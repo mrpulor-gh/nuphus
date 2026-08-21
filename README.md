@@ -24,7 +24,7 @@
 |------|------|------|
 | 编码 Agent | Cursor、Cline | 出不了 IDE |
 | 聊天 Agent | OpenClaw | 在聊天软件里遥控 |
-| 云端 Agent | Claude Computer Use | 在别人的虚拟机里 |
+| 云端 Agent | Codex Computer Use | 在别人的虚拟机里 |
 
 Nuphus 打破了这些边界。它不只是「帮你写代码」的工具——它是**替代你日常工作的 Agent**，并且你走到哪里，它跟到哪里。
 
