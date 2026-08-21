@@ -33,9 +33,20 @@ impl InputEngine {
 
         match target {
             #[cfg(windows)]
-            Target::Window { .. } | Target::Tui { .. } => {
+            Target::Window { .. } => {
                 // Windows: SendInput Unicode
                 sendinput::send_unicode_text(text)?;
+            }
+            Target::Tui { .. } => {
+                // 终端：Windows 走 SendInput；其他平台不支持
+                #[cfg(windows)]
+                {
+                    sendinput::send_unicode_text(text)?;
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(DesktopError::PlatformNotSupported);
+                }
             }
             Target::Browser { .. } => {
                 // 浏览器: Playwright 输入

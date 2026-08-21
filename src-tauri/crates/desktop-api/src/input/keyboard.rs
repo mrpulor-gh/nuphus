@@ -3,7 +3,7 @@
 use crate::core::*;
 
 #[cfg(not(windows))]
-fn enigo() -> std::sync::Mutex<enigo::Enigo> {
+fn enigo() -> &'static std::sync::Mutex<enigo::Enigo> {
     static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> = std::sync::OnceLock::new();
     INST.get_or_init(|| {
         // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
@@ -12,7 +12,6 @@ fn enigo() -> std::sync::Mutex<enigo::Enigo> {
             enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
         )
     })
-    .clone()
 }
 
 /// 发送按键
@@ -32,7 +31,7 @@ pub async fn press(key: &str) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::Direction;
+        use enigo::{Direction, Keyboard};
         let ek = vk_to_enigo(vk)?;
         enigo()
             .lock()
@@ -71,7 +70,7 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::Direction;
+        use enigo::{Direction, Keyboard};
         let mut e = enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?;

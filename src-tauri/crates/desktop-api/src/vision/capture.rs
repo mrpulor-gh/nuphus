@@ -43,21 +43,8 @@ async fn capture_window(target: &Target) -> Result<Frame> {
         }
     }
 
-    #[cfg(not(windows))]
-    {
-        if let Target::Window { hwnd, .. } = target {
-            // macOS/Linux: xcap 直接截窗口（回退到全屏+裁剪）
-            let windows =
-                XcapWindow::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
-            let win = windows.into_iter().find(|w| w.id() as isize == *hwnd);
-            if let Some(w) = win {
-                let image = w
-                    .capture_image()
-                    .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
-                return convert_to_frame(image, Scope::Window, FrameSource::WindowCapture);
-            }
-        }
-    }
+    // 非 Windows：Target::Window 变体不存在（cfg(windows)），直接回退全屏。
+    // 跨平台窗口截图由 xcap 全屏 + 裁剪路径覆盖（capture_fullscreen_and_crop 仅 Windows）。
 
     // 回退: 全屏截图 (所有平台)
     capture_fullscreen().await
@@ -119,17 +106,17 @@ async fn capture_fullscreen_and_crop(hwnd: isize) -> Result<Frame> {
 
     #[cfg(not(windows))]
     {
-        // macOS/Linux: 使用 xcap 获取窗口位置进行裁剪
+        // macOS/Linux: 使用 xcap 获取窗口位置进行裁剪（xcap 0.9: id/width/height 返回 Result）
         let windows = XcapWindow::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
         let win = windows
             .into_iter()
-            .find(|w| w.id() as isize == hwnd)
+            .find(|w| w.id().map(|id| id as isize).unwrap_or(-1) == hwnd)
             .ok_or_else(|| DesktopError::CaptureFailed(format!("window {} not found", hwnd)))?;
 
-        let x = win.x().max(0) as u32;
-        let y = win.y().max(0) as u32;
-        let w = win.width();
-        let h = win.height();
+        let x = win.x().unwrap_or(0).max(0) as u32;
+        let y = win.y().unwrap_or(0).max(0) as u32;
+        let w = win.width().unwrap_or(0) as u32;
+        let h = win.height().unwrap_or(0) as u32;
 
         frame
             .crop(x, y, w, h)

@@ -3,8 +3,9 @@
 use crate::core::*;
 
 /// 创建共享 enigo 实例 (macOS / Linux)
+/// 返回 `&'static Mutex`：OnceLock 保证单例且 'static，调用方 `enigo().lock()` 自动解引用。
 #[cfg(not(windows))]
-fn enigo() -> std::sync::Mutex<enigo::Enigo> {
+fn enigo() -> &'static std::sync::Mutex<enigo::Enigo> {
     static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> = std::sync::OnceLock::new();
     INST.get_or_init(|| {
         // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
@@ -13,7 +14,6 @@ fn enigo() -> std::sync::Mutex<enigo::Enigo> {
             enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
         )
     })
-    .clone()
 }
 
 /// 移动鼠标到指定坐标
@@ -43,7 +43,7 @@ pub async fn move_to(x: i32, y: i32) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::Coordinate;
+        use enigo::{Coordinate, Mouse};
         enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
@@ -72,6 +72,7 @@ pub async fn position() -> Result<Point> {
     }
     #[cfg(not(windows))]
     {
+        use enigo::Mouse;
         let pos = enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
@@ -107,7 +108,7 @@ pub async fn click(x: i32, y: i32) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::{Button, Direction};
+        use enigo::{Button, Direction, Mouse};
         enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
@@ -139,7 +140,7 @@ pub async fn right_click(x: i32, y: i32) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::{Button, Direction};
+        use enigo::{Button, Direction, Mouse};
         enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
@@ -201,7 +202,7 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        use enigo::{Button, Direction};
+        use enigo::{Button, Direction, Mouse};
         let mut e = enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
