@@ -1,0 +1,411 @@
+// toolbar.rs → Main window show/hide / fullscreen overlay mask control
+//
+// Screenshot flow (pre-screenshot + static storage polling):
+//   1. start_overlay_mask: pre-capture full screen → hide main window → create transparent overlay → return OK
+//   2. Overlay mouse move calls overlay_magnifier_region → crop directly from pre-screenshot memory
+//   3. User drags selection → overlay_capture_confirm(x,y,w,h) → crop from pre-screenshot + save
+//   4. User confirms → overlay_capture_done: store CAPTURE_RESULT → restore main window → close overlay
+//   5. Main window DesktopToolbar polls via take_capture_result to get result
+
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// Global always-on-top state
+static ALWAYS_ON_TOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether overlay window has been created (lazy init)
+static OVERLAY_CREATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Pre-screenshot cache: (RGBA pixel data, width, height)
+/// Captured before overlay creation in start_overlay_mask, usable directly during overlay lifetime
+static PRE_SCREENSHOT: Mutex<Option<(Vec<u8>, u32, u32)>> = Mutex::new(None);
+
+/// Screenshot result cache (for main window polling)
+/// Written by overlay_capture_done/cancel, consumed and cleared by take_capture_result
+static CAPTURE_RESULT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+// ── Main window control ──
+
+#[tauri::command]
+pub async fn toggle_main_window_topmost(app: AppHandle) -> Result<bool, String> {
+    let new_state = !ALWAYS_ON_TOP.load(std::sync::atomic::Ordering::SeqCst);
+    if let Some(win) = app.get_webview_window("main") {
+        win.set_always_on_top(new_state)
+            .map_err(|e| format!("设置窗口置顶失败: {e}"))?;
+    }
+    ALWAYS_ON_TOP.store(new_state, std::sync::atomic::Ordering::SeqCst);
+    Ok(new_state)
+}
+
+/// Called by frontend when initialization is complete.
+/// Closes the splash window and shows the main window.
+#[tauri::command]
+pub async fn finish_startup(app: AppHandle) -> Result<(), String> {
+    // Close splash window
+    if let Some(splash) = app.get_webview_window("splash") {
+        let _ = splash.close();
+    }
+    // Show main window
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+/// Update the splash window's loading status text.
+/// Called from both Rust setup and frontend initialization stages.
+#[tauri::command]
+pub async fn splash_status_update(app: AppHandle, text: String) -> Result<(), String> {
+    if let Some(splash) = app.get_webview_window("splash") {
+        let escaped = text.replace('\\', "\\\\").replace('\'', "\\'");
+        let _ = splash.eval(format!("setStatus('{}')", escaped));
+    }
+    Ok(())
+}
+
+// ── Fullscreen overlay mask (pre-screenshot approach) ──
+
+/// Start fullscreen overlay mask: hide main window → capture full screen → show overlay → return
+/// Overlay window is created once at startup and reused (show/hide), eliminating white flash.
+/// mode parameter is injected into overlay frontend via window.__setOverlayMode__().
+#[tauri::command]
+pub async fn start_overlay_mask(app: AppHandle, mode: Option<String>) -> Result<(), String> {
+    // 0. Hide main window first so screenshot is clean (no self-capture)
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    // 1. Pre-capture full screen for magnifier / OCR use
+    let monitors = xcap::Monitor::all().map_err(|e| format!("获取显示器列表失败: {e}"))?;
+    let primary = monitors
+        .into_iter()
+        .next()
+        .ok_or_else(|| "未找到显示器".to_string())?;
+
+    let full = primary
+        .capture_image()
+        .map_err(|e| format!("屏幕截图失败: {e}"))?;
+
+    let pw = full.width();
+    let ph = full.height();
+    let pixels = full.into_raw();
+
+    // Store in global cache (for magnifier / OCR region read)
+    {
+        let mut cache = PRE_SCREENSHOT.lock().expect("store pre-screenshot");
+        *cache = Some((pixels, pw, ph));
+    }
+
+    // 2. Ensure overlay window exists (lazy init)
+    ensure_overlay(&app)?;
+
+    // 3. Inject mode into overlay frontend + show
+    let overlay = app
+        .get_webview_window("capture_overlay")
+        .ok_or_else(|| "capture_overlay window not found".to_string())?;
+
+    let mode_str = mode.as_deref().unwrap_or("screenshot");
+    // Hide first if already showing (previous session), then set mode + show
+    let _ = overlay.hide();
+    let _ = overlay.eval(format!(
+        "window.__setOverlayMode__ && window.__setOverlayMode__('{}')",
+        mode_str
+    ));
+    let _ = overlay.show();
+    let _ = overlay.set_focus();
+    Ok(())
+}
+
+/// Ensure capture_overlay window exists (created once, hidden, reused)
+pub fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
+    if OVERLAY_CREATED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    let overlay = WebviewWindowBuilder::new(
+        app,
+        "capture_overlay",
+        WebviewUrl::App("capture_overlay.html".into()),
+    )
+    .title("")
+    .fullscreen(true)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()
+    .map_err(|e| format!("创建覆盖窗失败: {e}"))?;
+
+    OVERLAY_CREATED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = overlay; // keep alive
+    Ok(())
+}
+
+/// Get small region screenshot near cursor (crop from pre-screenshot memory, no xcap, no overlay window)
+/// Returns base64 PNG data URL
+#[tauri::command]
+pub async fn overlay_magnifier_region(x: i32, y: i32, size: u32) -> Result<String, String> {
+    use base64::Engine;
+
+    let size = size.max(1);
+    let half = size / 2;
+    let sx = (x.saturating_sub(half as i32)).max(0) as u32;
+    let sy = (y.saturating_sub(half as i32)).max(0) as u32;
+
+    // Crop small region from pre-screenshot cache (operate within lock only, don't clone entire image)
+    let (cropped, cw, ch) = {
+        let cache = PRE_SCREENSHOT
+            .lock()
+            .expect("read pre-screenshot for magnifier");
+        let (pixels, pw, ph) = cache
+            .as_ref()
+            .ok_or_else(|| "预截图未就绪，请先调用 start_overlay_mask".to_string())?;
+        let cw = size.min(pw.saturating_sub(sx));
+        let ch = size.min(ph.saturating_sub(sy));
+        (crop_rgba(pixels, *pw, sx, sy, cw, ch), cw, ch)
+    };
+
+    let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(cw, ch, cropped)
+        .ok_or_else(|| "创建裁剪图像失败".to_string())?;
+
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::from(img_buf)
+        .write_to(&mut png_buf, image::ImageFormat::Png)
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_buf.into_inner());
+    Ok(format!("data:image/png;base64,{}", b64))
+}
+
+/// User confirms selection → crop selection and return PNG base64
+///
+/// * mode = "screenshot" (default): hide overlay → live screenshot (with dynamic content) → restore overlay
+/// * mode = "ocr" / "picker": crop directly from PRE_SCREENSHOT (clean, no overlay mask interference)
+/// Overlay is closed by overlay_capture_done (confirm) or overlay_capture_cancel (cancel).
+#[tauri::command]
+pub async fn overlay_capture_confirm(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine;
+
+    let is_screenshot = mode.as_deref() == Some("screenshot");
+
+    let (pw, ph, pixels) = if is_screenshot {
+        // ── Screenshot mode: hide overlay → live capture (dynamic content) ─
+        if let Some(overlay) = app.get_webview_window("capture_overlay") {
+            let _ = overlay.hide();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        let monitors = xcap::Monitor::all().map_err(|e| format!("获取显示器列表失败: {e}"))?;
+        let primary = monitors
+            .into_iter()
+            .next()
+            .ok_or_else(|| "未找到显示器".to_string())?;
+        let full = primary
+            .capture_image()
+            .map_err(|e| format!("屏幕截图失败: {e}"))?;
+
+        // Restore overlay (for preview thumbnail display)
+        if let Some(overlay) = app.get_webview_window("capture_overlay") {
+            let _ = overlay.show();
+            let _ = overlay.set_focus();
+        }
+
+        (full.width(), full.height(), full.into_raw())
+    } else {
+        // ── OCR/selection mode: crop directly from PRE_SCREENSHOT (no mask interference) ─
+        let cache = PRE_SCREENSHOT
+            .lock()
+            .expect("read pre-screenshot for confirm");
+        let (pixels, pw, ph) = cache
+            .as_ref()
+            .ok_or_else(|| "预截图未就绪，请先调用 start_overlay_mask".to_string())?;
+        (*pw, *ph, pixels.clone())
+    };
+
+    // 裁剪选区
+    let cap_x = x.max(0) as u32;
+    let cap_y = y.max(0) as u32;
+    let cap_w = width.max(1).min(pw.saturating_sub(cap_x));
+    let cap_h = height.max(1).min(ph.saturating_sub(cap_y));
+
+    let cropped = crop_rgba(&pixels, pw, cap_x, cap_y, cap_w, cap_h);
+    let dyn_img = image::DynamicImage::from(
+        image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(cap_w, cap_h, cropped)
+            .ok_or_else(|| "创建裁剪图像失败".to_string())?,
+    );
+
+    // Save as PNG
+    let captures_dir =
+        nuphus::desktop::captures_dir_path().map_err(|e| format!("获取截图目录失败: {e}"))?;
+    std::fs::create_dir_all(&captures_dir).map_err(|e| format!("创建截图目录失败: {e}"))?;
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+    let save_path = captures_dir.join(format!("capture_{ts}.png"));
+
+    dyn_img
+        .save(&save_path)
+        .map_err(|e| format!("保存截图失败: {e}"))?;
+
+    let path = save_path.display().to_string();
+
+    // Encode as PNG base64 (for frontend preview)
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    dyn_img
+        .write_to(&mut png_buf, image::ImageFormat::Png)
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_buf.into_inner());
+    let data_url = format!("data:image/png;base64,{}", b64);
+
+    let result = serde_json::json!({
+        "path": path,
+        "x": cap_x,
+        "y": cap_y,
+        "width": cap_w,
+        "height": cap_h,
+        "base64": data_url,
+    });
+
+    Ok(result)
+}
+
+/// User confirms screenshot → store CAPTURE_RESULT → clear pre-screenshot → close overlay
+#[tauri::command]
+pub async fn overlay_capture_done(
+    app: AppHandle,
+    path: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    // 截图预览图（PNG data URL）。前端渲染直接用 base64 显示，绕开 asset 协议
+    // 对系统 Temp 目录的 scope 覆盖不确定性（截图路径在 $TEMP/nuphus/captures）。
+    // 坐标模式不传（None），调用方只从 region 提取坐标。
+    base64: Option<String>,
+) -> Result<(), String> {
+    // 1. Store result in global cache (for take_capture_result polling consumption)
+    *CAPTURE_RESULT.lock().expect("store capture result") = Some(serde_json::json!({
+        "path": path,
+        "region": {
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+        },
+        "base64": base64,
+    }));
+
+    // 2. Clear pre-screenshot cache (no longer needed)
+    *PRE_SCREENSHOT
+        .lock()
+        .expect("clear pre-screenshot after done") = None;
+
+    // 3. Hide overlay window (keep alive for reuse, no white flash on next show)
+    hide_overlay(&app);
+
+    // 4. Restore main window now that screenshot is done
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    Ok(())
+}
+
+/// Pick color — read specified pixel color from pre-screenshot, store directly in CAPTURE_RESULT and hide overlay
+#[tauri::command]
+pub async fn overlay_pick_color(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    let (r, g, b) = {
+        let cache = PRE_SCREENSHOT
+            .lock()
+            .expect("read pre-screenshot for pick color");
+        let (pixels, pw, ph) = cache.as_ref().ok_or_else(|| "预截图未就绪".to_string())?;
+        let px = x.max(0) as u32;
+        let py = y.max(0) as u32;
+        if px >= *pw || py >= *ph {
+            return Err("坐标超出屏幕范围".to_string());
+        }
+        let idx = ((py * pw + px) * 4) as usize;
+        (pixels[idx], pixels[idx + 1], pixels[idx + 2])
+    };
+
+    *CAPTURE_RESULT.lock().expect("store pick-color result") = Some(serde_json::json!({
+        "color_rgb": [r, g, b],
+        "hex": format!("#{:02X}{:02X}{:02X}", r, g, b),
+        "x": x,
+        "y": y,
+    }));
+
+    // Clear pre-screenshot cache
+    *PRE_SCREENSHOT
+        .lock()
+        .expect("clear pre-screenshot after pick color") = None;
+
+    // Hide overlay window + restore main window
+    hide_overlay(&app);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    Ok(())
+}
+
+/// Take screenshot result (for polling) — called by main window, cleared after consumption
+#[tauri::command]
+pub fn take_capture_result() -> Result<Option<serde_json::Value>, String> {
+    Ok(CAPTURE_RESULT.lock().expect("take capture result").take())
+}
+
+/// User cancels screenshot — hide overlay and restore main window
+#[tauri::command]
+pub async fn overlay_capture_cancel(app: AppHandle) -> Result<(), String> {
+    // Store cancellation flag
+    *CAPTURE_RESULT.lock().expect("store cancel flag") =
+        Some(serde_json::json!({"cancelled": true}));
+
+    // Clear pre-screenshot cache
+    *PRE_SCREENSHOT
+        .lock()
+        .expect("clear pre-screenshot on cancel") = None;
+
+    hide_overlay(&app);
+
+    // Restore main window
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    Ok(())
+}
+
+fn hide_overlay(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("capture_overlay") {
+        let _ = win.hide();
+    }
+}
+
+/// Crop rectangle region from RGBA pixel buffer
+fn crop_rgba(pixels: &[u8], full_width: u32, x: u32, y: u32, w: u32, h: u32) -> Vec<u8> {
+    let bpp = 4u32;
+    let stride = full_width * bpp;
+    let mut out = Vec::with_capacity((w * h * bpp) as usize);
+
+    for row in 0..h {
+        let src_start = ((y + row) * stride + x * bpp) as usize;
+        let src_end = (src_start + (w * bpp) as usize).min(pixels.len());
+        out.extend_from_slice(&pixels[src_start..src_end]);
+    }
+
+    out
+}

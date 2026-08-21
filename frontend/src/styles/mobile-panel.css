@@ -1,0 +1,370 @@
+/* ═══════════════════════════════════════════
+   mobile-panel.css — MobilePage「移动端」设置面板
+   类名前缀：mobile-*（名实一致）
+   仅引用 tokens.css 语义层（surface/fg/line/accent/状态色/fz/radius/space），
+   复用 .switch / .section 体系（page-layout.css / ui-primitives.css）
+   ═══════════════════════════════════════════ */
+
+.mobile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── 流程模块：块状结构（步骤即设置项，不用线条分割） ── */
+
+.mobile-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.mobile-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+}
+
+.mobile-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-block-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+}
+
+.mobile-block-title {
+  font-size: var(--fz-md);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.mobile-block-hint {
+  margin: 0;
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  line-height: var(--leading-normal);
+}
+
+/* 扫码模块：遗留状态修复（中继未开）行 */
+.mobile-scan-repair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 备用地址：模块内一行小字（标签 + 地址 + 复制图标） */
+.mobile-backup-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-backup-label {
+  flex: none;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+.mobile-backup-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+
+.mobile-backup-copy:hover {
+  background: var(--surface-hover);
+  color: var(--fg-2);
+}
+
+/* 维护操作：低频按钮收尾 */
+.mobile-ops {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* QR + caption（居中块） */
+.mobile-qr-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.mobile-qr-block svg {
+  border-radius: var(--radius-3);
+  border: 1px solid var(--line-2);
+}
+
+.mobile-qr-caption {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* 中继地址行（域名展示，去协议端口） */
+.mobile-relay-host {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-relay-host-label {
+  flex: none;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+.mobile-relay-host-value {
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  color: var(--fg-1);
+}
+
+/* 境外中继波动提示 */
+.mobile-relay-wave-note {
+  margin: 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* ── 占位提示（二维码未就绪时的引导文案） ── */
+
+.mobile-pro-locked-text {
+  margin: 0;
+  font-size: var(--fz-md);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+/* ── 状态行 ── */
+
+.mobile-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-status-text {
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+}
+
+.mobile-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-4);
+}
+
+.mobile-status-dot-on {
+  background: var(--success);
+}
+
+/* ── 地址 / URL 复制按钮 ── */
+
+.mobile-panel-url {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: var(--radius-3);
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  font-size: var(--fz-md);
+  cursor: pointer;
+}
+
+.mobile-panel-url:hover {
+  background: var(--accent-glow);
+}
+
+.mobile-panel-url:active {
+  opacity: 0.75;
+}
+
+/* 地址只读展示 */
+.mobile-panel-address {
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  color: var(--fg-2);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 重置按钮（危险操作） ── */
+
+.mobile-panel-reset {
+  padding: 6px 14px;
+  border: 1px solid var(--error);
+  border-radius: var(--radius-3);
+  background: transparent;
+  color: var(--error);
+  font-size: var(--fz-md);
+  cursor: pointer;
+}
+
+.mobile-panel-reset:hover:not(:disabled) {
+  background: var(--error);
+  color: #ffffff;
+}
+
+.mobile-panel-reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mobile-panel-error {
+  margin-top: var(--space-2);
+  font-size: var(--fz-sm);
+  color: var(--error);
+}
+
+/* ── 配对密码输入 + 保存按钮 ── */
+
+.mobile-password-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-panel-password {
+  width: 200px;
+  padding: 6px 10px;
+  border-radius: var(--radius-3);
+  border: 1px solid var(--line-2);
+  background: var(--surface-inset);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.mobile-panel-password:focus {
+  border-color: var(--accent);
+}
+
+.mobile-panel-password:disabled {
+  opacity: 0.55;
+}
+
+.mobile-panel-save {
+  padding: 6px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--surface-inset);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  cursor: pointer;
+}
+
+.mobile-panel-save:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.mobile-panel-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 配对密码错误提示（输入框下方） */
+.mobile-password-error {
+  font-size: var(--fz-sm);
+  color: var(--error);
+}
+
+
+/* ── 双端状态（SVG 图标 + CSS 连接线） ── */
+
+.mobile-dual {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.mobile-device {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  text-align: center;
+}
+
+.mobile-device-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-2);
+  color: var(--fg-3);
+}
+
+.mobile-device-icon.is-on {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.mobile-device-name {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.mobile-device-meta {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+/* 连接线：已连接 = 绿色实线；未连接 = 灰色虚线 */
+.mobile-link-line {
+  flex: 1;
+  min-width: 24px;
+  border-top: 2px dashed var(--line-2);
+}
+
+.mobile-link-line.is-connected {
+  border-top: 2px solid var(--success);
+}
+
+/* ── 配对后小提示（添加到主屏幕引导） ── */
+
+.mobile-relay-guide-text {
+  margin: 0;
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  line-height: var(--leading-normal);
+}

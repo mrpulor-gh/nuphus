@@ -1,0 +1,234 @@
+@import './tokens.css';
+/* error.css — ErrorScreen/ErrorBoundary 错误页样式（自 components.css 拆出） */
+/* ═══════════════════════════════════════
+   ErrorScreen — 模型配置错误/启动失败页
+   设计原则: 生命感🌬 + 空间感🏔 + 纪律感📏 + 材质感💎
+   色彩体系: Void & Spark
+   ═══════════════════════════════════════ */
+
+/* ── 容器层：全屏覆盖，虚空背景 ── */
+.error-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(var(--error-rgb), .04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(var(--accent-rgb), .02) 0%, transparent 50%),
+    var(--void-deepest);
+  user-select: none;
+  animation: fadeIn .3s ease-out;
+}
+
+/* ── 边界错误的额外标识 ── */
+.error-screen--boundary {
+  z-index: 10000;
+}
+
+/* ── 内容容器：垂直居中，滑入动画 ── */
+.error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 400px;
+  padding: 48px 40px;
+  background: var(--glass-bg-soft);
+  border: var(--border-glow);
+  border-radius: 20px;
+  box-shadow: var(--shadow-modal);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  animation: slideUp .35s ease-out;
+}
+
+/* ── 图标区域：错误符号 + 呼吸光晕 ── */
+.error-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 24px;
+  color: var(--error);
+  animation: errorShake .5s ease-in-out .3s;
+}
+
+/* 图标背后的呼吸光晕 — 默认错误红 */
+.error-icon-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--error-rgb), .12) 0%, transparent 70%);
+  animation: errorGlowPulse 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 模型配置错误 → 琥珀色光晕（配置问题，非致命崩溃） */
+.error-icon-wrap[data-error-kind="api_key_invalid"]::before {
+  background: radial-gradient(circle, rgba(var(--warning-rgb), .15) 0%, transparent 70%);
+}
+.error-icon-wrap[data-error-kind="api_key_invalid"] {
+  color: var(--warning);
+}
+
+/* 配置文件损坏 → 橙色光晕 */
+.error-icon-wrap[data-error-kind="config_corrupted"]::before {
+  background: radial-gradient(circle, rgba(var(--warning-rgb), .12) 0%, transparent 70%);
+}
+.error-icon-wrap[data-error-kind="config_corrupted"] {
+  color: var(--warning);
+}
+
+/* 后端未响应 → 深红（服务挂了）*/
+.error-icon-wrap[data-error-kind="backend_unavailable"]::before {
+  background: radial-gradient(circle, rgba(var(--error-rgb), .15) 0%, transparent 70%);
+}
+
+/* 端口被占用 → 紫色调 */
+.error-icon-wrap[data-error-kind="port_in_use"]::before {
+  background: radial-gradient(circle, rgba(var(--accent-rgb), .10) 0%, transparent 70%);
+}
+.error-icon-wrap[data-error-kind="port_in_use"] {
+  color: var(--spark-tertiary);
+}
+
+/* ── 标题 ── */
+.error-title {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  color: var(--spark-primary);
+  letter-spacing: var(--ls-tight);
+  line-height: 1.3;
+  margin-bottom: 10px;
+}
+
+/* ── 描述文字 ── */
+.error-desc {
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  color: var(--spark-tertiary);
+  margin-bottom: 28px;
+  max-width: 320px;
+}
+
+/* ── 操作按钮组 ── */
+.error-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── 按钮基础 ── */
+.error-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  letter-spacing: var(--ls-wide);
+  min-width: 88px;
+}
+
+/* 主要按钮：强调色填充 */
+.error-btn--primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 1px 6px rgba(var(--accent-rgb), .2);
+}
+.error-btn--primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 2px 12px rgba(var(--accent-rgb), .3);
+}
+.error-btn--primary:active {}
+
+/* 次要按钮：玻璃材质轮廓 */
+.error-btn--secondary {
+  background: var(--glass-2);
+  color: var(--spark-secondary);
+  border: var(--border-glow);
+}
+.error-btn--secondary:hover {
+  background: var(--void-hover);
+  color: var(--spark-primary);
+  border-color: rgba(255, 255, 255, .2);
+}
+.error-btn--secondary:active {}
+
+/* 幽灵按钮：轻量文本 */
+.error-btn--ghost {
+  background: transparent;
+  color: var(--spark-muted);
+}
+.error-btn--ghost:hover {
+  background: var(--glass-1);
+  color: var(--spark-tertiary);
+}
+
+/* ── 详情区域：纪律感，按需浮现 ── */
+.error-detail {
+  margin-top: 24px;
+  width: 100%;
+}
+
+/* 详情切换按钮 */
+.error-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: var(--border-divider);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--spark-dim);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.error-detail-toggle:hover {
+  background: var(--glass-1);
+  color: var(--spark-tertiary);
+  border-color: var(--border-standard);
+}
+
+/* 详情代码块 */
+.error-detail-code {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--void-deepest);
+  border: var(--border-divider);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.55;
+  color: var(--spark-secondary);
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-inset);
+}
+
+/* ── 错误呼吸脉冲动画 ── */
+@keyframes errorGlowPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: .5;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}

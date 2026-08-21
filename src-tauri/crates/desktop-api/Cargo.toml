@@ -1,0 +1,81 @@
+[package]
+name = "desktop-api"
+version = "2.0.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mrpulor-gh/nuphus"
+authors = ["Nuphus Team"]
+description = "Nuphus 桌面控制核心基础设施 - 感知·查找·操作·沟通"
+rust-version = "1.78"
+
+[features]
+default = []
+http-server = ["dep:axum", "dep:tower"]
+http = ["http-server"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+
+# HTTP 服务
+axum = { version = "0.7", features = ["macros"], optional = true }
+tower = { version = "0.4", features = ["timeout"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.8", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 截图
+xcap.workspace = true
+
+# 图像处理（bmp 用于读取截图 BMP 输入）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+
+# 缓存
+lru = "0.12"
+
+# base64
+base64 = "0.22"
+
+# ONNX Runtime (YOLO 元素检测 / PaddleOCR)
+# 钉死 =2.0.0-rc.12：rc.13 起要求更新的 onnxruntime（1.26 会报 BadVersion）。
+# 与主仓库 Cargo.lock 一致，保证主 workspace 与独立 repo 行为确定。
+ort = { version = "=2.0.0-rc.12", features = ["load-dynamic", "ndarray"] }
+ndarray = "0.17"
+
+# 应用数据目录
+dirs = "5"
+
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+# 非 Windows 鼠标/键盘（macOS + Linux via enigo）
+enigo = "0.2"
+# macOS 剪贴板
+arboard = "3.4"
+
+[target.'cfg(windows)'.dependencies]
+# Windows API (仅 Windows 编译)
+windows = { version = "0.56", features = [
+    "Win32",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+] }
+
+[dev-dependencies]
+tokio-test = "0.4"

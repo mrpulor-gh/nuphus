@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hello Nuphus</title>
+  <!-- 模板惯例（设计文档 §4.3）：语义 token 单一来源 + 共享基础样式 + 当前生效主题快照 -->
+  <link rel="stylesheet" href="/plugins-shared/tokens.css" />
+  <link rel="stylesheet" href="/plugins-shared/base.css" />
+  <link rel="stylesheet" href="/plugins-shared/theme.css" />
+  <script src="/plugins-shared/bridge.js"></script>
+  <style>
+    /* 插件本地样式：只引用语义 token，不写死颜色（主题切换自动跟随） */
+    body {
+      margin: 0;
+      background: var(--surface-0);
+      color: var(--fg-1);
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--surface-1);
+      border: 1px solid var(--line-1);
+      border-radius: var(--radius-3);
+      padding: 20px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      color: var(--fg-1);
+    }
+    .sub {
+      margin: 0 0 16px;
+      font-size: 12px;
+      color: var(--fg-3);
+    }
+    .swatches {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .swatch {
+      flex: 1;
+      height: 48px;
+      border-radius: var(--radius-2);
+      border: 1px solid var(--line-1);
+    }
+    .swatch-label {
+      font-size: 10px;
+      color: var(--fg-3);
+      text-align: center;
+      margin-top: 4px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .count {
+      font-size: 28px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+    }
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius-2);
+      background: var(--accent);
+      color: var(--on-accent);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button.ghost {
+      background: var(--surface-active);
+      color: var(--fg-1);
+    }
+    .status {
+      min-height: 16px;
+      font-size: 11px;
+      color: var(--fg-3);
+      margin-top: 8px;
+    }
+    .status.error {
+      color: var(--error);
+    }
+    #theme-label {
+      font-size: 12px;
+      color: var(--fg-2);
+      padding: 6px 10px;
+      border-radius: var(--radius-2);
+      background: var(--surface-inset);
+      border: 1px solid var(--line-1);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Hello Nuphus</h1>
+    <p class="sub">App Plugin 示例：主题色卡 + KV 计数器 + Toast</p>
+
+    <div class="swatches" id="swatches">
+      <div>
+        <div class="swatch" style="background: var(--surface-0)"></div>
+        <div class="swatch-label">surface-0</div>
+      </div>
+      <div>
+        <div class="swatch" style="background: var(--surface-1)"></div>
+        <div class="swatch-label">surface-1</div>
+      </div>
+      <div>
+        <div class="swatch" style="background: var(--accent)"></div>
+        <div class="swatch-label">accent</div>
+      </div>
+      <div>
+        <div class="swatch" style="background: var(--fg-1)"></div>
+        <div class="swatch-label">fg-1</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <span>KV 计数器（持久化）</span>
+      <span class="count" id="count">0</span>
+    </div>
+    <div class="row">
+      <button id="inc">+1</button>
+      <button class="ghost" id="toast">发 Toast</button>
+    </div>
+    <div class="row">
+      <span id="theme-label">主题: --</span>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict'
+      var bridge = window.NuphusBridge
+      var count = 0
+
+      function setStatus(text, isError) {
+        var el = document.getElementById('status')
+        el.textContent = text
+        el.className = isError ? 'status error' : 'status'
+      }
+
+      function renderCount() {
+        document.getElementById('count').textContent = String(count)
+      }
+
+      // 初始化：读 KV 恢复计数 + 显示当前主题
+      function init() {
+        bridge.call('kv.keys').then(function (keys) {
+          if (keys && keys.indexOf('count') !== -1) {
+            return bridge.call('kv.get', { key: 'count' })
+          }
+          return null
+        }).then(function (v) {
+          if (typeof v === 'number') count = v
+          renderCount()
+        }).catch(function (e) {
+          setStatus('KV 读取失败: ' + (e && e.error ? e.error.code : e), true)
+        })
+      }
+
+      document.getElementById('inc').addEventListener('click', function () {
+        count += 1
+        renderCount()
+        bridge.call('kv.set', { key: 'count', value: count }).then(function () {
+          setStatus('已保存 count=' + count)
+        }).catch(function (e) {
+          setStatus('KV 写入失败: ' + (e && e.error ? e.error.code : e), true)
+        })
+      })
+
+      document.getElementById('toast').addEventListener('click', function () {
+        bridge.call('notify.toast', { text: '来自插件：Hello Nuphus！' }).then(function () {
+          setStatus('Toast 已发送')
+        }).catch(function (e) {
+          setStatus('Toast 失败: ' + (e && e.error ? e.error.code : e), true)
+        })
+      })
+
+      // 主题变化事件：宿主推送 theme.changed → 插件本地刷新指示
+      bridge.on('theme.changed', function (payload) {
+        var base = payload && payload.base ? payload.base : '?'
+        document.getElementById('theme-label').textContent = '主题: ' + base
+      })
+
+      // init 握手完成（含 theme 初始值）
+      bridge.on('init', function (info) {
+        var base = info && info.theme ? info.theme.base : '?'
+        document.getElementById('theme-label').textContent = '主题: ' + base
+        init()
+      })
+    })()
+  </script>
+</body>
+</html>

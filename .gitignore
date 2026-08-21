@@ -1,0 +1,143 @@
+target/
+*.log
+*.pdb
+config.toml
+config/team.toml
+debug_*
+.nuphus/
+.nuphus-*
+node_modules/
+desktop/tesseract/
+scripts/__pycache__/
+__pycache__/
+temp/
+frontend/dist/
+compare_preprocess/
+*.bmp
+*.py
+py_ocr_results.txt
+ocr_report.txt
+test_ocr_page.html
+test_ocr_content.txt
+test_rec_input.png
+src-tauri/desktop/models/*.onnx
+src-tauri/desktop/models/*.txt
+src-tauri/desktop/models/*.pt
+src-tauri/desktop/sherpa/
+src-tauri/desktop/*.dll
+
+# 备份文件
+*.bak
+
+# 临时文件
+*.tmp
+
+# 编辑器/系统文件（跨平台）
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# 根目录临时运维脚本（AI 会话产物，不入库）
+/*.ps1
+
+# 内部审计文件（不公开）
+audit-*.md
+# 前端内部设计文档（不公开，与 docs/ 同策略）
+frontend/docs/
+# 源码内设计文档（不公开）
+src/memory/agent-memory-design.md
+# 审计报告目录（内部文档，不公开）
+audit/
+# 内部文档（开发/审计/路线图/计划，均不公开推送；开源壳子仅保留根 README）
+# 插件市场建好后会重写公开开发文档
+docs/
+
+# 个人工作流数据（不公开）
+plugin/workflows/a1b2c3d4*/
+plugin/workflows/wechat*/
+
+# 工作流运行快照（保留 workflow.json / params.json / guide.md）
+plugin/workflows/*/workflow.2*.json
+plugin/ui-maps/im/
+plugin/ui-maps/terminal/
+
+# 个人 ChatAgent 配置（不公开）
+plugin/chat-agents/
+
+# 第三方安装的 skill（不提交）
+plugin/skills/community/
+
+# 内部开发计划（含个人路径，不公开）
+# TEMPLATE.plan.md 是公开模板，给开源贡献者引导用；具体实例本地化
+src-tauri/tasks/nuphus/
+src-tauri/tasks/*/plans/
+
+# Agent 自我认知文档（内部设计，不公开；运行时随安装包分发）
+plugin/knowledge/nuphus-self/
+src-tauri/tasks/*/archive/
+!src-tauri/tasks/TEMPLATE.plan.md
+
+# 构建日志
+build_restart.log
+candle_build.log
+
+# 系统元数据
+Thumbs.db
+.DS_Store
+
+# 本地构建产物
+*.exe
+*.dll
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境变量（防 API Key 泄漏）
+.env
+.env.*
+
+# TypeScript 增量编译
+*.tsbuildinfo
+# STT 原型验证遗留物（模型包/wav/onnx 库，721MB，不提交）
+tools/stt-proto/
+# nuphus-mcp 已独立迁出到 C:\Users\Administrator\nuphus-mcp（不再随主仓库）
+release/
+# 运行时安装的插件应用与实例数据（用户数据，不入库）
+plugin/apps/
+# 插件市场实现目录（仅本地开发；开源基础版不含市场，动态加载零匹配降级）
+frontend/src/market/
+# 插件市场体系 UI（2026-08-21 大王决策：市场体系不开源，仅本地开发编辑；
+# 入口仅展示筹备提示 PluginComingSoon；市场 ready 后解除忽略并恢复 App.tsx 挂载）
+frontend/src/main-window/pages/PluginAppsPage.tsx
+frontend/src/main-window/pages/PluginDevPage.tsx
+frontend/src/main-window/lib/market-types.ts
+frontend/src/main-window/lib/plugin-categories.ts
+frontend/src/styles/plugin-dev.css
+# 运行时创建的工作流实例（UUID 目录；命名目录为策划工作流，需入库）
+plugin/workflows/????????-????-????-????-????????????/
+
+
+# ── 开源壳子排除（2026-08-19 大王确认：历史压成单提交，做干净壳子）──
+# 赞助收款码（商业敏感资产）
+relay-server/src/sponsor_wechat_qr.png
+relay-server/src/sponsor_wechat_qr.b64
+# 本地 Agent 登记（含本机路径/账号信息）
+plugin/team.toml
+# 本地验证工作流（含真实窗口快照/截图/运行痕迹，非产品示例）
+plugin/workflows/chatagent-opencode-verify/
+plugin/workflows/nuphus-tour-v4/
+# 本地工作流注册表（UUID 实例，用户数据）
+plugin/workflows/index.json
+# 内部自我认知知识库（含安全架构/中继安全，不公开）
+plugin/knowledge/nuphus-self/
+# 市场仓聚合脚本（供独立 nuphus-market 仓使用，开源版不含市场）
+scripts/build-market-index.mjs
+
+
+*.log.err

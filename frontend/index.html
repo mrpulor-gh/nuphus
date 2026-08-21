@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
+    <title>Nuphus - 智慧协作伙伴</title>
+    <link rel="icon" type="image/x-icon" href="/nuphus.ico" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // 移动端键盘适配：visualViewport 变化时计算键盘高度
+      if (window.visualViewport) {
+        const updateKb = () => {
+          const kb = Math.max(0, window.innerHeight - window.visualViewport.height);
+          document.documentElement.style.setProperty('--kb-height', kb + 'px');
+        };
+        window.visualViewport.addEventListener('resize', updateKb);
+        updateKb();
+      }
+
+      // 拦截系统快捷键（在 React 挂载前注册，确保最早捕获）
+      document.addEventListener('keydown', function(e) {
+        // Ctrl+P / Cmd+P → 阻止系统打印
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent('nuphus-shortcut', { detail: { key: 'ctrl+p' } }));
+        }
+        // Shift+P → 插件搜索（避免与系统打印冲突）
+        if (e.shiftKey && e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent('nuphus-shortcut', { detail: { key: 'shift+p' } }));
+        }
+      }, { capture: true });
+    </script>
+  </body>
+</html>
+<!-- market-url hotfix reload -->
+ <!-- reload2 -->

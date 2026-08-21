@@ -1,0 +1,96 @@
+@import './tokens.css';
+/* markdown.css — MarkdownContent 渲染样式（自 components.css 拆出） */
+/* ═══════════════════════════════════════
+   Markdown 渲染样式 — Void & Spark 主题风
+   设计原则: 玻璃质感 + 呼吸感 + 层次清晰
+   ═══════════════════════════════════════ */
+
+/* ── 标题 ── */
+.markdown-h{ margin: 20px 0 8px; font-weight: 600; line-height: 1.35; color: var(--spark-primary); letter-spacing: -0.02em }
+
+/* ── 段落 ── */
+.markdown-paragraph{ margin: 0 0 10px; line-height: 1.7; color: var(--spark-secondary) }
+.markdown-paragraph:last-child{ margin-bottom: 0 }
+.markdown-paragraph + .markdown-h{ margin-top: 24px }
+
+/* ── 引用块（圆角玻璃背景） ── */
+.markdown-blockquote{ margin: 12px 0; padding: 10px 16px; border: none; background: var(--glass-0); border-radius: 8px; color: var(--spark-tertiary); line-height: 1.6; position: relative; box-shadow: inset 0 1px 0 var(--glass-1), inset 0 -1px 0 var(--glass-1) }
+.markdown-blockquote > *:last-child{ margin-bottom: 0 }
+
+/* ── 分割线 ── */
+.markdown-hr{ margin: 20px 0; border: none; height: 1px; background: linear-gradient(to right, transparent, var(--glass-4), var(--accent), var(--glass-4), transparent); position: relative }
+.markdown-hr::before{ content: ''; position: absolute; top: -2px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .5 }
+
+/* ── 链接 ── */
+.markdown-link{ color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: all var(--transition-fast); font-weight: 500 }
+.markdown-link:hover{ border-bottom-color: var(--accent); color: var(--accent-hover) }
+
+/* ── 可点击文件路径（AI 回复中的 Windows 绝对路径） ── */
+.markdown-file-path{ color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: .9em; white-space: break-spaces; overflow-wrap: anywhere; transition: all var(--transition-fast) }
+.markdown-file-path:hover{ color: var(--accent-hover); border-bottom-color: var(--accent-hover); background: rgba(var(--accent-rgb), .08); border-radius: 3px }
+.markdown-file-path:focus-visible{ outline: none; box-shadow: var(--shadow-focus); border-radius: 3px }
+
+/* ── 无序/有序列表 ── */
+.markdown-ul{ margin: 8px 0 12px; padding-left: 0; line-height: 1.7; color: var(--spark-secondary); list-style: none }
+.markdown-ul > .markdown-li{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px }
+.markdown-ol{ margin: 8px 0 12px; padding-left: 0; line-height: 1.7; color: var(--spark-secondary); list-style: none }
+.markdown-ol > .markdown-li{ display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px }
+
+/* 列表标记（序号/圆点） */
+.markdown-marker{ flex-shrink: 0; font-weight: 600; color: var(--accent); font-family: var(--font-mono); text-align: center; line-height: 1.7; opacity: .7; -webkit-user-select: none; user-select: none }
+.markdown-marker-ol{ width: 22px; font-size: var(--fz-sm); text-align: right }
+.markdown-ul .markdown-marker{ width: 16px; font-size: var(--fz-lg); font-weight: 700; opacity: .6; transition: all var(--transition-fast) }
+.markdown-ul > .markdown-li:hover .markdown-marker{ opacity: 1; transform: scale(1.25) }
+
+/* 列表内容体（包裹文本+子列表，块级流中自然换行） */
+.markdown-body{ flex: 1; min-width: 0 }
+.markdown-body > .markdown-ul,
+.markdown-body > .markdown-ol{ margin: 4px 0 6px }
+
+.markdown-li{ margin-bottom: 2px }
+
+/* ── 任务列表 ── */
+.markdown-task-item{ list-style: none; display: flex; align-items: flex-start; gap: 8px }
+.markdown-task-item::before{ display: none !important }
+.markdown-task-checkbox{ flex-shrink: 0; width: 16px; height: 16px; border: 1.5px solid var(--spark-muted); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; margin-top: 4px; transition: all var(--transition-fast); background: transparent }
+.markdown-task-checkbox.checked{ background: var(--accent); border-color: var(--accent); color: var(--on-accent) }
+.markdown-task-done{ text-decoration: line-through; opacity: .5 }
+
+/* ── 表格 ── */
+.markdown-table-wrapper{ overflow-x: auto; margin: 12px 0; border-radius: 8px; border: 1px solid var(--glass-2) }
+.markdown-table{ width: 100%; border-collapse: collapse; font-size: var(--fz-md); color: var(--spark-secondary) }
+.markdown-table th, .markdown-table td{ border: 1px solid var(--glass-1); padding: 7px 12px; text-align: left; overflow-wrap: break-word; word-break: break-word }
+.markdown-table th{ background: var(--glass-1); font-weight: 600; color: var(--spark-primary); white-space: normal; word-break: break-word; font-size: var(--fz-sm); letter-spacing: 0.02em; text-transform: uppercase }
+.markdown-table tbody tr{ transition: background var(--transition-fast) }
+.markdown-table tbody tr:hover{ background: var(--glass-0) }
+.markdown-table tbody tr:last-child td:first-child{ border-radius: 0 0 0 8px }
+.markdown-table tbody tr:last-child td:last-child{ border-radius: 0 0 8px 0 }
+
+/* ── 代码块 ── */
+.markdown-code-block{ background: var(--code-bg, var(--code-bg)); border: 1px solid var(--glass-1); border-radius: 10px; padding: 14px 16px; margin: 12px 0; font-size: 12.5px; font-family: var(--font-mono); font-variant-ligatures: normal; color: var(--spark-secondary); line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word; position: relative; box-shadow: var(--shadow-surface) }
+.code-lang-label{ display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); background: var(--glass-1); padding: 2px 10px; border-radius: 4px; margin-bottom: 8px; -webkit-user-select: none; -moz-user-select: none; user-select: none; border: 1px solid var(--glass-1) }
+.markdown-code-block code{ font-family: inherit; font-size: inherit; color: inherit; background: none; padding: 0; border-radius: 0 }
+
+/* ── 行内代码 ── */
+.inline-code{ background: rgba(var(--accent-rgb), .08); border: 1px solid rgba(var(--accent-rgb), .1); border-radius: 4px; padding: 1px 6px; font-size: .88em; font-family: var(--font-mono); color: var(--accent); white-space: break-spaces; font-weight: 500 }
+.markdown-table td .inline-code{ white-space: normal; overflow-wrap: break-word; word-break: break-word }
+
+/* ── 代码语法高亮 ── */
+.markdown-code-block .token-keyword{ color: var(--accent-hover); font-weight: 600 }
+.markdown-code-block .token-type{ color: var(--syntax-type) }
+.markdown-code-block .token-builtin{ color: var(--syntax-builtin) }
+.markdown-code-block .token-string{ color: var(--success) }
+.markdown-code-block .token-number{ color: var(--syntax-number) }
+.markdown-code-block .token-comment{ color: var(--syntax-comment); font-style: italic }
+.markdown-code-block .token-class{ color: var(--warning) }
+.markdown-code-block .token-property{ color: var(--accent-hover) }
+.markdown-code-block .token-variable{ color: var(--syntax-variable) }
+.markdown-code-block .token-atrule{ color: var(--syntax-atrule) }
+.markdown-code-block .token-unit{ color: var(--violet-soft) }
+.markdown-code-block .token-color{ color: var(--success) }
+.markdown-code-block .token-section{ color: var(--error); font-weight: 600 }
+.markdown-code-block .token-diff-insert{ display: block; background: rgba(74, 222, 128, .12); color: var(--success); border-radius: 2px }
+.markdown-code-block .token-diff-delete{ display: block; background: rgba(248, 113, 113, .12); color: var(--error); border-radius: 2px }
+.markdown-code-block .token-diff-header{ color: var(--syntax-diff-header); font-weight: 600 }
+.markdown-code-block .token-diff-meta{ color: var(--syntax-diff-meta); font-style: italic }
+.markdown-code-block .token-diff-file{ color: var(--accent-hover) }

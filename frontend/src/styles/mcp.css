@@ -1,0 +1,184 @@
+/* ═══════════════════════════════════════════
+   mcp.css — McpPage 页面特有样式（只读 server/工具列表）
+   骨架：ui/PageLayout Section + page-layout.css .page
+   仅使用 tokens.css 语义变量，禁止硬编码色值
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── server 卡片列表 ── */
+.mcp-server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-server-card {
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-md);
+  background: var(--glass-0);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.mcp-server-card:hover {
+  border-color: var(--glass-2);
+}
+
+.mcp-server-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3) var(--space-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.mcp-server-header:hover {
+  background: var(--glass-1);
+}
+
+.mcp-server-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcp-server-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mcp-server-key {
+  font-family: var(--font-mono);
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-1);
+}
+
+.mcp-server-command {
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-server-meta {
+  font-size: var(--fz-xs);
+  color: var(--fg-5);
+}
+
+.mcp-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--fg-5);
+}
+
+/* ── 启动方式徽标 ── */
+.mcp-badge {
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--fg-4);
+  background: var(--glass-2);
+  white-space: nowrap;
+}
+.mcp-badge--auto {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ── 工具列表 ── */
+.mcp-tools {
+  border-top: 1px solid var(--glass-1);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.mcp-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcp-tool-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: var(--radius-1);
+  background: var(--glass-0);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.mcp-tool-item:hover {
+  background: var(--glass-1);
+}
+
+.mcp-tool-name {
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+}
+
+.mcp-tool-desc {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ── 状态 / 空态 ── */
+.mcp-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-1);
+  font-size: var(--fz-sm);
+  color: var(--fg-4);
+}
+.mcp-state--error {
+  color: var(--error);
+}
+
+.mcp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--fg-5);
+}
+
+.mcp-empty-title {
+  font-size: var(--fz-md);
+  font-weight: var(--fw-medium);
+  color: var(--fg-3);
+}
+
+.mcp-empty-desc {
+  font-size: var(--fz-sm);
+  color: var(--fg-4);
+}
+
+.mcp-path {
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 8px;
+  border-radius: var(--radius-1);
+}

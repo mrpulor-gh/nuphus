@@ -1,0 +1,3335 @@
+/* ==========================================================================
+   Nuphus 移动端 — 设计 token 与全部样式
+   设计决策档案：docs/internal/mobile-ui-design-rationale.md
+   基调：iOS HIG（语义色板、44pt 触摸目标、17/16/13/12 字阶、hairline 分隔）
+   主题：亮色（品牌蓝）为默认 :root；深色（酷炫黑）由 [data-theme="dark"] 覆盖，
+        切换见 theme.ts（默认深色启动，localStorage 记忆）。
+   ========================================================================== */
+
+/* ── 亮色主题（默认：黑白基调，替换原品牌蓝 #3b82f6） ────────────── */
+:root {
+  /* 品牌（白：亮色主题主调；发送/主操作按钮统一黑色，见各组件） */
+  --m-accent: #ffffff;
+  --m-accent-pressed: #e8e8ea;
+  /* 中性（iOS 语义灰阶，亮色） */
+  --m-bg: #ffffff;
+  --m-bg-grouped: #f2f2f7;
+  /* 执行栏呼吸卡片色（运行中「现身」端）：明显区别于页面背景 --m-bg，
+     但不过分（Δ≈26，柔和可感知）。动画在它 ↔ --m-bg 间切换，
+     形成「浮现 → 融入背景 → 浮现」的明灭节奏 */
+  --m-exec-breath-bg: #e4e4ea;
+  /* 执行状态胶囊呼吸色（反色胶囊半透明版：浅色主题=黑胶囊明灭） */
+  --m-exec-line-dim: rgba(28, 28, 33, 0.7);
+  --m-surface: #f2f2f7;
+  --m-fg: #1c1c1e;
+  --m-fg-secondary: #6d6d72;
+  --m-separator: rgba(60, 60, 67, 0.12);
+  --m-fill: rgba(120, 120, 128, 0.16);
+  /* 主操作按钮（黑底白字，黑白主题统一） */
+  --m-btn-bg: #1c1c1e;
+  --m-btn-bg-pressed: #000000;
+  --m-btn-fg: #ffffff;
+  /* 输入栏发送/终止按钮（主题反色：亮色=黑钮、深色=亮钮，避免深色背景融合） */
+  --m-composer-btn-bg: #1c1c1e;
+  --m-composer-btn-bg-pressed: #000000;
+  --m-composer-btn-fg: #ffffff;
+  /* 终止按钮弧条特效色（主题反色：亮色=深弧、深色=白弧，保证可见） */
+  --m-stop-arc: rgba(28, 28, 33, 0.85);
+  /* 「+」弹窗反色 token：亮色主题下弹窗用酷炫黑（与窗口浅色背景强区分） */
+  --m-plus-bg: #1c1c21;
+  --m-plus-fg: #e4e4e7;
+  --m-plus-fg-secondary: #a1a1aa;
+  --m-plus-fill: rgba(255, 255, 255, 0.1);
+  --m-plus-separator: rgba(255, 255, 255, 0.16);
+  --m-plus-active: rgba(255, 255, 255, 0.08);
+  /* 工作流胶囊反色 token：亮色主题下胶囊用酷炫黑毛玻璃（与浅色窗口强区分），
+     深色毛玻璃 + blur + 阴影 = iOS 原生提示胶囊质感；非贯穿、宽度自适应内容 */
+  --m-wf-pill-bg: rgba(28, 28, 33, 0.82);
+  --m-wf-pill-border: rgba(0, 0, 0, 0.08);
+  --m-wf-pill-fg: #f2f2f7;
+  --m-wf-pill-fg-secondary: #b8b8bd;
+  --m-wf-pill-fill: rgba(255, 255, 255, 0.08);
+  --m-wf-pill-separator: rgba(255, 255, 255, 0.14);
+  --m-wf-pill-active: rgba(255, 255, 255, 0.08);
+  --m-wf-pill-highlight: rgba(255, 255, 255, 0.18);
+  /* refine 弹窗反色 token：亮色主题下用酷炫黑（与浅色窗口强区分，无 border） */
+  --m-refine-bg: #1c1c21;
+  --m-refine-fg: #e4e4e7;
+  --m-refine-fg-secondary: #a1a1aa;
+  --m-refine-fill: rgba(255, 255, 255, 0.1);
+  --m-refine-btn-bg: #ffffff;
+  --m-refine-btn-fg: #1c1c1e;
+  /* 状态 */
+  --m-ok: #34c759;
+  --m-warn: #ff9500;
+  --m-fail: #ff3b30;
+  /* 字族 */
+  --m-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto,
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 圆角（嵌套递减：气泡 18 → 卡片 12 → sm 8 → pill 全圆） */
+  --m-radius-sm: 8px;
+  --m-radius-bubble: 18px;
+  --m-radius-card: 12px;
+  --m-radius-pill: 999px;
+  /* 消息文字大小缩放（标准 16px 基准；large=17px、xlarge=18px 由
+     <html data-fontsize> 覆盖，见 fontsize.ts）。只作用于消息正文区
+     （.mobile-msg-bubble / .mobile-msg-final 及其 Markdown 内容），
+     UI 控件（nav/status/composer）字号不跟随，保持界面骨架稳定。 */
+  --m-fs-scale: 1;
+}
+
+/* ── 深色主题（酷炫黑：近黑冷调，白字高对比） ─────────────────────── */
+:root[data-theme="dark"] {
+  --m-accent: #1c1c21;
+  --m-accent-pressed: #000000;
+  --m-bg: #0d0d10;
+  --m-bg-grouped: #0f0f12;
+  /* 执行栏呼吸卡片色（运行中「现身」端）：明显区别于页面背景 --m-bg，
+     但不过分（Δ≈24，柔和可感知）。动画在它 ↔ --m-bg 间切换，
+     形成「浮现 → 融入背景 → 浮现」的明灭节奏 */
+  --m-exec-breath-bg: #1e1e28;
+  /* 执行状态胶囊呼吸色（反色胶囊半透明版：深色主题=白胶囊明灭） */
+  --m-exec-line-dim: rgba(255, 255, 255, 0.7);
+  --m-surface: #1a1a1e;
+  --m-fg: #e4e4e7;
+  --m-fg-secondary: #a1a1aa;
+  --m-separator: rgba(255, 255, 255, 0.1);
+  --m-fill: rgba(255, 255, 255, 0.12);
+  /* 主操作按钮（酷炫黑：黑底白字） */
+  --m-btn-bg: #1c1c21;
+  --m-btn-bg-pressed: #000000;
+  --m-btn-fg: #ffffff;
+  /* 输入栏发送/终止按钮（主题反色：深色=亮钮，与页面深背景强区分） */
+  --m-composer-btn-bg: #f2f2f7;
+  --m-composer-btn-bg-pressed: #e8e8ea;
+  --m-composer-btn-fg: #1c1c1e;
+  /* 终止按钮弧条特效色（深色=白弧，深背景上可见） */
+  --m-stop-arc: rgba(255, 255, 255, 0.9);
+  /* 「+」弹窗反色 token：深色主题下弹窗用简白（与窗口深色背景强区分） */
+  --m-plus-bg: #ffffff;
+  --m-plus-fg: #1c1c1e;
+  --m-plus-fg-secondary: #6d6d72;
+  --m-plus-fill: rgba(0, 0, 0, 0.07);
+  --m-plus-separator: rgba(60, 60, 67, 0.18);
+  --m-plus-active: rgba(0, 0, 0, 0.05);
+  /* 工作流胶囊反色 token：深色主题下胶囊用简白毛玻璃（与深色窗口强区分） */
+  --m-wf-pill-bg: rgba(244, 244, 248, 0.82);
+  --m-wf-pill-border: rgba(255, 255, 255, 0.4);
+  --m-wf-pill-fg: #1c1c1e;
+  --m-wf-pill-fg-secondary: #6d6d72;
+  --m-wf-pill-fill: rgba(0, 0, 0, 0.06);
+  --m-wf-pill-separator: rgba(60, 60, 67, 0.16);
+  --m-wf-pill-active: rgba(0, 0, 0, 0.06);
+  --m-wf-pill-highlight: rgba(255, 255, 255, 0.65);
+  /* refine 弹窗反色 token：深色主题下用简白（与深色窗口强区分，无 border） */
+  --m-refine-bg: #ffffff;
+  --m-refine-fg: #1c1c1e;
+  --m-refine-fg-secondary: #6d6d72;
+  --m-refine-fill: rgba(0, 0, 0, 0.07);
+  --m-refine-btn-bg: #1c1c1e;
+  --m-refine-btn-fg: #ffffff;
+}
+
+/* ── 文字大小档位（独立于主题，亮/深共用；见 fontsize.ts） ────────── */
+:root[data-fontsize="large"] {
+  --m-fs-scale: 1.0625; /* 17px / 16px */
+}
+
+:root[data-fontsize="xlarge"] {
+  --m-fs-scale: 1.125; /* 18px / 16px */
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  /* dvh 兜底：微信老内核（<Chrome 108）不识别 dvh，先 vh 再 dvh 渐进覆盖，否则高度塌陷 */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--m-font);
+  -webkit-font-smoothing: antialiased;
+  background: var(--m-bg);
+  color: var(--m-fg);
+  /* 禁双击缩放（交互全为按钮/输入，无缩放需求） */
+  touch-action: manipulation;
+}
+
+.mobile-boot {
+  height: 100vh;
+  height: 100dvh;
+  background: var(--m-bg);
+}
+
+/* ── 骨架：导航条 / 消息流 / 输入栏 三层 ───────────────────────────── */
+
+.mobile-app {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* 简白主题：主背景纯白（--m-bg），气泡/卡片用 --m-surface 浅灰保持层次 */
+  background: var(--m-bg);
+  /* 工作流胶囊 absolute 悬浮定位锚点 */
+  position: relative;
+}
+
+/* 工作流胶囊悬浮层：覆盖在消息区顶部（导航条下方）。
+   pointer-events: none 让胶囊之外的区域点击穿透到消息流；
+   胶囊本体 pointer-events: auto 恢复交互。滚动内容从胶囊背后经过 → 毛玻璃可见 */
+.mobile-wf-float {
+  position: absolute;
+  top: calc(44px + env(safe-area-inset-top, 0px) + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.mobile-wf-float > * {
+  pointer-events: auto;
+}
+
+/* 导航条：44pt + 安全区上沿
+   三列 grid（1fr auto 1fr）：左品牌 / 中状态 pill（记忆锚点）/ 右操作按钮 */
+.mobile-nav {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--m-bg);
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.mobile-nav-brand-wrap {
+  position: relative; /* logo 菜单 absolute 锚点 */
+  justify-self: start;
+  min-width: 0;
+}
+
+.mobile-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px 8px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 10px;
+}
+
+.mobile-nav-brand:active {
+  background: var(--m-fill);
+}
+
+/* 品牌菜单（新会话 / 设置）：复用字号浮层样式，锚定品牌区左侧下方 */
+.mobile-nav-logo-pop {
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
+  min-width: 168px;
+}
+
+/* 状态 pill 容器：绝对居中，长文本由 pill 自身 ellipsis 约束 */
+.mobile-nav-center {
+  justify-self: center;
+  min-width: 0;
+}
+
+.mobile-nav-logo {
+  width: 22px;
+  height: 22px;
+  /* SVG stroke=currentColor：跟随主题（亮色黑 / 深色白） */
+  color: var(--m-fg);
+}
+
+/* 眨眼 logo：双竖（眼睛）定期眨眼（对齐桌面端 avatar idle 节奏 4.6s） */
+.mobile-nav-logo .nv-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mobile-nv-blink 4.6s ease-in-out infinite;
+}
+
+@keyframes mobile-nv-blink {
+  0%,
+  91%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.08);
+  }
+  97% {
+    transform: scaleY(1);
+  }
+}
+
+.mobile-nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* 主题切换按钮：44pt 触摸目标（视觉 32px，padding 补齐） */
+.mobile-nav-theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 8px;
+  border: none;
+  border-radius: 50%;
+  background: var(--m-fill);
+  color: var(--m-fg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease-out, opacity 120ms ease-out;
+}
+
+.mobile-nav-theme:active {
+  background: var(--m-fg-secondary);
+  opacity: 0.8;
+}
+
+/* 终止执行按钮已移至输入框按钮区（mobile-composer-stop，与桌面端三态一致）——
+   原 header 红色停止按钮（mobile-nav-stop）已移除 */
+
+.mobile-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  min-width: 0;
+}
+
+/* 文字大小按钮容器：相对定位承载 popover 锚点 */
+.mobile-nav-fs-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 文字大小浮层：轻量 popover（m-surface 卡片 + hairline + 12px 圆角 + 微阴影），
+   右对齐按钮下方展开；不叠加遮罩，点外部即收起 */
+.mobile-nav-fs-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  min-width: 148px;
+  padding: 6px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-surface);
+  border: 0.5px solid var(--m-separator);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  animation: mobile-fs-pop-in 140ms ease-out;
+}
+
+@keyframes mobile-fs-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mobile-nav-fs-title {
+  padding: 6px 10px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--m-fg-secondary);
+}
+
+/* 档位选项：44pt 行高（触摸目标），默认态即有背景（Chip 可发现性） */
+.mobile-nav-fs-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--m-fg);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.mobile-nav-fs-opt:hover {
+  background: var(--m-fill);
+}
+
+.mobile-nav-fs-opt:active {
+  background: var(--m-fg-secondary);
+  opacity: 0.8;
+}
+
+.mobile-nav-fs-opt:focus-visible {
+  outline: 2px solid var(--m-fg-secondary);
+  outline-offset: -2px;
+}
+
+.mobile-nav-fs-opt.is-active {
+  background: var(--m-fill);
+}
+
+/* 档位预览（Aa）：各档位字号不同，所见即所得 */
+.mobile-nav-fs-sample {
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.mobile-nav-fs-opt:nth-child(2) .mobile-nav-fs-sample {
+  font-size: 14px;
+}
+.mobile-nav-fs-opt:nth-child(3) .mobile-nav-fs-sample {
+  font-size: 15px;
+}
+.mobile-nav-fs-opt:nth-child(4) .mobile-nav-fs-sample {
+  font-size: 16px;
+}
+
+.mobile-nav-fs-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-nav-fs-hint {
+  font-size: 11px;
+  color: var(--m-fg-secondary);
+  flex-shrink: 0;
+}
+
+.mobile-nav-fs-check {
+  color: var(--m-fg);
+  flex-shrink: 0;
+}
+
+/* 连接状态 pill：默认态即有容器形态（Chip 模式，可发现性不依赖探索） */
+.mobile-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-fill);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--m-fg);
+  max-width: 60vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mobile-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--m-fg-secondary);
+}
+
+.mobile-status-pill.is-online .mobile-status-dot {
+  background: var(--m-ok);
+}
+
+.mobile-status-pill.is-offline .mobile-status-dot {
+  background: var(--m-fail);
+}
+
+/* 执行中状态：工具调用 + 实时用时（Wrench 图标随内容颜色） */
+.mobile-status-pill.is-running {
+  color: var(--m-fg);
+  background: var(--m-fill);
+}
+
+.mobile-status-pill.is-running svg {
+  flex-shrink: 0;
+}
+
+.mobile-status-pill.is-running .mobile-status-dot {
+  background: var(--m-ok);
+}
+
+/* 轻量横幅（历史加载失败等可恢复提示）；is-retryable = 点击立即重试 */
+.mobile-banner {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--m-warn);
+  background: var(--m-bg);
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.mobile-banner.is-retryable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-banner.is-retryable:active {
+  background: var(--m-surface);
+}
+
+.mobile-banner-retry {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border-radius: var(--m-radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-fg);
+  background: var(--m-surface);
+  border: 0.5px solid var(--m-separator);
+}
+
+/* 轻量弹窗提示（追加指令受理等一句话提醒，不生成消息气泡）
+   浮动于底部输入栏上方，毛玻璃 + 圆角，自动消失（App 层 4s 计时） */
+.mobile-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 108px;
+  transform: translateX(-50%);
+  /* 高于执行弹窗遮罩(200)：toast 永远可见（弹窗打开时的操作反馈不丢失） */
+  z-index: 220;
+  max-width: 82vw;
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(28, 28, 30, 0.86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  text-align: center;
+  animation: mobile-toast-in 0.18s ease-out;
+}
+
+@keyframes mobile-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ── 添加到主屏幕引导条（PWA 桌面快捷方式入口）── */
+.mobile-a2hs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  background: var(--m-bg-grouped);
+  border: 0.5px solid var(--m-separator);
+  border-radius: var(--m-radius-card);
+  animation: mobile-toast-in 0.2s ease-out;
+}
+
+.mobile-a2hs-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  color: var(--m-fg);
+  background: var(--m-fill);
+  border-radius: 9px;
+}
+
+.mobile-a2hs-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-a2hs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+.mobile-a2hs-steps {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-a2hs-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  color: var(--m-fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.mobile-a2hs-close:active {
+  background: var(--m-fill);
+}
+
+/* ── 消息流 ────────────────────────────────────────────────────────── */
+
+.mobile-messages {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 新消息入场：内容变化反馈（150ms，克制） */
+@keyframes mobile-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 消息占满横屏宽度（不再百分比裁断） */
+.mobile-msg {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  animation: mobile-msg-in 150ms ease-out;
+}
+
+.mobile-msg-user {
+  align-self: stretch;
+  align-items: flex-start;
+}
+
+.mobile-msg-ai {
+  align-self: stretch;
+  align-items: flex-start;
+}
+
+.mobile-msg.is-pending {
+  opacity: 0.55;
+}
+
+/* header：名称 + 时间（user 名称在右侧，向 agent 结构靠拢） */
+.mobile-msg-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+/* user 消息 header 整体右对齐（气泡满宽、header 靠右，名称在时间右侧） */
+.mobile-msg-user .mobile-msg-header {
+  flex-direction: row-reverse;
+  align-self: flex-end;
+}
+
+.mobile-msg-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-msg-time {
+  font-size: 11px;
+  color: var(--m-fg-secondary);
+  opacity: 0.75;
+}
+
+/* user 气泡：椭圆角 + Markdown，向 agent 最终回复靠拢（accent 实色区分身份） */
+.mobile-msg-bubble {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 22px;
+  font-size: calc(16px * var(--m-fs-scale));
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.mobile-msg-user .mobile-msg-bubble {
+  /* 简白（水墨画）：user 气泡黑渐变卡片——天然的 turn 标志（与浅灰 AI 气泡强对比）；
+     dark 主题为白渐变（对称设计） */
+  background: linear-gradient(135deg, #2a2a30 0%, #101013 100%);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble {
+  /* 酷炫黑下的 user 气泡：白渐变卡片——天然的 turn 标志（与 AI 深色气泡强对比） */
+  background: linear-gradient(135deg, #ffffff 0%, #e8e8ec 100%);
+  color: #1c1c1e;
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* 白渐变 user 气泡内的 Markdown 深色适配（仅 dark；亮色主题保持黑底白字） */
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-h {
+  color: #1c1c1e;
+}
+
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-code-block,
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-code {
+  background: rgba(0, 0, 0, 0.07);
+  color: #1c1c1e;
+}
+
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-link {
+  color: #1c1c1e;
+}
+
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-table th,
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-table td {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+:root[data-theme="dark"] .mobile-msg-user .mobile-msg-bubble .m-md-table th {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-h {
+  margin: 16px 0 8px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-h1 {
+  font-size: calc(22px * var(--m-fs-scale));
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-h2 {
+  font-size: calc(19px * var(--m-fs-scale));
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-h3 {
+  font-size: calc(17px * var(--m-fs-scale));
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-paragraph {
+  margin: 8px 0;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-code-block {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  /* 长代码行横向滚动（对齐 final 行为），防止溢出气泡/屏幕——之前出现过的问题 */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* user 气泡代码块复制按钮（白底气泡内浅色适配） */
+.mobile-msg-user .mobile-msg-bubble .m-md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mobile-msg-user .mobile-msg-bubble .m-md-code-copy {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: var(--m-radius-pill);
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-msg-user .mobile-msg-bubble .m-md-code-copy:active {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-code {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-link {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+/* 消息内图片附件（user 与 assistant 通用，圆角 + 限宽 + 点击放大） */
+.mobile-msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mobile-msg-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 10px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: zoom-in;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 消息内音频（可播放） */
+.mobile-msg-audios {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mobile-msg-audios audio {
+  max-width: 240px;
+  height: 32px;
+}
+
+/* 图片放大预览（全屏 overlay，点击关闭） */
+.mobile-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.9);
+  animation: mobile-fade-in 150ms ease-out;
+  cursor: zoom-out;
+}
+.mobile-lightbox img {
+  max-width: 94vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.mobile-lightbox-close {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* user 气泡内表格（黑底白字适配，列宽策略同 final：TableRenderer 内容权重分配） */
+.mobile-msg-user .mobile-msg-bubble .m-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: calc(13px * var(--m-fs-scale));
+  table-layout: fixed;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-table th,
+.mobile-msg-user .mobile-msg-bubble .m-md-table td {
+  padding: 8px 10px;
+  border: 0.5px solid rgba(255, 255, 255, 0.35);
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-table th:first-child,
+.mobile-msg-user .mobile-msg-bubble .m-md-table td:first-child {
+  width: 15%;
+  min-width: 0;
+  white-space: normal;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-table th {
+  background: rgba(255, 255, 255, 0.16);
+  font-weight: 600;
+}
+
+.mobile-msg-bubble-ai {
+  background: var(--m-surface);
+  color: var(--m-fg);
+  border-bottom-left-radius: 4px;
+  min-height: 38px;
+}
+
+/* ── 执行状态胶囊：一行纯文字（文本优先，无文本才显示工具），
+   反色胶囊悬浮（不贯穿、留白），点击打开执行弹窗。 ── */
+.mobile-exec-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content; /* 不贯穿，宽度自适应内容 */
+  max-width: 88%;
+  padding: 8px 14px; /* 胖胶囊 */
+  margin-bottom: 8px;
+  border: none;
+  border-radius: var(--m-radius-pill); /* 全胶囊 */
+  background: var(--m-plus-bg); /* 反色胶囊：浅色=黑 / 深色=白 */
+  color: var(--m-plus-fg);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* 全局过渡态（执行刚启动、尚无 assistant 消息）：非消息、不可点 */
+.mobile-exec-line--global {
+  align-self: flex-start;
+  margin-bottom: 0;
+  cursor: default;
+}
+
+/* ── 执行中明灭呼吸：反色胶囊在「实色 ↔ 半透明」间周期性浮现-融入
+   （两端停留 + 长过渡段），「有胶囊 → 淡胶囊」的明灭节奏一眼可见，
+   完成态不呼吸。前景文字不参与（两种背景下 --m-plus-fg 均可读）。 ── */
+@keyframes mobileExecBreath {
+  0%,
+  15% {
+    background-color: var(--m-plus-bg);
+  }
+  50% {
+    background-color: var(--m-exec-line-dim);
+  }
+  85%,
+  100% {
+    background-color: var(--m-plus-bg);
+  }
+}
+
+.mobile-exec-line.is-running,
+.mobile-exec-line--global {
+  animation: mobileExecBreath 3.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-exec-line.is-running,
+  .mobile-exec-line--global {
+    animation: none;
+  }
+}
+
+.mobile-exec-line-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-exec-line-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-exec-line-icon .is-ok {
+  color: var(--m-ok);
+}
+
+.mobile-exec-line-icon .is-fail {
+  color: var(--m-fail);
+}
+
+.mobile-exec-line-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-exec-line-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-plus-fill);
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-exec-line-chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* ── 工作流执行胶囊（WorkflowRunCard）：顶部悬浮单行 + 反色背景 ────────
+   实时展示 workflow 步骤（workflow_event 驱动），暂停/继续/终止走 /workflow-*。
+   设计：胶囊条（状态图标 + 标题 + 进度 + 展开箭头 + 移除 X）→ 点击展开面板
+   （步骤列表 + 遥控按钮）；背景取主题反色（--m-wf-pill-*，深色主题亮胶囊 /
+   亮色主题暗胶囊），视觉上与消息流强区分但保持信息层级。 */
+.mobile-wf {
+  flex-shrink: 0;
+  /* 居中悬浮胶囊：宽度自适应内容（fit-content），margin 左右 auto 水平居中 */
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  margin: 10px auto 0;
+  padding: 4px;
+  border-radius: 24px;
+  background: var(--m-wf-pill-bg);
+  color: var(--m-wf-pill-fg);
+  border: 0.5px solid var(--m-wf-pill-border);
+  /* 原生质感：顶部内高光 + 双层外阴影（接触 + 环境光）+ 毛玻璃 */
+  box-shadow:
+    inset 0 0.5px 0 var(--m-wf-pill-highlight),
+    0 1px 3px rgba(0, 0, 0, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(20px) saturate(1.7);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  animation: mobile-msg-in 150ms ease-out;
+}
+
+/* 胶囊条：单行 flex，胖（min-height 44pt 触摸目标），点击展开/收起 */
+.mobile-wf-pill {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-wf-pill-icon {
+  flex-shrink: 0;
+  color: var(--m-wf-pill-fg);
+}
+
+.mobile-wf-pill-icon.is-running {
+  color: var(--m-wf-pill-fg);
+  animation: mobile-wf-spin 1s linear infinite;
+}
+
+.mobile-wf-pill-icon.is-completed {
+  color: var(--m-ok);
+}
+
+.mobile-wf-pill-icon.is-failed {
+  color: var(--m-fail);
+}
+
+.mobile-wf-pill-icon.is-paused {
+  color: var(--m-warn);
+}
+
+.mobile-wf-pill-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-wf-pill-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-wf-pill-progress {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-wf-pill-fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-wf-pill-chevron {
+  flex-shrink: 0;
+  color: var(--m-wf-pill-fg-secondary);
+  transition: transform 160ms ease-out;
+}
+
+.mobile-wf-pill-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* 展开面板：步骤列表 + 错误 + 遥控按钮（悬浮在胶囊条下方，同底色浅层） */
+.mobile-wf-panel {
+  min-width: 264px;
+  margin-top: 4px;
+  padding: 8px 8px 4px;
+  border-radius: 18px;
+  background: var(--m-wf-pill-fill);
+}
+
+/* 移除按钮：胶囊右侧 X（任意时刻可关，执行中也可——不影响后端执行） */
+.mobile-wf-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--m-wf-pill-fg-secondary);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.mobile-wf-close:active {
+  background: var(--m-wf-pill-active);
+  color: var(--m-wf-pill-fg);
+}
+
+.mobile-wf-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-wf-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mobile-wf-step + .mobile-wf-step {
+  border-top: 0.5px solid var(--m-wf-pill-separator);
+}
+
+.mobile-wf-step-icon {
+  flex-shrink: 0;
+  color: var(--m-wf-pill-fg-secondary);
+}
+
+.mobile-wf-step-icon.is-running {
+  color: var(--m-wf-pill-fg);
+  animation: mobile-wf-spin 1s linear infinite;
+}
+
+.mobile-wf-step-icon.is-completed {
+  color: var(--m-ok);
+}
+
+.mobile-wf-step-icon.is-failed {
+  color: var(--m-fail);
+}
+
+.mobile-wf-step-icon.is-paused {
+  color: var(--m-warn);
+}
+
+.mobile-wf-step-icon.is-pending {
+  color: var(--m-separator);
+}
+
+@keyframes mobile-wf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mobile-wf-step-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--m-wf-pill-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-wf-step-depth {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--m-wf-pill-fg-secondary);
+}
+
+.mobile-wf-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  font-size: 12px;
+  color: var(--m-wf-pill-fg-secondary);
+}
+
+.mobile-wf-empty .is-running {
+  color: var(--m-wf-pill-fg);
+  animation: mobile-wf-spin 1s linear infinite;
+}
+
+.mobile-wf-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--m-radius-sm);
+  background: var(--m-wf-pill-fill);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--m-fail);
+  word-break: break-word;
+}
+
+.mobile-wf-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mobile-wf-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 38px;
+  border: none;
+  border-radius: var(--m-radius-card);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+}
+
+.mobile-wf-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mobile-wf-btn.is-primary {
+  /* 反色胶囊内主按钮：用前景反色填充、背景反色文字——与胶囊底色强对比 */
+  background: var(--m-wf-pill-fg);
+  color: var(--m-wf-pill-bg);
+}
+
+.mobile-wf-btn.is-primary:active:not(:disabled) {
+  opacity: 0.85;
+}
+
+.mobile-wf-btn.is-danger {
+  background: transparent;
+  color: var(--m-fail);
+  border: 1px solid var(--m-wf-pill-separator);
+}
+
+.mobile-wf-btn.is-danger:active:not(:disabled) {
+  background: var(--m-fail);
+  color: #ffffff;
+}
+
+/* 最终回复区：椭圆角背景 + Markdown */
+.mobile-msg-final {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 22px;
+  background: var(--m-surface);
+  color: var(--m-fg);
+  font-size: calc(16px * var(--m-fs-scale));
+  line-height: 1.55;
+  word-break: break-word;
+  border: 0.5px solid var(--m-separator);
+}
+
+/* 流式呼吸光标 */
+.mobile-msg-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.7;
+  animation: mobile-cursor 1s steps(2, start) infinite;
+}
+
+@keyframes mobile-cursor {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* 系统消息（错误/提示）：居中弱化 */
+.mobile-msg-system {
+  align-self: center;
+  max-width: 88%;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--m-fg-secondary);
+  text-align: center;
+  padding: 2px 12px;
+}
+
+/* 提炼摘要（refine 角色）：独立分隔条——内容完整展示（Leader 自我提炼的决策记忆），
+   与普通 assistant 回复区分，避免被当作「最后一轮回复」折叠/覆盖 */
+.mobile-msg-refine {
+  align-self: center;
+  width: 100%;
+  max-width: 92%;
+  margin: 4px 0;
+  padding: 10px 12px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-surface);
+  border: 1px solid var(--m-separator);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mobile-msg-refine-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-msg-refine-head svg {
+  color: var(--m-accent);
+}
+
+.mobile-msg-refine-body {
+  margin-top: 6px;
+  color: var(--m-fg);
+}
+
+.mobile-msg-refine-body p {
+  margin: 0 0 6px;
+}
+
+.mobile-msg-refine-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── 执行控制按钮（Composer 内嵌，常驻可见） ────────────────────────
+   复用桌面「执行中发送按钮变暂停」范式：
+   - 空闲：发送（accent 实底）
+   - 执行中无输入：暂停（accent 描边）
+   - 暂停中：继续（accent 实底）+ 终止（fail 实底）
+   触摸目标保持 ≥44px */
+
+.mobile-composer-send {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--m-composer-btn-bg);
+  color: var(--m-composer-btn-fg);
+  cursor: pointer;
+  transition: background 120ms ease-out, opacity 120ms ease-out;
+}
+
+.mobile-composer-send:active:not(:disabled) {
+  background: var(--m-composer-btn-bg-pressed);
+}
+
+.mobile-composer-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* 终止按钮（执行中 + 输入框空时替代发送；与桌面端一致的三态）：
+   黑色底与发送按钮统一（切换时背景不跳变），白色方块缩小居中 */
+.mobile-composer-stop {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--m-composer-btn-bg);
+  color: var(--m-composer-btn-fg);
+  cursor: pointer;
+  transition: background 120ms ease-out, transform 80ms ease;
+}
+
+.mobile-composer-stop:active {
+  background: var(--m-composer-btn-bg-pressed);
+  transform: scale(0.92);
+}
+
+/* 边框特效：1/4 弧条绕按钮旋转（conic-gradient 画 90° 弧 + mask 成环 + 旋转动画）
+   按钮本体 36px 缩小，弧条外扩 -4px → 环与按钮之间留 2.5px 细间隔（悬浮环动态区域）
+   弧条色用 --m-stop-arc（主题反色：亮色深弧、深色白弧，保证双主题可见） */
+.mobile-composer-stop::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--m-stop-arc) 90deg,
+    transparent 90deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  animation: mobile-stop-spin 1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes mobile-stop-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 麦克风按钮：胶囊内纯图标（对齐 Marvis 输入栏范式，语音入口常驻可见） */
+.mobile-composer-mic {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--m-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-composer-mic:active {
+  opacity: 0.6;
+}
+
+.mobile-spin {
+  animation: mobile-rotate 1s linear infinite;
+}
+
+@keyframes mobile-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 底部输入栏：浅灰底栏 + 白色胶囊输入框（对齐 Marvis 输入栏范式） ──── */
+
+.mobile-composer {
+  /* 高于执行弹窗遮罩(200)：弹窗打开时输入栏仍可发消息（否则点击被遮罩拦截=静默失效） */
+  position: relative;
+  z-index: 210;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--m-bg-grouped);
+  border-top: 0.5px solid var(--m-separator);
+}
+
+@supports (backdrop-filter: blur(20px)) {
+  .mobile-composer {
+    /* 亮色：浅灰毛玻璃；深色：近黑半透明（token 化见下） */
+    background: rgba(242, 242, 247, 0.85);
+    backdrop-filter: blur(20px) saturate(1.8);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  }
+  :root[data-theme="dark"] .mobile-composer {
+    background: rgba(15, 15, 18, 0.85);
+  }
+}
+
+.mobile-composer-inner {
+  position: relative; /* 「+」轻面板挂载锚点 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 一体化胶囊：+ / 输入 / 麦克风 / 发送 收进同一白色圆角容器 */
+.mobile-composer-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 52px;
+  padding: 4px 6px 4px 4px;
+  border-radius: 26px;
+  background: var(--m-bg);
+  border: 0.5px solid var(--m-separator);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 120ms ease-out;
+}
+
+:root[data-theme="dark"] .mobile-composer-pill {
+  background: var(--m-surface);
+}
+
+.mobile-composer-pill:focus-within {
+  border-color: var(--m-separator-strong, rgba(60, 60, 67, 0.28));
+}
+
+.mobile-composer-input {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--m-fg);
+  /* ≥16px：防 iOS focus 自动放大 */
+  font-size: 16px;
+  font-family: inherit;
+  line-height: 1.4;
+  padding: 10px 4px;
+  max-height: 120px;
+}
+
+.mobile-composer-input::placeholder {
+  color: var(--m-fg-secondary);
+}
+
+/* ── 空状态 ────────────────────────────────────────────────────────── */
+
+.mobile-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+}
+
+.mobile-empty-logo {
+  width: 56px;
+  height: 56px;
+  opacity: 0.85;
+  margin-bottom: 16px;
+  /* SVG stroke=currentColor：跟随主题 */
+  color: var(--m-fg);
+}
+
+.mobile-empty-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.mobile-empty-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--m-fg-secondary);
+  max-width: 260px;
+}
+
+/* ── 配对引导页 ────────────────────────────────────────────────────── */
+
+.mobile-pair {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  padding-top: calc(32px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  background: var(--m-bg-grouped);
+  text-align: center;
+}
+
+.mobile-pair-logo {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 20px;
+  /* SVG stroke=currentColor：跟随主题 */
+  color: var(--m-fg);
+}
+
+.mobile-pair-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.mobile-pair-desc,
+.mobile-pair-invalid {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--m-fg-secondary);
+  max-width: 300px;
+  margin-bottom: 20px;
+}
+
+.mobile-pair-invalid {
+  color: var(--m-fail);
+}
+
+.mobile-pair-steps {
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--m-fg);
+  background: var(--m-bg);
+  border-radius: var(--m-radius-card);
+  padding: 14px 16px 14px 34px;
+  margin-bottom: 20px;
+  max-width: 320px;
+}
+
+.mobile-pair-steps li + li {
+  margin-top: 6px;
+}
+
+.mobile-pair-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mobile-pair-error {
+  max-width: 320px;
+  width: 100%;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--m-fail);
+  text-align: left;
+}
+
+.mobile-pair-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  border-radius: var(--m-radius-card);
+  background: var(--m-bg);
+  color: var(--m-fg);
+  font-size: 16px;
+  padding: 11px 14px;
+}
+
+.mobile-pair-submit {
+  flex-shrink: 0;
+  min-width: 64px;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--m-radius-card);
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mobile-pair-submit:active:not(:disabled) {
+  background: var(--m-btn-bg-pressed);
+}
+
+.mobile-pair-submit:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── 危险操作确认卡（悬浮于输入栏上方，模态性质打断） ───────────────── */
+
+.mobile-confirm {
+  /* 高于执行弹窗遮罩(200)：弹窗打开时危险确认仍可操作 */
+  position: relative;
+  z-index: 210;
+  flex-shrink: 0;
+  margin: 0 12px 8px;
+  padding: 12px 14px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-surface);
+  border: 1px solid var(--m-warn);
+  animation: mobile-msg-in 150ms ease-out;
+}
+
+.mobile-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+.mobile-confirm-risk {
+  padding: 1px 8px;
+  border-radius: var(--m-radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+}
+
+.mobile-confirm-risk.is-medium,
+.mobile-confirm-risk.is-high,
+.mobile-confirm-risk.is-critical {
+  background: var(--m-warn);
+  color: #ffffff;
+}
+
+.mobile-confirm-risk.is-high,
+.mobile-confirm-risk.is-critical {
+  background: var(--m-fail);
+}
+
+.mobile-confirm-tool {
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 13px;
+}
+
+.mobile-confirm-reason {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--m-fg);
+}
+
+.mobile-confirm-params {
+  margin-top: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  color: var(--m-fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-confirm-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--m-fail);
+}
+
+.mobile-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mobile-confirm-btn {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--m-radius-card);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+}
+
+.mobile-confirm-btn:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.mobile-confirm-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mobile-confirm-btn.is-approve {
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+}
+
+.mobile-confirm-btn.is-approve-session {
+  background: var(--m-fill);
+  color: var(--m-fg);
+}
+
+.mobile-confirm-btn.is-deny {
+  background: var(--m-fill);
+  color: var(--m-fail);
+}
+
+/* ── 会话提炼弹窗（refine_prompt 事件） ────────────────────────────── */
+
+.mobile-refine {
+  /* 高于执行弹窗遮罩(200)：弹窗打开时提炼确认仍可操作 */
+  position: relative;
+  z-index: 210;
+  flex-shrink: 0;
+  margin: 0 12px 8px;
+  padding: 12px 14px;
+  border-radius: var(--m-radius-card);
+  /* 主题反色背景（亮色=酷炫黑、深色=简白），无 border 强区分 */
+  background: var(--m-refine-bg);
+  border: none;
+  color: var(--m-refine-fg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  animation: mobile-msg-in 150ms ease-out;
+}
+
+.mobile-refine-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-refine-fg);
+}
+
+.mobile-refine-head svg {
+  animation: mobile-rotate 1.2s linear infinite;
+  color: var(--m-warn);
+}
+
+.mobile-refine-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-refine-desc {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--m-refine-fg);
+}
+
+.mobile-refine-desc strong {
+  color: var(--m-warn);
+}
+
+.mobile-refine-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mobile-refine-btn {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--m-radius-card);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+}
+
+.mobile-refine-btn:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.mobile-refine-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mobile-refine-btn.is-confirm {
+  /* 反色背景上的主操作按钮：反色背景亮→深钮、暗→亮钮，保证对比 */
+  background: var(--m-refine-btn-bg);
+  color: var(--m-refine-btn-fg);
+}
+
+.mobile-refine-btn.is-skip {
+  background: var(--m-refine-fill);
+  color: var(--m-refine-fg);
+}
+
+/* 提炼中进度条（refine_executing / 手动触发） */
+.mobile-refine-progress {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 10px 14px;
+  border-radius: var(--m-radius-card);
+  /* 主题反色背景（与 refine 弹窗一致） */
+  background: var(--m-refine-bg);
+  color: var(--m-refine-fg);
+  font-size: 13px;
+}
+
+.mobile-refine-progress svg {
+  animation: mobile-rotate 1.2s linear infinite;
+}
+
+/* ── 执行过程弹窗（点击 trace 查看全部） ───────────────────────────── */
+
+.mobile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  animation: mobile-fade-in 150ms ease-out;
+  /* 阻断滚动链：弹窗打开时滚动不传递到背后的会话层 */
+  overscroll-behavior: contain;
+}
+
+@keyframes mobile-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mobile-modal {
+  width: 100%;
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--m-bg);
+  border-radius: 20px 20px 0 0;
+  animation: mobile-sheet-up 220ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes mobile-sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.mobile-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.mobile-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+/* Header 统计徽标（Cache / tok）：轻量 pill，与执行过程弹窗同一视觉层级 */
+.mobile-modal-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mobile-modal-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mobile-modal-stat svg {
+  flex-shrink: 0;
+}
+
+.mobile-modal-close {
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mobile-modal-trace {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 滚动链阻段：trace 内部滚动到边界时不穿透到背后会话层 */
+  overscroll-behavior: contain;
+  /* 底部大 padding：最后一条内容滚到底时不被输入框/Home 条遮挡
+     （实测 36px 仍不够——输入框约 60px 高，需 ≥72px + 安全区） */
+  padding: 14px 16px calc(72px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-modal-trace-empty {
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* 弹窗条目：思考 / 文本 / 工具调用，按实际顺序排列 */
+.mobile-modal-trace-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* 思考：比正文 text 稍淡（次级色 + 透明度）——无需前缀标签，靠颜色区分 */
+.mobile-modal-trace-item.is-thinking {
+  color: var(--m-fg-secondary);
+  opacity: 0.82;
+}
+
+/* 正文：正常主色 */
+.mobile-modal-trace-item.is-text {
+  color: var(--m-fg);
+}
+
+.mobile-modal-trace-item.is-tool {
+  align-items: flex-start;
+}
+
+.mobile-modal-trace-tool-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-modal-trace-tool-params {
+  display: block;
+  font-family: var(--m-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--m-fg-secondary);
+  background: var(--m-fill);
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: 0;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.mobile-modal-trace-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+.mobile-modal-trace-tool-name {
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg);
+  word-break: break-all;
+  flex: 1;
+}
+
+.mobile-modal-trace-duration {
+  font-size: 11px;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-modal-trace-item.is-tool .is-ok {
+  color: var(--m-ok);
+}
+
+.mobile-modal-trace-item.is-tool .is-fail {
+  color: var(--m-fail);
+}
+
+/* ── 手机 Markdown（最终回复渲染，手机专门设计） ───────────────────── */
+
+.mobile-msg-final .m-md-h {
+  margin: 16px 0 8px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--m-fg);
+  letter-spacing: -0.01em;
+}
+
+.mobile-msg-final .m-md-h1 {
+  font-size: calc(22px * var(--m-fs-scale));
+}
+
+.mobile-msg-final .m-md-h2 {
+  font-size: calc(19px * var(--m-fs-scale));
+}
+
+.mobile-msg-final .m-md-h3 {
+  font-size: calc(17px * var(--m-fs-scale));
+}
+
+.mobile-msg-final .m-md-paragraph {
+  margin: 0 0 10px;
+  line-height: 1.6;
+  color: var(--m-fg);
+}
+
+.mobile-msg-final .m-md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.mobile-msg-final .m-md-blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border: none;
+  background: var(--m-bg-grouped);
+  border-radius: 10px;
+  color: var(--m-fg-secondary);
+  line-height: 1.55;
+}
+
+.mobile-msg-final .m-md-blockquote > *:last-child {
+  margin-bottom: 0;
+}
+
+.mobile-msg-final .m-md-hr {
+  margin: 18px 0;
+  border: none;
+  height: 1px;
+  background: var(--m-separator);
+}
+
+.mobile-msg-final .m-md-link {
+  color: #1c1c1e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:root[data-theme="dark"] .mobile-msg-final .m-md-link {
+  color: #ffffff;
+}
+
+.mobile-msg-final .m-md-ul,
+.mobile-msg-final .m-md-ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  /* 手动渲染 marker span（.m-md-marker）已承载标号，禁用浏览器默认 list-style 防止双标号 */
+  list-style: none;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-ul,
+.mobile-msg-user .mobile-msg-bubble .m-md-ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.mobile-msg-final .m-md-li {
+  margin: 4px 0;
+  line-height: 1.55;
+}
+
+.mobile-msg-final .m-md-code-block {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--m-bg-grouped);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-msg-final .m-md-code-block code {
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: calc(13px * var(--m-fs-scale));
+  line-height: 1.5;
+  color: var(--m-fg);
+}
+
+.mobile-msg-final .m-md-table-wrapper {
+  margin: 12px 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-msg-final .m-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: calc(13px * var(--m-fs-scale));
+  /* fixed 布局：列宽由「第一列 15% + 其余列均分」决定，不依赖各内核的
+     min/max-content 计算（微信 X5 老内核 auto 布局会把可断行列压到
+     单字符宽，实测「关卡」列逐字竖排）。长文本靠单元格内换行承载。 */
+  table-layout: fixed;
+}
+
+.mobile-msg-final .m-md-table th,
+.mobile-msg-final .m-md-table td {
+  padding: 8px 10px;
+  border: 0.5px solid var(--m-separator);
+  text-align: left;
+  /* 长内容（代码/URL/英文串）在单元格内换行，防止撑破列宽或溢出 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 第一列兜底宽度（TableRenderer 内联 width 优先，此处仅 JS 未设 width 时的 fallback）。
+   实际列宽由 MobileMarkdown.tsx 按内容权重分配（短列保底 18% / 长列封顶 45%）。 */
+.mobile-msg-final .m-md-table th:first-child,
+.mobile-msg-final .m-md-table td:first-child {
+  width: 15%;
+  min-width: 0;
+  white-space: normal;
+}
+
+.mobile-msg-final .m-md-table th {
+  background: var(--m-bg-grouped);
+  font-weight: 600;
+}
+
+/* ── 代码高亮（手机版，token 语义色） ──────────────────────────────── */
+
+/* 代码块头部：语言标识 + 复制按钮 */
+.mobile-msg-final .m-md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mobile-msg-final .code-lang-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-msg-final .m-md-code-copy {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.mobile-msg-final .m-md-code-copy:active {
+  background: var(--m-fg-secondary);
+  color: var(--m-bg);
+}
+
+.mobile-msg-final .token-comment {
+  color: var(--m-fg-secondary);
+  font-style: italic;
+}
+
+.mobile-msg-final .token-string {
+  color: #34c759;
+}
+
+.mobile-msg-final .token-keyword {
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .mobile-msg-final .token-keyword {
+  color: #7aa2f7;
+}
+
+.mobile-msg-final .token-type {
+  color: #af52de;
+}
+
+.mobile-msg-final .token-builtin {
+  color: #ff9500;
+}
+
+.mobile-msg-final .token-number {
+  color: #ff9500;
+}
+
+.mobile-msg-final .token-function {
+  color: #3b82f6;
+}
+
+:root[data-theme="dark"] .mobile-msg-final .token-function {
+  color: #7aa2f7;
+}
+
+.mobile-msg-final .token-class {
+  color: #af52de;
+}
+
+.mobile-msg-final .token-annotation {
+  color: #ff9500;
+}
+
+.mobile-msg-final .token-regex {
+  color: #ff2d55;
+}
+
+.mobile-msg-final .token-operator {
+  color: #ff9500;
+}
+
+.mobile-msg-final .token-punctuation {
+  color: var(--m-fg-secondary);
+}
+
+.mobile-msg-final .token-param {
+  color: #5e5ce6;
+}
+
+.mobile-msg-final .token-variable {
+  color: var(--m-fg);
+}
+/* ==========================================================================
+   浏览器一致性 — flex gap 兜底
+   微信老 X5 内核不支持 flex/grid 的 gap 属性（Chrome <84 / Safari <14.1），
+   不支持时元素会紧贴无间距。现代浏览器声明 gap 即可，此处仅在
+   `@supports not (gap: …)` 命中（即老内核）时用 margin 补偿，避免间距叠加。
+   ========================================================================== */
+
+@supports not (gap: 1px) {
+  /* 顶部导航：logo + 标题 / 右侧区 */
+  .mobile-nav-brand > * + * {
+    margin-left: 8px;
+  }
+  .mobile-nav-right > * + * {
+    margin-left: 8px;
+  }
+
+  /* 连接状态 pill：状态点 + 文字 */
+  .mobile-status-pill > * + * {
+    margin-left: 5px;
+  }
+
+  /* 消息流：消息间垂直间距 */
+  .mobile-messages > * + * {
+    margin-top: 10px;
+  }
+
+  /* 底部输入栏：输入框 + 控制/发送按钮 */
+  .mobile-composer-inner > * + * {
+    margin-left: 8px;
+  }
+  .mobile-composer-pill > * + * {
+    margin-left: 2px;
+  }
+}
+/* ── 「+」扩展菜单：+ 按钮 / 图片胶囊 / 轻面板 / 模型卡 ──────────────── */
+
+/* + 按钮：胶囊内纯图标（嵌入白色输入框左侧，对齐 Marvis 范式）；打开时图标旋转 45° 变 × */
+.mobile-composer-plus {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--m-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-composer-plus:active {
+  opacity: 0.6;
+}
+
+.mobile-composer-plus svg {
+  transition: transform 200ms ease-out;
+}
+
+.mobile-composer-plus.open svg {
+  transform: rotate(45deg);
+}
+
+/* 图片胶囊区：横向滚动，贴输入栏上方 */
+.mobile-composer-images {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 2px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-composer-image {
+  position: relative;
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--m-radius-card);
+  overflow: hidden;
+  background: var(--m-fill);
+}
+
+.mobile-composer-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mobile-composer-image-processing {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 56px;
+  padding: 0 12px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  font-size: 13px;
+}
+
+.mobile-composer-image-processing-count {
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+.mobile-composer-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* 「+」扩展面板：轻面板贴输入框上方（absolute 锚定 bottom:100%），
+   内部功能为反色胶囊列表（每项一行、宽度自适应不贯穿、居中、上下间距适中） */
+.mobile-plus-sheet {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%; /* 贴合输入行上缘，无间隔 */
+  z-index: 95;
+  border-radius: var(--m-radius-card);
+  background: var(--m-bg);
+  border: 0.5px solid var(--m-separator);
+  overflow: hidden;
+  padding: 34px 24px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  animation: mobile-sheet-in 160ms ease-out;
+}
+
+/* 毛玻璃增强：容器跟随主题（浅色=白 / 深色=黑），反色胶囊在其上强对比 */
+@supports (backdrop-filter: blur(20px)) {
+  .mobile-plus-sheet {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(30px) saturate(1.5);
+    -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  }
+  :root[data-theme="dark"] .mobile-plus-sheet {
+    background: rgba(28, 28, 33, 0.9);
+  }
+}
+
+/* mobile-sheet-in：轻面板上浮入场（模型卡 / 设置卡引用，勿删） */
+@keyframes mobile-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 功能胶囊：主题反色（浅色=黑胶囊白字 / 深色=白胶囊黑字），全部同宽（留白由容器 padding 提供）。
+   内部布局：第一行 = icon + 标题（同行居中）；第二行 = 内容/说明（居中）；整体内容垂直居中 */
+.mobile-plus-capsule {
+  position: relative; /* 透明 file input 铺满锚点 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  /* 等高：无论单行（标题）还是双行（标题+说明），胶囊高度统一（内容垂直居中） */
+  min-height: 66px;
+  padding: 13px 18px;
+  border: none;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-plus-bg);
+  color: var(--m-plus-fg);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 120ms ease-out, transform 80ms ease;
+}
+
+.mobile-plus-capsule + .mobile-plus-capsule {
+  margin-top: 18px; /* 胶囊间上下间距 */
+}
+
+/* 文本区：固定两行（第一行 icon+标题 / 第二行内容），全部居中 */
+.mobile-plus-capsule-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* 第一行：icon + 标题 同行居中 */
+.mobile-plus-capsule-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mobile-plus-capsule:active:not(.is-disabled) {
+  transform: scale(0.98);
+  opacity: 0.85;
+}
+
+/* 禁用态：背景保持实色（不整体透明透底），仅内部内容弱化表达不可点 */
+.mobile-plus-capsule:disabled,
+.mobile-plus-capsule.is-disabled {
+  cursor: default;
+}
+
+.mobile-plus-capsule:disabled .mobile-plus-capsule-icon,
+.mobile-plus-capsule:disabled .mobile-plus-capsule-title,
+.mobile-plus-capsule:disabled .mobile-plus-capsule-sub,
+.mobile-plus-capsule.is-disabled .mobile-plus-capsule-icon,
+.mobile-plus-capsule.is-disabled .mobile-plus-capsule-title,
+.mobile-plus-capsule.is-disabled .mobile-plus-capsule-sub {
+  opacity: 0.45;
+}
+
+.mobile-plus-capsule-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--m-plus-fg);
+}
+
+.mobile-plus-capsule-title {
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.mobile-plus-capsule-sub {
+  /* 空时也占位（\u00A0 / 空字符串）：保证所有胶囊两行对齐，标题位置一致 */
+  min-height: 16px;
+  line-height: 1.3;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--m-plus-fg-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 底部当前执行状态：纯文字弱化（cache 缓存命中率 · tok 用量） */
+.mobile-plus-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 18px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--m-fg-secondary);
+  line-height: 1.2;
+}
+
+.mobile-plus-status-sep {
+  opacity: 0.6;
+}
+
+/* 透明 file input 铺满整个 label：点击 label 任意处直接命中 input（浏览器原生打开
+   选择器）。不依赖 label→input 转发（iOS standalone PWA 对 pointer-events:none /
+   display:none / 1px 隐藏的 input 转发不可靠），这是移动端最稳的 file input 模式 */
+.mobile-file-input-sr {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  z-index: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 模式子弹窗：独立弹窗（贴输入框上方，沿用主弹窗风格），右上角 X 关闭 */
+.mobile-mode-sheet {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
+  z-index: 95;
+  border-radius: var(--m-radius-card);
+  background: var(--m-bg);
+  border: 0.5px solid var(--m-separator);
+  overflow: hidden;
+  padding: 12px 24px 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  animation: mobile-sheet-in 160ms ease-out;
+}
+
+@supports (backdrop-filter: blur(20px)) {
+  .mobile-mode-sheet {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(30px) saturate(1.5);
+    -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  }
+  :root[data-theme="dark"] .mobile-mode-sheet {
+    background: rgba(28, 28, 33, 0.9);
+  }
+}
+
+/* 弹窗头：标题左、关闭 X 右（X 复用模型卡 mobile-model-card-x） */
+.mobile-mode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.mobile-mode-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+}
+
+/* 模式选项胶囊：同主弹窗反色胶囊风格（同宽）；
+   当前 mode = 反色背景突出，其它 mode = 中间色弱化 */
+.mobile-mode-capsule {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  padding: 10px 18px;
+  border: 2px solid transparent;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-fill); /* 默认：中间色（未选中） */
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out;
+}
+
+.mobile-mode-capsule + .mobile-mode-capsule {
+  margin-top: 16px;
+}
+
+.mobile-mode-capsule:active {
+  opacity: 0.85;
+}
+
+.mobile-mode-capsule.active {
+  /* 当前 mode：反色背景（黑胶囊白字 / 白胶囊黑字） */
+  background: var(--m-plus-bg);
+  color: var(--m-plus-fg);
+  border-color: transparent;
+}
+
+.mobile-mode-capsule-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.mobile-mode-capsule-desc {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--m-fg-secondary);
+  white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-mode-capsule.active .mobile-mode-capsule-desc {
+  color: var(--m-plus-fg-secondary);
+}
+
+/* Custom 档：紫色模式标识（与桌面端 chip 一致）+ 锁定/引导态弱化 */
+.mobile-mode-capsule-custom .mobile-mode-capsule-name {
+  color: #8b5cf6;
+}
+
+.mobile-mode-capsule.active.mobile-mode-capsule-custom .mobile-mode-capsule-name {
+  color: #a78bfa;
+}
+
+/* 锁定态：背景保持实色，仅内容弱化 */
+.mobile-mode-capsule-locked {
+  cursor: default;
+}
+
+.mobile-mode-capsule-locked .mobile-mode-capsule-name,
+.mobile-mode-capsule-locked .mobile-mode-capsule-desc {
+  opacity: 0.5;
+}
+
+/* 设置弹窗：连接信息行 + 断开按钮（沿用主弹窗反色胶囊风格） */
+.mobile-settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mobile-settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-plus-bg);
+  color: var(--m-plus-fg);
+  font-size: 13px;
+}
+
+.mobile-settings-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--m-plus-fg-secondary);
+  min-width: 34px;
+}
+
+.mobile-settings-value {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.mobile-settings-disconnect {
+  display: block;
+  width: 100%;
+  padding: 11px 0;
+  border: none;
+  border-radius: var(--m-radius-pill);
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
+}
+
+.mobile-settings-disconnect:active {
+  background: rgba(239, 68, 68, 0.28);
+}
+
+/* 重置小字说明：警示性弱文本，解释点击后果（防误触） */
+.mobile-settings-reset-hint {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--m-plus-fg-secondary);
+  opacity: 0.75;
+}
+
+/* 设置弹窗：fixed 底部弹出（点击 logo → 设置 打开；跟随主题毛玻璃）
+   高于底部输入栏(210)：弹窗 bottom 12px 正落于输入栏区域内，
+   同级 z-index 时 DOM 靠后的 Composer 会压住弹窗底部（重置按钮不可见） */
+.mobile-settings-sheet {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 220;
+  border-radius: var(--m-radius-card);
+  background: var(--m-bg);
+  border: 0.5px solid var(--m-separator);
+  overflow: hidden;
+  padding: 12px 16px 16px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  animation: mobile-sheet-in 160ms ease-out;
+}
+
+@supports (backdrop-filter: blur(20px)) {
+  .mobile-settings-sheet {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(30px) saturate(1.5);
+    -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  }
+  :root[data-theme="dark"] .mobile-settings-sheet {
+    background: rgba(28, 28, 33, 0.9);
+  }
+}
+
+/* 模型配置卡：与 + 面板同款反色轻面板（浮于输入行上方，左右收窄，无遮罩，外部点击关闭） */
+.mobile-model-card {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 12px);
+  z-index: 95;
+  border-radius: var(--m-radius-card);
+  background: var(--m-plus-bg);
+  border: 0.5px solid var(--m-plus-separator);
+  padding: 12px 16px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  animation: mobile-sheet-in 160ms ease-out;
+}
+
+.mobile-model-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mobile-model-card-title {
+  font-size: 13px;
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-model-card-x {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: var(--m-plus-fill);
+  color: var(--m-plus-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mobile-model-card-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--m-plus-fg-secondary);
+  padding: 12px 0;
+}
+
+.mobile-model-card-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--m-plus-separator);
+  margin-bottom: 8px;
+}
+
+.mobile-model-card-current-label {
+  font-size: 12px;
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-model-card-current-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--m-plus-fg);
+  word-break: break-all;
+}
+
+.mobile-model-card-ctx {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--m-plus-separator);
+  margin-bottom: 8px;
+}
+
+.mobile-model-card-ctx-label {
+  font-size: 12px;
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-model-card-ctx-pct {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--m-font);
+  line-height: 1;
+}
+
+.mobile-model-card-ctx-nums {
+  flex: 1;
+  text-align: right;
+  font-size: 12px;
+  font-family: var(--m-font);
+  color: var(--m-plus-fg-secondary);
+}
+
+.mobile-model-card-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.mobile-model-card-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  min-height: 40px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mobile-model-card-item:active {
+  opacity: 0.6;
+}
+
+.mobile-model-card-item:disabled {
+  cursor: default;
+}
+
+.mobile-model-card-item-provider {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--m-plus-fg-secondary);
+  background: var(--m-plus-fill);
+  border-radius: var(--m-radius-pill);
+  padding: 2px 8px;
+}
+
+.mobile-model-card-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mobile-model-card-item-id {
+  font-size: 14px;
+  color: var(--m-plus-fg);
+  word-break: break-all;
+}
+
+.mobile-model-card-item-alias {
+  font-size: 12px;
+  color: var(--m-plus-fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-model-card-item-caps {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--m-plus-fg-secondary);
+  border: 0.5px solid var(--m-plus-separator);
+  border-radius: var(--m-radius-pill);
+  padding: 1px 6px;
+}
+
+.mobile-model-card-item-check {
+  flex-shrink: 0;
+  color: var(--m-ok);
+}
+
+.mobile-model-card-note {
+  font-size: 12px;
+  color: var(--m-plus-fg-secondary);
+  line-height: 1.5;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--m-plus-separator);
+  margin-top: 8px;
+}
+/* ═══ request_user_input 输入卡（手机端） ═══ */
+.mobile-user-input {
+  /* 高于执行弹窗遮罩(200)：弹窗打开时用户输入仍可操作 */
+  position: relative;
+  z-index: 210;
+  flex-shrink: 0;
+  margin: 0 12px 8px;
+  padding: 12px 14px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-surface);
+  border: 1px solid var(--m-separator);
+  animation: mobile-msg-in 150ms ease-out;
+}
+
+.mobile-user-input-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+.mobile-user-input-title {
+  word-break: break-all;
+}
+
+.mobile-user-input-desc {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--m-fg-secondary);
+  word-break: break-word;
+}
+.mobile-user-input-desc .m-md-paragraph {
+  margin: 0 0 8px;
+  line-height: 1.45;
+  color: var(--m-fg-secondary);
+  white-space: pre-wrap;
+}
+.mobile-user-input-desc .m-md-paragraph:last-child { margin-bottom: 0 }
+.mobile-user-input-desc .m-md-link { color: var(--m-accent); text-decoration: underline }
+.mobile-user-input-desc .m-md-code-block,
+.mobile-user-input-desc .m-md-blockquote,
+.mobile-user-input-desc .m-md-table-wrapper { margin: 8px 0 }
+
+.mobile-user-input-desc-alt {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--m-radius-sm);
+  background: var(--m-fill);
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+  line-height: 1.4;
+}
+
+.mobile-user-input-field {
+  margin-top: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--m-radius-sm);
+  border: 1px solid var(--m-separator);
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-size: 15px;
+  outline: none;
+}
+
+.mobile-user-input-field:focus {
+  border-color: var(--m-accent);
+}
+
+.mobile-user-input-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--m-fail);
+}
+
+.mobile-user-input-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.mobile-user-input-btn {
+  padding: 12px 24px;
+  border-radius: var(--m-radius-pill);
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: opacity 150ms ease, transform 80ms ease;
+}
+
+.mobile-user-input-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.mobile-user-input-btn.is-confirm {
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+}
+
+.mobile-user-input-btn.is-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mobile-user-input-btn.is-skip {
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+}
+
+/* ═══ assistant 消息操作行（复制 / 点评） ═══ */
+.mobile-msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 2px;
+}
+
+.mobile-msg-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: var(--m-radius-pill);
+  border: none;
+  background: transparent;
+  color: var(--m-fg-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.mobile-msg-action:hover,
+.mobile-msg-action:active {
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+}
+
+/* ═══ 执行点评卡（手机端） ═══ */
+/* 点评弹窗遮罩：fixed 全屏 + 居中（对齐桌面端 rating-modal-overlay），
+   脱离文档流——原 .mobile-rating 是内联卡片，被 #root overflow:hidden 裁剪导致「无弹窗」 */
+.mobile-rating-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  animation: mobile-fade-in 150ms ease-out;
+}
+
+/* 居中卡片：宽度自适应 + 阴影，对齐桌面端 rating-modal */
+.mobile-rating {
+  width: 100%;
+  max-width: 360px;
+  padding: 16px;
+  border-radius: var(--m-radius-card);
+  background: var(--m-surface);
+  border: 1px solid var(--m-separator);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  animation: mobile-sheet-in 160ms ease-out;
+}
+
+.mobile-rating-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+
+.mobile-rating-title {
+  word-break: break-all;
+}
+
+.mobile-rating-goal {
+  margin-top: 12px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--m-radius-sm);
+  border: 1px solid var(--m-separator);
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-size: 15px;
+  line-height: 1.4;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.mobile-rating-goal:focus {
+  border-color: var(--m-accent);
+}
+
+.mobile-rating-stars {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.mobile-rating-star {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--m-fg-tertiary);
+  cursor: pointer;
+  padding: 0;
+  transition: color 120ms ease-out, transform 120ms ease-out;
+}
+
+.mobile-rating-star.active {
+  color: #f5b93d;
+  transform: scale(1.08);
+}
+
+.mobile-rating-star-label {
+  margin-left: 4px;
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-rating-comment {
+  margin-top: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--m-radius-sm);
+  border: 1px solid var(--m-separator);
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.mobile-rating-comment:focus {
+  border-color: var(--m-accent);
+}
+
+.mobile-rating-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--m-fail);
+}
+
+.mobile-rating-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mobile-rating-btn {
+  flex: 1;
+  padding: 9px 0;
+  border-radius: var(--m-radius-sm);
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+}
+
+.mobile-rating-btn.is-confirm {
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+}
+
+.mobile-rating-btn.is-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mobile-rating-btn.is-skip {
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+}
+/* 「+」菜单模型栏：模型名可截断、上下文用量百分比不可截断（菜单层直显，无需点开模型卡） */
+
+/* 模型卡读取失败重试按钮（隧道半死超时后落错误态，不再永久转圈） */
+.mobile-model-card-retry {
+  padding: 6px 18px;
+  background: var(--m-accent, #f0b429);
+  color: #1a1d24;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.mobile-model-card-retry:active {
+  opacity: 0.85;
+}

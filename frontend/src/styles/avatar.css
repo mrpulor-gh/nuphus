@@ -1,0 +1,76 @@
+/* ── Nuphus 虚拟形象体系 · 动效层 ─────────────────────────────
+ * 脸 = 身份 ICON「暂停键」：框 = 颅，双竖 = 目，右下开口 = 嘴部
+ * 单色纪律：情绪只用运动表达，永不变色。
+ * 目形变体（bar/wide/arc/flat/closed）是结构姿态，
+ * prefers-reduced-motion 下动画全部关闭，目形仍传达状态。
+ *
+ * 令牌：blink 180ms@4.6s / breathe 4.8s / work 1.1s / bob 1.5s
+ *       jump 600ms(squash&stretch) / shake 900ms±7° / sway 5s±2.5°
+ * ─────────────────────────────────────────────────────────── */
+
+.nv-eye { transform-box: fill-box; }
+.nv-whole { transform-box: fill-box; transform-origin: center; }
+/* 注视层：包裹双眼，独立于状态动画，由 gaze prop 驱动（跟随鼠标） */
+.nv-gaze { transform-box: fill-box; transform-origin: center; transition: transform .08s ease-out; }
+
+/* idle：呼吸 + 眨眼 */
+@keyframes nvBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.016); } }
+@keyframes nvBlink { 0%,91%,100% { transform: scaleY(1); } 94% { transform: scaleY(.08); } 97% { transform: scaleY(1); } }
+.nv-st-idle .nv-whole { animation: nvBreathe 4.8s ease-in-out infinite; }
+.nv-st-idle .nv-eye { transform-origin: center; animation: nvBlink 4.6s ease-in-out infinite; }
+
+/* thinking：眼珠左右 + 头部轻摆 */
+@keyframes nvLook { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 60% { transform: translateX(7px); } }
+@keyframes nvSway { 0%,100% { transform: rotate(0deg); } 30% { transform: rotate(-2.5deg); } 70% { transform: rotate(2.5deg); } }
+.nv-st-thinking .nv-whole { animation: nvSway 5s ease-in-out infinite; }
+.nv-st-thinking .nv-eye { animation: nvLook 2.8s ease-in-out infinite; }
+
+/* working：双竖均衡器（相位错开 50%），呼吸加速 */
+@keyframes nvEq { 0%,100% { transform: scaleY(.55); } 50% { transform: scaleY(1); } }
+.nv-st-working .nv-eye { transform-origin: bottom; animation: nvEq 1.1s ease-in-out infinite; }
+.nv-st-working .nv-eye.r { animation-delay: -.55s; }
+.nv-st-working .nv-whole { animation: nvBreathe 2.4s ease-in-out infinite; }
+
+/* streaming：轻快起伏 + 频密眨眼 */
+@keyframes nvBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes nvBlinkFast { 0%,82%,100% { transform: scaleY(1); } 88% { transform: scaleY(.08); } 94% { transform: scaleY(1); } }
+.nv-st-streaming .nv-whole { animation: nvBob 1.5s ease-in-out infinite; }
+.nv-st-streaming .nv-eye { transform-origin: center; animation: nvBlinkFast 2.6s ease-in-out infinite; }
+
+/* confirm：目睁大（结构姿态）+ 注意力脉冲 + 罕见慢眨眼 */
+@keyframes nvPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+@keyframes nvBlinkSlow { 0%,96%,100% { transform: scaleY(1); } 98% { transform: scaleY(.1); } }
+.nv-st-confirm .nv-whole { animation: nvPulse 2.2s ease-in-out infinite; }
+.nv-st-confirm .nv-eye { transform-origin: center; animation: nvBlinkSlow 6s ease-in-out infinite; }
+
+/* success：笑眼弧（结构姿态）+ 跃起（squash & stretch） */
+@keyframes nvJump {
+  0% { transform: translateY(0) scale(1,1); }
+  12% { transform: translateY(2px) scale(1.06,.9); }
+  30% { transform: translateY(-14px) scale(.96,1.06); }
+  46% { transform: translateY(0) scale(1,1); }
+  54% { transform: translateY(1px) scale(1.03,.97); }
+  60%,100% { transform: translateY(0) scale(1,1); }
+}
+.nv-st-success .nv-whole { animation: nvJump 2.8s cubic-bezier(.34,1.56,.64,1) infinite; }
+
+/* error：目扁平（结构姿态）+ 摇头（周期内一次，不持续抱怨） */
+@keyframes nvShake {
+  0%,100% { transform: rotate(0); }
+  4% { transform: rotate(-7deg); }
+  10% { transform: rotate(6deg); }
+  16% { transform: rotate(-4deg); }
+  22% { transform: rotate(2deg); }
+  28% { transform: rotate(0); }
+}
+.nv-st-error .nv-whole { animation: nvShake 3.2s ease-in-out infinite; }
+
+/* sleep：闭目（结构姿态）+ 深呼吸 */
+@keyframes nvDeepBreath { 0%,100% { transform: scale(1); } 50% { transform: scale(1.028); } }
+.nv-st-sleep .nv-whole { animation: nvDeepBreath 6s ease-in-out infinite; }
+
+/* reduced-motion：动画全关，结构姿态继续传达状态 */
+@media (prefers-reduced-motion: reduce) {
+  [class^="nv-st-"] .nv-whole,
+  [class^="nv-st-"] .nv-eye { animation: none !important; }
+}

@@ -1,0 +1,224 @@
+/* DesktopToolbar — 桌面工具浮窗条样式 v2 */
+/* 暗色主题匹配 tokens.css 设计系统 */
+
+/* ── 主工具条 ── */
+
+.desktop-toolbar {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: var(--glass-bg, rgba(14,14,20,0.92));
+  border: 1px solid var(--glass-2, rgba(255,255,255,0.06));
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.3) inset,
+    0 4px 24px rgba(0,0,0,0.5),
+    0 0 0 1px rgba(255,255,255,0.06);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  user-select: none;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  animation: toolbarFadeIn 0.15s ease-out;
+}
+
+/* ── 拖拽把手 ── */
+
+.desktop-toolbar-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  cursor: grab;
+  color: var(--spark-dim, var(--fg-5));
+  flex-shrink: 0;
+  border-radius: 6px;
+  transition: background 0.12s, color 0.12s;
+}
+.desktop-toolbar-grip:hover {
+  background: var(--glass-1, rgba(255,255,255,0.05));
+  color: var(--spark-tertiary, var(--fg-3));
+}
+.desktop-toolbar-grip:active {
+  cursor: grabbing;
+}
+
+/* ── 工具按钮 ── */
+
+.desktop-toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--spark-tertiary, var(--fg-3));
+  cursor: pointer;
+  font-size: var(--fz-sm);
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.desktop-toolbar-btn:hover {
+  background: var(--glass-1, rgba(255,255,255,0.06));
+  color: var(--spark-secondary, var(--fg-2));
+}
+.desktop-toolbar-btn:active {
+  background: var(--glass-2, rgba(255,255,255,0.10));
+}
+.desktop-toolbar-btn.active {
+  color: var(--accent);
+  background: rgba(110, 203, 245, 0.08);
+  box-shadow: 0 0 0 1px rgba(110, 203, 245, 0.2);
+}
+
+.desktop-toolbar-label {
+  font-size: var(--fz-xs);
+  line-height: 1;
+}
+
+/* ── 分隔线 ── */
+
+.desktop-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--glass-2, rgba(255,255,255,0.06));
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* ── 鼠标坐标显示 ── */
+
+.desktop-toolbar-pos {
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(110, 203, 245, 0.08);
+  color: var(--accent);
+  font-size: var(--fz-xs);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.desktop-toolbar-pos:hover {
+  background: rgba(110, 203, 245, 0.15);
+}
+
+
+/* ── 加载遮罩 ── */
+
+.desktop-toolbar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+
+.desktop-toolbar-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px;
+  border-radius: 16px;
+  background: var(--glass-bg-soft, rgba(10,10,18,0.82));
+  border: 1px solid var(--glass-4, rgba(255,255,255,0.08));
+  box-shadow: var(--shadow-modal, 0 8px 48px rgba(0,0,0,0.6));
+  backdrop-filter: blur(24px);
+  color: var(--spark-secondary, var(--fg-2));
+  font-size: var(--fz-md);
+}
+
+.desktop-toolbar-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--glass-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: toolbarSpin 0.7s linear infinite;
+}
+
+@keyframes toolbarSpin {
+  to { transform: rotate(360deg); }
+}
+
+
+
+
+/* ── 结果浮窗 ── */
+
+.desktop-toolbar-result {
+  z-index: 9999;
+  position: relative;
+  width: 440px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  background: var(--glass-bg-soft, rgba(10,10,18,0.82));
+  border: 1px solid var(--glass-4, rgba(255,255,255,0.08));
+  box-shadow: var(--shadow-modal, 0 8px 48px rgba(0,0,0,0.6));
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  animation: toolbarFadeIn 0.12s ease-out;
+  overflow: hidden;
+}
+
+.desktop-toolbar-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--glass-2, rgba(255,255,255,0.05));
+}
+
+.desktop-toolbar-result-title {
+  font-size: var(--fz-md);
+  font-weight: 500;
+  color: var(--spark-secondary, var(--fg-2));
+}
+
+
+.desktop-toolbar-result-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 14px;
+  margin: 0;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: var(--fz-sm);
+  line-height: 1.6;
+  color: var(--spark-secondary, var(--fg-2));
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+}
+
+.desktop-toolbar-result-content.ocr {
+  color: var(--fg-2);
+  font-size: var(--fz-md);
+  line-height: 1.7;
+  font-family: var(--font-ui, system-ui, sans-serif);
+}
+
+/* ── 入场动画 ── */
+
+@keyframes toolbarFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

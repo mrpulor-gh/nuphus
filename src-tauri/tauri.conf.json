@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nuphus",
+  "identifier": "com.nuphus.app",
+  "version": "0.1.0",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+        "windows": [
+      {
+        "label": "splash",
+        "title": "Nuphus",
+        "url": "splash.html",
+        "width": 280,
+        "height": 160,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "skipTaskbar": true,
+        "visible": true
+      },
+      {
+        "label": "main",
+        "title": "Nuphus - 智慧协作伙伴",
+        "url": "index.html",
+        "width": 1080,
+        "height": 720,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "visible": true
+      },
+      {
+        "label": "hud",
+        "title": "",
+        "url": "hud.html",
+        "width": 300,
+        "height": 58,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false,
+        "center": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: http://127.0.0.1:18772 https://raw.githubusercontent.com https://cdn.jsdelivr.net https://mrpulor-gh.github.io; font-src 'self' data:; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5174 http://localhost:5174 http://127.0.0.1:18772 https://raw.githubusercontent.com https://cdn.jsdelivr.net https://mrpulor-gh.github.io; frame-src http://127.0.0.1:18772",
+      "assetProtocol": {
+        "scope": {
+          "allow": [
+            "$APPDATA/**",
+            "$APPLOCALDATA/**",
+            "$HOME/.nuphus/**",
+            "$TEMP/**"
+          ]
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "msi", "dmg"],
+    "resources": {},
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  }
+}

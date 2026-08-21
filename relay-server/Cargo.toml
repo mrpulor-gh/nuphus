@@ -1,0 +1,24 @@
+[package]
+name = "relay-server"
+version = "0.1.0"
+edition = "2021"
+description = "Nuphus 中继服务端 — 薄转发：设备出站 WS + 外部任务转发"
+license = "Apache-2.0"
+repository = "https://github.com/mrpulor-gh/nuphus"
+
+# 独立项目，不属于根 workspace（单独编译，不污染主构建）
+[workspace]
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+# 明文 http/ws：生产环境 TLS 在 nginx 终结（443→隧道）。进程内 TLS（axum-server
+# tls-rustls）已移除——它会拉入 aws-lc-sys（C/汇编），交叉编译链过重且产线未使用。
+base64 = "0.22"
+futures-util = { version = "0.3", features = ["sink"] }
+# caller_token 轮换的密码学随机（无 C 链，跨平台）
+rand = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

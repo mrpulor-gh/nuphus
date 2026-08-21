@@ -1,0 +1,35 @@
+{
+    "keywords":  [
+                     "发版",
+                     "宣传图",
+                     "海报",
+                     "抖音",
+                     "release",
+                     "poster",
+                     "截图",
+                     "封面",
+                     "更新图"
+                 ],
+    "version":  "1.0.0",
+    "displayName":  "发版宣传图制作规范",
+    "name":  "release-poster",
+    "description":  "版本发布宣传图快速制作：横版 1920×1080 / 竖版 1080×1920 双模板固化（含抖音底部安全区 262px）、官方 logo 铁律、headless Chrome 截图流程、vision+像素扫描双验收纪律。",
+    "triggers":  {
+                     "context_hints":  [
+                                           "发版",
+                                           "宣传图",
+                                           "海报",
+                                           "抖音",
+                                           "封面",
+                                           "更新内容",
+                                           "release",
+                                           "poster",
+                                           "截图发"
+                                       ],
+                     "auto_suggest":  true
+                 },
+    "author":  "Nuphus",
+    "data_sources":  [
+
+                     ]
+}

@@ -1,0 +1,185 @@
+/* ═══════════════════════════════════════════
+   models.css — ModelsPage 页面特有样式
+   骨架：ui/PageLayout Section/FormRow
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 表单组（label 上 + 控件下，Section 内的纵向节奏）── */
+
+/* ── 小徽记（如「已配置」状态徽章的间距）── */
+.label-badge { margin-left: var(--space-2); }
+
+/* ── 检测/提示文字 ── */
+.detect-status {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  margin-bottom: var(--space-2);
+}
+
+/* ── 幽灵图标按钮（显示密码 / 删除等行内小操作）── */
+.icon-btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer;
+  color: var(--fg-4); padding: 2px; border-radius: var(--radius-1);
+  opacity: .6;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.icon-btn-ghost:hover { opacity: 1; color: var(--fg-1); }
+.icon-btn-ghost:focus-visible { outline: none; opacity: 1; color: var(--accent); box-shadow: var(--shadow-focus); }
+
+/* ── 密码可见性切换按钮（输入框后缀）── */
+.input-suffix-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--fg-4); font-size: var(--fz-xs); font-family: inherit;
+  padding: 0 var(--space-2); white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.input-suffix-btn:hover { color: var(--fg-1); }
+.input-suffix-btn:focus-visible { outline: none; color: var(--accent); }
+
+/* ── 等宽数字输入（上下文窗口等）── */
+.input-num {
+  font-family: var(--font-mono);
+  font-size: var(--fz-md);
+}
+
+/* ── 浮动反馈 Toast ── */
+.feedback-toast {
+  position: fixed; top: var(--space-4); left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  padding: var(--space-2) 18px;
+  border-radius: var(--radius-3);
+  font-size: var(--fz-md);
+  color: var(--on-accent);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .2);
+  pointer-events: none;
+  animation: fadeIn var(--dur-med) var(--ease-out);
+}
+.feedback-toast--ok { background: rgba(var(--success-rgb), .92); }
+.feedback-toast--error { background: rgba(var(--error-rgb), .92); }
+
+/* ── 下拉选项内联元素 ── */
+.select-option-provider {
+  color: var(--fg-4); font-size: var(--fz-xs); margin-left: 6px;
+}
+
+/* ── 检测错误提示 ── */
+.detect-error {
+  margin-top: var(--space-2);
+  font-size: var(--fz-xs);
+  color: var(--warning);
+  line-height: 1.4;
+}
+
+/* ── 变体与工具类 ── */
+.select-menu--up { top: auto; bottom: calc(100% + 4px); }
+/* 提高特异性覆盖 components.css 的 top 定位，避免 !important */
+.compact-select-menu.select-menu--up { top: auto; bottom: calc(100% + 4px); }
+.model-list { display: flex; flex-direction: column; gap: 3px; }
+.model-list--spaced { margin-top: var(--space-2); }
+.segmented-wrap { margin-bottom: var(--space-3); flex-wrap: wrap; }
+.hint-text { margin-top: 6px; }
+/* ── Model list（自 components.css 拆出并入）── */
+/* ── Model list ── */
+.model-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--glass-0);
+  transition: all .15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.model-list-item:hover {
+  background: var(--void-hover);
+}
+.model-list-item.active {
+  background: rgba(var(--accent-rgb), .08);
+  border-color: rgba(var(--accent-rgb), .25);
+}
+
+.model-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--glass-2);
+  background: transparent;
+  flex-shrink: 0;
+  transition: all .15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.model-radio::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.model-radio.selected {
+  border-color: var(--spark-secondary);
+}
+.model-radio.selected::after {
+  background: var(--spark-secondary);
+}
+
+.model-list-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 400;
+  font-family: var(--font-mono);
+  color: var(--spark-secondary);
+}
+.model-list-item.active .model-list-name {
+  font-weight: 500;
+  color: var(--spark-primary);
+}
+/* ── Agent 级模型配置（高级设置）── */
+.agent-models-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-models-hint {
+  display: block;
+  font-size: var(--fz-xs);
+  font-weight: 400;
+  color: var(--fg-4);
+  margin-top: 2px;
+}
+.agent-models-feedback {
+  margin-top: 10px;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  line-height: 1.4;
+}
+
+/* ── 模型列表刷新按钮（Section 右上角 actions）：小胶囊 + 图标，加载中旋转 ── */
+.models-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.models-refresh-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--fg-1); border-color: var(--line-3); }
+.models-refresh-btn:disabled { opacity: .55; cursor: default; }
+.models-refresh-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.models-refresh-btn .is-spinning { animation: modelsRefreshSpin .8s linear infinite; }
+@keyframes modelsRefreshSpin { to { transform: rotate(360deg); } }

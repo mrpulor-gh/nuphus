@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent 问答台</title>
+  <!-- 模板惯例（设计文档 §4.3）：语义 token 单一来源 + 共享基础样式 + 当前生效主题快照 -->
+  <link rel="stylesheet" href="/plugins-shared/tokens.css" />
+  <link rel="stylesheet" href="/plugins-shared/base.css" />
+  <link rel="stylesheet" href="/plugins-shared/theme.css" />
+  <script src="/plugins-shared/bridge.js"></script>
+  <style>
+    /* 视觉语言对齐主应用对话窗（chat-messages.css / chat-input.css）：
+       气泡圆角/底色/边框、输入浮岛、间距全部引用同一组语义 token */
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--surface-0);
+      color: var(--fg-1);
+      font-family: var(--font-ui);
+      font-size: 14px;
+    }
+    .chat {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .chat-header {
+      flex-shrink: 0;
+      padding: 14px 24px 12px;
+      border-bottom: 1px solid var(--line-1);
+      background: var(--surface-1);
+    }
+    .chat-header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .chat-header .sub {
+      margin: 3px 0 0;
+      font-size: 11px;
+      color: var(--fg-3);
+    }
+    /* 消息列表：对齐主应用 .chat-messages-inner（padding 24px 64px，gap 16px） */
+    .chat-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 64px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    @media (max-width: 720px) {
+      .chat-list { padding: 16px 20px; }
+    }
+    .row { display: flex; }
+    .row.user { justify-content: flex-end; }
+    .row.assistant { justify-content: flex-start; }
+    /* 气泡：对齐主应用 .message-bubble（max-width 60%，非对称圆角） */
+    .bubble {
+      max-width: 60%;
+      padding: 14px 20px;
+      border: 1px solid var(--border-secondary);
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+    }
+    .row.user .bubble {
+      border-radius: 14px 14px 0 14px;
+      background: var(--msg-user-bg);
+    }
+    .row.assistant .bubble {
+      border-radius: 0 16px 16px 16px;
+      background: var(--msg-assistant-bg);
+    }
+    @media (max-width: 720px) {
+      .bubble { max-width: 82%; }
+    }
+    .bubble.error {
+      color: var(--error);
+      font-size: 12px;
+      opacity: .9;
+    }
+    .row.loading .bubble {
+      color: var(--fg-3);
+      font-style: italic;
+      animation: nuphus-think 1.2s ease-in-out infinite;
+    }
+    @keyframes nuphus-think {
+      0%, 100% { opacity: .45; }
+      50% { opacity: 1; }
+    }
+    /* 输入浮岛：对齐主应用 .chat-input-area（--input-bg + 1px 边 + 16px 圆角 + 投影） */
+    .chat-input-dock {
+      flex-shrink: 0;
+      padding: 0 24px 20px;
+    }
+    .chat-input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      padding: 10px 12px;
+      border: 1px solid var(--line-1);
+      border-radius: 16px;
+      background: var(--input-bg);
+      box-shadow: 0 4px 32px rgba(0, 0, 0, .3);
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    #input {
+      flex: 1;
+      min-height: 36px;
+      max-height: 120px;
+      resize: none;
+      padding: 8px 10px;
+      border: none;
+      background: transparent;
+      color: var(--fg-1);
+      font: inherit;
+      font-size: 14px;
+      line-height: 1.5;
+      outline: none;
+    }
+    #input::placeholder { color: var(--fg-3); }
+    #input:disabled { opacity: .6; }
+    #send {
+      min-width: 64px;
+      height: 36px;
+      border: none;
+      border-radius: 12px;
+      background: var(--accent);
+      color: var(--on-accent);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: filter var(--dur-fast) var(--ease-out);
+    }
+    #send:hover:not(:disabled) { filter: brightness(1.1); }
+    #send:active:not(:disabled) { filter: brightness(.95); }
+    #send:disabled {
+      opacity: .6;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat">
+    <header class="chat-header">
+      <h1>Agent 问答台</h1>
+      <p class="sub">Bridge agent.chat · 独立运行时 · 历史注入上下文（最近 50 条）</p>
+    </header>
+    <div class="chat-list" id="list"></div>
+    <div class="chat-input-dock">
+      <div class="chat-input-row">
+        <textarea id="input" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="send">发送</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      'use strict'
+      var bridge = window.NuphusBridge
+      var HISTORY_KEY = 'history'
+      var MAX_HISTORY = 50
+      var messages = []
+      var busy = false
+      var pendingTimer = null
+
+      var listEl = document.getElementById('list')
+      var inputEl = document.getElementById('input')
+      var sendBtn = document.getElementById('send')
+
+      function persist() {
+        var slice = messages.filter(function (m) { return !m.pending }).slice(-MAX_HISTORY)
+        bridge.call('kv.set', { key: HISTORY_KEY, value: slice }).catch(function () {
+          /* 历史写失败不阻塞对话（下一条会再次尝试） */
+        })
+      }
+
+      function addMessage(role, text, cls) {
+        messages.push({ role: role, text: String(text), cls: cls || '' })
+        if (messages.length > MAX_HISTORY) messages = messages.slice(-MAX_HISTORY)
+        render()
+        persist()
+      }
+
+      // 等待 Agent 回复期间的 loading 气泡（不持久化）+ 耗时计数：
+      // 超过 3s 显示秒数——后端无响应时用户可感知「卡了多久」，辅助诊断
+      function setPending(on) {
+        if (on) {
+          var t0 = Date.now()
+          messages.push({ role: 'assistant', text: '正在思考…', pending: true })
+          pendingTimer = setInterval(function () {
+            var s = Math.floor((Date.now() - t0) / 1000)
+            for (var i = messages.length - 1; i >= 0; i--) {
+              if (messages[i].pending) {
+                messages[i].text = s < 3 ? '正在思考…' : '正在思考… ' + s + 's'
+                break
+              }
+            }
+            render()
+          }, 1000)
+        } else {
+          if (pendingTimer) {
+            clearInterval(pendingTimer)
+            pendingTimer = null
+          }
+          messages = messages.filter(function (m) { return !m.pending })
+        }
+        render()
+      }
+
+      function render() {
+        listEl.textContent = ''
+        messages.forEach(function (m) {
+          var row = document.createElement('div')
+          row.className = 'row ' + (m.role === 'user' ? 'user' : 'assistant') + (m.pending ? ' loading' : '')
+          var bubble = document.createElement('div')
+          bubble.className = 'bubble' + (m.cls ? ' ' + m.cls : '')
+          bubble.textContent = m.text
+          row.appendChild(bubble)
+          listEl.appendChild(row)
+        })
+        listEl.scrollTop = listEl.scrollHeight
+      }
+
+      function setBusy(b) {
+        busy = b
+        sendBtn.disabled = b
+        sendBtn.textContent = b ? '思考中…' : '发送'
+        inputEl.disabled = b
+      }
+
+      function send() {
+        if (busy) return
+        var text = inputEl.value.trim()
+        if (!text) return
+        inputEl.value = ''
+        inputEl.style.height = 'auto'
+        addMessage('user', text)
+        setBusy(true)
+        setPending(true)
+        // agent.chat v1：同步等待最终回复；宿主侧 120s 超时 → TIMEOUT 错误。
+        // 本地 KV 历史一并传入（{role, content} 形状，最近 50 条）→ 插件获得连续上下文能力
+        var history = messages
+          .filter(function (m) { return !m.pending && !m.cls })
+          .slice(-MAX_HISTORY)
+          .map(function (m) { return { role: m.role, content: m.text } })
+        bridge.call('agent.chat', { message: text, history: history })
+          .then(function (reply) {
+            addMessage('assistant', reply)
+          })
+          .catch(function (e) {
+            var code = e && e.code ? e.code : 'ERROR'
+            var msg = e && e.message ? e.message : String(e)
+            addMessage('assistant', '[' + code + '] ' + msg, 'error')
+          })
+          .finally(function () {
+            setPending(false)
+            setBusy(false)
+            inputEl.focus()
+          })
+      }
+
+      // 输入框自动增高（最多 4 行）
+      inputEl.addEventListener('input', function () {
+        inputEl.style.height = 'auto'
+        inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px'
+      })
+      inputEl.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' && !ev.shiftKey) {
+          ev.preventDefault()
+          send()
+        }
+      })
+      sendBtn.addEventListener('click', send)
+
+      // init 握手完成（含主题初始值）→ 加载 kv 历史
+      bridge.on('init', function () {
+        bridge.call('kv.get', { key: HISTORY_KEY })
+          .then(function (val) {
+            if (Array.isArray(val)) {
+              messages = val.filter(function (m) {
+                return m && typeof m.role === 'string' && typeof m.text === 'string'
+              })
+              render()
+            }
+          })
+          .catch(function () { /* 首次使用无历史 */ })
+      })
+    })()
+  </script>
+</body>
+</html>

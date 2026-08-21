@@ -1,0 +1,77 @@
+/* ═══════════════════════════════════════════
+   welcome.css — WelcomeScreen 欢迎页样式
+   v3 表情表演版：脸（NuphusAvatar 状态机）+ 品牌名 + 副标语
+   动效全部复用 avatar.css，此处只负责布局与文字。
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* 撑满消息区 + 垂直居中，底部留白让内容上移避开悬浮输入框 */
+.welcome-screen {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 24px 140px;
+  box-sizing: border-box;
+}
+
+/* 粒子场覆盖层：底层、不拦截鼠标 */
+.particle-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* logo 与文字浮在粒子之上 */
+.welcome-logo,
+.welcome-brand {
+  position: relative;
+  z-index: 1;
+}
+
+.welcome-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 40px;
+}
+
+.welcome-name {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  white-space: nowrap;
+  color: var(--fg-1);
+}
+
+/* 品牌名逐字浮现（transitionDelay 由组件内联注入） */
+.welcome-letter {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .5s ease, transform .5s ease;
+}
+.welcome-brand.is-revealed .welcome-letter {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.welcome-subtitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--fg-3);
+  opacity: 0;
+  transition: opacity .8s ease .3s;
+}
+.welcome-brand.is-revealed .welcome-subtitle {
+  opacity: 1;
+}

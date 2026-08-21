@@ -1,0 +1,18 @@
+{
+  "name": "chatagent-tooluse-event-fix",
+  "domain": "desktop",
+  "category": "troubleshooting",
+  "keywords": [
+    "ChatAgent",
+    "ToolUse",
+    "TextDelta",
+    "事件收集",
+    "不调工具",
+    "只说话不做事",
+    "system_prompt"
+  ],
+  "tags": [],
+  "content": "# ChatAgent 不调工具的根因与修复\n\n## 症状\nChatAgent 收到任务后只输出文字（如\"好的，我来做\"），不实际调用工具。工作流 result 只有一句话，耗时极短（2-3秒）。\n\n## 根因（双重 bug）\n1. **ToolUse 事件被丢弃**：`step_chat_agent.rs` 中只收集了 `TextDelta` 事件，`ToolUse` 事件在推理过程中产生但没被写入最终响应\n2. **system_prompt 未合并**：`BASE_CHAT_AGENT_PROMPT`（包含工具使用指令）没拼接到用户自定义 persona 前面，导致 ChatAgent 不知道可以调工具\n\n## 修复\n- `src/workflow/executor/step_chat_agent.rs:138-167`：同时收集 TextDelta 和 ToolUse 事件\n- `src/workflow/executor/step_chat_agent.rs:62-77`：system_prompt = BASE_CHAT_AGENT_PROMPT + user_config\n\n## 验证方法\n设计一个 3 轮对话工作流让 ChatAgent 在终端中执行。修复前耗时 3 秒只输出文字，修复后耗时 2 分钟完成真实工具调用（desktop_windows_list → activate → input → screenshot × 3轮）。\n\n## 跨应用适用性\n任何 ChatAgent 无法调用工具的场景，优先排查：(1) 事件收集是否完整 (ToolUse + TextDelta)；(2) system_prompt 是否包含工具使用指令。",
+  "created": "2026-07-31T08:08:00.025419400+00:00",
+  "updated": "2026-07-31T08:08:00.025419400+00:00"
+}

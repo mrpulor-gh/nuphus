@@ -1,0 +1,5 @@
+[toolchain]
+# 锁版本：stable 浮动曾在 2026-08 引入 rustfmt 对纯空白行的 ICE（已清理源头，
+# 但锁版本防再漂移）。升级时显式改此处并跑全量 fmt+test 验证。
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

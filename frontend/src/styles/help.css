@@ -1,0 +1,101 @@
+@import './tokens.css';
+
+/* ═══════════════════════════════════════════
+   help.css — HelpPage 页面特有样式
+   骨架：ui/PageLayout Section
+   ═══════════════════════════════════════════ */
+
+.help-page {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 文档表格 ── */
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.help-table th {
+  text-align: left;
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-3);
+  padding: 5px var(--space-2);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.help-table td {
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+  padding: 5px var(--space-2);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.help-table tr:last-child td { border-bottom: none; }
+
+/* ── 命令/按键 ── */
+.help-cmd {
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--accent);
+}
+
+.help-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  background: var(--surface-3);
+  padding: 2px 6px;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--line-1);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+/* ── 说明文字 ── */
+.help-text {
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+  line-height: var(--leading-normal);
+  margin: 0 0 var(--space-2);
+}
+
+.help-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+  line-height: 1.8;
+}
+
+.help-list strong { color: var(--fg-1); font-weight: var(--fw-medium); }
+
+/* ── 运行模式 ── */
+.help-modes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.help-mode-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.help-mode-badge {
+  display: inline-block;
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+  padding: 1px 8px;
+  border-radius: var(--radius-1);
+  background: var(--accent-dim);
+  color: var(--accent);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.help-mode-desc {
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+}

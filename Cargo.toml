@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "src",
+    "src-tauri",
+    "src-tauri/crates/desktop-api",
+    "crates/nuphus-index",
+    "crates/nuphus-browser",
+]
+
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/mrpulor-gh/nuphus"
+homepage = "https://github.com/mrpulor-gh/nuphus"
+documentation = "https://github.com/mrpulor-gh/nuphus"
+
+# 跨 crate 依赖统一：新 crate 一律引用 `workspace = true`，
+# 升级版本只改此处一处（审计 P2-7）。
+[workspace.dependencies]
+xcap = "0.9.7"
+
+# ── 工作区级 Clippy 门禁配置 ──
+# 开源 CI 使用 `cargo clippy --workspace --all-targets -- -D warnings`。
+# 以下 lint 属于既有合理设计（桌面自动化/工作流引擎 API 参数天然多、
+# 元组类型为领域常态等），统一 allow，避免对合理代码产生噪音；
+# 其余 lint 保持默认 warn，由 CI 以 -D warnings 强制为 error。
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+len_without_is_empty = "allow"
+new_without_default = "allow"
+module_inception = "allow"
+manual_range_contains = "allow"
+manual_is_multiple_of = "allow"
+items_after_test_module = "allow"

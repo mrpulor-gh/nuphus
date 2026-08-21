@@ -1,0 +1,938 @@
+/* ═══════════════════════════════════════════
+   plugin-apps.css — 应用插件全屏画布面板 + 全屏宿主
+
+   画布视觉（对齐 workflow-canvas Background Lines gap=24）：
+   - 全屏覆盖层：fixed inset 0（对齐 wfc-page / plugin-shell 模式）
+   - 顶栏 + 左分类 rail + 右 24px 网格线画布
+   - app 图标卡片网格 + 全局唯一虚线 + 空槽
+   仅引用 tokens.css 语义 token（--surface-* / --fg-* / --line-* / --accent 系 /
+   --radius-* / --space-* / --fz-* / --fw-* / --dur-* / --ease-* / --shadow-* /
+   状态色 --warning/--error），禁写硬编码色值。
+   ═══════════════════════════════════════════ */
+
+/* ── 全屏面板骨架 ── */
+
+.plugin-apps-page {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-md);
+}
+
+/* ── 顶栏 ── */
+
+.plugin-apps-topbar {
+  flex-shrink: 0;
+  height: 52px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.plugin-apps-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.plugin-apps-brand-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-2);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.plugin-apps-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.plugin-apps-brand-title {
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  color: var(--fg-1);
+  line-height: 1.3;
+}
+
+.plugin-apps-brand-desc {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-apps-topbar-spacer {
+  flex: 1;
+}
+
+/* 顶栏搜索框 */
+.plugin-apps-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 220px;
+  padding: 0 var(--space-2);
+  height: 30px;
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+  border: 1px solid transparent;
+  color: var(--fg-3);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-search:focus-within {
+  border-color: var(--accent);
+  background: var(--surface-0);
+  color: var(--accent);
+}
+
+.plugin-apps-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+}
+
+.plugin-apps-search input::placeholder {
+  color: var(--fg-3);
+}
+
+.plugin-apps-search input:focus {
+  outline: none;
+}
+
+.plugin-apps-search-clear {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-search-clear:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.plugin-apps-search-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-apps-close {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-close:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.plugin-apps-close:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-apps-close:active {
+  background: var(--surface-active);
+}
+
+/* ── 主体：rail + 画布 ── */
+
+.plugin-apps-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* 左分类 rail */
+
+.plugin-apps-rail {
+  flex-shrink: 0;
+  width: 200px;
+  padding: var(--space-3) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface-1);
+  border-right: 1px solid var(--line-1);
+  overflow-y: auto;
+}
+
+.plugin-apps-rail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-rail-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.plugin-apps-rail-item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-apps-rail-item:active {
+  background: var(--surface-active);
+}
+
+.plugin-apps-rail-item--active,
+.plugin-apps-rail-item--active:hover {
+  background: var(--accent-dim);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
+}
+
+.plugin-apps-rail-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-apps-rail-count {
+  flex-shrink: 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-apps-rail-item--active .plugin-apps-rail-count {
+  color: var(--accent);
+}
+
+/* ── 陈列区容器（干净底色，app 图标是唯一视觉主角）── */
+
+.plugin-apps-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background-color: var(--surface-0);
+}
+
+.plugin-apps-notice {
+  padding: 6px 12px;
+  border-radius: var(--radius-2);
+  background: rgba(var(--warning-rgb), 0.12);
+  color: var(--warning);
+  font-size: var(--fz-xs);
+}
+
+.plugin-apps-empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+}
+
+.plugin-apps-error {
+  padding: var(--space-4);
+  color: var(--error);
+  font-size: var(--fz-sm);
+}
+
+/* ── 分类区 ── */
+
+.plugin-apps-category {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.plugin-apps-category-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.plugin-apps-category-name {
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-2);
+  letter-spacing: var(--ls-tight);
+}
+
+.plugin-apps-category-count {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: var(--space-6) var(--space-3);
+}
+
+/* ── app tile（启动台式：图标 + 名称；管理信息收 hover 浮层）── */
+
+.plugin-app-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-3);
+  background: transparent;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.plugin-app-tile:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-app-tile-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-4);
+  background: var(--surface-1);
+  border: 1px solid var(--line-1);
+  overflow: hidden;
+  transition: transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-app-tile:hover .plugin-app-tile-icon {
+  transform: scale(1.06);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-surface);
+}
+
+.plugin-app-tile:active .plugin-app-tile-icon {
+  transform: scale(0.98);
+}
+
+.plugin-app-tile-icon img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plugin-app-tile-icon-fallback {
+  color: var(--fg-3);
+}
+
+.plugin-app-tile--disabled .plugin-app-tile-icon {
+  opacity: 0.45;
+}
+
+/* 停用角标：图标右下小圆点（warning 语义） */
+.plugin-app-tile-offdot {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--warning);
+  border: 2px solid var(--surface-0);
+}
+
+.plugin-app-tile-name {
+  max-width: 96px;
+  font-size: var(--fz-xs);
+  color: var(--fg-1);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 名称行：名称 + 示例徽章同排居中；徽章不挤压名称省略行为 */
+.plugin-app-tile-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 108px;
+  padding: 0 2px;
+}
+
+.plugin-app-tile-name-row .plugin-app-tile-name {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.plugin-app-tile-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.plugin-app-tile--disabled .plugin-app-tile-name {
+  color: var(--fg-3);
+}
+
+/* ── 详情视图（点 tile 进入；普通用户看简介/打开，管理聚合于此）── */
+
+.plugin-detail {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.plugin-detail-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px var(--space-2);
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font-family: var(--font-ui);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-detail-back:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.plugin-detail-back:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-detail-back:active {
+  background: var(--surface-active);
+}
+
+.plugin-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.plugin-detail-icon {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-4);
+  background: var(--surface-1);
+  border: 1px solid var(--line-1);
+  overflow: hidden;
+}
+
+.plugin-detail-icon img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plugin-detail-headline {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.plugin-detail-name {
+  font-size: var(--fz-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  color: var(--fg-1);
+}
+
+.plugin-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 版本号（详情 meta + AppShellPage 顶栏共用） */
+.plugin-app-version {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.plugin-detail-author {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+.plugin-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+}
+
+.plugin-detail-actions-spacer {
+  flex: 1;
+}
+
+.plugin-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plugin-detail-section-title {
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-3);
+}
+
+.plugin-detail-desc {
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+  line-height: 1.6;
+}
+
+/* 官方示例说明行（详情页 sample=true 时显示；中性提示色，非区块标题） */
+.plugin-detail-sample {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: 1.6;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.plugin-detail-perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* agent.chat 权限明示警告（该权限让渡完整工具集，安装决策关键信息） */
+.plugin-detail-warning {
+  font-size: var(--fz-xs);
+  color: var(--danger, #dc2626);
+  line-height: 1.6;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger-border, rgba(220, 38, 38, 0.35));
+  border-radius: var(--radius-2);
+  background: var(--danger-bg, rgba(220, 38, 38, 0.06));
+}
+
+.plugin-detail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-1);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+.plugin-detail-id {
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* AppShellPage 顶栏图标（类名历史共用 .plugin-app-icon，作用域限定尺寸） */
+.plugin-shell-title .plugin-app-icon {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-1);
+  overflow: hidden;
+  color: var(--fg-3);
+}
+
+.plugin-shell-title .plugin-app-icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ── + 虚线空槽（全局唯一，陈列末尾；与 tile 同构）── */
+
+.plugin-apps-add-slot-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--line-2);
+  border-radius: var(--radius-4);
+  color: var(--fg-3);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-add-slot:hover .plugin-apps-add-slot-icon {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+  transform: scale(1.06);
+}
+
+.plugin-apps-add-slot:hover .plugin-app-tile-name {
+  color: var(--accent);
+}
+
+.plugin-apps-add-slot:active .plugin-apps-add-slot-icon {
+  transform: scale(0.98);
+}
+
+/* ── 已安装区空态引导（区块内嵌，非整页中央；空状态是一种设计）── */
+
+.plugin-apps-section-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-3);
+}
+
+.plugin-apps-section-empty-title {
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-2);
+}
+
+.plugin-apps-section-empty-desc {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  max-width: 360px;
+  text-align: center;
+}
+
+/* 窄屏降级：rail 收为更窄 */
+@media (max-width: 720px) {
+  .plugin-apps-rail {
+    width: 132px;
+  }
+
+  .plugin-apps-canvas {
+    padding: var(--space-4);
+  }
+}
+
+/* ═══════════════════════════════════════════
+   全屏宿主（AppShellPage）——保留不动
+   ═══════════════════════════════════════════ */
+
+.plugin-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+}
+
+.plugin-shell-topbar {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.plugin-shell-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.plugin-shell-name {
+  font-weight: var(--fw-medium);
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-shell-back,
+.plugin-shell-min {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-shell-back:hover,
+.plugin-shell-min:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.plugin-shell-back:focus-visible,
+.plugin-shell-min:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-shell-back:active,
+.plugin-shell-min:active {
+  background: var(--surface-active);
+}
+
+/* 最小化按钮 = 右侧操作位（返回在左、标题跟随，对齐工作流画布工具栏模式） */
+.plugin-shell-min {
+  margin-left: auto;
+}
+
+/* ── 最小化态：保持挂载仅隐藏（visibility 保 iframe 文档/JS 存活；禁 display:none 防重载）── */
+
+.plugin-shell--minimized {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── 悬浮恢复按钮（PluginRestoreFab）：输入框 dock 左边缘外侧 ──
+   dock 几何（.chat-input-dock）：bottom:20px; left:50%; translateX(-50%);
+   宽 = clamp(800px, 80%, 1280px) → 左边缘 = (100% - 宽)/2；按钮退到其外侧 12px。
+   bottom:32px ≈ 对齐 dock 内输入卡（bottom:20 + 常规卡高 ~60）的垂直中心。 */
+
+.plugin-restore-fab {
+  position: fixed;
+  left: calc((100% - clamp(800px, 80%, 1280px)) / 2 - 44px);
+  bottom: 36px;
+  z-index: 50;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-4);
+  background: var(--surface-1);
+  color: var(--fg-2);
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: var(--shadow-elevated);
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.plugin-restore-fab img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plugin-restore-fab-fallback {
+  color: var(--fg-3);
+}
+
+.plugin-restore-fab:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  color: var(--fg-1);
+  transform: scale(1.05);
+}
+
+.plugin-restore-fab:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-elevated), var(--shadow-focus);
+}
+
+.plugin-restore-fab:active {
+  transform: scale(0.96);
+}
+
+/* 窄窗降级（主窗口 minWidth 900）：dock 落入 min-width 区，按钮缩小防溢出屏幕 */
+@media (max-width: 960px) {
+  .plugin-restore-fab {
+    width: 28px;
+    height: 28px;
+    left: calc((100% - 800px) / 2 - 40px);
+    bottom: 38px;
+  }
+}
+
+.plugin-shell-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--surface-0);
+}
+
+.plugin-shell-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  background: var(--surface-0);
+}
+
+.plugin-shell-loading,
+.plugin-shell-error {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.plugin-shell-error {
+  color: var(--error);
+}
+/* ── 市场模块排序 tab（区块头右侧；Chip 模式：默认可见容器，悬停 accent 浅底）── */
+
+.plugin-apps-sort-tabs {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+}
+
+.plugin-apps-sort-tab {
+  padding: 3px var(--space-2);
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  font-family: var(--font-ui);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-apps-sort-tab:hover {
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+
+.plugin-apps-sort-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.plugin-apps-sort-tab:active {
+  background: var(--surface-active);
+}
+
+.plugin-apps-sort-tab--active,
+.plugin-apps-sort-tab--active:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
+}

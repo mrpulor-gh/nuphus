@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Nuphus Logo — 暂停键 · 定稿审视</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f5f5f7; color: #1a1a2e; padding: 48px 56px;
+    max-width: 1200px; margin: 0 auto;
+  }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: .02em; }
+  .sub { margin-top: 10px; font-size: 14px; color: #555; line-height: 1.8; max-width: 720px; }
+  .sub b { color: #1a1a2e; }
+  h2 { font-size: 15px; font-weight: 600; margin: 44px 0 18px; color: #888;
+       text-transform: uppercase; letter-spacing: .12em; }
+  .row { display: flex; gap: 40px; align-items: flex-end; flex-wrap: wrap; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .swatch { border-radius: 18px; display: flex; align-items: center; justify-content: center; }
+  .swatch.d { background: #1a1a2e; }
+  .swatch.l { background: #ffffff; border: 1px solid #e2e2e8; }
+  .lbl { font-size: 11px; color: #999; font-variant-numeric: tabular-nums; }
+  .big-wrap { display: flex; gap: 40px; flex-wrap: wrap; }
+  .big-wrap .swatch { width: 300px; height: 300px; border-radius: 32px; }
+
+  /* 语义注解 */
+  .annot { display: flex; gap: 56px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .annot .notes { display: flex; flex-direction: column; gap: 18px; max-width: 420px; }
+  .note-item { display: flex; gap: 14px; align-items: flex-start; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+  .note-item h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .note-item p { font-size: 13px; color: #666; line-height: 1.7; }
+
+  /* 应用场景 */
+  .appicon-plate { width: 160px; height: 160px; border-radius: 36px; background: #14142b;
+                   display: flex; align-items: center; justify-content: center;
+                   box-shadow: 0 12px 32px rgba(20,20,43,.25); }
+  .titlebar { width: 520px; background: #ffffff; border: 1px solid #e2e2e8; border-radius: 12px 12px 0 0;
+              display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  .titlebar.dark { background: #1e1e30; border-color: #2c2c44; }
+  .titlebar .t { font-size: 13px; color: #444; }
+  .titlebar.dark .t { color: #c8c8d8; }
+  .window-body { width: 520px; height: 130px; background: #fafafc; border: 1px solid #e2e2e8;
+                 border-top: none; border-radius: 0 0 12px 12px; }
+  .window-body.dark { background: #17171f; border-color: #2c2c44; }
+  .dots { margin-left: auto; display: flex; gap: 6px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #ddd; display: block; }
+  .titlebar.dark .dots i { background: #3a3a52; }
+</style>
+</head>
+<body>
+
+<h1>Nuphus Logo —「暂停键」定稿审视</h1>
+<div class="sub">
+  设计语义（大王钦定）：<b>双竖 = 暂停键 = 控制</b>，智能体对桌面的接管与收束；
+  <b>右下角开口 = 工作流的确定性规则之内，留有智能介入的余地</b>。
+  整体亦是一个智能体的抽象头像。单色深空蓝 <code>#1a1a2e</code>，暗底反白自适应。
+</div>
+
+<h2>一、主标 · 暗 / 亮底 @300</h2>
+<div class="big-wrap">
+  <div class="cell">
+    <span class="swatch l">
+      <svg width="260" height="260" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/></svg>
+    </span>
+    <div class="lbl">亮底 · #1a1a2e</div>
+  </div>
+  <div class="cell">
+    <span class="swatch d">
+      <svg width="260" height="260" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/></svg>
+    </span>
+    <div class="lbl">暗底 · #f5f5fa 反白</div>
+  </div>
+</div>
+
+<h2>二、语义注解</h2>
+<div class="annot">
+  <span class="swatch l" style="width:220px;height:220px;">
+    <svg width="190" height="190" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><circle cx="128" cy="128" r="52" stroke="#3b82f6" stroke-width="2" stroke-dasharray="5 5" fill="none" opacity=".55"/><circle cx="218" cy="196" r="34" stroke="#3b82f6" stroke-width="2" stroke-dasharray="5 5" fill="none" opacity=".55"/></svg>
+  </span>
+  <div class="notes">
+    <div class="note-item">
+      <span class="dot" style="background:#1a1a2e;"></span>
+      <div>
+        <h3>双竖 · 暂停键 · 控制</h3>
+        <p>两笔等粗竖线居中矗立，是播放/暂停符号里的「⏸」。智能体的本质不是代替人，而是<b>在人的授意下接管与暂停</b>——控制权的可视宣言。</p>
+      </div>
+    </div>
+    <div class="note-item">
+      <span class="dot" style="background:#3b82f6;"></span>
+      <div>
+        <h3>右下开口 · 确定性中的智能介入</h3>
+        <p>方框近乎闭合，唯独右下角断开。框是工作流的确定性规则，缺口是规则之内留给智能的入口——<b>确定性与智能的交界处</b>。</p>
+      </div>
+    </div>
+    <div class="note-item">
+      <span class="dot" style="background:#999;"></span>
+      <div>
+        <h3>整体 · 智能体头像</h3>
+        <p>外框为颅、双竖为目，远观是一张沉稳的面孔。作为应用图标与对话头像均成立。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>三、尺寸阶梯（16 → 96）</h2>
+<div class="row" style="align-items:center;"><div class="lbl" style="width:48px;">暗底</div><div class="row" id="ladder-d" style="gap:28px;align-items:center;"></div></div>
+<div class="row" style="align-items:center;margin-top:20px;"><div class="lbl" style="width:48px;">亮底</div><div class="row" id="ladder-l" style="gap:28px;align-items:center;"></div></div>
+
+<h2>四、应用场景</h2>
+<div class="row" style="align-items:flex-start;">
+  <div class="cell">
+    <div class="appicon-plate">
+      <svg width="104" height="104" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/></svg>
+    </div>
+    <div class="lbl">App Icon @128（深空底板）</div>
+  </div>
+  <div class="cell">
+    <div>
+      <div class="titlebar">
+        <svg width="18" height="18" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/></svg>
+        <span class="t">Nuphus — 丞相</span>
+        <span class="dots"><i></i><i></i><i></i></span>
+      </div>
+      <div class="window-body"></div>
+    </div>
+    <div class="lbl">TitleBar · 亮色 @18</div>
+  </div>
+  <div class="cell">
+    <div>
+      <div class="titlebar dark">
+        <svg width="18" height="18" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M80 180 L80 76 M176 180 L176 76" stroke="#f5f5fa" stroke-width="24" stroke-linecap="round" fill="none"/></svg>
+        <span class="t">Nuphus — 丞相</span>
+        <span class="dots"><i></i><i></i><i></i></span>
+      </div>
+      <div class="window-body dark"></div>
+    </div>
+    <div class="lbl">TitleBar · 暗色 @18</div>
+  </div>
+</div>
+
+<script>
+  function mark(fg, size) {
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">'
+      + '<path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+      + '<path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+      + '<path d="M80 180 L80 76 M176 180 L176 76" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+      + '</svg>';
+  }
+  var sizes = [16, 20, 28, 48, 64, 96];
+  function cell(fg, s) {
+    return '<div class="cell"><span class="swatch ' + (fg === '#f5f5fa' ? 'd' : 'l') + '" style="width:' + Math.max(s+16,40) + 'px;height:' + Math.max(s+16,40) + 'px;">' + mark(fg, s) + '</span><div class="lbl">' + s + '</div></div>';
+  }
+  document.getElementById('ladder-d').innerHTML = sizes.map(function(s){ return cell('#f5f5fa', s); }).join('');
+  document.getElementById('ladder-l').innerHTML = sizes.map(function(s){ return cell('#1a1a2e', s); }).join('');
+</script>
+
+</body>
+</html>

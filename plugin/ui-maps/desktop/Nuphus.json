@@ -1,0 +1,54 @@
+{
+  "app_name": "Nuphus",
+  "app_category": "desktop",
+  "updated_at": "2026-08-06T11:50:10.261618500+00:00",
+  "screens": {},
+  "experiences": [
+    {
+      "id": "panel-tour-loop",
+      "name": "面板巡览循环模式",
+      "keywords": [
+        "for_each",
+        "loop",
+        "预计算",
+        "坐标",
+        "面板巡览",
+        "Ctrl+K",
+        "遮罩"
+      ],
+      "tool_chain": [
+        "desktop_windows_list",
+        "script:python",
+        "desktop_window_activate",
+        "desktop_input",
+        "system_sleep",
+        "desktop_mouse"
+      ],
+      "summary": "Nuphus 面板巡览使用 for_each 循环模式，替代 N 个独立 seq。关键设计：(1) 初始化阶段一个 Python 脚本预计算全部面板的屏幕绝对坐标；(2) 循环内只用 params 管道 {{p | get \"field\"}}，不用 code 字段（resolve_vars_str 不支持下钻）；(3) 滚动步骤始终执行，非滚动面板 scroll=0 无害——避免循环内条件分支（eval_condition 的 var 只支持顶层变量查找）。可跨应用：任何需要遍历 UI 面板序列的桌面应用都适用此模式。",
+      "screen_ref": "settings-panel",
+      "workflow_id": "nuphus-tour-v3"
+    },
+    {
+      "id": "panel-tour-search",
+      "name": "搜索定位面板巡览",
+      "keywords": [
+        "搜索定位",
+        "命令面板",
+        "巡览",
+        "Ctrl+K",
+        "for_each",
+        "遮罩关闭",
+        "浏览器"
+      ],
+      "tool_chain": [
+        "desktop_windows_list",
+        "desktop_window_activate",
+        "desktop_input",
+        "desktop_mouse"
+      ],
+      "summary": "Nuphus 面板巡览：Ctrl+K 打开命令面板 → 输入面板名（完全匹配）→ Enter 进入，面板加载后点击左下角遮罩（close_x=wx+50, close_y=wy+wh-76）关闭。面板列表通过 init 步骤 Python 脚本解析 desktop_windows_list 结果预计算，for_each 循环遍历。所有面板（含浏览器）均为模态弹窗，同一套打开/关闭机制。关键判断：面板名在命令面板中可见即可搜索定位，新面板只需加入 init 脚本 names 列表（按命令面板显示顺序插入），无需新增步骤。可跨应用：凡命令面板支持搜索定位的桌面应用，面板名列表 + for_each 循环模式适用。",
+      "screen_ref": "nuphus-main",
+      "workflow_id": "nuphus-tour-v4"
+    }
+  ]
+}

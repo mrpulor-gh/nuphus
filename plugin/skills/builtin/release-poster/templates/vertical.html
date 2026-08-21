@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<!-- 竖版模板 1080×1920（9:16，抖音全屏）。替换占位同 horizontal.html。
+     关键差异：卡片纵向堆叠+均分空间+内容垂直居中；footer 居中且整体上移
+     （margin-bottom:190px + stage padding-bottom:72px ≈ 262px 底部安全区，
+     覆盖抖音标题/描述/工具栏遮挡区 200-250px）。官方 logo 段禁止改动。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1080px; height: 1920px; overflow: hidden; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    background: #0b0d14;
+    color: #eef1f8;
+    position: relative;
+  }
+  .glow { position: absolute; border-radius: 50%; filter: blur(130px); opacity: .35; }
+  .glow.a { width: 620px; height: 620px; background: #3b5bff; top: -240px; left: -200px; }
+  .glow.b { width: 560px; height: 560px; background: #00c2a8; bottom: -260px; right: -180px; }
+  .glow.c { width: 380px; height: 380px; background: #7a3bff; top: 820px; left: -160px; opacity: .22; }
+
+  /* 顶部安全区：抖音状态栏+导航tab遮挡约150px，padding-top 200px 规避，禁止减小 */
+  .stage { position: relative; z-index: 2; padding: 200px 72px 72px; height: 100%; display: flex; flex-direction: column; }
+
+  .brand { display: flex; align-items: center; gap: 20px; }
+  .brand svg.logo { width: 72px; height: 72px; border-radius: 16px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  .brand .name { font-size: 36px; font-weight: 700; letter-spacing: 1px; }
+  .brand .name span { color: #5b7cff; }
+  .badge {
+    margin-left: auto;
+    font-size: 28px; font-weight: 700;
+    padding: 13px 32px; border-radius: 999px;
+    background: linear-gradient(135deg, #3b5bff, #7a3bff);
+    box-shadow: 0 8px 32px rgba(59,91,255,.45);
+    letter-spacing: 1px;
+  }
+
+  .headline { margin-top: 84px; }
+  .headline h1 { font-size: 74px; font-weight: 800; line-height: 1.3; letter-spacing: 1px; }
+  .headline h1 em { font-style: normal; background: linear-gradient(90deg, #5b7cff, #00e0c2); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .headline p { margin-top: 24px; font-size: 31px; color: #9aa3bd; letter-spacing: .5px; }
+
+  .cards { margin-top: 76px; display: flex; flex-direction: column; gap: 40px; flex: 1; }
+  .card {
+    flex: 1;
+    border-radius: 28px; padding: 40px 44px;
+    background: rgba(255,255,255,.045);
+    border: 1px solid rgba(255,255,255,.09);
+    display: flex; align-items: center; gap: 32px;
+    position: relative; overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 6px; }
+  .card.c1::before { background: linear-gradient(180deg, #3b5bff, #6f8bff); }
+  .card.c2::before { background: linear-gradient(180deg, #00c2a8, #00e0c2); }
+  .card.c3::before { background: linear-gradient(180deg, #7a3bff, #a86fff); }
+  .card .icon {
+    flex-shrink: 0;
+    width: 96px; height: 96px; border-radius: 24px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .c1 .icon { background: rgba(59,91,255,.16); }
+  .c2 .icon { background: rgba(0,194,168,.14); }
+  .c3 .icon { background: rgba(122,59,255,.16); }
+  .card .icon svg { width: 52px; height: 52px; }
+  .card .text { display: flex; flex-direction: column; }
+  .card .title-row { display: flex; align-items: baseline; gap: 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 40px; font-weight: 800; letter-spacing: .5px; }
+  .card .en { font-size: 20px; color: #6b7490; letter-spacing: 1.5px; text-transform: uppercase; }
+  .card p { font-size: 28px; line-height: 1.6; color: #b9c0d6; }
+  .card p b { color: #fff; font-weight: 700; }
+
+  /* 底部：居中 + 上移，避开平台遮挡区（底部安全区 ≈262px） */
+  .footer { margin-top: 56px; margin-bottom: 190px; display: flex; flex-direction: column; gap: 22px; align-items: center; }
+  .install {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    font-size: 30px; color: #0b0d14; font-weight: 700;
+    background: #00e0c2; padding: 18px 38px; border-radius: 16px;
+    box-shadow: 0 8px 30px rgba(0,224,194,.35);
+  }
+  .footer .hint { font-size: 26px; color: #8a93ad; }
+</style>
+</head>
+<body>
+  <div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
+
+  <div class="stage">
+    <div class="brand">
+      <!-- 官方 logo：src-tauri/icons/icon-source.svg 原样嵌入，禁止重绘/改色/改路径 -->
+      <svg class="logo" viewBox="0 0 256 256" fill="none">
+        <rect x="0" y="0" width="256" height="256" rx="50" fill="#1a1a2e"/>
+        <g transform="translate(128 128) scale(0.7778) translate(-128 -128)"
+           stroke="#ffffff" stroke-width="24" stroke-linecap="round" fill="none">
+          <path d="M64 20 H192 A44 44 0 0 1 236 64 V156"/>
+          <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"/>
+          <path d="M80 180 L80 76 M176 180 L176 76"/>
+        </g>
+      </svg>
+      <div class="name">nuphus<span>-mcp</span></div>
+      <div class="badge">{{VERSION}}</div>
+    </div>
+
+    <div class="headline">
+      <h1>{{HEADLINE_A}}<br><em>{{HEADLINE_B_em}}</em>{{HEADLINE_C}}</h1>
+      <p>{{SUBTITLE}}</p>
+    </div>
+
+    <div class="cards">
+      <div class="card c1">
+        <div class="icon">{{CARD1_ICON_SVG}}</div>
+        <div class="text">
+          <div class="title-row"><h2>{{CARD1_TITLE}}</h2><div class="en">{{CARD1_EN}}</div></div>
+          <p>{{CARD1_DESC}}</p>
+        </div>
+      </div>
+      <div class="card c2">
+        <div class="icon">{{CARD2_ICON_SVG}}</div>
+        <div class="text">
+          <div class="title-row"><h2>{{CARD2_TITLE}}</h2><div class="en">{{CARD2_EN}}</div></div>
+          <p>{{CARD2_DESC}}</p>
+        </div>
+      </div>
+      <div class="card c3">
+        <div class="icon">{{CARD3_ICON_SVG}}</div>
+        <div class="text">
+          <div class="title-row"><h2>{{CARD3_TITLE}}</h2><div class="en">{{CARD3_EN}}</div></div>
+          <p>{{CARD3_DESC}}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="install">{{INSTALL}}</div>
+      <div class="hint">{{HINT}}</div>
+    </div>
+  </div>
+</body>
+</html>

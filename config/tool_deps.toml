@@ -1,0 +1,124 @@
+# 工具依赖关系配置
+# 格式: [group]
+#       tool_suffix = ["dep1", "dep2", ...]
+# 执行 tool_suffix 前，这些依赖工具建议已调用过
+# 缺失时仅注入提醒，不阻塞执行
+# 全名 = group_tool_suffix（如 [file] 下 read = ["FilesInfo"] → file_read 依赖 file_stat）
+
+[file]
+# 读文件前检查文件是否存在/类型
+read = ["FilesInfo"]
+# 写文件自动创建目录，无需手动依赖
+write = []
+# 编辑需要先读取以便观察上下文，同时确认文件存在
+edit = ["FilesInfo", "Read"]
+# 追加确认文件存在
+append = ["FilesInfo"]
+# 删除/复制/重命名/移动先确认文件存在
+delete = ["FilesInfo"]
+copy = ["FilesInfo"]
+rename = ["FilesInfo"]
+# 移除目录前先列出内容
+remove_dir = ["ListDir"]
+# 创建目录无需前置
+mkdir = []
+# 列出目录内容无需前置（但若需要元数据可用 stat）
+list_dir = []
+# 直接 stat 即可
+stat = []
+
+[search]
+# grep 搜索内容时最好先确认路径存在
+grep = ["FilesInfo"]
+# glob 搜索文件模式时建议从根路径开始确认
+glob = ["FilesInfo"]
+
+[system]
+info = []
+env_get = []
+env_set = []
+shell = []
+
+[process]
+list = []
+kill = ["process_list"]
+
+[schedule]
+cron = []
+
+[web]
+# 搜索无需前置
+search = []
+# 提取页面内容可以直接用 URL，不需要先搜索
+extract = []
+
+[memory]
+search = []
+recent = []
+stats = []
+query = []
+
+[vision]
+analyze = []
+
+[task]
+dispatch = []
+
+[desktop]
+# 鼠标操作：移动前需要知道当前位置或目标
+mouse_move = []
+mouse_click = ["desktop_mouse_move"]
+mouse_position = []
+mouse_drag = ["desktop_mouse_position"]
+mouse_scroll = []
+# 键盘操作
+keyboard_type = []
+keyboard_press = []
+keyboard_hotkey = []
+# 屏幕/截图
+screen_size = []
+screenshot = ["desktop_screen_size"]
+window_screenshot = ["desktop_window_activate"]
+# 窗口操作
+windows_list = []
+window_activate = ["desktop_windows_list"]
+window_info = ["desktop_window_activate"]
+window_move = ["desktop_window_activate"]
+window_resize = ["desktop_window_activate"]
+# OCR/剪贴板
+ocr = []
+clipboard_clean = []
+clipboard_write = []
+# 输入
+input = []
+
+[browser]
+# 导航是浏览器入口，必须先导航才能做其他操作
+navigate = []
+# 快照/截图需要先打开页面
+snapshot = ["browser_navigate"]
+screenshot = ["browser_navigate"]
+# 点击需要先看页面结构
+click = ["browser_snapshot"]
+# 输入需要先点击输入框
+type = ["browser_click"]
+# 内容提取需要先有页面
+extract = ["browser_navigate"]
+# 滚动需要先有页面
+scroll = ["browser_navigate"]
+# JS 执行需要先有页面
+evaluate = ["browser_navigate"]
+# 等待元素需要先有页面
+wait_for = ["browser_navigate"]
+# Cookie 操作需要先有页面
+cookies_get = ["browser_navigate"]
+cookies_set = ["browser_navigate"]
+# 标签页操作
+new_tab = []
+list_tabs = []
+switch_tab = ["browser_list_tabs"]
+# 回退/前进需要先导航过
+back = ["browser_navigate"]
+forward = ["browser_navigate"]
+# 关闭
+close = ["browser_navigate"]

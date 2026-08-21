@@ -1,0 +1,151 @@
+[package]
+name = "nuphus"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mrpulor-gh/nuphus"
+homepage = "https://github.com/mrpulor-gh/nuphus"
+description = "Nuphus - 协同共生桌面助手"
+authors = ["Nuphus Team"]
+
+[lib]
+name = "nuphus"
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+async-recursion = "1"
+
+# Web/API调用
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+base64 = "0.22"
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# URL编码
+urlencoding = "2"
+
+# UUID生成
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# 日期时间
+chrono = { version = "0.4", features = ["serde"] }
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# 错误处理
+thiserror = "2"
+anyhow = "1"
+
+# 文件系统
+dirs = "5"
+
+# 模式匹配
+glob = "0.3"
+ignore = "0.4"
+regex = "1"
+
+# HTML 解析（搜索引擎结果页面）
+scraper = "0.22"
+
+# 异步 trait
+async-trait = "0.1"
+
+# 流式处理
+futures-util = "0.3"
+
+# YAML 解析（用于 hooks 配置文件）
+serde_yaml = "0.9"
+
+# TOML 解析（用于模型配置）
+toml = "0.8"
+
+# 桌面控制基础设施（Win32 原生API）
+desktop-api = { path = "../src-tauri/crates/desktop-api" }
+
+# Windows API (client.rs 直接使用)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.56", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Memory",
+    "Win32_Graphics_Dwm",
+    "Win32_Security_Cryptography",
+] }
+
+# 截图工具（workspace 统一 0.9.7；0.0.14 旧版 Monitor::all API 兼容）
+xcap.workspace = true
+
+# 图像处理（截图 BMP/PNG，找图模板匹配）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+
+# ONNX Runtime (PaddleOCR)
+# ONNX Runtime（跨平台 ML 推理 — PP-OCR / Silero VAD / SenseVoice STT）
+ort = { version = "2.0.0-rc.9", features = ["load-dynamic"] }
+
+ndarray = "0.17"
+
+# Base64编码
+base64 = "0.22"
+bincode = "1"
+
+# Diff 计算
+similar = "2"
+
+# Hex编码（TTS音频解码器）
+hex = "0.4"
+
+# Chrome DevTools Protocol（浏览器自动化）— 已抽离到 nuphus-browser crate
+nuphus-browser = { path = "../crates/nuphus-browser" }
+
+
+# 知识库索引引擎
+nuphus-index = { path = "../crates/nuphus-index" }
+
+# Excel (.xlsx) 读取
+calamine = "0.26"
+
+# Excel (.xlsx) 写出 — 纯 Rust
+rust_xlsxwriter = "0.95"
+
+# 办公文档读取 (docx/pptx/odt/odp — ZIP + XML)
+zip = "2"
+
+# PDF 读取 — 纯 Rust
+lopdf = "0.34"
+
+# 中文分词（jieba 轻量级纯 Rust 实现）
+jieba-rs = "0.7"
+
+# HNSW 近似最近邻索引（语义搜索向量检索）
+instant-distance = "0.6"
+
+# SQLite 存储（bundled 编译，无需外部依赖）
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Candle（纯 Rust ML 框架，本地 Embedding 引擎 — 替代 ONNX Runtime）
+candle-core = "0.8"
+candle-transformers = "0.8"
+candle-nn = "0.8"
+# Tokenizer（HuggingFace tokenizer.json 加载，Candle 也使用此 crate）
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux X11 窗口管理 - 纯 Rust X11 协议实现
+x11rb = "0.13"
+
+[dev-dependencies]
+tokio-test = "0.4"

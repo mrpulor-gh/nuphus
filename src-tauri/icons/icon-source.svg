@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" fill="none">
+  <!-- 底板：整画布圆角（rx=50，face.d 14/72 比例），框内外同色 -->
+  <rect x="0" y="0" width="256" height="256" rx="50" fill="#1a1a2e"/>
+  <!-- 暂停键 · 开口壳（标按 56/72 缩进居中，与 face.d 基准一致） -->
+  <g transform="translate(128 128) scale(0.7778) translate(-128 -128)"
+     stroke="#ffffff" stroke-width="24" stroke-linecap="round" fill="none">
+    <path d="M64 20 H192 A44 44 0 0 1 236 64 V156"/>
+    <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"/>
+    <path d="M80 180 L80 76 M176 180 L176 76"/>
+  </g>
+</svg>

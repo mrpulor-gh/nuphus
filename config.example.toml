@@ -1,0 +1,143 @@
+# Nuphus 模型配置文件
+#
+# 复制为 config.toml 并填入你的 API Key：
+#   cp config.example.toml config.toml
+#
+# API Key 落盘安全：应用写入的 api_key 在 Windows 上经 DPAPI 加密存储
+# （格式 `enc:v1:<base64>`），读取端透明解密；本示例中的占位 key 为明文，
+# 首次通过应用保存后会自动转为密文。旧明文配置读取时原样兼容。
+#
+# 配置文件搜索优先级（src/config/mod.rs::load_registry）：
+#   1. <exe_dir>/config.toml
+#   2. <exe_dir>/nuphus.toml
+#   3. ./config.toml
+#   4. ./nuphus.toml
+#   5. ~/.config/nuphus/config.toml
+#   6. ~/.nuphus/config.toml
+#   7. <AppData>/nuphus/config.toml     (Windows 桌面版首次启动自动生成)
+#   8. 环境变量回退（DEEPSEEK_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / ...）
+
+# ──────────────────────────────────────────────────────────────────────
+# 默认模型
+#   取值必须是 [[providers.models]] 中定义的 id 或 alias 之一。
+# ──────────────────────────────────────────────────────────────────────
+model = "deepseek-v4-flash"
+
+# ───────���──────────────────────────────────────────────────────────────
+# Providers
+#   每个 provider = 一个 AI 厂商；可在 providers.models 中注册多个模型。
+#   11 个 Provider 使用 OpenAI Chat Completions 兼容协议（/chat/completions + Bearer Token）。
+#   Anthropic (Claude) 使用 Messages API（/v1/messages + x-api-key）。
+#   Kimi / Qwen / Zhipu 等通过 base_url + auth_header 适配各自 API。
+# ──────────────────────────────────────────────────────────────────────
+
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+base_url = "https://api.deepseek.com"
+# 推理深度（可选）：模型支持的 effort 级别之一。
+#   deepseek-v4-flash : "low" | "high" | "max"（默认 high）
+#   deepseek-v4-pro   : "high" | "max"
+# 不配置 = 不发送 reasoning_effort 参数，使用提供商默认行为（thinking 开启、effort=high）。
+# 注意：thinking 模式下 temperature/top_p 等参数被 API 忽略（不报错）。
+# reasoning_effort = "high"
+
+[[providers.models]]
+id = "deepseek-v4-flash"
+alias = ["deepseek", "default"]
+supports_streaming = true
+
+[[providers.models]]
+id = "deepseek-v4"
+alias = ["deepseek-pro"]
+supports_streaming = true
+
+[[providers.models]]
+id = "deepseek-v4-pro"
+alias = []
+context_window = 1000000
+supports_streaming = true
+
+[[providers]]
+name = "kimi"
+provider_type = "kimi"
+api_key = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+base_url = "https://api.kimi.com/coding/v1"
+
+[[providers.models]]
+id = "kimi-for-coding"
+alias = ["kimi", "coding"]
+supports_streaming = true
+
+[[providers]]
+name = "minimax"
+provider_type = "minimax"
+api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# base_url 省略 → 使用 ProviderType::default_base_url() 的默认值
+
+[[providers.models]]
+id = "MiniMax-M2.7"
+alias = ["minimax"]
+supports_streaming = true
+
+# ──────────────────────────────────────────────────────────────────────
+# 其他 Provider 模板（按需取消注释）
+# ──────────────────────────────────────────────────────────────────────
+
+# [[providers]]
+# name = "openai"
+# provider_type = "openai"
+# api_key = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# base_url = "https://api.openai.com/v1"
+#
+# [[providers.models]]
+# id = "gpt-4o"
+# alias = ["openai", "gpt"]
+# supports_streaming = true
+
+# [[providers]]
+# name = "anthropic"
+# provider_type = "anthropic"
+# api_key = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# base_url = "https://api.anthropic.com/v1"
+#
+# [[providers.models]]
+# id = "claude-sonnet-4-20250514"
+# alias = ["claude", "sonnet"]
+# supports_streaming = true
+
+# [[providers]]
+# name = "openrouter"
+# provider_type = "openrouter"
+# api_key = "sk-or-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# base_url = "https://openrouter.ai/api/v1"
+#
+# [[providers.models]]
+# id = "anthropic/claude-sonnet-4"
+# alias = ["claude-sonnet-or"]
+# supports_streaming = true
+
+# [[providers]]
+# name = "custom"
+# provider_type = "custom"
+# api_key = "your-api-key-here"
+# base_url = "https://your-custom-api.com/v1"
+#
+# [[providers.models]]
+# id = "custom-model"
+# alias = ["custom"]
+# supports_streaming = true
+
+# ──────────────────────────────────────────────────────────────────────
+# Capability 路由
+#   留空则使用 model 字段对应的主模型。
+#   vision : 视觉识别（截图理解、图像分析）
+#   stt    : 语音转文字
+#   tts    : 文字转语音
+# ──────────────────────────────────────────────────────────────────────
+
+[capabilities]
+vision = "gpt-4o"
+stt = ""
+tts = ""

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Nuphus 虚拟形象体系 — 全状态预览</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:#f5f5f7; color:#1a1a2e; padding:44px 52px; max-width:1240px; margin:0 auto; }
+  h1 { font-size:24px; font-weight:650; }
+  .sub { margin-top:8px; font-size:13px; color:#666; line-height:1.8; max-width:760px; }
+  h2 { font-size:14px; font-weight:600; margin:40px 0 16px; color:#888; text-transform:uppercase; letter-spacing:.12em; }
+
+  .matrix { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
+  .card { background:#fff; border:1px solid #e4e4ea; border-radius:16px; padding:20px; }
+  .card .faces { display:flex; gap:14px; justify-content:center; margin-bottom:14px; }
+  .face { width:72px; height:72px; border-radius:14px; display:flex; align-items:center; justify-content:center; }
+  .face.d { background:#1a1a2e; }
+  .face.l { background:#fafafc; border:1px solid #ececf2; }
+  .card h3 { font-size:14px; font-weight:600; }
+  .card .en { font-size:11px; color:#aaa; font-weight:400; margin-left:6px; }
+  .card p { font-size:12px; color:#777; line-height:1.7; margin-top:6px; }
+  .card .map { font-size:11px; color:#3b82f6; margin-top:8px; font-family:Consolas,monospace; }
+
+  .ladder-row { display:flex; gap:26px; align-items:flex-end; flex-wrap:wrap; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .lbl { font-size:11px; color:#999; }
+
+  table.spec { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.spec th { text-align:left; padding:10px 14px; color:#888; font-weight:600; border-bottom:2px solid #e4e4ea; }
+  table.spec td { padding:10px 14px; border-bottom:1px solid #eee; color:#444; line-height:1.6; }
+  table.spec td:first-child { font-weight:600; color:#1a1a2e; white-space:nowrap; }
+  code { background:#eeeef3; padding:1px 6px; border-radius:4px; font-size:11.5px; }
+
+  /* ============ 形象动效（与 avatar.css 同源） ============ */
+  /* 令牌：blink 180ms / breath 4.8s / work 1.1s / jump 600ms / sway 5s */
+  .nv-eye { transform-box:fill-box; }
+  .nv-whole { transform-box:fill-box; transform-origin:center; }
+
+  /* idle：呼吸 + 眨眼 */
+  @keyframes nvBreathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.016)} }
+  @keyframes nvBlink { 0%,91%,100%{transform:scaleY(1)} 94%{transform:scaleY(.08)} 97%{transform:scaleY(1)} }
+  .st-idle .nv-whole { animation:nvBreathe 4.8s ease-in-out infinite; }
+  .st-idle .nv-eye { transform-origin:center; animation:nvBlink 4.6s ease-in-out infinite; }
+
+  /* thinking：眼珠左右 + 头部轻摆 */
+  @keyframes nvLook { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-7px)} 60%{transform:translateX(7px)} }
+  @keyframes nvSway { 0%,100%{transform:rotate(0deg)} 30%{transform:rotate(-2.5deg)} 70%{transform:rotate(2.5deg)} }
+  .st-thinking .nv-whole { animation:nvSway 5s ease-in-out infinite; }
+  .st-thinking .nv-eye { animation:nvLook 2.8s ease-in-out infinite; }
+
+  /* working：双竖均衡器（相位错开） */
+  @keyframes nvEq { 0%,100%{transform:scaleY(.55)} 50%{transform:scaleY(1)} }
+  .st-working .nv-eye { transform-origin:bottom; animation:nvEq 1.1s ease-in-out infinite; }
+  .st-working .nv-eye.r { animation-delay:-.55s; }
+  .st-working .nv-whole { animation:nvBreathe 2.4s ease-in-out infinite; }
+
+  /* streaming：轻快起伏 + 频密眨眼 */
+  @keyframes nvBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+  @keyframes nvBlinkFast { 0%,82%,100%{transform:scaleY(1)} 88%{transform:scaleY(.08)} 94%{transform:scaleY(1)} }
+  .st-streaming .nv-whole { animation:nvBob 1.5s ease-in-out infinite; }
+  .st-streaming .nv-eye { transform-origin:center; animation:nvBlinkFast 2.6s ease-in-out infinite; }
+
+  /* confirm：目睁大 + 注意力脉冲 + 罕见慢眨眼 */
+  @keyframes nvPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.035)} }
+  @keyframes nvBlinkSlow { 0%,96%,100%{transform:scaleY(1)} 98%{transform:scaleY(.1)} }
+  .st-confirm .nv-whole { animation:nvPulse 2.2s ease-in-out infinite; }
+  .st-confirm .nv-eye { transform-origin:center; animation:nvBlinkSlow 6s ease-in-out infinite; }
+
+  /* success：笑眼弧 + 跃起（循环演示，实际触发一次后保持笑眼呼吸） */
+  @keyframes nvJump { 0%{transform:translateY(0) scale(1,1)} 12%{transform:translateY(2px) scale(1.06,.9)} 30%{transform:translateY(-14px) scale(.96,1.06)} 46%{transform:translateY(0) scale(1,1)} 54%{transform:translateY(1px) scale(1.03,.97)} 60%,100%{transform:translateY(0) scale(1,1)} }
+  .st-success .nv-whole { animation:nvJump 2.8s cubic-bezier(.34,1.56,.64,1) infinite; }
+
+  /* error：目扁平 + 摇头（周期性） */
+  @keyframes nvShake { 0%,100%{transform:rotate(0)} 4%{transform:rotate(-7deg)} 10%{transform:rotate(6deg)} 16%{transform:rotate(-4deg)} 22%{transform:rotate(2deg)} 28%{transform:rotate(0)} }
+  .st-error .nv-whole { animation:nvShake 3.2s ease-in-out infinite; }
+
+  /* sleep：闭目 + 深呼吸 */
+  @keyframes nvDeepBreath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.028)} }
+  .st-sleep .nv-whole { animation:nvDeepBreath 6s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    [class^="st-"] .nv-whole, [class^="st-"] .nv-eye { animation:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Nuphus 虚拟形象体系 — 全状态预览</h1>
+<div class="sub">
+  以身份 ICON 为脸：<b>框 = 颅，双竖 = 目，右下开口 = 气息出入的嘴部</b>。
+  单色纪律：情绪只用<b>运动</b>表达，永不变色。所有动效遵循动效令牌（见文末），
+  <code>prefers-reduced-motion</code> 下全部回退为静态姿态（目形本身仍传达状态）。
+</div>
+
+<h2>一、状态矩阵（暗 / 亮底 @72，动画实时播放）</h2>
+<div class="matrix" id="matrix"></div>
+
+<h2>二、Idle 尺寸阶梯（16 → 96，暗底）</h2>
+<div class="ladder-row" id="ladder"></div>
+
+<h2>三、状态机映射（Agent 运行时 → 形象状态）</h2>
+<table class="spec">
+  <tr><th>运行时事件</th><th>形象状态</th><th>说明</th></tr>
+  <tr><td><code>会话空闲</code></td><td>idle</td><td>默认。呼吸 + 每 ~4.6s 眨眼，存在感但不打扰</td></tr>
+  <tr><td><code>LLM 调用中（首个 token 前）</code></td><td>thinking</td><td>眼珠左右巡视 + 头部轻摆：「正在想」</td></tr>
+  <tr><td><code>工具执行中（desktop/shell/skill）</code></td><td>working</td><td>双竖变均衡器，相位错开：「正在动手」</td></tr>
+  <tr><td><code>流式输出中</code></td><td>streaming</td><td>轻快起伏 + 频密眨眼：「正在说」</td></tr>
+  <tr><td><code>等待用户确认/输入</code></td><td>confirm</td><td>目睁大 + 注意力脉冲：「在等你」</td></tr>
+  <tr><td><code>回合成功完成</code></td><td>success</td><td>跃起一次 + 笑眼弧保持 ~2s 后回落 idle</td></tr>
+  <tr><td><code>错误/重试耗尽</code></td><td>error</td><td>目扁平 + 摇头一次后保持：「没办成」，不变红</td></tr>
+  <tr><td><code>空闲超时（如 5 分钟）</code></td><td>sleep</td><td>闭目 + 深呼吸，任意交互唤醒回 idle</td></tr>
+</table>
+
+<h2>四、动效令牌（Motion Tokens）</h2>
+<table class="spec">
+  <tr><th>令牌</th><th>值</th><th>用途</th></tr>
+  <tr><td><code>--nv-blink</code></td><td>180ms / 周期 4.6s</td><td>眨眼：快闭快开，只占周期 6~9%，不催眠</td></tr>
+  <tr><td><code>--nv-breathe</code></td><td>4.8s ease-in-out，幅度 1.6%</td><td>呼吸：存在感下限，幅度克制</td></tr>
+  <tr><td><code>--nv-work</code></td><td>1.1s，双竖相位差 50%</td><td>执行节律： visibly busy，幅度 45%</td></tr>
+  <tr><td><code>--nv-bob</code></td><td>1.5s / ±5 单位</td><td>说话起伏</td></tr>
+  <tr><td><code>--nv-jump</code></td><td>600ms，squash &amp; stretch</td><td>成功跃起：先压后弹，卡通物理</td></tr>
+  <tr><td><code>--nv-shake</code></td><td>900ms，±7° 衰减</td><td>摇头：一次表达，不持续抱怨</td></tr>
+  <tr><td><code>--nv-sway</code></td><td>5s / ±2.5°</td><td>思考头部摆动</td></tr>
+</table>
+
+<script>
+const SHELL1 = 'M64 20 H192 A44 44 0 0 1 236 64 V156';
+const SHELL2 = 'M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20';
+
+// 目形变体（结构姿态：reduced-motion 下仍传达状态）
+const EYES = {
+  bar:    x => 'M' + x + ' 180 L' + x + ' 76',
+  wide:   x => 'M' + x + ' 190 L' + x + ' 66',
+  arc:    x => 'M' + (x-16) + ' 142 Q' + x + ' 114 ' + (x+16) + ' 142',
+  flat:   x => 'M' + x + ' 168 L' + x + ' 112',
+  closed: x => 'M' + x + ' 134 L' + x + ' 122',
+};
+
+const STATES = [
+  { k:'idle',      name:'待机',   en:'Idle',      eye:'bar',    desc:'呼吸 + 定期眨眼。存在感下限，不打扰。', map:'会话空闲' },
+  { k:'thinking',  name:'思考',   en:'Thinking',  eye:'bar',    desc:'眼珠左右巡视 + 头部轻摆：意图正在编译。', map:'LLM 调用中' },
+  { k:'working',   name:'执行',   en:'Working',   eye:'bar',    desc:'双竖变均衡器，相位错开：手正在桌面上动。', map:'工具执行中' },
+  { k:'streaming', name:'输出',   en:'Streaming', eye:'bar',    desc:'轻快起伏 + 频密眨眼：话正在说。', map:'流式输出中' },
+  { k:'confirm',   name:'待确认', en:'Confirm',   eye:'wide',   desc:'目睁大 + 注意力脉冲：决定权交还给你。', map:'等待用户确认' },
+  { k:'success',   name:'成功',   en:'Success',   eye:'arc',    desc:'跃起一次 + 笑眼弧：事办成了。', map:'回合成功' },
+  { k:'error',     name:'失败',   en:'Error',     eye:'flat',   desc:'目扁平 + 摇头：没办成，但不变红不指责。', map:'错误/重试耗尽' },
+  { k:'sleep',     name:'休眠',   en:'Sleep',     eye:'closed', desc:'闭目 + 深呼吸：久置休眠，一触即醒。', map:'空闲超时' },
+];
+
+function svgMarkup(state, fg, size) {
+  const eye = EYES[state.eye];
+  return '<svg class="st-' + state.k + '" width="' + size + '" height="' + size + '" viewBox="0 0 256 256" fill="none">'
+    + '<g class="nv-whole">'
+    + '<path d="' + SHELL1 + '" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+    + '<path d="' + SHELL2 + '" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+    + '<path class="nv-eye l" d="' + eye(80) + '" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+    + '<path class="nv-eye r" d="' + eye(176) + '" stroke="' + fg + '" stroke-width="24" stroke-linecap="round" fill="none"/>'
+    + '</g></svg>';
+}
+
+document.getElementById('matrix').innerHTML = STATES.map(s =>
+  '<div class="card">'
+  + '<div class="faces">'
+  + '<span class="face d">' + svgMarkup(s, '#f5f5fa', 64) + '</span>'
+  + '<span class="face l">' + svgMarkup(s, '#1a1a2e', 64) + '</span>'
+  + '</div>'
+  + '<h3>' + s.name + '<span class="en">' + s.en + '</span></h3>'
+  + '<p>' + s.desc + '</p>'
+  + '<div class="map">← ' + s.map + '</div>'
+  + '</div>'
+).join('');
+
+const idleState = STATES[0];
+document.getElementById('ladder').innerHTML = [16,20,28,48,64,96].map(sz =>
+  '<div class="cell"><span class="face d" style="width:' + Math.max(sz+14,38) + 'px;height:' + Math.max(sz+14,38) + 'px;">'
+  + svgMarkup(idleState, '#f5f5fa', sz) + '</span><div class="lbl">' + sz + '</div></div>'
+).join('');
+</script>
+
+</body>
+</html>

@@ -1,0 +1,20 @@
+/* ═══════════════════════════════════════════
+   设计系统入口 — 全局基础层聚合
+
+   2026-07-19 W6 架构治理：
+   - sidebar.css 已拆解删除（0 个 sidebar 类，名不副实）：
+     welcome-* → welcome.css（WelcomeScreen import）
+     onboarding-* → onboarding.css（OnboardingModal import）
+     cmd-palette-* → cmd-palette.css（CommandPalette import）
+     font-dict-* → ocr-dict.css（OcrDictionary import）
+     settings-input → ui-primitives.css
+     其余 38 个 settings-* 死类删除
+   - 页面级 CSS 由对应组件自行 import（Vite 代码分割）
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+@import './base.css';
+@import './effects.css';
+@import './ui-primitives.css';
+@import './page-layout.css';
+@import './components.css';
+@import './compact.css';

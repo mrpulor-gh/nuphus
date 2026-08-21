@@ -1,0 +1,16 @@
+/* Nuphus App Plugin 共享基础样式（宿主统一版本，经 /plugins-shared/base.css 伺服）
+ * 职责：插件 iframe 是独立文档，不加载主应用 CSS——此处对齐主应用的基础体验：
+ * 1. 细滚动条（与 frontend/src/styles/components.css 全局 6px 滚动条逐像素一致）
+ * 2. 盒模型 reset
+ * 颜色一律引用 tokens.css 语义 token（本文件不含 token 定义，需先 link tokens.css）。
+ */
+
+* { box-sizing: border-box; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--spark-muted); }
+
+/* Firefox 系（兜底，WebView2 走 webkit 规则） */
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }

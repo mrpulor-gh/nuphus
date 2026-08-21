@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nuphus://step-v2",
+  "title": "Nuphus Step V2 Schema",
+  "description": "所有 Step 的合法结构定义。AI 生成 workflow 时以此为唯一真相源，运行时以此为校验依据。",
+  "$defs": {
+
+    "VarRef": {
+      "description": "变量引用或字面量。{\"var\": \"name\"} 引用变量（name 支持点号路径，如 {\"var\": \"coords.need_scroll\"}）；纯字符串为字面量。",
+      "oneOf": [
+        { "type": "object", "required": ["var"], "properties": {
+          "var": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z_][a-zA-Z0-9_.]*$", "description": "变量名，支持点号路径下钻" }
+        }, "additionalProperties": false },
+        { "type": "string", "description": "字符串字面量（非变量引用）" }
+      ]
+    },
+
+    "OnError": {
+      "description": "失败策略。abort=终止工作流, skip=跳过继续, retry=重试, allow_codes=仅白名单退出码通过",
+      "oneOf": [
+        { "type": "string", "enum": ["abort", "skip"] },
+        { "type": "object", "required": ["retry"], "properties": {
+          "retry": { "type": "object", "required": ["max"], "properties": {
+            "max": { "type": "integer", "minimum": 1 },
+            "backoff_ms": { "type": "integer", "default": 500 },
+            "backoff_multiplier": { "type": "number", "default": 1.0 }
+          }, "additionalProperties": false }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["allow_codes"], "properties": {
+          "allow_codes": { "type": "object", "required": ["codes"], "properties": {
+            "codes": { "type": "array", "items": { "type": "integer" }, "description": "白名单退出码" }
+          }, "additionalProperties": false }
+        }, "additionalProperties": false }
+      ],
+      "default": "abort"
+    },
+
+    "Condition": {
+      "description": "条件表达式。key=操作符, value=参数",
+      "oneOf": [
+        { "type": "object", "required": ["equals"], "properties": {
+          "equals": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["not_equals"], "properties": {
+          "not_equals": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["contains"], "properties": {
+          "contains": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["starts_with"], "properties": {
+          "starts_with": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["regex"], "properties": {
+          "regex": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["not_empty"], "properties": {
+          "not_empty": { "$ref": "#/$defs/VarRef" }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["empty"], "properties": {
+          "empty": { "$ref": "#/$defs/VarRef" }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["gt"], "properties": {
+          "gt": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["lt"], "properties": {
+          "lt": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["gte"], "properties": {
+          "gte": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["lte"], "properties": {
+          "lte": { "type": "array", "items": { "$ref": "#/$defs/VarRef" }, "minItems": 2, "maxItems": 2 }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["always"], "properties": {
+          "always": { "type": "boolean", "const": true }
+        }, "additionalProperties": false }
+      ]
+    },
+
+    "Step": {
+      "type": "object",
+      "required": ["id", "name", "do"],
+      "properties": {
+        "id":          { "type": "string", "minLength": 1, "description": "步骤唯一标识" },
+        "name":        { "type": "string", "minLength": 1, "description": "人类可读名称" },
+        "description": { "type": "string", "default": "", "description": "步骤详细说明" },
+        "on_error":    { "$ref": "#/$defs/OnError" },
+        "capture":     { "type": "string", "description": "步骤输出存入此变量名" },
+        "timeout_secs":{ "type": "integer", "minimum": 1, "description": "步骤超时(秒)，不设则无限制" },
+        "do":          { "$ref": "#/$defs/Action" }
+      },
+      "additionalProperties": false
+    },
+
+    "Action": {
+      "description": "步骤动作。只有其中一个 key 可出现。未匹配任何已知类型的 key → Action::Custom 承接（当前版本 dispatch 返回 not yet supported）。",
+      "oneOf": [
+        { "$ref": "#/$defs/DoTool" },
+        { "$ref": "#/$defs/DoSeq" },
+        { "$ref": "#/$defs/DoLoop" },
+        { "$ref": "#/$defs/DoIf" },
+        { "$ref": "#/$defs/DoCall" },
+        { "$ref": "#/$defs/DoWait" },
+        { "$ref": "#/$defs/DoChat" },
+        { "$ref": "#/$defs/DoScript" },
+        { "$ref": "#/$defs/DoAssert" },
+        { "$ref": "#/$defs/DoMcp" },
+        { "$ref": "#/$defs/DoSleep" },
+        { "$ref": "#/$defs/DoBreak" },
+        { "$ref": "#/$defs/DoContinue" },
+        { "$ref": "#/$defs/DoCustom" }
+      ]
+    },
+
+    "DoTool": {
+      "description": "调用 Nuphus 工具",
+      "type": "object",
+      "required": ["tool"],
+      "properties": {
+        "tool": { "type": "string", "minLength": 1, "description": "工具名，如 desktop_mouse" },
+        "with": { "type": "object", "default": {}, "description": "工具参数" }
+      },
+      "additionalProperties": false
+    },
+
+    "DoSeq": {
+      "description": "顺序执行子步骤（容器）",
+      "type": "object",
+      "required": ["seq"],
+      "properties": {
+        "seq": { "type": "array", "items": { "$ref": "#/$defs/Step" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+
+    "DoLoop": {
+      "description": "循环执行子步骤。for_each=遍历数组, repeat=固定次数, until=条件循环。容器支持 on_error。",
+      "type": "object",
+      "required": ["loop"],
+      "properties": {
+        "loop": {
+          "type": "object",
+          "required": ["do"],
+          "oneOf": [
+            { "required": ["for_each"], "properties": {
+              "for_each": { "type": "object", "required": ["items", "as"], "properties": {
+                "items": { "$ref": "#/$defs/VarRef", "description": "要遍历的数组变量" },
+                "as": { "type": "string", "minLength": 1, "description": "迭代项变量名" }
+              }, "additionalProperties": false },
+              "max": { "type": "integer", "default": 100, "description": "最大迭代次数防止死循环" },
+              "do": { "type": "array", "items": { "$ref": "#/$defs/Step" } }
+            }, "additionalProperties": false },
+            { "required": ["repeat"], "properties": {
+              "repeat": { "type": "integer", "minimum": 1, "description": "固定循环次数" },
+              "max": { "type": "integer", "default": 100, "description": "最大迭代次数防止死循环" },
+              "do": { "type": "array", "items": { "$ref": "#/$defs/Step" } }
+            }, "additionalProperties": false },
+            { "required": ["until"], "properties": {
+              "until": { "$ref": "#/$defs/Condition", "description": "循环条件，满足时停止" },
+              "max": { "type": "integer", "default": 100, "description": "最大迭代次数防止死循环" },
+              "do": { "type": "array", "items": { "$ref": "#/$defs/Step" } }
+            }, "additionalProperties": false }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoIf": {
+      "description": "条件分支。容器支持 on_error。",
+      "type": "object",
+      "required": ["if"],
+      "properties": {
+        "if": {
+          "type": "object",
+          "required": ["condition", "then"],
+          "properties": {
+            "condition": { "$ref": "#/$defs/Condition" },
+            "then": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
+            "else": { "type": "array", "items": { "$ref": "#/$defs/Step" }, "default": [] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoCall": {
+      "description": "调用子工作流",
+      "type": "object",
+      "required": ["call"],
+      "properties": {
+        "call": { "type": "string", "minLength": 1, "description": "子工作流 ID" },
+        "with": { "type": "object", "default": {}, "description": "传入子工作流的参数" }
+      },
+      "additionalProperties": false
+    },
+
+    "DoWait": {
+      "description": "暂停等待用户操作",
+      "type": "object",
+      "required": ["wait"],
+      "properties": {
+        "wait": { "type": "string", "minLength": 1, "description": "向用户展示的提示信息" },
+        "auto": { "type": "array", "items": { "$ref": "#/$defs/Step" }, "description": "等待期间可选的自动执行步骤" }
+      },
+      "additionalProperties": false
+    },
+
+    "DoChat": {
+      "description": "LLM 决策节点（原 chat_agent）。在工作流中嵌入 LLM 推理能力。",
+      "type": "object",
+      "required": ["chat"],
+      "properties": {
+        "chat": { "type": "string", "minLength": 1, "description": "LLM 任务描述" },
+"with": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string", "description": "引用的 ChatAgentConfig ID" },
+            "screenshot": { "type": "boolean", "default": false, "description": "执行前截图注入上下文" },
+            "max_steps": { "type": "integer", "minimum": 1, "description": "最大推理轮数（缺省用 agent 配置）" },
+            "tools": { "type": "array", "items": { "type": "string" }, "description": "工具白名单" },
+            "knowledge": { "type": "array", "items": { "type": "string" }, "description": "知识库路径" },
+            "model": { "type": "string", "description": "内联模型名称（覆盖默认模型）" },
+            "model_display": { "type": "string", "description": "内联模型显示名称（展示用）" },
+            "temperature": { "type": "number", "description": "内联采样温度（覆盖默认）" },
+            "max_tokens": { "type": "integer", "minimum": 1, "description": "内联 max_tokens（覆盖默认）" },
+            "system_prompt": { "type": "string", "description": "内联 system prompt 覆盖" },
+            "persona": { "type": "string", "description": "内联人设覆盖" },
+            "goal": { "type": "string", "description": "内联任务目标覆盖" },
+            "constraints": { "type": "array", "items": { "type": "string" }, "description": "内联约束列表" },
+            "requirements": { "type": "array", "items": { "type": "string" }, "description": "内联操作规范列表" },
+            "max_iterations": { "type": "integer", "minimum": 1, "description": "内联 ReAct 最大轮数" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoScript": {
+      "description": "执行内联脚本",
+      "type": "object",
+      "required": ["script"],
+      "properties": {
+        "script": {
+          "type": "object",
+          "required": ["runtime", "code"],
+          "properties": {
+            "runtime": { "type": "string", "enum": ["python", "node", "ahk", "pwsh"] },
+            "code": { "type": "string", "minLength": 1 },
+            "cwd": { "type": "string", "description": "脚本工作目录（可选）" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoAssert": {
+      "description": "断言验证。条件不满足时以 message 报错。on_error=skip 变为非阻断校验。",
+      "type": "object",
+      "required": ["assert"],
+      "properties": {
+        "assert": {
+          "type": "object",
+          "required": ["condition"],
+          "properties": {
+            "condition": { "$ref": "#/$defs/Condition" },
+            "message": { "type": "string", "default": "断言失败", "description": "失败时的错误消息" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoMcp": {
+      "description": "MCP 协议工具调用",
+      "type": "object",
+      "required": ["mcp"],
+      "properties": {
+        "mcp": {
+          "type": "object",
+          "required": ["server", "tool"],
+          "properties": {
+            "server": { "type": "string", "minLength": 1, "description": "servers.yaml 中的 server key" },
+            "tool": { "type": "string", "minLength": 1, "description": "MCP tool 名称" },
+            "with": { "type": "object", "default": {}, "description": "tool 参数" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DoSleep": {
+      "description": "等待指定秒数",
+      "type": "object",
+      "required": ["sleep"],
+      "properties": {
+        "sleep": { "type": "number", "minimum": 0.1, "maximum": 3600 }
+      },
+      "additionalProperties": false
+    },
+
+    "DoBreak": {
+      "description": "跳出当前循环",
+      "type": "object",
+      "required": ["break"],
+      "properties": {
+        "break": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+
+    "DoContinue": {
+      "description": "跳过当前迭代",
+      "type": "object",
+      "required": ["continue"],
+      "properties": {
+        "continue": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+
+    "DoCustom": {
+      "description": "未知/自定义步骤类型。当前版本暂不支持，由 Action::Custom 承接（dispatch 返回 not yet supported）。",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "propertyNames": { "not": { "enum": ["tool","seq","loop","if","call","wait","chat","script","assert","mcp","sleep","break","continue"] } },
+      "additionalProperties": { "type": "object" }
+    }
+  }
+}

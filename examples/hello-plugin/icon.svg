@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Hello Nuphus">
+  <defs>
+    <linearGradient id="hello-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#hello-bg)"/>
+  <path d="M64 32c5 14 14 23 28 28-14 5-23 14-28 28-5-14-14-23-28-28 14-5 23-14 28-28z" fill="#ffffff" fill-opacity="0.95"/>
+  <circle cx="64" cy="64" r="7" fill="#8b5cf6" fill-opacity="0.25"/>
+</svg>

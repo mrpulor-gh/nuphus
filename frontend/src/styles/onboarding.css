@@ -1,0 +1,31 @@
+/* ═══════════════════════════════════════════
+   onboarding.css — OnboardingModal 首次配置引导样式
+   （自 sidebar.css 拆出）
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+.onboarding-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)}
+.onboarding-card{width:420px;max-width:90vw;max-height:85vh;overflow-y:auto;background:var(--bg-elevated,var(--surface-1));border:1px solid var(--glass-2);border-radius:16px;padding:28px;box-shadow:0 8px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:20px}
+.onboarding-header{text-align:center}
+.onboarding-header h2{font-size: var(--fz-2xl);font-weight:600;color:var(--spark-primary);margin:0}
+.onboarding-header p{font-size: var(--fz-md);color:var(--spark-muted);margin:6px 0 0}
+.onboarding-back{position:absolute;left:28px;top:28px;background:none;border:none;font-size: var(--fz-md);color:var(--spark-muted);cursor:pointer;padding:0}
+.onboarding-back:hover{color:var(--spark-primary)}
+.onboarding-header{position:relative}
+.onboarding-provider-list{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto}
+.onboarding-provider-btn{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--glass-0);border:1px solid var(--glass-1);border-radius:10px;cursor:pointer;transition:all var(--transition-fast);color:var(--spark-primary);font-size: var(--fz-lg);text-align:left;width:100%}
+.onboarding-provider-btn:hover{background:var(--glass-1);border-color:var(--accent);transform:translateY(-1px)}
+.onboarding-provider-name{font-weight:500}
+.onboarding-provider-model{font-size: var(--fz-xs);color:var(--spark-muted);font-family:var(--font-mono)}
+.onboarding-form{display:flex;flex-direction:column;gap:14px}
+.onboarding-label{display:flex;flex-direction:column;gap:6px;font-size: var(--fz-sm);color:var(--spark-muted);font-weight:500}
+.onboarding-input{width:100%;padding:10px 12px;background:var(--glass-0);border:1px solid var(--glass-2);border-radius:8px;color:var(--spark-primary);font-size: var(--fz-md);box-sizing:border-box;transition:border-color var(--transition-fast)}
+.onboarding-input:focus{outline:none}
+.onboarding-input::placeholder{color:var(--spark-tertiary)}
+.onboarding-error{font-size: var(--fz-sm);color:var(--error);padding:8px 12px;background:rgba(var(--error-rgb),.1);border-radius:6px}
+.onboarding-footer{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.onboarding-skip{background:none;border:none;font-size: var(--fz-sm);color:var(--spark-muted);cursor:pointer;padding:8px 12px;border-radius:6px}
+.onboarding-skip:hover{color:var(--spark-primary);background:var(--glass-0)}
+.onboarding-submit{padding:10px 28px;background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;font-size: var(--fz-lg);font-weight:500;cursor:pointer;transition:opacity var(--transition-fast)}
+.onboarding-submit:hover{opacity:.9}
+.onboarding-submit:disabled{opacity:.5;cursor:not-allowed}

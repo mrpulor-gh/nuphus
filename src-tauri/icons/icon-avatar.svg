@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" fill="none">
+  <!-- 圆形底板 -->
+  <circle cx="128" cy="128" r="128" fill="#1a1a2e"/>
+  <!-- 暂停键 · 开口壳（52%，圆形头像内充足留白） -->
+  <g transform="translate(128 128) scale(0.52) translate(-128 -128)"
+     stroke="#ffffff" stroke-width="24" stroke-linecap="round" fill="none">
+    <path d="M64 20 H192 A44 44 0 0 1 236 64 V156"/>
+    <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"/>
+    <path d="M80 180 L80 76 M176 180 L176 76"/>
+  </g>
+</svg>

@@ -1,0 +1,16 @@
+[package]
+name = "nuphus-index"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mrpulor-gh/nuphus"
+description = "Nuphus 知识库索引引擎"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 日志（复用项目已有的 tracing）
+tracing = "0.1"
+
+[lints]
+workspace = true

@@ -1,0 +1,86 @@
+/* 截图覆盖层样式。加载设计系统令牌（tokens.css）+ 按钮组件样式（compact.css），
+   否则 Button 组件的 compact-btn 类无定义 → 渲染成无样式原生按钮。 */
+@import '../styles/tokens.css';
+@import '../styles/compact.css';
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: transparent;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#root { width: 100%; height: 100%; position: relative; }
+
+/* ── 确认面板：玻璃拟态浮条，对齐设计系统（surface/line/radius/shadow）── */
+.capture-confirm {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .04) inset;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  animation: captureConfirmIn .18s var(--ease-out);
+}
+@keyframes captureConfirmIn {
+  from { opacity: 0; transform: translate(-50%, 8px) scale(.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+.capture-confirm-preview {
+  max-width: 280px;
+  max-height: 200px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line-3);
+  background: #000;
+}
+.capture-confirm-meta {
+  color: var(--fg-3);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+.capture-confirm-path {
+  color: var(--fg-5);
+  font-size: 11px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+.capture-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 2px;
+}
+.capture-confirm-hint {
+  color: var(--fg-5);
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+.capture-confirm-hint kbd {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--line-3);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface-inset);
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  margin: 0 1px;
+}

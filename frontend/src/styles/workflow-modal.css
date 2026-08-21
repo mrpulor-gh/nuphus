@@ -1,0 +1,234 @@
+@import './tokens.css';
+/* workflow-modal.css — WorkflowRunModal（wcf-* 自 planner.css 拆出） */
+/* ═══════════════════════════════════════
+   WorkflowRunModal — 工作流运行确认弹窗
+   ═══════════════════════════════════════ */
+
+.wcf-wrapper {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wcf-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 1;
+  transition: opacity .25s ease;
+}
+
+.wcf-backdrop.is-hidden { opacity: 0; }
+
+.wcf-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 720px;
+  max-width: 92vw;
+  max-height: 80vh;
+  background: var(--modal-bg);
+  border: 1px solid var(--glass-3);
+  border-radius: 16px;
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform .3s cubic-bezier(.16,1,.3,1), opacity .25s ease;
+  animation: wcfEnter .3s cubic-bezier(.16,1,.3,1);
+}
+
+@keyframes wcfEnter {
+  0% { opacity: 0; transform: translateY(8px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.wcf-content.is-closing {
+  transform: translateY(20px) scale(.97);
+  opacity: 0;
+}
+
+/* ── Header ── */
+.wcf-header {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--glass-1);
+  flex-shrink: 0;
+}
+
+.wcf-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wcf-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  color: var(--spark-primary);
+  letter-spacing: -.2px;
+}
+
+.wcf-meta {
+  font-size: var(--fz-xs);
+  color: var(--spark-muted);
+  margin-top: 1px;
+}
+
+/* ── Body ── */
+.wcf-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wcf-body::-webkit-scrollbar { width: 4px; }
+.wcf-body::-webkit-scrollbar-track { background: transparent; }
+.wcf-body::-webkit-scrollbar-thumb { background: var(--glass-2); border-radius: 2px; }
+
+/* ── Step Card ── */
+.wcf-step-card {
+  background: var(--glass-0);
+  border-radius: 10px;
+  border: 1px solid var(--glass-1);
+  overflow: hidden;
+  transition: border-color .2s ease;
+}
+
+.wcf-step-card.has-children {
+  border-color: rgba(var(--accent-rgb), .1);
+}
+
+.wcf-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s ease;
+}
+
+.wcf-step-header:hover {
+  background: var(--glass-1);
+}
+
+.wcf-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--spark-muted);
+  flex-shrink: 0;
+  transition: transform .2s ease;
+}
+
+.wcf-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  margin-left: 6px;
+  margin-right: 6px;
+}
+
+.wcf-step-name {
+  flex: 1;
+  font-size: var(--fz-lg);
+  font-weight: 500;
+  color: var(--spark-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wcf-badge-intervention {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(var(--warning-rgb), .15);
+  color: var(--warning);
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+/* ── Children ── */
+.wcf-children {
+  border-top: 1px solid var(--glass-1);
+  padding: 8px 14px 10px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(var(--accent-rgb), .03);
+}
+
+.wcf-child-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wcf-child-index {
+  font-size: var(--fz-sm);
+  font-weight: 500;
+  color: var(--spark-muted);
+  font-family: var(--font-mono);
+  min-width: 16px;
+  flex-shrink: 0;
+}
+
+.wcf-child-input {
+  flex: 1;
+  border: 1px solid var(--glass-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: var(--fz-md);
+  font-family: inherit;
+  color: var(--spark-primary);
+  background: var(--void-input);
+  outline: none;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.wcf-child-input::placeholder {
+  color: var(--spark-dim);
+}
+
+.wcf-loop-info {
+  font-size: 10px;
+  color: var(--spark-muted);
+  font-family: var(--font-mono);
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--glass-1);
+  margin-top: 4px;
+}
+
+/* ── Footer ── */
+.wcf-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--glass-1);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.wcf-footer-left,
+.wcf-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

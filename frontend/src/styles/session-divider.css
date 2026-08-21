@@ -1,0 +1,103 @@
+/* ═══════════════════════════════════════════
+   session-divider.css — Refine 会话分隔符 v3
+
+   采用消息气泡 DOM 模式，与 ChatPanel 视觉一致。
+   .message-bubble.refine — 全宽，Markdown 渲染。
+   Header 复用 .message-label.assistant + .message-time 样式。
+
+   Token 约定: tokens.css 语义层
+   ═══════════════════════════════════════════ */
+
+/* ── 全宽消息气泡 ── */
+.message-bubble.refine {
+  max-width: 100% !important;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 !important;
+  border-radius: var(--radius-3);
+  background: var(--msg-assistant-bg);
+  border: 1px solid var(--border-secondary);
+  padding: 16px 24px;
+  cursor: default;
+  animation: msgAssistantIn 0.2s ease-out;
+}
+
+/* Header 可点击折叠 */
+.message-bubble.refine .message-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.message-bubble.refine .message-header:hover {
+  opacity: 0.85;
+}
+
+/* ── 折叠箭头 ── */
+.refine-header-toggle {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.5;
+  transition: transform var(--dur-fast) var(--ease-out);
+  color: var(--fg-2);
+  margin-left: auto;
+}
+
+.refine-header-toggle.expanded {
+  transform: rotate(180deg);
+}
+
+/* ── 流式指示点（放在 message-time 区域内） ── */
+.refine-streaming-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: refinePulse 1.2s ease-in-out infinite;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+@keyframes refinePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* ── Content 展开/折叠 ── */
+.message-content.refine {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.message-content.refine.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+}
+
+.message-content.refine.expanded {
+  max-height: 2000px;
+  opacity: 1;
+  padding: var(--space-2) 0 0 0;
+}
+
+.message-content.refine.streaming {
+  max-height: none;
+  opacity: 1;
+}
+
+/* ── 流式状态边框高亮 ── */
+.message-bubble.refine.refine-streaming {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.12);
+}
+
+/* ── Refine Modal ── */
+.refine-modal-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.refine-usage-pct {
+  font-size: var(--fz-sm); font-family: var(--font-mono); color: var(--fg-1);
+}
+.refine-usage { margin-bottom: var(--space-2); }

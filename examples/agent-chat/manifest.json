@@ -1,0 +1,14 @@
+{
+  "id": "com.nuphus.agent-chat",
+  "name": "Agent 问答台",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "description": "官方示例：插件版 Agent 对话，演示插件如何调用 Nuphus AI 能力",
+  "sample": true,
+  "author": "Nuphus Team",
+  "category": "ai",
+  "minHost": "0.1.0",
+  "permissions": ["agent.chat", "kv", "theme.get"],
+  "sidecar": null
+}

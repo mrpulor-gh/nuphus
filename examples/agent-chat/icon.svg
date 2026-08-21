@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Agent 问答台">
+  <defs>
+    <linearGradient id="chat-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#chat-bg)"/>
+  <path d="M64 34c-18 0-32 12-32 27 0 8 4 15 11 20l-3 12 13-7c3 1 7 2 11 2 18 0 32-12 32-27S82 34 64 34z" fill="#ffffff"/>
+  <circle cx="50" cy="61" r="5" fill="#8b5cf6"/>
+  <circle cx="64" cy="61" r="5" fill="#8b5cf6"/>
+  <circle cx="78" cy="61" r="5" fill="#8b5cf6"/>
+</svg>

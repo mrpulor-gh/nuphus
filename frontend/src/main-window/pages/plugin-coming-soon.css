@@ -1,0 +1,115 @@
+/* plugin-coming-soon.css — 插件市场筹备提示弹窗内容（市场体系不开源阶段） */
+/* 视觉结构：L1 状态区（居中）→ L2 双说明卡片（左对齐）→ L3 GitHub 行动按钮 */
+
+.plugin-coming-soon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-2) var(--space-4);
+}
+
+/* ── L1 状态区 ── */
+.plugin-coming-soon-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plugin-coming-soon-icon {
+  color: var(--accent);
+}
+
+.plugin-coming-soon-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  color: var(--fg-1);
+  line-height: 1.5;
+  text-align: center;
+  max-width: 340px;
+  margin: 0;
+}
+
+/* ── L2 说明卡片区 ── */
+.plugin-coming-soon-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 380px;
+}
+
+.plugin-coming-soon-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-4);
+  text-align: left;
+}
+
+.plugin-coming-soon-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-2);
+  background: var(--accent-dim);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.plugin-coming-soon-card-body {
+  min-width: 0;
+}
+
+.plugin-coming-soon-card-title {
+  font-size: var(--fz-md);
+  font-weight: 600;
+  color: var(--fg-1);
+  line-height: 1.5;
+}
+
+.plugin-coming-soon-card-desc {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  line-height: 1.7;
+  margin: var(--space-1) 0 0;
+}
+
+/* ── L3 行动区（GitHub 链接按钮化）── */
+.plugin-coming-soon-github {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-3);
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  font-weight: 500;
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.plugin-coming-soon-github:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.plugin-coming-soon-github:active {
+  background: rgba(var(--accent-rgb), 0.2);
+}
+
+.plugin-coming-soon-github:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}

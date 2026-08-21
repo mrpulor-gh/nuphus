@@ -1,0 +1,76 @@
+/* ═══════════════════════════════════════════
+   approval.css — ApprovalModal（安全审批弹窗）
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 结果态 ── */
+.approval-result { padding: 40px 28px; text-align: center; }
+.approval-result-icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  margin: 0 auto var(--space-4);
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fz-2xl);
+}
+.approval-result-icon--ok {
+  background: rgba(var(--success-rgb), .1); color: var(--success);
+}
+.approval-result-icon--neutral {
+  background: var(--surface-3); color: var(--fg-4);
+}
+.approval-result-title {
+  font-size: var(--fz-xl); color: var(--fg-1);
+  font-weight: var(--fw-semibold); margin-bottom: 6px;
+}
+.approval-result-desc {
+  font-size: var(--fz-md); color: var(--fg-3); line-height: var(--leading-normal);
+}
+.approval-close-btn { margin-top: var(--space-6); }
+
+/* ── 审批态 ── */
+.approval-eyebrow {
+  font-size: var(--fz-sm); font-weight: var(--fw-medium);
+  letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); opacity: .8;
+}
+.approval-title { font-size: var(--fz-xl); font-weight: var(--fw-semibold); color: var(--fg-1); }
+.approval-desc {
+  padding: var(--space-2) var(--space-6) var(--space-4);
+  font-size: var(--fz-md); color: var(--fg-3); line-height: var(--leading-normal);
+}
+.approval-content {
+  margin: 0 var(--space-6) var(--space-4);
+  background: var(--surface-2);
+  border-radius: var(--radius-3);
+  padding: var(--space-4) 18px;
+  font-size: var(--fz-lg); color: var(--fg-1);
+  line-height: 1.7; white-space: pre-wrap;
+  border: 1px solid var(--line-1);
+}
+.approval-tenet {
+  margin: 0 var(--space-6);
+  padding: 10px 14px;
+  background: var(--accent-dim);
+  border-radius: var(--radius-3);
+  font-size: var(--fz-sm); color: var(--fg-3);
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.approval-tenet-dot { opacity: .5; font-size: 10px; }
+.approval-actions {
+  display: flex; gap: 10px;
+  padding: var(--space-4) var(--space-6) var(--space-5);
+}
+.approval-actions > * { flex: 1; justify-content: center; }
+.approval-hints {
+  display: flex; justify-content: center; gap: var(--space-5);
+  padding: 0 var(--space-6) var(--space-4);
+  font-size: var(--fz-xs); color: var(--fg-5);
+  font-family: var(--font-mono);
+}
+
+/* header 定制：纵向布局 */
+.compact-header--stacked {
+  padding: var(--space-5) var(--space-6) 4px;
+  flex-direction: column; align-items: flex-start; gap: 4px;
+}
+/* 审批弹窗层级（低于 UserInputPrompt 9999，高于普通 compact 150） */
+.approval-overlay { z-index: 120; }

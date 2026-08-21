@@ -1,0 +1,369 @@
+@import './tokens.css';
+
+/* ═══════════════════════════════════════
+   PlannerModal — 计划弹窗
+   ═══════════════════════════════════════ */
+
+.pm-wrapper {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 1;
+  transition: opacity .25s ease;
+}
+
+.pm-backdrop.is-hidden { opacity: 0; }
+
+.pm-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 620px;
+  max-width: 92vw;
+  max-height: 75vh;
+  background: var(--modal-bg);
+  border: 1px solid var(--glass-3);
+  border-radius: 16px;
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform .3s cubic-bezier(.16,1,.3,1), opacity .25s ease;
+  animation: pmEnter .3s cubic-bezier(.16,1,.3,1);
+}
+
+@keyframes pmEnter {
+  0% { opacity: 0; transform: translateY(8px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pm-content.is-closing {
+  transform: translateY(20px) scale(.97);
+  opacity: 0;
+}
+
+/* ── Header ── */
+.pm-header {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--glass-1);
+  flex-shrink: 0;
+}
+
+.planner-header-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  color: var(--spark-primary);
+  letter-spacing: -.2px;
+  margin-bottom: 4px;
+}
+
+.pm-header-meta {
+  display: flex;
+  gap: 12px;
+  font-size: var(--fz-sm);
+  color: var(--spark-muted);
+}
+
+.pm-header-status { font-weight: 500; }
+.pm-header-status.is-active { color: var(--success); }
+.pm-header-status.is-archived { color: var(--spark-muted); }
+
+/* ── Body ── */
+.planner-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.planner-body::-webkit-scrollbar { width: 4px; }
+.planner-body::-webkit-scrollbar-track { background: transparent; }
+.planner-body::-webkit-scrollbar-thumb { background: var(--glass-2); border-radius: 2px; }
+
+/* ── Requirement Card ── */
+.pm-req-card {
+  background: var(--glass-0);
+  border-radius: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--glass-1);
+}
+
+.pm-req-label {
+  font-size: var(--fz-xs);
+  color: var(--spark-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  margin-bottom: 6px;
+}
+
+.pm-req-text {
+  font-size: var(--fz-lg);
+  color: var(--spark-primary);
+  line-height: 1.6;
+}
+
+/* ── Context Card ── */
+.pm-context-card {
+  background: rgba(var(--accent-rgb), .04);
+  border-radius: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(var(--accent-rgb), .08);
+}
+
+.pm-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pm-context-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pm-context-title {
+  font-size: var(--fz-sm);
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+
+.planner-context-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), .4);
+  animation: contextDotPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes contextDotPulse {
+  0%, 100% { opacity: .7; box-shadow: 0 0 5px rgba(var(--accent-rgb), .35); }
+  40% { opacity: 1; box-shadow: 0 0 12px rgba(var(--accent-rgb), .6); }
+  70% { opacity: .85; box-shadow: 0 0 8px rgba(var(--accent-rgb), .4); }
+}
+
+.planner-context-text {
+  font-size: var(--fz-md);
+  color: var(--spark-tertiary);
+  line-height: 1.6;
+  background: var(--glass-0);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-1);
+}
+
+/* ── Progress ── */
+.pm-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--spark-tertiary);
+  letter-spacing: .3px;
+}
+
+.pm-progress-stats {
+  display: flex;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.pm-stat-inprogress { color: var(--accent); }
+.pm-stat-done { color: var(--success); }
+.pm-stat-failed { color: var(--error); }
+
+
+/* ═══════════════════════════════════════
+   PlanTaskCard
+   ═══════════════════════════════════════ */
+
+.ptc-card {
+  background: var(--glass-0);
+  border-radius: 10px;
+  border: 1px solid var(--glass-1);
+  padding: 14px 16px;
+  transition: border-color .3s ease, box-shadow .3s ease;
+}
+
+.ptc-card.is-in_progress {
+  border-color: rgba(var(--accent-rgb), .25);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), .08);
+}
+
+.ptc-card.is-completed {
+  border-color: rgba(var(--success-rgb), .15);
+  opacity: .75;
+}
+
+.ptc-card.is-failed {
+  border-color: rgba(var(--error-rgb), .2);
+  box-shadow: 0 0 12px rgba(var(--error-rgb), .04);
+}
+
+.ptc-card.is-cancelled {
+  border-color: var(--glass-1);
+  opacity: .5;
+}
+
+.ptc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ptc-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ptc-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Status icon ── */
+.ptc-status {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-accent);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: background .35s ease, box-shadow .35s ease;
+}
+
+.ptc-status.is-pending { background: var(--glass-2); }
+.ptc-status.is-in_progress {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), .4);
+  animation: ptcPulse 2s ease-in-out infinite;
+}
+.ptc-status.is-completed {
+  background: var(--success);
+  animation: ptcPop .35s ease-out;
+}
+.ptc-status.is-failed {
+  background: var(--error);
+  box-shadow: 0 0 6px rgba(var(--error-rgb), .3);
+}
+.ptc-status.is-cancelled {
+  background: var(--glass-2);
+  opacity: .5;
+}
+
+@keyframes ptcPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(var(--accent-rgb), .4), 0 0 20px rgba(var(--accent-rgb), .08); }
+  40% { box-shadow: 0 0 14px rgba(var(--accent-rgb), .55), 0 0 32px rgba(var(--accent-rgb), .15); }
+  70% { box-shadow: 0 0 10px rgba(var(--accent-rgb), .45), 0 0 24px rgba(var(--accent-rgb), .1); }
+}
+
+@keyframes ptcPop {
+  0% { transform: scale(.5); opacity: 0; }
+  40% { transform: scale(1.3); }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ── Priority badge ── */
+.ptc-priority {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.ptc-priority.is-high {
+  background: rgba(var(--error-rgb), .15);
+  color: var(--error);
+}
+
+.ptc-priority.is-medium {
+  background: rgba(var(--warning-rgb), .15);
+  color: var(--warning);
+}
+
+.ptc-priority.is-low {
+  background: var(--glass-1);
+  color: var(--spark-muted);
+}
+
+/* ── Task name ── */
+.ptc-name {
+  color: var(--spark-primary);
+  font-weight: 600;
+  font-size: var(--fz-lg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Understanding text ── */
+.ptc-understanding {
+  color: var(--spark-secondary);
+  font-size: var(--fz-md);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+/* (Edit Overlay removed — user editing during execution is not feasible) */
+
+/* ═══════════════════════════════════════
+   TaskBubble — 左侧任务光点链
+   ═══════════════════════════════════════ */
+
+/* ═══════════════════════════════════════
+   TaskTrack — 右侧任务跟踪面板
+   ═══════════════════════════════════════ */
+
+.task-track {
+  position: fixed;
+  right: 24px;
+  bottom: 180px;
+  z-index: 50;
+  width: 230px;
+  max-height: 500px;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg, rgba(14,14,22,.85));
+  border: 1px solid var(--glass-3);
+  border-radius: 12px;
+  box-shadow: var(--shadow-elevated);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 12px;
+  animation: taskTrackIn .35s cubic-bezier(.16,1,.3,1);
+}
+
+@keyframes taskTrackIn {
+  0% { opacity: 0; transform: translateX(12px) scale(.97); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}

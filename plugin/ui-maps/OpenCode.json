@@ -1,0 +1,26 @@
+{
+  "app": "OpenCode",
+  "version": "2026-08-02",
+  "window": {
+    "process": "opencode.exe",
+    "parent_process": "powershell.exe",
+    "locate": "process_list opencode.exe → 查父进程 powershell → MainWindowHandle（skill: agent-orchestration §二）",
+    "default_pos": { "x": 190, "y": 213 },
+    "default_size": { "w": 852, "h": 727 },
+    "title_note": "运行时标题会被 opencode 覆写为任务名（如『OC | 自我介绍』），不能靠标题匹配"
+  },
+  "interact": {
+    "description": "向 opencode 发送指令的路径（探索验证 2026-08-02，指令：请简单介绍一下你自己）",
+    "steps": [
+      { "step": 1, "action": "activate", "detail": "desktop_window_activate(hwnd)" },
+      { "step": 2, "action": "input", "detail": "desktop_input type 指令文本，send enter（opencode 终端直接输入+回车）" },
+      { "step": 3, "action": "wait", "detail": "5-8 秒（AI 响应时间，探索实测 3.5s + 渲染）" },
+      { "step": 4, "action": "verify", "detail": "窗口截图 + vision 读取回答内容" }
+    ],
+    "verified_response": "我是 opencode，一个交互式 CLI 工具，帮你完成软件工程任务——比如修 bug、加功能、重构代码、解释代码等。我可以搜索和编辑代码、执行命令、运行测试。当前运行在 Windows 上，基于 deepseek-v4-flash 模型。"
+  },
+  "verify_anchor": {
+    "desc": "opencode 响应完成：窗口出现回答文本 + 状态栏显示模型名与耗时",
+    "note": "状态栏含『DeepSeek V4 Flash』与耗时（如 3.5s）"
+  }
+}

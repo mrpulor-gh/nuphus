@@ -1,0 +1,139 @@
+/* ════════════════════════════════════════════════════════════════
+   mobile.css — 移动端布局覆写
+    通过 @media (max-width: 800px) 触发的样式，
+    隐藏桌面独占元素、收窄间距、调整输入/消息区域尺寸。
+    ════════════════════════════════════════════════════════════════ */
+
+/* ── 根容器使用 dvh 替代 vh，让键盘弹出时容器自动缩到可见区域 ── */
+.app-shell { height: 100dvh !important; }
+
+/* ── 桌面端默认隐藏移动端控件 ── */
+.title-bar-right.title-bar-mobile-controls { display: none !important; }
+.hamburger-backdrop { display: none; }
+.hamburger-menu { display: none; position: absolute; top: 100%; right: 8px; background: var(--void-primary); border: 1px solid var(--glass-2); border-radius: 10px; box-shadow: var(--shadow-elevated); z-index: 200; min-width: 160px; padding: 4px; flex-direction: column; gap: 2px; }
+.hamburger-backdrop { position: fixed; inset: 0; z-index: 199; background: transparent; }
+.hamburger-menu-item { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: none; background: transparent; color: var(--spark-primary); font-size: var(--fz-md); font-family: inherit; border-radius: 6px; cursor: pointer; transition: background var(--transition-fast); width: 100%; text-align: left; }
+.hamburger-menu-item:hover { background: var(--glass-1); }
+.hamburger-menu-item svg { flex-shrink: 0; }
+
+/* ── 触发条件：屏幕宽度 ≤ 800px ── */
+@media (max-width: 800px) {
+
+  /* ── TitleBar 精简：隐藏窗口控制、显示汉堡菜单 ── */
+  .title-bar {
+    display: flex !important;
+    height: 44px !important;
+    padding: 0 8px !important;
+    border-bottom: 1px solid var(--glass-1) !important;
+    -webkit-app-region: no-drag !important;
+  }
+  .title-bar-right.title-bar-desktop-controls { display: none !important; }
+  .title-bar-right.title-bar-mobile-controls  { display: flex !important; }
+  .title-bar-left { gap: 6px !important; }
+  .title-bar-brand { font-size: var(--fz-md) !important; }
+
+  /* ── 汉堡菜单下拉 ── */
+  .hamburger-backdrop { display: block !important; }
+  .hamburger-menu { display: flex !important; }
+
+  /* ── 确保中间 flex 容器能随 dvh 缩小 ── */
+  .chat-area, .chat-panel, .chat-messages { min-height: 0 !important; }
+
+  /* ── WelcomeScreen 表情表演：居中 + 上移避开底部输入框 ── */
+  .welcome-screen { padding: 24px 16px 120px !important; }
+  .welcome-brand { gap: 8px !important; }
+
+  /* ── 对话消息区：去掉左右大间距 + 800px 限制 ── */
+  .chat-messages-inner {
+    min-width: 0 !important;
+    padding: 12px 12px 12px !important;
+    gap: 14px !important;
+  }
+
+  /* ── 消息气泡：移动端可更宽 ── */
+  .message-bubble {
+    max-width: 88% !important;
+    padding: 12px 14px !important;
+  }
+  .message-row.with-avatar .message-bubble {
+    max-width: calc(88% - 40px) !important;
+  }
+
+  /* ── 头像缩小 ── */
+  .message-avatar {
+    width: 26px !important;
+    height: 26px !important;
+  }
+
+  /* ── 输入框：16px 防 iOS 自动 zoom ── */
+  .chat-input { font-size: var(--fz-xl) !important; }
+  .chat-input::-moz-placeholder { font-size: var(--fz-xl) !important; }
+  .chat-input::placeholder { font-size: var(--fz-xl) !important; }
+
+  /* ── 输入框：正常文档流 + 全宽，不再使用 fixed + --kb-height 补偿 ── */
+  .chat-input-dock {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    z-index: auto !important;
+  }
+  .chat-input-area {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    border-radius: 0 !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-bottom: none !important;
+  }
+  .chat-input-inner {
+    margin: 6px 12px 12px !important;
+  }
+
+  /* ── thinking indicator：输入框上方文档流位置 ── */
+  .thinking-indicator {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    padding: 8px 12px !important;
+    border-left: none !important;
+    border-right: none !important;
+  }
+
+  /* ── thinking 展开按钮简化 ── */
+  .thinking-expand span { display: none !important; }
+  .thinking-expand {
+    padding: 4px 7px !important;
+    font-size: var(--fz-xs) !important;
+  }
+
+  /* ── StatusBar 精简 ── */
+  .status-bar {
+    padding: 2px 2px 4px !important;
+    font-size: 9px !important;
+  }
+
+  .execution-trace-center {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+
+} /* @media (max-width: 800px) */

@@ -1,0 +1,12 @@
+{
+  "name": "mcp-tools",
+  "displayName": "MCP 工具参考",
+  "description": "MCP (Model Context Protocol) 集成参考：已配置的 MCP server 工具列表、签名、调用规范。WorkAgent 设计工作流时按需查阅。",
+  "version": "1.0.0",
+  "author": "Nuphus",
+  "keywords": ["mcp", "工具", "cli", "集成", "server", "model context protocol"],
+  "triggers": {
+    "auto_suggest": true,
+    "context_hints": ["mcp", "MCP", "server", "工具", "集成", "外部工具"]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "com.nuphus.hello",
+  "name": "Hello Nuphus",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "description": "官方示例：插件能力演示（主题跟随/通知/存储），供开发者参考的样板",
+  "sample": true,
+  "author": "Nuphus Team",
+  "category": "tools",
+  "minHost": "0.1.0",
+  "permissions": ["kv", "notify", "theme.get"],
+  "sidecar": null
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuphus</title>
+  <style>
+    :root { --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #ffffff;
+      overflow: hidden;
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    /* ── 虚拟形象动效令牌 ── */
+    .nv-eye { transform-box: fill-box; }
+    .nv-whole { transform-box: fill-box; transform-origin: center; }
+
+    /* idle：呼吸 + 眨眼 */
+    @keyframes nvBreathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.016)} }
+    @keyframes nvBlink { 0%,91%,100%{transform:scaleY(1)} 94%{transform:scaleY(.08)} 97%{transform:scaleY(1)} }
+    .st-idle .nv-whole { animation: nvBreathe 4.8s ease-in-out infinite; }
+    .st-idle .nv-eye { transform-origin: center; animation: nvBlink 4.6s ease-in-out infinite; }
+
+    .hint {
+      font-size: 12px;
+      color: #5a5a6e;
+      transition: opacity 0.3s ease;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .st-idle .nv-whole, .st-idle .nv-eye { animation: none !important; }
+    }
+  </style>
+  <script>
+    // Called by Rust backend via eval() to update loading status
+    function setStatus(msg) {
+      var el = document.querySelector('.hint');
+      if (el) {
+        el.style.opacity = '0';
+        setTimeout(function () {
+          el.textContent = msg;
+          el.style.opacity = '1';
+        }, 150);
+      }
+    }
+  </script>
+</head>
+<body>
+  <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
+    <g class="nv-whole">
+      <path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
+      <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
+      <path class="nv-eye l" d="M80 180 L80 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
+      <path class="nv-eye r" d="M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
+    </g>
+  </svg>
+  <div class="hint">Starting…</div>
+</body>
+</html>

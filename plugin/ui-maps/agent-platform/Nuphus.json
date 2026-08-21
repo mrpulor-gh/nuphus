@@ -1,0 +1,109 @@
+{
+  "app_name": "Nuphus",
+  "app_category": "agent-platform",
+  "updated_at": "2026-07-24T02:54:10.871415300+00:00",
+  "screens": {
+    "control-panel": {
+      "regions": [
+        {
+          "name": "panel-overlay",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1196,
+            "height": 776
+          },
+          "description": "半透明遮罩层。点击遮罩或 ESC 关闭面板。面板居中、可滚动，可见区约 8 项，共 12 项",
+          "elements": []
+        }
+      ],
+      "anchors": [],
+      "updated_at": "2026-07-24T02:16:25.538158100+00:00"
+    },
+    "pause-dialog": {
+      "regions": [
+        {
+          "name": "dialog-body",
+          "rect": {
+            "x": 429,
+            "y": 270,
+            "width": 360,
+            "height": 20
+          },
+          "description": "Nuphus 正在执行中，你想怎么处理？",
+          "elements": []
+        },
+        {
+          "name": "dialog-footer",
+          "rect": {
+            "x": 420,
+            "y": 530,
+            "width": 360,
+            "height": 25
+          },
+          "description": "↑↓ 选择  Enter 确认  Esc 跳过",
+          "elements": []
+        }
+      ],
+      "anchors": [],
+      "updated_at": "2026-07-24T02:54:10.871415300+00:00"
+    },
+    "main-window": {
+      "regions": [
+        {
+          "name": "control-panel-btn",
+          "rect": {
+            "x": 1135,
+            "y": 58,
+            "width": 38,
+            "height": 32
+          },
+          "description": "【控制面板入口】九宫格。触发：Ctrl+K 或点击。只读不点",
+          "elements": []
+        },
+        {
+          "name": "chat-area",
+          "rect": {
+            "x": 50,
+            "y": 100,
+            "width": 1100,
+            "height": 450
+          },
+          "description": "对话流区域",
+          "elements": []
+        },
+        {
+          "name": "execution-status-card",
+          "rect": {
+            "x": 416,
+            "y": 575,
+            "width": 500,
+            "height": 80
+          },
+          "description": "【可点击】执行状态卡。点击弹出执行面板。center:(666,615)",
+          "elements": []
+        }
+      ],
+      "anchors": [],
+      "updated_at": "2026-07-24T02:53:56.020447700+00:00"
+    },
+    "model-dialog": {
+      "regions": [
+        {
+          "name": "dialog-footer",
+          "rect": {
+            "x": 395,
+            "y": 495,
+            "width": 403,
+            "height": 30
+          },
+          "description": "Tip: Use /models to quickly switch models anytime",
+          "elements": []
+        }
+      ],
+      "anchors": [],
+      "updated_at": "2026-07-24T02:54:03.044957100+00:00"
+    }
+  },
+  "experiences": []
+}

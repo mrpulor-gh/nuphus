@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover：全面屏安全区由 env(safe-area-inset-*) 接管 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- PWA：添加到主屏幕（iOS 全屏 standalone / Android 快捷方式） -->
+    <link rel="manifest" href="./manifest.json" />
+    <!-- theme-color 固定深色（酷炫黑基调；微信/抖音 WebView 对深浅色上报不一致） -->
+    <meta name="theme-color" content="#0d0d10" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Nuphus" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+    <title>Nuphus</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/mobile/main.tsx"></script>
+    <!-- 加载失败兜底：外部脚本（CSP script-src 'self' 会拒绝内联脚本）。主入口挂起/失败时显示提示+重试 -->
+    <script src="./load-guard.js"></script>
+    <script>
+      // 防主题闪烁：渲染前同步读取 localStorage（默认深色酷炫黑）
+      // 注：CSP script-src 'self' 会拒绝本内联脚本（外部 load-guard.js 不受影响）——
+      // 主题预置属渐进增强，React 挂载后 theme.ts 仍会正确设置，不影响功能。
+      try {
+        var t = localStorage.getItem('nuphus_mobile_theme')
+        if (t !== 'light') document.documentElement.setAttribute('data-theme', 'dark')
+      } catch (e) {}
+      // PWA：注册 Service Worker（仅 secure context 生效——HTTPS 或 localhost；
+      // 局域网 HTTP 下浏览器静默拒绝，不影响「添加到主屏幕」。失败不报错。）
+      if ('serviceWorker' in navigator && window.isSecureContext) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js').catch(() => {})
+        })
+      }
+      // 键盘适配：iOS 软键盘弹出时 visualViewport 收缩，暴露 --kb-height 供布局使用
+      if (window.visualViewport) {
+        const updateKb = () => {
+          const kb = Math.max(0, window.innerHeight - window.visualViewport.height)
+          document.documentElement.style.setProperty('--kb-height', kb + 'px')
+        }
+        window.visualViewport.addEventListener('resize', updateKb)
+        updateKb()
+      }
+    </script>
+  </body>
+</html>

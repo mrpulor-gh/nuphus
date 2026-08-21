@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!-- 横版模板 1920×1080（16:9）。替换占位：{{VERSION}} {{HEADLINE_A}} {{HEADLINE_B_em}}
+     {{SUBTITLE}} 三卡 {{CARDn_TITLE}} {{CARDn_EN}} {{CARDn_DESC}} {{INSTALL}} {{HINT}}
+     卡片图标 SVG 按内容重选（stroke 配色跟随卡片色）。官方 logo 段禁止改动。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    background: #0b0d14;
+    color: #eef1f8;
+    position: relative;
+  }
+  .glow { position: absolute; border-radius: 50%; filter: blur(140px); opacity: .35; }
+  .glow.a { width: 700px; height: 700px; background: #3b5bff; top: -260px; left: -180px; }
+  .glow.b { width: 640px; height: 640px; background: #00c2a8; bottom: -300px; right: -140px; }
+  .glow.c { width: 420px; height: 420px; background: #7a3bff; top: 380px; left: 760px; opacity: .22; }
+
+  .stage { position: relative; z-index: 2; padding: 72px 96px; height: 100%; display: flex; flex-direction: column; }
+
+  .brand { display: flex; align-items: center; gap: 22px; }
+  .brand svg.logo { width: 64px; height: 64px; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  .brand .name { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
+  .brand .name span { color: #5b7cff; }
+  .badge {
+    margin-left: auto;
+    font-size: 26px; font-weight: 700;
+    padding: 12px 30px; border-radius: 999px;
+    background: linear-gradient(135deg, #3b5bff, #7a3bff);
+    box-shadow: 0 8px 32px rgba(59,91,255,.45);
+    letter-spacing: 1px;
+  }
+
+  .headline { margin-top: 58px; }
+  .headline h1 { font-size: 76px; font-weight: 800; line-height: 1.18; letter-spacing: 1px; }
+  .headline h1 em { font-style: normal; background: linear-gradient(90deg, #5b7cff, #00e0c2); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .headline p { margin-top: 18px; font-size: 30px; color: #9aa3bd; letter-spacing: .5px; }
+
+  .cards { margin-top: 64px; display: flex; gap: 36px; flex: 1; }
+  .card {
+    flex: 1; border-radius: 28px; padding: 44px 40px;
+    background: rgba(255,255,255,.045);
+    border: 1px solid rgba(255,255,255,.09);
+    backdrop-filter: blur(6px);
+    display: flex; flex-direction: column;
+    position: relative; overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 5px; }
+  .card.c1::before { background: linear-gradient(90deg, #3b5bff, #6f8bff); }
+  .card.c2::before { background: linear-gradient(90deg, #00c2a8, #00e0c2); }
+  .card.c3::before { background: linear-gradient(90deg, #7a3bff, #a86fff); }
+  .card .icon {
+    width: 84px; height: 84px; border-radius: 22px;
+    display: flex; align-items: center; justify-content: center; margin-bottom: 30px;
+  }
+  .c1 .icon { background: rgba(59,91,255,.16); }
+  .c2 .icon { background: rgba(0,194,168,.14); }
+  .c3 .icon { background: rgba(122,59,255,.16); }
+  .card .icon svg { width: 46px; height: 46px; }
+  .card h2 { font-size: 37px; font-weight: 800; margin-bottom: 10px; letter-spacing: .5px; }
+  .card .en { font-size: 19px; color: #6b7490; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 24px; }
+  .card p { font-size: 26px; line-height: 1.62; color: #b9c0d6; }
+  .card p b { color: #fff; font-weight: 700; }
+
+  .footer { margin-top: 54px; display: flex; align-items: center; gap: 26px; }
+  .install {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    font-size: 27px; color: #0b0d14; font-weight: 700;
+    background: #00e0c2; padding: 16px 34px; border-radius: 14px;
+    box-shadow: 0 8px 30px rgba(0,224,194,.35);
+  }
+  .footer .hint { font-size: 24px; color: #8a93ad; }
+</style>
+</head>
+<body>
+  <div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
+
+  <div class="stage">
+    <div class="brand">
+      <!-- 官方 logo：src-tauri/icons/icon-source.svg 原样嵌入，禁止重绘/改色/改路径 -->
+      <svg class="logo" viewBox="0 0 256 256" fill="none">
+        <rect x="0" y="0" width="256" height="256" rx="50" fill="#1a1a2e"/>
+        <g transform="translate(128 128) scale(0.7778) translate(-128 -128)"
+           stroke="#ffffff" stroke-width="24" stroke-linecap="round" fill="none">
+          <path d="M64 20 H192 A44 44 0 0 1 236 64 V156"/>
+          <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"/>
+          <path d="M80 180 L80 76 M176 180 L176 76"/>
+        </g>
+      </svg>
+      <div class="name">nuphus<span>-mcp</span></div>
+      <div class="badge">{{VERSION}}</div>
+    </div>
+
+    <div class="headline">
+      <h1>{{HEADLINE_A}}<em>{{HEADLINE_B_em}}</em></h1>
+      <p>{{SUBTITLE}}</p>
+    </div>
+
+    <div class="cards">
+      <div class="card c1">
+        <div class="icon">{{CARD1_ICON_SVG}}</div>
+        <h2>{{CARD1_TITLE}}</h2>
+        <div class="en">{{CARD1_EN}}</div>
+        <p>{{CARD1_DESC}}</p>
+      </div>
+      <div class="card c2">
+        <div class="icon">{{CARD2_ICON_SVG}}</div>
+        <h2>{{CARD2_TITLE}}</h2>
+        <div class="en">{{CARD2_EN}}</div>
+        <p>{{CARD2_DESC}}</p>
+      </div>
+      <div class="card c3">
+        <div class="icon">{{CARD3_ICON_SVG}}</div>
+        <h2>{{CARD3_TITLE}}</h2>
+        <div class="en">{{CARD3_EN}}</div>
+        <p>{{CARD3_DESC}}</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="install">{{INSTALL}}</div>
+      <div class="hint">{{HINT}}</div>
+    </div>
+  </div>
+</body>
+</html>

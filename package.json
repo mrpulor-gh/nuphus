@@ -1,0 +1,11 @@
+{
+  "license": "Apache-2.0",
+  "scripts": {
+    "predev": "node -e \"try { fetch('http://localhost:5174').then(r => r.text()).catch(() => {}); } catch(e) {}\"",
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1"
+  }
+}

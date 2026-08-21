@@ -1,0 +1,9 @@
+# Nuphus Shell Hooks 配置
+# 路径: Nuphus/hooks/hooks.yaml
+# 所有路径相对于 Nuphus 项目根目录
+
+hooks:
+  pre_tool_call: hooks/pre_tool_call.sh
+  post_tool_call: hooks/post_tool_call.sh
+  on_session_start: hooks/session_start.sh
+  on_session_end: hooks/session_end.sh

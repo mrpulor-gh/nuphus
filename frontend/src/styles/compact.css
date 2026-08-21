@@ -1,0 +1,65 @@
+@import './tokens.css';
+/* compact.css — CompactModal 及 compact-* 通用类（自 components.css 拆出） */
+/* ═══════════════════════════════════════
+   Compact Command Modal — 命令快捷弹窗
+   精巧版，适配小型内容
+   ═══════════════════════════════════════ */
+.compact-overlay{position:fixed;inset:0;z-index:150;display:flex;align-items:center;justify-content:center;background:var(--overlay-bg);animation:compactOverlayIn var(--dur-med) var(--ease-out)}
+@keyframes compactOverlayIn{0%{opacity:0}to{opacity:1}}
+.compact-overlay--closing{animation:compactOverlayOut .15s ease-in forwards}
+.compact-overlay--closing .compact-modal{animation:compactModalOut .15s ease-in forwards}
+@keyframes compactOverlayOut{to{opacity:0}}
+@keyframes compactModalOut{to{opacity:0;transform:translateY(4px) scale(.97)}}
+.compact-modal{display:flex;flex-direction:column;background:var(--modal-bg);border:1px solid var(--line-2);border-radius:var(--radius-5);box-shadow:var(--shadow-modal);animation:compactModalIn var(--dur-med) var(--ease-spring);overflow:hidden;height:80vh;max-height:80vh}
+@keyframes compactModalIn{0%{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+.compact-modal--sm{width:380px;max-width:92vw}
+.compact-modal--md{width:480px;max-width:92vw}
+.compact-modal--lg{width:600px;max-width:92vw}
+.compact-modal--xl{width:880px;max-width:94vw}
+.compact-modal--auto{width:auto;min-width:360px;max-width:640px;max-width:92vw;height:auto;max-height:80vh}
+.compact-modal--fit{height:auto;max-height:80vh}
+.compact-header{display:flex;align-items:center;gap:10px;padding:16px 18px 0;flex-shrink:0}
+.compact-header-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--bg-tertiary);color:var(--spark-secondary);flex-shrink:0;font-size: var(--fz-lg)}
+.compact-header-title{flex:1;font-size: var(--fz-lg);font-weight:600;color:var(--spark-primary);letter-spacing:-.01em}
+.compact-header-close{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;background:transparent;color:var(--spark-muted);cursor:pointer;border-radius:6px;transition:all .15s ease;flex-shrink:0}
+.compact-header-close:hover{background:var(--bg-hover);color:var(--spark-primary)}
+.compact-divider{height:1px;background:var(--border);margin:12px 18px 0;flex-shrink:0}
+.compact-body{padding:14px 18px 18px;overflow-y:auto;flex:1}
+.compact-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;flex-shrink:0}
+.compact-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
+.compact-row+.compact-row{border-top:1px solid var(--border-secondary)}
+.compact-option-grid{display:flex;gap:8px;flex-wrap:wrap}
+.compact-option-btn{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 14px;border-radius:10px;border:1px solid var(--glass-2);background:var(--void-tertiary);cursor:pointer;transition:all .15s ease;font-family:inherit;text-align:left}
+.compact-option-btn:hover{border-color:var(--glass-3);background:var(--void-hover)}
+.compact-option-btn.active{border-color:var(--accent);background:var(--accent);color:var(--on-accent);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3)}
+.compact-option-btn.active .compact-option-label,
+.compact-option-btn.active .compact-option-desc{color:var(--on-accent)}
+.compact-option-label{font-size: var(--fz-md);font-weight:500;color:var(--spark-primary)}
+.compact-option-desc{font-size:10px;color:var(--spark-muted)}
+.compact-input{width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--glass-2);background:var(--void-input);color:var(--spark-primary);font-size: var(--fz-md);font-family:inherit;outline:none;box-sizing:border-box}
+.compact-input:disabled{background:var(--glass-2);color:var(--spark-muted);opacity:.6;cursor:not-allowed}
+.compact-input-row{display:flex;gap:6px}
+.compact-input-row .compact-input{flex:1}
+.compact-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;border:1px solid var(--glass-2);background:var(--void-hover);color:var(--spark-secondary);font-size: var(--fz-sm);font-weight:500;cursor:pointer;transition:all .15s ease;font-family:inherit}
+.compact-btn:hover{background:var(--glass-2);color:var(--spark-primary)}
+.compact-btn:disabled,.compact-btn--primary:disabled{opacity:.4;cursor:not-allowed}
+.compact-btn--primary{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.compact-btn--primary:hover:not(:disabled){background:var(--accent-hover)}
+.compact-btn--primary:active:not(:disabled){background:var(--accent)}
+.compact-btn.danger-btn{color:var(--error);border-color:rgba(var(--error-rgb),.2)}
+.compact-btn.danger-btn:hover{background:rgba(var(--error-rgb),.1);color:var(--error)}
+.compact-btn.ghost-btn{background:transparent;border-color:transparent;color:var(--spark-muted)}
+.compact-btn.ghost-btn:hover{background:var(--void-hover);color:var(--spark-secondary)}
+.compact-select-wrap{position:relative;width:100%}
+.compact-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--glass-2);background:var(--void-input);color:var(--spark-primary);font-size: var(--fz-md);font-family:inherit;cursor:pointer;outline:none;transition:border-color .15s ease;box-sizing:border-box;-webkit-user-select:none;user-select:none}
+.compact-select-trigger:hover,.compact-select-trigger:focus-visible{border-color:var(--accent)}
+.compact-select-arrow{font-size:9px;color:var(--spark-dim);flex-shrink:0;transition:transform .2s ease}
+.compact-select-arrow.open{transform:rotate(180deg)}
+.compact-select-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:240px;overflow-y:auto;background:var(--void-primary);border:1px solid var(--glass-3);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:200;animation:compactMenuIn .12s ease-out}
+@keyframes compactMenuIn{0%{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.compact-select-option{padding:7px 12px;font-size: var(--fz-md);color:var(--spark-secondary);cursor:pointer;display:flex;align-items:center;gap:8px;transition:background var(--transition-fast)}
+.compact-select-option:hover{background:var(--void-hover);color:var(--spark-primary)}
+.compact-select-option.active{color:var(--accent);font-weight:600;background:rgba(var(--accent-rgb),.06)}
+/* ── Model list ── */
+/* 高层级变体（refine modal 等需压过其他浮层场景） */
+.compact-overlay--high { z-index: 200; }

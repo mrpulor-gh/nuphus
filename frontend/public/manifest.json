@@ -1,0 +1,36 @@
+{
+  "name": "Nuphus",
+  "short_name": "Nuphus",
+  "description": "Nuphus 桌面端的移动端第二屏",
+  "display": "standalone",
+  "start_url": "./mobile.html",
+  "scope": "./",
+  "theme_color": "#0d0d10",
+  "background_color": "#0d0d10",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

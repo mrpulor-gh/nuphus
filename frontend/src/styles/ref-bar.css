@@ -1,0 +1,181 @@
+@import './tokens.css';
+
+/* ═══════════════════════════════════════
+   ReferenceBar — 引用栏（textarea 上方）
+   容纳 skill/knowledge/workflow 引用 chip + 图片 pill
+   背景由父容器 .chat-input-body 统一提供
+   ═══════════════════════════════════════ */
+
+.ref-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 4px 4px;
+  /* 无独立背景/边框/阴影 — 由父容器提供 */
+}
+
+/* ════════ 引用 chips ════════ */
+.ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.15s var(--ease-out, ease-out);
+}
+
+/* type color variants */
+.ref-chip--skill {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.ref-chip--knowledge {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.ref-chip--workflow {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.ref-chip--capture {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.ref-chip-icon {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.ref-chip-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0 0 0 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s var(--ease-out, ease-out),
+              background 0.12s var(--ease-out, ease-out),
+              color 0.12s var(--ease-out, ease-out);
+}
+
+.ref-chip-remove:hover {
+  opacity: 1;
+  background: var(--error);
+  color: #fff;
+}
+
+/* ════════ 图片 pill（替代缩略图） ════════ */
+.ref-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ref-img-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 7px;
+  border-radius: 16px;
+  background: var(--surface-2, #1a1a24);
+  border: 1px solid var(--line-2, rgba(255, 255, 255, 0.1));
+  font-size: 12px;
+  color: var(--fg-3, #a0a0b0);
+  font-family: var(--font-ui);
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.15s var(--ease-out, ease-out);
+}
+
+.ref-img-pill:hover {
+  background: var(--surface-3, #22222e);
+}
+
+.ref-img-pill-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.ref-img-pill-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ref-img-pill-name {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, monospace);
+}
+
+.ref-img-pill-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0 0 0 1px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  flex-shrink: 0;
+  transition: opacity 0.12s var(--ease-out, ease-out),
+              background 0.12s var(--ease-out, ease-out),
+              color 0.12s var(--ease-out, ease-out);
+}
+
+.ref-img-pill-remove:hover {
+  opacity: 1;
+  background: var(--error);
+  color: #fff;
+}

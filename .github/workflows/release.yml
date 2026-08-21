@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+jobs:
+  release:
+    name: Build & Release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: nuphus_linux_amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: nuphus_windows_amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: nuphus_macos_amd64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend deps
+        run: |
+          npm ci
+          cd frontend && npm ci
+
+      # ── 1. 安装包（Tauri bundle：Windows→msi / macOS→dmg / Linux→deb+AppImage）──
+      # 模型库不打包（B 方案）：首次启动由 build.rs/bootstrap 自动下载。
+      - name: Build installer (tauri bundle)
+        run: npx tauri build
+
+      # ── 2. 便携包（绿色版：解压即用，技术用户/开发者通道）──
+      - name: Package portable (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release
+          cp target/release/nuphus release/
+          cp -r plugin release/
+          cp README.md LICENSE PRIVACY.md config.example.toml release/
+          cp -r src-tauri/desktop release/desktop
+          cp release/desktop/sherpa/libsherpa-onnx-c-api.so release/desktop/sherpa/libonnxruntime.so release/desktop/sherpa/libonnxruntime_providers_shared.so release/
+          # rpath：exe 与 .so 同目录加载（release 目录不在默认 LD_LIBRARY_PATH）
+          patchelf --set-rpath '$ORIGIN' release/nuphus
+          for so in release/*.so; do patchelf --set-rpath '$ORIGIN' "$so"; done
+          cd release && tar czf ../${{ matrix.artifact }}.tar.gz *
+      - name: Package portable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force
+          Copy-Item target/release/nuphus.exe release/
+          Copy-Item -Recurse plugin release/
+          Copy-Item README.md, LICENSE, PRIVACY.md, config.example.toml release/
+          Copy-Item -Recurse src-tauri/desktop release/desktop
+          # sherpa c-api + onnxruntime 拷到 exe 同目录（ORT load-dynamic / sherpa c-api 按名加载）
+          Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/
+          Compress-Archive -Path release/* -DestinationPath ${{ matrix.artifact }}.zip
+      - name: Package portable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release
+          cp target/release/nuphus release/
+          cp -r plugin release/
+          cp README.md LICENSE PRIVACY.md config.example.toml release/
+          cp -r src-tauri/desktop release/desktop
+          cp release/desktop/sherpa/libsherpa-onnx-c-api.dylib release/desktop/sherpa/libonnxruntime.dylib release/desktop/sherpa/libonnxruntime_providers_shared.dylib release/
+          # macOS 动态库：把绝对/相对 install_name 改为 @loader_path（相对 exe 同目录加载）
+          cd release
+          for lib in libsherpa-onnx-c-api.dylib libonnxruntime.dylib libonnxruntime_providers_shared.dylib; do
+            id=$(otool -D "$lib" 2>/dev/null | tail -1)
+            case "$id" in
+              /* | @rpath/* | @executable_path/* )
+                install_name_tool -id "@loader_path/$lib" "$lib" ;;
+            esac
+          done
+          for dep in libsherpa-onnx-c-api.dylib libonnxruntime.dylib libonnxruntime_providers_shared.dylib; do
+            if otool -L nuphus | grep -q "$dep"; then
+              old=$(otool -L nuphus | grep "$dep" | awk '{print $1}')
+              install_name_tool -change "$old" "@loader_path/$dep" nuphus 2>/dev/null || true
+            fi
+          done
+          echo "── dylib 依赖（应全部为 @loader_path 或系统库）──"
+          otool -L nuphus | grep -E "onnxruntime|sherpa" || true
+          cd ..
+          cd release && tar czf ../${{ matrix.artifact }}.tar.gz *
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+            nuphus_*.tar.gz
+            nuphus_*.zip
+          generate_release_notes: true

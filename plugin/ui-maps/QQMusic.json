@@ -1,0 +1,32 @@
+{
+  "app": "QQMusic",
+  "version": "2026-08-02",
+  "window": {
+    "process": "QQMusic.exe",
+    "exe": "C:\\Program Files (x86)\\Tencent\\QQMusic\\QQMusic.exe",
+    "default_pos": { "x": 412, "y": 175 },
+    "default_size": { "w": 1100, "h": 740 },
+    "title_pattern": "歌曲名 - 歌手"
+  },
+  "search_flow": {
+    "description": "播放指定歌曲的完整路径（探索验证 2026-08-02，测试歌：晴天/周杰伦）",
+    "steps": [
+      { "step": 1, "action": "start", "detail": "Start-Process QQMusic.exe（若未运行）" },
+      { "step": 2, "action": "click", "target": "搜索框", "rel": { "x": 437, "y": 38 }, "screen_at_default": { "x": 849, "y": 213 } },
+      { "step": 3, "action": "input", "target": "搜索框", "detail": "desktop_input type 歌名（UTF-8 中文 OK），send none" },
+      { "step": 4, "action": "key", "target": "触发搜索", "detail": "hotkey enter" },
+      { "step": 5, "action": "wait", "detail": "2 秒（搜索结果加载）" },
+      { "step": 6, "action": "click", "target": "列表上方播放按钮（歌手信息区旁）", "rel": { "x": 309, "y": 273 }, "screen_at_default": { "x": 721, "y": 448 }, "note": "比双击行稳定，点击后播放列表第一首（已验证：窗口标题变『晴天 - 周杰伦』）" },
+      { "step": 7, "action": "verify", "target": "底部播放条", "detail": "截图验证歌曲名=目标歌，暂停图标=播放中" }
+    ],
+    "pitfalls": [
+      { "trigger": "搜索结果页出现黑金配色『盗墓笔记·十年人间/开通超级会员』推广弹窗", "action": "hotkey esc 关闭（已验证有效）", "note": "弹窗可能因点击/播放 VIP 歌触发，探索时出现 2 次" },
+      { "trigger": "右下角『该歌曲支持更高品质音质 免费体验』提示气泡", "action": "不影响操作，可忽略" }
+    ]
+  },
+  "verify_anchor": {
+    "desc": "播放成功锚点：底部播放条左侧歌曲名区域",
+    "rel": { "x": 311, "y": 672 },
+    "window_rel_note": "窗口内坐标；屏幕坐标 = 窗口左上角(412,175) + rel"
+  }
+}

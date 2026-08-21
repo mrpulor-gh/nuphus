@@ -1,0 +1,38 @@
+{
+    "keywords":  [
+                     "ui",
+                     "design",
+                     "tailwind",
+                     "react",
+                     "设计",
+                     "颜色",
+                     "字体",
+                     "间距",
+                     "组件",
+                     "反AI味"
+                 ],
+    "version":  "1.0.0",
+    "displayName":  "UI 设计规范",
+    "name":  "ui-design",
+    "description":  "Agent 平台前端设计规范：颜色/字体/间距 token、四阶段决策协议、AI 味反模式检查清单、组件复用指南、动效预算。学习自 Ultimate-Ui-Ux-pro-max-2.O 和 nextlevelbuilder/ui-ux-pro-max-skill",
+    "triggers":  {
+                     "context_hints":  [
+                                           "设计",
+                                           "UI",
+                                           "页面",
+                                           "样式",
+                                           "颜色",
+                                           "组件",
+                                           "前端",
+                                           "界面",
+                                           "美化",
+                                           "改版",
+                                           "重构样式"
+                                       ],
+                     "auto_suggest":  true
+                 },
+    "author":  "Nuphus",
+    "data_sources":  [
+
+                     ]
+}
