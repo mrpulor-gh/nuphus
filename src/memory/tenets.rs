@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_capacity_limit() {
-        let mut store = TenetStore::with_path(PathBuf::from("/tmp/test_tenets.json"));
+        let mut store = TenetStore::with_path(std::env::temp_dir().join("nuphus_test_tenets.json"));
         // Clear existing
         store.tenets.clear();
         for i in 0..MAX_TENETS + 1 {
@@ -503,7 +503,8 @@ mod tests {
 
     #[test]
     fn test_check_tool_match() {
-        let mut store = TenetStore::with_path(PathBuf::from("/tmp/test_tenets_check.json"));
+        let mut store =
+            TenetStore::with_path(std::env::temp_dir().join("nuphus_test_tenets_check.json"));
         store.tenets.clear();
         store
             .add(Tenet {
@@ -527,7 +528,8 @@ mod tests {
 
     #[test]
     fn test_format_for_prompt() {
-        let mut store = TenetStore::with_path(PathBuf::from("/tmp/test_tenets_prompt.json"));
+        let mut store =
+            TenetStore::with_path(std::env::temp_dir().join("nuphus_test_tenets_prompt.json"));
         store.tenets.clear();
         store
             .add(Tenet {
