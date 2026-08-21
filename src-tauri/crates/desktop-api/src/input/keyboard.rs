@@ -5,8 +5,14 @@ use crate::core::*;
 #[cfg(not(windows))]
 fn enigo() -> std::sync::Mutex<enigo::Enigo> {
     static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> = std::sync::OnceLock::new();
-    INST.get_or_init(|| std::sync::Mutex::new(enigo::Enigo::new(&enigo::Settings::default())))
-        .clone()
+    INST.get_or_init(|| {
+        // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
+        // 平台输入初始化不可用（无显示服务器等），与后续调用失败语义一致。
+        std::sync::Mutex::new(
+            enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
+        )
+    })
+    .clone()
 }
 
 /// 发送按键
@@ -26,11 +32,12 @@ pub async fn press(key: &str) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
+        use enigo::Direction;
         let ek = vk_to_enigo(vk)?;
         enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .key_click(ek)
+            .key(ek, Direction::Click)
             .map_err(|e| DesktopError::InputFailed(e.to_string()))
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -64,6 +71,7 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
+        use enigo::Direction;
         let mut e = enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
@@ -72,11 +80,11 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
             .map(|&v| vk_to_enigo(v))
             .collect::<Result<Vec<_>>>()?;
         for k in &ekeys {
-            e.key_down(*k)
+            e.key(*k, Direction::Press)
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
         }
         for k in ekeys.iter().rev() {
-            e.key_up(*k)
+            e.key(*k, Direction::Release)
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
         }
         Ok(())

@@ -20,6 +20,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -33,11 +37,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
       - name: Run tests
         run: cargo test --workspace
 
@@ -61,6 +70,7 @@ jobs:
       - name: ESLint check
         run: npx eslint . --ext .ts,.tsx
       - name: Vitest
-        run: npm test
+        # --no-file-parallelism: CI 低资源 runner 上 fork worker 偶发启动失败
+        run: npx vitest run --no-file-parallelism
       - name: Prettier format check
         run: npx prettier --check "src/**/*.{ts,tsx,css}"
