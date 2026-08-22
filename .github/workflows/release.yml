@@ -41,7 +41,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libpipewire-0.3-dev libasound2-dev libgbm-dev libxdo-dev libfuse2
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libpipewire-0.3-dev libasound2-dev libgbm-dev libxdo-dev libfuse2 squashfs-tools
 
       - name: Install frontend deps
         run: |
@@ -51,7 +51,13 @@ jobs:
       # ── 1. 安装包（Tauri bundle：Windows→msi / macOS→dmg / Linux→deb+AppImage）──
       # 模型库不打包（B 方案）：首次启动由 build.rs/bootstrap 自动下载。
       # APPIMAGE_EXTRACT_AND_RUN=1：GitHub runner 上 AppImage（linuxdeploy）FUSE 挂载不可用，
-      # 解压到临时目录运行（tauri 官方 CI 模板做法）。
+      # 解压到临时目录运行（tauri 官方 CI 模板做法；解压需 unsquashfs → squashfs-tools）。
+      - name: Verify linuxdeploy executable
+        if: runner.os == 'Linux'
+        run: |
+          curl -sL -o /tmp/linuxdeploy.AppImage https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage
+          chmod +x /tmp/linuxdeploy.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 /tmp/linuxdeploy.AppImage --version || APPIMAGE_EXTRACT_AND_RUN=1 /tmp/linuxdeploy.AppImage --help || true
       - name: Build installer (tauri bundle)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
