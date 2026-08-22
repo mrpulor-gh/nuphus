@@ -60,16 +60,23 @@ jobs:
           npm ci
           cd frontend && npm ci
 
-      # FIX 3: 添加 NO_STRIP=true，跳过 linuxdeploy 不兼容的 strip 阶段
-      # 注：AppImage（linuxdeploy）在 GitHub runner 环境反复失败（1s 内退出、无 stderr），
-      # 当前仅打包 deb（已验证成功）+ 便携包；AppImage 后续用 tauri-action 或手动 linuxdeploy 攻关。
-      # macOS: --bundles app（.app 已成功生成；dmg 的 hdiutil 在 CI 无头环境失败，单列攻关；
-      # 无证书时 tauri 2 默认 adhoc 签名）
+      # macOS: --bundles app（.app 构建；dmg 由下一步手动 hdiutil 创建——
+      # tauri bundle_dmg.sh 的 stderr 被吞无法诊断，手动命令的失败信息直接可见）
       - name: Build installer (tauri bundle)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
         run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || runner.os == 'macOS' && '--bundles app' || '' }}
+
+      - name: Create DMG (macOS, manual hdiutil)
+        if: runner.os == 'macOS'
+        run: |
+          df -h / | tail -1
+          cd target/release/bundle/macos
+          # 手动 hdiutil create -srcfolder：一步创建，无需 attach/detach/AppleScript，
+          # 是 dmg 打包最简可靠方式；GitHub Actions 直接显示 stderr 便于诊断
+          hdiutil create -volname "Nuphus" -srcfolder Nuphus.app -ov -format UDZO ../../../../${{ matrix.artifact }}.dmg
+          ls -lh ../../../../${{ matrix.artifact }}.dmg
 
       - name: Package portable (Linux)
         if: runner.os == 'Linux'
@@ -129,6 +136,7 @@ jobs:
             target/release/bundle/msi/*.msi
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
+            nuphus_macos_*.dmg
             nuphus_*.tar.gz
             nuphus_*.zip
           generate_release_notes: true
