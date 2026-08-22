@@ -1,8 +1,8 @@
 //! 鼠标控制 — Win32 原生 / macOS enigo / Linux PlatformNotSupported
 
-use crate::core::*;
 #[cfg(not(windows))]
 use super::SendEnigo;
+use crate::core::*;
 
 /// 创建共享 enigo 实例 (macOS / Linux)
 /// 返回 `&'static Mutex`：OnceLock 保证单例且 'static，调用方 `enigo().lock()` 自动解引用。

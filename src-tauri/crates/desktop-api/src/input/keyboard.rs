@@ -1,8 +1,8 @@
 //! 键盘控制 — Win32 原生 / macOS enigo / Linux PlatformNotSupported
 
-use crate::core::*;
 #[cfg(not(windows))]
 use super::SendEnigo;
+use crate::core::*;
 
 #[cfg(not(windows))]
 fn enigo() -> &'static std::sync::Mutex<SendEnigo> {
