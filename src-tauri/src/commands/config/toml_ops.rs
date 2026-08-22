@@ -259,31 +259,115 @@ pub fn upsert_provider_models(
                     }
                 }
                 // Append missing models
+                // 补全 builtin 已知元数据：刷新发现的新模型立即具备正确的
+                // context_window / supports_vision 等，而非 fallback 128K /
+                // 图像理解选择器不可见（根因：/models 接口只返回 id）。
+                let builtin = nuphus::config::registry::ProviderRegistry::builtin();
+                let mut changed = false;
                 let mut added = 0usize;
                 for id in model_ids {
+                    let builtin_meta = builtin.find_model(id);
+                    // 已有模型：补全缺失字段（不覆盖用户已有值），使旧配置刷新后也能修复
                     if existing.contains(id) {
+                        if let Some(models) = map.get_mut("models").and_then(|m| m.as_array_mut()) {
+                            for model in models.iter_mut() {
+                                if model.get("id").and_then(|i| i.as_str()) != Some(id.as_str()) {
+                                    continue;
+                                }
+                                if let Some(mt) = model.as_table_mut() {
+                                    if let Some((_, m)) = builtin_meta {
+                                        let mut patched = false;
+                                        if !mt.contains_key("context_window") {
+                                            mt.insert(
+                                                "context_window".to_string(),
+                                                toml::Value::Integer(m.context_window as i64),
+                                            );
+                                            patched = true;
+                                        }
+                                        if !mt.contains_key("supports_vision") {
+                                            mt.insert(
+                                                "supports_vision".to_string(),
+                                                toml::Value::Boolean(m.supports_vision),
+                                            );
+                                            patched = true;
+                                        }
+                                        if !mt.contains_key("supports_audio") {
+                                            mt.insert(
+                                                "supports_audio".to_string(),
+                                                toml::Value::Boolean(m.supports_audio),
+                                            );
+                                            patched = true;
+                                        }
+                                        if !mt.contains_key("supports_image_generation") {
+                                            mt.insert(
+                                                "supports_image_generation".to_string(),
+                                                toml::Value::Boolean(m.supports_image_generation),
+                                            );
+                                            patched = true;
+                                        }
+                                        changed = changed || patched;
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     }
                     let mut entry = toml::map::Map::new();
                     entry.insert("id".to_string(), toml::Value::String(id.clone()));
                     // 与 ModelEntry 的 serde 默认一致：supports_streaming 默认 true
                     entry.insert("supports_streaming".to_string(), toml::Value::Boolean(true));
+                    if let Some((_, m)) = builtin_meta {
+                        entry.insert(
+                            "context_window".to_string(),
+                            toml::Value::Integer(m.context_window as i64),
+                        );
+                        entry.insert(
+                            "supports_vision".to_string(),
+                            toml::Value::Boolean(m.supports_vision),
+                        );
+                        entry.insert(
+                            "supports_audio".to_string(),
+                            toml::Value::Boolean(m.supports_audio),
+                        );
+                        entry.insert(
+                            "supports_image_generation".to_string(),
+                            toml::Value::Boolean(m.supports_image_generation),
+                        );
+                        if !m.reasoning_efforts.is_empty() {
+                            entry.insert(
+                                "reasoning_efforts".to_string(),
+                                toml::Value::Array(
+                                    m.reasoning_efforts
+                                        .iter()
+                                        .map(|s| toml::Value::String(s.to_string()))
+                                        .collect(),
+                                ),
+                            );
+                        }
+                        if let Some(ef) = m.default_effort {
+                            entry.insert(
+                                "default_effort".to_string(),
+                                toml::Value::String(ef.to_string()),
+                            );
+                        }
+                    }
                     map.entry("models".to_string())
                         .or_insert_with(|| toml::Value::Array(vec![]));
                     if let Some(models_arr) = map.get_mut("models").and_then(|m| m.as_array_mut()) {
                         models_arr.push(toml::Value::Table(entry));
                         existing.insert(id.clone());
                         added += 1;
+                        changed = true;
                     }
                 }
-                if added > 0 {
+                if changed {
                     nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
                     let new_content = toml::to_string_pretty(&doc)
                         .map_err(|e| format!("serialize config.toml failed: {}", e))?;
                     std::fs::write(config_path, new_content)
                         .map_err(|e| format!("write config.toml failed: {}", e))?;
                     tracing::info!(
-                        "upsert_provider_models: added {} new models for provider={}",
+                        "upsert_provider_models: added {} new models, patched metadata for provider={}",
                         added,
                         provider_name
                     );

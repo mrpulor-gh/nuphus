@@ -59,6 +59,22 @@ impl Provider for DeepSeekProvider {
                 reasoning_efforts: &["high", "max"],
                 default_effort: Some("high"),
             },
+            ModelDef {
+                id: "deepseek-v4-flash-vision-exp",
+                aliases: &["deepseek-vision", "flash-vision"],
+                context_window: 1_000_000,
+                max_output_tokens: 8_192,
+                supports_streaming: true,
+                supports_vision: true,
+                supports_reasoning: true,
+                supports_audio: false,
+                supports_image_generation: false,
+                cost_per_million_in: 0.07,
+                cost_per_million_out: 0.28,
+                reasoning_field: "reasoning_content",
+                reasoning_efforts: &["high", "max"],
+                default_effort: Some("high"),
+            },
         ]
     }
 
