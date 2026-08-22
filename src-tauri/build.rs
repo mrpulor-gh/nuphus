@@ -146,6 +146,7 @@ fn tar_cmd() -> &'static str {
 /// 远程主机规格去连接；含反斜杠会被当转义符损坏路径。把 cwd 设为共同父目录、
 /// 只传 basename → 任意 tar（GNU/bsdtar）都无歧义，也无需 --force-local。
 fn run_tar(archive: &std::path::Path, extract_dir: &std::path::Path) -> bool {
+    #[cfg_attr(not(windows), allow(unused_variables))]
     let is_bz2 = archive
         .extension()
         .and_then(|e| e.to_str())

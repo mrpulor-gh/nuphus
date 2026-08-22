@@ -2,6 +2,8 @@
 
 use crate::core::*;
 use xcap::Monitor;
+#[cfg(windows)]
+use xcap::Window as XcapWindow;
 
 /// 截图 - 根据目标和范围
 pub async fn capture(target: &Target, scope: Scope) -> Result<Frame> {
