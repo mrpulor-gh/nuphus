@@ -201,11 +201,11 @@ fn vk_to_enigo(vk: u16) -> Result<enigo::Key> {
         0x7A => F11,
         0x7B => F12,
         0x41..=0x5A => {
-            let c = (vk - 0x41 + b'a') as char;
+            let c = char::from_u32((vk - 0x41) as u32 + 'a' as u32).unwrap_or('a');
             Unicode(c)
         }
         0x30..=0x39 => {
-            let c = (vk - 0x30 + b'0') as char;
+            let c = char::from_u32((vk - 0x30) as u32 + '0' as u32).unwrap_or('0');
             Unicode(c)
         }
         _ => {

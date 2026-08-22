@@ -9,14 +9,12 @@ pub mod http;
 mod api_impl {
     use crate::core::{Point, Result, Scope, SessionHandle, Target};
     use crate::input::InputEngine;
-    use crate::platform::WindowManager;
     use crate::vision::{FindResult, PerceiveWhat, Perception, Query, VisionEngine};
 
     /// 统一 API 入口
     pub struct UnifiedApi {
         vision: VisionEngine,
         input: InputEngine,
-        window_mgr: WindowManager,
     }
 
     impl UnifiedApi {
@@ -25,7 +23,6 @@ mod api_impl {
             Self {
                 vision: VisionEngine::new(cleanup.clone()),
                 input: InputEngine::new(),
-                window_mgr: WindowManager::new(),
             }
         }
 
