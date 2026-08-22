@@ -614,6 +614,7 @@ body {
 .mobile-messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden; /* 兜底：任何子元素溢出不产生横向滚动/界面偏移 */
   -webkit-overflow-scrolling: touch;
   padding: 16px 12px 8px;
   display: flex;
@@ -686,11 +687,14 @@ body {
 /* user 气泡：椭圆角 + Markdown，向 agent 最终回复靠拢（accent 实色区分身份） */
 .mobile-msg-bubble {
   width: 100%;
+  min-width: 0; /* flex 子项允许收缩：防长 URL/表格按 min-content 撑破视口 */
   padding: 12px 14px;
   border-radius: 22px;
   font-size: calc(16px * var(--m-fs-scale));
   line-height: 1.55;
   word-break: break-word;
+  overflow-wrap: anywhere; /* 任意长串强制断行（比 break-word 更强） */
+  overflow: hidden; /* 兜底：任何不可断行元素不撑出气泡 */
 }
 
 .mobile-msg-user .mobile-msg-bubble {
@@ -1284,6 +1288,7 @@ body {
 /* 最终回复区：椭圆角背景 + Markdown */
 .mobile-msg-final {
   width: 100%;
+  min-width: 0; /* flex 子项允许收缩：防长 URL/表格按 min-content 撑破视口 */
   padding: 12px 14px;
   border-radius: 22px;
   background: var(--m-surface);
@@ -1291,6 +1296,8 @@ body {
   font-size: calc(16px * var(--m-fs-scale));
   line-height: 1.55;
   word-break: break-word;
+  overflow-wrap: anywhere; /* 任意长串强制断行（比 break-word 更强） */
+  overflow: hidden; /* 兜底：任何不可断行元素不撑出气泡 */
   border: 0.5px solid var(--m-separator);
 }
 
@@ -1330,6 +1337,7 @@ body {
   align-self: center;
   width: 100%;
   max-width: 92%;
+  min-width: 0; /* flex 子项允许收缩：防长内容按 min-content 撑破视口 */
   margin: 4px 0;
   padding: 10px 12px;
   border-radius: var(--m-radius-card);
@@ -1337,6 +1345,8 @@ body {
   border: 1px solid var(--m-separator);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere; /* 任意长串强制断行 */
+  overflow: hidden; /* 兜底：任何不可断行元素不撑出气泡 */
 }
 
 .mobile-msg-refine-head {
