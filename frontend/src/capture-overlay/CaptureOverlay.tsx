@@ -15,6 +15,16 @@ let _pendingMode: string | null = null
   window.dispatchEvent(new CustomEvent('overlay-mode-changed', { detail: mode }))
 }
 
+// Frozen background — Rust 每次 show 前注入（不透明 overlay 渲染此冻结帧，替代 WebView2 透明）
+let _pendingBg: string | null = null
+;(window as any).__setBg__ = (dataUrl: string) => {
+  _pendingBg = dataUrl
+  window.dispatchEvent(new CustomEvent('overlay-bg-changed', { detail: dataUrl }))
+}
+
+// 坐标换算：Rust 端 PRE_SCREENSHOT 是物理像素，webview 内是 CSS 像素 → 发给 Rust 前 × devicePixelRatio
+const DPR = window.devicePixelRatio || 1
+
 export function CaptureOverlay() {
   // Dynamic mode: initial from URL, then updated by Rust on each show
   const initialMode = new URLSearchParams(window.location.search).get('mode') || 'screenshot'
@@ -82,6 +92,20 @@ export function CaptureOverlay() {
 
   const [mask, setMask] = useState({ top: 0, bottom: 0, left: 0, right: 0 })
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  // ── 冻结背景图：Rust 每次 show 前注入（__setBg__ → overlay-bg-changed 事件） ──
+  const [bgUrl, setBgUrl] = useState<string | null>(_pendingBg)
+  useEffect(() => {
+    const applyBg = () => {
+      if (!_pendingBg) return
+      setBgUrl(_pendingBg)
+      _pendingBg = null
+    }
+    if (_pendingBg) applyBg()
+    const handler = () => applyBg()
+    window.addEventListener('overlay-bg-changed', handler)
+    return () => window.removeEventListener('overlay-bg-changed', handler)
+  }, [])
 
   // ── 持久 Image + RAF 循环：放大图像 + 十字线 + 选区边界标线 ──
   useEffect(() => {
@@ -254,8 +278,8 @@ export function CaptureOverlay() {
       if (!pos) return
       try {
         const b64 = await invoke<string | null>('overlay_magnifier_region', {
-          x: Math.round(pos.x),
-          y: Math.round(pos.y),
+          x: Math.round(pos.x * DPR),
+          y: Math.round(pos.y * DPR),
           size: CAPTURE_SIZE,
         })
         const img = magnifierElRef.current
@@ -352,7 +376,10 @@ export function CaptureOverlay() {
       const cur = cursorPosRef.current
       if (!cur) return
       try {
-        await invoke('overlay_pick_color', { x: Math.round(cur.x), y: Math.round(cur.y) })
+        await invoke('overlay_pick_color', {
+          x: Math.round(cur.x * DPR),
+          y: Math.round(cur.y * DPR),
+        })
       } catch (e) {
         console.error('取色失败:', e)
       }
@@ -370,8 +397,8 @@ export function CaptureOverlay() {
       try {
         await invoke('overlay_capture_done', {
           path: '',
-          x: cx,
-          y: cy,
+          x: Math.round(cx * DPR),
+          y: Math.round(cy * DPR),
           width: 1,
           height: 1,
         })
@@ -385,10 +412,10 @@ export function CaptureOverlay() {
     if (!finalRegion || finalRegion.w < 5 || finalRegion.h < 5) return
     try {
       const result = await invoke<any>('overlay_capture_confirm', {
-        x: Math.round(finalRegion.x),
-        y: Math.round(finalRegion.y),
-        width: Math.round(finalRegion.w),
-        height: Math.round(finalRegion.h),
+        x: Math.round(finalRegion.x * DPR),
+        y: Math.round(finalRegion.y * DPR),
+        width: Math.round(finalRegion.w * DPR),
+        height: Math.round(finalRegion.h * DPR),
         mode: overlayMode,
       })
       const cr = {
@@ -472,6 +499,26 @@ export function CaptureOverlay() {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
+      {/* ── 冻结截图背景（不透明 overlay 渲染，替代 WebView2 透明窗口） ── */}
+      {bgUrl && (
+        <img
+          src={bgUrl}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            width: '100vw',
+            height: '100vh',
+            objectFit: 'fill',
+            zIndex: 0,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+          }}
+        />
+      )}
+
       {/* ── CSS 遮罩 ── */}
       {!captureResult && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 1 }}>

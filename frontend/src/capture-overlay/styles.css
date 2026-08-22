@@ -13,7 +13,9 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: transparent;
+  /* 不透明兜底：overlay 不再依赖 WebView2 透明窗口（多屏/混合 DPI 透明会渲染成黑色）。
+     冻结截图背景注入前/加载中的间隙，深色底避免白闪。 */
+  background: #141414;
   cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;

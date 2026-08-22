@@ -71,44 +71,59 @@ pub async fn splash_status_update(app: AppHandle, text: String) -> Result<(), St
 /// mode parameter is injected into overlay frontend via window.__setOverlayMode__().
 #[tauri::command]
 pub async fn start_overlay_mask(app: AppHandle, mode: Option<String>) -> Result<(), String> {
-    // 0. Hide main window first so screenshot is clean (no self-capture)
+    // 0. Hide main window first so screenshot is clean (no self-capture).
+    //    xcap 走 DXGI 桌面采集，hide() 后立刻截图会拿到隐藏前的旧帧 →
+    //    冻结背景里会带上主窗口。先轮询确认 OS 层已隐藏，再等桌面合成刷新帧。
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
+        // 轮询直到 OS 确认隐藏（最长 ~300ms）
+        for _ in 0..30 {
+            if !win.is_visible().unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    // DXGI 桌面合成刷帧：隐藏生效后仍需一帧才保证截图干净。
+    // 150ms 足够（>2 个 vsync），再长会拖慢截图工具呼出速度。
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-    // 1. Pre-capture full screen for magnifier / OCR use
-    let monitors = xcap::Monitor::all().map_err(|e| format!("获取显示器列表失败: {e}"))?;
-    let primary = monitors
-        .into_iter()
-        .next()
-        .ok_or_else(|| "未找到显示器".to_string())?;
+    // 1. Pre-capture PRIMARY monitor — 既是冻结背景（overlay 不透明渲染），也是放大镜/OCR 数据源
+    let (pixels, pw, ph) = capture_primary_monitor()?;
 
-    let full = primary
-        .capture_image()
-        .map_err(|e| format!("屏幕截图失败: {e}"))?;
+    // 2. Encode frozen frame as image data URL (opaque overlay background).
+    //    JPEG：全屏编码比 PNG 快 4~5 倍，背景只是视觉层，选区/OCR 数据仍走无损 RGBA。
+    let data_url = encode_bg_data_url(&pixels, pw, ph)?;
 
-    let pw = full.width();
-    let ph = full.height();
-    let pixels = full.into_raw();
-
-    // Store in global cache (for magnifier / OCR region read)
+    // 3. Store in global cache (for magnifier / OCR region read)
     {
         let mut cache = PRE_SCREENSHOT.lock().expect("store pre-screenshot");
         *cache = Some((pixels, pw, ph));
     }
 
-    // 2. Ensure overlay window exists (lazy init)
+    // 4. Ensure overlay window exists (lazy init)
     ensure_overlay(&app)?;
 
-    // 3. Inject mode into overlay frontend + show
+    // 5. Pin overlay to primary monitor exactly (physical bounds), inject frozen bg, then show
     let overlay = app
         .get_webview_window("capture_overlay")
         .ok_or_else(|| "capture_overlay window not found".to_string())?;
 
+    let monitor = app
+        .primary_monitor()
+        .map_err(|e| format!("获取主显示器失败: {e}"))?
+        .ok_or_else(|| "未找到主显示器".to_string())?;
+
     let mode_str = mode.as_deref().unwrap_or("screenshot");
-    // Hide first if already showing (previous session), then set mode + show
+    // Hide first if already showing (previous session)
     let _ = overlay.hide();
+    let _ = overlay.set_position(tauri::Position::Physical(*monitor.position()));
+    let _ = overlay.set_size(tauri::Size::Physical(*monitor.size()));
+    // Inject bg BEFORE show to avoid pre-paint flash. base64 在 JS 单引号字符串内无转义风险。
+    let _ = overlay.eval(format!(
+        "window.__setBg__ && window.__setBg__('{}')",
+        data_url
+    ));
     let _ = overlay.eval(format!(
         "window.__setOverlayMode__ && window.__setOverlayMode__('{}')",
         mode_str
@@ -118,21 +133,57 @@ pub async fn start_overlay_mask(app: AppHandle, mode: Option<String>) -> Result<
     Ok(())
 }
 
+/// Capture the primary monitor into raw RGBA pixels (physical resolution).
+/// 无 is_primary 报告时回退到第一台显示器。
+fn capture_primary_monitor() -> Result<(Vec<u8>, u32, u32), String> {
+    let monitors = xcap::Monitor::all().map_err(|e| format!("获取显示器列表失败: {e}"))?;
+    let primary = monitors
+        .iter()
+        .find(|m| m.is_primary().unwrap_or(false))
+        .cloned()
+        .or_else(|| monitors.first().cloned())
+        .ok_or_else(|| "未找到显示器".to_string())?;
+
+    let full = primary
+        .capture_image()
+        .map_err(|e| format!("屏幕截图失败: {e}"))?;
+    let pw = full.width();
+    let ph = full.height();
+    Ok((full.into_raw(), pw, ph))
+}
+
+/// Encode RGBA pixels as a JPEG `data:image/jpeg;base64,...` URL (overlay frozen background).
+/// JPEG 比 PNG 编码快且体积小（背景仅视觉展示，不用无损）。
+fn encode_bg_data_url(pixels: &[u8], w: u32, h: u32) -> Result<String, String> {
+    use base64::Engine;
+    let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, pixels.to_vec())
+        .ok_or_else(|| "创建全屏图像失败".to_string())?;
+    let mut jpg_buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::from(img_buf)
+        .write_to(&mut jpg_buf, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("JPEG 编码失败: {e}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(jpg_buf.into_inner());
+    Ok(format!("data:image/jpeg;base64,{}", b64))
+}
+
 /// Ensure capture_overlay window exists (created once, hidden, reused)
 pub fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
     if OVERLAY_CREATED.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
 
+    // 不用 fullscreen + transparent：
+    //   · fullscreen 不带显示器会落到"默认显示器"（多屏时往往是副屏）
+    //   · WebView2 透明窗口在全屏/多屏/混合 DPI 下透明失效 → 渲染成黑色
+    // 改为普通不透明窗口，显示时（start_overlay_mask）按主屏物理尺寸精确铺满，
+    // 并把预截图注入为背景（opaque overlay，见 start_overlay_mask）。
     let overlay = WebviewWindowBuilder::new(
         app,
         "capture_overlay",
         WebviewUrl::App("capture_overlay.html".into()),
     )
     .title("")
-    .fullscreen(true)
     .decorations(false)
-    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .visible(false)
@@ -205,14 +256,7 @@ pub async fn overlay_capture_confirm(
         }
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
 
-        let monitors = xcap::Monitor::all().map_err(|e| format!("获取显示器列表失败: {e}"))?;
-        let primary = monitors
-            .into_iter()
-            .next()
-            .ok_or_else(|| "未找到显示器".to_string())?;
-        let full = primary
-            .capture_image()
-            .map_err(|e| format!("屏幕截图失败: {e}"))?;
+        let (pixels, pw, ph) = capture_primary_monitor()?;
 
         // Restore overlay (for preview thumbnail display)
         if let Some(overlay) = app.get_webview_window("capture_overlay") {
@@ -220,7 +264,7 @@ pub async fn overlay_capture_confirm(
             let _ = overlay.set_focus();
         }
 
-        (full.width(), full.height(), full.into_raw())
+        (pw, ph, pixels)
     } else {
         // ── OCR/selection mode: crop directly from PRE_SCREENSHOT (no mask interference) ─
         let cache = PRE_SCREENSHOT
