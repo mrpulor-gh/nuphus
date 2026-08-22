@@ -51,8 +51,8 @@ jobs:
         run: cargo test --workspace
 
   check-macos:
-    name: Check (macOS x86_64)
-    # macOS 打包走免费 Intel runner（macos-14）；产物 dmg 可在 Apple Silicon 经 Rosetta 运行。
+    name: Check (macOS arm64)
+    # macos-14 免费 runner 为 Apple Silicon (arm64)，原生 aarch64 编译验证。
     # cargo check 会执行 build.rs（自动下载 sherpa universal2 + 模型），快速暴露 macOS 编译错误。
     runs-on: macos-14
     steps:
