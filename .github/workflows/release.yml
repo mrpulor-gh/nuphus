@@ -50,7 +50,11 @@ jobs:
 
       # ── 1. 安装包（Tauri bundle：Windows→msi / macOS→dmg / Linux→deb+AppImage）──
       # 模型库不打包（B 方案）：首次启动由 build.rs/bootstrap 自动下载。
+      # APPIMAGE_EXTRACT_AND_RUN=1：GitHub runner 上 AppImage（linuxdeploy）FUSE 挂载不可用，
+      # 解压到临时目录运行（tauri 官方 CI 模板做法）。
       - name: Build installer (tauri bundle)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npx tauri build
 
       # ── 2. 便携包（绿色版：解压即用，技术用户/开发者通道）──
