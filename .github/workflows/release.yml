@@ -61,7 +61,8 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
-        run: npx tauri build --bundles deb
+        # Linux 只打 deb（AppImage linuxdeploy 环境问题单列）；Windows 默认 msi
+        run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || '' }}
 
       - name: Package portable (Linux)
         if: runner.os == 'Linux'
