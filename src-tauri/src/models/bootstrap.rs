@@ -435,7 +435,7 @@ fn file_pct(downloaded: u64, total: u64) -> String {
 /// 折算整体进度并推送 `splash:progress`（splash 已关闭时静默）。
 fn emit_splash_pct(app: &AppHandle, done: u64, total: u64, text: &str) {
     let pct = splash_pct(done, total);
-    let _ = crate::splash::emit_splash_progress(app, Some(pct), text);
+    crate::splash::emit_splash_progress(app, Some(pct), text);
 }
 
 /// Blocking entry point (first-run splash). Runs the download synchronously on
