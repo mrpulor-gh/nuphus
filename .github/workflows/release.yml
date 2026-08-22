@@ -17,9 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # FIX 1: ubuntu-latest → ubuntu-22.04
-          # 24.04 与 Tauri AppImage 工具链不兼容（FUSE2 缺失 + GLIBC 2.39）
-          - os: ubuntu-22.04
+          # FIX 1: 保持 ubuntu-24.04
+          # 22.04 无 webkit2gtk-2.40（tauri 2.11.5 要求 v2_40 feature），无法编译；
+          # AppImage 打包问题由 NO_STRIP + APPIMAGE_EXTRACT_AND_RUN + 系统依赖解决。
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: nuphus_linux_amd64
           - os: windows-latest
