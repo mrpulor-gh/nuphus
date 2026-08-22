@@ -112,6 +112,10 @@ fn check_ssrf(url: &str, allow_private: bool) -> Result<(), String> {
     let host = parsed
         .host_str()
         .ok_or_else(|| "URL missing host".to_string())?;
+    // url crate 对 IPv6 字面量 host_str 返回含方括号形式（如 "[::1]"），
+    // 直接 parse::<IpAddr> 会失败并落入 DNS 分支（Linux getaddrinfo 拒绝带括号）。
+    // 统一 trim 括号再判定；域名无括号不受影响。
+    let host = host.trim_start_matches('[').trim_end_matches(']');
     let port = parsed.port_or_known_default().unwrap_or(80);
 
     // IP 字面量直接判定，无需 DNS
