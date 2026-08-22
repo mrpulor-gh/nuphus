@@ -98,9 +98,25 @@ Nuphus 把「执行」和「掌控」分开：**桌面是 Agent 的双手，手�
 
 ## 安装
 
-### 下载安装（推荐）
+### npm 一键安装（推荐）
 
-面向最终用户，**无需命令行、无需 Node.js / Rust 环境**：
+一条命令完成安装，自动匹配当前平台的二进制（Windows x64 / macOS arm64 / Linux x64），**无需下载安装包、无需 Node.js / Rust 环境**：
+
+```bash
+# 全局安装（提供 nuphus 命令）
+npm install -g @nuphus/nuphus-desktop
+
+# 或免安装体验（不写入全局）
+npx @nuphus/nuphus-desktop
+```
+
+安装完成后在终端输入 `nuphus` 即可启动。
+
+> 首次安装体积较大（桌面应用含本地 OCR / 语音模型），请耐心等待。
+
+### 下载安装包
+
+面向不熟悉命令行的用户，**无需命令行、无需 Node.js / Rust 环境**：
 
 1. 从 [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases) 下载对应平台的安装包：
    - **Windows**：`.msi`
@@ -108,8 +124,6 @@ Nuphus 把「执行」和「掌控」分开：**桌面是 Agent 的双手，手�
    - **Linux**：`.deb` / `.AppImage`
 2. 双击安装包完成安装（Windows 安装后桌面生成 **Nuphus** 快捷方式）
 3. 双击快捷方式即可启动
-
-> **当前状态**：Nuphus 处于 Alpha 阶段，预编译安装包即将发布。发布前请使用下方的源码构建方式。
 
 ### 从源码构建（开发者）
 
@@ -140,7 +154,7 @@ npx tauri build
 
 ### 首次配置
 
-首次启动会弹出 2 步引导（下载安装与源码构建均适用）：
+首次启动会弹出 2 步引导（以上所有安装方式均适用）：
 
 1. **选择模型厂商** — 从预设模板中点选（OpenAI / Anthropic / DeepSeek / Qwen / Zhipu 等）
 2. **填入 API Key** — 按 Enter 提交即完成配置

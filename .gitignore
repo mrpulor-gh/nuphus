@@ -148,3 +148,10 @@ scripts/build-market-index.mjs
 !src-tauri/desktop/sherpa/
 !src-tauri/desktop/sherpa/*.dll
 !src-tauri/desktop/sherpa/*.lib
+# npm 发布产物（大文件二进制，不提交 git）
+npm-desktop/downloads/
+npm-desktop/packages/nuphus-desktop-win32-x64/
+npm-desktop/packages/nuphus-desktop-osx-arm64/
+npm-desktop/packages/nuphus-desktop-linux-x64/
+# npm 安装验证产物（一次性测试，不提交）
+npm-desktop/install-test/
