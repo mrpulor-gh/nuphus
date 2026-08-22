@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use desktop_api::{
     capture, clipboard as desk_clip, input, Frame, FrameSource, Locator, Query, Scope, Target,
 };
+#[cfg(not(windows))]
+use desktop_api::SendEnigo;
 #[cfg(windows)]
 use desktop_api::{sendinput, WindowManager};
 
@@ -297,13 +299,14 @@ impl DesktopClient {
     /// （命名为 enigo_handle 避免与 enigo crate 同名遮蔽；返回 &'static Mutex 供 .lock() 借用，
     ///  不可返回 Arc——临时 Arc 会在语句结束 drop 导致 MutexGuard 悬垂 E0716）
     #[cfg(not(windows))]
-    fn enigo_handle() -> &'static std::sync::Mutex<enigo::Enigo> {
-        static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> =
+    fn enigo_handle() -> &'static std::sync::Mutex<SendEnigo> {
+        static INST: std::sync::OnceLock<std::sync::Mutex<SendEnigo>> =
             std::sync::OnceLock::new();
         INST.get_or_init(|| {
-            std::sync::Mutex::new(
+            // SendEnigo: macOS 上 Enigo 非 Send（CGEventSource 指针），经 Mutex 串行化后包装为 Send+Sync。
+            std::sync::Mutex::new(SendEnigo(
                 enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-            )
+            ))
         })
     }
 

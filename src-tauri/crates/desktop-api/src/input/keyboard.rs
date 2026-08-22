@@ -1,16 +1,19 @@
 //! 键盘控制 — Win32 原生 / macOS enigo / Linux PlatformNotSupported
 
 use crate::core::*;
+#[cfg(not(windows))]
+use super::SendEnigo;
 
 #[cfg(not(windows))]
-fn enigo() -> &'static std::sync::Mutex<enigo::Enigo> {
-    static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> = std::sync::OnceLock::new();
+fn enigo() -> &'static std::sync::Mutex<SendEnigo> {
+    static INST: std::sync::OnceLock<std::sync::Mutex<SendEnigo>> = std::sync::OnceLock::new();
     INST.get_or_init(|| {
         // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
         // 平台输入初始化不可用（无显示服务器等），与后续调用失败语义一致。
-        std::sync::Mutex::new(
+        // SendEnigo: macOS 上 Enigo 非 Send（CGEventSource 指针），经 Mutex 串行化后包装为 Send+Sync。
+        std::sync::Mutex::new(SendEnigo(
             enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-        )
+        ))
     })
 }
 

@@ -12,6 +12,39 @@ pub use mouse::*;
 #[cfg(windows)]
 pub use sendinput::*;
 
+/// enigo 0.2 在 macOS 上 `Enigo` 内部持有 `NonNull<CGEventSource>`（core-graphics 指针），
+/// 编译器推断为非 Send/Sync，导致 `OnceLock<Mutex<Enigo>>` 静态变量无法编译
+/// （`shared static variables must have a type that implements Sync`）。
+///
+/// 安全性论证：
+/// - CoreGraphics 的 CGEventSource / CGEventPost 均为线程安全 API（Apple 官方文档确认）；
+/// - 所有访问经全局 `Mutex` 串行化，任意时刻仅一个线程持有可变引用；
+/// - Linux 上 `Enigo` 本就 Send/Sync，包装后行为不变。
+///
+/// 实现 `Deref`/`DerefMut` 自动解引用：调用点 `enigo().lock()?.key(...)` 无需改动。
+#[cfg(not(windows))]
+pub struct SendEnigo(pub enigo::Enigo);
+
+#[cfg(not(windows))]
+unsafe impl Send for SendEnigo {}
+#[cfg(not(windows))]
+unsafe impl Sync for SendEnigo {}
+
+#[cfg(not(windows))]
+impl std::ops::Deref for SendEnigo {
+    type Target = enigo::Enigo;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(not(windows))]
+impl std::ops::DerefMut for SendEnigo {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// 输入引擎
 pub struct InputEngine;
 
