@@ -90,6 +90,21 @@ jobs:
           Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/
           Compress-Archive -Path release/* -DestinationPath ${{ matrix.artifact }}.zip
 
+      # ── 3. msi 重命名：去掉 tauri 默认附加的语言后缀（en-US）──
+      # tauri v2 msi 命名含系统 locale（Nuphus_0.1.1_x64_en-US.msi），
+      # 与产品内容无关；统一为标准 Windows 命名 Nuphus_0.1.1_x64.msi。
+      - name: Rename MSI (strip locale suffix)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem "target/release/bundle/msi/*.msi" | ForEach-Object {
+            $newName = $_.Name -replace '_[a-zA-Z]{2,3}-[a-zA-Z]{2,4}\.msi$', '.msi'
+            if ($newName -ne $_.Name) {
+              Write-Output "Rename $($_.Name) -> $newName"
+              Rename-Item $_.FullName $newName -Force
+            }
+          }
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
