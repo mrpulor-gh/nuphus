@@ -71,7 +71,7 @@ pub fn stream_shell_blocking(
     };
 
     #[cfg(not(windows))]
-    let mut child = std::process::Command::new("sh")
+    let child = std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .stdout(std::process::Stdio::piped())

@@ -7,7 +7,6 @@ use serde_json::Value;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
-use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
 /// 连接 X11 服务，失败时给出友好提示
 fn connect() -> crate::Result<(RustConnection, usize)> {

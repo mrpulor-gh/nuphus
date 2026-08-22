@@ -16,8 +16,9 @@ use desktop_api::{sendinput, WindowManager};
 use crate::desktop::YoloDetector;
 
 // enigo 0.2: text/key/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
+// Direction 用全路径 enigo::Direction（避免 unused import）
 #[cfg(not(windows))]
-use enigo::{Direction, Keyboard, Mouse};
+use enigo::{Keyboard, Mouse};
 
 /// Desktop client — native Rust desktop control
 #[derive(Clone)]
@@ -231,6 +232,7 @@ impl DesktopClient {
 
     /// Send text input to window — Windows: AttachThreadInput ensures target receives input
     /// Caller must ensure the target window is foreground first (ensure_foreground).
+    #[cfg_attr(not(windows), allow(unused_variables))] // hwnd 仅 Windows 使用
     pub async fn input_send(&self, text: &str, hwnd: i32, press_enter: bool) -> Result<Value> {
         #[cfg(windows)]
         {
@@ -265,14 +267,21 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = Self::enigo_handle()
-                .lock()
-                .map_err(|e| format!("enigo: {e}"))?;
-            if !text.is_empty() {
-                e.text(text).map_err(|e| format!("text: {e}"))?;
+            // 不能持有 MutexGuard 跨 await（future 需 Send）：text 完成后立即释放锁，
+            // sleep 后再重新取锁执行 key。
+            {
+                let mut e = Self::enigo_handle()
+                    .lock()
+                    .map_err(|e| format!("enigo: {e}"))?;
+                if !text.is_empty() {
+                    e.text(text).map_err(|e| format!("text: {e}"))?;
+                }
             }
             if press_enter {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let mut e = Self::enigo_handle()
+                    .lock()
+                    .map_err(|e| format!("enigo: {e}"))?;
                 e.key(enigo::Key::Return, enigo::Direction::Click)
                     .map_err(|e| format!("enter: {e}"))?;
             }

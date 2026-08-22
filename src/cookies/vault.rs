@@ -899,6 +899,7 @@ mod tests {
     fn secret_legacy_enc_prefix_migrates() {
         // 旧版格式 `enc:<HEX>`（DPAPI 密文 HEX 编码，无 v1: 版本号）应能迁移解密。
         // Windows 上由 encrypt_secret 产出 `enc:v1:<base64>`，把 blob 改 HEX 即模拟旧格式。
+        #[cfg(target_os = "windows")]
         let plain = "sk-legacy-format-key";
         #[cfg(target_os = "windows")]
         {

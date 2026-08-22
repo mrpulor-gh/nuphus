@@ -241,11 +241,11 @@ impl ToolRegistry {
                         let mut cmd = std::process::Command::new("kill");
                         if force { cmd.arg("-9"); }
                         cmd.arg(pid.to_string());
-                        let output = cmd.output()
+                        let _output = cmd.output()
                             .map_err(|e| format!("kill failed: {}", e))?;
                         Ok(ToolResult::success(format!("Killed PID {}", pid)))
                     } else if let Some(name) = name {
-                        let output = std::process::Command::new("pkill")
+                        let _output = std::process::Command::new("pkill")
                             .args(if force { vec!["-9", name] } else { vec![name] })
                             .output()
                             .map_err(|e| format!("pkill failed: {}", e))?;
