@@ -288,13 +288,20 @@ Write-Step 'Publishing (platform packages first, then meta)'
 foreach ($p in $Platforms) { Publish-Package $p.Name $version }
 Publish-Package $MetaName $version
 
-# Verify published versions on registry
+# Verify published versions on registry (with propagation retry:
+# npm registry is eventually-consistent; immediate view may return old version)
 Write-Step 'Registry verification'
 if ($DryRun) {
     Write-Ok '[dry-run] would verify all 4 packages on registry after publish (skipped)'
 } else {
     foreach ($n in @($MetaName) + @($Platforms | ForEach-Object { $_.Name })) {
-        $v = Get-PublishedVersion "@nuphus/$n"
+        $v = $null
+        for ($attempt = 1; $attempt -le 4; $attempt++) {
+            $v = Get-PublishedVersion "@nuphus/$n"
+            if ($v -eq $version) { break }
+            Write-Ok "[retry $attempt/4] @nuphus/$n not yet $version (got '$v'), waiting for registry propagation..."
+            Start-Sleep -Seconds 5
+        }
         if ($v -ne $version) { throw "registry verification failed: @nuphus/$n expected $version got $v" }
         Write-Ok "@nuphus/$n@$v confirmed on registry"
     }
