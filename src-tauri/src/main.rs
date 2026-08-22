@@ -15,6 +15,7 @@ mod plugin_apps;
 mod relay_client;
 mod render;
 mod speech;
+mod splash;
 mod state;
 mod utils;
 mod video;
@@ -276,6 +277,7 @@ fn main() {
             commands::toggle_main_window_topmost,
             commands::finish_startup,
             commands::splash_status_update,
+            commands::splash_skip_download,
             // -- 全屏遮罩覆盖窗截图 --
             commands::start_overlay_mask,
             commands::overlay_magnifier_region,
@@ -357,10 +359,8 @@ fn main() {
                 })
             };
             tracing::info!("WorkflowEngine initialized at startup");
-            // Update splash status
-            if let Some(splash) = app.get_webview_window("splash") {
-                let _ = splash.eval("setStatus('Loading engine…')");
-            }
+            // Update splash status (事件推送；旧 eval+内联 setStatus 被 CSP 拦从未生效)
+            crate::splash::emit_splash_progress(app.handle(), None, "正在启动引擎…");
 
             // ── 一次性迁移：回填 conversation 条目空 intent/summary（历史 bug 导致
             // 对话全文已存但 FTS/检索命中不到）。幂等，启动时执行一次。──
@@ -381,9 +381,7 @@ fn main() {
             }
 
             // Update splash status
-            if let Some(splash) = app.get_webview_window("splash") {
-                let _ = splash.eval("setStatus('Preparing model…')");
-            }
+            crate::splash::emit_splash_progress(app.handle(), None, "准备模型…");
 
             // ── Inject LLM client into WorkflowEngine (required for ChatAgent Talk steps) ──
             {
@@ -507,24 +505,12 @@ fn main() {
                 let stt_cache = std::sync::Arc::clone(
                     &app.state::<crate::state::AppState>().speech.cache,
                 );
-                let vision_app = app.handle().clone();
                 let spawn_result = std::thread::Builder::new()
                     .name("preload".to_string())
                     .spawn(move || {
-                        // Start loading before frontend asks, so it may finish by the time preload_model IPC arrives.
-                        tracing::info!("[Preload] Background Candle embed model load starting...");
-                        match nuphus::embed::Embedder::get() {
-                            Some(_) => tracing::info!("[Preload] Background Candle embed model loaded"),
-                            None => tracing::warn!("[Preload] Background Candle embed model load failed (will lazy-init)"),
-                        }
-
-                        // 视觉模型自愈：OCR+YOLO 缺失时非阻塞触发后台下载
-                        // （ensure_vision_models 只 spawn 线程立即返回，不拖慢启动）。
-                        if let Err(e) = crate::models::bootstrap::ensure_vision_models(&vision_app) {
-                            tracing::warn!("[Preload] Vision model download spawn failed (will lazy-init): {e}");
-                        } else {
-                            tracing::info!("[Preload] Vision model ensure scheduled");
-                        }
+                        // 注意：嵌入模型（bge-small-zh）与视觉模型（OCR/YOLO）不在后台
+                        // 线程预热——改由前端 preload_model / preload_ocr 命令阻塞触发，
+                        // 以便 splash 展示真实下载进度（后台预热会吞掉进度回调）。
 
                         // STT 预热仅覆盖本地引擎场景：云端路由（capabilities.stt 可解析）
                         // 不需要本地 recognizer；模型文件未下载时静默跳过，绝不触发下载。

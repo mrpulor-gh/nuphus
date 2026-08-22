@@ -38,23 +38,58 @@
       transition: opacity 0.3s ease;
     }
 
+    /* 进度条：pct 已知时定宽过渡；未知（pct: null）时不定宽滑动 */
+    .bar {
+      width: 180px;
+      height: 4px;
+      border-radius: 999px;
+      background: #e9e9ef;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #5b5be6, #8b8bf5);
+      transition: width 0.25s ease;
+    }
+    .bar.indeterminate .bar-fill {
+      width: 30%;
+      animation: nvSlide 1.3s ease-in-out infinite;
+    }
+    @keyframes nvSlide {
+      0%   { transform: translateX(-110%); }
+      100% { transform: translateX(440%); }
+    }
+
+    /* 「后台下载」：下载超时 30s 才出现，先放用户进主界面，下载继续 */
+    .skip-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    .skip-btn {
+      font-size: 11px;
+      color: #6366f1;
+      background: none;
+      border: 1px solid #d3d3e0;
+      border-radius: 999px;
+      padding: 3px 12px;
+      cursor: pointer;
+      font-family: var(--font-ui);
+      transition: background 0.2s ease;
+    }
+    .skip-btn:hover { background: #f0f0ff; }
+    .skip-note {
+      font-size: 10px;
+      color: #9a9ab0;
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      .st-idle .nv-whole, .st-idle .nv-eye { animation: none !important; }
+      .st-idle .nv-whole, .st-idle .nv-eye, .bar.indeterminate .bar-fill { animation: none !important; }
     }
   </style>
-  <script>
-    // Called by Rust backend via eval() to update loading status
-    function setStatus(msg) {
-      var el = document.querySelector('.hint');
-      if (el) {
-        el.style.opacity = '0';
-        setTimeout(function () {
-          el.textContent = msg;
-          el.style.opacity = '1';
-        }, 150);
-      }
-    }
-  </script>
 </head>
 <body>
   <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
@@ -65,6 +100,15 @@
       <path class="nv-eye r" d="M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
     </g>
   </svg>
-  <div class="hint">Starting…</div>
+  <div class="hint">正在启动…</div>
+  <div class="bar indeterminate" id="bar"><div class="bar-fill" id="barFill"></div></div>
+  <div id="skipWrap" class="skip-wrap" hidden>
+    <button id="skipBtn" class="skip-btn">后台下载</button>
+    <div class="skip-note">除视觉定位，不影响正常使用！</div>
+  </div>
+  <!-- 进度由 splash.js 监听 splash:progress 事件驱动（旧 setStatus 定义在
+       内联 <script>，被 CSP script-src 'self' 拦截从未执行过；withGlobalTauri 注入的
+       __TAURI__ 走 AddScriptToExecuteOnDocumentCreated，不受页面 CSP 限制） -->
+  <script src="splash.js"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@
     "frontendDist": "../frontend/dist"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
         "windows": [
       {
         "label": "splash",

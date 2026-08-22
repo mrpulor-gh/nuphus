@@ -8,7 +8,7 @@
 //   5. Main window DesktopToolbar polls via take_capture_result to get result
 
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Global always-on-top state
 static ALWAYS_ON_TOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -55,12 +55,35 @@ pub async fn finish_startup(app: AppHandle) -> Result<(), String> {
 
 /// Update the splash window's loading status text.
 /// Called from both Rust setup and frontend initialization stages.
+/// 走 `splash:progress` 事件（不受 splash 页 CSP 限制；旧 eval+内联
+/// setStatus 定义被 `script-src 'self'` 拦截，状态文案从未生效）。
 #[tauri::command]
 pub async fn splash_status_update(app: AppHandle, text: String) -> Result<(), String> {
+    crate::splash::emit_splash_progress(&app, None, &text);
+    Ok(())
+}
+
+/// 用户在 splash 上点击「后台下载」：关闭 splash、显示主窗口，让进行中的
+/// 模型下载继续在后台跑（preload_model / preload_ocr 的下载在 spawn_blocking
+/// 线程上，不受 splash 窗口生命周期影响；ModelsPage 经 `models:download` 事件
+/// 继续展示进度）。同时广播 `splash:skipped`，主界面立即进入 ready。
+#[tauri::command]
+pub async fn splash_skip_download(app: AppHandle) -> Result<(), String> {
+    tracing::info!("[Splash] user chose background download — closing splash early");
     if let Some(splash) = app.get_webview_window("splash") {
-        let escaped = text.replace('\\', "\\\\").replace('\'', "\\'");
-        let _ = splash.eval(format!("setStatus('{}')", escaped));
+        let _ = splash.close();
     }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    // 主界面提示：模型在后台继续下载（可在「设置-模型」查看进度）
+    super::hud::hud_update(
+        app.clone(),
+        "模型正在后台下载…可在「设置-模型」查看进度".to_string(),
+        "info".to_string(),
+    );
+    let _ = app.emit("splash:skipped", ());
     Ok(())
 }
 

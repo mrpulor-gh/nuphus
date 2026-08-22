@@ -7,7 +7,7 @@ use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -78,7 +78,10 @@ impl Embedder {
             })
     }
 
-    fn download_model(dir: &PathBuf) -> Result<(), String> {
+    fn download_model(
+        dir: &PathBuf,
+        on_progress: &mut (dyn FnMut(u64, u64, &str) + Send),
+    ) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建模型目录失败: {}", e))?;
         tracing::info!("[Embed] 正在下载模型到: {}", dir.display());
 
@@ -100,6 +103,16 @@ impl Embedder {
             let mut last_err = String::new();
             let mut downloaded = false;
 
+            // 进度节流 ~1 MiB（与 bootstrap.rs 视觉模型一致），文件完成必报；
+            // 跨镜像/重试保留 last_emit，避免同一文件重复刷新进度。
+            let mut last_emit = 0u64;
+            let mut file_cb = |downloaded: u64, total: u64| {
+                if downloaded == total || downloaded - last_emit >= 1024 * 1024 {
+                    last_emit = downloaded;
+                    on_progress(downloaded, total, file);
+                }
+            };
+
             'mirrors: for &mirror in MIRRORS {
                 let url = format!("{}/{}/resolve/main/{}", mirror, HF_MODEL_ID, file);
 
@@ -110,7 +123,7 @@ impl Embedder {
                     }
                     tracing::info!("[Embed]  下载 {} ← {} (第 {} 次)", file, url, attempt + 1);
 
-                    match Self::download_once(&agent, &url, &path) {
+                    match Self::download_once(&agent, &url, &path, &mut file_cb) {
                         Ok(size) if size >= min_size => {
                             tracing::info!("[Embed]  完成: {} ({} bytes)", file, size);
                             downloaded = true;
@@ -151,11 +164,13 @@ impl Embedder {
         Ok(())
     }
 
-    /// 单次下载尝试：检查 HTTP 状态码并流式写入磁盘，返回写入字节数
+    /// 单次下载尝试：检查 HTTP 状态码并流式写入磁盘，返回写入字节数。
+    /// `on_progress(downloaded, total)` 随写入推进（调用方负责节流）。
     fn download_once(
         agent: &reqwest::blocking::Client,
         url: &str,
         path: &PathBuf,
+        on_progress: &mut (dyn FnMut(u64, u64) + Send),
     ) -> Result<u64, String> {
         let mut resp = agent
             .get(url)
@@ -172,11 +187,23 @@ impl Embedder {
             ));
         }
 
+        let total = resp.content_length().unwrap_or(0);
         let mut f = std::fs::File::create(path).map_err(|e| format!("创建文件失败: {}", e))?;
-        let size = resp
-            .copy_to(&mut f)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
-        Ok(size)
+        let mut buf = vec![0u8; 256 * 1024];
+        let mut downloaded = 0u64;
+        loop {
+            let n = resp
+                .read(&mut buf)
+                .map_err(|e| format!("读取数据失败: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n])
+                .map_err(|e| format!("写入文件失败: {}", e))?;
+            downloaded += n as u64;
+            on_progress(downloaded, total);
+        }
+        Ok(downloaded)
     }
 
     /// 模型文件的最小合法体积，用于识别错误页/毒化文件
@@ -189,14 +216,17 @@ impl Embedder {
         }
     }
 
-    pub fn init(model_dir: Option<PathBuf>) -> Result<Self, String> {
+    pub fn init(
+        model_dir: Option<PathBuf>,
+        on_progress: &mut (dyn FnMut(u64, u64, &str) + Send),
+    ) -> Result<Self, String> {
         let dir = model_dir.unwrap_or_else(Self::model_dir);
 
         // 按文件检查完整性（而非目录存在性），空目录/部分缺失的残留都会触发补下载；
         // download_model 内部跳过已存在文件，天然支持断点续传
         if MODEL_FILES.iter().any(|f| !dir.join(f).exists()) {
             tracing::info!("[Embed] 模型文件不完整，尝试自动下载: {}", dir.display());
-            Self::download_model(&dir)?;
+            Self::download_model(&dir, on_progress)?;
         }
 
         match Self::load_from_dir(&dir) {
@@ -205,7 +235,7 @@ impl Embedder {
                 // 毒化文件自愈：删除权重文件，重新下载并再加载一次
                 tracing::warn!("[Embed] 模型加载失败（{}），删除权重后重新下载", first_err);
                 let _ = std::fs::remove_file(dir.join("pytorch_model.bin"));
-                Self::download_model(&dir)
+                Self::download_model(&dir, on_progress)
                     .map_err(|e| format!("{}；重新下载失败: {}", first_err, e))?;
                 Self::load_from_dir(&dir)
             }
@@ -260,6 +290,15 @@ impl Embedder {
 
     /// 获取全局 Embedder 引用。首次调用自动加载模型，失败后下次调用自动重试。
     pub fn get() -> Option<&'static Embedder> {
+        Self::get_with_progress(&mut |_: u64, _: u64, _: &str| {})
+    }
+
+    /// 带进度回调的全局加载：首次调用自动下载模型，下载推进时回调
+    /// `on_progress(downloaded, total, filename)`（调用方负责节流与转发）。
+    /// 已加载/已就绪时立即返回且不回调。用于 splash 展示真实下载进度。
+    pub fn get_with_progress(
+        on_progress: &mut (dyn FnMut(u64, u64, &str) + Send),
+    ) -> Option<&'static Embedder> {
         // Mutex 中毒恢复（与 preload() 一致）：避免历史上一次 panic 导致进程内永久静默不可用
         let mut guard = embedder_lock().lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
@@ -268,7 +307,8 @@ impl Embedder {
             // wait::enter()（debug_assertions 检测 runtime 上下文）panic，
             // release 下也会长时间阻塞异步调度。统一放到独立 OS 线程执行并 join——
             // 子线程 panic 仅表现为 join 返回 Err，不会令本锁中毒。
-            let init_result = std::thread::scope(|s| s.spawn(|| Embedder::init(None)).join());
+            let init_result =
+                std::thread::scope(|s| s.spawn(|| Embedder::init(None, on_progress)).join());
             match init_result {
                 Ok(Ok(embedder)) => {
                     let leaked: &'static Embedder = Box::leak(Box::new(embedder));

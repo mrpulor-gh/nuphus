@@ -1,6 +1,6 @@
 // useInit — 应用初始化与 Toast 通知
 import { useState, useCallback, useEffect } from 'react'
-import { invoke } from '../core/bridge'
+import { invoke, listen } from '../core/bridge'
 import type { ChatMessage, TimelineEntry } from '../core/types'
 import {
   getChatHistory,
@@ -217,6 +217,31 @@ export function useInit(deps: InitDeps) {
         invoke('finish_startup').catch(() => {})
       })
   }, [runInitialization])
+
+  // splash「后台下载」跳过：模型仍在后台下载，主界面立即可用。
+  // （splash_skip_download 关闭 splash 后广播此事件；本监听让 appState 立即转 ready，
+  //  不再等待 preload_model / preload_ocr 阻塞完成）
+  useEffect(() => {
+    let unl: (() => void) | undefined
+    let mounted = true
+    ;(async () => {
+      try {
+        const u = await listen('splash:skipped', () => {
+          if (!mounted) return
+          setAppState('ready')
+          setFadeOut(true)
+          setTimeout(() => setFadeOut(false), 300)
+        })
+        if (mounted) unl = u
+      } catch {
+        // 事件不可用（异常环境）：退化为等待模型下载完成，行为同旧版
+      }
+    })()
+    return () => {
+      mounted = false
+      unl?.()
+    }
+  }, [setAppState])
 
   const refreshModelInfo = useCallback(async () => {
     try {

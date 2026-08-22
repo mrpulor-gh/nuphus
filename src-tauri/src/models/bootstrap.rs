@@ -8,11 +8,11 @@
 //! Contract (consumed by the ModelsPage vision card via `useVisionModelDownload`):
 //! - Command: `vision_models_status()` → `{ocr_ready, yolo_ready, missing[],
 //!   dir, downloading}` (synchronous, no side effects).
-//! - Trigger: `ensure_vision_models(&app)` — non-blocking. If every vision file
-//!   is already present it returns immediately; otherwise it single-flights an
-//!   OS thread `"vision-model-download"` and returns. `preload_ocr` invokes it,
-//!   so `invoke('preload_ocr')` doubles as the ModelsPage "retry" entry point.
-//!   A second caller while a download runs follows the global event stream
+//! - Trigger: `preload_ocr` → `ensure_vision_models_blocking(&app)` — blocking.
+//!   Runs the download synchronously (inside the command's spawn_blocking) so
+//!   the splash stays up through first-run downloads; `invoke('preload_ocr')`
+//!   doubles as the ModelsPage "retry" entry point. Terminal state via events.
+//!   A concurrent caller while a download runs follows the global event stream
 //!   (events are broadcast app-wide).
 //! - Events: `models:download` with a `kind`-tagged payload:
 //!   { kind:"progress", file, downloaded, total, index, count }
@@ -271,6 +271,11 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
     let files = vision_files();
     let count = files.len();
 
+    // 综合进度基准：以各文件 min_size 为代理体积累加（含已存在文件），
+    // 把逐文件进度折算成整体百分比推到 splash。
+    let total_bytes: u64 = files.iter().map(|f| f.min_size).sum();
+    let mut done_bytes: u64 = 0u64;
+
     for (idx, mf) in files.iter().enumerate() {
         let path = dir.join(mf.name);
         let index = idx + 1;
@@ -289,6 +294,13 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
                         index,
                         count,
                     },
+                );
+                done_bytes += mf.min_size;
+                emit_splash_pct(
+                    app,
+                    done_bytes,
+                    total_bytes,
+                    &format!("准备视觉模型… {}", mf.name),
                 );
                 continue;
             }
@@ -315,6 +327,24 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
                         index,
                         count,
                     },
+                );
+                // 该文件折算体积：total>0 按比例，否则按 min_size 封顶
+                // （文件完成后在循环尾部统一入账 done_bytes）。
+                let contrib = if total > 0 {
+                    (mf.min_size as u128 * downloaded as u128 / total as u128)
+                        .min(mf.min_size as u128) as u64
+                } else {
+                    downloaded.min(mf.min_size)
+                };
+                emit_splash_pct(
+                    app,
+                    done_bytes + contrib,
+                    total_bytes,
+                    &format!(
+                        "正在下载视觉模型… {} {}",
+                        mf.name,
+                        file_pct(downloaded, total)
+                    ),
                 );
             }
         };
@@ -368,17 +398,58 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
                 mf.name
             );
         }
+
+        done_bytes += mf.min_size;
+        emit_splash_pct(
+            app,
+            done_bytes,
+            total_bytes,
+            &format!("视觉模型… {} 就绪", mf.name),
+        );
     }
 
     Ok(())
 }
 
-/// Non-blocking entry point. Returns immediately (download runs on a named OS
-/// thread); callers that want the result follow the `models:download` events.
-pub fn ensure_vision_models(app: &AppHandle) -> Result<(), String> {
+/// 整体进度百分比（0..=100），基于代理总体积；total 为 0 时视为完成。
+fn splash_pct(done: u64, total: u64) -> u8 {
+    if total == 0 {
+        100
+    } else {
+        ((done as f64 / total as f64) * 100.0).min(100.0).round() as u8
+    }
+}
+
+/// 单文件进度文案：total 已知显示百分比，未知（无 Content-Length）显示已下载量。
+fn file_pct(downloaded: u64, total: u64) -> String {
+    if total > 0 {
+        let p = ((downloaded as f64 / total as f64) * 100.0)
+            .min(100.0)
+            .round() as u8;
+        format!("{p}%")
+    } else {
+        format!("{} bytes", downloaded)
+    }
+}
+
+/// 折算整体进度并推送 `splash:progress`（splash 已关闭时静默）。
+fn emit_splash_pct(app: &AppHandle, done: u64, total: u64, text: &str) {
+    let pct = splash_pct(done, total);
+    let _ = crate::splash::emit_splash_progress(app, Some(pct), text);
+}
+
+/// Blocking entry point (first-run splash). Runs the download synchronously on
+/// the calling thread and returns only when all vision models are ready or a
+/// required download terminally failed — this is what keeps the splash window
+/// alive through the first-run download. Progress is pushed to `splash:progress`
+/// (from inside `run_download`) and terminal state to `models:download`.
+///
+/// 调用方必须放在 spawn_blocking / 独立线程，避免阻塞主线程事件循环导致
+/// 进度事件无法投递（`run_download` 内部使用 reqwest::blocking）。
+pub fn ensure_vision_models_blocking(app: &AppHandle) -> Result<(), String> {
     let status = scan_status();
     if status.ocr_ready && status.yolo_ready {
-        tracing::info!("[vision-dl] all vision models ready, skip");
+        tracing::info!("[vision-dl] all vision models ready, skip (blocking)");
         return Ok(());
     }
     if DOWNLOAD_RUNNING.swap(true, Ordering::SeqCst) {
@@ -386,50 +457,42 @@ pub fn ensure_vision_models(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let worker_app = app.clone();
-    let spawn = std::thread::Builder::new()
-        .name("vision-model-download".to_string())
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_download(&worker_app)
-            }));
-            DOWNLOAD_RUNNING.store(false, Ordering::SeqCst);
-            match result {
-                Ok(Ok(())) => {
-                    let s = scan_status();
-                    tracing::info!(
-                        "[vision-dl] done (ocr_ready={}, yolo_ready={})",
-                        s.ocr_ready,
-                        s.yolo_ready
-                    );
-                    emit(
-                        &worker_app,
-                        ModelsEvent::Done {
-                            ocr_ready: s.ocr_ready,
-                            yolo_ready: s.yolo_ready,
-                        },
-                    );
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("[vision-dl] download failed: {e}");
-                    emit(&worker_app, ModelsEvent::Error { message: e });
-                }
-                Err(_) => {
-                    tracing::warn!("[vision-dl] download worker panicked");
-                    emit(
-                        &worker_app,
-                        ModelsEvent::Error {
-                            message: "download worker panicked (see stderr)".to_string(),
-                        },
-                    );
-                }
-            }
-        });
-    if let Err(e) = spawn {
-        DOWNLOAD_RUNNING.store(false, Ordering::SeqCst);
-        return Err(format!("failed to spawn vision download worker: {e}"));
+    // catch_unwind：下载线程 panic 仅表现为 Err，不污染 DOWNLOAD_RUNNING 状态。
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_download(app)));
+    DOWNLOAD_RUNNING.store(false, Ordering::SeqCst);
+    match result {
+        Ok(Ok(())) => {
+            let s = scan_status();
+            tracing::info!(
+                "[vision-dl] done (blocking) ocr_ready={}, yolo_ready={}",
+                s.ocr_ready,
+                s.yolo_ready
+            );
+            emit(
+                app,
+                ModelsEvent::Done {
+                    ocr_ready: s.ocr_ready,
+                    yolo_ready: s.yolo_ready,
+                },
+            );
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("[vision-dl] download failed: {e}");
+            emit(app, ModelsEvent::Error { message: e.clone() });
+            Err(e)
+        }
+        Err(_) => {
+            tracing::warn!("[vision-dl] download worker panicked");
+            emit(
+                app,
+                ModelsEvent::Error {
+                    message: "download worker panicked (see stderr)".to_string(),
+                },
+            );
+            Err("download worker panicked (see stderr)".to_string())
+        }
     }
-    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
