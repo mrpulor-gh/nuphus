@@ -90,6 +90,7 @@ Thumbs.db
 # 本地构建产物
 *.exe
 *.dll
+*.zip
 # IDE
 .vscode/
 .idea/
