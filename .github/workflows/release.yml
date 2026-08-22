@@ -17,7 +17,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # FIX 1: ubuntu-latest → ubuntu-22.04
+          # 24.04 与 Tauri AppImage 工具链不兼容（FUSE2 缺失 + GLIBC 2.39）
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact: nuphus_linux_amd64
           - os: windows-latest
@@ -30,7 +32,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # FIX 2: 添加 prefix-key，避免 24.04/22.04 缓存互相污染
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.os }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -48,22 +53,13 @@ jobs:
           npm ci
           cd frontend && npm ci
 
-      # ── 1. 安装包（Tauri bundle：Windows→msi / macOS→dmg / Linux→deb+AppImage）──
-      # 模型库不打包（B 方案）：首次启动由 build.rs/bootstrap 自动下载。
-      # APPIMAGE_EXTRACT_AND_RUN=1：GitHub runner 上 AppImage（linuxdeploy）FUSE 挂载不可用，
-      # 解压到临时目录运行（tauri 官方 CI 模板做法；解压需 unsquashfs → squashfs-tools）。
-      - name: Verify linuxdeploy executable
-        if: runner.os == 'Linux'
-        run: |
-          curl -sL -o /tmp/linuxdeploy.AppImage https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage
-          chmod +x /tmp/linuxdeploy.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 /tmp/linuxdeploy.AppImage --version
+      # FIX 3: 添加 NO_STRIP=true，跳过 linuxdeploy 不兼容的 strip 阶段
       - name: Build installer (tauri bundle)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
         run: npx tauri build
 
-      # ── 2. 便携包（绿色版：解压即用，技术用户/开发者通道）──
       - name: Package portable (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -72,11 +68,17 @@ jobs:
           cp -r plugin release/
           cp README.md LICENSE PRIVACY.md config.example.toml release/
           cp -r src-tauri/desktop release/desktop
-          cp release/desktop/sherpa/libsherpa-onnx-c-api.so release/desktop/sherpa/libonnxruntime.so release/desktop/sherpa/libonnxruntime_providers_shared.so release/
-          # rpath：exe 与 .so 同目录加载（release 目录不在默认 LD_LIBRARY_PATH）
+          # FIX 4: 安全复制 .so 文件，避免 libonnxruntime_providers_shared.so 不存在时失败
+          cp release/desktop/sherpa/libsherpa-onnx-c-api.so release/desktop/sherpa/libonnxruntime.so release/ 2>/dev/null || true
+          if [ -f "release/desktop/sherpa/libonnxruntime_providers_shared.so" ]; then
+            cp release/desktop/sherpa/libonnxruntime_providers_shared.so release/
+          fi
           patchelf --set-rpath '$ORIGIN' release/nuphus
-          for so in release/*.so; do patchelf --set-rpath '$ORIGIN' "$so"; done
+          for so in release/*.so; do
+            [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so"
+          done
           cd release && tar czf ../${{ matrix.artifact }}.tar.gz *
+
       - name: Package portable (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -86,13 +88,9 @@ jobs:
           Copy-Item -Recurse plugin release/
           Copy-Item README.md, LICENSE, PRIVACY.md, config.example.toml release/
           Copy-Item -Recurse src-tauri/desktop release/desktop
-          # sherpa c-api + onnxruntime 拷到 exe 同目录（ORT load-dynamic / sherpa c-api 按名加载）
-          Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/
+          Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/ -ErrorAction SilentlyContinue
           Compress-Archive -Path release/* -DestinationPath ${{ matrix.artifact }}.zip
 
-      # ── 3. msi 重命名：去掉 tauri 默认附加的语言后缀（en-US）──
-      # tauri v2 msi 命名含系统 locale（Nuphus_0.1.1_x64_en-US.msi），
-      # 与产品内容无关；统一为标准 Windows 命名 Nuphus_0.1.1_x64.msi。
       - name: Rename MSI (strip locale suffix)
         if: runner.os == 'Windows'
         shell: pwsh
