@@ -62,6 +62,41 @@ jobs:
       - name: Check compilation
         run: cargo check --workspace
 
+  smoke-macos:
+    name: Smoke (macOS launch)
+    # 无 Mac 硬件的启动验证：macOS runner 有 WindowServer，可运行 GUI 程序。
+    # tauri build --debug --no-bundle 产出可独立运行的 debug 二进制（内置前端资源），
+    # 启动后检查进程存活（未崩溃）即通过。
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps
+        run: |
+          npm ci
+          cd frontend && npm ci
+      - name: Build (debug, no-bundle)
+        run: npx tauri build --debug --no-bundle
+      - name: Launch smoke test
+        run: |
+          ./target/debug/nuphus > /tmp/nuphus_smoke.log 2>&1 &
+          APP_PID=$!
+          sleep 12
+          if kill -0 $APP_PID 2>/dev/null; then
+            echo "APP ALIVE (pid=$APP_PID)"
+            kill $APP_PID || true
+          else
+            echo "APP CRASHED — last log lines:"
+            tail -30 /tmp/nuphus_smoke.log || true
+            exit 1
+          fi
+
   frontend:
     name: Frontend Check
     runs-on: ubuntu-latest
