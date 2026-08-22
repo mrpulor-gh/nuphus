@@ -304,6 +304,7 @@ fn main() {
             video::commands::video_extract_subtitles,
             // -- 文件预览（AI 回复路径点击） --
             commands::read_file,
+            commands::read_file_base64,
             commands::open_path,
             commands::reveal_path,
             // -- Document render service (pdf.js in main webview) --

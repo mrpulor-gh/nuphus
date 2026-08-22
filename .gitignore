@@ -52,7 +52,9 @@ src/memory/agent-memory-design.md
 audit/
 # 内部文档（开发/审计/路线图/计划，均不公开推送；开源壳子仅保留根 README）
 # 插件市场建好后会重写公开开发文档
-docs/
+docs/*
+!docs/readme-hero/
+!docs/readme-hero/*
 
 # 个人工作流数据（不公开）
 plugin/workflows/a1b2c3d4*/

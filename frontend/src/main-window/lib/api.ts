@@ -970,6 +970,11 @@ export function readFile(path: string) {
   return invoke<string>('read_file', { path })
 }
 
+/** 读取文件为 base64（后端限制 ≤8MB），供预览覆盖层内联渲染图片 */
+export function readFileBase64(path: string) {
+  return invoke<string>('read_file_base64', { path })
+}
+
 /** 系统默认程序打开文件/文件夹 */
 export function openPath(path: string) {
   return invoke<void>('open_path', { path })

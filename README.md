@@ -8,6 +8,10 @@
 > **版本**: 0.1.x · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
+<p align="center">
+  <img src="docs/readme-hero/preview.png" alt="Nuphus 桌面端与移动端" width="100%">
+</p>
+
 **Nuphus 是运行在你电脑上的 AI Agent——本地、私有、拥有真实的桌面执行力，手机是它的第二块屏幕。**
 
 它识别屏幕、操作鼠标键盘、控制窗口、读写文件、调度浏览器，把 LLM 的推理变成真实的自动化。数据留在本机，模型由你选择，Agent 替你做事情。
@@ -46,7 +50,7 @@ Nuphus 的解法——让 LLM 推理一次，编译为工作流，之后零 toke
 
 Nuphus 核心引擎用 Rust 构建，工具调用在毫秒级完成。延迟瓶颈在模型推理，不在引擎。
 
-Agent 决策本身就是因果链——每一步依赖上一步的结果，桌面系统操作更应遵循串行逻辑。Nuphus 的并行体现在执行层：通过显式指令传递，它可以同时打开 Cline 修 bug、Claude Code 写测试、浏览器查文档——每个外部 Agent 有多少并行能力，Nuphus 就能调度多少并行。Nuphus 在之上截图验证、阅读产出、汇总决策。
+Agent 决策本身就是因果链——每一步依赖上一步的结果，桌面系统操作更应遵循串行逻辑。Nuphus 的并行体现在执行层：通过显式指令传递，它可以同时打开 Cline 修 bug、Claude Code 写测试、浏览器查文档——每个外部 Agent 有多少并行能力，Nuphus 就能调度多少并行。外部 Agent 拥有自己的上下文理解。Nuphus 在之上截图验证、阅读产出、汇总决策。
 
 **串行的是思考，并行的是执行。**
 

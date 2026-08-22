@@ -23,6 +23,26 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| format!("读取文件失败：{}", e))
 }
 
+/// 读取文件为 base64 字符串（≤8MB），供前端内联预览图片等二进制内容。
+/// 超过 8MB 或读取失败时返回错误信息，前端提示改用「系统打开」。
+#[tauri::command]
+pub fn read_file_base64(path: String) -> Result<String, String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在：{}", path));
+    }
+    if !p.is_file() {
+        return Err(format!("不是文件（可能是文件夹）：{}", path));
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("读取文件信息失败：{}", e))?;
+    if meta.len() > 8 * 1024 * 1024 {
+        return Err("文件超过 8MB，无法内联预览，请用「系统打开」查看".to_string());
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("读取文件失败：{}", e))?;
+    use base64::Engine as _;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// 用系统默认程序打开文件/文件夹。
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
