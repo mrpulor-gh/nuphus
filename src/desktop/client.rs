@@ -592,7 +592,8 @@ impl DesktopClient {
         }))
     }
 
-    /// Get process name from PID (executable file name)
+    /// Get process name from PID (executable file name) — Windows-only
+    #[cfg(windows)]
     fn process_name_from_pid(pid: u32) -> Option<String> {
         #[cfg(windows)]
         {
@@ -653,6 +654,8 @@ impl DesktopClient {
     }
 
     /// Classify window type based on process name, class name and title
+    /// Window type classification (used by Windows window info) — Windows-only
+    #[cfg(windows)]
     fn classify_window(process_name: &str, class_name: &str, title: &str) -> &'static str {
         // 1) 按 process_name 识别（优先级最高）
         match process_name.to_lowercase().as_str() {

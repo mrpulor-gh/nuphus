@@ -196,6 +196,8 @@ impl Drop for McpClient {
 /// 是 `.cmd` 批处理（无 npx.exe）。此处先直接 spawn，失败且错误为 NotFound 时，
 /// 用 `cmd.exe /c` 包装重试（cmd 会用 PATHEXT 解析出 .cmd 并执行）。
 /// 这样无论用户的 Node.js 装在哪、命令是 .exe 还是 .cmd，都能正确启动。
+/// cfg(windows) 分支有 cmd fallback；Linux 视角 match 冗余故豁免 needless_match。
+#[cfg_attr(not(windows), allow(clippy::needless_match))]
 fn spawn_with_cmd_fallback(
     command: &str,
     args: &[String],

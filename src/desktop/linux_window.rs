@@ -66,7 +66,7 @@ pub fn window_activate(hwnd: i32) -> Result<Value> {
         false,
         screen.root,
         EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-        &event,
+        event,
     )
     .map_err(|e| format!("send_event: {e}"))?;
     conn.flush().map_err(|e| format!("flush: {e}"))?;
