@@ -335,7 +335,8 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
                 let messages = extract_history(&sess);
                 if !messages.is_empty() {
                     // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息（含图）
-                    let messages = append_last_turn_user(messages, &sb.last_message, &sb.last_message_images);
+                    let messages =
+                        append_last_turn_user(messages, &sb.last_message, &sb.last_message_images);
                     tracing::info!(
                         "[CHAT] get_chat_history returned {} messages from session_backup",
                         messages.len()
