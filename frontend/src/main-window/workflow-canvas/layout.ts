@@ -118,9 +118,8 @@ export function mergePosIntoSidecar(
   nodeId: string,
   pos: NodePos,
 ): CanvasLayoutSidecar {
-  const base: CanvasLayoutSidecar = sidecar && sidecar.version === 1
-    ? sidecar
-    : { version: 1, layers: {} }
+  const base: CanvasLayoutSidecar =
+    sidecar && sidecar.version === 1 ? sidecar : { version: 1, layers: {} }
   const layerEntry = base.layers[layerId] ?? { pos: {} }
   return {
     version: 1,

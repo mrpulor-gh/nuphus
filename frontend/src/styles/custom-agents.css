@@ -50,7 +50,9 @@
   font-size: var(--fz-md);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
 .custom-agents-card:hover {
@@ -187,7 +189,9 @@
   letter-spacing: 0;
   cursor: pointer;
   opacity: 0.6;
-  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .custom-agents-tool-invert:hover {
   opacity: 1;
@@ -240,14 +244,16 @@
   opacity: 0;
   transform: translateY(3px);
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .custom-agents-tool-item:hover::after {
   opacity: 1;
   transform: translateY(0);
 }
 /* 无描述的工具不显示空弹窗 */
-.custom-agents-tool-item[data-desc=""]::after,
+.custom-agents-tool-item[data-desc='']::after,
 .custom-agents-tool-item:not([data-desc])::after {
   display: none;
 }

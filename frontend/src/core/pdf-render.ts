@@ -29,7 +29,7 @@ declare global {
       requestId: string,
       pdfBase64: string,
       maxPages: number,
-      pageList?: number[] | null
+      pageList?: number[] | null,
     ) => void
     __nuphusRenderPdfText?: (requestId: string, pdfBase64: string, maxPages: number) => void
   }
@@ -49,7 +49,7 @@ function base64ToBytes(b64: string): Uint8Array {
 async function renderPdfPages(
   pdfBase64: string,
   maxPages: number,
-  pageList?: number[] | null
+  pageList?: number[] | null,
 ): Promise<string[]> {
   const data = base64ToBytes(pdfBase64)
   const loadingTask = pdfjsLib.getDocument({ data })
@@ -57,7 +57,7 @@ async function renderPdfPages(
   try {
     const targets =
       pageList && pageList.length > 0
-        ? pageList.filter((n) => n >= 1 && n <= doc.numPages)
+        ? pageList.filter(n => n >= 1 && n <= doc.numPages)
         : Array.from({ length: Math.min(doc.numPages, Math.max(1, maxPages)) }, (_, i) => i + 1)
     const pages: string[] = []
     for (const n of targets) {
@@ -121,7 +121,7 @@ async function handleRender(
   requestId: string,
   pdfBase64: string,
   maxPages: number,
-  pageList?: number[] | null
+  pageList?: number[] | null,
 ): Promise<void> {
   // 动态引入：本模块被 eval 触发时必然在 Tauri webview 内，但保持与 bridge.ts 一致的容错风格
   const { invoke } = await import('@tauri-apps/api/core')
@@ -134,7 +134,11 @@ async function handleRender(
   }
 }
 
-async function handleExtract(requestId: string, pdfBase64: string, maxPages: number): Promise<void> {
+async function handleExtract(
+  requestId: string,
+  pdfBase64: string,
+  maxPages: number,
+): Promise<void> {
   const { invoke } = await import('@tauri-apps/api/core')
   try {
     const pages = await extractPdfText(pdfBase64, maxPages)

@@ -103,7 +103,6 @@ function groupSessionsByDate(
 // MemoriesPage — 概览 | 会话 | 经验 | 设置
 // ============================================================================
 
-
 export function MemoriesPage() {
   const { t } = useLanguage()
   const [activeTab, setActiveTab] = useState<'overview' | 'sessions' | 'experience' | 'settings'>(
@@ -469,16 +468,18 @@ export function MemoriesPage() {
       ? Math.round((overview.embedded_count / overview.total_entries) * 100)
       : 0
 
-  const timeSpanDays = overview && overview.oldest_ms > 0 && overview.newest_ms > 0
-    ? Math.max(1, Math.ceil((overview.newest_ms - overview.oldest_ms) / 86400000))
-    : 0
+  const timeSpanDays =
+    overview && overview.oldest_ms > 0 && overview.newest_ms > 0
+      ? Math.max(1, Math.ceil((overview.newest_ms - overview.oldest_ms) / 86400000))
+      : 0
   const formatMsDate = (ms: number) => {
     const d = new Date(ms)
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
-  const timeSpanLabel = overview && timeSpanDays > 0
-    ? `${timeSpanDays} ${t('memory.overview.days')}（${formatMsDate(overview.oldest_ms)} ~ ${formatMsDate(overview.newest_ms)}）`
-    : t('memory.overview.empty')
+  const timeSpanLabel =
+    overview && timeSpanDays > 0
+      ? `${timeSpanDays} ${t('memory.overview.days')}（${formatMsDate(overview.oldest_ms)} ~ ${formatMsDate(overview.newest_ms)}）`
+      : t('memory.overview.empty')
 
   // ── Render ──
 
@@ -553,9 +554,12 @@ export function MemoriesPage() {
                   <div className="ov-card-label">{t('memory.overview.timeSpan')}</div>
                 </div>
                 <div className="ov-card">
-                  <div className="ov-card-value">{overview.distill_count + overview.pattern_count}</div>
+                  <div className="ov-card-value">
+                    {overview.distill_count + overview.pattern_count}
+                  </div>
                   <div className="ov-card-label">
-                    {t('memory.overview.reusable')}（{t('memory.kind.distill')} {overview.distill_count} + {t('memory.kind.pattern')} {overview.pattern_count}）
+                    {t('memory.overview.reusable')}（{t('memory.kind.distill')}{' '}
+                    {overview.distill_count} + {t('memory.kind.pattern')} {overview.pattern_count}）
                   </div>
                 </div>
               </div>
@@ -590,7 +594,11 @@ export function MemoriesPage() {
                   onChange={e => setSearch(e.target.value)}
                 />
                 {search && (
-                  <IconButton variant="ghost" label={t('common.clear')} onClick={() => setSearch('')}>
+                  <IconButton
+                    variant="ghost"
+                    label={t('common.clear')}
+                    onClick={() => setSearch('')}
+                  >
                     <IconX size={14} />
                   </IconButton>
                 )}
@@ -599,7 +607,11 @@ export function MemoriesPage() {
             {sessionJumpMsg && (
               <div className="ut-jump-msg">
                 <span>{sessionJumpMsg}</span>
-                <IconButton variant="ghost" label={t('common.close')} onClick={() => setSessionJumpMsg('')}>
+                <IconButton
+                  variant="ghost"
+                  label={t('common.close')}
+                  onClick={() => setSessionJumpMsg('')}
+                >
                   <IconX size={12} />
                 </IconButton>
               </div>
@@ -608,7 +620,9 @@ export function MemoriesPage() {
               {loading ? (
                 <div className="ut-empty">{t('common.loading')}</div>
               ) : sessionGroups.length === 0 ? (
-                <div className="ut-empty">{search ? t('cmd.noResults') : t('memory.noRecords')}</div>
+                <div className="ut-empty">
+                  {search ? t('cmd.noResults') : t('memory.noRecords')}
+                </div>
               ) : (
                 sessionGroups.map(group => (
                   <div key={group.label} className="ut-day-group">
@@ -1000,11 +1014,13 @@ function SessionDetailView({
   assistantName: string
 }) {
   const { t } = useLanguage()
-  const title = details && details.length > 0
-    ? details[0].user_message.substring(0, 80)
-    : sessionId.substring(0, 8)
+  const title =
+    details && details.length > 0
+      ? details[0].user_message.substring(0, 80)
+      : sessionId.substring(0, 8)
   // 统计 conversation 条目数作为轮次
-  const entryCount = details?.filter(e => e.kind === 'conversation' || e.kind === 'task_trace').length || 0
+  const entryCount =
+    details?.filter(e => e.kind === 'conversation' || e.kind === 'task_trace').length || 0
 
   return (
     <div className="ut-detail-page">
@@ -1027,7 +1043,9 @@ function SessionDetailView({
           <div className="ut-loading">{t('common.loading')}</div>
         ) : error ? (
           <div className="ut-detail-state">
-            <span className="ut-detail-state-text">{t('memory.detail.error')}: {error}</span>
+            <span className="ut-detail-state-text">
+              {t('memory.detail.error')}: {error}
+            </span>
             <Button variant="default" size="sm" onClick={onRetry}>
               {t('memory.detail.retry')}
             </Button>
@@ -1045,12 +1063,16 @@ function SessionDetailView({
             const isSnapshot = entry.kind === 'snapshot'
             const isPattern = entry.kind === 'pattern'
             if (isDistill || isSnapshot || isPattern) {
-              const labelKey = isDistill ? 'memory.kind.distill'
-                : isSnapshot ? 'memory.kind.snapshot'
-                : 'memory.kind.pattern'
-              const cardClass = isDistill ? 'ut-distill-card'
-                : isSnapshot ? 'ut-distill-card ut-snapshot-card'
-                : 'ut-distill-card ut-pattern-card'
+              const labelKey = isDistill
+                ? 'memory.kind.distill'
+                : isSnapshot
+                  ? 'memory.kind.snapshot'
+                  : 'memory.kind.pattern'
+              const cardClass = isDistill
+                ? 'ut-distill-card'
+                : isSnapshot
+                  ? 'ut-distill-card ut-snapshot-card'
+                  : 'ut-distill-card ut-pattern-card'
               return (
                 <div key={entry.id || i} className={cardClass}>
                   <div className="ut-distill-label">{t(labelKey)}</div>
@@ -1080,7 +1102,9 @@ function SessionDetailView({
                   <div className="ut-entry-tags">
                     {entry.goal_type && <span className="ann-tag">{entry.goal_type}</span>}
                     {entry.steps_summary.map((tool, ti) => (
-                      <span key={ti} className="ann-tag ann-tag--sm">{tool}</span>
+                      <span key={ti} className="ann-tag ann-tag--sm">
+                        {tool}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -1184,8 +1208,8 @@ function SnapshotSessionList({
         map.set(s.session_id, { snapshot: s, session: sess })
       }
     }
-    return Array.from(map.values()).sort(
-      (a, b) => b.session.timestamp.localeCompare(a.session.timestamp)
+    return Array.from(map.values()).sort((a, b) =>
+      b.session.timestamp.localeCompare(a.session.timestamp),
     )
   }, [snapshots, sessionMap])
 
@@ -1211,11 +1235,17 @@ function SnapshotSessionList({
                 <div className="ut-session-meta">
                   <span>{formatTime(session.timestamp, t)}</span>
                   <span className="ut-meta-sep">·</span>
-                  <span className="kind-badge kind-badge--distill">{t('memory.kind.snapshot')}</span>
+                  <span className="kind-badge kind-badge--distill">
+                    {t('memory.kind.snapshot')}
+                  </span>
                 </div>
               </div>
             </div>
-            <IconChevronDown size={14} className="ut-chevron" style={{ transform: 'rotate(-90deg)' }} />
+            <IconChevronDown
+              size={14}
+              className="ut-chevron"
+              style={{ transform: 'rotate(-90deg)' }}
+            />
           </div>
         </div>
       ))}
@@ -1309,7 +1339,8 @@ function SnapshotDetailView({
       : memory.kind === 'pattern'
         ? { label: t('memory.exp.tab.review'), cls: 'kind-badge--user-review' }
         : { label: t('memory.exp.tab.distill'), cls: 'kind-badge--system' }
-  const body = memory.kind === 'pattern' ? (memory as any).pattern || memory.summary : memory.summary
+  const body =
+    memory.kind === 'pattern' ? (memory as any).pattern || memory.summary : memory.summary
   const title = (memory.intent || memory.summary || t('memory.noTitle')).substring(0, 80)
 
   return (
@@ -1336,13 +1367,18 @@ function SnapshotDetailView({
         </div>
       </div>
       <div className="ut-detail-body">
-        <div className="note-card-content note-card-content--mono" style={{ whiteSpace: 'pre-wrap' }}>
+        <div
+          className="note-card-content note-card-content--mono"
+          style={{ whiteSpace: 'pre-wrap' }}
+        >
           {body}
         </div>
         {tagDisplay.length > 0 && (
           <div className="ut-memory-tags ut-memory-tags--row">
             {tagDisplay.map(t => (
-              <span key={t} className="ann-tag ann-tag--sm">{t}</span>
+              <span key={t} className="ann-tag ann-tag--sm">
+                {t}
+              </span>
             ))}
           </div>
         )}

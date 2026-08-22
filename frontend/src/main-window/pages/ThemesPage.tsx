@@ -229,7 +229,9 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   )
   // 激活主题切换时名称输入框跟随（改名编辑从当前主题名开始）
   useEffect(() => {
-    setCustomName(customThemes.find(x => x.id === activeCustomId)?.name || t('themes.customDefaultName'))
+    setCustomName(
+      customThemes.find(x => x.id === activeCustomId)?.name || t('themes.customDefaultName'),
+    )
   }, [activeCustomId])
   // 当前生效的覆盖（实时预览优先，其次已保存自定义，最后无覆盖）
   const activeOverrides = previewOverrides ?? customTheme?.overrides ?? EMPTY_OVERRIDES
@@ -397,13 +399,15 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
 
   // 预览草稿 = 未保存修改（编辑一律先预览不落盘；保存按钮才持久化——
   // 修复「已激活自定义主题时编辑直接落盘，下次启动仍是草稿」）
-  const hasUnsavedPreview =
-    previewOverrides !== null && Object.keys(previewOverrides).length > 0
+  const hasUnsavedPreview = previewOverrides !== null && Object.keys(previewOverrides).length > 0
 
   const handleCustomSave = () => {
     // 编辑激活主题（同基底）→ 更新该条目；否则新建条目（大王：每个主题有名字，可区分）
     const editingActive = customTheme !== null && customTheme.base === theme
-    saveCustom({ ...buildTheme(theme, activeOverrides), id: editingActive ? customTheme.id : undefined })
+    saveCustom({
+      ...buildTheme(theme, activeOverrides),
+      id: editingActive ? customTheme.id : undefined,
+    })
     showToast(t('themes.customSaved'), 'success')
   }
 
@@ -652,7 +656,9 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
                 const swatchBg =
                   ct.overrides['--surface-0'] ?? THEMES.find(x => x.id === ct.base)?.bg ?? '#12121a'
                 const swatchAccent =
-                  ct.overrides['--accent'] ?? THEMES.find(x => x.id === ct.base)?.accent ?? '#3b82f6'
+                  ct.overrides['--accent'] ??
+                  THEMES.find(x => x.id === ct.base)?.accent ??
+                  '#3b82f6'
                 return (
                   <div
                     key={ct.id}
@@ -666,9 +672,14 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
                     >
                       <span
                         className="theme-swatch my-theme-swatch"
-                        style={{ background: swatchBg, ['--swatch-accent' as string]: swatchAccent }}
+                        style={{
+                          background: swatchBg,
+                          ['--swatch-accent' as string]: swatchAccent,
+                        }}
                       />
-                      <span className="my-theme-name">{ct.name || t('themes.customDefaultName')}</span>
+                      <span className="my-theme-name">
+                        {ct.name || t('themes.customDefaultName')}
+                      </span>
                       <span className="my-theme-base">{t(`theme.${ct.base}`)}</span>
                     </button>
                     <button

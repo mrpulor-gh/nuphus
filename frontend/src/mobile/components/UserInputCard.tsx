@@ -72,7 +72,9 @@ export default function UserInputCard({ input, token, onResolved }: Props) {
           type={input.sensitive ? 'password' : 'text'}
           value={value}
           onChange={e => setValue(e.target.value)}
-          placeholder={input.sensitive ? t('mobile.inputPlaceholderSensitive') : t('mobile.inputPlaceholder')}
+          placeholder={
+            input.sensitive ? t('mobile.inputPlaceholderSensitive') : t('mobile.inputPlaceholder')
+          }
           autoFocus
           enterKeyHint="done"
         />
@@ -89,7 +91,7 @@ export default function UserInputCard({ input, token, onResolved }: Props) {
           disabled={busy}
           onClick={() => void reject()}
         >
-            {t('mobile.cancel')}
+          {t('mobile.cancel')}
         </button>
         {isText && (
           <button

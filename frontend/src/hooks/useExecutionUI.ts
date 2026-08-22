@@ -1,7 +1,16 @@
 // useExecutionUI — 执行追踪、上下文精炼、工作流运行时、Planner/Approval 状态
 import { useState, useCallback, useEffect } from 'react'
 import { invoke, listen } from '../core/bridge'
-import type { SecurityCheck, UserInputRequest, TimelineEntry, PlanData, PlanTask, TaskStatus, TaskPriority, WorkflowRunStep } from '../core/types'
+import type {
+  SecurityCheck,
+  UserInputRequest,
+  TimelineEntry,
+  PlanData,
+  PlanTask,
+  TaskStatus,
+  TaskPriority,
+  WorkflowRunStep,
+} from '../core/types'
 import { executeSessionRefine, refineSkip } from '../main-window/lib/api'
 import type { Toast } from './useInit'
 
@@ -181,14 +190,10 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
           const rawStatus = data.status
           const failed =
             (typeof rawStatus === 'string' && rawStatus === 'Failed') ||
-            (typeof rawStatus === 'object' &&
-              rawStatus !== null &&
-              'Error' in rawStatus)
+            (typeof rawStatus === 'object' && rawStatus !== null && 'Error' in rawStatus)
           setWorkflowRunSteps((prev: WorkflowRunStep[]) =>
             prev.map(s =>
-              s.id === str(data.step_id)
-                ? { ...s, status: failed ? 'failed' : 'completed' }
-                : s,
+              s.id === str(data.step_id) ? { ...s, status: failed ? 'failed' : 'completed' } : s,
             ),
           )
           break

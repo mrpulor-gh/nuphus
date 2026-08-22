@@ -27,7 +27,8 @@ export function ProblemsPanel({ problems, backendReport, onLocate, nameOf }: Pro
     [problems, backendReport],
   )
   const warnCount = useMemo(
-    () => problems.filter(p => p.level === 'warning').length + (backendReport?.warnings.length ?? 0),
+    () =>
+      problems.filter(p => p.level === 'warning').length + (backendReport?.warnings.length ?? 0),
     [problems, backendReport],
   )
 
@@ -62,7 +63,10 @@ export function ProblemsPanel({ problems, backendReport, onLocate, nameOf }: Pro
             className={`wfc-chip${tab === 'backend' ? ' is-active' : ''}`}
             onClick={() => setTab('backend')}
           >
-            后端校验{backendReport ? `（${backendReport.errors.length + backendReport.warnings.length}）` : ''}
+            后端校验
+            {backendReport
+              ? `（${backendReport.errors.length + backendReport.warnings.length}）`
+              : ''}
           </button>
         </div>
       </div>
@@ -74,15 +78,25 @@ export function ProblemsPanel({ problems, backendReport, onLocate, nameOf }: Pro
           )}
           {tab === 'local' &&
             problems.map((p, i) => (
-              <div className={`wfc-problem wfc-problem--${p.level}`} key={`${p.rule}-${p.stepId ?? ''}-${i}`}>
+              <div
+                className={`wfc-problem wfc-problem--${p.level}`}
+                key={`${p.rule}-${p.stepId ?? ''}-${i}`}
+              >
                 <span className="wfc-problem-icon">
                   {p.level === 'error' ? <CircleAlert size={12} /> : <TriangleAlert size={12} />}
                 </span>
                 <span className="wfc-problem-rule">{p.rule}</span>
                 <span className="wfc-problem-node">{p.stepId ? nameOf(p.stepId) : '—'}</span>
-                <span className="wfc-problem-msg" title={p.message}>{p.message}</span>
+                <span className="wfc-problem-msg" title={p.message}>
+                  {p.message}
+                </span>
                 {p.stepId && (
-                  <button type="button" className="wfc-icon-btn" title="定位到节点" onClick={() => onLocate(p.stepId!)}>
+                  <button
+                    type="button"
+                    className="wfc-icon-btn"
+                    title="定位到节点"
+                    onClick={() => onLocate(p.stepId!)}
+                  >
                     <Crosshair size={12} />
                   </button>
                 )}
@@ -93,16 +107,24 @@ export function ProblemsPanel({ problems, backendReport, onLocate, nameOf }: Pro
               <>
                 {backendReport.errors.map((m, i) => (
                   <div className="wfc-problem wfc-problem--error" key={`be-${i}`}>
-                    <span className="wfc-problem-icon"><CircleAlert size={12} /></span>
+                    <span className="wfc-problem-icon">
+                      <CircleAlert size={12} />
+                    </span>
                     <span className="wfc-problem-rule">L3</span>
-                    <span className="wfc-problem-msg" title={m}>{m}</span>
+                    <span className="wfc-problem-msg" title={m}>
+                      {m}
+                    </span>
                   </div>
                 ))}
                 {backendReport.warnings.map((m, i) => (
                   <div className="wfc-problem wfc-problem--warning" key={`bw-${i}`}>
-                    <span className="wfc-problem-icon"><TriangleAlert size={12} /></span>
+                    <span className="wfc-problem-icon">
+                      <TriangleAlert size={12} />
+                    </span>
                     <span className="wfc-problem-rule">L3</span>
-                    <span className="wfc-problem-msg" title={m}>{m}</span>
+                    <span className="wfc-problem-msg" title={m}>
+                      {m}
+                    </span>
                   </div>
                 ))}
                 {backendReport.errors.length === 0 && backendReport.warnings.length === 0 && (

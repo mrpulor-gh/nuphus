@@ -193,9 +193,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
       )}
 
       {/* ── 加载中 ── */}
-      {loading && (
-        <div className="page-loading">{t('common.loading')}</div>
-      )}
+      {loading && <div className="page-loading">{t('common.loading')}</div>}
 
       {/* ── 空状态 ── */}
       {!loading && results.length === 0 && (
@@ -228,9 +226,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
                       <span className="item-title">{item.title}</span>
                       <span className={st.badge}>{t(st.textKey)}</span>
                     </div>
-                    {item.description && (
-                      <div className="item-desc">{item.description}</div>
-                    )}
+                    {item.description && <div className="item-desc">{item.description}</div>}
                     <div className="item-meta-line">{metaLine}</div>
                   </div>
                   <div className="item-actions">

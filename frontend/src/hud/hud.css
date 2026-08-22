@@ -1,5 +1,11 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #root {
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -7,7 +13,10 @@ html, body, #root {
 }
 
 /* Prevent flash of content before React renders */
-#root { min-height: 1px; background: transparent; }
+#root {
+  min-height: 1px;
+  background: transparent;
+}
 
 /* Smooth font rendering for the overlay */
 body {

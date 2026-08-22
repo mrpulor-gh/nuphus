@@ -75,7 +75,7 @@ export default function ConfirmCard({ confirm, token, onResolved }: Props) {
           disabled={busy}
           onClick={() => void submit(true, false)}
         >
-            {t('mobile.allowOnce')}
+          {t('mobile.allowOnce')}
         </button>
         <button
           type="button"

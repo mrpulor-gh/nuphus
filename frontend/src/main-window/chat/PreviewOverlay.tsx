@@ -11,7 +11,20 @@ interface PreviewOverlayProps {
 
 const MD_EXTS = new Set(['md'])
 const HTML_EXTS = new Set(['html', 'htm'])
-const CODE_EXTS = new Set(['rs', 'ts', 'tsx', 'js', 'jsx', 'py', 'json', 'toml', 'css', 'yml', 'yaml', 'sh'])
+const CODE_EXTS = new Set([
+  'rs',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'py',
+  'json',
+  'toml',
+  'css',
+  'yml',
+  'yaml',
+  'sh',
+])
 
 function extOf(path: string): string {
   const m = /\.([^.\\/]+)$/.exec(path)
@@ -103,7 +116,9 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
           <div className="pv-placeholder">
             <div className="pv-placeholder-title">已用系统默认程序打开</div>
             <div className="pv-placeholder-path">{path}</div>
-            <div className="pv-placeholder-hint">该类型不支持内联预览（pdf / 图片等），已调用系统默认程序打开。</div>
+            <div className="pv-placeholder-hint">
+              该类型不支持内联预览（pdf / 图片等），已调用系统默认程序打开。
+            </div>
           </div>
         ) : loading ? (
           <div className="pv-loading">读取中…</div>

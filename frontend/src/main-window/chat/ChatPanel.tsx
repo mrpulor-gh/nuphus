@@ -1,6 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { ChatMessage, ChatReference, PendingImage, PendingFile, TimelineEntry } from '../../core/types'
+import type {
+  ChatMessage,
+  ChatReference,
+  PendingImage,
+  PendingFile,
+  TimelineEntry,
+} from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
@@ -948,7 +954,7 @@ export function ChatPanel({
 
   // ── Resource picker ──
   const openResourcePicker = useCallback(async (type: ChatReference['type']) => {
-    setInput('')           // clear slash command so stale text isn't sent
+    setInput('') // clear slash command so stale text isn't sent
     setCmdQuery('')
     setCmdOpen(false)
     setResPickerOpen(true)
@@ -960,12 +966,23 @@ export function ChatPanel({
     try {
       if (type === 'skill') {
         const { invoke } = await import('@tauri-apps/api/core')
-        const list = await invoke<Array<{ name: string; display_name: string; description: string }>>('skill_list')
-        setResItems(list.map(s => ({ id: s.name, label: s.display_name || s.name, desc: s.description })))
+        const list =
+          await invoke<Array<{ name: string; display_name: string; description: string }>>(
+            'skill_list',
+          )
+        setResItems(
+          list.map(s => ({ id: s.name, label: s.display_name || s.name, desc: s.description })),
+        )
       } else if (type === 'knowledge') {
         const { listKnowledge } = await import('../lib/api')
         const list = await listKnowledge()
-        setResItems((list ?? []).map(k => ({ id: k.rel_path, label: k.title || k.rel_path, desc: k.snippet })))
+        setResItems(
+          (list ?? []).map(k => ({
+            id: k.rel_path,
+            label: k.title || k.rel_path,
+            desc: k.snippet,
+          })),
+        )
       } else if (type === 'workflow') {
         const { listWorkflows } = await import('../lib/api')
         const list = await listWorkflows()
@@ -1123,8 +1140,8 @@ export function ChatPanel({
                 </div>
               </div>
             </div>
-      )}
-    </div>
+          )}
+        </div>
       )}
       <div className="chat-messages" ref={scrollRef}>
         {messages.length === 0 ? (
@@ -1200,7 +1217,10 @@ export function ChatPanel({
                                 )}
                               </span>
                               {msg.sourceLabel && (
-                                <span className="message-source-badge" title={`来自插件 ${msg.sourceLabel}`}>
+                                <span
+                                  className="message-source-badge"
+                                  title={`来自插件 ${msg.sourceLabel}`}
+                                >
                                   {msg.sourceLabel}
                                 </span>
                               )}
@@ -1229,22 +1249,24 @@ export function ChatPanel({
                               {/* ── 截图引用（Ctrl+U 截图：本地文件路径经 asset 协议显示）── */}
                               {msg.references && msg.references.some(r => r.type === 'capture') && (
                                 <div className="msg-images">
-                                  {msg.references.filter(r => r.type === 'capture').map((r, i) => {
-                                    const src = r.meta?.base64 || toAssetUrl(r.id)
-                                    if (!src) return null
-                                    return (
-                                      <img
-                                        key={`cap-${i}`}
-                                        src={src}
-                                        alt={r.label || `截图 ${i + 1}`}
-                                        className="msg-image"
-                                        onClick={() => setLightboxUrl(src)}
-                                        onError={e => {
-                                          ;(e.target as HTMLImageElement).style.display = 'none'
-                                        }}
-                                      />
-                                    )
-                                  })}
+                                  {msg.references
+                                    .filter(r => r.type === 'capture')
+                                    .map((r, i) => {
+                                      const src = r.meta?.base64 || toAssetUrl(r.id)
+                                      if (!src) return null
+                                      return (
+                                        <img
+                                          key={`cap-${i}`}
+                                          src={src}
+                                          alt={r.label || `截图 ${i + 1}`}
+                                          className="msg-image"
+                                          onClick={() => setLightboxUrl(src)}
+                                          onError={e => {
+                                            ;(e.target as HTMLImageElement).style.display = 'none'
+                                          }}
+                                        />
+                                      )
+                                    })}
                                 </div>
                               )}
                               {/* ── 音频附件 ── */}
@@ -1269,7 +1291,10 @@ export function ChatPanel({
                                   return isCurrentAgent && isProcessing ? (
                                     msg.content ? (
                                       <>
-                                        <MarkdownContent content={msg.content} onFileClick={setPreviewPath} />
+                                        <MarkdownContent
+                                          content={msg.content}
+                                          onFileClick={setPreviewPath}
+                                        />
                                         <span className="message-thinking-cursor" />
                                       </>
                                     ) : (
@@ -1280,7 +1305,10 @@ export function ChatPanel({
                                       </span>
                                     )
                                   ) : (
-                                    <MarkdownContent content={msg.content} onFileClick={setPreviewPath} />
+                                    <MarkdownContent
+                                      content={msg.content}
+                                      onFileClick={setPreviewPath}
+                                    />
                                   )
                                 })()
                               ) : msg.content ? (
@@ -1416,9 +1444,7 @@ export function ChatPanel({
                         {Math.round(refineState.usagePercent)}%
                       </span>
                     </div>
-                    <div className="item-desc">
-                      {t('refine.desc')}
-                    </div>
+                    <div className="item-desc">{t('refine.desc')}</div>
                     <div className="item-sub item-sub--mono refine-usage">
                       {t(
                         'refine.usage',
@@ -1640,58 +1666,58 @@ export function ChatPanel({
       <div className="chat-input-dock">
         <VideoProgressBadge />
         <ChatInputBar
-        input={input}
-        onInputChange={handleInputChange}
-        onInputKeyDown={handleKeyDown}
-        textareaRef={textareaRef}
-        imageInputRef={fileInputRef}
-        isProcessing={isProcessing}
-        pauseState={pauseState ?? null}
-        refineState={refineState ?? null}
-        tokenUsage={tokenUsage || null}
-        mainTokenUsage={mainTokenUsage || null}
-        execTokenUsage={execTokenUsage || null}
-        totalDurationMs={totalDurationMs}
-        totalCalls={totalCalls}
-        mood={mood || 'idle'}
-        contextLimit={contextLimit}
-        security={security ?? null}
-        onApproveSecurity={onApproveSecurity}
-        onRejectSecurity={onRejectSecurity}
-        mode={mode}
-        onSetMode={onSetMode}
-        onManageCustomAgents={onManageCustomAgents}
-        onToggleWorkAgentMode={onToggleWorkAgentMode}
-        modelLabel={modelLabel}
-        modelName={modelName}
-        effort={effort}
-        supportedEfforts={currentModelEfforts}
-        defaultEffort={currentModelDefaultEffort}
-        onEffortChange={handleEffortChange}
-        onModelSwitch={() => setModelOpen(true)}
-        onSend={handleSubmit}
-        onInterrupt={onInterrupt}
-        isWorkflowRunning={isWorkflowRunning}
-        showDesktopToolbar={showDesktopToolbar}
-        onToggleDesktopToolbar={onToggleDesktopToolbar}
-        toolPermissions={toolPermissions}
-        onFileSelect={handleFileSelect}
-        onImageAttach={handleImageAttach}
-        onFileAttach={handleFileAttach}
-        projectDir={projectDir}
-        onOpenProjectDir={() => {
-          setDirInput(projectDir)
-          setDirOpen(true)
-        }}
-        hints={HINTS}
-        hintIndex={hintIndex}
-        hintFade={hintFade}
-        pendingReferences={pendingReferences}
-        pendingImages={pendingImages}
-        pendingFiles={pendingFiles}
-        onRemoveReference={removeReference}
-        onRemoveImage={removePendingImage}
-        onRemoveFile={removePendingFile}
+          input={input}
+          onInputChange={handleInputChange}
+          onInputKeyDown={handleKeyDown}
+          textareaRef={textareaRef}
+          imageInputRef={fileInputRef}
+          isProcessing={isProcessing}
+          pauseState={pauseState ?? null}
+          refineState={refineState ?? null}
+          tokenUsage={tokenUsage || null}
+          mainTokenUsage={mainTokenUsage || null}
+          execTokenUsage={execTokenUsage || null}
+          totalDurationMs={totalDurationMs}
+          totalCalls={totalCalls}
+          mood={mood || 'idle'}
+          contextLimit={contextLimit}
+          security={security ?? null}
+          onApproveSecurity={onApproveSecurity}
+          onRejectSecurity={onRejectSecurity}
+          mode={mode}
+          onSetMode={onSetMode}
+          onManageCustomAgents={onManageCustomAgents}
+          onToggleWorkAgentMode={onToggleWorkAgentMode}
+          modelLabel={modelLabel}
+          modelName={modelName}
+          effort={effort}
+          supportedEfforts={currentModelEfforts}
+          defaultEffort={currentModelDefaultEffort}
+          onEffortChange={handleEffortChange}
+          onModelSwitch={() => setModelOpen(true)}
+          onSend={handleSubmit}
+          onInterrupt={onInterrupt}
+          isWorkflowRunning={isWorkflowRunning}
+          showDesktopToolbar={showDesktopToolbar}
+          onToggleDesktopToolbar={onToggleDesktopToolbar}
+          toolPermissions={toolPermissions}
+          onFileSelect={handleFileSelect}
+          onImageAttach={handleImageAttach}
+          onFileAttach={handleFileAttach}
+          projectDir={projectDir}
+          onOpenProjectDir={() => {
+            setDirInput(projectDir)
+            setDirOpen(true)
+          }}
+          hints={HINTS}
+          hintIndex={hintIndex}
+          hintFade={hintFade}
+          pendingReferences={pendingReferences}
+          pendingImages={pendingImages}
+          pendingFiles={pendingFiles}
+          onRemoveReference={removeReference}
+          onRemoveImage={removePendingImage}
+          onRemoveFile={removePendingFile}
         />
       </div>
 
@@ -1911,7 +1937,8 @@ export function ChatPanel({
 
       {/* 空结果（输入框已有文字前加 "/" 无匹配）时不渲染——避免空 palette 的
           border/shadow 显示为长条黑块（用户实测） */}
-      {cmdOpen && filteredSlash.length > 0 &&
+      {cmdOpen &&
+        filteredSlash.length > 0 &&
         createPortal(
           <div className="cmd-overlay" onClick={() => setCmdOpen(false)}>
             <div
@@ -1972,9 +1999,7 @@ export function ChatPanel({
                       : '选择工作流'}
                 </span>
               </div>
-              {resLoading && (
-                <div className="cmd-item cmd-item--hint">加载中...</div>
-              )}
+              {resLoading && <div className="cmd-item cmd-item--hint">加载中...</div>}
               {resError && (
                 <div className="cmd-item cmd-item--hint" style={{ color: 'var(--error)' }}>
                   {resError}
@@ -2026,10 +2051,7 @@ export function ChatPanel({
       )}
       {/* Lightbox overlay for image click-to-zoom */}
       {lightboxUrl && (
-        <div
-          className="msg-lightbox-overlay"
-          onClick={() => setLightboxUrl(null)}
-        >
+        <div className="msg-lightbox-overlay" onClick={() => setLightboxUrl(null)}>
           <img
             src={lightboxUrl}
             alt="放大预览"
@@ -2040,9 +2062,7 @@ export function ChatPanel({
       )}
 
       {/* ── 文件预览覆盖层（AI 回复路径点击，全屏对齐画布范式） ── */}
-      {previewPath && (
-        <PreviewOverlay path={previewPath} onClose={() => setPreviewPath(null)} />
-      )}
+      {previewPath && <PreviewOverlay path={previewPath} onClose={() => setPreviewPath(null)} />}
     </div>
   )
 }

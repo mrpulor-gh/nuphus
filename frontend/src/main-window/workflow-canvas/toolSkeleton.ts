@@ -26,7 +26,9 @@ function placeholderFor(prop: Record<string, unknown> | undefined): unknown {
 }
 
 /** 从 input_schema（JSON Schema）生成 with 骨架：仅含 required 属性的类型占位 */
-export function skeletonFromSchema(schema: Record<string, unknown> | undefined): Record<string, unknown> {
+export function skeletonFromSchema(
+  schema: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   if (!schema || typeof schema !== 'object') return {}
   const required = Array.isArray(schema.required)
     ? schema.required.filter((r): r is string => typeof r === 'string')
@@ -38,7 +40,9 @@ export function skeletonFromSchema(schema: Record<string, unknown> | undefined):
   const out: Record<string, unknown> = {}
   for (const name of required) {
     const p = props[name]
-    out[name] = placeholderFor(p && typeof p === 'object' ? (p as Record<string, unknown>) : undefined)
+    out[name] = placeholderFor(
+      p && typeof p === 'object' ? (p as Record<string, unknown>) : undefined,
+    )
   }
   return out
 }

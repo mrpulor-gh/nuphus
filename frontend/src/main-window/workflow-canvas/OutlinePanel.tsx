@@ -68,9 +68,7 @@ interface OutlineRowProps {
 function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowProps) {
   const kind = stepKind(step)
   const container = containerLanes(step)
-  const Icon = container
-    ? CONTAINER_ICONS[container.kind]
-    : KIND_ICONS[kind] ?? KIND_ICONS.custom
+  const Icon = container ? CONTAINER_ICONS[container.kind] : (KIND_ICONS[kind] ?? KIND_ICONS.custom)
   const state = statuses.get(step.id)
   const multiLane = !!container && container.lanes.length > 1
   return (
@@ -137,7 +135,9 @@ export function OutlinePanel({ steps, selectedId, statuses, onLocate }: OutlineP
             <div key={g.desc} className="wfc-outline-guide-row">
               <span className="wfc-outline-guide-keys">
                 {g.keys.map(k => (
-                  <kbd key={k} className="kbd">{k}</kbd>
+                  <kbd key={k} className="kbd">
+                    {k}
+                  </kbd>
                 ))}
               </span>
               <span className="wfc-outline-guide-desc">{g.desc}</span>

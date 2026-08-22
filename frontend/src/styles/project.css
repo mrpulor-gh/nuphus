@@ -3,13 +3,21 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-.bookmark-info { flex: 1; min-width: 0; }
+.bookmark-info {
+  flex: 1;
+  min-width: 0;
+}
 .bookmark-name {
-  font-size: var(--fz-md); font-weight: var(--fw-semibold);
-  color: var(--fg-1); margin-bottom: 1px;
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-1);
+  margin-bottom: 1px;
 }
 .bookmark-path {
-  font-size: var(--fz-xs); color: var(--fg-4);
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
   font-family: var(--font-mono);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

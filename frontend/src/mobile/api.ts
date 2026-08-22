@@ -218,7 +218,9 @@ export interface ModelConfig {
 export async function fetchModelConfig(token: string, mode?: string): Promise<ModelConfig> {
   const qs = mode ? `?mode=${encodeURIComponent(mode)}` : ''
   const res = await checkAuth(
-    await fetchWithTimeout(resolveApi(`./model-config${qs}`), { headers: { 'X-Mobile-Token': token } }),
+    await fetchWithTimeout(resolveApi(`./model-config${qs}`), {
+      headers: { 'X-Mobile-Token': token },
+    }),
   )
   if (!res.ok) throw new Error(`model-config failed: ${res.status}`)
   return (await res.json()) as ModelConfig
@@ -291,7 +293,11 @@ export async function fetchRelayHint(token: string): Promise<RelayCfg | null> {
       // 10s 超时（boot 白屏敏感，但中继慢链路可达 3-10s）：经隧道到桌面，
       // 隧道 Data 帧半死时 fetch 永久挂起 → resolveLanUrl 永不返回 → connMode 永远 null
       // → 手机永久白屏（实测 P0）。超时后回退 getCachedLanUrl（局域网缓存）继续流程。
-      await fetchWithTimeout(resolveApi('./relay-hint'), { headers: { 'X-Mobile-Token': token } }, 10000),
+      await fetchWithTimeout(
+        resolveApi('./relay-hint'),
+        { headers: { 'X-Mobile-Token': token } },
+        10000,
+      ),
     )
     if (!res.ok) return null
     const data = (await res.json()) as {
@@ -408,9 +414,18 @@ export async function sendMessage(
   if (res.ok) {
     // 200 可能是正常提交，也可能是「追加指令」被接受（busy 时不拒绝）
     try {
-      const body = (await res.json()) as { status?: string; message?: string; images_dropped?: boolean }
+      const body = (await res.json()) as {
+        status?: string
+        message?: string
+        images_dropped?: boolean
+      }
       if (body.status === 'append') {
-        return { ok: true, appended: true, message: body.message, imagesDropped: body.images_dropped === true }
+        return {
+          ok: true,
+          appended: true,
+          message: body.message,
+          imagesDropped: body.images_dropped === true,
+        }
       }
     } catch {
       /* 无 body，视为正常提交 */
@@ -457,11 +472,7 @@ export async function postConfirm(
  * request_user_input 提交（POST /user-input）：对齐桌面 submit_user_input。
  * agent 侧 poll_response 消费后继续执行；提交成功即广播确认。
  */
-export async function postUserInput(
-  token: string,
-  actionId: string,
-  value: string,
-): Promise<void> {
+export async function postUserInput(token: string, actionId: string, value: string): Promise<void> {
   const res = await checkAuth(
     await fetch(resolveApi('./user-input'), {
       method: 'POST',
@@ -479,10 +490,7 @@ export async function postUserInput(
  * request_user_input 取消（POST /user-input-reject）：对齐桌面 reject_user_input。
  * 后端写入 __CANCELLED__，agent 立即醒来继续（不阻塞等待超时）。
  */
-export async function postUserInputReject(
-  token: string,
-  actionId: string,
-): Promise<void> {
+export async function postUserInputReject(token: string, actionId: string): Promise<void> {
   const res = await checkAuth(
     await fetch(resolveApi('./user-input-reject'), {
       method: 'POST',
@@ -541,11 +549,7 @@ export interface ControlResult {
  * 执行控制上行统一入口：pause/stop 无请求体；resume/terminate 回传
  * 后端 /pause 广播的 action_id。鉴权统一走 X-Mobile-Token Header。
  */
-async function postControl(
-  token: string,
-  path: string,
-  body?: unknown,
-): Promise<ControlResult> {
+async function postControl(token: string, path: string, body?: unknown): Promise<ControlResult> {
   const headers: Record<string, string> = { 'X-Mobile-Token': token }
   const init: RequestInit = { method: 'POST', headers }
   if (body !== undefined) {

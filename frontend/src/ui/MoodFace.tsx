@@ -41,25 +41,89 @@ export const MoodFace: React.FC<MoodFaceProps> = ({ mood, size = 16 }) => {
           <g transform="translate(3.6, 3.8) scale(0.7)">
             <g className="nuphus-idle">
               <g className="idle-shiver-wrap">
-            {/* 3D 阴影层 */}
-            <path d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.1" className="idle-shadow" />
-            <path d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.1" className="idle-shadow" />
-            {/* 底壳 */}
-            <rect x="3" y="3" width="18" height="18" rx="3.5" fill="currentColor" className="idle-bg" />
-            {/* 窗口框 */}
-            <g className="idle-shell">
-              <path d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
-              <path d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
-            </g>
-            {/* 左上高光 */}
-            <path d="M 7 3 H 16" stroke="currentColor" strokeWidth="0.6" strokeLinecap="round" className="idle-highlight" />
-            <path d="M 3.5 7 V 12" stroke="currentColor" strokeWidth="0.4" strokeLinecap="round" className="idle-highlight" />
-            {/* 眼睛 — 眨眼+瞪眼合并 */}
-            <rect x="7.2" y="7.5" width="3.2" height="7" rx="1.6" fill="currentColor" className="idle-eye-l" />
-            <rect x="13.6" y="7.5" width="3.2" height="7" rx="1.6" fill="currentColor" className="idle-eye-r" />
-            {/* 眼中高光 */}
-            <circle cx="8.2" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-l" />
-            <circle cx="14.6" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-r" />
+                {/* 3D 阴影层 */}
+                <path
+                  d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  fill="none"
+                  opacity="0.1"
+                  className="idle-shadow"
+                />
+                <path
+                  d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  fill="none"
+                  opacity="0.1"
+                  className="idle-shadow"
+                />
+                {/* 底壳 */}
+                <rect
+                  x="3"
+                  y="3"
+                  width="18"
+                  height="18"
+                  rx="3.5"
+                  fill="currentColor"
+                  className="idle-bg"
+                />
+                {/* 窗口框 */}
+                <g className="idle-shell">
+                  <path
+                    d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                  <path
+                    d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                </g>
+                {/* 左上高光 */}
+                <path
+                  d="M 7 3 H 16"
+                  stroke="currentColor"
+                  strokeWidth="0.6"
+                  strokeLinecap="round"
+                  className="idle-highlight"
+                />
+                <path
+                  d="M 3.5 7 V 12"
+                  stroke="currentColor"
+                  strokeWidth="0.4"
+                  strokeLinecap="round"
+                  className="idle-highlight"
+                />
+                {/* 眼睛 — 眨眼+瞪眼合并 */}
+                <rect
+                  x="7.2"
+                  y="7.5"
+                  width="3.2"
+                  height="7"
+                  rx="1.6"
+                  fill="currentColor"
+                  className="idle-eye-l"
+                />
+                <rect
+                  x="13.6"
+                  y="7.5"
+                  width="3.2"
+                  height="7"
+                  rx="1.6"
+                  fill="currentColor"
+                  className="idle-eye-r"
+                />
+                {/* 眼中高光 */}
+                <circle cx="8.2" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-l" />
+                <circle cx="14.6" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-r" />
               </g>
             </g>
           </g>

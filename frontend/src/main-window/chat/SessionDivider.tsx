@@ -13,7 +13,7 @@ export interface SessionDividerProps {
 
 function computeRatio(original: number): string | null {
   if (original <= 1) return null
-  return ((original - 1) / original * 100).toFixed(1)
+  return (((original - 1) / original) * 100).toFixed(1)
 }
 
 export function SessionDivider({
@@ -53,7 +53,13 @@ export function SessionDivider({
     <div className="message-row">
       <div className={`message-bubble refine ${isStreaming ? 'refine-streaming' : ''}`}>
         {/* ── Header：仿 agent 气泡的名称+时间 ── */}
-        <div className="message-header" onClick={handleToggle} role="button" tabIndex={0} aria-expanded={expanded}>
+        <div
+          className="message-header"
+          onClick={handleToggle}
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+        >
           <span className="message-label assistant">
             <IconSparkles size={12} />
             &nbsp;{labelText}
@@ -61,7 +67,9 @@ export function SessionDivider({
 
           <span className="message-time">
             {messageCount > 0 && !isStreaming && (
-              <>{messageCount} 条 → 1 条{ratio && <> · {ratio}%</>}</>
+              <>
+                {messageCount} 条 → 1 条{ratio && <> · {ratio}%</>}
+              </>
             )}
             {sessionId && !isStreaming && <> · #{sessionId.slice(0, 8)}</>}
             {isStreaming && <span className="refine-streaming-dot" />}

@@ -24,16 +24,44 @@ import {
   type Viewport,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import {
-  X, Save, Play, Undo2, Redo2, Plus, CircleCheckBig, CornerUpLeft,
-} from 'lucide-react'
+import { X, Save, Play, Undo2, Redo2, Plus, CircleCheckBig, CornerUpLeft } from 'lucide-react'
 
 import type { WorkflowStep, ToolSchema } from '../../core/types'
-import { wfGetRaw, wfSave, wfValidate, wfRun, wfLayoutGet, wfLayoutSave, type ValidationReport } from '../lib/api'
-import type { WorkflowIR, CanvasLayoutSidecar, CanvasLayer, CanvasNode, LaneId, StepVisualStatus } from './types'
+import {
+  wfGetRaw,
+  wfSave,
+  wfValidate,
+  wfRun,
+  wfLayoutGet,
+  wfLayoutSave,
+  type ValidationReport,
+} from '../lib/api'
+import type {
+  WorkflowIR,
+  CanvasLayoutSidecar,
+  CanvasLayer,
+  CanvasNode,
+  LaneId,
+  StepVisualStatus,
+} from './types'
 import { projectWorkflow, containerLanes, laneSteps, stepKind } from './projection'
-import { layoutLayer, layerDir, layerPosFromSidecar, mergePosIntoSidecar, pruneSidecar, type NodePos } from './layout'
-import { applyOp, checkOp, IrEditHistory, newStep, cloneStepWithNewIds, collectIds, locateStep } from './irEdit'
+import {
+  layoutLayer,
+  layerDir,
+  layerPosFromSidecar,
+  mergePosIntoSidecar,
+  pruneSidecar,
+  type NodePos,
+} from './layout'
+import {
+  applyOp,
+  checkOp,
+  IrEditHistory,
+  newStep,
+  cloneStepWithNewIds,
+  collectIds,
+  locateStep,
+} from './irEdit'
 import { validateIR, type Problem } from './validate'
 import { subscribeRunStatus, aggregateContainerBadges, type RunStatusSnapshot } from './runStatus'
 import { StepNode, NodeActionsContext } from './nodes/StepNode'
@@ -146,7 +174,11 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [dirty, setDirty] = useState(false)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
-  const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({ steps: new Map(), outputs: new Map(), running: false })
+  const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
+    steps: new Map(),
+    outputs: new Map(),
+    running: false,
+  })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   /** 新建 tool 节点后待聚焦的工具输入框（Inspector 消费一次） */
@@ -198,7 +230,9 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       }
       setIr(raw)
       setSteps(structuredClone(raw.steps ?? []))
-      const layout = (await wfLayoutGet(workflowId).catch(() => null)) as unknown as CanvasLayoutSidecar | null
+      const layout = (await wfLayoutGet(workflowId).catch(
+        () => null,
+      )) as unknown as CanvasLayoutSidecar | null
       if (alive) setSidecar(layout)
     })()
     return () => {
@@ -251,12 +285,21 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     const m = new Map<string, StepVisualStatus>()
     const last = ir?.run_history?.[0]
     if (!last || snapshot.running) return m
-    const recs = Array.isArray(last.steps) ? (last.steps as { step_id: string; status: unknown }[]) : []
+    const recs = Array.isArray(last.steps)
+      ? (last.steps as { step_id: string; status: unknown }[])
+      : []
     for (const r of recs) {
       if (r.status === 'Success') m.set(r.step_id, { state: 'success' })
       else if (r.status === 'Skipped') m.set(r.step_id, { state: 'skipped' })
-      else if (typeof r.status === 'object' && r.status !== null && 'Error' in (r.status as object)) {
-        m.set(r.step_id, { state: 'error', message: String((r.status as { Error: unknown }).Error) })
+      else if (
+        typeof r.status === 'object' &&
+        r.status !== null &&
+        'Error' in (r.status as object)
+      ) {
+        m.set(r.step_id, {
+          state: 'error',
+          message: String((r.status as { Error: unknown }).Error),
+        })
       }
     }
     return m
@@ -305,12 +348,24 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const laneFrames = useMemo(() => {
     if (!layer || layer.swimlanes.length < 2) return []
     const pos = layoutLayer(layer, layerPosFromSidecar(sidecar, layer.layerId))
-    const frames: { id: string; title: string; x: number; y: number; width: number; height: number; empty: boolean; lane: LaneId }[] = []
+    const frames: {
+      id: string
+      title: string
+      x: number
+      y: number
+      width: number
+      height: number
+      empty: boolean
+      lane: LaneId
+    }[] = []
     for (const lane of layer.swimlanes) {
       const laneNodes = layer.nodes.filter(n => n.lane === lane.id && !n.synthetic)
       const all = layer.nodes.filter(n => n.lane === lane.id)
       if (all.length === 0) continue
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity
       for (const n of all) {
         const p = pos.get(n.id)
         if (!p) continue
@@ -402,7 +457,19 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       })
     }
     setFlowNodes(nodes)
-  }, [layer, sidecar, snapshot.steps, historyStatus, problemByStep, badges, selectedId, readOnly, laneFrames, flashId, projection])
+  }, [
+    layer,
+    sidecar,
+    snapshot.steps,
+    historyStatus,
+    problemByStep,
+    badges,
+    selectedId,
+    readOnly,
+    laneFrames,
+    flashId,
+    projection,
+  ])
 
   // ── 加载完成视口适配 ──
   // ReactFlow 的 fitView 仅在初始挂载（此时 flowNodes 为空，适配的是空图）与 prop 值变化时触发；
@@ -597,16 +664,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   )
 
   // ── 拖拽：重排 / 跨泳道 / 入容器 / 到面包屑（2.5）──
-  const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      setFlowNodes(ns => applyNodeChanges(changes, ns))
-      if (changes.some(c => c.type === 'select')) {
-        const sel = changes.find(c => c.type === 'select' && c.selected)
-        if (sel && sel.type === 'select') setSelectedId(sel.id)
-      }
-    },
-    [],
-  )
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setFlowNodes(ns => applyNodeChanges(changes, ns))
+    if (changes.some(c => c.type === 'select')) {
+      const sel = changes.find(c => c.type === 'select' && c.selected)
+      if (sel && sel.type === 'select') setSelectedId(sel.id)
+    }
+  }, [])
 
   // ── 拖拽中：检测同层插入目标（阶段 3：顺序重排改为「明确越过节点中心」才插入）──
   // 拖动节点中心越过某兄弟节点中心 → 标记插入位置；未越过任何中心 → 仅改位置不动顺序。
@@ -619,9 +683,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       const horizontal = layerDir(layer.layerId) === 'LR'
       const selfAxis =
         (horizontal ? node.position.x : node.position.y) +
-        (horizontal
-          ? (node.measured?.width ?? 200) / 2
-          : (node.measured?.height ?? 56) / 2)
+        (horizontal ? (node.measured?.width ?? 200) / 2 : (node.measured?.height ?? 56) / 2)
       const siblings = layer.nodes
         .filter(n => n.lane === canvasNode.lane && !n.synthetic && n.id !== node.id)
         .map(n => {
@@ -667,9 +729,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       if (!canvasNode || canvasNode.synthetic) return
       // 触屏/鼠标统一取点（dragStop 时 touches 已空，用 changedTouches）
       const pt =
-        'changedTouches' in event
-          ? event.changedTouches[0] ?? { clientX: 0, clientY: 0 }
-          : event
+        'changedTouches' in event ? (event.changedTouches[0] ?? { clientX: 0, clientY: 0 }) : event
 
       // 拖动结束：立即清理插入指示 UI（ref 缓存保留至结构判断后）
       setDragInsert(null)
@@ -689,17 +749,23 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         const items = breadcrumbRef.current.querySelectorAll<HTMLElement>('[data-layer-id]')
         for (const el of items) {
           const r = el.getBoundingClientRect()
-          if (pt.clientX >= r.left && pt.clientX <= r.right && pt.clientY >= r.top && pt.clientY <= r.bottom) {
+          if (
+            pt.clientX >= r.left &&
+            pt.clientX <= r.right &&
+            pt.clientY >= r.top &&
+            pt.clientY <= r.bottom
+          ) {
             const targetLayer = el.dataset.layerId!
             if (targetLayer !== layer.layerId) {
               const targetCanvasLayer = projection.layers.get(targetLayer)
               const lane: LaneId = targetCanvasLayer?.swimlanes[0]?.id ?? 'main'
-              const siblings = targetLayer === 'root'
-                ? cur
-                : (() => {
-                    const loc = locateStep(cur, targetLayer)
-                    return loc ? laneSteps(loc.step, lane) : []
-                  })()
+              const siblings =
+                targetLayer === 'root'
+                  ? cur
+                  : (() => {
+                      const loc = locateStep(cur, targetLayer)
+                      return loc ? laneSteps(loc.step, lane) : []
+                    })()
               await applyEdit({
                 op: 'move_step',
                 stepId: node.id,
@@ -719,8 +785,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         const w = other.measured?.width ?? 220
         const h = other.measured?.height ?? 64
         if (
-          dropPoint.x >= other.position.x && dropPoint.x <= other.position.x + w &&
-          dropPoint.y >= other.position.y && dropPoint.y <= other.position.y + h
+          dropPoint.x >= other.position.x &&
+          dropPoint.x <= other.position.x + w &&
+          dropPoint.y >= other.position.y &&
+          dropPoint.y <= other.position.y + h
         ) {
           const loc = locateStep(cur, other.id)
           if (loc) {
@@ -826,38 +894,46 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
 
   // ── 删除 / 复制 / 添加 ──
   // id 可选：传入则操作指定节点（hover 操作按钮），缺省操作当前选中节点（快捷键）
-  const deleteSelected = useCallback(async (id?: string) => {
-    const targetId = id ?? selectedId
-    const cur = stepsRef.current
-    if (!cur || !targetId || readOnly) return
-    const loc = locateStep(cur, targetId)
-    if (!loc) return
-    if (containerLanes(loc.step)) {
-      const ok = await askConfirm(`「${loc.step.name || loc.step.id}」是容器，删除将级联删除全部子步骤。确认删除？`)
-      if (!ok) return
-    }
-    await applyEdit({ op: 'remove_step', stepId: targetId })
-    setSelectedId(null)
-    setInspectorOpen(false)
-  }, [selectedId, readOnly, applyEdit, askConfirm])
+  const deleteSelected = useCallback(
+    async (id?: string) => {
+      const targetId = id ?? selectedId
+      const cur = stepsRef.current
+      if (!cur || !targetId || readOnly) return
+      const loc = locateStep(cur, targetId)
+      if (!loc) return
+      if (containerLanes(loc.step)) {
+        const ok = await askConfirm(
+          `「${loc.step.name || loc.step.id}」是容器，删除将级联删除全部子步骤。确认删除？`,
+        )
+        if (!ok) return
+      }
+      await applyEdit({ op: 'remove_step', stepId: targetId })
+      setSelectedId(null)
+      setInspectorOpen(false)
+    },
+    [selectedId, readOnly, applyEdit, askConfirm],
+  )
 
-  const duplicateSelected = useCallback(async (id?: string) => {
-    const targetId = id ?? selectedId
-    const cur = stepsRef.current
-    if (!cur || !targetId || readOnly || !layer) return
-    const loc = locateStep(cur, targetId)
-    if (!loc) return
-    const ids = collectIds(cur)
-    const copy = cloneStepWithNewIds(loc.step, ids)
-    copy.name = `${copy.name || copy.id} 副本`
-    await applyEdit({
-      op: 'add_step',
-      parent: { layerId: loc.layerId },
-      lane: loc.lane,
-      index: loc.index + 1,
-      step: copy,
-    })
-  }, [selectedId, readOnly, layer, applyEdit])
+  const duplicateSelected = useCallback(
+    async (id?: string) => {
+      const targetId = id ?? selectedId
+      const cur = stepsRef.current
+      if (!cur || !targetId || readOnly || !layer) return
+      const loc = locateStep(cur, targetId)
+      if (!loc) return
+      const ids = collectIds(cur)
+      const copy = cloneStepWithNewIds(loc.step, ids)
+      copy.name = `${copy.name || copy.id} 副本`
+      await applyEdit({
+        op: 'add_step',
+        parent: { layerId: loc.layerId },
+        lane: loc.lane,
+        index: loc.index + 1,
+        step: copy,
+      })
+    },
+    [selectedId, readOnly, layer, applyEdit],
+  )
 
   // ── 节点 hover 操作（阶段 4：编辑/复制/删除快捷入口，注入节点 data；不经过闭包 selectedId）──
   const nodeActions = useMemo(
@@ -886,7 +962,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       if (!cur || !layer || readOnly) return
       const step = newStep(kind, collectIds(cur))
       const { lane, index } = clickInsertion(cur, layer, selectedId)
-      const ok = await applyEdit({ op: 'add_step', parent: { layerId: layer.layerId }, lane, index, step })
+      const ok = await applyEdit({
+        op: 'add_step',
+        parent: { layerId: layer.layerId },
+        lane,
+        index,
+        step,
+      })
       if (ok) {
         setSelectedId(step.id)
         setInspectorOpen(true)
@@ -934,7 +1016,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       } else {
         ;({ lane, index } = clickInsertion(cur, layer, selectedId))
       }
-      const ok = await applyEdit({ op: 'add_step', parent: { layerId: layer.layerId }, lane, index, step })
+      const ok = await applyEdit({
+        op: 'add_step',
+        parent: { layerId: layer.layerId },
+        lane,
+        index,
+        step,
+      })
       if (ok) {
         setSelectedId(step.id)
         setInspectorOpen(true)
@@ -1033,7 +1121,20 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     // 必须 capture 先拿到事件并 preventDefault；remove 需保持同一 capture 标志
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [save, undo, redo, duplicateSelected, deleteSelected, runWorkflow, readOnly, selectedId, addMenuOpen, inspectorOpen, layer, switchLayer])
+  }, [
+    save,
+    undo,
+    redo,
+    duplicateSelected,
+    deleteSelected,
+    runWorkflow,
+    readOnly,
+    selectedId,
+    addMenuOpen,
+    inspectorOpen,
+    layer,
+    switchLayer,
+  ])
 
   // ── ProblemsPanel 定位（3.3：下钻 + 居中闪烁）──
   const locateNode = useCallback(
@@ -1057,19 +1158,25 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     const chain = [...layer.parentChain, layer.layerId]
     return chain.map(id => ({
       id,
-      label: id === 'root' ? 'root' : projection.index.nodeById.get(id)?.name ?? id,
+      label: id === 'root' ? 'root' : (projection.index.nodeById.get(id)?.name ?? id),
     }))
   }, [layer, projection])
 
   // ── 顶部状态（4.2 断点续连呈现）──
   const lastRun = ir?.run_history?.[0]
-  const lastRunFailed = !!lastRun && !snapshot.running && (
-    lastRun.status === 'Paused' || (typeof lastRun.status === 'object' && lastRun.status !== null && 'Error' in lastRun.status)
-  )
+  const lastRunFailed =
+    !!lastRun &&
+    !snapshot.running &&
+    (lastRun.status === 'Paused' ||
+      (typeof lastRun.status === 'object' && lastRun.status !== null && 'Error' in lastRun.status))
   const failedStepName = useMemo(() => {
     if (!lastRunFailed || !lastRun) return null
-    const recs = Array.isArray(lastRun.steps) ? (lastRun.steps as { step_id: string; status: unknown }[]) : []
-    const failed = recs.find(r => typeof r.status === 'object' && r.status !== null && 'Error' in (r.status as object))
+    const recs = Array.isArray(lastRun.steps)
+      ? (lastRun.steps as { step_id: string; status: unknown }[])
+      : []
+    const failed = recs.find(
+      r => typeof r.status === 'object' && r.status !== null && 'Error' in (r.status as object),
+    )
     if (!failed) return null
     return projection?.index.nodeById.get(failed.step_id)?.name ?? failed.step_id
   }, [lastRunFailed, lastRun, projection])
@@ -1096,18 +1203,38 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         </button>
         <span className="wfc-title">{ir.name}</span>
         {dirty && <span className="wfc-badge wfc-badge--dirty">未保存</span>}
-        {readOnly && <span className="wfc-badge">{snapshot.running ? '运行中 · 只读' : '只读'}</span>}
+        {readOnly && (
+          <span className="wfc-badge">{snapshot.running ? '运行中 · 只读' : '只读'}</span>
+        )}
 
         <div className="wfc-toolbar-spacer" />
 
-        <button type="button" className="wfc-btn" onClick={undo} disabled={readOnly} title="撤销（Ctrl+Z）">
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={undo}
+          disabled={readOnly}
+          title="撤销（Ctrl+Z）"
+        >
           <Undo2 size={13} />
         </button>
-        <button type="button" className="wfc-btn" onClick={redo} disabled={readOnly} title="重做（Ctrl+Shift+Z）">
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={redo}
+          disabled={readOnly}
+          title="重做（Ctrl+Shift+Z）"
+        >
           <Redo2 size={13} />
         </button>
         <div className="wfc-add-wrap" ref={addWrapRef}>
-          <button type="button" className="wfc-btn" onClick={() => setAddMenuOpen(o => !o)} disabled={readOnly} title="添加节点（N）">
+          <button
+            type="button"
+            className="wfc-btn"
+            onClick={() => setAddMenuOpen(o => !o)}
+            disabled={readOnly}
+            title="添加节点（N）"
+          >
             <Plus size={13} /> 添加
           </button>
           {addMenuOpen && (
@@ -1127,10 +1254,21 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
             </div>
           )}
         </div>
-        <button type="button" className="wfc-btn" onClick={() => void runCheck()} title="后端权威校验">
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => void runCheck()}
+          title="后端权威校验"
+        >
           <CircleCheckBig size={13} /> 检查
         </button>
-        <button type="button" className="wfc-btn" onClick={() => void save()} disabled={!dirty || snapshot.running} title="保存（Ctrl+S，保存前强制校验）">
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => void save()}
+          disabled={!dirty || snapshot.running}
+          title="保存（Ctrl+S，保存前强制校验）"
+        >
           <Save size={13} /> 保存
         </button>
         <button
@@ -1147,8 +1285,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       {/* ── 横幅区 ── */}
       {projection.index.hasCustomNodes && (
         <div className="wfc-banner wfc-banner--error">
-          <strong>格式不兼容：</strong>本工作流包含旧格式节点，画布已切换为只读。
-          可通过 AI 对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。
+          <strong>格式不兼容：</strong>本工作流包含旧格式节点，画布已切换为只读。 可通过 AI
+          对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。
         </div>
       )}
       {lastRunFailed && !projection.index.hasCustomNodes && (
@@ -1161,11 +1299,15 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       {notice && (
         <div className="wfc-banner wfc-banner--info">
           {notice}
-          <button type="button" className="wfc-icon-btn" onClick={() => setNotice(null)}><X size={12} /></button>
+          <button type="button" className="wfc-icon-btn" onClick={() => setNotice(null)}>
+            <X size={12} />
+          </button>
         </div>
       )}
       {snapshot.running && (
-        <div className="wfc-banner wfc-banner--running">运行中 —— 画布已锁定为只读，防止编辑-执行竞态</div>
+        <div className="wfc-banner wfc-banner--running">
+          运行中 —— 画布已锁定为只读，防止编辑-执行竞态
+        </div>
       )}
 
       {/* ── 面包屑 ── */}
@@ -1250,20 +1392,33 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         <ToolPalette disabled={readOnly} onAdd={tool => void addToolStep(tool)} />
 
         {/* ── 结构大纲（右下角，替代 MiniMap；定位是纯视图操作，readOnly/运行中均可用）── */}
-        <OutlinePanel steps={steps} selectedId={selectedId} statuses={outlineStatus} onLocate={locateNode} />
+        <OutlinePanel
+          steps={steps}
+          selectedId={selectedId}
+          statuses={outlineStatus}
+          onLocate={locateNode}
+        />
 
         {inspectorOpen && selectedStep && (
           <Inspector
             step={selectedStep}
             readOnly={readOnly}
             idReferenced={(ir.run_history ?? []).some(r =>
-              (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(s => s.step_id === selectedStep.id),
+              (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(
+                s => s.step_id === selectedStep.id,
+              ),
             )}
             lastOutput={snapshot.outputs.get(selectedStep.id)}
             focusToolId={toolFocusId}
-            onPatch={patch => void applyEdit({ op: 'update_fields', stepId: selectedStep.id, patch })}
+            onPatch={patch =>
+              void applyEdit({ op: 'update_fields', stepId: selectedStep.id, patch })
+            }
             onPatchAction={action =>
-              void applyEdit({ op: 'update_fields', stepId: selectedStep.id, patch: { do: action } })
+              void applyEdit({
+                op: 'update_fields',
+                stepId: selectedStep.id,
+                patch: { do: action },
+              })
             }
             onClose={() => setInspectorOpen(false)}
           />

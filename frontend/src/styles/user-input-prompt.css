@@ -5,15 +5,21 @@
 @import './tokens.css';
 
 .uip-overlay {
-  position: fixed; inset: 0; z-index: 9999;
-  background: rgba(0, 0, 0, .65);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   animation: fadeIn var(--dur-med) var(--ease-out);
 }
 
 .uip-panel {
-  max-height: 90vh; overflow: auto;
+  max-height: 90vh;
+  overflow: auto;
   background: var(--modal-bg);
   border-radius: var(--radius-4);
   border: 1px solid var(--line-2);
@@ -21,127 +27,224 @@
   padding: var(--space-6);
   animation: compactModalIn var(--dur-med) var(--ease-spring);
 }
-.uip-panel--md { width: 360px; }
-.uip-panel--lg { width: 440px; }
+.uip-panel--md {
+  width: 360px;
+}
+.uip-panel--lg {
+  width: 440px;
+}
 
 /* ── 头部 ── */
 .uip-header {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: var(--space-4);
 }
-.uip-title-group { display: flex; align-items: center; gap: var(--space-2); }
-.uip-title { font-size: var(--fz-xl); font-weight: var(--fw-bold); color: var(--fg-1); }
+.uip-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.uip-title {
+  font-size: var(--fz-xl);
+  font-weight: var(--fw-bold);
+  color: var(--fg-1);
+}
 
 /* ── 提示正文 ── */
 .uip-prompt {
-  font-size: var(--fz-md); color: var(--fg-2);
-  margin-bottom: var(--space-5); line-height: 1.6;
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+  margin-bottom: var(--space-5);
+  line-height: 1.6;
 }
 .uip-prompt .markdown-paragraph {
-  color: inherit; white-space: pre-wrap;
+  color: inherit;
+  white-space: pre-wrap;
   margin: 0 0 var(--space-3);
 }
-.uip-prompt .markdown-paragraph:last-child { margin-bottom: 0 }
+.uip-prompt .markdown-paragraph:last-child {
+  margin-bottom: 0;
+}
 
 /* ── 表单 ── */
-.uip-field { margin-bottom: var(--space-3); }
-.uip-field--spaced { margin-bottom: var(--space-4); }
+.uip-field {
+  margin-bottom: var(--space-3);
+}
+.uip-field--spaced {
+  margin-bottom: var(--space-4);
+}
 .uip-label {
-  font-size: var(--fz-xs); color: var(--fg-3);
-  margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 .uip-input {
-  width: 100%; padding: var(--space-2) var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-2);
   border: 1px solid var(--line-2);
   background: var(--surface-inset);
   color: var(--fg-1);
-  font-size: var(--fz-md); font-family: var(--font-ui);
-  outline: none; box-sizing: border-box;
+  font-size: var(--fz-md);
+  font-family: var(--font-ui);
+  outline: none;
+  box-sizing: border-box;
   transition: border-color var(--dur-fast) var(--ease-out);
 }
-.uip-input:focus { border-color: var(--accent); }
-.uip-input::placeholder { color: var(--fg-5); }
-.uip-input--center { text-align: center; }
+.uip-input:focus {
+  border-color: var(--accent);
+}
+.uip-input::placeholder {
+  color: var(--fg-5);
+}
+.uip-input--center {
+  text-align: center;
+}
 
-.uip-row { display: flex; gap: var(--space-3); margin-bottom: var(--space-3); }
-.uip-row > * { flex: 1; }
+.uip-row {
+  display: flex;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.uip-row > * {
+  flex: 1;
+}
 
 /* ── 操作区 ── */
-.uip-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.uip-actions--spaced { margin-top: var(--space-4); }
+.uip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.uip-actions--spaced {
+  margin-top: var(--space-4);
+}
 
 /* ── 辅助 ── */
 .uip-kbd {
-  display: inline-block; padding: 1px 5px;
+  display: inline-block;
+  padding: 1px 5px;
   border-radius: 3px;
-  background: var(--surface-3); border: 1px solid var(--line-2);
-  margin-right: 4px; font-size: 10px; font-family: var(--font-mono);
+  background: var(--surface-3);
+  border: 1px solid var(--line-2);
+  margin-right: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
   color: var(--fg-2);
 }
-.uip-hint { font-size: var(--fz-xs); color: var(--fg-4); }
+.uip-hint {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
 
 /* ── 图标预览（icon_confirm 模式）── */
 .uip-icon-preview {
-  width: 100%; height: 100px;
+  width: 100%;
+  height: 100px;
   border-radius: var(--radius-2);
   border: 1px solid var(--line-2);
   background: var(--surface-inset);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
 }
 .uip-icon-preview img {
-  max-width: 100%; max-height: 100%; object-fit: contain;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 .uip-capture-btn {
-  margin-top: var(--space-2); width: 100%;
+  margin-top: var(--space-2);
+  width: 100%;
   padding: 6px 0;
   border-radius: var(--radius-1);
   border: 1px dashed var(--line-2);
-  background: transparent; color: var(--fg-3);
-  font-size: var(--fz-sm); font-family: inherit;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  font-family: inherit;
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-out);
 }
-.uip-capture-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.uip-capture-btn:disabled { cursor: not-allowed; opacity: .5; }
+.uip-capture-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.uip-capture-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 
 /* ── 捕获模式（screenshot/region/mouse_pos/color）── */
 .uip-capture-main-btn {
-  width: 100%; padding: var(--space-3) 0;
+  width: 100%;
+  padding: var(--space-3) 0;
   border-radius: var(--radius-3);
   border: 1px solid var(--line-2);
-  background: var(--surface-2); color: var(--fg-1);
-  font-size: var(--fz-lg); font-weight: var(--fw-semibold); font-family: inherit;
+  background: var(--surface-2);
+  color: var(--fg-1);
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-semibold);
+  font-family: inherit;
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-out);
 }
-.uip-capture-main-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.uip-capture-main-btn:disabled { cursor: not-allowed; opacity: .5; }
+.uip-capture-main-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.uip-capture-main-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 
 .uip-capture-result {
   padding: var(--space-3);
   border-radius: var(--radius-2);
-  background: var(--surface-2); border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
   margin-bottom: var(--space-4);
 }
 .uip-capture-result-label {
-  font-size: var(--fz-xs); color: var(--fg-4);
-  margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 .uip-capture-value {
-  font-size: var(--fz-md); color: var(--fg-1); font-family: var(--font-mono);
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+  font-family: var(--font-mono);
 }
-.uip-capture-img { max-width: 100%; max-height: 160px; border-radius: var(--radius-1); }
+.uip-capture-img {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: var(--radius-1);
+}
 
-.uip-btn-row { display: flex; gap: var(--space-2); }
-.uip-btn-row > * { flex: 1; }
+.uip-btn-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.uip-btn-row > * {
+  flex: 1;
+}
 
 .uip-footer-hint {
-  display: flex; justify-content: center;
+  display: flex;
+  justify-content: center;
   margin-top: var(--space-3);
-  font-size: var(--fz-xs); color: var(--fg-5);
+  font-size: var(--fz-xs);
+  color: var(--fg-5);
   font-family: var(--font-mono);
 }
 
-.uip-hint--spaced { margin-top: 6px; }
+.uip-hint--spaced {
+  margin-top: 6px;
+}

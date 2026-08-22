@@ -105,7 +105,8 @@ const zh: Record<string, string> = {
   'custom.page.name': '名字',
   'custom.page.namePlaceholder': '例如：我的写作助手',
   'custom.page.l2': '行为定义（L2 人格层）',
-  'custom.page.l2Placeholder': '定义它是谁、怎么说话、行为准则、禁止项……这是你的 Agent 的完整行为定义（替换 L2）',
+  'custom.page.l2Placeholder':
+    '定义它是谁、怎么说话、行为准则、禁止项……这是你的 Agent 的完整行为定义（替换 L2）',
   'custom.page.greeting': '开场白',
   'custom.page.greetingPlaceholder': '激活时 Agent 主动说的第一句话',
   'custom.page.knowledge': '知识库路径',
@@ -237,7 +238,8 @@ const zh: Record<string, string> = {
   'plugins.back': '返回',
   'plugins.detailAbout': '简介',
   'plugins.detailPerms': '所需权限',
-  'plugins.permAgentChatWarning': '「agent.chat」将允许插件代表你调用 Nuphus AI，并使用你在全局设置中已授权的全部工具（含文件 / 命令 / 桌面操作）。安装前请确认插件来源可信。',
+  'plugins.permAgentChatWarning':
+    '「agent.chat」将允许插件代表你调用 Nuphus AI，并使用你在全局设置中已授权的全部工具（含文件 / 命令 / 桌面操作）。安装前请确认插件来源可信。',
   'plugins.detailDeveloper': '开发者',
   'plugins.detailInstalled': '安装时间',
   'plugins.badge.sample': '示例',
@@ -246,7 +248,8 @@ const zh: Record<string, string> = {
   'plugins.devExportTitle': '选择导出目录',
   'plugins.devContractTitle': '开发契约（一页纸）',
   'plugins.devContractFormatTitle': '1. 包格式',
-  'plugins.devContractFormatDesc': '插件是一个 .nuph 文件（ZIP 格式）：根目录直接包含 manifest.json 与入口页面，不可套子目录。',
+  'plugins.devContractFormatDesc':
+    '插件是一个 .nuph 文件（ZIP 格式）：根目录直接包含 manifest.json 与入口页面，不可套子目录。',
   'plugins.devContractManifestTitle': '2. manifest.json 字段',
   'plugins.devContractManifestDesc': 'manifest 声明插件的身份、入口与权限；安装时逐项校验。',
   'plugins.devFieldId': '插件唯一 ID（reverse-dns 格式，如 com.author.my-plugin）',
@@ -259,18 +262,22 @@ const zh: Record<string, string> = {
   'plugins.devFieldSample': '官方示例标记（可选；true 显示「示例」徽章）',
   'plugins.devFieldSidecar': '扩展程序声明（v1 固定 null）',
   'plugins.devContractBridgeTitle': '3. Bridge API',
-  'plugins.devContractBridgeDesc': '插件页面通过 Bridge 调用宿主能力；未声明对应权限的调用会被拒绝（PERMISSION_DENIED）。',
+  'plugins.devContractBridgeDesc':
+    '插件页面通过 Bridge 调用宿主能力；未声明对应权限的调用会被拒绝（PERMISSION_DENIED）。',
   'plugins.devApiKv': '插件私有存储：读 / 写 / 删 / 列 key',
   'plugins.devApiToast': '主窗口通知（需要 notify 权限）',
   'plugins.devApiThemeGet': '读取当前主题（只读，免权限）',
   'plugins.devApiThemeChanged': '主题变化事件（单向推送）',
-  'plugins.devApiAgentChat': '调用 Nuphus AI，返回最终回复。注意：agent.chat 会使用你在全局设置中已授权的全部工具（含文件 / 命令 / 桌面操作），插件将可代表你执行这些操作（需要 agent.chat 权限）',
+  'plugins.devApiAgentChat':
+    '调用 Nuphus AI，返回最终回复。注意：agent.chat 会使用你在全局设置中已授权的全部工具（含文件 / 命令 / 桌面操作），插件将可代表你执行这些操作（需要 agent.chat 权限）',
   'plugins.devApiWorkflowList': '列出用户工作流（需要 workflow.run 权限）',
-  'plugins.devApiWorkflowRun': '执行工作流并等待终态（需要 workflow.run 权限；执行事件照常进主窗口）',
+  'plugins.devApiWorkflowRun':
+    '执行工作流并等待终态（需要 workflow.run 权限；执行事件照常进主窗口）',
   'plugins.devContractThemeTitle': '4. 主题跟随',
   'plugins.devContractThemeDesc': '引入主题四件套，颜色随主窗口主题自动变化：',
   'plugins.devContractHandshakeTitle': '5. 握手',
-  'plugins.devContractHandshakeDesc': '引入 bridge.js 后自动完成 ready → init 握手；桥接器按 manifest 权限逐次鉴权。',
+  'plugins.devContractHandshakeDesc':
+    '引入 bridge.js 后自动完成 ready → init 握手；桥接器按 manifest 权限逐次鉴权。',
   'plugins.devSamplesTitle': '导出示例工程',
   'plugins.devSampleHelloName': 'Hello Nuphus',
   'plugins.devSampleHelloDesc': '主题色卡 / KV 存储 / 通知 / 主题事件——覆盖插件最常用的四类能力',
@@ -290,7 +297,8 @@ const zh: Record<string, string> = {
   'plugins.devRef': '开发者参考',
   'plugins.devNext': '下一步',
   'plugins.devIntroWhatTitle': '插件是什么？',
-  'plugins.devIntroWhatDesc': '插件是一个自带界面的小应用，运行在 Nuphus 里。它能调用 Nuphus 的 AI 对话、自动化工作流、系统通知等能力——你出专业知识，Nuphus 出 AI 底座。',
+  'plugins.devIntroWhatDesc':
+    '插件是一个自带界面的小应用，运行在 Nuphus 里。它能调用 Nuphus 的 AI 对话、自动化工作流、系统通知等能力——你出专业知识，Nuphus 出 AI 底座。',
   'plugins.devIntroExamplesTitle': '你能做出什么？',
   'plugins.devIntroEx1Name': '行业问答助手',
   'plugins.devIntroEx1Desc': '把你行业的知识与经验做成问答助手，卖给同行或客户',
@@ -299,32 +307,44 @@ const zh: Record<string, string> = {
   'plugins.devIntroEx3Name': '内容生成器',
   'plugins.devIntroEx3Desc': '接上 Nuphus 的 AI 能力，批量生成你领域里的文案、报告或方案',
   'plugins.devIntroVisionTitle': '我们的愿景',
-  'plugins.devIntroVisionDesc': 'Nuphus 想和开发者一起，打造一个高质量、可持续的付费插件社区——不追求数量，用心做出来的作品值得被付费。你的插件可以打包成 .nuph 文件发给客户，也可以在市场上线后上架出售（最后一步会讲）。',
+  'plugins.devIntroVisionDesc':
+    'Nuphus 想和开发者一起，打造一个高质量、可持续的付费插件社区——不追求数量，用心做出来的作品值得被付费。你的插件可以打包成 .nuph 文件发给客户，也可以在市场上线后上架出售（最后一步会讲）。',
   'plugins.devExportLead': '下面两个官方示例就是完整的插件。导出一个，改它，就是在做你自己的插件。',
-  'plugins.devAiLead': '把导出的文件夹整个交给任意 AI 编程助手——Cursor、Claude Code，或者直接在 Nuphus 里让 Agent 改。你只说清楚想要什么，代码让 AI 写。',
+  'plugins.devAiLead':
+    '把导出的文件夹整个交给任意 AI 编程助手——Cursor、Claude Code，或者直接在 Nuphus 里让 Agent 改。你只说清楚想要什么，代码让 AI 写。',
   'plugins.devAiPromptsTitle': '复制一条提示词，发给 AI',
-  'plugins.devAiPrompt1': '阅读这个文件夹里的 manifest.json 和 index.html，理解这个 Nuphus 插件的结构。然后把界面改造成一个「你的行业」的「你想要的工具」，保持 manifest 的权限声明和 Bridge 调用方式不变。',
-  'plugins.devAiPrompt2': '在这个 Nuphus 插件里增加一个功能：（用一句话描述你想要的功能）。需要调用 AI 时用 Bridge 的 agent.chat，需要保存数据时用 kv 存储。改完后告诉我如何测试。',
-  'plugins.devAiPrompt3': '保持功能不变，把这个插件的界面重写得更美观、更专业。使用 /plugins-shared/tokens.css 里的设计变量，风格克制、现代。',
+  'plugins.devAiPrompt1':
+    '阅读这个文件夹里的 manifest.json 和 index.html，理解这个 Nuphus 插件的结构。然后把界面改造成一个「你的行业」的「你想要的工具」，保持 manifest 的权限声明和 Bridge 调用方式不变。',
+  'plugins.devAiPrompt2':
+    '在这个 Nuphus 插件里增加一个功能：（用一句话描述你想要的功能）。需要调用 AI 时用 Bridge 的 agent.chat，需要保存数据时用 kv 存储。改完后告诉我如何测试。',
+  'plugins.devAiPrompt3':
+    '保持功能不变，把这个插件的界面重写得更美观、更专业。使用 /plugins-shared/tokens.css 里的设计变量，风格克制、现代。',
   'plugins.devAiCopy': '复制',
   'plugins.devAiCopied': '已复制，粘贴给你的 AI 助手即可',
   'plugins.devAiCopyFail': '复制失败，请手动选择文本复制',
-  'plugins.devAiTip': '提示：每次让 AI 改完，都去第 4 步装回来看看效果；不满意就把问题描述给 AI，继续改。',
+  'plugins.devAiTip':
+    '提示：每次让 AI 改完，都去第 4 步装回来看看效果；不满意就把问题描述给 AI，继续改。',
   'plugins.devInstallLead': '改完了？就在这里装回 Nuphus 看效果——不用离开本页。',
-  'plugins.devInstallStep1': '把插件文件夹里的所有内容压缩成一个 zip（直接压缩内容，不要套一层文件夹）',
+  'plugins.devInstallStep1':
+    '把插件文件夹里的所有内容压缩成一个 zip（直接压缩内容，不要套一层文件夹）',
   'plugins.devInstallStep2': '点击下方按钮选择 zip / .nuph 文件，立即安装到本机',
-  'plugins.devInstallStep3': '点「打开插件页」，点击插件卡片的「打开」看效果；不满意就回去让 AI 继续改，再重复本步',
+  'plugins.devInstallStep3':
+    '点「打开插件页」，点击插件卡片的「打开」看效果；不满意就回去让 AI 继续改，再重复本步',
   'plugins.devInstallButton': '选择 .nuph / zip 安装',
   'plugins.devInstallNote': '此入口仅供开发调试；正式分发请走下一步「打包发布」上架市场',
   'plugins.devInstallOpen': '打开插件页',
   'plugins.devPubLead': '调试满意了？把它上架市场，让所有 Nuphus 用户都能发现它。',
   'plugins.devPubStep1': '打开插件页，点击你的插件进入详情页，点「打包导出」得到 .nuph 文件',
-  'plugins.devPubStep2': '向 nuphus-market 仓库提交 PR：附上 .nuph 与 manifest，分类必选其一（智能体/工具/效率/集成/游戏/其他）',
+  'plugins.devPubStep2':
+    '向 nuphus-market 仓库提交 PR：附上 .nuph 与 manifest，分类必选其一（智能体/工具/效率/集成/游戏/其他）',
   'plugins.devPubStep3': '审核通过后索引进市场 index.json，所有用户在插件市场即可发现并一键安装',
-  'plugins.devPubIconNote': '图标要求：每个应用必须携带 SVG 图标（如 icon.svg）——没有图标或非 SVG 的应用无法安装也无法上架，这是市场准入的基础要求。',
+  'plugins.devPubIconNote':
+    '图标要求：每个应用必须携带 SVG 图标（如 icon.svg）——没有图标或非 SVG 的应用无法安装也无法上架，这是市场准入的基础要求。',
   'plugins.devMarketTitle': '上架 nuphus-market 市场',
-  'plugins.devMarketDesc': '开源、闭源双轨投稿（设计文档 §8）。抢先占据你的生态位——现在做出来，市场上线即首发。',
-  'plugins.devRefLead': '给想深入的人：插件开发契约一页纸。做插件不需要读懂它——AI 会替你处理这些细节。',
+  'plugins.devMarketDesc':
+    '开源、闭源双轨投稿（设计文档 §8）。抢先占据你的生态位——现在做出来，市场上线即首发。',
+  'plugins.devRefLead':
+    '给想深入的人：插件开发契约一页纸。做插件不需要读懂它——AI 会替你处理这些细节。',
   'plugins.searchPlaceholder': '搜索插件…',
   'plugins.noMatch': '没有匹配的插件',
 
@@ -436,7 +456,8 @@ const zh: Record<string, string> = {
   'themes.customResetDone': '已停用自定义，回到内置主题（我的主题保留在列表中）',
   'themes.customImported': '自定义主题已导入',
   'themes.customImportErrJson': '导入失败：文件不是有效的 JSON',
-  'themes.customImportErrStructure': '导入失败：需包含 name / base / overrides 字段，overrides 须为 CSS 变量字符串映射',
+  'themes.customImportErrStructure':
+    '导入失败：需包含 name / base / overrides 字段，overrides 须为 CSS 变量字符串映射',
   'themes.customExportFail': '导出失败',
   'theme.dark': '深邃蓝黑',
   'theme.darkDesc': '深色主题',
@@ -598,7 +619,8 @@ const zh: Record<string, string> = {
   'mobile.resetPairingBtn': '重置配对',
   'mobile.relayRotate': '重新生成调用凭据',
   'mobile.relayRotateHint': '外网访问凭据；怀疑泄露时点此轮换，旧凭据即刻失效',
-  'mobile.relayRotateConfirm': '重新生成后，已配对手机的外网访问将立即失效，需重新扫描二维码。确认继续？',
+  'mobile.relayRotateConfirm':
+    '重新生成后，已配对手机的外网访问将立即失效，需重新扫描二维码。确认继续？',
   'mobile.statusRunning': '运行中',
   'mobile.statusStopped': '已停止',
   'mobile.stopFailed': '终止失败，请重试',
@@ -727,7 +749,8 @@ const zh: Record<string, string> = {
   'memory.detail.retry': '重试',
   'memory.detail.back': '返回列表',
   'memory.detail.noReply': '（无回复记录）',
-  'memory.exp.empty': '暂无条目。经验只来自三处：快照（memory update）、提炼（refine）、点评（用户评分）。',
+  'memory.exp.empty':
+    '暂无条目。经验只来自三处：快照（memory update）、提炼（refine）、点评（用户评分）。',
   'memory.exp.tab.snapshot': '快照',
   'memory.exp.tab.distill': '提炼',
   'memory.exp.tab.review': '点评',
@@ -898,7 +921,8 @@ const zh: Record<string, string> = {
   'help.arch.workflow': 'Workflow Agent',
   'help.arch.workflowDesc': '按预定义脚本执行工作流，零 LLM Token 消耗，适合重复性任务。',
   'help.modes': '运行模式',
-  'help.mode.leader': 'Leader 模式。AI 自主判断最优路径，复杂任务先规划确认再执行。覆盖日常对话到复杂多步骤任务。',
+  'help.mode.leader':
+    'Leader 模式。AI 自主判断最优路径，复杂任务先规划确认再执行。覆盖日常对话到复杂多步骤任务。',
   'help.mode.workflow': '工作流模式。按预定义步骤执行，无 LLM 调用。适合重复性操作和自动化。',
   'help.tips': '使用建议',
   'help.tips.stuck': '任务卡死时使用 /reset 复位后端状态，不会丢失对话记录。',
@@ -986,8 +1010,10 @@ const zh: Record<string, string> = {
   'mobile.a2hsIosStep': '点底部「分享」→「添加到主屏幕」',
   'mobile.a2hsAndroidStep': '点右上角「⋮」菜单 →「添加到主屏幕」',
   'mobile.a2hsLanTitle': '添加到主屏幕，全屏直连桌面',
-  'mobile.a2hsLanIosStep': '点底部「分享」→「添加到主屏幕」；从图标打开即全屏，同 WiFi 直连桌面速度最快',
-  'mobile.a2hsLanAndroidStep': '点右上角「⋮」菜单 →「添加到主屏幕」；从图标打开即全屏，同 WiFi 直连桌面速度最快',
+  'mobile.a2hsLanIosStep':
+    '点底部「分享」→「添加到主屏幕」；从图标打开即全屏，同 WiFi 直连桌面速度最快',
+  'mobile.a2hsLanAndroidStep':
+    '点右上角「⋮」菜单 →「添加到主屏幕」；从图标打开即全屏，同 WiFi 直连桌面速度最快',
   'mobile.closeHint': '关闭提示',
   'mobile.pairTitle': '连接到桌面 Nuphus',
   'mobile.pairInvalid': '配对已失效（桌面端可能重置了配对），请重新输入密码。',

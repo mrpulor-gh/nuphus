@@ -1,5 +1,12 @@
 import { useState, useRef, useEffect, useCallback, type RefObject } from 'react'
-import { IconSend, IconSquare, IconBrain, IconWorkflow, IconSparkles, IconWrench } from '../../ui/Icons'
+import {
+  IconSend,
+  IconSquare,
+  IconBrain,
+  IconWorkflow,
+  IconSparkles,
+  IconWrench,
+} from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
@@ -178,9 +185,12 @@ export function ChatInputBar({
     if (ctxTimer.current) window.clearTimeout(ctxTimer.current)
     ctxTimer.current = window.setTimeout(() => setCtxHover(false), 160)
   }, [])
-  useEffect(() => () => {
-    if (ctxTimer.current) window.clearTimeout(ctxTimer.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (ctxTimer.current) window.clearTimeout(ctxTimer.current)
+    },
+    [],
+  )
   // ── 实时计时：执行中 time 实时走动；结束后以后端权威 totalDurationMs 覆盖 ──
   const [liveDuration, setLiveDuration] = useState(0)
   const startTimeRef = useRef<number | null>(null)
@@ -367,7 +377,9 @@ export function ChatInputBar({
       } else {
         onSetMode?.('leader')
       }
-      setTimeout(() => { modeSwitchLock.current = false }, 500)
+      setTimeout(() => {
+        modeSwitchLock.current = false
+      }, 500)
     },
     [mode, onSetMode, onToggleWorkAgentMode],
   )
@@ -385,14 +397,19 @@ export function ChatInputBar({
         })
         .catch(() => {})
         .finally(() => {
-          setTimeout(() => { modeSwitchLock.current = false }, 500)
+          setTimeout(() => {
+            modeSwitchLock.current = false
+          }, 500)
         })
     },
     [onSetMode],
   )
-  useEffect(() => () => {
-    if (modeMenuTimer.current) window.clearTimeout(modeMenuTimer.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (modeMenuTimer.current) window.clearTimeout(modeMenuTimer.current)
+    },
+    [],
+  )
 
   // ── 推理深度：model chip hover 时弹出选择（点击 model 仍是切换模型；hover 呈现强度档位）──
   const [modelEffortOpen, setModelEffortOpen] = useState(false)
@@ -419,9 +436,12 @@ export function ChatInputBar({
     return () => document.removeEventListener('keydown', onKey)
   }, [modelEffortOpen])
 
-  useEffect(() => () => {
-    if (modelEffortTimer.current) window.clearTimeout(modelEffortTimer.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (modelEffortTimer.current) window.clearTimeout(modelEffortTimer.current)
+    },
+    [],
+  )
 
   const selectEffort = useCallback(
     (val: string | null) => {
@@ -593,7 +613,12 @@ export function ChatInputBar({
                 onChange={handleChange}
                 onKeyDown={e => {
                   // 录音/识别中按 Enter = 说完发送：先冲刷语音会话再发送
-                  if (e.key === 'Enter' && !e.shiftKey && !isProcessing && voiceRef.current?.isActive()) {
+                  if (
+                    e.key === 'Enter' &&
+                    !e.shiftKey &&
+                    !isProcessing &&
+                    voiceRef.current?.isActive()
+                  ) {
                     e.preventDefault()
                     flushThenSend()
                     return
@@ -623,16 +648,55 @@ export function ChatInputBar({
         <div className="input-actions">
           {/* ── 工具入口「+」：附件/图片/项目目录合并弹窗 ── */}
           <div className="input-tool-plus-wrap" ref={toolMenuRef}>
-                <IconButton
-                  variant="raw"
-                  className="input-tool-plus-btn"
-                  label={t('input.tools')}
-                  title={t('input.tools')}
-                  onClick={() => setToolMenuOpen(o => !o)}
+            <IconButton
+              variant="raw"
+              className="input-tool-plus-btn"
+              label={t('input.tools')}
+              title={t('input.tools')}
+              onClick={() => setToolMenuOpen(o => !o)}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </IconButton>
+            {toolMenuOpen && (
+              <div className="input-tool-menu" role="menu">
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={async () => {
+                    setToolMenuOpen(false)
+                    const { open } = await import('@tauri-apps/plugin-dialog')
+                    try {
+                      const selected = await open({ multiple: true })
+                      if (selected && Array.isArray(selected)) {
+                        const paths = selected as string[]
+                        onInputChange(
+                          input + (input ? '\n' : '') + paths.map(p => `[附件: ${p}]`).join('\n'),
+                        )
+                      } else if (selected) {
+                        onInputChange(input + (input ? '\n' : '') + `[附件: ${selected}]`)
+                      }
+                    } catch (e) {
+                      console.error('文件选择失败:', e)
+                    }
+                  }}
                 >
                   <svg
-                    width="16"
-                    height="16"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -640,163 +704,120 @@ export function ChatInputBar({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <path d="M12 5v14" />
-                    <path d="M5 12h14" />
+                    <path d="M15 3v11a5 5 0 1 1-10 0V7a2 2 0 1 1 4 0v5.5" />
                   </svg>
-                </IconButton>
-                {toolMenuOpen && (
-                  <div className="input-tool-menu" role="menu">
-                    <button
-                      type="button"
-                      className="input-tool-menu-item"
-                      role="menuitem"
-                      disabled={isProcessing && !pauseState}
-                      onClick={async () => {
-                        setToolMenuOpen(false)
-                        const { open } = await import('@tauri-apps/plugin-dialog')
-                        try {
-                          const selected = await open({ multiple: true })
-                          if (selected && Array.isArray(selected)) {
-                            const paths = selected as string[]
-                            onInputChange(
-                              input + (input ? '\n' : '') + paths.map(p => `[附件: ${p}]`).join('\n'),
-                            )
-                          } else if (selected) {
-                            onInputChange(input + (input ? '\n' : '') + `[附件: ${selected}]`)
-                          }
-                        } catch (e) {
-                          console.error('文件选择失败:', e)
-                        }
-                      }}
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M15 3v11a5 5 0 1 1-10 0V7a2 2 0 1 1 4 0v5.5" />
-                      </svg>
-                      <span className="input-tool-menu-label">{t('input.attach')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="input-tool-menu-item"
-                      role="menuitem"
-                      disabled={isProcessing && !pauseState}
-                      onClick={() => {
-                        setToolMenuOpen(false)
-                        imageInputRef.current?.click()
-                      }}
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect x="3" y="4" width="18" height="16" rx="3" />
-                        <circle cx="8.5" cy="10" r="2.5" />
-                        <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
-                      </svg>
-                      <span className="input-tool-menu-label">{t('input.image')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="input-tool-menu-item"
-                      role="menuitem"
-                      disabled={isProcessing && !pauseState}
-                      onClick={() => {
-                        setToolMenuOpen(false)
-                        onOpenProjectDir()
-                      }}
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M3 7a2 2 0 0 1 2-2h4l2.5 2h7.5a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-                      </svg>
-                      <span className="input-tool-menu-label">{t('input.projectDir')}</span>
-                    </button>
-                  </div>
-                )}
+                  <span className="input-tool-menu-label">{t('input.attach')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    imageInputRef.current?.click()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="3" />
+                    <circle cx="8.5" cy="10" r="2.5" />
+                    <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('input.image')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    onOpenProjectDir()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2.5 2h7.5a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('input.projectDir')}</span>
+                </button>
               </div>
-              <VoiceButton
-                ref={voiceRef}
-                onFinalText={handleVoiceFinal}
-                onPartialText={setVoicePartial}
-                // 与发送按钮一致：执行中（含 workflow 执行中）不禁用——
-                // 语音转文字后发送 = 追加指令插入队列（Leader 与 Workflow 统一）。
-                // 仅 workflow 权限锁定 / 暂停等待决策时禁用。
-                disabled={workflowLocked || !!pauseState}
-              />
-              {/* 发送 / 终止按钮三态：
+            )}
+          </div>
+          <VoiceButton
+            ref={voiceRef}
+            onFinalText={handleVoiceFinal}
+            onPartialText={setVoicePartial}
+            // 与发送按钮一致：执行中（含 workflow 执行中）不禁用——
+            // 语音转文字后发送 = 追加指令插入队列（Leader 与 Workflow 统一）。
+            // 仅 workflow 权限锁定 / 暂停等待决策时禁用。
+            disabled={workflowLocked || !!pauseState}
+          />
+          {/* 发送 / 终止按钮三态：
                   执行中（仅后端 is_busy 判断）且输入框无任何内容（含语音 partial）→ 终止按钮（可点，终止当前执行）；
                   执行中 + 有内容 → 发送按钮（追加指令）；
                   空闲 + 空内容 → 发送按钮灰显（待命）；
                   空闲 + 有内容 → 发送按钮高亮 */}
-              {backendBusy && !input.trim() && !voicePartial ? (
-                <IconButton
-                  variant="input-send"
-                  className="interrupt"
-                  label={t('input.interrupt')}
-                  title={t('input.interruptTitle')}
-                  onClick={() => onInterrupt?.()}
-                >
-                  <IconSquare size={14} />
-                </IconButton>
-              ) : (
-                <IconButton
-                  variant={!isProcessing && input.trim() ? 'input-send-active' : 'input-send'}
-                  className={isProcessing && !pauseState ? 'processing' : ''}
-                  label={
-                    isProcessing
-                      ? input.trim() || voicePartial
-                        ? '发送（追加指令）'
-                        : t('input.send')
-                      : t('input.send')
-                  }
-                  onClick={() => {
-                    // 单一发送语义（Leader 与 Workflow 一致）：空闲 = 新执行；执行中 = 追加指令（下一轮生效）。
-                    // 无暂停按钮/暂停弹窗——执行控制已从输入栏移除（与手机端一致）。
-                    // workflow 执行中也不禁用：发送 = 追加指令插入队列，由 workflow_agent 迭代边界注入。
-                    if (!isProcessing) flushThenSend()
-                    else if (input.trim() || voicePartial) flushThenSend()
-                  }}
-                  disabled={
-                    workflowLocked ||
-                    !input.trim() ||
-                    !!pauseState
-                  }
-                  title={
-                    workflowLocked
-                      ? 'WORKFLOW 需要打开全部安全权限'
-                      : isProcessing
-                        ? input.trim() || voicePartial
-                          ? '执行中发送 = 追加指令，立即纳入当前任务'
-                          : '执行中请先输入内容，发送 = 追加指令'
-                        : t('input.send')
-                  }
-                >
-                  <IconSend size={14} />
-                </IconButton>
-              )}
-            </div>
+          {backendBusy && !input.trim() && !voicePartial ? (
+            <IconButton
+              variant="input-send"
+              className="interrupt"
+              label={t('input.interrupt')}
+              title={t('input.interruptTitle')}
+              onClick={() => onInterrupt?.()}
+            >
+              <IconSquare size={14} />
+            </IconButton>
+          ) : (
+            <IconButton
+              variant={!isProcessing && input.trim() ? 'input-send-active' : 'input-send'}
+              className={isProcessing && !pauseState ? 'processing' : ''}
+              label={
+                isProcessing
+                  ? input.trim() || voicePartial
+                    ? '发送（追加指令）'
+                    : t('input.send')
+                  : t('input.send')
+              }
+              onClick={() => {
+                // 单一发送语义（Leader 与 Workflow 一致）：空闲 = 新执行；执行中 = 追加指令（下一轮生效）。
+                // 无暂停按钮/暂停弹窗——执行控制已从输入栏移除（与手机端一致）。
+                // workflow 执行中也不禁用：发送 = 追加指令插入队列，由 workflow_agent 迭代边界注入。
+                if (!isProcessing) flushThenSend()
+                else if (input.trim() || voicePartial) flushThenSend()
+              }}
+              disabled={workflowLocked || !input.trim() || !!pauseState}
+              title={
+                workflowLocked
+                  ? 'WORKFLOW 需要打开全部安全权限'
+                  : isProcessing
+                    ? input.trim() || voicePartial
+                      ? '执行中发送 = 追加指令，立即纳入当前任务'
+                      : '执行中请先输入内容，发送 = 追加指令'
+                    : t('input.send')
+              }
+            >
+              <IconSend size={14} />
+            </IconButton>
+          )}
+        </div>
 
         {/* ── 统一底栏：全部 flat 文字 + flat 图标，同一视觉语言 ── */}
         <div className="input-bar">
@@ -816,92 +837,90 @@ export function ChatInputBar({
                   <span className="input-bar-status-dot" style={{ color: moodColor }} />
                 )}
                 {mode === 'custom' ? (
+                  <>
+                    <IconSparkles size={13} />
+                    <span className="input-bar-mode-text">
+                      {(activeCustom?.name || 'CUSTOM').toUpperCase()}
+                    </span>
+                  </>
+                ) : mode === 'workflow' ? (
+                  <>
+                    <IconWorkflow size={13} />
+                    <span className="input-bar-mode-text">WORKFLOW</span>
+                  </>
+                ) : (
+                  <>
+                    <IconBrain size={13} />
+                    <span className="input-bar-mode-text">LEADER</span>
+                  </>
+                )}
+              </span>
+              {!isProcessing && modeMenuOpen && (
+                <div className="input-bar-mode-menu">
+                  <div
+                    className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
+                    onClick={() => selectMode('leader')}
+                  >
+                    <span className="input-bar-mode-option-name mode-leader">Leader</span>
+                    <span className="input-bar-mode-option-desc">
+                      {t('input.mode.leader.desc')}
+                    </span>
+                  </div>
+                  <div
+                    className={`input-bar-mode-option ${mode === 'workflow' ? 'active' : ''}`}
+                    onClick={() => selectMode('workflow')}
+                  >
+                    <span className="input-bar-mode-option-name mode-workflow">Workflow</span>
+                    <span className="input-bar-mode-option-desc">
+                      {t('input.mode.workflow.desc')}
+                    </span>
+                  </div>
+                  {/* ── Custom 档：列出卡片（点击激活+切换）；无卡片引导创建 ── */}
+                  {customAgents.length > 0 ? (
                     <>
-                      <IconSparkles size={13} />
-                      <span className="input-bar-mode-text">
-                        {(activeCustom?.name || 'CUSTOM').toUpperCase()}
-                      </span>
-                    </>
-                  ) : mode === 'workflow' ? (
-                    <>
-                      <IconWorkflow size={13} />
-                      <span className="input-bar-mode-text">WORKFLOW</span>
+                      {customAgents.map(agent => (
+                        <div
+                          key={agent.id}
+                          className={`input-bar-mode-option ${mode === 'custom' && agent.id === activeCustomId ? 'active' : ''}`}
+                          onClick={() => selectCustomAgent(agent.id)}
+                        >
+                          <span className="input-bar-mode-option-name mode-custom">
+                            {agent.name}
+                          </span>
+                          <span className="input-bar-mode-option-desc">
+                            {t('input.mode.custom.desc')}
+                          </span>
+                        </div>
+                      ))}
+                      {onManageCustomAgents && (
+                        <div
+                          className="input-bar-mode-manage"
+                          onClick={() => {
+                            setModeMenuOpen(false)
+                            onManageCustomAgents()
+                          }}
+                        >
+                          {t('input.mode.custom.manage')}
+                        </div>
+                      )}
                     </>
                   ) : (
-                    <>
-                      <IconBrain size={13} />
-                      <span className="input-bar-mode-text">LEADER</span>
-                    </>
+                    <div
+                      className="input-bar-mode-option"
+                      onClick={() => {
+                        setModeMenuOpen(false)
+                        onManageCustomAgents?.()
+                      }}
+                    >
+                      <span className="input-bar-mode-option-name mode-custom">Custom</span>
+                      <span className="input-bar-mode-option-desc">
+                        {t('input.mode.custom.create')}
+                      </span>
+                    </div>
                   )}
-                </span>
-                {!isProcessing && modeMenuOpen && (
-                  <div className="input-bar-mode-menu">
-                    <div
-                      className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
-                      onClick={() => selectMode('leader')}
-                    >
-                      <span className="input-bar-mode-option-name mode-leader">Leader</span>
-                      <span className="input-bar-mode-option-desc">
-                        {t('input.mode.leader.desc')}
-                      </span>
-                    </div>
-                    <div
-                      className={`input-bar-mode-option ${mode === 'workflow' ? 'active' : ''}`}
-                      onClick={() => selectMode('workflow')}
-                    >
-                      <span className="input-bar-mode-option-name mode-workflow">Workflow</span>
-                      <span className="input-bar-mode-option-desc">
-                        {t('input.mode.workflow.desc')}
-                      </span>
-                    </div>
-                    {/* ── Custom 档：列出卡片（点击激活+切换）；无卡片引导创建 ── */}
-                    {customAgents.length > 0 ? (
-                      <>
-                        {customAgents.map(agent => (
-                          <div
-                            key={agent.id}
-                            className={`input-bar-mode-option ${mode === 'custom' && agent.id === activeCustomId ? 'active' : ''}`}
-                            onClick={() => selectCustomAgent(agent.id)}
-                          >
-                            <span className="input-bar-mode-option-name mode-custom">
-                              {agent.name}
-                            </span>
-                            <span className="input-bar-mode-option-desc">
-                              {t('input.mode.custom.desc')}
-                            </span>
-                          </div>
-                        ))}
-                        {onManageCustomAgents && (
-                          <div
-                            className="input-bar-mode-manage"
-                            onClick={() => {
-                              setModeMenuOpen(false)
-                              onManageCustomAgents()
-                            }}
-                          >
-                            {t('input.mode.custom.manage')}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div
-                        className="input-bar-mode-option"
-                        onClick={() => {
-                          setModeMenuOpen(false)
-                          onManageCustomAgents?.()
-                        }}
-                      >
-                        <span className="input-bar-mode-option-name mode-custom">
-                          Custom
-                        </span>
-                        <span className="input-bar-mode-option-desc">
-                          {t('input.mode.custom.create')}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
+            </div>
             {/* ── workflow 桌面工具箱按钮（Ctrl+U）：仅 workflow 模式显示，
                 切换 Ctrl+U 工具箱显示；active 态表示工具箱当前打开。
                 hover 提示：自定义浮层（复用输入栏弹窗样式），不用原生 title ── */}
@@ -933,10 +952,7 @@ export function ChatInputBar({
               onMouseEnter={openModelEffort}
               onMouseLeave={closeModelEffort}
             >
-              <span
-                className="input-bar-text input-bar-chip"
-                onClick={onModelSwitch}
-              >
+              <span className="input-bar-text input-bar-chip" onClick={onModelSwitch}>
                 {modelLabel || modelName || '—'}
                 {effortAvailable && (
                   <svg
@@ -977,22 +993,14 @@ export function ChatInputBar({
               )}
             </div>
             {/* ── 状态：唯一常驻 ctx，迷你进度条 + hover 弹窗详情 ── */}
-            <span
-              className="input-bar-ctx"
-              onMouseEnter={openCtx}
-              onMouseLeave={closeCtx}
-            >
+            <span className="input-bar-ctx" onMouseEnter={openCtx} onMouseLeave={closeCtx}>
               <span className="input-bar-ctx-label">ctx</span>
               <span className="input-bar-ctx-gauge" aria-hidden>
                 {Array.from({ length: 5 }).map((_, i) => (
                   <span
                     key={i}
                     className="input-bar-ctx-gauge-cell"
-                    style={
-                      i < Math.round(ctxPct * 5)
-                        ? { background: ctxColor }
-                        : undefined
-                    }
+                    style={i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined}
                   />
                 ))}
               </span>

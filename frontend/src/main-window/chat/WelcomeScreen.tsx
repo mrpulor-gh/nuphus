@@ -14,11 +14,11 @@ interface WelcomeScreenProps {
  * 唤醒 → 环顾 → 对视 → 欢喜 → 待命，一个生命体从沉睡到认出你的叙事。
  */
 const PERFORMANCE: ReadonlyArray<[NuphusAvatarState, number]> = [
-  ['working', 0],     // 唤醒：双竖均衡器（相位错开）
+  ['working', 0], // 唤醒：双竖均衡器（相位错开）
   ['thinking', 1800], // 环顾：眼珠左右巡视 + 头部轻摆
-  ['confirm', 3800],  // 对视：目睁大 + 注意力脉冲
-  ['success', 5200],  // 欢喜：跃起 + 笑眼弧
-  ['idle', 6500],     // 待命：呼吸 + 眨眼（此阶段眼睛跟随鼠标）
+  ['confirm', 3800], // 对视：目睁大 + 注意力脉冲
+  ['success', 5200], // 欢喜：跃起 + 笑眼弧
+  ['idle', 6500], // 待命：呼吸 + 眨眼（此阶段眼睛跟随鼠标）
 ]
 const REVEAL_AT = 5350 // 文字在 success 段浮现
 const BRAND = 'NUPHUS'
@@ -32,9 +32,7 @@ export function WelcomeScreen(_props: WelcomeScreenProps) {
 
   // 表情表演状态机
   useEffect(() => {
-    const timers = PERFORMANCE.map(([s, delay]) =>
-      window.setTimeout(() => setState(s), delay),
-    )
+    const timers = PERFORMANCE.map(([s, delay]) => window.setTimeout(() => setState(s), delay))
     const revealTimer = window.setTimeout(() => setRevealed(true), REVEAL_AT)
     return () => {
       timers.forEach(clearTimeout)

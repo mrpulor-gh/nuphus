@@ -82,7 +82,8 @@ function execCommandCopy(text: string): boolean {
 }
 
 function senderName(message: ChatMessage, assistantName?: string): string {
-  if (message.role === 'user') return message.source === 'desktop' ? t('mobile.desktop') : t('mobile.me')
+  if (message.role === 'user')
+    return message.source === 'desktop' ? t('mobile.desktop') : t('mobile.me')
   if (message.role === 'assistant') return assistantName || 'Nuphus'
   return t('mobile.system')
 }
@@ -95,7 +96,12 @@ function execSummary(items: TraceItem[]) {
   return { tools, lastTool, lastText }
 }
 
-export default function MessageBubble({ message, assistantName, tokenUsage, onRateMessage }: Props) {
+export default function MessageBubble({
+  message,
+  assistantName,
+  tokenUsage,
+  onRateMessage,
+}: Props) {
   const [traceOpen, setTraceOpen] = useState(false)
   // 复制反馈（短暂显示「已复制」）
   const [copied, setCopied] = useState(false)
@@ -130,8 +136,7 @@ export default function MessageBubble({ message, assistantName, tokenUsage, onRa
   const hasFinal = !!message.content && message.content.length > 0
   // 共享媒体渲染：图片（点击放大）+ 音频（可播放）——user 与 assistant 消息通用
   const mediaBlock =
-    (message.images && message.images.length > 0) ||
-    (message.audio && message.audio.length > 0) ? (
+    (message.images && message.images.length > 0) || (message.audio && message.audio.length > 0) ? (
       <>
         {message.images && message.images.length > 0 && (
           <div className="mobile-msg-images">
@@ -259,7 +264,11 @@ export default function MessageBubble({ message, assistantName, tokenUsage, onRa
                 }}
                 title={t('mobile.copyContent')}
               >
-                {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                {copied ? (
+                  <Check size={13} aria-hidden="true" />
+                ) : (
+                  <Copy size={13} aria-hidden="true" />
+                )}
                 <span>{copied ? t('mobile.copied') : t('mobile.copy')}</span>
               </button>
               {onRateMessage && (
@@ -293,7 +302,12 @@ export default function MessageBubble({ message, assistantName, tokenUsage, onRa
 
       {/* 图片放大预览：全屏 overlay，点击关闭 */}
       {previewImg && (
-        <div className="mobile-lightbox" role="dialog" aria-label="图片预览" onClick={() => setPreviewImg(null)}>
+        <div
+          className="mobile-lightbox"
+          role="dialog"
+          aria-label="图片预览"
+          onClick={() => setPreviewImg(null)}
+        >
           <img src={previewImg} alt="图片预览" />
           <button
             type="button"

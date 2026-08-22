@@ -46,7 +46,7 @@
   margin: 0;
   font-size: 26px;
   font-weight: 700;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   white-space: nowrap;
   color: var(--fg-1);
 }
@@ -56,7 +56,9 @@
   display: inline-block;
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity .5s ease, transform .5s ease;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
 }
 .welcome-brand.is-revealed .welcome-letter {
   opacity: 1;
@@ -70,7 +72,7 @@
   line-height: 1.6;
   color: var(--fg-3);
   opacity: 0;
-  transition: opacity .8s ease .3s;
+  transition: opacity 0.8s ease 0.3s;
 }
 .welcome-brand.is-revealed .welcome-subtitle {
   opacity: 1;

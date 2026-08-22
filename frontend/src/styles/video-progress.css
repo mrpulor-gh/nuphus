@@ -3,6 +3,22 @@
    无容器形态（无边框/背景/圆角）：仅 spinner + 一行提示文字，
    嵌在 chat-input-dock 顶部，左边缘由 dock 几何保证对齐。
    ═══════════════════════════════════════ */
-.video-progress-badge{display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-1);font-size:var(--fz-sm);line-height:var(--leading-normal);color:var(--fg-3);user-select:none}
-.video-progress-badge-icon{flex-shrink:0;animation:spin .8s linear infinite}
-.video-progress-badge-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.video-progress-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  font-size: var(--fz-sm);
+  line-height: var(--leading-normal);
+  color: var(--fg-3);
+  user-select: none;
+}
+.video-progress-badge-icon {
+  flex-shrink: 0;
+  animation: spin 0.8s linear infinite;
+}
+.video-progress-badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

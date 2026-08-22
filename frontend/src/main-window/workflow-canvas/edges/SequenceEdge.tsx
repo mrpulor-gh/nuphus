@@ -19,7 +19,14 @@ export const SequenceEdge = memo(function SequenceEdge({
   data,
   markerEnd,
 }: EdgeProps<SequenceFlowEdge>) {
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  const [path, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  })
   return (
     <>
       <BaseEdge

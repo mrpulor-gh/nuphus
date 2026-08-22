@@ -37,8 +37,8 @@ export interface InlineChatAgentEntry {
 
 export interface ChatReference {
   type: 'skill' | 'knowledge' | 'workflow' | 'capture'
-  id: string        // skill name / knowledge rel_path / workflow id / capture file path
-  label: string     // 显示文本
+  id: string // skill name / knowledge rel_path / workflow id / capture file path
+  label: string // 显示文本
   meta?: CaptureMeta // extra data for capture type
 }
 
@@ -375,13 +375,13 @@ export interface ScheduleConfig {
 
 export interface WorkflowItem {
   id: string
-  title: string          // ← 后端 name 映射
-  description?: string   // ← 后端 doc 映射
+  title: string // ← 后端 name 映射
+  description?: string // ← 后端 doc 映射
   steps: WorkflowStep[]
   tags: string[]
-  created_at: number     // Unix timestamp (秒)
+  created_at: number // Unix timestamp (秒)
   updated_at: number
-  run_count: number      // ← run_history.length
+  run_count: number // ← run_history.length
   status: 'draft' | 'active' | 'archived'
   // V2 新增字段
   schedule?: ScheduleConfig | null

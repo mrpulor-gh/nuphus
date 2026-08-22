@@ -46,9 +46,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         ref={ref}
-        className={[variantClass[variant], sizeClass[size], className]
-          .filter(Boolean)
-          .join(' ')}
+        className={[variantClass[variant], sizeClass[size], className].filter(Boolean).join(' ')}
         disabled={disabled || loading}
         style={{ ...(loading ? { position: 'relative' } : {}), ...style }}
         {...rest}

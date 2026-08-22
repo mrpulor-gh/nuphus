@@ -113,7 +113,7 @@ function getImageWorker(): Worker {
       if (ok && dataUrl) pending.resolve(dataUrl)
       else pending.reject(new Error(error || t('mobile.imageProcessFailed')))
     }
-    imageWorker.onerror = (e) => {
+    imageWorker.onerror = e => {
       const err = new Error(`${t('mobile.imageWorkerError')}: ${e.message}`)
       workerPending.forEach(p => p.reject(err))
       workerPending.clear()
@@ -279,8 +279,7 @@ export default function Composer({
       onModelChanged?.(id)
       onToast?.(t('mobile.modelSwitched'))
     } catch (e) {
-      const reason =
-        e instanceof Error ? e.message : t('mobile.switchFailed')
+      const reason = e instanceof Error ? e.message : t('mobile.switchFailed')
       onToast?.(`${t('mobile.switchFailed')}: ${reason}`)
     } finally {
       setSwitchingModel(null)
@@ -786,7 +785,9 @@ export default function Composer({
                         <span className="mobile-model-card-item-main">
                           <span className="mobile-model-card-item-id">{m.id}</span>
                           {m.alias.length > 0 && (
-                            <span className="mobile-model-card-item-alias">{m.alias.join(' / ')}</span>
+                            <span className="mobile-model-card-item-alias">
+                              {m.alias.join(' / ')}
+                            </span>
                           )}
                         </span>
                         {(m.supports_vision || m.supports_audio) && (
@@ -797,10 +798,18 @@ export default function Composer({
                           </span>
                         )}
                         {isSwitching ? (
-                          <Loader2 size={14} className="mobile-spin mobile-model-card-item-check" aria-hidden="true" />
+                          <Loader2
+                            size={14}
+                            className="mobile-spin mobile-model-card-item-check"
+                            aria-hidden="true"
+                          />
                         ) : (
                           isCurrent && (
-                            <Check size={14} className="mobile-model-card-item-check" aria-hidden="true" />
+                            <Check
+                              size={14}
+                              className="mobile-model-card-item-check"
+                              aria-hidden="true"
+                            />
                           )
                         )}
                       </button>

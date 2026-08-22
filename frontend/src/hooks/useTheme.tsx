@@ -151,11 +151,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // 插件看到的就是用户看到的）。
   useEffect(() => {
     const overrides =
-      previewOverrides !== null
-        ? previewOverrides
-        : customTheme
-          ? customTheme.overrides
-          : {}
+      previewOverrides !== null ? previewOverrides : customTheme ? customTheme.overrides : {}
     const timer = setTimeout(() => {
       import('../main-window/lib/plugin-apps')
         .then(m => m.themeSnapshotSave(theme, overrides).catch(() => {}))
@@ -165,18 +161,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme, customTheme, previewOverrides])
 
   // 选内置主题 = 停用自定义激活（列表保留，用户可再回来）+ 清草稿预览
-  const setTheme = useCallback((newTheme: ThemeId) => {
-    setThemeState(newTheme)
-    setPreviewOverrides(null)
-    setCustomStore(prev => {
-      const next = { themes: prev.themes, activeId: null }
-      persistCustomStore(next.themes, null)
-      return next
-    })
-    try {
-      localStorage.setItem(LS_THEME, newTheme)
-    } catch {}
-  }, [persistCustomStore])
+  const setTheme = useCallback(
+    (newTheme: ThemeId) => {
+      setThemeState(newTheme)
+      setPreviewOverrides(null)
+      setCustomStore(prev => {
+        const next = { themes: prev.themes, activeId: null }
+        persistCustomStore(next.themes, null)
+        return next
+      })
+      try {
+        localStorage.setItem(LS_THEME, newTheme)
+      } catch {}
+    },
+    [persistCustomStore],
+  )
 
   const toggleTheme = useCallback(() => {
     setThemeState(prev => {
@@ -211,9 +210,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setCustomStore(prev => {
         const idx = prev.themes.findIndex(t => t.id === id)
         const themes =
-          idx >= 0
-            ? prev.themes.map(t => (t.id === id ? entry : t))
-            : [...prev.themes, entry]
+          idx >= 0 ? prev.themes.map(t => (t.id === id ? entry : t)) : [...prev.themes, entry]
         persistCustomStore(themes, id)
         return { themes, activeId: id }
       })

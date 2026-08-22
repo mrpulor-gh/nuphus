@@ -261,9 +261,11 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
               // Screenshot: dispatch to ReferenceBar via CustomEvent (no popup, no tool_call wrapping)
               // The user decides whether to OCR, find_image, or just analyze — we only pass the path.
               setActiveTool(null)
-              window.dispatchEvent(new CustomEvent('nuphus:capture-result', {
-                detail: { path, region, base64: raw.base64 || null }
-              }))
+              window.dispatchEvent(
+                new CustomEvent('nuphus:capture-result', {
+                  detail: { path, region, base64: raw.base64 || null },
+                }),
+              )
               break
           }
         } catch (e: any) {

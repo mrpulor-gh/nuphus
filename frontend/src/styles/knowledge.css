@@ -5,7 +5,9 @@
 
 /* ── 标签筛选组 ── */
 .tag-filter {
-  display: flex; flex-wrap: wrap; gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: var(--space-4);
 }
 .tag-filter-btn {
@@ -14,42 +16,68 @@
   border: 1px solid var(--line-2);
   background: var(--surface-2);
   color: var(--fg-2);
-  font-size: var(--fz-xs); font-family: inherit;
+  font-size: var(--fz-xs);
+  font-family: inherit;
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-out);
 }
-.tag-filter-btn:hover { border-color: var(--line-3); color: var(--fg-1); }
-.tag-filter-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.tag-filter-btn:hover {
+  border-color: var(--line-3);
+  color: var(--fg-1);
+}
+.tag-filter-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
 .tag-filter-btn.active {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
 }
 .tag-filter-clear {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 4px 8px; border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 12px;
   border: 1px solid var(--line-2);
-  background: transparent; color: var(--fg-3);
+  background: transparent;
+  color: var(--fg-3);
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-out);
 }
-.tag-filter-clear:hover { color: var(--fg-1); border-color: var(--line-3); }
+.tag-filter-clear:hover {
+  color: var(--fg-1);
+  border-color: var(--line-3);
+}
 
 /* ── 错误提示条：已提升至 page-layout.css（通用类），此处不再重复 ── */
 
 /* ── 文档条目 ── */
 .doc-title {
-  font-size: var(--fz-lg); font-weight: var(--fw-medium);
-  color: var(--fg-1); margin-bottom: 4px;
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-medium);
+  color: var(--fg-1);
+  margin-bottom: 4px;
 }
 .doc-path {
-  font-size: var(--fz-xs); color: var(--fg-3);
-  font-family: var(--font-mono); margin-bottom: 4px;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
 }
 .doc-snippet {
-  font-size: var(--fz-sm); color: var(--fg-2);
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
   line-height: var(--leading-normal);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.doc-time { font-size: var(--fz-xs); color: var(--fg-3); margin-top: 4px; }
+.doc-time {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  margin-top: 4px;
+}

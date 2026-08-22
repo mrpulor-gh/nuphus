@@ -22,14 +22,7 @@ interface SectionProps {
   children: ReactNode
 }
 
-export function Section({
-  title,
-  description,
-  actions,
-  flush,
-  className,
-  children,
-}: SectionProps) {
+export function Section({ title, description, actions, flush, className, children }: SectionProps) {
   const hasHeader = title || description || actions
   return (
     <section className={['section', className].filter(Boolean).join(' ')}>
@@ -42,9 +35,7 @@ export function Section({
           {actions && <div className="section-actions">{actions}</div>}
         </header>
       )}
-      <div className={flush ? 'section-body section-body--flush' : 'section-body'}>
-        {children}
-      </div>
+      <div className={flush ? 'section-body section-body--flush' : 'section-body'}>{children}</div>
     </section>
   )
 }
@@ -65,9 +56,7 @@ export function FormRow({ label, hint, control, stacked, className, children }: 
   const ctl = control ?? children
   return (
     <div
-      className={['form-row', stacked && 'form-row--stacked', className]
-        .filter(Boolean)
-        .join(' ')}
+      className={['form-row', stacked && 'form-row--stacked', className].filter(Boolean).join(' ')}
     >
       <div className="form-row-info">
         <div className="form-row-label">{label}</div>

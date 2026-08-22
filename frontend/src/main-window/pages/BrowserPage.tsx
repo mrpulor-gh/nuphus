@@ -143,10 +143,7 @@ export function BrowserPage({ onClose: _onClose }: { onClose: () => void }) {
           >
             {t('browser.modeManaged')}
           </Button>
-          <Button
-            variant={mode === 'external' ? 'primary' : 'default'}
-            onClick={switchExternal}
-          >
+          <Button variant={mode === 'external' ? 'primary' : 'default'} onClick={switchExternal}>
             {t('browser.modeExternal')}
           </Button>
         </div>

@@ -8,7 +8,9 @@
   align-items: center;
   justify-content: center;
   gap: 24px;
-  background: radial-gradient(ellipse at 50% 30%, rgba(var(--accent-rgb), 0.03) 0%, transparent 60%), var(--void-deepest);
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(var(--accent-rgb), 0.03) 0%, transparent 60%),
+    var(--void-deepest);
   user-select: none;
   opacity: 1;
   transition: opacity 0.8s ease;

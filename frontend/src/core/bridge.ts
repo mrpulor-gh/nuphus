@@ -118,7 +118,9 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       try {
         const json = JSON.stringify(rawResult)
         if (json.length > 50 * 1024) {
-          console.log(`[Bridge] invoke ${cmd} raw result: <${json.length} bytes, too large, skipped>`)
+          console.log(
+            `[Bridge] invoke ${cmd} raw result: <${json.length} bytes, too large, skipped>`,
+          )
         } else {
           console.log(`[Bridge] invoke ${cmd} raw result:`, json)
         }
@@ -535,25 +537,75 @@ let mockWorkflows: MockBackendWorkflow[] = [
     updated_at: new Date(Date.now() - 3600000).toISOString(),
     steps: [
       {
-        id: 'init', name: '初始化', on_error: 'abort',
-        do: { seq: [
-          { id: 'init_list', name: '列窗', on_error: 'abort', capture: '@wins', do: { tool: 'desktop_windows_list', with: {} } },
-          { id: 'init_compute', name: '预计算坐标', on_error: 'abort', capture: '@panels:json', do: { script: { runtime: 'python', code: 'print("computing...")' } } },
-        ]},
+        id: 'init',
+        name: '初始化',
+        on_error: 'abort',
+        do: {
+          seq: [
+            {
+              id: 'init_list',
+              name: '列窗',
+              on_error: 'abort',
+              capture: '@wins',
+              do: { tool: 'desktop_windows_list', with: {} },
+            },
+            {
+              id: 'init_compute',
+              name: '预计算坐标',
+              on_error: 'abort',
+              capture: '@panels:json',
+              do: { script: { runtime: 'python', code: 'print("computing...")' } },
+            },
+          ],
+        },
       },
       {
-        id: 'tour', name: '面板巡览', on_error: 'abort',
-        do: { loop: { for_each: { items: { var: 'panels' }, as: 'p' }, max: 100, do: [
-          { id: 'tour_activate', name: '激活窗口', on_error: 'abort', do: { tool: 'desktop_window_activate', with: { hwnd: '{{p.h}}' } } },
-          { id: 'tour_click', name: '点开面板', on_error: 'abort', do: { tool: 'desktop_mouse_click', with: { x: 100, y: 200 } } },
-        ]}},
+        id: 'tour',
+        name: '面板巡览',
+        on_error: 'abort',
+        do: {
+          loop: {
+            for_each: { items: { var: 'panels' }, as: 'p' },
+            max: 100,
+            do: [
+              {
+                id: 'tour_activate',
+                name: '激活窗口',
+                on_error: 'abort',
+                do: { tool: 'desktop_window_activate', with: { hwnd: '{{p.h}}' } },
+              },
+              {
+                id: 'tour_click',
+                name: '点开面板',
+                on_error: 'abort',
+                do: { tool: 'desktop_mouse_click', with: { x: 100, y: 200 } },
+              },
+            ],
+          },
+        },
       },
     ],
     tags: ['tour'],
     run_history: [
-      { id: 'r1', status: 'completed', started_at: new Date(Date.now() - 3600000).toISOString(), finished_at: new Date(Date.now() - 3500000).toISOString() },
-      { id: 'r2', status: 'completed', started_at: new Date(Date.now() - 7200000).toISOString(), finished_at: new Date(Date.now() - 7100000).toISOString() },
-      { id: 'r3', status: 'failed', started_at: new Date(Date.now() - 10800000).toISOString(), finished_at: null, error: 'timeout' },
+      {
+        id: 'r1',
+        status: 'completed',
+        started_at: new Date(Date.now() - 3600000).toISOString(),
+        finished_at: new Date(Date.now() - 3500000).toISOString(),
+      },
+      {
+        id: 'r2',
+        status: 'completed',
+        started_at: new Date(Date.now() - 7200000).toISOString(),
+        finished_at: new Date(Date.now() - 7100000).toISOString(),
+      },
+      {
+        id: 'r3',
+        status: 'failed',
+        started_at: new Date(Date.now() - 10800000).toISOString(),
+        finished_at: null,
+        error: 'timeout',
+      },
     ],
   },
   {
@@ -564,12 +616,35 @@ let mockWorkflows: MockBackendWorkflow[] = [
     created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
     updated_at: new Date(Date.now() - 3600000).toISOString(),
     steps: [
-      { id: 'step-1', name: '拉取代码', description: '从远程仓库拉取最新代码', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'git pull' } } },
-      { id: 'step-2', name: '静态分析', description: '运行 linter 和类型检查', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'cargo clippy' } } },
-      { id: 'step-3', name: '安全扫描', description: '检查依赖和已知漏洞', on_error: 'skip', do: { tool: 'system_shell', with: { command: 'cargo audit' } } },
+      {
+        id: 'step-1',
+        name: '拉取代码',
+        description: '从远程仓库拉取最新代码',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'git pull' } },
+      },
+      {
+        id: 'step-2',
+        name: '静态分析',
+        description: '运行 linter 和类型检查',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'cargo clippy' } },
+      },
+      {
+        id: 'step-3',
+        name: '安全扫描',
+        description: '检查依赖和已知漏洞',
+        on_error: 'skip',
+        do: { tool: 'system_shell', with: { command: 'cargo audit' } },
+      },
     ],
     tags: ['code-review', 'ci'],
-    run_history: Array.from({ length: 23 }, (_, i) => ({ id: `r-${i}`, status: i < 21 ? ('completed' as const) : ('failed' as const), started_at: new Date(Date.now() - (i + 1) * 86400000).toISOString(), finished_at: new Date(Date.now() - (i + 1) * 86400000 + 600000).toISOString() })),
+    run_history: Array.from({ length: 23 }, (_, i) => ({
+      id: `r-${i}`,
+      status: i < 21 ? ('completed' as const) : ('failed' as const),
+      started_at: new Date(Date.now() - (i + 1) * 86400000).toISOString(),
+      finished_at: new Date(Date.now() - (i + 1) * 86400000 + 600000).toISOString(),
+    })),
   },
   {
     id: 'wf-002',
@@ -579,13 +654,42 @@ let mockWorkflows: MockBackendWorkflow[] = [
     created_at: new Date(Date.now() - 86400000 * 30).toISOString(),
     updated_at: new Date(Date.now() - 86400000).toISOString(),
     steps: [
-      { id: 'step-1', name: '构建', description: '编译前端和后端代码', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'npm run build' } } },
-      { id: 'step-2', name: '测试', description: '运行单元测试和集成测试', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'npm test' } } },
-      { id: 'step-3', name: '部署到 staging', description: '推送到预发布环境验证', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'deploy staging' } } },
-      { id: 'step-4', name: '生产部署', description: '灰度发布到生产环境', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'deploy prod' } } },
+      {
+        id: 'step-1',
+        name: '构建',
+        description: '编译前端和后端代码',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'npm run build' } },
+      },
+      {
+        id: 'step-2',
+        name: '测试',
+        description: '运行单元测试和集成测试',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'npm test' } },
+      },
+      {
+        id: 'step-3',
+        name: '部署到 staging',
+        description: '推送到预发布环境验证',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'deploy staging' } },
+      },
+      {
+        id: 'step-4',
+        name: '生产部署',
+        description: '灰度发布到生产环境',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'deploy prod' } },
+      },
     ],
     tags: ['deploy', 'devops'],
-    run_history: Array.from({ length: 56 }, (_, i) => ({ id: `r-${i}`, status: 'completed' as const, started_at: new Date(Date.now() - (i + 1) * 43200000).toISOString(), finished_at: new Date(Date.now() - (i + 1) * 43200000 + 300000).toISOString() })),
+    run_history: Array.from({ length: 56 }, (_, i) => ({
+      id: `r-${i}`,
+      status: 'completed' as const,
+      started_at: new Date(Date.now() - (i + 1) * 43200000).toISOString(),
+      finished_at: new Date(Date.now() - (i + 1) * 43200000 + 300000).toISOString(),
+    })),
   },
   {
     id: 'wf-003',
@@ -595,9 +699,27 @@ let mockWorkflows: MockBackendWorkflow[] = [
     created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
     updated_at: new Date(Date.now() - 86400000 * 2).toISOString(),
     steps: [
-      { id: 'step-1', name: '提取注释', description: '扫描源码中的 JSDoc/RustDoc 注释', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'extract-docs' } } },
-      { id: 'step-2', name: '生成 Markdown', description: '将注释转换为结构化文档', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'generate-md' } } },
-      { id: 'step-3', name: '发布', description: '推送到文档站点', on_error: 'abort', do: { tool: 'system_shell', with: { command: 'publish-docs' } } },
+      {
+        id: 'step-1',
+        name: '提取注释',
+        description: '扫描源码中的 JSDoc/RustDoc 注释',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'extract-docs' } },
+      },
+      {
+        id: 'step-2',
+        name: '生成 Markdown',
+        description: '将注释转换为结构化文档',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'generate-md' } },
+      },
+      {
+        id: 'step-3',
+        name: '发布',
+        description: '推送到文档站点',
+        on_error: 'abort',
+        do: { tool: 'system_shell', with: { command: 'publish-docs' } },
+      },
     ],
     tags: ['docs', 'automation'],
     run_history: [],
@@ -617,7 +739,12 @@ registerMock('wf_parse_template', async args => {
   const text = input.templateText || ''
   // Parse hidden workflow-steps JSON from template
   const stepsMatch = text.match(/<!-- workflow-steps\n([\s\S]*?)\n-->/)
-  let steps: { name?: string; description?: string; tool?: string; params?: Record<string, unknown> }[] = []
+  let steps: {
+    name?: string
+    description?: string
+    tool?: string
+    params?: Record<string, unknown>
+  }[] = []
   let name = '未命名工作流'
   let description = ''
 
@@ -665,9 +792,7 @@ registerMock('mobile_server_status', () => ({
   running: MOCK_MOBILE_STATE.running,
   port: MOCK_MOBILE_STATE.port,
   token: MOCK_MOBILE_STATE.token,
-  lan_url: MOCK_MOBILE_STATE.running
-    ? `http://192.168.1.100:${MOCK_MOBILE_STATE.port}`
-    : null,
+  lan_url: MOCK_MOBILE_STATE.running ? `http://192.168.1.100:${MOCK_MOBILE_STATE.port}` : null,
 }))
 registerMock('mobile_server_start', args => {
   const port = typeof args?.port === 'number' ? args.port : MOCK_MOBILE_STATE.port

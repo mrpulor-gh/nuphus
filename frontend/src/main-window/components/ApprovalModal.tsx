@@ -114,7 +114,10 @@ export function ApprovalModal({
       <div
         className={`compact-modal compact-modal--md compact-modal--fit ${animating ? '' : 'is-closing'}`}
         onClick={e => e.stopPropagation()}
-        style={{ transform: animating ? 'none' : undefined, opacity: animating ? 1 : undefined }} /* 动态：入场动画状态 */
+        style={{
+          transform: animating ? 'none' : undefined,
+          opacity: animating ? 1 : undefined,
+        }} /* 动态：入场动画状态 */
       >
         {result ? (
           <div className="approval-result">
@@ -177,19 +180,10 @@ export function ApprovalModal({
               </div>
             )}
             <div className="approval-actions">
-              <Button
-                variant="default"
-                onClick={handleReject}
-                disabled={busy}
-              >
+              <Button variant="default" onClick={handleReject} disabled={busy}>
                 {t('approval.reject')}
               </Button>
-              <Button
-                variant="primary"
-                onClick={handleApprove}
-                disabled={busy}
-                loading={busy}
-              >
+              <Button variant="primary" onClick={handleApprove} disabled={busy} loading={busy}>
                 {busy ? t('common.processing') : t('approval.approve')}
               </Button>
             </div>

@@ -26,14 +26,7 @@ import { useTheme } from '../hooks/useTheme'
 import '../styles/avatar.css'
 
 export type NuphusAvatarState =
-  | 'idle'
-  | 'thinking'
-  | 'working'
-  | 'streaming'
-  | 'confirm'
-  | 'success'
-  | 'error'
-  | 'sleep'
+  'idle' | 'thinking' | 'working' | 'streaming' | 'confirm' | 'success' | 'error' | 'sleep'
 
 interface NuphusAvatarProps {
   state?: NuphusAvatarState
@@ -48,10 +41,10 @@ const SHELL_2 = 'M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20'
 
 /** 目形变体（结构姿态） */
 const EYES: Record<string, (x: number) => string> = {
-  bar:    x => `M${x} 180 L${x} 76`,
-  wide:   x => `M${x} 190 L${x} 66`,
-  arc:    x => `M${x - 16} 142 Q${x} 114 ${x + 16} 142`,
-  flat:   x => `M${x} 168 L${x} 112`,
+  bar: x => `M${x} 180 L${x} 76`,
+  wide: x => `M${x} 190 L${x} 66`,
+  arc: x => `M${x - 16} 142 Q${x} 114 ${x + 16} 142`,
+  flat: x => `M${x} 168 L${x} 112`,
   closed: x => `M${x} 134 L${x} 122`,
 }
 
@@ -91,8 +84,22 @@ export function NuphusAvatar({ state = 'idle', size = 40, className, gaze }: Nup
         <path d={SHELL_1} stroke={fg} strokeWidth={24} strokeLinecap="round" fill="none" />
         <path d={SHELL_2} stroke={fg} strokeWidth={24} strokeLinecap="round" fill="none" />
         <g className="nv-gaze" style={{ transform: gazeTransform }}>
-          <path className="nv-eye l" d={eye(80)} stroke={fg} strokeWidth={24} strokeLinecap="round" fill="none" />
-          <path className="nv-eye r" d={eye(176)} stroke={fg} strokeWidth={24} strokeLinecap="round" fill="none" />
+          <path
+            className="nv-eye l"
+            d={eye(80)}
+            stroke={fg}
+            strokeWidth={24}
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path
+            className="nv-eye r"
+            d={eye(176)}
+            stroke={fg}
+            strokeWidth={24}
+            strokeLinecap="round"
+            fill="none"
+          />
         </g>
       </g>
     </svg>

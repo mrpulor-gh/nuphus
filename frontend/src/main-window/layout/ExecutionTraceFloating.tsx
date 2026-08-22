@@ -131,17 +131,38 @@ function toolPhaseTag(toolName: string): string | null {
 // ── Terminal mode tool categories (for differentiated output rendering) ──
 // Read-only tools: show command line only, no output body
 const READ_ONLY_TOOLS = new Set([
-  'Read', 'Glob', 'Grep', 'FilesInfo', 'ListDir',
-  'memory_search', 'memory_recent', 'memory_session_context', 'memory_stats',
-  'web_search', 'web_extract', 'knowledge_search',
-  'skill_query', 'skill_read',
-  'system_info', 'system_env_get', 'process_list',
-  'browser_snapshot', 'browser_extract',
-  'planner_list', 'planner_parse',
-  'desktop_screenshot', 'desktop_screen_size',
-  'desktop_windows_list', 'desktop_window_info', 'desktop_window_screenshot',
-  'desktop_ocr', 'desktop_clipboard_clean',
-  'desktop_find_image', 'desktop_find_color', 'desktop_find_multi_color', 'desktop_find_text',
+  'Read',
+  'Glob',
+  'Grep',
+  'FilesInfo',
+  'ListDir',
+  'memory_search',
+  'memory_recent',
+  'memory_session_context',
+  'memory_stats',
+  'web_search',
+  'web_extract',
+  'knowledge_search',
+  'skill_query',
+  'skill_read',
+  'system_info',
+  'system_env_get',
+  'process_list',
+  'browser_snapshot',
+  'browser_extract',
+  'planner_list',
+  'planner_parse',
+  'desktop_screenshot',
+  'desktop_screen_size',
+  'desktop_windows_list',
+  'desktop_window_info',
+  'desktop_window_screenshot',
+  'desktop_ocr',
+  'desktop_clipboard_clean',
+  'desktop_find_image',
+  'desktop_find_color',
+  'desktop_find_multi_color',
+  'desktop_find_text',
 ])
 
 // Write/edit tools: full output, no line limit
@@ -149,8 +170,10 @@ const WRITE_TOOLS = new Set(['Write', 'Edit', 'Append'])
 
 // Exec tools: extended 50-line preview (user needs to see command output)
 const EXEC_TOOLS = new Set([
-  'system_shell', 'process_kill',
-  'task_dispatch', 'workflow_run',
+  'system_shell',
+  'process_kill',
+  'task_dispatch',
+  'workflow_run',
   'browser_evaluate',
 ])
 
@@ -753,24 +776,29 @@ export function ExecutionTraceFloating({
   const displayDuration =
     completed && totalDurationMs !== undefined
       ? totalDurationMs
-    : toolCalls.reduce((sum, t) => sum + (t.durationMs || 0), 0)
+      : toolCalls.reduce((sum, t) => sum + (t.durationMs || 0), 0)
   const failCount = toolCalls.filter(t => t.status === 'error').length
 
   // ── Dynamic title state from last timeline entry ──
   const titleState = useMemo(() => {
     if (completed) {
-      return { avatar: failCount > 0 ? 'error' as const : 'success' as const, text: '执行完成' }
+      return { avatar: failCount > 0 ? ('error' as const) : ('success' as const), text: '执行完成' }
     }
     if (!isProcessing || displayTimeline.length === 0) {
       return { avatar: 'idle' as const, text: '执行追踪' }
     }
     const last = displayTimeline[displayTimeline.length - 1]
     switch (last.kind) {
-      case 'thinking': return { avatar: 'thinking' as const, text: '思考中…' }
-      case 'text':     return { avatar: 'streaming' as const, text: '输出中…' }
-      case 'tool_call': return { avatar: 'working' as const, text: `执行 ${last.toolName || '工具'}…` }
-      case 'task':     return { avatar: 'working' as const, text: '派发任务…' }
-      default:         return { avatar: 'working' as const, text: '执行中…' }
+      case 'thinking':
+        return { avatar: 'thinking' as const, text: '思考中…' }
+      case 'text':
+        return { avatar: 'streaming' as const, text: '输出中…' }
+      case 'tool_call':
+        return { avatar: 'working' as const, text: `执行 ${last.toolName || '工具'}…` }
+      case 'task':
+        return { avatar: 'working' as const, text: '派发任务…' }
+      default:
+        return { avatar: 'working' as const, text: '执行中…' }
     }
   }, [completed, failCount, isProcessing, displayTimeline])
   const progressPct = completed
@@ -846,10 +874,7 @@ export function ExecutionTraceFloating({
         {/* ── Header ── */}
         <div className="execution-trace-header">
           <div className="execution-trace-title">
-            <NuphusAvatar
-              state={titleState.avatar}
-              size={20}
-            />
+            <NuphusAvatar state={titleState.avatar} size={20} />
             <span>{titleState.text}</span>
             <span className="exec-topbar-meta">
               {displayCalls} 调用 ·{' '}
@@ -915,7 +940,9 @@ export function ExecutionTraceFloating({
                       if (entry.toolName === 'task_dispatch') {
                         const tid = (p as { task_id?: number }).task_id || 1
                         const ttl = (p as { total_tasks?: number }).total_tasks || 1
-                        const desc = ((p as { description?: string }).description || '').replace(/\n/g, ' ').slice(0, 80)
+                        const desc = ((p as { description?: string }).description || '')
+                          .replace(/\n/g, ' ')
+                          .slice(0, 80)
                         return `#${tid}/${ttl} ${desc}${desc.length >= 80 ? '…' : ''}`
                       }
                       return (p as { command?: string })?.command
@@ -1043,14 +1070,28 @@ export function ExecutionTraceFloating({
                         lines.push(
                           <div key="expanded" className="term-expanded">
                             {description && (
-                              <div className="tc-code-block tc-task-summary" style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-caption)', lineHeight: 1.6, padding: 10, marginBottom: 8 }}>
+                              <div
+                                className="tc-code-block tc-task-summary"
+                                style={{
+                                  whiteSpace: 'pre-wrap',
+                                  fontSize: 'var(--fs-caption)',
+                                  lineHeight: 1.6,
+                                  padding: 10,
+                                  marginBottom: 8,
+                                }}
+                              >
                                 {description}
                               </div>
                             )}
                             <div className="term-expanded-label">Output</div>
                             <div
                               className="tc-code-block tc-task-summary"
-                              style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-caption)', lineHeight: 1.6, padding: 10 }}
+                              style={{
+                                whiteSpace: 'pre-wrap',
+                                fontSize: 'var(--fs-caption)',
+                                lineHeight: 1.6,
+                                padding: 10,
+                              }}
                             >
                               <MarkdownContent content={summary} />
                             </div>
@@ -1210,7 +1251,7 @@ export function ExecutionTraceFloating({
 
             {(() => {
               let callIdx = 0
-return displayTimeline.map((entry, i) => {
+              return displayTimeline.map((entry, i) => {
                 if (entry.kind === 'tool_call') {
                   callIdx++
                   const isExpanded = expandedCalls.has(entry.id)

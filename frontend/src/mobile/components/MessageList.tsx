@@ -20,7 +20,13 @@ interface Props {
   onRateMessage?: (message: ChatMessage) => void
 }
 
-export default function MessageList({ messages, activity, assistantName, tokenUsage, onRateMessage }: Props) {
+export default function MessageList({
+  messages,
+  activity,
+  assistantName,
+  tokenUsage,
+  onRateMessage,
+}: Props) {
   const listRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
 

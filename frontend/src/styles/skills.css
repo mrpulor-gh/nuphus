@@ -21,7 +21,7 @@
   opacity: 0.55;
 }
 .skill-card.active {
-  border-color: rgba(var(--accent-rgb), .08);
+  border-color: rgba(var(--accent-rgb), 0.08);
 }
 
 .skill-card-dot {
@@ -34,7 +34,7 @@
 }
 .skill-card-dot.active {
   background: var(--success);
-  box-shadow: 0 0 5px rgba(var(--success-rgb), .4);
+  box-shadow: 0 0 5px rgba(var(--success-rgb), 0.4);
 }
 
 .skill-card-body {
@@ -115,7 +115,7 @@
 .skill-card-builtin-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--accent);
   background: var(--accent-dim);
   padding: 2px 8px;
@@ -142,7 +142,7 @@
 
 .skill-remove-btn {
   opacity: 0;
-  transition: opacity .15s ease;
+  transition: opacity 0.15s ease;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -158,6 +158,6 @@
   opacity: 1;
 }
 .skill-remove-btn:hover {
-  background: rgba(var(--error-rgb), .2);
+  background: rgba(var(--error-rgb), 0.2);
   color: var(--error);
 }

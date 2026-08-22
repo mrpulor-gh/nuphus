@@ -642,9 +642,7 @@ function normalizeWorkflow(raw: Record<string, unknown>): WorkflowItem {
   const rawDoc = typeof raw.doc === 'string' ? raw.doc : undefined
   const scheduleRaw = raw.schedule
   const schedule =
-    scheduleRaw !== null && typeof scheduleRaw === 'object'
-      ? (scheduleRaw as ScheduleConfig)
-      : null
+    scheduleRaw !== null && typeof scheduleRaw === 'object' ? (scheduleRaw as ScheduleConfig) : null
   const rawTimeout = raw.timeout_secs
   const timeout_secs = typeof rawTimeout === 'number' ? rawTimeout : null
 
@@ -766,7 +764,11 @@ export function listChatAgentsInline(workflowId: string) {
 }
 
 /** 更新工作流中内联 ChatAgent 配置 */
-export function updateChatAgentInline(workflowId: string, stepId: string, config: Record<string, unknown>) {
+export function updateChatAgentInline(
+  workflowId: string,
+  stepId: string,
+  config: Record<string, unknown>,
+) {
   return invoke<void>('chat_agent_update_inline', {
     workflow_id: workflowId,
     step_id: stepId,

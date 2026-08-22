@@ -10,8 +10,11 @@
 
 /* 透明无边框输入（聊天输入、搜索、命令面板） */
 .input-reset {
-  border: none; outline: none; background: transparent;
-  color: var(--spark-primary); font-family: var(--font-ui);
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--spark-primary);
+  font-family: var(--font-ui);
   font-size: var(--fs-body);
 }
 
@@ -22,8 +25,10 @@
   background: var(--void-input);
   color: var(--spark-primary);
   border-radius: var(--radius-md);
-  font-size: var(--fz-md); font-family: var(--font-ui);
-  outline: none; box-sizing: border-box;
+  font-size: var(--fz-md);
+  font-family: var(--font-ui);
+  outline: none;
+  box-sizing: border-box;
   transition: border-color var(--transition-fast);
 }
 
@@ -34,10 +39,11 @@
   background: var(--void-input);
   color: var(--spark-primary);
   border-radius: var(--radius-md);
-  font-size: var(--fs-caption); font-family: var(--font-mono);
-  outline: none; box-sizing: border-box;
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  outline: none;
+  box-sizing: border-box;
 }
-
 
 /* 文本域 */
 .textarea {
@@ -46,9 +52,12 @@
   background: var(--void-input);
   color: var(--spark-primary);
   border-radius: var(--radius-md);
-  font-size: var(--fz-md); font-family: var(--font-ui);
-  outline: none; box-sizing: border-box;
-  resize: vertical; min-height: 60px;
+  font-size: var(--fz-md);
+  font-family: var(--font-ui);
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 60px;
 }
 
 /* 选择器 */
@@ -58,19 +67,27 @@
   background: var(--glass-0);
   color: var(--spark-primary);
   border-radius: var(--radius-sm);
-  font-size: var(--fz-md); font-family: var(--font-ui);
-  outline: none; cursor: pointer;
+  font-size: var(--fz-md);
+  font-family: var(--font-ui);
+  outline: none;
+  cursor: pointer;
 }
 
 /* ── 按钮基类 ── */
 
 /* 通用按钮（可组合样式） */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  gap: 6px; cursor: pointer; font-family: var(--font-ui);
-  font-weight: var(--fw-medium); white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
   transition: all var(--transition-fast);
-  user-select: none; border: none;
+  user-select: none;
+  border: none;
 }
 
 .btn-primary {
@@ -95,20 +112,26 @@
   padding: 6px 14px;
   background: transparent;
   color: var(--error);
-  border: 1px solid rgba(var(--error-rgb), .2);
+  border: 1px solid rgba(var(--error-rgb), 0.2);
   border-radius: var(--radius-md);
   font-size: var(--fs-caption);
 }
-
 
 /* Hover 状态统一 */
 .btn-ghost:hover {
   background: var(--void-hover);
   color: var(--spark-primary);
 }
-.btn-primary:hover { opacity: .88; }
-.btn-danger:hover { background: rgba(var(--error-rgb), .1); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary:hover {
+  opacity: 0.88;
+}
+.btn-danger:hover {
+  background: rgba(var(--error-rgb), 0.1);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ── 卡片 ── */
 
@@ -122,7 +145,9 @@
 /* ── 搜索框容器 ── */
 
 .search-wrap {
-  display: flex; align-items: center; gap: var(--space-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   background: var(--glass-0);
   border: 1px solid var(--glass-2);
   border-radius: 10px;
@@ -132,127 +157,249 @@
 /* ── 状态标签 ── */
 
 .badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 10px;
-  font-size: var(--fs-micro); font-weight: var(--fw-medium);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
 }
-.badge-accent { background: var(--accent-dim); color: var(--accent); }
-.badge-success { background: rgba(var(--success-rgb), .12); color: var(--success); }
-.badge-warning { background: rgba(var(--warning-rgb), .12); color: var(--warning); }
+.badge-accent {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.badge-success {
+  background: rgba(var(--success-rgb), 0.12);
+  color: var(--success);
+}
+.badge-warning {
+  background: rgba(var(--warning-rgb), 0.12);
+  color: var(--warning);
+}
 /* ═══════════════════════════════════════════
    W2 扩充：按钮尺寸类 / 表单控件原语
    （switch / segmented / select / textarea）
    ═══════════════════════════════════════════ */
 
 /* ── 按钮尺寸类（替代 Button.tsx 原内联 style）── */
-.btn--sm { padding: 4px 10px; font-size: var(--fz-xs); }
-.btn--lg { padding: 10px 24px; font-size: var(--fz-lg); }
+.btn--sm {
+  padding: 4px 10px;
+  font-size: var(--fz-xs);
+}
+.btn--lg {
+  padding: 10px 24px;
+  font-size: var(--fz-lg);
+}
 
 /* ── 开关（Toggle Switch）── */
 .switch {
-  position: relative; flex-shrink: 0;
-  width: 36px; height: 20px; padding: 0;
-  border: none; border-radius: 10px;
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
   background: var(--surface-active);
-  cursor: pointer; font-family: inherit;
+  cursor: pointer;
+  font-family: inherit;
   transition: background var(--dur-fast) var(--ease-out);
 }
 .switch::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px; border-radius: 50%;
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
   background: var(--fg-2);
-  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
-.switch:hover::after { background: var(--fg-1); }
-.switch:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.switch:hover::after {
+  background: var(--fg-1);
+}
+.switch:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 .switch[aria-checked='true'],
-.switch.on { background: var(--accent); }
+.switch.on {
+  background: var(--accent);
+}
 .switch[aria-checked='true']::after,
-.switch.on::after { transform: translateX(16px); background: var(--on-accent); }
-.switch:disabled { opacity: .5; cursor: not-allowed; }
+.switch.on::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ── 分段控件（Segmented Control）── */
 .segmented {
-  display: inline-flex; gap: 2px; padding: 2px;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
   background: var(--surface-inset);
   border: 1px solid var(--line-1);
   border-radius: var(--radius-3);
 }
 .segmented-item {
-  padding: 4px 12px; border: none; background: transparent;
-  color: var(--fg-3); font-size: var(--fz-sm); font-family: inherit;
-  border-radius: var(--radius-2); cursor: pointer; white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  font-family: inherit;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
-.segmented-item:hover { color: var(--fg-1); }
-.segmented-item:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.segmented-item:hover {
+  color: var(--fg-1);
+}
+.segmented-item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 .segmented-item.active {
-  background: var(--surface-3); color: var(--fg-1); font-weight: var(--fw-medium);
+  background: var(--surface-3);
+  color: var(--fg-1);
+  font-weight: var(--fw-medium);
 }
 
 /* ── 下拉选择（包裹式，chevron 跟随主题色）── */
-.select-wrap { position: relative; display: inline-flex; }
+.select-wrap {
+  position: relative;
+  display: inline-flex;
+}
 .select-wrap::after {
-  content: ''; position: absolute; right: 10px; top: 50%;
-  width: 7px; height: 7px; pointer-events: none;
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  pointer-events: none;
   border-right: 1.5px solid var(--fg-3);
   border-bottom: 1.5px solid var(--fg-3);
   transform: translateY(-70%) rotate(45deg);
 }
 .select {
-  appearance: none; -webkit-appearance: none;
-  height: var(--control-h); padding: 0 28px 0 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  height: var(--control-h);
+  padding: 0 28px 0 12px;
   background: var(--surface-inset);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-2);
-  color: var(--fg-1); font-size: var(--fz-md); font-family: inherit;
-  cursor: pointer; outline: none;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
-.select:hover { border-color: var(--line-3); }
-.select:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-focus); }
-.select:disabled { opacity: .5; cursor: not-allowed; }
-.select option { background: var(--surface-1); color: var(--fg-1); }
+.select:hover {
+  border-color: var(--line-3);
+}
+.select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.select option {
+  background: var(--surface-1);
+  color: var(--fg-1);
+}
 
 /* ── 多行文本域 ── */
 .textarea {
-  width: 100%; min-height: 72px; padding: var(--space-2) var(--space-3);
+  width: 100%;
+  min-height: 72px;
+  padding: var(--space-2) var(--space-3);
   background: var(--surface-inset);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-2);
-  color: var(--fg-1); font-size: var(--fz-md); font-family: inherit;
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-family: inherit;
   line-height: var(--leading-normal);
-  outline: none; resize: vertical; box-sizing: border-box;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
-.textarea:hover { border-color: var(--line-3); }
-.textarea:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-focus); }
-.textarea::placeholder { color: var(--fg-5); }
+.textarea:hover {
+  border-color: var(--line-3);
+}
+.textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.textarea::placeholder {
+  color: var(--fg-5);
+}
 
 /* ── 按钮行（操作区通用组合）── */
-.btn-row { display: flex; align-items: center; gap: 6px; }
+.btn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* 中性徽章（draft/archived 等非强调状态） */
-.badge-neutral { background: var(--surface-3); color: var(--fg-3); }
+.badge-neutral {
+  background: var(--surface-3);
+  color: var(--fg-3);
+}
 
 /* ── 键盘按键徽章 ── */
 .kbd {
-  display: inline-block; padding: 1px 6px;
+  display: inline-block;
+  padding: 1px 6px;
   border-radius: 3px;
-  background: var(--surface-3); border: 1px solid var(--line-2);
-  margin-right: 4px; font-size: 10px; font-family: var(--font-mono);
+  background: var(--surface-3);
+  border: 1px solid var(--line-2);
+  margin-right: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
   color: var(--fg-2);
 }
 
 /* ── 遗留别名：settings-input（OcrDictionary 使用；与 .input 并存，后续收敛）── */
 .settings-input {
-  width: 100%; padding: 8px 12px;
-  border: 1px solid var(--glass-2); background: var(--glass-0);
-  color: var(--spark-primary); border-radius: 8px;
-  font-size: var(--fs-caption); font-family: var(--font-ui);
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--glass-2);
+  background: var(--glass-0);
+  color: var(--spark-primary);
+  border-radius: 8px;
+  font-size: var(--fs-caption);
+  font-family: var(--font-ui);
   outline: none;
 }
 
 /* ── 图标颜色/间距工具类 ── */
-.icon-accent { color: var(--accent); }
-.icon-prefix { margin-right: 4px; flex-shrink: 0; }
+.icon-accent {
+  color: var(--accent);
+}
+.icon-prefix {
+  margin-right: 4px;
+  flex-shrink: 0;
+}

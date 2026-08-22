@@ -83,10 +83,7 @@ export class MobileWsClient {
       this.connect()
       return
     }
-    if (
-      ws.readyState === WebSocket.OPEN &&
-      Date.now() - this.lastFrameAt > SILENCE_THRESHOLD_MS
-    ) {
+    if (ws.readyState === WebSocket.OPEN && Date.now() - this.lastFrameAt > SILENCE_THRESHOLD_MS) {
       this.killZombie()
     }
     // OPEN 且静默未超时 / CONNECTING 进行中：健康，无操作

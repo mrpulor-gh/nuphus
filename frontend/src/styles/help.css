@@ -32,7 +32,9 @@
   border-bottom: 1px solid var(--line-1);
 }
 
-.help-table tr:last-child td { border-bottom: none; }
+.help-table tr:last-child td {
+  border-bottom: none;
+}
 
 /* ── 命令/按键 ── */
 .help-cmd {
@@ -68,7 +70,10 @@
   line-height: 1.8;
 }
 
-.help-list strong { color: var(--fg-1); font-weight: var(--fw-medium); }
+.help-list strong {
+  color: var(--fg-1);
+  font-weight: var(--fw-medium);
+}
 
 /* ── 运行模式 ── */
 .help-modes {

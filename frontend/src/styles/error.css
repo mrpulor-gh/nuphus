@@ -16,11 +16,11 @@
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(ellipse at 50% 30%, rgba(var(--error-rgb), .04) 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 80%, rgba(var(--accent-rgb), .02) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 30%, rgba(var(--error-rgb), 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(var(--accent-rgb), 0.02) 0%, transparent 50%),
     var(--void-deepest);
   user-select: none;
-  animation: fadeIn .3s ease-out;
+  animation: fadeIn 0.3s ease-out;
 }
 
 /* ── 边界错误的额外标识 ── */
@@ -42,7 +42,7 @@
   box-shadow: var(--shadow-modal);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  animation: slideUp .35s ease-out;
+  animation: slideUp 0.35s ease-out;
 }
 
 /* ── 图标区域：错误符号 + 呼吸光晕 ── */
@@ -55,7 +55,7 @@
   height: 72px;
   margin-bottom: 24px;
   color: var(--error);
-  animation: errorShake .5s ease-in-out .3s;
+  animation: errorShake 0.5s ease-in-out 0.3s;
 }
 
 /* 图标背后的呼吸光晕 — 默认错误红 */
@@ -64,37 +64,37 @@
   position: absolute;
   inset: -8px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--error-rgb), .12) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(var(--error-rgb), 0.12) 0%, transparent 70%);
   animation: errorGlowPulse 2.4s ease-in-out infinite;
   pointer-events: none;
 }
 
 /* 模型配置错误 → 琥珀色光晕（配置问题，非致命崩溃） */
-.error-icon-wrap[data-error-kind="api_key_invalid"]::before {
-  background: radial-gradient(circle, rgba(var(--warning-rgb), .15) 0%, transparent 70%);
+.error-icon-wrap[data-error-kind='api_key_invalid']::before {
+  background: radial-gradient(circle, rgba(var(--warning-rgb), 0.15) 0%, transparent 70%);
 }
-.error-icon-wrap[data-error-kind="api_key_invalid"] {
+.error-icon-wrap[data-error-kind='api_key_invalid'] {
   color: var(--warning);
 }
 
 /* 配置文件损坏 → 橙色光晕 */
-.error-icon-wrap[data-error-kind="config_corrupted"]::before {
-  background: radial-gradient(circle, rgba(var(--warning-rgb), .12) 0%, transparent 70%);
+.error-icon-wrap[data-error-kind='config_corrupted']::before {
+  background: radial-gradient(circle, rgba(var(--warning-rgb), 0.12) 0%, transparent 70%);
 }
-.error-icon-wrap[data-error-kind="config_corrupted"] {
+.error-icon-wrap[data-error-kind='config_corrupted'] {
   color: var(--warning);
 }
 
 /* 后端未响应 → 深红（服务挂了）*/
-.error-icon-wrap[data-error-kind="backend_unavailable"]::before {
-  background: radial-gradient(circle, rgba(var(--error-rgb), .15) 0%, transparent 70%);
+.error-icon-wrap[data-error-kind='backend_unavailable']::before {
+  background: radial-gradient(circle, rgba(var(--error-rgb), 0.15) 0%, transparent 70%);
 }
 
 /* 端口被占用 → 紫色调 */
-.error-icon-wrap[data-error-kind="port_in_use"]::before {
-  background: radial-gradient(circle, rgba(var(--accent-rgb), .10) 0%, transparent 70%);
+.error-icon-wrap[data-error-kind='port_in_use']::before {
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.1) 0%, transparent 70%);
 }
-.error-icon-wrap[data-error-kind="port_in_use"] {
+.error-icon-wrap[data-error-kind='port_in_use'] {
   color: var(--spark-tertiary);
 }
 
@@ -145,13 +145,18 @@
 .error-btn--primary {
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 1px 6px rgba(var(--accent-rgb), .2);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 6px rgba(var(--accent-rgb), 0.2);
 }
 .error-btn--primary:hover {
   background: var(--accent-hover);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 2px 12px rgba(var(--accent-rgb), .3);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 2px 12px rgba(var(--accent-rgb), 0.3);
 }
-.error-btn--primary:active {}
+.error-btn--primary:active {
+}
 
 /* 次要按钮：玻璃材质轮廓 */
 .error-btn--secondary {
@@ -162,9 +167,10 @@
 .error-btn--secondary:hover {
   background: var(--void-hover);
   color: var(--spark-primary);
-  border-color: rgba(255, 255, 255, .2);
+  border-color: rgba(255, 255, 255, 0.2);
 }
-.error-btn--secondary:active {}
+.error-btn--secondary:active {
+}
 
 /* 幽灵按钮：轻量文本 */
 .error-btn--ghost {
@@ -223,9 +229,10 @@
 
 /* ── 错误呼吸脉冲动画 ── */
 @keyframes errorGlowPulse {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
-    opacity: .5;
+    opacity: 0.5;
   }
   50% {
     transform: scale(1.15);

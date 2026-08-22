@@ -135,11 +135,7 @@ export function SkillsPage() {
 
       <div className="page-search">
         <IconSearch size={14} />
-        <input
-          placeholder="搜索技能..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        <input placeholder="搜索技能..." value={search} onChange={e => setSearch(e.target.value)} />
         <span className="page-search-count">
           {activeCount}/{skills.length}
         </span>
@@ -208,11 +204,7 @@ export function SkillsPage() {
                         >
                           卸载
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setConfirmRemove(null)}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmRemove(null)}>
                           取消
                         </Button>
                       </div>

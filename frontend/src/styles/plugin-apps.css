@@ -94,7 +94,8 @@
   background: var(--surface-inset);
   border: 1px solid transparent;
   color: var(--fg-3);
-  transition: border-color var(--dur-fast) var(--ease-out),
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
 }
 
@@ -134,7 +135,8 @@
   background: transparent;
   color: var(--fg-3);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 
@@ -160,7 +162,8 @@
   background: transparent;
   color: var(--fg-3);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 
@@ -214,7 +217,8 @@
   font-size: var(--fz-sm);
   cursor: pointer;
   text-align: left;
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
@@ -360,7 +364,8 @@
   background: var(--surface-1);
   border: 1px solid var(--line-1);
   overflow: hidden;
-  transition: transform var(--dur-fast) var(--ease-out),
+  transition:
+    transform var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
@@ -463,7 +468,8 @@
   font-family: var(--font-ui);
   font-size: var(--fz-xs);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 
@@ -654,7 +660,8 @@
   border: 2px dashed var(--line-2);
   border-radius: var(--radius-4);
   color: var(--fg-3);
-  transition: border-color var(--dur-fast) var(--ease-out),
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-fast) var(--ease-out);
@@ -763,7 +770,9 @@
   background: transparent;
   color: var(--fg-3);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 .plugin-shell-back:hover,
@@ -817,7 +826,8 @@
   cursor: pointer;
   overflow: hidden;
   box-shadow: var(--shadow-elevated);
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     transform var(--dur-fast) var(--ease-out);
@@ -912,7 +922,8 @@
   font-family: var(--font-ui);
   font-size: var(--fz-xs);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 

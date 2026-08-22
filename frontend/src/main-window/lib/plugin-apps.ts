@@ -41,7 +41,10 @@ export interface ThemeSnapshot {
 }
 
 /** 与 useInit Toast 一致的 toast 函数形状（ThemesPage 同款局部类型） */
-export type PluginToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
+export type PluginToastFn = (
+  message: string,
+  type?: 'info' | 'success' | 'warning' | 'error',
+) => void
 
 // ── 安装器（4） ──
 
@@ -91,11 +94,7 @@ export interface PluginChatHistoryItem {
   content: string
 }
 
-export function pluginAgentChat(
-  id: string,
-  message: string,
-  history?: PluginChatHistoryItem[],
-) {
+export function pluginAgentChat(id: string, message: string, history?: PluginChatHistoryItem[]) {
   const args: Record<string, unknown> = { id, message }
   if (history !== undefined) args.history = history
   return invoke<string>('plugin_agent_chat', args)

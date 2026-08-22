@@ -98,7 +98,9 @@ function groupTools(allTools: ToolSchema[]): Array<[string, ToolSchema[]]> {
   return ordered
 }
 
-export function CustomAgentsPage({ onActivated }: {
+export function CustomAgentsPage({
+  onActivated,
+}: {
   onClose: () => void
   /** 激活成功后回调（App 层切换到 Custom 模式 + 关闭页面，闭合「配置→使用」链路） */
   onActivated?: () => void
@@ -277,10 +279,7 @@ export function CustomAgentsPage({ onActivated }: {
           {agents.map(agent => (
             <button
               key={agent.id}
-              className={[
-                'custom-agents-card',
-                draft?.id === agent.id && 'selected',
-              ]
+              className={['custom-agents-card', draft?.id === agent.id && 'selected']
                 .filter(Boolean)
                 .join(' ')}
               onClick={() => selectAgent(agent)}
@@ -303,9 +302,7 @@ export function CustomAgentsPage({ onActivated }: {
           {draft ? (
             <Section
               title={
-                isEditingExisting
-                  ? draft.name || t('custom.page.untitled')
-                  : t('custom.page.new')
+                isEditingExisting ? draft.name || t('custom.page.untitled') : t('custom.page.new')
               }
             >
               <div className="custom-agents-note">{t('custom.page.lockedNote')}</div>
@@ -374,7 +371,9 @@ export function CustomAgentsPage({ onActivated }: {
                     <div className="custom-agents-tools-toolbar">
                       <button
                         className="custom-agents-tools-action"
-                        onClick={() => update({ checked: new Set(allTools.map(tool => tool.name)) })}
+                        onClick={() =>
+                          update({ checked: new Set(allTools.map(tool => tool.name)) })
+                        }
                       >
                         {t('custom.page.selectAll')}
                       </button>
@@ -430,12 +429,7 @@ export function CustomAgentsPage({ onActivated }: {
                       <span className="custom-agents-delete-confirm">
                         {t('custom.page.deleteConfirm')}
                       </span>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        loading={saving}
-                        onClick={handleDelete}
-                      >
+                      <Button variant="danger" size="sm" loading={saving} onClick={handleDelete}>
                         {t('common.delete')}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
@@ -453,11 +447,7 @@ export function CustomAgentsPage({ onActivated }: {
                   ))}
                 <span className="custom-agents-footer-spacer" />
                 {isEditingExisting && !isActive && (
-                  <Button
-                    icon={<IconCheck size={13} />}
-                    loading={saving}
-                    onClick={handleActivate}
-                  >
+                  <Button icon={<IconCheck size={13} />} loading={saving} onClick={handleActivate}>
                     {t('custom.page.setActive')}
                   </Button>
                 )}

@@ -35,7 +35,17 @@ interface MirrorCtx {
 
 function conditionOperands(cond: Condition): { op: string; operands: VarRef[] } | null {
   const c = cond as Record<string, unknown>
-  for (const key of ['equals', 'not_equals', 'contains', 'starts_with', 'regex', 'gt', 'lt', 'gte', 'lte']) {
+  for (const key of [
+    'equals',
+    'not_equals',
+    'contains',
+    'starts_with',
+    'regex',
+    'gt',
+    'lt',
+    'gte',
+    'lte',
+  ]) {
     if (key in c) return { op: key, operands: Array.isArray(c[key]) ? (c[key] as VarRef[]) : [] }
   }
   for (const key of ['not_empty', 'empty']) {
@@ -48,17 +58,32 @@ function conditionOperands(cond: Condition): { op: string; operands: VarRef[] } 
 function checkCondition(cond: Condition, owner: string, stepId: string, ctx: MirrorCtx): void {
   const parsed = conditionOperands(cond)
   if (!parsed) {
-    ctx.problems.push({ level: 'error', rule: 'V7', message: `步骤「${owner}」条件为空或无法识别`, stepId })
+    ctx.problems.push({
+      level: 'error',
+      rule: 'V7',
+      message: `步骤「${owner}」条件为空或无法识别`,
+      stepId,
+    })
     return
   }
   const { op, operands } = parsed
   // V7：操作数数量
   if (op === 'not_empty' || op === 'empty') {
     if (operands.length !== 1) {
-      ctx.problems.push({ level: 'error', rule: 'V7', message: `步骤「${owner}」条件 ${op} 需要 1 个操作数`, stepId })
+      ctx.problems.push({
+        level: 'error',
+        rule: 'V7',
+        message: `步骤「${owner}」条件 ${op} 需要 1 个操作数`,
+        stepId,
+      })
     }
   } else if (op !== 'always' && operands.length < 2) {
-    ctx.problems.push({ level: 'error', rule: 'V7', message: `步骤「${owner}」条件 ${op} 需要至少 2 个操作数`, stepId })
+    ctx.problems.push({
+      level: 'error',
+      rule: 'V7',
+      message: `步骤「${owner}」条件 ${op} 需要至少 2 个操作数`,
+      stepId,
+    })
   }
   // V6：regex 可编译（取字面量操作数）
   if (op === 'regex') {
@@ -67,7 +92,12 @@ function checkCondition(cond: Condition, owner: string, stepId: string, ctx: Mir
         try {
           new RegExp(r)
         } catch {
-          ctx.problems.push({ level: 'error', rule: 'V6', message: `步骤「${owner}」正则不可编译: ${r}`, stepId })
+          ctx.problems.push({
+            level: 'error',
+            rule: 'V6',
+            message: `步骤「${owner}」正则不可编译: ${r}`,
+            stepId,
+          })
         }
       }
     }
@@ -76,7 +106,14 @@ function checkCondition(cond: Condition, owner: string, stepId: string, ctx: Mir
   for (const r of operands) {
     if (r && typeof r === 'object' && 'var' in r) {
       const root = r.var.split('.')[0]
-      if (root && !ctx.captured.has(root) && !ctx.loopVars.includes(root) && root !== '_index' && root !== 'params' && root !== 'ENV') {
+      if (
+        root &&
+        !ctx.captured.has(root) &&
+        !ctx.loopVars.includes(root) &&
+        root !== '_index' &&
+        root !== 'params' &&
+        root !== 'ENV'
+      ) {
         ctx.problems.push({
           level: 'warning',
           rule: 'V4',
@@ -94,12 +131,22 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
 
   // V1：id 非空 + 全局唯一
   if (!step.id) {
-    ctx.problems.push({ level: 'error', rule: 'V1', message: `步骤「${owner}」缺少 id`, stepId: step.id })
+    ctx.problems.push({
+      level: 'error',
+      rule: 'V1',
+      message: `步骤「${owner}」缺少 id`,
+      stepId: step.id,
+    })
   } else {
     const n = (ctx.ids.get(step.id) ?? 0) + 1
     ctx.ids.set(step.id, n)
     if (n > 1) {
-      ctx.problems.push({ level: 'error', rule: 'V1', message: `步骤 id「${step.id}」重复（断点续连依赖全局唯一）`, stepId: step.id })
+      ctx.problems.push({
+        level: 'error',
+        rule: 'V1',
+        message: `步骤 id「${step.id}」重复（断点续连依赖全局唯一）`,
+        stepId: step.id,
+      })
     }
   }
 
@@ -116,12 +163,22 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
 
   // V9：capture 命名规范
   if (step.capture && !NAME_RE.test(step.capture)) {
-    ctx.problems.push({ level: 'error', rule: 'V9', message: `步骤「${owner}」capture 名「${step.capture}」不合规（^[a-zA-Z_][a-zA-Z0-9_.]*$）`, stepId: step.id })
+    ctx.problems.push({
+      level: 'error',
+      rule: 'V9',
+      message: `步骤「${owner}」capture 名「${step.capture}」不合规（^[a-zA-Z_][a-zA-Z0-9_.]*$）`,
+      stepId: step.id,
+    })
   }
 
   // V3：break/continue 必须在 loop 内
   if ((kind === 'break' || kind === 'continue') && !ctx.inLoop) {
-    ctx.problems.push({ level: 'error', rule: 'V3', message: `「${kind}」仅可在循环（loop）内使用`, stepId: step.id })
+    ctx.problems.push({
+      level: 'error',
+      rule: 'V3',
+      message: `「${kind}」仅可在循环（loop）内使用`,
+      stepId: step.id,
+    })
   }
 
   const d = step.do as Record<string, unknown>
@@ -136,11 +193,21 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
     if (def?.condition) checkCondition(def.condition, owner, step.id, ctx)
   }
   if (kind === 'loop') {
-    const def = d.loop as { for_each?: { items?: VarRef; as?: string }; repeat?: number; until?: Condition; max?: number }
+    const def = d.loop as {
+      for_each?: { items?: VarRef; as?: string }
+      repeat?: number
+      until?: Condition
+      max?: number
+    }
     // V8：max 边界
     const max = def?.max ?? 100
     if (max < 1 || max > 10000) {
-      ctx.problems.push({ level: 'warning', rule: 'V8', message: `步骤「${owner}」loop.max=${max} 超出建议范围 1..=10000`, stepId: step.id })
+      ctx.problems.push({
+        level: 'warning',
+        rule: 'V8',
+        message: `步骤「${owner}」loop.max=${max} 超出建议范围 1..=10000`,
+        stepId: step.id,
+      })
     }
     // V5：for_each items 已被捕获
     if (def?.for_each) {
@@ -165,7 +232,12 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
   if (kind === 'call') {
     // V12：call 目标非空
     if (typeof d.call !== 'string' || !d.call) {
-      ctx.problems.push({ level: 'error', rule: 'V12', message: `步骤「${owner}」call 目标 workflow_id 为空`, stepId: step.id })
+      ctx.problems.push({
+        level: 'error',
+        rule: 'V12',
+        message: `步骤「${owner}」call 目标 workflow_id 为空`,
+        stepId: step.id,
+      })
     }
   }
 

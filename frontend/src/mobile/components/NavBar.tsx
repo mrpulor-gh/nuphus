@@ -12,11 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ALargeSmall, Check, Moon, RotateCcw, Settings, Sun, Wrench, X } from 'lucide-react'
 import { getTheme, toggleTheme, type MobileTheme } from '../theme'
 import { getCachedLanUrl, getCachedRelayUrl } from '../connection'
-import {
-  getFontSize,
-  setFontSize,
-  type MobileFontSize,
-} from '../fontsize'
+import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
 import type { ActivityState } from '../store'
 import type { WsStatus } from '../ws'
 import { t } from '../i18n'
@@ -66,8 +62,20 @@ function BlinkLogo() {
       aria-label="Nuphus"
     >
       <g>
-        <path d={SHELL_1} stroke="currentColor" strokeWidth={24} strokeLinecap="round" fill="none" />
-        <path d={SHELL_2} stroke="currentColor" strokeWidth={24} strokeLinecap="round" fill="none" />
+        <path
+          d={SHELL_1}
+          stroke="currentColor"
+          strokeWidth={24}
+          strokeLinecap="round"
+          fill="none"
+        />
+        <path
+          d={SHELL_2}
+          stroke="currentColor"
+          strokeWidth={24}
+          strokeLinecap="round"
+          fill="none"
+        />
         <path
           className="nv-eye l"
           d="M80 180 L80 76"
@@ -263,10 +271,7 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
                 type="button"
                 role="menuitemradio"
                 aria-checked={fontSize === opt.value}
-                className={[
-                  'mobile-nav-fs-opt',
-                  fontSize === opt.value ? 'is-active' : '',
-                ]
+                className={['mobile-nav-fs-opt', fontSize === opt.value ? 'is-active' : '']
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => pickFontSize(opt.value)}
@@ -290,7 +295,11 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
         aria-label={theme === 'dark' ? t('mobile.switchToLight') : t('mobile.switchToDark')}
         onClick={() => setTheme(toggleTheme())}
       >
-        {theme === 'dark' ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+        {theme === 'dark' ? (
+          <Sun size={16} aria-hidden="true" />
+        ) : (
+          <Moon size={16} aria-hidden="true" />
+        )}
       </button>
     </div>
   )

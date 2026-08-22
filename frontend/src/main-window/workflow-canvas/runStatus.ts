@@ -107,7 +107,8 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
   }
 
   const unlisten = listen<Record<string, unknown>>('workflow-event', event => {
-    const payload = (event as { payload?: Record<string, unknown> }).payload ?? (event as Record<string, unknown>)
+    const payload =
+      (event as { payload?: Record<string, unknown> }).payload ?? (event as Record<string, unknown>)
     const type = String(payload.event ?? '')
 
     switch (type) {

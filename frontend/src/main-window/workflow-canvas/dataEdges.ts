@@ -92,7 +92,17 @@ function scanVarRef(r: VarRef | undefined, out: VarConsumption[]): void {
 function scanCondition(cond: Condition | undefined, out: VarConsumption[]): void {
   if (!cond || typeof cond !== 'object') return
   const c = cond as Record<string, unknown>
-  for (const key of ['equals', 'not_equals', 'contains', 'starts_with', 'regex', 'gt', 'lt', 'gte', 'lte']) {
+  for (const key of [
+    'equals',
+    'not_equals',
+    'contains',
+    'starts_with',
+    'regex',
+    'gt',
+    'lt',
+    'gte',
+    'lte',
+  ]) {
     const arr = c[key]
     if (Array.isArray(arr)) for (const r of arr) scanVarRef(r as VarRef, out)
   }

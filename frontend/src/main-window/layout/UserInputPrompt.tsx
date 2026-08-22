@@ -255,11 +255,7 @@ export function UserInputPrompt({
               <Button variant="ghost" onClick={handleReject} disabled={busy}>
                 取消
               </Button>
-              <Button
-                variant="primary"
-                onClick={handleTextSubmit}
-                disabled={busy || !value.trim()}
-              >
+              <Button variant="primary" onClick={handleTextSubmit} disabled={busy || !value.trim()}>
                 {busy ? '处理中...' : '提交'}
               </Button>
             </div>
@@ -393,11 +389,7 @@ export function UserInputPrompt({
                   </div>
                   {captureResult.mode === 'screenshot' && captureResult.path && (
                     <div>
-                      <img
-                        className="uip-capture-img"
-                        src={captureResult.path}
-                        alt="截图"
-                      />
+                      <img className="uip-capture-img" src={captureResult.path} alt="截图" />
                       {captureResult.region && (
                         <div className="uip-hint uip-hint--spaced">
                           区域: x={captureResult.region.x} y={captureResult.region.y} w=

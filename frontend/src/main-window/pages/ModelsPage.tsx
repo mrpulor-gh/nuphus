@@ -508,8 +508,8 @@ export function ModelsPage({
       } catch (e: any) {
         setFeedback({ ok: false, msg: e?.message || t('models.switchFail') })
       }
-    setTimeout(() => setFeedback(null), 2500)
-  }
+      setTimeout(() => setFeedback(null), 2500)
+    }
   }
 
   // Agent 级模型保存（高级设置）：空串 = 清除（跟随 global fallback）
@@ -544,7 +544,13 @@ export function ModelsPage({
     try {
       // provider-driven: switch_model 从 config.toml 读取 API key，前端不传 key
       // mode='default'：模型页主切换写入默认模型（聊天界面按当前 mode 写对应 agent）
-      await switchModelCmd(name, provider, resolvedBaseUrl, isLocal ? localCtxWindow : undefined, 'default')
+      await switchModelCmd(
+        name,
+        provider,
+        resolvedBaseUrl,
+        isLocal ? localCtxWindow : undefined,
+        'default',
+      )
       setCurrentModel(name)
       persistCurrentProvider(name)
       onModelChanged?.()
@@ -558,10 +564,16 @@ export function ModelsPage({
   return (
     <div className="page">
       <div className="page-tabs">
-        <button className={`page-tab ${activeTab === 'basic' ? 'active' : ''}`} onClick={() => setActiveTab('basic')}>
+        <button
+          className={`page-tab ${activeTab === 'basic' ? 'active' : ''}`}
+          onClick={() => setActiveTab('basic')}
+        >
           {t('models.tabBasic') || '基础配置'}
         </button>
-        <button className={`page-tab ${activeTab === 'custom' ? 'active' : ''}`} onClick={() => setActiveTab('custom')}>
+        <button
+          className={`page-tab ${activeTab === 'custom' ? 'active' : ''}`}
+          onClick={() => setActiveTab('custom')}
+        >
           {t('models.tabCustom') || '自定义配置'}
         </button>
       </div>
@@ -605,10 +617,7 @@ export function ModelsPage({
                           : t('models.inputApiKey', curProvider?.name || '')
                       }
                     />
-                    <button
-                      className="input-suffix-btn"
-                      onClick={() => setShowKey(!showKey)}
-                    >
+                    <button className="input-suffix-btn" onClick={() => setShowKey(!showKey)}>
                       {showKey ? t('common.hide') : t('common.show')}
                     </button>
                     <Button
@@ -677,14 +686,10 @@ export function ModelsPage({
             )}
             {/* ── 可用模型列表（后端已配置 + 本地检测结果并集，实时筛选）+ radio 选择 (大王需求 ②+⑤) ── */}
             {(() => {
-              const configured = allModels
-                .filter(m => m.provider === provider)
-                .map(m => m.id)
+              const configured = allModels.filter(m => m.provider === provider).map(m => m.id)
               const display = Array.from(new Set([...detectedModels, ...configured]))
               const q = filterInput.trim().toLowerCase()
-              const filtered = q
-                ? display.filter(m => m.toLowerCase().includes(q))
-                : display
+              const filtered = q ? display.filter(m => m.toLowerCase().includes(q)) : display
               if (filtered.length === 0) {
                 return (
                   <div className="detect-status">
@@ -714,7 +719,13 @@ export function ModelsPage({
                               if (effectiveKey) {
                                 await configureLlm(effectiveKey, name, provider, resolvedBaseUrl)
                               } else {
-                                await switchModelCmd(name, provider, resolvedBaseUrl, undefined, 'default')
+                                await switchModelCmd(
+                                  name,
+                                  provider,
+                                  resolvedBaseUrl,
+                                  undefined,
+                                  'default',
+                                )
                               }
                               setCurrentModel(name)
                               persistCurrentProvider(name)
@@ -810,7 +821,9 @@ export function ModelsPage({
               ))}
             </div>
             <div className="form-hint agent-models-feedback">
-              {agentFeedback ? `${agentFeedback.ok ? '✓' : '⚠'} ${agentFeedback.msg}` : '在 Leader / Workflow / Custom 模式切换模型会自动写入对应 agent 配置'}
+              {agentFeedback
+                ? `${agentFeedback.ok ? '✓' : '⚠'} ${agentFeedback.msg}`
+                : '在 Leader / Workflow / Custom 模式切换模型会自动写入对应 agent 配置'}
             </div>
           </Section>
 
@@ -868,9 +881,7 @@ export function ModelsPage({
                   {t('models.addModel')}
                 </Button>
               </div>
-              <div className="text-caption hint-text">
-                {t('models.localModelsHint')}
-              </div>
+              <div className="text-caption hint-text">{t('models.localModelsHint')}</div>
             </Section>
           )}
         </>
@@ -897,7 +908,10 @@ export function ModelsPage({
                       setVisionFeedback({ ok: true, msg: t('models.visionSaved') })
                       setTimeout(() => setVisionFeedback(null), 2000)
                     } catch (e: any) {
-                      setVisionFeedback({ ok: false, msg: e?.message || t('models.visionSaveFail') })
+                      setVisionFeedback({
+                        ok: false,
+                        msg: e?.message || t('models.visionSaveFail'),
+                      })
                     } finally {
                       setVisionSaving(false)
                     }
@@ -961,12 +975,19 @@ export function ModelsPage({
                 <div className="text-caption" style={{ color: 'var(--error)', marginTop: 8 }}>
                   下载失败：{visionDl.error}
                 </div>
-                <Button variant="primary" size="sm" style={{ marginTop: 8 }} onClick={visionDl.retry}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  style={{ marginTop: 8 }}
+                  onClick={visionDl.retry}
+                >
                   重试下载
                 </Button>
               </>
             ) : visionDl.status === null ? (
-              <div className="text-caption hint-text" style={{ marginTop: 6 }}>检测中…</div>
+              <div className="text-caption hint-text" style={{ marginTop: 6 }}>
+                检测中…
+              </div>
             ) : visionDl.status.missing.length > 0 ? (
               <>
                 <div className="text-caption hint-text" style={{ marginTop: 6 }}>
@@ -974,7 +995,12 @@ export function ModelsPage({
                     ? `缺少 ${visionDl.status.missing.join('、')}（可选，仅影响 UI 元素检测）`
                     : `缺少 ${visionDl.status.missing.length} 个模型文件，下载后即可使用屏幕理解`}
                 </div>
-                <Button variant="primary" size="sm" style={{ marginTop: 8 }} onClick={visionDl.retry}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  style={{ marginTop: 8 }}
+                  onClick={visionDl.retry}
+                >
                   立即下载
                 </Button>
               </>
@@ -1140,7 +1166,6 @@ export function ModelsPage({
               }
             />
           </Section>
-
         </>
       )}
 

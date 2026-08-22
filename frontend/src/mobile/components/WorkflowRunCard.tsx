@@ -81,7 +81,11 @@ export default function WorkflowRunCard({
     <Loader2 size={16} className="mobile-wf-pill-icon is-running" aria-hidden="true" />
   )
 
-  const title = done ? t('mobile.wfCompleted') : isPaused ? t('mobile.wfPaused') : t('mobile.wfRunning')
+  const title = done
+    ? t('mobile.wfCompleted')
+    : isPaused
+      ? t('mobile.wfPaused')
+      : t('mobile.wfRunning')
 
   return (
     <div className={`mobile-wf ${expanded ? 'is-expanded' : 'is-collapsed'}`} role="status">

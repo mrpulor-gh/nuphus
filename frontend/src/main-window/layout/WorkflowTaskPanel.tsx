@@ -25,7 +25,15 @@ interface WorkflowTaskPanelProps {
 // ── 步骤参数查看（只读）──
 
 /** 详情中不展示的字段：V2 顶层标识/容器字段（实际参数在 do 内） */
-const HIDDEN_KEYS = new Set(['id', 'name', 'description', 'on_error', 'capture', 'timeout_secs', 'do'])
+const HIDDEN_KEYS = new Set([
+  'id',
+  'name',
+  'description',
+  'on_error',
+  'capture',
+  'timeout_secs',
+  'do',
+])
 
 /** 判断一个数组是否为子步骤数组（容器 children），不作为参数展示 */
 function isStepArray(arr: unknown[]): boolean {
@@ -56,9 +64,7 @@ function flattenStepDefs(steps: unknown, map: Map<string, Record<string, unknown
 
 /** 提取可展示的参数项：V2 参数位于 do 内（tool.with / chat.with 等）；剔除标识/子步骤数组/空值 */
 function paramEntriesOf(def: Record<string, unknown>): [string, unknown][] {
-  const raw = def.do && typeof def.do === 'object'
-    ? (def.do as Record<string, unknown>)
-    : def
+  const raw = def.do && typeof def.do === 'object' ? (def.do as Record<string, unknown>) : def
   return Object.entries(raw).filter(([k, v]) => {
     if (HIDDEN_KEYS.has(k)) return false
     if (v === null || v === undefined) return false
@@ -439,51 +445,48 @@ export function WorkflowTaskPanel({
                 style={{ paddingLeft: 12 + depth * INDENT }}
                 onClick={() => hasParams && setExpandedId(expanded ? null : step.id)}
               >
-              {/* ── Tree connector lines ── */}
-              {depth > 0 && (
-                <div className="wfst-connector" style={{ left: 14 + (depth - 1) * INDENT }}>
-                  <div className="wfst-connector-line" />
-                  <div className="wfst-connector-cap" />
+                {/* ── Tree connector lines ── */}
+                {depth > 0 && (
+                  <div className="wfst-connector" style={{ left: 14 + (depth - 1) * INDENT }}>
+                    <div className="wfst-connector-line" />
+                    <div className="wfst-connector-cap" />
+                  </div>
+                )}
+
+                {/* ── Status indicator ── */}
+                <div className="wfst-node-indicator">
+                  {isRunning && <span className="wfst-shimmer-ring" />}
+                  <StatusBadge status={step.status} />
                 </div>
-              )}
 
-              {/* ── Status indicator ── */}
-              <div className="wfst-node-indicator">
-                {isRunning && <span className="wfst-shimmer-ring" />}
-                <StatusBadge status={step.status} />
-              </div>
+                {/* ── Kind icon ── */}
+                {step.kind && step.kind !== 'tool' && <KindTag kind={step.kind} />}
 
-              {/* ── Kind icon ── */}
-              {step.kind && step.kind !== 'tool' && <KindTag kind={step.kind} />}
+                {/* ── Step name ── */}
+                <span
+                  className={[
+                    'wfst-node-name',
+                    step.status === 'completed' ? 'wfst-name-completed' : '',
+                    step.status === 'failed' ? 'wfst-name-failed' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  {step.name}
+                </span>
 
-              {/* ── Step name ── */}
-              <span
-                className={[
-                  'wfst-node-name',
-                  step.status === 'completed' ? 'wfst-name-completed' : '',
-                  step.status === 'failed' ? 'wfst-name-failed' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                {step.name}
-              </span>
+                {/* ── Running indicator ── */}
+                {isRunning && <span className="wfst-running-dot" />}
 
-              {/* ── Running indicator ── */}
-              {isRunning && <span className="wfst-running-dot" />}
-
-              {/* ── Params chevron ── */}
-              {hasParams && (
-                <span className={`wfst-node-chevron ${expanded ? 'open' : ''}`}>▾</span>
-              )}
+                {/* ── Params chevron ── */}
+                {hasParams && (
+                  <span className={`wfst-node-chevron ${expanded ? 'open' : ''}`}>▾</span>
+                )}
               </div>
 
               {/* ── Step params detail（只读）── */}
               {expanded && (
-                <div
-                  className="wfst-node-detail"
-                  style={{ paddingLeft: 12 + depth * INDENT + 20 }}
-                >
+                <div className="wfst-node-detail" style={{ paddingLeft: 12 + depth * INDENT + 20 }}>
                   {paramEntries.map(([key, value]) => (
                     <div key={key} className="wfst-param-row">
                       <span className="wfst-param-key">{key}</span>
@@ -509,7 +512,16 @@ export function WorkflowTaskPanel({
             </button>
           ) : allDone ? (
             <button className="wfst-btn wfst-btn-secondary" onClick={onReRun}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <polyline points="23 4 23 10 17 10" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>

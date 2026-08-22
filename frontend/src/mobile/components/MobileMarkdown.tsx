@@ -373,8 +373,8 @@ function TableRenderer({ lines }: { lines: string[] }) {
     }
     return texts
   })
-  const colWeights = colTexts.map(
-    texts => Math.max(...texts.map(t => estimateTextWidth(stripMdForWidth(t))), 1),
+  const colWeights = colTexts.map(texts =>
+    Math.max(...texts.map(t => estimateTextWidth(stripMdForWidth(t))), 1),
   )
   const weightTotal = colWeights.reduce((a, b) => a + b, 0)
   // 列宽分配：短列（序号/中文标签）保底 MIN，长列（代码/说明）封顶 MAX。

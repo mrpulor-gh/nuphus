@@ -55,8 +55,7 @@ const en: Record<string, string> = {
   'input.hint.desktop': 'I can control desktop apps and browser — just describe what you need',
   'input.hint.workflow':
     'Describe a repeatable task → I build a deterministic workflow, zero TOKEN cost',
-  'input.hint.mobile':
-    'Mobile chat: Ctrl+K → Mobile → scan QR to pair, phone as second screen',
+  'input.hint.mobile': 'Mobile chat: Ctrl+K → Mobile → scan QR to pair, phone as second screen',
   'input.send': 'Send',
   'input.interrupt': 'Interrupt',
   'input.interruptTitle': 'Interrupt current execution',
@@ -77,15 +76,15 @@ const en: Record<string, string> = {
   'input.voiceAutoStop': 'Max recording time reached, stopped automatically',
   'input.voiceNeedModel': 'Download the voice model to enable',
   'input.voiceDlTitle': 'Download Voice Model',
-  'input.voiceDlDesc': 'Voice input requires a one-time download of the recognition model (~250 MB).',
+  'input.voiceDlDesc':
+    'Voice input requires a one-time download of the recognition model (~250 MB).',
   'input.voiceDlStart': 'Download',
   'input.voiceDlCancel': 'Cancel',
   'input.voiceDlRetry': 'Retry',
   'input.voiceDlFailed': 'Download failed',
   'input.thinking': 'Thinking...',
   'input.placeholder.refine': 'Please handle context refinement first...',
-  'input.placeholder.executing':
-    'Executing · type & send to append instruction to current task',
+  'input.placeholder.executing': 'Executing · type & send to append instruction to current task',
   'input.mode.leader': 'Leader',
   'input.mode.workflow': 'Workflow',
   'input.mode.leader.desc': 'Understand, plan, dispatch',
@@ -104,15 +103,18 @@ const en: Record<string, string> = {
   'custom.page.setActive': 'Set active',
   'custom.page.placeholder': 'Select an agent on the left to edit, or create a new one',
   'custom.page.loading': 'Loading…',
-  'custom.page.lockedNote': 'L0 core safety constraints and L1 system protocol are always locked. What you define here is the L2 persona layer.',
+  'custom.page.lockedNote':
+    'L0 core safety constraints and L1 system protocol are always locked. What you define here is the L2 persona layer.',
   'custom.page.name': 'Name',
   'custom.page.namePlaceholder': 'e.g. My writing assistant',
   'custom.page.l2': 'Behavior definition (L2 persona)',
-  'custom.page.l2Placeholder': 'Define who it is, how it speaks, its code of conduct and prohibitions… this is the full behavior definition of your agent (replaces L2)',
+  'custom.page.l2Placeholder':
+    'Define who it is, how it speaks, its code of conduct and prohibitions… this is the full behavior definition of your agent (replaces L2)',
   'custom.page.greeting': 'Greeting',
   'custom.page.greetingPlaceholder': 'The first message the agent says when activated',
   'custom.page.knowledge': 'Knowledge paths',
-  'custom.page.knowledgeHint': 'Knowledge directories/files bound to this agent, one per line or comma-separated',
+  'custom.page.knowledgeHint':
+    'Knowledge directories/files bound to this agent, one per line or comma-separated',
   'custom.page.knowledgePlaceholder': 'e.g. C:/Users/You/Nuphus/plugin/knowledge',
   'custom.page.tools': 'Tool allowlist',
   'custom.page.toolsHint': 'Checked tools are available to this agent; all checked = unrestricted',
@@ -188,7 +190,8 @@ const en: Record<string, string> = {
   'plugins.comingSoonP1': 'A paid plugin marketplace is in the works.',
   'plugins.comingSoonP2':
     'Here, creators with professional skills can turn their abilities into plugin products — early joiners will earn the first wave of value.',
-  'plugins.comingSoonP3': 'Nuphus looks forward to having you on board to build a high-quality AI ecosystem together!',
+  'plugins.comingSoonP3':
+    'Nuphus looks forward to having you on board to build a high-quality AI ecosystem together!',
   'plugins.comingSoonCard1Title': 'Creator opportunity',
   'plugins.comingSoonCard2Title': 'Ecosystem building',
   'plugins.comingSoonGithub': 'Official GitHub: mrpulor-gh/nuphus',
@@ -241,7 +244,8 @@ const en: Record<string, string> = {
   'plugins.back': 'Back',
   'plugins.detailAbout': 'About',
   'plugins.detailPerms': 'Permissions',
-  'plugins.permAgentChatWarning': '"agent.chat" lets the plugin call Nuphus AI on your behalf, using all tools you have granted globally (including files / commands / desktop actions). Only install plugins from trusted sources.',
+  'plugins.permAgentChatWarning':
+    '"agent.chat" lets the plugin call Nuphus AI on your behalf, using all tools you have granted globally (including files / commands / desktop actions). Only install plugins from trusted sources.',
   'plugins.detailDeveloper': 'Developer',
   'plugins.detailInstalled': 'Installed',
   'plugins.badge.sample': 'Sample',
@@ -250,9 +254,11 @@ const en: Record<string, string> = {
   'plugins.devExportTitle': 'Choose export directory',
   'plugins.devContractTitle': 'Developer contract (one-pager)',
   'plugins.devContractFormatTitle': '1. Package format',
-  'plugins.devContractFormatDesc': 'A plugin is a .nuph file (ZIP): manifest.json and the entry page live at the zip root — no subdirectory wrapping.',
+  'plugins.devContractFormatDesc':
+    'A plugin is a .nuph file (ZIP): manifest.json and the entry page live at the zip root — no subdirectory wrapping.',
   'plugins.devContractManifestTitle': '2. manifest.json fields',
-  'plugins.devContractManifestDesc': 'The manifest declares identity, entry and permissions; each is validated on install.',
+  'plugins.devContractManifestDesc':
+    'The manifest declares identity, entry and permissions; each is validated on install.',
   'plugins.devFieldId': 'Unique plugin ID (reverse-dns, e.g. com.author.my-plugin)',
   'plugins.devFieldName': 'Display name',
   'plugins.devFieldVersion': 'Version (x.y.z, three numeric segments)',
@@ -263,29 +269,37 @@ const en: Record<string, string> = {
   'plugins.devFieldSample': 'Official sample flag (optional; true shows the "Sample" badge)',
   'plugins.devFieldSidecar': 'Extension declaration (fixed null in v1)',
   'plugins.devContractBridgeTitle': '3. Bridge API',
-  'plugins.devContractBridgeDesc': 'Plugin pages call host capabilities over the Bridge; calls without the matching permission are rejected (PERMISSION_DENIED).',
+  'plugins.devContractBridgeDesc':
+    'Plugin pages call host capabilities over the Bridge; calls without the matching permission are rejected (PERMISSION_DENIED).',
   'plugins.devApiKv': 'Plugin-private storage: get / set / delete / keys',
   'plugins.devApiToast': 'Main-window toast (requires notify)',
   'plugins.devApiThemeGet': 'Read current theme (read-only, no permission)',
   'plugins.devApiThemeChanged': 'Theme-change event (one-way push)',
-  'plugins.devApiAgentChat': 'Call Nuphus AI and get the final reply. Note: agent.chat may use every tool you have granted globally (files / commands / desktop actions) — the plugin can act on your behalf (requires agent.chat)',
+  'plugins.devApiAgentChat':
+    'Call Nuphus AI and get the final reply. Note: agent.chat may use every tool you have granted globally (files / commands / desktop actions) — the plugin can act on your behalf (requires agent.chat)',
   'plugins.devApiWorkflowList': 'List user workflows (requires workflow.run)',
-  'plugins.devApiWorkflowRun': 'Run a workflow and wait for the terminal state (requires workflow.run; execution events still go to the main window)',
+  'plugins.devApiWorkflowRun':
+    'Run a workflow and wait for the terminal state (requires workflow.run; execution events still go to the main window)',
   'plugins.devContractThemeTitle': '4. Theme theming',
-  'plugins.devContractThemeDesc': 'Include the four shared assets and colors follow the main-window theme automatically:',
+  'plugins.devContractThemeDesc':
+    'Include the four shared assets and colors follow the main-window theme automatically:',
   'plugins.devContractHandshakeTitle': '5. Handshake',
-  'plugins.devContractHandshakeDesc': 'Including bridge.js completes the ready → init handshake automatically; the bridge checks permissions per call.',
+  'plugins.devContractHandshakeDesc':
+    'Including bridge.js completes the ready → init handshake automatically; the bridge checks permissions per call.',
   'plugins.devSamplesTitle': 'Export a sample project',
   'plugins.devSampleHelloName': 'Hello Nuphus',
-  'plugins.devSampleHelloDesc': 'Theme swatches / KV storage / toast / theme events — the four most common plugin capabilities',
+  'plugins.devSampleHelloDesc':
+    'Theme swatches / KV storage / toast / theme events — the four most common plugin capabilities',
   'plugins.devSampleAgentName': 'Agent Chat',
-  'plugins.devSampleAgentDesc': 'Plugin-powered Agent chat — how to call Nuphus AI through the Bridge',
+  'plugins.devSampleAgentDesc':
+    'Plugin-powered Agent chat — how to call Nuphus AI through the Bridge',
   'plugins.devSampleExport': 'Export to…',
   'plugins.devSampleSuccess': 'Sample project exported to',
   'plugins.devSampleFail': 'Failed to export sample project',
   'plugins.devCenterTitle': 'Developer Center',
   'plugins.devBackToPlugins': 'Back to Plugins',
-  'plugins.devCenterDesc': 'No coding required — follow the five-step wizard and let AI build your plugin',
+  'plugins.devCenterDesc':
+    'No coding required — follow the five-step wizard and let AI build your plugin',
   'plugins.devStep1': 'What plugins are',
   'plugins.devStep2': 'Export a sample',
   'plugins.devStep3': 'Remake it with AI',
@@ -294,41 +308,63 @@ const en: Record<string, string> = {
   'plugins.devRef': 'Developer reference',
   'plugins.devNext': 'Next',
   'plugins.devIntroWhatTitle': 'What is a plugin?',
-  'plugins.devIntroWhatDesc': 'A plugin is a small app with its own UI that runs inside Nuphus. It can call Nuphus AI chat, automation workflows and system notifications — you bring the expertise, Nuphus brings the AI.',
+  'plugins.devIntroWhatDesc':
+    'A plugin is a small app with its own UI that runs inside Nuphus. It can call Nuphus AI chat, automation workflows and system notifications — you bring the expertise, Nuphus brings the AI.',
   'plugins.devIntroExamplesTitle': 'What can you build?',
   'plugins.devIntroEx1Name': 'Industry Q&A assistant',
-  'plugins.devIntroEx1Desc': 'Turn your professional knowledge into a Q&A assistant and sell it to peers or clients',
+  'plugins.devIntroEx1Desc':
+    'Turn your professional knowledge into a Q&A assistant and sell it to peers or clients',
   'plugins.devIntroEx2Name': 'Productivity tool',
   'plugins.devIntroEx2Desc': 'Turn the repetitive chores in your work into a one-click tool',
   'plugins.devIntroEx3Name': 'Content generator',
-  'plugins.devIntroEx3Desc': 'Hook into Nuphus AI to batch-generate copy, reports or plans in your domain',
+  'plugins.devIntroEx3Desc':
+    'Hook into Nuphus AI to batch-generate copy, reports or plans in your domain',
   'plugins.devIntroVisionTitle': 'Our vision',
-  'plugins.devIntroVisionDesc': 'We want to build a high-quality, sustainable paid-plugin community together with developers — not chasing quantity, but rewarding well-crafted work. Package your plugin into a single .nuph file to send to clients, or list it on the marketplace when it launches (covered in the last step).',
-  'plugins.devExportLead': 'The two official samples below are complete plugins. Export one and change it — that IS making your own plugin.',
-  'plugins.devAiLead': 'Hand the whole exported folder to any AI coding assistant — Cursor, Claude Code, or the Agent right inside Nuphus. You describe what you want; the AI writes the code.',
+  'plugins.devIntroVisionDesc':
+    'We want to build a high-quality, sustainable paid-plugin community together with developers — not chasing quantity, but rewarding well-crafted work. Package your plugin into a single .nuph file to send to clients, or list it on the marketplace when it launches (covered in the last step).',
+  'plugins.devExportLead':
+    'The two official samples below are complete plugins. Export one and change it — that IS making your own plugin.',
+  'plugins.devAiLead':
+    'Hand the whole exported folder to any AI coding assistant — Cursor, Claude Code, or the Agent right inside Nuphus. You describe what you want; the AI writes the code.',
   'plugins.devAiPromptsTitle': 'Copy a prompt and send it to your AI',
-  'plugins.devAiPrompt1': 'Read manifest.json and index.html in this folder to understand the structure of this Nuphus plugin. Then turn the UI into a tool for your industry that does what you want, keeping the manifest permissions and Bridge calls unchanged.',
-  'plugins.devAiPrompt2': 'Add a feature to this Nuphus plugin: (describe the feature in one sentence). Use the Bridge agent.chat for AI calls and kv storage for persistence. Tell me how to test it when done.',
-  'plugins.devAiPrompt3': 'Keep the features unchanged, but rewrite the UI of this plugin to be more polished and professional. Use the design variables from /plugins-shared/tokens.css — restrained and modern.',
+  'plugins.devAiPrompt1':
+    'Read manifest.json and index.html in this folder to understand the structure of this Nuphus plugin. Then turn the UI into a tool for your industry that does what you want, keeping the manifest permissions and Bridge calls unchanged.',
+  'plugins.devAiPrompt2':
+    'Add a feature to this Nuphus plugin: (describe the feature in one sentence). Use the Bridge agent.chat for AI calls and kv storage for persistence. Tell me how to test it when done.',
+  'plugins.devAiPrompt3':
+    'Keep the features unchanged, but rewrite the UI of this plugin to be more polished and professional. Use the design variables from /plugins-shared/tokens.css — restrained and modern.',
   'plugins.devAiCopy': 'Copy',
   'plugins.devAiCopied': 'Copied — paste it to your AI assistant',
   'plugins.devAiCopyFail': 'Copy failed — please select and copy the text manually',
-  'plugins.devAiTip': 'Tip: after every AI revision, reinstall it in step 4 to see the result; not happy? Describe the problem to the AI and iterate.',
-  'plugins.devInstallLead': 'Done editing? Install it back into Nuphus right here — no need to leave this page.',
-  'plugins.devInstallStep1': 'Zip the CONTENTS of the plugin folder (compress the files directly — no wrapping folder)',
-  'plugins.devInstallStep2': 'Click the button below to pick a zip / .nuph file and install it locally right away',
-  'plugins.devInstallStep3': 'Click "Open Plugins page", then "Open" on the plugin card to see the result; not happy? Ask the AI to revise, then repeat this step',
+  'plugins.devAiTip':
+    'Tip: after every AI revision, reinstall it in step 4 to see the result; not happy? Describe the problem to the AI and iterate.',
+  'plugins.devInstallLead':
+    'Done editing? Install it back into Nuphus right here — no need to leave this page.',
+  'plugins.devInstallStep1':
+    'Zip the CONTENTS of the plugin folder (compress the files directly — no wrapping folder)',
+  'plugins.devInstallStep2':
+    'Click the button below to pick a zip / .nuph file and install it locally right away',
+  'plugins.devInstallStep3':
+    'Click "Open Plugins page", then "Open" on the plugin card to see the result; not happy? Ask the AI to revise, then repeat this step',
   'plugins.devInstallButton': 'Install .nuph / zip…',
-  'plugins.devInstallNote': 'For development debugging only — for distribution, publish to the marketplace in the next step',
+  'plugins.devInstallNote':
+    'For development debugging only — for distribution, publish to the marketplace in the next step',
   'plugins.devInstallOpen': 'Open Plugins page',
-  'plugins.devPubLead': 'Happy with it? Publish it to the marketplace so every Nuphus user can discover it.',
-  'plugins.devPubStep1': 'Open the Plugins page, click your plugin to enter its detail page, and click "Pack & Export" to produce a .nuph file',
-  'plugins.devPubStep2': 'Open a PR against the nuphus-market repo with the .nuph and its manifest — picking one category is required (Agents/Tools/Productivity/Integrations/Games/Other)',
-  'plugins.devPubStep3': 'Once reviewed and merged into the marketplace index.json, every user can discover and one-click install it',
-  'plugins.devPubIconNote': 'Icon requirement: every app must ship an SVG icon (e.g. icon.svg). Apps without an SVG icon cannot be installed or listed — a baseline marketplace requirement.',
+  'plugins.devPubLead':
+    'Happy with it? Publish it to the marketplace so every Nuphus user can discover it.',
+  'plugins.devPubStep1':
+    'Open the Plugins page, click your plugin to enter its detail page, and click "Pack & Export" to produce a .nuph file',
+  'plugins.devPubStep2':
+    'Open a PR against the nuphus-market repo with the .nuph and its manifest — picking one category is required (Agents/Tools/Productivity/Integrations/Games/Other)',
+  'plugins.devPubStep3':
+    'Once reviewed and merged into the marketplace index.json, every user can discover and one-click install it',
+  'plugins.devPubIconNote':
+    'Icon requirement: every app must ship an SVG icon (e.g. icon.svg). Apps without an SVG icon cannot be installed or listed — a baseline marketplace requirement.',
   'plugins.devMarketTitle': 'Publish to nuphus-market',
-  'plugins.devMarketDesc': 'Open-source and closed-source submission tracks (design doc §8). Build now and claim your niche — ship on day one when the marketplace goes live.',
-  'plugins.devRefLead': 'For those who want to go deeper: the one-page plugin contract. You do NOT need to understand it to build plugins — the AI handles these details for you.',
+  'plugins.devMarketDesc':
+    'Open-source and closed-source submission tracks (design doc §8). Build now and claim your niche — ship on day one when the marketplace goes live.',
+  'plugins.devRefLead':
+    'For those who want to go deeper: the one-page plugin contract. You do NOT need to understand it to build plugins — the AI handles these details for you.',
   'plugins.searchPlaceholder': 'Search plugins…',
   'plugins.noMatch': 'No matching plugins',
 
@@ -409,7 +445,8 @@ const en: Record<string, string> = {
   'themes.upload': 'Upload',
   'themes.applied': 'Applied',
   'themes.custom': 'Custom Theme',
-  'themes.customDesc': 'Layered custom colors on a built-in base — live preview while editing; persists only after saving',
+  'themes.customDesc':
+    'Layered custom colors on a built-in base — live preview while editing; persists only after saving',
   'themes.customBaseFollow': 'Base (follows current theme)',
   'themes.customName': 'Theme Name',
   'themes.customDefaultName': 'My Theme',
@@ -438,10 +475,12 @@ const en: Record<string, string> = {
   'themes.customImport': 'Import JSON',
   'themes.customBadge': 'Custom',
   'themes.customSaved': 'Custom theme saved',
-  'themes.customResetDone': 'Custom theme deactivated — back to built-in (your themes stay in the list)',
+  'themes.customResetDone':
+    'Custom theme deactivated — back to built-in (your themes stay in the list)',
   'themes.customImported': 'Custom theme imported',
   'themes.customImportErrJson': 'Import failed: not valid JSON',
-  'themes.customImportErrStructure': 'Import failed: expected name / base / overrides with CSS-variable string overrides',
+  'themes.customImportErrStructure':
+    'Import failed: expected name / base / overrides with CSS-variable string overrides',
   'themes.customExportFail': 'Export failed',
   'theme.dark': 'Deep Blue',
   'theme.darkDesc': 'Dark theme',
@@ -576,7 +615,8 @@ const en: Record<string, string> = {
   'mobile.runningHint': 'On · your phone can connect anytime',
   'mobile.stoppedHint': 'Off · your phone cannot connect',
   'mobile.title': 'Phone access',
-  'mobile.desc': "Your phone becomes this computer's second screen: pair once, then message, watch progress and control tasks anytime",
+  'mobile.desc':
+    "Your phone becomes this computer's second screen: pair once, then message, watch progress and control tasks anytime",
   'mobile.blockPassword': 'Set a pairing password',
   'mobile.blockScan': 'Scan with your phone, then enter the password',
   'mobile.scanNeedPassword': 'Set a pairing password in block 1 to show the QR code here',
@@ -601,8 +641,10 @@ const en: Record<string, string> = {
   'mobile.resetPairingHint': 'All paired phones must re-enter the password after reset',
   'mobile.resetPairingBtn': 'Reset pairing',
   'mobile.relayRotate': 'Regenerate caller credential',
-  'mobile.relayRotateHint': 'External access credential; rotate here if leaked — old one expires immediately',
-  'mobile.relayRotateConfirm': 'After regeneration, paired phones lose external access immediately and must rescan the QR code. Continue?',
+  'mobile.relayRotateHint':
+    'External access credential; rotate here if leaked — old one expires immediately',
+  'mobile.relayRotateConfirm':
+    'After regeneration, paired phones lose external access immediately and must rescan the QR code. Continue?',
   'mobile.statusRunning': 'Running',
   'mobile.statusStopped': 'Stopped',
   'mobile.stopFailed': 'Failed to stop, please retry',
@@ -614,7 +656,8 @@ const en: Record<string, string> = {
   'mobile.pairStatusLabel': 'Pairing',
   'mobile.paired': 'Ready',
   'mobile.unpaired': 'Not started',
-  'mobile.relayShortcutGuide': 'After pairing in the browser, "Add to Home Screen" on your phone creates a desktop icon for one-tap access',
+  'mobile.relayShortcutGuide':
+    'After pairing in the browser, "Add to Home Screen" on your phone creates a desktop icon for one-tap access',
   'security.title': 'Permission Request',
   'security.hintUpDown': '↑↓ select',
   'security.hintEnter': 'Enter confirm',
@@ -815,7 +858,8 @@ const en: Record<string, string> = {
   'browser.guideStep1': '1. Enable the "debugging port" in your fingerprint browser',
   'browser.guideStep2': '2. Click "Detect browsers" below, then pick a detected browser to finish',
   'browser.detect': 'Detect browsers',
-  'browser.detectEmpty': 'No browser detected. Make sure the debugging port is enabled in your fingerprint browser, then detect again',
+  'browser.detectEmpty':
+    'No browser detected. Make sure the debugging port is enabled in your fingerprint browser, then detect again',
   'browser.inUse': 'In use',
   'browser.current': 'Current',
   'browser.use': 'Use',
@@ -823,7 +867,8 @@ const en: Record<string, string> = {
   'browser.managedActive': 'Switched back to the built-in browser',
   'browser.statusProbing': 'Checking connection…',
   'browser.statusConnected': 'Connected: {0}',
-  'browser.statusUnreachable': 'Unreachable — the window may be closed; it will reconnect automatically once reopened',
+  'browser.statusUnreachable':
+    'Unreachable — the window may be closed; it will reconnect automatically once reopened',
 
   'project.selectDir': 'Select Project Directory',
   'project.currentDir': 'Current Project Directory',
@@ -1004,11 +1049,14 @@ const en: Record<string, string> = {
   'mobile.a2hsIosStep': 'Tap Share at the bottom → "Add to Home Screen"',
   'mobile.a2hsAndroidStep': 'Tap the "⋮" menu → "Add to Home Screen"',
   'mobile.a2hsLanTitle': 'Add to Home Screen for fullscreen direct LAN',
-  'mobile.a2hsLanIosStep': 'Tap Share at the bottom → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
-  'mobile.a2hsLanAndroidStep': 'Tap the "⋮" menu → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
+  'mobile.a2hsLanIosStep':
+    'Tap Share at the bottom → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
+  'mobile.a2hsLanAndroidStep':
+    'Tap the "⋮" menu → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
   'mobile.closeHint': 'Dismiss',
   'mobile.pairTitle': 'Connect to desktop Nuphus',
-  'mobile.pairInvalid': 'Pairing has expired (the desktop may have reset it). Please enter the password again.',
+  'mobile.pairInvalid':
+    'Pairing has expired (the desktop may have reset it). Please enter the password again.',
   'mobile.pairDesc': 'Enter the pairing password set on desktop to connect.',
   'mobile.pairStep1': 'Open Nuphus "Settings" on the desktop',
   'mobile.pairStep2': 'Open the "Mobile" panel, enable LAN access and set a pairing password',

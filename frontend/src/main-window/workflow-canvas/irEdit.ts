@@ -151,8 +151,7 @@ export function checkOp(steps: WorkflowStep[], op: IrEditOp, ctx: CheckContext =
       if (loc.layerId !== 'root' && loc.siblings.length === 1 && loc.lane !== 'else') {
         return {
           ok: false,
-          reason:
-            '容器至少需要保留一个步骤（空容器无法通过校验）。请先添加新步骤，再删除本步骤。',
+          reason: '容器至少需要保留一个步骤（空容器无法通过校验）。请先添加新步骤，再删除本步骤。',
         }
       }
       // 容器级联删除由 UI 弹窗确认（2.5 Delete 行），此处放行
@@ -202,7 +201,9 @@ export function checkOp(steps: WorkflowStep[], op: IrEditOp, ctx: CheckContext =
           const used = itemVars.filter(v => refs.has(v))
           if (used.length > 0) {
             const targetItemVars =
-              op.to.parent.layerId === 'root' ? [] : enclosingLoopItemVars(steps, op.to.parent.layerId)
+              op.to.parent.layerId === 'root'
+                ? []
+                : enclosingLoopItemVars(steps, op.to.parent.layerId)
             const missing = used.filter(v => !targetItemVars.includes(v))
             if (missing.length > 0) {
               return {
@@ -231,7 +232,8 @@ export function checkOp(steps: WorkflowStep[], op: IrEditOp, ctx: CheckContext =
         if (referenced) {
           return {
             ok: true,
-            confirm: '该步骤有历史运行记录，修改 id 将使断点续连跳过记录失效（续跑会重新执行本步骤）。确认修改？',
+            confirm:
+              '该步骤有历史运行记录，修改 id 将使断点续连跳过记录失效（续跑会重新执行本步骤）。确认修改？',
           }
         }
       }
@@ -419,20 +421,34 @@ export function newStep(kind: string, existing: Set<string>): WorkflowStep {
   const id = genStepId(kind, existing)
   const base = { id, name: '', description: '', on_error: 'abort' as const }
   switch (kind) {
-    case 'tool': return { ...base, do: { tool: '', with: {} } }
-    case 'seq': return { ...base, do: { seq: [] } }
-    case 'loop': return { ...base, do: { loop: { repeat: 1, max: 100, do: [] } } }
-    case 'if': return { ...base, do: { if: { condition: { always: true }, then: [], else: [] } } }
-    case 'call': return { ...base, do: { call: '', with: {} } }
-    case 'wait': return { ...base, do: { wait: '', auto: [] } }
-    case 'chat': return { ...base, do: { chat: '', with: {} } }
-    case 'script': return { ...base, do: { script: { runtime: 'python', code: '' } } }
-    case 'assert': return { ...base, do: { assert: { condition: { always: true } } } }
-    case 'mcp': return { ...base, do: { mcp: { server: '', tool: '', with: {} } } }
-    case 'sleep': return { ...base, do: { sleep: 1 } }
-    case 'break': return { ...base, do: { break: true } }
-    case 'continue': return { ...base, do: { continue: true } }
-    default: return { ...base, do: { tool: '', with: {} } }
+    case 'tool':
+      return { ...base, do: { tool: '', with: {} } }
+    case 'seq':
+      return { ...base, do: { seq: [] } }
+    case 'loop':
+      return { ...base, do: { loop: { repeat: 1, max: 100, do: [] } } }
+    case 'if':
+      return { ...base, do: { if: { condition: { always: true }, then: [], else: [] } } }
+    case 'call':
+      return { ...base, do: { call: '', with: {} } }
+    case 'wait':
+      return { ...base, do: { wait: '', auto: [] } }
+    case 'chat':
+      return { ...base, do: { chat: '', with: {} } }
+    case 'script':
+      return { ...base, do: { script: { runtime: 'python', code: '' } } }
+    case 'assert':
+      return { ...base, do: { assert: { condition: { always: true } } } }
+    case 'mcp':
+      return { ...base, do: { mcp: { server: '', tool: '', with: {} } } }
+    case 'sleep':
+      return { ...base, do: { sleep: 1 } }
+    case 'break':
+      return { ...base, do: { break: true } }
+    case 'continue':
+      return { ...base, do: { continue: true } }
+    default:
+      return { ...base, do: { tool: '', with: {} } }
   }
 }
 

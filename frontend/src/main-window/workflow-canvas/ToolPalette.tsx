@@ -11,9 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import {
-  Monitor, Globe, FolderOpen, Terminal, Sparkles, Puzzle,
-} from 'lucide-react'
+import { Monitor, Globe, FolderOpen, Terminal, Sparkles, Puzzle } from 'lucide-react'
 import type { ToolSchema } from '../../core/types'
 import { loadToolsOnce } from './Inspector'
 
@@ -169,7 +167,12 @@ export function ToolPalette({ disabled, onAdd }: ToolPaletteProps) {
               if (!disabled) setOpenGroup(g.key)
             }}
           >
-            <button type="button" className="wfc-palette-btn" disabled={disabled} title={meta.label}>
+            <button
+              type="button"
+              className="wfc-palette-btn"
+              disabled={disabled}
+              title={meta.label}
+            >
               <Icon size={15} />
             </button>
             {openGroup === g.key && !disabled && (

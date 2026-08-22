@@ -91,9 +91,10 @@
   line-height: 1;
   cursor: pointer;
   opacity: 0.55;
-  transition: opacity 0.12s var(--ease-out, ease-out),
-              background 0.12s var(--ease-out, ease-out),
-              color 0.12s var(--ease-out, ease-out);
+  transition:
+    opacity 0.12s var(--ease-out, ease-out),
+    background 0.12s var(--ease-out, ease-out),
+    color 0.12s var(--ease-out, ease-out);
 }
 
 .ref-chip-remove:hover {
@@ -169,9 +170,10 @@
   cursor: pointer;
   opacity: 0.55;
   flex-shrink: 0;
-  transition: opacity 0.12s var(--ease-out, ease-out),
-              background 0.12s var(--ease-out, ease-out),
-              color 0.12s var(--ease-out, ease-out);
+  transition:
+    opacity 0.12s var(--ease-out, ease-out),
+    background 0.12s var(--ease-out, ease-out),
+    color 0.12s var(--ease-out, ease-out);
 }
 
 .ref-img-pill-remove:hover {

@@ -78,9 +78,7 @@ export default function PairingGuide({ invalid, onPair }: Props) {
       </svg>
       <h1 className="mobile-pair-title">{t('mobile.pairTitle')}</h1>
       {invalid ? (
-        <p className="mobile-pair-invalid">
-          {t('mobile.pairInvalid')}
-        </p>
+        <p className="mobile-pair-invalid">{t('mobile.pairInvalid')}</p>
       ) : (
         <p className="mobile-pair-desc">{t('mobile.pairDesc')}</p>
       )}
@@ -111,7 +109,11 @@ export default function PairingGuide({ invalid, onPair }: Props) {
           disabled={password.trim().length === 0 || disabled}
           onClick={() => void handleSubmit()}
         >
-          {lockSec > 0 ? `${lockSec} ${t('mobile.secondsRetry')}` : submitting ? t('mobile.connecting') : t('mobile.connect')}
+          {lockSec > 0
+            ? `${lockSec} ${t('mobile.secondsRetry')}`
+            : submitting
+              ? t('mobile.connecting')
+              : t('mobile.connect')}
         </button>
       </div>
       {error && <p className="mobile-pair-error">{error}</p>}

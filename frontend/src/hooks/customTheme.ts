@@ -115,7 +115,12 @@ export function applyCoreColor(
 /* ── 不透明度覆盖（气泡 / 输入框 / 皮肤背景图）── */
 
 /** 不透明度滑块覆盖的颜色 token：气泡 ×2 + 输入框 + 弹窗（走 rgba 派生） */
-export const OPACITY_COLOR_KEYS = ['--msg-user-bg', '--msg-assistant-bg', '--input-bg', '--modal-bg'] as const
+export const OPACITY_COLOR_KEYS = [
+  '--msg-user-bg',
+  '--msg-assistant-bg',
+  '--input-bg',
+  '--modal-bg',
+] as const
 
 /** 皮肤背景图不透明度 token（数值型覆盖，非 rgba 派生） */
 export const SKIN_OPACITY_KEY = '--skin-bg-opacity'
@@ -126,9 +131,13 @@ export function parseColorValue(value: string): { r: number; g: number; b: numbe
   const hex = normalizeHexInput(v)
   if (hex) return hexToRgb(hex)
   // 兼容 getComputedStyle 的 rgb()/rgba()：逗号或空格分隔，alpha 可省略
-  const m = /^rgba?\(\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)(?:\s*[,/]\s*[\d.]+%?)?\s*\)$/i.exec(v)
+  const m =
+    /^rgba?\(\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)(?:\s*[,/]\s*[\d.]+%?)?\s*\)$/i.exec(
+      v,
+    )
   if (m) {
-    const to255 = (s: string) => (s.endsWith('%') ? Math.round((parseFloat(s) / 100) * 255) : parseFloat(s))
+    const to255 = (s: string) =>
+      s.endsWith('%') ? Math.round((parseFloat(s) / 100) * 255) : parseFloat(s)
     const r = to255(m[1])
     const g = to255(m[2])
     const b = to255(m[3])
@@ -142,7 +151,10 @@ export function parseColorValue(value: string): { r: number; g: number; b: numbe
 /** 从 rgb()/rgba() 中解析 alpha（缺省 = 1）；非 rgba 颜色返回 null */
 export function parseColorAlpha(value: string): number | null {
   const v = value.trim()
-  const m = /^rgba?\(\s*[\d.]+%?\s*[, ]\s*[\d.]+%?\s*[, ]\s*[\d.]+%?(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(v)
+  const m =
+    /^rgba?\(\s*[\d.]+%?\s*[, ]\s*[\d.]+%?\s*[, ]\s*[\d.]+%?(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(
+      v,
+    )
   if (!m) return null
   if (m[1] == null) return 1
   const raw = m[1]
@@ -165,8 +177,7 @@ export function stripOpacityColorKeys(overrides: Record<string, string>): Record
 }
 
 export type CustomThemeParseResult =
-  | { ok: true; theme: CustomTheme }
-  | { ok: false; reason: 'invalid-json' | 'invalid-structure' }
+  { ok: true; theme: CustomTheme } | { ok: false; reason: 'invalid-json' | 'invalid-structure' }
 
 /** 解析并校验自定义主题 JSON（name/base/overrides 结构） */
 export function parseCustomThemeJSON(text: string): CustomThemeParseResult {

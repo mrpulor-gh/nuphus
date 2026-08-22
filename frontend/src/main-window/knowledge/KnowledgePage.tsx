@@ -165,9 +165,7 @@ export function KnowledgePage({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {loading && (
-        <div className="page-loading">{t('common.loading')}</div>
-      )}
+      {loading && <div className="page-loading">{t('common.loading')}</div>}
 
       {!loading && items.length === 0 && (
         <div className="page-empty">
@@ -186,17 +184,15 @@ export function KnowledgePage({ onClose }: { onClose: () => void }) {
                   <div className="doc-title">{item.title}</div>
                   <div className="doc-path">{item.rel_path}</div>
                   {item.tags.length > 0 && (
-                        <div className="item-tags">
-                          {item.tags.map(tag => (
-                            <span key={tag} className="item-tag">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
+                    <div className="item-tags">
+                      {item.tags.map(tag => (
+                        <span key={tag} className="item-tag">
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
                   )}
-                  {item.snippet && (
-                    <div className="doc-snippet">{truncate(item.snippet, 200)}</div>
-                  )}
+                  {item.snippet && <div className="doc-snippet">{truncate(item.snippet, 200)}</div>}
                   <div className="doc-time">{formatTime(item.file_mtime, t)}</div>
                 </div>
                 <div className="item-actions">

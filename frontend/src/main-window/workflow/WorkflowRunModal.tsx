@@ -49,7 +49,7 @@ function getLoopInfo(step: WorkflowStep): string | null {
   const loop = d?.loop
   if (!loop) return null
   if (loop.repeat != null) return `重复 ${loop.repeat} 次`
-  if (loop.for_each) return `遍历 ${loop.for_each.as || (loop.for_each.items?.var) || 'item'}`
+  if (loop.for_each) return `遍历 ${loop.for_each.as || loop.for_each.items?.var || 'item'}`
   if (loop.until) return `循环直到条件满足`
   if (loop.max != null) return `最多 ${loop.max} 次`
   return null
@@ -81,7 +81,12 @@ export function WorkflowRunModal({
             </Button>
           </div>
           <div className="wcf-footer-right">
-            <Button variant="primary" size="sm" loading={running} onClick={() => onRun(workflow.id)}>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={running}
+              onClick={() => onRun(workflow.id)}
+            >
               启动
             </Button>
           </div>

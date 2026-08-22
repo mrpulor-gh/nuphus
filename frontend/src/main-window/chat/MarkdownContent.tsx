@@ -14,7 +14,10 @@ interface MarkdownContentProps {
  * ⚠️ Key design: separate code blocks (```) first, then process inline markup in text.
  *    All characters inside code blocks are output as-is, not misinterpreted as Markdown syntax.
  */
-const MarkdownContent = React.memo(function MarkdownContent({ content, onFileClick }: MarkdownContentProps) {
+const MarkdownContent = React.memo(function MarkdownContent({
+  content,
+  onFileClick,
+}: MarkdownContentProps) {
   // Normalize line endings: \r\n / \r → \n, prevent Windows line endings from breaking split(/\n\n+/)
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
@@ -66,7 +69,13 @@ const MarkdownContent = React.memo(function MarkdownContent({ content, onFileCli
 
 // ── 2. Scan line by line to split block-level elements ──
 // Handle \r\n line endings + single-line block element separation
-function MarkdownText({ text, onFileClick }: { text: string; onFileClick?: (path: string) => void }) {
+function MarkdownText({
+  text,
+  onFileClick,
+}: {
+  text: string
+  onFileClick?: (path: string) => void
+}) {
   const lines = text.split('\n')
   const elements: React.ReactNode[] = []
   let current: string[] = []
@@ -74,7 +83,11 @@ function MarkdownText({ text, onFileClick }: { text: string; onFileClick?: (path
   function flush() {
     if (current.length > 0) {
       elements.push(
-        <BlockRenderer key={elements.length} block={current.join('\n')} onFileClick={onFileClick} />,
+        <BlockRenderer
+          key={elements.length}
+          block={current.join('\n')}
+          onFileClick={onFileClick}
+        />,
       )
       current = []
     }
@@ -187,7 +200,13 @@ function NestedList({
           let childList: React.ReactNode = null
           if (item.children.length > 0) {
             const firstChild = item.children.find(l => l.trim().length > 0)?.trim() || ''
-            childList = <NestedList lines={item.children} ordered={/^\d+\.\s/.test(firstChild)} onFileClick={onFileClick} />
+            childList = (
+              <NestedList
+                lines={item.children}
+                ordered={/^\d+\.\s/.test(firstChild)}
+                onFileClick={onFileClick}
+              />
+            )
           }
           return (
             <li key={idx} className="markdown-li markdown-task-item">
@@ -212,7 +231,9 @@ function NestedList({
         if (item.children.length > 0) {
           const firstChild = item.children.find(l => l.trim().length > 0)?.trim() || ''
           const childOrdered = /^\d+\.\s/.test(firstChild)
-          childList = <NestedList lines={item.children} ordered={childOrdered} onFileClick={onFileClick} />
+          childList = (
+            <NestedList lines={item.children} ordered={childOrdered} onFileClick={onFileClick} />
+          )
         }
 
         return (
@@ -230,7 +251,13 @@ function NestedList({
 }
 
 // ── 3. Determine block type and render ──
-function BlockRenderer({ block, onFileClick }: { block: string; onFileClick?: (path: string) => void }) {
+function BlockRenderer({
+  block,
+  onFileClick,
+}: {
+  block: string
+  onFileClick?: (path: string) => void
+}) {
   const lines = block.split('\n')
 
   // ▸ Horizontal rule (single line, at least 3 - * _)
@@ -347,7 +374,8 @@ function TableRenderer({
 //   6. Bare Windows absolute file path (only when onFileClick provided)
 
 /** 白名单扩展名：扩展名后不得紧跟字母/数字/下划线（避免 .md5 之类误判） */
-const FILE_EXT_WHITELIST = /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg)(?![A-Za-z0-9_])/i
+const FILE_EXT_WHITELIST =
+  /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg)(?![A-Za-z0-9_])/i
 /** 盘符开头绝对路径候选：`:` 在排除集中，天然在第二个冒号处截断（分隔相邻路径） */
 const PATH_CANDIDATE_RE = /[A-Za-z]:[\\/][^\r\n<>:"|?*]*/g
 
@@ -412,7 +440,13 @@ function applyFilePaths(
   })
 }
 
-function MarkdownInline({ text, onFileClick }: { text: string; onFileClick?: (path: string) => void }) {
+function MarkdownInline({
+  text,
+  onFileClick,
+}: {
+  text: string
+  onFileClick?: (path: string) => void
+}) {
   const boldRegex = /\*\*(.+?)\*\*/g
   const italicRegex = /(?<!\w)\*(?!\*)(.+?)\*(?!\*)/g
   const delRegex = /~~(.+?)~~/g

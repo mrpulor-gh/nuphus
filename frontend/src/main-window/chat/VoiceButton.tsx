@@ -184,7 +184,11 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
         setPhase(prev => (prev === 'activating' ? 'listening' : prev))
       })
       if (!mounted) {
-        u1(); u2(); u3(); u4(); u5()
+        u1()
+        u2()
+        u3()
+        u4()
+        u5()
         return
       }
       unl = [u1, u2, u3, u4, u5]
@@ -242,32 +246,36 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
   }, [phase])
 
   // ── 命令式句柄：发送前冲刷语音会话（详见 VoiceButtonHandle 注释）──
-  useImperativeHandle(ref, () => ({
-    isActive: () => phaseRef.current !== 'idle',
-    stopAndFlush: () => {
-      if (phaseRef.current === 'idle') return Promise.resolve()
-      if (phaseRef.current === 'listening') {
-        setPhase('finishing')
-        sttStop().catch(() => {})
-      } else if (phaseRef.current === 'activating') {
-        // 尚未开麦，无尾部可冲刷：取消会话，done 到达后放行发送
-        setPhase('idle')
-        sttCancel().catch(() => {})
-      }
-      return new Promise<void>(resolve => {
-        const waiter = () => {
-          clearTimeout(timer)
-          resolve()
+  useImperativeHandle(
+    ref,
+    () => ({
+      isActive: () => phaseRef.current !== 'idle',
+      stopAndFlush: () => {
+        if (phaseRef.current === 'idle') return Promise.resolve()
+        if (phaseRef.current === 'listening') {
+          setPhase('finishing')
+          sttStop().catch(() => {})
+        } else if (phaseRef.current === 'activating') {
+          // 尚未开麦，无尾部可冲刷：取消会话，done 到达后放行发送
+          setPhase('idle')
+          sttCancel().catch(() => {})
         }
-        const timer = setTimeout(() => {
-          doneWaiters.current = doneWaiters.current.filter(w => w !== waiter)
-          resolve()
-        }, 3000)
-        doneWaiters.current.push(waiter)
-      })
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [])
+        return new Promise<void>(resolve => {
+          const waiter = () => {
+            clearTimeout(timer)
+            resolve()
+          }
+          const timer = setTimeout(() => {
+            doneWaiters.current = doneWaiters.current.filter(w => w !== waiter)
+            resolve()
+          }, 3000)
+          doneWaiters.current.push(waiter)
+        })
+      },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }),
+    [],
+  )
 
   // 未探测 / 无麦克风 / 探测失败 → 整体隐藏；模型缺失保留按钮（点击走下载流）
   if (!available && !modelMissing) return null

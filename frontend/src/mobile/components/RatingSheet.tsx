@@ -103,7 +103,12 @@ export default function RatingSheet({ message, token, onClose, onSubmitted }: Pr
         />
         {error && <p className="mobile-rating-error">{error}</p>}
         <div className="mobile-rating-actions">
-          <button type="button" className="mobile-rating-btn is-skip" disabled={busy} onClick={onClose}>
+          <button
+            type="button"
+            className="mobile-rating-btn is-skip"
+            disabled={busy}
+            onClick={onClose}
+          >
             {t('mobile.cancel')}
           </button>
           <button

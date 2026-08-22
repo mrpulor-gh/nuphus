@@ -144,11 +144,14 @@ export default function App() {
   /** 页面内切换到局域网直连通道：更新 REST 基址 + 连接模式。
    *  connMode 变化触发 WS 创建 effect 重建（读 apiBase 已指向局域网）——页面不刷新，
    *  本地消息与执行状态完整保留（刷新会丢执行中气泡、触发重发，绝不在切通道时刷新）。 */
-  const switchToLan = useCallback((lanUrl: string) => {
-    markSwitchTime()
-    setApiBase(lanUrl)
-    setConnMode('lan')
-  }, [markSwitchTime])
+  const switchToLan = useCallback(
+    (lanUrl: string) => {
+      markSwitchTime()
+      setApiBase(lanUrl)
+      setConnMode('lan')
+    },
+    [markSwitchTime],
+  )
 
   /** 页面内回退到中继通道：REST 基址 + 连接模式置 wan。
    *  connMode 变化触发 WS 创建 effect 重建——页面不刷新，本地消息与执行状态完整保留。
@@ -211,9 +214,7 @@ export default function App() {
       }
     }
     // 只拉取最终回复：历史 assistant 不带执行过程（traceItems 清空）
-    return out.map(m =>
-      m.role === 'assistant' ? { ...m, traceItems: [] } : m,
-    )
+    return out.map(m => (m.role === 'assistant' ? { ...m, traceItems: [] } : m))
   }
 
   // ── 历史拉取（首载与每次 WS 就绪后，补齐断线间隙）──
@@ -387,45 +388,58 @@ export default function App() {
 
     // 通道：切到局域网后 apiBase 指向桌面 → WS 直连（页面不刷新，本地状态保留）；
     // 未切（apiBase=null）→ 当前 origin。
-    const client = new MobileWsClient(token, {
-      onEvent: event => {
-        // 后台任务完成通知：执行完成时若页面在后台，发系统通知提醒
-        if (event.type === 'execution_started') {
-          ensureNotificationPermission()
-        }
-        if (event.type === 'execution_completed' && document.visibilityState === 'hidden') {
-          notifyExecutionDone(event.output?.result_message)
-        }
-        dispatch({ type: 'event', event })
+    const client = new MobileWsClient(
+      token,
+      {
+        onEvent: event => {
+          // 后台任务完成通知：执行完成时若页面在后台，发系统通知提醒
+          if (event.type === 'execution_started') {
+            ensureNotificationPermission()
+          }
+          if (event.type === 'execution_completed' && document.visibilityState === 'hidden') {
+            notifyExecutionDone(event.output?.result_message)
+          }
+          dispatch({ type: 'event', event })
+        },
+        onReady: () => {
+          // 订阅激活（含每次重连）：重拉历史补齐间隙
+          void loadHistory(token)
+          // 恢复执行状态：broadcast 事件不为迟到订阅者补发，刷新/断线间隙的
+          // execution_started/completed 会丢失——据此恢复 running，让后续 delta 正常
+          // 累积气泡、完成结果经 loadHistory 落地（修复刷新后回复看不到）。
+          void fetchAgentStatus(token)
+            .then(s => {
+              dispatch({ type: 'sync_running', running: s.running })
+              if (!s.running) {
+                // 已完成/空闲：再拉一次历史兜底——覆盖「loadHistory 后 agent 才完成，
+                // 且 execution_completed 在断线间隙错过」的时序窗口。
+                void loadHistory(token)
+              }
+            })
+            // 不再静默：404（旧后端无此端点）/网络失败时至少留日志，
+            // 否则执行栏永不恢复且无任何线索可查
+            .catch(e => console.warn('[mobile] fetchAgentStatus failed:', e))
+        },
+        onStatus: s => {
+          wsStatusRef.current = s
+          setWsStatus(s)
+        },
       },
-      onReady: () => {
-        // 订阅激活（含每次重连）：重拉历史补齐间隙
-        void loadHistory(token)
-        // 恢复执行状态：broadcast 事件不为迟到订阅者补发，刷新/断线间隙的
-        // execution_started/completed 会丢失——据此恢复 running，让后续 delta 正常
-        // 累积气泡、完成结果经 loadHistory 落地（修复刷新后回复看不到）。
-        void fetchAgentStatus(token)
-          .then(s => {
-            dispatch({ type: 'sync_running', running: s.running })
-            if (!s.running) {
-              // 已完成/空闲：再拉一次历史兜底——覆盖「loadHistory 后 agent 才完成，
-              // 且 execution_completed 在断线间隙错过」的时序窗口。
-              void loadHistory(token)
-            }
-          })
-          // 不再静默：404（旧后端无此端点）/网络失败时至少留日志，
-          // 否则执行栏永不恢复且无任何线索可查
-          .catch(e => console.warn('[mobile] fetchAgentStatus failed:', e))
-      },
-      onStatus: s => {
-        wsStatusRef.current = s
-        setWsStatus(s)
-      },
-    }, getApiBase() ?? undefined)
+      getApiBase() ?? undefined,
+    )
     client.start()
     wsRef.current = client
     return () => client.dispose()
-  }, [phase, token, loadHistory, canChat, connMode, resolveLanUrl, switchToLan, withinSwitchCooldown])
+  }, [
+    phase,
+    token,
+    loadHistory,
+    canChat,
+    connMode,
+    resolveLanUrl,
+    switchToLan,
+    withinSwitchCooldown,
+  ])
 
   // ── LAN 断连自动回退中继：局域网直连模式下 WS 离线（离开 WiFi）持续一段时间
   // 且局域网探测不可达 → 页面内切回中继通道（WS 重建），继续可用。
@@ -485,7 +499,7 @@ export default function App() {
       showToast(t('mobile.lanDisconnectedSwitchWan'))
     }, 2000)
     return () => clearInterval(iv)
-    }, [phase, token, connMode, switchToWan, showToast, withinSwitchCooldown])
+  }, [phase, token, connMode, switchToWan, showToast, withinSwitchCooldown])
 
   // ── WAN → LAN 自动切回：重连 WiFi 后，wan 模式下定时探测局域网直连，可达则页面内切回
   // lan（免费直连，绕过可能半死的中继隧道）。重连 WiFi 白屏的根治：此前 connMode 只在
@@ -534,7 +548,16 @@ export default function App() {
       cancelled = true
       clearInterval(iv)
     }
-  }, [phase, token, connMode, resolveLanUrl, switchToLan, showToast, withinSwitchCooldown, navigateToLanProbe])
+  }, [
+    phase,
+    token,
+    connMode,
+    resolveLanUrl,
+    switchToLan,
+    showToast,
+    withinSwitchCooldown,
+    navigateToLanProbe,
+  ])
 
   // ── 前台恢复探测：切后台会静默挂起 TCP（iOS/微信 WebView），回前台必须主动体检 ──
   useEffect(() => {
@@ -710,95 +733,94 @@ export default function App() {
   return (
     <>
       <ChatScreen
-      messages={state.messages}
-      activity={state.activity}
-      wsStatus={wsStatus}
-      historyError={historyError}
-      onRetryHistory={() => {
-        // 手动重试：取消未决自动重试，立即重拉（重置退避）
-        if (historyRetryTimerRef.current) {
-          clearTimeout(historyRetryTimerRef.current)
-          historyRetryTimerRef.current = null
+        messages={state.messages}
+        activity={state.activity}
+        wsStatus={wsStatus}
+        historyError={historyError}
+        onRetryHistory={() => {
+          // 手动重试：取消未决自动重试，立即重拉（重置退避）
+          if (historyRetryTimerRef.current) {
+            clearTimeout(historyRetryTimerRef.current)
+            historyRetryTimerRef.current = null
+          }
+          historyRetryAttemptRef.current = 0
+          void loadHistory(token ?? '')
+        }}
+        onReloadHistory={reloadHistory}
+        pendingConfirm={state.pendingConfirm}
+        pendingRefine={state.pendingRefine}
+        pendingUserInput={state.pendingUserInput}
+        refining={state.refining}
+        token={token ?? ''}
+        assistantName={state.identity?.assistantName}
+        model={state.model}
+        tokenUsage={state.tokenUsage}
+        workflowRun={state.workflowRun}
+        wfControlBusy={wfControlBusy}
+        onWorkflowPause={() =>
+          void runWorkflowControl(wfId => wfPause(token ?? '', wfId), t('mobile.wfPausedToast'))
         }
-        historyRetryAttemptRef.current = 0
-        void loadHistory(token ?? '')
-      }}
-      onReloadHistory={reloadHistory}
-      pendingConfirm={state.pendingConfirm}
-      pendingRefine={state.pendingRefine}
-      pendingUserInput={state.pendingUserInput}
-      refining={state.refining}
-      token={token ?? ''}
-      assistantName={state.identity?.assistantName}
-      model={state.model}
-      tokenUsage={state.tokenUsage}
-      workflowRun={state.workflowRun}
-      wfControlBusy={wfControlBusy}
-      onWorkflowPause={() =>
-        void runWorkflowControl(wfId => wfPause(token ?? '', wfId), t('mobile.wfPausedToast'))
-      }
-      onWorkflowResume={() =>
-        void runWorkflowControl(wfId => wfResume(token ?? '', wfId), t('mobile.wfResumedToast'))
-      }
-      onWorkflowTerminate={() =>
-        void runWorkflowControl(wfId => wfStop(token ?? '', wfId), t('mobile.wfStoppedToast'))
-      }
-      onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
-      onStopExecution={() => {
-        // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
-        void stopExecution(token ?? '')
-          .then(res => {
-            if (res.status === 'stopping' || res.status === 'terminated') {
-              showToast(t('mobile.statusStopped'))
-            }
-          })
-          .catch(() => showToast(t('mobile.stopFailed')))
-      }}
-      onNewChat={() => {
-        // 新会话：清空前端消息（历史仍在后端，刷新可恢复）
-        dispatch({ type: 'new_chat' })
-        showToast(t('mobile.newChatStarted'))
-      }}
-      onDisconnect={() => {
-        // 断开连接：清除 token + WS，回到配对页
-        clearToken()
-        wsRef.current?.dispose()
-        setAuthInvalid(false)
-        setPhase('guide')
-      }}
-      onSend={handleSend}
-      onRateMessage={setRatingMsg}
-      onUserInputResolved={(submitted) => {
-        dispatch({ type: 'user_input_resolved' })
-        showToast(submitted ? t('mobile.submitted') : t('mobile.cancelled'))
-      }}
-      onModelChanged={(m) => {
-        // 模型卡切换成功后立即同步 store（不等下次 session_info 事件）
-        dispatch({ type: 'set_model', model: m })
-      }}
-      onConfirmResolved={(approved) => {
-        dispatch({ type: 'confirm_resolved' })
-        // 安全决策反馈：让用户明确知道点击已生效（已允许/已拒绝）
-        showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
-      }}
-      onRefineConfirm={() => {
-        dispatch({ type: 'refine_resolve' })
-        dispatch({ type: 'refine_state', refining: true })
-        // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
-        triggerRefine(token ?? '')
-          .catch(() => {
+        onWorkflowResume={() =>
+          void runWorkflowControl(wfId => wfResume(token ?? '', wfId), t('mobile.wfResumedToast'))
+        }
+        onWorkflowTerminate={() =>
+          void runWorkflowControl(wfId => wfStop(token ?? '', wfId), t('mobile.wfStoppedToast'))
+        }
+        onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
+        onStopExecution={() => {
+          // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
+          void stopExecution(token ?? '')
+            .then(res => {
+              if (res.status === 'stopping' || res.status === 'terminated') {
+                showToast(t('mobile.statusStopped'))
+              }
+            })
+            .catch(() => showToast(t('mobile.stopFailed')))
+        }}
+        onNewChat={() => {
+          // 新会话：清空前端消息（历史仍在后端，刷新可恢复）
+          dispatch({ type: 'new_chat' })
+          showToast(t('mobile.newChatStarted'))
+        }}
+        onDisconnect={() => {
+          // 断开连接：清除 token + WS，回到配对页
+          clearToken()
+          wsRef.current?.dispose()
+          setAuthInvalid(false)
+          setPhase('guide')
+        }}
+        onSend={handleSend}
+        onRateMessage={setRatingMsg}
+        onUserInputResolved={submitted => {
+          dispatch({ type: 'user_input_resolved' })
+          showToast(submitted ? t('mobile.submitted') : t('mobile.cancelled'))
+        }}
+        onModelChanged={m => {
+          // 模型卡切换成功后立即同步 store（不等下次 session_info 事件）
+          dispatch({ type: 'set_model', model: m })
+        }}
+        onConfirmResolved={approved => {
+          dispatch({ type: 'confirm_resolved' })
+          // 安全决策反馈：让用户明确知道点击已生效（已允许/已拒绝）
+          showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
+        }}
+        onRefineConfirm={() => {
+          dispatch({ type: 'refine_resolve' })
+          dispatch({ type: 'refine_state', refining: true })
+          // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
+          triggerRefine(token ?? '').catch(() => {
             dispatch({ type: 'refine_state', refining: false })
             showToast(t('mobile.refineFailed'))
           })
-      }}
-      onRefineSkip={() => {
-        dispatch({ type: 'refine_resolve' })
-        showToast(t('mobile.refineSkipped'))
-        // 通知后端广播 RefineSkipped——桌面端弹窗同步关闭（双端状态一致）
-        refineSkip(token ?? '').catch(() => {})
-      }}
-      toast={toast}
-      onToast={showToast}
+        }}
+        onRefineSkip={() => {
+          dispatch({ type: 'refine_resolve' })
+          showToast(t('mobile.refineSkipped'))
+          // 通知后端广播 RefineSkipped——桌面端弹窗同步关闭（双端状态一致）
+          refineSkip(token ?? '').catch(() => {})
+        }}
+        toast={toast}
+        onToast={showToast}
       />
       {ratingMsg && (
         <RatingSheet

@@ -9,106 +9,213 @@
 
 /* ── 淡入/滑入（状态反馈类）── */
 @keyframes fadeIn {
-  0% { opacity: 0; }
-  to { opacity: 1; }
+  0% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  0% { opacity: 0; transform: translateY(24px) scale(.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  0% {
+    opacity: 0;
+    transform: translateY(24px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* ── 输入呼吸（聚焦状态反馈）── */
 @keyframes inputBreathing {
-  0%, to { box-shadow: 0 0 0 2px rgba(var(--accent-rgb), .15); }
-  50% { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), .08); }
+  0%,
+  to {
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0.08);
+  }
 }
 
 /* ── 光标闪烁 ── */
 @keyframes blink {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* ── 思考中呼吸光晕（执行状态反馈）── */
 @keyframes breathingGlow {
-  0%, to { box-shadow: 0 0 16px rgba(var(--accent-rgb), .08), var(--thinking-shadow); }
-  50% { box-shadow: 0 0 28px rgba(var(--accent-rgb), .18), var(--thinking-shadow); }
+  0%,
+  to {
+    box-shadow:
+      0 0 16px rgba(var(--accent-rgb), 0.08),
+      var(--thinking-shadow);
+  }
+  50% {
+    box-shadow:
+      0 0 28px rgba(var(--accent-rgb), 0.18),
+      var(--thinking-shadow);
+  }
 }
 
 /* ── 加载旋转 ── */
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── 中央面板弹入（模态进入）── */
 @keyframes centerPanelIn {
-  0% { opacity: 0; transform: scale(.92); }
-  to { opacity: 1; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ── 进度条不确定态（状态反馈）── */
 @keyframes barIndeterminate {
-  0% { width: 20%; opacity: .4; }
-  50% { width: 70%; opacity: 1; }
-  to { width: 20%; opacity: .4; }
+  0% {
+    width: 20%;
+    opacity: 0.4;
+  }
+  50% {
+    width: 70%;
+    opacity: 1;
+  }
+  to {
+    width: 20%;
+    opacity: 0.4;
+  }
 }
 
 /* ── 思考脉冲（执行状态反馈）── */
 @keyframes thinkPulse {
-  0%, to { transform: scale(.92); opacity: .7; }
-  50% { transform: scale(1.08); opacity: 1; }
+  0%,
+  to {
+    transform: scale(0.92);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
 }
 
 /* ── 工作脉冲（WorkAgent 状态；var(--warning) 硬编码橙色，待 W7 token 化）── */
 @keyframes workPulse {
-  0%, to { transform: scale(1); }
-  30% { transform: scale(1.18); color: var(--warning); }
-  60% { transform: scale(.95); }
+  0%,
+  to {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.18);
+    color: var(--warning);
+  }
+  60% {
+    transform: scale(0.95);
+  }
 }
 
 /* ── 成功弹跳（结果反馈）── */
 @keyframes successBounce {
-  0% { transform: scale(.5); opacity: 0; }
-  40% { transform: scale(1.3); }
-  to { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.3);
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 /* ── 错误抖动（结果反馈）── */
 @keyframes errorShake {
-  0%, to { transform: translate(0); }
-  20% { transform: translate(-2px) rotate(-3deg); }
-  40% { transform: translate(2px) rotate(3deg); }
-  60% { transform: translate(-1px); }
-  80% { transform: translate(1px); }
+  0%,
+  to {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-2px) rotate(-3deg);
+  }
+  40% {
+    transform: translate(2px) rotate(3deg);
+  }
+  60% {
+    transform: translate(-1px);
+  }
+  80% {
+    transform: translate(1px);
+  }
 }
 
 /* ── 涟漪扩散（点击反馈）── */
 @keyframes rippleOut {
-  0% { opacity: .35; r: 3; }
-  to { opacity: 0; r: 9; }
+  0% {
+    opacity: 0.35;
+    r: 3;
+  }
+  to {
+    opacity: 0;
+    r: 9;
+  }
 }
 
 /* ── 勾选描绘（成功确认）── */
 @keyframes checkDraw {
-  to { stroke-dashoffset: 0; }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 /* ── 闪光（点缀反馈）── */
 @keyframes rayFlash {
-  0% { opacity: 0; transform: scale(0); }
-  50% { opacity: 1; transform: scale(1.3); }
-  to { opacity: 0; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.3);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1);
+  }
 }
 
 /* ── 模态弹入（弹性进入；W2 起模态统一用 compactModalIn，此动画逐步退场）── */
 @keyframes modalPopIn {
-  0% { opacity: 0; transform: translateY(16px) scale(.92); }
-  60% { opacity: 1; transform: translateY(-2px) scale(1.01); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* ── 遮罩淡入 ── */
 @keyframes overlayFadeIn {
-  0% { opacity: 0; }
-  to { opacity: 1; }
+  0% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }

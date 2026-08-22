@@ -6,7 +6,10 @@
 import { memo } from 'react'
 import type { NodeProps, Node } from '@xyflow/react'
 
-export type LaneFrameFlow = Node<{ title: string; width: number; height: number; empty?: boolean }, 'lane'>
+export type LaneFrameFlow = Node<
+  { title: string; width: number; height: number; empty?: boolean },
+  'lane'
+>
 
 export const LaneFrame = memo(function LaneFrame({ data }: NodeProps<LaneFrameFlow>) {
   return (

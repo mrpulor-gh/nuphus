@@ -49,12 +49,7 @@ export function PluginComingSoon() {
       </div>
 
       {/* ── L3 行动区 ── */}
-      <a
-        className="plugin-coming-soon-github"
-        href={GITHUB_URL}
-        target="_blank"
-        rel="noreferrer"
-      >
+      <a className="plugin-coming-soon-github" href={GITHUB_URL} target="_blank" rel="noreferrer">
         <IconExternalLink size={14} />
         <span>{t('plugins.comingSoonGithub')}</span>
       </a>

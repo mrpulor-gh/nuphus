@@ -20,32 +20,32 @@
    ═════════════════════════════════════════════ */
 :root {
   /* ── ① 语义层：表面（背景层级，窗口 → 面板 → 悬浮 → 凹陷）── */
-  --surface-0: #0a0a10;        /* 窗口基底 */
-  --surface-1: #12121a;        /* 面板/卡片底 */
-  --surface-2: #1a1a24;        /* 悬浮层 */
-  --surface-3: #22222e;        /* 更高悬浮 */
-  --surface-hover: #2e2e3c;    /* 悬停 */
-  --surface-active: #383848;   /* 激活/按下 */
-  --surface-inset: #161620;    /* 凹陷（输入框/代码块） */
+  --surface-0: #0a0a10; /* 窗口基底 */
+  --surface-1: #12121a; /* 面板/卡片底 */
+  --surface-2: #1a1a24; /* 悬浮层 */
+  --surface-3: #22222e; /* 更高悬浮 */
+  --surface-hover: #2e2e3c; /* 悬停 */
+  --surface-active: #383848; /* 激活/按下 */
+  --surface-inset: #161620; /* 凹陷（输入框/代码块） */
 
   /* ── ① 语义层：前景（文字层级，1 最强 → 5 最弱）── */
-  --fg-1: #f5f5fa;             /* 主文本/标题 */
-  --fg-2: #d0d0dd;             /* 次文本 */
-  --fg-3: #a0a0b0;             /* 弱文本/说明 */
-  --fg-4: #707080;             /* 更弱（时间戳/状态栏） */
-  --fg-5: #505060;             /* 占位/禁用 */
+  --fg-1: #f5f5fa; /* 主文本/标题 */
+  --fg-2: #d0d0dd; /* 次文本 */
+  --fg-3: #a0a0b0; /* 弱文本/说明 */
+  --fg-4: #707080; /* 更弱（时间戳/状态栏） */
+  --fg-5: #505060; /* 占位/禁用 */
 
   /* ── ① 语义层：线条 ── */
-  --line-1: rgba(255, 255, 255, .08);   /* 分隔线 */
-  --line-2: rgba(255, 255, 255, .1);    /* 常规边框 */
-  --line-3: rgba(255, 255, 255, .15);   /* 强边框 */
+  --line-1: rgba(255, 255, 255, 0.08); /* 分隔线 */
+  --line-2: rgba(255, 255, 255, 0.1); /* 常规边框 */
+  --line-3: rgba(255, 255, 255, 0.15); /* 强边框 */
 
   /* ── ① 语义层：Accent（品牌蓝，仅用于主操作/聚焦/激活态）── */
   --accent: #3b82f6;
   --accent-rgb: 59, 130, 246;
   --accent-hover: #60a5fa;
-  --accent-dim: rgba(59, 130, 246, .12);
-  --accent-glow: rgba(59, 130, 246, .25);
+  --accent-dim: rgba(59, 130, 246, 0.12);
+  --accent-glow: rgba(59, 130, 246, 0.25);
   --on-accent: #ffffff;
 
   /* ── ① 语义层：代码语法高亮 ── */
@@ -92,14 +92,14 @@
   --violet-soft: #a78bfa;
 
   /* ── ① 语义层：字阶（唯一字号来源）── */
-  --fz-xs: 11px;               /* 微标签/徽章 */
-  --fz-sm: 12px;               /* 辅助说明 */
-  --fz-md: 13px;               /* 控件/表单正文 */
-  --fz-lg: 14px;               /* 正文 */
-  --fz-xl: 16px;               /* 分区标题 */
-  --fz-2xl: 20px;              /* 页面/模态标题 */
-  --fz-3xl: 28px;              /* 展示级 */
-  --fz-mono: 13px;             /* 等宽正文 */
+  --fz-xs: 11px; /* 微标签/徽章 */
+  --fz-sm: 12px; /* 辅助说明 */
+  --fz-md: 13px; /* 控件/表单正文 */
+  --fz-lg: 14px; /* 正文 */
+  --fz-xl: 16px; /* 分区标题 */
+  --fz-2xl: 20px; /* 页面/模态标题 */
+  --fz-3xl: 28px; /* 展示级 */
+  --fz-mono: 13px; /* 等宽正文 */
   --leading-tight: 1.3;
   --leading-normal: 1.5;
 
@@ -120,45 +120,51 @@
   --space-8: 32px;
 
   /* ── ① 语义层：动效（时长 + 缓动）── */
-  --dur-fast: .12s;
-  --dur-med: .2s;
-  --dur-slow: .32s;
-  --ease-out: cubic-bezier(.16, 1, .3, 1);
-  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --dur-fast: 0.12s;
+  --dur-med: 0.2s;
+  --dur-slow: 0.32s;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   /* ── ① 语义层：组件尺寸 ── */
-  --row-h: 40px;               /* 标准表单行高 */
-  --control-h: 32px;           /* 标准控件高 */
+  --row-h: 40px; /* 标准表单行高 */
+  --control-h: 32px; /* 标准控件高 */
 
   /* ── ② 基础层：阴影 ── */
-  --shadow-surface: 0 0 0 1px rgba(255, 255, 255, .06), 0 1px 3px rgba(0, 0, 0, .4);
-  --shadow-elevated: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 16px rgba(0, 0, 0, .5), 0 0 0 1px rgba(0, 0, 0, .2) inset;
-  --shadow-modal: 0 0 0 1px rgba(255, 255, 255, .1), 0 8px 32px rgba(0, 0, 0, .6), 0 0 0 1px rgba(0, 0, 0, .3) inset;
-  --shadow-inset: 0 0 16px rgba(0, 0, 0, .4) inset;
-  --shadow-focus: 0 0 0 3px rgba(59, 130, 246, .12);
-  --thinking-shadow: 0 4px 32px rgba(0, 0, 0, .4);
+  --shadow-surface: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-elevated:
+    0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+  --shadow-modal:
+    0 0 0 1px rgba(255, 255, 255, 0.1), 0 8px 32px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(0, 0, 0, 0.3) inset;
+  --shadow-inset: 0 0 16px rgba(0, 0, 0, 0.4) inset;
+  --shadow-focus: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  --thinking-shadow: 0 4px 32px rgba(0, 0, 0, 0.4);
 
   /* ── ② 基础层：玻璃拟态（仅弹窗/浮层使用）── */
-  --glass-0: rgba(255, 255, 255, .03);
-  --glass-1: rgba(255, 255, 255, .05);
-  --glass-2: rgba(255, 255, 255, .06);
-  --glass-3: rgba(255, 255, 255, .07);
-  --glass-4: rgba(255, 255, 255, .1);
-  --glass-bg: rgba(14, 14, 20, .9);
-  --glass-bg-soft: rgba(14, 14, 22, .6);
-  --modal-bg: rgba(14, 14, 22, .8);      /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
-  --overlay-bg: rgba(0, 0, 0, .55);
+  --glass-0: rgba(255, 255, 255, 0.03);
+  --glass-1: rgba(255, 255, 255, 0.05);
+  --glass-2: rgba(255, 255, 255, 0.06);
+  --glass-3: rgba(255, 255, 255, 0.07);
+  --glass-4: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(14, 14, 20, 0.9);
+  --glass-bg-soft: rgba(14, 14, 22, 0.6);
+  --modal-bg: rgba(14, 14, 22, 0.8); /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
+  --overlay-bg: rgba(0, 0, 0, 0.55);
 
   /* ── ② 基础层：字体族 / 字重 / 字距 ── */
-  --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  --font-ui:
+    system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
   --fw-normal: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
-  --ls-tight: -.56px;
+  --ls-tight: -0.56px;
   --ls-normal: 0;
-  --ls-wide: .2px;
+  --ls-wide: 0.2px;
 
   /* ── ② 基础层：框架尺寸 ── */
   --nav-width: 56px;
@@ -168,8 +174,8 @@
   /* ── ② 基础层：业务专用色（消息气泡/代码/滚动条）── */
   --msg-user-bg: #152238;
   --msg-assistant-bg: #12141e;
-  --input-bg: #12141e;         /* 输入框底（新增语义 token，= --bg-secondary 现值） */
-  --skin-bg-opacity: 0.35;     /* 皮肤背景图默认不透明度（三主题共用，仅此处定义） */
+  --input-bg: #12141e; /* 输入框底（新增语义 token，= --bg-secondary 现值） */
+  --skin-bg-opacity: 0.35; /* 皮肤背景图默认不透明度（三主题共用，仅此处定义） */
   --code-bg: #0d0f1a;
   --scrollbar-thumb: #1e293b;
   --text-secondary-rgb: 148, 163, 184;
@@ -214,7 +220,7 @@
   --border-divider: 1px solid var(--line-1);
   --border-glow: 1px solid var(--line-2);
   --border-standard: 1px solid var(--line-3);
-  --border-accent: 1px solid rgba(var(--accent-rgb), .5);
+  --border-accent: 1px solid rgba(var(--accent-rgb), 0.5);
   --border-focus: var(--accent);
 
   /* 旧字阶 → 新字阶（无对应的保留字面值） */
@@ -243,16 +249,16 @@
   --space-lg: var(--space-4);
 
   /* 旧过渡（保留字面缓动关键字，新代码用 --dur-* + --ease-*） */
-  --transition-fast: .12s ease-out;
-  --transition-normal: .2s ease-out;
-  --transition-slow: .3s ease-out;
+  --transition-fast: 0.12s ease-out;
+  --transition-normal: 0.2s ease-out;
+  --transition-slow: 0.3s ease-out;
 }
 
 /* ═════════════════════════════════════════════
    亮色主题
    设计意向：宣纸/白瓷底 + 墨色文字阶梯 + 墨黑笔触 accent
    ═════════════════════════════════════════════ */
-[data-theme=light] {
+[data-theme='light'] {
   /* ── 语义层：表面（白瓷阶梯）── */
   --surface-0: #e8e8ea;
   --surface-1: #f4f4f6;
@@ -270,16 +276,16 @@
   --fg-5: #bbbbbb;
 
   /* ── 语义层：线条（极细烟灰，保持克制）── */
-  --line-1: rgba(0, 0, 0, .04);
-  --line-2: rgba(0, 0, 0, .03);
-  --line-3: rgba(0, 0, 0, .06);
+  --line-1: rgba(0, 0, 0, 0.04);
+  --line-2: rgba(0, 0, 0, 0.03);
+  --line-3: rgba(0, 0, 0, 0.06);
 
   /* ── 语义层：Accent（墨黑笔触）── */
   --accent: #111111;
   --accent-rgb: 17, 17, 17;
   --accent-hover: #333333;
-  --accent-dim: rgba(17, 17, 17, .04);
-  --accent-glow: rgba(17, 17, 17, .08);
+  --accent-dim: rgba(17, 17, 17, 0.04);
+  --accent-glow: rgba(17, 17, 17, 0.08);
   --on-accent: #ffffff;
 
   /* ── 语义层：代码语法高亮 ── */
@@ -306,36 +312,36 @@
   --term-args-color: #333;
 
   /* ── 语义层：状态色（降饱和融入白底）── */
-  --success: #2e7d32;          /* 竹翠绿 */
+  --success: #2e7d32; /* 竹翠绿 */
   --success-rgb: 46, 125, 50;
-  --error: #c62828;            /* 赭石红 */
+  --error: #c62828; /* 赭石红 */
   --error-rgb: 198, 40, 40;
-  --warning: #ef6c00;          /* 琥珀橙 */
+  --warning: #ef6c00; /* 琥珀橙 */
   --warning-rgb: 239, 108, 0;
 
   /* ── 基础层：阴影（宣纸边缘的微弱折痕）── */
-  --shadow-surface: 0 1px 2px rgba(0, 0, 0, .02);
-  --shadow-elevated: 0 4px 20px rgba(0, 0, 0, .04), 0 0 0 1px rgba(0, 0, 0, .01) inset;
-  --shadow-modal: 0 12px 40px rgba(0, 0, 0, .06);
-  --shadow-inset: 0 0 12px rgba(0, 0, 0, .02) inset;
-  --shadow-focus: 0 0 0 3px rgba(17, 17, 17, .06);
-  --thinking-shadow: 0 4px 24px rgba(0, 0, 0, .04);
+  --shadow-surface: 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-elevated: 0 4px 20px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.01) inset;
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.06);
+  --shadow-inset: 0 0 12px rgba(0, 0, 0, 0.02) inset;
+  --shadow-focus: 0 0 0 3px rgba(17, 17, 17, 0.06);
+  --thinking-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
 
   /* ── 基础层：玻璃拟态 ── */
-  --glass-0: rgba(0, 0, 0, .01);
-  --glass-1: rgba(0, 0, 0, .02);
-  --glass-2: rgba(0, 0, 0, .03);
-  --glass-3: rgba(0, 0, 0, .04);
-  --glass-4: rgba(0, 0, 0, .05);
-  --glass-bg: rgba(251, 251, 252, .85);
-  --glass-bg-soft: rgba(251, 251, 252, .6);
-  --modal-bg: rgba(251, 251, 252, .8);   /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
-  --overlay-bg: rgba(255, 255, 255, .6);
+  --glass-0: rgba(0, 0, 0, 0.01);
+  --glass-1: rgba(0, 0, 0, 0.02);
+  --glass-2: rgba(0, 0, 0, 0.03);
+  --glass-3: rgba(0, 0, 0, 0.04);
+  --glass-4: rgba(0, 0, 0, 0.05);
+  --glass-bg: rgba(251, 251, 252, 0.85);
+  --glass-bg-soft: rgba(251, 251, 252, 0.6);
+  --modal-bg: rgba(251, 251, 252, 0.8); /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
+  --overlay-bg: rgba(255, 255, 255, 0.6);
 
   /* ── 基础层：业务专用色 ── */
-  --msg-user-bg: #f0f0f2;      /* 用户：浅灰气泡 */
+  --msg-user-bg: #f0f0f2; /* 用户：浅灰气泡 */
   --msg-assistant-bg: #ffffff; /* 智能体：白纸卡片 */
-  --input-bg: #f6f6f7;         /* 输入框底（新增语义 token，= --bg-secondary 现值） */
+  --input-bg: #f6f6f7; /* 输入框底（新增语义 token，= --bg-secondary 现值） */
   --code-bg: #f5f5f6;
   --scrollbar-thumb: #d4d4d6;
 
@@ -358,7 +364,7 @@
 
   /* 别名层特例：--border-accent 语义为 rgba(accent,.5)，
      亮色原值为 rgba(0,0,0,.12)，解析值不同，必须保留此覆盖 */
-  --border-accent: 1px solid rgba(0, 0, 0, .12);
+  --border-accent: 1px solid rgba(0, 0, 0, 0.12);
 }
 
 /* ═════════════════════════════════════════════
@@ -366,34 +372,34 @@
    背景：无色深渊，纯黑阶梯。文字：高亮冷白，信息即光源。
    Accent 仅点缀交互元素，不污染背景与文字。
    ═════════════════════════════════════════════ */
-[data-theme="tech"] {
+[data-theme='tech'] {
   /* ── 表面 — 纯黑阶梯，极低色调 ── */
-  --surface-0: #020408;          /* 深渊基底，几乎纯黑 */
-  --surface-1: #060810;          /* 微亮面板 */
-  --surface-2: #0a0e18;          /* 悬浮层 */
-  --surface-3: #0e1220;          /* 更高悬浮 */
-  --surface-hover: #141828;      /* 悬停 */
-  --surface-active: #1a1e30;     /* 激活 */
-  --surface-inset: #000206;      /* 凹陷，比基底更深 */
+  --surface-0: #020408; /* 深渊基底，几乎纯黑 */
+  --surface-1: #060810; /* 微亮面板 */
+  --surface-2: #0a0e18; /* 悬浮层 */
+  --surface-3: #0e1220; /* 更高悬浮 */
+  --surface-hover: #141828; /* 悬停 */
+  --surface-active: #1a1e30; /* 激活 */
+  --surface-inset: #000206; /* 凹陷，比基底更深 */
 
   /* ── 前景 — 高对比冷白，纯明度阶梯 ── */
-  --fg-1: #eeeff4;               /* 主文本，高亮 */
-  --fg-2: #c4c8d4;               /* 次文本 */
-  --fg-3: #888c98;               /* 三级 */
-  --fg-4: #585c68;               /* 弱文本 */
-  --fg-5: #343840;               /* 禁用/占位 */
+  --fg-1: #eeeff4; /* 主文本，高亮 */
+  --fg-2: #c4c8d4; /* 次文本 */
+  --fg-3: #888c98; /* 三级 */
+  --fg-4: #585c68; /* 弱文本 */
+  --fg-5: #343840; /* 禁用/占位 */
 
   /* ── 线条 — 无色微光，不偏色 ── */
-  --line-1: rgba(255, 255, 255, .06);
-  --line-2: rgba(255, 255, 255, .04);
-  --line-3: rgba(255, 255, 255, .10);
+  --line-1: rgba(255, 255, 255, 0.06);
+  --line-2: rgba(255, 255, 255, 0.04);
+  --line-3: rgba(255, 255, 255, 0.1);
 
   /* ── Accent — 蓝紫，仅用于主操作/聚焦 ── */
   --accent: #7c6ff7;
   --accent-rgb: 124, 111, 247;
   --accent-hover: #9b8ff7;
-  --accent-dim: rgba(124, 111, 247, .14);
-  --accent-glow: rgba(124, 111, 247, .26);
+  --accent-dim: rgba(124, 111, 247, 0.14);
+  --accent-glow: rgba(124, 111, 247, 0.26);
   --on-accent: #ffffff;
 
   /* ── 语义层：代码语法高亮 ── */
@@ -428,26 +434,23 @@
   --warning-rgb: 251, 191, 36;
 
   /* ── 阴影 — 无色黑底，不偏色 ── */
-  --shadow-surface: 0 0 0 1px rgba(255, 255, 255, .04);
-  --shadow-elevated: 0 4px 24px rgba(0, 0, 0, .85),
-                     0 0 0 1px rgba(255, 255, 255, .06);
-  --shadow-modal: 0 12px 48px rgba(0, 0, 0, .92),
-                  0 0 0 1px rgba(255, 255, 255, .08);
-  --shadow-inset: 0 0 24px rgba(0, 0, 0, .6) inset;
-  --shadow-focus: 0 0 0 3px rgba(124, 111, 247, .28),
-                  0 0 8px rgba(124, 111, 247, .14);
-  --thinking-shadow: 0 4px 28px rgba(0, 0, 0, .7);
+  --shadow-surface: 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-elevated: 0 4px 24px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-modal: 0 12px 48px rgba(0, 0, 0, 0.92), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-inset: 0 0 24px rgba(0, 0, 0, 0.6) inset;
+  --shadow-focus: 0 0 0 3px rgba(124, 111, 247, 0.28), 0 0 8px rgba(124, 111, 247, 0.14);
+  --thinking-shadow: 0 4px 28px rgba(0, 0, 0, 0.7);
 
   /* ── 玻璃 — 无色薄雾 ── */
-  --glass-0: rgba(255, 255, 255, .02);
-  --glass-1: rgba(255, 255, 255, .03);
-  --glass-2: rgba(255, 255, 255, .05);
-  --glass-3: rgba(255, 255, 255, .08);
-  --glass-4: rgba(255, 255, 255, .12);
-  --glass-bg: rgba(6, 8, 16, .90);
-  --glass-bg-soft: rgba(6, 8, 16, .58);
-  --modal-bg: rgba(6, 8, 16, .8);        /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
-  --overlay-bg: rgba(2, 4, 8, .85);
+  --glass-0: rgba(255, 255, 255, 0.02);
+  --glass-1: rgba(255, 255, 255, 0.03);
+  --glass-2: rgba(255, 255, 255, 0.05);
+  --glass-3: rgba(255, 255, 255, 0.08);
+  --glass-4: rgba(255, 255, 255, 0.12);
+  --glass-bg: rgba(6, 8, 16, 0.9);
+  --glass-bg-soft: rgba(6, 8, 16, 0.58);
+  --modal-bg: rgba(6, 8, 16, 0.8); /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
+  --overlay-bg: rgba(2, 4, 8, 0.85);
 
   /* ── 别名层 ── */
   --bg-primary: #060810;
@@ -462,10 +465,10 @@
   --text-secondary: #c4c8d4;
   --text-tertiary: #888c98;
   --text-muted: #585c68;
-  --border-primary: rgba(255, 255, 255, .06);
-  --border: rgba(255, 255, 255, .04);
-  --border-secondary: rgba(255, 255, 255, .03);
-  --border-accent: 1px solid rgba(124, 111, 247, .35);
+  --border-primary: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.04);
+  --border-secondary: rgba(255, 255, 255, 0.03);
+  --border-accent: 1px solid rgba(124, 111, 247, 0.35);
 
   /* ── 辅助紫（暗色主题覆盖）── */
   --violet: #a78bfa;
@@ -474,7 +477,7 @@
   /* ── 业务专用色 ── */
   --msg-user-bg: #0c1020;
   --msg-assistant-bg: #060810;
-  --input-bg: #080a14;         /* 输入框底（新增语义 token，= --bg-secondary 现值） */
+  --input-bg: #080a14; /* 输入框底（新增语义 token，= --bg-secondary 现值） */
   --code-bg: #010306;
   --scrollbar-thumb: #1a1e30;
   --text-secondary-rgb: 196, 200, 212;

@@ -115,8 +115,8 @@ async fn capture_fullscreen_and_crop(hwnd: isize) -> Result<Frame> {
 
         let x = win.x().unwrap_or(0).max(0) as u32;
         let y = win.y().unwrap_or(0).max(0) as u32;
-        let w = win.width().unwrap_or(0) as u32;
-        let h = win.height().unwrap_or(0) as u32;
+        let w = win.width().unwrap_or(0);
+        let h = win.height().unwrap_or(0);
 
         frame
             .crop(x, y, w, h)

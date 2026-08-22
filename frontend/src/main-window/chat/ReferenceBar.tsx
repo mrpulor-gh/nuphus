@@ -1,5 +1,12 @@
 import type { ChatReference, PendingImage, PendingFile } from '../../core/types'
-import { IconImage, IconFile, IconCamera, IconWrench, IconBrain, IconWorkflow } from '../../ui/Icons'
+import {
+  IconImage,
+  IconFile,
+  IconCamera,
+  IconWrench,
+  IconBrain,
+  IconWorkflow,
+} from '../../ui/Icons'
 import '../../styles/ref-bar.css'
 
 interface ReferenceBarProps {
@@ -77,9 +84,7 @@ export default function ReferenceBar({
               <span className="ref-img-pill-icon" aria-hidden="true">
                 <IconImage size={14} />
               </span>
-              <span className="ref-img-pill-name">
-                {truncateName(img.name)}
-              </span>
+              <span className="ref-img-pill-name">{truncateName(img.name)}</span>
               <button
                 type="button"
                 className="ref-img-pill-remove"
@@ -100,9 +105,7 @@ export default function ReferenceBar({
               <span className="ref-img-pill-icon" aria-hidden="true">
                 <IconFile size={14} />
               </span>
-              <span className="ref-img-pill-name">
-                {truncateName(f.name)}
-              </span>
+              <span className="ref-img-pill-name">{truncateName(f.name)}</span>
               <button
                 type="button"
                 className="ref-img-pill-remove"

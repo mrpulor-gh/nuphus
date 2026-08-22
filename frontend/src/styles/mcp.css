@@ -86,7 +86,7 @@
 .mcp-badge {
   font-size: 10px;
   font-weight: var(--fw-semibold);
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--fg-4);

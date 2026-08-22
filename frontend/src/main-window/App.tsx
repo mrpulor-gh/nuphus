@@ -67,9 +67,7 @@ const ProjectPage = lazy(() =>
 const SecurityPage = lazy(() =>
   import('./pages/SecurityPage').then(m => ({ default: m.SecurityPage })),
 )
-const MobilePage = lazy(() =>
-  import('./pages/MobilePage').then(m => ({ default: m.MobilePage })),
-)
+const MobilePage = lazy(() => import('./pages/MobilePage').then(m => ({ default: m.MobilePage })))
 const BrowserPage = lazy(() =>
   import('./pages/BrowserPage').then(m => ({ default: m.BrowserPage })),
 )
@@ -222,7 +220,9 @@ export default function App() {
             <ChatPanel
               messages={s.messages}
               isProcessing={s.isProcessing}
-              onSend={(input, images, references) => s.handleSend(input, images, undefined, references)}
+              onSend={(input, images, references) =>
+                s.handleSend(input, images, undefined, references)
+              }
               startupStats={s.startupStats}
               onGracefulStop={s.handleGracefulStop}
               onInterrupt={s.handleInterrupt}
@@ -710,10 +710,7 @@ export default function App() {
           {/* ── 工作流节点画布：全屏覆盖层 ── */}
           {canvasWorkflowId && (
             <Suspense fallback={null}>
-              <CanvasPage
-                workflowId={canvasWorkflowId}
-                onClose={() => setCanvasWorkflowId(null)}
-              />
+              <CanvasPage workflowId={canvasWorkflowId} onClose={() => setCanvasWorkflowId(null)} />
             </Suspense>
           )}
           {/* ── 应用插件宿主：全屏覆盖层（App Plugin 体系 §4.2）── */}
@@ -781,7 +778,6 @@ export default function App() {
             }}
             onCancel={() => setRunWorkflow(null)}
           />
-
         </ErrorBoundary>
       )}
 

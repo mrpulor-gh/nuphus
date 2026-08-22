@@ -24,8 +24,19 @@ import { profileStep, walkSteps, type StepVarProfile } from './dataEdges'
 // ── kind 判定（对齐 types.rs kind_str；无法识别的 Action → custom）──
 
 const KNOWN_ACTION_KEYS = [
-  'tool', 'seq', 'loop', 'if', 'call', 'wait', 'chat',
-  'script', 'assert', 'mcp', 'sleep', 'break', 'continue',
+  'tool',
+  'seq',
+  'loop',
+  'if',
+  'call',
+  'wait',
+  'chat',
+  'script',
+  'assert',
+  'mcp',
+  'sleep',
+  'break',
+  'continue',
 ] as const
 
 export function stepKind(step: WorkflowStep): StepKind {
@@ -95,9 +106,18 @@ function conditionSummary(cond: Condition | undefined): string {
   if (!cond || typeof cond !== 'object') return ''
   const c = cond as Record<string, unknown>
   const ops: [string, string][] = [
-    ['equals', '='], ['not_equals', '≠'], ['contains', '包含'], ['starts_with', '前缀'],
-    ['regex', '正则'], ['not_empty', '非空'], ['empty', '为空'], ['gt', '>'],
-    ['lt', '<'], ['gte', '≥'], ['lte', '≤'], ['always', '恒'],
+    ['equals', '='],
+    ['not_equals', '≠'],
+    ['contains', '包含'],
+    ['starts_with', '前缀'],
+    ['regex', '正则'],
+    ['not_empty', '非空'],
+    ['empty', '为空'],
+    ['gt', '>'],
+    ['lt', '<'],
+    ['gte', '≥'],
+    ['lte', '≤'],
+    ['always', '恒'],
   ]
   for (const [key, sym] of ops) {
     if (!(key in c)) continue
@@ -377,7 +397,12 @@ export function projectWorkflow(ir: { steps: WorkflowStep[] }): Projection {
       for (const lane of lanes) {
         const first = childrenOf(lane.id)[0]
         if (first) {
-          edges.push({ id: `cond:${condId}->${first.id}`, source: condId, target: first.id, kind: 'cond' })
+          edges.push({
+            id: `cond:${condId}->${first.id}`,
+            source: condId,
+            target: first.id,
+            kind: 'cond',
+          })
         }
       }
     }

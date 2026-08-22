@@ -7,9 +7,22 @@
 import { memo, createContext, useContext } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import {
-  Wrench, MessageSquare, FileCode2, ShieldCheck, Plug, Moon,
-  CircleStop, SkipForward, Hourglass, AlertTriangle, LogIn, LogOut, GitBranch,
-  Pencil, Copy, Trash2,
+  Wrench,
+  MessageSquare,
+  FileCode2,
+  ShieldCheck,
+  Plug,
+  Moon,
+  CircleStop,
+  SkipForward,
+  Hourglass,
+  AlertTriangle,
+  LogIn,
+  LogOut,
+  GitBranch,
+  Pencil,
+  Copy,
+  Trash2,
 } from 'lucide-react'
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
@@ -59,7 +72,8 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
 
   // 合成锚点节点（1.3：仅 UI 内部）
   if (node.synthetic) {
-    const AnchorIcon = node.synthetic === 'entry' ? LogIn : node.synthetic === 'cond' ? GitBranch : LogOut
+    const AnchorIcon =
+      node.synthetic === 'entry' ? LogIn : node.synthetic === 'cond' ? GitBranch : LogOut
     return (
       <div
         className={`wfc-node wfc-anchor wfc-anchor--${node.synthetic}`}
@@ -81,20 +95,37 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
     selected ? 'is-selected' : '',
     statusClass(status),
     problem ? `wfc-node--check-${problem}` : '',
-  ].filter(Boolean).join(' ')
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   return (
     <div className={classes}>
       <Handle type="target" position={targetPos} className="wfc-handle" />
       {actions && (
         <div className="wfc-node-actions" onClick={e => e.stopPropagation()}>
-          <button type="button" className="wfc-node-act" title="编辑" onClick={() => actions.onEdit(node.id)}>
+          <button
+            type="button"
+            className="wfc-node-act"
+            title="编辑"
+            onClick={() => actions.onEdit(node.id)}
+          >
             <Pencil size={11} aria-hidden="true" />
           </button>
-          <button type="button" className="wfc-node-act" title="复制" onClick={() => actions.onDuplicate(node.id)}>
+          <button
+            type="button"
+            className="wfc-node-act"
+            title="复制"
+            onClick={() => actions.onDuplicate(node.id)}
+          >
             <Copy size={11} aria-hidden="true" />
           </button>
-          <button type="button" className="wfc-node-act wfc-node-act--danger" title="删除" onClick={() => actions.onDelete(node.id)}>
+          <button
+            type="button"
+            className="wfc-node-act wfc-node-act--danger"
+            title="删除"
+            onClick={() => actions.onDelete(node.id)}
+          >
             <Trash2 size={11} aria-hidden="true" />
           </button>
         </div>
@@ -103,22 +134,33 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
         <span className="wfc-node-icon" data-kind={node.kind}>
           <Icon size={13} aria-hidden="true" />
         </span>
-        <span className="wfc-node-name" title={node.name}>{node.name}</span>
-        {node.onErrorLabel && <span className="wfc-badge wfc-badge--onerror">{node.onErrorLabel}</span>}
+        <span className="wfc-node-name" title={node.name}>
+          {node.name}
+        </span>
+        {node.onErrorLabel && (
+          <span className="wfc-badge wfc-badge--onerror">{node.onErrorLabel}</span>
+        )}
       </div>
       <div className="wfc-node-foot">
         <span className="wfc-node-kind">{node.kind}</span>
         {node.capture && <span className="wfc-badge wfc-badge--capture">→ {node.capture}</span>}
         {node.shadowedBy && <span className="wfc-badge wfc-badge--shadowed">已遮蔽</span>}
         {node.danglingVars && node.danglingVars.length > 0 && (
-          <span className="wfc-badge wfc-badge--dangling" title={`未捕获: ${node.danglingVars.join(', ')}`}>
+          <span
+            className="wfc-badge wfc-badge--dangling"
+            title={`未捕获: ${node.danglingVars.join(', ')}`}
+          >
             外部注入
           </span>
         )}
       </div>
-      {status?.state === 'retrying' && <span className="wfc-retry-badge">第 {status.attempt} 次重试</span>}
+      {status?.state === 'retrying' && (
+        <span className="wfc-retry-badge">第 {status.attempt} 次重试</span>
+      )}
       {status?.state === 'error' && status.message && (
-        <span className="wfc-error-tip" title={status.message}>!</span>
+        <span className="wfc-error-tip" title={status.message}>
+          !
+        </span>
       )}
       <Handle type="source" position={sourcePos} className="wfc-handle" />
     </div>

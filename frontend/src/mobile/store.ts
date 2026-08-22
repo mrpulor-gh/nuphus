@@ -361,10 +361,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
           paused: false,
           pauseActionId: undefined,
           pausedAt: undefined,
-          tools: [
-            ...state.activity.tools,
-            { callId: ev.call_id, name: ev.tool_name },
-          ],
+          tools: [...state.activity.tools, { callId: ev.call_id, name: ev.tool_name }],
         },
       }
     }
@@ -379,7 +376,11 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       if (last && last.role === 'assistant' && last.streaming && last.traceItems) {
         const traceItems = last.traceItems.map(t =>
           t.kind === 'tool' && t.callId === ev.call_id
-            ? { ...t, status: ev.success ? ('ok' as const) : ('fail' as const), durationMs: ev.duration_ms }
+            ? {
+                ...t,
+                status: ev.success ? ('ok' as const) : ('fail' as const),
+                durationMs: ev.duration_ms,
+              }
             : t,
         )
         messages[messages.length - 1] = { ...last, traceItems }
@@ -390,9 +391,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         activity: {
           ...state.activity,
           tools: state.activity.tools.map(t =>
-            t.callId === ev.call_id
-              ? { ...t, success: ev.success, durationMs: ev.duration_ms }
-              : t,
+            t.callId === ev.call_id ? { ...t, success: ev.success, durationMs: ev.duration_ms } : t,
           ),
         },
       }
@@ -520,10 +519,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     case 'warning':
       return {
         ...state,
-        messages: [
-          ...state.messages,
-          { id: rid(), role: 'system', content: ev.message },
-        ],
+        messages: [...state.messages, { id: rid(), role: 'system', content: ev.message }],
       }
 
     case 'security_check':
@@ -624,7 +620,11 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         typeof ev.output_tokens === 'number' && ev.output_tokens >= 0 ? ev.output_tokens : undefined
       return {
         ...state,
-        tokenUsage: { inputTokens: ev.input_tokens, outputTokens: output, cacheHitTokens: cacheHit },
+        tokenUsage: {
+          inputTokens: ev.input_tokens,
+          outputTokens: output,
+          cacheHitTokens: cacheHit,
+        },
       }
     }
 
@@ -634,7 +634,11 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       // 仅 run_started（新一轮）重置 dismissed 并重新出现——移除不影响后端执行。
       if (state.workflowDismissed && ev.event !== 'run_started') return state
       const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d)
-      const cur = state.workflowRun ?? { steps: [] as WorkflowRunStep[], isPaused: false, done: false }
+      const cur = state.workflowRun ?? {
+        steps: [] as WorkflowRunStep[],
+        isPaused: false,
+        done: false,
+      }
       switch (ev.event) {
         case 'run_started': {
           // 新一轮执行：清空步骤列表，记录 workflow_id（供控制端点复用），重置完成态
@@ -734,9 +738,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // （执行前快照）→ 后端历史缺当前轮 user/agent；若本地完成态消息被历史替换
       // 则最后气泡消失（用户实测：息屏重开/切换应用返回后最后消息不见）。
       // 仅执行中启用保护：空闲/完成态历史完整，不保护避免 refine 后旧消息残留。
-      const historyKeys = new Set(
-        action.messages.map(h => `${h.role}|${h.content ?? ''}`),
-      )
+      const historyKeys = new Set(action.messages.map(h => `${h.role}|${h.content ?? ''}`))
       // 长尾对账（P2 修复）：空闲态下 pending 超 60s 且历史无同 content
       // = 请求从未到达后端（隧道半死/断网瞬间 POST 挂起 15s 超时）→
       // 转失败提示，不再永久挂灰。执行中/历史已含的 pending 不动
@@ -800,21 +802,23 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           timestamp: now,
         })
       }
-      return { ...state, messages: out
-        // 历史（fetchHistory）现已返回真实执行过程 traceItems（后端 Session 存储），
-        // 刷新后保留——显示完成状态（执行栏「执行完成 · N 个工具」可点开看详情）。
-        // 仅移除「空气泡」：无正文、无执行过程、非执行中的 assistant 残留消息
-        // （息屏/切应用期间 WS 事件重放可能创建的孤立流式气泡）。
-        .filter(
-          m =>
-            !(
-              m.role === 'assistant' &&
-              !m.streaming &&
-              !m.pending &&
-              !m.content?.trim() &&
-              !m.traceItems?.length
-            ),
-        )
+      return {
+        ...state,
+        messages: out
+          // 历史（fetchHistory）现已返回真实执行过程 traceItems（后端 Session 存储），
+          // 刷新后保留——显示完成状态（执行栏「执行完成 · N 个工具」可点开看详情）。
+          // 仅移除「空气泡」：无正文、无执行过程、非执行中的 assistant 残留消息
+          // （息屏/切应用期间 WS 事件重放可能创建的孤立流式气泡）。
+          .filter(
+            m =>
+              !(
+                m.role === 'assistant' &&
+                !m.streaming &&
+                !m.pending &&
+                !m.content?.trim() &&
+                !m.traceItems?.length
+              ),
+          ),
       }
     }
     case 'event':
@@ -884,7 +888,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // 恢复时清除 pausedAt（继续计时），保留 startedAt
       return {
         ...state,
-        activity: { ...state.activity, paused: false, pauseActionId: undefined, pausedAt: undefined },
+        activity: {
+          ...state.activity,
+          paused: false,
+          pauseActionId: undefined,
+          pausedAt: undefined,
+        },
       }
     case 'identity':
       return { ...state, identity: action.identity }

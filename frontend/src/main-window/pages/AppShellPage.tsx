@@ -73,9 +73,7 @@ const MAX_PLUGIN_CHAT_HISTORY_CHARS = 64 * 1024
  * 上限 50 条、总字符 ≤64KB，超限/形状非法返回 null（桥接器返回 INVALID_PARAMS）；
  * 未传/空值返回 undefined（不携带该参数）。
  */
-function normalizeChatHistory(
-  value: unknown,
-): PluginChatHistoryItem[] | null | undefined {
+function normalizeChatHistory(value: unknown): PluginChatHistoryItem[] | null | undefined {
   if (value === undefined || value === null) return undefined
   if (!Array.isArray(value) || value.length > MAX_PLUGIN_CHAT_HISTORY) return null
   const items: PluginChatHistoryItem[] = []
@@ -99,10 +97,22 @@ function okEnvelope(id: string, payload: unknown): BridgeEnvelope {
 }
 
 function errEnvelope(id: string, code: string, message?: string): BridgeEnvelope {
-  return { nuphus: BRIDGE_VERSION, id, type: 'result', ok: false, error: { code, message: message || code } }
+  return {
+    nuphus: BRIDGE_VERSION,
+    id,
+    type: 'result',
+    ok: false,
+    error: { code, message: message || code },
+  }
 }
 
-export function AppShellPage({ pluginId, onClose, onMinimize, minimized, showToast }: AppShellPageProps) {
+export function AppShellPage({
+  pluginId,
+  onClose,
+  onMinimize,
+  minimized,
+  showToast,
+}: AppShellPageProps) {
   const { t, lang } = useLanguage()
   const { theme, customTheme, previewOverrides } = useTheme()
 
@@ -182,7 +192,11 @@ export function AppShellPage({ pluginId, onClose, onMinimize, minimized, showToa
 
   // ── Bridge call 分派（权限白名单逐次校验）──
   const handleCall = useCallback(
-    async (id: string, method: string, params: Record<string, unknown>): Promise<BridgeEnvelope> => {
+    async (
+      id: string,
+      method: string,
+      params: Record<string, unknown>,
+    ): Promise<BridgeEnvelope> => {
       // ready 前拒绝任何 call（SDK 自动 ready → init 后才能发 call，此处纵深防御）
       if (!readyRef.current) return errEnvelope(id, 'NOT_READY', t('plugins.errNotReady'))
       const perms = pluginRef.current?.permissions ?? []
@@ -264,14 +278,18 @@ export function AppShellPage({ pluginId, onClose, onMinimize, minimized, showToa
           const wid = params?.id
           if (typeof wid !== 'string' || !wid.trim()) return errEnvelope(id, 'INVALID_PARAMS')
           // 在途串行：同插件上一个 run 未完成时拒绝重入（后端 guard 为纵深防御）
-          if (workflowInFlightRef.current) return errEnvelope(id, 'BUSY', t('plugins.errWorkflowBusy'))
+          if (workflowInFlightRef.current)
+            return errEnvelope(id, 'BUSY', t('plugins.errWorkflowBusy'))
           workflowInFlightRef.current = true
           let timer: ReturnType<typeof setTimeout> | undefined
           try {
             const result = await Promise.race([
               pluginWorkflowRun(pluginId, wid),
               new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error('WORKFLOW_TIMEOUT')), WORKFLOW_RUN_TIMEOUT_MS)
+                timer = setTimeout(
+                  () => reject(new Error('WORKFLOW_TIMEOUT')),
+                  WORKFLOW_RUN_TIMEOUT_MS,
+                )
               }),
             ])
             return okEnvelope(id, result)
@@ -345,7 +363,10 @@ export function AppShellPage({ pluginId, onClose, onMinimize, minimized, showToa
     })
   }, [currentTheme, postToPlugin])
 
-  const img = port !== null && plugin?.icon ? `http://127.0.0.1:${port}/plugins/${plugin.id}/${plugin.icon}` : null
+  const img =
+    port !== null && plugin?.icon
+      ? `http://127.0.0.1:${port}/plugins/${plugin.id}/${plugin.icon}`
+      : null
 
   return (
     <div className={`plugin-shell${minimized ? ' plugin-shell--minimized' : ''}`}>

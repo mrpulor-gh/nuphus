@@ -4,9 +4,25 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { invoke } from '../core/bridge'
-import type { ChatMessage, ChatReference, ToolSchema, TimelineEntry, PlanData, PlanTask, TaskStatus, TaskPriority, WorkflowRunStep } from '../core/types'
+import type {
+  ChatMessage,
+  ChatReference,
+  ToolSchema,
+  TimelineEntry,
+  PlanData,
+  PlanTask,
+  TaskStatus,
+  TaskPriority,
+  WorkflowRunStep,
+} from '../core/types'
 import type { MoodState } from '../ui/MoodFace'
-import { processInput, isLlmConfigured, getContextLimit, getCurrentConfig, isBusy } from '../main-window/lib/api'
+import {
+  processInput,
+  isLlmConfigured,
+  getContextLimit,
+  getCurrentConfig,
+  isBusy,
+} from '../main-window/lib/api'
 import { loadRelation } from '../main-window/lib/relation'
 import { useLanguage } from '../locales'
 
@@ -115,7 +131,9 @@ export interface SessionAPI {
 
   // ── Workflow run ──
   workflowRunSteps: WorkflowRunStep[]
-  setWorkflowRunSteps: (v: WorkflowRunStep[] | ((prev: WorkflowRunStep[]) => WorkflowRunStep[])) => void
+  setWorkflowRunSteps: (
+    v: WorkflowRunStep[] | ((prev: WorkflowRunStep[]) => WorkflowRunStep[]),
+  ) => void
   workflowRunId: string | null
   setWorkflowRunId: (v: string | null) => void
   /** 最近一次运行的 workflow id（run 结束后保留，供步骤参数查看） */
@@ -148,7 +166,15 @@ export interface SessionAPI {
   setCompleted: (v: boolean) => void
   setStepIndex: React.Dispatch<React.SetStateAction<number>>
   setGoal: (v: string) => void
-  setProgress: (v: { iteration: number; max: number; calls: number } | ((prev: { iteration: number; max: number; calls: number }) => { iteration: number; max: number; calls: number })) => void
+  setProgress: (
+    v:
+      | { iteration: number; max: number; calls: number }
+      | ((prev: { iteration: number; max: number; calls: number }) => {
+          iteration: number
+          max: number
+          calls: number
+        }),
+  ) => void
   setExecPhase: React.Dispatch<
     React.SetStateAction<'understanding' | 'executing' | 'recording' | 'workflow' | 'retrying' | ''>
   >
@@ -199,7 +225,14 @@ export interface SessionAPI {
   showPlannerModal: boolean
   planData: PlanData | null
   showReview: boolean
-  approvalState: { open: boolean; kind: string; title: string; content: string; actionId: string; tenetCount: number }
+  approvalState: {
+    open: boolean
+    kind: string
+    title: string
+    content: string
+    actionId: string
+    tenetCount: number
+  }
   taskBubbleVisible: boolean
   setShowPlannerModal: (v: boolean) => void
   setPlanData: React.Dispatch<React.SetStateAction<PlanData | null>>
@@ -251,7 +284,12 @@ export interface SessionAPI {
   liveCalls: number
 
   // ── Handlers ──
-  handleSend: (input: string, images?: string[], forceMode?: string, refs?: import('../core/types').ChatReference[]) => Promise<void>
+  handleSend: (
+    input: string,
+    images?: string[],
+    forceMode?: string,
+    refs?: import('../core/types').ChatReference[],
+  ) => Promise<void>
   handleNewChat: () => void
   handleRetryAgent: (input: string) => Promise<void>
   handlePause: () => Promise<void>
@@ -450,7 +488,15 @@ export function useSession(): SessionAPI {
       try {
         const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }))
         const relation = loadRelation()
-        const result = await processInput(input, history, relation, sendId, forceMode || mode, images, refs)
+        const result = await processInput(
+          input,
+          history,
+          relation,
+          sendId,
+          forceMode || mode,
+          images,
+          refs,
+        )
         if (result === null) {
           invoke('hud_update', {
             text: 'Connection lost - please try again',
@@ -531,10 +577,7 @@ export function useSession(): SessionAPI {
   // ── refreshModelInfo (with contextLimit from execUI) ──
   const refreshModelInfoFinal = useCallback(async () => {
     try {
-      const [cfg, limit] = await Promise.all([
-        getCurrentConfig(),
-        getContextLimit(),
-      ])
+      const [cfg, limit] = await Promise.all([getCurrentConfig(), getContextLimit()])
       if (cfg?.model) setModelName(cfg.model)
       if (limit !== null) execUI.setContextLimit(limit)
     } catch {}
@@ -718,11 +761,9 @@ export function useSession(): SessionAPI {
     // 显示当前 running 工具调用（tool_call 优先会导致思考与工具交替时
     // 在两个文案间每帧跳变（闪抖））。
     const lastText = timeline.filter(t => t.kind === 'text').pop() as
-      | { kind: 'text'; text: string }
-      | undefined
+      { kind: 'text'; text: string } | undefined
     const lastThinking = timeline.filter(t => t.kind === 'thinking').pop() as
-      | { kind: 'thinking'; text: string }
-      | undefined
+      { kind: 'thinking'; text: string } | undefined
     const text = lastText?.text || lastThinking?.text || ''
     if (text && text.trim().length >= 2) {
       const firstPara = text.split('\n\n')[0]?.trim() || ''
@@ -753,9 +794,9 @@ export function useSession(): SessionAPI {
   const [focusSignal, setFocusSignal] = useState(0)
   const [executionCounter, setExecutionCounter] = useState(0)
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
-  const [regionPickerMode, setRegionPickerMode] = useState<
-    'picker' | 'capture' | 'ocr' | null
-  >(null)
+  const [regionPickerMode, setRegionPickerMode] = useState<'picker' | 'capture' | 'ocr' | null>(
+    null,
+  )
 
   // ── Return ──
   return {

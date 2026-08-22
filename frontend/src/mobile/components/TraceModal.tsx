@@ -83,7 +83,13 @@ export default function TraceModal({ traceItems, tokenUsage, onClose }: Props) {
   const cacheTotal = tokenUsage?.inputTokens ?? 0
   const cacheRate = cacheTotal > 0 ? Math.round((cacheHit / cacheTotal) * 100) : null
   const cacheColor =
-    cacheRate !== null ? (cacheRate > 60 ? '#22c55e' : cacheRate > 30 ? '#f59e0b' : '#ef4444') : undefined
+    cacheRate !== null
+      ? cacheRate > 60
+        ? '#22c55e'
+        : cacheRate > 30
+          ? '#f59e0b'
+          : '#ef4444'
+      : undefined
 
   return (
     <div className="mobile-modal-overlay" onClick={onClose}>

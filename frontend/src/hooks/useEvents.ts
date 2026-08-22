@@ -173,7 +173,12 @@ export function useEvents(h: EventHandlers) {
 
       // ── Shared helpers (extracted duplicated patterns) ──
       const addSystemMsg = (content: string) =>
-        h.addMessage({ id: crypto.randomUUID(), role: 'system' as const, content, timestamp: Date.now() })
+        h.addMessage({
+          id: crypto.randomUUID(),
+          role: 'system' as const,
+          content,
+          timestamp: Date.now(),
+        })
 
       const finishWithMessage = (content: string, mood: MoodState) => {
         const s = sid()
@@ -540,11 +545,7 @@ export function useEvents(h: EventHandlers) {
           const s = h.refs.streamingMsgId.current
           if (s && event.url) {
             h.setMessages((prev: ChatMessage[]) =>
-              prev.map(m =>
-                m.id === s
-                  ? { ...m, images: [...(m.images || []), event.url] }
-                  : m
-              )
+              prev.map(m => (m.id === s ? { ...m, images: [...(m.images || []), event.url] } : m)),
             )
           }
           break
@@ -569,13 +570,15 @@ export function useEvents(h: EventHandlers) {
             // （process_text_delta 跨 chunk 折叠不完美）。execution_completed 的
             // result_message 是后端 extract_think_blocks 处理过的权威干净文本——
             // finalMsg 非空时无条件覆盖，避免"中间的空格都是 thinking 的 chars"。
-            const content = finalMsg.trim()
-              ? finalMsg
-              : '（已执行完成，未产出回复）'
+            const content = finalMsg.trim() ? finalMsg : '（已执行完成，未产出回复）'
             h.setMessages((prev: ChatMessage[]) =>
               prev.map(m =>
                 m.id === s
-                  ? { ...m, content: finalMsg.trim() ? finalMsg : m.content || content, runtime: 'done' }
+                  ? {
+                      ...m,
+                      content: finalMsg.trim() ? finalMsg : m.content || content,
+                      runtime: 'done',
+                    }
                   : m,
               ),
             )
@@ -640,9 +643,7 @@ export function useEvents(h: EventHandlers) {
           break
         case 'prompt_timeout':
           // 后端等待超时/取消 → 清除对应 action_id 的安全弹窗与输入请求弹窗
-          h.setSecurity(prev =>
-            prev && prev.actionId === event.action_id ? null : prev,
-          )
+          h.setSecurity(prev => (prev && prev.actionId === event.action_id ? null : prev))
           if (
             userInputRequestRef.current &&
             userInputRequestRef.current.actionId === event.action_id
@@ -716,7 +717,11 @@ export function useEvents(h: EventHandlers) {
                   event.cache_hit_tokens === 0xffffffff
                     ? (prev?.cacheHitTokens ?? 0)
                     : event.cache_hit_tokens
-                return { inputTokens: event.input_tokens, outputTokens: event.output_tokens, cacheHitTokens: cacheHit }
+                return {
+                  inputTokens: event.input_tokens,
+                  outputTokens: event.output_tokens,
+                  cacheHitTokens: cacheHit,
+                }
               })
             if (event.source === 'main') update(h.setMainTokenUsage)
             else update(h.setExecTokenUsage)
@@ -877,9 +882,7 @@ export function useEvents(h: EventHandlers) {
     let unlisten: (() => void) | undefined
     listen<{ action_id: string }>('mobile-security-resolved', payload => {
       if (disposed) return
-      h.setSecurity(prev =>
-        prev && prev.actionId === payload.action_id ? null : prev,
-      )
+      h.setSecurity(prev => (prev && prev.actionId === payload.action_id ? null : prev))
     }).then(fn => {
       if (disposed) fn()
       else unlisten = fn

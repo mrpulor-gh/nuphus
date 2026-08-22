@@ -96,9 +96,7 @@ export function McpPage({ onClose }: { onClose: () => void }) {
                       <div className="mcp-server-top">
                         <span className="mcp-server-key">{server.key}</span>
                         {server.auto_start ? (
-                          <span className="mcp-badge mcp-badge--auto">
-                            {t('mcp.autoStart')}
-                          </span>
+                          <span className="mcp-badge mcp-badge--auto">{t('mcp.autoStart')}</span>
                         ) : (
                           <span className="mcp-badge">{t('mcp.onDemand')}</span>
                         )}
@@ -111,11 +109,7 @@ export function McpPage({ onClose }: { onClose: () => void }) {
                       </div>
                     </div>
                     <span className="mcp-chevron">
-                      {isOpen ? (
-                        <IconChevronDown size={14} />
-                      ) : (
-                        <IconChevronRight size={14} />
-                      )}
+                      {isOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                     </span>
                   </button>
                   {isOpen && (
@@ -126,7 +120,11 @@ export function McpPage({ onClose }: { onClose: () => void }) {
                       {state?.status === 'error' && (
                         <div className="mcp-state mcp-state--error">
                           {t('mcp.loadToolsError')}: {state.error}
-                          <Button variant="default" size="sm" onClick={() => void loadTools(server.key)}>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => void loadTools(server.key)}
+                          >
                             {t('mcp.retry')}
                           </Button>
                         </div>

@@ -68,7 +68,15 @@ function loadModelsOnce(): Promise<ModelInfo[] | null> {
 
 /** 本地文本缓冲：失焦/回车才提交（避免每次击键都重投影） */
 function TextField({
-  label, value, onCommit, readOnly, placeholder, mono, multiline, title, required,
+  label,
+  value,
+  onCommit,
+  readOnly,
+  placeholder,
+  mono,
+  multiline,
+  title,
+  required,
 }: {
   label: string
   value: string
@@ -123,7 +131,12 @@ type ComboItem = { kind: 'custom'; text: string } | { kind: 'tool'; tool: ToolSc
 
 /** 可搜索工具 combobox：注册表驱动过滤 + 键盘导航 + 手输兜底（未匹配值也可提交） */
 function ToolCombobox({
-  label, value, tools, autoFocus, onCommit, required,
+  label,
+  value,
+  tools,
+  autoFocus,
+  onCommit,
+  required,
 }: {
   label: string
   value: string
@@ -208,9 +221,13 @@ function ToolCombobox({
         onKeyDown={e => {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault()
-              if (!open) openMenu()
+            if (!open) openMenu()
             else if (items.length > 0) {
-              setActive(i => (e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length))
+              setActive(i =>
+                e.key === 'ArrowDown'
+                  ? (i + 1) % items.length
+                  : (i - 1 + items.length) % items.length,
+              )
             }
           } else if (e.key === 'Enter') {
             if (open && items.length > 0) {
@@ -247,7 +264,9 @@ function ToolCombobox({
                 ) : (
                   <>
                     <span className="wfc-combo-name">{it.tool.name}</span>
-                    {it.tool.description && <span className="wfc-combo-desc">{it.tool.description}</span>}
+                    {it.tool.description && (
+                      <span className="wfc-combo-desc">{it.tool.description}</span>
+                    )}
                   </>
                 )}
               </button>
@@ -260,7 +279,9 @@ function ToolCombobox({
 }
 
 /** 从 input_schema（JSON Schema）容错解析必填参数：缺失/非对象/无 required → 无必填 */
-function parseRequired(schema: Record<string, unknown> | undefined): { name: string; desc?: string }[] {
+function parseRequired(
+  schema: Record<string, unknown> | undefined,
+): { name: string; desc?: string }[] {
   if (!schema || typeof schema !== 'object') return []
   const required = Array.isArray(schema.required)
     ? schema.required.filter((r): r is string => typeof r === 'string')
@@ -305,7 +326,13 @@ function RequiredHint({ schema }: { schema?: Record<string, unknown> }) {
  * tools === null（加载失败）或 readOnly 时退化为纯文本 TextField。
  */
 function ToolField({
-  label, value, tools, readOnly, autoFocus, onCommit, required,
+  label,
+  value,
+  tools,
+  readOnly,
+  autoFocus,
+  onCommit,
+  required,
 }: {
   label: string
   value: string
@@ -318,19 +345,38 @@ function ToolField({
   required?: boolean
 }) {
   if (readOnly || tools === null) {
-    return <TextField label={label} value={value} readOnly={readOnly} mono onCommit={onCommit} required={required} />
+    return (
+      <TextField
+        label={label}
+        value={value}
+        readOnly={readOnly}
+        mono
+        onCommit={onCommit}
+        required={required}
+      />
+    )
   }
   const list = tools ?? []
   return (
     <>
-      <ToolCombobox label={label} value={value} tools={list} autoFocus={autoFocus} onCommit={onCommit} required={required} />
+      <ToolCombobox
+        label={label}
+        value={value}
+        tools={list}
+        autoFocus={autoFocus}
+        onCommit={onCommit}
+        required={required}
+      />
       <RequiredHint schema={list.find(t => t.name === value.trim())?.input_schema} />
     </>
   )
 }
 
 function JsonField({
-  label, value, onCommit, readOnly,
+  label,
+  value,
+  onCommit,
+  readOnly,
 }: {
   label: string
   value: unknown
@@ -370,9 +416,18 @@ function JsonField({
 }
 
 const COND_OPS: [string, string][] = [
-  ['equals', '等于'], ['not_equals', '不等于'], ['contains', '包含'], ['starts_with', '前缀是'],
-  ['regex', '正则匹配'], ['not_empty', '非空'], ['empty', '为空'], ['gt', '>'],
-  ['lt', '<'], ['gte', '≥'], ['lte', '≤'], ['always', '恒真'],
+  ['equals', '等于'],
+  ['not_equals', '不等于'],
+  ['contains', '包含'],
+  ['starts_with', '前缀是'],
+  ['regex', '正则匹配'],
+  ['not_empty', '非空'],
+  ['empty', '为空'],
+  ['gt', '>'],
+  ['lt', '<'],
+  ['gte', '≥'],
+  ['lte', '≤'],
+  ['always', '恒真'],
 ]
 
 function condOpOf(cond: Condition | undefined): string {
@@ -393,7 +448,9 @@ function condOperandsOf(cond: Condition | undefined): VarRef[] {
 }
 
 function ConditionEditor({
-  value, onChange, readOnly,
+  value,
+  onChange,
+  readOnly,
 }: {
   value: Condition | undefined
   onChange: (c: Condition) => void
@@ -403,7 +460,8 @@ function ConditionEditor({
   const operands = condOperandsOf(value)
   const setOp = (nextOp: string) => {
     if (nextOp === 'always') onChange({ always: true } as Condition)
-    else if (nextOp === 'not_empty' || nextOp === 'empty') onChange({ [nextOp]: '' } as unknown as Condition)
+    else if (nextOp === 'not_empty' || nextOp === 'empty')
+      onChange({ [nextOp]: '' } as unknown as Condition)
     else onChange({ [nextOp]: ['', ''] } as unknown as Condition)
   }
   const setOperand = (i: number, v: VarRef) => {
@@ -418,9 +476,16 @@ function ConditionEditor({
     <div className="wfc-cond">
       <label className="wfc-field">
         <span className="wfc-field-label">条件</span>
-        <select className="wfc-input" value={op} disabled={readOnly} onChange={e => setOp(e.target.value)}>
+        <select
+          className="wfc-input"
+          value={op}
+          disabled={readOnly}
+          onChange={e => setOp(e.target.value)}
+        >
           {COND_OPS.map(([k, label]) => (
-            <option key={k} value={k}>{label}（{k}）</option>
+            <option key={k} value={k}>
+              {label}（{k}）
+            </option>
           ))}
         </select>
       </label>
@@ -463,7 +528,16 @@ function onErrorMode(oe: OnErrorValue): string {
   return 'abort'
 }
 
-export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolId, onPatch, onPatchAction, onClose }: InspectorProps) {
+export function Inspector({
+  step,
+  readOnly,
+  idReferenced,
+  lastOutput,
+  focusToolId,
+  onPatch,
+  onPatchAction,
+  onClose,
+}: InspectorProps) {
   const kind = stepKind(step)
   const d = step.do as Record<string, unknown>
   // 工具注册表（模块级缓存，加载一次；失败 → null 回退纯文本）
@@ -522,7 +596,13 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
       </div>
 
       <div className="wfc-inspector-body">
-        <TextField label="名称" value={step.name} readOnly={readOnly} onCommit={v => onPatch({ name: v })} required />
+        <TextField
+          label="名称"
+          value={step.name}
+          readOnly={readOnly}
+          onCommit={v => onPatch({ name: v })}
+          required
+        />
         <TextField
           label={idReferenced ? 'ID（有历史运行记录，修改需确认）' : 'ID'}
           value={step.id}
@@ -531,7 +611,13 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
           required
           onCommit={v => onPatch({ id: v })}
         />
-        <TextField label="描述" value={step.description ?? ''} readOnly={readOnly} multiline onCommit={v => onPatch({ description: v })} />
+        <TextField
+          label="描述"
+          value={step.description ?? ''}
+          readOnly={readOnly}
+          multiline
+          onCommit={v => onPatch({ description: v })}
+        />
         <TextField
           label="capture（输出写入变量）"
           value={step.capture ?? ''}
@@ -597,7 +683,10 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
             value={(allowCfg.codes ?? []).join(',')}
             readOnly={readOnly}
             onCommit={v => {
-              const codes = v.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n))
+              const codes = v
+                .split(',')
+                .map(s => Number(s.trim()))
+                .filter(n => Number.isFinite(n))
               onPatch({ on_error: { allow_codes: { codes } } })
             }}
           />
@@ -625,24 +714,52 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
                     !Array.isArray(d.with) &&
                     Object.keys(d.with as object).length === 0)
                 if (schema && withEmpty) {
-                  onPatchAction({ ...d, tool: v, with: skeletonFromSchema(schema) } as WorkflowStep['do'])
+                  onPatchAction({
+                    ...d,
+                    tool: v,
+                    with: skeletonFromSchema(schema),
+                  } as WorkflowStep['do'])
                 } else {
                   patchActionKey('tool', v)
                 }
               }}
             />
-            <JsonField label="with（参数 JSON）" value={d.with} readOnly={readOnly} onCommit={v => patchActionKey('with', v)} />
+            <JsonField
+              label="with（参数 JSON）"
+              value={d.with}
+              readOnly={readOnly}
+              onCommit={v => patchActionKey('with', v)}
+            />
           </>
         )}
         {kind === 'call' && (
           <>
-            <TextField label="目标 workflow_id" value={String(d.call ?? '')} readOnly={readOnly} mono required onCommit={v => patchActionKey('call', v)} />
-            <JsonField label="with（参数 JSON）" value={d.with} readOnly={readOnly} onCommit={v => patchActionKey('with', v)} />
+            <TextField
+              label="目标 workflow_id"
+              value={String(d.call ?? '')}
+              readOnly={readOnly}
+              mono
+              required
+              onCommit={v => patchActionKey('call', v)}
+            />
+            <JsonField
+              label="with（参数 JSON）"
+              value={d.with}
+              readOnly={readOnly}
+              onCommit={v => patchActionKey('with', v)}
+            />
           </>
         )}
         {kind === 'chat' && (
           <>
-            <TextField label="对话内容" value={String(d.chat ?? '')} readOnly={readOnly} multiline required onCommit={v => patchActionKey('chat', v)} />
+            <TextField
+              label="对话内容"
+              value={String(d.chat ?? '')}
+              readOnly={readOnly}
+              multiline
+              required
+              onCommit={v => patchActionKey('chat', v)}
+            />
             {models != null && models.length > 0 && (
               <label className="wfc-field">
                 <span className="wfc-field-label">模型（registry 模型 ID）</span>
@@ -661,7 +778,9 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
                   {typeof chatWith.model === 'string' &&
                     chatWith.model !== '' &&
                     !models.some(m => m.id === chatWith.model) && (
-                      <option value={chatWith.model}>{chatWith.model}（不在 registry，按裸模型名回退主模型）</option>
+                      <option value={chatWith.model}>
+                        {chatWith.model}（不在 registry，按裸模型名回退主模型）
+                      </option>
                     )}
                 </select>
               </label>
@@ -686,7 +805,12 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
                 if (Number.isFinite(n) && n > 0) patchChatWith('max_tokens', n)
               }}
             />
-            <JsonField label="with（ChatOpts JSON）" value={d.with} readOnly={readOnly} onCommit={v => patchActionKey('with', v)} />
+            <JsonField
+              label="with（ChatOpts JSON）"
+              value={d.with}
+              readOnly={readOnly}
+              onCommit={v => patchActionKey('with', v)}
+            />
           </>
         )}
         {kind === 'script' && (
@@ -697,7 +821,9 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
                 className="wfc-input"
                 value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
                 disabled={readOnly}
-                onChange={e => patchActionKey('script', { ...(d.script as object), runtime: e.target.value })}
+                onChange={e =>
+                  patchActionKey('script', { ...(d.script as object), runtime: e.target.value })
+                }
               >
                 <option value="python">python</option>
                 <option value="node">node</option>
@@ -734,21 +860,45 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
               label="失败消息"
               value={String((d.assert as Record<string, unknown>)?.message ?? '')}
               readOnly={readOnly}
-              onCommit={v => patchActionKey('assert', { ...(d.assert as object), message: v || undefined })}
+              onCommit={v =>
+                patchActionKey('assert', { ...(d.assert as object), message: v || undefined })
+              }
             />
           </>
         )}
-        {kind === 'loop' && (
-          <LoopEditor d={d} readOnly={readOnly} onPatch={patchActionKey} />
-        )}
+        {kind === 'loop' && <LoopEditor d={d} readOnly={readOnly} onPatch={patchActionKey} />}
         {kind === 'wait' && (
-          <TextField label="等待目标" value={String(d.wait ?? '')} readOnly={readOnly} onCommit={v => patchActionKey('wait', v)} />
+          <TextField
+            label="等待目标"
+            value={String(d.wait ?? '')}
+            readOnly={readOnly}
+            onCommit={v => patchActionKey('wait', v)}
+          />
         )}
         {kind === 'mcp' && (
           <>
-            <TextField label="server" value={String((d.mcp as Record<string, unknown>)?.server ?? '')} readOnly={readOnly} mono required onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), server: v })} />
-            <TextField label="tool" value={String((d.mcp as Record<string, unknown>)?.tool ?? '')} readOnly={readOnly} mono required onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), tool: v })} />
-            <JsonField label="with（参数 JSON）" value={(d.mcp as Record<string, unknown>)?.with} readOnly={readOnly} onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), with: v })} />
+            <TextField
+              label="server"
+              value={String((d.mcp as Record<string, unknown>)?.server ?? '')}
+              readOnly={readOnly}
+              mono
+              required
+              onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), server: v })}
+            />
+            <TextField
+              label="tool"
+              value={String((d.mcp as Record<string, unknown>)?.tool ?? '')}
+              readOnly={readOnly}
+              mono
+              required
+              onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), tool: v })}
+            />
+            <JsonField
+              label="with（参数 JSON）"
+              value={(d.mcp as Record<string, unknown>)?.with}
+              readOnly={readOnly}
+              onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), with: v })}
+            />
           </>
         )}
         {kind === 'sleep' && (
@@ -785,14 +935,22 @@ export function Inspector({ step, readOnly, idReferenced, lastOutput, focusToolI
 }
 
 function LoopEditor({
-  d, readOnly, onPatch,
+  d,
+  readOnly,
+  onPatch,
 }: {
   d: Record<string, unknown>
   readOnly: boolean
   onPatch: (key: string, v: unknown) => void
 }) {
   const def = (d.loop ?? {}) as Record<string, unknown>
-  const mode = def.for_each ? 'for_each' : def.repeat != null ? 'repeat' : def.until ? 'until' : 'repeat'
+  const mode = def.for_each
+    ? 'for_each'
+    : def.repeat != null
+      ? 'repeat'
+      : def.until
+        ? 'until'
+        : 'repeat'
   const setMode = (m: string) => {
     const next: Record<string, unknown> = { max: def.max ?? 100, do: def.do ?? [] }
     if (m === 'for_each') next.for_each = { items: '', as: 'item' }
@@ -804,7 +962,12 @@ function LoopEditor({
     <>
       <label className="wfc-field">
         <span className="wfc-field-label">循环方式</span>
-        <select className="wfc-input" value={mode} disabled={readOnly} onChange={e => setMode(e.target.value)}>
+        <select
+          className="wfc-input"
+          value={mode}
+          disabled={readOnly}
+          onChange={e => setMode(e.target.value)}
+        >
           <option value="for_each">for_each（遍历变量）</option>
           <option value="repeat">repeat（固定次数）</option>
           <option value="until">until（直到条件）</option>
@@ -816,18 +979,32 @@ function LoopEditor({
             label="items（变量名）"
             value={(() => {
               const items = (def.for_each as Record<string, unknown>)?.items
-              return items && typeof items === 'object' && 'var' in items ? String(items.var) : typeof items === 'string' ? items : ''
+              return items && typeof items === 'object' && 'var' in items
+                ? String(items.var)
+                : typeof items === 'string'
+                  ? items
+                  : ''
             })()}
             readOnly={readOnly}
             mono
-            onCommit={v => onPatch('loop', { ...def, for_each: { ...(def.for_each as object), items: { var: v } } })}
+            onCommit={v =>
+              onPatch('loop', {
+                ...def,
+                for_each: { ...(def.for_each as object), items: { var: v } },
+              })
+            }
           />
           <TextField
             label="as（item 变量名）"
             value={String((def.for_each as Record<string, unknown>)?.as ?? 'item')}
             readOnly={readOnly}
             mono
-            onCommit={v => onPatch('loop', { ...def, for_each: { ...(def.for_each as object), as: v || 'item' } })}
+            onCommit={v =>
+              onPatch('loop', {
+                ...def,
+                for_each: { ...(def.for_each as object), as: v || 'item' },
+              })
+            }
           />
         </>
       )}

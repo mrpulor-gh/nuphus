@@ -28,8 +28,19 @@ export interface WorkflowIR {
 // ── 步骤 kind（对齐 types.rs kind_str；custom 为画布特化：Action::Custom 旧格式）──
 
 export type StepKind =
-  | 'tool' | 'seq' | 'loop' | 'if' | 'call' | 'wait' | 'chat'
-  | 'script' | 'assert' | 'mcp' | 'sleep' | 'break' | 'continue'
+  | 'tool'
+  | 'seq'
+  | 'loop'
+  | 'if'
+  | 'call'
+  | 'wait'
+  | 'chat'
+  | 'script'
+  | 'assert'
+  | 'mcp'
+  | 'sleep'
+  | 'break'
+  | 'continue'
   | 'custom'
 
 // ── 分层视图模型（1.2）──

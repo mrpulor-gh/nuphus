@@ -59,14 +59,23 @@
 }
 
 @keyframes refinePulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
 }
 
 /* ── Content 展开/折叠 ── */
 .message-content.refine {
   overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.2s ease;
+  transition:
+    max-height 0.3s ease,
+    opacity 0.2s ease;
 }
 
 .message-content.refine.collapsed {
@@ -94,10 +103,16 @@
 
 /* ── Refine Modal ── */
 .refine-modal-head {
-  display: flex; align-items: center; gap: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
 .refine-usage-pct {
-  font-size: var(--fz-sm); font-family: var(--font-mono); color: var(--fg-1);
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  color: var(--fg-1);
 }
-.refine-usage { margin-bottom: var(--space-2); }
+.refine-usage {
+  margin-bottom: var(--space-2);
+}
