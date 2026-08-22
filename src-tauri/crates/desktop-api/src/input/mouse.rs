@@ -47,7 +47,7 @@ pub async fn move_to(x: i32, y: i32) -> Result<()> {
         enigo()
             .lock()
             .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .move_mouse(x as i32, y as i32, Coordinate::Abs)
+            .move_mouse(x, y, Coordinate::Abs)
             .map_err(|e| DesktopError::InputFailed(e.to_string()))
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -199,24 +199,25 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        // 拖拽实现：Press → 移动（需释放锁避免阻塞其他输入）→ Release。
-        // drop(e) 已显式释放锁；clippy await_holding_lock 对显式 drop 仍告警，属有意设计。
-        #[allow(clippy::await_holding_lock)]
+        // 拖拽实现：Press → 移动（移动期间不持锁，避免阻塞其他输入）→ Release。
+        // 用作用域块让 MutexGuard 在 await 前自然 drop——clippy await_holding_lock
+        // 对显式 drop(e) 仍告警（版本差异），作用域块是跨 clippy 版本稳定的写法。
+        use enigo::{Button, Direction, Mouse};
         {
-            use enigo::{Button, Direction, Mouse};
             let mut e = enigo()
                 .lock()
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
             e.button(Button::Left, Direction::Press)
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
-            drop(e);
-            for i in 1..=20 {
-                let t = i as f32 / 20.0;
-                let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
-                let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
-                move_to(x, y).await?;
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
+        }
+        for i in 1..=20 {
+            let t = i as f32 / 20.0;
+            let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
+            let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
+            move_to(x, y).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        {
             let mut e = enigo()
                 .lock()
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))?;

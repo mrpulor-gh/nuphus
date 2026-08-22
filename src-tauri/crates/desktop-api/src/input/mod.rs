@@ -27,6 +27,7 @@ impl InputEngine {
     }
 
     /// 发送文本 - 自动选择最优策略
+    #[cfg_attr(not(windows), allow(unused_variables))]
     pub async fn send_text(&self, text: &str, target: &mut Target) -> Result<()> {
         // 确保目标激活
         self.ensure_active(target).await?;

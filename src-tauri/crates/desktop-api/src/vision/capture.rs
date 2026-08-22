@@ -32,6 +32,7 @@ async fn capture_fullscreen() -> Result<Frame> {
 }
 
 /// 窗口截图 - 根据图形后端分派策略
+#[cfg_attr(not(windows), allow(unused_variables))]
 async fn capture_window(target: &Target) -> Result<Frame> {
     #[cfg(windows)]
     {
@@ -50,7 +51,8 @@ async fn capture_window(target: &Target) -> Result<Frame> {
     capture_fullscreen().await
 }
 
-/// 按图形后端分派截图策略
+/// 按图形后端分派截图策略（仅 Windows：Target::Window 变体与后端枚举是 Windows 概念）
+#[cfg(windows)]
 async fn capture_window_by_backend(hwnd: isize, gfx: GfxBackend) -> Result<Frame> {
     match gfx {
         GfxBackend::Gdi => capture_window_gdi(hwnd).await,
@@ -68,7 +70,8 @@ async fn capture_window_by_backend(hwnd: isize, gfx: GfxBackend) -> Result<Frame
     }
 }
 
-/// GDI 窗口截图 (xcap)
+/// GDI 窗口截图 (xcap，仅 Windows)
+#[cfg(windows)]
 async fn capture_window_gdi(hwnd: isize) -> Result<Frame> {
     let windows = XcapWindow::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
     let win = windows
@@ -82,7 +85,8 @@ async fn capture_window_gdi(hwnd: isize) -> Result<Frame> {
     convert_to_frame(image, Scope::Window, FrameSource::WindowCapture)
 }
 
-/// 全屏截图 + 按窗口位置裁剪 (降级策略)
+/// 全屏截图 + 按窗口位置裁剪 (降级策略，仅 Windows 调用链)
+#[cfg(windows)]
 async fn capture_fullscreen_and_crop(hwnd: isize) -> Result<Frame> {
     let frame = capture_fullscreen().await?;
 
