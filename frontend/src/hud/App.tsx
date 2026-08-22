@@ -566,6 +566,8 @@ export function HudOverlay() {
   }, [])
 
   const handleStop = useCallback(async () => {
+    // 加确认弹窗：避免 Enter/误触终止（HUD 无 i18n，硬编码中文）
+    if (!window.confirm('确定立即终止？未保存的结果将丢失。')) return
     try {
       await invoke('hud_stop')
       setState(s => ({ ...s, phase: 'done' }))

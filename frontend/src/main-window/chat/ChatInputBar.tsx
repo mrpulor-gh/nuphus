@@ -781,7 +781,11 @@ export function ChatInputBar({
               className="interrupt"
               label={t('input.interrupt')}
               title={t('input.interruptTitle')}
-              onClick={() => onInterrupt?.()}
+              onClick={() => {
+                // 加确认弹窗：避免 Enter/误按键盘触发终止
+                if (!window.confirm(t('input.forceStopConfirm'))) return
+                onInterrupt?.()
+              }}
             >
               <IconSquare size={14} />
             </IconButton>

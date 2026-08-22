@@ -768,6 +768,8 @@ export default function App() {
         }
         onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
         onStopExecution={() => {
+          // 加确认弹窗：避免手机端误触终止（执行中发送按钮常与终止相邻）
+          if (!window.confirm(t('input.forceStopConfirm'))) return
           // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
           void stopExecution(token ?? '')
             .then(res => {

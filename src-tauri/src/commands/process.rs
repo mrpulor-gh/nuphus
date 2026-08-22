@@ -278,6 +278,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         }
         guard.last_message = message.clone();
         guard.last_send_id = send_id.clone();
+        guard.last_message_images = images.clone().unwrap_or_default();
         state.record_process_start();
     }
 

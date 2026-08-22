@@ -129,7 +129,7 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
 
             // 跳过空内容、系统内部消息（internal 标记——reminders/门铃/安全检查警告等
             // 只进 LLM 上下文，不显示在前端历史）、以及 system 前缀 [ 的内部提示。
-            if content.trim().is_empty()
+            if (content.trim().is_empty() && images.is_empty() && audio.is_empty())
                 || m.internal
                 || (role == "system" && content.starts_with('['))
             {
@@ -227,9 +227,11 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
 fn append_last_turn_user(
     mut msgs: Vec<crate::state::HistoryMessage>,
     last_message: &str,
+    last_images: &[String],
 ) -> Vec<crate::state::HistoryMessage> {
     let text = last_message.trim();
-    if text.is_empty() {
+    // 空内容且无图 → 无可补回（纯图消息 future 场景除外：有 images 就补）
+    if text.is_empty() && last_images.is_empty() {
         return msgs;
     }
     // 已含同 content（刚放回 agent / 执行完成间隙）则不重复附加
@@ -239,7 +241,7 @@ fn append_last_turn_user(
     msgs.push(crate::state::HistoryMessage {
         role: "user".to_string(),
         content: text.to_string(),
-        images: Vec::new(),
+        images: last_images.to_vec(),
         audio: Vec::new(),
         timestamp: None,
         trace_items: Vec::new(),
@@ -332,8 +334,8 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
             if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
                 let messages = extract_history(&sess);
                 if !messages.is_empty() {
-                    // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息
-                    let messages = append_last_turn_user(messages, &sb.last_message);
+                    // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息（含图）
+                    let messages = append_last_turn_user(messages, &sb.last_message, &sb.last_message_images);
                     tracing::info!(
                         "[CHAT] get_chat_history returned {} messages from session_backup",
                         messages.len()

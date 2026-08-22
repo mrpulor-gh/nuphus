@@ -107,6 +107,9 @@ impl Default for RuntimeContext {
 pub struct SessionState {
     pub last_message: String,
     pub last_send_id: Option<String>,
+    /// 与 last_message 同步记录非 busy 受理的图片（data URL 列表）——执行中刷新
+    /// 走 session_backup 回退路径时，append_last_turn_user 用它补回当前轮带图消息。
+    pub last_message_images: Vec<String>,
     pub session_backup: Option<String>,
 }
 
