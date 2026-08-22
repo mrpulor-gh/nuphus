@@ -139,8 +139,16 @@ pub fn extract_append_user_text(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// 测试共享全局状态（PENDING / LAST_INJECTED），必须串行执行防竞争（flaky）
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn push_drain_roundtrip() {
+        let _g = lock_tests();
         push("第一条".to_string());
         push("第二条".to_string());
         let drained = drain_for_injection();
@@ -150,6 +158,7 @@ mod tests {
 
     #[test]
     fn push_dedup_same_content_in_queue() {
+        let _g = lock_tests();
         clear();
         push("重复内容A".to_string());
         push("重复内容A".to_string());
@@ -159,6 +168,7 @@ mod tests {
 
     #[test]
     fn push_dedup_after_injection_window() {
+        let _g = lock_tests();
         clear();
         push("重复内容B".to_string());
         let _ = drain_for_injection(); // 记录 LAST_INJECTED = B
@@ -168,6 +178,7 @@ mod tests {
 
     #[test]
     fn clear_empties_queue() {
+        let _g = lock_tests();
         clear();
         push("残留内容C".to_string());
         clear();
@@ -176,6 +187,7 @@ mod tests {
 
     #[test]
     fn drain_empty_is_noop() {
+        let _g = lock_tests();
         assert!(drain_for_injection().is_empty());
     }
 

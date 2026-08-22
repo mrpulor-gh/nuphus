@@ -170,6 +170,7 @@ fn expand_env_vars(path: &str) -> String {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)] // 非 Windows 无 %VAR% 路径展开需求，调用点仅在 cfg(windows) 块内
 fn expand_env_vars(path: &str) -> String {
     path.to_string()
 }

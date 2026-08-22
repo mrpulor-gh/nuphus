@@ -160,7 +160,9 @@ impl DesktopClient {
         }
         #[cfg(target_os = "macos")]
         {
-            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = Self::enigo_handle()
+                .lock()
+                .map_err(|e| format!("enigo: {e}"))?;
             let len = match direction {
                 "up" => amount,
                 _ => amount,
@@ -172,7 +174,9 @@ impl DesktopClient {
         {
             // Linux: 使用 enigo XTest 模拟滚轮 (X11 only, Wayland 不可用)
             // enigo 0.2 的 scroll 方向由 Axis::Vertical 正负决定
-            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = Self::enigo_handle()
+                .lock()
+                .map_err(|e| format!("enigo: {e}"))?;
             let len = match direction {
                 "up" => amount,
                 _ => -amount,
@@ -196,7 +200,9 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = Self::enigo_handle()
+                .lock()
+                .map_err(|e| format!("enigo: {e}"))?;
             e.text(text).map_err(|e| format!("text: {e}"))?;
         }
         #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -255,7 +261,9 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = Self::enigo_handle()
+                .lock()
+                .map_err(|e| format!("enigo: {e}"))?;
             if !text.is_empty() {
                 e.text(text).map_err(|e| format!("text: {e}"))?;
             }
