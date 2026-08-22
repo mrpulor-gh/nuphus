@@ -4399,6 +4399,7 @@ dependencies = [
  "chrono",
  "desktop-api",
  "dirs 5.0.1",
+ "enigo",
  "futures-util",
  "glob",
  "hex",

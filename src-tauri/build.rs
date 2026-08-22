@@ -64,7 +64,7 @@ fn sherpa_spec() -> Option<SherpaSpec> {
 #[cfg(target_os = "macos")]
 fn sherpa_spec() -> Option<SherpaSpec> {
     Some(SherpaSpec {
-        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-osx-arm64-shared.tar.bz2",
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-osx-universal2-shared.tar.bz2",
         libs: &[
             "libsherpa-onnx-c-api.dylib",
             "libonnxruntime.dylib",

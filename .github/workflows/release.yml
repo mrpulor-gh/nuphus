@@ -26,6 +26,11 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: nuphus_windows_amd64
+          # macOS: 免费 runner 为 Intel x86_64；产物 x86_64 dmg 可在 Apple Silicon 经 Rosetta 运行。
+          # build.rs macOS sherpa 源已切换 osx-universal2（含 x86_64+arm64 双 slice）。
+          - os: macos-14
+            target: x86_64-apple-darwin
+            artifact: nuphus_macos_x86_64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -57,12 +62,12 @@ jobs:
       # FIX 3: 添加 NO_STRIP=true，跳过 linuxdeploy 不兼容的 strip 阶段
       # 注：AppImage（linuxdeploy）在 GitHub runner 环境反复失败（1s 内退出、无 stderr），
       # 当前仅打包 deb（已验证成功）+ 便携包；AppImage 后续用 tauri-action 或手动 linuxdeploy 攻关。
+      # macOS: --bundles dmg（x86_64 dmg，Rosetta 兼容 Apple Silicon；无证书时 tauri 2 默认 adhoc 签名）
       - name: Build installer (tauri bundle)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
-        # Linux 只打 deb（AppImage linuxdeploy 环境问题单列）；Windows 默认 msi
-        run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || '' }}
+        run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || runner.os == 'macOS' && '--bundles dmg' || '' }}
 
       - name: Package portable (Linux)
         if: runner.os == 'Linux'
@@ -95,6 +100,18 @@ jobs:
           Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/ -ErrorAction SilentlyContinue
           Compress-Archive -Path release/* -DestinationPath ${{ matrix.artifact }}.zip
 
+      - name: Package portable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release
+          cp target/release/nuphus release/
+          cp -r plugin release/
+          cp README.md LICENSE PRIVACY.md config.example.toml release/
+          cp -r src-tauri/desktop release/desktop
+          # 拷贝 dylib（macOS 动态库；缺失时忽略，dmg 才是正式产物）
+          cp release/desktop/sherpa/*.dylib release/ 2>/dev/null || true
+          cd release && tar czf ../${{ matrix.artifact }}.tar.gz *
+
       - name: Rename MSI (strip locale suffix)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -114,6 +131,7 @@ jobs:
             target/release/bundle/msi/*.msi
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
+            target/release/bundle/dmg/*.dmg
             nuphus_*.tar.gz
             nuphus_*.zip
           generate_release_notes: true
