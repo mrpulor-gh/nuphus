@@ -58,7 +58,7 @@ npm run publish:npm -- --dry-run
 ```
 npm-desktop/
 ├── publish.ps1            # 发布脚本（勿手改版本号，脚本自动写）
-├── downloads/             # GitHub Release 资产缓存（git 忽略）
+├── downloads/             # GitHub Release 资产缓存（git 忽略；按版本隔离 downloads/<version>/）
 └── packages/
     ├── nuphus-desktop/            # 主包：bin/nuphus.js + package.json + README（已入库）
     ├── nuphus-desktop-win32-x64/  # 平台包（git 忽略，发布时重建）

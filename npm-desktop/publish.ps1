@@ -115,12 +115,12 @@ function Test-NotPublished($pkgName, $version) {
 }
 
 function Get-Asset($p, $version) {
-    $destDir = Join-Path $Downloads $p.Dir
     $assetUrl = "$ReleaseUrl/v$version/$($p.Asset)"
-    $localFile = Join-Path $Downloads $p.Asset
-
+    # 版本隔离缓存：downloads/<version>/<asset>，避免同名资产跨版本误复用（资产名不随版本变）
+    $versionDir = "$Downloads\$version"
+    $localFile = "$versionDir\$($p.Asset)"
     if (Test-Path $localFile) {
-        Write-Ok "asset already cached: $($p.Asset) (size $((Get-Item $localFile).Length) bytes)"
+        Write-Ok "asset already cached (v$version): $($p.Asset) (size $((Get-Item $localFile).Length) bytes)"
         return $localFile
     }
     if ($DryRun) {
@@ -128,7 +128,7 @@ function Get-Asset($p, $version) {
         return $null
     }
     Write-Step "Downloading $($p.Asset) <- $assetUrl"
-    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
     try {
         Invoke-WebRequest -Uri $assetUrl -OutFile $localFile -UseBasicParsing -TimeoutSec 600
     } catch {
