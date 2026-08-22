@@ -15,9 +15,9 @@ use desktop_api::{sendinput, WindowManager};
 
 use crate::desktop::YoloDetector;
 
-// enigo 0.2: text/key_click/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
+// enigo 0.2: text/key/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
 #[cfg(not(windows))]
-use enigo::{Keyboard, Mouse};
+use enigo::{Direction, Keyboard, Mouse};
 
 /// Desktop client — native Rust desktop control
 #[derive(Clone)]
@@ -273,7 +273,7 @@ impl DesktopClient {
             }
             if press_enter {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                e.key_click(enigo::Key::Return)
+                e.key(enigo::Key::Return, enigo::Direction::Click)
                     .map_err(|e| format!("enter: {e}"))?;
             }
         }
@@ -285,17 +285,17 @@ impl DesktopClient {
     }
 
     /// macOS / Linux enigo helper
-    /// （命名为 enigo_handle 避免与 enigo crate 同名遮蔽；Arc 共享 + Result 解包）
+    /// （命名为 enigo_handle 避免与 enigo crate 同名遮蔽；返回 &'static Mutex 供 .lock() 借用，
+    ///  不可返回 Arc——临时 Arc 会在语句结束 drop 导致 MutexGuard 悬垂 E0716）
     #[cfg(not(windows))]
-    fn enigo_handle() -> std::sync::Arc<std::sync::Mutex<enigo::Enigo>> {
-        static INST: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<enigo::Enigo>>> =
+    fn enigo_handle() -> &'static std::sync::Mutex<enigo::Enigo> {
+        static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> =
             std::sync::OnceLock::new();
         INST.get_or_init(|| {
-            std::sync::Arc::new(std::sync::Mutex::new(
+            std::sync::Mutex::new(
                 enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-            ))
+            )
         })
-        .clone()
     }
 
     /// Screenshot - save as BMP format to unified directory
