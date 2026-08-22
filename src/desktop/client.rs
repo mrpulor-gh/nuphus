@@ -58,7 +58,7 @@ impl DesktopClient {
             .args(["-e", script])
             .output()
             .map_err(|e| {
-                DesktopError::InputFailed(format!(
+                desktop_api::DesktopError::InputFailed(format!(
                     "osascript failed: {}. 请检查 系统设置→隐私与安全性→辅助功能 中是否已授权。",
                     e
                 ))
@@ -70,7 +70,7 @@ impl DesktopClient {
             } else {
                 format!("osascript error: {}", stderr.trim())
             };
-            return Err(DesktopError::InputFailed(msg).into());
+            return Err(desktop_api::DesktopError::InputFailed(msg).into());
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
