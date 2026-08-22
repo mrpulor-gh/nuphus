@@ -23,8 +23,6 @@ test_rec_input.png
 src-tauri/desktop/models/*.onnx
 src-tauri/desktop/models/*.txt
 src-tauri/desktop/models/*.pt
-src-tauri/desktop/sherpa/
-src-tauri/desktop/*.dll
 
 # 备份文件
 *.bak
@@ -141,3 +139,9 @@ scripts/build-market-index.mjs
 
 
 *.log.err
+# ── sherpa-onnx 预编译库入库（Windows 构建不再依赖外部 bzip2.exe 解包）──
+# 2026-08-22: fresh clone 需能直接链接 STT，避免 CI/用户机缺 bzip2 导致 LNK2019。
+# 覆盖上方全局 *.dll 规则。
+!src-tauri/desktop/sherpa/
+!src-tauri/desktop/sherpa/*.dll
+!src-tauri/desktop/sherpa/*.lib
