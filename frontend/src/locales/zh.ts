@@ -380,7 +380,7 @@ const zh: Record<string, string> = {
   'models.switchFail': '切换失败',
   'models.inputApiKey': '输入 {0} API 密钥',
   'models.baseUrl': '接口地址',
-  'models.baseUrlPlaceholder': 'https://your-custom-api.com/v1',
+  'models.baseUrlPlaceholder': '你的中转站 / OpenAI 兼容接口地址，如 https://api.example.com/v1',
   'models.reasoningDefault': '提供商默认',
   'models.reasoningHighHint': '默认',
   'models.tabBasic': '基础配置',
