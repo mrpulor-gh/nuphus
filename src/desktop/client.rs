@@ -160,7 +160,7 @@ impl DesktopClient {
         }
         #[cfg(target_os = "macos")]
         {
-            let mut e = enigo().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
             let len = match direction {
                 "up" => amount,
                 _ => amount,
@@ -172,7 +172,7 @@ impl DesktopClient {
         {
             // Linux: 使用 enigo XTest 模拟滚轮 (X11 only, Wayland 不可用)
             // enigo 0.2 的 scroll 方向由 Axis::Vertical 正负决定
-            let mut e = enigo().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
             let len = match direction {
                 "up" => amount,
                 _ => -amount,
@@ -196,7 +196,7 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = enigo().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
             e.text(text).map_err(|e| format!("text: {e}"))?;
         }
         #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -255,7 +255,7 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = enigo().lock().map_err(|e| format!("enigo: {e}"))?;
+            let mut e = enigo_handle().lock().map_err(|e| format!("enigo: {e}"))?;
             if !text.is_empty() {
                 e.text(text).map_err(|e| format!("text: {e}"))?;
             }
@@ -273,12 +273,17 @@ impl DesktopClient {
     }
 
     /// macOS / Linux enigo helper
+    /// （命名为 enigo_handle 避免与 enigo crate 同名遮蔽；Arc 共享 + Result 解包）
     #[cfg(not(windows))]
-    fn enigo() -> std::sync::Mutex<enigo::Enigo> {
-        static INST: std::sync::OnceLock<std::sync::Mutex<enigo::Enigo>> =
+    fn enigo_handle() -> std::sync::Arc<std::sync::Mutex<enigo::Enigo>> {
+        static INST: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<enigo::Enigo>>> =
             std::sync::OnceLock::new();
-        INST.get_or_init(|| std::sync::Mutex::new(enigo::Enigo::new(&enigo::Settings::default())))
-            .clone()
+        INST.get_or_init(|| {
+            std::sync::Arc::new(std::sync::Mutex::new(
+                enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
+            ))
+        })
+        .clone()
     }
 
     /// Screenshot - save as BMP format to unified directory

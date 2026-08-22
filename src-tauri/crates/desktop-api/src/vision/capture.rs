@@ -1,7 +1,7 @@
 //! 截图实现 - xcap + 自定义裁剪 + 图形后端分派
 
 use crate::core::*;
-use xcap::{Monitor, Window as XcapWindow};
+use xcap::Monitor;
 
 /// 截图 - 根据目标和范围
 pub async fn capture(target: &Target, scope: Scope) -> Result<Frame> {

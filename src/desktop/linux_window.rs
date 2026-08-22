@@ -148,7 +148,8 @@ fn get_window_title(conn: &RustConnection, win: u32) -> std::result::Result<Stri
         .reply()
         .map_err(|e| format!("get_property reply: {e}"))?;
     if let Some(bytes) = reply.value8() {
-        return Ok(String::from_utf8_lossy(bytes).to_string());
+        let bytes: Vec<u8> = bytes.collect();
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
     // Fallback: WM_NAME
     let reply = conn
@@ -157,7 +158,8 @@ fn get_window_title(conn: &RustConnection, win: u32) -> std::result::Result<Stri
         .reply()
         .map_err(|e| format!("get_property reply: {e}"))?;
     if let Some(bytes) = reply.value8() {
-        return Ok(String::from_utf8_lossy(bytes).to_string());
+        let bytes: Vec<u8> = bytes.collect();
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
     Ok(String::new())
 }
@@ -170,7 +172,7 @@ fn get_window_pid(conn: &RustConnection, win: u32) -> std::result::Result<u32, S
         .map_err(|e| format!("get_property PID: {e}"))?
         .reply()
         .map_err(|e| format!("get_property PID reply: {e}"))?;
-    if let Some(values) = reply.value32() {
+    if let Some(mut values) = reply.value32() {
         if let Some(pid) = values.next() {
             return Ok(pid);
         }
@@ -189,7 +191,7 @@ pub fn foreground_hwnd() -> Result<Value> {
         .map_err(|e| format!("get_property _NET_ACTIVE_WINDOW: {e}"))?
         .reply()
         .map_err(|e| format!("get_property reply _NET_ACTIVE_WINDOW: {e}"))?;
-    if let Some(values) = reply.value32() {
+    if let Some(mut values) = reply.value32() {
         if let Some(active) = values.next() {
             return Ok(serde_json::json!({ "success": true, "result": { "hwnd": active as i64 } }));
         }
