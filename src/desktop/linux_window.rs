@@ -5,7 +5,6 @@
 use crate::Result;
 use serde_json::Value;
 use x11rb::protocol::xproto::*;
-use x11rb::protocol::ConnectionExt;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 

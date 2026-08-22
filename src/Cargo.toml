@@ -73,18 +73,7 @@ toml = "0.8"
 # 桌面控制基础设施（Win32 原生API）
 desktop-api = { path = "../src-tauri/crates/desktop-api" }
 
-# Windows API (client.rs 直接使用)
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.56", features = [
-    "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_System_Threading",
-    "Win32_System_ProcessStatus",
-    "Win32_System_Memory",
-    "Win32_Graphics_Dwm",
-    "Win32_Security_Cryptography",
-] }
+# ── 跨平台依赖（windows 专属段已移至文件末尾；此前误落在 cfg(windows) 段导致 Linux 编译 unresolved imports） ──
 
 # 截图工具（workspace 统一 0.9.7；0.0.14 旧版 Monitor::all API 兼容）
 xcap.workspace = true
@@ -98,8 +87,6 @@ ort = { version = "2.0.0-rc.9", features = ["load-dynamic"] }
 
 ndarray = "0.17"
 
-# Base64编码
-base64 = "0.22"
 bincode = "1"
 
 # Diff 计算
@@ -146,6 +133,19 @@ tokenizers = { version = "0.21.4", default-features = false, features = ["onig"]
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux X11 窗口管理 - 纯 Rust X11 协议实现
 x11rb = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+# Windows API (client.rs 直接使用)
+windows = { version = "0.56", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Memory",
+    "Win32_Graphics_Dwm",
+    "Win32_Security_Cryptography",
+] }
 
 [dev-dependencies]
 tokio-test = "0.4"

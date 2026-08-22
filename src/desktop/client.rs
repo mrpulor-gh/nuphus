@@ -8,16 +8,18 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 use desktop_api::{
-    capture, clipboard as desk_clip, input, sendinput, Frame, FrameSource, Locator, Query, Scope,
-    Target, WindowManager,
+    capture, clipboard as desk_clip, input, Frame, FrameSource, Locator, Query, Scope, Target,
 };
+#[cfg(windows)]
+use desktop_api::{sendinput, WindowManager};
 
 use crate::desktop::YoloDetector;
 
 /// Desktop client — native Rust desktop control
 #[derive(Clone)]
 pub struct DesktopClient {
-    /// Window manager (with LRU cache)
+    /// Window manager (with LRU cache) — Windows-only（Linux 走 linux_window X11 实现）
+    #[cfg(windows)]
     window_manager: std::sync::Arc<std::sync::Mutex<WindowManager>>,
     /// YOLO icon detector
     yolo: std::sync::Arc<YoloDetector>,
@@ -32,6 +34,7 @@ impl Default for DesktopClient {
 impl DesktopClient {
     pub fn new() -> Self {
         Self {
+            #[cfg(windows)]
             window_manager: std::sync::Arc::new(std::sync::Mutex::new(WindowManager::new())),
             yolo: std::sync::Arc::new(YoloDetector::new()),
         }
@@ -348,6 +351,7 @@ impl DesktopClient {
     ) -> Result<Value> {
         let hwnd_val = match (hwnd, title) {
             (Some(h), _) => h as isize,
+            #[cfg(windows)]
             (_, Some(t)) => {
                 let mut wm = self
                     .window_manager
@@ -358,6 +362,10 @@ impl DesktopClient {
                     desktop_api::Target::Window { hwnd, .. } => hwnd,
                     _ => return Self::result_err("target is not a window"),
                 }
+            }
+            #[cfg(not(windows))]
+            (_, Some(_t)) => {
+                return Self::result_err("按标题查找窗口仅支持 Windows，请传入 hwnd");
             }
             (None, None) => return Self::result_err("hwnd or title required"),
         };
