@@ -73,6 +73,9 @@ toml = "0.8"
 # 桌面控制基础设施（Win32 原生API）
 desktop-api = { path = "../src-tauri/crates/desktop-api" }
 
+# 跨平台键盘输入（macOS/Linux 分支使用 enigo 模拟输入）
+enigo = "0.2"
+
 # ── 跨平台依赖（windows 专属段已移至文件末尾；此前误落在 cfg(windows) 段导致 Linux 编译 unresolved imports） ──
 
 # 截图工具（workspace 统一 0.9.7；0.0.14 旧版 Monitor::all API 兼容）

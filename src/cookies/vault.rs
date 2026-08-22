@@ -609,6 +609,12 @@ fn decrypt_dpapi_bytes(_ct: Vec<u8>) -> Option<String> {
     None
 }
 
+/// base64 密文 → 解密（非 Windows：无 DPAPI 实现，一律视为无效）。
+#[cfg(not(target_os = "windows"))]
+fn decrypt_dpapi_b64(_b64: &str) -> Option<String> {
+    None
+}
+
 /// 解码旧版 `enc:` 密文（HEX 优先，兼容 base64 变体）。
 fn decode_legacy_enc(h: &str) -> Option<Vec<u8>> {
     if let Ok(hex) = hex::decode(h) {

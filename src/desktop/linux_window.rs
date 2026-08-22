@@ -4,6 +4,7 @@
 
 use crate::Result;
 use serde_json::Value;
+use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
@@ -37,7 +38,7 @@ pub fn windows_list() -> Result<Value> {
 
     let mut windows = Vec::new();
     if let Some(windows_raw) = reply.value32() {
-        for &w in windows_raw {
+        for w in windows_raw {
             if let Ok(info) = window_info_inner(&conn, w) {
                 windows.push(info);
             }
@@ -170,7 +171,7 @@ fn get_window_pid(conn: &RustConnection, win: u32) -> std::result::Result<u32, S
         .reply()
         .map_err(|e| format!("get_property PID reply: {e}"))?;
     if let Some(values) = reply.value32() {
-        if let Some(&pid) = values.first() {
+        if let Some(pid) = values.next() {
             return Ok(pid);
         }
     }
@@ -189,7 +190,7 @@ pub fn foreground_hwnd() -> Result<Value> {
         .reply()
         .map_err(|e| format!("get_property reply _NET_ACTIVE_WINDOW: {e}"))?;
     if let Some(values) = reply.value32() {
-        if let Some(&active) = values.first() {
+        if let Some(active) = values.next() {
             return Ok(serde_json::json!({ "success": true, "result": { "hwnd": active as i64 } }));
         }
     }
@@ -197,6 +198,27 @@ pub fn foreground_hwnd() -> Result<Value> {
         "success": true,
         "result": { "hwnd": 0 },
         "note": "未检测到活动窗口（_NET_ACTIVE_WINDOW 属性为空）。如使用 Wayland 桌面环境，窗口管理功能不可用，请切换到 X11 会话。"
+    }))
+}
+
+/// 检查指定窗口是否为当前前台（活动）窗口
+pub fn window_is_foreground(hwnd: i32) -> Result<Value> {
+    let (conn, screen_num) = connect()?;
+    let root = conn.setup().roots[screen_num].root;
+    let atom = intern_atom(&conn, "_NET_ACTIVE_WINDOW")?;
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .map_err(|e| format!("get_property _NET_ACTIVE_WINDOW: {e}"))?
+        .reply()
+        .map_err(|e| format!("get_property reply _NET_ACTIVE_WINDOW: {e}"))?;
+    let foreground = reply
+        .value32()
+        .and_then(|mut values| values.next())
+        .map(|active| active == hwnd as u32)
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "success": true,
+        "result": { "hwnd": hwnd, "foreground": foreground }
     }))
 }
 

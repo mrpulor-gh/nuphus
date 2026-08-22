@@ -370,11 +370,18 @@ impl DesktopClient {
             (None, None) => return Self::result_err("hwnd or title required"),
         };
 
+        #[cfg(windows)]
         let target = desktop_api::Target::Window {
             hwnd: hwnd_val,
             title: String::new(),
             verified: false,
             gfx_backend: desktop_api::GfxBackend::Unknown,
+        };
+        // 非 Windows：Target::Window 变体不存在（cfg(windows)），capture 会忽略 target 回退全屏
+        #[cfg(not(windows))]
+        let target = desktop_api::Target::Tui {
+            hwnd: hwnd_val,
+            title: String::new(),
         };
         let frame = capture::capture(&target, Scope::Window).await?;
 

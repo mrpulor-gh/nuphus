@@ -299,6 +299,13 @@ impl NuphusError {
     }
 }
 
+/// 允许 `?` 直接传播 String 错误（映射到 Tool 变体）——Linux 窗口管理等多处使用。
+impl From<String> for NuphusError {
+    fn from(s: String) -> Self {
+        NuphusError::Tool(s)
+    }
+}
+
 impl serde::Serialize for NuphusError {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
