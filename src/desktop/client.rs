@@ -15,6 +15,10 @@ use desktop_api::{sendinput, WindowManager};
 
 use crate::desktop::YoloDetector;
 
+// enigo 0.2: text/key_click/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
+#[cfg(not(windows))]
+use enigo::{Keyboard, Mouse};
+
 /// Desktop client — native Rust desktop control
 #[derive(Clone)]
 pub struct DesktopClient {
