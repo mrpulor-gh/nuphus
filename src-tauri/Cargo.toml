@@ -108,6 +108,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需要 macos-private-api；
+# 同一依赖在 target 段声明，features 与通用段自动合并（非 macOS 平台不启用该 feature，
+# 避免 tauri-build 的 "remove the macos-private-api feature" 报错）。
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 # test feature: mobile_server 集成测试用 mock_app 驱动完整 submit_user_message 调用链
