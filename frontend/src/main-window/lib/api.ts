@@ -326,6 +326,43 @@ export function listAgentDeliverables(agent: string) {
   return invoke<AgentDeliverable[]>('list_agent_deliverables', { agent })
 }
 
+// ── Session Shelf（浅层会话展示台）──
+
+export interface ShelfSessionItem {
+  id: string
+  mode: string
+  title: string
+  message_count: number
+  updated_at: number
+  is_active: boolean
+}
+
+export interface ShelfListResponse {
+  /** false = busy 或追加队列非空，切换被后端拒绝 */
+  can_switch: boolean
+  items: ShelfSessionItem[]
+}
+
+/** 展示台列表：active 置顶 + newest-first */
+export function listShelfSessions() {
+  return invoke<ShelfListResponse>('list_shelf_sessions')
+}
+
+/** 切换会话（同 backing mode）；失败 reject 稳定错误码字符串 */
+export function switchSession(id: string) {
+  return invoke<void>('switch_session', { id })
+}
+
+/** 新建对话：归档当前 → 安装空白会话，返回新会话 id */
+export function newChatSessionCmd() {
+  return invoke<string>('new_chat_session_cmd')
+}
+
+/** 重命名会话（落 sessions.summary 元数据行） */
+export function renameSession(id: string, title: string) {
+  return invoke<void>('rename_session_cmd', { id, title })
+}
+
 /** 初始化外部 agent 工作目录（幂等，返回目录绝对路径） */
 export function agentInit(agent: string, description: string) {
   return invoke<string>('agent_init', { agent, description })

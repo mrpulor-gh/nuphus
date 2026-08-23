@@ -16,12 +16,15 @@ pub mod mode;
 pub mod refine;
 pub mod retry;
 pub mod session;
+pub mod shelf;
 
 // Re-export public commands so commands::xxx remains accessible
 pub use lifecycle::*;
 pub use mode::*;
 pub use retry::*;
 pub use session::*;
+// glob 携带 #[tauri::command] 生成的 __cmd__ 宏项，generate_handler 依赖它们
+pub use shelf::*;
 
 // ============================================================================
 // ChatReference — 前端传递的资源引用
@@ -862,6 +865,9 @@ pub async fn submit_user_message<R: tauri::Runtime>(
 
         // Update completion time for next dedup check
         state.record_completion();
+
+        // Shelf 镜像回填（crash 安全）：active 会话刷盘，失败不影响结果上报
+        crate::commands::process::shelf::flush_active_mirror(state.inner());
 
         // Memory: persist Leader turn to SQLite — only for Leader mode
         if !is_workflow2 {

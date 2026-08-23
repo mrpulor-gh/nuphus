@@ -234,6 +234,7 @@ export default function App() {
               onRetry={s.handleRetryAgent}
               focusSignal={s.focusSignal}
               onNewChat={s.handleNewChat}
+              onChatReplaced={() => void s.reloadChatFromBackend()}
               tokenUsage={s.displayTokenUsage}
               mood={s.mood}
               goalType={s.goalType}

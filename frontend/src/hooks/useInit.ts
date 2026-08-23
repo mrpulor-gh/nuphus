@@ -35,7 +35,8 @@ export interface InitDeps {
  * 与手机端差异：桌面端保留 traceItems（折叠时合并）——气泡执行回溯入口需要
  * 展示对应轮次的完整执行过程（思考/文本/工具调用）。
  */
-function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
+/** 导出供 useSession.reloadChatFromBackend 复用（Session Shelf 切换后刷新） */
+export function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
   const out: HistoryMessage[] = []
   for (const m of msgs) {
     const prev = out[out.length - 1]
@@ -53,7 +54,8 @@ function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
 }
 
 /** 后端 HistoryTraceItem → 前端 TimelineEntry（执行回溯面板渲染用） */
-function toTimelineEntry(ti: HistoryTraceItem): TimelineEntry {
+/** 导出供 useSession.reloadChatFromBackend 复用 */
+export function toTimelineEntry(ti: HistoryTraceItem): TimelineEntry {
   if (ti.kind === 'tool') {
     let params: unknown
     try {

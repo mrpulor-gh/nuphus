@@ -43,6 +43,7 @@ import { PauseOverlay } from './PauseOverlay'
 import { ChatInputBar } from './ChatInputBar'
 import { VideoProgressBadge } from './VideoProgressBadge'
 import ExternalAgentsStatusBar from './ExternalAgentsStatusBar'
+import SessionRail from './SessionRail'
 import { loadRelation } from '../lib/relation'
 import {
   IconCopy,
@@ -88,6 +89,8 @@ interface ChatPanelProps {
   onRetry?: (input: string) => void
   focusSignal?: number
   onNewChat?: () => void
+  /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
+  onChatReplaced?: () => void
   tokenUsage?: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
   goalType?: { type: string; label: string; confidence: number } | null
   security?: SecurityCheck | null
@@ -148,6 +151,7 @@ export function ChatPanel({
   onRetry,
   focusSignal,
   onNewChat,
+  onChatReplaced,
   tokenUsage,
   goalType,
   security,
@@ -1670,6 +1674,7 @@ export function ChatPanel({
         <VideoProgressBadge />
         {/* 外部 Agent 悬浮胶囊：输入框外层右上角（absolute 定位，不占文档流） */}
         <ExternalAgentsStatusBar onOpenConfig={onManageExternalAgents} />
+        {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} />}
         <ChatInputBar
           input={input}
           onInputChange={handleInputChange}

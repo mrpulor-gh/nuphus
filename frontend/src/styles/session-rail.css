@@ -1,0 +1,218 @@
+/* ═══════════════════════════════════════════
+   session-rail.css — 会话展示台（左缘感应式竖排横杠）
+   静止微露 → 感应区 hover 阶梯展开 → 单条 hover 玻璃气泡（重命名）
+   全部取项目 token：跨 dark/light/midnight 主题自适应
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 左缘感应区 ── */
+.session-rail-zone {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 8px;
+  border-radius: 0 14px 14px 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.session-rail-zone.is-locked {
+  opacity: 0.45;
+}
+
+.session-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 单条会话项 ── */
+.sr-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 22px;
+}
+
+.sr-bar {
+  height: 6px;
+  width: 16px; /* idle 微露 */
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--fg-5);
+  cursor: pointer;
+  transition:
+    width 0.32s var(--ease-out),
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.session-rail-zone:hover .sr-bar {
+  width: 38px;
+  background: var(--fg-4);
+}
+.sr-item.active .sr-bar {
+  background: var(--accent);
+  width: 26px;
+  box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
+}
+.session-rail-zone:hover .sr-item.active .sr-bar {
+  width: 48px;
+}
+.sr-item:hover .sr-bar {
+  width: 54px !important;
+  background: var(--accent) !important;
+  box-shadow: 0 0 12px var(--accent-dim, rgba(59, 130, 246, 0.45));
+  transition-delay: 0s !important;
+}
+.sr-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 执行中点击被拒：shake 反馈 */
+.sr-item.shake .sr-bar {
+  animation: srShake 0.3s ease;
+}
+@keyframes srShake {
+  25% { transform: translateX(2px); }
+  75% { transform: translateX(-2px); }
+}
+
+/* 新建对话虚线杠 */
+.sr-bar-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-4);
+  border: 1px dashed var(--line-3);
+  background: transparent;
+  width: 20px;
+  height: 16px;
+}
+.session-rail-zone:hover .sr-bar-new {
+  width: 34px;
+  background: transparent;
+  border-color: var(--line-2);
+  color: var(--fg-3);
+}
+.sr-item.sr-new:hover .sr-bar-new,
+.sr-bar-new:hover {
+  width: 40px !important;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim) !important;
+  box-shadow: none;
+}
+.sr-bar-new:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ── hover 玻璃气泡：标题 + 重命名 ── */
+.sr-bubble {
+  position: absolute;
+  left: 62px;
+  top: 50%;
+  transform: translateY(-50%) translateX(-6px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 300px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+  z-index: 60;
+}
+.sr-bubble::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--surface-2);
+  border-left: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.sr-item:hover .sr-bubble,
+.sr-item.editing .sr-bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+.sr-title {
+  font-size: var(--fz-sm);
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.sr-item.active .sr-title {
+  font-weight: 600;
+}
+
+.sr-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sr-edit-btn:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.sr-rename-input {
+  width: 180px;
+  font-size: var(--fz-sm);
+  color: var(--fg-1);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+/* 错误提示浮层 */
+.sr-error {
+  margin-top: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.12);
+  border: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.4);
+  color: var(--error);
+  font-size: var(--fz-xs);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sr-bar,
+  .sr-bubble {
+    transition: none !important;
+  }
+}

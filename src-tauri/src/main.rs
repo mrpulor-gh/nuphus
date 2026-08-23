@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use nuphus::store::session::{upsert_session, SessionRow};
+// Shelf 退出持久化经 commands::process::shelf::persist_and_mirror（元数据行+镜像一并落盘）
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -173,6 +173,10 @@ fn main() {
             commands::agent_status,
             commands::list_agent_statuses,
             commands::list_agent_deliverables,
+            commands::list_shelf_sessions,
+            commands::switch_session,
+            commands::new_chat_session_cmd,
+            commands::rename_session_cmd,
             commands::list_external_agents,
             commands::upsert_external_agent,
             commands::delete_external_agent,
@@ -491,6 +495,17 @@ fn main() {
             // 启动失败内部优雅降级（warn 日志），不阻塞应用启动。
             crate::handoff_server::spawn();
 
+            // ── Session Shelf 预热：磁盘镜像装回内存展示台，rail 列表立即可用 ──
+            {
+                let state = app.state::<crate::state::AppState>();
+                let shelf_locked = state.shelf.lock();
+                if let Ok(mut shelf) = shelf_locked {
+                    crate::commands::process::shelf::warm_from_disk(&mut shelf);
+                    let n = shelf.len();
+                    tracing::info!("[Shelf] 预热完成，装载 {n} 个镜像会话");
+                }
+            }
+
             // ── 中继客户端：enabled + 配置完整即启动双回路（外部网络控制桌面）──
             // 出站 WS 连中继服务器，收到任务走 submit_user_message 共享入口（source="relay"）。
             // 断线指数退避重连。（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）
@@ -610,23 +625,14 @@ fn main() {
                             }
                         }
                         "quit" => {
-                            // 退出前保存当前 session
+                            // 退出前保存当前 session（元数据行 + Shelf 磁盘镜像）
                             if let Some(state) = app.try_state::<crate::state::AppState>() {
                                 if let Ok(guard) = state.runtime.lock() {
                                     if let Some(rt) = guard.leader_agent.as_ref() {
-                                        let session = rt.session();
-                                        let existing = nuphus::store::session::get_session(&session.id).ok().flatten();
-                                        let row = SessionRow {
-                                            id: session.id.clone(),
-                                            parent_id: existing.as_ref().and_then(|r| r.parent_id.clone()),
-                                            depth: existing.as_ref().map(|r| r.depth).unwrap_or(0),
-                                            created_at: existing.as_ref().map(|r| r.created_at.clone()).unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-                                            updated_at: chrono::Utc::now().to_rfc3339(),
-                                            message_count: session.messages().len() as i32,
-                                            token_count: session.api_input_tokens as i32,
-                                            summary: existing.as_ref().map(|r| r.summary.clone()).unwrap_or_default(),
-                                        };
-                                        let _ = upsert_session(&row);
+                                        crate::commands::process::shelf::persist_and_mirror("leader", rt.session());
+                                    }
+                                    if let Some(wa) = guard.workflow_agent.as_ref() {
+                                        crate::commands::process::shelf::persist_and_mirror("workflow", wa.session());
                                     }
                                 }
                             }

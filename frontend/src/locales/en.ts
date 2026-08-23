@@ -115,6 +115,18 @@ const en: Record<string, string> = {
   'extAgents.deliver.artifacts': 'Artifacts',
   'extAgents.deliver.preview': 'Click to preview',
 
+  // ── Session Rail (session shelf) ──
+  'sessionRail.title': 'Session rail',
+  'sessionRail.newChat': 'New chat',
+  'sessionRail.busyHint': 'Locked while executing — append an instruction or wait',
+  'sessionRail.rename': 'Rename',
+  'sessionRail.save': 'Save',
+  'sessionRail.untitled': 'Untitled session',
+  'sessionRail.switchFailBusy': 'Execution in progress, cannot switch',
+  'sessionRail.switchFailAppend': 'Append instructions pending, try again shortly',
+  'sessionRail.switchFailMode': 'That session belongs to another run mode',
+  'sessionRail.switchFailGeneric': 'Switch failed',
+
   // ── External Agents config center (team.toml CRUD) ──
   'extAgents.cfg.title': 'External Agents',
   'extAgents.cfg.add': 'Configure external agents',

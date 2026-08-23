@@ -113,6 +113,18 @@ const zh: Record<string, string> = {
   'extAgents.deliver.artifacts': '产物文件',
   'extAgents.deliver.preview': '点击预览',
 
+  // ── Session Rail（会话展示台）──
+  'sessionRail.title': '会话展示台',
+  'sessionRail.newChat': '新建对话',
+  'sessionRail.busyHint': '执行中不可切换，可发送追加指令或等待完成',
+  'sessionRail.rename': '重命名',
+  'sessionRail.save': '保存',
+  'sessionRail.untitled': '未命名会话',
+  'sessionRail.switchFailBusy': '执行中，无法切换会话',
+  'sessionRail.switchFailAppend': '有追加指令待处理，稍后再试',
+  'sessionRail.switchFailMode': '该会话属于另一运行模式',
+  'sessionRail.switchFailGeneric': '切换失败',
+
   // ── 外部 Agent 配置中心（team.toml CRUD）──
   'extAgents.cfg.title': '外部 Agent 配置中心',
   'extAgents.cfg.add': '配置外部 Agent',

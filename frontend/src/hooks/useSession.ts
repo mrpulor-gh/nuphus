@@ -22,7 +22,9 @@ import {
   getContextLimit,
   getCurrentConfig,
   isBusy,
+  getChatHistory,
 } from '../main-window/lib/api'
+import { foldHistoryAssistants, toTimelineEntry } from './useInit'
 import { loadRelation } from '../main-window/lib/relation'
 import { useLanguage } from '../locales'
 
@@ -293,6 +295,7 @@ export interface SessionAPI {
     refs?: import('../core/types').ChatReference[],
   ) => Promise<void>
   handleNewChat: () => void
+  reloadChatFromBackend: () => Promise<void>
   handleRetryAgent: (input: string) => Promise<void>
   handlePause: () => Promise<void>
   handleContinue: (actionId: string) => Promise<void>
@@ -542,7 +545,7 @@ export function useSession(): SessionAPI {
   )
 
   // ── handleNewChat (kept in useSession due to tight coupling with messages) ──
-  const handleNewChat = useCallback(() => {
+  const resetTransientUI = useCallback(() => {
     setMessages([])
     setIsProcessing(false)
     execUI.setCompleted(false)
@@ -560,6 +563,39 @@ export function useSession(): SessionAPI {
     streamingMsgId.current = null
     lastStreamingMsgId.current = null
   }, [])
+
+  const handleNewChat = useCallback(() => {
+    resetTransientUI()
+  }, [resetTransientUI])
+
+  /**
+   * Session Shelf 切换/新建后：从后端重拉当前会话历史并整体替换气泡。
+   * 映射逻辑与 useInit 启动恢复完全一致（fold 连续 assistant + traceItems）。
+   */
+  const reloadChatFromBackend = useCallback(async () => {
+    resetTransientUI()
+    try {
+      const history = await getChatHistory()
+      if (history && history.length > 0) {
+        const folded = foldHistoryAssistants(history)
+        setMessages(
+          folded.map(h => ({
+            id: crypto.randomUUID(),
+            role: h.role as ChatMessage['role'],
+            content: h.content,
+            images: h.images && h.images.length > 0 ? h.images : undefined,
+            audio: h.audio && h.audio.length > 0 ? h.audio : undefined,
+            ...(h.role === 'refine' ? { refineStatus: 'completed' as const } : {}),
+            timestamp: h.timestamp ?? Date.now(),
+            ...(h.traceItems && h.traceItems.length > 0
+              ? { traceItems: h.traceItems.map(toTimelineEntry) }
+              : {}),
+          })),
+        )
+        messagesRestoredRef.current = true
+      }
+    } catch {}
+  }, [resetTransientUI])
 
   // ── addMessage ──
   const addMessage = useCallback((msg: ChatMessage) => {
@@ -974,6 +1010,7 @@ export function useSession(): SessionAPI {
     // Handlers
     handleSend,
     handleNewChat,
+    reloadChatFromBackend,
     handleRetryAgent: agentControl.handleRetryAgent,
     handlePause: agentControl.handlePause,
     handleContinue: agentControl.handleContinue,

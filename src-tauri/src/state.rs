@@ -59,6 +59,8 @@ pub struct AppState {
     /// 插件 workflow.run 在途集合（每插件同时只允许一个在途工作流执行；
     /// guard 模式确保 panic/取消也移除，见 plugin_apps::PluginWorkflowGuard）
     pub plugin_workflow_inflight: Mutex<std::collections::HashSet<String>>,
+    /// Session Shelf —— 浅层会话展示台（内存 LRU ≤10 + 磁盘镜像），见 process/shelf.rs
+    pub shelf: Mutex<crate::commands::process::shelf::ShelfState>,
 }
 
 /// 主题快照：base 为主题标识（dark/light），overrides 为 documentElement 内联覆盖
@@ -196,6 +198,7 @@ impl Default for AppState {
             theme_snapshot: Mutex::new(ThemeSnapshot::default()),
             plugin_chat_inflight: Mutex::new(std::collections::HashSet::new()),
             plugin_workflow_inflight: Mutex::new(std::collections::HashSet::new()),
+            shelf: Mutex::new(crate::commands::process::shelf::ShelfState::default()),
         }
     }
 }
