@@ -8,6 +8,12 @@ fn main() {
         println!("cargo:rustc-link-arg=/SUBSYSTEM:WINDOWS");
     }
 
+    // 必须先于 tauri_build::build()：tauri 在构建脚本里校验 bundle.resources
+    // 指向的文件必须存在（"resource path ... doesn't exist"）。tauri.linux.conf.json
+    // 引用了 desktop/sherpa/ 下的 .so，而干净 checkout 里只有 Windows DLL 在 git，
+    // .so 是 ensure_sherpa_libs() 下载解包生成的——不先下载，校验必挂。
+    ensure_sherpa_libs();
+
     tauri_build::build();
 
     // macOS：把 sherpa/onnxruntime dylib 的运行时查找路径写进二进制的 @rpath。
@@ -43,7 +49,6 @@ fn main() {
     // 顺序：先 OCR（最常缺）→ sherpa（其 shared 包自带 onnxruntime）→
     // onnxruntime（sherpa 未内置时兜底）→ YOLO → 最后 sync_*。
     download_ocr_models();
-    ensure_sherpa_libs();
     #[cfg(target_os = "macos")]
     decouple_onnxruntime_name();
     ensure_onnxruntime_libs();
