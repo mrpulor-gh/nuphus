@@ -8,6 +8,7 @@ interface ThinkingIndicatorProps {
   step: string
   isThinking: boolean
   completed?: boolean
+  dismissed?: boolean
   phase?: 'understanding' | 'executing' | 'recording' | 'workflow' | 'retrying' | ''
   timeline?: TimelineEntry[]
   mood?: MoodState
@@ -36,6 +37,7 @@ export function ThinkingIndicator({
   step,
   isThinking,
   completed,
+  dismissed,
   phase,
   timeline,
   mood,
@@ -44,6 +46,8 @@ export function ThinkingIndicator({
   onClose,
 }: ThinkingIndicatorProps) {
   const { t } = useLanguage()
+  // 已点击「关闭」：无论是否 completed / isThinking，整条指示器都应隐藏。
+  if (dismissed) return null
   if (!completed && !isThinking && !step) return null
 
   const phaseColor = completed ? '#22c55e' : phase ? PHASE_COLORS[phase] : '#3b82f6'
