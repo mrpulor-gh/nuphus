@@ -767,6 +767,138 @@ pub fn init_logging() {
         .with(stderr_layer)
         .init();
 }
+// ── 项目标签记忆日志（memory/{tag}.md）──
+//
+// 记忆按「Ctrl+K→项目配置」的 project_dir 派生标签分文件存储：
+// 同项目跨会话共享、不同项目互不串扰。active_project_tag 为单一事实源
+// （实时读配置），系统提示词的项目注入与记忆定位永远同源。
+
+/// 当前生效的项目标签：实时从项目目录配置派生（空串视为未配置）。
+pub fn active_project_tag() -> Option<String> {
+    let dir = crate::config::UserPreferences::load().project_dir;
+    if dir.trim().is_empty() {
+        return None;
+    }
+    derive_project_tag_from_dir(&dir)
+}
+
+/// 标签清洗：保留字母/数字/下划线/连字符/CJK，空格折叠 '-'，空结果回退 default。
+pub fn sanitize_memory_tag(raw: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || !ch.is_ascii() {
+            out.push(if ch == ' ' { '-' } else { ch });
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() { "default".to_string() } else { trimmed }
+}
+
+/// 标签 → memory 文件路径；None → default。
+pub fn memory_md_path(tag: Option<&str>) -> PathBuf {
+    let t = tag
+        .map(sanitize_memory_tag)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    nuphus_data_dir().join("memory").join(format!("{t}.md"))
+}
+
+/// 当前生效的记忆文件路径——注入与工具写盘统一入口。
+pub fn active_memory_md_path() -> PathBuf {
+    memory_md_path(active_project_tag().as_deref())
+}
+
+/// 由项目目录派生标签：目录名截 24 字符 + 路径 8 位哈希（同名不同路径不冲突）。
+pub fn derive_project_tag_from_dir(dir: &str) -> Option<String> {
+    if dir.trim().is_empty() {
+        return None;
+    }
+    let name = std::path::Path::new(dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())?;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    dir.hash(&mut hasher);
+    Some(format!("{}-{:08x}", name.chars().take(24).collect::<String>(), hasher.finish() as u32))
+}
+
+/// 旧版单文件迁移：memory.md 内容拷为 default 标签（原文件保留）。幂等。
+pub fn migrate_legacy_memory_md() {
+    let legacy = nuphus_data_dir().join("memory.md");
+    if !legacy.exists() { return; }
+    let target = memory_md_path(Some("default"));
+    if target.exists() { return; }
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::copy(&legacy, &target) {
+        Ok(_) => tracing::info!("[memory-tag] legacy memory.md migrated to default tag"),
+        Err(e) => tracing::warn!("[memory-tag] migrate failed: {e}"),
+    }
+}
+
+/// 记忆日志单文件容量上限：超出时从头丢弃最旧条目（整条目粒度）
+pub const MEMORY_JOURNAL_CAP_BYTES: usize = 16 * 1024;
+
+/// 按条目切分日志（旧→新）。条目以 '[' 署名行起始、空行分隔；
+/// 整条目粒度操作，杜绝 UTF-8 多字节中间截断。无署名头的旧整文件视为单条。
+pub fn split_memory_journal(content: &str) -> Vec<&str> {
+    let mut blocks: Vec<&str> = Vec::new();
+    let len = content.len();
+    let mut idx = 0usize;
+    let mut start: Option<usize> = None;
+    while idx < len {
+        if content[idx..].starts_with('[') {
+            if let Some(s) = start {
+                blocks.push(content[s..idx].trim_end());
+            }
+            start = Some(idx);
+        }
+        match content[idx..].find('\n') {
+            Some(nl) => idx += nl + 1,
+            None => break,
+        }
+    }
+    if let Some(s) = start {
+        blocks.push(content[s..len].trim_end());
+    }
+    blocks.retain(|b| !b.trim().is_empty());
+    blocks
+}
+
+/// 注入用：从最新（尾部）向前累计 ≤ max_chars 字符，按原时间序拼接。
+pub fn memory_journal_tail(content: &str, max_chars: usize) -> String {
+    let blocks = split_memory_journal(content);
+    let mut picked: Vec<&str> = Vec::new();
+    let mut used = 0usize;
+    for b in blocks.iter().rev() {
+        let cost = b.chars().count() + 2;
+        if used + cost > max_chars { break; }
+        used += cost;
+        picked.push(b);
+    }
+    picked.reverse();
+    picked.join("\n\n")
+}
+
+/// 容量裁剪：超 cap_bytes 时从头丢弃最旧条目。
+pub fn trim_memory_journal_to_cap(content: &str, cap_bytes: usize) -> String {
+    if content.len() <= cap_bytes {
+        return content.to_string();
+    }
+    let blocks = split_memory_journal(content);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut total = 0usize;
+    for b in blocks.iter().rev() {
+        total += b.len() + 2;
+        if total > cap_bytes { break; }
+        kept.push(b);
+    }
+    kept.reverse();
+    kept.join("\n\n")
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,3 +1079,7 @@ mod tests {
         assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
+
+
+
+

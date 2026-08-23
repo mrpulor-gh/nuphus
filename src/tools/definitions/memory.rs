@@ -303,7 +303,7 @@ impl ToolRegistry {
     pub(crate) fn register_leader_memory_update(&mut self) {
         self.register(ToolDef {
             name: "leader::memory_update".to_string(),
-            description: "Write the latest session working memory to .nuphus/memory.md. The file always contains ONLY the content from the most recent call — previous content is NOT kept and does NOT need to be repeated. The latest content is also registered in the SQLite memory store as this session's snapshot (one record per session, replaced on each update — the record always holds this session's final snapshot). Inject into the Leader's prompt during new sessions. Maintain the latest status: phase status, key decisions, active blocking items, and file pointers. Skip temporary step-by-step logs. Maximum length: 2000 characters. Recommended structure: ##Phase / ##File / ##Blocking Item / ##Decision.".to_string(),
+            description: "Append a dated entry to the project memory journal (.nuphus/memory/{tag}.md). Write INCREMENTAL changes only (new phase, new decision, resolved blocker) — do not restate unchanged items; each call becomes one timestamped journal entry attributed to this session, kept in SQLite for full causal-chain search. The newest tail of this journal is auto-injected into future sessions of the same project. Skip temporary step-by-step logs. Max 2000 chars per entry. Suggested structure: ##Phase / ##File / ##Blocker / ##Decision.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -324,24 +324,46 @@ impl ToolRegistry {
                 } else {
                     content
                 };
-                let nuphus_dir = crate::utils::nuphus_data_dir();
-                let path = nuphus_dir.join("memory.md");
-                if let Err(e) = std::fs::create_dir_all(&nuphus_dir) {
-                    return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
-                }
-                // ── Project Map: extract anchors from content ──
-                let anchors = extract_memory_anchors(trimmed);
-                let with_frontmatter = build_memory_frontmatter(trimmed, &anchors);
+                // ── 追加式项目记忆日志（memory/{tag}.md）──
+                // 每次调用追加一条带署名条目；不覆盖他人/他轮内容。
+                let sid_full = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("leader-current");
+                let sid8: String = sid_full.chars().take(8).collect();
+                let ts = chrono::Local::now();
+                let entry = format!(
+                    "[{} · {}]\n{}\n\n",
+                    ts.format("%m-%d %H:%M"),
+                    sid8,
+                    trimmed
+                );
 
-                match std::fs::write(&path, &with_frontmatter) {
+                let path = crate::utils::active_memory_md_path();
+                if let Some(parent) = path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
+                    }
+                }
+                // 追加：读旧 → 拼（署名行 + 锚点 frontmatter）→ 16KB 整条目容量
+                // 裁剪（丢最旧）→ 写回。失败必须可见，不允许静默假成功。
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                // ── Project Map: 锚点随条目一并保留 ──
+                let anchors = extract_memory_anchors(trimmed);
+                let body = build_memory_frontmatter(trimmed, &anchors);
+                let journal_entry = format!("{entry}{body}\n\n");
+                let capped = crate::utils::trim_memory_journal_to_cap(
+                    &format!("{existing}{journal_entry}"),
+                    crate::utils::MEMORY_JOURNAL_CAP_BYTES,
+                );
+                match std::fs::write(&path, &capped) {
                     Ok(_) => {
-                        // ── 写入后登记：SQLite 每 session 一行，内容 = 本 session 最新快照 ──
-                        // session_id 由 execute_tool_with_permission 注入；
-                        // 缺失时回退固定 ID（向后兼容无 session 上下文的调用方）
+                        // ── SQLite 追加式登记：每次更新一条独立记录（唯一 id 含毫秒戳），
+                        // 保留跨会话因果链；不再按 session 覆盖（与 md 日志语义对齐）──
                         let snapshot_sid = params
                             .get("session_id")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("leader-snapshot-current");
+                            .unwrap_or("leader-current");
                         register_snapshot_entry(
                             snapshot_sid,
                             "leader-snapshot",
@@ -349,9 +371,12 @@ impl ToolRegistry {
                             "memory_snapshot",
                             vec!["memory_snapshot".to_string(), "leader".to_string()],
                             trimmed,
-                            "memory.md snapshot",
+                            "memory.md journal",
                         );
-                        Ok(ToolResult::success(format!("Memory updated ({} chars)", trimmed.len())))
+                        Ok(ToolResult::success(format!(
+                            "Memory appended ({} chars)",
+                            trimmed.len()
+                        )))
                     }
                     Err(e) => Ok(ToolResult::failure(format!("Failed to write memory.md: {}", e))),
                 }
@@ -554,7 +579,8 @@ fn register_snapshot_entry(
         .map(|l| l.trim().chars().take(200).collect())
         .unwrap_or_else(|| default_intent.to_string());
     let entry = crate::memory::entry::MemoryEntry {
-        id: format!("{}-{}", id_prefix, session_id),
+        // 追加式语义：id 含毫秒戳 → 每次调用一条独立记录，不覆盖
+        id: format!("{}-{}-{}", id_prefix, session_id, ts_ms),
         session_id: session_id.to_string(),
         turn_id: format!("snapshot-{}", ts_ms),
         sequence: 0,

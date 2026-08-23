@@ -28,10 +28,6 @@ pub struct Session {
     /// 上次 API 返回的实际 input_tokens (prompt_tokens + prompt_cache_hit_tokens)
     /// 保持 session 内峰值——status-bar 和 refine 共用，不受 KV cache 波动影响
     pub api_input_tokens: u64,
-    /// 提炼摘要缓存（供写入 memory.md 用，session 切换前设置）
-    /// 在 refine/divide 时写入，new_chat_session 时被读取并写入 memory.md
-    #[serde(default)]
-    pub pending_memory_md: Option<String>,
     /// turn 计数器 — 每次用户发送消息时递增。
     /// 用作 memory entry 的 turn_id，用于因果链追踪。
     #[serde(default)]
@@ -51,8 +47,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-            pending_memory_md: None,
-            turn_count: 0,
+                    turn_count: 0,
         }
     }
 
@@ -80,8 +75,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-            pending_memory_md: None,
-            turn_count: parent_depth + 1,
+                    turn_count: parent_depth + 1,
         }
     }
 
@@ -130,8 +124,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-            pending_memory_md: None,
-            turn_count: 0,
+                    turn_count: 0,
         }
     }
 
@@ -362,8 +355,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-            pending_memory_md: None,
-            turn_count: 0,
+                    turn_count: 0,
         }
     }
 }

@@ -316,7 +316,7 @@ pub fn search_entries_scored(
         Some(_) => sql.push_str(" AND e.custom_agent_id = ?"),
         None => sql.push_str(" AND e.custom_agent_id IS NULL"),
     }
-    sql.push_str(" ORDER BY score LIMIT ?");
+    sql.push_str(" ORDER BY CASE e.kind WHEN 'snapshot' THEN 0 WHEN 'distill' THEN 1 ELSE 2 END, score LIMIT ?");
 
     let limit_i = limit as i64;
     let kind_str = kind.map(|k| k.as_str());
@@ -482,7 +482,7 @@ pub fn search_entries_filtered(
             format!(" AND {}", conditions_str)
         };
         format!(
-            "SELECT {}\n         FROM memory_entries e\n         JOIN memory_fts_v4 fts ON e.id = fts.id\n         WHERE memory_fts_v4 MATCH ?{}\n         ORDER BY CASE WHEN e.kind = 'snapshot' THEN 0 ELSE 1 END, bm25(memory_fts_v4) ASC\n         LIMIT ?",
+            "SELECT {}\n         FROM memory_entries e\n         JOIN memory_fts_v4 fts ON e.id = fts.id\n         WHERE memory_fts_v4 MATCH ?{}\n         ORDER BY CASE e.kind WHEN 'snapshot' THEN 0 WHEN 'distill' THEN 1 ELSE 2 END, e.wall_clock_ms DESC, bm25(memory_fts_v4) ASC\n         LIMIT ?",
             select_cols, extra_where
         )
     } else {
