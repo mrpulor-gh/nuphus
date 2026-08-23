@@ -10,6 +10,17 @@ fn main() {
 
     tauri_build::build();
 
+    // macOS：把 sherpa/onnxruntime dylib 的运行时查找路径写进二进制的 @rpath。
+    // dev 时 dylib 被 sync_sherpa_libs 拷到 target/<profile>/（与二进制同目录），
+    // 打包成 .app 后 dylib 放在 Contents/Frameworks/ 下；@executable_path 与
+    // @executable_path/../Frameworks 两条 rpath 分别覆盖这两种布局，缺一不可。
+    // 否则 @rpath/libsherpa-onnx-c-api.dylib 无法解析 → 启动即 "Library not loaded"。
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+    }
+
     // ═══ 模型与运行时依赖自动获取 ═══
     // 产品原则：除 STT 语音模型外，其余所有本地模型/运行时都要自动获取——
     // 端用户不懂技术，git clone + cargo build 后必须自愈。所有步骤失败时都只
@@ -18,6 +29,8 @@ fn main() {
     // onnxruntime（sherpa 未内置时兜底）→ YOLO → 最后 sync_*。
     download_ocr_models();
     ensure_sherpa_libs();
+    #[cfg(target_os = "macos")]
+    decouple_onnxruntime_name();
     ensure_onnxruntime_libs();
     ensure_yolo_model();
     sync_models_to_data_dir();
@@ -371,6 +384,52 @@ fn sync_sherpa_libs() {
             }
         }
     }
+}
+
+// macOS：解除 sherpa c-api 对 onnxruntime 的「带版本号」依赖耦合。
+// k2-fsa 的 osx-universal2 包里 c-api 引用的是 libonnxruntime.1.27.0.dylib，
+// 但文件名是 libonnxruntime.dylib，且版本号会随 sherpa 升级变化。这里用
+// install_name_tool 把 c-api 的依赖统一改成不带版本号的名字，使打包只关心
+// libonnxruntime.dylib，无需在 tauri.conf.json / 代码里硬编码版本。
+#[cfg(target_os = "macos")]
+fn decouple_onnxruntime_name() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let sherpa_dir = std::path::PathBuf::from(&manifest_dir)
+        .join("desktop")
+        .join("sherpa");
+    let c_api = sherpa_dir.join("libsherpa-onnx-c-api.dylib");
+    if !c_api.exists() {
+        return;
+    }
+    let Ok(out) = std::process::Command::new("otool")
+        .args(["-L"])
+        .arg(&c_api)
+        .output()
+    else {
+        return;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let old = text.lines().map(str::trim).find_map(|l| {
+        l.strip_prefix("@rpath/libonnxruntime.").map(|rest| {
+            format!(
+                "@rpath/libonnxruntime.{}",
+                rest.split_whitespace().next().unwrap_or("")
+            )
+        })
+    });
+    let Some(old) = old else {
+        println!("cargo:warning=sherpa-onnx: 未发现带版本号的 onnxruntime 依赖，跳过解耦");
+        return;
+    };
+    let new = "@rpath/libonnxruntime.dylib";
+    if old == new {
+        return;
+    }
+    let _ = std::process::Command::new("install_name_tool")
+        .args(["-change", &old, new])
+        .arg(&c_api)
+        .status();
+    println!("cargo:warning=sherpa-onnx: 已解除 onnxruntime 版本耦合: {old} -> {new}");
 }
 
 // ─── OCR Model files ─────────────────────────────────────────────

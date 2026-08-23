@@ -77,6 +77,12 @@
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "files": {
+        "Frameworks/libsherpa-onnx-c-api.dylib": "desktop/sherpa/libsherpa-onnx-c-api.dylib",
+        "Frameworks/libonnxruntime.dylib": "desktop/sherpa/libonnxruntime.dylib"
+      }
+    }
   }
 }

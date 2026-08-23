@@ -36,9 +36,15 @@ function resolveVendorDir() {
     console.error('        当前支持: win32-x64 / darwin-arm64 / linux-x64');
     process.exit(1);
   }
-  // 主包位于 node_modules/@nuphus/nuphus-desktop/，平台子包与其同级
-  // __dirname = <node_modules>/@nuphus/nuphus-desktop/bin
-  const vendor = path.join(__dirname, '..', '..', '@nuphus', spec.pkg);
+  // 平台子包可能被 npm 提升到 <node_modules>/@nuphus/ 下（与主包同级），也可能被
+  // 嵌套在主包的 node_modules/@nuphus/ 下；用 Node 模块解析定位，两种布局都能命中。
+  const pkgName = `@nuphus/${spec.pkg}`;
+  let vendor;
+  try {
+    vendor = path.dirname(require.resolve(`${pkgName}/package.json`));
+  } catch (_) {
+    vendor = path.join(__dirname, '..', '..', pkgName);
+  }
   if (!fs.existsSync(vendor)) {
     console.error(`[nuphus] 未找到平台包: ${spec.pkg}`);
     console.error('        请确认安装完整（npm install -g @nuphus/nuphus-desktop）或重装。');
