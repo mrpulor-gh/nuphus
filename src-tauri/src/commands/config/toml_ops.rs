@@ -435,6 +435,50 @@ pub fn update_reasoning_effort(
     Ok(())
 }
 
+/// Clear a provider's API key from config.toml.
+///
+/// Sets the matching `[[providers]]` `api_key` to an empty string — the key is
+/// effectively removed while the provider entry (name / provider_type / base_url
+/// / models) is preserved. Idempotent: unknown providers leave the file
+/// untouched and return `Ok(())`.
+pub fn clear_provider_api_key_in_config_toml(
+    config_path: &std::path::Path,
+    provider_name: &str,
+) -> Result<(), String> {
+    // If file doesn't exist yet, nothing to clear — silently skip
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+    let mut doc: toml::Value = match content.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+
+    let providers = match doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    for provider in providers.iter_mut() {
+        if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
+            if name == provider_name {
+                if let Some(map) = provider.as_table_mut() {
+                    map.insert("api_key".to_string(), toml::Value::String(String::new()));
+                    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+                    let new_content = toml::to_string_pretty(&doc)
+                        .map_err(|e| format!("serialize config.toml failed: {}", e))?;
+                    std::fs::write(config_path, new_content)
+                        .map_err(|e| format!("write config.toml failed: {}", e))?;
+                    tracing::info!("Cleared api_key for provider {}", provider_name);
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Update provider config in config.toml
 /// Parse/modify with toml::Value, preserving comments and other fields
 pub fn update_config_toml(
@@ -808,6 +852,79 @@ id = "deepseek-v4-flash"
             .as_array()
             .unwrap();
         assert_eq!(models.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn clear_api_key_empties_key_but_keeps_provider_and_models() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+base_url = "https://api.deepseek.com"
+
+[[providers.models]]
+id = "deepseek-v4-flash"
+supports_streaming = true
+supports_vision = true
+"#,
+        );
+
+        clear_provider_api_key_in_config_toml(&path, "deepseek").unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let doc: toml::Value = content.parse().unwrap();
+        let providers = doc.get("providers").unwrap().as_array().unwrap();
+        assert_eq!(providers.len(), 1, "provider entry must be preserved");
+
+        let deepseek = providers
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("deepseek"))
+            .unwrap();
+        // api_key 置空（而非删除字段）：等价于删除，且与 has_key=false 判定一致
+        let key = deepseek.get("api_key").and_then(|k| k.as_str()).unwrap_or("");
+        assert!(key.is_empty(), "api_key should be empty after clear");
+        assert_eq!(
+            deepseek.get("provider_type").and_then(|v| v.as_str()),
+            Some("deepseek"),
+            "provider_type must be preserved"
+        );
+        assert_eq!(
+            deepseek.get("base_url").and_then(|v| v.as_str()),
+            Some("https://api.deepseek.com"),
+            "base_url must be preserved"
+        );
+        let models = deepseek.get("models").unwrap().as_array().unwrap();
+        assert_eq!(models.len(), 1, "models must be preserved");
+        assert_eq!(
+            models[0].get("id").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn clear_api_key_is_idempotent_for_unknown_provider() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+"#,
+        );
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        clear_provider_api_key_in_config_toml(&path, "nonexistent").unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            before, after,
+            "file must not change when provider is not found"
+        );
         std::fs::remove_file(&path).ok();
     }
 }

@@ -101,6 +101,11 @@ export function configureLlm(
   return invoke<string>('configure_llm', { apiKey, model, provider, baseUrl, contextWindow })
 }
 
+/** 清除指定 provider 已存储的 API Key（仅清 key，保留 provider/model 配置） */
+export function clearProviderApiKey(provider: string) {
+  return invoke<void>('clear_provider_api_key', { provider })
+}
+
 export function getSessionInfo() {
   return invoke<SessionInfo>('get_session_info')
 }
@@ -283,6 +288,89 @@ export function getActiveCustomAgent() {
 
 export function setActiveCustomAgent(id: string) {
   return invoke<CustomAgentConfig>('set_active_custom_agent', { id })
+}
+
+// ── External Agents（外部 Agent 工作台 / handoff 运行时态）──
+
+/** status.json 运行时态（后端字段原样映射，前端只做显示层转换） */
+export interface ExternalAgentStatus {
+  agent: string
+  state: string
+  task_id?: string
+  last_event?: {
+    status?: string
+    summary?: string
+    report_path?: string | null
+    ts?: string
+  } | null
+  updated_at?: string
+}
+
+/** 列出所有已初始化外部 agent 的运行时态（按 agent 名排序） */
+export function listAgentStatuses() {
+  return invoke<ExternalAgentStatus[]>('list_agent_statuses')
+}
+
+/** 单个交付物条目：briefs/*-report.md（report）或 projects/** 产物文件（artifact） */
+export interface AgentDeliverable {
+  path: string
+  name: string
+  rel_path: string
+  kind: 'report' | 'artifact'
+  size: number
+  modified: string
+}
+
+/** 列出某外部 agent 的交付物（任务报告 + projects/ 产物，按修改时间降序） */
+export function listAgentDeliverables(agent: string) {
+  return invoke<AgentDeliverable[]>('list_agent_deliverables', { agent })
+}
+
+/** 初始化外部 agent 工作目录（幂等，返回目录绝对路径） */
+export function agentInit(agent: string, description: string) {
+  return invoke<string>('agent_init', { agent, description })
+}
+
+/** 派发任务：写 brief + 置 in_progress，返回含门铃 URL/token 的契约字符串（token 仅出现在返回值，不落盘） */
+export function handoffEnsure(agent: string, taskId: string, brief: string) {
+  return invoke<string>('handoff_ensure', { agent, task_id: taskId, brief })
+}
+
+// ── External Agents 配置中心（plugin/team.toml CRUD）──
+
+/** 外部 Agent 登记项（team.toml 段 → 扁平字段，含默认值补全） */
+export interface ExternalAgentConfig {
+  key: string
+  display_name: string
+  icon: string
+  /** 交互协议（由后端按 mode 归并：background/embedded→terminal、standalone→desktop、web→web-ui） */
+  type?: string
+  mode: string
+  open: string
+  args?: string
+  process?: string
+  description?: string
+  note?: string
+}
+
+/** 列出全部外部 Agent（按 key 排序） */
+export function listExternalAgents() {
+  return invoke<ExternalAgentConfig[]>('list_external_agents')
+}
+
+/** 新增/更新外部 Agent（新 agent 时后端联动 agent_init 生成 handoff 目录），返回 'created'|'updated' */
+export function upsertExternalAgent(agent: ExternalAgentConfig) {
+  return invoke<string>('upsert_external_agent', { agent })
+}
+
+/** 删除外部 Agent 段（不删除 .nuphus/handoff/{key}/ 目录） */
+export function deleteExternalAgent(key: string) {
+  return invoke<void>('delete_external_agent', { key })
+}
+
+/** 提取应用图标为 data URL（图片文件直接编码；exe/dll/ico 提取关联图标转 PNG） */
+export function extractAgentIcon(path: string) {
+  return invoke<string>('extract_agent_icon', { path })
 }
 
 // ── Permissions ──

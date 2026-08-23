@@ -106,6 +106,8 @@ export interface SessionAPI {
   setShowMobile: (v: boolean) => void
   showCustomAgents: boolean
   setShowCustomAgents: (v: boolean) => void
+  showExternalAgents: boolean
+  setShowExternalAgents: (v: boolean) => void
   showPlugins: boolean
   setShowPlugins: (v: boolean) => void
   showPluginDev: boolean
@@ -678,6 +680,16 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowThemes(true)
+        },
+      },
+      {
+        id: 'external-agents',
+        label: t('cmd.externalAgents'),
+        desc: t('cmd.externalAgentsDesc'),
+        category: t('cmd.category.settings'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowExternalAgents(true)
         },
       },
       {

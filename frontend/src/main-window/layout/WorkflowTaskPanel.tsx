@@ -3,6 +3,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { IconSquare } from '../../ui/Icons'
+import { Button } from '../../ui/Button'
+import { CompactModal } from './CompactModal'
 import { listWorkflows } from '../lib/api'
 import type { WorkflowRunStep } from '../../core/types'
 
@@ -319,6 +321,8 @@ export function WorkflowTaskPanel({
   // 手风琴展开：点击步骤查看定义参数（只读）
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [stepDefs, setStepDefs] = useState<Map<string, Record<string, unknown>> | null>(null)
+  // 桌面端终止/紧急停止确认（防误触）：'stop'=终止执行 / 'reset'=重置会话；null=未触发
+  const [confirmAction, setConfirmAction] = useState<'stop' | 'reset' | null>(null)
   const treeRef = useRef<HTMLDivElement>(null)
 
   // 面板可见且有 workflow id 时加载步骤定义（本地文件读取，开销小；
@@ -536,14 +540,14 @@ export function WorkflowTaskPanel({
               暂停
             </button>
           )}
-          <button className="wfst-btn wfst-btn-danger" onClick={onTerminate}>
+          <button className="wfst-btn wfst-btn-danger" onClick={() => setConfirmAction('stop')}>
             <IconSquare size={10} />
             终止
           </button>
           {onForceReset && (
             <button
               className="wfst-btn wfst-btn-danger"
-              onClick={onForceReset}
+              onClick={() => setConfirmAction('reset')}
               title="紧急停止 — 重置整个会话状态"
             >
               <svg
@@ -563,6 +567,38 @@ export function WorkflowTaskPanel({
           )}
         </div>
       )}
+
+      {/* 终止 / 紧急停止 确认弹窗（桌面端防误触；确认后执行 onTerminate / onForceReset） */}
+      <CompactModal
+        open={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        title={confirmAction === 'reset' ? '紧急停止' : '终止执行'}
+        size="sm"
+        footer={
+          <>
+            <Button variant="default" onClick={() => setConfirmAction(null)}>
+              取消
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                const action = confirmAction
+                setConfirmAction(null)
+                if (action === 'reset') onForceReset?.()
+                else onTerminate?.()
+              }}
+            >
+              {confirmAction === 'reset' ? '紧急停止' : '终止'}
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>
+          {confirmAction === 'reset'
+            ? '确定重置整个会话状态？将清空当前执行与全部上下文。'
+            : '确定终止当前执行？未保存的结果将丢失。'}
+        </p>
+      </CompactModal>
     </div>
   )
 }

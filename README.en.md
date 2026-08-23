@@ -225,7 +225,7 @@ Nuphus uses a TOML config file, searched by priority in `src/config/mod.rs::load
 | 4 | `~/.nuphus/config.toml` | Backward compatibility |
 | 5 | `<AppData>/nuphus/config.toml` | Windows desktop, auto-generated on first launch |
 
-> After onboarding you can edit settings in the "Settings → Models" panel (currently stored in plain text in the local config.toml; encrypted storage is on the roadmap).
+> After onboarding you can edit settings in the "Settings → Models" panel. API keys are encrypted at rest: on Windows they are encrypted via the OS-level DPAPI before being written to local config.toml (`enc:v1:` format, bound to your user account); on macOS/Linux they are currently stored in plain text (OS file permissions apply; OS keychain integration is on the roadmap). Do not share or commit this file.
 
 ---
 

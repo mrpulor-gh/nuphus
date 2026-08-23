@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type RefObject } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import {
   IconSend,
   IconSquare,
@@ -7,7 +8,8 @@ import {
   IconSparkles,
   IconWrench,
 } from '../../ui/Icons'
-import { IconButton } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/Button'
+import { CompactModal } from '../layout/CompactModal'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { VoiceButton, type VoiceButtonHandle } from './VoiceButton'
@@ -231,10 +233,21 @@ export function ChatInputBar({
   // 终止按钮只判断后端 is_busy（state.busy，执行开始/结束时由后端置位）：
   // 与前端生命周期无关——界面刷新/重载不影响，查询即得真实状态。
   // 同步：挂载即查 + busy 期间 1.5s 轮询（感知执行开始/结束）；空闲停止轮询。
+  // ⚠️ 完成感知必须事件驱动：仅靠 1.5s 轮询，执行完成后终止按钮会延迟 1.5~3s
+  // 才变回发送（后端 busy=false 在收尾 guard drop，晚于 execution_completed 事件）。
   const [backendBusy, setBackendBusy] = useState(false)
+  // 终止确认弹窗：应用内模态（window.confirm 在 Tauri WebView 中被屏蔽不弹窗），防误触
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setInterval> | null = null
+    let fastTimer: ReturnType<typeof setInterval> | null = null
+    const clearFast = () => {
+      if (fastTimer) {
+        clearInterval(fastTimer)
+        fastTimer = null
+      }
+    }
     const check = async () => {
       try {
         const busy = await isBusy()
@@ -256,10 +269,34 @@ export function ChatInputBar({
         /* 后端不可达：保持当前状态，等待下次触发 */
       }
     }
+    // 执行完成/失败事件 → 立即刷新 busy（消除 1.5s 轮询间隔延迟）；
+    // 若后端收尾未完成（busy 仍 true），300ms 快速轮询跟到 false。
+    const onExecFinished = () => {
+      void check()
+      if (fastTimer) return
+      fastTimer = setInterval(() => {
+        isBusy()
+          .then(b => {
+            if (cancelled) return
+            setBackendBusy(b === true)
+            if (!b) clearFast()
+          })
+          .catch(() => {})
+      }, 300)
+    }
+    const unlisteners: (() => void)[] = []
+    void listen<unknown>('execution_completed', onExecFinished).then(u => {
+      if (!cancelled) unlisteners.push(u)
+    })
+    void listen<unknown>('execution_error', onExecFinished).then(u => {
+      if (!cancelled) unlisteners.push(u)
+    })
     void check()
     return () => {
       cancelled = true
       if (timer) clearInterval(timer)
+      clearFast()
+      unlisteners.forEach(u => u())
     }
   }, [])
 
@@ -782,9 +819,8 @@ export function ChatInputBar({
               label={t('input.interrupt')}
               title={t('input.interruptTitle')}
               onClick={() => {
-                // 加确认弹窗：避免 Enter/误按键盘触发终止
-                if (!window.confirm(t('input.forceStopConfirm'))) return
-                onInterrupt?.()
+                // 应用内确认弹窗（window.confirm 在 Tauri WebView 中被屏蔽，用模态防误触）
+                setStopConfirmOpen(true)
               }}
             >
               <IconSquare size={14} />
@@ -1037,6 +1073,32 @@ export function ChatInputBar({
           </div>
         </div>
       </div>
+
+      {/* 终止确认弹窗：应用内模态，防误触（Tauri 屏蔽 window.confirm，必须用应用内 UI） */}
+      <CompactModal
+        open={stopConfirmOpen}
+        onClose={() => setStopConfirmOpen(false)}
+        title={t('input.interruptTitle')}
+        size="sm"
+        footer={
+          <>
+            <Button variant="default" onClick={() => setStopConfirmOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setStopConfirmOpen(false)
+                onInterrupt?.()
+              }}
+            >
+              {t('input.interrupt')}
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>{t('input.forceStopConfirm')}</p>
+      </CompactModal>
     </div>
   )
 }

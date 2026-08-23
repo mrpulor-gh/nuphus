@@ -31,6 +31,7 @@ import {
   IconKeyboard,
   IconGrid,
   IconMessageCircle,
+  IconCpu,
 } from '../ui/Icons'
 import { CommandPalette } from '../ui/CommandPalette'
 import { useLanguage } from '../locales'
@@ -74,6 +75,9 @@ const BrowserPage = lazy(() =>
 const SoulPage = lazy(() => import('./pages/SoulPage').then(m => ({ default: m.SoulPage })))
 const CustomAgentsPage = lazy(() =>
   import('./pages/CustomAgentsPage').then(m => ({ default: m.CustomAgentsPage })),
+)
+const ExternalAgentsPage = lazy(() =>
+  import('./pages/ExternalAgentsPage').then(m => ({ default: m.ExternalAgentsPage })),
 )
 const McpPage = lazy(() => import('./pages/McpPage').then(m => ({ default: m.McpPage })))
 const HelpPage = lazy(() => import('./pages/HelpPage').then(m => ({ default: m.HelpPage })))
@@ -159,6 +163,7 @@ export default function App() {
     'new-chat': <IconMessageCircle size={14} />,
     'force-reset': <IconX size={14} />,
     help: <IconKeyboard size={14} />,
+    'external-agents': <IconCpu size={14} />,
   }
   useKeyboard([
     { key: 'k', ctrl: true, handler: () => s.setCmdPaletteOpen((p: boolean) => !p) },
@@ -249,6 +254,7 @@ export default function App() {
               mode={s.mode}
               onSetMode={s.handleSetMode}
               onManageCustomAgents={() => s.setShowCustomAgents(true)}
+              onManageExternalAgents={() => s.setShowExternalAgents(true)}
               onToggleWorkAgentMode={s.toggleWorkAgentMode}
               refineState={s.refineState}
               pendingRefine={s.pendingRefine}
@@ -318,6 +324,9 @@ export default function App() {
                     break
                   case 'snake-game':
                     s.setShowSnakeGame(true)
+                    break
+                  case 'external-agents':
+                    s.setShowExternalAgents(true)
                     break
                 }
               }}
@@ -641,6 +650,17 @@ export default function App() {
                   s.setShowCustomAgents(false)
                 }}
               />
+            </Suspense>
+          </CompactModal>
+          <CompactModal
+            open={s.showExternalAgents}
+            onClose={() => s.setShowExternalAgents(false)}
+            title={t('extAgents.cfg.title')}
+            icon={<IconCpu size={14} />}
+            size="lg"
+          >
+            <Suspense fallback={null}>
+              <ExternalAgentsPage onClose={() => s.setShowExternalAgents(false)} />
             </Suspense>
           </CompactModal>
           <CompactModal

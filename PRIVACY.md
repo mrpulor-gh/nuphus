@@ -6,7 +6,7 @@ Nuphus is designed with **local-first privacy**. This document describes what da
 
 | Data | Storage | Details |
 |------|---------|---------|
-| **API Keys** | config.toml | Stored locally in plaintext in your config directory. Treat this file like a password — do not share or commit it. |
+| **API Keys** | config.toml | Encrypted at rest with Windows DPAPI (`enc:v1:` format, bound to your user account); stored in plain text on macOS/Linux pending OS keychain support. Treat this file like a password — do not share or commit it. |
 | **Chat Sessions** | SQLite (~/.nuphus/) | All conversation history, including messages, tool calls, and execution results. |
 | **Memory** | SQLite (FTS5 + vector index) | Cross-session experience records, annotations, and learned patterns. |
 | **Workflow Definitions** | plugin/workflows/ | Workflow JSON definitions and execution records. |
@@ -49,7 +49,7 @@ Each provider has its own data handling policy. Please refer to the respective p
 
 ## Security
 
-- API keys are stored locally in plaintext (OS file permissions apply); encrypted storage is planned but not yet implemented
+- API keys are encrypted at rest via Windows DPAPI (`enc:v1:` format, user-bound); macOS/Linux currently store keys in plain text (OS file permissions apply), with OS keychain integration on the roadmap
 - Tool execution is subject to permission policies and injection detection
 - File operations are sandboxed by configurable path scopes
 - Desktop automation requires explicit user approval for high-risk operations
@@ -64,4 +64,4 @@ For privacy concerns or questions, please [open an issue](https://github.com/mrp
 
 ---
 
-*Last updated: 2026-07-08*
+*Last updated: 2026-08-23*

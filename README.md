@@ -225,7 +225,7 @@ Nuphus 使用 TOML 配置文件，`src/config/mod.rs::load_registry` 按优先�
 | 4 | `~/.nuphus/config.toml` | 兼容旧版 |
 | 5 | `<AppData>/nuphus/config.toml` | Windows 桌面版首次启动自动生成 |
 
-> 引导完成后可在「设置 → 模型」面板修改配置（当前以明文保存到本地 config.toml，加密存储在路线图中）。
+> 引导完成后可在「设置 → 模型」面板修改配置。API Key 加密存储：Windows 上经系统级 DPAPI 加密后写入本地 config.toml（`enc:v1:` 格式，绑定当前用户）；macOS/Linux 暂以明文保存（依赖系统文件权限，OS 凭据链接入在路线图中）。请勿分享或提交该文件。
 
 ---
 

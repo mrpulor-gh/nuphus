@@ -42,6 +42,7 @@ import { SessionDivider } from './SessionDivider'
 import { PauseOverlay } from './PauseOverlay'
 import { ChatInputBar } from './ChatInputBar'
 import { VideoProgressBadge } from './VideoProgressBadge'
+import ExternalAgentsStatusBar from './ExternalAgentsStatusBar'
 import { loadRelation } from '../lib/relation'
 import {
   IconCopy,
@@ -119,6 +120,7 @@ interface ChatPanelProps {
   mode?: string
   onSetMode?: (mode: string) => void
   onManageCustomAgents?: () => void
+  onManageExternalAgents?: () => void
   onToggleWorkAgentMode?: () => Promise<void>
   onRate?: (
     name: string,
@@ -175,6 +177,7 @@ export function ChatPanel({
   mode,
   onSetMode,
   onManageCustomAgents,
+  onManageExternalAgents,
   onToggleWorkAgentMode,
   startupStats,
   isWorkflowRunning,
@@ -1665,6 +1668,8 @@ export function ChatPanel({
       {/* 输入区 dock：badge 与输入框共享同一定位几何，保证左边缘对齐 */}
       <div className="chat-input-dock">
         <VideoProgressBadge />
+        {/* 外部 Agent 悬浮胶囊：输入框外层右上角（absolute 定位，不占文档流） */}
+        <ExternalAgentsStatusBar onOpenConfig={onManageExternalAgents} />
         <ChatInputBar
           input={input}
           onInputChange={handleInputChange}

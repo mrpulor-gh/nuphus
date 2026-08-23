@@ -45,6 +45,20 @@
   box-shadow: var(--shadow-focus);
 }
 
+/* ── 清除密钥按钮：默认低调（fg-4/半透明），红色仅 hover/focus 时出现 ── */
+.icon-btn-clear:hover:not(:disabled) {
+  color: var(--error);
+  opacity: 1;
+}
+.icon-btn-clear:focus-visible {
+  color: var(--error);
+  opacity: 1;
+}
+.icon-btn-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── 密码可见性切换按钮（输入框后缀）── */
 .input-suffix-btn {
   background: none;

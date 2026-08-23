@@ -5,10 +5,10 @@
 //! (context-window probing, vision probing, etc.).
 
 use super::toml_ops::{
-    get_config_path, list_configured_providers, read_provider_api_key_from_config_toml,
-    read_provider_reasoning_effort_from_config_toml, update_config_toml,
-    update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
-    update_reasoning_effort, upsert_provider_models,
+    clear_provider_api_key_in_config_toml, get_config_path, list_configured_providers,
+    read_provider_api_key_from_config_toml, read_provider_reasoning_effort_from_config_toml,
+    update_config_toml, update_model_context_window, update_model_reasoning_efforts,
+    update_model_supports_vision, update_reasoning_effort, upsert_provider_models,
 };
 use crate::emitter::CompoundEmitter;
 use crate::state::{AppState, LlamaConfig};
@@ -603,6 +603,32 @@ pub async fn configure_llm(
         "LLM configured: provider={}, model={}",
         resolved_provider, resolved_model
     ))
+}
+
+/// Clear a provider's API key from config.toml.
+///
+/// Preserves the provider entry (name / base_url / models) — only `api_key`
+/// is emptied. Idempotent: unknown providers return `Ok(())` without changes.
+#[tauri::command]
+pub fn clear_provider_api_key(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<(), String> {
+    let toml_config_path = get_config_path().or_else(|| {
+        let fallback = state.llm_config_path.with_file_name("providers.toml");
+        if let Some(parent) = fallback.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        Some(fallback)
+    });
+
+    if let Some(ref config_path) = toml_config_path {
+        if let Err(e) = clear_provider_api_key_in_config_toml(config_path, &provider) {
+            tracing::error!("[clear_provider_api_key] Failed to clear config.toml: {}", e);
+            return Err(format!("清除 API Key 失败: {}", e));
+        }
+    }
+    Ok(())
 }
 
 /// Post-config steps: query context window from API + probe vision support.

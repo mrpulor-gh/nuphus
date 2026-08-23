@@ -565,9 +565,8 @@ export function HudOverlay() {
     }
   }, [])
 
+  // HUD 终止 = 终止 workflow_run：直接终止，无确认（与桌面主执行终止弹窗不同，行为即设计）
   const handleStop = useCallback(async () => {
-    // 加确认弹窗：避免 Enter/误触终止（HUD 无 i18n，硬编码中文）
-    if (!window.confirm('确定立即终止？未保存的结果将丢失。')) return
     try {
       await invoke('hud_stop')
       setState(s => ({ ...s, phase: 'done' }))

@@ -1,0 +1,683 @@
+/* ═══════════════════════════════════════════
+   external-agents.css — 输入框外层右上角的外部 Agent 悬浮胶囊（Gemini 参考形态）
+   圆形 agent 头像按钮（状态点叠加右上角 + hover tooltip）+ "+" 配置入口
+   absolute 定位在 chat-input-dock 右上角，不占文档流
+   state 原值 → 语义 token 映射（未知状态统一灰，不拦截后端新状态）
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 悬浮胶囊容器：输入框外层右上角（参考 Gemini：top:-46px / right:0）── */
+.external-agents-bar {
+  position: absolute;
+  top: -46px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 20px;
+  background: rgba(18, 20, 29, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 51;
+}
+
+/* ── Agent 圆形头像按钮 ── */
+.agent-avatar-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--fg-2);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.agent-avatar-btn:hover {
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+/* 执行中：图标放大缩小呼吸（in_progress 状态） */
+.agent-avatar-btn.is-in-progress .agent-avatar-icon {
+  animation: agentIconBreath 1.6s ease-in-out infinite;
+}
+@keyframes agentIconBreath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+.agent-avatar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.agent-avatar-icon.is-cli {
+  color: #38bdf8;
+}
+.agent-avatar-icon.is-agent {
+  color: #a855f7;
+}
+
+/* ── 状态点：叠加在头像右上角 ── */
+.agent-avatar-btn .ext-agent-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--surface-2);
+  flex-shrink: 0;
+  background: var(--fg-5);
+}
+
+/* 状态点色：idle=灰 / in_progress=琥珀(呼吸) / ready=绿 / done=蓝 / blocked=红 / error=红(脉冲) */
+.agent-avatar-btn .ext-agent-dot.is-idle {
+  background: var(--fg-4);
+}
+.agent-avatar-btn .ext-agent-dot.is-ready {
+  background: var(--success);
+  box-shadow: 0 0 5px rgba(var(--success-rgb), 0.5);
+}
+.agent-avatar-btn .ext-agent-dot.is-done {
+  background: var(--info);
+  box-shadow: 0 0 5px rgba(var(--info-rgb), 0.5);
+}
+.agent-avatar-btn .ext-agent-dot.is-blocked {
+  background: var(--error);
+}
+.agent-avatar-btn .ext-agent-dot.is-error {
+  background: var(--error);
+  animation: extAgentPulse 1.1s ease-in-out infinite;
+}
+.agent-avatar-btn .ext-agent-dot.is-in-progress {
+  background: var(--warning);
+  box-shadow: 0 0 5px rgba(var(--warning-rgb), 0.55);
+  animation: extAgentPulse 1.6s ease-in-out infinite;
+}
+.agent-avatar-btn .ext-agent-dot.is-unknown {
+  background: var(--fg-5);
+}
+
+@keyframes extAgentPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── hover tooltip：agent 名 + 状态 + task_id（显示在图标上方）── */
+.agent-avatar-btn .agent-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: rgba(18, 20, 29, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) translateY(2px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+  z-index: 60;
+}
+.agent-avatar-btn:hover .agent-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.agent-tooltip-name {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-tooltip-state {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+.agent-tooltip-task {
+  font-size: var(--fz-xs);
+  font-family: var(--font-mono);
+  color: var(--fg-4);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── "+" 配置入口：始终可见（空列表时也提供入口）── */
+.add-agent-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px dashed var(--line-3);
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.add-agent-entry:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ═══════════════════════════════════════════
+   外部 Agent 配置中心页（ExternalAgentsPage）
+   顶部横向 chips + 表单（ICON 选择器 / 名称 / 路径 / 模式 / 描述）
+   ═══════════════════════════════════════════ */
+.ext-agents-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+/* ── 顶部横向 chips ── */
+.ext-agents-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.ext-agents-add-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed var(--line-3);
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.ext-agents-add-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.ext-agents-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-2);
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.ext-agents-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-3);
+}
+.ext-agents-chip.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--fg-1);
+}
+.ext-agents-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px 0 10px;
+  height: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+}
+/* 配置页 chips 头像：统一为状态栏风格（圆形 + agent-avatar-icon 类型图标，颜色规则全局复用） */
+.ext-agents-chip-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-3);
+}
+.ext-agents-chip-avatar .agent-avatar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ext-agents-chip-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ext-agents-chip-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 100%;
+  background: none;
+  border: none;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ext-agents-chip-del:hover {
+  color: var(--error);
+}
+.ext-agents-chips-empty {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+
+/* ── 表单 ── */
+.ext-agents-form {
+  min-height: 0;
+  flex: 1;
+}
+
+/* ICON 选择：横向一行 = 预览 + 「自动获取」/「自定义文件」两个操作（不再提供手选图标网格） */
+.ext-agents-icon-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+.ext-agents-icon-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-2);
+}
+.ext-agents-icon-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.ext-agents-icon-act:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.ext-agents-icon-act.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 应用图标 img：保持比例，圆角裁切 */
+.agent-icon-img {
+  object-fit: contain;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* 提取中旋转 */
+.ext-agent-icon-spin {
+  animation: extAgentPulse 0.8s ease-in-out infinite;
+}
+
+/* ICON 提取提示（auto 无启动路径 / 提取失败） */
+.ext-agents-icon-hint {
+  margin-top: 2px;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+.ext-agents-icon-hint--error {
+  color: var(--error);
+}
+
+/* ── 状态反馈 ── */
+.ext-agents-error {
+  padding: 6px 10px;
+  border-radius: var(--radius-2);
+  background: rgba(var(--error-rgb), 0.1);
+  border: 1px solid rgba(var(--error-rgb), 0.35);
+  color: var(--error);
+  font-size: var(--fz-sm);
+}
+.ext-agents-toast {
+  padding: 6px 10px;
+  border-radius: var(--radius-2);
+  background: rgba(var(--success-rgb), 0.1);
+  border: 1px solid rgba(var(--success-rgb), 0.35);
+  color: var(--success);
+  font-size: var(--fz-sm);
+}
+
+/* ═══════════════════════════════════════════
+   状态栏交互扩展：头像点击弹窗 / 单 agent 关闭 / 隐藏恢复
+   （头像内部改为 button.agent-avatar-main 承载图标+状态点，
+     div.agent-avatar-btn 仅作定位容器 + tooltip/hide-btn 锚点）
+   ═══════════════════════════════════════════ */
+
+/* ── 头像内层按钮：填满容器，保持圆形 ── */
+.agent-avatar-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+.agent-avatar-main:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 状态点改锚在内层按钮上（覆盖旧规则的位置基准） */
+.agent-avatar-btn .agent-avatar-main .ext-agent-dot {
+  z-index: 1;
+}
+
+/* ── 「已隐藏」恢复入口：数字小胶囊 ── */
+.hidden-agents-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed var(--line-3);
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.hidden-agents-entry:hover,
+.hidden-agents-entry.active {
+  color: var(--fg-2);
+  border-color: var(--line-2);
+  background: var(--surface-2);
+}
+
+/* ── 弹窗遮罩：透明全屏捕获外部点击 ── */
+.ext-agent-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+}
+
+/* ── 交付物弹窗：锚定胶囊上方右对齐 ── */
+.ext-agent-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 340px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: rgba(18, 20, 29, 0.96);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  z-index: 71;
+}
+
+/* ── 弹窗头：图标 + 名 + 状态点 + 隐藏/关闭 ── */
+.ext-agent-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px 7px 12px;
+  border-bottom: 1px solid var(--line-2);
+  flex-shrink: 0;
+}
+.ext-agent-popover-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ext-agent-popover-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: none;
+  border: none;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+.ext-agent-popover-close:hover {
+  color: var(--fg-1);
+  background: var(--surface-hover);
+}
+
+/* 最近一次上报摘要（只读展示） */
+.ext-agent-popover-summary {
+  padding: 7px 12px;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: 1.5;
+  border-bottom: 1px solid var(--line-2);
+  max-height: 52px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* ── 列表体：分组滚动 ── */
+.ext-agent-popover-body {
+  overflow-y: auto;
+  padding: 6px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.ext-agent-popover-empty {
+  padding: 18px 10px;
+  text-align: center;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+.ext-agent-dgroup-label {
+  padding: 4px 6px 2px;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* 单条交付物行：文件名 + 时间/大小 + eye 提示 */
+.ext-agent-deliver-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.ext-agent-deliver-row:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.ext-agent-deliver-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ext-agent-deliver-name {
+  font-size: var(--fz-sm);
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ext-agent-deliver-meta {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  font-family: var(--font-mono);
+}
+.ext-agent-deliver-eye {
+  flex-shrink: 0;
+  opacity: 0;
+  color: var(--fg-4);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.ext-agent-deliver-row:hover .ext-agent-deliver-eye {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ── 弹窗底部操作行：「不再显示」与头部关闭按钮区分开 ── */
+.ext-agent-popover-foot {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line-2);
+  padding: 5px 6px;
+}
+.ext-agent-hide-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.ext-agent-hide-row:hover {
+  color: var(--error);
+  background: rgba(var(--error-rgb), 0.08);
+}
+
+/* ── 已隐藏列表行 ── */
+.ext-agent-hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.ext-agent-hidden-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ext-agent-restore-btn {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.ext-agent-restore-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}

@@ -24,6 +24,8 @@ const CODE_EXTS = new Set([
   'yml',
   'yaml',
   'sh',
+  'txt',
+  'log',
 ])
 /** 支持内联预览的图片扩展名（后端 base64 读取，CSP 已允许 data:） */
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'])

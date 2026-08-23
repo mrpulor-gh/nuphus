@@ -32,6 +32,11 @@ const MAX_PENDING_EVENTS: usize = 100;
 pub enum HandoffStatus {
     /// 进度上报 —— 同 id 只保留最新一条（折叠）
     Progress,
+    /// 就位上报 —— 同 Progress 折叠语义；表示外部 Agent 已就位、可领任务，
+    /// 之后同 id 的 done/blocked 到达时会被当作陈旧信息一并清除
+    /// ⚠️ 已退出产品流程（read.md/契约不再要求 ready；门铃语义收敛为「完成后交付」），
+    /// 保留枚举仅为兼容旧 Agent 上报，不拦截不宣传。
+    Ready,
     /// 完工 —— 注入一次后不再重复（含重复 POST 幂等忽略）
     Done,
     /// 受阻 —— 同 Done 语义
@@ -42,6 +47,7 @@ impl HandoffStatus {
     fn parse(s: &str) -> Option<Self> {
         match s {
             "progress" => Some(Self::Progress),
+            "ready" => Some(Self::Ready),
             "done" => Some(Self::Done),
             "blocked" => Some(Self::Blocked),
             _ => None,
@@ -51,6 +57,7 @@ impl HandoffStatus {
     fn tag(self) -> &'static str {
         match self {
             Self::Progress => "progress",
+            Self::Ready => "ready",
             Self::Done => "done",
             Self::Blocked => "blocked",
         }
@@ -163,8 +170,8 @@ impl HandoffState {
         };
 
         match status {
-            HandoffStatus::Progress => {
-                // 折叠：同 id 覆盖旧值，天然只保留最新一条
+            HandoffStatus::Progress | HandoffStatus::Ready => {
+                // 折叠：同 id 覆盖旧值，天然只保留最新一条（ready 视作进度类，可心跳重发）
                 self.progress_events.insert(id, event);
             }
             HandoffStatus::Done | HandoffStatus::Blocked => {
@@ -311,6 +318,36 @@ mod tests {
         // 重复 POST 同 id done → 幂等忽略，不再进入队列
         ev(&mut s, "0728-01", "done", "完成重构");
         assert!(s.drain_for_injection().is_empty());
+    }
+
+    #[test]
+    fn test_ready_event_folds_and_drains() {
+        let mut s = HandoffState::new();
+        // ready 可入队（parse 接受 "ready"）且能 drain 到
+        ev(&mut s, "web-01", "ready", "已就位，可领任务");
+        let drained = s.drain_for_injection();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, "web-01");
+        assert_eq!(drained[0].status, HandoffStatus::Ready);
+
+        // ready 同 Progress 折叠：同 id 重复 ready 只保留最新
+        ev(&mut s, "web-01", "ready", "再次就位");
+        let drained = s.drain_for_injection();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].summary, "再次就位");
+
+        // done 到达后陈旧 ready 不再注入（终态清除就位信息）
+        ev(&mut s, "web-01", "ready", "就位");
+        ev(&mut s, "web-01", "done", "任务完成");
+        let drained = s.drain_for_injection();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].status, HandoffStatus::Done);
+
+        // 格式化不 panic 且带 ready 标签
+        let mut s2 = HandoffState::new();
+        s2.push_event("web-02", "ready", "在线", None).unwrap();
+        let section = format_doorbell_section(&s2.drain_for_injection());
+        assert!(section.contains("[ready] web-02"));
     }
 
     #[test]

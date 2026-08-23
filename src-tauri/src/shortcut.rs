@@ -79,9 +79,8 @@ fn create_shortcut(exe: &Path, lnk: &Path) -> std::io::Result<()> {
         tracing::info!("Created portable desktop shortcut: {}", lnk.display());
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("powershell exited with {status}"),
-        ))
+        Err(std::io::Error::other(format!(
+            "powershell exited with {status}"
+        )))
     }
 }

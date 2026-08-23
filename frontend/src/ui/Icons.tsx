@@ -49,6 +49,7 @@ export {
   Shield as IconShield,
   Smartphone as IconSmartphone,
   Sparkles as IconSparkles,
+  BrushCleaning as IconBrushCleaning,
   Store as IconStore,
   Minus as IconMinus,
   Plus as IconPlus,
@@ -65,6 +66,14 @@ export {
   Download as IconDownload,
   ExternalLink as IconExternalLink,
   RefreshCw as IconRefresh,
+  Cpu as IconCpu,
+  Layers as IconLayers,
+  Box as IconBox,
+  SquareTerminal as IconTerminalSquare,
+  Rocket as IconRocket,
+  HardDrive as IconHardDrive,
+  AppWindow as IconAppWindow,
+  Radio as IconRadio,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

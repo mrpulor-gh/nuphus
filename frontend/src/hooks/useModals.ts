@@ -17,6 +17,7 @@ export function useModals() {
   const [showSnakeGame, setShowSnakeGame] = useState(false)
   const [showMobile, setShowMobile] = useState(false)
   const [showCustomAgents, setShowCustomAgents] = useState(false)
+  const [showExternalAgents, setShowExternalAgents] = useState(false)
   const [showPlugins, setShowPlugins] = useState(false)
   const [showPluginDev, setShowPluginDev] = useState(false)
 
@@ -51,6 +52,8 @@ export function useModals() {
     setShowMobile,
     showCustomAgents,
     setShowCustomAgents,
+    showExternalAgents,
+    setShowExternalAgents,
     showPlugins,
     setShowPlugins,
     showPluginDev,

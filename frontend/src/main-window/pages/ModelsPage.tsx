@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   getCurrentConfig,
   configureLlm,
+  clearProviderApiKey,
   switchModel as switchModelCmd,
   getSupportedProviders,
   getCapabilities,
@@ -25,7 +26,7 @@ import {
   modelsDownloadProgressPct,
   modelsDownloadProgressText,
 } from '../lib/useVisionModelDownload'
-import { IconCheck, IconTrash2, IconEye, IconAlertTriangle, IconRefresh } from '../../ui/Icons'
+import { IconCheck, IconTrash2, IconEye, IconAlertTriangle, IconRefresh, IconBrushCleaning } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
@@ -270,6 +271,8 @@ export function ModelsPage({
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
   // API key 检测 — 通过 /v1/models 列出可用模型
   const [detecting, setDetecting] = useState(false)
+  // 清除 API Key 进行中（防重复点击）
+  const [clearingKey, setClearingKey] = useState(false)
   const [detectedModels, setDetectedModels] = useState<string[]>([])
   const [filterInput, setFilterInput] = useState('') // 实时筛选 detectedModels
   const [detectError, setDetectError] = useState<string | null>(null)
@@ -445,6 +448,33 @@ export function ModelsPage({
       setRefreshError(e?.message || '刷新失败')
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  /** 清除当前 provider 已存储的 API Key（仅清 key，保留 provider/model 配置） */
+  const handleClearKey = async () => {
+    if (!window.confirm(t('models.clearKeyConfirm'))) return
+    setClearingKey(true)
+    try {
+      await clearProviderApiKey(provider)
+      // 重新拉取后端配置刷新 UI：apiKey 从不暴露；hasKey 按 configured_providers 重算
+      // （getCurrentConfig 的 has_key 属于当前激活 provider，不一定是正在查看的 provider）
+      const cfg = await getCurrentConfig()
+      if (cfg) {
+        setApiKey('')
+        setBaseUrl(cfg.base_url || '')
+        if (cfg.configured_providers) {
+          setConfiguredProviders(cfg.configured_providers)
+          setHasKey(cfg.configured_providers.includes(provider))
+        }
+      }
+      setFeedback({ ok: true, msg: t('models.clearKeySuccess') })
+      setTimeout(() => setFeedback(null), 2000)
+    } catch (e: any) {
+      setFeedback({ ok: false, msg: e?.message || t('models.clearKeyFail') })
+      setTimeout(() => setFeedback(null), 3000)
+    } finally {
+      setClearingKey(false)
     }
   }
 
@@ -628,6 +658,18 @@ export function ModelsPage({
                     >
                       {detecting ? '连接中...' : '连接'}
                     </Button>
+                    {hasKey && (
+                      <button
+                        type="button"
+                        className="icon-btn-ghost icon-btn-clear"
+                        onClick={handleClearKey}
+                        disabled={clearingKey}
+                        title={t('models.clearKey')}
+                        aria-label={t('models.clearKey')}
+                      >
+                        <IconBrushCleaning size={14} />
+                      </button>
+                    )}
                   </div>
                 }
               />
