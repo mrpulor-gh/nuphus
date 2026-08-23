@@ -21,6 +21,21 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
     }
 
+    // Linux：sherpa/onnxruntime 的 .so 由 tauri.linux.conf.json 的 bundle.resources
+    // 拷进 deb /usr/lib/Nuphus/sherpa/（AppImage 复用同一布局 AppDir/usr/lib/Nuphus/sherpa/），
+    // 二进制的 rpath 必须指向那里，否则启动即
+    // "error while loading shared libraries: libsherpa-onnx-c-api.so: No such file or directory"。
+    // $ORIGIN 覆盖 dev 布局（sync_sherpa_libs 把 .so 拷到 target/<profile>/ 与二进制同目录）。
+    // 必须 --disable-new-dtags：新版 ld 默认生成 DT_RUNPATH 只对自身生效、不向下传递，
+    // 而 libsherpa-onnx-c-api.so 需要在自己里找 libonnxruntime.so，DT_RPATH 才会做传递查找
+    // （VPS 已验证：仅二进制的 DT_RPATH 就能同时解析两个 .so）。
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/Nuphus/sherpa");
+        println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
+    }
+
     // ═══ 模型与运行时依赖自动获取 ═══
     // 产品原则：除 STT 语音模型外，其余所有本地模型/运行时都要自动获取——
     // 端用户不懂技术，git clone + cargo build 后必须自愈。所有步骤失败时都只
