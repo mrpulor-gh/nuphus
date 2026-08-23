@@ -14,6 +14,7 @@ mod models;
 mod plugin_apps;
 mod relay_client;
 mod render;
+mod shortcut;
 mod speech;
 mod splash;
 mod state;
@@ -312,6 +313,11 @@ fn main() {
             render::commands::pdf_render_error,
         ])
         .setup(|app| {
+            // ── 便携模式桌面快捷方式自建 ──
+            // npm 一键安装 / 手工拷贝的便携 exe 不经安装器 → 无桌面图标，用户找不到。
+            // 仅便携模式且 .lnk 不存在时创建一次；NSIS/Program Files 安装自动跳过。
+            crate::shortcut::ensure_portable_desktop_shortcut();
+
             // ── wry 拖放注册修复 ──
             // main 窗口必须以 visible=true 创建，否则 WebView2 内部子窗口未就绪，
             // wry 的 RegisterDragDrop 失败 → 文件拖放失效（禁止光标）。
