@@ -707,7 +707,7 @@ export function MemoriesPage() {
             )}
           </div>
         )
-      ) : (
+      ) : false ? (
         /* ══════════ 设置 Tab（二级导航：原则 | 标注 | 存储管理）══════════ */
         <div className="ut-timeline">
           <div className="segmented set-subtabs" role="tablist">
@@ -846,7 +846,7 @@ export function MemoriesPage() {
             </>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* ── Tenet add dialog ── */}
       {tenetDialogOpen && (

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { invoke } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
 import { wfStop, wfPause, wfResume, getToolPermissions } from './lib/api'
+import { TenetsDialog } from './dialogs/TenetsDialog'
+import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
 import { TitleBar } from './layout/TitleBar'
 import { ChatPanel } from './chat/ChatPanel'
@@ -118,6 +120,8 @@ export default function App() {
   // ── Hooks ──
   const { t } = useLanguage()
   const s = useSession()
+  /** +号菜单记忆弹窗：'tenets' | 'annotations' | null */
+  const [memoryDialog, setMemoryDialog] = useState<'tenets' | 'annotations' | null>(null)
 
   // ── Workflow 权限确认弹窗出现时播放提示音 ──
   useEffect(() => {
@@ -235,6 +239,8 @@ export default function App() {
               focusSignal={s.focusSignal}
               onNewChat={s.handleNewChat}
               onChatReplaced={() => void s.reloadChatFromBackend()}
+              onOpenPrinciples={() => setMemoryDialog('tenets')}
+              onOpenAnnotations={() => setMemoryDialog('annotations')}
               tokenUsage={s.displayTokenUsage}
               mood={s.mood}
               goalType={s.goalType}
@@ -801,6 +807,14 @@ export default function App() {
             onCancel={() => setRunWorkflow(null)}
           />
         </ErrorBoundary>
+      )}
+
+      {/* ── +号菜单记忆弹窗：教导原则 / 关系标注 ── */}
+      {memoryDialog === 'tenets' && (
+        <TenetsDialog onClose={() => setMemoryDialog(null)} />
+      )}
+      {memoryDialog === 'annotations' && (
+        <AnnotationsDialog onClose={() => setMemoryDialog(null)} />
       )}
 
       {/* ── Desktop toolbar (Ctrl+U) ── */}

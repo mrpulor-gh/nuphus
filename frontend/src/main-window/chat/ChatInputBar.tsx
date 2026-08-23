@@ -92,6 +92,10 @@ interface ChatInputBarProps {
   /** 项目目录 */
   projectDir: string
   onOpenProjectDir: () => void
+  /** 打开教导原则弹窗（Session Shelf 配套：原则/标注自记忆页迁入） */
+  onOpenPrinciples?: () => void
+  /** 打开关系标注弹窗 */
+  onOpenAnnotations?: () => void
   /** 输入提示 */
   hints: string[]
   hintIndex: number
@@ -146,6 +150,8 @@ export function ChatInputBar({
   onImageAttach,
   projectDir,
   onOpenProjectDir,
+  onOpenPrinciples,
+  onOpenAnnotations,
   hints,
   hintIndex,
   hintFade,
@@ -708,6 +714,84 @@ export function ChatInputBar({
             </IconButton>
             {toolMenuOpen && (
               <div className="input-tool-menu" role="menu">
+                {/* ── 上组：项目与记忆 ── */}
+                <div className="input-tool-menu-group">{t('input.group.projectMemory')}</div>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    onOpenProjectDir()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2.5 2h7.5a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('input.projectDir')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    onOpenPrinciples?.()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('memory.settings.subTenets')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    onOpenAnnotations?.()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 17v5M9 10h6M10 3h4v7h-4z" />
+                  </svg>
+                  <span className="input-tool-menu-label">
+                    {t('memory.settings.subAnnotations')}
+                  </span>
+                </button>
+
+                {/* 分隔线 + 下组：附件 */}
+                <div className="input-tool-menu-divider" />
+                <div className="input-tool-menu-group">{t('input.group.attach')}</div>
                 <button
                   type="button"
                   className="input-tool-menu-item"
@@ -770,30 +854,6 @@ export function ChatInputBar({
                     <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
                   </svg>
                   <span className="input-tool-menu-label">{t('input.image')}</span>
-                </button>
-                <button
-                  type="button"
-                  className="input-tool-menu-item"
-                  role="menuitem"
-                  disabled={isProcessing && !pauseState}
-                  onClick={() => {
-                    setToolMenuOpen(false)
-                    onOpenProjectDir()
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 7a2 2 0 0 1 2-2h4l2.5 2h7.5a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-                  </svg>
-                  <span className="input-tool-menu-label">{t('input.projectDir')}</span>
                 </button>
               </div>
             )}

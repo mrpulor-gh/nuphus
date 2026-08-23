@@ -91,6 +91,10 @@ interface ChatPanelProps {
   onNewChat?: () => void
   /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
   onChatReplaced?: () => void
+  /** +号菜单：打开教导原则弹窗 */
+  onOpenPrinciples?: () => void
+  /** +号菜单：打开关系标注弹窗 */
+  onOpenAnnotations?: () => void
   tokenUsage?: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
   goalType?: { type: string; label: string; confidence: number } | null
   security?: SecurityCheck | null
@@ -152,6 +156,8 @@ export function ChatPanel({
   focusSignal,
   onNewChat,
   onChatReplaced,
+  onOpenPrinciples,
+  onOpenAnnotations,
   tokenUsage,
   goalType,
   security,
@@ -1725,6 +1731,8 @@ export function ChatPanel({
             setDirInput(projectDir)
             setDirOpen(true)
           }}
+          onOpenPrinciples={onOpenPrinciples}
+          onOpenAnnotations={onOpenAnnotations}
           hints={HINTS}
           hintIndex={hintIndex}
           hintFade={hintFade}
