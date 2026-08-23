@@ -327,6 +327,7 @@ export default function App() {
               step={s.dismissThinking ? '' : s.thinkingStep}
               isThinking={s.isProcessing}
               completed={s.completed}
+              dismissed={s.dismissThinking}
               phase={s.execPhase}
               timeline={s.timeline}
               mood={s.mood}
