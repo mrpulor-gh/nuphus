@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getAnnotations, addAnnotation, updateAnnotation, removeAnnotation } from '../lib/api-memory'
 import type { Annotation } from '../../core/types-memory'
-import { IconTrash2, IconX, IconEdit3 } from '../../ui/Icons'
-import { Button, IconButton } from '../../ui/Button'
+import { IconEdit3, IconFolder, IconPlus, IconTrash2, IconX } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
+import '../../styles/memory-dialogs.css'
 
 interface AnnotationsDialogProps {
   onClose: () => void
 }
 
 /**
- * 关系标注管理弹窗（自包含）——从记忆页设置 Tab 迁移而来。
- * 列表 / 新增 / 编辑 / 删除，数据经 annotations API 直连后端。
+ * 关系标注管理弹窗（gemini 布局：ad-card 五段式 + 新增/编辑子弹窗）。
+ * 数据直连后端 annotations API。
  */
 export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
   const { t } = useLanguage()
   const [annotations, setAnnotations] = useState<Annotation[]>([])
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [editOpen, setEditOpen] = useState(false)
   const [editKeyword, setEditKeyword] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
   const [keywords, setKeywords] = useState('')
@@ -25,19 +26,35 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
   const [tags, setTags] = useState('')
   const [group, setGroup] = useState('custom')
   const [priority, setPriority] = useState(0)
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
+    setLoading(true)
     try {
       const res = await getAnnotations()
       setAnnotations((res || []).filter(a => !a.builtin))
     } catch (e) {
       console.error('Failed to load annotations:', e)
+    } finally {
+      setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  // Esc 关闭最上层
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (editOpen) setEditOpen(false)
+        else onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editOpen, onClose])
 
   const openAdd = useCallback(() => {
     setEditKeyword(null)
@@ -48,7 +65,7 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
     setTags('')
     setGroup('custom')
     setPriority(0)
-    setDialogOpen(true)
+    setEditOpen(true)
   }, [])
 
   const openEdit = useCallback((a: Annotation) => {
@@ -60,11 +77,12 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
     setTags(a.tags.join(', '))
     setGroup(a.group)
     setPriority(a.priority)
-    setDialogOpen(true)
+    setEditOpen(true)
   }, [])
 
   const handleSave = useCallback(async () => {
     if (!keyword.trim() || !desc.trim()) return
+    setSaving(true)
     const pathsArr = paths
       .split('\n')
       .map(s => s.trim())
@@ -91,10 +109,12 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
           keywordsArr.length > 0 ? keywordsArr : undefined,
         )
       }
-      setDialogOpen(false)
-      void load()
+      setEditOpen(false)
+      await load()
     } catch (e) {
       console.error('Failed to save annotation:', e)
+    } finally {
+      setSaving(false)
     }
   }, [keyword, keywords, desc, paths, tags, group, priority, editKeyword, load])
 
@@ -102,7 +122,7 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
     async (kw: string) => {
       try {
         await removeAnnotation(kw)
-        void load()
+        await load()
       } catch (e) {
         console.error('Failed to delete annotation:', e)
       }
@@ -111,156 +131,150 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
   )
 
   return (
-    <div className="modal-overlay visible" onClick={onClose}>
-      <div className="modal-content modal-content--lg" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span className="modal-title">{t('memory.settings.subAnnotations')}</span>
-          <IconButton variant="modal-close" label={t('common.close')} onClick={onClose}>
+    <div className="memdlg-overlay" onClick={onClose}>
+      <div className="memdlg-container" onClick={e => e.stopPropagation()}>
+        <div className="memdlg-header">
+          <div className="memdlg-title">{t('memory.settings.subAnnotations')}</div>
+          <button type="button" className="memdlg-close" onClick={onClose} aria-label={t('common.close')}>
             <IconX size={16} />
-          </IconButton>
+          </button>
         </div>
-        <div className="modal-body">
-          <div className="ann-top-bar">
-            <div className="ann-guide">
-              <span>{t('memory.annotation.guide')}</span>
-            </div>
-            <Button variant="primary" size="sm" onClick={openAdd}>
-              {t('memory.addAnnotation')}
-            </Button>
+
+        <div className="memdlg-body">
+          <div className="memdlg-guide-row">
+            <span className="memdlg-guide-text">{t('memory.annotation.guide')}</span>
+            <button type="button" className="memdlg-btn-primary" onClick={openAdd}>
+              <IconPlus size={14} />
+              {t('common.add')}
+            </button>
           </div>
-          <div className="ann-section-body ann-section-body--flush">
-            {annotations.length === 0 ? (
-              <div className="ann-empty">{t('memory.noAnnotations')}</div>
-            ) : (
-              <div className="ann-list">
-                {annotations.map(a => (
-                  <div key={a.id} className="ann-item">
-                    <div className="ann-item-header">
-                      <span className="ann-keyword">{a.keyword}</span>
-                      {a.keywords &&
-                        a.keywords.length > 0 &&
-                        a.keywords.map((kw, i) => (
-                          <span key={i} className="ann-sub-keyword">
-                            {kw}
-                          </span>
-                        ))}
-                      {a.builtin && <span className="ann-badge">{t('memory.builtin')}</span>}
-                      <span className={`ann-group-tag ann-group-${a.group}`}>{a.group}</span>
-                    </div>
-                    <div className="ann-desc">{a.description}</div>
-                    {a.paths.length > 0 && (
-                      <div className="ann-paths">
-                        {a.paths.map((p, i) => (
-                          <span key={i} className="ann-path">
-                            {p}
-                          </span>
-                        ))}
+
+          {loading ? (
+            <div className="memdlg-guide-text">{t('common.loading')}</div>
+          ) : annotations.length === 0 ? (
+            <div className="memdlg-guide-text">{t('memory.noAnnotations')}</div>
+          ) : (
+            annotations.map(a => (
+              <div key={a.id} className="ad-card">
+                <div className="ad-row1">
+                  <span className="ad-keyword">{a.keyword}</span>
+                  {(a.keywords || []).map(kw => (
+                    <span key={kw} className="ad-sub-keyword">
+                      {kw}
+                    </span>
+                  ))}
+                  <span className={`ad-group-badge ad-group-${a.group}`}>{a.group}</span>
+                </div>
+                <div className="ad-desc">{a.description}</div>
+                {a.paths.length > 0 && (
+                  <div className="ad-paths">
+                    {a.paths.map(p => (
+                      <div key={p} className="ad-path-item">
+                        <IconFolder size={12} />
+                        {p}
                       </div>
-                    )}
-                    {a.tags.length > 0 && (
-                      <div className="ann-tags">
-                        {a.tags.map((tag, i) => (
-                          <span key={i} className="ann-tag">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="ann-item-actions">
-                      <IconButton variant="ghost" label={t('common.edit')} onClick={() => openEdit(a)}>
-                        <IconEdit3 size={12} />
-                      </IconButton>
-                      <IconButton
-                        variant="ghost"
-                        label={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
-                        onClick={() => !a.builtin && handleDelete(a.keyword)}
-                        disabled={a.builtin}
-                      >
-                        <IconTrash2 size={12} />
-                      </IconButton>
-                    </div>
+                    ))}
                   </div>
-                ))}
+                )}
+                {a.tags.length > 0 && (
+                  <div className="ad-chips-row">
+                    {a.tags.map(tag => (
+                      <span key={tag} className="ad-chip ad-chip-success">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="ad-actions">
+                  <button type="button" className="ad-icon-btn" title={t('common.edit')} onClick={() => openEdit(a)}>
+                    <IconEdit3 size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="ad-icon-btn delete"
+                    title={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
+                    disabled={a.builtin}
+                    onClick={() => handleDelete(a.keyword)}
+                  >
+                    <IconTrash2 size={14} />
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+            ))
+          )}
+          <div className="list-padding-bottom" />
         </div>
       </div>
 
       {/* 新增/编辑子弹窗 */}
-      {dialogOpen && (
-        <div
-          className="modal-overlay visible"
-          onClick={() => setDialogOpen(false)}
-          style={{ zIndex: 20 }}
-        >
-          <div className="modal-content modal-content--lg" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">
+      {editOpen && (
+        <div className="memdlg-overlay memdlg-overlay--sub" onClick={() => setEditOpen(false)}>
+          <div className="memdlg-container memdlg-container--sm" onClick={e => e.stopPropagation()}>
+            <div className="memdlg-header">
+              <div className="memdlg-title">
                 {editKeyword ? t('memory.annotation.edit') : t('memory.annotation.add')}
-              </span>
-              <IconButton
-                variant="modal-close"
-                label={t('common.close')}
-                onClick={() => setDialogOpen(false)}
-              >
+              </div>
+              <button type="button" className="memdlg-close" onClick={() => setEditOpen(false)} aria-label={t('common.close')}>
                 <IconX size={16} />
-              </IconButton>
+              </button>
             </div>
-            <div className="modal-body modal-body--form">
-              <div>
-                <label className="ann-label">{t('memory.annotation.keyword')}</label>
+            <div className="memdlg-body">
+              <div className="memdlg-form-group">
+                <label className="memdlg-label">{t('memory.annotation.keyword')} *</label>
                 <input
-                  className="ann-input input"
+                  type="text"
+                  className="memdlg-input"
                   value={keyword}
                   onChange={e => setKeyword(e.target.value)}
                   placeholder={t('memory.annotation.keywordPlaceholder')}
                   disabled={!!editKeyword}
                 />
               </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.keywords')}</label>
+              <div className="memdlg-form-group">
+                <label className="memdlg-label">{t('memory.annotation.keywords')}</label>
                 <input
-                  className="ann-input input"
+                  type="text"
+                  className="memdlg-input"
                   value={keywords}
                   onChange={e => setKeywords(e.target.value)}
                   placeholder={t('memory.annotation.keywordsPlaceholder')}
                 />
               </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.desc')}</label>
+              <div className="memdlg-form-group">
+                <label className="memdlg-label">{t('memory.annotation.desc')} *</label>
                 <textarea
-                  className="ann-textarea textarea"
+                  className="memdlg-textarea"
+                  rows={3}
                   value={desc}
                   onChange={e => setDesc(e.target.value)}
                   placeholder={t('memory.annotation.descPlaceholder')}
-                  rows={3}
                 />
               </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.paths')}</label>
+              <div className="memdlg-form-group">
+                <label className="memdlg-label">{t('memory.annotation.paths')}</label>
                 <textarea
-                  className="ann-textarea textarea"
+                  className="memdlg-textarea"
+                  rows={3}
                   value={paths}
                   onChange={e => setPaths(e.target.value)}
                   placeholder={t('memory.annotation.pathsPlaceholder')}
-                  rows={3}
                 />
               </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.tags')}</label>
+              <div className="memdlg-form-group">
+                <label className="memdlg-label">{t('memory.annotation.tags')}</label>
                 <input
-                  className="ann-input input"
+                  type="text"
+                  className="memdlg-input"
                   value={tags}
                   onChange={e => setTags(e.target.value)}
                   placeholder={t('memory.annotation.tagsPlaceholder')}
                 />
               </div>
-              <div className="ann-row-2col">
-                <div>
-                  <label className="ann-label">{t('memory.annotation.group')}</label>
+              <div className="memdlg-form-row">
+                <div className="memdlg-form-group">
+                  <label className="memdlg-label">{t('memory.annotation.group')}</label>
                   <select
-                    className="ann-select select"
+                    className="memdlg-select"
                     value={group}
                     onChange={e => setGroup(e.target.value)}
                   >
@@ -269,24 +283,29 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
                     <option value="user">user</option>
                   </select>
                 </div>
-                <div>
-                  <label className="ann-label">{t('memory.annotation.priority')}</label>
+                <div className="memdlg-form-group">
+                  <label className="memdlg-label">{t('memory.annotation.priority')}</label>
                   <input
-                    className="ann-input input"
                     type="number"
+                    className="memdlg-input"
                     value={priority}
                     onChange={e => setPriority(parseInt(e.target.value) || 0)}
                   />
                 </div>
               </div>
-              <div className="form-footer">
-                <Button variant="default" onClick={() => setDialogOpen(false)}>
-                  {t('common.cancel')}
-                </Button>
-                <Button variant="primary" onClick={handleSave}>
-                  {t('common.save')}
-                </Button>
-              </div>
+            </div>
+            <div className="memdlg-footer">
+              <button type="button" className="memdlg-btn-ghost" onClick={() => setEditOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="memdlg-btn-primary"
+                disabled={!keyword.trim() || !desc.trim() || saving}
+                onClick={handleSave}
+              >
+                {saving ? '…' : t('common.save')}
+              </button>
             </div>
           </div>
         </div>
