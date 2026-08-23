@@ -68,6 +68,19 @@ jobs:
           NO_STRIP: "true"
         run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || runner.os == 'macOS' && '--bundles app' || '' }}
 
+      - name: Deep-sign dylibs & verify (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP_PATH="target/release/bundle/macos/Nuphus.app"
+          # macOS：tauri 只签主二进制，bundle.macOS.files 拷入 Contents/Frameworks 的
+          # sherpa/onnxruntime dylib 是预编译 adhoc 签名；必须深签名，否则用户侧
+          # 直接 SIGKILL (Code Signature Invalid)。
+          # 优先使用配置的签名身份；未配置时退化为 adhoc（用于 CI 验证签名链路）。
+          SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+          codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+          echo "macOS deep-sign + verify OK ($APP_PATH)"
+
       - name: Create DMG (macOS, manual hdiutil)
         if: runner.os == 'macOS'
         run: |

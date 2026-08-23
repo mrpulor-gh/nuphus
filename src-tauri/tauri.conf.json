@@ -81,7 +81,7 @@
     "macOS": {
       "files": {
         "Frameworks/libsherpa-onnx-c-api.dylib": "desktop/sherpa/libsherpa-onnx-c-api.dylib",
-        "Frameworks/libonnxruntime.1.27.0.dylib": "desktop/sherpa/libonnxruntime.dylib"
+        "Frameworks/libonnxruntime.dylib": "desktop/sherpa/libonnxruntime.dylib"
       }
     }
   }
