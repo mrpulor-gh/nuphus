@@ -65,6 +65,8 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
   const [imageData, setImageData] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(isText || isImage)
+  /** 系统打开/定位失败信息（此前被静默吞掉，表现为「点了打不开」无反馈） */
+  const [openErr, setOpenErr] = useState<string | null>(null)
 
   // Esc 关闭
   useEffect(() => {
@@ -77,6 +79,7 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
 
   // 读取内容
   useEffect(() => {
+    setOpenErr(null)
     if (isImage) {
       let cancelled = false
       setLoading(true)
@@ -97,9 +100,14 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
       }
     }
     if (!isText) {
-      // 非文本类型（pdf 等）：不读内容，直接系统默认程序打开
-      openPath(path).catch(() => {})
-      return
+      // 非文本类型（pdf 等）：不读内容，直接系统默认程序打开；失败必须可见
+      let cancelled = false
+      openPath(path).catch(err => {
+        if (!cancelled) setOpenErr(typeof err === 'string' ? err : String(err))
+      })
+      return () => {
+        cancelled = true
+      }
     }
     let cancelled = false
     setLoading(true)
@@ -121,10 +129,12 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
   }, [path, isText])
 
   const handleReveal = () => {
-    revealPath(path).catch(() => {})
+    setOpenErr(null)
+    revealPath(path).catch(err => setOpenErr(typeof err === 'string' ? err : String(err)))
   }
   const handleOpen = () => {
-    openPath(path).catch(() => {})
+    setOpenErr(null)
+    openPath(path).catch(err => setOpenErr(typeof err === 'string' ? err : String(err)))
   }
 
   return (
@@ -145,6 +155,16 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
           <ExternalLink size={13} /> 系统打开
         </button>
       </div>
+
+      {/* ── 系统打开/定位失败提示（不再静默吞错） ── */}
+      {openErr && (
+        <div className="pv-open-error" role="alert">
+          <span className="pv-open-error-msg">{openErr}</span>
+          <button type="button" className="pv-btn" onClick={handleReveal}>
+            <FolderOpen size={13} /> 在文件夹显示
+          </button>
+        </div>
+      )}
 
       {/* ── 主体 ── */}
       <div className="pv-body">
@@ -170,13 +190,24 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
             </div>
           )
         ) : !isText ? (
-          <div className="pv-placeholder">
-            <div className="pv-placeholder-title">已用系统默认程序打开</div>
-            <div className="pv-placeholder-path">{path}</div>
-            <div className="pv-placeholder-hint">
-              该类型不支持内联预览（pdf 等），已调用系统默认程序打开。
+          openErr ? (
+            <div className="pv-error">
+              <div className="pv-error-title">无法打开此文件</div>
+              <div className="pv-error-msg">{openErr}</div>
+              <div className="pv-error-path">{path}</div>
+              <button type="button" className="pv-btn" onClick={handleReveal}>
+                <FolderOpen size={13} /> 在文件夹显示
+              </button>
             </div>
-          </div>
+          ) : (
+            <div className="pv-placeholder">
+              <div className="pv-placeholder-title">已请求系统默认程序打开</div>
+              <div className="pv-placeholder-path">{path}</div>
+              <div className="pv-placeholder-hint">
+                该类型不支持内联预览（pdf 等），已调用系统默认程序打开；若未弹出窗口请查看上方提示。
+              </div>
+            </div>
+          )
         ) : loading ? (
           <div className="pv-loading">读取中…</div>
         ) : error ? (

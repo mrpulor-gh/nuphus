@@ -195,3 +195,22 @@
   word-break: break-all;
   max-width: 80%;
 }
+
+/* ── 系统打开/定位失败横幅：此前错误被静默吞掉，表现为「点了没反应」 ── */
+.pv-open-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px;
+  padding: 7px 12px;
+  border-radius: var(--radius-2);
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.1);
+  border: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.4);
+}
+.pv-open-error-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fz-sm);
+  color: var(--error, #ef4444);
+  overflow-wrap: anywhere;
+}

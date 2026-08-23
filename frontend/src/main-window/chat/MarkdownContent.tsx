@@ -373,9 +373,11 @@ function TableRenderer({
 //   5. Link [text](url)
 //   6. Bare Windows absolute file path (only when onFileClick provided)
 
-/** 白名单扩展名：扩展名后不得紧跟字母/数字/下划线（避免 .md5 之类误判） */
+/** 白名单扩展名：扩展名后不得紧跟字母/数字/下划线（避免 .md5 之类误判）。
+ *  覆盖常见下载产物类型——浏览器下载的 zip/exe/office/音视频此前不可点击，
+ *  是「下载完成但打不开」的前端放大因素之一 */
 const FILE_EXT_WHITELIST =
-  /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg)(?![A-Za-z0-9_])/i
+  /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_])/i
 /** 盘符开头绝对路径候选：`:` 在排除集中，天然在第二个冒号处截断（分隔相邻路径） */
 const PATH_CANDIDATE_RE = /[A-Za-z]:[\\/][^\r\n<>:"|?*]*/g
 
@@ -474,6 +476,30 @@ function MarkdownInline({
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
       if (seg.t === 'code') {
+        // 行内代码若整体就是一条白名单绝对路径（Agent 习惯用反引号包文件路径），
+        // 同样接入点击预览链路，不再作为纯代码不可点
+        if (onFileClick) {
+          const ranges = extractFilePaths(seg.v)
+          const whole = ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === seg.v.length
+          if (whole) {
+            nodes.push(
+              <a
+                key={`c-${i}-${seg.v}`}
+                href="#"
+                className="markdown-file-path inline-code"
+                title={seg.v}
+                onClick={e => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onFileClick(seg.v)
+                }}
+              >
+                {seg.v}
+              </a>,
+            )
+            continue
+          }
+        }
         nodes.push(
           <code key={`c-${i}-${seg.v}`} className="inline-code">
             {seg.v}

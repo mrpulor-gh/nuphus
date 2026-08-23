@@ -13,7 +13,7 @@ use chromiumoxide::{Command, Method, Page};
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -211,6 +211,21 @@ impl Command for BrowserSetDownloadBehavior {
     type Response = serde_json::Value;
 }
 
+/// Sort collected download entries newest-first (entries carry a private
+/// `mtime` key used only for ordering; stripped before serialization).
+fn sort_by_mtime_desc(files: &mut [serde_json::Value]) {
+    files.sort_by(|a, b| {
+        let am = a["mtime"].as_str().unwrap_or("");
+        let bm = b["mtime"].as_str().unwrap_or("");
+        bm.cmp(am)
+    });
+    for f in files.iter_mut() {
+        if let Some(obj) = f.as_object_mut() {
+            obj.remove("mtime");
+        }
+    }
+}
+
 /// Minimum viable viewport for reliable automation (screenshot, click, image match).
 /// Screens below this threshold force an explicit viewport constrained to screen
 /// size; screens at or above it leave the window to the system/native management.
@@ -280,8 +295,14 @@ pub struct BrowserClient {
     helpers_injected: bool,
     /// Download directory path.
     download_dir: PathBuf,
-    /// Whether download behavior has been configured for this session.
+    /// Whether download behavior has been configured for this session
+    /// (true also when configuration failed — see `download_cdp_ok`).
     download_configured: bool,
+    /// Whether the CDP `Browser.setDownloadBehavior` command actually took
+    /// effect. When false, downloads land in Chrome's default folder and
+    /// `list_downloads` must surface the real location instead of reporting
+    /// paths under `download_dir` that don't exist.
+    download_cdp_ok: bool,
     /// Warning recorded when download-dir configuration failed (bubbled into the
     /// `browser_list_downloads` output — downloads land in Chrome's default dir).
     download_config_warning: Option<String>,
@@ -768,6 +789,7 @@ impl BrowserClient {
             helpers_injected: false,
             download_dir,
             download_configured: false,
+            download_cdp_ok: false,
             download_config_warning: None,
             child_process: None,
             launched_headless: None,
@@ -790,6 +812,7 @@ impl BrowserClient {
             helpers_injected: false,
             download_dir,
             download_configured: false,
+            download_cdp_ok: false,
             download_config_warning: None,
             child_process: None,
             launched_headless: None,
@@ -2325,6 +2348,9 @@ impl BrowserClient {
     }
 
     /// Configure Chrome download behavior via CDP `Browser.setDownloadBehavior`.
+    /// Tracks whether the command actually took effect (`download_cdp_ok`) so
+    /// `list_downloads` can report the real landing directory when Chrome
+    /// refuses or ignores it.
     async fn configure_download_dir(&mut self) -> Result<(), BrowserError> {
         let page = self.get_page().await?;
         let page_guard = page.lock().await;
@@ -2343,6 +2369,8 @@ impl BrowserClient {
             Ok(_) => {
                 tracing::info!("[Browser] Download dir set to: {}", download_path);
                 self.download_configured = true;
+                self.download_cdp_ok = true;
+                self.download_config_warning = None;
                 Ok(())
             }
             Err(e) => {
@@ -2356,42 +2384,116 @@ impl BrowserClient {
                     self.download_dir.display()
                 ));
                 self.download_configured = true;
+                self.download_cdp_ok = false;
                 Ok(())
             }
         }
     }
 
+    /// Idempotently ensure the browser-wide download behavior points at the
+    /// managed dir. Must be reachable from EVERY page-acquisition path —
+    /// sessions whose first action is `new_tab`/`switch_tab` never go through
+    /// `get_or_create_page`, which previously left the CDP command unsent and
+    /// made downloads land in Chrome's default folder while tool output kept
+    /// reporting the (empty) managed dir. Also retries after an earlier
+    /// failed attempt (cheap round-trip, heals transient failures).
+    async fn ensure_download_behavior(&mut self) {
+        if !self.download_configured || !self.download_cdp_ok {
+            if let Err(e) = self.configure_download_dir().await {
+                tracing::warn!("[Browser] ensure_download_behavior failed: {e}");
+            }
+        }
+    }
+
     /// List files in the download directory.
+    ///
+    /// Source-aware: when the CDP download-behavior command did NOT take
+    /// effect (`download_cdp_ok == false`), real files land in Chrome's
+    /// default folder — listing only the managed dir would hand the Agent
+    /// paths that don't exist. In that case we also list recent files from
+    /// the system Downloads dir (top 20 by mtime) and label both sources.
     pub fn list_downloads(&self) -> Result<String, BrowserError> {
-        let mut files = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&self.download_dir) {
+        fn collect_files(dir: &Path, out: &mut Vec<serde_json::Value>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
             for entry in entries.flatten() {
-                if let Ok(meta) = entry.metadata() {
-                    if meta.is_file() {
-                        files.push(serde_json::json!({
-                            "name": entry.file_name().to_string_lossy(),
-                            "path": entry.path().to_string_lossy(),
-                            "size": meta.len(),
-                            "modified": meta.modified().ok().map(|t| {
-                                chrono::DateTime::<chrono::Utc>::from(t)
-                                    .format("%Y-%m-%d %H:%M:%S").to_string()
-                            }),
-                        }));
-                    }
+                let Ok(meta) = entry.metadata() else { continue };
+                if !meta.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                // Skip partial downloads — reporting them as ready-to-open
+                // files is exactly the "path exists but won't open" bug.
+                let ext = Path::new(&name)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase())
+                    .unwrap_or_default();
+                if matches!(ext.as_str(), "crdownload" | "part" | "tmp") {
+                    continue;
+                }
+                let modified = meta.modified().ok().map(|t| {
+                    chrono::DateTime::<chrono::Utc>::from(t)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string()
+                });
+                out.push(serde_json::json!({
+                    "name": name,
+                    "path": entry.path().to_string_lossy(),
+                    "size": meta.len(),
+                    // "%Y-%m-%d %H:%M:%S" sorts lexicographically == chronologically,
+                    // so the duplicate key doubles as the ordering key (stripped below).
+                    "modified": modified,
+                    "mtime": modified,
+                }));
+            }
+        }
+
+        let mut managed = Vec::new();
+        collect_files(&self.download_dir, &mut managed);
+        sort_by_mtime_desc(&mut managed);
+
+        if self.download_cdp_ok {
+            return Ok(serde_json::to_string_pretty(&managed).unwrap_or_else(|_| "[]".to_string()));
+        }
+
+        // Fallback path: surface the real landing zone alongside the (likely
+        // empty) managed dir so reported paths actually resolve on disk.
+        let system_downloads = dirs::download_dir();
+        let mut recent = Vec::new();
+        if let Some(ref d) = system_downloads {
+            collect_files(d, &mut recent);
+            sort_by_mtime_desc(&mut recent);
+            recent.truncate(20);
+            for f in recent.iter_mut() {
+                if let Some(obj) = f.as_object_mut() {
+                    obj.insert("source".into(), serde_json::json!("system_downloads"));
                 }
             }
         }
-        if let Some(warning) = &self.download_config_warning {
-            // Bubble the configuration failure into the tool output: the listing
-            // below covers the profile downloads dir while real downloads may be
-            // landing in Chrome's default folder.
-            return Ok(serde_json::to_string_pretty(&serde_json::json!({
-                "warning": warning,
-                "files": files,
-            }))
-            .unwrap_or_else(|_| "[]".to_string()));
+        for f in managed.iter_mut() {
+            if let Some(obj) = f.as_object_mut() {
+                obj.insert("source".into(), serde_json::json!("managed"));
+            }
         }
-        Ok(serde_json::to_string_pretty(&files).unwrap_or_else(|_| "[]".to_string()))
+
+        let warning = self.download_config_warning.clone().unwrap_or_else(|| {
+            format!(
+                "download directory not confirmed via CDP; downloads may land in \
+                 the system Downloads folder instead of {}",
+                self.download_dir.display()
+            )
+        });
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "warning": warning,
+            "files": managed,
+            "system_downloads_dir": system_downloads
+                .as_ref()
+                .map(|d| d.to_string_lossy()),
+            "system_downloads_recent": recent,
+        }))
+        .unwrap_or_else(|_| "[]".to_string()))
     }
 
     /// Import cookies from the user's Chrome profile into the current page.
@@ -2976,6 +3078,7 @@ impl BrowserClient {
         self.snapshot_backend_ids.clear();
         self.helpers_injected = false;
         self.download_configured = false;
+        self.download_cdp_ok = false;
         self.download_config_warning = None;
 
         // Kill the child process (managed manually, not via Browser::launch)
@@ -3045,6 +3148,7 @@ impl BrowserClient {
         self.snapshot_backend_ids.clear();
         self.helpers_injected = false;
         self.download_configured = false;
+        self.download_cdp_ok = false;
         self.download_config_warning = None;
         if let Some(mut child) = self.child_process.take() {
             let _ = child.kill().await;
@@ -3080,15 +3184,17 @@ impl BrowserClient {
 
     /// New tab
     pub async fn new_tab(&mut self, url: Option<&str>) -> Result<String, BrowserError> {
-        let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
-
-        let browser_guard = browser.lock().await;
-        let page = browser_guard
-            .new_page(url.unwrap_or("about:blank"))
-            .await
-            .map_err(|e| BrowserError::Launch(e.to_string()))?;
-
-        let page_arc = Arc::new(Mutex::new(page));
+        // Scope the browser borrow + guard: ensure_download_behavior below
+        // takes &mut self and must run after they drop.
+        let page_arc = {
+            let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
+            let browser_guard = browser.lock().await;
+            let page = browser_guard
+                .new_page(url.unwrap_or("about:blank"))
+                .await
+                .map_err(|e| BrowserError::Launch(e.to_string()))?;
+            Arc::new(Mutex::new(page))
+        };
         self.page = Some(page_arc);
         // New page, new backendNodeId space — stale @N refs must not carry over.
         self.snapshot_backend_ids.clear();
@@ -3099,6 +3205,11 @@ impl BrowserClient {
             let _ = page_guard.execute(DOMEnable::default()).await;
             let _ = Self::inject_anti_detection(&page_guard).await;
         }
+
+        // Download behavior is browser-scoped but was only ever sent from
+        // get_or_create_page — a session starting with new_tab never configured
+        // it, so downloads landed in Chrome's default folder. Heal here.
+        self.ensure_download_behavior().await;
 
         let url_str = url.unwrap_or("about:blank");
         Ok(format!("New tab opened: {}", url_str))
@@ -3136,33 +3247,39 @@ impl BrowserClient {
 
     /// Switch to tab (by index)
     pub async fn switch_tab(&mut self, index: usize) -> Result<String, BrowserError> {
-        let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
+        // Scope the browser borrow + guard (same reason as new_tab).
+        let (page_arc, url) = {
+            let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
+            let browser_guard = browser.lock().await;
+            let pages = browser_guard.pages().await.map_err(cdp_err)?;
 
-        let browser_guard = browser.lock().await;
-        let pages = browser_guard.pages().await.map_err(cdp_err)?;
+            if index >= pages.len() {
+                return Err(BrowserError::Execution(format!(
+                    "Tab index {} out of range ({} tabs)",
+                    index,
+                    pages.len()
+                )));
+            }
 
-        if index >= pages.len() {
-            return Err(BrowserError::Execution(format!(
-                "Tab index {} out of range ({} tabs)",
-                index,
-                pages.len()
-            )));
-        }
+            let page = pages
+                .get(index)
+                .ok_or_else(|| BrowserError::Execution("Invalid tab index".to_string()))?;
 
-        let page = pages
-            .get(index)
-            .ok_or_else(|| BrowserError::Execution("Invalid tab index".to_string()))?;
+            let url = page
+                .url()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_else(|| "about:blank".to_string());
+            (Arc::new(Mutex::new(page.clone())), url)
+        };
 
-        let page_arc = Arc::new(Mutex::new(page.clone()));
         self.page = Some(page_arc);
         // Different tab, different backendNodeId space — stale @N refs must not carry over.
         self.snapshot_backend_ids.clear();
 
-        let url = page
-            .url()
-            .await
-            .unwrap_or_default()
-            .unwrap_or_else(|| "about:blank".to_string());
+        // Same healing as new_tab: attach-then-switch sessions bypass
+        // get_or_create_page and would otherwise never configure downloads.
+        self.ensure_download_behavior().await;
 
         Ok(format!("Switched to tab {}: {}", index, url))
     }
