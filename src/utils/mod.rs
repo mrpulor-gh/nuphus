@@ -664,6 +664,31 @@ pub fn resolve_project_root() -> PathBuf {
     cwd
 }
 
+/// Nuphus 用户数据目录——运行时数据（memory 快照、plan 文件等）的写入根目录。
+///
+/// 优先级：
+/// 1. `NUPHUS_DATA_DIR` 环境变量显式覆盖
+/// 2. `dirs::data_dir()/.nuphus`（Windows: `%APPDATA%\.nuphus`，macOS:
+///    `~/Library/Application Support/.nuphus`，Linux: `~/.local/share/.nuphus`）——
+///    始终指向用户可写目录
+/// 3. 兜底 `resolve_project_root()/.nuphus`（`data_dir` 不可用等极端情况）
+///
+/// 与 `resolve_project_root()` 的区别：后者探测仓库/cwd，发布版会退化到
+/// `current_dir`，安装到 Program Files 等受保护目录时写入会 Access Denied。
+/// 所有运行时**写入**路径应统一走这里；`resolve_project_root` 保留给路径信任
+/// 边界（workspace 内/外判定）等只读场景。
+pub fn nuphus_data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("NUPHUS_DATA_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    if let Some(data_dir) = dirs::data_dir() {
+        return data_dir.join(".nuphus");
+    }
+    resolve_project_root().join(".nuphus")
+}
+
 /// Returns the workspace root directory (cross-platform: Linux/macOS/Windows).
 ///
 /// Nuphus layout: `workspace_root/src/` (lib crate), `workspace_root/src-tauri/` (app).

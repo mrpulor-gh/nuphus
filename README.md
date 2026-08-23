@@ -119,7 +119,7 @@ npx @nuphus/nuphus-desktop
 面向不熟悉命令行的用户，**无需命令行、无需 Node.js / Rust 环境**：
 
 1. 从 [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases) 下载对应平台的安装包：
-   - **Windows**：`.msi`
+   - **Windows**：`.exe`（NSIS 安装包，用户级安装，**无需管理员权限**）
    - **macOS**：`.dmg`
    - **Linux**：`.deb` / `.AppImage`
 2. 双击安装包完成安装（Windows 安装后桌面生成 **Nuphus** 快捷方式）

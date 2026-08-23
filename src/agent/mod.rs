@@ -398,9 +398,7 @@ impl ReactAgent {
         }
 
         // Part 2: Current memory.md
-        let md_path = crate::utils::resolve_project_root()
-            .join(".nuphus")
-            .join("memory.md");
+        let md_path = crate::utils::nuphus_data_dir().join("memory.md");
         if md_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&md_path) {
                 let trimmed = content.trim().to_string();

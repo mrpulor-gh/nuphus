@@ -72,7 +72,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "msi", "dmg"],
+    "targets": ["deb", "appimage", "nsis", "dmg"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "resources": {},
     "icon": [
       "icons/icon.ico",

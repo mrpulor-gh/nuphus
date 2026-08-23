@@ -408,7 +408,7 @@ impl Runtime {
         if !self.agent.session().is_empty() {
             return;
         }
-        let path = crate::utils::resolve_project_root().join(".nuphus/memory.md");
+        let path = crate::utils::nuphus_data_dir().join("memory.md");
         if !path.exists() {
             return;
         }

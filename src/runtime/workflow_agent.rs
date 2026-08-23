@@ -280,7 +280,7 @@ impl WorkflowAgent {
     /// Inject memory snapshot from workflow-memory.md
     pub fn inject_memory_snapshot(&mut self) {
         if self.session.is_empty() {
-            let wmem_path = crate::utils::resolve_project_root().join(".nuphus/workflow-memory.md");
+            let wmem_path = crate::utils::nuphus_data_dir().join("workflow-memory.md");
             if wmem_path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&wmem_path) {
                     let trimmed = content.trim();

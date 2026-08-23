@@ -130,23 +130,19 @@ jobs:
           cd target/release/bundle/macos
           zip -r -y ../../../../${{ matrix.artifact }}.zip Nuphus.app
 
-      - name: Rename MSI (strip locale suffix)
+      - name: Collect NSIS installer (per-user)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Get-ChildItem "target/release/bundle/msi/*.msi" | ForEach-Object {
-            $newName = $_.Name -replace '_[a-zA-Z]{2,3}-[a-zA-Z]{2,4}\.msi$', '.msi'
-            if ($newName -ne $_.Name) {
-              Write-Output "Rename $($_.Name) -> $newName"
-              Rename-Item $_.FullName $newName -Force
-            }
+          Get-ChildItem "target/release/bundle/nsis/*.exe" | ForEach-Object {
+            Write-Output "NSIS installer: $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)"
           }
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
             nuphus_macos_*.dmg

@@ -44,8 +44,8 @@ fn get_plan_dir(root: &std::path::Path, project: &str) -> PathBuf {
         }
     }
 
-    // fallback 默认路径
-    root.join("src-tauri")
+    // fallback 默认路径：用户数据目录（避免安装到 Program Files 等受保护目录时写入失败）
+    crate::utils::nuphus_data_dir()
         .join("tasks")
         .join(project)
         .join("plans")

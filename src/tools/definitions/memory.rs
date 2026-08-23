@@ -296,7 +296,7 @@ impl ToolRegistry {
 
     /// Leader 主动记忆更新工具 —— 只允许 Leader 写入，ExecAgent 不可访问
     ///
-    /// 写入 ~/.nuphus/memory.md（项目根目录 .nuphus/memory.md）。
+    /// 写入 ~/.nuphus/memory.md（用户数据目录，见 utils::nuphus_data_dir）。
     /// 这不是随手笔记，而是重点阶段/文件/操作的索引指南，
     /// 会被注入到 Leader 每轮 prompt 中用于快速决策。
     /// 自动截断到 2000 字符，保留尾部最新内容。
@@ -324,7 +324,7 @@ impl ToolRegistry {
                 } else {
                     content
                 };
-                let nuphus_dir = crate::utils::resolve_project_root().join(".nuphus");
+                let nuphus_dir = crate::utils::nuphus_data_dir();
                 let path = nuphus_dir.join("memory.md");
                 if let Err(e) = std::fs::create_dir_all(&nuphus_dir) {
                     return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
@@ -362,7 +362,7 @@ impl ToolRegistry {
 
     /// WorkflowAgent 主动记忆写入工具
     ///
-    /// 写入 ~/.nuphus/workflow-memory.md（项目根目录 .nuphus/workflow-memory.md）。
+    /// 写入 ~/.nuphus/workflow-memory.md（用户数据目录，见 utils::nuphus_data_dir）。
     /// 会被注入到后续 Workflow 会话 prompt 中作为跨会话参考。
     /// 每次调用覆盖上次快照，最新内容同步登记到 SQLite（每 session 一行）。
     /// 自动截断到 2000 字符。
@@ -388,7 +388,7 @@ impl ToolRegistry {
                 } else {
                     content
                 };
-                let nuphus_dir = crate::utils::resolve_project_root().join(".nuphus");
+                let nuphus_dir = crate::utils::nuphus_data_dir();
                 let path = nuphus_dir.join("workflow-memory.md");
                 if let Err(e) = std::fs::create_dir_all(&nuphus_dir) {
                     return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
