@@ -29,6 +29,7 @@ fn main() {
     // onnxruntime（sherpa 未内置时兜底）→ YOLO → 最后 sync_*。
     download_ocr_models();
     ensure_sherpa_libs();
+    #[cfg(target_os = "macos")]
     decouple_onnxruntime_name();
     ensure_onnxruntime_libs();
     ensure_yolo_model();
@@ -408,13 +409,14 @@ fn decouple_onnxruntime_name() {
         return;
     };
     let text = String::from_utf8_lossy(&out.stdout);
-    let old = text
-        .lines()
-        .map(str::trim)
-        .find_map(|l| {
-            l.strip_prefix("@rpath/libonnxruntime.")
-                .map(|rest| format!("@rpath/libonnxruntime.{}", rest.split_whitespace().next().unwrap_or("")))
-        });
+    let old = text.lines().map(str::trim).find_map(|l| {
+        l.strip_prefix("@rpath/libonnxruntime.").map(|rest| {
+            format!(
+                "@rpath/libonnxruntime.{}",
+                rest.split_whitespace().next().unwrap_or("")
+            )
+        })
+    });
     let Some(old) = old else {
         println!("cargo:warning=sherpa-onnx: 未发现带版本号的 onnxruntime 依赖，跳过解耦");
         return;
