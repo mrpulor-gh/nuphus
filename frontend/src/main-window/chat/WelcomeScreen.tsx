@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { NuphusAvatar, type NuphusAvatarState } from '../../ui/NuphusAvatar'
 import { ParticleField } from './ParticleField'
 import { useLanguage } from '../../locales'
+import { hasResumeCandidate } from '../lib/api'
 import '../../styles/welcome.css'
 
 interface WelcomeScreenProps {
   onSend: (text: string, images?: string[]) => void
   startupStats: { tools: number; memories: number }
+  /** 「继续对话」点击后由父级重拉历史（Session Shelf 恢复链） */
+  onResume?: () => void
 }
 
 /**
@@ -23,12 +26,31 @@ const PERFORMANCE: ReadonlyArray<[NuphusAvatarState, number]> = [
 const REVEAL_AT = 5350 // 文字在 success 段浮现
 const BRAND = 'NUPHUS'
 
-export function WelcomeScreen(_props: WelcomeScreenProps) {
+export function WelcomeScreen({ onResume }: WelcomeScreenProps) {
   const { t } = useLanguage()
   const [state, setState] = useState<NuphusAvatarState>('working')
   const [revealed, setRevealed] = useState(false)
   const [gaze, setGaze] = useState<{ x: number; y: number } | undefined>(undefined)
   const logoRef = useRef<HTMLDivElement>(null)
+  const [resumable, setResumable] = useState(false)
+  const [resuming, setResuming] = useState(false)
+
+  // 是否存在可恢复的最近会话镜像（决定「继续对话」按钮显示）
+  useEffect(() => {
+    hasResumeCandidate()
+      .then(v => setResumable(v === true))
+      .catch(() => {})
+  }, [])
+
+  const handleResume = useCallback(async () => {
+    if (resuming || !onResume) return
+    setResuming(true)
+    try {
+      await onResume()
+    } finally {
+      setResuming(false)
+    }
+  }, [onResume, resuming])
 
   // 表情表演状态机
   useEffect(() => {
@@ -96,6 +118,16 @@ export function WelcomeScreen(_props: WelcomeScreenProps) {
           ))}
         </h1>
         <p className="welcome-subtitle">{t('welcome.subtitle')}</p>
+        {revealed && resumable && onResume && (
+          <button
+            type="button"
+            className="welcome-resume-btn"
+            onClick={() => void handleResume()}
+            disabled={resuming}
+          >
+            {resuming ? '…' : t('welcome.resume')}
+          </button>
+        )}
       </div>
     </div>
   )

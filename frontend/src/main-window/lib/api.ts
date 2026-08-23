@@ -363,6 +363,16 @@ export function renameSession(id: string, title: string) {
   return invoke<void>('rename_session_cmd', { id, title })
 }
 
+/** 是否存在可恢复的最近会话镜像（欢迎页「继续对话」按钮显示条件） */
+export function hasResumeCandidate() {
+  return invoke<boolean>('has_resume_candidate')
+}
+
+/** 继续对话：最新镜像写入 session_backup，返回完整历史（下条消息即续聊） */
+export function resumeLatestSession() {
+  return invoke<HistoryMessage[]>('resume_latest_session')
+}
+
 /** 初始化外部 agent 工作目录（幂等，返回目录绝对路径） */
 export function agentInit(agent: string, description: string) {
   return invoke<string>('agent_init', { agent, description })

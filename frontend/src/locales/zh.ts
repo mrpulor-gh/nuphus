@@ -125,6 +125,9 @@ const zh: Record<string, string> = {
   'sessionRail.switchFailMode': '该会话属于另一运行模式',
   'sessionRail.switchFailGeneric': '切换失败',
 
+  // ── 欢迎页 ──
+  'welcome.resume': '继续对话',
+
   // ── 外部 Agent 配置中心（team.toml CRUD）──
   'extAgents.cfg.title': '外部 Agent 配置中心',
   'extAgents.cfg.add': '配置外部 Agent',

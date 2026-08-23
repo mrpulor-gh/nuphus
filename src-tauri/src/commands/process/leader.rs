@@ -191,27 +191,6 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
         }
     }
 
-    // Shelf 镜像恢复（优先于摘要注入）：完整装载最近一次会话，
-    // 取代「[上次会话摘要]」降级体验——跨重启延续真实对话上下文
-    if runtime.session().is_empty() {
-        match crate::commands::process::shelf::load_latest_mirror() {
-            Some((mode, sess)) if !sess.is_empty() => {
-                // v1 仅 leader 侧走此恢复链；workflow 镜像留给展示台列表
-                if mode == "workflow" {
-                    tracing::info!("[LEADER] 最新镜像为 workflow 会话，跳过 leader 恢复");
-                } else {
-                    tracing::info!(
-                        "[LEADER] Restored full session from shelf mirror ({} msgs, id={})",
-                        sess.len(),
-                        sess.id
-                    );
-                    runtime.set_session(sess);
-                }
-            }
-            _ => {}
-        }
-    }
-
     // When no history, try to restore latest session from SQLite
     if runtime.session().is_empty() {
         if let Ok(Some(last_session)) = nuphus::store::session::latest_session() {

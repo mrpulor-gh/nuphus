@@ -544,6 +544,40 @@ pub fn rename_session_cmd(
     nuphus::store::session::upsert_session(&row).map_err(|e| e.to_string())
 }
 
+/// 是否存在可恢复的最近会话镜像（leader 归属、非空）——欢迎页「继续对话」按钮显示条件
+#[tauri::command]
+pub fn has_resume_candidate() -> bool {
+    matches!(
+        load_latest_mirror(),
+        Some((mode, ref s)) if mode != "workflow" && !s.is_empty()
+    )
+}
+
+/// 「继续对话」：把最新 leader 镜像写入 session_backup——
+/// 1) get_chat_history 的 backup 回退路径立即返回完整历史（无需构建 Runtime，
+///    欢迎页保持存在，恢复是显式用户动作）
+/// 2) 下一条消息提交时 run_runtime_with_config 经同一 JSON 恢复完整上下文
+///    （retry.rs 同一先例），新指令即续聊
+#[tauri::command]
+pub fn resume_latest_session(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::state::HistoryMessage>, String> {
+    let Some((mode, sess)) = load_latest_mirror() else {
+        return Err("no_resume".to_string());
+    };
+    if mode == "workflow" || sess.is_empty() {
+        return Err("no_resume".to_string());
+    }
+    let json = serde_json::to_string(&sess).map_err(|e| e.to_string())?;
+    {
+        let mut sb = state.session.lock().map_err(|e| e.to_string())?;
+        sb.session_backup = Some(json);
+        sb.last_message.clear();
+        sb.last_message_images.clear();
+    }
+    crate::commands::process::session::chat_history(&state)
+}
+
 /// 任务完成后的镜像回填（crash 安全）：把 active 会话刷盘。
 /// 由 process.rs 完成路径调用；失败不影响执行结果上报。
 pub fn flush_active_mirror(state: &AppState) {

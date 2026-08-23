@@ -1152,7 +1152,11 @@ export function ChatPanel({
       )}
       <div className="chat-messages" ref={scrollRef}>
         {messages.length === 0 ? (
-          <WelcomeScreen onSend={onSend} startupStats={startupStats} />
+          <WelcomeScreen
+            onSend={onSend}
+            startupStats={startupStats}
+            onResume={onChatReplaced}
+          />
         ) : (
           <div className="chat-messages-inner">
             {(() => {

@@ -177,6 +177,8 @@ fn main() {
             commands::switch_session,
             commands::new_chat_session_cmd,
             commands::rename_session_cmd,
+            commands::has_resume_candidate,
+            commands::resume_latest_session,
             commands::list_external_agents,
             commands::upsert_external_agent,
             commands::delete_external_agent,

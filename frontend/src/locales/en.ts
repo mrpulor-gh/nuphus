@@ -127,6 +127,9 @@ const en: Record<string, string> = {
   'sessionRail.switchFailMode': 'That session belongs to another run mode',
   'sessionRail.switchFailGeneric': 'Switch failed',
 
+  // ── Welcome ──
+  'welcome.resume': 'Resume',
+
   // ── External Agents config center (team.toml CRUD) ──
   'extAgents.cfg.title': 'External Agents',
   'extAgents.cfg.add': 'Configure external agents',
