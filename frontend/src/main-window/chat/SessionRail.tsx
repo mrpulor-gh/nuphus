@@ -41,6 +41,11 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
   const [err, setErr] = useState<string | null>(null)
   const errTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stoppedRef = useRef(false)
+  /** 整轨隐显：默认隐身，左缘感应区唤醒；移开 10s 后渐隐 */
+  const [revealed, setRevealed] = useState(false)
+  const [fading, setFading] = useState(false)
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -106,6 +111,41 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     [onSessionChanged, refresh, flashError],
   )
 
+  // ── 整轨隐显：感应区进入即展开；移开 10s 后 0.6s 渐隐（无强制常驻条件）──
+  const handleZoneEnter = useCallback(() => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current)
+      leaveTimer.current = null
+    }
+    if (fadeTimer.current) {
+      clearTimeout(fadeTimer.current)
+      fadeTimer.current = null
+    }
+    setRevealed(true)
+    setFading(false)
+  }, [])
+
+  const handleZoneLeave = useCallback(() => {
+    if (leaveTimer.current) clearTimeout(leaveTimer.current)
+    leaveTimer.current = setTimeout(() => {
+      leaveTimer.current = null
+      setFading(true)
+      fadeTimer.current = setTimeout(() => {
+        fadeTimer.current = null
+        setRevealed(false)
+        setFading(false)
+      }, 600)
+    }, 10_000)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (leaveTimer.current) clearTimeout(leaveTimer.current)
+      if (fadeTimer.current) clearTimeout(fadeTimer.current)
+    },
+    [],
+  )
+
   const saveRename = useCallback(
     async (id: string) => {
       const draft = draftTitle.trim()
@@ -121,9 +161,30 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     [draftTitle, refresh, flashError],
   )
 
+  const shown = revealed || fading || editingId !== null
+
   return (
-    <div className={`session-rail-zone${canSwitch ? '' : ' is-locked'}`}>
-      <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
+    <>
+      {/* 左缘感应区：横向自左边框至内容气泡前，纵向覆盖 10 横条显示高度；
+          常驻透明 DOM，z-index 低于轨道避免遮挡其交互 */}
+      <div
+        className="session-rail-hover-zone"
+        onMouseEnter={handleZoneEnter}
+        onMouseLeave={handleZoneLeave}
+        aria-hidden
+      />
+      <div
+        className={[
+          'session-rail-zone',
+          canSwitch ? '' : 'is-locked',
+          shown ? (fading ? 'fading' : 'revealed') : 'concealed',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onMouseEnter={handleZoneEnter}
+        onMouseLeave={handleZoneLeave}
+      >
+          <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
         {items.map((it, idx) => (
           <div
             key={it.id}
@@ -192,6 +253,7 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
           {err}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }

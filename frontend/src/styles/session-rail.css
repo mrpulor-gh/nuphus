@@ -179,3 +179,31 @@
     transition: none !important;
   }
 }
+/* ── 整轨隐显：默认隐身，左缘感应区唤醒，移开 10s 后 0.6s 渐隐 ──
+   感应区：横向自左边框至内容气泡前（140px），纵向覆盖 10 横条显示高度 */
+.session-rail-hover-zone {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 140px;
+  height: 360px;
+  z-index: 54;
+}
+.session-rail-zone {
+  transition:
+    opacity 0.6s ease,
+    transform 0.25s var(--ease-out);
+}
+.session-rail-zone.concealed {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-8px);
+}
+.session-rail-zone.revealed,
+.session-rail-zone.fading,
+.session-rail-zone.editing-hold {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
