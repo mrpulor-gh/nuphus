@@ -512,9 +512,11 @@ fn main() {
             //    状态栏仅显示本轮真实启动且经门铃上报验证过的 agent ──
             crate::commands::config::handoff::reset_all_statuses_at_startup();
 
-            // ── 中继客户端：enabled + 配置完整即启动双回路（外部网络控制桌面）──
+            // ── 中继客户端：先确保配置就绪（官方默认开箱即用），再按 enabled 启动 ──
+            // 新用户首次使用免配置：缺失时写入官方中继默认值；自建中继已有配置则保留。
             // 出站 WS 连中继服务器，收到任务走 submit_user_message 共享入口（source="relay"）。
             // 断线指数退避重连。（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）
+            crate::relay_client::ensure_default_config();
             crate::relay_client::spawn_relay_loops(app.handle().clone());
 
             // ── 移动端局域网 server：默认关闭，仅当持久化配置 enabled=true 时自动恢复 ──

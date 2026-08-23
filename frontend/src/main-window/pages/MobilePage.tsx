@@ -331,21 +331,6 @@ export function MobilePage() {
               ) : (
                 <p className="mobile-pro-locked-text">{t('mobile.qrConnecting')}</p>
               )}
-              {status?.lan_url && (
-                <div className="mobile-backup-line">
-                  <span className="mobile-backup-label">{t('mobile.backupInline')}</span>
-                  <span className="mobile-panel-address" title={status.lan_url}>
-                    {status.lan_url}
-                  </span>
-                  <button
-                    className="mobile-backup-copy"
-                    onClick={handleCopyUrl}
-                    title={t('mobile.copyUrl')}
-                  >
-                    {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* 维护操作（低频，安静收尾） */}
@@ -400,6 +385,26 @@ export function MobilePage() {
           </div>
         </div>
       </Section>
+
+      {/* ── 3. 局域网直连（最终回退，弱化展示但说明清楚） ── */}
+      {status?.lan_url && (
+        <Section title={t('mobile.lanFallbackTitle')}>
+          <div className="mobile-lan-fallback">
+            <span className="mobile-lan-fallback-desc">{t('mobile.lanFallbackDesc')}</span>
+            <span className="mobile-panel-address" title={status.lan_url}>
+              {status.lan_url}
+            </span>
+            <button
+              className="mobile-backup-copy"
+              onClick={handleCopyUrl}
+              title={t('mobile.copyAddress')}
+            >
+              {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+            </button>
+          </div>
+          <p className="mobile-lan-fallback-note">{t('mobile.lanFallbackNote')}</p>
+        </Section>
+      )}
     </div>
   )
 }

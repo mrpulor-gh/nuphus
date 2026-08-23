@@ -45,6 +45,50 @@ fn config_path() -> std::path::PathBuf {
         .join("relay_client.json")
 }
 
+// ── 官方中继默认配置（开箱即用，零配置） ──────────────────────────────
+// 首次启动自动写入；用户自建中继可覆盖 relay_client.json 后不受影响。
+// token 与 relay-server 部署端 RELAY_DEVICE_TOKEN / RELAY_CALLER_TOKEN 一致。
+const DEFAULT_RELAY_URL: &str = "wss://relay.nuphus.com";
+const DEFAULT_RELAY_PUBLIC_URL: &str = "https://r.nuphus.com";
+const DEFAULT_RELAY_DEVICE_TOKEN: &str = "795e02c19acfed38501627219b6dd7b41cba731f81f615a1";
+const DEFAULT_RELAY_CALLER_TOKEN: &str = "fce616d1585750053b079c15ca24c06cc05d33f69e47417e";
+
+/// 确保中继配置就绪：文件缺失或关键字段为空时写入官方默认值（幂等，可重复调用）。
+/// 调用时机：Tauri setup（spawn_relay_loops 之前）——新用户首次使用免配置，
+/// 开启手机访问即自动启用官方中继；自建中继用户已有配置则原样保留。
+pub fn ensure_default_config() {
+    let mut cfg = load_config();
+    let mut changed = false;
+    if cfg.url.trim().is_empty() {
+        cfg.url = DEFAULT_RELAY_URL.to_string();
+        changed = true;
+    }
+    if cfg.token.trim().is_empty() {
+        cfg.token = DEFAULT_RELAY_DEVICE_TOKEN.to_string();
+        changed = true;
+    }
+    if cfg.caller_token.trim().is_empty() {
+        cfg.caller_token = DEFAULT_RELAY_CALLER_TOKEN.to_string();
+        changed = true;
+    }
+    if cfg.public_url.trim().is_empty() {
+        cfg.public_url = DEFAULT_RELAY_PUBLIC_URL.to_string();
+        changed = true;
+    }
+    // device_id 必须每机唯一（中继按 device_id 路由）：缺失时随机生成
+    if cfg.device_id.trim().is_empty() {
+        cfg.device_id = format!("desktop-{}", uuid::Uuid::new_v4().simple());
+        changed = true;
+    }
+    if changed {
+        if let Err(e) = save_config(&cfg) {
+            tracing::warn!("[Relay] 初始化默认配置失败: {e}");
+        } else {
+            tracing::info!("[Relay] 已初始化官方中继默认配置（device_id={}）", cfg.device_id);
+        }
+    }
+}
+
 pub fn load_config() -> RelayClientConfig {
     std::fs::read_to_string(config_path())
         .ok()

@@ -111,8 +111,13 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     [onSessionChanged, refresh, flashError],
   )
 
-  // ── 整轨隐显：感应区进入即展开；移开 10s 后 0.6s 渐隐（无强制常驻条件）──
-  const handleZoneEnter = useCallback(() => {
+  // ── 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
+  //    window mousemove + rAF 节流做矩形包含检测，移开 10s 后 0.6s 渐隐 ──
+  const zoneRef = useRef<HTMLDivElement>(null)
+  const rafId = useRef(0)
+  const insideRef = useRef(false)
+
+  const startReveal = useCallback(() => {
     if (leaveTimer.current) {
       clearTimeout(leaveTimer.current)
       leaveTimer.current = null
@@ -125,8 +130,8 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     setFading(false)
   }, [])
 
-  const handleZoneLeave = useCallback(() => {
-    if (leaveTimer.current) clearTimeout(leaveTimer.current)
+  const scheduleHide = useCallback(() => {
+    if (leaveTimer.current) return
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null
       setFading(true)
@@ -138,6 +143,44 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     }, 10_000)
   }, [])
 
+  const cancelHide = useCallback(() => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current)
+      leaveTimer.current = null
+    }
+    if (fadeTimer.current) {
+      clearTimeout(fadeTimer.current)
+      fadeTimer.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (rafId.current) return
+      rafId.current = requestAnimationFrame(() => {
+        rafId.current = 0
+        const el = zoneRef.current
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        const inside =
+          e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+        if (inside === insideRef.current) return
+        insideRef.current = inside
+        if (inside) {
+          startReveal()
+        } else {
+          scheduleHide()
+        }
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      if (rafId.current) cancelAnimationFrame(rafId.current)
+    }
+  }, [startReveal, scheduleHide])
+
+  // 卸载清理
   useEffect(
     () => () => {
       if (leaveTimer.current) clearTimeout(leaveTimer.current)
@@ -166,13 +209,8 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
   return (
     <>
       {/* 左缘感应区：横向自左边框至内容气泡前，纵向覆盖 10 横条显示高度；
-          常驻透明 DOM，z-index 低于轨道避免遮挡其交互 */}
-      <div
-        className="session-rail-hover-zone"
-        onMouseEnter={handleZoneEnter}
-        onMouseLeave={handleZoneLeave}
-        aria-hidden
-      />
+          pointer-events:none 纯几何判定（window mousemove），绝不拦截输入框点击 */}
+      <div ref={zoneRef} className="session-rail-hover-zone" aria-hidden />
       <div
         className={[
           'session-rail-zone',
@@ -181,8 +219,6 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
         ]
           .filter(Boolean)
           .join(' ')}
-        onMouseEnter={handleZoneEnter}
-        onMouseLeave={handleZoneLeave}
       >
           <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
         {items.map((it, idx) => (

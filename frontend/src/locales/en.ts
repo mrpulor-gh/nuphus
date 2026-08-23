@@ -716,6 +716,10 @@ const en: Record<string, string> = {
   'mobile.copyUrl': 'Click to copy link',
   'mobile.copyAddress': 'Copy address',
   'mobile.copyRemoteLink': 'Copy link',
+  'mobile.lanFallbackTitle': 'LAN direct (fallback)',
+  'mobile.lanFallbackDesc': 'Same Wi-Fi only:',
+  'mobile.lanFallbackNote':
+    'Away from home? Use the relay QR code above — the LAN address only works on the same network',
   'mobile.pairPassword': 'Pairing password',
   'mobile.pairPasswordUnsetHint': 'Not set; phones pair with this password once set',
   'mobile.pairPasswordSetHint': 'Set; paired phones must re-enter the password after a change',
