@@ -5,6 +5,8 @@
 [![Tauri](https://img.shields.io/badge/Tauri-v2-ffc131)](https://v2.tauri.app)
 [![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev)
 
+**中文** | [English](README.en.md)
+
 > **版本**: 0.1.x · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
