@@ -128,9 +128,6 @@ const zh: Record<string, string> = {
   // ── 欢迎页 ──
   'welcome.resume': '继续对话',
 
-  // ── 输入框 +号菜单分组 ──
-  'input.group.projectMemory': '项目与记忆',
-  'input.group.attach': '附件',
 
   // ── 外部 Agent 配置中心（team.toml CRUD）──
   'extAgents.cfg.title': '外部 Agent 配置中心',

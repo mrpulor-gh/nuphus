@@ -130,9 +130,6 @@ const en: Record<string, string> = {
   // ── Welcome ──
   'welcome.resume': 'Resume',
 
-  // ── Input + menu groups ──
-  'input.group.projectMemory': 'Project & Memory',
-  'input.group.attach': 'Attachments',
 
   // ── External Agents config center (team.toml CRUD) ──
   'extAgents.cfg.title': 'External Agents',

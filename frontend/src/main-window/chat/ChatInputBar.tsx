@@ -715,7 +715,6 @@ export function ChatInputBar({
             {toolMenuOpen && (
               <div className="input-tool-menu" role="menu">
                 {/* ── 上组：附件 ── */}
-                <div className="input-tool-menu-group">{t('input.group.attach')}</div>
                 <button
                   type="button"
                   className="input-tool-menu-item"
@@ -781,7 +780,6 @@ export function ChatInputBar({
                 </button>
                 <div className="input-tool-menu-divider" />
                 {/* ── 下组：项目与记忆 ── */}
-                <div className="input-tool-menu-group">{t('input.group.projectMemory')}</div>
                 <button
                   type="button"
                   className="input-tool-menu-item"

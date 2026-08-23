@@ -21,7 +21,7 @@ describe('locales 中英键一致性', () => {
   })
 
   it('键数量记录（改动时此处数字应同步更新）', () => {
-    expect(Object.keys(zh).length).toBe(1076)
-    expect(Object.keys(en).length).toBe(1076)
+    expect(Object.keys(zh).length).toBe(1074)
+    expect(Object.keys(en).length).toBe(1074)
   })
 })
