@@ -681,3 +681,23 @@
   border-color: var(--accent);
   background: var(--accent-dim);
 }
+/* ── 可见性引擎：非常驻 agent 仅 hover 展开，移开 10s 后渐隐 ──
+   常驻 = 注意态(in_progress/blocked/error) ∪ 用户添加过的 pin 集合；
+   .shown 由 React 在 expanded&&!fading 时挂上 */
+.external-agents-bar .agent-avatar-btn.ext-extra {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px);
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s var(--ease-out);
+}
+.external-agents-bar.revealed .agent-avatar-btn.ext-extra.shown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.external-agents-bar.fading .agent-avatar-btn.ext-extra {
+  opacity: 0;
+  pointer-events: none;
+}

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCheck, IconEdit3, IconPlus } from '../../ui/Icons'
+import { IconCheck, IconEdit3 } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 import {
   listShelfSessions,
   switchSession,
-  newChatSessionCmd,
   renameSession,
   type ShelfSessionItem,
 } from '../lib/api'
@@ -13,7 +12,7 @@ import '../../styles/session-rail.css'
 const POLL_INTERVAL_MS = 5000
 
 interface SessionRailProps {
-  /** 切换/新建成功后由父级重拉 get_chat_history 整体替换气泡 */
+  /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
   onSessionChanged: () => void
 }
 
@@ -107,16 +106,6 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     [onSessionChanged, refresh, flashError],
   )
 
-  const handleNew = useCallback(async () => {
-    try {
-      await newChatSessionCmd()
-      onSessionChanged()
-      void refresh()
-    } catch (e) {
-      flashError(typeof e === 'string' ? e : String(e))
-    }
-  }, [onSessionChanged, refresh, flashError])
-
   const saveRename = useCallback(
     async (id: string) => {
       const draft = draftTitle.trim()
@@ -196,23 +185,6 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
             </div>
           </div>
         ))}
-
-        {/* 新建对话：虚线杠 */}
-        <div className="sr-item sr-new">
-          <button
-            type="button"
-            className="sr-bar sr-bar-new"
-            disabled={!canSwitch}
-            onClick={() => void handleNew()}
-            title={t('sessionRail.newChat')}
-            aria-label={t('sessionRail.newChat')}
-          >
-            <IconPlus size={11} />
-          </button>
-          <div className="sr-bubble">
-            <span className="sr-title">{t('sessionRail.newChat')}</span>
-          </div>
-        </div>
       </div>
 
       {err && (

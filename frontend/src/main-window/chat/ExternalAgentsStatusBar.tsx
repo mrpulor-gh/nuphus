@@ -14,6 +14,24 @@ const POLL_INTERVAL_MS = 3000
 
 /** 单独关闭的 agent 列表持久化 key（仅隐藏状态栏显示，不影响 handoff 目录与门铃） */
 const HIDDEN_KEY = 'nuphus.extAgents.hiddenAgents'
+/** 用户在配置中心添加过的 agent：应用生命周期内常驻显示（跨重启保留，但后端
+ *  启动清零后仍需真实门铃上报才有动态状态；pin 只保证「有状态就显示」） */
+const PINNED_KEY = 'nuphus.extAgents.pinned'
+/** 配置中心保存成功后广播的事件名 */
+export const EXT_AGENT_PINNED_EVENT = 'nuphus:ext-agent-pinned'
+
+/** 常驻可见的注意态：执行中/阻塞/错误——其余状态默认隐藏，hover 感应区临时展开 */
+const ATTENTION_STATES = new Set(['in_progress', 'blocked', 'error'])
+
+function loadPinnedAgents(): string[] {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 function loadHiddenAgents(): string[] {
   try {
@@ -91,6 +109,14 @@ interface ExternalAgentsStatusBarProps {
  *   不删除配置/目录；被移除的 agent 收进「已隐藏」入口可随时恢复）。
  * - 末尾固定一个 "+" 配置入口，点击打开外部 Agent 配置中心（空列表时入口仍可见）。
  * - 状态值来自 status.json 原样映射，前端只加显示层。
+ *
+ * ── 可见性引擎（默认隐藏，按需浮现）──
+ * - 后端启动清零 status.json：跨生命周期的陈旧 agent 不复存在；
+ *   本轮内只有真实启动并经门铃上报验证的 agent 才有非 idle 状态。
+ * - 常驻显示 = 注意态（in_progress/blocked/error）∪ 用户在配置中心添加过的
+ *   pin 集合（EXT_AGENT_PINNED_EVENT 广播 + localStorage，应用生命周期内有效）。
+ * - 其余 agent：鼠标悬停在胶囊附近 → 全部展开；移开 10s 后 0.6s 渐隐收起
+ *   （常驻项不受影响）。
  */
 export default function ExternalAgentsStatusBar({
   visible = true,
@@ -99,6 +125,13 @@ export default function ExternalAgentsStatusBar({
   const { t } = useLanguage()
   const [agents, setAgents] = useState<ExternalAgentStatus[]>([])
   const [hidden, setHidden] = useState<string[]>(loadHiddenAgents)
+  const [pins, setPins] = useState<string[]>(loadPinnedAgents)
+  /** hover 展开：额外（非常驻）agent 可见 */
+  const [revealed, setRevealed] = useState(false)
+  /** 移开鼠标后 10s 进入渐隐窗口 */
+  const [fading, setFading] = useState(false)
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [openAgent, setOpenAgent] = useState<ExternalAgentStatus | null>(null)
   const [deliverables, setDeliverables] = useState<AgentDeliverable[] | null>(null)
   const [loadingDeliv, setLoadingDeliv] = useState(false)
@@ -141,6 +174,53 @@ export default function ExternalAgentsStatusBar({
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [visible])
+
+  // ── pin 集合：配置中心保存成功后广播事件 → 加入常驻集合（应用生命周期） ──
+  useEffect(() => {
+    const onPinned = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail
+      if (!key) return
+      setPins(prev => (prev.includes(key) ? prev : [...prev, key]))
+    }
+    window.addEventListener(EXT_AGENT_PINNED_EVENT, onPinned)
+    return () => window.removeEventListener(EXT_AGENT_PINNED_EVENT, onPinned)
+  }, [])
+
+  // 卸载时清理渐隐定时器
+  useEffect(
+    () => () => {
+      if (leaveTimer.current) clearTimeout(leaveTimer.current)
+      if (fadeTimer.current) clearTimeout(fadeTimer.current)
+    },
+    [],
+  )
+
+  const handleZoneEnter = useCallback(() => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current)
+      leaveTimer.current = null
+    }
+    if (fadeTimer.current) {
+      clearTimeout(fadeTimer.current)
+      fadeTimer.current = null
+    }
+    setRevealed(true)
+    setFading(false)
+  }, [])
+
+  const handleZoneLeave = useCallback(() => {
+    // 移开 10s 后开始 0.6s 渐隐收起非常驻项
+    if (leaveTimer.current) clearTimeout(leaveTimer.current)
+    leaveTimer.current = setTimeout(() => {
+      leaveTimer.current = null
+      setFading(true)
+      fadeTimer.current = setTimeout(() => {
+        fadeTimer.current = null
+        setRevealed(false)
+        setFading(false)
+      }, 600)
+    }, 10_000)
+  }, [])
 
   /** 点击头像：打开交付物弹窗并拉取列表 */
   const openDeliverables = useCallback((a: ExternalAgentStatus) => {
@@ -192,10 +272,54 @@ export default function ExternalAgentsStatusBar({
 
   if (!visible) return null
 
-  const shown = agents.filter(a => !hidden.includes(a.agent))
+  const known = agents.filter(a => !hidden.includes(a.agent))
+  const isPersistent = (a: ExternalAgentStatus) =>
+    ATTENTION_STATES.has(a.state || '') || pins.includes(a.agent)
+  const persistent = known.filter(isPersistent)
+  const extras = known.filter(a => !isPersistent(a))
   const hiddenKnown = hidden.filter(name => agents.some(a => a.agent === name))
   const reports = (deliverables || []).filter(d => d.kind === 'report')
   const artifacts = (deliverables || []).filter(d => d.kind === 'artifact')
+  /** 弹窗打开期间视同展开，避免气泡随渐隐消失 */
+  const expanded = revealed || fading || openAgent !== null
+
+  /** 单个 agent 头像（persistent 与 hover 展开共用）；extra=hover 展开项，受渐隐控制 */
+  const renderAvatar = (a: ExternalAgentStatus, extra?: boolean) => {
+    const state = a.state || 'unknown'
+    const stateLabel = t(STATE_I18N[state] || 'extAgents.state.unknown')
+    const kind = agentKind(a.agent)
+    const title = `${a.agent} · ${stateLabel}${a.task_id ? ` · ${a.task_id}` : ''}`
+    return (
+      <div
+        key={a.agent}
+        className={[
+          'agent-avatar-btn',
+          STATE_CLASS[state] || 'is-unknown',
+          extra ? (expanded && !fading ? 'ext-extra shown' : 'ext-extra') : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        title={title}
+      >
+        <button
+          type="button"
+          className="agent-avatar-main"
+          onClick={() => openDeliverables(a)}
+          aria-label={t('extAgents.deliver.title', a.agent)}
+        >
+          <span className={`ext-agent-dot ${STATE_CLASS[state] || 'is-unknown'}`} aria-hidden />
+          <span className={`agent-avatar-icon is-${kind}`}>
+            {kind === 'cli' ? <IconTerminal size={16} /> : <IconBot size={16} />}
+          </span>
+        </button>
+        <div className="agent-tooltip">
+          <span className="agent-tooltip-name">{a.agent}</span>
+          <span className="agent-tooltip-state">{stateLabel}</span>
+          {a.task_id ? <span className="agent-tooltip-task">{a.task_id}</span> : null}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <>
@@ -203,42 +327,21 @@ export default function ExternalAgentsStatusBar({
       {(openAgent || showHiddenPanel) && (
         <div className="ext-agent-popover-backdrop" onClick={closePopover} aria-hidden />
       )}
-      <div className="external-agents-bar" role="status" aria-label={t('extAgents.title')}>
-        {shown.map(a => {
-          const state = a.state || 'unknown'
-          const stateLabel = t(STATE_I18N[state] || 'extAgents.state.unknown')
-          const kind = agentKind(a.agent)
-          const title = `${a.agent} · ${stateLabel}${a.task_id ? ` · ${a.task_id}` : ''}`
-          return (
-            <div
-              key={a.agent}
-              className={['agent-avatar-btn', STATE_CLASS[state] || 'is-unknown']
-                .filter(Boolean)
-                .join(' ')}
-              title={title}
-            >
-              <button
-                type="button"
-                className="agent-avatar-main"
-                onClick={() => openDeliverables(a)}
-                aria-label={t('extAgents.deliver.title', a.agent)}
-              >
-                <span
-                  className={`ext-agent-dot ${STATE_CLASS[state] || 'is-unknown'}`}
-                  aria-hidden
-                />
-                <span className={`agent-avatar-icon is-${kind}`}>
-                  {kind === 'cli' ? <IconTerminal size={16} /> : <IconBot size={16} />}
-                </span>
-              </button>
-              <div className="agent-tooltip">
-                <span className="agent-tooltip-name">{a.agent}</span>
-                <span className="agent-tooltip-state">{stateLabel}</span>
-                {a.task_id ? <span className="agent-tooltip-task">{a.task_id}</span> : null}
-              </div>
-            </div>
-          )
-        })}
+      <div
+        className={[
+          'external-agents-bar',
+          expanded ? 'revealed' : '',
+          fading ? 'fading' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        role="status"
+        aria-label={t('extAgents.title')}
+        onMouseEnter={handleZoneEnter}
+        onMouseLeave={handleZoneLeave}
+      >
+        {persistent.map(a => renderAvatar(a, false))}
+        {extras.map(a => renderAvatar(a, true))}
         {hiddenKnown.length > 0 && (
           <button
             type="button"

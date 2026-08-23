@@ -506,6 +506,10 @@ fn main() {
                 }
             }
 
+            // ── 外部 Agent 状态清零：上一轮生命周期的 status.json 一律作废，
+            //    状态栏仅显示本轮真实启动且经门铃上报验证过的 agent ──
+            crate::commands::config::handoff::reset_all_statuses_at_startup();
+
             // ── 中继客户端：enabled + 配置完整即启动双回路（外部网络控制桌面）──
             // 出站 WS 连中继服务器，收到任务走 submit_user_message 共享入口（source="relay"）。
             // 断线指数退避重连。（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）

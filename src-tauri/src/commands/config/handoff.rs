@@ -54,6 +54,44 @@ pub fn handoff_root() -> PathBuf {
         })
 }
 
+/// 应用启动时清空全部 agent 运行时状态（重启即清空，杜绝陈旧显示）。
+/// 外部 Agent 必须在本轮生命周期内真实启动并经门铃上报（ready/progress/done）
+/// 才会再次出现在状态栏——这就是「启动验证」。
+/// 只重置 status.json 为 idle 骨架；read.md/memory.md/briefs/projects 全部保留。
+pub fn reset_all_statuses_at_startup() -> usize {
+    let root = handoff_root();
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return 0;
+    };
+    let mut n = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(agent) = path.file_name().and_then(|x| x.to_str()) else {
+            continue;
+        };
+        if !path.join("status.json").exists() {
+            continue;
+        }
+        let skeleton = serde_json::json!({
+            "agent": agent,
+            "state": "idle",
+            "task_id": "",
+            "last_event": null,
+            "updated_at": chrono::Local::now().to_rfc3339(),
+        });
+        if write_status_at(&root, agent, &skeleton).is_ok() {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        tracing::info!("[Handoff] 启动清空 {n} 个外部 Agent 的陈旧状态");
+    }
+    n
+}
+
 /// 某 agent 的工作目录（{handoff_root}/{agent}/）。
 /// 阶段 0 提供为模块公共 API（供阶段 1 前端运行时态面板/外部调用方消费），
 /// 阶段 0 内部路径解析走 root 注入的 `*_at` 函数，故此处暂未在二进制内引用。

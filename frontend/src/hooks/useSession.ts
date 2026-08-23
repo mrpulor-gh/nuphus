@@ -23,6 +23,7 @@ import {
   getCurrentConfig,
   isBusy,
   getChatHistory,
+  newChatSessionCmd,
 } from '../main-window/lib/api'
 import { foldHistoryAssistants, toTimelineEntry } from './useInit'
 import { loadRelation } from '../main-window/lib/relation'
@@ -565,6 +566,8 @@ export function useSession(): SessionAPI {
   }, [])
 
   const handleNewChat = useCallback(() => {
+    // 后端归档：当前会话入展示台+镜像，安装空白会话（busy 时后端拒绝，仅清 UI）
+    newChatSessionCmd().catch(() => {})
     resetTransientUI()
   }, [resetTransientUI])
 

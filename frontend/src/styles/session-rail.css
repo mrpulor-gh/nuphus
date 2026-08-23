@@ -74,43 +74,6 @@
 }
 
 /* 执行中点击被拒：shake 反馈 */
-.sr-item.shake .sr-bar {
-  animation: srShake 0.3s ease;
-}
-@keyframes srShake {
-  25% { transform: translateX(2px); }
-  75% { transform: translateX(-2px); }
-}
-
-/* 新建对话虚线杠 */
-.sr-bar-new {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-4);
-  border: 1px dashed var(--line-3);
-  background: transparent;
-  width: 20px;
-  height: 16px;
-}
-.session-rail-zone:hover .sr-bar-new {
-  width: 34px;
-  background: transparent;
-  border-color: var(--line-2);
-  color: var(--fg-3);
-}
-.sr-item.sr-new:hover .sr-bar-new,
-.sr-bar-new:hover {
-  width: 40px !important;
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-dim) !important;
-  box-shadow: none;
-}
-.sr-bar-new:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
 
 /* ── hover 玻璃气泡：标题 + 重命名 ── */
 .sr-bubble {
