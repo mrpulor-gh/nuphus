@@ -65,6 +65,83 @@ pub fn get_timeline_index_stats(_state: State<'_, AppState>) -> Result<TimelineI
 
 /// Get history session list (read from SQLite sessions table)
 /// For sessions with empty message_count/summary, fill data from memory_entries.
+/// 从 memory_entries 聚合生成会话摘要（标题取 distill 摘要 → 首条 user 消息
+/// → 首条 leader intent；entry_count 只计 conversation 轮次）。
+/// 供 sessions 表空 summary 行与孤儿会话（表缺行）两条兜底路径共用。
+fn aggregate_entry_summaries(
+    guard: &rusqlite::Connection,
+    ids: &[String],
+    out: &mut Vec<nuphus::store::memory::SessionSummary>,
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+    // Exclude snapshot entries — their user_message
+    // is memory.md content (not a user query), which pollutes the session title.
+    let sql = format!(
+        "SELECT session_id,
+                COALESCE(
+                     (SELECT summary FROM memory_entries
+                      WHERE session_id = me.session_id AND kind = 'distill' AND summary != ''
+                      ORDER BY created_at DESC LIMIT 1),
+                     (SELECT user_message FROM memory_entries
+                      WHERE session_id = me.session_id
+                        AND kind = 'conversation'
+                        AND user_message != ''
+                      ORDER BY created_at ASC LIMIT 1),
+                      (SELECT intent FROM memory_entries
+                       WHERE session_id = me.session_id
+                         AND agent_type = 'leader'
+                         AND intent != ''
+                       ORDER BY created_at ASC LIMIT 1),
+                       ''
+                 ),
+                 COALESCE((SELECT intent FROM memory_entries WHERE session_id = me.session_id AND agent_type = 'leader' AND intent != '' ORDER BY created_at DESC LIMIT 1), ''),
+                 COALESCE((SELECT assistant_message FROM memory_entries WHERE session_id = me.session_id AND agent_type = 'leader' AND assistant_message != '' ORDER BY created_at DESC LIMIT 1), ''),
+                 COUNT(*) FILTER (WHERE kind = 'conversation'),
+                 MAX(created_at),
+                 MAX(CASE WHEN success = 1 THEN 1 ELSE 0 END)
+          FROM memory_entries me
+          WHERE session_id IN ({})
+          GROUP BY session_id
+          ORDER BY MAX(created_at) DESC",
+        placeholders.join(",")
+    );
+
+    let mut stmt = guard.prepare(&sql).map_err(|e| e.to_string())?;
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+    let rows = stmt
+        .query_map(params.as_slice(), |row| {
+            let session_id: String = row.get(0)?;
+            let user_message: String = row.get(1)?;
+            let intent: String = row.get(2)?;
+            let last_assistant_message: String = row.get(3)?;
+            let entry_count: i64 = row.get(4)?;
+            let last_ts: String = row.get(5)?;
+            let has_success: i64 = row.get(6)?;
+            Ok(nuphus::store::memory::SessionSummary {
+                session_id,
+                user_message,
+                intent,
+                last_assistant_message,
+                entry_count: entry_count as u32,
+                timestamp: chrono::DateTime::parse_from_rfc3339(&last_ts)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                success: has_success > 0,
+                tags: Vec::new(),
+                tool_call_count: 0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows.flatten() {
+        out.push(row);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_session_history() -> Result<Vec<nuphus::store::memory::SessionSummary>, String> {
     // 1) Read ALL rows from sessions table
@@ -98,73 +175,34 @@ pub fn get_session_history() -> Result<Vec<nuphus::store::memory::SessionSummary
     // 2) Fill empty sessions from memory_entries (only leader dialogue entries)
     if !empty_ids.is_empty() {
         let guard = nuphus::store::db::acquire().map_err(|e| e.to_string())?;
-        let placeholders: Vec<String> = (1..=empty_ids.len()).map(|i| format!("?{}", i)).collect();
-        // Exclude snapshot entries — their user_message
-        // is memory.md content (not a user query), which pollutes the session title.
-        let sql = format!(
-            "SELECT session_id,
-                    COALESCE(
-                         (SELECT summary FROM memory_entries
-                          WHERE session_id = me.session_id AND kind = 'distill' AND summary != ''
-                          ORDER BY created_at DESC LIMIT 1),
-                         (SELECT user_message FROM memory_entries
-                          WHERE session_id = me.session_id
-                            AND kind = 'conversation'
-                            AND user_message != ''
-                          ORDER BY created_at ASC LIMIT 1),
-                          (SELECT intent FROM memory_entries
-                           WHERE session_id = me.session_id
-                             AND agent_type = 'leader'
-                             AND intent != ''
-                           ORDER BY created_at ASC LIMIT 1),
-                          ''
-                     ),
-                     COALESCE((SELECT intent FROM memory_entries WHERE session_id = me.session_id AND agent_type = 'leader' AND intent != '' ORDER BY created_at DESC LIMIT 1), ''),
-                     COALESCE((SELECT assistant_message FROM memory_entries WHERE session_id = me.session_id AND agent_type = 'leader' AND assistant_message != '' ORDER BY created_at DESC LIMIT 1), ''),
-                     COUNT(*) FILTER (WHERE kind = 'conversation'),
-                     MAX(created_at),
-                     MAX(CASE WHEN success = 1 THEN 1 ELSE 0 END)
-              FROM memory_entries me
-              WHERE session_id IN ({})
-              GROUP BY session_id
-              ORDER BY MAX(created_at) DESC",
-            placeholders.join(",")
-        );
+        aggregate_entry_summaries(&guard, &empty_ids, &mut sessions)?;
+    }
 
-        let prepared = guard.prepare(&sql);
-        if let Ok(mut stmt) = prepared {
-            let params: Vec<&dyn rusqlite::types::ToSql> = empty_ids
-                .iter()
-                .map(|s| s as &dyn rusqlite::types::ToSql)
-                .collect();
-            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
-                let session_id: String = row.get(0)?;
-                let user_message: String = row.get(1)?;
-                let intent: String = row.get(2)?;
-                let last_assistant_message: String = row.get(3)?;
-                let entry_count: i64 = row.get(4)?;
-                let last_ts: String = row.get(5)?;
-                let has_success: i64 = row.get(6)?;
-                Ok(nuphus::store::memory::SessionSummary {
-                    session_id,
-                    user_message,
-                    intent,
-                    last_assistant_message,
-                    entry_count: entry_count as u32,
-                    timestamp: chrono::DateTime::parse_from_rfc3339(&last_ts)
-                        .map(|d| d.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| chrono::Utc::now()),
-                    success: has_success > 0,
-                    tags: Vec::new(),
-                    tool_call_count: 0,
-                })
-            }) {
-                for row in rows.flatten() {
-                    sessions.push(row);
-                }
-            }
+    // 2b) 孤儿会话兜底：memory_entries 有对话记录、但 sessions 表没有元数据行的
+    //     会话（历史版本仅托盘 quit 才写元数据；点 ✕ 隐藏到托盘 / 杀进程路径
+    //     一行不落 → 受影响用户「明明聊过天，记忆页却空空」）。聚合补齐展示。
+    {
+        let guard = nuphus::store::db::acquire().map_err(|e| e.to_string())?;
+        let ghost_ids: Vec<String> = {
+            let mut stmt = guard
+                .prepare(
+                    "SELECT DISTINCT session_id FROM memory_entries
+                     WHERE kind = 'conversation'
+                       AND session_id NOT IN (SELECT id FROM sessions)",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            rows.flatten().collect()
+        };
+        if !ghost_ids.is_empty() {
+            aggregate_entry_summaries(&guard, &ghost_ids, &mut sessions)?;
         }
     }
+
+    // 展示顺序统一按最近活跃降序（表行与兜底条目合并后归一）
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
 
     // 3) Batch query memory_entries for kind breakdown (conversation turns + tool calls)
     if !sessions.is_empty() {

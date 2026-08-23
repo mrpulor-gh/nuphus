@@ -578,8 +578,9 @@ pub fn resume_latest_session(
     crate::commands::process::session::chat_history(&state)
 }
 
-/// 任务完成后的镜像回填（crash 安全）：把 active 会话刷盘。
-/// 由 process.rs 完成路径调用；失败不影响执行结果上报。
+/// 任务完成后的回填（crash 安全）：active 会话镜像刷盘 + 元数据行实时落库。
+/// 元数据行不再依赖退出方式——此前仅托盘 quit 才写，点 ✕ 隐藏/杀进程的用户
+/// 记忆页会话列表永远为空。失败不影响执行结果上报。
 pub fn flush_active_mirror(state: &AppState) {
     let current_mode = state
         .current_mode
@@ -591,6 +592,7 @@ pub fn flush_active_mirror(state: &AppState) {
         if let Some(sess) = active_session(&ctx, kind) {
             if !sess.is_empty() {
                 write_mirror(kind, sess);
+                upsert_meta_row(sess, &derive_title(sess));
             }
         }
     }

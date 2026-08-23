@@ -681,8 +681,19 @@ fn main() {
         {
             if label == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = win_event {
-                    // 拦截关闭事件：隐藏到托盘而非退出
+                    // 拦截关闭事件：隐藏到托盘而非退出；隐藏前先保存
+                    // （用户可能此后不再经托盘 quit，元数据行+镜像必须此刻落盘）
                     api.prevent_close();
+                    if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
+                        if let Ok(guard) = state.runtime.lock() {
+                            if let Some(rt) = guard.leader_agent.as_ref() {
+                                crate::commands::process::shelf::persist_and_mirror("leader", rt.session());
+                            }
+                            if let Some(wa) = guard.workflow_agent.as_ref() {
+                                crate::commands::process::shelf::persist_and_mirror("workflow", wa.session());
+                            }
+                        }
+                    }
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
                     }
