@@ -198,8 +198,9 @@ function Update-MetaPackage($version) {
     $raw = Get-Content $pkgPath -Raw -Encoding UTF8
     $raw = [regex]::Replace($raw, '"version"\s*:\s*"[^"]*"', "`"version`": `"$version`"")
     foreach ($n in $Platforms | ForEach-Object { "@nuphus/$($_.Name)" }) {
+        # PS 字符串内引号必须用反引号转义（\" 是 C# 写法，PowerShell 会提前终止字符串）
         $esc = [regex]::Escape($n)
-        $raw = [regex]::Replace($raw, "\"$esc\"\s*:\s*\"[^\"]*\"", "`"$n`": `"$version`"")
+        $raw = [regex]::Replace($raw, "`"$esc`"\s*:\s*`"[^`"]*`"", "`"$n`": `"$version`"")
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($pkgPath, $raw, $utf8NoBom)
