@@ -1063,6 +1063,9 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
+      {/* ── Session Rail：面板级左缘挂载（垂直居中于整个聊天区，
+          与 mockup 的 viewport 居中语义一致；感应区纯几何不拦截点击）── */}
+      {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} />}
       {/* ── Chat Header (command palette entry) ── */}
       <div className="chat-header">
         <div className="chat-header-left" />
@@ -1678,7 +1681,6 @@ export function ChatPanel({
         <VideoProgressBadge />
         {/* 外部 Agent 悬浮胶囊：输入框外层右上角（absolute 定位，不占文档流） */}
         <ExternalAgentsStatusBar onOpenConfig={onManageExternalAgents} />
-        {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} />}
         <ChatInputBar
           input={input}
           onInputChange={handleInputChange}
