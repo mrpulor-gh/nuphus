@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getTenets, deleteTenet, addTenet } from '../lib/api'
-import { IconPlus, IconTrash2, IconX } from '../../ui/Icons'
+import { IconPlus, IconShield, IconTrash2, IconX } from '../../ui/Icons'
+import { Button, IconButton } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import '../../styles/memory-dialogs.css'
 
@@ -9,8 +10,8 @@ interface TenetsDialogProps {
 }
 
 /**
- * 教导原则管理弹窗（gemini 布局：guide 行 + td-card 列表 + 新增子弹窗）。
- * 数据直连后端 getTenets / addTenet / deleteTenet。
+ * 教导原则管理弹窗：guide 行 + 原则卡片列表 + 新增子弹窗。
+ * 弹窗骨架复用全局 modal-* 体系；数据直连后端 getTenets / addTenet / deleteTenet。
  */
 export function TenetsDialog({ onClose }: TenetsDialogProps) {
   const { t } = useLanguage()
@@ -76,66 +77,91 @@ export function TenetsDialog({ onClose }: TenetsDialogProps) {
   )
 
   return (
-    <div className="memdlg-overlay" onClick={onClose}>
-      <div className="memdlg-container" onClick={e => e.stopPropagation()}>
-        <div className="memdlg-header">
-          <div className="memdlg-title">{t('memory.settings.subTenets')}</div>
-          <button type="button" className="memdlg-close" onClick={onClose} aria-label={t('common.close')}>
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-content"
+        role="dialog"
+        aria-label={t('memory.settings.subTenets')}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <span className="modal-title">{t('memory.settings.subTenets')}</span>
+          <IconButton variant="modal-close" label={t('common.close')} onClick={onClose}>
             <IconX size={16} />
-          </button>
+          </IconButton>
         </div>
 
-        <div className="memdlg-body">
-          <div className="memdlg-guide-row">
-            <span className="memdlg-guide-text">{t('memory.tenet.guide')}</span>
-            <button type="button" className="memdlg-btn-primary" onClick={() => setAddOpen(true)}>
+        <div className="modal-body">
+          <div className="memdlg-intro">
+            <span className="memdlg-intro-icon" aria-hidden>
+              <IconShield size={16} />
+            </span>
+            <span className="memdlg-intro-text">
+              <span className="memdlg-intro-title">{t('memory.settings.subTenets')}</span>
+              <span className="memdlg-guide-text">{t('memory.tenet.guide')}</span>
+            </span>
+            <Button variant="primary" size="sm" onClick={() => setAddOpen(true)}>
               <IconPlus size={14} />
               {t('common.add')}
-            </button>
+            </Button>
           </div>
 
           {loading ? (
-            <div className="memdlg-guide-text">{t('common.loading')}</div>
+            <div className="memdlg-empty">{t('common.loading')}</div>
           ) : tenets.length === 0 ? (
-            <div className="memdlg-guide-text">{t('memory.noTenets')}</div>
+            <div className="memdlg-empty">{t('memory.noTenets')}</div>
           ) : (
-            tenets.map(tenet => (
-              <div key={tenet.id} className="td-card">
-                <div className="td-card-header">
-                  <span className="td-badge-priority">{tenet.priority}</span>
-                  <button
-                    type="button"
-                    className="td-icon-btn"
-                    title={t('common.delete')}
-                    onClick={() => handleDelete(tenet.id)}
-                  >
-                    <IconTrash2 size={14} />
-                  </button>
+            <div className="memdlg-list">
+              {tenets.map(tenet => (
+                <div key={tenet.id} className="td-card">
+                  <div className="td-card-header">
+                    <span className="td-badge-priority">{tenet.priority}</span>
+                    <button
+                      type="button"
+                      className="memdlg-icon-btn danger"
+                      title={t('common.delete')}
+                      aria-label={t('common.delete')}
+                      onClick={() => handleDelete(tenet.id)}
+                    >
+                      <IconTrash2 size={14} />
+                    </button>
+                  </div>
+                  <div className="td-card-body">{tenet.content}</div>
                 </div>
-                <div className="td-card-body">{tenet.content}</div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
-          <div className="list-padding-bottom" />
         </div>
       </div>
 
-      {/* 新增子弹窗 */}
+      {/* 新增子弹窗（嵌套在外层遮罩内，DOM 顺序天然置顶） */}
       {addOpen && (
-        <div className="memdlg-overlay memdlg-overlay--sub" onClick={() => setAddOpen(false)}>
-          <div className="memdlg-container memdlg-container--sm" onClick={e => e.stopPropagation()}>
-            <div className="memdlg-header">
-              <div className="memdlg-title">{t('memory.tenet.add')}</div>
-              <button type="button" className="memdlg-close" onClick={() => setAddOpen(false)} aria-label={t('common.close')}>
+        <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setAddOpen(false)}>
+          <div
+            className="modal-content memdlg-modal-sm"
+            role="dialog"
+            aria-label={t('memory.tenet.add')}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">{t('memory.tenet.add')}</span>
+              <IconButton
+                variant="modal-close"
+                label={t('common.close')}
+                onClick={() => setAddOpen(false)}
+              >
                 <IconX size={16} />
-              </button>
+              </IconButton>
             </div>
-            <div className="memdlg-body">
+            <div className="modal-body memdlg-form-body">
               <div className="memdlg-form-group">
-                <label className="memdlg-label">{t('memory.tenet.content')}</label>
+                <label className="memdlg-label">
+                  {t('memory.tenet.content')}
+                  <em className="memdlg-req">*</em>
+                </label>
                 <textarea
                   className="memdlg-textarea"
-                  rows={4}
+                  rows={5}
                   value={content}
                   onChange={e => setContent(e.target.value)}
                   placeholder={t('memory.tenet.placeholder')}
@@ -144,17 +170,12 @@ export function TenetsDialog({ onClose }: TenetsDialogProps) {
               </div>
             </div>
             <div className="memdlg-footer">
-              <button type="button" className="memdlg-btn-ghost" onClick={() => setAddOpen(false)}>
+              <Button variant="default" onClick={() => setAddOpen(false)}>
                 {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                className="memdlg-btn-primary"
-                disabled={!content.trim()}
-                onClick={handleAdd}
-              >
-                {saving ? '…' : t('common.save')}
-              </button>
+              </Button>
+              <Button variant="primary" loading={saving} disabled={!content.trim()} onClick={handleAdd}>
+                {t('common.save')}
+              </Button>
             </div>
           </div>
         </div>

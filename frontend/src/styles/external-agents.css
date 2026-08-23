@@ -1,12 +1,12 @@
 /* ═══════════════════════════════════════════
-   external-agents.css — 输入框外层右上角的外部 Agent 悬浮胶囊（Gemini 参考形态）
+   external-agents.css — 输入框外层右上角的外部 Agent 悬浮胶囊
    圆形 agent 头像按钮（状态点叠加右上角 + hover tooltip）+ "+" 配置入口
    absolute 定位在 chat-input-dock 右上角，不占文档流
    state 原值 → 语义 token 映射（未知状态统一灰，不拦截后端新状态）
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 悬浮胶囊容器：输入框外层右上角（参考 Gemini：top:-46px / right:0）── */
+/* ── 悬浮胶囊容器：输入框外层右上角（top:-46px / right:0）── */
 .external-agents-bar {
   position: absolute;
   top: -46px;
@@ -319,6 +319,65 @@
 .ext-agents-form {
   min-height: 0;
   flex: 1;
+}
+
+/* ── 身份区：ICON 预览与 名称/标识 一体化卡片 ── */
+.ext-agents-identity {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--surface-inset);
+}
+/* 左列：头像 + 其下方的图标来源小按钮 */
+.ext-agents-identity-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.ext-agents-identity-avatar {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-2);
+}
+.ext-agents-identity-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ext-agents-identity-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ext-agents-identity-label {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+/* 图标来源操作行：头像正下方的小芯片，沿用 .ext-agents-icon-act 配色 */
+.ext-agents-identity-iconrow {
+  display: flex;
+  gap: 4px;
+}
+.ext-agents-identity-iconrow .ext-agents-icon-act {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
 }
 
 /* ICON 选择：横向一行 = 预览 + 「自动获取」/「自定义文件」两个操作（不再提供手选图标网格） */

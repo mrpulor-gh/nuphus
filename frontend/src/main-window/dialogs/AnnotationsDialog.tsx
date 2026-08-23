@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getAnnotations, addAnnotation, updateAnnotation, removeAnnotation } from '../lib/api-memory'
 import type { Annotation } from '../../core/types-memory'
-import { IconEdit3, IconFolder, IconPlus, IconTrash2, IconX } from '../../ui/Icons'
+import { IconEdit3, IconFolder, IconPin, IconPlus, IconTrash2, IconX } from '../../ui/Icons'
+import { Button, IconButton } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import '../../styles/memory-dialogs.css'
 
@@ -10,8 +11,8 @@ interface AnnotationsDialogProps {
 }
 
 /**
- * 关系标注管理弹窗（gemini 布局：ad-card 五段式 + 新增/编辑子弹窗）。
- * 数据直连后端 annotations API。
+ * 关系标注管理弹窗：标注卡片列表 + 新增/编辑子弹窗。
+ * 弹窗骨架复用全局 modal-* 体系；数据直连后端 annotations API。
  */
 export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
   const { t } = useLanguage()
@@ -131,117 +132,156 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
   )
 
   return (
-    <div className="memdlg-overlay" onClick={onClose}>
-      <div className="memdlg-container" onClick={e => e.stopPropagation()}>
-        <div className="memdlg-header">
-          <div className="memdlg-title">{t('memory.settings.subAnnotations')}</div>
-          <button type="button" className="memdlg-close" onClick={onClose} aria-label={t('common.close')}>
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-content"
+        role="dialog"
+        aria-label={t('memory.settings.subAnnotations')}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <span className="modal-title">{t('memory.settings.subAnnotations')}</span>
+          <IconButton variant="modal-close" label={t('common.close')} onClick={onClose}>
             <IconX size={16} />
-          </button>
+          </IconButton>
         </div>
 
-        <div className="memdlg-body">
-          <div className="memdlg-guide-row">
-            <span className="memdlg-guide-text">{t('memory.annotation.guide')}</span>
-            <button type="button" className="memdlg-btn-primary" onClick={openAdd}>
+        <div className="modal-body">
+          <div className="memdlg-intro">
+            <span className="memdlg-intro-icon" aria-hidden>
+              <IconPin size={16} />
+            </span>
+            <span className="memdlg-intro-text">
+              <span className="memdlg-intro-title">{t('memory.settings.subAnnotations')}</span>
+              <span className="memdlg-guide-text">{t('memory.annotation.guide')}</span>
+            </span>
+            <Button variant="primary" size="sm" onClick={openAdd}>
               <IconPlus size={14} />
               {t('common.add')}
-            </button>
+            </Button>
           </div>
 
           {loading ? (
-            <div className="memdlg-guide-text">{t('common.loading')}</div>
+            <div className="memdlg-empty">{t('common.loading')}</div>
           ) : annotations.length === 0 ? (
-            <div className="memdlg-guide-text">{t('memory.noAnnotations')}</div>
+            <div className="memdlg-empty">{t('memory.noAnnotations')}</div>
           ) : (
-            annotations.map(a => (
-              <div key={a.id} className="ad-card">
-                <div className="ad-row1">
-                  <span className="ad-keyword">{a.keyword}</span>
-                  {(a.keywords || []).map(kw => (
-                    <span key={kw} className="ad-sub-keyword">
-                      {kw}
-                    </span>
-                  ))}
-                  <span className={`ad-group-badge ad-group-${a.group}`}>{a.group}</span>
-                </div>
-                <div className="ad-desc">{a.description}</div>
-                {a.paths.length > 0 && (
-                  <div className="ad-paths">
-                    {a.paths.map(p => (
-                      <div key={p} className="ad-path-item">
-                        <IconFolder size={12} />
-                        {p}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {a.tags.length > 0 && (
-                  <div className="ad-chips-row">
-                    {a.tags.map(tag => (
-                      <span key={tag} className="ad-chip ad-chip-success">
-                        {tag}
+            <div className="memdlg-list">
+              {annotations.map(a => (
+                <div key={a.id} className="ad-card">
+                  <div className="ad-row1">
+                    <span className="ad-keyword">{a.keyword}</span>
+                    {(a.keywords || []).map(kw => (
+                      <span key={kw} className="ad-sub-keyword">
+                        {kw}
                       </span>
                     ))}
+                    <span className={`ad-group-badge ad-group-${a.group}`}>{a.group}</span>
                   </div>
-                )}
-                <div className="ad-actions">
-                  <button type="button" className="ad-icon-btn" title={t('common.edit')} onClick={() => openEdit(a)}>
-                    <IconEdit3 size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="ad-icon-btn delete"
-                    title={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
-                    disabled={a.builtin}
-                    onClick={() => handleDelete(a.keyword)}
-                  >
-                    <IconTrash2 size={14} />
-                  </button>
+                  <div className="ad-desc">{a.description}</div>
+                  {a.paths.length > 0 && (
+                    <div className="ad-paths">
+                      {a.paths.map(p => (
+                        <div key={p} className="ad-path-item">
+                          <IconFolder size={12} />
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {a.tags.length > 0 && (
+                    <div className="ad-chips-row">
+                      {a.tags.map(tag => (
+                        <span key={tag} className="ad-chip ad-chip-success">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="ad-actions">
+                    <button
+                      type="button"
+                      className="memdlg-icon-btn"
+                      title={t('common.edit')}
+                      aria-label={t('common.edit')}
+                      onClick={() => openEdit(a)}
+                    >
+                      <IconEdit3 size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="memdlg-icon-btn danger"
+                      title={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
+                      aria-label={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
+                      disabled={a.builtin}
+                      onClick={() => handleDelete(a.keyword)}
+                    >
+                      <IconTrash2 size={14} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
-          <div className="list-padding-bottom" />
         </div>
       </div>
 
-      {/* 新增/编辑子弹窗 */}
+      {/* 新增/编辑子弹窗（嵌套在外层遮罩内，DOM 顺序天然置顶） */}
       {editOpen && (
-        <div className="memdlg-overlay memdlg-overlay--sub" onClick={() => setEditOpen(false)}>
-          <div className="memdlg-container memdlg-container--sm" onClick={e => e.stopPropagation()}>
-            <div className="memdlg-header">
-              <div className="memdlg-title">
+        <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setEditOpen(false)}>
+          <div
+            className="modal-content memdlg-modal-sm"
+            role="dialog"
+            aria-label={editKeyword ? t('memory.annotation.edit') : t('memory.annotation.add')}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
                 {editKeyword ? t('memory.annotation.edit') : t('memory.annotation.add')}
-              </div>
-              <button type="button" className="memdlg-close" onClick={() => setEditOpen(false)} aria-label={t('common.close')}>
+              </span>
+              <IconButton
+                variant="modal-close"
+                label={t('common.close')}
+                onClick={() => setEditOpen(false)}
+              >
                 <IconX size={16} />
-              </button>
+              </IconButton>
             </div>
-            <div className="memdlg-body">
-              <div className="memdlg-form-group">
-                <label className="memdlg-label">{t('memory.annotation.keyword')} *</label>
-                <input
-                  type="text"
-                  className="memdlg-input"
-                  value={keyword}
-                  onChange={e => setKeyword(e.target.value)}
-                  placeholder={t('memory.annotation.keywordPlaceholder')}
-                  disabled={!!editKeyword}
-                />
+            <div className="modal-body memdlg-form-body">
+              {/* ── 标识：关键词 + 同义词 ── */}
+              <div className="memdlg-form-row">
+                <div className="memdlg-form-group">
+                  <label className="memdlg-label">
+                    {t('memory.annotation.keyword')}
+                    <em className="memdlg-req">*</em>
+                  </label>
+                  <input
+                    type="text"
+                    className="memdlg-input memdlg-input--mono"
+                    value={keyword}
+                    onChange={e => setKeyword(e.target.value)}
+                    placeholder={t('memory.annotation.keywordPlaceholder')}
+                    disabled={!!editKeyword}
+                  />
+                </div>
+                <div className="memdlg-form-group">
+                  <label className="memdlg-label">{t('memory.annotation.keywords')}</label>
+                  <input
+                    type="text"
+                    className="memdlg-input"
+                    value={keywords}
+                    onChange={e => setKeywords(e.target.value)}
+                    placeholder={t('memory.annotation.keywordsPlaceholder')}
+                  />
+                </div>
               </div>
+
+              {/* ── 内容：描述 ── */}
               <div className="memdlg-form-group">
-                <label className="memdlg-label">{t('memory.annotation.keywords')}</label>
-                <input
-                  type="text"
-                  className="memdlg-input"
-                  value={keywords}
-                  onChange={e => setKeywords(e.target.value)}
-                  placeholder={t('memory.annotation.keywordsPlaceholder')}
-                />
-              </div>
-              <div className="memdlg-form-group">
-                <label className="memdlg-label">{t('memory.annotation.desc')} *</label>
+                <label className="memdlg-label">
+                  {t('memory.annotation.desc')}
+                  <em className="memdlg-req">*</em>
+                </label>
                 <textarea
                   className="memdlg-textarea"
                   rows={3}
@@ -250,16 +290,20 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
                   placeholder={t('memory.annotation.descPlaceholder')}
                 />
               </div>
+
+              {/* ── 作用域：生效路径 ── */}
               <div className="memdlg-form-group">
                 <label className="memdlg-label">{t('memory.annotation.paths')}</label>
                 <textarea
-                  className="memdlg-textarea"
+                  className="memdlg-textarea memdlg-textarea--mono"
                   rows={3}
                   value={paths}
                   onChange={e => setPaths(e.target.value)}
                   placeholder={t('memory.annotation.pathsPlaceholder')}
                 />
               </div>
+
+              {/* ── 元数据：标签 / 分组 / 优先级 ── */}
               <div className="memdlg-form-group">
                 <label className="memdlg-label">{t('memory.annotation.tags')}</label>
                 <input
@@ -270,7 +314,7 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
                   placeholder={t('memory.annotation.tagsPlaceholder')}
                 />
               </div>
-              <div className="memdlg-form-row">
+              <div className="memdlg-form-row memdlg-form-row--tail">
                 <div className="memdlg-form-group">
                   <label className="memdlg-label">{t('memory.annotation.group')}</label>
                   <select
@@ -295,17 +339,17 @@ export function AnnotationsDialog({ onClose }: AnnotationsDialogProps) {
               </div>
             </div>
             <div className="memdlg-footer">
-              <button type="button" className="memdlg-btn-ghost" onClick={() => setEditOpen(false)}>
+              <Button variant="default" onClick={() => setEditOpen(false)}>
                 {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                className="memdlg-btn-primary"
-                disabled={!keyword.trim() || !desc.trim() || saving}
+              </Button>
+              <Button
+                variant="primary"
+                loading={saving}
+                disabled={!keyword.trim() || !desc.trim()}
                 onClick={handleSave}
               >
-                {saving ? '…' : t('common.save')}
-              </button>
+                {t('common.save')}
+              </Button>
             </div>
           </div>
         </div>

@@ -32,9 +32,10 @@
     }, 120);
   }
 
-  // 「后台下载」出口仅在真正下载时出现：下载开始 15s 未完成才显示
+  // 「后台下载」出口仅在真正下载时出现：下载开始 10s 未完成才显示
   // （短下载不闪烁）；非下载阶段隐藏加载条与按钮，splash 回归纯文字状态。
   // 缓存路径下 splash 秒关，定时器无副作用；只有真正卡在下载/启动才触发。
+  var SKIP_DELAY_MS = 10000
   var skipTimer = null;
 
   function showBar() {
@@ -59,7 +60,7 @@
       skipTimer = null;
       // 仅仍在下载（加载条可见）时才亮出按钮
       if (!bar || !bar.hidden) skipWrap.hidden = false;
-    }, 15000);
+    }, SKIP_DELAY_MS);
   }
 
   function start() {

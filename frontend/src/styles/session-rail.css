@@ -5,12 +5,11 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 左缘感应区 ── */
+/* ── 左缘感应区：从区域顶部起锚（top:10%），不垂直居中 ── */
 .session-rail-zone {
   position: absolute;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 10%;
   z-index: 55;
   display: flex;
   flex-direction: column;
@@ -29,20 +28,25 @@
   gap: 12px;
 }
 
-/* ── 单条会话项 ── */
+/* ── 单条会话项 ──
+   padding-right 是悬停桥：把命中区从横杠右缘无缝延伸到气泡左缘，
+   鼠标移向标题时 .sr-item:hover 不再断链（气泡是指定子元素，
+   进入后由它接管续住 hover） */
 .sr-item {
   position: relative;
   display: flex;
   align-items: center;
   height: 22px;
+  padding-right: 32px;
 }
 
+/* 粗横杠本体：矮胖方圆块（12px 高），只做宽度动画 */
 .sr-bar {
-  height: 6px;
-  width: 16px; /* idle 微露 */
+  height: 12px;
+  width: 12px; /* idle 微露小方墩 */
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--fg-5);
   cursor: pointer;
   transition:
@@ -51,19 +55,19 @@
     box-shadow 0.18s ease;
 }
 .session-rail-zone:hover .sr-bar {
-  width: 38px;
+  width: 22px;
   background: var(--fg-4);
 }
 .sr-item.active .sr-bar {
   background: var(--accent);
-  width: 26px;
+  width: 16px;
   box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
 }
 .session-rail-zone:hover .sr-item.active .sr-bar {
-  width: 48px;
+  width: 28px;
 }
 .sr-item:hover .sr-bar {
-  width: 54px !important;
+  width: 34px !important;
   background: var(--accent) !important;
   box-shadow: 0 0 12px var(--accent-dim, rgba(59, 130, 246, 0.45));
   transition-delay: 0s !important;
@@ -75,23 +79,24 @@
 
 /* 执行中点击被拒：shake 反馈 */
 
-/* ── hover 玻璃气泡：标题 + 重命名 ── */
+/* ── hover 玻璃气泡：标题 + 重命名 ──
+   背景必须实色（--bg-card 三主题均为不透明 hex）：气泡悬浮在消息流上方，
+   半透明 + backdrop-filter 会与 agent 文字叠影；不用任何透明/模糊 */
 .sr-bubble {
   position: absolute;
-  left: 62px;
+  left: 44px;
   top: 50%;
   transform: translateY(-50%) translateX(-6px);
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 300px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: var(--surface-2);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  gap: 10px;
+  max-width: 380px;
+  min-height: 36px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  background: var(--bg-card);
   border: 1px solid var(--line-2);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
@@ -108,7 +113,7 @@
   transform: translateY(-50%) rotate(45deg);
   width: 8px;
   height: 8px;
-  background: var(--surface-2);
+  background: var(--bg-card);
   border-left: 1px solid var(--line-2);
   border-bottom: 1px solid var(--line-2);
 }
@@ -120,7 +125,8 @@
 }
 
 .sr-title {
-  font-size: var(--fz-sm);
+  font-size: var(--fz-md);
+  line-height: 1.4;
   color: var(--fg-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -135,8 +141,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  padding: 2px;
-  border-radius: 4px;
+  padding: 4px;
+  border-radius: 6px;
   background: transparent;
   border: none;
   color: var(--fg-4);
@@ -151,13 +157,14 @@
 }
 
 .sr-rename-input {
-  width: 180px;
-  font-size: var(--fz-sm);
+  width: 220px;
+  font-size: var(--fz-md);
   color: var(--fg-1);
-  background: var(--bg);
+  /* 窗口基底（--bg token 不存在，勿用） */
+  background: var(--surface-0);
   border: 1px solid var(--accent);
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: 6px;
+  padding: 5px 8px;
   outline: none;
 }
 
@@ -180,15 +187,15 @@
   }
 }
 /* ── 整轨隐显：默认隐身，左缘感应区唤醒，移开 10s 后 0.6s 渐隐 ──
-   感应区：贴边小条（左边框 → 内容气泡前 padding 区，横杠 hover 最长
-   54px 即可触发）；纵向 = 容纳 10 横条的显示高度（10×22+9×12≈328px） */
+   感应区与轨道同锚点（top:10%，不居中）；横向覆盖到气泡最远边缘——
+   鼠标悬停标题/编辑框期间仍算「在场」，不会中途渐隐；
+   纵向 = 容纳 10 横条的显示高度（10×22 + 9×12 + padding ≈ 348px） */
 .session-rail-hover-zone {
   position: absolute;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 36px;
-  height: 340px;
+  top: 10%;
+  width: 430px;
+  height: 348px;
   z-index: 54;
   /* 纯几何感应：可见性由 window mousemove 坐标判定驱动，
      自身绝不参与命中测试 —— 不遮挡消息/输入区的任何点击 */
@@ -202,12 +209,12 @@
 .session-rail-zone.concealed {
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%) translateX(-8px);
+  transform: translateX(-8px);
 }
 .session-rail-zone.revealed,
 .session-rail-zone.fading,
 .session-rail-zone.editing-hold {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(-50%);
+  transform: translateX(0);
 }

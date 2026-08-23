@@ -2,31 +2,21 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   listMemories,
   deleteMemory,
-  getAnnotations,
-  addAnnotation,
-  updateAnnotation,
-  removeAnnotation,
 } from '../lib/api-memory'
 import {
   getSessionHistory,
   getSessionDetail,
-  getTenets,
-  deleteTenet,
-  addTenet,
   getMemoryOverview,
 } from '../lib/api'
 import { invoke } from '../../core/bridge'
-import type { UserMemory, MemoryOverview, Annotation } from '../../core/types-memory'
+import type { UserMemory, MemoryOverview } from '../../core/types-memory'
 import type { SessionSummary, SessionDetailEntry } from '../../core/types'
 import {
   IconSearch,
   IconMessageCircle,
   IconStar,
-  IconTrash2,
   IconX,
   IconChevronDown,
-  IconEdit3,
-  IconPin,
   IconShield,
 } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
@@ -100,14 +90,12 @@ function groupSessionsByDate(
 }
 
 // ============================================================================
-// MemoriesPage — 概览 | 会话 | 经验 | 设置
+// MemoriesPage — 概览 | 会话 | 经验（原则/标注管理在输入框 + 菜单的弹窗中）
 // ============================================================================
 
 export function MemoriesPage() {
   const { t } = useLanguage()
-  const [activeTab, setActiveTab] = useState<'overview' | 'sessions' | 'experience' | 'settings'>(
-    'overview',
-  )
+  const [activeTab, setActiveTab] = useState<'overview' | 'sessions' | 'experience'>('overview')
 
   // ── Overview state ──
   const [overview, setOverview] = useState<MemoryOverview | null>(null)
@@ -134,28 +122,6 @@ export function MemoriesPage() {
   // ── 经验 → 会话 跨 tab 跳转（distill 条目回溯来源会话）──
   const [pendingSessionJump, setPendingSessionJump] = useState<string | null>(null)
   const [sessionJumpMsg, setSessionJumpMsg] = useState('')
-
-  // ── Settings sub-tab（原则 | 标注）──
-  const [settingsSub, setSettingsSub] = useState<'tenets' | 'annotations'>('tenets')
-
-  // ── Annotation state ──
-  const [annotations, setAnnotations] = useState<Annotation[]>([])
-  const [annDialogOpen, setAnnDialogOpen] = useState(false)
-  const [annEditKeyword, setAnnEditKeyword] = useState<string | null>(null)
-  const [annKeyword, setAnnKeyword] = useState('')
-  const [annKeywords, setAnnKeywords] = useState('')
-  const [annDesc, setAnnDesc] = useState('')
-  const [annPaths, setAnnPaths] = useState('')
-  const [annTags, setAnnTags] = useState('')
-  const [annGroup, setAnnGroup] = useState('custom')
-  const [annPriority, setAnnPriority] = useState(0)
-
-  // ── Tenet state ──
-  const [tenets, setTenets] = useState<Array<{ id: string; content: string; priority: string }>>([])
-  const [tenetsLoading, setTenetsLoading] = useState(false)
-  const [tenetDialogOpen, setTenetDialogOpen] = useState(false)
-  const [tenetContent, setTenetContent] = useState('')
-  const [tenetSaving, setTenetSaving] = useState(false)
 
   const relation = useMemo(() => loadRelation(), [])
 
@@ -204,41 +170,14 @@ export function MemoriesPage() {
     }
   }, [])
 
-  const loadAnnotations = useCallback(async () => {
-    try {
-      const res = await getAnnotations()
-      setAnnotations((res || []).filter(a => !a.builtin))
-    } catch (e) {
-      console.error('Failed to load annotations:', e)
-    }
-  }, [])
-
-  const loadTenets = useCallback(async () => {
-    setTenetsLoading(true)
-    try {
-      const res = await getTenets()
-      setTenets(res?.items || [])
-    } catch (e) {
-      console.error('Failed to load tenets:', e)
-    } finally {
-      setTenetsLoading(false)
-    }
-  }, [])
-
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      await Promise.all([
-        loadOverview(),
-        loadHistory(),
-        loadExperience(),
-        loadAnnotations(),
-        loadTenets(),
-      ])
+      await Promise.all([loadOverview(), loadHistory(), loadExperience()])
     } finally {
       setLoading(false)
     }
-  }, [loadOverview, loadHistory, loadExperience, loadAnnotations, loadTenets])
+  }, [loadOverview, loadHistory, loadExperience])
 
   useEffect(() => {
     loadData()
@@ -329,120 +268,6 @@ export function MemoriesPage() {
     }
   }, [])
 
-  // ── Tenet 操作 ──
-  const handleDeleteTenet = useCallback(
-    async (id: string) => {
-      try {
-        await deleteTenet(id)
-        loadTenets()
-      } catch (e) {
-        console.error('Failed to delete tenet:', e)
-      }
-    },
-    [loadTenets],
-  )
-
-  const openAddTenetDialog = useCallback(() => {
-    setTenetContent('')
-    setTenetDialogOpen(true)
-  }, [])
-
-  const handleAddTenet = useCallback(async () => {
-    if (!tenetContent.trim()) return
-    setTenetSaving(true)
-    try {
-      await addTenet(tenetContent.trim())
-      setTenetDialogOpen(false)
-      loadTenets()
-    } catch (e) {
-      console.error('Failed to add tenet:', e)
-    } finally {
-      setTenetSaving(false)
-    }
-  }, [tenetContent, loadTenets])
-
-  // ── Annotation 操作 ──
-  const openAddDialog = useCallback(() => {
-    setAnnEditKeyword(null)
-    setAnnKeyword('')
-    setAnnKeywords('')
-    setAnnDesc('')
-    setAnnPaths('')
-    setAnnTags('')
-    setAnnGroup('custom')
-    setAnnPriority(0)
-    setAnnDialogOpen(true)
-  }, [])
-
-  const openEditDialog = useCallback((a: Annotation) => {
-    setAnnEditKeyword(a.keyword)
-    setAnnKeyword(a.keyword)
-    setAnnKeywords((a.keywords || []).join(', '))
-    setAnnDesc(a.description)
-    setAnnPaths(a.paths.join('\n'))
-    setAnnTags(a.tags.join(', '))
-    setAnnGroup(a.group)
-    setAnnPriority(a.priority)
-    setAnnDialogOpen(true)
-  }, [])
-
-  const handleAnnSave = useCallback(async () => {
-    if (!annKeyword.trim() || !annDesc.trim()) return
-    const pathsArr = annPaths
-      .split('\n')
-      .map(s => s.trim())
-      .filter(Boolean)
-    const tagsArr = annTags
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-    const keywordsArr = annKeywords
-      .split(/[,，、\n]+/)
-      .map(s => s.trim())
-      .filter(Boolean)
-    try {
-      if (annEditKeyword) {
-        await updateAnnotation(annEditKeyword, annDesc, pathsArr, tagsArr, annGroup, annPriority)
-      } else {
-        await addAnnotation(
-          annKeyword,
-          annDesc,
-          pathsArr,
-          tagsArr,
-          annGroup,
-          annPriority,
-          keywordsArr.length > 0 ? keywordsArr : undefined,
-        )
-      }
-      setAnnDialogOpen(false)
-      loadAnnotations()
-    } catch (e) {
-      console.error('Failed to save annotation:', e)
-    }
-  }, [
-    annKeyword,
-    annKeywords,
-    annDesc,
-    annPaths,
-    annTags,
-    annGroup,
-    annPriority,
-    annEditKeyword,
-    loadAnnotations,
-  ])
-
-  const handleAnnDelete = useCallback(
-    async (keyword: string) => {
-      try {
-        await removeAnnotation(keyword)
-        loadAnnotations()
-      } catch (e) {
-        console.error('Failed to delete annotation:', e)
-      }
-    },
-    [loadAnnotations],
-  )
-
   // ── Derived ──
 
   const filteredSessions = sessions.filter(item => {
@@ -506,13 +331,6 @@ export function MemoriesPage() {
         >
           <IconStar size={14} />
           {t('memory.tab.experience')}
-        </button>
-        <button
-          className={`page-tab ${activeTab === 'settings' ? 'active' : ''}`}
-          onClick={() => setActiveTab('settings')}
-        >
-          <IconPin size={14} />
-          {t('memory.tab.settings')}
         </button>
       </div>
 
@@ -707,285 +525,7 @@ export function MemoriesPage() {
             )}
           </div>
         )
-      ) : false ? (
-        /* ══════════ 设置 Tab（二级导航：原则 | 标注 | 存储管理）══════════ */
-        <div className="ut-timeline">
-          <div className="segmented set-subtabs" role="tablist">
-            <button
-              className={`segmented-item ${settingsSub === 'tenets' ? 'active' : ''}`}
-              onClick={() => setSettingsSub('tenets')}
-            >
-              {t('memory.settings.subTenets')}
-            </button>
-            <button
-              className={`segmented-item ${settingsSub === 'annotations' ? 'active' : ''}`}
-              onClick={() => setSettingsSub('annotations')}
-            >
-              {t('memory.settings.subAnnotations')}
-            </button>
-          </div>
-
-          {/* ── 原则（tenets）── */}
-          {settingsSub === 'tenets' && (
-            <>
-              <div className="ann-top-bar">
-                <div className="ann-guide">
-                  <IconShield size={14} />
-                  <span>{t('memory.tenet.guide')}</span>
-                </div>
-                <Button variant="primary" size="sm" onClick={openAddTenetDialog}>
-                  {t('memory.addTenet')}
-                </Button>
-              </div>
-              <div className="ann-section-body ann-section-body--flush">
-                {tenetsLoading ? (
-                  <div className="ann-empty">{t('common.loading')}</div>
-                ) : tenets.length === 0 ? (
-                  <div className="ann-empty">{t('memory.noTenets')}</div>
-                ) : (
-                  <div className="note-list">
-                    {tenets.map(tenet => (
-                      <div key={tenet.id} className="note-card">
-                        <div className="note-card-header note-card-header--static">
-                          <div className="note-card-left">
-                            <div className="note-card-title note-card-title--mono">
-                              <span className="ann-group-tag tenet-priority-tag">
-                                {tenet.priority}
-                              </span>
-                            </div>
-                            <div className="note-card-meta">{tenet.content}</div>
-                          </div>
-                          <IconButton
-                            variant="ghost"
-                            label={t('common.delete')}
-                            onClick={() => handleDeleteTenet(tenet.id)}
-                          >
-                            <IconTrash2 size={12} />
-                          </IconButton>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
-          {/* ── 关系标注（annotations）── */}
-          {settingsSub === 'annotations' && (
-            <>
-              <div className="ann-top-bar">
-                <div className="ann-guide">
-                  <IconPin size={14} />
-                  <span>{t('memory.annotation.guide')}</span>
-                </div>
-                <Button variant="primary" size="sm" onClick={openAddDialog}>
-                  {t('memory.addAnnotation')}
-                </Button>
-              </div>
-              <div className="ann-section-body ann-section-body--flush">
-                {annotations.length === 0 ? (
-                  <div className="ann-empty">{t('memory.noAnnotations')}</div>
-                ) : (
-                  <div className="ann-list">
-                    {annotations.map(a => (
-                      <div key={a.id} className="ann-item">
-                        <div className="ann-item-header">
-                          <span className="ann-keyword">{a.keyword}</span>
-                          {a.keywords &&
-                            a.keywords.length > 0 &&
-                            a.keywords.map((kw, i) => (
-                              <span key={i} className="ann-sub-keyword">
-                                {kw}
-                              </span>
-                            ))}
-                          {a.builtin && <span className="ann-badge">{t('memory.builtin')}</span>}
-                          <span className={`ann-group-tag ann-group-${a.group}`}>{a.group}</span>
-                        </div>
-                        <div className="ann-desc">{a.description}</div>
-                        {a.paths.length > 0 && (
-                          <div className="ann-paths">
-                            {a.paths.map((p, i) => (
-                              <span key={i} className="ann-path">
-                                {p}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {a.tags.length > 0 && (
-                          <div className="ann-tags">
-                            {a.tags.map((tag, i) => (
-                              <span key={i} className="ann-tag">
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div className="ann-item-actions">
-                          <IconButton
-                            variant="ghost"
-                            label={t('common.edit')}
-                            onClick={() => openEditDialog(a)}
-                          >
-                            <IconEdit3 size={12} />
-                          </IconButton>
-                          <IconButton
-                            variant="ghost"
-                            label={a.builtin ? t('memory.builtinNoDelete') : t('common.delete')}
-                            onClick={() => !a.builtin && handleAnnDelete(a.keyword)}
-                            disabled={a.builtin}
-                          >
-                            <IconTrash2 size={12} />
-                          </IconButton>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
       ) : null}
-
-      {/* ── Tenet add dialog ── */}
-      {tenetDialogOpen && (
-        <div className="modal-overlay visible" onClick={() => setTenetDialogOpen(false)}>
-          <div className="modal-content modal-content--md" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">{t('memory.tenet.add')}</span>
-              <IconButton
-                variant="modal-close"
-                label={t('common.close')}
-                onClick={() => setTenetDialogOpen(false)}
-              >
-                <IconX size={16} />
-              </IconButton>
-            </div>
-            <div className="modal-body modal-body--form">
-              <div>
-                <label className="ann-label">{t('memory.tenet.content')}</label>
-                <textarea
-                  className="ann-textarea textarea"
-                  value={tenetContent}
-                  onChange={e => setTenetContent(e.target.value)}
-                  placeholder={t('memory.tenet.placeholder')}
-                  rows={4}
-                />
-              </div>
-              <div className="form-footer">
-                <Button variant="default" onClick={() => setTenetDialogOpen(false)}>
-                  {t('common.cancel')}
-                </Button>
-                <Button variant="primary" loading={tenetSaving} onClick={handleAddTenet}>
-                  {t('common.save')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Annotation edit dialog ── */}
-      {annDialogOpen && (
-        <div className="modal-overlay visible" onClick={() => setAnnDialogOpen(false)}>
-          <div className="modal-content modal-content--lg" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">
-                {annEditKeyword ? t('memory.annotation.edit') : t('memory.annotation.add')}
-              </span>
-              <IconButton
-                variant="modal-close"
-                label={t('common.close')}
-                onClick={() => setAnnDialogOpen(false)}
-              >
-                <IconX size={16} />
-              </IconButton>
-            </div>
-            <div className="modal-body modal-body--form">
-              <div>
-                <label className="ann-label">{t('memory.annotation.keyword')}</label>
-                <input
-                  className="ann-input input"
-                  value={annKeyword}
-                  onChange={e => setAnnKeyword(e.target.value)}
-                  placeholder={t('memory.annotation.keywordPlaceholder')}
-                  disabled={!!annEditKeyword}
-                />
-              </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.keywords')}</label>
-                <input
-                  className="ann-input input"
-                  value={annKeywords}
-                  onChange={e => setAnnKeywords(e.target.value)}
-                  placeholder={t('memory.annotation.keywordsPlaceholder')}
-                />
-              </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.desc')}</label>
-                <textarea
-                  className="ann-textarea textarea"
-                  value={annDesc}
-                  onChange={e => setAnnDesc(e.target.value)}
-                  placeholder={t('memory.annotation.descPlaceholder')}
-                  rows={3}
-                />
-              </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.paths')}</label>
-                <textarea
-                  className="ann-textarea textarea"
-                  value={annPaths}
-                  onChange={e => setAnnPaths(e.target.value)}
-                  placeholder={t('memory.annotation.pathsPlaceholder')}
-                  rows={3}
-                />
-              </div>
-              <div>
-                <label className="ann-label">{t('memory.annotation.tags')}</label>
-                <input
-                  className="ann-input input"
-                  value={annTags}
-                  onChange={e => setAnnTags(e.target.value)}
-                  placeholder={t('memory.annotation.tagsPlaceholder')}
-                />
-              </div>
-              <div className="ann-row-2col">
-                <div>
-                  <label className="ann-label">{t('memory.annotation.group')}</label>
-                  <select
-                    className="ann-select select"
-                    value={annGroup}
-                    onChange={e => setAnnGroup(e.target.value)}
-                  >
-                    <option value="system">system</option>
-                    <option value="custom">custom</option>
-                    <option value="user">user</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="ann-label">{t('memory.annotation.priority')}</label>
-                  <input
-                    className="ann-input input"
-                    type="number"
-                    value={annPriority}
-                    onChange={e => setAnnPriority(parseInt(e.target.value) || 0)}
-                  />
-                </div>
-              </div>
-              <div className="form-footer">
-                <Button variant="default" onClick={() => setAnnDialogOpen(false)}>
-                  {t('common.cancel')}
-                </Button>
-                <Button variant="primary" onClick={handleAnnSave}>
-                  {t('common.save')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

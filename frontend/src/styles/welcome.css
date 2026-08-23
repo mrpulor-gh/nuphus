@@ -78,13 +78,17 @@
   opacity: 1;
 }
 
-/* ── 「继续对话」：Session Shelf 恢复入口（gemini mockup 药丸按钮，token 化）── */
+/* ── 「继续对话」：Session Shelf 恢复入口（药丸按钮，token 化）──
+   底色用窗口基底 --surface-0（body 同源），文字/边框取反色 --fg-1。
+   ⚠️ 不要写 var(--bg)：tokens.css 从未定义该 token，无效值会回退透明/继承色
+   （此前 hover 白上白即此因）。三主题 surface-0 ↔ fg-1 恒成对比：
+   dark #0a0a10↔#f5f5fa / light #e8e8ea↔#1a1a1a / tech #020408↔#eeeff4 */
 .welcome-resume-btn {
   margin-top: 40px;
   padding: 13px 44px;
-  background: var(--fg-1);
-  color: var(--bg);
-  border: 2px solid transparent;
+  background: var(--surface-0);
+  color: var(--fg-1);
+  border: 2px solid var(--fg-1);
   border-radius: 999px;
   font-size: 15px;
   font-weight: 600;
@@ -99,11 +103,10 @@
     transform 0.2s ease,
     box-shadow 0.3s ease;
 }
-.welcome-resume-btn:hover {
-  background: var(--bg);
-  color: var(--fg-1);
-  border-color: var(--fg-1);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+/* hover 反色：底色 ↔ 文字互换（静止=基底底/反色字，悬停=反色底/基底字） */
+.welcome-resume-btn:hover:not(:disabled) {
+  background: var(--fg-1);
+  color: var(--surface-0);
 }
 .welcome-resume-btn:active {
   transform: scale(0.97);

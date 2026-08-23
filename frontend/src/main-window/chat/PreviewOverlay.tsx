@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, FolderOpen, ExternalLink } from 'lucide-react'
 import MarkdownContent from './MarkdownContent'
 import { readFile, readFileBase64, openPath, revealPath } from '../lib/api'
@@ -137,7 +138,10 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
     openPath(path).catch(err => setOpenErr(typeof err === 'string' ? err : String(err)))
   }
 
-  return (
+  // portal 到 body：调用方（外部 agent 状态栏）挂在 chat-input-dock 内，
+  // 其祖先的 transform/backdrop-filter 会劫持 position:fixed 的定位基准，
+  // 预览被压进输入框上方区域；portal 逃逸后 .pv-page 才是真正的全窗口覆盖
+  return createPortal(
     <div className="pv-page">
       {/* ── 工具栏：关闭按钮在最左（与画布一致），spacer 之后才是右侧操作 ── */}
       <div className="pv-toolbar">
@@ -236,6 +240,7 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

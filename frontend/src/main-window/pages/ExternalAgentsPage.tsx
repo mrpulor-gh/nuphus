@@ -472,33 +472,21 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
             isNew ? t('extAgents.cfg.newTitle') : draft.display_name || draft.key || '—'
           }
         >
-          <FormRow
-            label={t('extAgents.cfg.key')}
-            hint={t('extAgents.cfg.keyHint')}
-            control={
-              <input
-                className="input"
-                value={draft.key}
-                disabled={!isNew}
-                onChange={e => update({ key: e.target.value.trim() })}
-                placeholder="e.g. claude-code"
-              />
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.icon')}
-            control={
-              <div className="ext-agents-icon-row">
-                <span className="ext-agents-icon-preview" aria-hidden>
-                  <AgentIconAuto
-                    icon={draft.icon}
-                    size={18}
-                    name={draft.key || draft.display_name}
-                    open={draft.open}
-                    process={draft.process}
-                  />
-                </span>
+          {/* ── 身份区：ICON 预览与 名称/标识 一体化（替代原先分散的三行）──
+              左侧大头像随 icon/启动路径 实时更新；右侧名称在上、标识在下，
+              底部一行是图标来源操作（自动提取 / 自定义文件） */}
+          <div className="ext-agents-identity">
+            <div className="ext-agents-identity-side">
+              <span className="ext-agents-identity-avatar" aria-hidden>
+                <AgentIconAuto
+                  icon={draft.icon}
+                  size={28}
+                  name={draft.key || draft.display_name}
+                  open={draft.open}
+                  process={draft.process}
+                />
+              </span>
+              <div className="ext-agents-identity-iconrow">
                 <button
                   type="button"
                   className={['ext-agents-icon-act', iconAutoActive && 'active'].filter(Boolean).join(' ')}
@@ -520,26 +508,40 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
                   {t('extAgents.cfg.iconCustom')}
                 </button>
               </div>
-            }
-          />
-          {iconAutoActive && !iconAutoHint && !iconLoading && (
-            <div className="ext-agents-icon-hint">{t('extAgents.cfg.iconAutoEmpty')}</div>
-          )}
-          {iconAutoActive && iconError && (
-            <div className="ext-agents-icon-hint ext-agents-icon-hint--error">{iconError}</div>
-          )}
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.name')}
-            control={
-              <input
-                className="input"
-                value={draft.display_name}
-                onChange={e => update({ display_name: e.target.value })}
-                placeholder={t('extAgents.cfg.namePlaceholder')}
-              />
-            }
-          />
+            </div>
+            <div className="ext-agents-identity-main">
+              <div className="ext-agents-identity-field">
+                <span className="ext-agents-identity-label">
+                  {t('extAgents.cfg.name')} · {t('extAgents.cfg.icon')}
+                </span>
+                <input
+                  className="input"
+                  value={draft.display_name}
+                  onChange={e => update({ display_name: e.target.value })}
+                  placeholder={t('extAgents.cfg.namePlaceholder')}
+                />
+              </div>
+              <div className="ext-agents-identity-field">
+                <span className="ext-agents-identity-label" title={t('extAgents.cfg.keyHint')}>
+                  {t('extAgents.cfg.key')}
+                  {!isNew && ' 🔒'}
+                </span>
+                <input
+                  className="input"
+                  value={draft.key}
+                  disabled={!isNew}
+                  onChange={e => update({ key: e.target.value.trim() })}
+                  placeholder="e.g. claude-code"
+                />
+              </div>
+              {iconAutoActive && !iconAutoHint && !iconLoading && (
+                <div className="ext-agents-icon-hint">{t('extAgents.cfg.iconAutoEmpty')}</div>
+              )}
+              {iconAutoActive && iconError && (
+                <div className="ext-agents-icon-hint ext-agents-icon-hint--error">{iconError}</div>
+              )}
+            </div>
+          </div>
           <FormRow
             stacked
             label={t('extAgents.cfg.open')}

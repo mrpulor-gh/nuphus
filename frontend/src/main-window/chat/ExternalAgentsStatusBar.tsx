@@ -68,7 +68,7 @@ const STATE_I18N: Record<string, string> = {
   uninitialized: 'extAgents.state.uninitialized',
 }
 
-/** agent 名 → 图标类型（Gemini 参考形态：CLI 类终端图标 / 其余 bot 图标） */
+/** agent 名 → 图标类型（CLI 类终端图标 / 其余 bot 图标） */
 function agentKind(name: string): 'cli' | 'agent' {
   const n = name.toLowerCase()
   if (n.includes('claude') || n.includes('code') || n.includes('cli')) return 'cli'
@@ -96,7 +96,7 @@ interface ExternalAgentsStatusBarProps {
 }
 
 /**
- * 外部 Agent 运行时态面板：输入框外层右上角的悬浮胶囊（Gemini 参考形态）。
+ * 外部 Agent 运行时态面板：输入框外层右上角的悬浮胶囊。
  * - 数据源：listAgentStatuses()，轻量轮询（≈3s），仅组件挂载且页面可见时拉取；
  *   切后台自动暂停，回前台立即刷新（门铃事件由后端落 status.json，轮询兜底覆盖）。
  * - 每个已初始化 agent 渲染为圆形头像按钮：点击弹出该 agent 的交付物列表弹窗，
@@ -274,7 +274,13 @@ export default function ExternalAgentsStatusBar({
 
   if (!visible) return null
 
-  const known = agents.filter(a => !hidden.includes(a.agent))
+  const known = agents.filter(
+    a =>
+      !hidden.includes(a.agent) &&
+      // idle 且未 pin = 本轮未经门铃验证的历史残留（启动清零只重置为 idle 骨架，
+      // 目录仍在），不渲染——状态栏只出现真实启动过的 agent 或用户 pin 的配置
+      ((a.state && a.state !== 'idle') || pins.includes(a.agent)),
+  )
   /** 常驻条件：注意态（执行中/阻塞/错误）或用户添加过的 pin —— 存在即整条胶囊强制可见 */
   const forced = known.some(
     a => ATTENTION_STATES.has(a.state || '') || pins.includes(a.agent),

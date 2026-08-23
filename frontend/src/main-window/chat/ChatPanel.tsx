@@ -91,6 +91,8 @@ interface ChatPanelProps {
   onNewChat?: () => void
   /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
   onChatReplaced?: () => void
+  /** 欢迎页「继续对话」：先调后端 resume_latest_session 装镜像再渲染完整历史 */
+  onResumeLast?: () => void
   /** +号菜单：打开教导原则弹窗 */
   onOpenPrinciples?: () => void
   /** +号菜单：打开关系标注弹窗 */
@@ -156,6 +158,7 @@ export function ChatPanel({
   focusSignal,
   onNewChat,
   onChatReplaced,
+  onResumeLast,
   onOpenPrinciples,
   onOpenAnnotations,
   tokenUsage,
@@ -1069,8 +1072,8 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
-      {/* ── Session Rail：面板级左缘挂载（垂直居中于整个聊天区，
-          与 mockup 的 viewport 居中语义一致；感应区纯几何不拦截点击）── */}
+      {/* ── Session Rail：面板级左缘挂载（自聊天区顶部 10% 起锚，
+          感应区纯几何不拦截点击）── */}
       {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} />}
       {/* ── Chat Header (command palette entry) ── */}
       <div className="chat-header">
@@ -1164,7 +1167,7 @@ export function ChatPanel({
           <WelcomeScreen
             onSend={onSend}
             startupStats={startupStats}
-            onResume={onChatReplaced}
+            onResume={onResumeLast ?? onChatReplaced}
           />
         ) : (
           <div className="chat-messages-inner">

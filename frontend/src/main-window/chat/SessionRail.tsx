@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCheck, IconEdit3 } from '../../ui/Icons'
+import { IconCheck, IconEdit3, IconX } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 import {
   listShelfSessions,
@@ -46,6 +46,12 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
   const [fading, setFading] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 编辑中镜像：渐隐定时器回调里读最新值，避免闭包过期 */
+  const editingRef = useRef(false)
+
+  useEffect(() => {
+    editingRef.current = editingId !== null
+  }, [editingId])
 
   const refresh = useCallback(async () => {
     try {
@@ -131,6 +137,8 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
   }, [])
 
   const scheduleHide = useCallback(() => {
+    // 编辑标题期间绝不启动渐隐倒计时
+    if (editingRef.current) return
     if (leaveTimer.current) return
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null
@@ -244,9 +252,10 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
                     value={draftTitle}
                     autoFocus
                     maxLength={60}
+                    placeholder={it.title || t('sessionRail.untitled')}
                     onChange={e => setDraftTitle(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter') void saveRename(it.id)
+                      if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
                       if (e.key === 'Escape') setEditingId(null)
                     }}
                   />
@@ -254,10 +263,20 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
                     type="button"
                     className="sr-edit-btn"
                     onClick={() => void saveRename(it.id)}
+                    disabled={!draftTitle.trim()}
                     title={t('sessionRail.save')}
                     aria-label={t('sessionRail.save')}
                   >
                     <IconCheck size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="sr-edit-btn"
+                    onClick={() => setEditingId(null)}
+                    title={t('common.cancel')}
+                    aria-label={t('common.cancel')}
+                  >
+                    <IconX size={12} />
                   </button>
                 </>
               ) : (
@@ -271,6 +290,10 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
                     onClick={() => {
                       setDraftTitle(it.title)
                       setEditingId(it.id)
+                      // 编辑期间冻结隐显：取消在途倒计时并强制常亮
+                      cancelHide()
+                      setFading(false)
+                      setRevealed(true)
                     }}
                     title={t('sessionRail.rename')}
                     aria-label={t('sessionRail.rename')}

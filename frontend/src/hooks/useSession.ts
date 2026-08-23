@@ -24,6 +24,8 @@ import {
   isBusy,
   getChatHistory,
   newChatSessionCmd,
+  resumeLatestSession,
+  type HistoryMessage,
 } from '../main-window/lib/api'
 import { foldHistoryAssistants, toTimelineEntry } from './useInit'
 import { loadRelation } from '../main-window/lib/relation'
@@ -297,6 +299,7 @@ export interface SessionAPI {
   ) => Promise<void>
   handleNewChat: () => void
   reloadChatFromBackend: () => Promise<void>
+  resumeLastSession: () => Promise<void>
   handleRetryAgent: (input: string) => Promise<void>
   handlePause: () => Promise<void>
   handleContinue: (actionId: string) => Promise<void>
@@ -575,10 +578,9 @@ export function useSession(): SessionAPI {
    * Session Shelf 切换/新建后：从后端重拉当前会话历史并整体替换气泡。
    * 映射逻辑与 useInit 启动恢复完全一致（fold 连续 assistant + traceItems）。
    */
-  const reloadChatFromBackend = useCallback(async () => {
-    resetTransientUI()
-    try {
-      const history = await getChatHistory()
+  /** 后端 HistoryMessage[] → 气泡列表（fold 连续 assistant + traceItems）；恢复/切换共用 */
+  const applyHistory = useCallback(
+    (history: HistoryMessage[] | null) => {
       if (history && history.length > 0) {
         const folded = foldHistoryAssistants(history)
         setMessages(
@@ -597,8 +599,32 @@ export function useSession(): SessionAPI {
         )
         messagesRestoredRef.current = true
       }
+    },
+    [],
+  )
+
+  const reloadChatFromBackend = useCallback(async () => {
+    resetTransientUI()
+    try {
+      applyHistory(await getChatHistory())
     } catch {}
-  }, [resetTransientUI])
+  }, [resetTransientUI, applyHistory])
+
+  /**
+   * 「继续对话」：先调后端 resume_latest_session——把最新镜像装入 session_backup、
+   * 清掉上一轮执行遗留的脏 last_message，返回完整历史。
+   * ⚠️ 不能只 reloadChatFromBackend：session_backup 在执行成功后不清空，仍是
+   * 「第 N 轮执行前快照」，backup 回退路径会补回 user(N) 却没有回复(N)，
+   * 表现为最后一轮 agent 最终回复被吞。resume_latest_session 会整体覆盖该快照。
+   */
+  const resumeLastSession = useCallback(async () => {
+    resetTransientUI()
+    try {
+      applyHistory(await resumeLatestSession())
+    } catch {
+      await reloadChatFromBackend()
+    }
+  }, [resetTransientUI, applyHistory, reloadChatFromBackend])
 
   // ── addMessage ──
   const addMessage = useCallback((msg: ChatMessage) => {
@@ -1014,6 +1040,7 @@ export function useSession(): SessionAPI {
     handleSend,
     handleNewChat,
     reloadChatFromBackend,
+    resumeLastSession,
     handleRetryAgent: agentControl.handleRetryAgent,
     handlePause: agentControl.handlePause,
     handleContinue: agentControl.handleContinue,

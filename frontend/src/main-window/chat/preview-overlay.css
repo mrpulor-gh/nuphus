@@ -10,7 +10,8 @@
 .pv-page {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* 组件 portal 到 body 后的层级：压过输入区/状态栏局部堆叠上下文 */
+  z-index: 200;
   display: flex;
   flex-direction: column;
   background: var(--surface-0);
