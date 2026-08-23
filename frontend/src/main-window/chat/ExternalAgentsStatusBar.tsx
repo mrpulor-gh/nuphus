@@ -14,8 +14,9 @@ const POLL_INTERVAL_MS = 3000
 
 /** 单独关闭的 agent 列表持久化 key（仅隐藏状态栏显示，不影响 handoff 目录与门铃） */
 const HIDDEN_KEY = 'nuphus.extAgents.hiddenAgents'
-/** 用户在配置中心添加过的 agent：应用生命周期内常驻显示（跨重启保留，但后端
- *  启动清零后仍需真实门铃上报才有动态状态；pin 只保证「有状态就显示」） */
+/** 用户在配置中心添加过的 agent：应用生命周期内常驻显示。
+ *  ⚠️ 仅内存态（随应用启动清零）——跨重启的持久化由后端启动清零 +
+ *  门铃真实上报接管，避免历史 pin 让 idle agent 永远占位 */
 const PINNED_KEY = 'nuphus.extAgents.pinned'
 /** 配置中心保存成功后广播的事件名 */
 export const EXT_AGENT_PINNED_EVENT = 'nuphus:ext-agent-pinned'
@@ -23,14 +24,9 @@ export const EXT_AGENT_PINNED_EVENT = 'nuphus:ext-agent-pinned'
 /** 常驻可见的注意态：执行中/阻塞/错误——其余状态默认隐藏，hover 感应区临时展开 */
 const ATTENTION_STATES = new Set(['in_progress', 'blocked', 'error'])
 
+/** 生命周期内 pin 集合：不从 localStorage 恢复，每次启动为空 */
 function loadPinnedAgents(): string[] {
-  try {
-    const raw = localStorage.getItem(PINNED_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : []
-  } catch {
-    return []
-  }
+  return []
 }
 
 function loadHiddenAgents(): string[] {
@@ -179,6 +175,8 @@ export default function ExternalAgentsStatusBar({
 
   // ── pin 集合：配置中心保存成功后广播事件 → 加入常驻集合（应用生命周期） ──
   useEffect(() => {
+    // 清理历史版本遗留的持久化 pin（现语义为内存态）
+    localStorage.removeItem(PINNED_KEY)
     const onPinned = (e: Event) => {
       const key = (e as CustomEvent<string>).detail
       if (!key) return

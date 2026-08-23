@@ -387,17 +387,7 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
         description: draft.description,
       })
       // pin：用户显式添加的 agent 在应用生命周期内常驻状态栏
-      // （localStorage 持久 + CustomEvent 通知状态栏立即生效）
-      try {
-        const raw = localStorage.getItem('nuphus.extAgents.pinned')
-        const pins: string[] = raw ? JSON.parse(raw) : []
-        if (Array.isArray(pins) && !pins.includes(draft.key)) {
-          localStorage.setItem(
-            'nuphus.extAgents.pinned',
-            JSON.stringify([...pins, draft.key]),
-          )
-        }
-      } catch {}
+      // （内存态，随启动清零；CustomEvent 通知状态栏立即生效）
       window.dispatchEvent(new CustomEvent(EXT_AGENT_PINNED_EVENT, { detail: draft.key }))
       await refreshList(draft.key)
       showToast(t('extAgents.cfg.saved'))
