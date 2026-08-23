@@ -132,6 +132,8 @@ export default function ExternalAgentsStatusBar({
   const [fading, setFading] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** forced 的 ref 镜像（定时器回调里读取最新值，避免闭包过期） */
+  const forcedRef = useRef(false)
   const [openAgent, setOpenAgent] = useState<ExternalAgentStatus | null>(null)
   const [deliverables, setDeliverables] = useState<AgentDeliverable[] | null>(null)
   const [loadingDeliv, setLoadingDeliv] = useState(false)
@@ -209,7 +211,9 @@ export default function ExternalAgentsStatusBar({
   }, [])
 
   const handleZoneLeave = useCallback(() => {
-    // 移开 10s 后开始 0.6s 渐隐收起非常驻项
+    // 有常驻条件（执行中/阻塞/错误/pin）时整条胶囊强制可见，无需渐隐
+    if (forcedRef.current) return
+    // 移开 10s 后开始 0.6s 渐隐收起
     if (leaveTimer.current) clearTimeout(leaveTimer.current)
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null
@@ -273,18 +277,19 @@ export default function ExternalAgentsStatusBar({
   if (!visible) return null
 
   const known = agents.filter(a => !hidden.includes(a.agent))
-  const isPersistent = (a: ExternalAgentStatus) =>
-    ATTENTION_STATES.has(a.state || '') || pins.includes(a.agent)
-  const persistent = known.filter(isPersistent)
-  const extras = known.filter(a => !isPersistent(a))
+  /** 常驻条件：注意态（执行中/阻塞/错误）或用户添加过的 pin —— 存在即整条胶囊强制可见 */
+  const forced = known.some(
+    a => ATTENTION_STATES.has(a.state || '') || pins.includes(a.agent),
+  )
+  forcedRef.current = forced
   const hiddenKnown = hidden.filter(name => agents.some(a => a.agent === name))
   const reports = (deliverables || []).filter(d => d.kind === 'report')
   const artifacts = (deliverables || []).filter(d => d.kind === 'artifact')
-  /** 弹窗打开期间视同展开，避免气泡随渐隐消失 */
-  const expanded = revealed || fading || openAgent !== null
+  /** 胶囊整体可见：强制常驻 ∪ hover 展开 ∪ 渐隐中 ∪ 有弹窗 */
+  const shown = forced || revealed || fading || openAgent !== null || showHiddenPanel
 
-  /** 单个 agent 头像（persistent 与 hover 展开共用）；extra=hover 展开项，受渐隐控制 */
-  const renderAvatar = (a: ExternalAgentStatus, extra?: boolean) => {
+  /** 单个 agent 头像 */
+  const renderAvatar = (a: ExternalAgentStatus) => {
     const state = a.state || 'unknown'
     const stateLabel = t(STATE_I18N[state] || 'extAgents.state.unknown')
     const kind = agentKind(a.agent)
@@ -292,13 +297,7 @@ export default function ExternalAgentsStatusBar({
     return (
       <div
         key={a.agent}
-        className={[
-          'agent-avatar-btn',
-          STATE_CLASS[state] || 'is-unknown',
-          extra ? (expanded && !fading ? 'ext-extra shown' : 'ext-extra') : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
+        className={['agent-avatar-btn', STATE_CLASS[state] || 'is-unknown'].filter(Boolean).join(' ')}
         title={title}
       >
         <button
@@ -327,11 +326,19 @@ export default function ExternalAgentsStatusBar({
       {(openAgent || showHiddenPanel) && (
         <div className="ext-agent-popover-backdrop" onClick={closePopover} aria-hidden />
       )}
+      {/* 感应区：与胶囊同高同右缘，向左延伸 200px；胶囊隐身时由它唤醒。
+          常驻 DOM（透明），z-index 低于胶囊避免遮挡其交互 */}
+      <div
+        className="ext-agents-hover-zone"
+        onMouseEnter={handleZoneEnter}
+        onMouseLeave={handleZoneLeave}
+        aria-hidden
+      />
       <div
         className={[
           'external-agents-bar',
-          expanded ? 'revealed' : '',
-          fading ? 'fading' : '',
+          forced ? 'forced' : '',
+          shown ? (fading ? 'fading' : 'revealed') : 'concealed',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -340,8 +347,7 @@ export default function ExternalAgentsStatusBar({
         onMouseEnter={handleZoneEnter}
         onMouseLeave={handleZoneLeave}
       >
-        {persistent.map(a => renderAvatar(a, false))}
-        {extras.map(a => renderAvatar(a, true))}
+        {known.map(renderAvatar)}
         {hiddenKnown.length > 0 && (
           <button
             type="button"

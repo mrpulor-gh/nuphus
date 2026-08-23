@@ -681,23 +681,34 @@
   border-color: var(--accent);
   background: var(--accent-dim);
 }
-/* ── 可见性引擎：非常驻 agent 仅 hover 展开，移开 10s 后渐隐 ──
-   常驻 = 注意态(in_progress/blocked/error) ∪ 用户添加过的 pin 集合；
-   .shown 由 React 在 expanded&&!fading 时挂上 */
-.external-agents-bar .agent-avatar-btn.ext-extra {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(6px);
+/* ── 可见性引擎：整条胶囊默认隐身，感应区唤醒 ──
+   感应区与胶囊同高同右缘、向左延伸 200px；forced（执行中/阻塞/错误/pin）
+   时 React 挂 .forced 恒可见。移开 10s 后经 .fading 0.6s 渐隐 */
+.ext-agents-hover-zone {
+  position: absolute;
+  top: -46px;
+  right: 0;
+  width: 200px;
+  height: 38px;
+  z-index: 50;
+}
+.external-agents-bar {
   transition:
     opacity 0.6s ease,
-    transform 0.6s var(--ease-out);
+    transform 0.25s var(--ease-out);
 }
-.external-agents-bar.revealed .agent-avatar-btn.ext-extra.shown {
+.external-agents-bar.concealed {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px);
+}
+.external-agents-bar.revealed,
+.external-agents-bar.fading,
+.external-agents-bar.forced {
   opacity: 1;
   pointer-events: auto;
   transform: none;
 }
-.external-agents-bar.fading .agent-avatar-btn.ext-extra {
-  opacity: 0;
-  pointer-events: none;
+.external-agents-bar.fading {
+  transition-delay: 0s;
 }
