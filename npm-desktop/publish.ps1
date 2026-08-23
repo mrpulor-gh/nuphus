@@ -192,16 +192,17 @@ function Update-MetaPackage($version) {
     }
     if (-not (Test-Path $pkgPath)) { throw "meta package.json not found: $pkgPath" }
 
-    $meta = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $meta.version = $version
-    $meta.optionalDependencies = @{
-        '@nuphus/nuphus-desktop-win32-x64' = $version
-        '@nuphus/nuphus-desktop-osx-arm64' = $version
-        '@nuphus/nuphus-desktop-linux-x64' = $version
+    # 只更新 version 与三个 optionalDependencies 版本字段，保留手写格式。
+    # 勿用 ConvertTo-Json 往返重写：PS 5.1 输出会破坏格式（冒号后双空格、层级缩进错乱），
+    # 2026-08-23 曾因此把被 git 跟踪的 meta package.json 写乱。
+    $raw = Get-Content $pkgPath -Raw -Encoding UTF8
+    $raw = [regex]::Replace($raw, '"version"\s*:\s*"[^"]*"', "`"version`": `"$version`"")
+    foreach ($n in $Platforms | ForEach-Object { "@nuphus/$($_.Name)" }) {
+        $esc = [regex]::Escape($n)
+        $raw = [regex]::Replace($raw, "\"$esc\"\s*:\s*\"[^\"]*\"", "`"$n`": `"$version`"")
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    $json = ($meta | ConvertTo-Json -Depth 6) -replace '\\/', '/'
-    [System.IO.File]::WriteAllText($pkgPath, $json, $utf8NoBom)
+    [System.IO.File]::WriteAllText($pkgPath, $raw, $utf8NoBom)
     Write-Ok "$MetaName package.json updated"
 }
 

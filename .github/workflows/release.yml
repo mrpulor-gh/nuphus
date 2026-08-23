@@ -19,7 +19,9 @@ jobs:
         include:
           # FIX 1: 保持 ubuntu-24.04
           # 22.04 无 webkit2gtk-2.40（tauri 2.11.5 要求 v2_40 feature），无法编译；
-          # AppImage 打包问题由 NO_STRIP + APPIMAGE_EXTRACT_AND_RUN + 系统依赖解决。
+          # AppImage 打包问题由 NO_STRIP + APPIMAGE_EXTRACT_AND_RUN + 系统依赖解决，
+          # 构建命令用 --bundles deb,appimage 同时产出 .deb 与 .AppImage（tauri.conf.json
+          # targets 已含 appimage；上传 glob target/release/bundle/appimage/*.AppImage 与此对应）。
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: nuphus_linux_amd64
@@ -66,7 +68,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
-        run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb' || runner.os == 'macOS' && '--bundles app' || '' }}
+        run: npx tauri build ${{ runner.os == 'Linux' && '--bundles deb,appimage' || runner.os == 'macOS' && '--bundles app' || '' }}
 
       - name: Deep-sign dylibs & verify (macOS)
         if: runner.os == 'macOS'
