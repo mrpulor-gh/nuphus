@@ -32,15 +32,39 @@
     }, 120);
   }
 
-  // 下载超过 30s 仍未结束 → 出现「后台下载」按钮。
+  // 「后台下载」出口仅在真正下载时出现：下载开始 15s 未完成才显示
+  // （短下载不闪烁）；非下载阶段隐藏加载条与按钮，splash 回归纯文字状态。
   // 缓存路径下 splash 秒关，定时器无副作用；只有真正卡在下载/启动才触发。
-  var skipTimer = setTimeout(function () {
-    if (skipWrap) skipWrap.hidden = false;
-  }, 30000);
+  var skipTimer = null;
+
+  function showBar() {
+    if (bar) bar.hidden = false;
+  }
+
+  function hideBar() {
+    if (bar) {
+      bar.hidden = true;
+      setIndeterminate(true); // 复位不定宽动画，供下次下载从头开始
+    }
+    if (skipWrap) skipWrap.hidden = true;
+    if (skipTimer) {
+      clearTimeout(skipTimer);
+      skipTimer = null;
+    }
+  }
+
+  function ensureSkipTimer() {
+    if (skipTimer || !skipWrap) return;
+    skipTimer = setTimeout(function () {
+      skipTimer = null;
+      // 仅仍在下载（加载条可见）时才亮出按钮
+      if (!bar || !bar.hidden) skipWrap.hidden = false;
+    }, 15000);
+  }
 
   function start() {
     var tauri = window.__TAURI__;
-    // withGlobalTauri 未注入（异常环境）：静态文案 + 不定宽条继续转，不抛错。
+    // withGlobalTauri 未注入（异常环境）：纯文字静态状态，不抛错。
     if (!tauri || !tauri.event) {
       setText('正在启动…');
       return;
@@ -49,9 +73,13 @@
       .listen('splash:progress', function (ev) {
         var d = ev.payload || {};
         if (typeof d.pct === 'number') {
+          // pct 只由真实下载发出 → 此刻才亮出加载条与（延时后）后台下载按钮
+          showBar();
           setPct(d.pct);
+          ensureSkipTimer();
         } else {
-          setIndeterminate(true);
+          // 纯文字阶段：隐藏加载条/按钮
+          hideBar();
         }
         if (d.text) setText(d.text);
       })

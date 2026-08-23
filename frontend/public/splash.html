@@ -101,7 +101,8 @@
     </g>
   </svg>
   <div class="hint">正在启动…</div>
-  <div class="bar indeterminate" id="bar"><div class="bar-fill" id="barFill"></div></div>
+  <!-- 加载条默认隐藏：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
+  <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
   <div id="skipWrap" class="skip-wrap" hidden>
     <button id="skipBtn" class="skip-btn">后台下载</button>
     <div class="skip-note">除视觉定位，不影响正常使用！</div>
