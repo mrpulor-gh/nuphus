@@ -10,6 +10,17 @@ fn main() {
 
     tauri_build::build();
 
+    // macOS：把 sherpa/onnxruntime dylib 的运行时查找路径写进二进制的 @rpath。
+    // dev 时 dylib 被 sync_sherpa_libs 拷到 target/<profile>/（与二进制同目录），
+    // 打包成 .app 后 dylib 放在 Contents/Frameworks/ 下；@executable_path 与
+    // @executable_path/../Frameworks 两条 rpath 分别覆盖这两种布局，缺一不可。
+    // 否则 @rpath/libsherpa-onnx-c-api.dylib 无法解析 → 启动即 "Library not loaded"。
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+    }
+
     // ═══ 模型与运行时依赖自动获取 ═══
     // 产品原则：除 STT 语音模型外，其余所有本地模型/运行时都要自动获取——
     // 端用户不懂技术，git clone + cargo build 后必须自愈。所有步骤失败时都只
