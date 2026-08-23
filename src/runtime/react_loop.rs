@@ -13,6 +13,16 @@ use crate::{session::ContentBlock, ExecutionStep, StepStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// A user-cancelled workflow must terminate the enclosing Leader turn.
+///
+/// This decision is kept separate from executor cancellation so the ReAct loop
+/// cannot accidentally treat a deliberate stop as a recoverable tool failure.
+fn should_abort_react_loop_after_workflow_cancel(was_user_cancelled: bool) -> bool {
+    was_user_cancelled
+}
+
+const WORKFLOW_CANCELLED_MESSAGE: &str = "工作流已由用户终止";
+
 impl super::Runtime {
     pub(super) async fn react_loop(
         &mut self,
@@ -767,6 +777,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
             }
 
             let mut post_tool_warnings: Vec<String> = Vec::new();
+            let mut workflow_cancelled = false;
 
             if leader_should_stop {
                 let stop_text = assistant_blocks
@@ -813,6 +824,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
 
             // Execute tools
             for call in tool_calls {
+                // A user cancellation is terminal for this Leader turn. Do not
+                // execute any additional tool calls emitted in the same reply.
+                if workflow_cancelled {
+                    break;
+                }
                 let tool_start = std::time::Instant::now();
                 if let Some(ref emitter) = self.agent.exec_emitter {
                     emitter.emit(NuphusEvent::ToolCallStart {
@@ -1071,6 +1087,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                         Err(e) => (false, None, Some(e.to_string())),
                     };
                     if was_user_cancelled {
+                        workflow_cancelled =
+                            should_abort_react_loop_after_workflow_cancel(was_user_cancelled);
                         let note = "\n\n[用户已终止此工作流的执行]";
                         output = Some(match output {
                             Some(s) => s + note,
@@ -1270,6 +1288,36 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                 self.agent.session.push_user_internal(w);
             }
 
+            if workflow_cancelled {
+                if let Some(ref hooks) = self.agent.hooks {
+                    hooks.run_session_end(
+                        &self.agent.session.id,
+                        false,
+                        WORKFLOW_CANCELLED_MESSAGE,
+                    );
+                }
+                if let Some(ref emitter) = self.agent.exec_emitter {
+                    emitter.emit(NuphusEvent::HudUpdate {
+                        text: WORKFLOW_CANCELLED_MESSAGE.into(),
+                        phase: "done".into(),
+                        step_kind: None,
+                    });
+                    emitter.emit(NuphusEvent::ExecutionError {
+                        step_index: 0,
+                        error: WORKFLOW_CANCELLED_MESSAGE.into(),
+                    });
+                    emitter.emit(NuphusEvent::LeaderDone {
+                        message: WORKFLOW_CANCELLED_MESSAGE.into(),
+                    });
+                }
+                return Ok(crate::AgentOutput {
+                    success: false,
+                    message: WORKFLOW_CANCELLED_MESSAGE.to_string(),
+                    steps: self.agent.steps.clone(),
+                    retry_session: None,
+                });
+            }
+
             // -- Context hints (large-window models only, > 200K context) --
             let ctx_window = crate::agent::goal_types::get_context_window(&self.agent.config.model);
             if ctx_window > 200_000 {
@@ -1351,3 +1399,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
 
 // detect_frustration removed — replaced by LLM thinking-based emotion detection.
 // Trigger: src/agent/prompt.rs (build_l2_leader) instructs LLM to read prompts/emotion_guide.md when needed.
+
+#[cfg(test)]
+mod tests {
+    use super::should_abort_react_loop_after_workflow_cancel;
+
+    #[test]
+    fn user_cancelled_workflow_ends_react_loop() {
+        assert!(should_abort_react_loop_after_workflow_cancel(true));
+        assert!(!should_abort_react_loop_after_workflow_cancel(false));
+    }
+}
