@@ -714,7 +714,73 @@ export function ChatInputBar({
             </IconButton>
             {toolMenuOpen && (
               <div className="input-tool-menu" role="menu">
-                {/* ── 上组：项目与记忆 ── */}
+                {/* ── 上组：附件 ── */}
+                <div className="input-tool-menu-group">{t('input.group.attach')}</div>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={async () => {
+                    setToolMenuOpen(false)
+                    const { open } = await import('@tauri-apps/plugin-dialog')
+                    try {
+                      const selected = await open({ multiple: true })
+                      if (selected && Array.isArray(selected)) {
+                        const paths = selected as string[]
+                        onInputChange(
+                          input + (input ? '\n' : '') + paths.map(p => `[附件: ${p}]`).join('\n'),
+                        )
+                      } else if (selected) {
+                        onInputChange(input + (input ? '\n' : '') + `[附件: ${selected}]`)
+                      }
+                    } catch (e) {
+                      console.error('文件选择失败:', e)
+                    }
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M15 3v11a5 5 0 1 1-10 0V7a2 2 0 1 1 4 0v5.5" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('input.attach')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  disabled={isProcessing && !pauseState}
+                  onClick={() => {
+                    setToolMenuOpen(false)
+                    imageInputRef.current?.click()
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="3" />
+                    <circle cx="8.5" cy="10" r="2.5" />
+                    <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
+                  </svg>
+                  <span className="input-tool-menu-label">{t('input.image')}</span>
+                </button>
+                <div className="input-tool-menu-divider" />
+                {/* ── 下组：项目与记忆 ── */}
                 <div className="input-tool-menu-group">{t('input.group.projectMemory')}</div>
                 <button
                   type="button"
@@ -789,72 +855,7 @@ export function ChatInputBar({
                   </span>
                 </button>
 
-                {/* 分隔线 + 下组：附件 */}
-                <div className="input-tool-menu-divider" />
-                <div className="input-tool-menu-group">{t('input.group.attach')}</div>
-                <button
-                  type="button"
-                  className="input-tool-menu-item"
-                  role="menuitem"
-                  disabled={isProcessing && !pauseState}
-                  onClick={async () => {
-                    setToolMenuOpen(false)
-                    const { open } = await import('@tauri-apps/plugin-dialog')
-                    try {
-                      const selected = await open({ multiple: true })
-                      if (selected && Array.isArray(selected)) {
-                        const paths = selected as string[]
-                        onInputChange(
-                          input + (input ? '\n' : '') + paths.map(p => `[附件: ${p}]`).join('\n'),
-                        )
-                      } else if (selected) {
-                        onInputChange(input + (input ? '\n' : '') + `[附件: ${selected}]`)
-                      }
-                    } catch (e) {
-                      console.error('文件选择失败:', e)
-                    }
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M15 3v11a5 5 0 1 1-10 0V7a2 2 0 1 1 4 0v5.5" />
-                  </svg>
-                  <span className="input-tool-menu-label">{t('input.attach')}</span>
-                </button>
-                <button
-                  type="button"
-                  className="input-tool-menu-item"
-                  role="menuitem"
-                  disabled={isProcessing && !pauseState}
-                  onClick={() => {
-                    setToolMenuOpen(false)
-                    imageInputRef.current?.click()
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="4" width="18" height="16" rx="3" />
-                    <circle cx="8.5" cy="10" r="2.5" />
-                    <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
-                  </svg>
-                  <span className="input-tool-menu-label">{t('input.image')}</span>
-                </button>
+
               </div>
             )}
           </div>
