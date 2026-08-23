@@ -1,20 +1,4 @@
 {
-  // Linux 专属配置：只在此平台把 sherpa/onnxruntime 的 .so 打进安装包。
-  // 放在 tauri.linux.conf.json（json_patch 深合并进 tauri.conf.json），
-  // 避免 Windows NSIS/macOS 构建去解析不存在的 .so 资源文件。
-  //
-  // 目标路径必须是「完整文件名」，不能只给目录：tauri-bundler 的
-  // copy_resources 用 resource_dir.join(target) 后 fs::copy，给目录会把
-  // 文件复制成名为目录的文件（tauri-utils 已知 confusing special case）。
-  //
-  // 落地位置（copy_resources 的 path = /usr/lib/<productName>）：
-  //   deb      → /usr/lib/Nuphus/sherpa/<name>
-  //   AppImage → AppDir/usr/lib/Nuphus/sherpa/<name>（复用 debian::generate_data）
-  // 与 build.rs 里的 rpath $ORIGIN/../lib/Nuphus/sherpa 一一对应，缺一个
-  // 启动即 "error while loading shared libraries: libsherpa-onnx-c-api.so"。
-  //
-  // 只列 v1.13.4 linux-x64-shared 包实际存在的库（libonnxruntime_providers_shared.so
-  // 不存在，别写进去否则打包报 ResourcePathNotFound）。
   "bundle": {
     "resources": {
       "desktop/sherpa/libsherpa-onnx-c-api.so": "sherpa/libsherpa-onnx-c-api.so",
