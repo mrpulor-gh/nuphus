@@ -166,25 +166,36 @@ pub fn pool_available() -> usize {
 
 /// 幂等加列：已存在则跳过，不存在则 ALTER TABLE ADD COLUMN。
 /// 用于给已存量的旧表补充新增列（CREATE TABLE IF NOT EXISTS 不会改旧表）。
+/// 并发安全：多连接首次初始化同时加列时，后到者 ALTER 报 duplicate column，
+/// 重查列已存在即视为成功（幂等语义）。
 fn ensure_column(
     conn: &Connection,
     table: &str,
     column: &str,
     col_type: &str,
 ) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        &format!(
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('{}') WHERE name = '{}'",
-            table, column
-        ),
-        [],
-        |r| r.get(0),
-    )?;
-    if !exists {
-        conn.execute_batch(&format!(
-            "ALTER TABLE {} ADD COLUMN {} {}",
-            table, column, col_type
-        ))?;
+    let column_exists = |conn: &Connection| -> rusqlite::Result<bool> {
+        conn.query_row(
+            &format!(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('{}') WHERE name = '{}'",
+                table, column
+            ),
+            [],
+            |r| r.get(0),
+        )
+    };
+    if column_exists(conn)? {
+        return Ok(());
+    }
+    if let Err(e) = conn.execute_batch(&format!(
+        "ALTER TABLE {} ADD COLUMN {} {}",
+        table, column, col_type
+    )) {
+        // 并发 pool 初始化时另一连接可能已抢先加列——重查确认后视为成功
+        if column_exists(conn).unwrap_or(false) {
+            return Ok(());
+        }
+        return Err(e);
     }
     Ok(())
 }
@@ -256,6 +267,7 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
     )?;
 
     // sessions 表：记录会话元数据，new_chat_session 时 upsert
+    // mode：backing 归属（leader/workflow）；snapshot：完整 Session 序列化（方案A 快照持久化）
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS sessions (
@@ -266,7 +278,9 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at      TEXT NOT NULL,
             message_count   INTEGER NOT NULL DEFAULT 0,
             token_count     INTEGER NOT NULL DEFAULT 0,
-            summary         TEXT DEFAULT ''
+            summary         TEXT DEFAULT '',
+            mode            TEXT NOT NULL DEFAULT 'leader',
+            snapshot        TEXT
         );
     ",
     )?;
@@ -280,6 +294,11 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
     ",
     )?;
+
+    // ── 幂等列迁移：sessions.mode / sessions.snapshot（方案A 快照持久化）──
+    // CREATE TABLE IF NOT EXISTS 不会给已存在的旧表加列，需显式 ALTER。
+    ensure_column(conn, "sessions", "mode", "TEXT NOT NULL DEFAULT 'leader'")?;
+    ensure_column(conn, "sessions", "snapshot", "TEXT")?;
 
     Ok(())
 }

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCheck, IconEdit3, IconX } from '../../ui/Icons'
+import { createPortal } from 'react-dom'
+import { IconCheck, IconEdit3, IconX, IconTrash2 } from '../../ui/Icons'
+import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
 import {
   listShelfSessions,
   switchSession,
   renameSession,
+  archiveSession,
   type ShelfSessionItem,
 } from '../lib/api'
 import '../../styles/session-rail.css'
@@ -29,7 +32,7 @@ function errorCodeToI18n(code: string): string {
  * - 静止态仅微露短杠；hover 感应区阶梯展开（20ms/条 stagger）；单条 hover 弹出
  *   玻璃气泡显示标题，气泡内可重命名（Enter 保存 / Esc 取消）。
  * - 点击横杠切换会话（busy / 追加队列非空时后端拒绝 → 错误码映射文案短暂浮现，
- *   横杠同步 shake）。底部虚线杠为「新建对话」入口。
+ *   横杠同步 shake）。新建对话入口在 TitleBar 与 Ctrl+N（底部无虚线杠）。
  * - 执行中整轨降透明度锁定（can_switch），与后端守卫双保险。
  */
 export default function SessionRail({ onSessionChanged }: SessionRailProps) {
@@ -40,6 +43,8 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
   const [draftTitle, setDraftTitle] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const errTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 手动归档确认弹窗目标会话 id（null = 关闭） */
+  const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
   const stoppedRef = useRef(false)
   /** 整轨隐显：默认隐身，左缘感应区唤醒；移开 10s 后渐隐 */
   const [revealed, setRevealed] = useState(false)
@@ -115,6 +120,28 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
       }
     },
     [onSessionChanged, refresh, flashError],
+  )
+
+  /** 手动归档：确认弹窗后移出展示台（元数据+文本记忆保留可查）；失败映射稳定错误码 */
+  const handleArchive = useCallback(
+    async (id: string) => {
+      setConfirmArchiveId(null)
+      try {
+        await archiveSession(id)
+        void refresh()
+      } catch (e) {
+        const code = typeof e === 'string' ? e : String(e)
+        // busy / 追加队列非空复用切换守卫文案；not_found/其他 → 归档失败
+        if (code === 'busy' || code === 'append_pending') {
+          flashError(code)
+        } else {
+          setErr(t('sessionRail.archiveFailGeneric'))
+          if (errTimer.current) clearTimeout(errTimer.current)
+          errTimer.current = setTimeout(() => setErr(null), 2400)
+        }
+      }
+    },
+    [refresh, flashError, t],
   )
 
   // ── 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
@@ -236,13 +263,10 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
               editingId === it.id ? ' editing' : ''
             }`}
           >
-            <button
-              type="button"
+            <span
               className="sr-bar"
               style={{ transitionDelay: `${idx * 0.02}s` }}
-              onClick={() => void handleSwitch(it.id, it.is_active)}
-              aria-label={it.title || t('sessionRail.untitled')}
-              aria-current={it.is_active ? 'true' : undefined}
+              aria-hidden="true"
             />
             <div className="sr-bubble">
               {editingId === it.id ? (
@@ -281,9 +305,15 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
                 </>
               ) : (
                 <>
-                  <span className="sr-title" title={it.title}>
+                  <button
+                    type="button"
+                    className={`sr-title-btn${it.is_active ? ' active' : ''}`}
+                    title={it.title}
+                    disabled={it.is_active}
+                    onClick={() => void handleSwitch(it.id, it.is_active)}
+                  >
                     {it.title || t('sessionRail.untitled')}
-                  </span>
+                  </button>
                   <button
                     type="button"
                     className="sr-edit-btn"
@@ -300,6 +330,18 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
                   >
                     <IconEdit3 size={12} />
                   </button>
+                  {!it.is_active && (
+                    <button
+                      type="button"
+                      className="sr-edit-btn sr-archive-btn"
+                      onClick={() => setConfirmArchiveId(it.id)}
+                      disabled={!canSwitch}
+                      title={t('sessionRail.archive')}
+                      aria-label={t('sessionRail.archive')}
+                    >
+                      <IconTrash2 size={12} />
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -312,6 +354,37 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
           {err}
         </div>
       )}
+      {confirmArchiveId &&
+        createPortal(
+          <CompactModal
+            open
+            onClose={() => setConfirmArchiveId(null)}
+            title={t('sessionRail.archiveConfirmTitle')}
+            size="sm"
+            className="compact-modal--fit"
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setConfirmArchiveId(null)}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void handleArchive(confirmArchiveId)}
+                >
+                  {t('sessionRail.archive')}
+                </button>
+              </>
+            }
+          >
+            <div className="sr-confirm-desc">{t('sessionRail.archiveConfirmDesc')}</div>
+          </CompactModal>,
+          document.body,
+        )}
       </div>
     </>
   )

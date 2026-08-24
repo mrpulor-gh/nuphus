@@ -177,6 +177,7 @@ fn main() {
             commands::switch_session,
             commands::new_chat_session_cmd,
             commands::rename_session_cmd,
+            commands::archive_session,
             commands::has_resume_candidate,
             commands::resume_latest_session,
             commands::list_external_agents,
@@ -497,9 +498,12 @@ fn main() {
             // 启动失败内部优雅降级（warn 日志），不阻塞应用启动。
             crate::handoff_server::spawn();
 
-            // ── Session Shelf 预热：磁盘镜像装回内存展示台，rail 列表立即可用 ──
+            // ── Session Shelf 预热：旧镜像迁移 → SQLite 快照装回内存展示台，rail 列表立即可用 ──
             {
                 let state = app.state::<crate::state::AppState>();
+                // 旧磁盘镜像（sessions/{id}.json）幂等导入 SQLite（保留文件不删），
+                // 必须在 warm_from_disk 之前执行，保证列表/恢复立即可用
+                crate::commands::process::shelf::migrate_legacy_mirrors();
                 let shelf_locked = state.shelf.lock();
                 if let Ok(mut shelf) = shelf_locked {
                     crate::commands::process::shelf::warm_from_disk(&mut shelf);

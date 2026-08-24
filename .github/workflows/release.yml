@@ -47,6 +47,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      # 统一发布命名（2026-08-24 指定格式）：nuphus-<platform>-<version>
+      # VER 取自 tag 去掉 v 前缀，供各打包步骤与 Upload 文件名使用
+      - name: Resolve version (strip v prefix from tag)
+        run: echo "VER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -99,8 +103,8 @@ jobs:
           cd target/release/bundle/macos
           # 手动 hdiutil create -srcfolder：一步创建，无需 attach/detach/AppleScript，
           # 是 dmg 打包最简可靠方式；GitHub Actions 直接显示 stderr 便于诊断
-          hdiutil create -volname "Nuphus" -srcfolder Nuphus.app -ov -format UDZO ../../../../${{ matrix.artifact }}.dmg
-          ls -lh ../../../../${{ matrix.artifact }}.dmg
+          hdiutil create -volname "Nuphus" -srcfolder Nuphus.app -ov -format UDZO ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg
+          ls -lh ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg
 
       - name: Package portable (Linux)
         if: runner.os == 'Linux'
@@ -119,7 +123,7 @@ jobs:
           for so in release/*.so; do
             [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so"
           done
-          cd release && tar czf ../${{ matrix.artifact }}.tar.gz *
+          cd release && tar czf ../nuphus-linux-x64-${{ env.VER }}.tar.gz *
 
       - name: Package portable (Windows)
         if: runner.os == 'Windows'
@@ -131,7 +135,7 @@ jobs:
           Copy-Item README.md, LICENSE, PRIVACY.md, config.example.toml release/
           Copy-Item -Recurse src-tauri/desktop release/desktop
           Copy-Item src-tauri/desktop/sherpa/sherpa-onnx-c-api.dll, src-tauri/desktop/sherpa/onnxruntime.dll, src-tauri/desktop/sherpa/onnxruntime_providers_shared.dll release/ -ErrorAction SilentlyContinue
-          Compress-Archive -Path release/* -DestinationPath ${{ matrix.artifact }}.zip
+          Compress-Archive -Path release/* -DestinationPath nuphus-win32-x64-${{ env.VER }}.zip
 
       - name: Package portable (macOS)
         if: runner.os == 'macOS'
@@ -139,24 +143,27 @@ jobs:
           # .app 应用包 zip —— macOS 分发主产物（dmg 在 CI 无头环境待攻关）。
           # zip -y 保留符号链接（框架内 dylib 的 symlink 结构）
           cd target/release/bundle/macos
-          zip -r -y ../../../../${{ matrix.artifact }}.zip Nuphus.app
+          zip -r -y ../../../../nuphus-osx-arm64-${{ env.VER }}.zip Nuphus.app
 
       - name: Collect NSIS installer (per-user)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Get-ChildItem "target/release/bundle/nsis/*.exe" | ForEach-Object {
-            Write-Output "NSIS installer: $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)"
+            $newName = "nuphus-win32-x64-$($env:VER)-setup.exe"
+            Rename-Item $_.FullName -NewName $newName
+            Write-Output "NSIS installer: $newName ($([math]::Round($_.Length/1MB,1)) MB)"
           }
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/nuphus-win32-x64-*-setup.exe
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
-            nuphus_macos_*.dmg
-            nuphus_*.tar.gz
-            nuphus_*.zip
+            nuphus-osx-arm64-*.dmg
+            nuphus-linux-x64-*.tar.gz
+            nuphus-win32-x64-*.zip
+            nuphus-osx-arm64-*.zip
           generate_release_notes: true

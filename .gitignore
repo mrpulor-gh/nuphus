@@ -155,3 +155,6 @@ npm-desktop/packages/nuphus-desktop-osx-arm64/
 npm-desktop/packages/nuphus-desktop-linux-x64/
 # npm 安装验证产物（一次性测试，不提交）
 npm-desktop/install-test/
+# 内部诊断/改造文档（不对外公开）
+relay-device-routing.md
+mobile-link-diagnosis.md

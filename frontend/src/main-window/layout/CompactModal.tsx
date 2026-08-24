@@ -8,6 +8,8 @@ interface CompactModalProps {
   title: string
   icon?: ReactElement
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'auto'
+  /** 追加到 modal 卡片的类（如 compact-modal--fit 高度自适应） */
+  className?: string
   /** 固定底部操作区 — 渲染在滚动区之外，长内容时主操作始终可见 */
   footer?: ReactNode
   children: ReactNode
@@ -22,6 +24,7 @@ export function CompactModal({
   title,
   icon,
   size = 'auto',
+  className,
   footer,
   children,
 }: CompactModalProps) {
@@ -56,7 +59,7 @@ export function CompactModal({
       onClick={requestClose}
     >
       <div
-        className={`compact-modal ${sizeClass}`}
+        className={`compact-modal ${sizeClass}${className ? ` ${className}` : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

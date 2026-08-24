@@ -124,6 +124,10 @@ const zh: Record<string, string> = {
   'sessionRail.switchFailAppend': '有追加指令待处理，稍后再试',
   'sessionRail.switchFailMode': '该会话属于另一运行模式',
   'sessionRail.switchFailGeneric': '切换失败',
+  'sessionRail.archive': '归档',
+  'sessionRail.archiveConfirmTitle': '归档该会话？',
+  'sessionRail.archiveConfirmDesc': '归档后将从会话台移除，对话记录保留在记忆页可查看',
+  'sessionRail.archiveFailGeneric': '归档失败',
 
   // ── 欢迎页 ──
   'welcome.resume': '继续对话',

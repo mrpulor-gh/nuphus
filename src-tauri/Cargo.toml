@@ -1,6 +1,6 @@
 [package]
 name = "nuphus-desktop"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mrpulor-gh/nuphus"
@@ -35,27 +35,20 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
 # Process enumeration (CDP browser detection: find --remote-debugging-port)
 sysinfo = "0.32"
 
-# 门铃 HTTP server + 移动端局域网 server（复用 workspace 已有的 axum 0.7，与 desktop-api 同版本）
-# ws feature: mobile_server 的 /ws 事件推流（axum 自带，不引 tokio-tungstenite）
-axum = { version = "0.7", features = ["macros", "ws"] }
+# 门铃 HTTP server + 移动端局域网 server（复�?workspace 已有�?axum 0.7，与 desktop-api 同版本）
+# ws feature: mobile_server �?/ws 事件推流（axum 自带，不�?tokio-tungstenite�?axum = { version = "0.7", features = ["macros", "ws"] }
 
-# 静态资源 gzip/brotli 压缩（mobile_server 资源路由）：主入口 JS 850KB→gzip ~253KB，
-# 隧道冷启动传输量降 3.4 倍——跨境丢包链路 8s load-guard 的主要触发源（实测反馈）。
-# axum 0.7 对应 tower-http 0.5 系（workspace 锁文件里的 0.6 是 axum 0.8 生态，勿对齐）。
-tower-http = { version = "0.5", features = ["compression-gzip", "compression-br"] }
+# 静态资�?gzip/brotli 压缩（mobile_server 资源路由）：主入�?JS 850KB→gzip ~253KB�?# 隧道冷启动传输量�?3.4 倍——跨境丢包链�?8s load-guard 的主要触发源（实测反馈）�?# axum 0.7 对应 tower-http 0.5 系（workspace 锁文件里�?0.6 �?axum 0.8 生态，勿对齐）�?tower-http = { version = "0.5", features = ["compression-gzip", "compression-br"] }
 
 # WebSocket split（SinkExt/StreamExt）——workspace 依赖树已有，mobile_server /ws 推流使用
 futures-util = "0.3"
 
-# 中继客户端出站 WebSocket（relay_client.rs，对齐 axum 0.7 内部的 0.24 版本）
-# native-tls：wss:// 需 TLS（Windows=schannel / macOS=Security-Framework / Linux=OpenSSL，走系统信任库）
+# 中继客户端出�?WebSocket（relay_client.rs，对�?axum 0.7 内部�?0.24 版本�?# native-tls：wss:// 需 TLS（Windows=schannel / macOS=Security-Framework / Linux=OpenSSL，走系统信任库）
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 
-# TCP keepalive（relay_client 防 NAT 空闲掐断半死连接）
-socket2 = "0.5"
+# TCP keepalive（relay_client �?NAT 空闲掐断半死连接�?socket2 = "0.5"
 
-# WS 握手 Authorization Header（tungstenite IntoClientRequest 返回 http::Request）
-http = "1"
+# WS 握手 Authorization Header（tungstenite IntoClientRequest 返回 http::Request�?http = "1"
 
 # HTTP (blocking, for lightweight API queries like /models)
 reqwest = { version = "0.12", features = ["blocking", "multipart"] }
@@ -67,7 +60,7 @@ toml = "0.8"
 # Async
 async-trait = "0.1"
 
-# Image processing (for capture overlay — crop + PNG preview encoding)
+# Image processing (for capture overlay �?crop + PNG preview encoding)
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
 
 # xcap screen capture (used directly in toolbar.rs for overlay screenshots)
@@ -85,49 +78,38 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # Base64
 base64 = "0.22"
 
-# ZIP extraction (ffmpeg release archive → bin/ffmpeg.exe + bin/ffprobe.exe；
-# 应用插件安装器 plugin_apps.rs 复用同一 zip 1.x 依赖——.nuph 包解压)
+# ZIP extraction (ffmpeg release archive �?bin/ffmpeg.exe + bin/ffprobe.exe�?# 应用插件安装�?plugin_apps.rs 复用同一 zip 1.x 依赖—�?nuph 包解�?
 zip = { version = "1.1", default-features = false, features = ["deflate"] }
 
 # Hex编码
 hex = "0.4"
 
-# SHA256 (插件包完整性校验 sha256_file + mobile_server 配对密码哈希；非 Windows 平台 API Key 加密密钥派生——路线图，当前 Windows 走 DPAPI)
+# SHA256 (插件包完整性校�?sha256_file + mobile_server 配对密码哈希；非 Windows 平台 API Key 加密密钥派生——路线图，当�?Windows �?DPAPI)
 sha2 = "0.10"
 
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 
-# Windows API（emitter.rs 置前不抢焦点：SetWindowPos + SWP_NOACTIVATE）
-# 用 windows-sys 而非 windows crate——tauri 内部依赖 windows-sys，
-# 避免 windows_core 多版本导致 Param trait 类型冲突。
-[target.'cfg(windows)'.dependencies]
+# Windows API（emitter.rs 置前不抢焦点：SetWindowPos + SWP_NOACTIVATE�?# �?windows-sys 而非 windows crate——tauri 内部依赖 windows-sys�?# 避免 windows_core 多版本导�?Param trait 类型冲突�?[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需要 macos-private-api；
-# 同一依赖在 target 段声明，features 与通用段自动合并（非 macOS 平台不启用该 feature，
-# 避免 tauri-build 的 "remove the macos-private-api feature" 报错）。
-[target.'cfg(target_os = "macos")'.dependencies]
+# macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需�?macos-private-api�?# 同一依赖�?target 段声明，features 与通用段自动合并（�?macOS 平台不启用该 feature�?# 避免 tauri-build �?"remove the macos-private-api feature" 报错）�?[target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
-# test feature: mobile_server 集成测试用 mock_app 驱动完整 submit_user_message 调用链
-# （仅测试构建生效，不进入生产二进制）
+# test feature: mobile_server 集成测试�?mock_app 驱动完整 submit_user_message 调用�?# （仅测试构建生效，不进入生产二进制）
 tauri = { version = "2", features = ["test"] }
-# 测试中启用 tracing 输出（诊断 server 错误路径）
-tracing-subscriber = "0.3"
+# 测试中启�?tracing 输出（诊�?server 错误路径�?tracing-subscriber = "0.3"
 
 [[bin]]
 name = "nuphus"
 path = "src/main.rs"
 
-# 可选特性：插件市场（默认关闭）。开启后编译 plugin_market_install 命令；
-# 开源基础版不包含市场，保持此特性关闭即可独立构建。
-[features]
+# 可选特性：插件市场（默认关闭）。开启后编译 plugin_market_install 命令�?# 开源基础版不包含市场，保持此特性关闭即可独立构建�?[features]
 default = []
 market = []

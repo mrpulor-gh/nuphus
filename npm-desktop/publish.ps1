@@ -13,9 +13,9 @@
 # Requirements:
 #   - Windows 10+ (uses built-in tar.exe for zip and tar.gz extraction)
 #   - npm authenticated with publish rights on the @nuphus scope (npm whoami)
-#   - GitHub Release tag v<version> already published with assets:
-#       nuphus_windows_amd64.zip / nuphus_macos_arm64.zip / nuphus_linux_amd64.tar.gz
-#     (asset names come from .github/workflows/release.yml matrix.artifact)
+#   - GitHub Release tag v<version> already published with assets (2026-08-24 命名格式：
+#     nuphus-<platform>-<version>，由 .github/workflows/release.yml 打包上传):
+#       nuphus-win32-x64-<version>.zip / nuphus-osx-arm64-<version>.zip / nuphus-linux-x64-<version>.tar.gz
 
 [CmdletBinding()]
 param(
@@ -38,7 +38,7 @@ $MetaName   = 'nuphus-desktop'
 $Platforms = @(
     @{
         Name     = 'nuphus-desktop-win32-x64'
-        Asset    = 'nuphus_windows_amd64.zip'
+        Asset    = 'nuphus-win32-x64-{0}.zip'
         Dir      = 'win64'
         Os       = 'win32'
         Cpu      = 'x64'
@@ -47,7 +47,7 @@ $Platforms = @(
     },
     @{
         Name     = 'nuphus-desktop-osx-arm64'
-        Asset    = 'nuphus_macos_arm64.zip'
+        Asset    = 'nuphus-osx-arm64-{0}.zip'
         Dir      = 'macos'
         Os       = 'darwin'
         Cpu      = 'arm64'
@@ -56,7 +56,7 @@ $Platforms = @(
     },
     @{
         Name     = 'nuphus-desktop-linux-x64'
-        Asset    = 'nuphus_linux_amd64.tar.gz'
+        Asset    = 'nuphus-linux-x64-{0}.tar.gz'
         Dir      = 'linux'
         Os       = 'linux'
         Cpu      = 'x64'
@@ -115,26 +115,28 @@ function Test-NotPublished($pkgName, $version) {
 }
 
 function Get-Asset($p, $version) {
-    $assetUrl = "$ReleaseUrl/v$version/$($p.Asset)"
+    # Asset 为命名模板（{0}=version）：nuphus-<platform>-<version> 格式
+    $assetName = $p.Asset -f $version
+    $assetUrl = "$ReleaseUrl/v$version/$assetName"
     # 版本隔离缓存：downloads/<version>/<asset>，避免同名资产跨版本误复用（资产名不随版本变）
     $versionDir = "$Downloads\$version"
-    $localFile = "$versionDir\$($p.Asset)"
+    $localFile = "$versionDir\$assetName"
     if (Test-Path $localFile) {
-        Write-Ok "asset already cached (v$version): $($p.Asset) (size $((Get-Item $localFile).Length) bytes)"
+        Write-Ok "asset already cached (v$version): $assetName (size $((Get-Item $localFile).Length) bytes)"
         return $localFile
     }
     if ($DryRun) {
         Write-Ok "[dry-run] would download $assetUrl"
         return $null
     }
-    Write-Step "Downloading $($p.Asset) <- $assetUrl"
+    Write-Step "Downloading $assetName <- $assetUrl"
     New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
     try {
         Invoke-WebRequest -Uri $assetUrl -OutFile $localFile -UseBasicParsing -TimeoutSec 600
     } catch {
         throw "Failed to download $assetUrl : $($_.Exception.Message)`nCheck that GitHub Release v$version exists and the asset name matches release.yml."
     }
-    Write-Ok "downloaded $($p.Asset) ($((Get-Item $localFile).Length) bytes)"
+    Write-Ok "downloaded $assetName ($((Get-Item $localFile).Length) bytes)"
     return $localFile
 }
 

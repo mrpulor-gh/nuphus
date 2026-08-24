@@ -363,6 +363,11 @@ export function renameSession(id: string, title: string) {
   return invoke<void>('rename_session_cmd', { id, title })
 }
 
+/** 手动归档：移出展示台并清快照（对话记录保留在记忆页）；失败 reject 稳定错误码 */
+export function archiveSession(id: string) {
+  return invoke<void>('archive_session', { id })
+}
+
 /** 是否存在可恢复的最近会话镜像（欢迎页「继续对话」按钮显示条件） */
 export function hasResumeCandidate() {
   return invoke<boolean>('has_resume_candidate')

@@ -35,8 +35,11 @@
 //!     链路离线但设备通道在线       → 回重试页（RETRY_HTML，语义「连接中」）
 //!     链路离线且设备通道也不在     → 回设备离线页（OFFLINE_HTML）
 //!   两页均注入局域网直连入口（设备自报 lan_url），同 WiFi 手机自动切直连。
+//! - 多用户路由（2026-08 改造）：手机 URL 携带 ?device=<device_id>，每条隧道连接
+//!   解析首行请求行按设备路由（显式标记 > IP 粘性 > RELAY_TUNNEL_DEVICE 兜底）。
 //! - 滥用防护由基础设施承担：IP 速率限制 + 隧道并发上限 + idle 超时。
-//! - 静态页为完整 HTTP/1.1 响应直写 TCP 流；中继是薄转发，不解析手机发来的请求内容。
+//! - 静态页为完整 HTTP/1.1 响应直写 TCP 流；中继是薄转发，不读请求 body、
+//!   不改写字节流——仅从首个请求行提取路由用的 ?device= 参数。
 
 use axum::{
     body::Body,
@@ -92,6 +95,19 @@ const HTTP_RATE_PER_IP_MIN: usize = 120;
 /// HTTP：限流窗口（秒）
 const RATE_WINDOW_SECS: u64 = 60;
 
+// ── 隧道按 device_id 路由参数（2026-08 多用户改造） ──────────────────────
+/// URL 携带的 device_id 最大长度：超长视为滥用直接 fallback（仅作 HashMap key，
+/// 无 SQL 面；白名单校验见 tunnel_device_ok）
+const TUNNEL_DEVICE_MAX_LEN: usize = 128;
+/// 隧道首行（HTTP 请求行）读取超时：连接后迟迟不发数据按 fallback 处理，防慢连接占位
+const TUNNEL_HEAD_TIMEOUT_SECS: u64 = 10;
+/// 隧道 IP 粘性路由 TTL：手机并行连接（静态资源/API/WS 的请求不带 ?device=）沿用
+/// 该 IP 最近一次显式标记的目标设备。标记来源：扫码导航入口 URL（桌面二维码携带
+/// ?device=）；页面内故障转移等后续连接均为无标记拼接基址，全靠本表路由。
+/// 12h 权衡：覆盖一次典型外网会话全程（含长时间挂机后恢复）；表规模 = 近期活跃
+/// 手机数（个位数），过期惰性清理，内存可忽略。
+const TUNNEL_STICKY_TTL_SECS: u64 = 43200;
+
 /// 获取 std::Mutex 守卫，锁中毒时恢复（into_inner）而非 panic 整进程。
 /// 本服务所有 Mutex 保护的都是 map/计数器状态（无跨字段不变量），持锁 panic 后
 /// 数据仍自洽，恢复继续服务是幂等安全的；公网中继任一锁中毒即崩溃不可接受。
@@ -142,6 +158,9 @@ struct AppState {
     /// 设备自报局域网直连地址：device_id → "http://<IP>:<port>"（隧道握手时写入；
     /// 断开不删，保留 last-known 供离线页注入「同一 WiFi 直连」入口；缺省 None = 旧客户端）
     device_lan_urls: Arc<Mutex<HashMap<String, String>>>,
+    /// 隧道 IP 粘性路由：ip → (device_id, 标记时间)。手机并行连接不带 ?device= 时
+    /// 沿用该 IP 最近一次显式标记的目标（TTL 内），仅内存、过期惰性清理。
+    tunnel_sticky: Arc<Mutex<HashMap<IpAddr, (String, Instant)>>>,
 }
 
 impl AppState {
@@ -158,6 +177,7 @@ impl AppState {
             tunnel_active: Arc::new(Mutex::new(0)),
             tunnel_active_ip: Arc::new(Mutex::new(HashMap::new())),
             device_lan_urls: Arc::new(Mutex::new(HashMap::new())),
+            tunnel_sticky: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -832,14 +852,114 @@ async fn handle_tunnel_socket(
     tracing::info!("[relay] tunnel link offline: {}", device_id);
 }
 
+// ── 隧道按 device_id 路由（2026-08 多用户改造）───────────────────────────
+// 手机访问入口 URL 携带 ?device=<device_id>（查询式——与薄转发兼容：只解析请求行、
+// 不读 body、不改写字节流，query 原样透传给桌面 mobile_server，桌面无感知）。
+// 逐 TCP 连接解析首行并按序解析目标：
+//   1. 显式 ?device=（合法）→ 路由该设备，并刷新 IP 粘性表；
+//   2. 无标记 → 查 IP 粘性表（TTL 内）：并行资源连接沿用首次导航的目标；
+//   3. 仍无 → RELAY_TUNNEL_DEVICE fallback（旧 URL / 存量用户不感知）。
+
+/// 从 HTTP 请求行提取指定 query 参数值。仅字符串处理不做百分号解码——
+/// device_id 为白名单安全字符集（见 tunnel_device_ok），客户端生成即安全字符。
+fn request_line_query_param<'a>(request_line: &'a str, key: &str) -> Option<&'a str> {
+    let target = request_line.split_whitespace().nth(1)?;
+    let query = target.split_once('?')?.1;
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key && !v.is_empty()).then_some(v)
+    })
+}
+
+/// device_id 合法性：非空、长度 ≤ TUNNEL_DEVICE_MAX_LEN、白名单字符
+/// （ASCII 字母数字与 -_.~，覆盖 desktop-<uuid simple> 及常规自定义 ID）
+fn tunnel_device_ok(device: &str) -> bool {
+    !device.is_empty()
+        && device.len() <= TUNNEL_DEVICE_MAX_LEN
+        && device
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
+}
+
+/// 从隧道 TCP 首个 HTTP 请求行提取显式目标设备；无/非法 → None（走粘性/fallback）。
+/// 同时接受 device_id 别名（对齐 /ws/device 的 query 键，容手写 URL）。
+fn extract_device_from_request_line(request_line: &str) -> Option<String> {
+    let v = request_line_query_param(request_line, "device")
+        .or_else(|| request_line_query_param(request_line, "device_id"))?;
+    tunnel_device_ok(v).then(|| v.to_string())
+}
+
+/// 解析本条隧道连接的目标设备：显式标记 > IP 粘性 > 默认（见区块注释）。
+/// 返回 (目标设备, 路由来源)——来源入日志便于现场排查多设备路由问题。
+fn resolve_tunnel_target(
+    state: &AppState,
+    ip: IpAddr,
+    explicit: Option<String>,
+    default: &str,
+) -> (String, &'static str) {
+    if let Some(device) = explicit {
+        {
+            let mut sticky = lock_recover(&state.tunnel_sticky);
+            // 顺手清理过期项：表规模 = 近期活跃手机数，量级极小，O(n) retain 足够
+            sticky.retain(|_, (_, seen)| {
+                seen.elapsed() < Duration::from_secs(TUNNEL_STICKY_TTL_SECS)
+            });
+            sticky.insert(ip, (device.clone(), Instant::now()));
+        }
+        return (device, "explicit");
+    }
+    let hit = {
+        let sticky = lock_recover(&state.tunnel_sticky);
+        sticky.get(&ip).and_then(|(d, seen)| {
+            (seen.elapsed() < Duration::from_secs(TUNNEL_STICKY_TTL_SECS)).then(|| d.clone())
+        })
+    };
+    match hit {
+        Some(d) => (d, "sticky"),
+        None => (default.to_string(), "default"),
+    }
+}
+
+/// 读取隧道连接的首个 HTTP 请求行（限长限时的预读），返回 (显式 device, 预读字节)。
+/// 预读字节必须在隧道就绪后先行转发给设备——否则手机首个 HTTP 请求滞留中继侧缓冲，
+/// 桌面本地服务器收不到首请求（页面永远打不开）。
+async fn read_tunnel_head(tcp: &mut TcpStream) -> (Option<String>, Vec<u8>) {
+    let mut buf: Vec<u8> = Vec::with_capacity(512);
+    let mut chunk = [0u8; 2048];
+    loop {
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line = String::from_utf8_lossy(&buf[..pos]);
+            return (
+                extract_device_from_request_line(line.trim_end_matches('\r')),
+                buf,
+            );
+        }
+        if buf.len() >= 16384 {
+            // 异常超大头部：放弃解析按 fallback，已读字节照常透传（不丢数据）
+            return (None, buf);
+        }
+        match tokio::time::timeout(
+            Duration::from_secs(TUNNEL_HEAD_TIMEOUT_SECS),
+            tcp.read(&mut chunk),
+        )
+        .await
+        {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return (None, buf),
+            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
+        }
+    }
+}
+
 /// 启动公网隧道监听（独立端口）。RELAY_TUNNEL_PORT 默认 18081；
-/// RELAY_TUNNEL_DEVICE 指定目标设备（默认 desktop-main）。
+/// RELAY_TUNNEL_DEVICE 为默认兜底目标（默认 desktop-main）——多设备改造后
+/// 正常路由按 URL ?device= / IP 粘性解析，仅无标记流量落到该默认值。
 async fn spawn_tunnel_listener(state: AppState) {
     let port: u16 = std::env::var("RELAY_TUNNEL_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(18081);
-    let target = std::env::var("RELAY_TUNNEL_DEVICE").unwrap_or_else(|_| "desktop-main".into());
+    let default_target =
+        std::env::var("RELAY_TUNNEL_DEVICE").unwrap_or_else(|_| "desktop-main".into());
 
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
@@ -849,9 +969,9 @@ async fn spawn_tunnel_listener(state: AppState) {
         }
     };
     tracing::info!(
-        "[relay] tunnel listening on 0.0.0.0:{} -> device {}",
+        "[relay] tunnel listening on 0.0.0.0:{} (route by ?device=, fallback {})",
         port,
-        target
+        default_target
     );
 
     loop {
@@ -860,7 +980,7 @@ async fn spawn_tunnel_listener(state: AppState) {
         };
         let ip = peer.ip();
         let st = state.clone();
-        let tgt = target.clone();
+        let tgt = default_target.clone();
 
         // ── 安全：隧道入口限流（每 IP 新建连接限速 + 全局/单 IP 并发上限） ──
         if !rate_check(&st.tunnel_rate, ip, TUNNEL_RATE_PER_IP_MIN) {
@@ -915,8 +1035,6 @@ impl Drop for TunnelCountGuard {
         }
     }
 }
-
-
 
 /// 设备离线页：设备隧道链路不在线时返回。自包含，zh-CN，移动端竖屏居中卡片。
 /// meta refresh 3s 自动重试：桌面重连（离线窗口 1~6s）期间拿到本页的手机端可自动恢复，
@@ -1149,7 +1267,12 @@ async fn write_static_page(tcp: &mut TcpStream, html: &str) {
     let _ = tcp.shutdown().await;
 }
 
-async fn handle_tunnel_conn(state: AppState, mut tcp: TcpStream, target: String, ip: IpAddr) {
+async fn handle_tunnel_conn(
+    state: AppState,
+    mut tcp: TcpStream,
+    fallback_target: String,
+    ip: IpAddr,
+) {
     // 并发计数已由调用方预占；guard 确保本函数所有退出路径释放
     let _guard = TunnelCountGuard {
         state: state.clone(),
@@ -1158,6 +1281,18 @@ async fn handle_tunnel_conn(state: AppState, mut tcp: TcpStream, target: String,
 
     // TCP_NODELAY：禁用 Nagle，避免 HTTP 小请求/控制帧被 40ms ACK 延迟累积拖慢转发
     let _ = tcp.set_nodelay(true);
+
+    // 0. 按 device_id 路由（多用户改造）：预读首行提取显式 ?device=，否则 IP 粘性 /
+    //    RELAY_TUNNEL_DEVICE 兜底。预读字节在隧道就绪后先行转发（见双向转发段）。
+    let (explicit_device, head) = read_tunnel_head(&mut tcp).await;
+    let (target, route_src) = resolve_tunnel_target(&state, ip, explicit_device, &fallback_target);
+    tracing::info!(
+        "[relay] tunnel conn {} -> device {} (route={}, head={}B)",
+        ip,
+        target,
+        route_src,
+        head.len()
+    );
 
     // 1. 链路分流（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）：
     //    链路离线 → 按设备通道（/ws/device）是否在线区分「连接中」与「真离线」，
@@ -1264,6 +1399,28 @@ async fn handle_tunnel_conn(state: AppState, mut tcp: TcpStream, target: String,
     let link2 = link.clone();
     // ready 等待期间收到的预读 Data 帧（Ready 丢帧兜底），先写出再进入正常转发
     let prelude = ready.1;
+    // 首包补投递：路由预读的首个 HTTP 请求行等头部字节，在设备就绪后、进入读循环前
+    // 先发给设备——服务端等 Ready 才放行数据（设备本地连接建立后 Data 才有归属），
+    // 不补投则手机首个请求滞留中继缓冲，桌面永远收不到首请求。
+    if !head.is_empty() {
+        use base64::Engine as _;
+        if link2
+            .send(TunnelFrame::Data {
+                tunnel_id: tunnel_id.clone(),
+                data: base64::engine::general_purpose::STANDARD.encode(&head),
+            })
+            .is_err()
+        {
+            // 设备链路已断：与读循环退出路径同样收口（writer 尚未 spawn，无需 abort）
+            lock_recover(&state.tunnels).remove(&tunnel_id);
+            lock_recover(&state.tunnel_owner).remove(&tunnel_id);
+            let _ = link2.send(TunnelFrame::Close {
+                tunnel_id: tunnel_id.clone(),
+            });
+            tracing::info!("[relay] tunnel closed: {}", tunnel_id);
+            return;
+        }
+    }
     // 设备帧 → TCP 写
     let writer = tokio::spawn(async move {
         for frame in prelude {
@@ -1428,7 +1585,10 @@ mod tests {
             "空 lan_url 时占位符应被替换为自动重试脚本"
         );
         // 无条件自动重试脚本仍注入（页面挂起后整体刷新，交给下一次请求重试）
-        assert!(html.contains("location.reload"), "无 lan_url 也必须有自动重试");
+        assert!(
+            html.contains("location.reload"),
+            "无 lan_url 也必须有自动重试"
+        );
         assert!(!html.contains("LAN_URL"), "无 lan_url 不注入探测脚本");
         assert!(html.contains("立即重试"), "无 lan_url 也必须有手动重试按钮");
     }
@@ -1437,7 +1597,10 @@ mod tests {
     fn offline_html_ignores_empty_lan_url() {
         let html = offline_html(Some(""));
         assert!(!html.contains("同一 WiFi 下直连电脑"));
-        assert!(html.contains("location.reload"), "空 lan_url 也必须有自动重试");
+        assert!(
+            html.contains("location.reload"),
+            "空 lan_url 也必须有自动重试"
+        );
         assert!(!html.contains("LAN_URL"));
         assert!(html.contains("立即重试"));
     }
@@ -1478,7 +1641,10 @@ mod tests {
         let html = retry_html(None);
         assert!(html.contains("连接不稳定，正在重试"));
         assert!(!html.contains("同一 WiFi 下直连电脑"));
-        assert!(html.contains("location.reload"), "无 lan_url 也必须有自动重试");
+        assert!(
+            html.contains("location.reload"),
+            "无 lan_url 也必须有自动重试"
+        );
         assert!(!html.contains("LAN_URL"), "无 lan_url 不注入探测脚本");
         assert!(!html.contains("<!--LAN_BLOCK-->"), "占位符替换为自动重试");
     }
@@ -1537,5 +1703,147 @@ mod tests {
 
         std::env::remove_var("RELAY_DATA_DIR");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── 隧道按 device_id 路由（多用户改造）──────────────────────────────
+
+    #[test]
+    fn request_line_query_param_extracts_value() {
+        assert_eq!(
+            request_line_query_param("GET /?device=abc HTTP/1.1", "device"),
+            Some("abc")
+        );
+        // 多参数：目标参数不在首位
+        assert_eq!(
+            request_line_query_param("GET /?token=t&device=dev-1 HTTP/1.1", "device"),
+            Some("dev-1")
+        );
+        // 路径 + query
+        assert_eq!(
+            request_line_query_param("GET /mobile/?device=x&foo=bar HTTP/1.1", "device"),
+            Some("x")
+        );
+        // 无 query / 键不存在 / 空值 → None
+        assert_eq!(request_line_query_param("GET / HTTP/1.1", "device"), None);
+        assert_eq!(
+            request_line_query_param("GET /?other=1 HTTP/1.1", "device"),
+            None
+        );
+        assert_eq!(
+            request_line_query_param("GET /?device= HTTP/1.1", "device"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_device_from_request_line_accepts_valid() {
+        assert_eq!(
+            extract_device_from_request_line("GET /?device=desktop-9f2c HTTP/1.1"),
+            Some("desktop-9f2c".to_string())
+        );
+        // device_id 别名（对齐 /ws/device 的 query 键）
+        assert_eq!(
+            extract_device_from_request_line("POST /api?device_id=d_1&a=b HTTP/1.1"),
+            Some("d_1".to_string())
+        );
+        // 合法字符集边界（-_.~ 与字母数字）
+        assert_eq!(
+            extract_device_from_request_line("GET /?device=A-z._~9 HTTP/1.1"),
+            Some("A-z._~9".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_device_from_request_line_rejects_invalid() {
+        // 无标记（旧 URL）→ None 走粘性/fallback
+        assert_eq!(
+            extract_device_from_request_line("GET /?token=x HTTP/1.1"),
+            None
+        );
+        assert_eq!(extract_device_from_request_line("GET / HTTP/1.1"), None);
+        // 空 / 非法字符 / 百分号编码（不做解码，白名单直接拒绝）
+        assert_eq!(
+            extract_device_from_request_line("GET /?device= HTTP/1.1"),
+            None
+        );
+        assert_eq!(
+            extract_device_from_request_line("GET /?device=a/b HTTP/1.1"),
+            None
+        );
+        assert_eq!(
+            extract_device_from_request_line("GET /?device=a%20b HTTP/1.1"),
+            None
+        );
+        // 超长（> TUNNEL_DEVICE_MAX_LEN = 128）防滥用
+        let long = "d".repeat(129);
+        assert_eq!(
+            extract_device_from_request_line(&format!("GET /?device={long} HTTP/1.1")),
+            None
+        );
+        let ok_len = "d".repeat(128);
+        assert_eq!(
+            extract_device_from_request_line(&format!("GET /?device={ok_len} HTTP/1.1")),
+            Some(ok_len)
+        );
+        // 垃圾行（非请求行）→ None
+        assert_eq!(extract_device_from_request_line(""), None);
+        assert_eq!(
+            extract_device_from_request_line("\x16\x03\x01\x00garbage"),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_target_explicit_marks_sticky_and_wins() {
+        let state = AppState::new();
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        let default = "desktop-main";
+
+        // 显式标记：路由到该设备，来源 explicit
+        let (t, src) = resolve_tunnel_target(&state, ip, Some("desktop-aaa".to_string()), default);
+        assert_eq!((t.as_str(), src), ("desktop-aaa", "explicit"));
+
+        // 同 IP 后续无标记连接（并行资源加载）：命中粘性表沿用显式目标
+        let (t, src) = resolve_tunnel_target(&state, ip, None, default);
+        assert_eq!((t.as_str(), src), ("desktop-aaa", "sticky"));
+
+        // 新的显式标记覆盖旧粘性
+        let (t, src) = resolve_tunnel_target(&state, ip, Some("desktop-bbb".to_string()), default);
+        assert_eq!((t.as_str(), src), ("desktop-bbb", "explicit"));
+        let (t, src) = resolve_tunnel_target(&state, ip, None, default);
+        assert_eq!((t.as_str(), src), ("desktop-bbb", "sticky"));
+
+        // 其他 IP 不受影响：走默认兜底
+        let other: IpAddr = "198.51.100.9".parse().unwrap();
+        let (t, src) = resolve_tunnel_target(&state, other, None, default);
+        assert_eq!((t.as_str(), src), ("desktop-main", "default"));
+    }
+
+    #[test]
+    fn resolve_target_sticky_ttl_expiry_falls_back_to_default() {
+        let state = AppState::new();
+        let ip: IpAddr = "203.0.113.8".parse().unwrap();
+
+        // 直接写入已过期的粘性条目（模拟 TTL 已过）
+        {
+            let mut sticky = lock_recover(&state.tunnel_sticky);
+            sticky.insert(
+                ip,
+                (
+                    "desktop-old".to_string(),
+                    Instant::now() - Duration::from_secs(TUNNEL_STICKY_TTL_SECS + 10),
+                ),
+            );
+        }
+        let (t, src) = resolve_tunnel_target(&state, ip, None, "desktop-main");
+        assert_eq!((t.as_str(), src), ("desktop-main", "default"));
+
+        // TTL 内的条目正常命中
+        {
+            let mut sticky = lock_recover(&state.tunnel_sticky);
+            sticky.insert(ip, ("desktop-fresh".to_string(), Instant::now()));
+        }
+        let (t, src) = resolve_tunnel_target(&state, ip, None, "desktop-main");
+        assert_eq!((t.as_str(), src), ("desktop-fresh", "sticky"));
     }
 }

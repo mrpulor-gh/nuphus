@@ -48,7 +48,8 @@
   border: none;
   border-radius: 5px;
   background: var(--fg-5);
-  cursor: pointer;
+  /* 纯视觉指示条，不参与点击（切换入口 = 气泡标题文本） */
+  pointer-events: none;
   transition:
     width 0.32s var(--ease-out),
     background-color 0.18s ease,
@@ -72,14 +73,8 @@
   box-shadow: 0 0 12px var(--accent-dim, rgba(59, 130, 246, 0.45));
   transition-delay: 0s !important;
 }
-.sr-bar:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
-/* 执行中点击被拒：shake 反馈 */
-
-/* ── hover 玻璃气泡：标题 + 重命名 ──
+/* ── hover 玻璃气泡：标题（可点击切换）+ 重命名 ──
    背景必须实色（--bg-card 三主题均为不透明 hex）：气泡悬浮在消息流上方，
    半透明 + backdrop-filter 会与 agent 文字叠影；不用任何透明/模糊 */
 .sr-bubble {
@@ -124,16 +119,44 @@
   transform: translateY(-50%) translateX(0);
 }
 
-.sr-title {
+.sr-title-btn {
+  display: inline-block;
+  min-width: 0;
+  padding: 2px 8px;
+  margin: -2px -8px; /* 放大点击热区，不挤气泡布局 */
+  border: none;
+  background: none;
+  font-family: inherit;
   font-size: var(--fz-md);
   line-height: 1.4;
   color: var(--fg-1);
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 8px;
+  transform-origin: left center;
+  transition:
+    transform var(--dur-med) var(--ease-spring),
+    color var(--dur-fast) var(--ease-out);
 }
-.sr-item.active .sr-title {
+.sr-title-btn:hover:not(:disabled) {
+  color: var(--accent);
+  transform: scale(1.05) translateY(-1px);
+}
+.sr-title-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.sr-title-btn:disabled {
+  cursor: default;
+}
+.sr-title-btn.active {
   font-weight: 600;
+}
+.sr-title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sr-edit-btn {
@@ -217,4 +240,21 @@
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
+}
+
+/* ── 手动归档：hover 气泡垃圾桶按钮（非 active 条目）── */
+.sr-archive-btn:hover {
+  color: var(--error, #ef4444);
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.12);
+}
+.sr-archive-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── 归档确认弹窗内容（容器复用 CompactModal，portal 到 body 居中）── */
+.sr-confirm-desc {
+  font-size: var(--fz-sm);
+  line-height: 1.6;
+  color: var(--fg-3);
 }

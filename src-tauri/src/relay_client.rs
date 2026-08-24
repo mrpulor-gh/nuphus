@@ -584,9 +584,13 @@ fn register_failure(
 /// 桌面端按此约定从中继 WS 地址派生公网入口，不引入新配置项。
 const TUNNEL_PUBLIC_PORT: u16 = 18081;
 
-/// 从中继配置派生隧道公网入口 URL（手机外网访问地址）。
-/// 派生规则：ws://host:18080 → http://host:18081；wss:// → https://；
-/// host 保留，端口替换为 TUNNEL_PUBLIC_PORT。未启用或 url 为空 → None。
+/// 隧道公网入口基址 URL（手机外网访问地址），**裸 origin 形态、不带任何参数**。
+/// 消费方（手机端 relay-hint 的 tunnel_url）把它当字符串前缀拼接 REST/WS 路径
+/// （frontend/mobile api.ts resolveApi / ws.ts host 提取）——带 query 会拼出坏 URL，
+/// 因此本函数保持改造前语义：显式 public_url 原样返回；派生规则
+/// ws://host:18080 → http://host:18081、wss:// → https://，host 保留，端口替换。
+/// 未启用或 url 为空 → None。多设备路由的 device 标记由导航入口变体携带
+/// （public_tunnel_entry_url），运行时连接靠中继 IP 粘性路由桥接。
 /// 手写解析（src-tauri 无 url crate 依赖，不为本需求单加依赖），
 /// 仅处理 `scheme://authority[/path]` 形态——配置即此形态。
 pub(crate) fn public_tunnel_url(cfg: &RelayClientConfig) -> Option<String> {
@@ -620,12 +624,27 @@ pub(crate) fn public_tunnel_url(cfg: &RelayClientConfig) -> Option<String> {
     Some(format!("{}://{}:{}", http_scheme, host, TUNNEL_PUBLIC_PORT))
 }
 
+/// 隧道公网**导航入口** URL = public_tunnel_url 基址 + `?device=<device_id>`。
+/// 用途：桌面设置页二维码/配对链接等「浏览器直接导航」场景——中继按该参数把
+/// 首条隧道连接路由到本机，并播种 IP 粘性表（后续无标记连接沿用，见 relay-server）。
+/// 仅基址不含 query/fragment 时追加（拼接语义不可靠时宁可不拼）；device_id 缺失或
+/// 未启用 → 与基址行为一致（None / 裸基址走服务端默认兜底）。
+pub(crate) fn public_tunnel_entry_url(cfg: &RelayClientConfig) -> Option<String> {
+    let base = public_tunnel_url(cfg)?;
+    let device = cfg.device_id.trim();
+    if device.is_empty() || base.contains('?') || base.contains('#') {
+        return Some(base);
+    }
+    Some(format!("{base}/?device={device}"))
+}
+
 /// 桌面设置页查询中继连接状态（与 /relay-hint 同一数据源，只读）
 #[derive(Serialize)]
 pub struct RelayClientStatus {
     pub enabled: bool,
     pub state: RelayConnState,
-    /// 隧道公网入口（http://host:18081），未启用中继时为 None；
+    /// 隧道公网入口（http(s)://host[:port]，多设备改造后携带 ?device=<device_id>），
+    /// 未启用中继时为 None；
     /// 设置页「远程访问」引导用它拼接配对链接
     pub public_url: Option<String>,
 }
@@ -636,7 +655,8 @@ pub fn relay_client_status() -> RelayClientStatus {
     RelayClientStatus {
         enabled: cfg.enabled,
         state: relay_conn_state(),
-        public_url: public_tunnel_url(&cfg),
+        // 二维码/配对链接是导航入口：携带 ?device= 供中继按设备路由（多用户改造）
+        public_url: public_tunnel_entry_url(&cfg),
     }
 }
 
@@ -1511,16 +1531,20 @@ mod backoff_tests {
 mod public_tunnel_url_tests {
     use super::*;
 
+    const DEV: &str = "desktop-9f2c7a1e";
+
     fn cfg(enabled: bool, url: &str) -> RelayClientConfig {
         RelayClientConfig {
             enabled,
             url: url.to_string(),
+            device_id: DEV.to_string(),
             ..Default::default()
         }
     }
 
     #[test]
     fn derives_http_from_ws_and_replaces_port() {
+        // 基址保持裸 origin（消费方按字符串前缀拼接 REST/WS 路径，不得带 query）
         assert_eq!(
             public_tunnel_url(&cfg(true, "ws://relay.example.com:18080")),
             Some("http://relay.example.com:18081".to_string())
@@ -1578,6 +1602,69 @@ mod public_tunnel_url_tests {
         // 非 ws/wss scheme 不派生（协议不明，宁缺毋滥）
         assert_eq!(
             public_tunnel_url(&cfg(true, "http://relay.example.com:18080")),
+            None
+        );
+    }
+
+    // ── 导航入口变体：携带 ?device=（多设备路由）────────────────────────
+
+    #[test]
+    fn entry_url_appends_device_to_derived_base() {
+        assert_eq!(
+            public_tunnel_entry_url(&cfg(true, "ws://relay.example.com:18080")),
+            Some(format!("http://relay.example.com:18081/?device={DEV}"))
+        );
+        assert_eq!(
+            public_tunnel_entry_url(&cfg(true, "wss://relay.example.com")),
+            Some(format!("https://relay.example.com:18081/?device={DEV}"))
+        );
+    }
+
+    #[test]
+    fn entry_url_appends_device_to_explicit_public_url() {
+        let mut c = cfg(true, "wss://relay.example.com");
+        c.public_url = "https://r.example.com".to_string();
+        assert_eq!(
+            public_tunnel_entry_url(&c),
+            Some(format!("https://r.example.com/?device={DEV}"))
+        );
+        // 尾部斜杠修剪后再追加
+        c.public_url = "https://r.example.com/".to_string();
+        assert_eq!(
+            public_tunnel_entry_url(&c),
+            Some(format!("https://r.example.com/?device={DEV}"))
+        );
+    }
+
+    #[test]
+    fn entry_url_verbatim_when_query_or_fragment_present() {
+        let mut c = cfg(true, "wss://relay.example.com");
+        c.public_url = "https://r.example.com/entry?x=1".to_string();
+        assert_eq!(
+            public_tunnel_entry_url(&c),
+            Some("https://r.example.com/entry?x=1".to_string())
+        );
+        c.public_url = "https://r.example.com/page#frag".to_string();
+        assert_eq!(
+            public_tunnel_entry_url(&c),
+            Some("https://r.example.com/page#frag".to_string())
+        );
+    }
+
+    #[test]
+    fn entry_url_without_device_id_stays_bare() {
+        let mut c = cfg(true, "ws://relay.example.com:18080");
+        c.device_id = String::new();
+        assert_eq!(
+            public_tunnel_entry_url(&c),
+            Some("http://relay.example.com:18081".to_string())
+        );
+    }
+
+    #[test]
+    fn entry_url_none_when_disabled() {
+        assert_eq!(
+            public_tunnel_entry_url(&cfg(false, "ws://relay.example.com:18080")),
             None
         );
     }

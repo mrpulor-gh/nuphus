@@ -1,6 +1,6 @@
 //! Session Shelf —— 浅层会话展示台
 //!
-//! 内存 LRU（≤10）+ 磁盘镜像（config_dir/nuphus/sessions/{id}.json）。
+//! 内存 LRU（≤10）+ SQLite 完整快照（sessions.snapshot 列，方案A）。
 //! 存储原始 Session 对象本身：切换 = 整对象换入换出，tool_use/tool_result
 //! 配对由构造保证，不经过任何「重建/转换」路径（规避上下文正确性风险）。
 //!
@@ -9,7 +9,9 @@
 //!           3) 同 backing mode（v1 不触碰 set_mode 联动语义）
 //!
 //! 持久化时机：归档（切换/新建让位）、任务完成回填、退出钩子。
-//! 启动时惰性装载最近镜像为 active（见 leader.rs 恢复链最前端）。
+//! 启动时惰性装载最近快照为 active（见 leader.rs 恢复链最前端）。
+//! 旧磁盘镜像（config_dir/nuphus/sessions/{id}.json）由 migrate_legacy_mirrors
+//! 幂等导入 SQLite 后保留不删（保守）。
 
 use crate::state::AppState;
 use nuphus::session::{MessageRole, Session};
@@ -21,6 +23,7 @@ use tauri::State;
 /// 展示台容量上限
 pub const SHELF_CAPACITY: usize = 10;
 
+/// 旧磁盘镜像目录（迁移用：扫描导入 SQLite；导入后文件保留不删）
 fn mirror_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -28,15 +31,7 @@ fn mirror_dir() -> PathBuf {
         .join("sessions")
 }
 
-fn mirror_path(id: &str) -> PathBuf {
-    let safe: String = id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect();
-    mirror_dir().join(format!("{safe}.json"))
-}
-
-/// 镜像文件包装：记录 backing mode 以便跨重启恢复归属
+/// 旧镜像文件包装（仅迁移解析用，新 IO 走 SQLite snapshot 列）
 #[derive(Serialize, Deserialize)]
 struct MirrorFile {
     mode: String,
@@ -179,66 +174,93 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-// ── 镜像 IO（best-effort，失败只 warn 不阻塞主流程）──
+/// RFC3339 时间字符串 → Unix 毫秒（sessions.updated_at 为 RFC3339 文本）。
+/// 解析失败返回 None，调用方回退 now_millis()。
+fn rfc3339_to_millis(s: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis().max(0) as u64)
+}
+
+// ── 镜像 IO（SQLite 快照，best-effort，失败只 warn 不阻塞主流程）──
 
 pub(crate) fn write_mirror(mode: &str, session: &Session) {
-    let dir = mirror_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!("[Shelf] 创建镜像目录失败: {e}");
-        return;
-    }
-    let file = MirrorFile {
-        mode: mode.to_string(),
-        session: session.clone(),
-    };
-    match serde_json::to_string_pretty(&file) {
+    match serde_json::to_string(session) {
         Ok(json) => {
-            let final_path = mirror_path(&session.id);
-            let tmp = final_path.with_extension("json.tmp");
-            if let Err(e) = std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &final_path)) {
-                tracing::warn!("[Shelf] 写镜像失败 id={}: {e}", session.id);
+            if let Err(e) = nuphus::store::session::upsert_snapshot(&session.id, mode, &json) {
+                tracing::warn!("[Shelf] 写快照失败 id={}: {e}", session.id);
+            }
+            // 保留策略：SQLite 只留最近 SHELF_CAPACITY 个快照（轻量切换语义），
+            // 超出清空 snapshot 列防无界增长；元数据行保留。best-effort。
+            if let Err(e) = nuphus::store::session::prune_snapshots(SHELF_CAPACITY) {
+                tracing::warn!("[Shelf] 快照保留策略执行失败: {e}");
             }
         }
-        Err(e) => tracing::warn!("[Shelf] 序列化镜像失败 id={}: {e}", session.id),
+        Err(e) => tracing::warn!("[Shelf] 序列化快照失败 id={}: {e}", session.id),
     }
 }
 
 pub(crate) fn read_mirror(id: &str) -> Option<(String, Session)> {
-    let content = std::fs::read_to_string(mirror_path(id)).ok()?;
-    let file: MirrorFile = serde_json::from_str(&content).ok()?;
-    Some((file.mode, file.session))
+    let Ok(Some((mode, json))) = nuphus::store::session::get_snapshot(id) else {
+        return None;
+    };
+    let session: Session = serde_json::from_str(&json).ok()?;
+    Some((mode, session))
 }
 
 fn delete_mirror(id: &str) {
-    let _ = std::fs::remove_file(mirror_path(id));
+    let _ = nuphus::store::session::delete_snapshot(id);
 }
 
-/// 启动恢复：磁盘上最新的镜像（按 mtime）。供 leader.rs 恢复链最前端调用。
+/// 启动恢复：SQLite 中最新快照（按 updated_at）。供 leader.rs 恢复链最前端调用。
 pub(crate) fn load_latest_mirror() -> Option<(String, Session)> {
-    let dir = mirror_dir();
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for e in std::fs::read_dir(&dir).ok()?.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(mt) = e.metadata().and_then(|m| m.modified()) else {
-            continue;
-        };
-        if best.as_ref().map(|(t, _)| mt > *t).unwrap_or(true) {
-            best = Some((mt, p));
-        }
-    }
-    let (_, path) = best?;
-    let file: MirrorFile = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    if file.session.is_empty() {
+    let Ok(Some((mode, json))) = nuphus::store::session::latest_snapshot() else {
+        return None;
+    };
+    let session: Session = serde_json::from_str(&json).ok()?;
+    if session.is_empty() {
         return None;
     }
-    Some((file.mode, file.session))
+    Some((mode, session))
 }
 
-/// 启动预热：磁盘镜像装回内存展示台（≤10 个最新），供列表命令直接消费。
+/// 启动预热：SQLite 快照装回内存展示台（≤10 个最新），供列表命令直接消费。
+/// updated_at 使用 sessions 表时间（RFC3339），非文件 mtime。
 pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
+    let Ok(snapshots) = nuphus::store::session::list_snapshots(SHELF_CAPACITY) else {
+        return;
+    };
+    for (id, mode, updated_at) in snapshots {
+        let Ok(Some((_, json))) = nuphus::store::session::get_snapshot(&id) else {
+            continue;
+        };
+        let Ok(file_session) = serde_json::from_str::<Session>(&json) else {
+            continue;
+        };
+        if file_session.is_empty()
+            || shelf.contains(&file_session.id)
+            || shelf.len() >= SHELF_CAPACITY
+        {
+            continue;
+        }
+        let entry = ShelfEntry {
+            id: file_session.id.clone(),
+            mode,
+            title: derive_title(&file_session),
+            message_count: file_session.messages().len(),
+            updated_at: rfc3339_to_millis(&updated_at).unwrap_or_else(now_millis),
+        };
+        let id = entry.id.clone();
+        shelf.entries.insert(id.clone(), entry);
+        shelf.sessions.insert(id.clone(), file_session);
+        shelf.order.insert(0, id);
+    }
+}
+
+/// 旧磁盘镜像迁移：扫描 mirror_dir()/*.json（MirrorFile{mode,session} 格式），
+/// 按文件修改时间倒序，仅对 sessions 表无 snapshot 的 id 导入（有则跳过）。
+/// 文件解析失败仅 warn 不中断；旧文件保留不删。幂等（多次调用安全）。
+pub(crate) fn migrate_legacy_mirrors() {
     let dir = mirror_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
@@ -259,27 +281,30 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
         })
         .collect();
     files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
-    for (_, path) in files.into_iter().take(SHELF_CAPACITY) {
+    let mut imported = 0usize;
+    for (_, path) in files {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
         let Ok(file) = serde_json::from_str::<MirrorFile>(&content) else {
+            tracing::warn!("[Shelf] 旧镜像解析失败，跳过: {}", path.display());
             continue;
         };
-        if file.session.is_empty() || shelf.contains(&file.session.id) || shelf.len() >= SHELF_CAPACITY {
+        if file.session.is_empty() {
             continue;
         }
-        let entry = ShelfEntry {
-            id: file.session.id.clone(),
-            mode: file.mode,
-            title: derive_title(&file.session),
-            message_count: file.session.messages().len(),
-            updated_at: now_millis(),
-        };
-        let id = entry.id.clone();
-        shelf.entries.insert(id.clone(), entry);
-        shelf.sessions.insert(id.clone(), file.session);
-        shelf.order.insert(0, id);
+        // 已有快照则跳过（幂等，不覆盖已有数据）
+        if let Ok(Some(_)) = nuphus::store::session::get_snapshot(&file.session.id) {
+            continue;
+        }
+        if let Ok(json) = serde_json::to_string(&file.session) {
+            if nuphus::store::session::upsert_snapshot(&file.session.id, &file.mode, &json).is_ok() {
+                imported += 1;
+            }
+        }
+    }
+    if imported > 0 {
+        tracing::info!("[Shelf] 旧镜像迁移完成，导入 {imported} 个快照");
     }
 }
 
@@ -361,13 +386,14 @@ fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind
     upsert_meta_row(&snapshot, &entry.title);
     if let Ok(mut shelf) = state.shelf.lock() {
         if let Some(evicted) = shelf.put(entry, snapshot) {
-            delete_mirror(&evicted);
-            tracing::info!("[Shelf] 淘汰最旧会话 {evicted}");
+            // 淘汰仅移除内存 LRU 条目；SQLite 快照永久保留，重启后仍可恢复
+            tracing::info!("[Shelf] 淘汰最旧会话 {evicted}（SQLite 快照保留）");
         }
     }
 }
 
-/// 列出展示台：active 在首位，其后 newest-first。附 can_switch 供前端置灰。
+/// 列出展示台：按 created_at 降序稳定排序（最新创建在上，切换/激活不改变位置，
+/// 只通过 is_active 变化颜色/效果）。附 can_switch 供前端置灰。
 #[tauri::command]
 pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let can_switch = guard_switch(&state).is_ok();
@@ -378,8 +404,12 @@ pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Val
         .unwrap_or_else(|_| "leader".to_string());
     let kind = normalize_mode(&current_mode);
 
-    let mut items: Vec<serde_json::Value> = Vec::new();
+    // 收集候选 (id, item_json, is_active)；active 与会话台条目统一参与稳定排序
+    let mut candidates: Vec<(String, serde_json::Value, bool)> = Vec::new();
+    let mut active_id: Option<String> = None;
 
+    // active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
+    // 以 active 为准展示，shelf 循环跳过同 id 去重。
     if let Ok(ctx) = state.runtime.lock() {
         if let Some(sess) = active_session(&ctx, kind) {
             if !sess.is_empty() {
@@ -390,34 +420,71 @@ pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Val
                     .and_then(|s| s.titles.get(&sess.id).cloned())
                     .unwrap_or_default();
                 let e = build_entry(sess.id.clone(), kind, sess, Some(&title));
-                items.push(serde_json::json!({
-                    "id": e.id, "mode": e.mode, "title": e.title,
-                    "message_count": e.message_count, "updated_at": e.updated_at,
-                    "is_active": true,
-                }));
+                active_id = Some(e.id.clone());
+                candidates.push((
+                    e.id.clone(),
+                    serde_json::json!({
+                        "id": e.id, "mode": e.mode, "title": e.title,
+                        "message_count": e.message_count, "updated_at": e.updated_at,
+                        "is_active": true,
+                    }),
+                    true,
+                ));
             }
         }
     }
 
     if let Ok(shelf) = state.shelf.lock() {
         for id in &shelf.order {
+            if active_id.as_deref() == Some(id.as_str()) {
+                continue;
+            }
             let Some(e) = shelf.get(id) else { continue };
-            items.push(serde_json::json!({
-                "id": e.id, "mode": e.mode, "title": e.title,
-                "message_count": e.message_count, "updated_at": e.updated_at,
-                "is_active": false,
-            }));
+            candidates.push((
+                e.id.clone(),
+                serde_json::json!({
+                    "id": e.id, "mode": e.mode, "title": e.title,
+                    "message_count": e.message_count, "updated_at": e.updated_at,
+                    "is_active": false,
+                }),
+                false,
+            ));
         }
     }
 
-    Ok(serde_json::json!({ "can_switch": can_switch, "items": items }))
+    // 稳定排序：created_at 降序（最新创建在上）；缺失/解析失败排最后；同时间按 id 保序。
+    let created_at_map = nuphus::store::session::list_created_at(
+        &candidates.iter().map(|c| c.0.clone()).collect::<Vec<String>>(),
+    )
+    .unwrap_or_default();
+    candidates.sort_by(|a, b| {
+        let ta = created_at_map
+            .get(&a.0)
+            .and_then(|s| rfc3339_to_millis(s))
+            .unwrap_or(0);
+        let tb = created_at_map
+            .get(&b.0)
+            .and_then(|s| rfc3339_to_millis(s))
+            .unwrap_or(0);
+        tb.cmp(&ta).then_with(|| a.0.cmp(&b.0))
+    });
+
+    Ok(serde_json::json!({
+        "can_switch": can_switch,
+        "items": candidates.into_iter().map(|(_, v, _)| v).collect::<Vec<_>>(),
+    }))
 }
 
 /// 切换会话。守卫/归属校验失败返回稳定错误码字符串（busy / append_pending /
-/// mode_mismatch / not_found / no_agent），前端映射文案。
+/// mode_mismatch / not_found），前端映射文案。无 agent 槽（重启后新进程
+/// leader/workflow 槽为空）时降级 backup 中转成功返回，不再报 no_agent。
 #[tauri::command]
 pub fn switch_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    guard_switch(&state).map_err(|c| c.to_string())?;
+    switch_session_inner(&state, id)
+}
+
+fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
+    guard_switch(state).map_err(|c| c.to_string())?;
 
     let current_mode = state
         .current_mode
@@ -464,14 +531,31 @@ pub fn switch_session(state: State<'_, AppState>, id: String) -> Result<(), Stri
 
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
 
-    archive_active(&state, &mut ctx, kind);
+    archive_active(state, &mut ctx, kind);
 
     let Some(slot) = active_session_mut(&mut ctx, kind) else {
-        // 无 agent 可装：目标放回展示台避免丢失
+        // 无 agent 槽可装（重启/build 后新进程 leader/workflow 槽为 None，agent 仅在
+        // 发送消息时才创建）：
+        // 降级为 backup 中转——与 resume_latest_session 同机制：目标会话序列化进
+        // session_backup，前端 get_chat_history 经 backup 回退路径显示目标历史；
+        // 下次发消息时 run_runtime_with_config 从 session_backup_json 恢复完整上下文
+        // （含 ToolUse/ToolResult，非 text-only）。
+        // 目标放回展示台避免 rail 丢条目（take/put 仅动内存，磁盘镜像不动，重启仍可恢复）。
+        let sid = entry.id.clone();
+        if let Ok(json) = serde_json::to_string(&target_session) {
+            if let Ok(mut sb) = state.session.lock() {
+                sb.session_backup = Some(json);
+                sb.last_message.clear();
+                sb.last_message_images.clear();
+            }
+        }
         if let Ok(mut shelf) = state.shelf.lock() {
             shelf.put(entry, target_session);
         }
-        return Err("no_agent".to_string());
+        tracing::info!(
+            "[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({kind})"
+        );
+        return Ok(());
     };
     *slot = target_session;
 
@@ -499,7 +583,17 @@ pub fn new_chat_session_cmd(state: State<'_, AppState>) -> Result<String, String
     if let Some(slot) = active_session_mut(&mut ctx, kind) {
         *slot = fresh;
     } else {
-        return Err("no_agent".to_string());
+        // 无 agent 槽（重启/build 后新进程槽为空）：清空 backup 表示新会话并返回新 id。
+        // 前端 handleNewChat 已 resetTransientUI 清空本地气泡，get_chat_history 因
+        // backup 与 agent 均为空返回欢迎页——与新会话语义一致；下次发消息时
+        // run_runtime_with_config 从空 backup 构建全新 session。
+        if let Ok(mut sb) = state.session.lock() {
+            sb.session_backup = None;
+            sb.last_message.clear();
+            sb.last_message_images.clear();
+        }
+        tracing::info!("[Shelf] 无 agent 槽，新建对话 {new_id} ({kind})（backup 已清空）");
+        return Ok(new_id);
     }
     tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
     Ok(new_id)
@@ -542,6 +636,29 @@ pub fn rename_session_cmd(
         })
     };
     nuphus::store::session::upsert_session(&row).map_err(|e| e.to_string())
+}
+
+/// 用户手动归档：把 rail 中指定会话移出展示台并清快照（元数据行+文本记忆保留可查）。
+/// 与 LRU 淘汰语义一致，由用户主动触发（前端非 active 条目显示归档按钮 + 确认弹窗）。
+/// active 会话在 runtime 不在 shelf，无法经此归档（前端不显示按钮）。错误码：
+/// busy / append_pending / not_found。
+#[tauri::command]
+pub fn archive_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    guard_switch(&state).map_err(|c| c.to_string())?;
+
+    let removed = {
+        let mut shelf = state.shelf.lock().map_err(|e| e.to_string())?;
+        shelf.take(&id)
+    };
+    let Some((entry, session)) = removed else {
+        return Err("not_found".to_string());
+    };
+    // 元数据行确保落库（记忆页列表可查）；快照清空（与 LRU 淘汰一致：rail 移除后
+    // 不再保留完整执行上下文，对话文本记忆仍可经记忆页/搜索查看）
+    upsert_meta_row(&session, &entry.title);
+    delete_mirror(&id);
+    tracing::info!("[Shelf] 用户手动归档会话 {} ({})", entry.id, entry.mode);
+    Ok(())
 }
 
 /// 是否存在可恢复的最近会话镜像（leader 归属、非空）——欢迎页「继续对话」按钮显示条件
@@ -658,16 +775,80 @@ mod tests {
     }
 
     #[test]
-    fn mirror_roundtrip_preserves_session() {
-        // 用临时目录验证序列化往返（mirror_dir 固定，测试后清理）
-        let s = session_with_user(&["镜像往返测试"]);
+    fn snapshot_roundtrip_preserves_session() {
+        // SQLite 快照往返（Session::new 生成随机 id，测试结束删除整行清理，不污染真实库）
+        let s = session_with_user(&["快照往返测试"]);
         write_mirror("leader", &s);
-        let (mode, restored) = read_mirror(&s.id).expect("镜像应可读回");
+        let (mode, restored) = read_mirror(&s.id).expect("快照应可读回");
         assert_eq!(mode, "leader");
         assert_eq!(restored.id, s.id);
         assert_eq!(restored.messages().len(), s.messages().len());
         delete_mirror(&s.id);
-        assert!(read_mirror(&s.id).is_none());
+        assert!(read_mirror(&s.id).is_none(), "delete 后 read 应为 None");
+        let _ = nuphus::store::session::delete_session(&s.id);
+    }
+
+    #[test]
+    fn warm_from_disk_loads_snapshots_from_sqlite() {
+        // 写两个快照（不同 updated_at），warm_from_disk 应从 SQLite 装回内存展示台
+        let a = session_with_user(&["快照A"]);
+        let b = session_with_user(&["快照B"]);
+        write_mirror("leader", &a);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        write_mirror("workflow", &b);
+
+        let mut shelf = ShelfState::default();
+        warm_from_disk(&mut shelf);
+        assert!(shelf.contains(&a.id), "A 应被装载");
+        assert!(shelf.contains(&b.id), "B 应被装载");
+        let entry_b = shelf.get(&b.id).expect("B 应有条目");
+        assert_eq!(entry_b.mode, "workflow", "mode 应来自快照");
+
+        let _ = nuphus::store::session::delete_session(&a.id);
+        let _ = nuphus::store::session::delete_session(&b.id);
+    }
+
+    #[test]
+    fn load_latest_mirror_prefers_most_recent_snapshot() {
+        let a = session_with_user(&["旧快照"]);
+        let b = session_with_user(&["新快照"]);
+        write_mirror("leader", &a);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        write_mirror("workflow", &b);
+
+        let (mode, latest) = load_latest_mirror().expect("应有最新快照");
+        assert_eq!(latest.id, b.id, "最新写入的快照应优先");
+        assert_eq!(mode, "workflow");
+
+        let _ = nuphus::store::session::delete_session(&a.id);
+        let _ = nuphus::store::session::delete_session(&b.id);
+    }
+
+    #[test]
+    fn migrate_legacy_mirrors_imports_old_files_idempotent() {
+        // 构造旧格式镜像文件（MirrorFile{mode,session}，随机 id），写临时目录
+        let dir = mirror_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = session_with_user(&["旧镜像导入测试"]);
+        let sid = s.id.clone();
+        let file_path = dir.join(format!("legacy-{sid}.json"));
+        let legacy = serde_json::json!({ "mode": "leader", "session": s });
+        std::fs::write(&file_path, serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        migrate_legacy_mirrors();
+        let imported = nuphus::store::session::get_snapshot(&sid)
+            .expect("旧镜像应导入 SQLite 快照");
+        assert_eq!(imported.0, "leader", "导入的 mode 应保留");
+
+        // 幂等：再次迁移不覆盖已有快照
+        migrate_legacy_mirrors();
+        let again = nuphus::store::session::get_snapshot(&sid).unwrap();
+        assert_eq!(again.0, imported.0);
+        assert_eq!(again.1, imported.1, "幂等迁移不得改变已有快照内容");
+
+        // 清理：删除临时文件 + SQLite 行
+        let _ = std::fs::remove_file(&file_path);
+        let _ = nuphus::store::session::delete_session(&sid);
     }
 
     #[test]
@@ -675,5 +856,43 @@ mod tests {
         assert_eq!(normalize_mode("workflow"), "workflow");
         assert_eq!(normalize_mode("leader"), "leader");
         assert_eq!(normalize_mode("custom-agent-x"), "leader");
+    }
+
+    /// 重启后新进程 leader_agent/workflow_agent 槽为 None（agent 仅在发送消息时创建）。
+    /// switch_session 此时不应报 no_agent，而降级 backup 中转：session_backup 写入目标、
+    /// 目标放回展示台。前端经 backup 回退路径显示历史，下次发消息经 JSON 恢复上下文。
+    #[test]
+    fn switch_session_without_agent_falls_back_to_backup() {
+        let state = AppState::default();
+        let target = session_with_user(&["目标会话"]);
+        let target_id = target.id.clone();
+        let entry = ShelfEntry {
+            id: target_id.clone(),
+            mode: "leader".into(),
+            title: "目标会话".into(),
+            message_count: target.messages().len(),
+            updated_at: now_millis(),
+        };
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(entry, target);
+        }
+        let r = switch_session_inner(&state, target_id.clone());
+        assert!(r.is_ok(), "无 agent 槽时应降级成功: {:?}", r.err());
+
+        // 目标会话已写入 session_backup
+        let sb = state.session.lock().unwrap();
+        let backup = sb
+            .session_backup
+            .as_ref()
+            .expect("session_backup 应被写入目标会话");
+        let restored: Session = serde_json::from_str(backup).expect("backup 应为合法 Session");
+        assert_eq!(restored.id, target_id);
+        assert_eq!(restored.messages().len(), target.messages().len());
+        drop(sb);
+
+        // 目标放回展示台，rail 不丢条目
+        let shelf = state.shelf.lock().unwrap();
+        assert!(shelf.contains(&target_id), "目标应放回展示台");
     }
 }

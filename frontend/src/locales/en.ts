@@ -126,6 +126,10 @@ const en: Record<string, string> = {
   'sessionRail.switchFailAppend': 'Append instructions pending, try again shortly',
   'sessionRail.switchFailMode': 'That session belongs to another run mode',
   'sessionRail.switchFailGeneric': 'Switch failed',
+  'sessionRail.archive': 'Archive',
+  'sessionRail.archiveConfirmTitle': 'Archive this session?',
+  'sessionRail.archiveConfirmDesc': 'It will be removed from the session rail; conversation records stay viewable in the memory page.',
+  'sessionRail.archiveFailGeneric': 'Archive failed',
 
   // ── Welcome ──
   'welcome.resume': 'Resume',
