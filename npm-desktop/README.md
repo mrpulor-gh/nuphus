@@ -13,16 +13,16 @@
 # 发布当前版本（版本号自动读取 src-tauri/tauri.conf.json）
 npm run publish:npm
 
-# 指定版本
-npm run publish:npm -- --version 0.1.3
+# 指定版本（显式版本号用 PS 风格 -Version；npm 风格开关见下表，脚本内自动归位）
+npm run publish:npm -- -Version 0.1.3
 ```
 
 ## 前置条件
 
-1. **代码已打 tag 并推送**，GitHub Actions 已完成 Release 构建上传（release.yml）——资产名固定：
-   - `nuphus_windows_amd64.zip`
-   - `nuphus_macos_arm64.zip`
-   - `nuphus_linux_amd64.tar.gz`
+1. **代码已打 tag 并推送**，GitHub Actions 已完成 Release 构建上传（release.yml）——资产名随版本：
+   - `nuphus-win32-x64-<version>.zip`
+   - `nuphus-osx-arm64-<version>.zip`
+   - `nuphus-linux-x64-<version>.tar.gz`
 2. **npm 已认证**：`npm whoami` 可返回账号（需对 `@nuphus` scope 有发布权限，token 建议放环境变量 `NPM_TOKEN`）
 3. Windows 10+（脚本用系统自带 `tar.exe` 解压 zip / tar.gz）
 

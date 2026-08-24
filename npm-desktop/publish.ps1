@@ -1,14 +1,17 @@
-# npm-desktop/publish.ps1
+﻿# npm-desktop/publish.ps1
 # Nuphus Desktop npm release pipeline:
 #   download platform assets from GitHub Releases
 #   -> assemble 4 packages (meta + 3 platform) -> publish -> verify install
 #
 # Usage (run from repo root via npm script):
 #   npm run publish:npm                      # release current version (reads src-tauri/tauri.conf.json)
-#   npm run publish:npm -- --version 0.1.3   # explicit version
+#   npm run publish:npm -- -Version 0.1.3    # explicit version（显式版本号用 PS 风格）
 #   npm run publish:npm -- --dry-run         # preflight: version/auth/existing-version/asset checks only
-#   npm run publish:npm -- --skip-download   # reuse assets already under downloads/
+#   npm run publish:npm -- --skip-download   # reuse assets already under downloads/<version>/
 #   npm run publish:npm -- --skip-verify     # skip post-publish install verification
+# 开关同时接受 npm 风格（--dry-run 等，脚本内防呆归位）与 PS 风格（-DryRun）。
+# 注意：npm→-Command 路径下多余参数以位置参数进入脚本——开关靠防呆块识别；
+# 显式版本号必须写 -Version x.y.z（--version 形式无法携带值，会明确报错）。
 #
 # Requirements:
 #   - Windows 10+ (uses built-in tar.exe for zip and tar.gz extraction)
@@ -22,8 +25,25 @@ param(
     [string]$Version = "",
     [switch]$SkipDownload,
     [switch]$SkipVerify,
-    [switch]$DryRun
+    [switch]$DryRun,
+    # npm 风格开关经位置传入时的兜底收口（--skip-download --dry-run 等多标记）
+    [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraFlags
 )
+
+# 防呆（2026-08-24 实测事故）：npm 风格的 '--skip-download' 无法绑定 PS 开关
+# （参数名匹配不含连字符），会按位置落进 $Version，被当成版本号拼出
+# v--skip-download 的下载 URL 空转 10 分钟后 404。此处统一识别归位：
+$flagTokens = @($Version, $ExtraFlags) | Where-Object { $_ -match '^-' }
+if ($flagTokens.Count -gt 0) {
+    foreach ($t in $flagTokens) {
+        if     ($t -match 'skip.download') { $SkipDownload = $true }
+        elseif ($t -match 'skip.verify')   { $SkipVerify   = $true }
+        elseif ($t -match 'dry')           { $DryRun       = $true }
+        else { throw "无法识别的参数 '$t'——开关用 -SkipDownload/-SkipVerify/-DryRun/--skip-download 等；显式版本号用 -Version x.y.z" }
+    }
+    if ($Version -match '^-') { $Version = "" }
+}
 
 $ErrorActionPreference = 'Stop'
 
@@ -274,8 +294,18 @@ Test-NotPublished "@nuphus/$MetaName" $version
 
 $assetFiles = @{}
 foreach ($p in $Platforms) {
-    $f = Get-Asset $p $version
-    if ($f) { $assetFiles[$p.Name] = $f }
+    if ($SkipDownload) {
+        # 只用版本隔离缓存，缺失即报错（不联网）；缓存由不带开关的完整跑一次填充
+        $local = "$Downloads\$version\$($p.Asset -f $version)"
+        if (-not (Test-Path $local)) {
+            throw "--skip-download: 缓存缺失 $local ——先去掉开关完整运行一次完成下载"
+        }
+        Write-Ok "using cached (skip-download): $(Split-Path -Leaf $local) (size $((Get-Item $local).Length) bytes)"
+        $assetFiles[$p.Name] = $local
+    } else {
+        $f = Get-Asset $p $version
+        if ($f) { $assetFiles[$p.Name] = $f }
+    }
 }
 
 foreach ($p in $Platforms) {
