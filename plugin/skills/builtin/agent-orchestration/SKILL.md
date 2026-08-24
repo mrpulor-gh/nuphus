@@ -24,9 +24,46 @@ process = "opencode.exe"
 
 调用决策：Read team.toml → process_list 看谁活着（活着优先）→ 按平台能力匹配。不维护历史评分。
 
+### 跑通即归档（强制，当轮完成）
+
+新外部 Agent 首次**跑通验证**后，必须当轮登记归档，禁止「以后再用再配」——不归档则下次会话无从知晓其存在与用法，跑通经验直接丢失。
+
+1. **配置中心录入**：桌面 设置 → 外部 Agent → 新增（走 `upsert_external_agent`，字段填全）：
+   - `key`：唯一 id（字母数字-_；保存后不可改）
+   - `mode`：background / embedded / standalone / web ——窗口分类依据（§2 交互方式由此决定）
+   - `display_name` / `icon`：状态栏与人读标识
+   - `open` / `args`：启动命令与参数
+   - `process`：进程名特征（process_list 识别依赖此字段）
+   - `description`：职责一句话（路由提示；新 agent 自动同步为其 `.nuphus/handoff/{key}/read.md` 的职责段）
+2. **落盘核对**：`plugin/team.toml` 出现该段且原有段未被破坏（写回是段级增量）；新 key 联动生成 handoff 工作目录。
+3. 完整段示例：
+
+```toml
+[opencode]
+type = "terminal"        # terminal | web-ui | desktop（写回时由 mode 归并，读回可反推）
+mode = "background"      # background | embedded | standalone | web
+display_name = "OpenCode"
+icon = "terminal"
+open = "终端执行 opencode"
+process = "opencode.exe"
+description = "终端 CLI 编码 Agent：修 bug / 加功能 / 重构 / 跑测试"
+```
+
 ---
 
 ## 2. 交互协议
+
+### 窗口分类（先分类，再选交互方式——禁止跨类操作）
+
+| 类别 | team.toml 标识 | 窗口特征 | 正确交互 | 明令禁止 |
+|---|---|---|---|---|
+| 终端类 | type=terminal / mode=background、embedded | 控制台/TUI（conhost、Windows Terminal），无任何 GUI 控件 | 激活窗口后 desktop_input **直接打字**，`enter` 发送；OCR 仅用于读回显确认响应（§2 窗口定位）| ❌ 找输入框/按钮等控件；❌ 走 §6 ui-maps 控件定位 |
+| Web 类 | type=web-ui / mode=web | 浏览器/WebView 渲染的页面 | 按 §6 定位页面输入框（textarea/contenteditable），send 多为 `ctrl+enter` | ❌ 当终端直打 |
+| 桌面类 | mode=standalone / type=desktop | 原生 GUI 应用（独立输入框/按钮） | 有 ui-maps 缓存 → 按 §6 缓存定位；**无缓存 → 首次必须先视觉分析定位（见下）** | ❌ 未定位就盲打坐标 |
+
+判错代价（实测教训）：对终端窗口执行「找输入框」会无限空转——终端根本没有该控件，轻则浪费轮次，重则误点窗口内文本导致 TUI 进入意外状态。
+
+**桌面类无 ui-maps 首跑流程（强制）**：窗口激活 → 截图 + vision 读屏（识别窗口布局/目标控件语义位置）→ `desktop_perceive` 精确定位控件坐标与可交互性 → 确认后才执行操作 → **当轮把定位结论写入 `plugin/ui-maps/{应用名}.json`**（window 定位 + interact 步骤 + verify_anchor，格式见 §6）。视觉分析只做一次，之后一律走缓存；布局实质变化才重新识别。
 
 ### 窗口定位（terminal 类，不可跳过）
 
