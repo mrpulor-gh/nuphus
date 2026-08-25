@@ -4,6 +4,7 @@
  */
 import type { TraceItem } from './store'
 import { t } from './i18n'
+import { resolveTunnelDeviceId } from './connection'
 
 /**
  * 当前 REST 通道地址（null=当前页面 origin；非 null=桌面局域网直连地址）。
@@ -23,8 +24,16 @@ export function getApiBase(): string | null {
 
 /** 解析 API 路径：无通道时原样相对路径（当前 origin）；有通道时拼到局域网地址（跨域由 mobile_server CORS 放行） */
 function resolveApi(path: string): string {
-  if (!apiBase) return path
-  return `${apiBase.replace(/\/+$/, '')}/${path.replace(/^\.?\//, '')}`
+  if (apiBase) {
+    return `${apiBase.replace(/\/+$/, '')}/${path.replace(/^\.?\//, '')}`
+  }
+  // 中继通道（apiBase=null）：**显式绝对根路径**，不依赖当前页面路径。
+  // ⚠️ 2026-08-26 实测：PWA 主屏幕入口打开的是 /d/<device_id>/mobile.html
+  // （manifest start_url 相对解析），相对 './pair' 会错位成 /d/<device_id>/pair →
+  // 桌面把它当静态资产伺服（404）→ 「网络错误请重试」。根绝对路径命中桌面 API
+  // 路由；归属由 X-Tunnel-Device 头（tunnelDeviceHeaders → resolveTunnelDeviceId
+  // 已支持从 /d/<id>/ 路径提取）保证中继精确路由。
+  return `/${path.replace(/^\.?\//, '')}`
 }
 
 /** 与后端 HistoryMessage 对齐（commands/process/session.rs chat_history 返回） */
@@ -48,6 +57,21 @@ export interface HistoryMessage {
  * 白屏防护由 load-guard（8s 提示）兜底，不依赖本超时。
  */
 const DEFAULT_FETCH_TIMEOUT_MS = 20000
+
+/**
+ * 多租户隧道归属标记：中继（公网入口）按 ?device= 或本头路由到归属桌面。
+ * apiBase 是裸 origin 前缀拼接（query 进 base 会打废后续路径，实测事故），
+ * query 无法贯穿页面内全部 API/WS——头是唯一能统一注入的显式归属通道。
+ * ⚠️ 仅中继通道（apiBase=null，相对 origin）注入：局域网直连不经中继路由，
+ * 无需标记；且该头会让跨域 LAN 请求触发 CORS 预检——老桌面白名单没有它时
+ * 会被整批拦下（实测：同 WiFi 自动切直连后历史加载全挂）。
+ */
+function tunnelDeviceHeaders(): Record<string, string> {
+  if (apiBase !== null) return {}
+  const id = resolveTunnelDeviceId()
+  return id ? { 'X-Tunnel-Device': id } : {}
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -56,7 +80,14 @@ async function fetchWithTimeout(
   const c = new AbortController()
   const t = setTimeout(() => c.abort(), timeoutMs)
   try {
-    return await fetch(input, { ...init, signal: c.signal })
+    return await fetch(input, {
+      ...init,
+      headers: {
+        ...tunnelDeviceHeaders(),
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+      signal: c.signal,
+    })
   } finally {
     clearTimeout(t)
   }
@@ -104,7 +135,7 @@ export async function postPair(password: string): Promise<string> {
       resolveApi('./pair'),
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...tunnelDeviceHeaders() },
         body: JSON.stringify({ password }),
       },
       10000,
@@ -141,7 +172,9 @@ async function checkAuth(res: Response): Promise<Response> {
 /** 拉取与桌面一致的对话历史（无 agent 时后端返回空列表） */
 export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
   const res = await checkAuth(
-    await fetchWithTimeout(resolveApi('./history'), { headers: { 'X-Mobile-Token': token } }),
+    await fetchWithTimeout(resolveApi('./history'), {
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+    }),
   )
   if (!res.ok) throw new Error(`history failed: ${res.status}`)
   return (await res.json()) as HistoryMessage[]
@@ -150,7 +183,9 @@ export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
 /** 拉取当前生效的身份显示名（assistant_name / user_label，后端 relation_cache 下发） */
 export async function fetchIdentity(token: string): Promise<Identity> {
   const res = await checkAuth(
-    await fetchWithTimeout(resolveApi('./identity'), { headers: { 'X-Mobile-Token': token } }),
+    await fetchWithTimeout(resolveApi('./identity'), {
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+    }),
   )
   if (!res.ok) throw new Error(`identity failed: ${res.status}`)
   return (await res.json()) as Identity
@@ -171,7 +206,9 @@ export interface CustomAgentsInfo {
 /** 拉取 Custom Agent 列表 + 激活卡片（卡片管理在桌面端，手机端只读展示） */
 export async function fetchCustomAgents(token: string): Promise<CustomAgentsInfo> {
   const res = await checkAuth(
-    await fetchWithTimeout(resolveApi('./custom-agents'), { headers: { 'X-Mobile-Token': token } }),
+    await fetchWithTimeout(resolveApi('./custom-agents'), {
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+    }),
   )
   if (!res.ok) throw new Error(`custom-agents failed: ${res.status}`)
   return (await res.json()) as CustomAgentsInfo
@@ -185,7 +222,9 @@ export interface AgentStatus {
 /** 查询桌面端执行状态（刷新/重连后恢复 running，补齐 broadcast 不重传的间隙事件） */
 export async function fetchAgentStatus(token: string): Promise<AgentStatus> {
   const res = await checkAuth(
-    await fetch(resolveApi('./agent-status'), { headers: { 'X-Mobile-Token': token } }),
+    await fetchWithTimeout(resolveApi('./agent-status'), {
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+    }),
   )
   if (!res.ok) throw new Error(`agent-status failed: ${res.status}`)
   return (await res.json()) as AgentStatus
@@ -219,7 +258,7 @@ export async function fetchModelConfig(token: string, mode?: string): Promise<Mo
   const qs = mode ? `?mode=${encodeURIComponent(mode)}` : ''
   const res = await checkAuth(
     await fetchWithTimeout(resolveApi(`./model-config${qs}`), {
-      headers: { 'X-Mobile-Token': token },
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
     }),
   )
   if (!res.ok) throw new Error(`model-config failed: ${res.status}`)
@@ -243,7 +282,7 @@ export async function switchMobileModel(
   const res = await checkAuth(
     await fetchWithTimeout(resolveApi('./switch-model'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json' },
+      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json', ...tunnelDeviceHeaders() },
       body: JSON.stringify({ model, provider, mode }),
     }),
   )
@@ -257,7 +296,7 @@ export async function switchMobileMode(token: string, mode: string): Promise<voi
   const res = await checkAuth(
     await fetchWithTimeout(resolveApi('./switch-mode'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json' },
+      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json', ...tunnelDeviceHeaders() },
       body: JSON.stringify({ mode }),
     }),
   )
@@ -295,7 +334,7 @@ export async function fetchRelayHint(token: string): Promise<RelayCfg | null> {
       // → 手机永久白屏（实测 P0）。超时后回退 getCachedLanUrl（局域网缓存）继续流程。
       await fetchWithTimeout(
         resolveApi('./relay-hint'),
-        { headers: { 'X-Mobile-Token': token } },
+        { headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() } },
         10000,
       ),
     )
@@ -321,7 +360,7 @@ export async function fetchRelayHint(token: string): Promise<RelayCfg | null> {
   }
 }
 
-/** /boot 聚合返回：identity + agentStatus + relayHint（中继启动一次往返拿齐） */
+/** /boot 聚合返回：identity + agentStatus + relayHint + sessions（会话清单镜像） */
 export interface BootPayload {
   identity?: Identity
   agentStatus?: { running?: boolean }
@@ -333,6 +372,7 @@ export interface BootPayload {
     lan_url?: string
     tunnel_url?: string
   }
+  sessions?: ShelfSessions
 }
 
 /** 中继模式启动聚合：一次往返拿 identity+agentStatus+relayHint。
@@ -341,12 +381,120 @@ export interface BootPayload {
 export async function fetchBoot(token: string): Promise<BootPayload | null> {
   try {
     const res = await checkAuth(
-      await fetchWithTimeout(resolveApi('./boot'), { headers: { 'X-Mobile-Token': token } }, 15000),
+      await fetchWithTimeout(
+        resolveApi('./boot'),
+        { headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() } },
+        15000,
+      ),
     )
     if (!res.ok) return null
     return (await res.json()) as BootPayload
   } catch {
     return null
+  }
+}
+
+/** 桌面展示台会话条目（/sessions 与 /boot.sessions 同源，只读镜像投影） */
+export interface ShelfSessionItem {
+  id: string
+  mode: string
+  title: string
+  message_count: number
+  updated_at?: string
+  is_active: boolean
+}
+
+export interface ShelfSessions {
+  can_switch: boolean
+  items: ShelfSessionItem[]
+}
+
+/** GET /sessions —— 会话清单镜像（失败返回 null，调用方降级隐藏入口） */
+export async function fetchSessions(token: string): Promise<ShelfSessions | null> {
+  try {
+    const res = await checkAuth(
+      await fetchWithTimeout(
+        resolveApi('./sessions'),
+        { headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() } },
+        10000,
+      ),
+    )
+    if (!res.ok) return null
+    return (await res.json()) as ShelfSessions
+  } catch {
+    return null
+  }
+}
+
+/** 后端稳定错误码 → 用户文案（switch_session_inner 守卫语义） */
+const SWITCH_ERROR_TEXT: Record<string, string> = {
+  busy: '后台任务运行中，暂不能切换',
+  append_pending: '有追加指令待处理，稍后再试',
+  mode_mismatch: '该会话不属于当前模式',
+  not_found: '会话不存在或已归档',
+}
+
+export interface NewChatResult {
+  ok: boolean
+  session_id?: string
+}
+
+/** POST /new-chat —— 遥控桌面新建对话（单一路径：桌面执行权威创建，手机经
+ *  SessionChanged 事件跟随显示欢迎页；本端 HTTP 成功响应兜底清一次视图）。 */
+export async function startNewChat(
+  token: string,
+): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
+  try {
+    const res = await checkAuth(
+      await fetchWithTimeout(
+        resolveApi('./new-chat'),
+        {
+          method: 'POST',
+          headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+        },
+        SEND_TIMEOUT_MS,
+      ),
+    )
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      return { ok: false, error: body.error ?? `新建会话失败（${res.status}）` }
+    }
+    const data = (await res.json()) as NewChatResult
+    return { ok: true, sessionId: data.session_id ?? '' }
+  } catch {
+    return { ok: false, error: '网络异常，请重试' }
+  }
+}
+
+/** POST /session/switch —— 遥控切换桌面当前会话（手机视图经 SessionChanged 事件跟随刷新） */
+export async function switchSession(
+  token: string,
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await checkAuth(
+      await fetchWithTimeout(
+        resolveApi('./session/switch'),
+        {
+          method: 'POST',
+          headers: {
+            'X-Mobile-Token': token,
+            'Content-Type': 'application/json',
+            ...tunnelDeviceHeaders(),
+          },
+          body: JSON.stringify({ id }),
+        },
+        SEND_TIMEOUT_MS,
+      ),
+    )
+    if (res.ok) return { ok: true }
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    return {
+      ok: false,
+      error: SWITCH_ERROR_TEXT[body.error ?? ''] ?? `切换失败（${body.error ?? res.status}）`,
+    }
+  } catch {
+    return { ok: false, error: '网络异常，请重试' }
   }
 }
 
@@ -388,6 +536,7 @@ export async function sendMessage(
         headers: {
           'Content-Type': 'application/json',
           'X-Mobile-Token': token,
+          ...tunnelDeviceHeaders(),
         },
         body: JSON.stringify({
           message,
@@ -461,6 +610,7 @@ export async function postConfirm(
       headers: {
         'Content-Type': 'application/json',
         'X-Mobile-Token': token,
+        ...tunnelDeviceHeaders(),
       },
       body: JSON.stringify(payload),
     }),
@@ -479,6 +629,7 @@ export async function postUserInput(token: string, actionId: string, value: stri
       headers: {
         'Content-Type': 'application/json',
         'X-Mobile-Token': token,
+        ...tunnelDeviceHeaders(),
       },
       body: JSON.stringify({ action_id: actionId, value }),
     }),
@@ -497,6 +648,7 @@ export async function postUserInputReject(token: string, actionId: string): Prom
       headers: {
         'Content-Type': 'application/json',
         'X-Mobile-Token': token,
+        ...tunnelDeviceHeaders(),
       },
       body: JSON.stringify({ action_id: actionId, value: '' }),
     }),
@@ -524,6 +676,7 @@ export async function postRating(
       headers: {
         'Content-Type': 'application/json',
         'X-Mobile-Token': token,
+        ...tunnelDeviceHeaders(),
       },
       body: JSON.stringify({
         goal: payload.goal,
@@ -550,7 +703,10 @@ export interface ControlResult {
  * 后端 /pause 广播的 action_id。鉴权统一走 X-Mobile-Token Header。
  */
 async function postControl(token: string, path: string, body?: unknown): Promise<ControlResult> {
-  const headers: Record<string, string> = { 'X-Mobile-Token': token }
+  const headers: Record<string, string> = {
+    'X-Mobile-Token': token,
+    ...tunnelDeviceHeaders(),
+  }
   const init: RequestInit = { method: 'POST', headers }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
@@ -593,6 +749,7 @@ async function postWorkflowControl(token: string, path: string, workflowId: stri
       headers: {
         'Content-Type': 'application/json',
         'X-Mobile-Token': token,
+        ...tunnelDeviceHeaders(),
       },
       body: JSON.stringify({ workflow_id: workflowId }),
     }),
@@ -628,7 +785,7 @@ export async function triggerRefine(token: string): Promise<void> {
   const res = await checkAuth(
     await fetch(resolveApi('./refine'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token },
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
     }),
   )
   if (!res.ok) {
@@ -648,7 +805,7 @@ export async function refineSkip(token: string): Promise<void> {
   const res = await checkAuth(
     await fetch(resolveApi('./refine-skip'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token },
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
     }),
   )
   if (!res.ok) throw new Error(`refine-skip failed: ${res.status}`)

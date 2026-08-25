@@ -101,12 +101,6 @@ const RATE_WINDOW_SECS: u64 = 60;
 const TUNNEL_DEVICE_MAX_LEN: usize = 128;
 /// 隧道首行（HTTP 请求行）读取超时：连接后迟迟不发数据按 fallback 处理，防慢连接占位
 const TUNNEL_HEAD_TIMEOUT_SECS: u64 = 10;
-/// 隧道 IP 粘性路由 TTL：手机并行连接（静态资源/API/WS 的请求不带 ?device=）沿用
-/// 该 IP 最近一次显式标记的目标设备。标记来源：扫码导航入口 URL（桌面二维码携带
-/// ?device=）；页面内故障转移等后续连接均为无标记拼接基址，全靠本表路由。
-/// 12h 权衡：覆盖一次典型外网会话全程（含长时间挂机后恢复）；表规模 = 近期活跃
-/// 手机数（个位数），过期惰性清理，内存可忽略。
-const TUNNEL_STICKY_TTL_SECS: u64 = 43200;
 
 /// 获取 std::Mutex 守卫，锁中毒时恢复（into_inner）而非 panic 整进程。
 /// 本服务所有 Mutex 保护的都是 map/计数器状态（无跨字段不变量），持锁 panic 后
@@ -158,9 +152,11 @@ struct AppState {
     /// 设备自报局域网直连地址：device_id → "http://<IP>:<port>"（隧道握手时写入；
     /// 断开不删，保留 last-known 供离线页注入「同一 WiFi 直连」入口；缺省 None = 旧客户端）
     device_lan_urls: Arc<Mutex<HashMap<String, String>>>,
-    /// 隧道 IP 粘性路由：ip → (device_id, 标记时间)。手机并行连接不带 ?device= 时
-    /// 沿用该 IP 最近一次显式标记的目标（TTL 内），仅内存、过期惰性清理。
-    tunnel_sticky: Arc<Mutex<HashMap<IpAddr, (String, Instant)>>>,
+    /// 自学习路由表（持久化绑定注册表）：手机配对 token → device_id。
+    /// 显式标记请求经过时学习并落盘 bindings.json；之后同 token 的无标记请求
+    /// （老客户端发不出任何标记）凭此路由——扫码一次终身有效，**服务重启不清零**。
+    /// 容量上限 1024 条防无限增长；文件含敏感映射，权限与数据目录一致。
+    token_routes: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl AppState {
@@ -177,7 +173,7 @@ impl AppState {
             tunnel_active: Arc::new(Mutex::new(0)),
             tunnel_active_ip: Arc::new(Mutex::new(HashMap::new())),
             device_lan_urls: Arc::new(Mutex::new(HashMap::new())),
-            tunnel_sticky: Arc::new(Mutex::new(HashMap::new())),
+            token_routes: Arc::new(Mutex::new(load_bindings(&data_dir()))),
         }
     }
 }
@@ -208,6 +204,59 @@ fn device_token() -> String {
 
 fn caller_token() -> String {
     load_token("relay_caller.token", "RELAY_CALLER_TOKEN")
+}
+
+// ── 绑定注册表持久化（token → device_id） ─────────────────────────────
+const BINDINGS_FILE: &str = "bindings.json";
+const BINDINGS_MAX_ENTRIES: usize = 1024;
+
+fn bindings_path_in(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(BINDINGS_FILE)
+}
+
+/// 启动时加载绑定表；文件缺失/损坏返回空表（损坏文件保留待人工排查）
+fn load_bindings(dir: &std::path::Path) -> HashMap<String, String> {
+    std::fs::read_to_string(bindings_path_in(dir))
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 原子落盘：tmp 写入 + rename；超容量时按字典序裁剪最旧一半（无时间戳字段，简单兜底）
+fn save_bindings(dir: &std::path::Path, map: &HashMap<String, String>) {
+    let mut entries: Vec<(&String, &String)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    while entries.len() > BINDINGS_MAX_ENTRIES {
+        let drop = entries.remove(0);
+        // 从内存同步移除，防止下次 save 又长回来
+        // （调用方持锁场景下由调用方处理；此处仅落盘裁剪）
+        let _ = drop;
+        break;
+    }
+    let body = match serde_json::to_string_pretty(map) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let tmp = bindings_path_in(dir).with_extension("json.tmp");
+    if std::fs::write(&tmp, body.as_bytes()).is_ok() {
+        let _ = std::fs::rename(&tmp, bindings_path_in(dir));
+    }
+}
+
+/// 学习并持久化一条绑定（调用方已确认来源显式可信）
+fn learn_binding(state: &AppState, token: &str, device_id: &str) {
+    {
+        let mut map = lock_recover(&state.token_routes);
+        map.insert(token.to_string(), device_id.to_string());
+        if map.len() > BINDINGS_MAX_ENTRIES {
+            // 裁剪最旧（字典序近似）：简单移除前 128 条防无限增长
+            let victims: Vec<String> = map.keys().take(map.len() / 8).cloned().collect();
+            for v in victims {
+                map.remove(&v);
+            }
+        }
+        save_bindings(&data_dir(), &map);
+    }
 }
 
 fn token_ok(provided: &str, expected: &str) -> bool {
@@ -537,6 +586,16 @@ async fn post_rotate_caller_token(headers: HeaderMap) -> Response {
     Json(serde_json::json!({ "caller_token": new_token })).into_response()
 }
 
+/// 遗留共享设备 ID（旧版默认值，公共中继多用户撞车源）：一律拒绝注册。
+/// 任何持 device_token 的老版本桌面都会以同一 ID 上线——两台以上互相顶号、
+/// 跨用户路由串线（实测事故源）。新版桌面启动时已自动迁移为唯一 ID；老版本
+/// 必须升级。拒绝而非放行 = 把「静默串线」变成「确定性不可用」。
+const LEGACY_SHARED_DEVICE_IDS: [&str; 1] = ["desktop-main"];
+
+fn is_legacy_shared_device(device_id: &str) -> bool {
+    LEGACY_SHARED_DEVICE_IDS.contains(&device_id.trim())
+}
+
 /// GET /ws/device — 桌面出站 WS 长连接。
 async fn ws_device(
     State(state): State<AppState>,
@@ -547,6 +606,14 @@ async fn ws_device(
     let token = extract_ws_token(&headers, &q.token);
     if !token_ok(&token, &device_token()) {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    if is_legacy_shared_device(&q.device_id) {
+        tracing::warn!("[relay] 拒绝遗留共享 device_id 注册（需升级桌面）: {}", q.device_id);
+        return (
+            StatusCode::FORBIDDEN,
+            "legacy shared device id rejected; please upgrade nuphus desktop",
+        )
+            .into_response();
     }
     // 浏览器子协议鉴权：服务器必须回显所选协议，否则握手失败
     let ws = if let Some(p) = extract_ws_subprotocol(&headers) {
@@ -647,6 +714,14 @@ async fn ws_tunnel(
     let token = extract_ws_token(&headers, &q.token);
     if !token_ok(&token, &device_token()) {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    if is_legacy_shared_device(&q.device_id) {
+        tracing::warn!("[relay] 拒绝遗留共享 device_id 注册（需升级桌面）: {}", q.device_id);
+        return (
+            StatusCode::FORBIDDEN,
+            "legacy shared device id rejected; please upgrade nuphus desktop",
+        )
+            .into_response();
     }
     // 浏览器子协议鉴权：服务器必须回显所选协议，否则握手失败
     let ws = if let Some(p) = extract_ws_subprotocol(&headers) {
@@ -855,10 +930,12 @@ async fn handle_tunnel_socket(
 // ── 隧道按 device_id 路由（2026-08 多用户改造）───────────────────────────
 // 手机访问入口 URL 携带 ?device=<device_id>（查询式——与薄转发兼容：只解析请求行、
 // 不读 body、不改写字节流，query 原样透传给桌面 mobile_server，桌面无感知）。
-// 逐 TCP 连接解析首行并按序解析目标：
-//   1. 显式 ?device=（合法）→ 路由该设备，并刷新 IP 粘性表；
-//   2. 无标记 → 查 IP 粘性表（TTL 内）：并行资源连接沿用首次导航的目标；
-//   3. 仍无 → RELAY_TUNNEL_DEVICE fallback（旧 URL / 存量用户不感知）。
+//
+// ⚠️ 无标记请求的确定性决策（2026-08-25 二次修正，替代初版 IP 粘性）：
+// 初版按「来源 IP 粘性」兜底——生产拓扑下致命：caddy/nginx 在本机终结 TLS，
+// 所有用户的请求到达隧道监听器时源 IP 一律 127.0.0.1，全体用户共享同一粘性
+// 槽位，后扫码者污染先扫码者（跨用户路由串线，实测手机端整晚时好时坏）。
+// IP 粘性已整体删除。现行决策见 decide_route_without_marker（纯函数可测）。
 
 /// 从 HTTP 请求行提取指定 query 参数值。仅字符串处理不做百分号解码——
 /// device_id 为白名单安全字符集（见 tunnel_device_ok），客户端生成即安全字符。
@@ -881,7 +958,18 @@ fn tunnel_device_ok(device: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
 }
 
-/// 从隧道 TCP 首个 HTTP 请求行提取显式目标设备；无/非法 → None（走粘性/fallback）。
+/// 从请求行路径首段提取 /d/<device>/ 显式归属（静态子资源的唯一标记通道）。
+/// 背景：浏览器子资源（script/css/img）既不继承导航 URL 的 ?device=，也无法带
+/// 自定义头——公共中继多设备在线时无标记资产被 Ambiguous 拒绝（引导页当 JS
+/// 执行失败 → 白屏）。桌面端 serve mobile.html 时把相对引用改写为 /d/<id>/ 前缀。
+fn extract_device_from_path_prefix(request_line: &str) -> Option<String> {
+    let target = request_line.split_whitespace().nth(1)?;
+    let rest = target.strip_prefix("/d/")?;
+    let seg = rest.split(['/', '?']).next()?;
+    tunnel_device_ok(seg).then(|| seg.to_string())
+}
+
+/// 从 HTTP 请求行提取显式目标设备；无/非法 → None。
 /// 同时接受 device_id 别名（对齐 /ws/device 的 query 键，容手写 URL）。
 fn extract_device_from_request_line(request_line: &str) -> Option<String> {
     let v = request_line_query_param(request_line, "device")
@@ -889,54 +977,79 @@ fn extract_device_from_request_line(request_line: &str) -> Option<String> {
     tunnel_device_ok(v).then(|| v.to_string())
 }
 
-/// 解析本条隧道连接的目标设备：显式标记 > IP 粘性 > 默认（见区块注释）。
-/// 返回 (目标设备, 路由来源)——来源入日志便于现场排查多设备路由问题。
-fn resolve_tunnel_target(
-    state: &AppState,
-    ip: IpAddr,
-    explicit: Option<String>,
-    default: &str,
-) -> (String, &'static str) {
-    if let Some(device) = explicit {
-        {
-            let mut sticky = lock_recover(&state.tunnel_sticky);
-            // 顺手清理过期项：表规模 = 近期活跃手机数，量级极小，O(n) retain 足够
-            sticky.retain(|_, (_, seen)| {
-                seen.elapsed() < Duration::from_secs(TUNNEL_STICKY_TTL_SECS)
-            });
-            sticky.insert(ip, (device.clone(), Instant::now()));
+/// 从预读头部块提取 X-Tunnel-Device 头值（多租户归属标记的第二通道）。
+/// 头名大小写不敏感、值 trim 后过白名单；只扫请求行之后到首个空行的头部区，
+/// body 区出现的同名内容不解析。裸 origin 前缀拼接约束下，query 无法随 apiBase
+/// 走，头是唯一能贯穿全部 API/WS 请求的显式归属通道（实测教训见 connection.ts）。
+fn extract_device_from_head(head: &str) -> Option<String> {
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    lines.next(); // 请求行
+    for line in lines {
+        if line.is_empty() {
+            break; // 空行 = 头部块结束
         }
-        return (device, "explicit");
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case("x-tunnel-device") {
+            let v = value.trim();
+            return tunnel_device_ok(v).then(|| v.to_string());
+        }
     }
-    let hit = {
-        let sticky = lock_recover(&state.tunnel_sticky);
-        sticky.get(&ip).and_then(|(d, seen)| {
-            (seen.elapsed() < Duration::from_secs(TUNNEL_STICKY_TTL_SECS)).then(|| d.clone())
-        })
-    };
-    match hit {
-        Some(d) => (d, "sticky"),
-        None => (default.to_string(), "default"),
-    }
+    None
 }
 
-/// 读取隧道连接的首个 HTTP 请求行（限长限时的预读），返回 (显式 device, 预读字节)。
+/// 从请求 Cookie 头提取 nu_dev 归属（第四通道）：首次扫码（显式标记）时中继在
+/// 响应里播种此 Cookie，此后浏览器无论从 PWA 图标、书签还是裸域名发起的导航/
+/// API 都自动携带——这类入口无法自拼 query、也无法带自定义头，Cookie 是唯一
+/// 能覆盖它们的通道（实测：裸导航在多设备常驻时必被 Ambiguous 引导页拦死）。
+fn extract_device_from_cookie(head: &str) -> Option<String> {
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    lines.next(); // 请求行
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.trim().eq_ignore_ascii_case("cookie") {
+            continue;
+        }
+        for pair in value.split(';') {
+            if let Some(v) = pair.trim().strip_prefix("nu_dev=") {
+                let v = v.trim();
+                return tunnel_device_ok(v).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 显式归属标记总入口：请求行 ?device=（导航/手写 URL 场景）优先，
+/// 其次 /d/<id>/ 路径前缀（桌面改写的静态子资源），再次 X-Tunnel-Device 头
+/// （前端 API 统一注入），最后 nu_dev Cookie（浏览器长期记忆，扫码一次终身生效）。
+fn extract_explicit_device(request_line: &str, head: &str) -> Option<String> {
+    extract_device_from_request_line(request_line)
+        .or_else(|| extract_device_from_path_prefix(request_line))
+        .or_else(|| extract_device_from_head(head))
+        .or_else(|| extract_device_from_cookie(head))
+}
+
+/// 从隧道 TCP 首个 HTTP 请求头部提取显式目标设备；无/非法 → None。
+/// 预读到头部块结束（\r\n\r\n）以保证头可用；超时/超大/残缺按已有字节尽力解析。
+/// 同时接受 device_id 别名（对齐 /ws/device 的 query 键，容手写 URL）。
 /// 预读字节必须在隧道就绪后先行转发给设备——否则手机首个 HTTP 请求滞留中继侧缓冲，
 /// 桌面本地服务器收不到首请求（页面永远打不开）。
 async fn read_tunnel_head(tcp: &mut TcpStream) -> (Option<String>, Vec<u8>) {
     let mut buf: Vec<u8> = Vec::with_capacity(512);
     let mut chunk = [0u8; 2048];
     loop {
-        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-            let line = String::from_utf8_lossy(&buf[..pos]);
-            return (
-                extract_device_from_request_line(line.trim_end_matches('\r')),
-                buf,
-            );
-        }
-        if buf.len() >= 16384 {
-            // 异常超大头部：放弃解析按 fallback，已读字节照常透传（不丢数据）
-            return (None, buf);
+        let head_end = buf.windows(4).any(|w| w == b"\r\n\r\n");
+        if head_end || buf.len() >= 16384 {
+            let s = String::from_utf8_lossy(&buf);
+            let request_line = s.lines().next().unwrap_or("").trim_end_matches('\r');
+            return (extract_explicit_device(request_line, &s), buf);
         }
         match tokio::time::timeout(
             Duration::from_secs(TUNNEL_HEAD_TIMEOUT_SECS),
@@ -944,22 +1057,54 @@ async fn read_tunnel_head(tcp: &mut TcpStream) -> (Option<String>, Vec<u8>) {
         )
         .await
         {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return (None, buf),
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
+                // 残缺头：仍尽力解析（可能只有请求行），已读字节照常透传（不丢数据）
+                let s = String::from_utf8_lossy(&buf);
+                let request_line = s.lines().next().unwrap_or("").trim_end_matches('\r');
+                return (extract_explicit_device(request_line, &s), buf);
+            }
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
         }
     }
 }
 
+/// 无显式标记时的拒绝原因（调用方映射为静态页）
+#[derive(Debug)]
+enum RouteReject {
+    /// 没有任何设备隧道在线 → 离线页
+    NoDevices,
+    /// 多台在线且无标记，无法确定归属 → 多设备引导页
+    Ambiguous,
+}
+
+/// 无显式标记时的确定性决策（纯函数）。RELAY_TUNNEL_DEVICE 为自建单用户部署的
+/// 显式固定目标；公共多租户部署不设置该变量 → 单在线自动跟随、多在线明确拒绝，
+/// 绝不静默猜测归属（路由到别人的电脑 = 跨用户事故）。
+fn decide_route_without_marker(
+    env_default: Option<&str>,
+    online_devices: &[String],
+) -> Result<String, RouteReject> {
+    if let Some(def) = env_default.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(def.to_string());
+    }
+    match online_devices {
+        [only] => Ok(only.clone()),
+        [] => Err(RouteReject::NoDevices),
+        _ => Err(RouteReject::Ambiguous),
+    }
+}
+
 /// 启动公网隧道监听（独立端口）。RELAY_TUNNEL_PORT 默认 18081；
-/// RELAY_TUNNEL_DEVICE 为默认兜底目标（默认 desktop-main）——多设备改造后
-/// 正常路由按 URL ?device= / IP 粘性解析，仅无标记流量落到该默认值。
+/// RELAY_TUNNEL_DEVICE 仅作自建单用户部署的显式固定目标（未设置 = 公共多租户
+/// 模式：无标记流量按 decide_route_without_marker 确定性决策，绝不静默猜归属）。
 async fn spawn_tunnel_listener(state: AppState) {
     let port: u16 = std::env::var("RELAY_TUNNEL_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(18081);
-    let default_target =
-        std::env::var("RELAY_TUNNEL_DEVICE").unwrap_or_else(|_| "desktop-main".into());
+    let env_default = std::env::var("RELAY_TUNNEL_DEVICE")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
 
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
@@ -969,9 +1114,8 @@ async fn spawn_tunnel_listener(state: AppState) {
         }
     };
     tracing::info!(
-        "[relay] tunnel listening on 0.0.0.0:{} (route by ?device=, fallback {})",
-        port,
-        default_target
+        "[relay] tunnel listening on 0.0.0.0:{} (route by ?device=/X-Tunnel-Device; unmarked: sole-online / env-default)",
+        port
     );
 
     loop {
@@ -980,7 +1124,7 @@ async fn spawn_tunnel_listener(state: AppState) {
         };
         let ip = peer.ip();
         let st = state.clone();
-        let tgt = default_target.clone();
+        let tgt = env_default.clone();
 
         // ── 安全：隧道入口限流（每 IP 新建连接限速 + 全局/单 IP 并发上限） ──
         if !rate_check(&st.tunnel_rate, ip, TUNNEL_RATE_PER_IP_MIN) {
@@ -1116,11 +1260,19 @@ const OFFLINE_HTML: &str = r#"<!DOCTYPE html>
 /// 手机被隧道断线窗口困住时，页面加载即自动 fetch 桌面 /health（无鉴权 + CORS 允许），
 /// 可达则自动跳转直连，全程不依赖隧道（JS 来自中继响应本身）。lan_url 为空返回空串。
 fn lan_block(lan_url: Option<&str>) -> String {
-    // 无条件注入自动重试：页面挂起后整体刷新，交给下一次请求重试。
-    // 不再用 <meta refresh> 定时刷新——定时刷新会打断下面的 3s 探测窗口。
+    // 有限退避自动重试（替代无条件 4s 刷新）：隧道持续不稳时无条件 location.reload()
+    // = 地址栏强刷死循环（2026-08-26 实测：手机国际链路不稳频繁拿到重试页 → 4s 无限刷新，
+    // 历史加载成功也被冲掉）。改为最多 8 次、间隔递增（3s→45s，总约 2 分钟），
+    // 之后停住交给用户手动「立即重试」——自动恢复能力保留，但绝不无限刷屏。
     let retry_js = r#"<script>
 (function () {
-  setTimeout(function () { location.reload(); }, 4000);
+  var attempts = 0;
+  var delays = [3000, 3000, 5000, 8000, 12000, 20000, 30000, 45000];
+  function schedule() {
+    if (attempts >= delays.length) return;
+    setTimeout(function () { location.reload(); }, delays[attempts++]);
+  }
+  schedule();
 })();
 </script>"#;
     match lan_url {
@@ -1178,10 +1330,114 @@ fn offline_html(lan_url: Option<&str>) -> String {
 
 /// 动态生成重试页：桌面设备在线（/ws/device 在）但隧道链路离线/半死时返回。
 /// 语义「设备在，通道在恢复」——注入 lan 直连块，同 WiFi 手机可自动切直连。
-fn retry_html(lan_url: Option<&str>) -> String {
+fn retry_html(lan_url: Option<&str>, device_id: Option<&str>) -> String {
+    let self_heal = match device_id {
+        Some(id) => format!(
+            r#"<script>
+(function () {{
+  // 应用内自愈（非 meta refresh 页面级刷新）：每 3s XHR 探测当前 URL，
+  // 隧道恢复后中继返回 mobile 应用页（含 id="root"）→ 原地 replace 进入应用。
+  // 探测带 X-Tunnel-Device 归属头，多设备在线也能路由到本机。
+  var attempts = 0;
+  function probe() {{
+    if (attempts++ >= 20) return; // 最多约 60s，之后留给用户手动重试
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', location.href, true);
+    xhr.setRequestHeader('X-Tunnel-Device', '{id}');
+    xhr.timeout = 8000;
+    xhr.onload = function () {{
+      if (xhr.status === 200 && xhr.responseText.indexOf('id="root"') !== -1) {{
+        location.replace(location.href);
+      }} else {{
+        setTimeout(probe, 3000);
+      }}
+    }};
+    xhr.onerror = function () {{ setTimeout(probe, 3000); }};
+    xhr.ontimeout = function () {{ setTimeout(probe, 3000); }};
+    xhr.send();
+  }}
+  setTimeout(probe, 3000);
+}})();
+</script>"#
+        ),
+        None => String::new(),
+    };
     RETRY_HTML
         .replace("<!--LAN_BLOCK-->", &lan_block(lan_url))
         .replace("<!--TS_BLOCK-->", TS_BLOCK)
+        .replace("<!--SELFHEAL_BLOCK-->", &self_heal)
+}
+
+/// 多设备在线但请求未携带归属标记时的引导页：绝不静默猜测归属
+/// （路由到别人的电脑 = 跨用户事故）。
+/// ⚠️ 自愈检查点：本页与移动端应用同源，可直接读取其 localStorage——
+/// 曾在本浏览器配对成功的设备 ID 就存在 nuphus_relay_cfg 里。发现即自动
+/// 带标记重进（僵尸标签页/旧图标/书签全部原地复活）。
+/// ⚠️ 2026-08-26 移除 20s meta refresh：多设备无归属时自动刷新必然还是引导页
+/// （无归属标记刷新无意义），且造成手机「地址栏一直刷新」恶性循环（大王实测：
+/// 短暂进入 → 拉取失败 → 刷新重开应用 → 又失败）。改为纯提示 + 应用内自愈
+/// （localStorage 归属跳转），无记录停留引导页等用户扫码，绝不再自动刷新页面。
+fn multi_device_html() -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nuphus · 正在识别你的电脑</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html, body {{ height: 100%; }}
+  body {{
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: #0f1115; color: #e6e8ee;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }}
+  .card {{
+    width: 100%; max-width: 420px; padding: 36px 28px;
+    background: #1a1d24; border: 1px solid #2a2e38; border-radius: 16px;
+    text-align: center;
+  }}
+  .dot {{ width: 14px; height: 14px; margin: 0 auto 20px; background: #f0b429; border-radius: 50%; animation: pulse 1.2s ease-in-out infinite; }}
+  @keyframes pulse {{ 0%,100% {{ opacity: .35 }} 50% {{ opacity: 1 }} }}
+  h1 {{ font-size: 21px; font-weight: 600; margin-bottom: 14px; }}
+  p {{ font-size: 15px; line-height: 1.9; color: #a8adb8; text-align: left; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="dot"></div>
+    <h1>正在识别你的电脑…</h1>
+    <p id="msg">检测到多台电脑在线。正在尝试自动识别…</p>
+    <p style="margin-top:12px">若长时间停留，请用对应电脑「设置 → 手机访问」的二维码重新扫码。</p>
+  </div>
+  <script>
+  (function () {{
+    // 同源可读应用 localStorage：曾配对成功的浏览器必存 device_id。
+    // ⚠️ 一律回正门根路径「/?device=<id>」——引导页可能被顶替在任意路径
+    // （含 API 路径），保留原路径会跳回 401 错误响应 = 白屏（实测踩坑）。
+    // 根路径加载应用后，其自身 token/localStorage 自动恢复会话。
+    // 归属自愈（2026-08-25 补强）：跳转前把「正在连接本机曾配对的电脑」写进
+    // 可见文案——此前瞬间跳转用户无感知，误以为页面卡死；无记录则留在引导页
+    // 提示重新扫码（不清空、不猜测，绝不错连他人电脑）。
+    try {{
+      var cfg = JSON.parse(localStorage.getItem('nuphus_relay_cfg') || 'null');
+      var dev = cfg && cfg.device_id;
+      if (dev) {{
+        document.getElementById('msg').textContent = '检测到本机曾配对的电脑，正在自动连接…';
+        setTimeout(function () {{
+          location.replace('/?device=' + encodeURIComponent(dev));
+        }}, 600);
+        return;
+      }}
+    }} catch (e) {{}}
+  }})();
+  </script>
+</body>
+</html>"#
+    )
 }
 
 /// 隧道写方向半死重试页：Ready 超时（链路在线但写方向不通）时返回给手机。
@@ -1235,6 +1491,7 @@ const RETRY_HTML: &str = r#"<!DOCTYPE html>
     <div class="spinner"></div>
     <h1>连接不稳定，正在重试</h1>
     <p>网络隧道正在恢复，页面将自动重连。若长时间停留在此页，请检查电脑端 Nuphus 是否在运行。</p>
+    <!--SELFHEAL_BLOCK-->
     <!--LAN_BLOCK-->
     <!--TS_BLOCK-->
   </div>
@@ -1257,9 +1514,12 @@ const TS_BLOCK: &str = r#"<details class="ts">
 
 /// 往公网隧道 TCP 流直写完整 HTTP/1.1 静态页响应并关闭连接。
 /// 薄转发原则：中继不理解也不读取手机发来的 HTTP 请求内容，直接回固定页面。
+/// ⚠️ 必须 no-store：无缓存头的 200 会被浏览器/运营商透明代理启发式缓存，
+/// 把「引导页/离线页」钉死在用户手机的正确入口 URL 上——重扫二维码也命中
+/// 缓存死循环（实测事故）。
 async fn write_static_page(tcp: &mut TcpStream, html: &str) {
     let resp = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store, max-age=0\r\nPragma: no-cache\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         html.len(),
         html
     );
@@ -1267,10 +1527,204 @@ async fn write_static_page(tcp: &mut TcpStream, html: &str) {
     let _ = tcp.shutdown().await;
 }
 
+/// 设备→手机方向字节冲刷：Cookie 播种前先缓冲到首个响应头结束（\r\n\r\n），重写响应头：
+/// ① 追加 Set-Cookie（显式路由时播种归属）② 强制 `Connection: close`。
+/// ⚠️ force_close 是多租户正确性的根基：caddy 会池化复用上游连接，而路由判定只发生
+/// 在连接建立时（read_tunnel_head）——若复用，后续请求无论带什么标记都会沿袭首个
+/// 请求的绑定（跨用户错路由/引导页误伤，实测）。逐响应关闭迫使每请求独立建连、
+/// 独立路由；回环 TCP 建连开销可忽略。101 升级（WS）跳过注入与关闭，长连接不受影响。
+/// 播种完成后仅剩 force_close 头改写（inject=None 时若无需关闭则纯直通零开销）。
+/// 从请求头提取指定头的值（大小写不敏感，值两侧空白修剪）
+fn extract_header_value(head: &str, name: &str) -> Option<String> {
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    lines.next()?; // 请求行
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some((n, v)) = line.split_once(':') {
+            if n.trim().eq_ignore_ascii_case(name) {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 净化重定向目标（防开放重定向）：仅接受以单斜杠开头的 path+query 形态；
+/// 协议相对（//host）、绝对 URI、控制字符一律拒绝或折叠——Location 头注入/
+/// 跳转外站的经典手法在此全部封死。
+fn sanitize_redirect_target(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if !t.starts_with('/') {
+        return None;
+    }
+    let mut out = String::with_capacity(t.len());
+    let mut prev_slash = false;
+    for ch in t.chars() {
+        match ch {
+            '\r' | '\n' | '\0' => continue,
+            '/' => {
+                if prev_slash {
+                    continue; // 折叠连续斜杠（//evil → /evil）
+                }
+                prev_slash = true;
+                out.push('/');
+            }
+            c if c.is_ascii_graphic() => {
+                prev_slash = false;
+                out.push(c);
+            }
+            _ => continue,
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+async fn flush_device_bytes(
+    w: &mut (impl tokio::io::AsyncWriteExt + Unpin),
+    buf: &mut Vec<u8>,
+    inject: &mut Option<String>,
+    remaining: &mut Option<u64>,
+    header_done: &mut bool,
+) -> std::io::Result<()> {
+    // 首响应头已处理完：纯透传（Content-Length 模式按剩余字节判定完成；
+    // chunked/无长度模式直通全部字节——此前 chunked 响应无 Content-Length 时
+    // remaining 恒 None，每次调用都重走「找 \r\n\r\n」分支，头后的 body 滞留
+    // pending 不写（仅凑满 16KB 才直通），响应尾部滞留到 30s 空闲回收被
+    // writer.abort() 丢弃 → 大文件随机截断（白屏根因，实测 73787/49688 字节））
+    if *header_done {
+        if !buf.is_empty() {
+            if let Some(left) = remaining.as_mut() {
+                *left = left.saturating_sub(buf.len() as u64);
+            }
+            let r = w.write_all(buf).await;
+            buf.clear();
+            r?;
+        }
+        return Ok(());
+    }
+    let Some(pos) = buf.windows(4).position(|wd| wd == b"\r\n\r\n") else {
+        // 头未到齐：继续缓冲（首响应头必须经过改写以追加归属标记）；
+        // 异常超大头放弃改写整段直通
+        if buf.len() >= 16384 {
+            let r = w.write_all(buf).await;
+            buf.clear();
+            r?;
+        }
+        return Ok(());
+    };
+    let cookie = inject.take().unwrap_or_default();
+    // 101 Switching Protocols（WS）：升级响应跳过一切改写，长连接语义原样保留；
+    // 无剩余字节追踪（长连接按双向空闲回收）
+    let status_is_101 = buf[..pos]
+        .split(|&b| b == b'\n')
+        .next()
+        .map(|line| line.windows(4).any(|wd| wd == b" 101"))
+        .unwrap_or(false);
+    if status_is_101 {
+        let r = w.write_all(buf).await;
+        buf.clear();
+        // ⚠️ WS 升级（101）后必须进入纯透传模式：header_done=true 使后续调用走
+        // 「头已处理、直通」分支，WS 数据帧（流式 delta/事件）到达即写，不再被
+        // 当 HTTP 响应头解析攒批（此前滞留 pending 凑 16KB 才直通 → 手机流式
+        // 输出「一段段打包」——v0.1.4 纯 TCP 直转无此问题，2026-08-26 大王裁定
+        // 「看转发」定位）。remaining 保持 None：长连接按双向空闲回收。
+        *header_done = true;
+        return r;
+    }
+    // 解析 Content-Length（有则逐响应精确关闭；无=chunked 回退双向空闲回收）
+    let content_length = extract_header_value(&String::from_utf8_lossy(&buf[..pos]).to_string(), "content-length")
+        .and_then(|v| v.parse::<u64>().ok());
+    // 重建头部：剔除既有 Connection 行（多租户逐请求路由的根基）→ 显式路由时附加 Set-Cookie 播种
+    let mut out: Vec<u8> = Vec::with_capacity(buf.len() + cookie.len() + 48);
+    let mut first = true;
+    for line in buf[..pos].split(|&b| b == b'\n') {
+        let line = if line.ends_with(b"\r") { &line[..line.len() - 1] } else { line };
+        if line.is_empty() {
+            continue;
+        }
+        let is_conn = match line.iter().position(|&b| b == b':') {
+            Some(p) => line[..p].eq_ignore_ascii_case(b"connection"),
+            None => false,
+        };
+        if is_conn {
+            continue;
+        }
+        if !first {
+            out.extend_from_slice(b"\r\n");
+        }
+        out.extend_from_slice(line);
+        first = false;
+    }
+    if !cookie.is_empty() {
+        out.extend_from_slice(format!("\r\nSet-Cookie: {cookie}").as_bytes());
+    }
+    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(&buf[pos + 4..]);
+    *remaining = content_length.map(|cl| cl.saturating_sub((buf.len() - pos - 4) as u64));
+    *header_done = true;
+    let r = w.write_all(&out).await;
+    buf.clear();
+    r
+}
+
+/// 从请求中提取手机配对 token（自学习路由的 key）。三种携带方式：
+/// query ?token=（WS 与部分老客户端）、X-Mobile-Token 头（REST 标准）、
+/// Sec-WebSocket-Protocol auth.<token>（浏览器 WS 无法自定义头的替代通道）。
+fn extract_mobile_token(request_line: &str, head: &str) -> Option<String> {
+    if let Some(v) = request_line_query_param(request_line, "token") {
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    lines.next(); // 请求行
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let n = name.trim();
+        let v = value.trim();
+        if n.eq_ignore_ascii_case("x-mobile-token") && !v.is_empty() {
+            return Some(v.to_string());
+        }
+        if n.eq_ignore_ascii_case("sec-websocket-protocol") {
+            for p in v.split(',') {
+                let p = p.trim();
+                if let Some(t) = p.strip_prefix("auth.") {
+                    if !t.is_empty() {
+                        return Some(t.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 当前 Unix 毫秒（隧道双向活动时间戳用）
+fn now_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 async fn handle_tunnel_conn(
     state: AppState,
     mut tcp: TcpStream,
-    fallback_target: String,
+    env_default: Option<String>,
     ip: IpAddr,
 ) {
     // 并发计数已由调用方预占；guard 确保本函数所有退出路径释放
@@ -1282,16 +1736,108 @@ async fn handle_tunnel_conn(
     // TCP_NODELAY：禁用 Nagle，避免 HTTP 小请求/控制帧被 40ms ACK 延迟累积拖慢转发
     let _ = tcp.set_nodelay(true);
 
-    // 0. 按 device_id 路由（多用户改造）：预读首行提取显式 ?device=，否则 IP 粘性 /
-    //    RELAY_TUNNEL_DEVICE 兜底。预读字节在隧道就绪后先行转发（见双向转发段）。
-    let (explicit_device, head) = read_tunnel_head(&mut tcp).await;
-    let (target, route_src) = resolve_tunnel_target(&state, ip, explicit_device, &fallback_target);
+    // 0. 按 device_id 路由（多用户改造）：预读首行提取显式 ?device=；无标记时按
+    //    decide_route_without_marker 确定性决策——绝不按来源 IP/静默默认猜测
+    //    （caddy 终结 TLS 后全体用户源 IP 均为 127.0.0.1，任何 IP 侧推断都会跨用户串线）。
+    let (explicit_device, head_bytes) = read_tunnel_head(&mut tcp).await;
+    let head_str = String::from_utf8_lossy(&head_bytes).to_string();
+    let request_line_for_token = head_str.split('\n').next().unwrap_or("").trim_end_matches('\r').to_string();
+
+    // ── 公网直连非 TLS 门（:18081 裸 HTTP）：301 至 HTTPS 正门 ──
+    // 保留 path+query（含 ?device= 归属标记与历史 token），持有旧 :18081 链接的
+    // 用户打开即自动迁移到唯一正门，无需任何人工迁移动作。防开放重定向见
+    // sanitize_redirect_target；Host 头缺失时放弃跳转按原逻辑处理（极罕见）。
+    // ⚠️ 带 ?device= 显式归属的请求不 301、直接路由：这是移动端「WiFi 自动切直连」
+    // 闭环的关键——应用以 http origin 重载后探测局域网不再被 Mixed Content 拦截，
+    // 同 WiFi 即自动切局域网直连（2026-08-26 实测：一律 301 导致 HTTPS 页恒被拦、
+    // 跳转徒劳循环，WiFi 用户永远无法自动直连）。明文风险由应用侧兜底：
+    // http origin 探测局域网失败（不在 WiFi）时自动跳回 https 正门。
+    if !ip.is_loopback() && explicit_device.is_none() {
+        let raw_target = request_line_for_token.split_whitespace().nth(1).unwrap_or("/");
+        if let Some(clean) = sanitize_redirect_target(raw_target) {
+            // Host 头剥端口：Location 恒定落 443 默认口——保留 :18081 会造成
+            // 「301 → https 同端口」自指循环（明文门跳自身，实测）
+            if let Some(host) = extract_header_value(&head_str, "host") {
+                let host_only = host.split(':').next().unwrap_or(&host);
+                tracing::info!("[relay] 非 TLS 直连 {} -> 301 https://{}{}", ip, host_only, clean);
+                let resp = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: https://{}{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    host_only, clean
+                );
+                let _ = tcp.write_all(resp.as_bytes()).await;
+                let _ = tcp.shutdown().await;
+                return;
+            }
+        }
+        // 净化失败（畸形目标）：继续走下方常规分流（引导/离线页兜底）
+    }
+
+    let mobile_token = extract_mobile_token(&request_line_for_token, &head_str);
+    // 是否经显式标记路由（Cookie/token 学习只信任显式来源——启发式路由绝不播种，
+    // 防止 sole-online 误归属被钉死进浏览器）
+    let routed_explicitly = explicit_device.is_some();
+    let online_devices: Vec<String> = lock_recover(&state.tunnel_links).keys().cloned().collect();
+    let target = match explicit_device {
+        Some(d) => d,
+        None => {
+            // 自学习表：老客户端发不出任何标记，但必带配对 token——凭历史映射路由。
+            // 映射只在显式标记请求经过时写入，永不猜测（无记录 → 照常走引导页）。
+            let learned = mobile_token
+                .as_deref()
+                .and_then(|tok| lock_recover(&state.token_routes).get(tok).cloned());
+            match learned {
+                Some(d) => {
+                    tracing::info!("[relay] 隧道路由：token 自学习命中 → {}", d);
+                    d
+                }
+                None => match decide_route_without_marker(env_default.as_deref(), &online_devices)
+                {
+                    Ok(t) => t,
+                    Err(RouteReject::NoDevices) => {
+                        tracing::info!("[relay] 隧道分流：无任何设备在线，回离线页");
+                        write_static_page(&mut tcp, &offline_html(None)).await;
+                        return;
+                    }
+                    Err(RouteReject::Ambiguous) => {
+                        tracing::warn!(
+                            "[relay] 隧道分流：{} 台设备在线且请求未带归属标记，回多设备引导页",
+                            online_devices.len()
+                        );
+                        write_static_page(&mut tcp, &multi_device_html()).await;
+                        return;
+                    }
+                },
+            }
+        }
+    };
+    // 自学习：显式标记（扫码 query / 路径前缀 / 请求头 / Cookie）请求 → 学习并持久化绑定
+    if routed_explicitly {
+        if let Some(tok) = mobile_token.as_deref() {
+            learn_binding(&state, tok, &target);
+        }
+    }
+    // 诊断日志：路由来源 + 脱敏请求行（token 值打码）——排查「扫码仍见引导页」类问题
+    {
+        let mut s = request_line_for_token.clone();
+        if let Some(qpos) = s.find("token=") {
+            let after = &s[qpos + 6..];
+            let end = after.find('&').unwrap_or(after.len());
+            s = format!("{}token=***{}", &s[..qpos + 6], &s[end..]);
+        }
+        tracing::info!(
+            "[relay] 路由判定: target={} explicit={} token_present={} devices_online={} req={}",
+            target,
+            routed_explicitly,
+            mobile_token.is_some(),
+            online_devices.len(),
+            s
+        );
+    }
     tracing::info!(
-        "[relay] tunnel conn {} -> device {} (route={}, head={}B)",
+        "[relay] tunnel conn {} -> device {} (head={}B)",
         ip,
         target,
-        route_src,
-        head.len()
+        head_bytes.len()
     );
 
     // 1. 链路分流（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）：
@@ -1309,7 +1855,7 @@ async fn handle_tunnel_conn(
                 "[relay] 隧道分流：设备 {} 隧道离线但设备在线，回重试页",
                 target
             );
-            write_static_page(&mut tcp, &retry_html(lan.as_deref())).await;
+            write_static_page(&mut tcp, &retry_html(lan.as_deref(), Some(&target))).await;
         } else {
             tracing::info!("[relay] 隧道分流：设备 {} 隧道链路离线，回离线页", target);
             write_static_page(&mut tcp, &offline_html(lan.as_deref())).await;
@@ -1372,7 +1918,7 @@ async fn handle_tunnel_conn(
         // 此前此处直接用常量，<!--LAN_BLOCK--> 占位符未替换，半死路径（手机最常命中的
         // 路径）从不显示「同一 WiFi 直连」入口，同 WiFi 手机被困在重试页（实测反馈）。
         let lan = lock_recover(&state.device_lan_urls).get(&target).cloned();
-        write_static_page(&mut tcp, &retry_html(lan.as_deref())).await;
+        write_static_page(&mut tcp, &retry_html(lan.as_deref(), Some(&target))).await;
         tracing::warn!("[relay] tunnel {} 设备未就绪，已回重试页并关闭", tunnel_id);
         // 半死自愈：ready 超时 = 隧道写方向半死（桌面「已投递本地」但 Ready 回不到中继）。
         // 触发发起连接的隧道 WS 强制断开，桌面 read 返回 Err 后经统一状态机重连，新连接恢复。
@@ -1399,15 +1945,23 @@ async fn handle_tunnel_conn(
     let link2 = link.clone();
     // ready 等待期间收到的预读 Data 帧（Ready 丢帧兜底），先写出再进入正常转发
     let prelude = ready.1;
+    // 首响应头改写：恒定 `Connection: close`（caddy 池化复用上游连接会使归属判定
+    // 失效——逐响应关闭迫使每请求独立建连、独立路由，多租户正确性根基）；
+    // 显式标记路由时附加 nu_dev 播种（此后浏览器裸导航凭 Cookie 归属）。
+    let plant_cookie = if routed_explicitly {
+        format!("nu_dev={target}; Path=/; Max-Age=31536000; SameSite=Lax")
+    } else {
+        String::new()
+    };
     // 首包补投递：路由预读的首个 HTTP 请求行等头部字节，在设备就绪后、进入读循环前
     // 先发给设备——服务端等 Ready 才放行数据（设备本地连接建立后 Data 才有归属），
     // 不补投则手机首个请求滞留中继缓冲，桌面永远收不到首请求。
-    if !head.is_empty() {
+    if !head_bytes.is_empty() {
         use base64::Engine as _;
         if link2
             .send(TunnelFrame::Data {
                 tunnel_id: tunnel_id.clone(),
-                data: base64::engine::general_purpose::STANDARD.encode(&head),
+                data: base64::engine::general_purpose::STANDARD.encode(&head_bytes),
             })
             .is_err()
         {
@@ -1421,42 +1975,100 @@ async fn handle_tunnel_conn(
             return;
         }
     }
-    // 设备帧 → TCP 写
+    // 设备帧 → TCP 写（首个响应头可能注入 Set-Cookie，见 plant_cookie/flush_device_bytes）。
+    // 每次成功写出都刷新双向活动时间戳（与读循环共享）——纯下载期间本方向持续产生
+    // 写活动，防止读侧空闲误判腰斩响应。
+    let last_activity = Arc::new(AtomicU64::new(now_unix_millis()));
+    let last_activity_writer = Arc::clone(&last_activity);
     let writer = tokio::spawn(async move {
-        for frame in prelude {
-            if let TunnelFrame::Data { data, .. } = frame {
+    let mut pending: Vec<u8> = Vec::new();
+    let mut inject: Option<String> = Some(plant_cookie);
+    // 响应完成追踪：Some(剩余字节)——归零即响应完成，立即关闭本连接，
+    // 迫使 caddy 下一请求新建连、重新路由（多租户逐请求隔离的根基）
+    let mut resp_remaining: Option<u64> = None;
+    // 首响应头是否已处理（改写/长度解析完成）：此后字节一律直通不滞留——
+    // chunked 响应无 Content-Length，remaining 保持 None，靠 header_done 区分
+    // 「头已处理、直通模式」与「头未到齐、缓冲模式」，尾部不再滞留丢失
+    let mut header_done = false;
+    let mut closed = false;
+    for frame in &prelude {
+        if let TunnelFrame::Data { data, .. } = frame {
+            use base64::Engine as _;
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                pending.extend_from_slice(&bytes);
+            }
+        }
+    }
+    if flush_device_bytes(
+        &mut tcp_w,
+        &mut pending,
+        &mut inject,
+        &mut resp_remaining,
+        &mut header_done,
+    )
+    .await
+    .is_err()
+    {
+        closed = true;
+    } else {
+        last_activity_writer.store(now_unix_millis(), Ordering::Relaxed);
+    }
+    if resp_remaining == Some(0) {
+        closed = true;
+    }
+    while !closed {
+        let Some(frame) = rx.recv().await else {
+            break;
+        };
+        match frame {
+            TunnelFrame::Data { data, .. } => {
                 use base64::Engine as _;
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
-                    if tcp_w.write_all(&bytes).await.is_err() {
+                    pending.extend_from_slice(&bytes);
+                    if flush_device_bytes(
+                        &mut tcp_w,
+                        &mut pending,
+                        &mut inject,
+                        &mut resp_remaining,
+                        &mut header_done,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    } else {
+                        last_activity_writer.store(now_unix_millis(), Ordering::Relaxed);
+                    }
+                    if resp_remaining == Some(0) {
+                        // 响应完成：主动关闭，让 caddy 回收连接、下请求重新路由
                         break;
                     }
                 }
             }
+            TunnelFrame::Close { .. } | TunnelFrame::Error { .. } => break,
+            _ => {}
         }
-        while let Some(frame) = rx.recv().await {
-            match frame {
-                TunnelFrame::Data { data, .. } => {
-                    use base64::Engine as _;
-                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
-                        if tcp_w.write_all(&bytes).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-                TunnelFrame::Close { .. } | TunnelFrame::Error { .. } => break,
-                _ => {}
-            }
-        }
-        let _ = tcp_w.shutdown().await;
-    });
+    }
+    let _ = tcp_w.shutdown().await;
+});
 
-    // TCP 读 → 设备帧（空闲超时：长期无数据强制关闭，防僵尸连接占并发额度）
+    // TCP 读 → 设备帧。⚠️ 空闲判定为双向活动共享：旧实现只看手机→设备方向，
+    // 纯下载（设备→手机持续推流、手机方向静默）30s 即被误判空闲 → writer.abort()
+    // 腰斩响应 → 大资源/慢网络必现截断（白屏/卡死根因，实测）。现由读写两侧共同
+    // 刷新 last_activity，仅当「双向均静默」满阈值才回收。
     let mut buf = [0u8; 16384];
-    let idle_timeout = Duration::from_secs(TUNNEL_IDLE_TIMEOUT_SECS);
+    let idle_ms = TUNNEL_IDLE_TIMEOUT_SECS as u64 * 1000;
     loop {
-        match tokio::time::timeout(idle_timeout, tcp_r.read(&mut buf)).await {
+        let since_last = now_unix_millis().saturating_sub(last_activity.load(Ordering::Relaxed));
+        if since_last >= idle_ms {
+            tracing::info!("[relay] tunnel idle timeout: {}", tunnel_id);
+            break;
+        }
+        let wait = idle_ms - since_last;
+        match tokio::time::timeout(Duration::from_millis(wait), tcp_r.read(&mut buf)).await {
             Ok(Ok(0)) => break,
             Ok(Ok(n)) => {
+                last_activity.store(now_unix_millis(), Ordering::Relaxed);
                 use base64::Engine as _;
                 let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                 // 无界 send 非阻塞：不因单隧道慢而阻塞共享读循环饿死其他并发隧道
@@ -1624,7 +2236,7 @@ mod tests {
 
     #[test]
     fn retry_html_injects_lan_block() {
-        let html = retry_html(Some("http://192.168.1.79:18772"));
+        let html = retry_html(Some("http://192.168.1.79:18772"), Some("desktop-test"));
         assert!(html.contains("连接不稳定，正在重试"), "重试页语义");
         assert!(html.contains("同一 WiFi 下直连电脑（免费）"));
         assert!(html.contains("<script>"), "自动探测脚本注入");
@@ -1632,18 +2244,40 @@ mod tests {
             html.contains("LAN_URL = \"http://192.168.1.79:18772\""),
             "lan_url 注入"
         );
+        assert!(
+            html.contains("X-Tunnel-Device', 'desktop-test'"),
+            "归属头注入（应用内自愈路由）"
+        );
+        assert!(html.contains("location.replace"), "自愈成功进入应用");
         assert!(!html.contains("<!--LAN_BLOCK-->"), "占位符应被替换");
         assert!(!html.contains("<!--TS_BLOCK-->"), "自查占位符应被替换");
+        assert!(!html.contains("<!--SELFHEAL_BLOCK-->"), "自愈占位符应被替换");
+    }
+
+    #[test]
+    fn multi_device_page_selfheals_and_autoretries() {
+        let html = multi_device_html();
+        // 自愈：读应用 localStorage 的归属并带标记重进
+        assert!(html.contains("nuphus_relay_cfg"));
+        assert!(html.contains("location.replace"));
+        assert!(html.contains("device="));
+        // 2026-08-26 移除 meta refresh：多设备无归属自动刷新=重新打开应用=恶性循环
+        // （地址栏一直刷新，大王实测）。绝不允许页面级自动刷新。
+        assert!(
+            !html.contains("http-equiv=\"refresh\""),
+            "must not auto-refresh (address-bar reload loop)"
+        );
+        // 禁缓存由 write_static_page 统一头保证，页面内不再重复
     }
 
     #[test]
     fn retry_html_without_lan_url_omits_block() {
-        let html = retry_html(None);
+        let html = retry_html(None, Some("desktop-test"));
         assert!(html.contains("连接不稳定，正在重试"));
         assert!(!html.contains("同一 WiFi 下直连电脑"));
         assert!(
-            html.contains("location.reload"),
-            "无 lan_url 也必须有自动重试"
+            html.contains("location.replace"),
+            "无 lan_url 也必须有自愈重试"
         );
         assert!(!html.contains("LAN_URL"), "无 lan_url 不注入探测脚本");
         assert!(!html.contains("<!--LAN_BLOCK-->"), "占位符替换为自动重试");
@@ -1794,56 +2428,302 @@ mod tests {
     }
 
     #[test]
-    fn resolve_target_explicit_marks_sticky_and_wins() {
-        let state = AppState::new();
-        let ip: IpAddr = "203.0.113.7".parse().unwrap();
-        let default = "desktop-main";
-
-        // 显式标记：路由到该设备，来源 explicit
-        let (t, src) = resolve_tunnel_target(&state, ip, Some("desktop-aaa".to_string()), default);
-        assert_eq!((t.as_str(), src), ("desktop-aaa", "explicit"));
-
-        // 同 IP 后续无标记连接（并行资源加载）：命中粘性表沿用显式目标
-        let (t, src) = resolve_tunnel_target(&state, ip, None, default);
-        assert_eq!((t.as_str(), src), ("desktop-aaa", "sticky"));
-
-        // 新的显式标记覆盖旧粘性
-        let (t, src) = resolve_tunnel_target(&state, ip, Some("desktop-bbb".to_string()), default);
-        assert_eq!((t.as_str(), src), ("desktop-bbb", "explicit"));
-        let (t, src) = resolve_tunnel_target(&state, ip, None, default);
-        assert_eq!((t.as_str(), src), ("desktop-bbb", "sticky"));
-
-        // 其他 IP 不受影响：走默认兜底
-        let other: IpAddr = "198.51.100.9".parse().unwrap();
-        let (t, src) = resolve_tunnel_target(&state, other, None, default);
-        assert_eq!((t.as_str(), src), ("desktop-main", "default"));
+    fn extract_device_from_head_parses_marker_header() {
+        // 基本解析：请求行 + 头 + 空行 + body
+        let head = "POST /sessions HTTP/1.1\r\nX-Mobile-Token: tok\r\nX-Tunnel-Device: desktop-9f2c\r\nHost: r.example.com\r\n\r\nbody";
+        assert_eq!(
+            extract_device_from_head(head),
+            Some("desktop-9f2c".to_string())
+        );
+        // 头名大小写不敏感（浏览器/代理可能变换）
+        assert_eq!(
+            extract_device_from_head("GET / HTTP/1.1\nx-tunnel-device: dev-A._~1\n\n"),
+            Some("dev-A._~1".to_string())
+        );
+        // 值两侧空白 trim
+        assert_eq!(
+            extract_device_from_head("GET / HTTP/1.1\r\nX-Tunnel-Device:  spaced-id \r\n\r\n"),
+            Some("spaced-id".to_string())
+        );
+        // 裸 LF 行分隔（残缺/非规范客户端）同样可解析
+        assert_eq!(
+            extract_device_from_head("GET / HTTP/1.1\nHost: h\nX-Tunnel-Device: lf-dev\n\n"),
+            Some("lf-dev".to_string())
+        );
     }
 
     #[test]
-    fn resolve_target_sticky_ttl_expiry_falls_back_to_default() {
-        let state = AppState::new();
-        let ip: IpAddr = "203.0.113.8".parse().unwrap();
+    fn extract_device_from_head_rejects_invalid_or_misplaced() {
+        // 无头 / 无值
+        assert_eq!(extract_device_from_head("GET / HTTP/1.1\r\nHost: h\r\n\r\n"), None);
+        assert_eq!(
+            extract_device_from_head("GET / HTTP/1.1\r\nX-Tunnel-Device:\r\n\r\n"),
+            None
+        );
+        // 非法字符（白名单拒绝，与 query 同规）
+        assert_eq!(
+            extract_device_from_head("GET / HTTP/1.1\r\nX-Tunnel-Device: a/b\r\n\r\n"),
+            None
+        );
+        // 超长防滥用（> TUNNEL_DEVICE_MAX_LEN = 128）
+        let long = "d".repeat(129);
+        assert_eq!(
+            extract_device_from_head(&format!(
+                "GET / HTTP/1.1\r\nX-Tunnel-Device: {long}\r\n\r\n"
+            )),
+            None
+        );
+        // ⚠️ 空行之后（body 区）出现的同名内容绝不解析——防止 body 注入伪造归属
+        assert_eq!(
+            extract_device_from_head(
+                "GET / HTTP/1.1\r\nHost: h\r\n\r\nX-Tunnel-Device: injected"
+            ),
+            None
+        );
+        // 其他同名变体头不匹配（前缀/后缀混淆）
+        assert_eq!(
+            extract_device_from_head(
+                "GET / HTTP/1.1\r\nX-Tunnel-Device-X: nope\r\nZX-Tunnel-Device: nope\r\n\r\n"
+            ),
+            None
+        );
+    }
 
-        // 直接写入已过期的粘性条目（模拟 TTL 已过）
-        {
-            let mut sticky = lock_recover(&state.tunnel_sticky);
-            sticky.insert(
-                ip,
-                (
-                    "desktop-old".to_string(),
-                    Instant::now() - Duration::from_secs(TUNNEL_STICKY_TTL_SECS + 10),
-                ),
-            );
-        }
-        let (t, src) = resolve_tunnel_target(&state, ip, None, "desktop-main");
-        assert_eq!((t.as_str(), src), ("desktop-main", "default"));
+    #[test]
+    fn extract_explicit_device_query_wins_over_header() {
+        let head = "GET /?device=from-query HTTP/1.1\r\nX-Tunnel-Device: from-header\r\n\r\n";
+        assert_eq!(
+            extract_explicit_device("GET /?device=from-query HTTP/1.1", head),
+            Some("from-query".to_string())
+        );
+        // query 缺席时头生效；两者都缺 → None（走 sole-online/env-default 决策）
+        assert_eq!(
+            extract_explicit_device(
+                "GET /sessions HTTP/1.1",
+                "GET /sessions HTTP/1.1\r\nX-Tunnel-Device: from-header\r\n\r\n"
+            ),
+            Some("from-header".to_string())
+        );
+        assert_eq!(extract_explicit_device("GET / HTTP/1.1", "GET / HTTP/1.1\r\n\r\n"), None);
+    }
 
-        // TTL 内的条目正常命中
-        {
-            let mut sticky = lock_recover(&state.tunnel_sticky);
-            sticky.insert(ip, ("desktop-fresh".to_string(), Instant::now()));
-        }
-        let (t, src) = resolve_tunnel_target(&state, ip, None, "desktop-main");
-        assert_eq!((t.as_str(), src), ("desktop-fresh", "sticky"));
+    #[test]
+    fn extract_device_from_path_prefix_parses_and_validates() {
+        // 标准形态（桌面改写后的资产引用）
+        assert_eq!(
+            extract_device_from_path_prefix("GET /d/desktop-9f2c/assets/app.js HTTP/1.1"),
+            Some("desktop-9f2c".to_string())
+        );
+        // query 并存时截断在 '?' 前
+        assert_eq!(
+            extract_device_from_path_prefix("GET /d/dev-1/assets/a.js?v=2 HTTP/1.1"),
+            Some("dev-1".to_string())
+        );
+        // 非法字符 / 空段 → None（走后续通道）
+        assert_eq!(
+            extract_device_from_path_prefix("GET /d/a%20b/x.js HTTP/1.1"),
+            None
+        );
+        assert_eq!(extract_device_from_path_prefix("GET /d//x.js HTTP/1.1"), None);
+        // 无前缀路径不受影响
+        assert_eq!(
+            extract_device_from_path_prefix("GET /assets/a.js HTTP/1.1"),
+            None
+        );
+        assert_eq!(extract_device_from_path_prefix("GET /sessions HTTP/1.1"), None);
+    }
+
+    #[test]
+    fn sanitize_redirect_target_blocks_open_redirect() {
+        // 常规 path+query 通过
+        assert_eq!(
+            sanitize_redirect_target("/?device=abc&t=1"),
+            Some("/?device=abc&t=1".to_string())
+        );
+        // 协议相对（//evil）→ 折叠连续斜杠为本地路径（自家域名下 404，无外站跳转）
+        assert_eq!(
+            sanitize_redirect_target("//evil.com/x"),
+            Some("/evil.com/x".to_string())
+        );
+        // 绝对 URI → 拒绝
+        assert_eq!(sanitize_redirect_target("https://evil.com"), None);
+        // 控制字符剥离（头注入防护）
+        assert_eq!(
+            sanitize_redirect_target("/a\r\nSet-Cookie: x"),
+            Some("/aSet-Cookie:x".to_string())
+        );
+        // 空与畸形
+        assert_eq!(sanitize_redirect_target(""), None);
+        assert_eq!(sanitize_redirect_target("relative-no-slash"), None);
+    }
+
+    #[test]
+    fn bindings_persist_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("nuphus-bind-test-{}", now_unix_millis()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut map = load_bindings(&dir);
+        assert!(map.is_empty(), "新目录应为空表");
+        map.insert("tok-a".into(), "dev-1".into());
+        map.insert("tok-b".into(), "dev-2".into());
+        save_bindings(&dir, &map);
+        let reloaded = load_bindings(&dir);
+        assert_eq!(reloaded.get("tok-a").map(String::as_str), Some("dev-1"));
+        assert_eq!(reloaded.get("tok-b").map(String::as_str), Some("dev-2"));
+        // 覆盖写：同 token 更新指向
+        let mut map2 = load_bindings(&dir);
+        map2.insert("tok-a".into(), "dev-9".into());
+        save_bindings(&dir, &map2);
+        assert_eq!(
+            load_bindings(&dir).get("tok-a").map(String::as_str),
+            Some("dev-9")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_mobile_token_covers_all_channels() {
+        // query 通道（WS / 老客户端）
+        assert_eq!(
+            extract_mobile_token(
+                "GET /ws?token=tok-1&device=d HTTP/1.1",
+                "GET /ws?token=tok-1&device=d HTTP/1.1\r\n\r\n"
+            ),
+            Some("tok-1".to_string())
+        );
+        // X-Mobile-Token 头（REST 标准）
+        assert_eq!(
+            extract_mobile_token(
+                "GET /sessions HTTP/1.1",
+                "GET /sessions HTTP/1.1\r\nX-Mobile-Token: tok-2\r\n\r\n"
+            ),
+            Some("tok-2".to_string())
+        );
+        // WS 子协议 auth.<token>
+        assert_eq!(
+            extract_mobile_token(
+                "GET /ws HTTP/1.1",
+                "GET /ws HTTP/1.1\r\nSec-WebSocket-Protocol: auth.tok-3\r\n\r\n"
+            ),
+            Some("tok-3".to_string())
+        );
+        // 全缺 → None
+        assert_eq!(
+            extract_mobile_token("GET / HTTP/1.1", "GET / HTTP/1.1\r\nHost: h\r\n\r\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_device_from_cookie_parses_nu_dev() {
+        let head = "GET / HTTP/1.1\r\nHost: r.example.com\r\nCookie: other=1; nu_dev=desktop-abc\r\n\r\n";
+        assert_eq!(
+            extract_device_from_cookie(head),
+            Some("desktop-abc".to_string())
+        );
+        // Cookie 是首个头（跳请求行后立即命中）
+        assert_eq!(
+            extract_device_from_cookie("GET / HTTP/1.1\r\nCookie: nu_dev=d_1\r\n\r\n"),
+            Some("d_1".to_string())
+        );
+        // 无 Cookie / 无 nu_dev / 非法值
+        assert_eq!(extract_device_from_cookie("GET / HTTP/1.1\r\nHost: h\r\n\r\n"), None);
+        assert_eq!(
+            extract_device_from_cookie("GET / HTTP/1.1\r\nCookie: a=b\r\n\r\n"),
+            None
+        );
+        assert_eq!(
+            extract_device_from_cookie(
+                "GET / HTTP/1.1\r\nCookie: nu_dev=a/b\r\n\r\n"
+            ),
+            None
+        );
+        // 空行之后（body 区）不解析
+        assert_eq!(
+            extract_device_from_head(
+                "GET / HTTP/1.1\r\n\r\nCookie: nu_dev=injected"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_explicit_device_priority_query_path_header() {
+        let head = "GET / HTTP/1.1\r\nX-Tunnel-Device: from-header\r\n\r\n";
+        // query > path 前缀 > 头
+        assert_eq!(
+            extract_explicit_device(
+                "GET /d/from-path/a.js?device=from-query HTTP/1.1",
+                head
+            ),
+            Some("from-query".to_string())
+        );
+        assert_eq!(
+            extract_explicit_device("GET /d/from-path/a.js HTTP/1.1", head),
+            Some("from-path".to_string())
+        );
+        assert_eq!(
+            extract_explicit_device("GET /assets/a.js HTTP/1.1", head),
+            Some("from-header".to_string())
+        );
+        // 四通道：query > 路径前缀 > 头 > Cookie
+        let head_with_cookie =
+            "GET /d/from-path/a.js HTTP/1.1\r\nX-Tunnel-Device: from-header\r\nCookie: nu_dev=from-cookie\r\n\r\n";
+        assert_eq!(
+            extract_explicit_device(
+                "GET /d/from-path/a.js?device=from-query HTTP/1.1",
+                head_with_cookie
+            ),
+            Some("from-query".to_string())
+        );
+        assert_eq!(
+            extract_explicit_device("GET /d/from-path/a.js HTTP/1.1", head_with_cookie),
+            Some("from-path".to_string())
+        );
+        assert_eq!(
+            extract_explicit_device("GET /sessions HTTP/1.1", head_with_cookie),
+            Some("from-header".to_string())
+        );
+        let head_cookie_only =
+            "GET /sessions HTTP/1.1\r\nCookie: nu_dev=from-cookie\r\nHost: h\r\n\r\n";
+        assert_eq!(
+            extract_explicit_device("GET /sessions HTTP/1.1", head_cookie_only),
+            Some("from-cookie".to_string())
+        );
+    }
+
+    #[test]
+    fn decide_route_env_default_wins_over_online_list() {
+        // 自建单用户部署：显式设置 RELAY_TUNNEL_DEVICE → 固定目标（即便他机在线）
+        let online = vec!["desktop-a".to_string(), "desktop-b".to_string()];
+        assert_eq!(
+            decide_route_without_marker(Some("desktop-fixed"), &online).unwrap(),
+            "desktop-fixed"
+        );
+        // 空白环境变量视为未设置
+        assert!(decide_route_without_marker(Some("  "), &online).is_err());
+    }
+
+    #[test]
+    fn decide_route_sole_online_follows_the_only_device() {
+        let online = vec!["desktop-solo".to_string()];
+        assert_eq!(
+            decide_route_without_marker(None, &online).unwrap(),
+            "desktop-solo"
+        );
+    }
+
+    #[test]
+    fn decide_route_rejects_when_none_or_multiple_online() {
+        // 零台在线 → NoDevices（离线页）
+        assert!(matches!(
+            decide_route_without_marker(None, &[]),
+            Err(RouteReject::NoDevices)
+        ));
+        // 多台在线且无标记 → Ambiguous（引导页），绝不静默猜测归属
+        let many = vec!["desktop-a".to_string(), "desktop-b".to_string()];
+        assert!(matches!(
+            decide_route_without_marker(None, &many),
+            Err(RouteReject::Ambiguous)
+        ));
     }
 }

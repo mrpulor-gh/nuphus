@@ -172,6 +172,58 @@ body {
   background: var(--m-bg);
 }
 
+/* boot 超时错误界面：白屏根治——给用户可见出口（重试/重新配对） */
+.mobile-boot-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.mobile-boot-card {
+  width: 100%;
+  max-width: 340px;
+  padding: 28px 24px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-border);
+  border-radius: 16px;
+  text-align: center;
+}
+.mobile-boot-card h2 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+.mobile-boot-card p {
+  margin: 0 0 20px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--m-fg-muted, #8b919c);
+}
+.mobile-boot-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mobile-boot-btn {
+  padding: 12px 16px;
+  border: none;
+  border-radius: 10px;
+  background: var(--m-accent, #3b82f6);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-boot-btn:active {
+  opacity: 0.85;
+}
+.mobile-boot-btn.is-secondary {
+  background: transparent;
+  color: var(--m-fg);
+  border: 1px solid var(--m-border);
+}
+
 /* ── 骨架：导航条 / 消息流 / 输入栏 三层 ───────────────────────────── */
 
 .mobile-app {
@@ -288,11 +340,13 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* 主题切换按钮：44pt 触摸目标（视觉 32px，padding 补齐） */
+/* 主题切换按钮：44pt 触摸目标（视觉 32px 圆，::after 透明热区补足 44pt——
+   全局 border-box 下 width:32 即总尺寸 32px，低于 iOS HIG 44pt，实测点击偏难命中） */
 .mobile-nav-theme {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   width: 32px;
   height: 32px;
   padding: 8px;
@@ -305,6 +359,14 @@ body {
   transition:
     background 120ms ease-out,
     opacity 120ms ease-out;
+}
+
+/* 透明热区扩展：32px 视觉 + 四周各 6px = 44pt 命中区，不改变视觉 */
+.mobile-nav-theme::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
 }
 
 .mobile-nav-theme:active {
@@ -398,6 +460,22 @@ body {
 
 .mobile-nav-fs-opt.is-active {
   background: var(--m-fill);
+}
+
+/* 执行中禁用（新会话入口）：置灰 + 右侧「执行中」小标签 */
+.mobile-nav-fs-opt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+}
+.mobile-nav-fs-opt:disabled:hover {
+  background: transparent;
+}
+.mobile-nav-fs-lock {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--m-fg-secondary);
+  opacity: 0.85;
 }
 
 /* 档位预览（Aa）：各档位字号不同，所见即所得 */
@@ -2847,6 +2925,68 @@ body {
   opacity: 0.75;
 }
 
+/* ── 会话清单（桌面展示台镜像，NavBar「会话」弹层）────────────────────── */
+.mobile-sess-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 42vh;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.mobile-sess-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0.5px solid var(--m-separator);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--m-plus-fg-primary, inherit);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+
+.mobile-sess-item:active {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+/* 当前会话：高亮描边 + 禁用态（已在看，无需切换） */
+.mobile-sess-item.is-active {
+  border-color: var(--m-accent, #f0b429);
+  opacity: 0.85;
+}
+
+.mobile-sess-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.mobile-sess-meta {
+  font-size: 11px;
+  color: var(--m-plus-fg-secondary);
+  opacity: 0.8;
+}
+
+.mobile-sess-empty {
+  padding: 18px 0 6px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--m-plus-fg-secondary);
+  opacity: 0.75;
+}
+
 /* 设置弹窗：fixed 底部弹出（点击 logo → 设置 打开；跟随主题毛玻璃）
    高于底部输入栏(210)：弹窗 bottom 12px 正落于输入栏区域内，
    同级 z-index 时 DOM 靠后的 Composer 会压住弹窗底部（重置按钮不可见） */
@@ -3372,4 +3512,63 @@ body {
 }
 .mobile-model-card-retry:active {
   opacity: 0.85;
+}
+/* ═══════════════════════════════════════════
+   渲染错误兜底（ErrorBoundary）与历史增量加载
+   ═══════════════════════════════════════════ */
+.mobile-error-boundary {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--m-bg, #0d0d10);
+}
+.mobile-error-boundary-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 28px 22px;
+  border-radius: 16px;
+  background: var(--m-fill, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--m-line, rgba(255, 255, 255, 0.12));
+  text-align: center;
+}
+.mobile-error-boundary-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--m-fg, #e6e8ee);
+  margin-bottom: 8px;
+}
+.mobile-error-boundary-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--m-fg-secondary, #a8adb8);
+  margin-bottom: 18px;
+}
+.mobile-error-boundary-btn {
+  padding: 10px 28px;
+  border: none;
+  border-radius: 22px;
+  background: var(--m-accent, #3b82f6);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 历史增量加载：顶部「查看更早」入口 */
+.mobile-msgs-load-more {
+  display: block;
+  margin: 12px auto;
+  padding: 8px 18px;
+  border: 1px dashed var(--m-line, rgba(255, 255, 255, 0.18));
+  border-radius: 18px;
+  background: transparent;
+  color: var(--m-fg-secondary, #a8adb8);
+  font-size: 13px;
+  cursor: pointer;
+}
+.mobile-msgs-load-more:active {
+  opacity: 0.7;
 }

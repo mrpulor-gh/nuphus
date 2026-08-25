@@ -10,9 +10,12 @@ import {
   sendMessage,
   fetchIdentity,
   fetchAgentStatus,
+  fetchSessions,
+  switchSession,
   triggerRefine,
   refineSkip,
   fetchRelayHint,
+  startNewChat,
   wfPause,
   wfResume,
   wfStop,
@@ -21,6 +24,7 @@ import {
   getApiBase,
   AuthError,
   type HistoryMessage,
+  type ShelfSessions,
 } from './api'
 import { MobileWsClient, type WsStatus } from './ws'
 import {
@@ -31,6 +35,7 @@ import {
   type ChatMessage,
 } from './store'
 import ChatScreen from './components/ChatScreen'
+import MobileErrorBoundary from './components/MobileErrorBoundary'
 import RatingSheet from './components/RatingSheet'
 import PairingGuide from './components/PairingGuide'
 import {
@@ -39,6 +44,7 @@ import {
   probeLanDirect,
   getCachedLanUrl,
   getCachedRelayUrl,
+  resolveTunnelDeviceId,
   saveRelayCache,
   type ConnectionMode,
 } from './connection'
@@ -92,6 +98,12 @@ export default function App() {
   const [ratingMsg, setRatingMsg] = useState<ChatMessage | null>(null)
   /** 工作流遥控请求进行中（防重复提交；失败 toast 提示） */
   const [wfControlBusy, setWfControlBusy] = useState(false)
+  /** 桌面展示台会话清单镜像（null = 未加载/不可用，隐藏「会话」入口） */
+  const [sessions, setSessions] = useState<ShelfSessions | null>(null)
+  const [switchBusy, setSwitchBusy] = useState(false)
+  /** boot 超时兜底：连接模式判定卡住（隧道半死/慢）时不再无限白屏——
+   *  超时后显示错误界面（重试/重新配对），给用户可见出口（2026-08-25 白屏根治）。 */
+  const [bootTimeout, setBootTimeout] = useState(false)
   /** 历史拉取失败自动重试：timer + 退避计数（指数退避 3s→30s 上限，中继慢/半死时自愈） */
   const historyRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const historyRetryAttemptRef = useRef(0)
@@ -122,7 +134,7 @@ export default function App() {
       if (hint) {
         // 只缓存非凭据字段（lan_url + relay_url 隧道入口）：hint 里的 caller_token 已无
         // 消费方（POST /task 通道已移除），长期缓存高权限凭据只会扩大 XSS 泄漏面（审计 P3-5 修复）
-        saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url })
+        saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
         if (hint.lan_url) return hint.lan_url
       }
     } catch {
@@ -130,16 +142,6 @@ export default function App() {
     }
     return getCachedLanUrl()
   }, [token])
-
-  /** Mixed Content 拦截（iOS Safari HTTPS 中继页 fetch HTTP 局域网被拦）时的逃生通道：
-   *  top-level 导航到中继 HTTP 口 18081（不受 mixed content 限制），页面以 http origin 重载后，
-   *  App 重新 resolve——此时探测局域网不再被浏览器拦截（CORS 已同 host 放行），同 WiFi 即切回直连；
-   *  仍在异地则继续走中继，仅多一次跳转。token 经 query 传递，auth.ts 载入后立即净化地址栏。 */
-  const navigateToLanProbe = useCallback((tok: string) => {
-    const host = window.location.hostname
-    const lanProbeUrl = `http://${host}:18081/?token=${encodeURIComponent(tok)}`
-    window.location.replace(lanProbeUrl)
-  }, [])
 
   /** 页面内切换到局域网直连通道：更新 REST 基址 + 连接模式。
    *  connMode 变化触发 WS 创建 effect 重建（读 apiBase 已指向局域网）——页面不刷新，
@@ -151,6 +153,24 @@ export default function App() {
       setConnMode('lan')
     },
     [markSwitchTime],
+  )
+
+  /** 明文门导航（v0.1.5 切换逻辑，2026-08-26 大王确认）：探测到局域网（ok/blocked）→
+   *  导航到中继明文口（http origin）。PWA 桌面快捷方式无地址栏，导航视觉无感（界面不变）；
+   *  http origin 页面 WS/REST 到局域网均不被混合内容拦 → 完整直连（HTTPS 页 WS 被拦导致
+   *  掉线反向切回的根治）。明文门探测失败不回跳 → 无循环。 */
+  const navigateToLanProbe = useCallback(
+    (tok: string) => {
+      if (withinSwitchCooldown()) return
+      markSwitchTime()
+      const host = window.location.hostname
+      const dev = resolveTunnelDeviceId()
+      const lanProbeUrl = `http://${host}:18081/?token=${encodeURIComponent(tok)}${
+        dev ? `&device=${encodeURIComponent(dev)}` : ''
+      }`
+      window.location.replace(lanProbeUrl)
+    },
+    [withinSwitchCooldown, markSwitchTime],
   )
 
   /** 页面内回退到中继通道：REST 基址 + 连接模式置 wan。
@@ -172,6 +192,16 @@ export default function App() {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4000)
   }, [])
+
+  /** 刷新会话清单镜像（失败静默 → 入口隐藏，不打扰主流程） */
+  const refreshSessions = useCallback(
+    (tk: string) => {
+      void fetchSessions(tk)
+        .then(s => setSessions(s))
+        .catch(() => {})
+    },
+    [],
+  )
 
   const wsRef = useRef<MobileWsClient | null>(null)
   // 状态镜像：前台恢复 hook 用 ref 读取，避免 wsStatus 变化触发监听器重注册
@@ -299,6 +329,45 @@ export default function App() {
     }
   }, [])
 
+  /** 遥控切换桌面当前会话：切的就是电脑端正显示的视图（桌面 rail 同步跟随）。
+   *  成功后后端已广播 SessionChanged（本机也会收到一次），此处立即重拉双份数据。
+   *  位置约束：依赖 loadHistory/refreshSessions，必须定义于二者之后。 */
+  const handleSwitchSession = useCallback(
+    (id: string) => {
+      if (switchBusy) return
+      setSwitchBusy(true)
+      switchSession(token ?? '', id)
+        .then(res => {
+          if (res.ok) {
+            showToast('已切换会话')
+            void loadHistory(token ?? '')
+            refreshSessions(token ?? '')
+          } else {
+            showToast(res.error)
+          }
+        })
+        .catch(() => showToast('切换失败'))
+        .finally(() => setSwitchBusy(false))
+    },
+    [switchBusy, token, loadHistory, refreshSessions, showToast],
+  )
+
+  // 会话清单镜像自愈：WS 未就绪/瞬断期 fetchSessions 失败会留下 null（弹层显示空），
+  // 周期补拉 + 回前台即拉，保证入口自愈；成功前「会话」弹层显示暂无记录而非报错
+  useEffect(() => {
+    if (!token) return
+    const tick = () => {
+      if (document.visibilityState === 'visible') refreshSessions(token)
+    }
+    tick()
+    const iv = window.setInterval(tick, 30000)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      window.clearInterval(iv)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [token, refreshSessions])
+
   // ── 启动：解析 token → 首拉历史 → 建 WS ──
   useEffect(() => {
     const tokenStr = initToken()
@@ -309,6 +378,20 @@ export default function App() {
     setToken(tokenStr)
     setPhase('paired')
   }, [])
+
+  // ── boot 超时兜底（白屏根治）：进入 boot 态后 12s 连接模式仍未就绪 → 显示错误界面 ──
+  // 场景：中继隧道半死/极慢时 connMode 判定依赖 fetchRelayHint 往返，可能长时间卡 null；
+  // 此前纯空白 mobile-boot 无任何出口，用户误以为应用死了（2026-08-25 实测白屏）。
+  useEffect(() => {
+    const inBoot = phase === 'loading' || (phase === 'paired' && connMode === null)
+    if (!inBoot) {
+      setBootTimeout(false)
+      return
+    }
+    setBootTimeout(false)
+    const id = setTimeout(() => setBootTimeout(true), 12000)
+    return () => clearTimeout(id)
+  }, [phase, connMode])
 
   // ── 连接模式判定：私有 hostname → lan；公网（中继入口）→ 统一先按中继打开界面 ──
   // 设计意图（2026-08 用户确认）：所有中继入口先显示中继界面——全屏原生、启动零等待、
@@ -327,7 +410,7 @@ export default function App() {
         setConnMode('lan')
         void fetchRelayHint(token).then(hint => {
           if (!hint) return
-          saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url })
+          saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
         })
         return
       }
@@ -337,7 +420,7 @@ export default function App() {
       setConnMode('wan')
       // 后台顺手拉一次 hint：缓存隧道入口 + 局域网地址（不阻塞启动；切回局域网用）
       void fetchRelayHint(token).then(hint => {
-        if (hint) saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url })
+        if (hint) saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
       })
     }
     void resolve()
@@ -354,7 +437,7 @@ export default function App() {
     // 中继入口：拉取历史前并行发起一次局域网探测（路线选择的加速，不阻塞历史拉取、
     // 不改历史拉取逻辑——历史照常走当前通道发起）。本地网络探测 ok → 页面内切回直连，
     // connMode 变化触发本 effect 重跑 → WS/历史走局域网（更快）；异地/被拦 → 保持中继，
-    // 交由下方 8s 巡检持续探测（blocked 导航等完整逻辑在那里）。
+    // 交由下方 8s 巡检持续探测（blocked 导航等完整逻辑在那里，对齐 v0.1.5）。
     // 快路径：缓存 lan_url 直接探测（本地网络 <100ms，不依赖隧道）；缓存缺失/失败
     // 才走 resolveLanUrl（hint 实时地址，IP 变化可感知）→ 探测。
     if (connMode === 'wan') {
@@ -380,6 +463,8 @@ export default function App() {
       })()
     }
 
+    // 历史首拉：WS 建立前直接拉一次（v0.1.5 对齐）——onReady 每次重连也会重拉；
+    // 首拉在此保证界面立即有内容，不依赖 WS 握手成功。
     void loadHistory(token)
     // 拉取身份显示名（桌面端 soul 配置经后端下发）；失败静默（默认 Nuphus）
     void fetchIdentity(token)
@@ -392,9 +477,20 @@ export default function App() {
       token,
       {
         onEvent: event => {
+          // ⚠️ 不使用轻量快照（session_snapshot）：2026-08-26 大王裁定「轻量快照方案不可取」——
+          // 只含状态不含数据，执行中（running）时手机端无内容可跟随，事件丢失就永远卡执行中、
+          // 无法跟随电脑端完成。同步完全回归 v0.1.5 逻辑：onReady 每次连接 loadHistory 拉完整
+          // 历史 + WS 实时事件累积（delta/tool_call/completed）；执行状态由 fetchAgentStatus 恢复。
+          // 同 WiFi（局域网直连）带宽充足，完整历史拉取瞬时完成，无需任何快照。
           // 后台任务完成通知：执行完成时若页面在后台，发系统通知提醒
           if (event.type === 'execution_started') {
             ensureNotificationPermission()
+          }
+          // 会话镜像跟随：桌面 rail（或本机遥控）切换了当前会话 → 重拉历史呈现
+          if (event.type === 'session_changed') {
+            void loadHistory(token ?? '')
+            refreshSessions(token ?? '')
+            showToast('桌面已切换会话')
           }
           if (event.type === 'execution_completed' && document.visibilityState === 'hidden') {
             notifyExecutionDone(event.output?.result_message)
@@ -402,22 +498,17 @@ export default function App() {
           dispatch({ type: 'event', event })
         },
         onReady: () => {
-          // 订阅激活（含每次重连）：重拉历史补齐间隙
+          // 订阅激活（含每次重连）：立即拉取历史补齐断线间隙（v0.1.5 逻辑）。
+          // ⚠️ 不做「等 snapshot 再拉」——snapshot 只负责 welcome/running 快速呈现，
+          // 历史以 loadHistory 全量拉取为准；onReady 每次连接都拉 → 与桌面永远一致，
+          // 不同步根治（2026-08-26 实测：快照清空 + 依赖拉取时机 = 断线重连丢历史）。
+          refreshSessions(token)
           void loadHistory(token)
           // 恢复执行状态：broadcast 事件不为迟到订阅者补发，刷新/断线间隙的
           // execution_started/completed 会丢失——据此恢复 running，让后续 delta 正常
-          // 累积气泡、完成结果经 loadHistory 落地（修复刷新后回复看不到）。
+          // 累积气泡、完成结果经历史拉取落地（修复刷新后回复看不到）。
           void fetchAgentStatus(token)
-            .then(s => {
-              dispatch({ type: 'sync_running', running: s.running })
-              if (!s.running) {
-                // 已完成/空闲：再拉一次历史兜底——覆盖「loadHistory 后 agent 才完成，
-                // 且 execution_completed 在断线间隙错过」的时序窗口。
-                void loadHistory(token)
-              }
-            })
-            // 不再静默：404（旧后端无此端点）/网络失败时至少留日志，
-            // 否则执行栏永不恢复且无任何线索可查
+            .then(s => dispatch({ type: 'sync_running', running: s.running }))
             .catch(e => console.warn('[mobile] fetchAgentStatus failed:', e))
         },
         onStatus: s => {
@@ -429,7 +520,9 @@ export default function App() {
     )
     client.start()
     wsRef.current = client
-    return () => client.dispose()
+    return () => {
+      client.dispose()
+    }
   }, [
     phase,
     token,
@@ -492,6 +585,9 @@ export default function App() {
         // 局域网 origin：上面已校验 relay_url 存在，这里再取一次保底
         const relayUrl = getCachedRelayUrl()
         if (!relayUrl) return
+        // ⚠️ 基址必须保持裸 origin：apiBase 是字符串前缀拼接（resolveApi），
+        // 带 query 会打废后续请求。多设备归属由服务端决策（唯一在线自动跟随/
+        // 引导页）兜底，不靠客户端拼标记（实测拼接事故）。
         switchToWan(relayUrl)
       } else {
         switchToWan()
@@ -501,6 +597,26 @@ export default function App() {
     return () => clearInterval(iv)
   }, [phase, token, connMode, switchToWan, showToast, withinSwitchCooldown])
 
+  // ── 完成轮询兜底（2026-08-26）：执行中定期查后端 busy，释放即收尾 ──
+  // 手机端 running 依赖 WS 推送的 execution_completed 事件收尾；中继慢链路下事件
+  // 可能丢失（WS 在线不重连，onReady 不触发）→ running 永 true 卡执行态、无法跟随
+  // 电脑端完成（大王实测）。此处执行中每 5s 轮询后端状态（fetchAgentStatus = busy），
+  // 检测到已完成 → sync_running(false) 收口 + loadHistory 补拉最终结果。
+  useEffect(() => {
+    if (phase !== 'paired' || !token || !state.activity.running) return
+    const iv = setInterval(() => {
+      fetchAgentStatus(token)
+        .then(s => {
+          if (!s.running) {
+            dispatch({ type: 'sync_running', running: false })
+            void loadHistory(token)
+          }
+        })
+        .catch(() => {})
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [phase, token, state.activity.running, loadHistory])
+
   // ── WAN → LAN 自动切回：重连 WiFi 后，wan 模式下定时探测局域网直连，可达则页面内切回
   // lan（免费直连，绕过可能半死的中继隧道）。重连 WiFi 白屏的根治：此前 connMode 只在
   // 页面加载时判定一次，重连 WiFi 后页面仍走半死中继，不探测局域网 → 永久白屏。
@@ -508,6 +624,8 @@ export default function App() {
   // 回到 WiFi 同样经此 effect 切回直连。
   useEffect(() => {
     if (phase !== 'paired' || !token || connMode !== 'wan') return
+    // ⚠️ 不依赖 wsStatus：WS 可能一直 connecting（中继/直连建立中），等它 = 死锁
+    // 永不巡检、永不切直连（2026-08-26 实测「电脑不推」根因）。周期性探测独立执行。
     let cancelled = false
     // 滞回：连续 2 次探测成功才切回 lan——避免 WiFi 弱/刚连上时单次抖动触发
     // switchToLan → WS 重建 → 反向回退 → 振荡闪动
@@ -632,25 +750,9 @@ export default function App() {
       // ── 空闲：乐观回显 → POST（send_id 去重）→ 失败撤销 ──
       const optimistic = makeOptimisticMessage(content, opts?.images)
       dispatch({ type: 'optimistic', message: optimistic })
-      // 外网（中继入口）页面：发送前先探测桌面局域网——同一 WiFi 下局域网可达，
-      // 页面内切到直连通道（免费、不绕中继，pro 同样优先本地），继续走下方本地发送；
-      // 不可达才走中继。探测目标是桌面局域网地址（/relay-hint 下发的 lan_url），不是
-      // 当前页面 origin——中继页面的 /health 永远可达，探测它无法感知「是否已回到同一 WiFi」。
-      // 注意：绝不通过刷新/跳转切通道——刷新会重发消息、清空本地执行中气泡。
-      // 中继（wan）通道 = 下方 sendMessage 走当前 origin（隧道 18081）→ 经隧道直达桌面
-      // mobile_server；agent 回复由 WS 事件流推送（完整「第二块屏」体验）。
-      // （POST /task 旧消息通道已移除：其同步返回仅为消息确认原文，无法承载 agent 回复。）
-      if (connModeRef.current === 'wan') {
-        const lanUrl = await resolveLanUrl()
-        if (lanUrl) {
-          const r = await probeLanDirect(lanUrl, token ?? '')
-          // ok：确认同 WiFi → 页面内切直连；blocked：Mixed Content 拦截（不代表不可达）→
-          // 同样切直连（发送走局域网更稳，若实际不可达下方 catch 会反向切回 wan）
-          if (r === 'ok' || r === 'blocked') {
-            switchToLan(lanUrl)
-          }
-        }
-      }
+      // ⚠️ 2026-08-26 移除「发送前探测局域网」：resolveLanUrl 经中继 fetchRelayHint
+      // 慢（国际链路 20s 超时）会阻塞发送 → 实测「发消息卡死」（气泡永久 pending）。
+      // 发送立即走当前通道（中继/直连），通道切换由 8s 巡检/进入探测负责——发送不等待探测。
       try {
         const result = await sendMessage(token, content, optimistic.id, opts)
         if (result.ok && result.timeout) {
@@ -658,6 +760,12 @@ export default function App() {
           // 保留乐观气泡 pending，等待 WS 事件（user_message_received /
           // execution_started）确认——绝不撤销，撤销曾导致 user 消息消失 +
           // 用户误判重试 + agent 双气泡。
+          // ⚠️ 弱网兜底：蜂窝 CGNAT 下 WS 可能反复闪断，推送确认永远等不到 →
+          // 气泡永久 pending（实测「发消息卡死」观感）。8s 后主动拉一次历史
+          // 对账——消息已被后端受理就会出现在历史里，气泡随之落定。
+          window.setTimeout(() => {
+            void loadHistory(token ?? '')
+          }, 8000)
         } else if (!result.ok) {
           dispatch({
             type: 'send_failed',
@@ -725,6 +833,39 @@ export default function App() {
   )
 
   if (phase === 'loading' || (phase === 'paired' && connMode === null)) {
+    // boot 超时兜底：不再无限白屏——给「重试」与「重新配对」两个可见出口。
+    // 重试 = 重新加载页面（隧道恢复后即正常进入）；重新配对 = 清 token 回配对页。
+    if (bootTimeout) {
+      return (
+        <div className="mobile-boot mobile-boot-error">
+          <div className="mobile-boot-card">
+            <h2>{t('mobile.bootTimeoutTitle')}</h2>
+            <p>{t('mobile.bootTimeoutDesc')}</p>
+            <div className="mobile-boot-actions">
+              <button
+                type="button"
+                className="mobile-boot-btn"
+                onClick={() => window.location.reload()}
+              >
+                {t('mobile.retry')}
+              </button>
+              <button
+                type="button"
+                className="mobile-boot-btn is-secondary"
+                onClick={() => {
+                  clearToken()
+                  wsRef.current?.dispose()
+                  setAuthInvalid(false)
+                  setPhase('guide')
+                }}
+              >
+                {t('mobile.repair')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return <div className="mobile-boot" />
   }
   if (phase === 'guide') {
@@ -732,8 +873,10 @@ export default function App() {
   }
   return (
     <>
-      <ChatScreen
-        messages={state.messages}
+      {/* 渲染错误兜底：历史消息大量加载/低端 WebView 渲染崩溃时，白屏变可恢复提示 */}
+      <MobileErrorBoundary>
+        <ChatScreen
+          messages={state.messages}
         activity={state.activity}
         wsStatus={wsStatus}
         historyError={historyError}
@@ -780,9 +923,27 @@ export default function App() {
             .catch(() => showToast(t('mobile.stopFailed')))
         }}
         onNewChat={() => {
-          // 新会话：清空前端消息（历史仍在后端，刷新可恢复）
-          dispatch({ type: 'new_chat' })
-          showToast(t('mobile.newChatStarted'))
+          // 单一路径：手机新建 = 遥控桌面执行权威新建（复用桌面 new_chat_session_cmd），
+          // 后端经 SessionChanged 事件广播，手机收到后跟随显示欢迎页。
+          // HTTP 成功响应兜底清一次本端视图（WS 事件可能瞬时漏收，幂等）。
+          if (!token) return
+          void startNewChat(token).then(r => {
+            if (r.ok) {
+              dispatch({ type: 'new_chat' })
+              showToast(t('mobile.newChatStarted'))
+              // 兜底重拉：即使 SessionChanged 漏收，本端也立即呈现新会话欢迎页
+              void loadHistory(token)
+              refreshSessions(token)
+            } else {
+              // busy/append_pending：后端 guard_switch 已拒绝（执行中禁止新建），
+              // 前端给明确提示而非裸错误码；其余失败走通用文案
+              showToast(
+                r.error === 'busy' || r.error === 'append_pending'
+                  ? t('mobile.newChatBusy')
+                  : r.error || t('mobile.newChatFailed'),
+              )
+            }
+          })
         }}
         onDisconnect={() => {
           // 断开连接：清除 token + WS，回到配对页
@@ -793,6 +954,8 @@ export default function App() {
         }}
         onSend={handleSend}
         onRateMessage={setRatingMsg}
+        sessions={sessions}
+        onSwitchSession={handleSwitchSession}
         onUserInputResolved={submitted => {
           dispatch({ type: 'user_input_resolved' })
           showToast(submitted ? t('mobile.submitted') : t('mobile.cancelled'))
@@ -835,6 +998,7 @@ export default function App() {
           }}
         />
       )}
+      </MobileErrorBoundary>
     </>
   )
 }

@@ -295,13 +295,12 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
                         count,
                     },
                 );
+                // ⚠️ 已存在（无需下载）不发 splash pct：splash 加载条/「后台下载」按钮
+                // 只在真实下载时显示——此前即使全部本地就绪也发 pct（100%），splash.js
+                // 收到 pct 即亮出加载条 + 15s 后「后台下载」按钮 → 本地已下载完仍显示
+                // 「后台下载」（2026-08-26 大王实测；OpenCode 只改前端未治本）。
+                // 仅累计 done_bytes 供整体进度折算（真正下载时的 on_progress 用）。
                 done_bytes += mf.min_size;
-                emit_splash_pct(
-                    app,
-                    done_bytes,
-                    total_bytes,
-                    &format!("准备视觉模型… {}", mf.name),
-                );
                 continue;
             }
             tracing::warn!(

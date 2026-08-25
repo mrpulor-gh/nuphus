@@ -78,6 +78,9 @@ interface RelayCache {
   lan_url?: string
   /** 隧道公网入口（非凭据，可缓存）：局域网 origin 页面离开 WiFi 后故障转移到中继用 */
   relay_url?: string
+  /** 本机 device_id（hint 下发）：故障转移请求必须携带 ?device= 显式标记——
+   *  中继多租户下无标记请求无法确定归属（会被拒绝/引导），实测跨用户串线事故 */
+  device_id?: string
   /** 写入时间戳（unix ms）。缺失视为旧格式，读取时按过期处理。 */
   ts?: number
 }
@@ -125,4 +128,51 @@ export function getCachedLanUrl(): string | null {
 /** 读缓存的中继隧道公网入口（无则 null）。局域网 origin 页面故障转移的目标基址 */
 export function getCachedRelayUrl(): string | null {
   return readCache()?.relay_url || null
+}
+
+/** 读缓存的 device_id（无则 null）：wan 基址拼接 ?device= 用，显式标记本机归属 */
+export function getCachedDeviceId(): string | null {
+  return readCache()?.device_id || null
+}
+
+/** 从当前页面 URL 提取归属设备（?device= / ?device_id=）。
+ *  配对期 localStorage 尚无缓存（首次扫码/重置后）——扫码入口本身携带标记，
+ *  POST /pair 等请求必须沿用，否则公共中继多设备在线时配对请求被 Ambiguous
+ *  拒成引导页，用户怎么重扫都失败（实测死循环）。 */
+export function deviceIdFromLocation(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search)
+    const v = (q.get('device') || q.get('device_id') || '').trim()
+    return v || null
+  } catch {
+    return null
+  }
+}
+
+/** 从归属前缀路径提取 device：/d/<device_id>/mobile.html（PWA 主屏幕入口 start_url
+ *  相对 manifest 解析成 /d/<device_id>/mobile.html，**query 无 device**）→ 从路径段取。
+ *  2026-08-26 实测：PWA 打开无 query 归属 → 配对/API 请求无 X-Tunnel-Device 头 →
+ *  中继 Ambiguous 或桌面路由错位 → 「网络错误请重试」。 */
+export function deviceIdFromPath(): string | null {
+  try {
+    const m = window.location.pathname.match(/^\/d\/([^/]+)\//)
+    if (!m) return null
+    const v = decodeURIComponent(m[1]).trim()
+    return v || null
+  } catch {
+    return null
+  }
+}
+
+/** 归属设备解析顺序：localStorage 缓存（配对成功后 hint 落盘）→ URL query → 归属路径 */
+export function resolveTunnelDeviceId(): string | null {
+  return getCachedDeviceId() ?? deviceIdFromLocation() ?? deviceIdFromPath()
+}
+
+/** 故障转移基址 + 显式设备标记：https://r.example.com → https://r.example.com/?device=<id>。
+ *  中继多租户下无标记请求无法确定归属；已有 query/fragment 的 URL 原样返回。 */
+export function withDeviceMarker(relayUrl: string, deviceId: string | null): string {
+  const base = relayUrl.trim().replace(/\/+$/, '')
+  if (!deviceId || base.includes('?') || base.includes('#')) return base
+  return `${base}/?device=${deviceId}`
 }

@@ -16,6 +16,11 @@ export function mobileLang(): string {
   return stored && stored in packs ? stored : 'zh'
 }
 
-export function t(key: string): string {
-  return packs[mobileLang()][key] ?? zh[key] ?? key
+export function t(key: string, ...args: unknown[]): string {
+  // 与桌面端 locales 同款位置插值（{0} {1} …），支持带参文案（如 token 统计 tooltip）
+  let text = packs[mobileLang()][key] ?? zh[key] ?? key
+  args.forEach((arg, i) => {
+    text = text.replace(`{${i}}`, String(arg))
+  })
+  return text
 }

@@ -4,7 +4,7 @@
  * 执行状态由消息内状态行承载（轻量一行），不再有独立活动卡
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { ChatMessage, ActivityState } from '../store'
 import MessageBubble from './MessageBubble'
@@ -20,6 +20,12 @@ interface Props {
   onRateMessage?: (message: ChatMessage) => void
 }
 
+/** 初始渲染的消息条数：历史大列表（180+ 条）全量渲染会压垮低端 WebView
+ *  （2026-08-26 实测：中继公网加载 188 条历史后真机白屏，桌面 Chrome 正常），
+ *  先渲染最近窗口 + 顶部「查看更早」增量展开。 */
+const INITIAL_VISIBLE = 50
+const PAGE_STEP = 50
+
 export default function MessageList({
   messages,
   activity,
@@ -29,6 +35,8 @@ export default function MessageList({
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
+  // 从尾部可见条数（新消息追加时保持，只增不减；点「查看更早」步进展开）
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE)
 
   // 用户上翻则暂停自动跟随；回滚到底部附近恢复跟随
   const handleScroll = () => {
@@ -66,9 +74,23 @@ export default function MessageList({
     )
   }
 
+  // 增量窗口：只渲染最近 visibleCount 条，顶部「查看更早」步进展开。
+  // 新消息追加时 visibleCount 保持 → 始终看到最新会话底部，不会因历史变长而卡顿。
+  const hidden = messages.length - visibleCount
+  const visible = hidden > 0 ? messages.slice(hidden) : messages
+
   return (
     <div className="mobile-messages" ref={listRef} onScroll={handleScroll}>
-      {messages.map(m => (
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="mobile-msgs-load-more"
+          onClick={() => setVisibleCount(v => Math.min(v + PAGE_STEP, messages.length))}
+        >
+          {t('mobile.loadEarlier', String(hidden))}
+        </button>
+      )}
+      {visible.map(m => (
         <MessageBubble
           key={m.id}
           message={m}

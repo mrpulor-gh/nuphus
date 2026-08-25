@@ -291,6 +291,11 @@ export function ChatInputBar({
       }, 300)
     }
     const unlisteners: (() => void)[] = []
+    // ⚠️ 开始事件必须也监听：挂载时后端空闲（busy=false）不启动轮询，若无开始事件驱动
+    // 重新查询，执行开始后 backendBusy 永远 false → 终止按钮永不显示（2026-08-26 实测）。
+    void listen<unknown>('execution_started', () => void check()).then(u => {
+      if (!cancelled) unlisteners.push(u)
+    })
     void listen<unknown>('execution_completed', onExecFinished).then(u => {
       if (!cancelled) unlisteners.push(u)
     })

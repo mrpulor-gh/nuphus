@@ -147,6 +147,9 @@ export const initialChatState: ChatState = {
 export type ChatAction =
   | { type: 'history'; messages: ChatMessage[] }
   | { type: 'history_merge'; messages: ChatMessage[]; manual?: boolean }
+  /** 连接成功快照：电脑端当前状态权威镜像（WS ws_connected 后由服务端推送）。
+   *  messages 为空 = 电脑端欢迎界面（显示欢迎而非拉取失败）；running = 桌面执行中。 */
+  | { type: 'session_snapshot'; messages: ChatMessage[]; welcome: boolean; running: boolean }
   | { type: 'new_chat' }
   | { type: 'event'; event: NuphusEvent }
   | { type: 'optimistic'; message: ChatMessage }
@@ -819,6 +822,40 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
                 !m.traceItems?.length
               ),
           ),
+      }
+    }
+    case 'session_snapshot': {
+      // 连接成功快照（轻量状态帧，welcome/running）——**不再清空本地消息**。
+      // 背景（2026-08-26 不同步根治）：快照不带历史（messages=[]），若 reducer 把
+      // 现有消息替换为空 → 手机外网 WS 断线重连（频繁）每次新快照都清空已显示历史，
+      // 依赖后续 loadHistory 恢复 → 拉取失败/慢 = 不同步。改为：快照 messages 为空时
+      // **保留本地全部消息**；历史一致性由 onReady 每次连接的 loadHistory 全量拉取保证
+      // （v0.1.5 逻辑）；带历史种子（理论上）时才按 live 保护合并。
+      const live =
+        action.messages.length > 0
+          ? state.messages.filter(
+              m =>
+                m.pending ||
+                m.streaming ||
+                (action.running && !action.messages.some(h => h.id === m.id)),
+            )
+          : state.messages
+      const merged = [...action.messages, ...live]
+      const seen = new Set<string>()
+      const out = merged.filter(m => {
+        const k = `${m.role}|${m.content ?? ''}`
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      return {
+        ...state,
+        messages: out,
+        activity: {
+          ...state.activity,
+          running: action.running,
+          goal: action.running ? state.activity.goal : '',
+        },
       }
     }
     case 'event':

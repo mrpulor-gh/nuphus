@@ -14,6 +14,7 @@
  */
 
 import type { NuphusEvent } from '../core/types'
+import { resolveTunnelDeviceId } from './connection'
 
 export type WsStatus = 'connecting' | 'online' | 'offline'
 
@@ -157,8 +158,13 @@ export class MobileWsClient {
       /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
       /^169\.254\./.test(hostname)
     const protocols = isPrivateHost ? undefined : [`auth.${this.token}`]
+    // 多租户归属标记：WS 无法带自定义 Header，query 是唯一通道（中继请求行解析
+    // ?device= 优先于 sole-online 决策）。局域网直连同样携带，mobile_server 忽略未知 query。
+    const deviceId = resolveTunnelDeviceId()
     const ws = new WebSocket(
-      `${proto}://${host}/ws?token=${encodeURIComponent(this.token)}`,
+      `${proto}://${host}/ws?token=${encodeURIComponent(this.token)}${
+        deviceId ? `&device=${encodeURIComponent(deviceId)}` : ''
+      }`,
       protocols,
     )
     this.ws = ws

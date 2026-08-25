@@ -9,10 +9,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ALargeSmall, Check, Moon, RotateCcw, Settings, Sun, Wrench, X } from 'lucide-react'
+import { ALargeSmall, Check, Layers, Moon, RotateCcw, Settings, Sun, Wrench, X } from 'lucide-react'
 import { getTheme, toggleTheme, type MobileTheme } from '../theme'
 import { getCachedLanUrl, getCachedRelayUrl } from '../connection'
 import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
+import type { ShelfSessions } from '../api'
 import type { ActivityState } from '../store'
 import type { WsStatus } from '../ws'
 import { t } from '../i18n'
@@ -24,6 +25,10 @@ interface Props {
   onNewChat?: () => void
   /** 重置连接（设置弹窗触发）：清除 token 回到配对页 */
   onDisconnect?: () => void
+  /** 桌面展示台会话清单镜像（null = 未加载/不可用，隐藏入口） */
+  sessions?: ShelfSessions | null
+  /** 遥控切换桌面当前会话（切的就是电脑端正显示的视图） */
+  onSwitchSession?: (id: string) => void
 }
 
 const STATUS_LABEL: Record<WsStatus, () => string> = {
@@ -97,17 +102,26 @@ function BlinkLogo() {
   )
 }
 
-export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: Props) {
+export default function NavBar({
+  wsStatus,
+  activity,
+  onNewChat,
+  onDisconnect,
+  sessions,
+  onSwitchSession,
+}: Props) {
   const [now, setNow] = useState(Date.now())
   const [theme, setTheme] = useState<MobileTheme>(getTheme)
   const [fontSize, setFs] = useState<MobileFontSize>(getFontSize)
   const [fsOpen, setFsOpen] = useState(false)
   const fsWrapRef = useRef<HTMLDivElement>(null)
-  // 品牌菜单（点击 logo 弹出：新会话 / 设置）与设置弹窗
+  // 品牌菜单（点击 logo 弹出：新会话 / 会话 / 设置）与设置弹窗
   const [logoMenuOpen, setLogoMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
   const logoWrapRef = useRef<HTMLDivElement>(null)
   const settingsSheetRef = useRef<HTMLDivElement>(null)
+  const sessionsSheetRef = useRef<HTMLDivElement>(null)
 
   // 执行中每秒 tick 刷新用时；空闲/暂停时不 tick
   const running = activity.running && !activity.paused
@@ -133,15 +147,17 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
     }
   }, [fsOpen])
 
-  // 品牌菜单 / 设置弹窗：点击外部关闭（轻量 popover，不叠加遮罩）
+  // 品牌菜单 / 设置弹窗 / 会话清单：点击外部关闭（轻量 popover，不叠加遮罩）
   useEffect(() => {
-    if (!logoMenuOpen && !settingsOpen) return
+    if (!logoMenuOpen && !settingsOpen && !sessionsOpen) return
     const onDown = (e: MouseEvent | TouchEvent) => {
       const t = e.target as Node
       if (logoWrapRef.current?.contains(t)) return
       if (settingsSheetRef.current?.contains(t)) return
+      if (sessionsSheetRef.current?.contains(t)) return
       setLogoMenuOpen(false)
       setSettingsOpen(false)
+      setSessionsOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('touchstart', onDown)
@@ -149,7 +165,7 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('touchstart', onDown)
     }
-  }, [logoMenuOpen, settingsOpen])
+  }, [logoMenuOpen, settingsOpen, sessionsOpen])
 
   const pickFontSize = (size: MobileFontSize) => {
     setFs(setFontSize(size))
@@ -177,6 +193,7 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
             type="button"
             role="menuitem"
             className="mobile-nav-fs-opt"
+            disabled={activity.running}
             onClick={() => {
               setLogoMenuOpen(false)
               onNewChat?.()
@@ -184,6 +201,19 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
           >
             <RotateCcw size={15} aria-hidden="true" />
             <span className="mobile-nav-fs-label">新会话</span>
+            {activity.running && <span className="mobile-nav-fs-lock">执行中</span>}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="mobile-nav-fs-opt"
+            onClick={() => {
+              setLogoMenuOpen(false)
+              setSessionsOpen(true)
+            }}
+          >
+            <Layers size={15} aria-hidden="true" />
+            <span className="mobile-nav-fs-label">会话</span>
           </button>
           <button
             type="button"
@@ -244,6 +274,58 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
           重置
         </button>
         <div className="mobile-settings-reset-hint">清除配对信息并断开连接，需重新扫码配对</div>
+      </div>
+    ) : null
+
+  /** 会话清单弹层：桌面展示台镜像（切的就是电脑端正显示的视图）。
+   *  复用设置弹层样式（mobile-settings-sheet），条目高亮当前会话。 */
+  const renderSessions = () =>
+    sessionsOpen ? (
+      <div className="mobile-settings-sheet" role="dialog" aria-label="会话" ref={sessionsSheetRef}>
+        <div className="mobile-mode-head">
+          <span className="mobile-mode-title">会话</span>
+          <button
+            type="button"
+            className="mobile-model-card-x"
+            onClick={() => setSessionsOpen(false)}
+            aria-label="关闭"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+        {sessions && sessions.items.length > 0 ? (
+          <div className="mobile-sess-list">
+            {sessions.items.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={[
+                  'mobile-sess-item',
+                  item.is_active ? 'is-active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => {
+                  if (item.is_active) {
+                    setSessionsOpen(false)
+                    return
+                  }
+                  setSessionsOpen(false)
+                  onSwitchSession?.(item.id)
+                }}
+              >
+                <span className="mobile-sess-title">{item.title || item.id}</span>
+                <span className="mobile-sess-meta">
+                  {item.is_active ? '当前 · ' : ''}
+                  {item.message_count} 条
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mobile-sess-empty">暂无会话记录</div>
+        )}
+        <div className="mobile-settings-reset-hint">切换的是电脑端正在显示的对话，两端同步</div>
       </div>
     ) : null
 
@@ -326,6 +408,7 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
           {renderActions()}
         </header>
         {renderSettings()}
+        {renderSessions()}
       </>
     )
   }
@@ -344,6 +427,7 @@ export default function NavBar({ wsStatus, activity, onNewChat, onDisconnect }: 
         {renderActions()}
       </header>
       {renderSettings()}
+      {renderSessions()}
     </>
   )
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { IconCheck, IconEdit3, IconX, IconTrash2 } from '../../ui/Icons'
+import { IconCheck, IconEdit3, IconX, IconTrash2, IconPlus } from '../../ui/Icons'
 import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
 import {
@@ -17,13 +17,58 @@ const POLL_INTERVAL_MS = 5000
 interface SessionRailProps {
   /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
   onSessionChanged: () => void
+  /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
+  onNewChat?: () => void
 }
 
-function errorCodeToI18n(code: string): string {
+type NoticeTone = 'info' | 'warning' | 'error'
+
+/** 错误码 → i18n key（按业务/系统错误拆分，业务等待有专属细分文案） */
+function codeToI18n(code: string): string {
   if (code === 'busy') return 'sessionRail.switchFailBusy'
   if (code === 'append_pending') return 'sessionRail.switchFailAppend'
   if (code === 'mode_mismatch') return 'sessionRail.switchFailMode'
+  if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
   return 'sessionRail.switchFailGeneric'
+}
+
+/** 错误码 → 视觉 tone：业务等待用 info（蓝），模式不匹配用 warning（橙），真错误用 error（红） */
+function codeToTone(code: string): NoticeTone {
+  if (code === 'busy' || code === 'append_pending') return 'info'
+  if (code === 'mode_mismatch') return 'warning'
+  return 'error'
+}
+
+/** 通知浮层图标：按 tone 切换内嵌 SVG，避免引入额外 icon 包污染主图标库 */
+function NoticeIcon({ tone }: { tone: NoticeTone }) {
+  if (tone === 'warning') {
+    // 三角警示
+    return (
+      <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 2 L14.5 13.5 L1.5 13.5 Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M8 6 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (tone === 'error') {
+    // 圆 + 叹号
+    return (
+      <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8 5 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
+      </svg>
+    )
+  }
+  // info：圆 + i
+  return (
+    <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="8" cy="4.6" r="0.9" fill="currentColor" />
+      <path d="M8 7 V11.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
 }
 
 /**
@@ -35,17 +80,24 @@ function errorCodeToI18n(code: string): string {
  *   横杠同步 shake）。新建对话入口在 TitleBar 与 Ctrl+N（底部无虚线杠）。
  * - 执行中整轨降透明度锁定（can_switch），与后端守卫双保险。
  */
-export default function SessionRail({ onSessionChanged }: SessionRailProps) {
+export default function SessionRail({ onSessionChanged, onNewChat }: SessionRailProps) {
   const { t } = useLanguage()
-  const [items, setItems] = useState<ShelfSessionItem[]>([])
+const [items, setItems] = useState<ShelfSessionItem[]>([])
   const [canSwitch, setCanSwitch] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
-  const [err, setErr] = useState<string | null>(null)
-  const errTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone } | null>(null)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 手动归档确认弹窗目标会话 id（null = 关闭） */
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
   const stoppedRef = useRef(false)
+  /** 外部会话变化检测基准：上轮轮询的 active 会话 id（null=无 active；首轮回填不触发） */
+  const lastActiveIdRef = useRef<string | null>(null)
+  const initializedRef = useRef(false)
+  /** 上次 canSwitch 状态：检测「执行开始/结束」的状态翻转轮（只校准基准，不触发重拉） */
+  const prevCanSwitchRef = useRef(true)
+  /** 检测触发去抖：上次 fire 时间戳（2s 内不重复触发重拉） */
+  const lastFireAtRef = useRef(0)
   /** 整轨隐显：默认隐身，左缘感应区唤醒；移开 10s 后渐隐 */
   const [revealed, setRevealed] = useState(false)
   const [fading, setFading] = useState(false)
@@ -58,12 +110,60 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     editingRef.current = editingId !== null
   }, [editingId])
 
+  /** onSessionChanged 经 ref 间接持有：保持 refresh 引用稳定（deps 不加回调），
+   *  否则父组件每次渲染重建回调会导致轮询 effect 反复重启 */
+  const onSessionChangedRef = useRef(onSessionChanged)
+  onSessionChangedRef.current = onSessionChanged
+
   const refresh = useCallback(async () => {
     try {
       const r = await listShelfSessions()
       if (!stoppedRef.current && r) {
-        setItems(r.items || [])
-        setCanSwitch(r.can_switch !== false)
+        const list = r.items || []
+        const canSwitch = r.can_switch !== false
+        setItems(list)
+        setCanSwitch(canSwitch)
+        // ── 外部会话变化检测 ──
+        // 手机端「新会话」/ 遥控切换只广播给移动 WS，桌面前端没有该事件通道；
+        // 本轮询是桌面感知外部会话变化的唯一信息源。
+        // ⚠️ 仅在空闲态（can_switch）检测：执行期后端 get_chat_history 的会话解析源
+        // 会在 session_backup 与 live agent 间漂移（实测日志交替返回），active id
+        // 随之抖动——若此时比对会把执行期快照切换误判为外部变更，每次收发都整表
+        // 重拉聊天区（实测回归）。执行中守卫本就禁止任何切换，不存在外部变更，
+        // 直接冻结检测与基准更新。
+        // ⚠️ 状态翻转轮（busy↔idle）：执行开始/结束时 active id 天然变化（agent
+        // take/放回），此轮只校准基准不触发——否则「新会话/切换后第一轮回复完成」
+        // 会因基准过期误判为外部变更，必然整表重拉（实测 2026-08-25）。
+        const flip = prevCanSwitchRef.current !== canSwitch
+        prevCanSwitchRef.current = canSwitch
+        // 执行完成（can_switch false→true 翻转）→ 强制显示工作台：
+        // 「执行中不显示」会让用户看不到 rail；完成后默认浮现，方便立即切换。
+        // （complete 语义：轮询翻转近似事件，3s 内收敛，体验一致）
+        if (flip && canSwitch) {
+          startReveal()
+        }
+        const activeId = list.find(i => i.is_active)?.id ?? null
+        if (flip) {
+          lastActiveIdRef.current = activeId
+          return
+        }
+        if (!canSwitch) return
+        if (!initializedRef.current) {
+          initializedRef.current = true
+          lastActiveIdRef.current = activeId
+        } else if (list.length > 0 && activeId !== lastActiveIdRef.current) {
+          // 去抖：2s 内只触发一次，防连续变更风暴
+          const now = Date.now()
+          if (now - lastFireAtRef.current >= 2000) {
+            lastFireAtRef.current = now
+            lastActiveIdRef.current = activeId
+            onSessionChangedRef.current()
+          } else {
+            lastActiveIdRef.current = activeId
+          }
+        } else {
+          lastActiveIdRef.current = activeId
+        }
       }
     } catch {
       /* 后端不可达：保留当前数据 */
@@ -99,11 +199,14 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
     }
   }, [refresh])
 
-  const flashError = useCallback(
+const flashNotice = useCallback(
     (code: string) => {
-      setErr(t(errorCodeToI18n(code)))
-      if (errTimer.current) clearTimeout(errTimer.current)
-      errTimer.current = setTimeout(() => setErr(null), 2400)
+      const tone = codeToTone(code)
+      setNotice({ text: t(codeToI18n(code)), tone })
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
+      // 业务等待（info）延长阅读时间；模式不匹配/真错误保留短促反馈
+      const duration = tone === 'info' ? 3500 : 2400
+      noticeTimer.current = setTimeout(() => setNotice(null), duration)
     },
     [t],
   )
@@ -113,13 +216,15 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
       if (isActive) return
       try {
         await switchSession(id)
+        // 主动切换：先登记基准，避免下轮轮询把这次变化再判成外部变更重复触发重拉
+        lastActiveIdRef.current = id
         onSessionChanged()
         void refresh()
-      } catch (e) {
-        flashError(typeof e === 'string' ? e : String(e))
+} catch (e) {
+        flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
-    [onSessionChanged, refresh, flashError],
+    [onSessionChanged, refresh, flashNotice],
   )
 
   /** 手动归档：确认弹窗后移出展示台（元数据+文本记忆保留可查）；失败映射稳定错误码 */
@@ -129,19 +234,17 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
       try {
         await archiveSession(id)
         void refresh()
-      } catch (e) {
+} catch (e) {
         const code = typeof e === 'string' ? e : String(e)
-        // busy / 追加队列非空复用切换守卫文案；not_found/其他 → 归档失败
+        // busy / 追加队列非空复用切换守卫文案（业务等待=info 蓝）；其他走归档失败兜底（error 红）
         if (code === 'busy' || code === 'append_pending') {
-          flashError(code)
+          flashNotice(code)
         } else {
-          setErr(t('sessionRail.archiveFailGeneric'))
-          if (errTimer.current) clearTimeout(errTimer.current)
-          errTimer.current = setTimeout(() => setErr(null), 2400)
+          flashNotice('archiveFailGeneric')
         }
       }
     },
-    [refresh, flashError, t],
+    [refresh, flashNotice, t],
   )
 
   // ── 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
@@ -232,20 +335,32 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
       try {
         await renameSession(id, draft)
         void refresh()
-      } catch (e) {
-        flashError(typeof e === 'string' ? e : String(e))
+} catch (e) {
+        flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
-    [draftTitle, refresh, flashError],
+    [draftTitle, refresh, flashNotice],
   )
 
-  const shown = revealed || fading || editingId !== null
+  // 执行中（!canSwitch）强制隐藏：此时 rail 锁定不可切换，显示出来只会让用户
+  // 「看得见摸不着」（旧逻辑 hover 会 reveal 但切换被禁）。完成后经 can_switch
+  // 翻转强制 reveal（见 refresh）。其余隐藏/渐隐逻辑保持现状。
+  const shown = canSwitch && (revealed || fading || editingId !== null)
 
   return (
     <>
       {/* 左缘感应区：横向自左边框至内容气泡前，纵向覆盖 10 横条显示高度；
           pointer-events:none 纯几何判定（window mousemove），绝不拦截输入框点击 */}
       <div ref={zoneRef} className="session-rail-hover-zone" aria-hidden />
+      {/* 引导标志块：工作台隐藏（concealed）时在左上角露出小竖条，暗示此处有内容可展开；
+          左缘贴应用边框无间距，右侧上下椭圆角（圆帽）。hover 标志块弹出标题气泡
+          「会话工作台」（复用 sr-bubble 样式，双向 hover 桥接防间隙丢失）。 */}
+      {!shown && (
+        <div className="session-rail-guide" aria-hidden>
+          <span className="session-rail-guide-bar" />
+          <span className="session-rail-guide-title">{t('sessionRail.guideTitle')}</span>
+        </div>
+      )}
       <div
         className={[
           'session-rail-zone',
@@ -256,6 +371,23 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
           .join(' ')}
       >
           <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
+        {/* 顶部新建对话：复用外部 Agent 状态栏 + 按钮（add-agent-entry 视觉），
+            与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat）。
+            执行中（!canSwitch）禁用：后端 guard_switch 也会拒绝，UI 双保险。 */}
+        {onNewChat && (
+          <div className="sr-new-chat">
+            <button
+              type="button"
+              className="add-agent-entry sr-new-chat-btn"
+              onClick={onNewChat}
+              disabled={!canSwitch}
+              title={t('sessionRail.newChat')}
+              aria-label={t('sessionRail.newChat')}
+            >
+              <IconPlus size={15} />
+            </button>
+          </div>
+        )}
         {items.map((it, idx) => (
           <div
             key={it.id}
@@ -349,9 +481,14 @@ export default function SessionRail({ onSessionChanged }: SessionRailProps) {
         ))}
       </div>
 
-      {err && (
-        <div className="sr-error" role="alert">
-          {err}
+{notice && (
+        <div
+          className={`sr-notice sr-notice--${notice.tone}`}
+          role={notice.tone === 'error' ? 'alert' : 'status'}
+          aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}
+        >
+          <NoticeIcon tone={notice.tone} />
+          <span>{notice.text}</span>
         </div>
       )}
       {confirmArchiveId &&

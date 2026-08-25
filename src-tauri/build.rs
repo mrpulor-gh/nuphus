@@ -1,4 +1,14 @@
 fn main() {
+    // ═══ 中继凭据编译期注入（开源仓库不硬编码，2026-08-26 审计）═══
+    // 官方发布构建设置 NUPHUS_RELAY_DEVICE_TOKEN / NUPHUS_RELAY_CALLER_TOKEN 环境变量，
+    // 经 cargo:rustc-env 内嵌进二进制（源码端 env! 读取）；用户自建 build 无环境变量 →
+    // 空 token，ensure_default_config 留空，用户自建中继自行配置 relay_client.json。
+    for key in ["NUPHUS_RELAY_DEVICE_TOKEN", "NUPHUS_RELAY_CALLER_TOKEN"] {
+        let v = std::env::var(key).unwrap_or_default();
+        println!("cargo:rerun-if-env-changed={}", key);
+        println!("cargo:rustc-env={}={}", key, v);
+    }
+
     // 在 Windows release 模式下设置 /SUBSYSTEM:WINDOWS 避免控制台窗口弹出
     #[cfg(target_os = "windows")]
     if std::env::var("PROFILE")

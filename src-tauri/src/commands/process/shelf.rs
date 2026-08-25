@@ -396,6 +396,11 @@ fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind
 /// 只通过 is_active 变化颜色/效果）。附 can_switch 供前端置灰。
 #[tauri::command]
 pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    list_shelf_sessions_inner(&state)
+}
+
+/// 内部实现（&AppState 直取）：mobile_server 的会话清单镜像端点复用
+pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::Value, String> {
     let can_switch = guard_switch(&state).is_ok();
     let current_mode = state
         .current_mode
@@ -408,29 +413,32 @@ pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Val
     let mut candidates: Vec<(String, serde_json::Value, bool)> = Vec::new();
     let mut active_id: Option<String> = None;
 
-    // active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
+// active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
     // 以 active 为准展示，shelf 循环跳过同 id 去重。
+    //
+    // 空 messages 的 active 会话也作为 active 返回：0825-02 修复后 SessionRail 5s 轮询
+    // 比对 active id 变化以感知外部会话切换，若 active 在「empty → non-empty」
+    // 之间跳变，会被误判为外部变更触发无意义重拉。保持 active id 从创建那一刻起
+    // 稳定，让 SessionRail 只在真正切换时刷新。
     if let Ok(ctx) = state.runtime.lock() {
         if let Some(sess) = active_session(&ctx, kind) {
-            if !sess.is_empty() {
-                let title = state
-                    .shelf
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.titles.get(&sess.id).cloned())
-                    .unwrap_or_default();
-                let e = build_entry(sess.id.clone(), kind, sess, Some(&title));
-                active_id = Some(e.id.clone());
-                candidates.push((
-                    e.id.clone(),
-                    serde_json::json!({
-                        "id": e.id, "mode": e.mode, "title": e.title,
-                        "message_count": e.message_count, "updated_at": e.updated_at,
-                        "is_active": true,
-                    }),
-                    true,
-                ));
-            }
+            let title = state
+                .shelf
+                .lock()
+                .ok()
+                .and_then(|s| s.titles.get(&sess.id).cloned())
+                .unwrap_or_default();
+            let e = build_entry(sess.id.clone(), kind, sess, Some(&title));
+            active_id = Some(e.id.clone());
+            candidates.push((
+                e.id.clone(),
+                serde_json::json!({
+                    "id": e.id, "mode": e.mode, "title": e.title,
+                    "message_count": e.message_count, "updated_at": e.updated_at,
+                    "is_active": true,
+                }),
+                true,
+            ));
         }
     }
 
@@ -483,7 +491,26 @@ pub fn switch_session(state: State<'_, AppState>, id: String) -> Result<(), Stri
     switch_session_inner(&state, id)
 }
 
-fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
+/// 手机端跟随广播：会话切换后经 mobile WS 通道通知（mobile_server 未启动时 no-op）。
+/// 镜像模型：手机不维护独立会话状态，收到 SessionChanged 后重拉 /history，
+/// 呈现桌面当前会话。帧格式与 CompoundEmitter 的 WS 分支一致（裸 NuphusEvent JSON）。
+fn broadcast_session_changed_mobile(state: &AppState, session_id: &str) {
+    use nuphus::agent::events::EventEmitter;
+    let Some(tx) = state
+        .mobile_ws_tx
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+    else {
+        return;
+    };
+    crate::emitter::MobileWsEmitter::new(tx).emit(nuphus::agent::events::NuphusEvent::SessionChanged {
+        session_id: session_id.to_string(),
+    });
+}
+
+/// 内部实现（&AppState 直取）：mobile_server 的遥控切换端点复用
+pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
     guard_switch(state).map_err(|c| c.to_string())?;
 
     let current_mode = state
@@ -555,18 +582,33 @@ fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
         tracing::info!(
             "[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({kind})"
         );
+        broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
     *slot = target_session;
 
     tracing::info!("[Shelf] 切换到会话 {} ({kind})", entry.id);
+    broadcast_session_changed_mobile(state, &entry.id);
     Ok(())
 }
 
 /// 新建对话：归档当前（有内容才占槽）→ 安装空白会话，返回新 id
+/// 广播：CompoundEmitter 双推（桌面 Tauri IPC + 手机 WS）——手机「新建对话」遥控桌面
+/// 走同一入口，变更经 SessionChanged 事件回传，双端跟随显示（单一路径，手机跟随）。
 #[tauri::command]
-pub fn new_chat_session_cmd(state: State<'_, AppState>) -> Result<String, String> {
-    guard_switch(&state).map_err(|c| c.to_string())?;
+pub fn new_chat_session_cmd(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    new_chat_session_with_event(&app, state.inner())
+}
+
+/// 内部实现（&AppState 直取）：mobile_server 的 /new-chat 端点复用（避免构造 tauri State）
+pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) -> Result<String, String> {
+    guard_switch(state).map_err(|c| c.to_string())?;
 
     let current_mode = state
         .current_mode
@@ -576,26 +618,29 @@ pub fn new_chat_session_cmd(state: State<'_, AppState>) -> Result<String, String
     let kind = normalize_mode(&current_mode);
 
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
-    archive_active(&state, &mut ctx, kind);
+    archive_active(state, &mut ctx, kind);
 
     let fresh = Session::new();
     let new_id = fresh.id.clone();
     if let Some(slot) = active_session_mut(&mut ctx, kind) {
         *slot = fresh;
-    } else {
-        // 无 agent 槽（重启/build 后新进程槽为空）：清空 backup 表示新会话并返回新 id。
-        // 前端 handleNewChat 已 resetTransientUI 清空本地气泡，get_chat_history 因
-        // backup 与 agent 均为空返回欢迎页——与新会话语义一致；下次发消息时
-        // run_runtime_with_config 从空 backup 构建全新 session。
-        if let Ok(mut sb) = state.session.lock() {
-            sb.session_backup = None;
-            sb.last_message.clear();
-            sb.last_message_images.clear();
-        }
-        tracing::info!("[Shelf] 无 agent 槽，新建对话 {new_id} ({kind})（backup 已清空）");
-        return Ok(new_id);
+    }
+    drop(ctx);
+
+    // 会话边界必须同步清理恢复快照与消息去重键。否则新会话第一条消息若恰好与
+    // 上一会话末条相同，会被 completion dedup 当成重复提交而静默丢弃。
+    if let Ok(mut sb) = state.session.lock() {
+        sb.session_backup = None;
+        sb.last_message.clear();
+        sb.last_send_id = None;
+        sb.last_message_images.clear();
     }
     tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
+    use nuphus::agent::events::EventEmitter;
+    crate::emitter::CompoundEmitter::new(app.clone(), state)
+        .emit(nuphus::agent::events::NuphusEvent::SessionChanged {
+            session_id: new_id.clone(),
+        });
     Ok(new_id)
 }
 
@@ -836,13 +881,17 @@ mod tests {
         std::fs::write(&file_path, serde_json::to_string(&legacy).unwrap()).unwrap();
 
         migrate_legacy_mirrors();
+        // get_snapshot 返回 Result<Option<(mode, snapshot_json)>>
         let imported = nuphus::store::session::get_snapshot(&sid)
+            .expect("查询 SQLite 快照失败")
             .expect("旧镜像应导入 SQLite 快照");
         assert_eq!(imported.0, "leader", "导入的 mode 应保留");
 
         // 幂等：再次迁移不覆盖已有快照
         migrate_legacy_mirrors();
-        let again = nuphus::store::session::get_snapshot(&sid).unwrap();
+        let again = nuphus::store::session::get_snapshot(&sid)
+            .expect("二次查询 SQLite 快照失败")
+            .expect("二次查询应命中已有快照");
         assert_eq!(again.0, imported.0);
         assert_eq!(again.1, imported.1, "幂等迁移不得改变已有快照内容");
 
@@ -866,11 +915,12 @@ mod tests {
         let state = AppState::default();
         let target = session_with_user(&["目标会话"]);
         let target_id = target.id.clone();
+        let target_msg_count = target.messages().len();
         let entry = ShelfEntry {
             id: target_id.clone(),
             mode: "leader".into(),
             title: "目标会话".into(),
-            message_count: target.messages().len(),
+            message_count: target_msg_count,
             updated_at: now_millis(),
         };
         {
@@ -888,7 +938,7 @@ mod tests {
             .expect("session_backup 应被写入目标会话");
         let restored: Session = serde_json::from_str(backup).expect("backup 应为合法 Session");
         assert_eq!(restored.id, target_id);
-        assert_eq!(restored.messages().len(), target.messages().len());
+        assert_eq!(restored.messages().len(), target_msg_count);
         drop(sb);
 
         // 目标放回展示台，rail 不丢条目

@@ -6,9 +6,10 @@
 
 use super::toml_ops::{
     clear_provider_api_key_in_config_toml, get_config_path, list_configured_providers,
-    read_provider_api_key_from_config_toml, read_provider_reasoning_effort_from_config_toml,
-    update_config_toml, update_model_context_window, update_model_reasoning_efforts,
-    update_model_supports_vision, update_reasoning_effort, upsert_provider_models,
+    read_model_context_window, read_provider_api_key_from_config_toml,
+    read_provider_reasoning_effort_from_config_toml, update_config_toml,
+    update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
+    update_reasoning_effort, upsert_provider_models,
 };
 use crate::emitter::CompoundEmitter;
 use crate::state::{AppState, LlamaConfig};
@@ -681,14 +682,28 @@ async fn post_configure(
             _ => nuphus::agent::goal_types::get_context_window(resolved_model),
         }
     };
+    // 本地记录优先（仅非 local）：API 查询结果只填充缺失项，不覆盖本地已记录
+    // context_window。背景（2026-08-26 实测）：API /models 返回的 context_length 常为
+    // provider 统一值或不准确（deepseek 三模型全 1000000），无条件写入会把用户手动
+    // 校准的本地值逐一污染 → 前端上下文占用百分比显示混乱。已有记录 → 保留并用其
+    // 刷新运行时；无记录 → API/内置表值写入 + 刷新运行时。local provider 例外：
+    // 前端显式传入 context_window（ModelsPage 手动校准），尊重用户意图照常写入。
+    let existing_ctx = if resolved_provider == "local" {
+        None // local 不参与本地优先（前端显式传值，尊重用户意图）
+    } else {
+        read_model_context_window(&toml_config_path, resolved_provider, resolved_model)
+    };
+    let effective_ctx = existing_ctx.unwrap_or(ctx);
     {
         let mut cw = state.runtime.lock().ok();
         if let Some(ref mut cw) = cw {
-            cw.model_context_window = ctx;
+            cw.model_context_window = effective_ctx;
         }
     }
 
-    let _ = update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
+    if existing_ctx.is_none() {
+        let _ = update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
+    }
 
     // Vision probe — provider-driven: prefer metadata from ProviderRegistry over HTTP probing.
     // Only HTTP-probe when metadata doesn't have a definitive answer (e.g. custom / new models).

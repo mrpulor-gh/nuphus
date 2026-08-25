@@ -46,12 +46,17 @@ fn config_path() -> std::path::PathBuf {
 }
 
 // ── 官方中继默认配置（开箱即用，零配置） ──────────────────────────────
-// 首次启动自动写入；用户自建中继可覆盖 relay_client.json 后不受影响。
-// token 与 relay-server 部署端 RELAY_DEVICE_TOKEN / RELAY_CALLER_TOKEN 一致。
+// 首次启动自动写入 url/public_url；自建中继用户可覆盖 relay_client.json 后不受影响。
+// ⚠️ 官方中继凭据（device/caller token）绝不硬编码在源码——仓库公开（github/gitee），
+// 硬编码 = 任何人克隆即拿到服务器凭据（2026-08-26 审计发现，commit ab71791 曾硬编码）。
+// 改为构建/运行时经环境变量注入：NUPHUS_RELAY_DEVICE_TOKEN / NUPHUS_RELAY_CALLER_TOKEN；
+// 未注入时留空（用户自建中继在 relay_client.json 自行配置，或官方发布流程注入）。
 const DEFAULT_RELAY_URL: &str = "wss://relay.nuphus.com";
 const DEFAULT_RELAY_PUBLIC_URL: &str = "https://r.nuphus.com";
-const DEFAULT_RELAY_DEVICE_TOKEN: &str = "795e02c19acfed38501627219b6dd7b41cba731f81f615a1";
-const DEFAULT_RELAY_CALLER_TOKEN: &str = "fce616d1585750053b079c15ca24c06cc05d33f69e47417e";
+
+/// 历史版本曾默认下发的共享 device_id——公共中继上多用户互抢同一路由槽的根源，
+/// ensure_default_config 检测到即自动迁移为唯一 id
+const LEGACY_SHARED_DEVICE_IDS: [&str; 1] = ["desktop-main"];
 
 /// 确保中继配置就绪：文件缺失或关键字段为空时写入官方默认值（幂等，可重复调用）。
 /// 调用时机：Tauri setup（spawn_relay_loops 之前）——新用户首次使用免配置，
@@ -64,21 +69,44 @@ pub fn ensure_default_config() {
         changed = true;
     }
     if cfg.token.trim().is_empty() {
-        cfg.token = DEFAULT_RELAY_DEVICE_TOKEN.to_string();
-        changed = true;
+        // 官方凭据仅经构建期注入（env!：发布 CI 设环境变量 → 二进制内嵌）或运行时
+        // 环境变量注入；均未注入则留空，用户自建中继在 relay_client.json 自行配置。
+        let injected = env!("NUPHUS_RELAY_DEVICE_TOKEN").trim().to_string();
+        let rt = std::env::var("NUPHUS_RELAY_DEVICE_TOKEN").unwrap_or_default();
+        let t = if !injected.is_empty() { injected } else { rt };
+        if !t.trim().is_empty() {
+            cfg.token = t;
+            changed = true;
+        }
     }
     if cfg.caller_token.trim().is_empty() {
-        cfg.caller_token = DEFAULT_RELAY_CALLER_TOKEN.to_string();
-        changed = true;
+        let injected = env!("NUPHUS_RELAY_CALLER_TOKEN").trim().to_string();
+        let rt = std::env::var("NUPHUS_RELAY_CALLER_TOKEN").unwrap_or_default();
+        let t = if !injected.is_empty() { injected } else { rt };
+        if !t.trim().is_empty() {
+            cfg.caller_token = t;
+            changed = true;
+        }
     }
     if cfg.public_url.trim().is_empty() {
         cfg.public_url = DEFAULT_RELAY_PUBLIC_URL.to_string();
         changed = true;
     }
-    // device_id 必须每机唯一（中继按 device_id 路由）：缺失时随机生成
-    if cfg.device_id.trim().is_empty() {
+    // device_id 必须每机唯一（中继按 device_id 路由）：缺失时随机生成。
+    // 遗留共享默认值迁移（2026-08-25 实测事故）：旧版本默认 desktop-main，公共中继
+    // 上所有此类用户互相抢占同一路由槽——连接风暴、手机被路由到陌生人的电脑
+    // （配对失效/指令丢失）。检测到即换发唯一 id 并持久化。
+    if cfg.device_id.trim().is_empty() || LEGACY_SHARED_DEVICE_IDS.contains(&cfg.device_id.trim())
+    {
+        let legacy = cfg.device_id.trim().to_string();
         cfg.device_id = format!("desktop-{}", uuid::Uuid::new_v4().simple());
         changed = true;
+        if !legacy.is_empty() {
+            tracing::warn!(
+                "[Relay] 检测到遗留共享 device_id「{legacy}」（公共中继多用户撞车源），已迁移为 {}",
+                cfg.device_id
+            );
+        }
     }
     if changed {
         if let Err(e) = save_config(&cfg) {
@@ -90,10 +118,23 @@ pub fn ensure_default_config() {
 }
 
 pub fn load_config() -> RelayClientConfig {
-    std::fs::read_to_string(config_path())
-        .ok()
-        .and_then(|data| serde_json::from_str::<RelayClientConfig>(&data).ok())
-        .unwrap_or_default()
+    let path = config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => {
+            // BOM 免疫：外部编辑器保存常带 BOM，serde_json 解析会失败——
+            // 静默回退默认值曾把 enabled/token 清掉（二维码消失事故根因）
+            match serde_json::from_str::<RelayClientConfig>(raw.trim_start_matches('\u{feff}')) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    tracing::error!(
+                        "[Relay] relay_client.json 解析失败（回退默认值，原文件保留）: {e}"
+                    );
+                    RelayClientConfig::default()
+                }
+            }
+        }
+        Err(_) => RelayClientConfig::default(),
+    }
 }
 
 /// 配置写入（中继开关等设置页入口）
@@ -269,9 +310,22 @@ async fn connect_ws_with_keepalive(
     // 握手按 scheme 决定是否包 TLS：wss→native-tls TLS 层，ws→裸 TCP。
     // 之前用 client_async（裸 WS）——迁移 wss:// 后缺 TLS 层，明文 HTTP 升级请求打到
     // 443 TLS 端口，被服务端回「HTTP version must be 1.1 or higher」。
-    let (ws, _resp) = tokio_tungstenite::client_async_tls(req, tcp)
-        .await
-        .map_err(|e| ConnectError::Handshake(Box::new(e)))?;
+    //
+    // 整段拨号（TCP+TLS+WS 升级）加超时：对端半开/代理黑洞时 client_async_tls
+    // 会永久悬挂——外层循环随之卡死、不再有任何重试（实测事故：隧道静默失联
+    // 35 分钟，僵尸 ESTABLISHED socket 挂着，无任何日志）。超时按网络类失败走退避。
+    let (ws, _resp) = tokio::time::timeout(
+        Duration::from_secs(WS_DIAL_TIMEOUT_SECS),
+        tokio_tungstenite::client_async_tls(req, tcp),
+    )
+    .await
+    .map_err(|_| {
+        ConnectError::Handshake(Box::new(tungstenite::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("dial timeout: {}s 内未完成 TCP/TLS/WS 升级", WS_DIAL_TIMEOUT_SECS),
+        ))))
+    })?
+    .map_err(|e| ConnectError::Handshake(Box::new(e)))?;
     Ok(ws)
 }
 
@@ -346,6 +400,12 @@ impl ConnectError {
 
 const BACKOFF_BASE_SECS: u64 = 1;
 const BACKOFF_CAP_SECS: u64 = 60;
+/// 连接建立（TCP+TLS+WS 升级）全程超时：任一阶段悬挂即按网络类失败重试，
+/// 杜绝「僵尸拨号」卡死重连循环（实测：隧道静默失联 35 分钟无任何尝试）
+const WS_DIAL_TIMEOUT_SECS: u64 = 15;
+/// 隧道读空闲看门狗：服务端每 10s 下发协议 Ping，60s 无任何帧 = 链路/对端任务
+/// 已死但 TCP 未断（半开），强制断开走重连自愈。正常路径永不触发。
+const TUNNEL_READ_IDLE_SECS: u64 = 60;
 /// 连续网络失败达到此次数进故障态（warn 一次，探测继续）
 const FAULT_THRESHOLD: u32 = 5;
 
@@ -651,7 +711,14 @@ pub struct RelayClientStatus {
 
 #[tauri::command]
 pub fn relay_client_status() -> RelayClientStatus {
-    let cfg = load_config();
+    let mut cfg = load_config();
+    // 二维码必须带 device_id（公共中继归属依据）。缺失/被外部编辑器清空时幂等补齐——
+    // 裸基址二维码在公共中继多用户在线时会被 Ambiguous 拒成引导页
+    // （「扫码连不上 / 显示多台电脑在线」根因之一，2026-08-25 实测事故）。
+    if cfg.device_id.trim().is_empty() {
+        ensure_default_config();
+        cfg = load_config();
+    }
     RelayClientStatus {
         enabled: cfg.enabled,
         state: relay_conn_state(),
@@ -1096,7 +1163,17 @@ async fn connect_tunnel_once(url: &str, token: &str) -> Result<(), ConnectError>
     // - Err(e)　＝ WS 读错误（TCP 层错误，多为网络抖动）
     // - write_fail ＝ 写方向半死（对端不读/TCP 窗口满，Ready/Data 回不到中继）
     let drop_reason: Option<String> = loop {
+        // 读空闲看门狗：服务端每 10s 下发协议 Ping，60s 无任何帧 = 链路半开/
+        // 对端读任务已死但 TCP 未断——强制断开走外层重连自愈（正常永不触发）。
+        let mut idle_watchdog = tokio::time::interval(Duration::from_secs(TUNNEL_READ_IDLE_SECS));
+        idle_watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        idle_watchdog.tick().await; // 消耗立即触发的首跳，从现在起每 60s 一跳
         tokio::select! {
+            _ = idle_watchdog.tick() => {
+                break Some(format!(
+                    "隧道读空闲超时（{TUNNEL_READ_IDLE_SECS}s 无任何帧含服务端心跳），强制重连"
+                ));
+            }
             msg = read.next() => {
                 let Some(msg) = msg else {
                     break Some("隧道 WS 被对端关闭（EOF/Close 帧）".to_string());

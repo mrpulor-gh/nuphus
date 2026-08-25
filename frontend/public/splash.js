@@ -20,6 +20,7 @@
   function setPct(pct) {
     setIndeterminate(false);
     var p = Math.max(0, Math.min(100, Math.round(pct)));
+    lastPct = p;
     fill.style.width = p + '%';
   }
 
@@ -37,6 +38,9 @@
   // 缓存路径下 splash 秒关，定时器无副作用；只有真正卡在下载/启动才触发。
   var SKIP_DELAY_MS = 10000
   var skipTimer = null;
+  // 最近一次 pct（0..=100）：pct=100（就绪/非下载）时绝不亮出「后台下载」——
+  // 双保险（后端已保证已存在文件不发 pct，此处兜底防止任何 pct 事件误亮按钮）。
+  var lastPct = -1;
 
   function showBar() {
     if (bar) bar.hidden = false;
@@ -52,14 +56,17 @@
       clearTimeout(skipTimer);
       skipTimer = null;
     }
+    lastPct = -1; // 纯文字阶段：复位下载态标记
   }
 
   function ensureSkipTimer() {
     if (skipTimer || !skipWrap) return;
     skipTimer = setTimeout(function () {
       skipTimer = null;
-      // 仅仍在下载（加载条可见）时才亮出按钮
-      if (!bar || !bar.hidden) skipWrap.hidden = false;
+      // 仅仍在下载（加载条可见）且未完成（pct<100）时才亮出按钮
+      if ((!bar || !bar.hidden) && lastPct >= 0 && lastPct < 100) {
+        skipWrap.hidden = false;
+      }
     }, SKIP_DELAY_MS);
   }
 

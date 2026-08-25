@@ -95,16 +95,21 @@ pub fn hide<R: tauri::Runtime>(app: &AppHandle<R>) {
 }
 
 /// Position the HUD window at bottom-right of the screen (20px from right, 40px from bottom)
+/// ⚠️ DPI 修复(2026-08-25)：旧实现把 monitor.size()(物理像素)除以 scale 得到逻辑坐标后，
+/// 却用 Position::Physical 设置——Win11 高 DPI(125%~200%)下坐标被二次缩放 → 窗口落到
+/// 屏幕中央。修复：坐标全程逻辑像素，set_position 用 LogicalPosition，Tauri 按当前 DPI
+/// 自动转换，任何缩放比例都贴右下角。
 fn position_bottom_right<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     if let Ok(Some(monitor)) = window.primary_monitor() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
         let w = HUD_WIDTH;
         let h = HUD_HEIGHT;
+        // 逻辑像素坐标：物理尺寸 / scale → 逻辑；右缘留 20、底部留 40（逻辑像素）
         let x = (size.width as f64 / scale) - w - 20.0;
         let y = (size.height as f64 / scale) - h - 40.0;
-        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-            x as i32, y as i32,
+        let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+            x, y,
         )));
     }
 }

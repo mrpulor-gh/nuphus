@@ -71,6 +71,34 @@ pub fn update_model_context_window(
     Ok(())
 }
 
+/// Read existing context_window for a model entry (if recorded in config.toml).
+/// 用于「本地记录优先」：API key 联通时查询到的 context_length 只填充缺失项，
+/// 不覆盖本地已记录（用户校准/历史）值——实测 API 返回的 context_length 常为
+/// provider 统一值或不准确，无条件覆盖会污染本地各模型记录，前端上下文占用显示混乱。
+pub fn read_model_context_window(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+) -> Option<usize> {
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let providers = doc.get("providers")?.as_array()?;
+    for provider in providers {
+        let name = provider.get("name")?.as_str()?;
+        if name != provider_name {
+            continue;
+        }
+        let models = provider.get("models")?.as_array()?;
+        for model in models {
+            let id = model.get("id")?.as_str()?;
+            if id == model_id {
+                return model.get("context_window")?.as_integer().map(|v| v as usize);
+            }
+        }
+    }
+    None
+}
+
 /// Update model reasoning-effort metadata in config.toml model entry
 /// (discovered from the provider's /models response at configure time).
 pub fn update_model_reasoning_efforts(
@@ -925,6 +953,47 @@ api_key = "sk-test"
             before, after,
             "file must not change when provider is not found"
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_model_context_window_returns_existing_or_none() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+base_url = "https://api.deepseek.com"
+
+[[providers.models]]
+id = "deepseek-v4-flash"
+context_window = 128000
+supports_streaming = true
+
+[[providers.models]]
+id = "deepseek-v4-pro"
+supports_streaming = true
+"#,
+        );
+
+        // 有记录 → 返回本地值
+        assert_eq!(
+            read_model_context_window(&path, "deepseek", "deepseek-v4-flash"),
+            Some(128000)
+        );
+        // 无 context_window 字段 → None（API 才填充）
+        assert_eq!(
+            read_model_context_window(&path, "deepseek", "deepseek-v4-pro"),
+            None
+        );
+        // 未知 provider/model → None
+        assert_eq!(read_model_context_window(&path, "kimi", "k3"), None);
+        assert_eq!(
+            read_model_context_window(&path, "deepseek", "nope-model"),
+            None
+        );
+
         std::fs::remove_file(&path).ok();
     }
 }

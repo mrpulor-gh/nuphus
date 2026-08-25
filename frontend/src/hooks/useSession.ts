@@ -569,10 +569,13 @@ export function useSession(): SessionAPI {
   }, [])
 
   const handleNewChat = useCallback(() => {
-    // 后端归档：当前会话入展示台+镜像，安装空白会话（busy 时后端拒绝，仅清 UI）
+    // 执行中禁止新建（全入口统一防护：Ctrl+N / TitleBar / SessionRail + / 命令面板）：
+    // 后端 guard_switch 会拒绝 busy，但前端必须同步停手——旧逻辑无条件清 UI，
+    // 后端拒绝后消息/执行状态被清空而 agent 仍在后台跑 → 界面与真实状态撕裂（实测）。
+    if (isProcessing) return
     newChatSessionCmd().catch(() => {})
     resetTransientUI()
-  }, [resetTransientUI])
+  }, [resetTransientUI, isProcessing])
 
   /**
    * Session Shelf 切换/新建后：从后端重拉当前会话历史并整体替换气泡。

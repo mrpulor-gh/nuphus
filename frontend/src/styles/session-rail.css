@@ -18,6 +18,78 @@
   border-radius: 0 14px 14px 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
+
+/* 引导标志块：工作台隐藏时在左上角露出，暗示此处有内容可展开。
+   左缘贴应用边框（无间距），右侧上下椭圆角（圆帽）。容器可 hover（透明扩展区
+   衔接感应区），hover 弹出标题气泡「会话工作台」。纯视觉指示，不拦截点击。 */
+.session-rail-guide {
+  position: absolute;
+  left: 0;
+  top: 10%;
+  z-index: 54;
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding-left: 0;
+  pointer-events: auto;
+  cursor: default;
+}
+/* 竖条本体：6×48px，左缘贴边框，右侧圆帽 */
+.session-rail-guide-bar {
+  flex: none;
+  width: 6px;
+  height: 48px;
+  border-radius: 0 24px 24px 0;
+  background: var(--fg-5);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+/* 标题气泡：复用 sr-bubble 外观（玻璃卡片 + 箭头），hover 标志块时淡入。
+   双向 hover 桥接：气泡延伸覆盖标志块右缘，鼠标移向气泡不丢 hover。 */
+.session-rail-guide-title {
+  position: absolute;
+  left: 44px;
+  top: 50%;
+  transform: translateY(-50%) translateX(-6px);
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  max-width: 380px;
+  min-height: 36px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+}
+.session-rail-guide-title::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.session-rail-guide:hover .session-rail-guide-title {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.session-rail-guide:hover .session-rail-guide-bar {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
+}
 .session-rail-zone.is-locked {
   opacity: 0.45;
 }
@@ -191,16 +263,37 @@
   outline: none;
 }
 
-/* 错误提示浮层 */
-.sr-error {
+/* ── 通知浮层（按 tone 差异化视觉：业务等待=info 蓝，模式不匹配=warning 橙，真错误=error 红）──
+   业务等待不是系统错误，统一用红色会让用户把"正常拒绝"误判成"产品崩溃" */
+.sr-notice {
   margin-top: 8px;
-  padding: 5px 10px;
+  padding: 6px 10px;
   border-radius: 8px;
-  background: rgba(var(--error-rgb, 239, 68, 68), 0.12);
-  border: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.4);
-  color: var(--error);
   font-size: var(--fz-xs);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(var(--notice-rgb, var(--error-rgb)), 0.12);
+  border: 1px solid rgba(var(--notice-rgb, var(--error-rgb)), 0.4);
+  color: var(--fg);
+  animation: srNoticeIn 200ms var(--ease-out);
+}
+.sr-notice--info    { --notice-rgb: var(--info-rgb); }
+.sr-notice--warning { --notice-rgb: var(--warning-rgb); }
+.sr-notice--error   { --notice-rgb: var(--error-rgb); }
+
+.sr-notice-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: rgb(var(--notice-rgb, var(--error-rgb)));
+  opacity: 0.9;
+}
+
+@keyframes srNoticeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -257,4 +350,27 @@
   font-size: var(--fz-sm);
   line-height: 1.6;
   color: var(--fg-3);
+}
+/* ── 顶部新建对话 + 按钮：复用外部 Agent 状态栏 add-agent-entry 视觉，
+     适配 rail 窄条节奏（22px 圆，与 sr-item 等高对齐）── */
+.sr-new-chat {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding-right: 32px; /* 与 sr-item 悬停桥一致：命中区延伸到气泡左缘 */
+}
+.sr-new-chat-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex: none;
+}
+/* 执行中（!canSwitch）禁用：整轨已 is-locked 降透明度，按钮再明确置灰 */
+.sr-new-chat-btn:disabled,
+.sr-new-chat-btn:disabled:hover {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--fg-5);
+  border-color: var(--line-3);
+  background: transparent;
 }

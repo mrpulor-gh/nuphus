@@ -608,6 +608,8 @@ export type NuphusEvent =
     }
   | { type: 'hud_update'; text: string; phase: string; step_kind?: string | null }
   | { type: 'leader_done'; message: string }
+  /** 会话切换（桌面 rail 或手机遥控触发）：手机收到后重拉 /history 跟随桌面当前视图 */
+  | { type: 'session_changed'; session_id: string }
   | {
       type: 'workflow_event'
       /** WorkflowEvent 子类型（run_started / step_run_started / step_run_completed /

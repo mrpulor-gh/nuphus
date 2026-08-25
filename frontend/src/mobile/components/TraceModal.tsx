@@ -3,12 +3,14 @@
  * 条目按实际发生顺序排列：思考 → agent 流式文本 → 工具调用（含状态/时长）。
  * 不做 Tab 分离——过程就是时间线，文本也是过程的一部分。
  * 流式输出自动下拉到底；轻量视觉：小字号、hairline 分隔、无重阴影。
- * Header 实时展示会话 token 统计：Cache（缓存命中）+ tok（累计上下文用量）。
+ * Header 实时展示会话 token 统计：Cache（缓存命中）+ tok（执行消耗 = input + output，
+ * 与桌面端 StatusBar.execTokens 同源）。
  */
 
 import { useEffect, useRef } from 'react'
 import { Check, Gauge, Loader2, X, Zap } from 'lucide-react'
 import type { TraceItem } from '../store'
+import { t } from '../i18n'
 
 interface Props {
   traceItems: TraceItem[]
@@ -79,6 +81,7 @@ export default function TraceModal({ traceItems, tokenUsage, onClose }: Props) {
   }, [traceItems])
 
   // ── 缓存命中率（百分比展示，公式与三档配色对齐桌面 StatusBar/ChatInputBar）──
+  // 基数为 inputTokens（与桌面端 cacheTotal 同源，cacheHitTokens 是其中已缓存部分）。
   const cacheHit = tokenUsage?.cacheHitTokens ?? 0
   const cacheTotal = tokenUsage?.inputTokens ?? 0
   const cacheRate = cacheTotal > 0 ? Math.round((cacheHit / cacheTotal) * 100) : null
@@ -91,6 +94,13 @@ export default function TraceModal({ traceItems, tokenUsage, onClose }: Props) {
           : '#ef4444'
       : undefined
 
+  // ── 执行消耗（对齐桌面 StatusBar.execTokens = input + output）：弹窗 tok 数字与 tooltip ──
+  // 后端 token_usage 事件的 outputTokens 可能为 undefined（后端不可用/旧版本），按 0 处理；
+  // 此时 tok 显示 = inputTokens，与现状一致（不显示 +0）。
+  const inputTokens = tokenUsage?.inputTokens ?? 0
+  const outputTokens = tokenUsage?.outputTokens ?? 0
+  const execTokens = inputTokens + outputTokens
+
   return (
     <div className="mobile-modal-overlay" onClick={onClose}>
       <div className="mobile-modal" onClick={e => e.stopPropagation()}>
@@ -102,16 +112,29 @@ export default function TraceModal({ traceItems, tokenUsage, onClose }: Props) {
                 <span
                   className="mobile-modal-stat"
                   style={{ color: cacheColor }}
-                  title={`缓存命中 ${formatTokens(cacheHit)} / ${formatTokens(cacheTotal)} tokens`}
+                  title={t(
+                    'status.cacheTooltip',
+                    formatTokens(cacheHit),
+                    formatTokens(cacheTotal),
+                    cacheRate,
+                  )}
                 >
                   <Zap size={11} aria-hidden="true" />
                   Cache {cacheRate}%
                 </span>
               )}
-              {tokenUsage.inputTokens !== undefined && (
-                <span className="mobile-modal-stat" title="累计上下文用量">
+              {execTokens > 0 && (
+                <span
+                  className="mobile-modal-stat"
+                  title={t(
+                    'status.tokenTooltip',
+                    formatTokens(execTokens),
+                    formatTokens(inputTokens),
+                    formatTokens(outputTokens),
+                  )}
+                >
                   <Gauge size={11} aria-hidden="true" />
-                  tok {formatTokens(tokenUsage.inputTokens)}
+                  tok {formatTokens(execTokens)}
                 </span>
               )}
             </span>

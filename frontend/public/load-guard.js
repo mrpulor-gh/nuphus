@@ -51,7 +51,14 @@
   }
   function withToken(base) {
     var t = readToken()
-    return base.replace(/\/+$/, '') + '/' + (t ? '?token=' + encodeURIComponent(t) : '')
+    // 多租户归属标记：导航请求无法带自定义头，必须用 ?device= 显式声明目标桌面
+    // （公共中继多设备常驻在线时，无标记导航会被 Ambiguous 引导页拦下——实测死路）。
+    // t= 时间戳击穿浏览器/运营商对历史响应的启发式缓存（旧引导页钉死实测）。
+    var d = readCfg().device_id || ''
+    var q = ['t=' + Date.now()]
+    if (t) q.push('token=' + encodeURIComponent(t))
+    if (d) q.push('device=' + encodeURIComponent(d))
+    return base.replace(/\/+$/, '') + '/' + '?' + q.join('&')
   }
   /** 探测缓存 LAN 可达性（/health 无鉴权 + CORS 允许，简单 GET 无预检），3s 超时 */
   function probeLan(lanUrl, cb) {
@@ -160,14 +167,32 @@
 
   // 挂起兜底：8s 内主入口未挂载（main.tsx 渲染后置 window.__nuphusMounted=true）则先自动
   // 选路、无法自动切换再提示。已显示提示后轮询：模块最终挂载成功则移除提示（慢加载不算失败）。
+  // ⚠️ 蜂窝丢包自愈：中继 origin 上资源传输停滞（丢包）时先自动 reload 一次再走人工路径——
+  // 实测停滞重试即可恢复；sessionStorage 计数 + 时间窗防无限循环（2 次/分钟上限）。
   setTimeout(function () {
     if (!window.__nuphusMounted && !document.getElementById('nuphus-load-fail')) {
+      var retried = 0
+      var lastRetry = 0
+      try {
+        retried = parseInt(sessionStorage.getItem('nuphus_lg_retry') || '0', 10) || 0
+        lastRetry = parseInt(sessionStorage.getItem('nuphus_lg_retry_at') || '0', 10) || 0
+      } catch (e) {}
+      var now = Date.now()
+      if (!isPrivateHost(location.hostname) && retried < 2 && now - lastRetry > 60000) {
+        try {
+          sessionStorage.setItem('nuphus_lg_retry', String(retried + 1))
+          sessionStorage.setItem('nuphus_lg_retry_at', String(now))
+        } catch (e) {}
+        location.reload()
+        return
+      }
       if (!autoRoute()) showFail('网络不稳定，页面加载较慢')
       var timer = setInterval(function () {
         if (window.__nuphusMounted) {
           var el = document.getElementById('nuphus-load-fail')
           if (el) el.remove()
           clearInterval(timer)
+          try { sessionStorage.removeItem('nuphus_lg_retry') } catch (e) {}
         }
       }, 1000)
     }

@@ -21,9 +21,6 @@ const PINNED_KEY = 'nuphus.extAgents.pinned'
 /** 配置中心保存成功后广播的事件名 */
 export const EXT_AGENT_PINNED_EVENT = 'nuphus:ext-agent-pinned'
 
-/** 常驻可见的注意态：执行中/阻塞/错误——其余状态默认隐藏，hover 感应区临时展开 */
-const ATTENTION_STATES = new Set(['in_progress', 'blocked', 'error'])
-
 /** 生命周期内 pin 集合：不从 localStorage 恢复，每次启动为空 */
 function loadPinnedAgents(): string[] {
   return []
@@ -106,13 +103,13 @@ interface ExternalAgentsStatusBarProps {
  * - 末尾固定一个 "+" 配置入口，点击打开外部 Agent 配置中心（空列表时入口仍可见）。
  * - 状态值来自 status.json 原样映射，前端只加显示层。
  *
- * ── 可见性引擎（默认隐藏，按需浮现）──
+ * ── 可见性引擎（按需浮现，活跃恒显）──
  * - 后端启动清零 status.json：跨生命周期的陈旧 agent 不复存在；
  *   本轮内只有真实启动并经门铃上报验证的 agent 才有非 idle 状态。
- * - 常驻显示 = 注意态（in_progress/blocked/error）∪ 用户在配置中心添加过的
- *   pin 集合（EXT_AGENT_PINNED_EVENT 广播 + localStorage，应用生命周期内有效）。
- * - 其余 agent：鼠标悬停在胶囊附近 → 全部展开；移开 10s 后 0.6s 渐隐收起
- *   （常驻项不受影响）。
+ * - 恒显 = 状态栏有可见 agent（非 hidden 且（非 idle 或用户 pin 过））——
+ *   一旦调用了外部 agent（执行中/待命/阻塞/错误）整条胶囊常驻，不随 hover 隐藏；
+ *   完全没有 agent 时才默认隐藏，鼠标悬停感应区临时浮现 "+" 配置入口。
+ * - 其余（无 agent）场景：鼠标悬停在胶囊附近 → 展开；移开 10s 后 0.6s 渐隐收起。
  */
 export default function ExternalAgentsStatusBar({
   visible = true,
@@ -281,10 +278,9 @@ export default function ExternalAgentsStatusBar({
       // 目录仍在），不渲染——状态栏只出现真实启动过的 agent 或用户 pin 的配置
       ((a.state && a.state !== 'idle') || pins.includes(a.agent)),
   )
-  /** 常驻条件：注意态（执行中/阻塞/错误）或用户添加过的 pin —— 存在即整条胶囊强制可见 */
-  const forced = known.some(
-    a => ATTENTION_STATES.has(a.state || '') || pins.includes(a.agent),
-  )
+  /** 恒显条件：状态栏有可见 agent 即常驻（调用了外部 agent 就一直在，不随 hover 隐藏；
+   *  无 agent 时默认隐藏，hover 感应区临时浮现）。pins（配置中心添加过）同样触发常驻。 */
+  const forced = known.length > 0 || pins.length > 0
   forcedRef.current = forced
   const hiddenKnown = hidden.filter(name => agents.some(a => a.agent === name))
   const reports = (deliverables || []).filter(d => d.kind === 'report')

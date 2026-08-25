@@ -81,11 +81,30 @@ fn config_path() -> std::path::PathBuf {
         .join("mobile_server.json")
 }
 
+/// 剥离 UTF-8 BOM：外部编辑器（记事本等）保存配置常带 BOM，
+/// serde_json 对首字节 BOM 直接解析失败——静默回退默认值会清掉 enabled/token
+/// （实测事故：配对二维码永远不出现）。加载器必须全部免疫。
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{feff}').unwrap_or(s)
+}
+
 fn load_config_from(path: &std::path::Path) -> MobileServerConfig {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|data| serde_json::from_str::<MobileServerConfig>(&data).ok())
-        .unwrap_or_default()
+    match std::fs::read_to_string(path) {
+        Ok(raw) => match serde_json::from_str::<MobileServerConfig>(strip_bom(&raw)) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!(
+                    "[Mobile] mobile_server.json 解析失败（回退默认值，原文件保留）: {e}"
+                );
+                MobileServerConfig::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => MobileServerConfig::default(),
+        Err(e) => {
+            tracing::error!("[Mobile] mobile_server.json 读取失败（回退默认值）: {e}");
+            MobileServerConfig::default()
+        }
+    }
 }
 
 fn save_config_to(path: &std::path::Path, cfg: &MobileServerConfig) -> Result<(), String> {
@@ -847,6 +866,18 @@ async fn serve_index<R: tauri::Runtime>(State(ctx): State<MobileCtx<R>>) -> Resp
     serve_asset_with_rel(&ctx, "mobile.html")
 }
 
+/// 静态子资源归属标记改写：HTML 内相对根引用 "./x" → "/d/<device_id>/x"。
+/// 背景：浏览器子资源（script/css/icon）既不继承导航 URL 的 ?device=，也无法带
+/// 自定义头——公共中继多设备在线时无标记资产被 Ambiguous 引导页顶替（HTML 当
+/// JS 执行失败 → 白屏）。前缀由中继提取归属后原样转发，本服务 fallback 剥前缀
+/// 按普通资产伺服；URL 含稳定 device_id + 内容 hash → HTTP 缓存键不受影响。
+fn mark_html_assets(html: &str, device_id: &str) -> String {
+    if device_id.is_empty() {
+        return html.to_string();
+    }
+    html.replace("\"./", &format!("\"/d/{device_id}/"))
+}
+
 /// SPA 静态资源兜底（Router fallback：无显式路由时按路径伺服移动端资源）。
 ///
 /// 原实现用 `/*path` 通配路由，但 matchit 0.7 的通配优先级会**遮蔽**更具体的
@@ -857,7 +888,16 @@ async fn serve_asset_fallback<R: tauri::Runtime>(
     State(ctx): State<MobileCtx<R>>,
     uri: axum::extract::OriginalUri,
 ) -> Response {
-    serve_asset_with_rel(&ctx, uri.path())
+    // 归属前缀剥离：/d/<device_id>/assets/x.js → /assets/x.js。归属判定已在
+    // 中继隧道侧完成（能到达本连接即路由正确），此处只按资产语义处理剩余路径。
+    let path = match uri.path().strip_prefix("/d/") {
+        Some(rest) => match rest.split_once('/') {
+            Some((_, after)) => format!("/{after}"),
+            None => "/".to_string(),
+        },
+        None => uri.path().to_string(),
+    };
+    serve_asset_with_rel(&ctx, &path)
 }
 
 fn serve_asset_with_rel<R: tauri::Runtime>(ctx: &MobileCtx<R>, rel: &str) -> Response {
@@ -865,6 +905,16 @@ fn serve_asset_with_rel<R: tauri::Runtime>(ctx: &MobileCtx<R>, rel: &str) -> Res
     let rel = if rel.is_empty() { "mobile.html" } else { rel };
     match resolve_asset(&ctx.app, rel) {
         Some((bytes, mime)) => {
+            // 移动端入口 HTML：注入子资源归属前缀（见 mark_html_assets 文档）
+            let bytes = if rel == "mobile.html" && mime.starts_with("text/html") {
+                let device_id = crate::relay_client::load_config().device_id;
+                match std::str::from_utf8(&bytes) {
+                    Ok(s) => mark_html_assets(s, &device_id).into_bytes(),
+                    Err(_) => bytes,
+                }
+            } else {
+                bytes
+            };
             let mut headers = axum::http::HeaderMap::new();
             headers.insert(
                 axum::http::header::CONTENT_TYPE,
@@ -1230,6 +1280,23 @@ async fn post_message<R: tauri::Runtime>(
     }
 }
 
+/// 提取客户端请求的 WS 子协议（auth.<token>），用于握手回显——浏览器 WebSocket 要求
+/// 服务器必须从请求的 protocols 中回显一个，否则握手失败（close 1006）。
+/// 移动端 ws.ts 在中继（公网）路径必带子协议 `auth.<token>`：该子协议只是中继
+/// 三通道鉴权之一（Authorization / 子协议 / query token），隧道转发到本端点时 query
+/// 鉴权已足够（token_valid 读 query 或 X-Mobile-Token），子协议纯为满足浏览器握手
+/// 契约。不回显 → 公网手机 WS 全部 1006 断开（实测定位：refine 弹窗/实时消息失效）。
+fn extract_ws_subprotocol(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("sec-websocket-protocol")?
+        .to_str()
+        .ok()?
+        .split(',')
+        .map(|p| p.trim())
+        .find(|p| p.starts_with("auth."))
+        .map(|p| p.to_string())
+}
+
 /// WS 事件推流：鉴权通过后 upgrade，把 broadcast channel 中的 NuphusEvent JSON
 /// 实时转发给本连接。多手机客户端各自订阅同一 channel，互不影响。
 async fn ws_handler<R: tauri::Runtime>(
@@ -1243,15 +1310,46 @@ async fn ws_handler<R: tauri::Runtime>(
     }
     let tx = ctx.ws_tx.clone();
     let engine = ctx.workflow_engine.clone();
-    ws.on_upgrade(move |socket| handle_ws(socket, tx, engine))
+    // 会话快照（连接即推送，替代手机端启动被动拉取）：握手前构造当前电脑端状态
+    // 的**轻量**权威镜像——欢迎标志 + 执行状态 + 会话信息，**不含完整历史消息**。
+    // ⚠️ 2026-08-26 实测：完整历史（数百 KB）经中继隧道 base64 在手机数据流量
+    // 国际链路上大帧传输必失败 → WS 断开循环（「已连接→已断开」）。轻量状态帧
+    // 稳定送达；历史内容由手机端经 HTTP 短连接拉取（归属头修复后多设备也能路由）。
+    let snapshot: Option<String> = {
+        let st = ctx.app.state::<AppState>();
+        match crate::commands::process::session::chat_history(st.inner()) {
+            Ok(messages) => Some(
+                serde_json::json!({
+                    "type": "session_snapshot",
+                    "welcome": messages.is_empty(),
+                    "running": st.busy.load(std::sync::atomic::Ordering::SeqCst),
+                    "message_count": messages.len(),
+                })
+                .to_string(),
+            ),
+            Err(e) => {
+                tracing::warn!("[Mobile] session snapshot build failed: {}", e);
+                None
+            }
+        }
+    };
+    // 浏览器子协议鉴权：服务器必须回显所选协议，否则握手失败（close 1006）。
+    // 移动端公网（中继）路径必带 auth.<token>，不回显则手机 WS 永久断开。
+    let ws = if let Some(p) = extract_ws_subprotocol(&headers) {
+        ws.protocols([p])
+    } else {
+        ws
+    };
+    ws.on_upgrade(move |socket| handle_ws(socket, tx, engine, snapshot))
 }
 
 async fn handle_ws(
     socket: WebSocket,
     tx: tokio::sync::broadcast::Sender<String>,
     engine: Arc<tokio::sync::RwLock<nuphus::workflow::WorkflowEngine>>,
+    snapshot: Option<String>,
 ) {
-    handle_ws_with_heartbeat(socket, tx, engine, WS_HEARTBEAT_INTERVAL).await
+    handle_ws_with_heartbeat(socket, tx, engine, snapshot, WS_HEARTBEAT_INTERVAL).await
 }
 
 /// 心跳间隔参数化仅供集成测试直接调小（非配置项，生产入口固定走上面的包装）
@@ -1259,6 +1357,7 @@ async fn handle_ws_with_heartbeat(
     socket: WebSocket,
     tx: tokio::sync::broadcast::Sender<String>,
     engine: Arc<tokio::sync::RwLock<nuphus::workflow::WorkflowEngine>>,
+    snapshot: Option<String>,
     heartbeat_interval: std::time::Duration,
 ) {
     let mut rx = tx.subscribe();
@@ -1274,6 +1373,13 @@ async fn handle_ws_with_heartbeat(
         .is_err()
     {
         return;
+    }
+    // 会话快照：连接即推送电脑端当前状态（欢迎界面/会话历史）的权威镜像——
+    // 手机端收到直接呈现，无需再被动拉取（中继慢时拉取失败→重试循环的历史问题）。
+    if let Some(snapshot) = snapshot {
+        if ws_tx.send(Message::Text(snapshot)).await.is_err() {
+            return;
+        }
     }
     tracing::info!("[Mobile] WS client connected");
     let mut heartbeat = tokio::time::interval(heartbeat_interval);
@@ -1493,8 +1599,87 @@ async fn get_boot<R: tauri::Runtime>(
         "identity": identity_json(state.inner()),
         "agentStatus": { "running": running },
         "relayHint": relay_hint_json(&cfg, ctx.port),
+        // 会话清单投影（只读）：手机「会话」抽屉数据源——桌面当前视图的镜像，
+        // 手机不维护独立会话状态（含 can_switch：busy/追加挂起时切换被禁）
+        "sessions": crate::commands::process::shelf::list_shelf_sessions_inner(state.inner()).ok(),
     }))
     .into_response()
+}
+
+/// GET /sessions —— 桌面展示台会话清单投影（只读）。与 /boot.sessions 同源；
+/// 局域网分请求模式单独拉取用。手机不维护独立会话状态，此为纯镜像端点。
+async fn get_sessions<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::process::shelf::list_shelf_sessions_inner(state.inner()) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SwitchSessionPayload {
+    id: String,
+}
+
+/// POST /session/switch —— 手机遥控切换桌面当前会话。
+/// 镜像模型：切的就是电脑端正显示的视图（桌面 rail 同步跟随），非移动端独立选态。
+/// 成功后 switch_session_inner 已向 WS 广播 SessionChanged，双端各自刷新呈现。
+/// 错误码为稳定字符串（busy / append_pending / mode_mismatch / not_found）→ 409 {"error": code}。
+async fn post_switch_session<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+    Json(payload): Json<SwitchSessionPayload>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::process::shelf::switch_session_inner(state.inner(), payload.id) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(code) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": code })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /new-chat —— 手机遥控桌面新建对话（单一路径：复用桌面 new_chat_session_cmd
+/// 同一权威入口，非移动端独立建会话）。成功后 new_chat_session_cmd 经 CompoundEmitter
+/// 双推 SessionChanged（桌面 + 手机 WS），手机收到事件跟随显示欢迎页。
+/// 错误码为稳定字符串（busy / append_pending）→ 409 {"error": code}。
+async fn post_new_chat<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::process::shelf::new_chat_session_with_event(&ctx.app, state.inner()) {
+        Ok(id) => Json(serde_json::json!({ "ok": true, "session_id": id })).into_response(),
+        Err(e) => {
+            let status = if e == "busy" || e == "append_pending" {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, Json(serde_json::json!({ "error": e }))).into_response()
+        }
+    }
 }
 
 /// GET /model-config — 手机端读取桌面端模型配置（与桌面端 list_models / get_default_model 同源）
@@ -1710,7 +1895,8 @@ fn add_cors_headers(headers: &mut HeaderMap, origin: Option<&str>) {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type, X-Mobile-Token, X-Relay-Token"),
+        // X-Tunnel-Device：中继多租户归属标记（api.ts 统一注入），局域网直连跨域预检需放行
+        HeaderValue::from_static("Content-Type, X-Mobile-Token, X-Relay-Token, X-Tunnel-Device"),
     );
 }
 
@@ -1781,6 +1967,9 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/agent-status", get(get_agent_status))
         .route("/relay-hint", get(get_relay_hint))
         .route("/boot", get(get_boot))
+        .route("/sessions", get(get_sessions))
+        .route("/session/switch", post(post_switch_session))
+        .route("/new-chat", post(post_new_chat))
         .route("/model-config", get(get_model_config))
         .route("/switch-model", post(post_switch_model))
         .route("/switch-mode", post(post_switch_mode))
@@ -1799,7 +1988,13 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/workflow-resume", post(post_workflow_resume))
         .route("/workflow-stop", post(post_workflow_stop))
         .route("/ws", get(ws_handler))
-        // 静态资源压缩（gzip/br）：主入口 JS 850KB→gzip ~253KB，隧道冷启动传输量降 3.4 倍。
+        // 静态资源不再压缩（2026-08-26 白屏根因修复）：压缩层把资源响应变成
+        // Transfer-Encoding: chunked（无 Content-Length），中继隧道对 chunked 无法
+        // 精确判定响应完成——旧逻辑头后 body 滞留 pending，30s 空闲回收 abort 丢失
+        // 尾部 → 大文件随机截断 → 公网手机 JS 加载失败 → 白屏（实测 73787/49688 字节）。
+        // 去掉压缩后 axum bytes → Body::Full 自动带 Content-Length，中继逐响应精确
+        // 关闭；资源体积 JS 102KB 直传（局域网毫秒级，公网经 base64 隧道后约 137KB
+        // 仍可接受），正确性优先于带宽优化。
         // 只挂资源路由：WS upgrade / 小 JSON API 不过压缩层（无谓 CPU 开销）；
         // axum 0.7 的 .layer() 烘焙进路由服务，merge 后压缩层仍只作用于资源路由
         // （含应用插件 /plugins/* 与 /plugins-shared/* 静态伺服）。
@@ -1809,14 +2004,13 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
                 // 移动端 SPA 兜底改 fallback：matchit 0.7 通配优先级会遮蔽
                 // /plugins/*rest 插件路由（实测 /plugins/{id}/ 被 /*path 吃掉），
                 // fallback 语义等价且不遮蔽显式路由。
-                // 应用插件伺服（设计文档 §4.1；与移动端静态资源同压缩层）
+                // 应用插件伺服（设计文档 §4.1；与移动端静态资源同层，不压缩）
                 .route("/plugins/*rest", get(serve_plugin))
                 .route("/plugins-shared/tokens.css", get(serve_tokens_css))
                 .route("/plugins-shared/base.css", get(serve_plugin_base_css))
                 .route("/plugins-shared/theme.css", get(serve_theme_css))
                 .route("/plugins-shared/bridge.js", get(serve_bridge_js))
-                .fallback(serve_asset_fallback)
-                .layer(tower_http::compression::CompressionLayer::new()),
+                .fallback(serve_asset_fallback),
         )
         .with_state(ctx)
         .layer(middleware::from_fn(cors_middleware))
@@ -2044,9 +2238,15 @@ pub fn mobile_token_regenerate(state: tauri::State<'_, AppState>) -> Result<Stri
     Ok(new_token)
 }
 
-/// 设置/重置配对密码：校验强度 → 存 salt:hash → 重签 token（旧 token 立即失效，已配对
-/// 手机下次鉴权 401，被迫重新输密码）。空字符串同样走 validate 分支报"至少 6 位"，
-/// 未提供"清除密码"入口——配对密码一旦设置持续生效（与桌面"必须设置密码"一致）。
+/// 设置/重置配对密码：校验强度 → 存 salt:hash → 新设置/改密时重签 token
+/// （旧 token 立即失效，已配对手机下次鉴权 401，被迫重新输密码）。
+/// 空字符串同样走 validate 分支报"至少 6 位"，未提供"清除密码"入口——
+/// 配对密码一旦设置持续生效（与桌面"必须设置密码"一致）。
+///
+/// 幂等保护（2026-08-25 实测事故）：同一密码重复保存**不重签 token**——
+/// 设置页「保存」可能被随手点击，无条件轮换会立即踢掉所有已配对手机
+/// （401 循环，用户侧表现为反复「配对失效」）。salt 哈希不可直接比较，
+/// 用 verify_password 对照存量哈希判定同一密码。
 #[tauri::command]
 pub fn mobile_password_set(
     state: tauri::State<'_, AppState>,
@@ -2054,10 +2254,17 @@ pub fn mobile_password_set(
 ) -> Result<(), String> {
     validate_password(&password)?;
     let new_hash = hash_password(&password);
+    let mut cfg = load_config();
+    if !cfg.password_hash.is_empty()
+        && !cfg.token.is_empty()
+        && verify_password(&password, &cfg.password_hash)
+    {
+        tracing::info!("[Mobile] 配对密码未变化，token 保持不变");
+        return Ok(());
+    }
     let new_token = generate_token();
     // 先更新运行态 token，再落盘——与 mobile_token_regenerate 顺序一致
     *state.mobile_token.write().map_err(|e| e.to_string())? = new_token.clone();
-    let mut cfg = load_config();
     cfg.password_hash = new_hash;
     cfg.token = new_token.clone();
     save_config(&cfg)?;
@@ -2072,6 +2279,23 @@ pub fn mobile_password_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mark_html_assets_rewrites_relative_refs_with_device_prefix() {
+        let html = r#"<link rel="icon" href="./icons/icon-192.png"><script type="module" src="./assets/mobile.html-D7XNzb5s.js"></script><script src="./load-guard.js"></script>"#;
+        let marked = mark_html_assets(html, "desktop-9f2c");
+        assert!(marked.contains(r#"href="/d/desktop-9f2c/icons/icon-192.png""#));
+        assert!(marked.contains(r#"src="/d/desktop-9f2c/assets/mobile.html-D7XNzb5s.js""#));
+        assert!(marked.contains(r#"src="/d/desktop-9f2c/load-guard.js""#));
+        // 无残留相对引用
+        assert!(!marked.contains(r#""./"#));
+    }
+
+    #[test]
+    fn mark_html_assets_noop_without_device_id() {
+        let html = r#"<script src="./assets/a.js"></script>"#;
+        assert_eq!(mark_html_assets(html, ""), html);
+    }
 
     /// 最小 WS 客户端：握手 + 读一个文本帧（server→client 帧不带 mask，解析从简）。
     /// 不引 tokio-tungstenite——测试只需要「连得上、收得到 JSON」的最小能力。

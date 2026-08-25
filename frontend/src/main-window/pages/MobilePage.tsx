@@ -76,11 +76,16 @@ export function MobilePage() {
   const running = status?.running ?? false
   const relayOn = relay?.enabled ?? false
 
-  // 扫码入口地址（Nuphus 官方中继公网地址；二维码只承载地址，不带 token）
+  // 扫码入口地址（Nuphus 官方中继公网地址；二维码只承载地址，不带 token）。
+  // 附时间戳噪声 t=：保证每次启动生成的扫码 URL 全局唯一——Safari 等浏览器对
+  // 无缓存头的响应可能启发式缓存（历史故障窗口曾把引导页钉死在带标记入口上，
+  // 换浏览器正常、本浏览器永远异常），唯一 URL 强制真实回源。中继解析 ?device=
+  // 不受额外参数影响。
   const remoteUrl = useMemo(() => {
     if (!running || !status?.password_set) return null
     if (!relay?.public_url) return null
-    return relay.public_url
+    const sep = relay.public_url.includes('?') ? '&' : '?'
+    return `${relay.public_url}${sep}t=${Date.now()}`
   }, [running, status, relay])
 
   // 中继地址展示（去协议与端口，只留域名）
@@ -204,7 +209,9 @@ export function MobilePage() {
     }
   }, [remoteUrl])
 
-  /** 保存配对密码（设置/修改）；成功清空输入并刷新 */
+  /** 保存配对密码（设置/修改）；成功清空输入并刷新。
+   *  中继未开时自动接入——扫码二维码是唯一配对入口，用户设完密码就应看到码，
+   *  不允许停留在「需要接入中继」的死角（实测投诉：设完密码无码可扫）。 */
   const handlePasswordSave = useCallback(async () => {
     const pwd = passwordInput.trim()
     if (!pwd || busy || passwordSaving) return
@@ -213,13 +220,23 @@ export function MobilePage() {
     try {
       await mobilePasswordSet(pwd)
       setPasswordInput('')
+      if (!relayOn) {
+        try {
+          await relayClientSetEnabled(true)
+        } catch (e) {
+          setError(cleanIpcError(e))
+        }
+      }
       await refresh()
+      // 隧道建立有延迟（公网地址就绪前轮询补拉），确保二维码尽快出现
+      window.setTimeout(() => void refresh(), 800)
+      window.setTimeout(() => void refresh(), 2500)
     } catch (e) {
       setPasswordError(cleanIpcError(e))
     } finally {
       setPasswordSaving(false)
     }
-  }, [passwordInput, busy, passwordSaving, refresh])
+  }, [passwordInput, busy, passwordSaving, relayOn, refresh])
 
   return (
     <div className="mobile-panel">

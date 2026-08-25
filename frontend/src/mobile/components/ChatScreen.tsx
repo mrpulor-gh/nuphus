@@ -14,6 +14,7 @@ import type {
   PendingUserInput,
 } from '../store'
 import type { WsStatus } from '../ws'
+import type { ShelfSessions } from '../api'
 import { Loader2 } from 'lucide-react'
 import { t } from '../i18n'
 import NavBar from './NavBar'
@@ -66,6 +67,10 @@ interface Props {
   onNewChat?: () => void
   /** 断开连接（Composer 设置弹窗触发）：清除 token 回到配对页 */
   onDisconnect?: () => void
+  /** 桌面展示台会话清单镜像（null = 未加载/不可用） */
+  sessions?: ShelfSessions | null
+  /** 遥控切换桌面当前会话（App 层 POST /session/switch + 刷新） */
+  onSwitchSession?: (id: string) => void
   /** 工作流执行实时状态（workflow_event 驱动，存在即渲染 WorkflowRunCard） */
   workflowRun?: WorkflowRunState
   /** 工作流遥控请求进行中（防重复提交） */
@@ -104,6 +109,8 @@ export default function ChatScreen({
   onStopExecution,
   onNewChat,
   onDisconnect,
+  sessions,
+  onSwitchSession,
   workflowRun,
   wfControlBusy,
   onWorkflowPause,
@@ -118,6 +125,8 @@ export default function ChatScreen({
         activity={activity}
         onNewChat={onNewChat}
         onDisconnect={onDisconnect}
+        sessions={sessions}
+        onSwitchSession={onSwitchSession}
       />
       {historyError && (
         <div

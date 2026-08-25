@@ -261,6 +261,14 @@ pub enum NuphusEvent {
     /// Leader execution round completed — trigger main window focus.
     /// Emitted ONLY by react_loop when the Leader finishes, NOT per-tool.
     LeaderDone { message: String },
+
+    // ── 会话镜像（手机跟随桌面当前视图）──
+    /// 当前会话已切换（桌面 rail 或手机遥控任一路径触发）。
+    /// 手机端收到后重拉 /history 即呈现桌面当前会话——手机不维护独立会话状态。
+    SessionChanged {
+        /// 切换后的当前会话 id
+        session_id: String,
+    },
 }
 
 // ── Helper types ──
@@ -452,6 +460,10 @@ mod tests {
         let variants = vec![
             serde_json::to_value(NuphusEvent::DirectResponse {
                 message: "x".into(),
+            })
+            .unwrap(),
+            serde_json::to_value(NuphusEvent::SessionChanged {
+                session_id: "s1".into(),
             })
             .unwrap(),
             serde_json::to_value(NuphusEvent::ExecutionStarted {
