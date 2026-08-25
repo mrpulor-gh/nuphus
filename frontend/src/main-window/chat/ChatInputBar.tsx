@@ -857,8 +857,6 @@ export function ChatInputBar({
                     {t('memory.settings.subAnnotations')}
                   </span>
                 </button>
-
-
               </div>
             )}
           </div>

@@ -582,29 +582,26 @@ export function useSession(): SessionAPI {
    * 映射逻辑与 useInit 启动恢复完全一致（fold 连续 assistant + traceItems）。
    */
   /** 后端 HistoryMessage[] → 气泡列表（fold 连续 assistant + traceItems）；恢复/切换共用 */
-  const applyHistory = useCallback(
-    (history: HistoryMessage[] | null) => {
-      if (history && history.length > 0) {
-        const folded = foldHistoryAssistants(history)
-        setMessages(
-          folded.map(h => ({
-            id: crypto.randomUUID(),
-            role: h.role as ChatMessage['role'],
-            content: h.content,
-            images: h.images && h.images.length > 0 ? h.images : undefined,
-            audio: h.audio && h.audio.length > 0 ? h.audio : undefined,
-            ...(h.role === 'refine' ? { refineStatus: 'completed' as const } : {}),
-            timestamp: h.timestamp ?? Date.now(),
-            ...(h.traceItems && h.traceItems.length > 0
-              ? { traceItems: h.traceItems.map(toTimelineEntry) }
-              : {}),
-          })),
-        )
-        messagesRestoredRef.current = true
-      }
-    },
-    [],
-  )
+  const applyHistory = useCallback((history: HistoryMessage[] | null) => {
+    if (history && history.length > 0) {
+      const folded = foldHistoryAssistants(history)
+      setMessages(
+        folded.map(h => ({
+          id: crypto.randomUUID(),
+          role: h.role as ChatMessage['role'],
+          content: h.content,
+          images: h.images && h.images.length > 0 ? h.images : undefined,
+          audio: h.audio && h.audio.length > 0 ? h.audio : undefined,
+          ...(h.role === 'refine' ? { refineStatus: 'completed' as const } : {}),
+          timestamp: h.timestamp ?? Date.now(),
+          ...(h.traceItems && h.traceItems.length > 0
+            ? { traceItems: h.traceItems.map(toTimelineEntry) }
+            : {}),
+        })),
+      )
+      messagesRestoredRef.current = true
+    }
+  }, [])
 
   const reloadChatFromBackend = useCallback(async () => {
     resetTransientUI()

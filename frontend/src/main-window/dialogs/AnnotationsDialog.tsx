@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getAnnotations, addAnnotation, updateAnnotation, removeAnnotation } from '../lib/api-memory'
+import {
+  getAnnotations,
+  addAnnotation,
+  updateAnnotation,
+  removeAnnotation,
+} from '../lib/api-memory'
 import type { Annotation } from '../../core/types-memory'
 import { IconEdit3, IconFolder, IconPin, IconPlus, IconTrash2, IconX } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'

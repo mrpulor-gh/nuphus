@@ -1,116 +1,191 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nuphus</title>
-  <!-- BUILD-SENTINEL-20260826-SPLASH-NODL-BTN -->
-  <style>
-    :root { --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #ffffff;
-      overflow: hidden;
-      font-family: var(--font-ui);
-      -webkit-font-smoothing: antialiased;
-      user-select: none;
-    }
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-    }
-    /* ── 虚拟形象动效令牌 ── */
-    .nv-eye { transform-box: fill-box; }
-    .nv-whole { transform-box: fill-box; transform-origin: center; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nuphus</title>
+    <!-- BUILD-SENTINEL-20260826-SPLASH-NODL-BTN -->
+    <style>
+      :root {
+        --font-ui:
+          system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+        overflow: hidden;
+        font-family: var(--font-ui);
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+      }
+      /* ── 虚拟形象动效令牌 ── */
+      .nv-eye {
+        transform-box: fill-box;
+      }
+      .nv-whole {
+        transform-box: fill-box;
+        transform-origin: center;
+      }
 
-    /* idle：呼吸 + 眨眼 */
-    @keyframes nvBreathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.016)} }
-    @keyframes nvBlink { 0%,91%,100%{transform:scaleY(1)} 94%{transform:scaleY(.08)} 97%{transform:scaleY(1)} }
-    .st-idle .nv-whole { animation: nvBreathe 4.8s ease-in-out infinite; }
-    .st-idle .nv-eye { transform-origin: center; animation: nvBlink 4.6s ease-in-out infinite; }
+      /* idle：呼吸 + 眨眼 */
+      @keyframes nvBreathe {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.016);
+        }
+      }
+      @keyframes nvBlink {
+        0%,
+        91%,
+        100% {
+          transform: scaleY(1);
+        }
+        94% {
+          transform: scaleY(0.08);
+        }
+        97% {
+          transform: scaleY(1);
+        }
+      }
+      .st-idle .nv-whole {
+        animation: nvBreathe 4.8s ease-in-out infinite;
+      }
+      .st-idle .nv-eye {
+        transform-origin: center;
+        animation: nvBlink 4.6s ease-in-out infinite;
+      }
 
-    .hint {
-      font-size: 12px;
-      color: #5a5a6e;
-      transition: opacity 0.3s ease;
-    }
+      .hint {
+        font-size: 12px;
+        color: #5a5a6e;
+        transition: opacity 0.3s ease;
+      }
 
-    /* 进度条：pct 已知时定宽过渡；未知（pct: null）时不定宽滑动 */
-    .bar {
-      width: 180px;
-      height: 4px;
-      border-radius: 999px;
-      background: #e9e9ef;
-      overflow: hidden;
-    }
-    .bar-fill {
-      height: 100%;
-      width: 0%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, #5b5be6, #8b8bf5);
-      transition: width 0.25s ease;
-    }
-    .bar.indeterminate .bar-fill {
-      width: 30%;
-      animation: nvSlide 1.3s ease-in-out infinite;
-    }
-    @keyframes nvSlide {
-      0%   { transform: translateX(-110%); }
-      100% { transform: translateX(440%); }
-    }
+      /* 进度条：pct 已知时定宽过渡；未知（pct: null）时不定宽滑动 */
+      .bar {
+        width: 180px;
+        height: 4px;
+        border-radius: 999px;
+        background: #e9e9ef;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #5b5be6, #8b8bf5);
+        transition: width 0.25s ease;
+      }
+      .bar.indeterminate .bar-fill {
+        width: 30%;
+        animation: nvSlide 1.3s ease-in-out infinite;
+      }
+      @keyframes nvSlide {
+        0% {
+          transform: translateX(-110%);
+        }
+        100% {
+          transform: translateX(440%);
+        }
+      }
 
-    /* 「后台下载」：下载卡住 10s 才出现，先放用户进主界面，下载继续 */
-    .skip-wrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 5px;
-    }
-    .skip-btn {
-      font-size: 11px;
-      color: #6366f1;
-      background: none;
-      border: 1px solid #d3d3e0;
-      border-radius: 999px;
-      padding: 3px 12px;
-      cursor: pointer;
-      font-family: var(--font-ui);
-      transition: background 0.2s ease;
-    }
-    .skip-btn:hover { background: #f0f0ff; }
-    .skip-note {
-      font-size: 10px;
-      color: #9a9ab0;
-    }
+      /* 「后台下载」：下载卡住 10s 才出现，先放用户进主界面，下载继续 */
+      .skip-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+      }
+      .skip-btn {
+        font-size: 11px;
+        color: #6366f1;
+        background: none;
+        border: 1px solid #d3d3e0;
+        border-radius: 999px;
+        padding: 3px 12px;
+        cursor: pointer;
+        font-family: var(--font-ui);
+        transition: background 0.2s ease;
+      }
+      .skip-btn:hover {
+        background: #f0f0ff;
+      }
+      .skip-note {
+        font-size: 10px;
+        color: #9a9ab0;
+      }
 
-    @media (prefers-reduced-motion: reduce) {
-      .st-idle .nv-whole, .st-idle .nv-eye, .bar.indeterminate .bar-fill { animation: none !important; }
-    }
-  </style>
-</head>
-<body>
-  <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
-    <g class="nv-whole">
-      <path d="M64 20 H192 A44 44 0 0 1 236 64 V156" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
-      <path d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
-      <path class="nv-eye l" d="M80 180 L80 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
-      <path class="nv-eye r" d="M176 180 L176 76" stroke="#1a1a2e" stroke-width="24" stroke-linecap="round" fill="none"/>
-    </g>
-  </svg>
-  <div class="hint">正在启动…</div>
-  <!-- 加载条默认隐藏：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
-  <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
-  <div id="skipWrap" class="skip-wrap" hidden>
-    <button id="skipBtn" class="skip-btn">后台下载</button>
-    <div class="skip-note">除视觉定位，不影响正常使用！</div>
-  </div>
-  <!-- 进度由 splash.js 监听 splash:progress 事件驱动（旧 setStatus 定义在
+      @media (prefers-reduced-motion: reduce) {
+        .st-idle .nv-whole,
+        .st-idle .nv-eye,
+        .bar.indeterminate .bar-fill {
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
+      <g class="nv-whole">
+        <path
+          d="M64 20 H192 A44 44 0 0 1 236 64 V156"
+          stroke="#1a1a2e"
+          stroke-width="24"
+          stroke-linecap="round"
+          fill="none"
+        />
+        <path
+          d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"
+          stroke="#1a1a2e"
+          stroke-width="24"
+          stroke-linecap="round"
+          fill="none"
+        />
+        <path
+          class="nv-eye l"
+          d="M80 180 L80 76"
+          stroke="#1a1a2e"
+          stroke-width="24"
+          stroke-linecap="round"
+          fill="none"
+        />
+        <path
+          class="nv-eye r"
+          d="M176 180 L176 76"
+          stroke="#1a1a2e"
+          stroke-width="24"
+          stroke-linecap="round"
+          fill="none"
+        />
+      </g>
+    </svg>
+    <div class="hint">正在启动…</div>
+    <!-- 加载条默认隐藏：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
+    <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
+    <div id="skipWrap" class="skip-wrap" hidden>
+      <button id="skipBtn" class="skip-btn">后台下载</button>
+      <div class="skip-note">除视觉定位，不影响正常使用！</div>
+    </div>
+    <!-- 进度由 splash.js 监听 splash:progress 事件驱动（旧 setStatus 定义在
        内联 <script>，被 CSP script-src 'self' 拦截从未执行过；withGlobalTauri 注入的
        __TAURI__ 走 AddScriptToExecuteOnDocumentCreated，不受页面 CSP 限制） -->
-  <script src="splash.js"></script>
-</body>
+    <script src="splash.js"></script>
+  </body>
 </html>

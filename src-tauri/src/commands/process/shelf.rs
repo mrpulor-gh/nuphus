@@ -298,7 +298,8 @@ pub(crate) fn migrate_legacy_mirrors() {
             continue;
         }
         if let Ok(json) = serde_json::to_string(&file.session) {
-            if nuphus::store::session::upsert_snapshot(&file.session.id, &file.mode, &json).is_ok() {
+            if nuphus::store::session::upsert_snapshot(&file.session.id, &file.mode, &json).is_ok()
+            {
                 imported += 1;
             }
         }
@@ -310,7 +311,9 @@ pub(crate) fn migrate_legacy_mirrors() {
 
 /// 元数据行 upsert（title 空串时保留已有 summary，与退出钩子语义一致）
 pub(crate) fn upsert_meta_row(session: &Session, title: &str) {
-    let existing = nuphus::store::session::get_session(&session.id).ok().flatten();
+    let existing = nuphus::store::session::get_session(&session.id)
+        .ok()
+        .flatten();
     let row = nuphus::store::session::SessionRow {
         id: session.id.clone(),
         parent_id: existing.as_ref().and_then(|r| r.parent_id.clone()),
@@ -413,7 +416,7 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     let mut candidates: Vec<(String, serde_json::Value, bool)> = Vec::new();
     let mut active_id: Option<String> = None;
 
-// active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
+    // active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
     // 以 active 为准展示，shelf 循环跳过同 id 去重。
     //
     // 空 messages 的 active 会话也作为 active 返回：0825-02 修复后 SessionRail 5s 轮询
@@ -462,7 +465,10 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
 
     // 稳定排序：created_at 降序（最新创建在上）；缺失/解析失败排最后；同时间按 id 保序。
     let created_at_map = nuphus::store::session::list_created_at(
-        &candidates.iter().map(|c| c.0.clone()).collect::<Vec<String>>(),
+        &candidates
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<String>>(),
     )
     .unwrap_or_default();
     candidates.sort_by(|a, b| {
@@ -496,17 +502,14 @@ pub fn switch_session(state: State<'_, AppState>, id: String) -> Result<(), Stri
 /// 呈现桌面当前会话。帧格式与 CompoundEmitter 的 WS 分支一致（裸 NuphusEvent JSON）。
 fn broadcast_session_changed_mobile(state: &AppState, session_id: &str) {
     use nuphus::agent::events::EventEmitter;
-    let Some(tx) = state
-        .mobile_ws_tx
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-    else {
+    let Some(tx) = state.mobile_ws_tx.lock().ok().and_then(|g| g.clone()) else {
         return;
     };
-    crate::emitter::MobileWsEmitter::new(tx).emit(nuphus::agent::events::NuphusEvent::SessionChanged {
-        session_id: session_id.to_string(),
-    });
+    crate::emitter::MobileWsEmitter::new(tx).emit(
+        nuphus::agent::events::NuphusEvent::SessionChanged {
+            session_id: session_id.to_string(),
+        },
+    );
 }
 
 /// 内部实现（&AppState 直取）：mobile_server 的遥控切换端点复用
@@ -579,9 +582,7 @@ pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), S
         if let Ok(mut shelf) = state.shelf.lock() {
             shelf.put(entry, target_session);
         }
-        tracing::info!(
-            "[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({kind})"
-        );
+        tracing::info!("[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({kind})");
         broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
@@ -637,10 +638,11 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     }
     tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
     use nuphus::agent::events::EventEmitter;
-    crate::emitter::CompoundEmitter::new(app.clone(), state)
-        .emit(nuphus::agent::events::NuphusEvent::SessionChanged {
+    crate::emitter::CompoundEmitter::new(app.clone(), state).emit(
+        nuphus::agent::events::NuphusEvent::SessionChanged {
             session_id: new_id.clone(),
-        });
+        },
+    );
     Ok(new_id)
 }
 

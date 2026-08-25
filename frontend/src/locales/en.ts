@@ -122,19 +122,20 @@ const en: Record<string, string> = {
   'sessionRail.busyHint': 'Locked while executing — append an instruction or wait',
   'sessionRail.rename': 'Rename session title',
   'sessionRail.save': 'Save',
-'sessionRail.untitled': 'Untitled session',
-  'sessionRail.switchFailBusy': 'This session is executing — please wait for it to finish before switching',
+  'sessionRail.untitled': 'Untitled session',
+  'sessionRail.switchFailBusy':
+    'This session is executing — please wait for it to finish before switching',
   'sessionRail.switchFailAppend': 'Instruction queue still processing — switchable shortly',
   'sessionRail.switchFailMode': 'That session belongs to another run mode — switch modes first',
   'sessionRail.switchFailGeneric': 'Switch did not take effect, please retry',
   'sessionRail.archive': 'Archive',
   'sessionRail.archiveConfirmTitle': 'Archive this session?',
-  'sessionRail.archiveConfirmDesc': 'It will be removed from the session rail; conversation records stay viewable in the memory page.',
+  'sessionRail.archiveConfirmDesc':
+    'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
 
   // ── Welcome ──
   'welcome.resume': 'Resume',
-
 
   // ── External Agents config center (team.toml CRUD) ──
   'extAgents.cfg.title': 'External Agents',
@@ -167,7 +168,8 @@ const en: Record<string, string> = {
   'extAgents.cfg.process': 'Process name',
   'extAgents.cfg.processHint': 'process_list matches this to detect if it is running',
   'extAgents.cfg.description': 'Work description',
-  'extAgents.cfg.descriptionHint': 'Main responsibility, used for routing; written into read.md for new agents',
+  'extAgents.cfg.descriptionHint':
+    'Main responsibility, used for routing; written into read.md for new agents',
   'extAgents.cfg.descriptionPlaceholder': 'Local code analysis, auto Git commit & refactor…',
   'extAgents.cfg.cancel': 'Cancel',
   'extAgents.cfg.save': 'Save & apply',
@@ -176,7 +178,8 @@ const en: Record<string, string> = {
   'extAgents.cfg.saveFail': 'Failed to save',
   'extAgents.cfg.deleteFail': 'Failed to delete',
   'extAgents.cfg.loadFail': 'Failed to load',
-  'extAgents.cfg.deleteConfirm': 'Delete this external agent config? (handoff workspace will not be deleted)',
+  'extAgents.cfg.deleteConfirm':
+    'Delete this external agent config? (handoff workspace will not be deleted)',
 
   'cmd.externalAgents': 'External Agents',
   'cmd.externalAgentsDesc': 'External agent config center (team.toml registry)',
@@ -518,7 +521,7 @@ const en: Record<string, string> = {
   'models.visionSaveFail': 'Save failed',
   'models.visionModelNone': 'Add vision model',
   'models.clearKey': 'Clear the saved API key for this local model provider',
-  'models.clearKeyConfirm': 'Clear this provider\'s API Key? This cannot be undone.',
+  'models.clearKeyConfirm': "Clear this provider's API Key? This cannot be undone.",
   'models.clearKeySuccess': 'API Key cleared',
   'models.clearKeyFail': 'Failed to clear key',
 
@@ -744,13 +747,13 @@ const en: Record<string, string> = {
   'mobile.statusRunning': 'Running',
   'mobile.statusStopped': 'Stopped',
   'mobile.stopFailed': 'Failed to stop, please retry',
-   'mobile.newChatStarted': 'New chat started',
-   'mobile.newChatFailed': 'Failed to start new chat, please retry',
-   'mobile.newChatBusy': 'Busy — cannot start a new chat while running',
-   'mobile.renderErrorTitle': 'Render error',
-   'mobile.renderErrorDesc': 'May happen with many history messages; tap retry to recover',
-   'mobile.loadEarlier': 'Load {0} earlier messages',
-   'mobile.dualTitle': 'Dual status',
+  'mobile.newChatStarted': 'New chat started',
+  'mobile.newChatFailed': 'Failed to start new chat, please retry',
+  'mobile.newChatBusy': 'Busy — cannot start a new chat while running',
+  'mobile.renderErrorTitle': 'Render error',
+  'mobile.renderErrorDesc': 'May happen with many history messages; tap retry to recover',
+  'mobile.loadEarlier': 'Load {0} earlier messages',
+  'mobile.dualTitle': 'Dual status',
   'mobile.desktopLabel': 'Desktop',
   'mobile.phoneLabel': 'Phone',
   'mobile.localServiceLabel': 'Local service',
@@ -1182,7 +1185,8 @@ const en: Record<string, string> = {
   'mobile.lanDisconnectedSwitchWan': 'LAN disconnected, switched to relay channel',
   'mobile.lanDisconnectedSwitchWanRetry': 'LAN disconnected, switched to relay channel — resend',
   'mobile.bootTimeoutTitle': 'Connection timed out',
-  'mobile.bootTimeoutDesc': 'Could not reach your computer. The tunnel may still be establishing or the network is unstable. Retry, or clear pairing info and scan the QR code again.',
+  'mobile.bootTimeoutDesc':
+    'Could not reach your computer. The tunnel may still be establishing or the network is unstable. Retry, or clear pairing info and scan the QR code again.',
   'mobile.repair': 'Repair pairing',
   'mobile.switchedBackLan': 'Switched back to LAN direct connection',
   'mobile.acceptedImagesNotSent': 'Accepted (images not sent while executing)',

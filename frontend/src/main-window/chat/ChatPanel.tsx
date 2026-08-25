@@ -1074,9 +1074,7 @@ export function ChatPanel({
     <div className="chat-panel">
       {/* ── Session Rail：面板级左缘挂载（自聊天区顶部 10% 起锚，
           感应区纯几何不拦截点击）── */}
-      {onChatReplaced && (
-        <SessionRail onSessionChanged={onChatReplaced} onNewChat={onNewChat} />
-      )}
+      {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} onNewChat={onNewChat} />}
       {/* ── Chat Header (command palette entry) ── */}
       <div className="chat-header">
         <div className="chat-header-left" />

@@ -235,14 +235,11 @@ pub fn list_created_at(ids: &[String]) -> crate::Result<HashMap<String, String>>
         .take(ids.len())
         .collect::<Vec<_>>()
         .join(",");
-    let sql = format!(
-        "SELECT id, created_at FROM sessions WHERE id IN ({placeholders})"
-    );
+    let sql = format!("SELECT id, created_at FROM sessions WHERE id IN ({placeholders})");
     let mut stmt = guard.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params_from_iter(ids.iter()),
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    )?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
     let mut map = HashMap::new();
     for r in rows.flatten() {
         map.insert(r.0, r.1);
@@ -302,7 +299,9 @@ mod tests {
 
         upsert_session(&row_with(&id, "重命名后的标题")).unwrap();
 
-        let snap = get_snapshot(&id).unwrap().expect("快照不应被 upsert_session 清空");
+        let snap = get_snapshot(&id)
+            .unwrap()
+            .expect("快照不应被 upsert_session 清空");
         assert_eq!(snap.0, "leader");
         assert_eq!(snap.1, r#"{"id":"x","messages":[]}"#);
 
@@ -355,7 +354,10 @@ mod tests {
         assert_eq!(mode, "workflow");
 
         delete_snapshot(&a).unwrap();
-        assert!(get_snapshot(&a).unwrap().is_none(), "delete 后 read 应为 None");
+        assert!(
+            get_snapshot(&a).unwrap().is_none(),
+            "delete 后 read 应为 None"
+        );
         // 元数据行仍保留（快照删除不删列表项）
         assert!(get_session(&a).unwrap().is_some());
 
@@ -378,9 +380,15 @@ mod tests {
 
         let cleaned = prune_snapshots(10).unwrap();
         let remaining = list_snapshots(100).unwrap().len();
-        assert!(remaining <= 10, "prune 后快照数应 ≤ keep(10)，实际 {remaining}");
+        assert!(
+            remaining <= 10,
+            "prune 后快照数应 ≤ keep(10)，实际 {remaining}"
+        );
         let second = prune_snapshots(10).unwrap();
-        assert_eq!(second, 0, "二次 prune 应幂等收敛（无更多清理），实际 {second}");
+        assert_eq!(
+            second, 0,
+            "二次 prune 应幂等收敛（无更多清理），实际 {second}"
+        );
         let _ = cleaned;
 
         for id in &ids {

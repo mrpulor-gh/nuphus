@@ -134,7 +134,11 @@ export default function App() {
       if (hint) {
         // 只缓存非凭据字段（lan_url + relay_url 隧道入口）：hint 里的 caller_token 已无
         // 消费方（POST /task 通道已移除），长期缓存高权限凭据只会扩大 XSS 泄漏面（审计 P3-5 修复）
-        saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
+        saveRelayCache({
+          lan_url: hint.lan_url,
+          relay_url: hint.tunnel_url,
+          device_id: hint.device_id,
+        })
         if (hint.lan_url) return hint.lan_url
       }
     } catch {
@@ -194,14 +198,11 @@ export default function App() {
   }, [])
 
   /** 刷新会话清单镜像（失败静默 → 入口隐藏，不打扰主流程） */
-  const refreshSessions = useCallback(
-    (tk: string) => {
-      void fetchSessions(tk)
-        .then(s => setSessions(s))
-        .catch(() => {})
-    },
-    [],
-  )
+  const refreshSessions = useCallback((tk: string) => {
+    void fetchSessions(tk)
+      .then(s => setSessions(s))
+      .catch(() => {})
+  }, [])
 
   const wsRef = useRef<MobileWsClient | null>(null)
   // 状态镜像：前台恢复 hook 用 ref 读取，避免 wsStatus 变化触发监听器重注册
@@ -410,7 +411,11 @@ export default function App() {
         setConnMode('lan')
         void fetchRelayHint(token).then(hint => {
           if (!hint) return
-          saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
+          saveRelayCache({
+            lan_url: hint.lan_url,
+            relay_url: hint.tunnel_url,
+            device_id: hint.device_id,
+          })
         })
         return
       }
@@ -420,7 +425,12 @@ export default function App() {
       setConnMode('wan')
       // 后台顺手拉一次 hint：缓存隧道入口 + 局域网地址（不阻塞启动；切回局域网用）
       void fetchRelayHint(token).then(hint => {
-        if (hint) saveRelayCache({ lan_url: hint.lan_url, relay_url: hint.tunnel_url, device_id: hint.device_id })
+        if (hint)
+          saveRelayCache({
+            lan_url: hint.lan_url,
+            relay_url: hint.tunnel_url,
+            device_id: hint.device_id,
+          })
       })
     }
     void resolve()
@@ -877,127 +887,127 @@ export default function App() {
       <MobileErrorBoundary>
         <ChatScreen
           messages={state.messages}
-        activity={state.activity}
-        wsStatus={wsStatus}
-        historyError={historyError}
-        onRetryHistory={() => {
-          // 手动重试：取消未决自动重试，立即重拉（重置退避）
-          if (historyRetryTimerRef.current) {
-            clearTimeout(historyRetryTimerRef.current)
-            historyRetryTimerRef.current = null
+          activity={state.activity}
+          wsStatus={wsStatus}
+          historyError={historyError}
+          onRetryHistory={() => {
+            // 手动重试：取消未决自动重试，立即重拉（重置退避）
+            if (historyRetryTimerRef.current) {
+              clearTimeout(historyRetryTimerRef.current)
+              historyRetryTimerRef.current = null
+            }
+            historyRetryAttemptRef.current = 0
+            void loadHistory(token ?? '')
+          }}
+          onReloadHistory={reloadHistory}
+          pendingConfirm={state.pendingConfirm}
+          pendingRefine={state.pendingRefine}
+          pendingUserInput={state.pendingUserInput}
+          refining={state.refining}
+          token={token ?? ''}
+          assistantName={state.identity?.assistantName}
+          model={state.model}
+          tokenUsage={state.tokenUsage}
+          workflowRun={state.workflowRun}
+          wfControlBusy={wfControlBusy}
+          onWorkflowPause={() =>
+            void runWorkflowControl(wfId => wfPause(token ?? '', wfId), t('mobile.wfPausedToast'))
           }
-          historyRetryAttemptRef.current = 0
-          void loadHistory(token ?? '')
-        }}
-        onReloadHistory={reloadHistory}
-        pendingConfirm={state.pendingConfirm}
-        pendingRefine={state.pendingRefine}
-        pendingUserInput={state.pendingUserInput}
-        refining={state.refining}
-        token={token ?? ''}
-        assistantName={state.identity?.assistantName}
-        model={state.model}
-        tokenUsage={state.tokenUsage}
-        workflowRun={state.workflowRun}
-        wfControlBusy={wfControlBusy}
-        onWorkflowPause={() =>
-          void runWorkflowControl(wfId => wfPause(token ?? '', wfId), t('mobile.wfPausedToast'))
-        }
-        onWorkflowResume={() =>
-          void runWorkflowControl(wfId => wfResume(token ?? '', wfId), t('mobile.wfResumedToast'))
-        }
-        onWorkflowTerminate={() =>
-          void runWorkflowControl(wfId => wfStop(token ?? '', wfId), t('mobile.wfStoppedToast'))
-        }
-        onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
-        onStopExecution={() => {
-          // 加确认弹窗：避免手机端误触终止（执行中发送按钮常与终止相邻）
-          if (!window.confirm(t('input.forceStopConfirm'))) return
-          // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
-          void stopExecution(token ?? '')
-            .then(res => {
-              if (res.status === 'stopping' || res.status === 'terminated') {
-                showToast(t('mobile.statusStopped'))
+          onWorkflowResume={() =>
+            void runWorkflowControl(wfId => wfResume(token ?? '', wfId), t('mobile.wfResumedToast'))
+          }
+          onWorkflowTerminate={() =>
+            void runWorkflowControl(wfId => wfStop(token ?? '', wfId), t('mobile.wfStoppedToast'))
+          }
+          onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
+          onStopExecution={() => {
+            // 加确认弹窗：避免手机端误触终止（执行中发送按钮常与终止相邻）
+            if (!window.confirm(t('input.forceStopConfirm'))) return
+            // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
+            void stopExecution(token ?? '')
+              .then(res => {
+                if (res.status === 'stopping' || res.status === 'terminated') {
+                  showToast(t('mobile.statusStopped'))
+                }
+              })
+              .catch(() => showToast(t('mobile.stopFailed')))
+          }}
+          onNewChat={() => {
+            // 单一路径：手机新建 = 遥控桌面执行权威新建（复用桌面 new_chat_session_cmd），
+            // 后端经 SessionChanged 事件广播，手机收到后跟随显示欢迎页。
+            // HTTP 成功响应兜底清一次本端视图（WS 事件可能瞬时漏收，幂等）。
+            if (!token) return
+            void startNewChat(token).then(r => {
+              if (r.ok) {
+                dispatch({ type: 'new_chat' })
+                showToast(t('mobile.newChatStarted'))
+                // 兜底重拉：即使 SessionChanged 漏收，本端也立即呈现新会话欢迎页
+                void loadHistory(token)
+                refreshSessions(token)
+              } else {
+                // busy/append_pending：后端 guard_switch 已拒绝（执行中禁止新建），
+                // 前端给明确提示而非裸错误码；其余失败走通用文案
+                showToast(
+                  r.error === 'busy' || r.error === 'append_pending'
+                    ? t('mobile.newChatBusy')
+                    : r.error || t('mobile.newChatFailed'),
+                )
               }
             })
-            .catch(() => showToast(t('mobile.stopFailed')))
-        }}
-        onNewChat={() => {
-          // 单一路径：手机新建 = 遥控桌面执行权威新建（复用桌面 new_chat_session_cmd），
-          // 后端经 SessionChanged 事件广播，手机收到后跟随显示欢迎页。
-          // HTTP 成功响应兜底清一次本端视图（WS 事件可能瞬时漏收，幂等）。
-          if (!token) return
-          void startNewChat(token).then(r => {
-            if (r.ok) {
-              dispatch({ type: 'new_chat' })
-              showToast(t('mobile.newChatStarted'))
-              // 兜底重拉：即使 SessionChanged 漏收，本端也立即呈现新会话欢迎页
-              void loadHistory(token)
-              refreshSessions(token)
-            } else {
-              // busy/append_pending：后端 guard_switch 已拒绝（执行中禁止新建），
-              // 前端给明确提示而非裸错误码；其余失败走通用文案
-              showToast(
-                r.error === 'busy' || r.error === 'append_pending'
-                  ? t('mobile.newChatBusy')
-                  : r.error || t('mobile.newChatFailed'),
-              )
-            }
-          })
-        }}
-        onDisconnect={() => {
-          // 断开连接：清除 token + WS，回到配对页
-          clearToken()
-          wsRef.current?.dispose()
-          setAuthInvalid(false)
-          setPhase('guide')
-        }}
-        onSend={handleSend}
-        onRateMessage={setRatingMsg}
-        sessions={sessions}
-        onSwitchSession={handleSwitchSession}
-        onUserInputResolved={submitted => {
-          dispatch({ type: 'user_input_resolved' })
-          showToast(submitted ? t('mobile.submitted') : t('mobile.cancelled'))
-        }}
-        onModelChanged={m => {
-          // 模型卡切换成功后立即同步 store（不等下次 session_info 事件）
-          dispatch({ type: 'set_model', model: m })
-        }}
-        onConfirmResolved={approved => {
-          dispatch({ type: 'confirm_resolved' })
-          // 安全决策反馈：让用户明确知道点击已生效（已允许/已拒绝）
-          showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
-        }}
-        onRefineConfirm={() => {
-          dispatch({ type: 'refine_resolve' })
-          dispatch({ type: 'refine_state', refining: true })
-          // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
-          triggerRefine(token ?? '').catch(() => {
-            dispatch({ type: 'refine_state', refining: false })
-            showToast(t('mobile.refineFailed'))
-          })
-        }}
-        onRefineSkip={() => {
-          dispatch({ type: 'refine_resolve' })
-          showToast(t('mobile.refineSkipped'))
-          // 通知后端广播 RefineSkipped——桌面端弹窗同步关闭（双端状态一致）
-          refineSkip(token ?? '').catch(() => {})
-        }}
-        toast={toast}
-        onToast={showToast}
-      />
-      {ratingMsg && (
-        <RatingSheet
-          message={ratingMsg}
-          token={token ?? ''}
-          onClose={() => setRatingMsg(null)}
-          onSubmitted={() => {
-            setRatingMsg(null)
-            showToast(t('mobile.ratingSaved'))
           }}
+          onDisconnect={() => {
+            // 断开连接：清除 token + WS，回到配对页
+            clearToken()
+            wsRef.current?.dispose()
+            setAuthInvalid(false)
+            setPhase('guide')
+          }}
+          onSend={handleSend}
+          onRateMessage={setRatingMsg}
+          sessions={sessions}
+          onSwitchSession={handleSwitchSession}
+          onUserInputResolved={submitted => {
+            dispatch({ type: 'user_input_resolved' })
+            showToast(submitted ? t('mobile.submitted') : t('mobile.cancelled'))
+          }}
+          onModelChanged={m => {
+            // 模型卡切换成功后立即同步 store（不等下次 session_info 事件）
+            dispatch({ type: 'set_model', model: m })
+          }}
+          onConfirmResolved={approved => {
+            dispatch({ type: 'confirm_resolved' })
+            // 安全决策反馈：让用户明确知道点击已生效（已允许/已拒绝）
+            showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
+          }}
+          onRefineConfirm={() => {
+            dispatch({ type: 'refine_resolve' })
+            dispatch({ type: 'refine_state', refining: true })
+            // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
+            triggerRefine(token ?? '').catch(() => {
+              dispatch({ type: 'refine_state', refining: false })
+              showToast(t('mobile.refineFailed'))
+            })
+          }}
+          onRefineSkip={() => {
+            dispatch({ type: 'refine_resolve' })
+            showToast(t('mobile.refineSkipped'))
+            // 通知后端广播 RefineSkipped——桌面端弹窗同步关闭（双端状态一致）
+            refineSkip(token ?? '').catch(() => {})
+          }}
+          toast={toast}
+          onToast={showToast}
         />
-      )}
+        {ratingMsg && (
+          <RatingSheet
+            message={ratingMsg}
+            token={token ?? ''}
+            onClose={() => setRatingMsg(null)}
+            onSubmitted={() => {
+              setRatingMsg(null)
+              showToast(t('mobile.ratingSaved'))
+            }}
+          />
+        )}
       </MobileErrorBoundary>
     </>
   )

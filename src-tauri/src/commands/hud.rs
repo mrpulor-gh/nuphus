@@ -108,9 +108,7 @@ fn position_bottom_right<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
         // 逻辑像素坐标：物理尺寸 / scale → 逻辑；右缘留 20、底部留 40（逻辑像素）
         let x = (size.width as f64 / scale) - w - 20.0;
         let y = (size.height as f64 / scale) - h - 40.0;
-        let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-            x, y,
-        )));
+        let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
     }
 }
 

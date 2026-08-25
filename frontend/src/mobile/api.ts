@@ -282,7 +282,11 @@ export async function switchMobileModel(
   const res = await checkAuth(
     await fetchWithTimeout(resolveApi('./switch-model'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json', ...tunnelDeviceHeaders() },
+      headers: {
+        'X-Mobile-Token': token,
+        'Content-Type': 'application/json',
+        ...tunnelDeviceHeaders(),
+      },
       body: JSON.stringify({ model, provider, mode }),
     }),
   )
@@ -296,7 +300,11 @@ export async function switchMobileMode(token: string, mode: string): Promise<voi
   const res = await checkAuth(
     await fetchWithTimeout(resolveApi('./switch-mode'), {
       method: 'POST',
-      headers: { 'X-Mobile-Token': token, 'Content-Type': 'application/json', ...tunnelDeviceHeaders() },
+      headers: {
+        'X-Mobile-Token': token,
+        'Content-Type': 'application/json',
+        ...tunnelDeviceHeaders(),
+      },
       body: JSON.stringify({ mode }),
     }),
   )

@@ -16,11 +16,15 @@ pub fn ensure_portable_desktop_shortcut() {
         if cfg!(debug_assertions) {
             return;
         }
-        let Ok(exe) = std::env::current_exe() else { return };
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
         if !is_portable_path(&exe) {
             return; // 标准安装目录 → 安装器已建快捷方式
         }
-        let Some(desktop) = dirs::desktop_dir() else { return };
+        let Some(desktop) = dirs::desktop_dir() else {
+            return;
+        };
         let lnk = desktop.join("Nuphus.lnk");
         if lnk.exists() {
             return; // 幂等：已存在不重复创建
@@ -73,7 +77,13 @@ fn create_shortcut(exe: &Path, lnk: &Path) -> std::io::Result<()> {
         wd = esc(exe.parent().unwrap_or(exe)),
     );
     let status = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .status()?;
     if status.success() {
         tracing::info!("Created portable desktop shortcut: {}", lnk.display());

@@ -173,7 +173,12 @@ export function TenetsDialog({ onClose }: TenetsDialogProps) {
               <Button variant="default" onClick={() => setAddOpen(false)}>
                 {t('common.cancel')}
               </Button>
-              <Button variant="primary" loading={saving} disabled={!content.trim()} onClick={handleAdd}>
+              <Button
+                variant="primary"
+                loading={saving}
+                disabled={!content.trim()}
+                onClick={handleAdd}
+              >
                 {t('common.save')}
               </Button>
             </div>

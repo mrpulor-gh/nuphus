@@ -299,10 +299,7 @@ export default function NavBar({
               <button
                 key={item.id}
                 type="button"
-                className={[
-                  'mobile-sess-item',
-                  item.is_active ? 'is-active' : '',
-                ]
+                className={['mobile-sess-item', item.is_active ? 'is-active' : '']
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => {

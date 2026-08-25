@@ -279,9 +279,15 @@
   color: var(--fg);
   animation: srNoticeIn 200ms var(--ease-out);
 }
-.sr-notice--info    { --notice-rgb: var(--info-rgb); }
-.sr-notice--warning { --notice-rgb: var(--warning-rgb); }
-.sr-notice--error   { --notice-rgb: var(--error-rgb); }
+.sr-notice--info {
+  --notice-rgb: var(--info-rgb);
+}
+.sr-notice--warning {
+  --notice-rgb: var(--warning-rgb);
+}
+.sr-notice--error {
+  --notice-rgb: var(--error-rgb);
+}
 
 .sr-notice-icon {
   flex: none;
@@ -292,8 +298,14 @@
 }
 
 @keyframes srNoticeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

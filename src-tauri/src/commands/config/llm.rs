@@ -611,10 +611,7 @@ pub async fn configure_llm(
 /// Preserves the provider entry (name / base_url / models) — only `api_key`
 /// is emptied. Idempotent: unknown providers return `Ok(())` without changes.
 #[tauri::command]
-pub fn clear_provider_api_key(
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<(), String> {
+pub fn clear_provider_api_key(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     let toml_config_path = get_config_path().or_else(|| {
         let fallback = state.llm_config_path.with_file_name("providers.toml");
         if let Some(parent) = fallback.parent() {
@@ -625,7 +622,10 @@ pub fn clear_provider_api_key(
 
     if let Some(ref config_path) = toml_config_path {
         if let Err(e) = clear_provider_api_key_in_config_toml(config_path, &provider) {
-            tracing::error!("[clear_provider_api_key] Failed to clear config.toml: {}", e);
+            tracing::error!(
+                "[clear_provider_api_key] Failed to clear config.toml: {}",
+                e
+            );
             return Err(format!("清除 API Key 失败: {}", e));
         }
     }
@@ -702,7 +702,8 @@ async fn post_configure(
     }
 
     if existing_ctx.is_none() {
-        let _ = update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
+        let _ =
+            update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
     }
 
     // Vision probe — provider-driven: prefer metadata from ProviderRegistry over HTTP probing.

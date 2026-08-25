@@ -2887,11 +2887,17 @@ mod tests {
                 },
             );
 
-            // WS 客户端应收到与桌面相同的 NuphusEvent JSON
-            let text = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
-                .await
-                .expect("5s 内应收到事件")
-                .unwrap();
+            // WS 客户端应收到与桌面相同的 NuphusEvent JSON（跳过连接即发的 snapshot 帧）
+            let text = loop {
+                let text = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
+                    .await
+                    .expect("5s 内应收到事件")
+                    .unwrap();
+                let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if v["type"] != "session_snapshot" {
+                    break text;
+                }
+            };
             let json: serde_json::Value = serde_json::from_str(&text).unwrap();
             assert_eq!(json["type"], "user_message_received");
             assert_eq!(json["content"], "手机端测试消息");
@@ -2919,6 +2925,7 @@ mod tests {
                                 socket,
                                 tx,
                                 engine,
+                                None, // snapshot：测试不需要
                                 std::time::Duration::from_millis(100),
                             )
                         })
@@ -3012,10 +3019,17 @@ mod tests {
                     });
             }
 
-            let frame = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
-                .await
-                .expect("5s 内应收到 workflow 事件")
-                .unwrap();
+            // 跳过连接即发的 snapshot 帧，读到 workflow 事件
+            let frame = loop {
+                let frame = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
+                    .await
+                    .expect("5s 内应收到 workflow 事件")
+                    .unwrap();
+                let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
+                if v["type"] != "session_snapshot" {
+                    break frame;
+                }
+            };
             let json: serde_json::Value = serde_json::from_str(&frame).unwrap();
             assert_eq!(json["type"], "workflow_event", "应携带 type 标记: {json}");
             assert_eq!(json["event"], "run_started", "event 应原样透传: {json}");

@@ -46,11 +46,13 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url)
 
   // API 请求绝不缓存：直连网络（含 WS 升级请求、/message /history /identity /health）
-  if (url.pathname.startsWith('/message') ||
-      url.pathname.startsWith('/history') ||
-      url.pathname.startsWith('/identity') ||
-      url.pathname.startsWith('/health') ||
-      url.pathname.startsWith('/ws')) {
+  if (
+    url.pathname.startsWith('/message') ||
+    url.pathname.startsWith('/history') ||
+    url.pathname.startsWith('/identity') ||
+    url.pathname.startsWith('/health') ||
+    url.pathname.startsWith('/ws')
+  ) {
     return
   }
 

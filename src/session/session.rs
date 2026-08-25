@@ -47,7 +47,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-                    turn_count: 0,
+            turn_count: 0,
         }
     }
 
@@ -75,7 +75,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-                    turn_count: parent_depth + 1,
+            turn_count: parent_depth + 1,
         }
     }
 
@@ -124,7 +124,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-                    turn_count: 0,
+            turn_count: 0,
         }
     }
 
@@ -355,7 +355,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
-                    turn_count: 0,
+            turn_count: 0,
         }
     }
 }

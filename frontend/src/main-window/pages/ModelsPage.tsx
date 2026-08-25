@@ -26,7 +26,14 @@ import {
   modelsDownloadProgressPct,
   modelsDownloadProgressText,
 } from '../lib/useVisionModelDownload'
-import { IconCheck, IconTrash2, IconEye, IconAlertTriangle, IconRefresh, IconBrushCleaning } from '../../ui/Icons'
+import {
+  IconCheck,
+  IconTrash2,
+  IconEye,
+  IconAlertTriangle,
+  IconRefresh,
+  IconBrushCleaning,
+} from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'

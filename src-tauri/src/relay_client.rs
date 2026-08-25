@@ -96,8 +96,7 @@ pub fn ensure_default_config() {
     // 遗留共享默认值迁移（2026-08-25 实测事故）：旧版本默认 desktop-main，公共中继
     // 上所有此类用户互相抢占同一路由槽——连接风暴、手机被路由到陌生人的电脑
     // （配对失效/指令丢失）。检测到即换发唯一 id 并持久化。
-    if cfg.device_id.trim().is_empty() || LEGACY_SHARED_DEVICE_IDS.contains(&cfg.device_id.trim())
-    {
+    if cfg.device_id.trim().is_empty() || LEGACY_SHARED_DEVICE_IDS.contains(&cfg.device_id.trim()) {
         let legacy = cfg.device_id.trim().to_string();
         cfg.device_id = format!("desktop-{}", uuid::Uuid::new_v4().simple());
         changed = true;
@@ -112,7 +111,10 @@ pub fn ensure_default_config() {
         if let Err(e) = save_config(&cfg) {
             tracing::warn!("[Relay] 初始化默认配置失败: {e}");
         } else {
-            tracing::info!("[Relay] 已初始化官方中继默认配置（device_id={}）", cfg.device_id);
+            tracing::info!(
+                "[Relay] 已初始化官方中继默认配置（device_id={}）",
+                cfg.device_id
+            );
         }
     }
 }
@@ -322,7 +324,10 @@ async fn connect_ws_with_keepalive(
     .map_err(|_| {
         ConnectError::Handshake(Box::new(tungstenite::Error::Io(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            format!("dial timeout: {}s 内未完成 TCP/TLS/WS 升级", WS_DIAL_TIMEOUT_SECS),
+            format!(
+                "dial timeout: {}s 内未完成 TCP/TLS/WS 升级",
+                WS_DIAL_TIMEOUT_SECS
+            ),
         ))))
     })?
     .map_err(|e| ConnectError::Handshake(Box::new(e)))?;

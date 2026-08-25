@@ -297,7 +297,9 @@ export default function ExternalAgentsStatusBar({
     return (
       <div
         key={a.agent}
-        className={['agent-avatar-btn', STATE_CLASS[state] || 'is-unknown'].filter(Boolean).join(' ')}
+        className={['agent-avatar-btn', STATE_CLASS[state] || 'is-unknown']
+          .filter(Boolean)
+          .join(' ')}
         title={title}
       >
         <button
@@ -410,9 +412,7 @@ export default function ExternalAgentsStatusBar({
                 [
                   reports.length > 0 ? (
                     <div key="reports" className="ext-agent-dgroup">
-                      <div className="ext-agent-dgroup-label">
-                        {t('extAgents.deliver.reports')}
-                      </div>
+                      <div className="ext-agent-dgroup-label">{t('extAgents.deliver.reports')}</div>
                       {reports.map(d => (
                         <DeliverableRow key={d.path} d={d} onOpen={setPreviewPath} t={t} />
                       ))}
@@ -478,9 +478,7 @@ export default function ExternalAgentsStatusBar({
           </div>
         )}
       </div>
-      {previewPath && (
-        <PreviewOverlay path={previewPath} onClose={() => setPreviewPath(null)} />
-      )}
+      {previewPath && <PreviewOverlay path={previewPath} onClose={() => setPreviewPath(null)} />}
     </>
   )
 }

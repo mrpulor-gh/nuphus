@@ -141,8 +141,7 @@ fn dispatch_at_root(root: &Path, payload: &DispatchPayload) -> Result<String, St
     // 可选产物子目录：对齐 read.md 约定「产物写 projects/{project}/」
     if let Some(project) = project {
         let project_dir = root.join(&payload.agent).join("projects").join(project);
-        std::fs::create_dir_all(&project_dir)
-            .map_err(|e| format!("创建产物子目录失败: {e}"))?;
+        std::fs::create_dir_all(&project_dir).map_err(|e| format!("创建产物子目录失败: {e}"))?;
     }
 
     handoff::ensure_handoff_at(root, &payload.agent, &payload.task_id, &payload.brief)
@@ -408,10 +407,9 @@ mod tests {
         );
 
         // status.json：in_progress + task_id + dispatched_at；token 不落盘
-        let status: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(dir.join("status.json")).unwrap(),
-        )
-        .unwrap();
+        let status: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
+                .unwrap();
         assert_eq!(status["state"], "in_progress");
         assert_eq!(status["task_id"], "task-001");
         assert!(status["dispatched_at"].is_string());

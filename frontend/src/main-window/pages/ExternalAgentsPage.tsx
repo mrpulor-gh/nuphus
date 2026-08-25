@@ -157,11 +157,7 @@ function exePathFromOpen(s: string): string | null {
 }
 
 /** 解析 icon 提取源路径：显式路径直接返回；auto → open/process 中的可执行路径 */
-function iconSourcePath(d: {
-  icon: string
-  open: string
-  process: string
-}): string | null {
+function iconSourcePath(d: { icon: string; open: string; process: string }): string | null {
   if (isIconPath(d.icon)) return d.icon
   if (d.icon === 'auto') return exePathFromOpen(d.open) || exePathFromOpen(d.process) || null
   return null
@@ -185,7 +181,9 @@ function AgentIconAuto({
   process?: string
 }) {
   const src = iconSourcePath({ icon, open, process })
-  const [url, setUrl] = useState<string | null>(() => (src ? iconUrlCache.get(src) ?? null : null))
+  const [url, setUrl] = useState<string | null>(() =>
+    src ? (iconUrlCache.get(src) ?? null) : null,
+  )
 
   useEffect(() => {
     const sourceRaw = iconSourcePath({ icon, open, process })
@@ -468,9 +466,7 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
       {/* ── 表单 ── */}
       <div className="ext-agents-form">
         <Section
-          title={
-            isNew ? t('extAgents.cfg.newTitle') : draft.display_name || draft.key || '—'
-          }
+          title={isNew ? t('extAgents.cfg.newTitle') : draft.display_name || draft.key || '—'}
         >
           {/* ── 身份区：ICON 预览与 名称/标识 一体化（替代原先分散的三行）──
               左侧大头像随 icon/启动路径 实时更新；右侧名称在上、标识在下，
@@ -489,7 +485,9 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
               <div className="ext-agents-identity-iconrow">
                 <button
                   type="button"
-                  className={['ext-agents-icon-act', iconAutoActive && 'active'].filter(Boolean).join(' ')}
+                  className={['ext-agents-icon-act', iconAutoActive && 'active']
+                    .filter(Boolean)
+                    .join(' ')}
                   title={
                     iconAutoHint
                       ? `${t('extAgents.cfg.iconAuto')}: ${iconAutoHint}`
@@ -501,7 +499,9 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
                 </button>
                 <button
                   type="button"
-                  className={['ext-agents-icon-act', iconCustomActive && 'active'].filter(Boolean).join(' ')}
+                  className={['ext-agents-icon-act', iconCustomActive && 'active']
+                    .filter(Boolean)
+                    .join(' ')}
                   title={t('extAgents.cfg.iconCustom')}
                   onClick={pickCustomIcon}
                 >

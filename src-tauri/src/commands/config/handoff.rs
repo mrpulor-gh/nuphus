@@ -176,7 +176,11 @@ pub fn agent_init(agent: String, description: String) -> Result<String, String> 
 /// 初始化 agent 工作目录（幂等：目录/文件已存在则补缺不覆盖）。
 /// 返回该 agent 目录绝对路径。
 /// pub(crate)：team.rs 保存新外部 Agent 时联动生成 handoff 目录。
-pub(crate) fn init_agent_at(root: &Path, agent: &str, description: &str) -> Result<PathBuf, String> {
+pub(crate) fn init_agent_at(
+    root: &Path,
+    agent: &str,
+    description: &str,
+) -> Result<PathBuf, String> {
     validate_agent(agent)?;
     let dir = root.join(agent);
     std::fs::create_dir_all(dir.join("briefs"))
@@ -472,7 +476,9 @@ fn update_agent_status_from_doorbell_at(
     summary: &str,
     report_path: Option<&str>,
 ) {
-    let Some(agent) = agent_id_prefix(id) else { return };
+    let Some(agent) = agent_id_prefix(id) else {
+        return;
+    };
     let state = match status {
         "progress" => "in_progress",
         "ready" => "ready",
@@ -534,7 +540,8 @@ mod tests {
         let memory = std::fs::read_to_string(dir.join("memory.md")).unwrap();
         assert!(memory.starts_with("# web_agent 跨任务记忆"));
         let status: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
+                .unwrap();
         assert_eq!(status["agent"], "web_agent");
         assert_eq!(status["state"], "idle");
         assert_eq!(status["last_event"], serde_json::Value::Null);
@@ -548,7 +555,8 @@ mod tests {
         );
         assert!(!read_before.contains("新的描述"));
         let status2: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
+                .unwrap();
         assert_eq!(status2["state"], "idle");
     }
 
@@ -568,8 +576,7 @@ mod tests {
     fn test_handoff_ensure_writes_brief_and_status() {
         let root = tmp_root("ensure");
         init_agent_at(&root, "web_agent", "desc").unwrap();
-        let contract =
-            ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面").unwrap();
+        let contract = ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面").unwrap();
         let dir = root.join("web_agent");
         assert!(dir.join("briefs").join("task-001-brief.md").is_file());
         assert_eq!(
@@ -577,11 +584,15 @@ mod tests {
             "任务：重构页面"
         );
         let status: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
+                .unwrap();
         assert_eq!(status["state"], "in_progress");
         assert_eq!(status["task_id"], "task-001");
         // 契约含门铃 URL / token / done POST 示例 / 产物路径（token 不落 status.json）
-        assert!(contract.contains("http://127.0.0.1:/handoff") || contract.contains("http://127.0.0.1:18771/handoff"));
+        assert!(
+            contract.contains("http://127.0.0.1:/handoff")
+                || contract.contains("http://127.0.0.1:18771/handoff")
+        );
         assert!(contract.contains("\"status\":\"done\""));
         assert!(!contract.contains("\"status\":\"ready\""));
         assert!(contract.contains("web_agent::task-001"));
@@ -626,13 +637,7 @@ mod tests {
         init_agent_at(&root, "web_agent", "desc").unwrap();
 
         // ready 命中 agent 前缀 → state=ready + last_event
-        update_agent_status_from_doorbell_at(
-            &root,
-            "web_agent::task-001",
-            "ready",
-            "已就位",
-            None,
-        );
+        update_agent_status_from_doorbell_at(&root, "web_agent::task-001", "ready", "已就位", None);
         let status: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(root.join("web_agent").join("status.json")).unwrap(),
         )
@@ -706,7 +711,10 @@ mod tests {
         let dir = root.join("web_agent");
         // 报告 + 嵌套产物 + 平铺产物；brief 是任务书不算交付物
         std::fs::write(dir.join("briefs").join("task-001-report.md"), "# 报告").unwrap();
-        set_mtime(&dir.join("briefs").join("task-001-report.md"), 1_800_000_000);
+        set_mtime(
+            &dir.join("briefs").join("task-001-report.md"),
+            1_800_000_000,
+        );
         std::fs::create_dir_all(dir.join("projects").join("smoke3")).unwrap();
         std::fs::write(dir.join("projects").join("smoke3").join("smoke3.txt"), "ok").unwrap();
         set_mtime(
@@ -717,7 +725,9 @@ mod tests {
 
         let list = list_agent_deliverables_at(&root, "web_agent");
         assert_eq!(list.len(), 3, "报告 1 + 产物 2，brief 不计入");
-        assert!(!list.iter().any(|d| d["name"].as_str().unwrap().contains("-brief")));
+        assert!(!list
+            .iter()
+            .any(|d| d["name"].as_str().unwrap().contains("-brief")));
 
         // 最新在前：mtime 更晚的产物排第一
         assert_eq!(list[0]["name"], "smoke3.txt");
@@ -727,7 +737,10 @@ mod tests {
         assert_eq!(report["name"], "task-001-report.md");
         assert_eq!(report["rel_path"], "briefs/task-001-report.md");
         assert_eq!(report["size"], 8); // "# 报告" 的 UTF-8 字节数
-        assert!(report["path"].as_str().unwrap().contains("task-001-report.md"));
+        assert!(report["path"]
+            .as_str()
+            .unwrap()
+            .contains("task-001-report.md"));
 
         // 未初始化 agent → 空列表；根不存在 → 空列表
         assert!(list_agent_deliverables_at(&root, "ghost").is_empty());

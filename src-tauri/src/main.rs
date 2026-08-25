@@ -693,10 +693,16 @@ fn main() {
                     if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
                         if let Ok(guard) = state.runtime.lock() {
                             if let Some(rt) = guard.leader_agent.as_ref() {
-                                crate::commands::process::shelf::persist_and_mirror("leader", rt.session());
+                                crate::commands::process::shelf::persist_and_mirror(
+                                    "leader",
+                                    rt.session(),
+                                );
                             }
                             if let Some(wa) = guard.workflow_agent.as_ref() {
-                                crate::commands::process::shelf::persist_and_mirror("workflow", wa.session());
+                                crate::commands::process::shelf::persist_and_mirror(
+                                    "workflow",
+                                    wa.session(),
+                                );
                             }
                         }
                     }

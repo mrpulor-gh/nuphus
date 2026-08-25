@@ -166,9 +166,9 @@ struct AgentBlock {
 }
 
 struct TeamTomlDoc {
-    head: String,           // 首注释块（第一个段头之前，含空行）
+    head: String,            // 首注释块（第一个段头之前，含空行）
     blocks: Vec<AgentBlock>, // 各段原文（保持文件顺序）
-    tail: String,           // 最后一个段之后的行
+    tail: String,            // 最后一个段之后的行
 }
 
 /// 识别顶层段头行 `[key]`：key 仅 [a-zA-Z0-9_-] 且不含 '.'（排除嵌套表），
@@ -180,7 +180,10 @@ fn top_level_key(line: &str) -> Option<String> {
     }
     let close = t.find(']')?;
     let inner = &t[1..close];
-    if inner.is_empty() || !inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    if inner.is_empty()
+        || !inner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
         return None;
     }
@@ -225,11 +228,7 @@ fn split_doc(content: &str) -> TeamTomlDoc {
     if let Some(prev) = current.take() {
         blocks.push(prev);
     }
-    TeamTomlDoc {
-        head,
-        blocks,
-        tail,
-    }
+    TeamTomlDoc { head, blocks, tail }
 }
 
 /// TOML 字符串字面量转义（输出合法 TOML literal）
@@ -291,10 +290,27 @@ fn extract_agent_fields(
     agent: &serde_json::Value,
     key: &str,
     note_fallback: &str,
-) -> Result<(String, String, String, String, String, String, String, String, String), String> {
+) -> Result<
+    (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ),
+    String,
+> {
     let mode = match agent.get("mode").and_then(|v| v.as_str()) {
         Some(m) if MODES.contains(&m) => m.to_string(),
-        Some(other) => return Err(format!("非法 mode: {other}（允许 background/embedded/standalone/web）")),
+        Some(other) => {
+            return Err(format!(
+                "非法 mode: {other}（允许 background/embedded/standalone/web）"
+            ))
+        }
         None => "embedded".to_string(),
     };
     let display_name = match agent.get("display_name").and_then(|v| v.as_str()) {
@@ -305,7 +321,13 @@ fn extract_agent_fields(
         Some(s) if !s.is_empty() => s.to_string(),
         _ => "bot".to_string(),
     };
-    let get = |k: &str| -> String { agent.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string() };
+    let get = |k: &str| -> String {
+        agent
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let note = match agent.get("note").and_then(|v| v.as_str()) {
         Some(n) => n.to_string(),
         None => note_fallback.to_string(), // 更新时保留原 note
@@ -364,7 +386,16 @@ fn upsert_external_agent_at(plugin_dir: &Path, agent: &serde_json::Value) -> Res
         extract_agent_fields(agent, key, note_fallback)?;
 
     let new_text = build_agent_block(
-        key, &type_, &mode, &display_name, &icon, &open, &args, &process, &description, &note,
+        key,
+        &type_,
+        &mode,
+        &display_name,
+        &icon,
+        &open,
+        &args,
+        &process,
+        &description,
+        &note,
     );
     if is_new {
         doc.blocks.push(AgentBlock {
@@ -581,7 +612,9 @@ process = "opencode.exe"
         assert_eq!(cc["note"], "Claude Code v2.1.220");
         assert_eq!(cc["args"], "");
         // 文件不存在 → 空数组
-        assert!(list_external_agents_at(&tmp_root("nope")).unwrap().is_empty());
+        assert!(list_external_agents_at(&tmp_root("nope"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

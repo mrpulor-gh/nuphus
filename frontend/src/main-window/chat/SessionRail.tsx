@@ -45,7 +45,12 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
     // 三角警示
     return (
       <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M8 2 L14.5 13.5 L1.5 13.5 Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path
+          d="M8 2 L14.5 13.5 L1.5 13.5 Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
         <path d="M8 6 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
       </svg>
@@ -82,7 +87,7 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
  */
 export default function SessionRail({ onSessionChanged, onNewChat }: SessionRailProps) {
   const { t } = useLanguage()
-const [items, setItems] = useState<ShelfSessionItem[]>([])
+  const [items, setItems] = useState<ShelfSessionItem[]>([])
   const [canSwitch, setCanSwitch] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
@@ -199,7 +204,7 @@ const [items, setItems] = useState<ShelfSessionItem[]>([])
     }
   }, [refresh])
 
-const flashNotice = useCallback(
+  const flashNotice = useCallback(
     (code: string) => {
       const tone = codeToTone(code)
       setNotice({ text: t(codeToI18n(code)), tone })
@@ -220,7 +225,7 @@ const flashNotice = useCallback(
         lastActiveIdRef.current = id
         onSessionChanged()
         void refresh()
-} catch (e) {
+      } catch (e) {
         flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
@@ -234,7 +239,7 @@ const flashNotice = useCallback(
       try {
         await archiveSession(id)
         void refresh()
-} catch (e) {
+      } catch (e) {
         const code = typeof e === 'string' ? e : String(e)
         // busy / 追加队列非空复用切换守卫文案（业务等待=info 蓝）；其他走归档失败兜底（error 红）
         if (code === 'busy' || code === 'append_pending') {
@@ -335,7 +340,7 @@ const flashNotice = useCallback(
       try {
         await renameSession(id, draft)
         void refresh()
-} catch (e) {
+      } catch (e) {
         flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
@@ -370,158 +375,158 @@ const flashNotice = useCallback(
           .filter(Boolean)
           .join(' ')}
       >
-          <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
-        {/* 顶部新建对话：复用外部 Agent 状态栏 + 按钮（add-agent-entry 视觉），
+        <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
+          {/* 顶部新建对话：复用外部 Agent 状态栏 + 按钮（add-agent-entry 视觉），
             与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat）。
             执行中（!canSwitch）禁用：后端 guard_switch 也会拒绝，UI 双保险。 */}
-        {onNewChat && (
-          <div className="sr-new-chat">
-            <button
-              type="button"
-              className="add-agent-entry sr-new-chat-btn"
-              onClick={onNewChat}
-              disabled={!canSwitch}
-              title={t('sessionRail.newChat')}
-              aria-label={t('sessionRail.newChat')}
+          {onNewChat && (
+            <div className="sr-new-chat">
+              <button
+                type="button"
+                className="add-agent-entry sr-new-chat-btn"
+                onClick={onNewChat}
+                disabled={!canSwitch}
+                title={t('sessionRail.newChat')}
+                aria-label={t('sessionRail.newChat')}
+              >
+                <IconPlus size={15} />
+              </button>
+            </div>
+          )}
+          {items.map((it, idx) => (
+            <div
+              key={it.id}
+              className={`sr-item${it.is_active ? ' active' : ''}${
+                editingId === it.id ? ' editing' : ''
+              }`}
             >
-              <IconPlus size={15} />
-            </button>
-          </div>
-        )}
-        {items.map((it, idx) => (
-          <div
-            key={it.id}
-            className={`sr-item${it.is_active ? ' active' : ''}${
-              editingId === it.id ? ' editing' : ''
-            }`}
-          >
-            <span
-              className="sr-bar"
-              style={{ transitionDelay: `${idx * 0.02}s` }}
-              aria-hidden="true"
-            />
-            <div className="sr-bubble">
-              {editingId === it.id ? (
-                <>
-                  <input
-                    className="sr-rename-input"
-                    value={draftTitle}
-                    autoFocus
-                    maxLength={60}
-                    placeholder={it.title || t('sessionRail.untitled')}
-                    onChange={e => setDraftTitle(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
-                      if (e.key === 'Escape') setEditingId(null)
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="sr-edit-btn"
-                    onClick={() => void saveRename(it.id)}
-                    disabled={!draftTitle.trim()}
-                    title={t('sessionRail.save')}
-                    aria-label={t('sessionRail.save')}
-                  >
-                    <IconCheck size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="sr-edit-btn"
-                    onClick={() => setEditingId(null)}
-                    title={t('common.cancel')}
-                    aria-label={t('common.cancel')}
-                  >
-                    <IconX size={12} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className={`sr-title-btn${it.is_active ? ' active' : ''}`}
-                    title={it.title}
-                    disabled={it.is_active}
-                    onClick={() => void handleSwitch(it.id, it.is_active)}
-                  >
-                    {it.title || t('sessionRail.untitled')}
-                  </button>
-                  <button
-                    type="button"
-                    className="sr-edit-btn"
-                    onClick={() => {
-                      setDraftTitle(it.title)
-                      setEditingId(it.id)
-                      // 编辑期间冻结隐显：取消在途倒计时并强制常亮
-                      cancelHide()
-                      setFading(false)
-                      setRevealed(true)
-                    }}
-                    title={t('sessionRail.rename')}
-                    aria-label={t('sessionRail.rename')}
-                  >
-                    <IconEdit3 size={12} />
-                  </button>
-                  {!it.is_active && (
+              <span
+                className="sr-bar"
+                style={{ transitionDelay: `${idx * 0.02}s` }}
+                aria-hidden="true"
+              />
+              <div className="sr-bubble">
+                {editingId === it.id ? (
+                  <>
+                    <input
+                      className="sr-rename-input"
+                      value={draftTitle}
+                      autoFocus
+                      maxLength={60}
+                      placeholder={it.title || t('sessionRail.untitled')}
+                      onChange={e => setDraftTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
+                        if (e.key === 'Escape') setEditingId(null)
+                      }}
+                    />
                     <button
                       type="button"
-                      className="sr-edit-btn sr-archive-btn"
-                      onClick={() => setConfirmArchiveId(it.id)}
-                      disabled={!canSwitch}
-                      title={t('sessionRail.archive')}
-                      aria-label={t('sessionRail.archive')}
+                      className="sr-edit-btn"
+                      onClick={() => void saveRename(it.id)}
+                      disabled={!draftTitle.trim()}
+                      title={t('sessionRail.save')}
+                      aria-label={t('sessionRail.save')}
                     >
-                      <IconTrash2 size={12} />
+                      <IconCheck size={13} />
                     </button>
-                  )}
-                </>
-              )}
+                    <button
+                      type="button"
+                      className="sr-edit-btn"
+                      onClick={() => setEditingId(null)}
+                      title={t('common.cancel')}
+                      aria-label={t('common.cancel')}
+                    >
+                      <IconX size={12} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={`sr-title-btn${it.is_active ? ' active' : ''}`}
+                      title={it.title}
+                      disabled={it.is_active}
+                      onClick={() => void handleSwitch(it.id, it.is_active)}
+                    >
+                      {it.title || t('sessionRail.untitled')}
+                    </button>
+                    <button
+                      type="button"
+                      className="sr-edit-btn"
+                      onClick={() => {
+                        setDraftTitle(it.title)
+                        setEditingId(it.id)
+                        // 编辑期间冻结隐显：取消在途倒计时并强制常亮
+                        cancelHide()
+                        setFading(false)
+                        setRevealed(true)
+                      }}
+                      title={t('sessionRail.rename')}
+                      aria-label={t('sessionRail.rename')}
+                    >
+                      <IconEdit3 size={12} />
+                    </button>
+                    {!it.is_active && (
+                      <button
+                        type="button"
+                        className="sr-edit-btn sr-archive-btn"
+                        onClick={() => setConfirmArchiveId(it.id)}
+                        disabled={!canSwitch}
+                        title={t('sessionRail.archive')}
+                        aria-label={t('sessionRail.archive')}
+                      >
+                        <IconTrash2 size={12} />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-
-{notice && (
-        <div
-          className={`sr-notice sr-notice--${notice.tone}`}
-          role={notice.tone === 'error' ? 'alert' : 'status'}
-          aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}
-        >
-          <NoticeIcon tone={notice.tone} />
-          <span>{notice.text}</span>
+          ))}
         </div>
-      )}
-      {confirmArchiveId &&
-        createPortal(
-          <CompactModal
-            open
-            onClose={() => setConfirmArchiveId(null)}
-            title={t('sessionRail.archiveConfirmTitle')}
-            size="sm"
-            className="compact-modal--fit"
-            footer={
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setConfirmArchiveId(null)}
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={() => void handleArchive(confirmArchiveId)}
-                >
-                  {t('sessionRail.archive')}
-                </button>
-              </>
-            }
+
+        {notice && (
+          <div
+            className={`sr-notice sr-notice--${notice.tone}`}
+            role={notice.tone === 'error' ? 'alert' : 'status'}
+            aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}
           >
-            <div className="sr-confirm-desc">{t('sessionRail.archiveConfirmDesc')}</div>
-          </CompactModal>,
-          document.body,
+            <NoticeIcon tone={notice.tone} />
+            <span>{notice.text}</span>
+          </div>
         )}
+        {confirmArchiveId &&
+          createPortal(
+            <CompactModal
+              open
+              onClose={() => setConfirmArchiveId(null)}
+              title={t('sessionRail.archiveConfirmTitle')}
+              size="sm"
+              className="compact-modal--fit"
+              footer={
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setConfirmArchiveId(null)}
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => void handleArchive(confirmArchiveId)}
+                  >
+                    {t('sessionRail.archive')}
+                  </button>
+                </>
+              }
+            >
+              <div className="sr-confirm-desc">{t('sessionRail.archiveConfirmDesc')}</div>
+            </CompactModal>,
+            document.body,
+          )}
       </div>
     </>
   )

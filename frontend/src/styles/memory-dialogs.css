@@ -128,7 +128,9 @@
   font-family: inherit;
   outline: none;
   width: 100%;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 .memdlg-textarea {
   resize: vertical;
@@ -161,7 +163,9 @@
   flex-direction: column;
   gap: 8px;
   border: 1px solid transparent;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 .td-card:hover {
   background: var(--surface-hover);
@@ -197,7 +201,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
   border: 1px solid transparent;
 }
 .ad-card:hover {
@@ -230,9 +236,18 @@
   font-weight: var(--fw-medium);
   margin-left: auto;
 }
-.ad-group-system { background: rgba(168, 85, 247, 0.12); color: #c084fc; }
-.ad-group-custom { background: rgba(var(--accent-rgb), 0.14); color: var(--accent); }
-.ad-group-user   { background: rgba(34, 197, 94, 0.12);  color: #4ade80; }
+.ad-group-system {
+  background: rgba(168, 85, 247, 0.12);
+  color: #c084fc;
+}
+.ad-group-custom {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
+}
+.ad-group-user {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
 .ad-desc {
   font-size: var(--fs-body);
   color: var(--text-secondary);
@@ -263,7 +278,10 @@
   padding: 2px 8px;
   border-radius: var(--radius-sm);
 }
-.ad-chip-success { background: rgba(var(--success-rgb), 0.12); color: var(--success); }
+.ad-chip-success {
+  background: rgba(var(--success-rgb), 0.12);
+  color: var(--success);
+}
 
 /* ── 卡片行内图标按钮 ── */
 .memdlg-icon-btn {
@@ -276,7 +294,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 .memdlg-icon-btn:hover:not(:disabled) {
   color: var(--text-primary);

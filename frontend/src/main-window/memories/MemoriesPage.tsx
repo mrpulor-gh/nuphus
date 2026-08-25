@@ -1,13 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import {
-  listMemories,
-  deleteMemory,
-} from '../lib/api-memory'
-import {
-  getSessionHistory,
-  getSessionDetail,
-  getMemoryOverview,
-} from '../lib/api'
+import { listMemories, deleteMemory } from '../lib/api-memory'
+import { getSessionHistory, getSessionDetail, getMemoryOverview } from '../lib/api'
 import { invoke } from '../../core/bridge'
 import type { UserMemory, MemoryOverview } from '../../core/types-memory'
 import type { SessionSummary, SessionDetailEntry } from '../../core/types'

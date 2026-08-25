@@ -811,9 +811,7 @@ export default function App() {
       )}
 
       {/* ── +号菜单记忆弹窗：教导原则 / 关系标注 ── */}
-      {memoryDialog === 'tenets' && (
-        <TenetsDialog onClose={() => setMemoryDialog(null)} />
-      )}
+      {memoryDialog === 'tenets' && <TenetsDialog onClose={() => setMemoryDialog(null)} />}
       {memoryDialog === 'annotations' && (
         <AnnotationsDialog onClose={() => setMemoryDialog(null)} />
       )}

@@ -120,7 +120,7 @@ const zh: Record<string, string> = {
   'sessionRail.busyHint': '执行中不可切换，可发送追加指令或等待完成',
   'sessionRail.rename': '重命名会话标题',
   'sessionRail.save': '保存',
-'sessionRail.untitled': '未命名会话',
+  'sessionRail.untitled': '未命名会话',
   'sessionRail.switchFailBusy': '当前会话正在执行任务，等待完成即可切换',
   'sessionRail.switchFailAppend': '指令队列还有内容在处理，处理完即可切换',
   'sessionRail.switchFailMode': '该会话属于其他运行模式，请先切换顶部模式',
@@ -132,7 +132,6 @@ const zh: Record<string, string> = {
 
   // ── 欢迎页 ──
   'welcome.resume': '继续对话',
-
 
   // ── 外部 Agent 配置中心（team.toml CRUD）──
   'extAgents.cfg.title': '外部 Agent 配置中心',
@@ -165,7 +164,8 @@ const zh: Record<string, string> = {
   'extAgents.cfg.process': '进程名特征',
   'extAgents.cfg.processHint': 'process_list 据此识别是否在跑',
   'extAgents.cfg.description': '自定义工作描述',
-  'extAgents.cfg.descriptionHint': '描述此 Agent 的主要职责，供路由分发参考；新 Agent 会写入 read.md',
+  'extAgents.cfg.descriptionHint':
+    '描述此 Agent 的主要职责，供路由分发参考；新 Agent 会写入 read.md',
   'extAgents.cfg.descriptionPlaceholder': '负责本地项目代码分析、自动 Git 提交与重构任务…',
   'extAgents.cfg.cancel': '取消',
   'extAgents.cfg.save': '保存并生效',
@@ -719,12 +719,12 @@ const zh: Record<string, string> = {
   'mobile.statusRunning': '运行中',
   'mobile.statusStopped': '已停止',
   'mobile.stopFailed': '终止失败，请重试',
-   'mobile.newChatStarted': '已开始新会话',
-   'mobile.newChatFailed': '新建会话失败，请稍后重试',
-   'mobile.newChatBusy': '执行中，暂不能新建会话',
-   'mobile.renderErrorTitle': '界面渲染出错',
-   'mobile.renderErrorDesc': '历史消息较多时可能触发，点击重试恢复',
-   'mobile.loadEarlier': '查看更早的 {0} 条消息',
+  'mobile.newChatStarted': '已开始新会话',
+  'mobile.newChatFailed': '新建会话失败，请稍后重试',
+  'mobile.newChatBusy': '执行中，暂不能新建会话',
+  'mobile.renderErrorTitle': '界面渲染出错',
+  'mobile.renderErrorDesc': '历史消息较多时可能触发，点击重试恢复',
+  'mobile.loadEarlier': '查看更早的 {0} 条消息',
   'mobile.dualTitle': '双端状态',
   'mobile.desktopLabel': '桌面端',
   'mobile.phoneLabel': '手机端',
@@ -1141,7 +1141,8 @@ const zh: Record<string, string> = {
   'mobile.lanDisconnectedSwitchWan': '局域网已断开，已切换至中继通道',
   'mobile.lanDisconnectedSwitchWanRetry': '局域网已断开，已切换至中继通道，请重发',
   'mobile.bootTimeoutTitle': '连接桌面超时',
-  'mobile.bootTimeoutDesc': '未能连接到你的电脑，可能隧道仍在建立或网络不稳定。可重试，或清除配对信息重新扫码。',
+  'mobile.bootTimeoutDesc':
+    '未能连接到你的电脑，可能隧道仍在建立或网络不稳定。可重试，或清除配对信息重新扫码。',
   'mobile.repair': '重新配对',
   'mobile.switchedBackLan': '已切回局域网直连',
   'mobile.acceptedImagesNotSent': '已受理（执行中图片未发送）',

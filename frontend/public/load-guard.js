@@ -192,7 +192,9 @@
           var el = document.getElementById('nuphus-load-fail')
           if (el) el.remove()
           clearInterval(timer)
-          try { sessionStorage.removeItem('nuphus_lg_retry') } catch (e) {}
+          try {
+            sessionStorage.removeItem('nuphus_lg_retry')
+          } catch (e) {}
         }
       }, 1000)
     }

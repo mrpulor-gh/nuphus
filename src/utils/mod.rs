@@ -793,7 +793,11 @@ pub fn sanitize_memory_tag(raw: &str) -> String {
         }
     }
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() { "default".to_string() } else { trimmed }
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed
+    }
 }
 
 /// 标签 → memory 文件路径；None → default。
@@ -821,15 +825,23 @@ pub fn derive_project_tag_from_dir(dir: &str) -> Option<String> {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     dir.hash(&mut hasher);
-    Some(format!("{}-{:08x}", name.chars().take(24).collect::<String>(), hasher.finish() as u32))
+    Some(format!(
+        "{}-{:08x}",
+        name.chars().take(24).collect::<String>(),
+        hasher.finish() as u32
+    ))
 }
 
 /// 旧版单文件迁移：memory.md 内容拷为 default 标签（原文件保留）。幂等。
 pub fn migrate_legacy_memory_md() {
     let legacy = nuphus_data_dir().join("memory.md");
-    if !legacy.exists() { return; }
+    if !legacy.exists() {
+        return;
+    }
     let target = memory_md_path(Some("default"));
-    if target.exists() { return; }
+    if target.exists() {
+        return;
+    }
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -875,7 +887,9 @@ pub fn memory_journal_tail(content: &str, max_chars: usize) -> String {
     let mut used = 0usize;
     for b in blocks.iter().rev() {
         let cost = b.chars().count() + 2;
-        if used + cost > max_chars { break; }
+        if used + cost > max_chars {
+            break;
+        }
         used += cost;
         picked.push(b);
     }
@@ -893,7 +907,9 @@ pub fn trim_memory_journal_to_cap(content: &str, cap_bytes: usize) -> String {
     let mut total = 0usize;
     for b in blocks.iter().rev() {
         total += b.len() + 2;
-        if total > cap_bytes { break; }
+        if total > cap_bytes {
+            break;
+        }
         kept.push(b);
     }
     kept.reverse();
@@ -1079,7 +1095,3 @@ mod tests {
         assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
-
-
-
-

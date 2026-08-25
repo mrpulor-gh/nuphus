@@ -92,7 +92,10 @@ pub fn read_model_context_window(
         for model in models {
             let id = model.get("id")?.as_str()?;
             if id == model_id {
-                return model.get("context_window")?.as_integer().map(|v| v as usize);
+                return model
+                    .get("context_window")?
+                    .as_integer()
+                    .map(|v| v as usize);
             }
         }
     }
@@ -912,7 +915,10 @@ supports_vision = true
             .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("deepseek"))
             .unwrap();
         // api_key 置空（而非删除字段）：等价于删除，且与 has_key=false 判定一致
-        let key = deepseek.get("api_key").and_then(|k| k.as_str()).unwrap_or("");
+        let key = deepseek
+            .get("api_key")
+            .and_then(|k| k.as_str())
+            .unwrap_or("");
         assert!(key.is_empty(), "api_key should be empty after clear");
         assert_eq!(
             deepseek.get("provider_type").and_then(|v| v.as_str()),

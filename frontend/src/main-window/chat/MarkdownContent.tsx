@@ -480,7 +480,8 @@ function MarkdownInline({
         // 同样接入点击预览链路，不再作为纯代码不可点
         if (onFileClick) {
           const ranges = extractFilePaths(seg.v)
-          const whole = ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === seg.v.length
+          const whole =
+            ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === seg.v.length
           if (whole) {
             nodes.push(
               <a
