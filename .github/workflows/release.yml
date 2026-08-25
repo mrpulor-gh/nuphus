@@ -84,6 +84,11 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
+          # 中继官方凭据：经 GitHub Secrets 注入（build.rs 编译期嵌入二进制）。
+          # 开源仓库不硬编码 token（2026-08-26 安全加固），未配置 secrets 时二进制
+          # 无官方中继凭据（自建中继用户不受影响）。
+          NUPHUS_RELAY_DEVICE_TOKEN: ${{ secrets.NUPHUS_RELAY_DEVICE_TOKEN }}
+          NUPHUS_RELAY_CALLER_TOKEN: ${{ secrets.NUPHUS_RELAY_CALLER_TOKEN }}
         run: npx tauri build --verbose ${{ runner.os == 'Linux' && '--bundles deb,appimage' || runner.os == 'macOS' && '--bundles app' || '' }}
 
       - name: Deep-sign dylibs & verify (macOS)
