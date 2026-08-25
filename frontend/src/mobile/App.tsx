@@ -17,6 +17,7 @@ import {
   wfResume,
   wfStop,
   stopExecution,
+  startNewChat,
   setApiBase,
   getApiBase,
   AuthError,
@@ -780,9 +781,23 @@ export default function App() {
             .catch(() => showToast(t('mobile.stopFailed')))
         }}
         onNewChat={() => {
-          // 新会话：清空前端消息（历史仍在后端，刷新可恢复）
-          dispatch({ type: 'new_chat' })
-          showToast(t('mobile.newChatStarted'))
+          // 以后端会话创建成功为准；session_changed 同时让电脑和其它手机清空视图。
+          if (!token) return
+          void startNewChat(token)
+            .then(() => {
+              // WS 事件可能因瞬时断线漏收，本端用 HTTP 成功响应再兜底清一次（幂等）。
+              dispatch({ type: 'new_chat' })
+              showToast(t('mobile.newChatStarted'))
+            })
+            .catch(e => {
+              if (e instanceof AuthError) {
+                clearToken()
+                setAuthInvalid(true)
+                setPhase('guide')
+                return
+              }
+              showToast(t('mobile.newChatFailed'))
+            })
         }}
         onDisconnect={() => {
           // 断开连接：清除 token + WS，回到配对页

@@ -1,5 +1,5 @@
 /**
- * 移动端 REST API：/history 与 /message
+ * 移动端 REST API：会话、历史与消息入口（/new-chat、/history、/message）
  * 鉴权统一走 X-Mobile-Token Header（WS 才用 query）。
  */
 import type { TraceItem } from './store'
@@ -145,6 +145,32 @@ export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
   )
   if (!res.ok) throw new Error(`history failed: ${res.status}`)
   return (await res.json()) as HistoryMessage[]
+}
+
+export interface NewChatResult {
+  status: 'created'
+  session_id: string
+}
+
+/** 创建真正的后端新会话；成功时后端会广播 session_changed 到桌面和所有手机。 */
+export async function startNewChat(token: string): Promise<NewChatResult> {
+  const res = await checkAuth(
+    await fetchWithTimeout(resolveApi('./new-chat'), {
+      method: 'POST',
+      headers: { 'X-Mobile-Token': token },
+    }),
+  )
+  if (!res.ok) {
+    let error = t('mobile.newChatFailed')
+    try {
+      const body = (await res.json()) as { error?: string }
+      if (body.error) error = body.error
+    } catch {
+      /* 非 JSON 响应，保留本地化默认文案 */
+    }
+    throw new Error(error)
+  }
+  return (await res.json()) as NewChatResult
 }
 
 /** 拉取当前生效的身份显示名（assistant_name / user_label，后端 relation_cache 下发） */

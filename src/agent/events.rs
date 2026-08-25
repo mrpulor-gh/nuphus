@@ -210,6 +210,10 @@ pub enum NuphusEvent {
         timestamp: u64,
     },
 
+    /// 当前活动会话已切换为一个全新会话。
+    /// source: "desktop" | "mobile"，供多端同步清空本地视图。
+    SessionChanged { session_id: String, source: String },
+
     /// 运行模式切换（空闲态 set_mode 时广播，手机端同步「当前模式」）
     ModeChanged { mode: String },
 

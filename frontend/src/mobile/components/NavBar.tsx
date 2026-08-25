@@ -20,7 +20,7 @@ import { t } from '../i18n'
 interface Props {
   wsStatus: WsStatus
   activity: ActivityState
-  /** 新会话（点击 logo 菜单触发）：清空前端消息 */
+  /** 新会话（点击 logo 菜单触发）：创建后端会话并同步所有端 */
   onNewChat?: () => void
   /** 重置连接（设置弹窗触发）：清除 token 回到配对页 */
   onDisconnect?: () => void

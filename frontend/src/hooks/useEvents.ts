@@ -121,6 +121,7 @@ export interface EventHandlers {
 
   // Callbacks
   addMessage: (msg: ChatMessage) => void
+  reloadChatFromBackend: () => Promise<void>
   transitionTask?: (taskId: number, status: TaskStatus) => void
 }
 
@@ -219,6 +220,12 @@ export function useEvents(h: EventHandlers) {
         case 'session_info':
           h.setModelName(event.model)
           if (event.session_id) h.setSessionId(event.session_id)
+          break
+        case 'session_changed':
+          // 后端已完成权威会话切换：清空瞬态并从新会话重拉历史。
+          // reloadChatFromBackend 会先同步 resetTransientUI，空历史自然显示欢迎页。
+          h.setSessionId(event.session_id)
+          void h.reloadChatFromBackend()
           break
         case 'understanding_complete':
           if (event.needs_clarification && event.critiques?.length > 0) {
@@ -873,6 +880,7 @@ export function useEvents(h: EventHandlers) {
     h.refs.processingRef,
     h.refs.toolCallCountRef,
     h.addMessage,
+    h.reloadChatFromBackend,
   ])
 
   // ── 移动端安全确认回执：手机端完成确认后，桌面弹窗同步关闭 ──

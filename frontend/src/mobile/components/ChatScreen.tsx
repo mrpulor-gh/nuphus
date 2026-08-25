@@ -62,7 +62,7 @@ interface Props {
   onReloadHistory?: () => void
   /** 终止执行（执行中 NavBar 显示终止按钮，POST /stop 直接终止） */
   onStopExecution?: () => void
-  /** 新会话（Composer + 弹窗触发）：清空前端消息 */
+  /** 新会话：请求后端创建并广播到所有已连接端 */
   onNewChat?: () => void
   /** 断开连接（Composer 设置弹窗触发）：清除 token 回到配对页 */
   onDisconnect?: () => void

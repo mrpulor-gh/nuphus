@@ -719,6 +719,7 @@ const zh: Record<string, string> = {
   'mobile.statusStopped': '已停止',
   'mobile.stopFailed': '终止失败，请重试',
   'mobile.newChatStarted': '已开始新会话',
+  'mobile.newChatFailed': '新建会话失败，请稍后重试',
   'mobile.dualTitle': '双端状态',
   'mobile.desktopLabel': '桌面端',
   'mobile.phoneLabel': '手机端',

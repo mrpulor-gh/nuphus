@@ -13,7 +13,9 @@
 //! 旧磁盘镜像（config_dir/nuphus/sessions/{id}.json）由 migrate_legacy_mirrors
 //! 幂等导入 SQLite 后保留不删（保守）。
 
+use crate::emitter::CompoundEmitter;
 use crate::state::AppState;
+use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::session::{MessageRole, Session};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -564,9 +566,8 @@ fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
 }
 
 /// 新建对话：归档当前（有内容才占槽）→ 安装空白会话，返回新 id
-#[tauri::command]
-pub fn new_chat_session_cmd(state: State<'_, AppState>) -> Result<String, String> {
-    guard_switch(&state).map_err(|c| c.to_string())?;
+pub(crate) fn new_chat_session_inner(state: &AppState) -> Result<String, String> {
+    guard_switch(state).map_err(|c| c.to_string())?;
 
     let current_mode = state
         .current_mode
@@ -576,27 +577,55 @@ pub fn new_chat_session_cmd(state: State<'_, AppState>) -> Result<String, String
     let kind = normalize_mode(&current_mode);
 
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
-    archive_active(&state, &mut ctx, kind);
+    archive_active(state, &mut ctx, kind);
 
     let fresh = Session::new();
     let new_id = fresh.id.clone();
     if let Some(slot) = active_session_mut(&mut ctx, kind) {
         *slot = fresh;
     } else {
-        // 无 agent 槽（重启/build 后新进程槽为空）：清空 backup 表示新会话并返回新 id。
-        // 前端 handleNewChat 已 resetTransientUI 清空本地气泡，get_chat_history 因
-        // backup 与 agent 均为空返回欢迎页——与新会话语义一致；下次发消息时
+        // 无 agent 槽（重启/build 后新进程槽为空）：下方清空 backup 表示新会话。
+        // get_chat_history 因 backup 与 agent 均为空返回欢迎页；下次发消息时
         // run_runtime_with_config 从空 backup 构建全新 session。
-        if let Ok(mut sb) = state.session.lock() {
-            sb.session_backup = None;
-            sb.last_message.clear();
-            sb.last_message_images.clear();
-        }
         tracing::info!("[Shelf] 无 agent 槽，新建对话 {new_id} ({kind})（backup 已清空）");
-        return Ok(new_id);
+    }
+    drop(ctx);
+
+    // 会话边界必须同步清理恢复快照与消息去重键。否则新会话第一条消息若恰好与
+    // 上一会话末条相同，会被 completion dedup 当成重复提交而静默丢弃。
+    if let Ok(mut sb) = state.session.lock() {
+        sb.session_backup = None;
+        sb.last_message.clear();
+        sb.last_send_id = None;
+        sb.last_message_images.clear();
     }
     tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
     Ok(new_id)
+}
+
+/// 新建会话并通过统一事件协议广播到桌面与所有已连接手机。
+/// 桌面 IPC 与手机 HTTP 入口共用，保证会话边界只有一个权威来源。
+pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: &AppState,
+    source: &str,
+) -> Result<String, String> {
+    let session_id = new_chat_session_inner(state)?;
+    let emitter = CompoundEmitter::new(app, state);
+    emitter.emit(NuphusEvent::SessionChanged {
+        session_id: session_id.clone(),
+        source: source.to_string(),
+    });
+    Ok(session_id)
+}
+
+/// 桌面 IPC 新建对话入口。
+#[tauri::command]
+pub fn new_chat_session_cmd(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    new_chat_session_with_event(app, state.inner(), "desktop")
 }
 
 /// 重命名：覆盖表 + 元数据行；对 active 会话立即生效（归档时沿用）

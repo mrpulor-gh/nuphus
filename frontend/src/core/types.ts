@@ -581,6 +581,7 @@ export type NuphusEvent =
       confidence: number
     }
   | { type: 'session_info'; session_id: string; model: string; timestamp: number }
+  | { type: 'session_changed'; session_id: string; source: 'desktop' | 'mobile' }
   | { type: 'mode_changed'; mode: string }
   | {
       type: 'token_usage'

@@ -12,6 +12,7 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:9090',
       // 移动端开发期代理 → mobile_server（P1，默认端口 18772）
       '/message': 'http://127.0.0.1:18772',
+      '/new-chat': 'http://127.0.0.1:18772',
       '/history': 'http://127.0.0.1:18772',
       '/health': 'http://127.0.0.1:18772',
       '/ws': {

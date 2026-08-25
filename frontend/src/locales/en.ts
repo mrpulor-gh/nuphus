@@ -744,6 +744,7 @@ const en: Record<string, string> = {
   'mobile.statusStopped': 'Stopped',
   'mobile.stopFailed': 'Failed to stop, please retry',
   'mobile.newChatStarted': 'New chat started',
+  'mobile.newChatFailed': 'Failed to start a new chat. Please try again.',
   'mobile.dualTitle': 'Dual status',
   'mobile.desktopLabel': 'Desktop',
   'mobile.phoneLabel': 'Phone',

@@ -1,6 +1,6 @@
 //! 移动端局域网 HTTP+WS server（axum，绑 0.0.0.0，默认关闭）
 //!
-//! 手机 = 同一会话的第二块屏：POST /message 走 P0 抽取的共享入口
+//! 手机 = 同一会话的第二块屏：POST /new-chat 切换共享会话边界，POST /message 走共享入口
 //! `commands::process::submit_user_message`（source="mobile"），与桌面共用
 //! 同一 leader_agent / busy 锁 / 去重逻辑；GET /ws 把 NuphusEvent 实时推给手机。
 //!
@@ -330,6 +330,42 @@ async fn get_history<R: tauri::Runtime>(
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
+    }
+}
+
+/// POST /new-chat：归档当前会话并创建空白会话。
+/// 复用桌面 Session Shelf 的同一实现；成功后 SessionChanged 经 CompoundEmitter
+/// 同时广播到桌面端与所有手机端，使各端立即进入同一个空白会话。
+async fn post_new_chat<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::process::shelf::new_chat_session_with_event(
+        ctx.app.clone(),
+        state.inner(),
+        "mobile",
+    ) {
+        Ok(session_id) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "created",
+                "session_id": session_id
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = if e == "busy" || e == "append_pending" {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, Json(serde_json::json!({ "error": e }))).into_response()
+        }
     }
 }
 
@@ -1784,6 +1820,7 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/model-config", get(get_model_config))
         .route("/switch-model", post(post_switch_model))
         .route("/switch-mode", post(post_switch_mode))
+        .route("/new-chat", post(post_new_chat))
         .route("/message", post(post_message))
         .route("/confirm", post(post_confirm))
         .route("/user-input", post(post_user_input))
@@ -2422,6 +2459,13 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.status(), 401);
+            // 新建会话同样必须鉴权
+            let r = client
+                .post(format!("{base}/new-chat"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401);
             // WS 无 token → 握手被拒（非 101）
             let (_s, headers) = ws_client::connect(
                 base.trim_start_matches("http://127.0.0.1:")
@@ -2450,6 +2494,71 @@ mod tests {
             );
             // query token 渠道与 header 等效（正确 token 的 WS 升级在 ws_receives_events 验证）
             let _ = token;
+        });
+    }
+
+    #[test]
+    fn test_new_chat_clears_backend_session_and_broadcasts() {
+        tokio_test::block_on(async {
+            let (base, token, app) = spawn_test_server().await;
+            let port: u16 = base
+                .trim_start_matches("http://127.0.0.1:")
+                .parse()
+                .unwrap();
+
+            // 构造旧会话恢复态与去重键，验证新会话边界会完整清理。
+            let old_session = nuphus::session::Session::new();
+            let old_id = old_session.id.clone();
+            let state = app.state::<AppState>();
+            {
+                let mut session = state.session.lock().unwrap();
+                session.session_backup = Some(serde_json::to_string(&old_session).unwrap());
+                session.last_message = "旧会话末条消息".to_string();
+                session.last_send_id = Some("old-send-id".to_string());
+                session.last_message_images = vec!["data:image/png;base64,old".to_string()];
+            }
+
+            // 先建立 WS 并等就绪，消除订阅与 POST 之间的竞态。
+            let (mut ws, headers) = ws_client::connect(port, &format!("/ws?token={token}"))
+                .await
+                .unwrap();
+            assert!(headers.contains("101"));
+            let hello = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
+                .await
+                .expect("5s 内应收到 WS 就绪帧")
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&hello).unwrap()["type"],
+                "ws_connected"
+            );
+
+            let response = np_client()
+                .post(format!("{base}/new-chat"))
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            let body: serde_json::Value = response.json().await.unwrap();
+            let new_id = body["session_id"].as_str().unwrap();
+            assert!(!new_id.is_empty());
+            assert_ne!(new_id, old_id);
+
+            let session = state.session.lock().unwrap();
+            assert!(session.session_backup.is_none());
+            assert!(session.last_message.is_empty());
+            assert!(session.last_send_id.is_none());
+            assert!(session.last_message_images.is_empty());
+            drop(session);
+
+            let text = tokio::time::timeout(std::time::Duration::from_secs(5), ws.read_text())
+                .await
+                .expect("5s 内应收到 session_changed")
+                .unwrap();
+            let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(event["type"], "session_changed");
+            assert_eq!(event["session_id"], new_id);
+            assert_eq!(event["source"], "mobile");
         });
     }
 

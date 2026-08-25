@@ -606,6 +606,10 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       if (!ev.model) return state
       return { ...state, model: ev.model }
 
+    case 'session_changed':
+      // 任意一端创建新会话：所有手机同步进入空白会话。
+      return chatReducer(state, { type: 'new_chat' })
+
     case 'token_usage': {
       // 会话累计上下文用量（input/output/cache_hit），驱动模型卡「上下文 xx%」与执行弹窗统计
       if (typeof ev.input_tokens !== 'number' || ev.input_tokens < 0) return state
@@ -721,14 +725,27 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // 重拉历史（首载 / 断线重连补齐）：直接替换本地视图
       return { ...state, messages: action.messages }
     case 'new_chat':
-      // 新会话：清空前端消息与待处理卡片（历史仍在后端，刷新可恢复）
+      // 后端已创建新会话：清空本端视图与所有上一会话瞬态。
       return {
         ...state,
         messages: [],
+        activity: {
+          ...state.activity,
+          running: false,
+          goal: '',
+          tools: [],
+          paused: false,
+          pauseActionId: undefined,
+          startedAt: undefined,
+          pausedAt: undefined,
+        },
         pendingConfirm: null,
         pendingRefine: null,
         pendingUserInput: null,
+        refining: false,
+        tokenUsage: undefined,
         workflowRun: undefined,
+        workflowDismissed: undefined,
       }
     case 'history_merge': {
       // 执行中重连补历史：合并而非替换——保留本地仍在流式中的消息，
