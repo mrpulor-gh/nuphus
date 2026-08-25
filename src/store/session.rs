@@ -272,6 +272,7 @@ pub fn prune_snapshots(keep: usize) -> crate::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn random_id() -> String {
         uuid::Uuid::new_v4().to_string()
@@ -292,6 +293,7 @@ mod tests {
     }
 
     /// 真 UPSERT：冲突更新元数据后，已持久化的快照必须原样保留（rename 路径）
+    #[serial]
     #[test]
     fn upsert_session_does_not_clear_snapshot() {
         let id = random_id();
@@ -310,6 +312,7 @@ mod tests {
     }
 
     /// 快照写入不得覆盖用户可见元数据（summary / created_at / message_count）
+    #[serial]
     #[test]
     fn upsert_snapshot_preserves_visible_metadata() {
         let id = random_id();
@@ -337,6 +340,7 @@ mod tests {
     }
 
     /// roundtrip + 列表按 updated_at 倒序 + latest + delete 后 None
+    #[serial]
     #[test]
     fn snapshot_crud_roundtrip_and_order() {
         let a = random_id();
@@ -367,6 +371,7 @@ mod tests {
 
     /// 保留策略：prune 后全局快照数收敛到 keep 以内，二次调用幂等（无更多清理）。
     /// 断言不依赖真实库全局状态（真实库可能已有快照），仅验证上界与收敛。
+    #[serial]
     #[test]
     fn prune_snapshots_converges_and_bounds() {
         let mut ids = Vec::new();
