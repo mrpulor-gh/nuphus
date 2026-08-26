@@ -105,6 +105,8 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
   const prevCanSwitchRef = useRef(true)
   /** 检测触发去抖：上次 fire 时间戳（2s 内不重复触发重拉） */
   const lastFireAtRef = useRef(0)
+  /** 列表签名：上轮渲染数据指纹（id+active+标题+顺序），结构未变不重绘 */
+  const listSigRef = useRef('')
   /** 整轨隐显：默认隐身，左缘感应区唤醒；移开 10s 后渐隐 */
   const [revealed, setRevealed] = useState(false)
   const [fading, setFading] = useState(false)
@@ -128,7 +130,14 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
       if (!stoppedRef.current && r) {
         const list = r.items || []
         const canSwitch = r.can_switch !== false
-        setItems(list)
+        // 签名守卫：id+active+标题+顺序未变则不 setItems——提炼/追加等后台写入只改
+        // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
+        // 仍基于本轮新数据，不受影响。签名含顺序（数组序），新建/归档必然变化。
+        const sig = list.map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}`).join(';')
+        if (sig !== listSigRef.current) {
+          listSigRef.current = sig
+          setItems(list)
+        }
         setCanSwitch(canSwitch)
         // ── 外部会话变化检测 ──
         // 手机端「新会话」/ 遥控切换只广播给移动 WS，桌面前端没有该事件通道；
@@ -143,12 +152,8 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         // 会因基准过期误判为外部变更，必然整表重拉（实测 2026-08-25）。
         const flip = prevCanSwitchRef.current !== canSwitch
         prevCanSwitchRef.current = canSwitch
-        // 执行完成（can_switch false→true 翻转）→ 强制显示工作台：
-        // 「执行中不显示」会让用户看不到 rail；完成后默认浮现，方便立即切换。
-        // （complete 语义：轮询翻转近似事件，3s 内收敛，体验一致）
-        if (flip && canSwitch) {
-          startReveal()
-        }
+        // 执行完成不再自动弹出整条 rail（2026-08-26）：UI 只响应用户显式交互或
+        // 外部会话变更；执行/提炼的后台写入对 rail 完全静默，唤醒走左缘感应区。
         const activeId = list.find(i => i.is_active)?.id ?? null
         if (flip) {
           lastActiveIdRef.current = activeId
