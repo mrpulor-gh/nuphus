@@ -89,6 +89,12 @@ pub async fn splash_skip_download(app: AppHandle) -> Result<(), String> {
 
 // ── Fullscreen overlay mask (pre-screenshot approach) ──
 
+/// 主窗口隐藏确认轮询：30 次 × 10ms ≈ 300ms 上限（正常 1~2 次即确认）
+const HIDE_POLL_ATTEMPTS: usize = 30;
+const HIDE_POLL_INTERVAL_MS: u64 = 10;
+/// DXGI 桌面合成刷帧等待（>2 个 vsync；再长会拖慢截图工具呼出速度）
+const COMPOSITOR_SETTLE_MS: u64 = 150;
+
 /// Start fullscreen overlay mask: hide main window → capture full screen → show overlay → return
 /// Overlay window is created once at startup and reused (show/hide), eliminating white flash.
 /// mode parameter is injected into overlay frontend via window.__setOverlayMode__().
@@ -99,17 +105,14 @@ pub async fn start_overlay_mask(app: AppHandle, mode: Option<String>) -> Result<
     //    冻结背景里会带上主窗口。先轮询确认 OS 层已隐藏，再等桌面合成刷新帧。
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
-        // 轮询直到 OS 确认隐藏（最长 ~300ms）
-        for _ in 0..30 {
+        for _ in 0..HIDE_POLL_ATTEMPTS {
             if !win.is_visible().unwrap_or(false) {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(HIDE_POLL_INTERVAL_MS)).await;
         }
     }
-    // DXGI 桌面合成刷帧：隐藏生效后仍需一帧才保证截图干净。
-    // 150ms 足够（>2 个 vsync），再长会拖慢截图工具呼出速度。
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(COMPOSITOR_SETTLE_MS)).await;
 
     // 1. Pre-capture PRIMARY monitor — 既是冻结背景（overlay 不透明渲染），也是放大镜/OCR 数据源
     let (pixels, pw, ph) = capture_primary_monitor()?;

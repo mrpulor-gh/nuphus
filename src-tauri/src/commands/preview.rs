@@ -5,6 +5,11 @@
 
 use std::path::Path;
 
+/// 文本内联预览上限（read_file）
+const TEXT_PREVIEW_MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// 图片等二进制 base64 内联预览上限（read_file_base64）；base64 膨胀后仍远小于 WebView data URL 实用上限
+const BINARY_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
 /// 读取文件文本内容（≤2MB），供前端预览覆盖层渲染。
 /// 超过 2MB 或读取失败时返回错误信息，前端提示改用「系统打开」。
 #[tauri::command]
@@ -17,8 +22,11 @@ pub fn read_file(path: String) -> Result<String, String> {
         return Err(format!("不是文件（可能是文件夹）：{}", path));
     }
     let meta = std::fs::metadata(p).map_err(|e| format!("读取文件信息失败：{}", e))?;
-    if meta.len() > 2 * 1024 * 1024 {
-        return Err("文件超过 2MB，无法内联预览，请用「系统打开」查看".to_string());
+    if meta.len() > TEXT_PREVIEW_MAX_BYTES {
+        return Err(format!(
+            "文件超过 {}MB，无法内联预览，请用「系统打开」查看",
+            TEXT_PREVIEW_MAX_BYTES / 1024 / 1024
+        ));
     }
     std::fs::read_to_string(p).map_err(|e| format!("读取文件失败：{}", e))
 }
@@ -35,8 +43,11 @@ pub fn read_file_base64(path: String) -> Result<String, String> {
         return Err(format!("不是文件（可能是文件夹）：{}", path));
     }
     let meta = std::fs::metadata(p).map_err(|e| format!("读取文件信息失败：{}", e))?;
-    if meta.len() > 8 * 1024 * 1024 {
-        return Err("文件超过 8MB，无法内联预览，请用「系统打开」查看".to_string());
+    if meta.len() > BINARY_PREVIEW_MAX_BYTES {
+        return Err(format!(
+            "文件超过 {}MB，无法内联预览，请用「系统打开」查看",
+            BINARY_PREVIEW_MAX_BYTES / 1024 / 1024
+        ));
     }
     let bytes = std::fs::read(p).map_err(|e| format!("读取文件失败：{}", e))?;
     use base64::Engine as _;

@@ -20,8 +20,10 @@ describe('locales 中英键一致性', () => {
     expect(zhKeys.length).toBe(enKeys.length)
   })
 
-  it('键数量记录（改动时此处数字应同步更新）', () => {
-    expect(Object.keys(zh).length).toBe(1087)
-    expect(Object.keys(en).length).toBe(1087)
+  it('键集合非空且达到基线规模（防整表误删/加载失败）', () => {
+    // 不快照精确键数（历史上 987→994→1070→1087 每次增删键都要手改，纯负担且易漏）；
+    // 只设保守下限：跌破它必然是误删或 import 失败，而非正常迭代
+    expect(Object.keys(zh).length).toBeGreaterThan(500)
+    expect(Object.keys(en).length).toBe(Object.keys(zh).length)
   })
 })

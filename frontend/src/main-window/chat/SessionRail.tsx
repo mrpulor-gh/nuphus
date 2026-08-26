@@ -13,6 +13,8 @@ import {
 import '../../styles/session-rail.css'
 
 const POLL_INTERVAL_MS = 5000
+/** 会话变更去抖：2s 内只触发一次 onSessionChanged，防轮询翻转连续触发风暴 */
+const SWITCH_NOTICE_THROTTLE_MS = 2000
 
 interface SessionRailProps {
   /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
@@ -159,7 +161,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         } else if (list.length > 0 && activeId !== lastActiveIdRef.current) {
           // 去抖：2s 内只触发一次，防连续变更风暴
           const now = Date.now()
-          if (now - lastFireAtRef.current >= 2000) {
+          if (now - lastFireAtRef.current >= SWITCH_NOTICE_THROTTLE_MS) {
             lastFireAtRef.current = now
             lastActiveIdRef.current = activeId
             onSessionChangedRef.current()
