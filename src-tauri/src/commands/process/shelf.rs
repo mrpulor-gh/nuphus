@@ -243,14 +243,28 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
         {
             continue;
         }
+        // 标题回读：优先 DB 已存标题（用户改过名），为空才派生默认——此前无条件
+        // derive_title，重启后自定义标题被打回第一条 user 消息（实测回归）
+        let stored_title = nuphus::store::session::get_session(&file_session.id)
+            .ok()
+            .flatten()
+            .map(|r| r.summary)
+            .filter(|s| !s.is_empty());
         let entry = ShelfEntry {
             id: file_session.id.clone(),
             mode,
-            title: derive_title(&file_session),
+            title: stored_title
+                .clone()
+                .unwrap_or_else(|| derive_title(&file_session)),
             message_count: file_session.messages().len(),
             updated_at: rfc3339_to_millis(&updated_at).unwrap_or_else(now_millis),
         };
         let id = entry.id.clone();
+        // 回填钉住表：titles 是内存态，重启即清空；不回填的话，后续 flush/
+        // archive 的兜底派生路径会再次无视自定义标题
+        if let Some(t) = stored_title {
+            shelf.titles.insert(id.clone(), t);
+        }
         shelf.entries.insert(id.clone(), entry);
         shelf.sessions.insert(id.clone(), file_session);
         shelf.order.insert(0, id);
@@ -756,7 +770,28 @@ pub fn flush_active_mirror(state: &AppState) {
         if let Some(sess) = active_session(&ctx, kind) {
             if !sess.is_empty() {
                 write_mirror(kind, sess);
-                upsert_meta_row(sess, &derive_title(sess));
+                // 标题保护：用户改过名 → 钉死自定义标题；否则保留 meta 既有
+                // 标题，仅首次落库才写派生默认。此前每轮 derive_title 强制覆盖，
+                // 是「编辑后切换/执行一轮，标题打回默认」的根因（实测回归）。
+                match state
+                    .shelf
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.titles.get(&sess.id).cloned())
+                {
+                    Some(custom) => upsert_meta_row(sess, &custom),
+                    None => {
+                        let exists = nuphus::store::session::get_session(&sess.id)
+                            .map(|r| r.is_some())
+                            .unwrap_or(false);
+                        if exists {
+                            // 空标题语义 = upsert 保留既有 summary，不覆盖
+                            upsert_meta_row(sess, "");
+                        } else {
+                            upsert_meta_row(sess, &derive_title(sess));
+                        }
+                    }
+                }
             }
         }
     }
