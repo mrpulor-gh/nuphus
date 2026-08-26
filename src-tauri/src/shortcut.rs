@@ -6,6 +6,7 @@
 //! 然后用 PowerShell WScript.Shell COM 在用户桌面创建 Nuphus.lnk 指向自身 exe。
 //! 幂等：仅当 .lnk 不存在时创建；NSIS 安装（perUser/Program Files）场景自动跳过。
 
+#[cfg(target_os = "windows")]
 use std::path::Path;
 
 /// 启动时调用。仅 Windows + 发布构建 + 便携模式下才可能建快捷方式，其余情况立即返回。
