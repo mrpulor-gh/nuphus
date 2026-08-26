@@ -231,8 +231,7 @@ pub fn list_created_at(ids: &[String]) -> crate::Result<HashMap<String, String>>
         return Ok(HashMap::new());
     }
     let guard = crate::store::db::acquire()?;
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
+    let placeholders = std::iter::repeat_n("?", ids.len())
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!("SELECT id, created_at FROM sessions WHERE id IN ({placeholders})");

@@ -404,7 +404,7 @@ pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Val
 
 /// 内部实现（&AppState 直取）：mobile_server 的会话清单镜像端点复用
 pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::Value, String> {
-    let can_switch = guard_switch(&state).is_ok();
+    let can_switch = guard_switch(state).is_ok();
     let current_mode = state
         .current_mode
         .read()
