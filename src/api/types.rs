@@ -99,6 +99,8 @@ pub struct ModelInfo {
     pub supports_vision: bool,
     pub supports_audio: bool,
     pub supports_image_generation: bool,
+    /// Context window (tokens) the model declares. `None` = unknown.
+    pub context_window: Option<u64>,
     /// Reasoning-effort levels the model declares (from builtin ModelDef).
     /// Empty = the model exposes no user-configurable effort.
     pub reasoning_efforts: Vec<String>,

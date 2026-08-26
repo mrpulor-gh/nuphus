@@ -933,6 +933,14 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                 supports_vision: model.supports_vision,
                 supports_audio: model.supports_audio,
                 supports_image_generation: model.supports_image_generation,
+                // Context window: per-model metadata persisted at configure time
+                // wins; fall back to the built-in ModelDef (e.g. deepseek-v4-flash
+                // = 1M) so models configured before the field existed still show.
+                context_window: model.context_window.map(|c| c as u64).or_else(|| {
+                    builtin
+                        .find_model(&model.id)
+                        .map(|(_, m)| m.context_window as u64)
+                }),
                 reasoning_efforts,
                 default_effort,
             });
@@ -1122,12 +1130,26 @@ pub async fn test_llm_connection(
     }
 }
 
+/// 服务商 /v1/models 返回的单个模型（id + 能力元数据，供前端列表项显示能力徽标）。
+/// 能力优先取内置 registry 的 ModelDef（id/alias 匹配）；未知模型保持缺省值，
+/// 由前端隐藏对应徽标（不做字符串启发式猜测）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderModelBrief {
+    pub id: String,
+    pub supports_streaming: bool,
+    pub supports_vision: bool,
+    pub supports_audio: bool,
+    pub supports_image_generation: bool,
+    /// Context window (tokens)。None = 未知（内置 registry 无此模型）。
+    pub context_window: Option<u64>,
+}
+
 /// 从服务商 /v1/models 拉取最新模型列表（list_provider_models 与 refresh_provider_models 共用核心）。
 async fn fetch_provider_models(
     api_key: &str,
     provider: &str,
     base_url: Option<&str>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<ProviderModelBrief>, String> {
     use std::time::Duration;
 
     if api_key.is_empty() {
@@ -1209,7 +1231,26 @@ async fn fetch_provider_models(
         models.len(),
         provider
     );
-    Ok(models)
+
+    // 关联内置能力元数据：/v1/models 只给 id，能力从 builtin ModelDef 匹配
+    // （id/alias 均可命中）。未知模型保持缺省值，前端隐藏对应徽标。
+    let briefs = models
+        .into_iter()
+        .map(|id| {
+            let meta = registry.find_model(&id).map(|(_, m)| m);
+            ProviderModelBrief {
+                id,
+                supports_streaming: meta.map(|m| m.supports_streaming).unwrap_or(true),
+                supports_vision: meta.map(|m| m.supports_vision).unwrap_or(false),
+                supports_audio: meta.map(|m| m.supports_audio).unwrap_or(false),
+                supports_image_generation: meta
+                    .map(|m| m.supports_image_generation)
+                    .unwrap_or(false),
+                context_window: meta.map(|m| m.context_window as u64),
+            }
+        })
+        .collect();
+    Ok(briefs)
 }
 
 /// 通过 /v1/models 检测 API key 并列出可用模型（连接检测：key 必须由前端显式传入）。
@@ -1218,7 +1259,7 @@ pub async fn list_provider_models(
     api_key: String,
     provider: String,
     base_url: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<ProviderModelBrief>, String> {
     fetch_provider_models(&api_key, &provider, base_url.as_deref()).await
 }
 
@@ -1228,7 +1269,7 @@ pub async fn list_provider_models(
 pub async fn refresh_provider_models(
     provider: String,
     base_url: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<ProviderModelBrief>, String> {
     let api_key = read_provider_api_key_from_config_toml(&provider)
         .ok_or_else(|| "该服务商尚未配置 API Key，请先在连接区域输入并保存".to_string())?;
     let models = fetch_provider_models(&api_key, &provider, base_url.as_deref()).await?;
@@ -1236,7 +1277,8 @@ pub async fn refresh_provider_models(
     // 持久化：把 API 返回的最新模型 ID 合并进 config.toml，使 list_models
     // （图像理解 / STT / TTS 选择器数据源）能看到刷新发现的新模型。
     if let Some(config_path) = get_config_path() {
-        let _ = upsert_provider_models(&config_path, &provider, &models);
+        let ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+        let _ = upsert_provider_models(&config_path, &provider, &ids);
     }
 
     Ok(models)

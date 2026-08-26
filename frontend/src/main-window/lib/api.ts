@@ -502,6 +502,9 @@ export interface ModelInfo {
   supports_streaming: boolean
   supports_vision: boolean
   supports_audio: boolean
+  supports_image_generation: boolean
+  /** 上下文窗口（tokens）；undefined = 未知 */
+  context_window?: number
   reasoning_efforts: string[]
   /** 模型默认推理强度（未配置时生效；null = 无声明，UI 显示「默认」） */
   default_effort?: string | null
@@ -567,14 +570,25 @@ export function setReasoningEffort(provider: string, effort: string | null) {
 
 // ── Provider & Connection Test ──
 
+/** 服务商 /v1/models 返回的单个模型（id + 能力元数据，用于模型列表能力徽标） */
+export interface ProviderModelBrief {
+  id: string
+  supports_streaming: boolean
+  supports_vision: boolean
+  supports_audio: boolean
+  supports_image_generation: boolean
+  /** 上下文窗口（tokens）；undefined = 未知 */
+  context_window?: number
+}
+
 /** List all available models for a provider via /v1/models (validates API key) */
 export function listProviderModels(apiKey: string, provider: string, baseUrl?: string) {
-  return invoke<string[]>('list_provider_models', { apiKey, provider, baseUrl })
+  return invoke<ProviderModelBrief[]>('list_provider_models', { apiKey, provider, baseUrl })
 }
 
 /** 刷新服务商最新模型列表：用 config.toml 已存 API key（不暴露 key），模型列表页刷新按钮使用 */
 export function refreshProviderModels(provider: string, baseUrl?: string) {
-  return invoke<string[]>('refresh_provider_models', { provider, baseUrl })
+  return invoke<ProviderModelBrief[]>('refresh_provider_models', { provider, baseUrl })
 }
 
 export interface ProviderInfo {

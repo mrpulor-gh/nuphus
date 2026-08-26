@@ -1734,6 +1734,11 @@ async fn get_model_config<R: tauri::Runtime>(
                         supports_vision: model.supports_vision,
                         supports_audio: model.supports_audio,
                         supports_image_generation: model.supports_image_generation,
+                        context_window: model.context_window.map(|c| c as u64).or_else(|| {
+                            builtin
+                                .find_model(&model.id)
+                                .map(|(_, m)| m.context_window as u64)
+                        }),
                         reasoning_efforts,
                         default_effort,
                     });

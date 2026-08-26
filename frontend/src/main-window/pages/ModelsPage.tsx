@@ -15,7 +15,7 @@ import {
   setAgentModel,
   sttStatus,
 } from '../lib/api'
-import type { ProviderInfo, ModelInfo, SttStatus, AgentModels } from '../lib/api'
+import type { ProviderInfo, ModelInfo, ProviderModelBrief, SttStatus, AgentModels } from '../lib/api'
 import {
   useSttModelDownload,
   sttDownloadProgressPct,
@@ -30,6 +30,8 @@ import {
   IconCheck,
   IconTrash2,
   IconEye,
+  IconMic,
+  IconImage,
   IconAlertTriangle,
   IconRefresh,
   IconBrushCleaning,
@@ -219,16 +221,32 @@ function saveModels(provider: string, models: string[]) {
   localStorage.setItem(MODELS_KEY_PREFIX + provider, JSON.stringify(models))
 }
 
-function loadDetectedModels(provider: string): string[] {
+/** 兼容旧版 string[] 缓存（仅模型 id）：解析后统一升级为 ProviderModelBrief[] */
+function loadDetectedModels(provider: string): ProviderModelBrief[] {
   try {
-    return JSON.parse(localStorage.getItem(DETECTED_KEY_PREFIX + provider) || '[]')
+    const raw = JSON.parse(localStorage.getItem(DETECTED_KEY_PREFIX + provider) || '[]')
+    if (!Array.isArray(raw)) return []
+    return raw.map(item =>
+      typeof item === 'string' ? { id: item } : item,
+    ) as ProviderModelBrief[]
   } catch {
     return []
   }
 }
 
-function saveDetectedModels(provider: string, models: string[]) {
+function saveDetectedModels(provider: string, models: ProviderModelBrief[]) {
   localStorage.setItem(DETECTED_KEY_PREFIX + provider, JSON.stringify(models))
+}
+
+/** 上下文窗口格式化：1_000_000 → 1M，128_000 → 128K，32_768 → 33K；未知返回空串 */
+function formatContextWindow(n?: number): string {
+  if (!n || n <= 0) return ''
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
+  return `${n}`
 }
 
 export function ModelsPage({
@@ -280,7 +298,7 @@ export function ModelsPage({
   const [detecting, setDetecting] = useState(false)
   // 清除 API Key 进行中（防重复点击）
   const [clearingKey, setClearingKey] = useState(false)
-  const [detectedModels, setDetectedModels] = useState<string[]>([])
+  const [detectedModels, setDetectedModels] = useState<ProviderModelBrief[]>([])
   const [filterInput, setFilterInput] = useState('') // 实时筛选 detectedModels
   const [detectError, setDetectError] = useState<string | null>(null)
   // 模型列表刷新（用已存 key 拉取服务商最新模型）
@@ -736,7 +754,9 @@ export function ModelsPage({
             {/* ── 可用模型列表（后端已配置 + 本地检测结果并集，实时筛选）+ radio 选择 (大王需求 ②+⑤) ── */}
             {(() => {
               const configured = allModels.filter(m => m.provider === provider).map(m => m.id)
-              const display = Array.from(new Set([...detectedModels, ...configured]))
+              const display = Array.from(
+                new Set([...detectedModels.map(d => d.id), ...configured]),
+              )
               const q = filterInput.trim().toLowerCase()
               const filtered = q ? display.filter(m => m.toLowerCase().includes(q)) : display
               if (filtered.length === 0) {
@@ -746,6 +766,11 @@ export function ModelsPage({
                   </div>
                 )
               }
+              // 能力数据：检测结果（ProviderModelBrief）优先，list_models（ModelInfo）兜底
+              const briefById = new Map<string, ProviderModelBrief>(
+                detectedModels.map(d => [d.id, d]),
+              )
+              const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
               return (
                 <div>
                   <div className="detect-status">
@@ -755,6 +780,17 @@ export function ModelsPage({
                   <div className="model-list">
                     {filtered.map(name => {
                       const isActive = currentModel === name
+                      const brief = briefById.get(name)
+                      const info = infoById.get(name)
+                      const ctx = brief?.context_window ?? info?.context_window
+                      const caps = {
+                        vision: brief?.supports_vision || info?.supports_vision || false,
+                        audio: brief?.supports_audio || info?.supports_audio || false,
+                        image:
+                          brief?.supports_image_generation ||
+                          info?.supports_image_generation ||
+                          false,
+                      }
                       return (
                         <div
                           key={name}
@@ -793,6 +829,33 @@ export function ModelsPage({
                         >
                           <div className={'model-radio' + (isActive ? ' selected' : '')} />
                           <div className="model-list-name">{name}</div>
+                          {(caps.vision || caps.audio || caps.image || ctx) && (
+                            <div className="model-list-badges">
+                              {caps.vision && (
+                                <span className="model-badge" title={t('models.capVision')}>
+                                  <IconEye size={12} />
+                                </span>
+                              )}
+                              {caps.audio && (
+                                <span className="model-badge" title={t('models.capAudio')}>
+                                  <IconMic size={12} />
+                                </span>
+                              )}
+                              {caps.image && (
+                                <span className="model-badge" title={t('models.capImageGen')}>
+                                  <IconImage size={12} />
+                                </span>
+                              )}
+                              {ctx ? (
+                                <span
+                                  className="model-badge model-badge--ctx"
+                                  title={t('models.capContext')}
+                                >
+                                  {formatContextWindow(ctx)}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
                           {isActive && <IconCheck size={12} className="icon-accent" />}
                         </div>
                       )

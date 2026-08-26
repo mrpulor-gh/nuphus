@@ -497,6 +497,10 @@ const zh: Record<string, string> = {
   'models.visionSaveFail': '保存失败',
   'models.visionModelNone': '添加图像理解模型',
   'models.clearKey': '清除本地此模型提供商已保存密钥',
+  'models.capVision': '支持视觉理解',
+  'models.capAudio': '支持语音',
+  'models.capImageGen': '支持图像生成',
+  'models.capContext': '上下文窗口',
   'models.clearKeyConfirm': '确认清除该服务商的 API Key？此操作不可恢复。',
   'models.clearKeySuccess': 'API Key 已清除',
   'models.clearKeyFail': '清除失败',
@@ -773,6 +777,7 @@ const zh: Record<string, string> = {
   'modelManager.title': '模型管理',
   'modelManager.noConfigs': '暂无保存的模型配置。',
   'modelManager.noConfigsHint': '在设置中配置 API 密钥以启用模型。',
+  'modelManager.switch': '切换',
   'modelManager.switchTip': '提示：使用 /models 可快速切换模型',
 
   'projectDir.title': '项目目录',

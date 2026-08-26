@@ -521,6 +521,10 @@ const en: Record<string, string> = {
   'models.visionSaveFail': 'Save failed',
   'models.visionModelNone': 'Add vision model',
   'models.clearKey': 'Clear the saved API key for this local model provider',
+  'models.capVision': 'Vision',
+  'models.capAudio': 'Audio',
+  'models.capImageGen': 'Image generation',
+  'models.capContext': 'Context window',
   'models.clearKeyConfirm': "Clear this provider's API Key? This cannot be undone.",
   'models.clearKeySuccess': 'API Key cleared',
   'models.clearKeyFail': 'Failed to clear key',
@@ -803,6 +807,7 @@ const en: Record<string, string> = {
   'modelManager.title': 'Model Manager',
   'modelManager.noConfigs': 'No model configurations saved.',
   'modelManager.noConfigsHint': 'Configure API keys in Settings to enable models.',
+  'modelManager.switch': 'Switch',
   'modelManager.switchTip': 'Tip: Use /models to quickly switch models anytime',
 
   'projectDir.title': 'Project Directory',

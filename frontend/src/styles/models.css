@@ -199,14 +199,44 @@
 
 .model-list-name {
   flex: 1;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 400;
   font-family: var(--font-mono);
   color: var(--spark-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model-list-item.active .model-list-name {
   font-weight: 500;
   color: var(--spark-primary);
+}
+
+/* ── 模型能力徽标（视觉/音频/图像生成/上下文窗口）── */
+.model-list-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-4);
+  opacity: 0.9;
+  line-height: 1;
+}
+.model-badge--ctx {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: -0.01em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--fg-3);
 }
 /* ── Agent 级模型配置（高级设置）── */
 .agent-models-grid {

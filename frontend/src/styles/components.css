@@ -830,6 +830,71 @@
   padding-top: 12px;
   border-top: 1px solid var(--glass-1);
 }
+
+/* ── Model Manager 上下翻滚轮播（点「切换」→ 翻出旧模型 → 翻入下一模型）── */
+.cmd-modal-card-roll {
+  perspective: 900px;
+}
+.cmd-modal-card-roll-out {
+  animation: cmdCardRollOut 0.18s ease-in forwards;
+}
+.cmd-modal-card-roll-in {
+  animation: cmdCardRollIn 0.24s ease-out;
+}
+@keyframes cmdCardRollOut {
+  from {
+    transform: rotateX(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: rotateX(-90deg);
+    opacity: 0.4;
+  }
+}
+@keyframes cmdCardRollIn {
+  from {
+    transform: rotateX(90deg);
+    opacity: 0.4;
+  }
+  to {
+    transform: rotateX(0deg);
+    opacity: 1;
+  }
+}
+/* 正面卡片内新增的「切换」按钮 */
+.cmd-modal-card-switch {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-3);
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.cmd-modal-card-switch:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+  border-color: var(--line-3);
+}
+.cmd-modal-card-switch:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cmd-modal-card-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 /* ── STT 模型下载进度条（VoiceButton 确认弹窗 / ModelsPage STT 卡片共用，确定性宽度）── */
 .stt-dl-progress {
   height: 4px;

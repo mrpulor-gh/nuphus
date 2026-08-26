@@ -423,6 +423,9 @@ export function ChatPanel({
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
+  // 上下翻滚轮播：记录「正在翻滚的 provider + 阶段」，仅该 provider 卡片做动画（避免全局 class 波及所有卡片）
+  const [rollState, setRollState] = useState<{ provider: string; phase: 'out' | 'in' } | null>(null)
+  const rollTimerRef = useRef<number | null>(null)
 
   // ── Slash Commands ──
   const SLASH_ITEMS = useMemo(
@@ -602,6 +605,75 @@ export function ChatPanel({
       /* 模型元数据加载失败时保持现状（入口隐藏） */
     }
   }, [])
+
+  // ── 模型切换：正面点击（closeAfter=true 保留原行为：切换后自动关弹窗）与
+  //    背面模型选择（closeAfter=false：翻回正面展示新模型）共用 ──
+  const switchConfig = useCallback(
+    async (
+      cfg: { id: string; label: string; model: string; provider: string; baseUrl: string },
+      closeAfter: boolean,
+    ) => {
+      if (switchingId) return
+      setSwitchingId(cfg.id)
+      try {
+        const prov = allProviders.find(p => p.id === cfg.provider)
+        const resolvedUrl = prov?.base_url || ''
+        // provider-driven: switch_model reads key from config.toml, no key param
+        // 按当前 mode 写入对应 agent 模型配置（Leader/Workflow/Custom 联动）
+        await switchModel(cfg.model, cfg.provider, resolvedUrl, undefined, mode)
+        const limit = await getContextLimit()
+        if (limit != null && limit > 0) setContextTotal(limit)
+        onModelChanged?.()
+        setModelLabel(cfg.model)
+        // 同步持久化该 provider 的当前 model,保持与 /models 切换一致
+        try {
+          localStorage.setItem(`nuphus_current_model_${cfg.provider}`, cfg.model)
+        } catch {
+          /* localStorage 写入失败不阻塞切换流程 */
+        }
+        // 本地同步 savedConfigs（轮播切换后卡片立即显示新模型名 + ✓）
+        setSavedConfigs(prev =>
+          prev.map(c =>
+            c.provider === cfg.provider
+              ? { ...c, model: cfg.model, id: `${cfg.provider}::${cfg.model}` }
+              : c,
+          ),
+        )
+        await new Promise(r => setTimeout(r, 300))
+      } catch {
+        /* ignore */
+      }
+      setSwitchingId(null)
+      if (closeAfter) setModelOpen(false)
+    },
+    [switchingId, allProviders, mode, onModelChanged],
+  )
+
+  // ── 上下翻滚轮播切换：点「切换」→ 卡片翻出 → 切换同 provider 下一个模型 → 翻入 ──
+  const rollSwitch = useCallback(
+    (cfg: { id: string; label: string; model: string; provider: string; baseUrl: string }) => {
+      if (rollState) return
+      const models = allModels.filter(m => m.provider === cfg.provider)
+      if (models.length <= 1) return
+      const idx = models.findIndex(m => m.id === cfg.model)
+      if (idx < 0) return
+      const next = models[(idx + 1) % models.length]
+      if (!next || next.id === cfg.model) return
+      // 1) 翻出旧模型（仅该 provider 卡片）
+      setRollState({ provider: cfg.provider, phase: 'out' })
+      // 2) 半程后：实际切换 + 翻入新模型
+      rollTimerRef.current = window.setTimeout(() => {
+        void switchConfig(
+          { ...cfg, id: `${cfg.provider}::${next.id}`, model: next.id },
+          false,
+        )
+        setRollState({ provider: cfg.provider, phase: 'in' })
+        // 3) 翻入完成归位
+        rollTimerRef.current = window.setTimeout(() => setRollState(null), 240)
+      }, 180)
+    },
+    [rollState, allModels, switchConfig],
+  )
 
   // 切换推理深度：写入 config.toml + 触发 Runtime 重建（后端已就绪，前端无需额外刷新）
   const handleEffortChange = useCallback(
@@ -1901,56 +1973,52 @@ export function ChatPanel({
                   </div>
                 ) : (
                   <div className="cmd-modal-list">
-                    {savedConfigs.map(cfg => (
-                      <div
-                        key={cfg.id}
-                        className={`cmd-modal-card ${modelLabel === cfg.model ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''}`}
-                        onClick={async () => {
-                          if (switchingId) return
-                          setSwitchingId(cfg.id)
-                          try {
-                            const prov = allProviders.find(p => p.id === cfg.provider)
-                            const resolvedUrl = prov?.base_url || ''
-                            // provider-driven: switch_model reads key from config.toml, no key param
-                            // 按当前 mode 写入对应 agent 模型配置（Leader/Workflow/Custom 联动）
-                            await switchModel(cfg.model, cfg.provider, resolvedUrl, undefined, mode)
-                            const limit = await getContextLimit()
-                            if (limit != null && limit > 0) setContextTotal(limit)
-                            onModelChanged?.()
-                            setModelLabel(cfg.model)
-                            // 同步持久化该 provider 的当前 model,保持与 /models 切换一致
-                            try {
-                              localStorage.setItem(
-                                `nuphus_current_model_${cfg.provider}`,
-                                cfg.model,
-                              )
-                            } catch {
-                              /* localStorage 写入失败不阻塞切换流程 */
-                            }
-                            await new Promise(r => setTimeout(r, 300))
-                          } catch {
-                            /* ignore */
-                          }
-                          setSwitchingId(null)
-                          setModelOpen(false)
-                        }}
-                      >
-                        <div className="cmd-modal-card-left">
-                          <span className="cmd-modal-provider-icon">
-                            {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
-                          </span>
+                    {savedConfigs.map(cfg => {
+                      const isActive = modelLabel === cfg.model
+                      // 同 provider 全部模型（轮播数据源；仅 1 个时禁用切换）
+                      const providerModels = allModels.filter(m => m.provider === cfg.provider)
+                      const isRolling = rollState?.provider === cfg.provider
+                      const rollClass = isRolling
+                        ? rollState?.phase === 'out'
+                          ? 'cmd-modal-card-roll-out'
+                          : 'cmd-modal-card-roll-in'
+                        : ''
+                      return (
+                        <div key={cfg.provider} className="cmd-modal-card-roll">
+                          <div
+                            className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''} ${rollClass}`}
+                            onClick={() => switchConfig(cfg, true)}
+                          >
+                            <div className="cmd-modal-card-left">
+                              <span className="cmd-modal-provider-icon">
+                                {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="cmd-modal-card-body">
+                              <div className="cmd-modal-card-name">{cfg.label}</div>
+                              <div className="cmd-modal-card-meta">{cfg.model}</div>
+                            </div>
+                            {switchingId === cfg.id ? (
+                              <div className="cmd-modal-card-spinner" />
+                            ) : isActive ? (
+                              <span className="cmd-modal-card-check">✓</span>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="cmd-modal-card-switch"
+                              title={t('modelManager.switch')}
+                              disabled={providerModels.length <= 1}
+                              onClick={e => {
+                                e.stopPropagation()
+                                rollSwitch(cfg)
+                              }}
+                            >
+                              {t('modelManager.switch')}
+                            </button>
+                          </div>
                         </div>
-                        <div className="cmd-modal-card-body">
-                          <div className="cmd-modal-card-name">{cfg.label}</div>
-                          <div className="cmd-modal-card-meta">{cfg.model}</div>
-                        </div>
-                        {switchingId === cfg.id ? (
-                          <div className="cmd-modal-card-spinner" />
-                        ) : modelLabel === cfg.model ? (
-                          <span className="cmd-modal-card-check">✓</span>
-                        ) : null}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
                 <div className="cmd-modal-footer-hint">
