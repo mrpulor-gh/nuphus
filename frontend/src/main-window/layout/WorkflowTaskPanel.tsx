@@ -574,6 +574,7 @@ export function WorkflowTaskPanel({
         onClose={() => setConfirmAction(null)}
         title={confirmAction === 'reset' ? '紧急停止' : '终止执行'}
         size="sm"
+        className="compact-modal--fit"
         footer={
           <>
             <Button variant="default" onClick={() => setConfirmAction(null)}>

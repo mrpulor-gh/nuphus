@@ -242,6 +242,9 @@ export function ChatInputBar({
   // ⚠️ 完成感知必须事件驱动：仅靠 1.5s 轮询，执行完成后终止按钮会延迟 1.5~3s
   // 才变回发送（后端 busy=false 在收尾 guard drop，晚于 execution_completed 事件）。
   const [backendBusy, setBackendBusy] = useState(false)
+  // 执行态合成：事件驱动（isProcessing，即时）∨ 后端权威（backendBusy，挂载即查、刷新/HMR 后可恢复）。
+  // 与后端执行强绑定的 UI 锁（mode 切换等）必须用它——纯事件 state 在界面刷新后丢失会导致锁失效。
+  const executing = isProcessing || backendBusy
   // 终止确认弹窗：应用内模态（window.confirm 在 Tauri WebView 中被屏蔽不弹窗），防误触
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
   useEffect(() => {
@@ -592,7 +595,8 @@ export function ChatInputBar({
   // ── 状态数据 ──
   const usage = mainTokenUsage || tokenUsage
   const ctxUsed = usage?.inputTokens || 0
-  const ctxLimit = contextLimit || 128000
+  // 分母缺失（contextLimit 0/未知）→ 百分比显示 "--"，不伪装 128000 假数
+  const ctxLimit = contextLimit || 0
   const ctxPct = ctxLimit > 0 ? Math.min(ctxUsed / ctxLimit, 1) : 0
   const ctxColor = ctxPct > 0.8 ? '#ef4444' : ctxPct > 0.6 ? '#f59e0b' : '#22c55e'
   const cacheHit = usage?.cacheHitTokens || 0
@@ -932,10 +936,10 @@ export function ChatInputBar({
               onMouseLeave={closeModeMenu}
             >
               <span
-                className={`input-bar-chip mode-${mode === 'workflow' ? 'workflow' : mode === 'custom' ? 'custom' : 'leader'}${isProcessing ? ' is-processing' : ''}`}
-                onClick={isProcessing ? undefined : () => setModeMenuOpen(o => !o)}
+                className={`input-bar-chip mode-${mode === 'workflow' ? 'workflow' : mode === 'custom' ? 'custom' : 'leader'}${executing ? ' is-processing' : ''}`}
+                onClick={executing ? undefined : () => setModeMenuOpen(o => !o)}
               >
-                {isProcessing && (
+                {executing && (
                   <span className="input-bar-status-dot" style={{ color: moodColor }} />
                 )}
                 {mode === 'custom' ? (
@@ -957,7 +961,7 @@ export function ChatInputBar({
                   </>
                 )}
               </span>
-              {!isProcessing && modeMenuOpen && (
+              {!executing && modeMenuOpen && (
                 <div className="input-bar-mode-menu">
                   <div
                     className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
@@ -1107,7 +1111,7 @@ export function ChatInputBar({
                 ))}
               </span>
               <span className="input-bar-ctx-pct" style={{ color: ctxColor }}>
-                {Math.round(ctxPct * 100)}%
+                {ctxLimit > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
               </span>
               {ctxHover && (
                 <span className="input-bar-ctx-detail">
@@ -1120,6 +1124,11 @@ export function ChatInputBar({
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">tok</span>
                     <span>{fmt(execTokens)}</span>
+                  </span>
+                  {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
+                  <span className="input-bar-ctx-row">
+                    <span className="input-bar-ctx-detail-label">cap</span>
+                    <span>{ctxLimit > 0 ? fmt(ctxLimit) : '--'}</span>
                   </span>
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">step</span>
@@ -1142,6 +1151,7 @@ export function ChatInputBar({
         onClose={() => setStopConfirmOpen(false)}
         title={t('input.interruptTitle')}
         size="sm"
+        className="compact-modal--fit"
         footer={
           <>
             <Button variant="default" onClick={() => setStopConfirmOpen(false)}>

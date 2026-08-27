@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconBot, IconTerminal, IconPlus, IconX, IconFile, IconEye } from '../../ui/Icons'
+import {
+  IconPlus,
+  IconX,
+  IconFile,
+  IconEye,
+  IconTrash2,
+} from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 import {
   listAgentStatuses,
   listAgentDeliverables,
+  deleteAgentDeliverable,
+  listExternalAgents,
   type ExternalAgentStatus,
+  type ExternalAgentConfig,
   type AgentDeliverable,
 } from '../lib/api'
+import { AgentIconAuto } from '../components/AgentIconAuto'
 import { PreviewOverlay } from './PreviewOverlay'
 import '../../styles/external-agents.css'
 
@@ -47,6 +57,7 @@ function saveHiddenAgents(list: string[]) {
 /** 后端 state 原值 → 展示样式 class（未知状态统一 is-unknown，不拦截新状态） */
 const STATE_CLASS: Record<string, string> = {
   idle: 'is-idle',
+  dispatched: 'is-dispatched',
   in_progress: 'is-in-progress',
   ready: 'is-ready',
   done: 'is-done',
@@ -57,6 +68,7 @@ const STATE_CLASS: Record<string, string> = {
 /** 后端 state 原值 → i18n key（前端只做显示层转换，不改写状态值） */
 const STATE_I18N: Record<string, string> = {
   idle: 'extAgents.state.idle',
+  dispatched: 'extAgents.state.dispatched',
   in_progress: 'extAgents.state.inProgress',
   ready: 'extAgents.state.ready',
   done: 'extAgents.state.done',
@@ -132,6 +144,12 @@ export default function ExternalAgentsStatusBar({
   const [loadingDeliv, setLoadingDeliv] = useState(false)
   const [showHiddenPanel, setShowHiddenPanel] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  /** 处于「确认删除」态的交付物路径（同时最多一行，行内二次确认防误删） */
+  const [confirmDelPath, setConfirmDelPath] = useState<string | null>(null)
+  /** 配置中心映射（key → icon/open/process）：头像按配置渲染真实图标，与设置页同源 */
+  const [cfgMap, setCfgMap] = useState<Record<string, ExternalAgentConfig>>({})
+  /** 删除失败提示（弹窗内一行红字，点击关闭） */
+  const [delError, setDelError] = useState<string | null>(null)
   const stoppedRef = useRef(false)
   /** 当前弹窗对应的 agent 名（ref：异步响应回来时校验弹窗未被切换/关闭） */
   const openAgentRef = useRef<string | null>(null)
@@ -170,14 +188,28 @@ export default function ExternalAgentsStatusBar({
     }
   }, [visible])
 
-  // ── pin 集合：配置中心保存成功后广播事件 → 加入常驻集合（应用生命周期） ──
+  // ── pin 集合：配置中心保存成功后广播事件 → 加入常驻集合（应用生命周期）──
   useEffect(() => {
+    // 头像配置映射：初始加载 + 配置保存事件时刷新（新增/改图标后状态栏立即跟进）
+    const refreshCfg = () => {
+      listExternalAgents()
+        .then(list => {
+          const map: Record<string, ExternalAgentConfig> = {}
+          for (const c of list || []) map[c.key] = c
+          setCfgMap(map)
+        })
+        .catch(() => {
+          /* 后端不可达：保留当前映射，下个事件重试 */
+        })
+    }
+    refreshCfg()
     // 清理历史版本遗留的持久化 pin（现语义为内存态）
     localStorage.removeItem(PINNED_KEY)
     const onPinned = (e: Event) => {
       const key = (e as CustomEvent<string>).detail
       if (!key) return
       setPins(prev => (prev.includes(key) ? prev : [...prev, key]))
+      refreshCfg()
     }
     window.addEventListener(EXT_AGENT_PINNED_EVENT, onPinned)
     return () => window.removeEventListener(EXT_AGENT_PINNED_EVENT, onPinned)
@@ -227,6 +259,8 @@ export default function ExternalAgentsStatusBar({
     setOpenAgent(a)
     setDeliverables(null)
     setShowHiddenPanel(false)
+    setConfirmDelPath(null)
+    setDelError(null)
     setLoadingDeliv(true)
     listAgentDeliverables(a.agent)
       .then(list => {
@@ -238,6 +272,37 @@ export default function ExternalAgentsStatusBar({
       })
       .finally(() => {
         if (openAgentRef.current === a.agent) setLoadingDeliv(false)
+      })
+  }, [])
+
+  /** ── 生成物删除：行内两段式确认（trash → 行内「确认/取消」）。
+   *  不用 window.confirm：Tauri WebView 中被屏蔽不弹窗，必须应用内 UI 防误触 ── */
+  const askDeleteDeliverable = useCallback((d: AgentDeliverable) => {
+    setDelError(null)
+    setConfirmDelPath(d.path)
+  }, [])
+
+  const cancelDeleteDeliverable = useCallback(() => {
+    setConfirmDelPath(null)
+  }, [])
+
+  const doDeleteDeliverable = useCallback((d: AgentDeliverable) => {
+    const agent = openAgentRef.current
+    if (!agent) return
+    deleteAgentDeliverable(agent, d.rel_path)
+      .then(() => {
+        if (openAgentRef.current === agent) {
+          // 列表即视图：本地移除条目即可，无需整表重拉
+          setDeliverables(prev => (prev ? prev.filter(x => x.path !== d.path) : prev))
+          // 正在预览的就是被删文件 → 关闭预览，避免继续展示已不存在的内容
+          setPreviewPath(p => (p === d.path ? null : p))
+        }
+        setConfirmDelPath(null)
+        setDelError(null)
+      })
+      .catch(e => {
+        setConfirmDelPath(null)
+        setDelError(String(e))
       })
   }, [])
 
@@ -267,6 +332,8 @@ export default function ExternalAgentsStatusBar({
     openAgentRef.current = null
     setOpenAgent(null)
     setShowHiddenPanel(false)
+    setConfirmDelPath(null)
+    setDelError(null)
   }, [])
 
   if (!visible) return null
@@ -310,7 +377,14 @@ export default function ExternalAgentsStatusBar({
         >
           <span className={`ext-agent-dot ${STATE_CLASS[state] || 'is-unknown'}`} aria-hidden />
           <span className={`agent-avatar-icon is-${kind}`}>
-            {kind === 'cli' ? <IconTerminal size={16} /> : <IconBot size={16} />}
+            <AgentIconAuto
+              icon={cfgMap[a.agent]?.icon || 'auto'}
+              size={22}
+              avatarSize={30}
+              name={a.agent}
+              open={cfgMap[a.agent]?.open || ''}
+              process={cfgMap[a.agent]?.process || ''}
+            />
           </span>
         </button>
         <div className="agent-tooltip">
@@ -371,7 +445,7 @@ export default function ExternalAgentsStatusBar({
           title={t('extAgents.cfg.add')}
           aria-label={t('extAgents.cfg.add')}
         >
-          <IconPlus size={16} />
+          <IconPlus size={18} />
         </button>
 
         {/* ── 交付物弹窗：锚定在胶囊上方，点遮罩 / Esc 关闭 ── */}
@@ -379,11 +453,13 @@ export default function ExternalAgentsStatusBar({
           <div className="ext-agent-popover" role="dialog" aria-label={openAgent.agent}>
             <div className="ext-agent-popover-head">
               <span className={`agent-avatar-icon is-${agentKind(openAgent.agent)}`}>
-                {agentKind(openAgent.agent) === 'cli' ? (
-                  <IconTerminal size={14} />
-                ) : (
-                  <IconBot size={14} />
-                )}
+                <AgentIconAuto
+                  icon={cfgMap[openAgent.agent]?.icon || 'auto'}
+                  size={18}
+                  name={openAgent.agent}
+                  open={cfgMap[openAgent.agent]?.open || ''}
+                  process={cfgMap[openAgent.agent]?.process || ''}
+                />
               </span>
               <span className="ext-agent-popover-title">{openAgent.agent}</span>
               <span
@@ -404,6 +480,16 @@ export default function ExternalAgentsStatusBar({
               <div className="ext-agent-popover-summary">{openAgent.last_event.summary}</div>
             ) : null}
             <div className="ext-agent-popover-body">
+              {delError && (
+                <button
+                  type="button"
+                  className="ext-agent-del-error"
+                  onClick={() => setDelError(null)}
+                  title={t('common.close')}
+                >
+                  {t('extAgents.deliver.deleteFail')}: {delError}
+                </button>
+              )}
               {loadingDeliv ? (
                 <div className="ext-agent-popover-empty">{t('extAgents.deliver.loading')}</div>
               ) : (deliverables || []).length === 0 ? (
@@ -414,7 +500,16 @@ export default function ExternalAgentsStatusBar({
                     <div key="reports" className="ext-agent-dgroup">
                       <div className="ext-agent-dgroup-label">{t('extAgents.deliver.reports')}</div>
                       {reports.map(d => (
-                        <DeliverableRow key={d.path} d={d} onOpen={setPreviewPath} t={t} />
+                        <DeliverableRow
+                          key={d.path}
+                          d={d}
+                          onOpen={setPreviewPath}
+                          t={t}
+                          confirming={confirmDelPath === d.path}
+                          onAskDelete={askDeleteDeliverable}
+                          onConfirmDelete={doDeleteDeliverable}
+                          onCancelDelete={cancelDeleteDeliverable}
+                        />
                       ))}
                     </div>
                   ) : null,
@@ -424,7 +519,16 @@ export default function ExternalAgentsStatusBar({
                         {t('extAgents.deliver.artifacts')}
                       </div>
                       {artifacts.map(d => (
-                        <DeliverableRow key={d.path} d={d} onOpen={setPreviewPath} t={t} />
+                        <DeliverableRow
+                          key={d.path}
+                          d={d}
+                          onOpen={setPreviewPath}
+                          t={t}
+                          confirming={confirmDelPath === d.path}
+                          onAskDelete={askDeleteDeliverable}
+                          onConfirmDelete={doDeleteDeliverable}
+                          onCancelDelete={cancelDeleteDeliverable}
+                        />
                       ))}
                     </div>
                   ) : null,
@@ -487,14 +591,38 @@ interface DeliverableRowProps {
   d: AgentDeliverable
   onOpen: (path: string) => void
   t: (key: string, ...args: string[]) => string
+  /** 该行处于「确认删除」警示态 */
+  confirming?: boolean
+  onAskDelete?: (d: AgentDeliverable) => void
+  onConfirmDelete?: (d: AgentDeliverable) => void
+  onCancelDelete?: () => void
 }
 
-function DeliverableRow({ d, onOpen, t }: DeliverableRowProps) {
+/**
+ * 单条交付物：默认整行点击预览，hover 显现 eye/trash 操作区；
+ * trash 进入行内二次确认（hint + 删除/取消），确认后由父级调后端删除并移除条目。
+ * 外层用 div[role=button] 替代原 button：行内要嵌真正的按钮元素
+ * （HTML 禁止 button 嵌套），onKeyDown 维持 Enter/Space 键盘可操作性。
+ */
+function DeliverableRow({
+  d,
+  onOpen,
+  t,
+  confirming = false,
+  onAskDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: DeliverableRowProps) {
+  const hasActions = Boolean(onAskDelete && onConfirmDelete && onCancelDelete)
   return (
-    <button
-      type="button"
-      className="ext-agent-deliver-row"
-      onClick={() => onOpen(d.path)}
+    <div
+      role="button"
+      tabIndex={0}
+      className={`ext-agent-deliver-row${confirming ? ' confirming' : ''}`}
+      onClick={() => !confirming && onOpen(d.path)}
+      onKeyDown={e => {
+        if (!confirming && (e.key === 'Enter' || e.key === ' ')) onOpen(d.path)
+      }}
       title={`${d.rel_path}\n${t('extAgents.deliver.preview')}`}
     >
       <IconFile size={14} />
@@ -504,7 +632,55 @@ function DeliverableRow({ d, onOpen, t }: DeliverableRowProps) {
           {formatTime(d.modified)} · {formatSize(d.size)}
         </span>
       </span>
-      <IconEye size={13} className="ext-agent-deliver-eye" />
-    </button>
+      {confirming ? (
+        <>
+          <span className="ext-agent-del-confirm-hint">
+            {t('extAgents.deliver.confirmHint')}
+          </span>
+          {hasActions && (
+            <>
+              <button
+                type="button"
+                className="ext-agent-del-btn danger"
+                onClick={e => {
+                  e.stopPropagation()
+                  onConfirmDelete?.(d)
+                }}
+              >
+                {t('extAgents.deliver.confirmBtn')}
+              </button>
+              <button
+                type="button"
+                className="ext-agent-del-btn"
+                onClick={e => {
+                  e.stopPropagation()
+                  onCancelDelete?.()
+                }}
+              >
+                {t('extAgents.deliver.cancelBtn')}
+              </button>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <IconEye size={13} className="ext-agent-deliver-eye" />
+          {hasActions && (
+            <button
+              type="button"
+              className="ext-agent-del-btn"
+              onClick={e => {
+                e.stopPropagation()
+                onAskDelete?.(d)
+              }}
+              title={t('extAgents.deliver.delete')}
+              aria-label={`${t('extAgents.deliver.delete')} · ${d.name}`}
+            >
+              <IconTrash2 size={13} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
   )
 }

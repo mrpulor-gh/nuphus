@@ -58,10 +58,12 @@ import {
   IconPalette,
   IconShield,
   IconBrowser,
-  IconSparkles,
-  IconSquare,
-  IconGrid,
-} from '../../ui/Icons'
+   IconSparkles,
+   IconSquare,
+   IconGrid,
+   IconChevronUp,
+   IconChevronDown,
+ } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
@@ -412,7 +414,8 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [refineSelected, setRefineSelected] = useState(0) // 0=refine, 1=skip
   const [showRefineConfirm, setShowRefineConfirm] = useState(false)
-  const [contextTotal, setContextTotal] = useState(contextLimit || 128000)
+  // 分母缺失（contextLimit 0/未知）→ 保持 0（前端消费端显示 "--"），不伪装 128000
+  const [contextTotal, setContextTotal] = useState(contextLimit || 0)
   useEffect(() => {
     if (contextLimit != null && contextLimit > 0) setContextTotal(contextLimit)
   }, [contextLimit])
@@ -423,9 +426,6 @@ export function ChatPanel({
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
-  // 上下翻滚轮播：记录「正在翻滚的 provider + 阶段」，仅该 provider 卡片做动画（避免全局 class 波及所有卡片）
-  const [rollState, setRollState] = useState<{ provider: string; phase: 'out' | 'in' } | null>(null)
-  const rollTimerRef = useRef<number | null>(null)
 
   // ── Slash Commands ──
   const SLASH_ITEMS = useMemo(
@@ -606,8 +606,7 @@ export function ChatPanel({
     }
   }, [])
 
-  // ── 模型切换：正面点击（closeAfter=true 保留原行为：切换后自动关弹窗）与
-  //    背面模型选择（closeAfter=false：翻回正面展示新模型）共用 ──
+  // ── 模型切换：点击卡片本身 → 切换到卡片当前显示的模型（所见即所得，切后自动关弹窗）──
   const switchConfig = useCallback(
     async (
       cfg: { id: string; label: string; model: string; provider: string; baseUrl: string },
@@ -649,30 +648,27 @@ export function ChatPanel({
     [switchingId, allProviders, mode, onModelChanged],
   )
 
-  // ── 上下翻滚轮播切换：点「切换」→ 卡片翻出 → 切换同 provider 下一个模型 → 翻入 ──
-  const rollSwitch = useCallback(
-    (cfg: { id: string; label: string; model: string; provider: string; baseUrl: string }) => {
-      if (rollState) return
+  // ── 上下按钮模型浏览：仅预览不切换，直接换显示的模型名（无翻转动画，高效直给）。
+  //    不调用 switch_model、不写 localStorage——真正切换仍靠点击卡片本身确认。
+  //    peekModels: provider → 正在预览的模型 id（关弹窗即清空，避免下次打开残留）
+  const [peekModels, setPeekModels] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!modelOpen) setPeekModels({})
+  }, [modelOpen])
+
+  const peekSwitch = useCallback(
+    (cfg: { id: string; label: string; model: string; provider: string; baseUrl: string }, dir: 1 | -1) => {
       const models = allModels.filter(m => m.provider === cfg.provider)
       if (models.length <= 1) return
-      const idx = models.findIndex(m => m.id === cfg.model)
+      // 浏览基准 = 当前显示中的模型（含预览态），非已保存配置
+      const displayed = peekModels[cfg.provider] || cfg.model
+      const idx = models.findIndex(m => m.id === displayed)
       if (idx < 0) return
-      const next = models[(idx + 1) % models.length]
-      if (!next || next.id === cfg.model) return
-      // 1) 翻出旧模型（仅该 provider 卡片）
-      setRollState({ provider: cfg.provider, phase: 'out' })
-      // 2) 半程后：实际切换 + 翻入新模型
-      rollTimerRef.current = window.setTimeout(() => {
-        void switchConfig(
-          { ...cfg, id: `${cfg.provider}::${next.id}`, model: next.id },
-          false,
-        )
-        setRollState({ provider: cfg.provider, phase: 'in' })
-        // 3) 翻入完成归位
-        rollTimerRef.current = window.setTimeout(() => setRollState(null), 240)
-      }, 180)
+      const next = models[(idx + dir + models.length) % models.length]
+      if (!next || next.id === displayed) return
+      setPeekModels(prev => ({ ...prev, [cfg.provider]: next.id }))
     },
-    [rollState, allModels, switchConfig],
+    [allModels, peekModels],
   )
 
   // 切换推理深度：写入 config.toml + 触发 Runtime 重建（后端已就绪，前端无需额外刷新）
@@ -1972,50 +1968,74 @@ export function ChatPanel({
                     <div className="cmd-modal-empty-hint">{t('modelManager.noConfigsHint')}</div>
                   </div>
                 ) : (
-                  <div className="cmd-modal-list">
-                    {savedConfigs.map(cfg => {
-                      const isActive = modelLabel === cfg.model
-                      // 同 provider 全部模型（轮播数据源；仅 1 个时禁用切换）
-                      const providerModels = allModels.filter(m => m.provider === cfg.provider)
-                      const isRolling = rollState?.provider === cfg.provider
-                      const rollClass = isRolling
-                        ? rollState?.phase === 'out'
-                          ? 'cmd-modal-card-roll-out'
-                          : 'cmd-modal-card-roll-in'
-                        : ''
-                      return (
-                        <div key={cfg.provider} className="cmd-modal-card-roll">
-                          <div
-                            className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''} ${rollClass}`}
-                            onClick={() => switchConfig(cfg, true)}
-                          >
-                            <div className="cmd-modal-card-left">
-                              <span className="cmd-modal-provider-icon">
-                                {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                            <div className="cmd-modal-card-body">
-                              <div className="cmd-modal-card-name">{cfg.label}</div>
-                              <div className="cmd-modal-card-meta">{cfg.model}</div>
-                            </div>
-                            {switchingId === cfg.id ? (
-                              <div className="cmd-modal-card-spinner" />
-                            ) : isActive ? (
-                              <span className="cmd-modal-card-check">✓</span>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="cmd-modal-card-switch"
-                              title={t('modelManager.switch')}
-                              disabled={providerModels.length <= 1}
-                              onClick={e => {
-                                e.stopPropagation()
-                                rollSwitch(cfg)
-                              }}
-                            >
-                              {t('modelManager.switch')}
-                            </button>
-                          </div>
+                   <div className="cmd-modal-list">
+                     {savedConfigs.map(cfg => {
+                       // 卡片当前显���的模型 = 预览态（上下按钮浏览）|| 已保存配置
+                       const displayedModel = peekModels[cfg.provider] || cfg.model
+                       // ✓ 只标真正生效的模型：预览到别的模型时该卡不视为 active
+                       const isActive =
+                         !peekModels[cfg.provider] && modelLabel === cfg.model
+                       // 同 provider 全部模型（上下浏览数据源；仅 1 个时禁用浏览）
+                       const providerModels = allModels.filter(m => m.provider === cfg.provider)
+                       return (
+                         <div key={cfg.provider}>
+                           <div
+                             className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''}`}
+                             onClick={() =>
+                               switchConfig(
+                                 {
+                                   ...cfg,
+                                   id: `${cfg.provider}::${displayedModel}`,
+                                   model: displayedModel,
+                                 },
+                                 true,
+                               )
+                             }
+                           >
+                             <div className="cmd-modal-card-left">
+                               <span className="cmd-modal-provider-icon">
+                                 {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
+                               </span>
+                             </div>
+                             <div className="cmd-modal-card-body">
+                               <div className="cmd-modal-card-name">{cfg.label}</div>
+                               <div className="cmd-modal-card-meta">{displayedModel}</div>
+                             </div>
+                             {switchingId === cfg.id ? (
+                               <div className="cmd-modal-card-spinner" />
+                             ) : isActive ? (
+                               <span className="cmd-modal-card-check">✓</span>
+                             ) : null}
+                             {/* 上下浏览按钮：仅预览相邻模型，不切换——切换靠点击卡片本身 */}
+                             <div className="cmd-modal-card-peek">
+                               <button
+                                 type="button"
+                                 className="cmd-modal-card-peek-btn"
+                                  title={t('modelManager.peekPrev')}
+                                  aria-label={t('modelManager.peekPrev')}
+                                  disabled={providerModels.length <= 1}
+                                 onClick={e => {
+                                   e.stopPropagation()
+                                   peekSwitch(cfg, -1)
+                                 }}
+                               >
+                                 <IconChevronUp size={12} />
+                               </button>
+                               <button
+                                 type="button"
+                                 className="cmd-modal-card-peek-btn"
+                                  title={t('modelManager.peekNext')}
+                                  aria-label={t('modelManager.peekNext')}
+                                  disabled={providerModels.length <= 1}
+                                 onClick={e => {
+                                   e.stopPropagation()
+                                   peekSwitch(cfg, 1)
+                                 }}
+                               >
+                                 <IconChevronDown size={12} />
+                               </button>
+                             </div>
+                           </div>
                         </div>
                       )
                     })}

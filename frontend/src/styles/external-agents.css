@@ -27,8 +27,8 @@
 /* ── Agent 圆形头像按钮 ── */
 .agent-avatar-btn {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--surface-2);
   display: flex;
@@ -84,9 +84,13 @@
   background: var(--fg-5);
 }
 
-/* 状态点色：idle=灰 / in_progress=琥珀(呼吸) / ready=绿 / done=蓝 / blocked=红 / error=红(脉冲) */
+/* 状态点色：idle=灰 / dispatched=青(待确认) / in_progress=琥珀(呼吸) / ready=绿 / done=蓝 / blocked=红 / error=红(脉冲) */
 .agent-avatar-btn .ext-agent-dot.is-idle {
   background: var(--fg-4);
+}
+.agent-avatar-btn .ext-agent-dot.is-dispatched {
+  background: #38bdf8;
+  box-shadow: 0 0 5px rgba(56, 189, 248, 0.45);
 }
 .agent-avatar-btn .ext-agent-dot.is-ready {
   background: var(--success);
@@ -175,8 +179,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: transparent;
   border: 1px dashed var(--line-3);
@@ -278,8 +282,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: var(--surface-2);
   border: 1px solid var(--line-2);
@@ -436,6 +440,12 @@
   object-fit: contain;
   border-radius: 4px;
   flex-shrink: 0;
+}
+
+/* 用户自定义头像 img：100% 填满容器 + 圆形裁切（cover）——底衬色不参与用户头像审美 */
+.agent-icon-img.agent-icon-img-avatar {
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 /* 提取中旋转 */
@@ -770,4 +780,119 @@
 }
 .external-agents-bar.fading {
   transition-delay: 0s;
+}
+
+
+/* ═══════════════════════════════════════════
+   external-agents.css — v8 高级分组「交互固化」
+   ═══════════════════════════════════════════ */
+
+/* 折叠触发按钮（Section title 内） */
+.ext-agents-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ext-agents-advanced-toggle:hover {
+  background: var(--surface-hover);
+}
+.ext-agents-advanced-caret {
+  display: inline-flex;
+  width: 14px;
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+/* dispatch_steps 提示 + JSON 编辑域 */
+.ext-agents-steps-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.ext-agents-steps-json {
+  font-family: var(--font-mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+/* ── 交付物行内删除（trash 入口 + 行内二次确认）── */
+/* trash 按钮：与 eye 同节奏，hover 行时显现 */
+.ext-agent-del-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+  opacity: 0;
+}
+.ext-agent-deliver-row:hover .ext-agent-del-btn {
+  opacity: 1;
+}
+.ext-agent-del-btn:hover {
+  color: var(--danger);
+  background: var(--surface-hover);
+}
+
+/* 确认删除态：整行红描边警示，阻断预览点击 */
+.ext-agent-deliver-row.confirming {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--danger);
+  color: var(--fg-1);
+}
+.ext-agent-del-confirm-hint {
+  flex-shrink: 0;
+  font-size: var(--fz-xs);
+  color: var(--danger);
+  white-space: nowrap;
+}
+.ext-agent-deliver-row.confirming .ext-agent-del-btn {
+  opacity: 1;
+}
+.ext-agent-del-btn.danger {
+  color: #fff;
+  background: var(--danger);
+  font-weight: 600;
+}
+.ext-agent-del-btn.danger:hover {
+  color: #fff;
+  background: var(--danger);
+  filter: brightness(1.1);
+}
+
+/* 删除失败提示行（点击关闭） */
+.ext-agent-del-error {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  font-size: var(--fz-xs);
+  color: var(--danger);
+  cursor: pointer;
+  word-break: break-all;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ext-agent-del-error:hover {
+  background: var(--surface-hover);
 }

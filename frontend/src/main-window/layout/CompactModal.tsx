@@ -1,4 +1,5 @@
 import { ReactNode, ReactElement, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IconX } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 
@@ -53,7 +54,10 @@ export function CompactModal({
 
   const sizeClass = size === 'auto' ? 'compact-modal--auto' : `compact-modal--${size}`
 
-  return (
+  // Portal 到 body：就地渲染时，任何带 transform/filter 的祖辈会成为 fixed 后代的
+  // 包含块（CSS 规范），导致弹窗按局部盒子定位而非视口——如 .chat-input-area 的
+  // translate(-50%) 曾把终止确认弹窗错位到输入框区域内。与项目弹层 portal 惯例一致。
+  return createPortal(
     <div
       className={closing ? 'compact-overlay compact-overlay--closing' : 'compact-overlay'}
       onClick={requestClose}
@@ -81,6 +85,7 @@ export function CompactModal({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

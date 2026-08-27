@@ -13,21 +13,15 @@ import { Section, FormRow } from '../../ui/PageLayout'
 import {
   IconPlus,
   IconX,
-  IconBot,
-  IconTerminal,
-  IconCpu,
-  IconGlobe,
-  IconLayers,
-  IconBox,
-  IconMonitor,
-  IconWrench,
-  IconBrain,
-  IconPlug,
-  IconRocket,
-  IconHardDrive,
-  IconAppWindow,
-  IconRadio,
 } from '../../ui/Icons'
+import {
+  AgentIconAuto,
+  agentKind,
+  exePathFromOpen,
+  iconSourcePath,
+  iconUrlCache,
+  isIconPath,
+} from '../components/AgentIconAuto'
 import { useLanguage } from '../../locales'
 import '../../styles/external-agents.css'
 
@@ -45,11 +39,55 @@ interface Draft {
   key: string
   display_name: string
   icon: string
+  dir: string
   mode: string
   open: string
   args: string
   process: string
   description: string
+  // ── v8 交互固化（高级分组，折叠）──
+  launch: string
+  window_hint: string
+  cooldown_secs: number
+  dispatch_steps_json: string
+  await_timeout_secs: number
+  timeout_action: string
+  timeout_script: string
+  auto_approve: string
+  auto_approve_script: string
+  confirm_keywords_csv: string
+}
+
+/** dispatch_steps JSON 数组 → 缩进文本（编辑域用） */
+function stepsToJson(steps?: ExternalAgentConfig['dispatch_steps']): string {
+  if (!steps || steps.length === 0) return ''
+  return JSON.stringify(steps, null, 2)
+}
+
+/** 解析 JSON 文本域为 dispatch_steps 数组；非法 JSON → 抛错（保存时提示） */
+function parseStepsJson(text: string): Array<{ tool: string; with?: Record<string, unknown> }> {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  const parsed = JSON.parse(trimmed) as unknown
+  if (!Array.isArray(parsed)) throw new Error('dispatch_steps 必须是 JSON 数组')
+  for (const step of parsed) {
+    const s = step as Record<string, unknown>
+    if (typeof s?.tool !== 'string' || !s.tool.trim()) throw new Error('每步必须含 tool 字段')
+  }
+  return parsed as Array<{ tool: string; with?: Record<string, unknown> }>
+}
+
+/** confirm_keywords 数组 → 逗号分隔文本 */
+function keywordsToCsv(keywords?: string[]): string {
+  return (keywords || []).join(', ')
+}
+
+/** 逗号分隔文本 → 数组（去空白，过滤空项） */
+function parseKeywordsCsv(text: string): string[] {
+  return text
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
 }
 
 function newDraft(): Draft {
@@ -57,11 +95,22 @@ function newDraft(): Draft {
     key: '',
     display_name: '',
     icon: 'auto',
+    dir: '',
     mode: 'embedded',
     open: '',
     args: '',
     process: '',
     description: '',
+    launch: '',
+    window_hint: '',
+    cooldown_secs: 120,
+    dispatch_steps_json: '',
+    await_timeout_secs: 120,
+    timeout_action: 'detect_confirm',
+    timeout_script: '',
+    auto_approve: '',
+    auto_approve_script: '',
+    confirm_keywords_csv: '',
   }
 }
 
@@ -70,156 +119,23 @@ function draftFromAgent(a: ExternalAgentConfig): Draft {
     key: a.key,
     display_name: a.display_name || '',
     icon: a.icon || 'auto',
+    dir: a.dir || '',
     mode: a.mode || 'embedded',
     open: a.open || '',
     args: a.args || '',
     process: a.process || '',
     description: a.description || '',
+    launch: a.launch || '',
+    window_hint: a.window_hint || '',
+    cooldown_secs: a.cooldown_secs ?? 120,
+    dispatch_steps_json: stepsToJson(a.dispatch_steps),
+    await_timeout_secs: a.await_timeout_secs ?? 120,
+    timeout_action: a.timeout_action || 'detect_confirm',
+    timeout_script: a.timeout_script || '',
+    auto_approve: a.auto_approve || '',
+    auto_approve_script: a.auto_approve_script || '',
+    confirm_keywords_csv: keywordsToCsv(a.confirm_keywords),
   }
-}
-
-/** 渲染 agent 图标：icon 字符串 → lucide 组件（未知名 fallback bot）；iconUrl 优先（应用图标 data URL） */
-function AgentIcon({
-  icon,
-  size = 14,
-  iconUrl,
-}: {
-  icon: string
-  size?: number
-  iconUrl?: string | null
-}) {
-  if (iconUrl) {
-    return (
-      <img
-        className="agent-icon-img"
-        src={iconUrl}
-        width={size}
-        height={size}
-        alt=""
-        draggable={false}
-      />
-    )
-  }
-  switch (icon) {
-    case 'terminal':
-      return <IconTerminal size={size} />
-    case 'cpu':
-      return <IconCpu size={size} />
-    case 'globe':
-      return <IconGlobe size={size} />
-    case 'layers':
-      return <IconLayers size={size} />
-    case 'box':
-      return <IconBox size={size} />
-    case 'monitor':
-      return <IconMonitor size={size} />
-    case 'wrench':
-      return <IconWrench size={size} />
-    case 'brain':
-      return <IconBrain size={size} />
-    case 'plug':
-      return <IconPlug size={size} />
-    case 'rocket':
-      return <IconRocket size={size} />
-    case 'hard-drive':
-      return <IconHardDrive size={size} />
-    case 'app-window':
-      return <IconAppWindow size={size} />
-    case 'radio':
-      return <IconRadio size={size} />
-    default:
-      return <IconBot size={size} />
-  }
-}
-
-/** agent 名 → 图标类型（与状态栏 ExternalAgentsStatusBar 的 agentKind 完全一致：CLI 类终端图标 / 其余 bot） */
-function agentKind(name: string): 'cli' | 'agent' {
-  const n = name.toLowerCase()
-  if (n.includes('claude') || n.includes('code') || n.includes('cli')) return 'cli'
-  return 'agent'
-}
-
-/** icon 值是否为文件路径（盘符 / UNC / 含扩展名） */
-function isIconPath(v: string): boolean {
-  if (!v) return false
-  if (/^[a-zA-Z]:[\\/]/.test(v) || v.startsWith('\\\\')) return true
-  return /\.[a-zA-Z0-9]{2,4}$/.test(v)
-}
-
-/** 从 open/process 启动串中提取可执行/图标文件路径（引号优先，其次含 .exe/.cmd/.bat/.lnk/.ico token） */
-function exePathFromOpen(s: string): string | null {
-  if (!s) return null
-  const quoted = s.match(/"([^"]+\.(?:exe|cmd|bat|lnk|ico|dll))"/i)
-  if (quoted) return quoted[1]
-  const token = s.match(/([A-Za-z]:[\\/][^"'\s]+\.(?:exe|cmd|bat|lnk|ico|dll))/i)
-  if (token) return token[1]
-  return null
-}
-
-/** 解析 icon 提取源路径：显式路径直接返回；auto → open/process 中的可执行路径 */
-function iconSourcePath(d: { icon: string; open: string; process: string }): string | null {
-  if (isIconPath(d.icon)) return d.icon
-  if (d.icon === 'auto') return exePathFromOpen(d.open) || exePathFromOpen(d.process) || null
-  return null
-}
-
-/** 跨组件图标提取缓存（同一会话内同一路径只提取一次，避免重复 PowerShell 调用） */
-const iconUrlCache = new Map<string, string>()
-
-/** 带自动提取的 AgentIcon：预设 SVG 直接渲染；auto/路径按需提取应用图标（带缓存） */
-function AgentIconAuto({
-  icon,
-  size = 14,
-  name = '',
-  open = '',
-  process = '',
-}: {
-  icon: string
-  size?: number
-  name?: string
-  open?: string
-  process?: string
-}) {
-  const src = iconSourcePath({ icon, open, process })
-  const [url, setUrl] = useState<string | null>(() =>
-    src ? (iconUrlCache.get(src) ?? null) : null,
-  )
-
-  useEffect(() => {
-    const sourceRaw = iconSourcePath({ icon, open, process })
-    const source: string = sourceRaw ?? ''
-    if (!source) {
-      setUrl(null)
-      return
-    }
-    if (iconUrlCache.has(source)) {
-      setUrl(iconUrlCache.get(source)!)
-      return
-    }
-    let cancelled = false
-    extractAgentIcon(source)
-      .then(u => {
-        if (!u) return
-        iconUrlCache.set(source, u)
-        if (!cancelled) setUrl(u)
-      })
-      .catch(() => {
-        /* 提取失败：保持默认 SVG 兜底 */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [icon, open, process])
-
-  // auto：优先应用图标（url）；提取不到时按 agent 名推断类型（与状态条 agentKind 一致）
-  if (icon === 'auto' && !url) {
-    const n = name.toLowerCase()
-    if (n.includes('claude') || n.includes('code') || n.includes('cli')) {
-      return <IconTerminal size={size} />
-    }
-    return <IconBot size={size} />
-  }
-  return <AgentIcon icon={icon} size={size} iconUrl={url} />
 }
 
 /**
@@ -237,6 +153,8 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
+  // ── 高级分组「交互固化」折叠状态 ──
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   // ── 应用图标提取状态（icon=auto 或显式路径时的加载/失败提示；预览由 AgentIconAuto 内部渲染）──
   const [iconLoading, setIconLoading] = useState(false)
   const [iconError, setIconError] = useState('')
@@ -374,15 +292,39 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
     setSaving(true)
     setError('')
     try {
+      // 高级字段：dispatch_steps JSON 解析（非法则中止保存并提示）
+      let dispatchSteps: Array<{ tool: string; with?: Record<string, unknown> }> = []
+      try {
+        dispatchSteps = parseStepsJson(draft.dispatch_steps_json)
+      } catch (e) {
+        setSaving(false)
+        setError(
+          `${t('extAgents.cfg.dispatchSteps')}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        )
+        return
+      }
       await upsertExternalAgent({
         key: draft.key,
         display_name: draft.display_name.trim(),
         icon: draft.icon,
+        dir: draft.dir.trim(),
         mode: draft.mode,
         open: draft.open,
         args: draft.args,
         process: draft.process,
         description: draft.description,
+        launch: draft.launch.trim(),
+        window_hint: draft.window_hint.trim(),
+        cooldown_secs: draft.cooldown_secs,
+        dispatch_steps: dispatchSteps,
+        await_timeout_secs: draft.await_timeout_secs,
+        timeout_action: draft.timeout_action,
+        timeout_script: draft.timeout_script.trim(),
+        auto_approve: draft.auto_approve.trim(),
+        auto_approve_script: draft.auto_approve_script.trim(),
+        confirm_keywords: parseKeywordsCsv(draft.confirm_keywords_csv),
       })
       // pin：用户显式添加的 agent 在应用生命周期内常驻状态栏
       // （内存态，随启动清零；CustomEvent 通知状态栏立即生效）
@@ -433,14 +375,17 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
               className="ext-agents-chip-main"
               onClick={() => handleSelect(agent)}
             >
-              {/* 头像统一为状态栏风格：圆形 + 按 agent 名推断类型图标（cli→终端蓝 / 其他→bot 紫） */}
+              {/* 头像与编辑区/状态栏同源：AgentIconAuto 按配置渲染真实头像（auto→提取应用图标 / 路径→自定义图） */}
               <span className="ext-agents-chip-avatar" aria-hidden>
                 <span className={`agent-avatar-icon is-${agentKind(agent.key)}`}>
-                  {agentKind(agent.key) === 'cli' ? (
-                    <IconTerminal size={13} />
-                  ) : (
-                    <IconBot size={13} />
-                  )}
+                  <AgentIconAuto
+                    icon={agent.icon || 'auto'}
+                    size={15}
+                    avatarSize={18}
+                    name={agent.key}
+                    open={agent.open || ''}
+                    process={agent.process || ''}
+                  />
                 </span>
               </span>
               <span className="ext-agents-chip-name" title={agent.display_name || agent.key}>
@@ -477,6 +422,7 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
                 <AgentIconAuto
                   icon={draft.icon}
                   size={28}
+                  avatarSize={54}
                   name={draft.key || draft.display_name}
                   open={draft.open}
                   process={draft.process}
@@ -522,16 +468,17 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div className="ext-agents-identity-field">
-                <span className="ext-agents-identity-label" title={t('extAgents.cfg.keyHint')}>
-                  {t('extAgents.cfg.key')}
-                  {!isNew && ' 🔒'}
+                <span
+                  className="ext-agents-identity-label"
+                  title={t('extAgents.cfg.dirHint')}
+                >
+                  {t('extAgents.cfg.dir')}
                 </span>
                 <input
                   className="input"
-                  value={draft.key}
-                  disabled={!isNew}
-                  onChange={e => update({ key: e.target.value.trim() })}
-                  placeholder="e.g. claude-code"
+                  value={draft.dir}
+                  onChange={e => update({ dir: e.target.value })}
+                  placeholder={t('extAgents.cfg.dirPlaceholder')}
                 />
               </div>
               {iconAutoActive && !iconAutoHint && !iconLoading && (
@@ -542,6 +489,40 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
               )}
             </div>
           </div>
+        </Section>
+
+        {/* ── Agent 配置（技术参数，默认收起；其余细节交由用户按需展开配置）── */}
+        <Section
+          className="ext-agents-advanced"
+          title={
+            <button
+              type="button"
+              className="ext-agents-advanced-toggle"
+              onClick={() => setAdvancedOpen(v => !v)}
+              aria-expanded={advancedOpen}
+            >
+              <span className="ext-agents-advanced-caret">{advancedOpen ? '▾' : '▸'}</span>
+              {t('extAgents.cfg.agentConfig')}
+            </button>
+          }
+          description={t('extAgents.cfg.agentConfigHint')}
+        >
+          {advancedOpen && (
+            <>
+          <FormRow
+            stacked
+            label={t('extAgents.cfg.key')}
+            hint={t('extAgents.cfg.keyHint')}
+            control={
+              <input
+                className="input"
+                value={draft.key}
+                disabled={!isNew}
+                onChange={e => update({ key: e.target.value.trim() })}
+                placeholder="e.g. claude-code"
+              />
+            }
+          />
           <FormRow
             stacked
             label={t('extAgents.cfg.open')}
@@ -612,6 +593,152 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
               />
             }
           />
+          {/* ── v8 交互固化字段 ── */}
+          <FormRow
+            stacked
+            label={t('extAgents.cfg.launch')}
+                hint={t('extAgents.cfg.launchHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.launch}
+                    onChange={e => update({ launch: e.target.value })}
+                    placeholder="wt.exe -p PowerShell opencode"
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.windowHint')}
+                hint={t('extAgents.cfg.windowHintField')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.window_hint}
+                    onChange={e => update({ window_hint: e.target.value })}
+                    placeholder="opencode"
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.cooldown')}
+                control={
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={draft.cooldown_secs}
+                    onChange={e => update({ cooldown_secs: Number(e.target.value) || 0 })}
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.dispatchSteps')}
+                hint={
+                  <span className="ext-agents-steps-hint">
+                    {t('extAgents.cfg.dispatchStepsTools')}
+                    <br />
+                    {t('extAgents.cfg.dispatchStepsPlaceholders')}
+                  </span>
+                }
+                control={
+                  <textarea
+                    className="textarea ext-agents-steps-json"
+                    rows={10}
+                    spellCheck={false}
+                    value={draft.dispatch_steps_json}
+                    onChange={e => update({ dispatch_steps_json: e.target.value })}
+                    placeholder={t('extAgents.cfg.dispatchStepsPlaceholder')}
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.awaitTimeout')}
+                control={
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={draft.await_timeout_secs}
+                    onChange={e => update({ await_timeout_secs: Number(e.target.value) || 0 })}
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.timeoutAction')}
+                hint={t('extAgents.cfg.timeoutActionHint')}
+                control={
+                  <select
+                    className="select"
+                    value={draft.timeout_action}
+                    onChange={e => update({ timeout_action: e.target.value })}
+                  >
+                    {['detect_confirm', 'screenshot_alive', 'notify_user', 'redeliver'].map(a => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                    <option value="timeout_script">timeout_script（自定义）</option>
+                  </select>
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.timeoutScript')}
+                hint={t('extAgents.cfg.timeoutScriptHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.timeout_script}
+                    onChange={e => update({ timeout_script: e.target.value })}
+                    placeholder="D:/policies/timeout.ps1"
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.autoApprove')}
+                hint={t('extAgents.cfg.autoApproveHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.auto_approve}
+                    onChange={e => update({ auto_approve: e.target.value })}
+                    placeholder="yes"
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.autoApproveScript')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.auto_approve_script}
+                    onChange={e => update({ auto_approve_script: e.target.value })}
+                    placeholder="D:/policies/approve.ps1"
+                  />
+                }
+              />
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.confirmKeywords')}
+                hint={t('extAgents.cfg.confirmKeywordsHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.confirm_keywords_csv}
+                    onChange={e => update({ confirm_keywords_csv: e.target.value })}
+                    placeholder="allow, confirm, proceed, yes/no"
+                  />
+                }
+              />
+            </>
+          )}
         </Section>
       </div>
 
