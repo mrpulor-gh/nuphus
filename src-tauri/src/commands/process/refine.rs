@@ -16,16 +16,27 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
 
     let refine_active = state.refine_active.clone();
     refine_active.store(true, Ordering::SeqCst);
-    struct RefineGuard {
+    // ── busy 置位（强刷���因修复）── refine 期间 leader/workflow agent 被 take 移出
+    // runtime，若不声明 busy：① guard_switch 放行 → can_switch=true，SessionRail 轮询
+    // 看到 activeId 突变（active 条目消失）误判外部切换 → 前端整列重拉旧历史（实测
+    // 「提炼前后对话窗口强制刷新」回归）；② refine 期间可切换会话，与 take/put 并发
+    // 竞态。swap 记录旧值，Drop 恢复——forced 路径（主循环内 busy 本为 true）嵌套安全。
+    let prev_busy = state.busy.swap(true, Ordering::SeqCst);
+    struct RefineGuard<'a> {
         flag: Arc<AtomicBool>,
+        busy: &'a AtomicBool,
+        prev_busy: bool,
     }
-    impl Drop for RefineGuard {
+    impl Drop for RefineGuard<'_> {
         fn drop(&mut self) {
             self.flag.store(false, Ordering::SeqCst);
+            self.busy.store(self.prev_busy, Ordering::SeqCst);
         }
     }
     let _refine_guard = RefineGuard {
         flag: refine_active,
+        busy: &state.busy,
+        prev_busy,
     };
 
     let refine_prompt = nuphus::agent::distill::REFINE_PROMPT;
