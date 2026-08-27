@@ -19,7 +19,7 @@ jobs:
         include:
           # FIX 1: 保持 ubuntu-24.04
           # 22.04 无 webkit2gtk-2.40（tauri 2.11.5 要求 v2_40 feature），无法编译。
-          # AppImage 打包根因（VPS 45.32.249.194 复现 + --verbose 拿到真实 stderr）：
+          # AppImage 打包根因（VPS 复现 + --verbose 拿到真实 stderr）：
           # Nuphus 二进制 link 期链接 libsherpa-onnx-c-api.so，但 deb/AppImage 都不
           # 携带该库且 Linux 无 rpath → linuxdeploy 报 "Could not find dependency:
           # libsherpa-onnx-c-api.so"。此前 v0.1.3 deb 也坏（装了 /usr/bin/nuphus 启动
