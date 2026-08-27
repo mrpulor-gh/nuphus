@@ -21,24 +21,43 @@
 
 use std::path::{Path, PathBuf};
 
-/// read.md 模板 —— 占位符 {agent_name} / {description} 在 agent_init 时替换
+/// read.md 模板 —— 占位符 {agent_name} / {description} 在 agent_init 时替换。
 /// 门铃语义：仅用于「完成后交付」上报（done）；不要求 ready/就位握手。
+/// 三大块：每轮工作流 / 跨任务记忆要求 / 操作级禁止事项；机制参数一律指向当次 brief 契约，
+/// 避免在本模板固化易变值（令牌每轮轮换，固化即失效）。
 const READ_TEMPLATE: &str = r#"# {agent_name} 对接协议
+
+> 本文件是你的常驻对接手册。任务细节以 briefs/ 下最新一份 -brief.md 为准；
+> 门铃端点、令牌、上报命令完整形态一律以该份 brief 尾部契约为准（令牌每轮重启轮换）。
 
 ## 你的职责
 {description}
 
-## 工作流程（每轮强制）
-1. 读 read.md 与 briefs/{task_id}-brief.md 拿本任务
-2. 执行 → 产物写 projects/{project}/ → 更新 memory.md
-3. 完成后 POST 门铃 status:"done"   （携带 report_path 指向报告文件）
+## 每轮工作流
+1. 打开 briefs/ 目录内修改时间最新的 -brief.md，读取任务定义与文末契约
+2. 开工即回报一次 progress（summary 一句话说明已理解的任务要点）；预计超过 5 分钟的任务，每完成一个阶段续报一次 progress
+3. 执行任务 → 产物写入契约给出的 projects 绝对路径
+4. 写报告到契约指定的 report 文件（固定四段：✅完成项 / 📄改动文件 / 🔍验证证据 / ⚠️遗留）
+5. 按契约命令向门铃回报 done；受阻或需要确认时回报 blocked
+6. 遇到需要人工批准的界面（权限/许可/执行确认弹窗等）：不要静默等待——立即回报 blocked 并在 summary 写清「正在等待什么授权」，由用户决定是否授予
 
-## 回传契约
-门铃端点见 Leader 派发时下发的契约字符串（URL / token / report_path 约定）。产物必须写绝对路径。
+## 内部机制速查
+- 你的 handoff 目录就是你的全部工作区；路径一律用契约中的绝对路径。
+- 上报状态只有三种：progress（进行中）/ done（完成）/ blocked（受阻）；事件 id 已在契约示例中拼好，原样使用勿改。
+- 上报返回 200 即送达；403=令牌错误、422/400=字段缺失，修正后重发一次。
+- 工具输出与中间产物属于你自己的 projects/ 子目录；不要写到其他 agent 的目录。
 
-## 边界/规则
-- 只记稳定事实。
-- 不靠视觉做常规验收；产物落盘是主证据。
+## 跨任务记忆要求（memory.md）
+- memory.md 是你的唯一跨任务记忆载体，每次完成非平凡动作（关键决策、踩坑结论、环境事实）应即时追加一行记录。
+- 格式：一行一事，前缀日期（如 `2026-08-27 | 结论…`）；禁止整段粘贴过程日志。
+- 每次 done 上报前，确认本轮新增经验已写入 memory.md。
+
+## 禁止事项
+- 禁止改动 status.json、read.md、briefs/ 目录内任何文件（brief 是 Leader 的只读输入）。
+- 禁止触碰你 handoff 目录之外的文件，除非 brief 明确授权了目标路径。
+- 禁止不写 report 直接报 done；禁止报告四段缺项。
+- 禁止凭记忆复用上一轮的门铃令牌、URL 或事件 id——一切以本轮契约原文为准。
+- 禁止长时间静默空转：受阻立即 blocked 并说明原因。
 "#;
 
 /// handoff 根目录：{项目根}/.nuphus/handoff
@@ -236,7 +255,21 @@ pub(crate) fn ensure_handoff_at(
     validate_agent(agent)?;
     validate_task_id(task_id)?;
     let dir = root.join(agent);
-    // 未初始化也补建目录（幂等），保证后续 brief/projects 可用
+    // 未初始化也补建目录与协议文件（幂等）。read.md 的 description 从 team.toml 取，
+    // 让「手改 team.toml + dispatch 上板」路径与配置中心录入殊途同归（冒烟实测断层回归：
+    // 旧逻辑 dispatch 只建空骨架，导致首次接手的 agent 没有可读协议文件）。
+    if !dir.join("read.md").exists() {
+        let desc = crate::commands::config::team::agent_config(agent)
+            .ok()
+            .flatten()
+            .and_then(|m| {
+                m.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| format!("{agent}（职责描述未登记）"));
+        init_agent_at(root, agent, &desc)?;
+    }
     std::fs::create_dir_all(dir.join("briefs"))
         .map_err(|e| format!("创建 briefs 目录失败: {e}"))?;
     std::fs::create_dir_all(dir.join("projects"))
@@ -245,8 +278,11 @@ pub(crate) fn ensure_handoff_at(
     let brief_path = dir.join("briefs").join(format!("{task_id}-brief.md"));
     std::fs::write(&brief_path, brief).map_err(|e| format!("写 brief 失败: {e}"))?;
 
-    // 更新 status.json：保留已有对象字段，置 in_progress + task_id + dispatched_at；
-    // 缺失/非对象则从骨架起
+    // 更新 status.json：保留已有对象字段，置 dispatched + task_id + dispatched_at；
+    // 缺失/非对象则从骨架起。
+    // 语义纪律：上板 ≠ agent 开始执行。dispatched 仅表示任务已就绪待投递/待确认，
+    // 真正的 in_progress 由外部 Agent 第一声拉铃（ready/progress 门铃）触发 ——
+    // 否则状态栏会在指令尚未送达时就误亮「执行中」（冒烟实测回归）。
     let mut doc = match read_status_at(root, agent) {
         Some(d) if d.as_object().is_some() => d,
         _ => serde_json::json!({
@@ -257,7 +293,7 @@ pub(crate) fn ensure_handoff_at(
         }),
     };
     if let Some(obj) = doc.as_object_mut() {
-        obj.insert("state".to_string(), serde_json::json!("in_progress"));
+        obj.insert("state".to_string(), serde_json::json!("dispatched"));
         obj.insert("task_id".to_string(), serde_json::json!(task_id));
         obj.insert(
             "dispatched_at".to_string(),
@@ -326,6 +362,52 @@ fn status_at(root: &Path, agent: &str) -> serde_json::Value {
 pub fn list_agent_deliverables(agent: String) -> Result<Vec<serde_json::Value>, String> {
     validate_agent(&agent)?;
     Ok(list_agent_deliverables_at(&handoff_root(), &agent))
+}
+
+/// 删除某 agent 的一个交付物文件（供交付物弹窗的删除入口调用）。
+/// 安全边界见 delete_agent_deliverable_at：agent 名校验 + rel_path 双重防线。
+#[tauri::command]
+pub fn delete_agent_deliverable(agent: String, rel_path: String) -> Result<(), String> {
+    validate_agent(&agent)?;
+    delete_agent_deliverable_at(&handoff_root(), &agent, &rel_path)
+}
+
+/// 删除逻辑主体（root 可注入，供单测）：
+/// 1. rel_path 逐组件校验——仅接受普通路径组件（拒绝 `..`/`.`/根/盘符前缀），
+///    且首组件必须是 briefs 或 projects，与 list_agent_deliverables 的扫描范围
+///    严格一致，永远删不到 status.json / memory.md 等核心 handoff 文件；
+/// 2. 删除前对目标与 agent 目录做 canonicalize 前缀断言，防符号链接/junction
+///    把删除目标引到 agent 目录之外。
+fn delete_agent_deliverable_at(root: &Path, agent: &str, rel_path: &str) -> Result<(), String> {
+    let rel = std::path::Path::new(rel_path);
+    if rel.as_os_str().is_empty() {
+        return Err("rel_path 不能为空".to_string());
+    }
+    let mut comps = rel.components();
+    let first_ok = matches!(
+        comps.next(),
+        Some(std::path::Component::Normal(c)) if c == "briefs" || c == "projects"
+    );
+    if !first_ok {
+        return Err("rel_path 必须位于 briefs/ 或 projects/ 下".to_string());
+    }
+    for comp in comps {
+        if !matches!(comp, std::path::Component::Normal(_)) {
+            return Err("rel_path 含非法路径组件".to_string());
+        }
+    }
+    let dir = root.join(agent);
+    let path = dir.join(rel);
+    let canon_dir = std::fs::canonicalize(&dir).map_err(|e| format!("agent 目录不可访问: {e}"))?;
+    let canon_path =
+        std::fs::canonicalize(&path).map_err(|e| format!("目标不存在或不可访问: {e}"))?;
+    if !canon_path.starts_with(&canon_dir) {
+        return Err("目标越出 agent 目录，已拒绝删除".to_string());
+    }
+    if !canon_path.is_file() {
+        return Err("目标不是文件".to_string());
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("删除失败: {e}"))
 }
 
 fn list_agent_deliverables_at(root: &Path, agent: &str) -> Vec<serde_json::Value> {
@@ -414,7 +496,8 @@ fn collect_project_files(dir: &Path, base: &Path, out: &mut Vec<serde_json::Valu
     }
 }
 
-/// 构建派发契约字符串（含门铃 URL / token / done POST 示例 / 产物路径 / report_path 约定）
+/// 构建派发契约字符串（含门铃 URL / token / 上报 CLI 示例 / 产物路径 / report_path 约定）
+/// 上报通道唯一化：CLI（nuphus task done/blocked）——curl 已从契约移除（GBK 编码坑 + 错误反馈脆弱）。
 /// pub(crate)：handoff_server 派发端点复用（ensure_handoff_at 内部已调用，开放供直接构造）。
 pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
     let info = nuphus::handoff::doorbell_info();
@@ -422,39 +505,72 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
     let event_id = format!("{agent}::{task_id}");
     let projects_dir = dir.join("projects");
     let report_path = dir.join("briefs").join(format!("{task_id}-report.md"));
+    // 上报 CLI 自解析：与桌面壳同目录的 nuphus-task.exe（PATH 不可依赖——实测 target\debug 外启动即失联）；
+    // 解析不到时退回裸命令名，由 agent 按 read.md 的排障指引自查。
+    let cli_cmd = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            let sibling = exe.parent()?.join("nuphus-task.exe");
+            if sibling.is_file() {
+                Some(sibling.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "nuphus task".to_string());
 
     let mut s = String::new();
-    s.push_str("外部 Agent 交接契约\n");
+    s.push_str("外部 Agent 交接契约（handoff contract）\n");
     s.push_str("====================\n");
+    // [1] 身份与凭证：首屏取齐调用所需
     s.push_str(&format!("agent: {agent}\n"));
     s.push_str(&format!("task_id: {task_id}\n"));
-    s.push_str(&format!("门铃端点: {endpoint}\n"));
+    s.push_str(&format!("门铃端点 doorbell endpoint (回调 webhook): {endpoint}\n"));
     if info.available {
-        s.push_str(&format!("令牌: {}\n", info.token));
+        s.push_str(&format!("令牌 token: {}\n", info.token));
     } else {
-        s.push_str("令牌: 门铃不可用（见末尾降级说明）\n");
+        s.push_str("令牌 token: 门铃不可用（见 [4] 降级说明）\n");
     }
-    s.push_str("\n上报示例（事件 id 必须以 agent 名为前缀，门铃据此归组到 status.json）:\n");
+    // [2] 上报命令：三态齐全、绝对路径、复制改参即可用（先给能直接跑的，再讲规则）
+    s.push_str("\n[2] 上报命令（CLI 与桌面主程序是两个东西；命令含绝对路径可整行复制执行；\n     事件 id 已拼好必须原样使用，门铃按其前缀归组更新状态栏）:\n");
     s.push_str(&format!(
-        "  done:  curl -X POST {endpoint} -H \"Content-Type: application/json\" -H \"X-Handoff-Token: {token}\" -d '{{\"id\":\"{event_id}\",\"status\":\"done\",\"summary\":\"任务完成\",\"report_path\":\"{report_path}\"}}'\n",
-        token = info.token,
+        "  progress: {cli_cmd} task progress --id {event_id} --token <令牌见上> --summary \"开工确认：<一句话要点>\"\n",
+    ));
+    s.push_str(&format!(
+        "  done:     {cli_cmd} task done --id {event_id} --token <令牌见上> --summary \"任务完成\" --report \"{report_path}\"\n",
         report_path = report_path.to_string_lossy(),
     ));
     s.push_str(&format!(
-        "\n产物落盘（绝对路径）: {}\n",
+        "  blocked:  {cli_cmd} task blocked --id {event_id} --token <令牌见上> --reason \"等待确认\"\n"
+    ));
+    // [3] 工作区路径约定
+    s.push_str("\n[3] 工作区路径（均为绝对路径）:\n");
+    s.push_str(&format!(
+        "  产物落盘 artifacts: {}\n",
         projects_dir.to_string_lossy()
     ));
     s.push_str(&format!(
-        "报告文件（绝对路径）: {}（报告写在 projects/ 内亦可，report_path 指向实际文件即可）\n",
+        "  报告文件 report: {}（写在 projects/ 内亦可，report_path 指向实际文件即可）\n",
         report_path.to_string_lossy()
     ));
+    // [4] 行为纪律：三态语义与时序要求
+    s.push_str("\n[4] 上报纪律:\n");
+    s.push_str("  - 开工即发一次 progress（summary 一句话说明已理解的任务要点）；\n");
+    s.push_str("  - 预计超过 5 分钟的任务，每完成一个阶段续报一次 progress；\n");
+    s.push_str("  - 完成才发 done、受阻立即发 blocked，禁止长时间静默空转。\n");
+    // [5] 红线：最高频踩坑反例，独立段落确保可见性
+    s.push_str("\n[5] 红线:\n");
+    s.push_str(&format!(
+        "  - 上报只用本契约给出的 CLI（{cli_cmd}）；Nuphus 桌面主程序 nuphus.exe 不是上报 CLI——运行它会拉起新的桌面实例；禁止自行搜索或启动任何 Nuphus 可执行文件。\n",
+        cli_cmd = cli_cmd,
+    ));
     if !info.available {
-        s.push_str("门铃不可用，请用 report 文件 + 回复标记。\n");
+        s.push_str("[4a] 降级说明: 门铃不可用时，将结果写入 report 文件并在回复末尾输出 handoff 标记，待 Leader 提取。\n");
     }
     s
 }
 
-/// 门铃事件归组：按 id 前缀（{agent}-{task}）匹配已初始化的 agent 目录，
+/// 门铃事件归组：按事件 id 前缀（格式 `{agent}::{task_id}`，以 '::' 分隔）匹配已初始化的 agent 目录，
 /// 命中则更新其 status.json 的 state / last_event / updated_at；
 /// 未命中或无目录 → 静默跳过（不报错，避免破坏既有门铃流程）。
 ///
@@ -480,8 +596,8 @@ fn update_agent_status_from_doorbell_at(
         return;
     };
     let state = match status {
-        "progress" => "in_progress",
-        "ready" => "ready",
+        // ready/progress 都是外部 Agent 的「开始确认」拉铃 → 才是真正的执行中
+        "ready" | "progress" => "in_progress",
         "done" => "done",
         "blocked" => "blocked",
         _ => return, // 未知状态：不落盘（与 push_event 校验语义一致）
@@ -588,13 +704,16 @@ mod tests {
                 .unwrap();
         assert_eq!(status["state"], "in_progress");
         assert_eq!(status["task_id"], "task-001");
-        // 契约含门铃 URL / token / done POST 示例 / 产物路径（token 不落 status.json）
+        // 契约含门铃 URL / token / CLI 上报示例 / 产物路径（token 不落 status.json）
         assert!(
             contract.contains("http://127.0.0.1:/handoff")
                 || contract.contains("http://127.0.0.1:18771/handoff")
         );
-        assert!(contract.contains("\"status\":\"done\""));
-        assert!(!contract.contains("\"status\":\"ready\""));
+        // 上报通道唯一化：CLI 示例（done/blocked），curl 已从契约移除
+        assert!(contract.contains("nuphus task done --id web_agent::task-001"));
+        assert!(contract.contains("nuphus task blocked --id web_agent::task-001"));
+        assert!(!contract.contains("curl"), "契约不得再宣传 curl 上报");
+        assert!(!contract.contains("\"status\":\"done\""));
         assert!(contract.contains("web_agent::task-001"));
         let status_str = std::fs::read_to_string(dir.join("status.json")).unwrap();
         assert!(!status_str.contains("token"), "token 不得落 status.json");
@@ -745,5 +864,57 @@ mod tests {
         // 未初始化 agent → 空列表；根不存在 → 空列表
         assert!(list_agent_deliverables_at(&root, "ghost").is_empty());
         assert!(list_agent_deliverables_at(&tmp_root("nope-deliver"), "web_agent").is_empty());
+    }
+
+    #[test]
+    fn test_delete_agent_deliverable_security() {
+        let root = tmp_root("deliver-del");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务").unwrap();
+        let dir = root.join("web_agent");
+        std::fs::write(dir.join("briefs").join("task-001-report.md"), "# 报告").unwrap();
+        std::fs::create_dir_all(dir.join("projects").join("sub")).unwrap();
+        std::fs::write(dir.join("projects").join("sub").join("out.json"), "{}").unwrap();
+
+        // 正常删除：嵌套产物
+        delete_agent_deliverable_at(&root, "web_agent", r"projects\sub\out.json")
+            .expect("合法产物应可删除");
+        assert!(!dir.join("projects").join("sub").join("out.json").exists());
+
+        // 正常删除：报告
+        delete_agent_deliverable_at(&root, "web_agent", "briefs/task-001-report.md")
+            .expect("报告应可删除");
+        assert!(!dir.join("briefs").join("task-001-report.md").exists());
+
+        // 路径穿越拒绝（.. 组件）
+        std::fs::write(root.join("secret.txt"), "x").unwrap();
+        let err = delete_agent_deliverable_at(&root, "web_agent", r"..\..\secret.txt")
+            .expect_err("穿越必须被拒");
+        assert!(err.contains("非法") || err.contains("briefs"), "意外错误: {err}");
+        assert!(root.join("secret.txt").exists(), "文件不应被误删");
+
+        // 首组件非 briefs/projects 拒绝 → 核心文件受保护
+        // （删除在首组件校验处即被拒，先于任何 fs 操作，所以无需断言文件仍存在）
+        let err = delete_agent_deliverable_at(&root, "web_agent", "status.json")
+            .expect_err("核心文件必须被拒");
+        assert!(err.contains("briefs"));
+        let err =
+            delete_agent_deliverable_at(&root, "web_agent", "memory.md").expect_err("必须被拒");
+        assert!(err.contains("briefs"));
+
+        // 空 rel_path / 不存在的目标 / 目录型目标
+        assert!(delete_agent_deliverable_at(&root, "web_agent", "").is_err());
+        assert!(delete_agent_deliverable_at(&root, "web_agent", "projects/ghost.json").is_err());
+        assert!(
+            delete_agent_deliverable_at(&root, "web_agent", "projects/nonexist-dir").is_err(),
+            "canonicalize 失败的目录也应报错"
+        );
+
+        // 未知 agent（目录不存在）→ 报错而非 panic
+        assert!(delete_agent_deliverable_at(&root, "ghost_agent", "briefs/x.md").is_err());
+
+        // Windows 反斜杠也能命中正斜杠创建的路径（Path 拼接统一解析）
+        std::fs::write(dir.join("projects").join("a.txt"), "1").unwrap();
+        delete_agent_deliverable_at(&root, "web_agent", r"projects\a.txt").unwrap();
     }
 }

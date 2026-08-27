@@ -720,7 +720,7 @@ impl ToolRegistry {
         self.register_knowledge_search();
     }
 
-    /// Leader 独占工具（11 个）
+    /// Leader 独占工具（12 个）
     pub(crate) fn register_leader_only_tools(&mut self) {
         self.register_leader_memory_update();
         self.register_timeline_stats();
@@ -733,6 +733,7 @@ impl ToolRegistry {
         self.register_annotation_add();
         self.register_annotation_remove();
         self.register_annotation_search();
+        self.register_agent_dispatch();
     }
 
     /// WorkflowAgent 独占工具

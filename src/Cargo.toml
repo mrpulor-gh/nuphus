@@ -12,6 +12,12 @@ authors = ["Nuphus Team"]
 name = "nuphus"
 path = "lib.rs"
 
+# 回程上报 CLI（方案 v8 四章：nuphus task done/blocked 唯一化替代 curl）。
+# 显式声明 bin：本包自动发现异常（src/main.rs 未作为 bin 目标），显式 [[bin]] 最稳。
+[[bin]]
+name = "nuphus-task"
+path = "bin/nuphus-task.rs"
+
 [lints]
 workspace = true
 

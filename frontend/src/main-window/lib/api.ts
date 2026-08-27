@@ -326,6 +326,15 @@ export function listAgentDeliverables(agent: string) {
   return invoke<AgentDeliverable[]>('list_agent_deliverables', { agent })
 }
 
+/**
+ * 删除某外部 agent 的一个交付物文件。
+ * relPath 为相对该 agent handoff 目录的路径（briefs/… 或 projects/…），
+ * 后端二次校验范围与 list 严格一致，越界/核心文件一律拒绝。
+ */
+export function deleteAgentDeliverable(agent: string, relPath: string) {
+  return invoke<void>('delete_agent_deliverable', { agent, relPath })
+}
+
 // ── Session Shelf（浅层会话展示台）──
 
 export interface ShelfSessionItem {
@@ -403,6 +412,19 @@ export interface ExternalAgentConfig {
   process?: string
   description?: string
   note?: string
+  /** Agent 工作目录（用户个性化配置；Leader 查找/定位用） */
+  dir?: string
+  // ── v8 交互固化字段（终端型推荐配置；agent_dispatch 使用）──
+  launch?: string
+  window_hint?: string
+  cooldown_secs?: number
+  dispatch_steps?: Array<{ tool: string; with?: Record<string, unknown> }>
+  await_timeout_secs?: number
+  timeout_action?: string
+  timeout_script?: string
+  auto_approve?: string
+  auto_approve_script?: string
+  confirm_keywords?: string[]
 }
 
 /** 列出全部外部 Agent（按 key 排序） */
@@ -505,9 +527,14 @@ export interface ModelInfo {
   supports_image_generation: boolean
   /** 上下文窗口（tokens）；undefined = 未知 */
   context_window?: number
+  /** 推理强度选项（如 ["low","high","max"]）；空 = 无此旋钮 */
   reasoning_efforts: string[]
   /** 模型默认推理强度（未配置时生效；null = 无声明，UI 显示「默认」） */
   default_effort?: string | null
+  /** 成本（USD / 百万输入 tokens）；undefined = 未知 */
+  cost_per_million_in?: number
+  /** 成本（USD / 百万输出 tokens）；undefined = 未知 */
+  cost_per_million_out?: number
 }
 
 export function listModels() {

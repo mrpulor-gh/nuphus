@@ -7,6 +7,7 @@
 
 pub mod diff;
 pub mod experience;
+pub mod ext_agent;
 pub mod file;
 pub mod generation;
 pub mod http;

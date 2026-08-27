@@ -134,18 +134,7 @@ fn list_external_agents_at(plugin_dir: &Path) -> Result<Vec<serde_json::Value>, 
         let Some(obj) = val.as_table() else {
             continue; // 非表值（少见）跳过，不 panic
         };
-        out.push(serde_json::json!({
-            "key": key,
-            "display_name": display_name_for(key, obj),
-            "icon": icon_for(obj),
-            "type": type_for(obj),
-            "mode": mode_for(obj),
-            "open": str_or(obj, "open", ""),
-            "args": str_or(obj, "args", ""),
-            "process": str_or(obj, "process", ""),
-            "description": str_or(obj, "description", ""),
-            "note": str_or(obj, "note", ""),
-        }));
+        out.push(agent_json(key, obj));
     }
     out.sort_by(|a, b| {
         a["key"]
@@ -154,6 +143,83 @@ fn list_external_agents_at(plugin_dir: &Path) -> Result<Vec<serde_json::Value>, 
             .cmp(b["key"].as_str().unwrap_or_default())
     });
     Ok(out)
+}
+
+/// 读取单个 agent 段配置（扁平 JSON，与 list 项同形）。
+/// 段不存在 → Ok(None)；文件损坏 → Err。
+/// pub(crate)：ext_agent（agent_dispatch 编排）读取 dispatch_steps 等字段。
+pub(crate) fn agent_config(key: &str) -> Result<Option<serde_json::Value>, String> {
+    agent_config_at(&crate::plugin_apps::find_plugin_dir(), key)
+}
+
+fn agent_config_at(plugin_dir: &Path, key: &str) -> Result<Option<serde_json::Value>, String> {
+    let value = read_team_toml(plugin_dir)?;
+    let table = value.as_table().cloned().unwrap_or_default();
+    match table.get(key).and_then(|v| v.as_table()) {
+        Some(obj) => Ok(Some(agent_json(key, obj))),
+        None => Ok(None),
+    }
+}
+
+/// agent 段 → 扁平 JSON（含 v8 交互固化字段；缺省补默认值）。
+/// 字段清单：key/display_name/icon/type/mode/open/args/process/description/note +
+/// launch/window_hint/cooldown_secs/dispatch_steps/await_timeout_secs/timeout_action/
+/// timeout_script/auto_approve/auto_approve_script/confirm_keywords
+fn agent_json(key: &str, obj: &toml::Table) -> serde_json::Value {
+    serde_json::json!({
+        "key": key,
+        "display_name": display_name_for(key, obj),
+        "icon": icon_for(obj),
+        "type": type_for(obj),
+        "mode": mode_for(obj),
+        "open": str_or(obj, "open", ""),
+        "args": str_or(obj, "args", ""),
+        "process": str_or(obj, "process", ""),
+        "description": str_or(obj, "description", ""),
+        "dir": str_or(obj, "dir", ""),
+        "note": str_or(obj, "note", ""),
+        "launch": str_or(obj, "launch", ""),
+        "window_hint": str_or(obj, "window_hint", ""),
+        "cooldown_secs": int_or(obj, "cooldown_secs", 120),
+        "dispatch_steps": steps_from(obj),
+        "await_timeout_secs": int_or(obj, "await_timeout_secs", 120),
+        "timeout_action": str_or(obj, "timeout_action", "detect_confirm"),
+        "timeout_script": str_or(obj, "timeout_script", ""),
+        "auto_approve": str_or(obj, "auto_approve", ""),
+        "auto_approve_script": str_or(obj, "auto_approve_script", ""),
+        "confirm_keywords": keywords_from(obj),
+    })
+}
+
+/// 段内整数字段（缺省 = 给定默认）
+fn int_or(obj: &toml::Table, key: &str, default: i64) -> i64 {
+    obj.get(key)
+        .and_then(|v| v.as_integer())
+        .unwrap_or(default)
+}
+
+/// dispatch_steps（array of tables）→ JSON 数组（每项 {tool, with}）
+fn steps_from(obj: &toml::Table) -> Vec<serde_json::Value> {
+    obj.get("dispatch_steps")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| serde_json::to_value(s).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// confirm_keywords（string array）→ JSON 数组
+fn keywords_from(obj: &toml::Table) -> Vec<String> {
+    obj.get("confirm_keywords")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -236,40 +302,131 @@ fn toml_lit(s: &str) -> String {
     format!("{}", toml::Value::String(s.to_string()))
 }
 
-/// 生成目标段文本（字段顺序固定；空字段省略行）
-fn build_agent_block(
-    key: &str,
-    type_: &str,
-    mode: &str,
-    display_name: &str,
-    icon: &str,
-    open: &str,
-    args: &str,
-    process: &str,
-    description: &str,
-    note: &str,
-) -> String {
+/// 段字段（含 v8 交互固化字段）。写回时目标段由模板重生成（行内注释不保留）。
+struct AgentFields {
+    type_: String,
+    mode: String,
+    display_name: String,
+    icon: String,
+    open: String,
+    args: String,
+    process: String,
+    description: String,
+    note: String,
+    /// Agent 工作目录（用户个性化配置；Leader 查找/定位用）
+    dir: String,
+    launch: String,
+    window_hint: String,
+    cooldown_secs: i64,
+    dispatch_steps: Vec<serde_json::Value>,
+    await_timeout_secs: i64,
+    timeout_action: String,
+    timeout_script: String,
+    auto_approve: String,
+    auto_approve_script: String,
+    confirm_keywords: Vec<String>,
+}
+
+/// 生成目标段文本（字段顺序固定；空字段省略行）。
+/// ⚠️ TOML 语义：`[[key.dispatch_steps]]`（array-of-tables）之后的键值会归属到
+/// 最后一个数组元素而非父表 —— 因此父级字段必须全部排在 [[...]] 块之前。
+fn build_agent_block(key: &str, f: &AgentFields) -> String {
     let mut s = format!("[{key}]\n");
-    s.push_str(&format!("type = {}\n", toml_lit(type_)));
-    s.push_str(&format!("mode = {}\n", toml_lit(mode)));
-    s.push_str(&format!("display_name = {}\n", toml_lit(display_name)));
-    s.push_str(&format!("icon = {}\n", toml_lit(icon)));
-    if !open.is_empty() {
-        s.push_str(&format!("open = {}\n", toml_lit(open)));
+    s.push_str(&format!("type = {}\n", toml_lit(&f.type_)));
+    s.push_str(&format!("mode = {}\n", toml_lit(&f.mode)));
+    s.push_str(&format!("display_name = {}\n", toml_lit(&f.display_name)));
+    s.push_str(&format!("icon = {}\n", toml_lit(&f.icon)));
+    if !f.open.is_empty() {
+        s.push_str(&format!("open = {}\n", toml_lit(&f.open)));
     }
-    if !args.is_empty() {
-        s.push_str(&format!("args = {}\n", toml_lit(args)));
+    if !f.args.is_empty() {
+        s.push_str(&format!("args = {}\n", toml_lit(&f.args)));
     }
-    if !process.is_empty() {
-        s.push_str(&format!("process = {}\n", toml_lit(process)));
+    if !f.process.is_empty() {
+        s.push_str(&format!("process = {}\n", toml_lit(&f.process)));
     }
-    if !description.is_empty() {
-        s.push_str(&format!("description = {}\n", toml_lit(description)));
+    if !f.description.is_empty() {
+        s.push_str(&format!("description = {}\n", toml_lit(&f.description)));
     }
-    if !note.is_empty() {
-        s.push_str(&format!("note = {}\n", toml_lit(note)));
+    if !f.dir.is_empty() {
+        s.push_str(&format!("dir = {}\n", toml_lit(&f.dir)));
+    }
+    if !f.note.is_empty() {
+        s.push_str(&format!("note = {}\n", toml_lit(&f.note)));
+    }
+    // ── v8 交互固化字段（终端型推荐配置；空字段省略行）──
+    if !f.launch.is_empty() {
+        s.push_str(&format!("launch = {}\n", toml_lit(&f.launch)));
+    }
+    if !f.window_hint.is_empty() {
+        s.push_str(&format!("window_hint = {}\n", toml_lit(&f.window_hint)));
+    }
+    if f.cooldown_secs != 0 {
+        s.push_str(&format!("cooldown_secs = {}\n", f.cooldown_secs));
+    }
+    if f.await_timeout_secs != 0 {
+        s.push_str(&format!("await_timeout_secs = {}\n", f.await_timeout_secs));
+    }
+    if !f.timeout_action.is_empty() {
+        s.push_str(&format!("timeout_action = {}\n", toml_lit(&f.timeout_action)));
+    }
+    if !f.timeout_script.is_empty() {
+        s.push_str(&format!("timeout_script = {}\n", toml_lit(&f.timeout_script)));
+    }
+    if !f.auto_approve.is_empty() {
+        s.push_str(&format!("auto_approve = {}\n", toml_lit(&f.auto_approve)));
+    }
+    if !f.auto_approve_script.is_empty() {
+        s.push_str(&format!(
+            "auto_approve_script = {}\n",
+            toml_lit(&f.auto_approve_script)
+        ));
+    }
+    if !f.confirm_keywords.is_empty() {
+        let arr: Vec<String> = f.confirm_keywords.iter().map(|k| toml_lit(k)).collect();
+        s.push_str(&format!("confirm_keywords = [{}]\n", arr.join(", ")));
+    }
+    // array-of-tables 块放最后：其后的键值会归属数组元素
+    for step in &f.dispatch_steps {
+        s.push_str(&format!("[[{key}.dispatch_steps]]\n"));
+        if let Some(tool) = step.get("tool").and_then(|v| v.as_str()) {
+            s.push_str(&format!("tool = {}\n", toml_lit(tool)));
+        }
+        if let Some(with) = step.get("with") {
+            s.push_str(&format!("with = {}\n", toml_inline_table(with)));
+        }
+        s.push('\n');
     }
     s
+}
+
+/// JSON 对象 → TOML 内联表（with = { hwnd = "{hwnd}", width = 1200 }）
+fn toml_inline_table(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(map) => {
+            let items: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{k} = {}", toml_inline_value(v)))
+                .collect();
+            format!("{{ {} }}", items.join(", "))
+        }
+        other => toml_inline_value(other),
+    }
+}
+
+/// JSON 标量 → TOML 内联值（字符串转义；数值/布尔原样；数组 [a, b]）
+fn toml_inline_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => toml_lit(s),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(toml_inline_value).collect();
+            format!("[{}]", items.join(", "))
+        }
+        serde_json::Value::Null => "".to_string(),
+        serde_json::Value::Object(_) => toml_inline_table(value),
+    }
 }
 
 /// 原子写（tmp + rename），避免半写残留
@@ -281,29 +438,80 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// 自定义头像本地化（v8.2 用户反馈：原图片移动后头像失效）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 应用图标库目录：%APPDATA%/nuphus/icons/
+fn app_icons_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("nuphus")
+        .join("icons")
+}
+
+/// icon 值是否为文件系统路径（对齐前端 isIconPath：盘符/UNC/带扩展名）
+fn icon_is_file_path(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    if s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
+        return true;
+    }
+    s.starts_with("\\\\")
+}
+
+/// icon 路径是否已在本地图标库内（避免重复拷贝）
+fn icon_in_app_store(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    lower.contains("\\icons\\") || lower.contains("/icons/")
+}
+
+/// 把外部图片拷贝进应用图标库，返回本地位。
+/// 命名 {key}{ext}（同 key 覆盖旧头像）；扩展名从源文件继承，缺省 .png。
+fn localize_icon(key: &str, src: &str) -> Result<String, String> {
+    let src_path = Path::new(src);
+    if !src_path.is_file() {
+        return Err(format!("图标源文件不存在: {src}"));
+    }
+    let ext = src_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_else(|| ".png".to_string());
+    let dir = app_icons_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建图标目录失败: {e}"))?;
+    let dest = dir.join(format!("{key}{ext}"));
+    // 源==目标（已本地化过）直接返回
+    if dest == src_path {
+        return Ok(src.to_string());
+    }
+    std::fs::copy(src_path, &dest).map_err(|e| format!("拷贝图标失败: {e}"))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// AgentFields 图标字段本地化：仅处理「外部文件路径」类 icon；
+/// auto / lucide 名 / 已在库内的路径原样保留；拷贝失败降级保留原路径并 warn。
+fn localize_icon_field(key: &str, mut f: AgentFields) -> AgentFields {
+    if !icon_is_file_path(&f.icon) || icon_in_app_store(&f.icon) {
+        return f;
+    }
+    match localize_icon(key, &f.icon) {
+        Ok(local) => f.icon = local,
+        Err(e) => tracing::warn!("[team] {key} 图标本地化失败（保留原路径）: {e}"),
+    }
+    f
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // 增删
 // ────────────────────────────────────────────────────────────────────────────
 
-/// 从 JSON 提取段字段（默认值补全）；返回 (type_, mode, display_name, icon,
-/// open, args, process, description, note)。
+/// 从 JSON 提取段字段（默认值补全）。
 fn extract_agent_fields(
     agent: &serde_json::Value,
     key: &str,
     note_fallback: &str,
-) -> Result<
-    (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-    ),
-    String,
-> {
+) -> Result<AgentFields, String> {
     let mode = match agent.get("mode").and_then(|v| v.as_str()) {
         Some(m) if MODES.contains(&m) => m.to_string(),
         Some(other) => {
@@ -332,17 +540,52 @@ fn extract_agent_fields(
         Some(n) => n.to_string(),
         None => note_fallback.to_string(), // 更新时保留原 note
     };
-    Ok((
-        mode_to_type(&mode).to_string(),
+    let get_i64 = |k: &str, default: i64| -> i64 {
+        agent
+            .get(k)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(default)
+    };
+    let get_steps = |k: &str| -> Vec<serde_json::Value> {
+        agent
+            .get(k)
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
+    let get_keywords = |k: &str| -> Vec<String> {
+        agent
+            .get(k)
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Ok(AgentFields {
+        type_: mode_to_type(&mode).to_string(),
         mode,
         display_name,
         icon,
-        get("open"),
-        get("args"),
-        get("process"),
-        get("description"),
+        open: get("open"),
+        args: get("args"),
+        process: get("process"),
+        description: get("description"),
         note,
-    ))
+        dir: get("dir"),
+        launch: get("launch"),
+        window_hint: get("window_hint"),
+        cooldown_secs: get_i64("cooldown_secs", 120),
+        dispatch_steps: get_steps("dispatch_steps"),
+        await_timeout_secs: get_i64("await_timeout_secs", 120),
+        timeout_action: get("timeout_action"),
+        timeout_script: get("timeout_script"),
+        auto_approve: get("auto_approve"),
+        auto_approve_script: get("auto_approve_script"),
+        confirm_keywords: get_keywords("confirm_keywords"),
+    })
 }
 
 /// upsert 一个 agent 段（按 key 新增/更新）。返回是否为新 agent。
@@ -382,21 +625,11 @@ fn upsert_external_agent_at(plugin_dir: &Path, agent: &serde_json::Value) -> Res
             .and_then(|v| v.as_str())
             .unwrap_or("")
     };
-    let (type_, mode, display_name, icon, open, args, process, description, note) =
-        extract_agent_fields(agent, key, note_fallback)?;
-
-    let new_text = build_agent_block(
-        key,
-        &type_,
-        &mode,
-        &display_name,
-        &icon,
-        &open,
-        &args,
-        &process,
-        &description,
-        &note,
-    );
+    let fields = extract_agent_fields(agent, key, note_fallback)?;
+    // 图标本地化：自定义头像若为外部绝对路径，拷贝进应用图标库后改写为本地位。
+    // 根治「原图片移动/删除 → 头像失效」的用户反馈；'auto' 与 lucide 名不受影响。
+    let fields = localize_icon_field(key, fields);
+    let new_text = build_agent_block(key, &fields);
     if is_new {
         doc.blocks.push(AgentBlock {
             key: key.to_string(),
@@ -805,5 +1038,87 @@ note = "Google Gemini 官网问答版，Chrome 标签页，窗口标题 'Google 
         let list = list_external_agents_at(&root).unwrap();
         assert_eq!(list.len(), 4); // web_agent + 原 3 段 - gemini
         assert!(!list.iter().any(|a| a["key"] == "gemini"));
+    }
+
+    // ── v8 交互固化字段（launch/window_hint/cooldown_secs/dispatch_steps/...）──
+
+    #[test]
+    fn test_v8_fields_upsert_and_list_roundtrip() {
+        let root = tmp_root("v8fields");
+        std::fs::write(root.join("team.toml"), SAMPLE).unwrap();
+        let agent = serde_json::json!({
+            "key": "opencode",
+            "display_name": "OpenCode",
+            "mode": "embedded",
+            "launch": "wt.exe -p PowerShell opencode",
+            "window_hint": "opencode",
+            "cooldown_secs": 60,
+            "dispatch_steps": [
+                { "tool": "desktop_window_activate", "with": { "hwnd": "{hwnd}" } },
+                { "tool": "desktop_clipboard_write", "with": { "text": "{message}" } },
+                { "tool": "desktop_input", "with": { "hwnd": "{hwnd}", "mode": "hotkey", "keys": ["ctrl", "v"], "send": "none" } },
+                { "tool": "__sleep", "with": { "ms": 300 } }
+            ],
+            "await_timeout_secs": 90,
+            "timeout_action": "detect_confirm",
+            "auto_approve": "yes",
+            "confirm_keywords": ["allow", "confirm", "proceed"]
+        });
+        assert!(!upsert_external_agent_at(&root, &agent).unwrap()); // 更新既有段
+        let list = list_external_agents_at(&root).unwrap();
+        let oc = list.iter().find(|a| a["key"] == "opencode").unwrap();
+        assert_eq!(oc["launch"], "wt.exe -p PowerShell opencode");
+        assert_eq!(oc["window_hint"], "opencode");
+        assert_eq!(oc["cooldown_secs"], 60);
+        assert_eq!(oc["await_timeout_secs"], 90);
+        assert_eq!(oc["timeout_action"], "detect_confirm");
+        assert_eq!(oc["auto_approve"], "yes");
+        assert_eq!(oc["confirm_keywords"][0], "allow");
+        let steps = oc["dispatch_steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 4);
+        assert_eq!(steps[0]["tool"], "desktop_window_activate");
+        assert_eq!(steps[0]["with"]["hwnd"], "{hwnd}");
+        assert_eq!(steps[2]["with"]["keys"][0], "ctrl");
+        assert_eq!(steps[3]["tool"], "__sleep");
+
+        // 落盘文本：array-of-tables + 内联 with + 关键字数组
+        let content = std::fs::read_to_string(root.join("team.toml")).unwrap();
+        eprintln!("=== DEBUG team.toml ===\n{content}\n=== END ===");
+        assert!(content.contains("[[opencode.dispatch_steps]]"));
+        assert!(content.contains("with = { hwnd = \"{hwnd}\" }"));
+        assert!(content.contains("keys = [\"ctrl\", \"v\"]"));
+        assert!(content.contains("confirm_keywords = [\"allow\", \"confirm\", \"proceed\"]"));
+        assert!(content.contains("launch = \"wt.exe -p PowerShell opencode\""));
+
+        // 写回后文件必须仍可解析（防损坏）
+        toml::from_str::<toml::Value>(&content).expect("写回后的 team.toml 必须可解析");
+    }
+
+    #[test]
+    fn test_v8_fields_defaults_on_absent() {
+        let root = tmp_root("v8defaults");
+        std::fs::write(root.join("team.toml"), SAMPLE).unwrap();
+        let list = list_external_agents_at(&root).unwrap();
+        let cc = list.iter().find(|a| a["key"] == "claude-code").unwrap();
+        assert_eq!(cc["launch"], "");
+        assert_eq!(cc["window_hint"], "");
+        assert_eq!(cc["cooldown_secs"], 120);
+        assert_eq!(cc["await_timeout_secs"], 120);
+        assert_eq!(cc["timeout_action"], "detect_confirm");
+        assert!(cc["dispatch_steps"].as_array().unwrap().is_empty());
+        assert!(cc["confirm_keywords"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_agent_config_reads_single_agent() {
+        let root = tmp_root("agentcfg");
+        std::fs::write(root.join("team.toml"), SAMPLE).unwrap();
+        // 未登记 → None
+        assert!(agent_config_at(&root, "ghost").unwrap().is_none());
+        // 已登记 → 扁平字段
+        let cfg = agent_config_at(&root, "opencode").unwrap().unwrap();
+        assert_eq!(cfg["key"], "opencode");
+        assert_eq!(cfg["mode"], "embedded");
+        assert_eq!(cfg["timeout_action"], "detect_confirm");
     }
 }

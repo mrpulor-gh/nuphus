@@ -981,6 +981,49 @@ pub async fn submit_user_message<R: tauri::Runtime>(
 }
 
 // ============================================================================
+// try_spawn_leader_round — 门铃 done/blocked 自动唤醒（方案 v8 六章）
+// ============================================================================
+
+/// 门铃收到 done/blocked 后自动唤醒 Leader 开一轮处理。
+///
+/// 语义（复用 send_message_cmd 的受理路径与 busy 互斥）：
+/// - busy 预检（非权威）：Leader 忙碌 → false，事件留队列，轮次边界自然消化（正确行为）；
+/// - 权威互斥由 submit_user_message 内部 `busy.swap(true)` 原子判定 —— 竞态窗口内
+///   被并发用户消息抢走时，本任务在 submit 内被拒绝，事件照常留队列，无正确性问题；
+/// - spawn 的受理任务与 send_message_cmd 完全同路径（含事件 drain 注入）。
+pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> bool {
+    let state = app.state::<AppState>();
+    if state.busy.load(Ordering::SeqCst) {
+        tracing::info!("[Handoff] Leader 忙碌，done/blocked 事件留队列（轮次边界自然消化）");
+        return false;
+    }
+    let app2 = app.clone();
+    tokio::spawn(async move {
+        let st = app2.state::<AppState>();
+        match submit_user_message(
+            app2.clone(),
+            st.inner(),
+            message,
+            None,  // images
+            None,  // history
+            None,  // relation
+            None,  // mode
+            None,  // references
+            None,  // send_id
+            Some("handoff".to_string()), // source 标记：门铃自动唤醒
+        )
+        .await
+        {
+            Ok(_) => tracing::info!("[Handoff] done/blocked 自动唤醒已受理"),
+            Err(e) => {
+                tracing::warn!("[Handoff] 自动唤醒未受理（事件留队列，轮次边界消化）: {e}")
+            }
+        }
+    });
+    true
+}
+
+// ============================================================================
 // execute_session_refine — thin wrapper delegating to refine module
 // ============================================================================
 

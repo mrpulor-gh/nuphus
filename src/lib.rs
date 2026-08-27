@@ -17,6 +17,7 @@ pub mod cookies;
 pub mod custom_agents;
 pub mod desktop;
 pub mod embed;
+pub mod ext_agent_bridge;
 pub mod filter;
 pub mod handoff;
 pub mod hooks;

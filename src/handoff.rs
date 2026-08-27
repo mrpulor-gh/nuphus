@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// 门铃默认端口 —— 固定值便于外部 Agent 的 brief 模板复用；
 ///  bind 冲突时由 server 侧退化为 0（OS 分配），实际端口经 set_bound_port() 回写。
@@ -54,7 +55,7 @@ impl HandoffStatus {
         }
     }
 
-    fn tag(self) -> &'static str {
+    pub fn tag(self) -> &'static str {
         match self {
             Self::Progress => "progress",
             Self::Ready => "ready",
@@ -206,6 +207,21 @@ impl HandoffState {
         out.extend(progress);
         out
     }
+
+    /// 窥视第一条匹配 id 前缀的事件（不消费 —— 事件仍留给轮次边界注入 Leader 上下文）。
+    /// agent_dispatch 的「await 第一声拉铃」用：ready/progress/done/blocked 均算拉铃。
+    fn peek_first_ringer(&self, prefix: &str) -> Option<HandoffEvent> {
+        self.terminal_events
+            .iter()
+            .find(|e| e.id.starts_with(prefix))
+            .cloned()
+            .or_else(|| {
+                self.progress_events
+                    .values()
+                    .find(|e| e.id.starts_with(prefix))
+                    .cloned()
+            })
+    }
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -220,6 +236,16 @@ fn truncate_chars(s: &str, max: usize) -> String {
 
 static STORE: OnceLock<Mutex<HandoffState>> = OnceLock::new();
 
+/// 门铃唤醒信号：push_event 成功后 notify_one（同步安全，axum handler 直接调用）。
+/// 用 notify_one 而非 notify_waiters：notify_one 在无等待者时存储 permit，
+/// 后续 waiter 的 notified() 立即完成 —— 配合 wait_first_ringer 的 check-loop
+/// 消除「push 发生在 check 之后、注册 notified 之前」的丢唤醒窗口。
+static RINGER: OnceLock<tokio::sync::Notify> = OnceLock::new();
+
+fn ringer() -> &'static tokio::sync::Notify {
+    RINGER.get_or_init(|| tokio::sync::Notify::new())
+}
+
 fn with_state<R>(f: impl FnOnce(&mut HandoffState) -> R) -> R {
     let m = STORE.get_or_init(|| Mutex::new(HandoffState::new()));
     // 中毒恢复：持锁 panic 不应让门铃永久不可用
@@ -232,14 +258,19 @@ pub fn verify_token(token: &str) -> bool {
     with_state(|s| s.verify_token(token))
 }
 
-/// 事件入队（src-tauri axum handler 调用）；Err = 参数非法 → 400
+/// 事件入队（src-tauri axum handler 调用）；Err = 参数非法 → 400。
+/// 入队成功后触发门铃唤醒信号（notify_one，同步安全），供 wait_first_ringer 等待。
 pub fn push_event(
     id: &str,
     status: &str,
     summary: &str,
     report_path: Option<String>,
 ) -> Result<(), String> {
-    with_state(|s| s.push_event(id, status, summary, report_path))
+    let r = with_state(|s| s.push_event(id, status, summary, report_path));
+    if r.is_ok() {
+        ringer().notify_one();
+    }
+    r
 }
 
 /// server 成功监听后回写实际端口（src-tauri 调用）
@@ -255,6 +286,35 @@ pub fn doorbell_info() -> DoorbellInfo {
 /// 轮次边界被动 drain（react_loop 调用）。无事件时返回空 Vec，零日志零开销。
 pub fn drain_for_injection() -> Vec<HandoffEvent> {
     with_state(|s| s.drain_for_injection())
+}
+
+/// 等待外部 Agent 的第一声拉铃（id 前缀匹配；ready/progress/done/blocked 均算拉铃）。
+/// agent_dispatch 的 await 短确认用：收到第一声即返回（事件不消费，仍留给轮次边界注入）。
+///
+/// 丢唤醒防护（check-loop 模式）：
+/// 1. 先查状态 → 命中即返回；
+/// 2. 注册 notified 之后再查一次状态（关闭「push 在查状态之后、注册之前」的窗口）；
+/// 3. 等待（带剩余超时）；超时后回到顶部做最终状态检查，确认无事件才返回 None。
+pub async fn wait_first_ringer(prefix: &str, timeout: Duration) -> Option<HandoffEvent> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Some(ev) = with_state(|s| s.peek_first_ringer(prefix)) {
+            return Some(ev);
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let notified = ringer().notified();
+        tokio::pin!(notified);
+        // 注册后再查一次：关闭竞态窗口（notify_one 会为这段窗口内的 push 存 permit）
+        if let Some(ev) = with_state(|s| s.peek_first_ringer(prefix)) {
+            return Some(ev);
+        }
+        if tokio::time::timeout(remaining, &mut notified).await.is_err() {
+            continue; // 超时 → 回到顶部做最终状态检查
+        }
+    }
 }
 
 /// 格式化为注入 Leader 上下文的系统提醒段。
@@ -279,6 +339,7 @@ pub fn format_doorbell_section(events: &[HandoffEvent]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn ev(state: &mut HandoffState, id: &str, status: &str, summary: &str) {
         state.push_event(id, status, summary, None).unwrap();
@@ -394,5 +455,65 @@ mod tests {
         assert!(section.contains("未验证"));
         assert!(section.contains("[done] 0728-01"));
         assert!(section.contains("（报告：.nuphus/handoff/0728-01-report.md）"));
+    }
+
+    // ── wait_first_ringer（agent_dispatch await 短确认）──
+    // 注意：这些用例走全局 STORE（wait_first_ringer 依赖全局 RINGER 信号），
+    // 并行测试会互相 drain 竞争 → 用 #[serial] 串行化；id 前缀用 wait-test- 避免歧义。
+
+    #[test]
+    #[serial]
+    fn test_waiter_returns_immediately_when_event_already_present() {
+        push_event("wait-test-present", "progress", "就位", None).unwrap();
+        let hit = tokio_test::block_on(wait_first_ringer(
+            "wait-test-present",
+            Duration::from_secs(2),
+        ))
+        .expect("已存在的事件应立即可见");
+        assert_eq!(hit.status, HandoffStatus::Progress);
+        // 事件不消费：仍留在队列中供轮次边界注入
+        let drained = drain_for_injection();
+        assert!(drained.iter().any(|e| e.id == "wait-test-present"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_waiter_wakes_on_async_push() {
+        let hit = tokio_test::block_on(async {
+            let prefix = "wait-test-async".to_string();
+            // 模拟外部 Agent 延迟拉铃
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                push_event("wait-test-async", "done", "完成", None).unwrap();
+            });
+            wait_first_ringer(&prefix, Duration::from_secs(2)).await
+        })
+        .expect("push 应唤醒 waiter");
+        assert_eq!(hit.id, "wait-test-async");
+        assert_eq!(hit.status, HandoffStatus::Done);
+        let _ = drain_for_injection();
+    }
+
+    #[test]
+    #[serial]
+    fn test_waiter_timeout_returns_none() {
+        let hit = tokio_test::block_on(wait_first_ringer(
+            "wait-test-nothing",
+            Duration::from_millis(80),
+        ));
+        assert!(hit.is_none(), "无事件应超时返回 None");
+    }
+
+    #[test]
+    #[serial]
+    fn test_waiter_prefix_matches_terminal_events() {
+        push_event("wait-test-done", "blocked", "等待确认", None).unwrap();
+        let hit = tokio_test::block_on(wait_first_ringer(
+            "wait-test-done",
+            Duration::from_secs(2),
+        ))
+        .expect("blocked 终态事件应算第一声拉铃");
+        assert_eq!(hit.status, HandoffStatus::Blocked);
+        let _ = drain_for_injection();
     }
 }

@@ -8,6 +8,7 @@
 //! 不影响应用启动）。serve 返回（极端情况）同样只记 warn。
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::commands::config::handoff;
 use axum::{
@@ -17,6 +18,10 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
+use tauri::AppHandle;
+
+/// done/blocked 自动唤醒用 AppHandle（模式对齐 render/commands.rs 的 APP 静态）
+static APP: OnceLock<AppHandle> = OnceLock::new();
 
 /// POST /handoff 请求体
 #[derive(Deserialize)]
@@ -70,6 +75,19 @@ async fn post_handoff(headers: HeaderMap, Json(payload): Json<HandoffPayload>) -
                 &payload.summary,
                 report_path.as_deref(),
             );
+            // 阶段 1（方案 v8 六章）：done/blocked 到达 → Leader 空闲时自动开一轮处理。
+            // busy 预检在 try_spawn_leader_round 内；忙碌 → 事件留队列，轮次边界自然消化。
+            if payload.status == "done" || payload.status == "blocked" {
+                if let Some(app) = APP.get() {
+                    let verb = if payload.status == "done" { "已完成" } else { "受阻" };
+                    let report = report_path.as_deref().unwrap_or("（未提供）");
+                    let message = format!(
+                        "外部任务 {} {}，summary: {}，验收产物 report_path: {}",
+                        payload.id, verb, payload.summary, report
+                    );
+                    crate::commands::process::try_spawn_leader_round(app.clone(), message);
+                }
+            }
             StatusCode::OK
         }
         // 参数非法（status 非枚举值 / id 或 summary 为空）→ 400
@@ -162,7 +180,8 @@ fn create_router() -> Router {
 
 /// 在 tauri async runtime 上启动门铃 server。
 /// 默认端口冲突 → 退化绑 0 由 OS 分配；再失败 → warn 后优雅降级。
-pub fn spawn() {
+pub fn spawn(app: AppHandle) {
+    let _ = APP.set(app);
     tauri::async_runtime::spawn(async {
         let app = create_router();
 
@@ -419,11 +438,14 @@ mod tests {
         // 产物子目录就绪
         assert!(dir.join("projects").join("web-redesign").is_dir());
 
-        // 契约含 done 模板 + 门铃事件 id + 令牌头（门铃语义=交付上报，不含 ready）
-        assert!(contract.contains("\"status\":\"done\""));
+        // 契约含 CLI 上报示例（done/blocked）+ 门铃事件 id + 令牌行（门铃语义=交付上报，不含 ready）
+        assert!(contract.contains("nuphus task done --id claude-code::task-001"));
+        assert!(contract.contains("nuphus task blocked --id claude-code::task-001"));
+        assert!(!contract.contains("curl"), "契约不得再宣传 curl 上报");
+        assert!(!contract.contains("\"status\":\"done\""));
         assert!(!contract.contains("\"status\":\"ready\""));
         assert!(contract.contains("claude-code::task-001"));
-        assert!(contract.contains("X-Handoff-Token"));
+        assert!(contract.contains("令牌:"));
 
         // 幂等：二次派发不破坏既有结构
         let contract2 = dispatch_at_root(&root, &payload).unwrap();

@@ -8,6 +8,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 mod commands;
 mod emitter;
+mod ext_agent;
 mod handoff_server;
 mod mobile_server;
 mod models;
@@ -173,6 +174,7 @@ fn main() {
             commands::agent_status,
             commands::list_agent_statuses,
             commands::list_agent_deliverables,
+            commands::delete_agent_deliverable,
             commands::list_shelf_sessions,
             commands::switch_session,
             commands::new_chat_session_cmd,
@@ -352,6 +354,10 @@ fn main() {
             // nuphus lib render bridge — same injection pattern as video.
             crate::render::commands::init_bridge(app.handle());
 
+            // Register agent_dispatch orchestration into the nuphus lib bridge
+            // (fn-pointer injection — same pattern as video/render).
+            crate::ext_agent::init_bridge(app.handle());
+
             // Pre-create capture overlay window (hidden) to eliminate white flash on first use
             if let Err(e) = commands::toolbar::ensure_overlay(app.handle()) {
                 tracing::warn!("Failed to pre-create overlay window: {e}");
@@ -402,6 +408,18 @@ fn main() {
             {
                 let state = app.state::<crate::state::AppState>();
                 commands::config::load_llm_config_from_disk(&state);
+            }
+
+            // ── 启动后台校准：OpenRouter 权威库 → 激活模型上下文窗口 ──
+            // stale-while-revalidate：读缓存判断 TTL → 过期/缺失则后台拉取更新
+            // 缓存 → lookup 当前激活 provider+model → 权威窗口与运行时不同则校准
+            // runtime.model_context_window 并 emit SessionInfo 让前端刷新。
+            // 全程异步、静默失败（warn 日志），启动同步路径零网络等待。
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::config::llm::startup_model_calibration(&app_handle).await;
+                });
             }
 
             // Update splash status
@@ -496,7 +514,7 @@ fn main() {
             // ── 外部 Agent 交接门铃（HTTP server，仅 127.0.0.1）──
             // 事件驱动：POST 到达即入 HandoffStore，轮次边界由 react_loop 被动 drain，无轮询。
             // 启动失败内部优雅降级（warn 日志），不阻塞应用启动。
-            crate::handoff_server::spawn();
+            crate::handoff_server::spawn(app.handle().clone());
 
             // ── Session Shelf 预热：旧镜像迁移 → SQLite 快照装回内存展示台，rail 列表立即可用 ──
             {
@@ -639,12 +657,17 @@ fn main() {
                         "quit" => {
                             // 退出前保存当前 session（元数据行 + Shelf 磁盘镜像）
                             if let Some(state) = app.try_state::<crate::state::AppState>() {
+                                // 快照保护名单先于 runtime 锁收集，避免嵌套加锁
+                                let protected =
+                                    crate::commands::process::shelf::protected_snapshot_ids(
+                                        state.inner(),
+                                    );
                                 if let Ok(guard) = state.runtime.lock() {
                                     if let Some(rt) = guard.leader_agent.as_ref() {
-                                        crate::commands::process::shelf::persist_and_mirror("leader", rt.session());
+                                        crate::commands::process::shelf::persist_and_mirror("leader", rt.session(), &protected);
                                     }
                                     if let Some(wa) = guard.workflow_agent.as_ref() {
-                                        crate::commands::process::shelf::persist_and_mirror("workflow", wa.session());
+                                        crate::commands::process::shelf::persist_and_mirror("workflow", wa.session(), &protected);
                                     }
                                 }
                             }
@@ -691,17 +714,22 @@ fn main() {
                     // （用户可能此后不再经托盘 quit，元数据行+镜像必须此刻落盘）
                     api.prevent_close();
                     if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
+                        // 快照保护名单先于 runtime 锁收集，避免嵌套加锁
+                        let protected =
+                            crate::commands::process::shelf::protected_snapshot_ids(state.inner());
                         if let Ok(guard) = state.runtime.lock() {
                             if let Some(rt) = guard.leader_agent.as_ref() {
                                 crate::commands::process::shelf::persist_and_mirror(
                                     "leader",
                                     rt.session(),
+                                    &protected,
                                 );
                             }
                             if let Some(wa) = guard.workflow_agent.as_ref() {
                                 crate::commands::process::shelf::persist_and_mirror(
                                     "workflow",
                                     wa.session(),
+                                    &protected,
                                 );
                             }
                         }
