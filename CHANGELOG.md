@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-27
+
 ### Added
 - 开源准备：LICENSE（Apache-2.0）、.gitignore、CONTRIBUTING.md、CHANGELOG.md
 - Cargo.toml 元数据补全（repository、homepage、documentation）
@@ -25,7 +27,13 @@
 - SessionDivider 移除冗余流式标签（无样式 + 信息增量为零）
 - 模型切换弹窗增加按压态 + loading spinner 反馈
 - 语言选择页面修复默认选中态不显示问题
-- 启动时 LLM 配置未及时加载：`main.rs` 增加 `eager-load` 调用，确保 `send_message_cmd` 启动即可找到 API Key 与 providers.toml（解决"启动后第一次对话报模型未配置"）
+- 启动时 LLM 配置未及时加载：`main.rs` 增加 `eager-load` 调用，确保 `send_message_cmd` 启动即可找到 API Key 与 providers.toml（解决"启动后第一次对话��模型未配置"）
+- refine：提炼期间置位 busy——根除提炼前后对话窗口强刷与会话切换竞态
+- HUD：agent_dispatch 投递完成后步数指示不再永远转动（编排结束发终态事件）
+- 输入框 mode 锁切后端权威源：界面刷新/热更新后执行中不再误解锁
+- 外部 Agent 头像单一实现：状态栏/弹窗/设置 chips/编辑区四处渲染不一致与尺寸偏小一并修正
+- shelf：快照保护名单防误杀，重启后可恢复会话不再锐减
+- 终止确认弹窗 portal 到 body，修复带 transform 祖先下错位
 
 ### Changed
 - 调试文件从 git 追踪中移除（nuphus-debug.log、debug_req_body.json）
@@ -34,6 +42,15 @@
 - 内部设计文档从 git 追踪中移除（docs/archive/）
 - **模型配置统一架构重构**：`AuxiliaryModels`(16 字段) → `Capabilities`(3 字段 vision/stt/tts)；所有 LLM 客户端统一通过 `ClientFactory` + `ModelRegistry` 创建；删除角色级（leader/exec/workflow/chat）模型路由，移除 `src-tauri/src/utils.rs::create_llm_client`
 - **Anthropic HTTP 传输层合并**：Anthropic Provider 的 HTTP 调用统一走 `ChatCompletionsTransport`；Anthropic 消息格式 parser 保留为独立模块（`transports/anthropic/`），不再需要独立传输层
+- license 变更为 Apache-2.0
+
+### Security
+- 移除 CI 注释中的 VPS IP（基础设施地址不入仓库）
+
+### Added（0.1.9 功能）
+- 外部 Agent 通路：agent_dispatch 单次派发编排（上板 → 窗口捕获 → 确定性投递 → 门铃异步回传）与 nuphus-task 完工上报 CLI
+- 外部 Agent 交付物管理：弹窗查看与删除（范围校验 + canonicalize 前缀断言双防线）
+- 模型能力 OpenRouter 聚合权威源：上下文窗口/定价贯通桌面/手机/工作流三端
 
 
 ## [0.1.0] - 2026-06
