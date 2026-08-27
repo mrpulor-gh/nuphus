@@ -25,7 +25,9 @@ pub struct AppState {
     /// 后端权威当前运行模式（"leader" | "workflow" | "custom"），chat_history 按此选择 agent 会话。
     /// 由 set_mode_impl（显式切换）与 submit_user_message（发送确认）维护；默认 "leader"。
     pub current_mode: Arc<std::sync::RwLock<String>>,
-    pub busy: AtomicBool,
+    /// 执行中标志（终止按钮权威源 / guard_switch 守卫）。Arc 化：refine 编排需在
+    /// state 被 move 进子编排前 clone 出恢复句柄（Drop guard 恢复原值，嵌套安全）。
+    pub busy: Arc<AtomicBool>,
     pub last_process_time: AtomicI64,
     pub last_completion_time: AtomicI64,
     pub event_seq: Arc<AtomicU64>,
@@ -181,7 +183,7 @@ impl Default for AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             pause_flag: Arc::new(AtomicBool::new(false)),
             current_mode: Arc::new(std::sync::RwLock::new("leader".to_string())),
-            busy: AtomicBool::new(false),
+            busy: Arc::new(AtomicBool::new(false)),
             last_process_time: AtomicI64::new(0),
             last_completion_time: AtomicI64::new(0),
             event_seq: Arc::new(AtomicU64::new(0)),

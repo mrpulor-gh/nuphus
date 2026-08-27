@@ -22,12 +22,12 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     // 「提炼前后对话窗口强制刷新」回归）；② refine 期间可切换会话，与 take/put 并发
     // 竞态。swap 记录旧值，Drop 恢复——forced 路径（主循环内 busy 本为 true）嵌套安全。
     let prev_busy = state.busy.swap(true, Ordering::SeqCst);
-    struct RefineGuard<'a> {
+    struct RefineGuard {
         flag: Arc<AtomicBool>,
-        busy: &'a AtomicBool,
+        busy: Arc<AtomicBool>,
         prev_busy: bool,
     }
-    impl Drop for RefineGuard<'_> {
+    impl Drop for RefineGuard {
         fn drop(&mut self) {
             self.flag.store(false, Ordering::SeqCst);
             self.busy.store(self.prev_busy, Ordering::SeqCst);
@@ -35,7 +35,7 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     }
     let _refine_guard = RefineGuard {
         flag: refine_active,
-        busy: &state.busy,
+        busy: state.busy.clone(),
         prev_busy,
     };
 
