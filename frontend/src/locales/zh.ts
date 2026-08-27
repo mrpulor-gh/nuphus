@@ -96,6 +96,7 @@ const zh: Record<string, string> = {
   'extAgents.titleHint': '外部 Agent 运行时态（handoff 门铃事件实时同步）',
   'extAgents.empty': '暂无外部 Agent',
   'extAgents.state.idle': '空闲',
+  'extAgents.state.dispatched': '已派发·待确认',
   'extAgents.state.inProgress': '执行中',
   'extAgents.state.ready': '就绪',
   'extAgents.state.done': '待命',
@@ -112,6 +113,11 @@ const zh: Record<string, string> = {
   'extAgents.deliver.reports': '任务报告',
   'extAgents.deliver.artifacts': '产物文件',
   'extAgents.deliver.preview': '点击预览',
+  'extAgents.deliver.delete': '删除该生成物',
+  'extAgents.deliver.confirmHint': '确认删除？不可恢复',
+  'extAgents.deliver.confirmBtn': '删除',
+  'extAgents.deliver.cancelBtn': '取消',
+  'extAgents.deliver.deleteFail': '删除失败',
 
   // ── Session Rail（会话展示台）──
   'sessionRail.title': '会话展示台',
@@ -175,6 +181,46 @@ const zh: Record<string, string> = {
   'extAgents.cfg.deleteFail': '删除失败',
   'extAgents.cfg.loadFail': '加载失败',
   'extAgents.cfg.deleteConfirm': '确定删除该外部 Agent 配置？(handoff 工作目录不会被删除)',
+  // ── v8 高级分组：交互固化 ──
+  'extAgents.cfg.advanced': '交互固化（可选，终端型推荐配置）',
+  'extAgents.cfg.advancedHint':
+    '配置后 Leader 用 agent_dispatch 单次调用即可自动完成 捕获窗口 → 归位 → 投递 → 等确认',
+  'extAgents.cfg.launch': '冷启动命令 (launch)',
+  'extAgents.cfg.launchHint': '窗口未捕获到时自动拉起的命令（如 wt.exe -p PowerShell opencode）',
+  'extAgents.cfg.windowHint': '窗口匹配特征 (window_hint)',
+  'extAgents.cfg.windowHintField': '窗口标题或进程名包含该特征即命中（也回退匹配 process 字段）',
+  'extAgents.cfg.cooldown': '冷启动等待上限（秒）',
+  'extAgents.cfg.dispatchSteps': '投递序列 (dispatch_steps)',
+  'extAgents.cfg.dispatchStepsHint': 'JSON 数组，格式对齐工作流 Action::Tool',
+  'extAgents.cfg.dispatchStepsTools':
+    '可用工具：desktop_window_activate / desktop_window_resize / desktop_window_move / desktop_mouse_click / desktop_input / desktop_clipboard_write / desktop_clipboard_clean / desktop_windows_list / desktop_screenshot / __sleep（内建，ms 休眠）',
+  'extAgents.cfg.dispatchStepsPlaceholders':
+    '占位符（自动替换）：{hwnd}=捕获句柄 {task_id} {brief_path}=brief 绝对路径 {message}=渲染后任务指令',
+  'extAgents.cfg.dispatchStepsPlaceholder': `示例（只给参考，不内置模板——Leader 按你电脑实际情景编写）：
+[
+  { "tool": "desktop_window_activate", "with": { "hwnd": "{hwnd}" } },
+  { "tool": "desktop_clipboard_write", "with": { "text": "{message}" } },
+  { "tool": "desktop_input", "with": { "hwnd": "{hwnd}", "mode": "hotkey", "keys": ["ctrl", "v"], "send": "none" } },
+  { "tool": "desktop_clipboard_clean", "with": {} },
+  { "tool": "desktop_input", "with": { "hwnd": "{hwnd}", "mode": "hotkey", "keys": ["enter"] } }
+]`,
+  'extAgents.cfg.awaitTimeout': '等待确认上限（秒）',
+  'extAgents.cfg.timeoutAction': '超时自检策略',
+  'extAgents.cfg.timeoutActionHint': 'detect_confirm=词表匹配确认屏（默认）/ screenshot_alive=窗口存活+截图 / notify_user=转呈大王 / redeliver=自动重投 / 自定义脚本优先',
+  'extAgents.cfg.timeoutScript': '自定义自检脚本',
+  'extAgents.cfg.timeoutScriptHint': '设置后优先于 timeout_action；stdout 作为自检结论',
+  'extAgents.cfg.autoApprove': '确认态代答白名单 (auto_approve)',
+  'extAgents.cfg.autoApproveHint': 'blocked 且命中平台特征词时自动代答的内容（如 yes）',
+  'extAgents.cfg.autoApproveScript': '代答决策脚本',
+  'extAgents.cfg.confirmKeywords': '确认态检测词表（逗号分隔）',
+  'extAgents.cfg.confirmKeywordsHint': 'detect_confirm 超时自检用；命中判定停在确认屏',
+  'extAgents.cfg.dir': 'Agent 目录',
+  'extAgents.cfg.dirHint': 'Agent 工作目录，供 Leader 直接查找/定位上下文',
+  'extAgents.cfg.dirPlaceholder': 'e.g. C:\\projects\\myapp',
+  'extAgents.cfg.agentConfig': 'Agent 配置（技术参数）',
+  'extAgents.cfg.agentConfigHint':
+    '启动方式 / 窗口定位 / 投递序列等交互细节；默认收起，展开按需配置',
+  // note（实测记录）为 Leader 专属字段：不提供 UI 编辑入口，由编排层实景校准维护
 
   'cmd.externalAgents': '外部 Agent',
   'cmd.externalAgentsDesc': '外部 Agent 配置中心（team.toml 登记簿）',
@@ -500,7 +546,8 @@ const zh: Record<string, string> = {
   'models.capVision': '支持视觉理解',
   'models.capAudio': '支持语音',
   'models.capImageGen': '支持图像生成',
-  'models.capContext': '上下文窗口',
+   'models.capContext': '上下文窗口',
+  'models.capContextUnknown': '上下文窗口未知',
   'models.clearKeyConfirm': '确认清除该服务商的 API Key？此操作不可恢复。',
   'models.clearKeySuccess': 'API Key 已清除',
   'models.clearKeyFail': '清除失败',
@@ -777,7 +824,8 @@ const zh: Record<string, string> = {
   'modelManager.title': '模型管理',
   'modelManager.noConfigs': '暂无保存的模型配置。',
   'modelManager.noConfigsHint': '在设置中配置 API 密钥以启用模型。',
-  'modelManager.switch': '切换',
+  'modelManager.peekPrev': '浏览上一个模型（不切换）',
+  'modelManager.peekNext': '浏览下一个模型（不切换）',
   'modelManager.switchTip': '提示：使用 /models 可快速切换模型',
 
   'projectDir.title': '项目目录',

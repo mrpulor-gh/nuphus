@@ -98,6 +98,7 @@ const en: Record<string, string> = {
   'extAgents.titleHint': 'External agent runtime status (synced from handoff doorbell events)',
   'extAgents.empty': 'No external agents yet',
   'extAgents.state.idle': 'Idle',
+  'extAgents.state.dispatched': 'Dispatched · awaiting ringer',
   'extAgents.state.inProgress': 'Running',
   'extAgents.state.ready': 'Ready',
   'extAgents.state.done': 'Standby',
@@ -114,6 +115,11 @@ const en: Record<string, string> = {
   'extAgents.deliver.reports': 'Reports',
   'extAgents.deliver.artifacts': 'Artifacts',
   'extAgents.deliver.preview': 'Click to preview',
+  'extAgents.deliver.delete': 'Delete this deliverable',
+  'extAgents.deliver.confirmHint': 'Delete? This cannot be undone',
+  'extAgents.deliver.confirmBtn': 'Delete',
+  'extAgents.deliver.cancelBtn': 'Cancel',
+  'extAgents.deliver.deleteFail': 'Delete failed',
 
   // ── Session Rail (session shelf) ──
   'sessionRail.title': 'Session rail',
@@ -180,6 +186,46 @@ const en: Record<string, string> = {
   'extAgents.cfg.loadFail': 'Failed to load',
   'extAgents.cfg.deleteConfirm':
     'Delete this external agent config? (handoff workspace will not be deleted)',
+  // ── v8 advanced group: interaction hardening ──
+  'extAgents.cfg.advanced': 'Interaction hardening (optional, recommended for terminal agents)',
+  'extAgents.cfg.advancedHint':
+    'Once configured, Leader calls agent_dispatch once to auto capture window → position → deliver → await confirmation',
+  'extAgents.cfg.launch': 'Cold-start command (launch)',
+  'extAgents.cfg.launchHint': 'Command to spawn when the window is not found (e.g. wt.exe -p PowerShell opencode)',
+  'extAgents.cfg.windowHint': 'Window match hint (window_hint)',
+  'extAgents.cfg.windowHintField': 'Matched when window title or process name contains it (falls back to process field)',
+  'extAgents.cfg.cooldown': 'Cold-start wait limit (seconds)',
+  'extAgents.cfg.dispatchSteps': 'Dispatch sequence (dispatch_steps)',
+  'extAgents.cfg.dispatchStepsHint': 'JSON array; format follows workflow Action::Tool',
+  'extAgents.cfg.dispatchStepsTools':
+    'Tools: desktop_window_activate / desktop_window_resize / desktop_window_move / desktop_mouse_click / desktop_input / desktop_clipboard_write / desktop_clipboard_clean / desktop_windows_list / desktop_screenshot / __sleep (builtin, ms sleep)',
+  'extAgents.cfg.dispatchStepsPlaceholders':
+    'Placeholders (auto-replaced): {hwnd}=captured handle {task_id} {brief_path}=brief absolute path {message}=rendered task instruction',
+  'extAgents.cfg.dispatchStepsPlaceholder': `Example only — no built-in template (Leader writes for your actual machine):
+[
+  { "tool": "desktop_window_activate", "with": { "hwnd": "{hwnd}" } },
+  { "tool": "desktop_clipboard_write", "with": { "text": "{message}" } },
+  { "tool": "desktop_input", "with": { "hwnd": "{hwnd}", "mode": "hotkey", "keys": ["ctrl", "v"], "send": "none" } },
+  { "tool": "desktop_clipboard_clean", "with": {} },
+  { "tool": "desktop_input", "with": { "hwnd": "{hwnd}", "mode": "hotkey", "keys": ["enter"] } }
+]`,
+  'extAgents.cfg.awaitTimeout': 'Confirm wait limit (seconds)',
+  'extAgents.cfg.timeoutAction': 'Timeout self-check strategy',
+  'extAgents.cfg.timeoutActionHint': 'detect_confirm=keyword-match confirm screen (default) / screenshot_alive=window alive+screenshot / notify_user=escalate to user / redeliver=auto redeliver / custom script wins',
+  'extAgents.cfg.timeoutScript': 'Custom self-check script',
+  'extAgents.cfg.timeoutScriptHint': 'Takes precedence over timeout_action; stdout becomes the self-check result',
+  'extAgents.cfg.autoApprove': 'Confirmation auto-reply whitelist (auto_approve)',
+  'extAgents.cfg.autoApproveHint': 'Auto-reply content (e.g. yes) when blocked and platform keywords hit',
+  'extAgents.cfg.autoApproveScript': 'Auto-reply decision script',
+  'extAgents.cfg.confirmKeywords': 'Confirm-screen keywords (comma separated)',
+  'extAgents.cfg.confirmKeywordsHint': 'Used by detect_confirm timeout self-check; hit = stuck on confirm screen',
+  'extAgents.cfg.dir': 'Agent directory',
+  'extAgents.cfg.dirHint': 'Agent working directory; lets Leader locate context directly',
+  'extAgents.cfg.dirPlaceholder': 'e.g. C:\\projects\\myapp',
+  'extAgents.cfg.agentConfig': 'Agent configuration (technical)',
+  'extAgents.cfg.agentConfigHint':
+    'Launch / window targeting / dispatch sequence details; collapsed by default, expand to configure as needed',
+  // note (field-test notes) is a Leader-only field: no UI editing entry, maintained via orchestration-layer calibration
 
   'cmd.externalAgents': 'External Agents',
   'cmd.externalAgentsDesc': 'External agent config center (team.toml registry)',
@@ -524,7 +570,8 @@ const en: Record<string, string> = {
   'models.capVision': 'Vision',
   'models.capAudio': 'Audio',
   'models.capImageGen': 'Image generation',
-  'models.capContext': 'Context window',
+   'models.capContext': 'Context window',
+  'models.capContextUnknown': 'Context window unknown',
   'models.clearKeyConfirm': "Clear this provider's API Key? This cannot be undone.",
   'models.clearKeySuccess': 'API Key cleared',
   'models.clearKeyFail': 'Failed to clear key',
@@ -807,7 +854,8 @@ const en: Record<string, string> = {
   'modelManager.title': 'Model Manager',
   'modelManager.noConfigs': 'No model configurations saved.',
   'modelManager.noConfigsHint': 'Configure API keys in Settings to enable models.',
-  'modelManager.switch': 'Switch',
+  'modelManager.peekPrev': 'Preview previous model (no switch)',
+  'modelManager.peekNext': 'Preview next model (no switch)',
   'modelManager.switchTip': 'Tip: Use /models to quickly switch models anytime',
 
   'projectDir.title': 'Project Directory',
