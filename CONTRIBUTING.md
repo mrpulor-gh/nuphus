@@ -67,7 +67,7 @@ nuphus/
 3. 确保 `cargo clippy --all-targets` 无新增警告
 4. 确保 `cargo fmt --all` 格式化一致
 5. 提交 PR 并简要描述变更内容
-6. 提交 PR 即表示你同意将你的贡献按 MIT 许可证授权（Developer Certificate of Origin）
+6. 提交 PR 即表示你同意将你的贡献按 Apache-2.0 许可证授权（Developer Certificate of Origin）
 
 ## 国际化贡献
 

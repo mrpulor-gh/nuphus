@@ -8,7 +8,7 @@
 ## [Unreleased]
 
 ### Added
-- 开源准备：LICENSE（MIT）、.gitignore、CONTRIBUTING.md、CHANGELOG.md
+- 开源准备：LICENSE（Apache-2.0）、.gitignore、CONTRIBUTING.md、CHANGELOG.md
 - Cargo.toml 元数据补全（repository、homepage、documentation）
 - 桌面控制基础设施 desktop-api crate（Win32 + xcap）
 - PRIVACY.md：数据分类与隐私策略声明

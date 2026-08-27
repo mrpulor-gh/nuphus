@@ -187,7 +187,7 @@ function Build-PlatformPackage($p, $version, $assetFile) {
         name        = "@nuphus/$($p.Name)"
         version     = $version
         description = $p.Desc
-        license     = 'MIT'
+        license     = 'Apache-2.0'
         repository  = @{ type = 'git'; url = 'git+https://github.com/mrpulor-gh/nuphus.git' }
         os          = @($p.Os)
         cpu         = @($p.Cpu)

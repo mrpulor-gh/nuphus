@@ -189,7 +189,9 @@ relay-server/
 ├── Cargo.toml
 ├── src/
 │   └── main.rs      # 路由 / 鉴权 / 隧道 / 限速 / 健康检查
-├── vps_ssh.py       # 本地运维脚本（不纳入发布）
-├── _deploy*.py      # 部署脚本（历史归档）
 └── README.md        # 本说明
+
+注：vps_ssh.py、_deploy*.py 为本地运维/部署脚本，含基础设施信息，
+已移出仓库目录（仅保留在本地 Nuphus-local-tools/relay-deploy-scripts/），
+不随仓库分发。
 ```

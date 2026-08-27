@@ -2,7 +2,7 @@
     "name":  "@nuphus/nuphus-desktop",
     "version": "0.1.8",
     "description":  "Nuphus - 协同共生桌面助手。npm 一键安装：自动选择对应平台二进制（win32-x64 / macOS arm64 / linux-x64）。",
-    "license":  "MIT",
+    "license":  "Apache-2.0",
     "bin":  {
                 "nuphus":  "bin/nuphus.js"
             },
