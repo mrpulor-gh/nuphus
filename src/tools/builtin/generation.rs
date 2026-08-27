@@ -661,6 +661,8 @@ mod tests {
                 supports_image_generation: false,
                 reasoning_efforts: vec![],
                 default_effort: None,
+                cost_per_million_in: None,
+                cost_per_million_out: None,
             }],
             reasoning_effort: None,
         }

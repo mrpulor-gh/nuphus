@@ -107,6 +107,13 @@ pub struct ModelInfo {
     /// Default effort used when the user has not configured one (from builtin
     /// ModelDef). `None` = no declared default (UI falls back to 默认).
     pub default_effort: Option<String>,
+    /// Cost in USD per 1M prompt tokens (providers.toml explicit value, or
+    /// OpenRouter aggregate pricing ×1_000_000). `None` = unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_per_million_in: Option<f64>,
+    /// Cost in USD per 1M completion tokens (same sources as above). `None` = unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_per_million_out: Option<f64>,
 }
 
 /// Model switch request

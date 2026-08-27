@@ -831,49 +831,24 @@
   border-top: 1px solid var(--glass-1);
 }
 
-/* ── Model Manager 上下翻滚轮播（点「切换」→ 翻出旧模型 → 翻入下一模型）── */
-.cmd-modal-card-roll {
-  perspective: 900px;
-}
-.cmd-modal-card-roll-out {
-  animation: cmdCardRollOut 0.18s ease-in forwards;
-}
-.cmd-modal-card-roll-in {
-  animation: cmdCardRollIn 0.24s ease-out;
-}
-@keyframes cmdCardRollOut {
-  from {
-    transform: rotateX(0deg);
-    opacity: 1;
-  }
-  to {
-    transform: rotateX(-90deg);
-    opacity: 0.4;
-  }
-}
-@keyframes cmdCardRollIn {
-  from {
-    transform: rotateX(90deg);
-    opacity: 0.4;
-  }
-  to {
-    transform: rotateX(0deg);
-    opacity: 1;
-  }
-}
-/* 正面卡片内新增的「切换」按钮 */
-.cmd-modal-card-switch {
+/* 正面卡片右侧「上下浏览」按钮组：仅预览模型（↑↓），不负责切换——切换 = 点击卡片本身 */
+.cmd-modal-card-peek {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cmd-modal-card-peek-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 999px;
+  justify-content: center;
+  width: 20px;
+  height: 16px;
+  padding: 0;
+  border-radius: 5px;
   border: 1px solid var(--glass-3);
   background: var(--surface-2);
   color: var(--fg-3);
-  font-size: 11px;
-  font-family: inherit;
   line-height: 1;
   cursor: pointer;
   user-select: none;
@@ -882,16 +857,16 @@
     color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
-.cmd-modal-card-switch:hover {
+.cmd-modal-card-peek-btn:hover {
   background: var(--surface-hover);
   color: var(--fg-1);
   border-color: var(--line-3);
 }
-.cmd-modal-card-switch:disabled {
+.cmd-modal-card-peek-btn:disabled {
   opacity: 0.4;
   cursor: default;
 }
-.cmd-modal-card-switch:focus-visible {
+.cmd-modal-card-peek-btn:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }

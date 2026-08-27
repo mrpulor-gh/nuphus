@@ -12,10 +12,19 @@ use super::toml_ops::{
     update_reasoning_effort, upsert_provider_models,
 };
 use crate::emitter::CompoundEmitter;
+use crate::models::aggregator as or_agg;
 use crate::state::{AppState, LlamaConfig};
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::config::registry::ProviderRegistry;
-use tauri::State;
+use tauri::{Manager, State};
+
+/// OpenRouter aggregate cache path — next to providers.toml (config dir).
+fn openrouter_cache_path() -> std::path::PathBuf {
+    let dir = get_config_path()
+        .and_then(|p| p.parent().map(|q| q.to_path_buf()))
+        .unwrap_or_default();
+    or_agg::cache_path(&dir)
+}
 /// Load provider/model selection from providers.toml (TOML) at app startup.
 /// Reads top-level `model` field (system default), falls back to first provider with an api_key.
 pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
@@ -649,61 +658,100 @@ async fn post_configure(
     let toml_config_path =
         get_config_path().unwrap_or_else(|| state.llm_config_path.with_file_name("providers.toml"));
 
-    // Context window + reasoning-effort capability (single /models fetch)
-    let ctx = if resolved_provider == "local" {
-        context_window.unwrap_or(128_000)
+    // ── context_window 四层信任链解析（不再有 128_000 伪默认）──
+    // ① local: 前端显式值（ModelsPage 手动校准，尊重用户意图）
+    // ② providers.toml existing_ctx（用户手写/历史记录，保留不动）
+    // ③ API 实测（query_model_metadata_from_api 返回 Some 且带 context_length）
+    // ④ OpenRouter 聚合库 lookup（权威源）
+    // ⑤ builtin ProviderRegistry 表（仅运行时，禁止落盘）
+    // ⑥ None → 未知（runtime 0，禁止落盘）
+    //
+    // 写入纪律：
+    // - local 且前端显式传值 → 写盘（原行为保留，来源①用户意图）
+    // - 非 local 且 existing_ctx 为 None 且来源为 ③④（实测/权威）→ 写盘
+    // - 来源 ⑤⑥ 只进运行时，禁止落盘（根治「兜底猜测值固化」缺陷：
+    //   探测失败 → 128_000 猜测值被 update_model_context_window 写盘 → 永不自愈）
+    let existing_ctx =
+        read_model_context_window(&toml_config_path, resolved_provider, resolved_model);
+
+    let (runtime_ctx, persist_ctx): (Option<usize>, Option<usize>) = if resolved_provider == "local"
+    {
+        // ① 前端显式值优先；前端未传时保留本地记录；都无 → 未知(0)
+        (context_window.or(existing_ctx), context_window)
+    } else if let Some(ctx) = existing_ctx {
+        // ② 用户手写/历史记录：保留不动（API/权威值不覆盖），运行时直接用
+        (Some(ctx), None)
     } else {
-        let base_url = resolved_base_url.to_string();
-        let model = resolved_model.to_string();
-        let key = api_key.to_string();
-        let hdr = auth_header.to_string();
-        let prefix = auth_prefix.to_string();
-        match tokio::task::spawn_blocking(move || {
-            query_model_metadata_from_api(&base_url, &model, &key, &hdr, &prefix)
-        })
-        .await
-        {
-            Ok(Some(meta)) => {
-                // Persist discovered effort capability into the model entry so
-                // list_models can serve it without a builtin-registry hit.
-                if !meta.reasoning_efforts.is_empty() {
-                    let _ = update_model_reasoning_efforts(
-                        &toml_config_path,
-                        resolved_provider,
-                        resolved_model,
-                        &meta.reasoning_efforts,
-                        meta.default_effort.as_deref(),
-                    );
+        // ③ API 实测（spawn_blocking，原逻辑保留 reasoning-effort 持久化）
+        let api_ctx = {
+            let base_url = resolved_base_url.to_string();
+            let model = resolved_model.to_string();
+            let key = api_key.to_string();
+            let hdr = auth_header.to_string();
+            let prefix = auth_prefix.to_string();
+            match tokio::task::spawn_blocking(move || {
+                query_model_metadata_from_api(&base_url, &model, &key, &hdr, &prefix)
+            })
+            .await
+            {
+                Ok(Some(meta)) => {
+                    // Persist discovered effort capability into the model entry so
+                    // list_models can serve it without a builtin-registry hit.
+                    if !meta.reasoning_efforts.is_empty() {
+                        let _ = update_model_reasoning_efforts(
+                            &toml_config_path,
+                            resolved_provider,
+                            resolved_model,
+                            &meta.reasoning_efforts,
+                            meta.default_effort.as_deref(),
+                        );
+                    }
+                    meta.context_length
                 }
-                meta.context_length.unwrap_or_else(|| {
-                    nuphus::agent::goal_types::get_context_window(resolved_model)
-                })
+                _ => None,
             }
-            _ => nuphus::agent::goal_types::get_context_window(resolved_model),
-        }
+        };
+        // ④ OpenRouter 聚合库（stale-while-revalidate：缓存新鲜直接查，过期拉一次）
+        // custom/local 无 vendor 映射 → 不触发网络，直接 None
+        let agg_ctx = if or_agg::has_vendor(resolved_provider) {
+            let cache_path = toml_config_path
+                .parent()
+                .map(|p| or_agg::cache_path(p))
+                .unwrap_or_else(openrouter_cache_path);
+            let entries = or_agg::ensure_cache(&cache_path).await;
+            or_agg::lookup(&entries, resolved_provider, resolved_model)
+                .and_then(|e| e.context_length)
+                .map(|v| v as usize)
+        } else {
+            None
+        };
+        // ⑤ builtin ProviderRegistry 表（仅运行时）
+        let builtin_ctx = ProviderRegistry::builtin()
+            .find_model(resolved_model)
+            .map(|(_, m)| m.context_window as usize);
+        // ③④ = 权威，可落盘；⑤ 仅运行时；⑥ 全 None → 未知
+        let authoritative = api_ctx.or(agg_ctx);
+        (authoritative.or(builtin_ctx), authoritative)
     };
-    // 本地记录优先（仅非 local）：API 查询结果只填充缺失项，不覆盖本地已记录
-    // context_window。背景（2026-08-26 实测）：API /models 返回的 context_length 常为
-    // provider 统一值或不准确（deepseek 三模型全 1000000），无条件写入会把用户手动
-    // 校准的本地值逐一污染 → 前端上下文占用百分比显示混乱。已有记录 → 保留并用其
-    // 刷新运行时；无记录 → API/内置表值写入 + 刷新运行时。local provider 例外：
-    // 前端显式传入 context_window（ModelsPage 手动校准），尊重用户意图照常写入。
-    let existing_ctx = if resolved_provider == "local" {
-        None // local 不参与本地优先（前端显式传值，尊重用户意图）
-    } else {
-        read_model_context_window(&toml_config_path, resolved_provider, resolved_model)
-    };
-    let effective_ctx = existing_ctx.unwrap_or(ctx);
+
     {
         let mut cw = state.runtime.lock().ok();
         if let Some(ref mut cw) = cw {
-            cw.model_context_window = effective_ctx;
+            // 0 = 未知语义（get_context_limit 与前端据此隐藏百分比，而非显示假数）
+            cw.model_context_window = runtime_ctx.unwrap_or(0);
         }
     }
 
-    if existing_ctx.is_none() {
-        let _ =
-            update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
+    match persist_ctx {
+        Some(ctx) => {
+            let _ = update_model_context_window(
+                &toml_config_path,
+                resolved_provider,
+                resolved_model,
+                ctx,
+            );
+        }
+        None => {} // 来源②用户手写 / ⑤⑥猜测或未知：不落盘
     }
 
     // Vision probe — provider-driven: prefer metadata from ProviderRegistry over HTTP probing.
@@ -907,24 +955,62 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
     let builtin = nuphus::config::registry::ProviderRegistry::builtin();
     for provider in &registry.providers {
         for model in &provider.models {
+            // ── OpenRouter 聚合库兜底（同步命令只读缓存，不触发网络）：
+            // cost 之外一并补齐 reasoning efforts —— 昨晚接入时只连了 cost，
+            // efforts 断链导致输入框 hover 推理强度弹窗消失（本轮一次性接全）。
+            let or_entry = get_config_path()
+                .and_then(|p| p.parent().map(|q| q.to_path_buf()))
+                .and_then(|config_dir| {
+                    or_agg::lookup_generic_cached(&config_dir, &provider.name, &model.id)
+                });
+
             // Reasoning-effort options: prefer per-model metadata persisted at
             // configure time (discovered from the provider's /models response,
             // e.g. Kimi think_efforts); fall back to the built-in ModelDef
-            // (e.g. deepseek-v4-flash = [high, max]) for providers whose
-            // /models returns bare id lists. Unknown models → no effort knob.
-            let reasoning_efforts = if !model.reasoning_efforts.is_empty() {
-                model.reasoning_efforts.clone()
+            // (e.g. deepseek-v4-flash = [high, max]); final fallback —
+            // OpenRouter supported_efforts. Unknown models → no effort knob.
+            let (mut reasoning_efforts, mut default_effort) = if !model.reasoning_efforts.is_empty()
+            {
+                (model.reasoning_efforts.clone(), model.default_effort.clone())
             } else {
-                builtin
-                    .find_model(&model.id)
-                    .map(|(_, m)| m.reasoning_efforts.iter().map(|s| s.to_string()).collect())
-                    .unwrap_or_default()
+                match builtin.find_model(&model.id) {
+                    Some((_, m)) => (
+                        m.reasoning_efforts.iter().map(|s| s.to_string()).collect(),
+                        m.default_effort.map(|s| s.to_string()),
+                    ),
+                    None => (
+                        model.reasoning_efforts.clone(),
+                        model.default_effort.clone(),
+                    ),
+                }
             };
-            let default_effort = model.default_effort.clone().or_else(|| {
-                builtin
-                    .find_model(&model.id)
-                    .and_then(|(_, m)| m.default_effort.map(|s| s.to_string()))
-            });
+            if reasoning_efforts.is_empty() {
+                if let Some(entry) = &or_entry {
+                    if !entry.supported_efforts.is_empty() {
+                        reasoning_efforts = entry.supported_efforts.clone();
+                        default_effort = default_effort.or_else(|| entry.default_effort.clone());
+                    }
+                }
+            }
+            // Cost（USD / 百万 tokens）：providers.toml 显式值优先（信任链最高层）；
+            // 否则 OpenRouter 聚合库定价 ×1_000_000；均无 → None（未知，前端不展示）。
+            let (cost_in, cost_out) = match (model.cost_per_million_in, model.cost_per_million_out)
+            {
+                (Some(a), Some(b)) => (Some(a), Some(b)),
+                (a, b) => match &or_entry {
+                    Some(entry) => (
+                        a.or_else(|| {
+                            (entry.pricing_prompt_per_million > 0.0)
+                                .then(|| entry.pricing_prompt_per_million * 1_000_000.0)
+                        }),
+                        b.or_else(|| {
+                            (entry.pricing_completion_per_million > 0.0)
+                                .then(|| entry.pricing_completion_per_million * 1_000_000.0)
+                        }),
+                    ),
+                    None => (a, b),
+                },
+            };
             models.push(nuphus::api::ModelInfo {
                 id: model.id.clone(),
                 provider: provider.name.clone(),
@@ -943,6 +1029,8 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                 }),
                 reasoning_efforts,
                 default_effort,
+                cost_per_million_in: cost_in,
+                cost_per_million_out: cost_out,
             });
         }
     }
@@ -1197,12 +1285,35 @@ async fn fetch_provider_models(
         .map_err(|e| format!("解析响应失败: {}", e))?;
 
     if !status.is_success() {
-        let msg = body
+        // 非 2xx → 分型包装为可行动指引，不再裸抛上游原文（用户报告的
+        // 「火山引擎 key 配到通义千问模板报阿里云 401」即此类错配，需要的是
+        // 排障方向而非一句英文 API error）
+        let upstream_msg = body
             .get("error")
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
+            .or_else(|| {
+                body.get("error")
+                    .and_then(|e| e.as_str())
+            })
             .unwrap_or("未知错误");
-        return Err(format!("API 错误 ({}): {}", status, msg));
+        let msg = match status.as_u16() {
+            401 | 403 => format!(
+                "API 密钥未通过当前服务商验证 ({}: {})。三个最常见原因：\
+① 密钥与所选服务商不同源——例如拿火山引擎/订阅计划签发的密钥填进了通义千问（阿里云百炼）模板，\
+两家的接入地址与密钥互不通用；\
+② 该服务给你的接入地址与所选模板默认地址不同（订阅类服务常有专用域名），需在下方地址栏显式填写；\
+③ 密钥已过期或未开通对应模型的访问权限。请核对「所选服务商 ↔ 接入地址 ↔ 密钥」三者同源后重试。",
+                status, upstream_msg
+            ),
+            404 => format!(
+                "未找到模型列表接口 ({}): {}。当前拼接地址 = {}；请确认该服务商是否提供 /models 路由、\
+以及地址栏填写的应是站点根地址还是包含版本前缀的完整接入地址（参考其文档的 curl 示例）。",
+                status, upstream_msg, url
+            ),
+            _ => format!("API 错误 ({}): {}", status, upstream_msg),
+        };
+        return Err(msg);
     }
 
     // Extract model IDs from common response formats
@@ -1233,12 +1344,19 @@ async fn fetch_provider_models(
     );
 
     // 关联内置能力元数据：/v1/models 只给 id，能力从 builtin ModelDef 匹配
-    // （id/alias 均可命中）。未知模型保持缺省值，前端隐藏对应徽标。
+    // （id/alias 均可命中）。builtin miss 的模型用 OpenRouter 聚合库补齐
+    // （context_window + input_modalities → vision/audio/image_generation）。
+    // 仍未知的模型保持缺省值，前端隐藏对应徽标（不做字符串启发式猜测）。
+    let agg_entries = if or_agg::has_vendor(provider) {
+        or_agg::ensure_cache(&openrouter_cache_path()).await
+    } else {
+        Vec::new()
+    };
     let briefs = models
         .into_iter()
         .map(|id| {
             let meta = registry.find_model(&id).map(|(_, m)| m);
-            ProviderModelBrief {
+            let mut brief = ProviderModelBrief {
                 id,
                 supports_streaming: meta.map(|m| m.supports_streaming).unwrap_or(true),
                 supports_vision: meta.map(|m| m.supports_vision).unwrap_or(false),
@@ -1247,7 +1365,22 @@ async fn fetch_provider_models(
                     .map(|m| m.supports_image_generation)
                     .unwrap_or(false),
                 context_window: meta.map(|m| m.context_window as u64),
+            };
+            // builtin miss（context_window None）→ OpenRouter 权威库补齐能力
+            if brief.context_window.is_none() {
+                if let Some(entry) = or_agg::lookup(&agg_entries, provider, &brief.id) {
+                    brief.context_window = entry.context_length;
+                    if !entry.input_modalities.is_empty() {
+                        brief.supports_vision = entry.input_modalities.iter().any(|m| m == "image");
+                        brief.supports_audio = entry.input_modalities.iter().any(|m| m == "audio");
+                    }
+                    if !entry.output_modalities.is_empty() {
+                        brief.supports_image_generation =
+                            entry.output_modalities.iter().any(|m| m == "image");
+                    }
+                }
             }
+            brief
         })
         .collect();
     Ok(briefs)
@@ -1613,32 +1746,100 @@ fn extract_context(obj: &serde_json::Value, ctx_keys: &[&str]) -> Option<usize> 
 
 #[tauri::command]
 pub fn get_context_limit(state: State<'_, AppState>) -> Result<usize, String> {
-    // 1. Prefer backend cached value (real model window set during configure_llm)
-    {
-        let cw = state.runtime.lock().map_err(|e| e.to_string())?;
-        if cw.model_context_window > 0 {
-            return Ok(cw.model_context_window);
+    // 1. Prefer backend cached value (real model window set during configure_llm /
+    //    startup calibration). 0 = unknown — kept as-is (never guessed).
+    let cw = state.runtime.lock().map_err(|e| e.to_string())?;
+    if cw.model_context_window > 0 {
+        return Ok(cw.model_context_window);
+    }
+
+    // 2. No authoritative value → return 0 (unknown), NOT a 128_000 guess.
+    //    Frontend hides the context-usage percentage when the denominator is
+    //    missing (shows "--"), so a fabricated default would display fake math.
+    //    (goal_types::get_context_window still returns 128_000 for its many
+    //    other call sites — runtime/process sizing — but this command no longer
+    //    leaks that guess into the UI.)
+    Ok(0)
+}
+
+/// B3 启动后台校准：stale-while-revalidate 拉取 OpenRouter 聚合库，用权威
+/// context_window 校准当前激活模型的运行时值；变化时广播 SessionInfo 让前端
+/// 刷新。全程静默失败（tracing::warn），绝不在启动同步路径上做网络等待。
+///
+/// 信任链①用户手写值（providers.toml 显式 context_window）优先——已存在显式值
+/// 时跳过校准，不覆盖用户意图（kimi k3=1048576 等合法显式值保持不动）。
+pub async fn startup_model_calibration(app: &tauri::AppHandle) {
+    let state = app.state::<crate::state::AppState>();
+    let (provider, model) = {
+        let guard = match state.runtime.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("[startup-calibration] runtime lock failed: {e}");
+                return;
+            }
+        };
+        match guard.llm_config.as_ref() {
+            Some(cfg) if !cfg.model.is_empty() => (cfg.provider.clone(), cfg.model.clone()),
+            _ => return, // 未配置 LLM
         }
-    }
-
-    // 2. When cache is empty, infer from current LLM config's model name
-    //    (scoped so the lock drops before re-locking for write-back)
-    let ctx = {
-        let config = state.runtime.lock().map_err(|e| e.to_string())?;
-        config
-            .llm_config
-            .as_ref()
-            .map(|cfg| nuphus::agent::goal_types::get_context_window(&cfg.model))
     };
-    if let Some(ctx) = ctx {
-        // Write back to cache
-        let mut cw = state.runtime.lock().map_err(|e| e.to_string())?;
-        cw.model_context_window = ctx;
-        return Ok(ctx);
+
+    if !or_agg::has_vendor(&provider) {
+        return; // custom/local/未知提供商：聚合库无对应 vendor
     }
 
-    // 3. Not configured yet → return default, frontend will refresh later
-    Ok(128000)
+    // ① 用户手写/历史显式值（信任链最高层）→ 不覆盖
+    if read_model_context_window(&state.llm_config_path, &provider, &model).is_some() {
+        return;
+    }
+
+    // 读缓存判断 TTL → 过期/缺失则后台拉取更新缓存（失败静默降级旧缓存）
+    let config_dir = state
+        .llm_config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let cache_path = or_agg::cache_path(&config_dir);
+    let entries = or_agg::ensure_cache(&cache_path).await;
+    let Some(entry) = or_agg::lookup(&entries, &provider, &model) else {
+        return;
+    };
+    let Some(window) = entry.context_length else {
+        return;
+    };
+    let window = window as usize;
+
+    let changed = {
+        let mut cw = match state.runtime.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if cw.model_context_window == window {
+            false
+        } else {
+            // 运行时为猜测/未知（0 或 builtin 值）且聚合库有权威值 → 校准
+            cw.model_context_window = window;
+            true
+        }
+    };
+
+    if changed {
+        tracing::info!(
+            "[startup-calibration] provider={}, model={}, context_window → {} (OpenRouter 权威值)",
+            provider,
+            model,
+            window
+        );
+        let emitter = CompoundEmitter::new(app.clone(), &state);
+        emitter.emit(NuphusEvent::SessionInfo {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            model: model.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+    }
 }
 
 #[cfg(test)]

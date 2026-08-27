@@ -829,7 +829,7 @@ export function ModelsPage({
                         >
                           <div className={'model-radio' + (isActive ? ' selected' : '')} />
                           <div className="model-list-name">{name}</div>
-                          {(caps.vision || caps.audio || caps.image || ctx) && (
+                          {(caps.vision || caps.audio || caps.image || ctx !== undefined) && (
                             <div className="model-list-badges">
                               {caps.vision && (
                                 <span className="model-badge" title={t('models.capVision')}>
@@ -853,7 +853,14 @@ export function ModelsPage({
                                 >
                                   {formatContextWindow(ctx)}
                                 </span>
-                              ) : null}
+                              ) : (
+                                <span
+                                  className="model-badge model-badge--ctx model-badge--ctx-unknown"
+                                  title={t('models.capContextUnknown')}
+                                >
+                                  ?
+                                </span>
+                              )}
                             </div>
                           )}
                           {isActive && <IconCheck size={12} className="icon-accent" />}

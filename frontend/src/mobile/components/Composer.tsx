@@ -441,7 +441,8 @@ export default function Composer({
 
   // ── 上下文用量（模型卡「上下文 xx%」展示，与桌面端 ctx 同色三档）──
   const ctxUsed = tokenUsage?.inputTokens || 0
-  const ctxLimit = modelConfig?.contextWindow || 128000
+  // 分母缺失（contextWindow 0/未知）→ 显示 "--"，不伪装 128000 假数
+  const ctxLimit = modelConfig?.contextWindow || 0
   const ctxPct = ctxLimit > 0 ? Math.min(ctxUsed / ctxLimit, 1) : 0
   const ctxColor = ctxPct > 0.8 ? '#ef4444' : ctxPct > 0.6 ? '#f59e0b' : '#22c55e'
   // ── 缓存命中率（模型卡「缓存命中 xx%」展示，公式与三档配色对齐桌面 ChatInputBar）──
@@ -640,7 +641,8 @@ export default function Composer({
                 {cacheRate >= 0 && ctxUsed > 0 && <span className="mobile-plus-status-sep">·</span>}
                 {ctxUsed > 0 && (
                   <span>
-                    tok {fmtTokens(ctxUsed)} / {fmtTokens(ctxLimit)}
+                    tok {fmtTokens(ctxUsed)} /{' '}
+                    {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
                   </span>
                 )}
               </div>
@@ -751,10 +753,10 @@ export default function Composer({
               <div className="mobile-model-card-ctx">
                 <span className="mobile-model-card-ctx-label">{t('mobile.context')}</span>
                 <span className="mobile-model-card-ctx-pct" style={{ color: ctxColor }}>
-                  {Math.round(ctxPct * 100)}%
+                  {ctxLimit > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
                 </span>
                 <span className="mobile-model-card-ctx-nums">
-                  {fmtTokens(ctxUsed)} / {fmtTokens(ctxLimit)}
+                  {fmtTokens(ctxUsed)} / {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
                 </span>
               </div>
               {cacheRate >= 0 && (

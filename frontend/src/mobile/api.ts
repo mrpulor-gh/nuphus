@@ -238,8 +238,15 @@ export interface ModelInfo {
   supports_streaming: boolean
   supports_vision: boolean
   supports_audio: boolean
+  supports_image_generation: boolean
   reasoning_efforts: string[]
   default_effort?: string | null
+  /** 上下文窗口（tokens）；undefined = 未知 */
+  context_window?: number
+  /** 成本（USD / 百万输入 tokens）；undefined = 未知 */
+  cost_per_million_in?: number
+  /** 成本（USD / 百万输出 tokens）；undefined = 未知 */
+  cost_per_million_out?: number
 }
 
 /** GET /model-config 返回：桌面端模型配置（主模型 + 全部已配置模型，与 /models 页同源） */

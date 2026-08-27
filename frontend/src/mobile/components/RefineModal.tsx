@@ -31,7 +31,10 @@ export default function RefineModal({ refine, refining, onConfirm, onSkip }: Pro
       </div>
       <p className="mobile-refine-desc">
         当前已使用约 <strong>{pct}%</strong> 上下文（{Math.round(refine.currentTokens / 1000)}K /{' '}
-        {Math.round(refine.contextWindow / 1000)}K tokens）。
+        {refine.contextWindow > 0
+          ? `${Math.round(refine.contextWindow / 1000)}K`
+          : '--'}{' '}
+        tokens）。
         提炼后保留关键信息并精简上下文，会话可继续更长时间。
       </p>
       <div className="mobile-refine-actions">

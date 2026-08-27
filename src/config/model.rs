@@ -45,6 +45,13 @@ pub struct ModelEntry {
     /// declared default; UI shows the provider-default state.
     #[serde(default)]
     pub default_effort: Option<String>,
+    /// Explicit per-million cost (USD) — providers.toml 手写值，信任链最高层。
+    /// None = 未手写（list_models 回退 OpenRouter 聚合库定价）。
+    #[serde(default)]
+    pub cost_per_million_in: Option<f64>,
+    /// Explicit per-million completion cost (USD). None = 未手写。
+    #[serde(default)]
+    pub cost_per_million_out: Option<f64>,
 }
 
 fn default_true() -> bool {
@@ -170,6 +177,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -198,6 +207,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -226,6 +237,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -254,6 +267,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -281,6 +296,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -309,6 +326,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             });
@@ -429,6 +448,8 @@ impl ModelRegistry {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort,
             }],
@@ -499,6 +520,8 @@ mod tests {
                     supports_image_generation: false,
                     reasoning_efforts: Vec::new(),
                     default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
                 }],
                 reasoning_effort: None,
             }],

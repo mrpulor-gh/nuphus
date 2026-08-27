@@ -1741,6 +1741,8 @@ async fn get_model_config<R: tauri::Runtime>(
                         }),
                         reasoning_efforts,
                         default_effort,
+                        cost_per_million_in: model.cost_per_million_in,
+                        cost_per_million_out: model.cost_per_million_out,
                     });
                 }
             }
@@ -1752,18 +1754,19 @@ async fn get_model_config<R: tauri::Runtime>(
                 &registry,
                 query.mode.as_deref().unwrap_or("leader"),
             );
-            // 当前模型上下文窗口（fallback 128000，与桌面端 contextLimit 默认一致）：
-            // 手机端上下文用量百分比 = 会话累计 input_tokens / context_window
+            // 当前模型上下文窗口（0 = 未知，不伪装默认值）：手机端上下文用量
+            // 百分比 = 会话累计 input_tokens / context_window；分母缺失时前端
+            // 隐藏百分比显示 "--"，而非用 128000 假数渲染。
             let context_window = registry
                 .providers
                 .iter()
                 .flat_map(|p| p.models.iter())
                 .find(|m| m.id == current)
                 .and_then(|m| m.context_window)
-                .unwrap_or(128000);
+                .unwrap_or(0);
             (current, models, context_window)
         }
-        Err(_) => (String::new(), Vec::new(), 128000),
+        Err(_) => (String::new(), Vec::new(), 0),
     };
     // 只回传模型标识与能力标记，绝不携带 api_key / base_url 等敏感字段
     Json(serde_json::json!({ "current": current, "models": models, "contextWindow": context_window }))

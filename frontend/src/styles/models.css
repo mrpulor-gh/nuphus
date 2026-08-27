@@ -238,6 +238,14 @@
   background: var(--surface-2);
   color: var(--fg-3);
 }
+/* 上下文窗口未知（builtin miss 且聚合库未命中）——诚实呈现 Unknown 态：
+   显示灰色 ? 而非伪装成 128K 之类的猜测值。 */
+.model-badge--ctx-unknown {
+  background: transparent;
+  color: var(--fg-4);
+  opacity: 0.6;
+  padding: 2px 4px;
+}
 /* ── Agent 级模型配置（高级设置）── */
 .agent-models-grid {
   display: flex;
