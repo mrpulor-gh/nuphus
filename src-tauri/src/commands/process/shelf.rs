@@ -137,6 +137,71 @@ pub(crate) fn normalize_mode(current_mode: &str) -> &'static str {
     }
 }
 
+// ── 快照保护名单（prune 白名单）──
+//
+// prune_snapshots 按「当前可恢复名单」裁剪 SQLite 快照，名单必须显式覆盖：
+//   ① runtime 内 leader / workflow 两个 active 会话槽
+//   ② shelf 内存展示台全部驻留成员（order 全量）
+//   ③ session_backup JSON 中转持有的会话（解析失败忽略该项）
+// 此前按 updated_at 截断的保留策略曾系统性误杀长期驻留成员的快照
+// （active 时间戳被每轮执行刷新、静坐成员时间戳冻结），回归见任务链 87f4fc7a。
+
+/// 保护名单公共收集段。调用方负责自身的 runtime 锁序：已持 runtime 锁的场景
+/// 必须经 [`protected_snapshot_ids_with_ctx`] 传入 active id，禁止嵌套加锁。
+fn collect_protected(
+    leader_id: Option<String>,
+    workflow_id: Option<String>,
+    state: &AppState,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(id) = leader_id {
+        out.push(id);
+    }
+    if let Some(id) = workflow_id {
+        out.push(id);
+    }
+    // ② shelf 驻留成员全量（含被 LRU 淘汰前的全部在台成员）
+    if let Ok(shelf) = state.shelf.lock() {
+        out.extend(shelf.order.iter().cloned());
+    }
+    // ③ session_backup 中转会话（半解析 JSON 取 id 字段；失败忽略该项）
+    if let Ok(sb) = state.session.lock() {
+        if let Some(json) = sb.session_backup.as_deref() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 已持 runtime 读侧锁场景的保护名单收集：active 会话从 ctx 直取，
+/// 不再触碰 runtime 锁（archive_active 等调用方持锁期间专用）。
+pub(crate) fn protected_snapshot_ids_with_ctx(
+    ctx: &crate::state::RuntimeContext,
+    state: &AppState,
+) -> Vec<String> {
+    collect_protected(
+        ctx.leader_agent.as_ref().map(|rt| rt.session().id.clone()),
+        ctx.workflow_agent.as_ref().map(|a| a.session().id.clone()),
+        state,
+    )
+}
+
+/// 自主获取 runtime 锁的保护名单收集。调用方不得已持有 runtime 锁时禁止使用
+/// （std Mutex 不可重入）——先收集名单、再进入长锁段。
+/// runtime 锁中毒时降级：至少保住 shelf 全员与 backup 中转。
+pub(crate) fn protected_snapshot_ids(state: &AppState) -> Vec<String> {
+    match state.runtime.lock() {
+        Ok(ctx) => protected_snapshot_ids_with_ctx(&ctx, state),
+        Err(_) => collect_protected(None, None, state),
+    }
+}
+
 /// 切换守卫。Err(稳定错误码) 供前端映射文案。
 fn guard_switch(state: &AppState) -> Result<(), &'static str> {
     if state.busy.load(std::sync::atomic::Ordering::SeqCst) {
@@ -184,15 +249,16 @@ fn rfc3339_to_millis(s: &str) -> Option<u64> {
 
 // ── 镜像 IO（SQLite 快照，best-effort，失败只 warn 不阻塞主流程）──
 
-pub(crate) fn write_mirror(mode: &str, session: &Session) {
+pub(crate) fn write_mirror(mode: &str, session: &Session, protected: &[String]) {
     match serde_json::to_string(session) {
         Ok(json) => {
             if let Err(e) = nuphus::store::session::upsert_snapshot(&session.id, mode, &json) {
                 tracing::warn!("[Shelf] 写快照失败 id={}: {e}", session.id);
             }
-            // 保留策略：SQLite 只留最近 SHELF_CAPACITY 个快照（轻量切换语义），
-            // 超出清空 snapshot 列防无界增长；元数据行保留。best-effort。
-            if let Err(e) = nuphus::store::session::prune_snapshots(SHELF_CAPACITY) {
+            // 保留策略：SQLite 快照集合以「当前可恢复名单」（runtime active ∪
+            // shelf 全员 ∪ backup 中转，由调用方收集传入）为准做白名单裁剪，
+            // 名单外清空 snapshot 列防无界增长；元数据行保留。best-effort。
+            if let Err(e) = nuphus::store::session::prune_snapshots(protected) {
                 tracing::warn!("[Shelf] 快照保留策略执行失败: {e}");
             }
         }
@@ -354,10 +420,12 @@ pub(crate) fn upsert_meta_row(session: &Session, title: &str) {
     let _ = nuphus::store::session::upsert_session(&row);
 }
 
-/// 元数据行 + 镜像一并落盘（退出钩子等调用方使用）
-pub(crate) fn persist_and_mirror(kind: &str, session: &Session) {
+/// 元数据行 + 镜像一并落盘（退出钩子等调用方使用）。
+/// `protected` 由调用方先行收集（[`protected_snapshot_ids`]），避免钩子内
+/// 嵌套获取 runtime 锁。
+pub(crate) fn persist_and_mirror(kind: &str, session: &Session, protected: &[String]) {
     upsert_meta_row(session, "");
-    write_mirror(kind, session);
+    write_mirror(kind, session, protected);
 }
 
 // ── 命令层 ──
@@ -385,6 +453,8 @@ fn build_entry(
 }
 
 /// 归档 active 到展示台 + 镜像 + 元数据行。空会话跳过（不占槽）。
+/// 注意：调用方持有 runtime 锁期间传入 ctx——保护名单经
+/// protected_snapshot_ids_with_ctx 从 ctx 直取，绝不嵌套加锁。
 fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind: &str) {
     let Some(sess_ref) = active_session(ctx, kind) else {
         return;
@@ -399,7 +469,8 @@ fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind
         .ok()
         .and_then(|s| s.titles.get(&snapshot.id).cloned());
     let entry = build_entry(snapshot.id.clone(), kind, &snapshot, title.as_deref());
-    write_mirror(kind, &snapshot);
+    let protected = protected_snapshot_ids_with_ctx(ctx, state);
+    write_mirror(kind, &snapshot, &protected);
     upsert_meta_row(&snapshot, &entry.title);
     if let Ok(mut shelf) = state.shelf.lock() {
         if let Some(evicted) = shelf.put(entry, snapshot) {
@@ -766,10 +837,13 @@ pub fn flush_active_mirror(state: &AppState) {
         .map(|g| g.clone())
         .unwrap_or_else(|_| "leader".to_string());
     let kind = normalize_mode(&current_mode);
+    // 保护名单先于 runtime 长锁收集（protected_snapshot_ids 内部需短暂 lock
+    // runtime，先行完成后下方长锁段内不再触碰该锁）
+    let protected = protected_snapshot_ids(state);
     if let Ok(ctx) = state.runtime.lock() {
         if let Some(sess) = active_session(&ctx, kind) {
             if !sess.is_empty() {
-                write_mirror(kind, sess);
+                write_mirror(kind, sess, &protected);
                 // 标题保护：用户改过名 → 钉死自定义标题；否则保留 meta 既有
                 // 标题，仅首次落库才写派生默认。此前每轮 derive_title 强制覆盖，
                 // 是「编辑后切换/执行一轮，标题打回默认」的根因（实测回归）。
@@ -860,7 +934,7 @@ mod tests {
     fn snapshot_roundtrip_preserves_session() {
         // SQLite 快照往返（Session::new 生成随机 id，测试结束删除整行清理，不污染真实库）
         let s = session_with_user(&["快照往返测试"]);
-        write_mirror("leader", &s);
+        write_mirror("leader", &s, &[]);
         let (mode, restored) = read_mirror(&s.id).expect("快照应可读回");
         assert_eq!(mode, "leader");
         assert_eq!(restored.id, s.id);
@@ -875,9 +949,9 @@ mod tests {
         // 写两个快照（不同 updated_at），warm_from_disk 应从 SQLite 装回内存展示台
         let a = session_with_user(&["快照A"]);
         let b = session_with_user(&["快照B"]);
-        write_mirror("leader", &a);
+        write_mirror("leader", &a, &[]);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        write_mirror("workflow", &b);
+        write_mirror("workflow", &b, &[]);
 
         let mut shelf = ShelfState::default();
         warm_from_disk(&mut shelf);
@@ -894,9 +968,9 @@ mod tests {
     fn load_latest_mirror_prefers_most_recent_snapshot() {
         let a = session_with_user(&["旧快照"]);
         let b = session_with_user(&["新快照"]);
-        write_mirror("leader", &a);
+        write_mirror("leader", &a, &[]);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        write_mirror("workflow", &b);
+        write_mirror("workflow", &b, &[]);
 
         let (mode, latest) = load_latest_mirror().expect("应有最新快照");
         assert_eq!(latest.id, b.id, "最新写入的快照应优先");
@@ -942,6 +1016,28 @@ mod tests {
         assert_eq!(normalize_mode("workflow"), "workflow");
         assert_eq!(normalize_mode("leader"), "leader");
         assert_eq!(normalize_mode("custom-agent-x"), "leader");
+    }
+
+    /// 回归（任务链 87f4fc7a）：保护名单必须包含 shelf.order 全量驻留成员——
+    /// prune 白名单漏掉任一在台成员都会导致其快照被误清、重启后从 rail 消失。
+    #[test]
+    fn protected_snapshot_ids_contains_all_shelf_order_entries() {
+        let state = AppState::default();
+        let want: Vec<String> = {
+            let mut shelf = state.shelf.lock().unwrap();
+            for i in 0..3 {
+                let s = session_with_user(&[&format!("驻留成员{i}")]);
+                let title = format!("驻留成员{i}");
+                shelf.put(build_entry(s.id.clone(), "leader", &s, Some(title.as_str())), s);
+            }
+            shelf.order.clone()
+        };
+        assert!(!want.is_empty(), "前置：shelf 应已有驻留成员");
+
+        let got = protected_snapshot_ids(&state);
+        for id in &want {
+            assert!(got.contains(id), "保护名单应包含 shelf 驻留成员 {id}");
+        }
     }
 
     /// 重启后新进程 leader_agent/workflow_agent 槽为 None（agent 仅在发送消息时创建）。

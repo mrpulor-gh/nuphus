@@ -8,7 +8,7 @@
 //! `upsert_session` 使用真 UPSERT（ON CONFLICT DO UPDATE），绝不触碰 snapshot/mode
 //! 列——rename/元数据刷新不会清掉已持久化的完整快照。
 
-use rusqlite::params;
+use rusqlite::{params, params_from_iter};
 use std::collections::HashMap;
 
 /// 会话行记录
@@ -246,25 +246,30 @@ pub fn list_created_at(ids: &[String]) -> crate::Result<HashMap<String, String>>
     Ok(map)
 }
 
-/// 保留策略：仅保留最近 `keep` 个有快照的会话（按 updated_at 倒序），超出部分
-/// 清空 snapshot 列（元数据行保留——记忆页列表历史仍在，仅不可切换恢复）。
+/// 快照保留策略（白名单制）：仅清理 `protected` 名单之外会话的 snapshot 列
+/// （元数据行保留——记忆页列表历史仍在，仅不可切换恢复）。返回被清理的快照数量。
 ///
-/// 对齐 Shelf「轻量切换 10 个」的产品语义：rail 可见会话（内存 LRU + active）总有
-/// 完整 Session 可切换；SQLite 快照只保障崩溃/重启后恢复这 10 个，防止无界增长
-/// （被动熵增）。返回被清理的快照数量。
-pub fn prune_snapshots(keep: usize) -> crate::Result<usize> {
+/// 与 Shelf「轻量切换 10 个」的产品语义对齐，但判定依据从 updated_at 时间序
+/// 截断改为显式 id 白名单：active 会话的 updated_at 被每轮执行反复刷新、
+/// 长期驻留成员的时间戳冻结，按时间截断曾系统性误杀驻留成员的快照（表现为
+/// 重启后 shelf 只剩寥寥数个可恢复会话）。保护名单由调用方收集：
+/// runtime active 会话 ∪ shelf 全量驻留成员 ∪ session_backup 中转会话。
+///
+/// 空 `protected` 直接返回 Ok(0) 防御性短路，不执行 UPDATE——调用方拿不到
+/// 状态时宁可跳过裁剪，也不允许意外清空全库快照。
+pub fn prune_snapshots(protected: &[String]) -> crate::Result<usize> {
+    if protected.is_empty() {
+        return Ok(0);
+    }
     let guard = crate::store::db::acquire()?;
-    let n = guard.execute(
+    let placeholders: Vec<String> = (1..=protected.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
         "UPDATE sessions SET snapshot = NULL
          WHERE snapshot IS NOT NULL
-           AND id NOT IN (
-               SELECT id FROM sessions
-               WHERE snapshot IS NOT NULL
-               ORDER BY updated_at DESC
-               LIMIT ?1
-           )",
-        params![keep as i64],
-    )?;
+           AND id NOT IN ({})",
+        placeholders.join(", ")
+    );
+    let n = guard.execute(&sql, params_from_iter(protected.iter()))?;
     Ok(n)
 }
 
@@ -368,35 +373,82 @@ mod tests {
         delete_session(&b).unwrap();
     }
 
-    /// 保留策略：prune 后全局快照数收敛到 keep 以内，二次调用幂等（无更多清理）。
-    /// 断言不依赖真实库全局状态（真实库可能已有快照），仅验证上界与收敛。
+    /// 回归（任务链 87f4fc7a）：白名单保留语义。模拟「活跃会话持续对话 +
+    /// 多成员驻留 shelf」：新建 12 个快照，保护其中 10 个驻留成员 →
+    /// 恰清理名单外 2 个、返回值=2；二次调用幂等收敛；名单含不存在 id 不报错。
+    /// 测试前库中既有的其他快照一并纳入保护名单——本测试绝不触碰用户现存数据。
     #[serial]
     #[test]
-    fn prune_snapshots_converges_and_bounds() {
+    fn prune_snapshots_whitelist_protects_members_and_cleans_rest() {
         let mut ids = Vec::new();
         for _ in 0..12 {
             let id = random_id();
-            // 递增 updated_at，保证排序稳定（不依赖真实库时间）
-            std::thread::sleep(std::time::Duration::from_millis(2));
             upsert_snapshot(&id, "leader", r#"{"t":1}"#).unwrap();
             ids.push(id);
         }
 
-        let cleaned = prune_snapshots(10).unwrap();
-        let remaining = list_snapshots(100).unwrap().len();
-        assert!(
-            remaining <= 10,
-            "prune 后快照数应 ≤ keep(10)，实际 {remaining}"
-        );
-        let second = prune_snapshots(10).unwrap();
-        assert_eq!(
-            second, 0,
-            "二次 prune 应幂等收敛（无更多清理），实际 {second}"
-        );
-        let _ = cleaned;
+        // 既存快照（含真实库中用户数据）并入保护名单
+        let existing: Vec<String> = list_snapshots(100_000)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .filter(|id| !ids.contains(id))
+            .collect();
+        let mut protected = ids[..10].to_vec();
+        protected.extend(existing.iter().cloned());
+
+        let cleaned = prune_snapshots(&protected).unwrap();
+        assert_eq!(cleaned, 2, "名单外恰有本次新建的 2 个应被清理");
+
+        for (i, id) in ids[..10].iter().enumerate() {
+            assert!(
+                get_snapshot(id).unwrap().is_some(),
+                "驻留成员 #{i} ({id}) 快照应幸存"
+            );
+        }
+        for id in &ids[10..] {
+            assert!(get_snapshot(id).unwrap().is_none(), "名单外 {id} 应被清");
+        }
+        for id in &existing {
+            assert!(
+                get_snapshot(id).unwrap().is_some(),
+                "用户现存快照 {id} 不得被触碰"
+            );
+        }
+
+        // 二次 prune 幂等收敛（无更多清理）
+        let again = prune_snapshots(&protected).unwrap();
+        assert_eq!(again, 0, "二次 prune 应幂等收敛");
+
+        // 白名单含不存在的 id 不报错且零清除
+        let mut with_ghost = protected.clone();
+        with_ghost.push("ghost-id-does-not-exist".to_string());
+        assert_eq!(prune_snapshots(&with_ghost).unwrap(), 0);
 
         for id in &ids {
             delete_session(id).unwrap();
         }
+    }
+
+    /// 回归（任务链 87f4fc7a）：空保护名单必须零清除（防御性短路）——
+    /// 调用方拿不到状态时禁止静默清空全库快照。
+    #[serial]
+    #[test]
+    fn prune_snapshots_empty_protection_clears_nothing() {
+        let before: Vec<String> = list_snapshots(100_000)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+
+        let n = prune_snapshots(&[]).unwrap();
+        assert_eq!(n, 0, "空名单应短路返回 Ok(0)");
+
+        let after: Vec<String> = list_snapshots(100_000)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(before.len(), after.len(), "空名单不得清除任何快照");
     }
 }
