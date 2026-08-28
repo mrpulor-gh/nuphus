@@ -152,11 +152,12 @@
 .sr-bubble {
   position: absolute;
   left: 44px;
-  top: 50%;
-  transform: translateY(-50%) translateX(-6px);
+  top: 0; /* 顶对齐条目、向下展开：预览高度可变，指向箭头钉在条目中心不漂移 */
+  transform: translateX(-6px);
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   max-width: 380px;
   min-height: 36px;
   padding: 9px 16px;
@@ -176,8 +177,8 @@
   content: '';
   position: absolute;
   left: -5px;
-  top: 50%;
-  transform: translateY(-50%) rotate(45deg);
+  top: 7px; /* 固定：条目高 22px 的中心（11px）- 方块半高（4px） */
+  transform: rotate(45deg);
   width: 8px;
   height: 8px;
   background: var(--bg-card);
@@ -188,42 +189,31 @@
 .sr-item.editing .sr-bubble {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(-50%) translateX(0);
+  transform: translateX(0);
 }
 
-/* ── hover 长预览：agent 最终回复（脱敏截断）──
-   挂 sr-bubble 内 absolute 下方展开；hover 标题按钮才出现（~ 兄弟选择器，
-   扫过条目不闪 tooltip）；不用原生 title 属性（长文本不可控 + 延迟 1s）。
-   pointer-events none 防止 tooltip 挡鼠标造成 hover 抖动。 */
-.sr-tip {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  width: min(340px, 56vw);
-  padding: 9px 12px;
-  border-radius: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--line-2);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+/* ── 标题行：标题 + 编辑/归档按钮（气泡统一整体的头部）── */
+.sr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── 预览块：agent 最终回复（脱敏截断 ≤400 字符），与标题「话题 ↔ 结果」互补。
+   并入气泡统一整体（非独立 tooltip）；pre-wrap 保留回复换行结构，
+   max-height 兜底超长回复，底部渐隐暗示可切会话看全文 */
+.sr-preview {
+  min-width: 0;
+  max-height: 180px;
+  overflow: hidden;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-2);
   font-size: var(--fz-sm);
   line-height: 1.55;
   color: var(--fg-2);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 180px;
-  overflow: hidden;
   text-align: left;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition:
-    opacity 0.15s ease 0.12s,
-    transform 0.15s ease 0.12s;
-  pointer-events: none;
-  z-index: 5;
-}
-.sr-title-btn:hover ~ .sr-tip {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .sr-title-btn {

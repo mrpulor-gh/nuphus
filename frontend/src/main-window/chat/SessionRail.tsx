@@ -415,83 +415,86 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
               <div className="sr-bubble">
                 {editingId === it.id ? (
                   <>
-                    <input
-                      className="sr-rename-input"
-                      value={draftTitle}
-                      autoFocus
-                      maxLength={60}
-                      placeholder={it.title || t('sessionRail.untitled')}
-                      onChange={e => setDraftTitle(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
-                        if (e.key === 'Escape') setEditingId(null)
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="sr-edit-btn"
-                      onClick={() => void saveRename(it.id)}
-                      disabled={!draftTitle.trim()}
-                      title={t('sessionRail.save')}
-                      aria-label={t('sessionRail.save')}
-                    >
-                      <IconCheck size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      className="sr-edit-btn"
-                      onClick={() => setEditingId(null)}
-                      title={t('common.cancel')}
-                      aria-label={t('common.cancel')}
-                    >
-                      <IconX size={12} />
-                    </button>
+                    <div className="sr-head">
+                      <input
+                        className="sr-rename-input"
+                        value={draftTitle}
+                        autoFocus
+                        maxLength={60}
+                        placeholder={it.title || t('sessionRail.untitled')}
+                        onChange={e => setDraftTitle(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
+                          if (e.key === 'Escape') setEditingId(null)
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="sr-edit-btn"
+                        onClick={() => void saveRename(it.id)}
+                        disabled={!draftTitle.trim()}
+                        title={t('sessionRail.save')}
+                        aria-label={t('sessionRail.save')}
+                      >
+                        <IconCheck size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="sr-edit-btn"
+                        onClick={() => setEditingId(null)}
+                        title={t('common.cancel')}
+                        aria-label={t('common.cancel')}
+                      >
+                        <IconX size={12} />
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <button
-                      type="button"
-                      className={`sr-title-btn${it.is_active ? ' active' : ''}`}
-                      disabled={it.is_active}
-                      onClick={() => void handleSwitch(it.id, it.is_active)}
-                    >
-                      {it.title || t('sessionRail.untitled')}
-                    </button>
-                    {/* hover 长预览：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」互补；
-                        DOM 呈现不受条目空间限制（原生 title 属性长文本体验差） */}
-                    {it.preview ? (
-                      <div className="sr-tip" role="tooltip">
-                        {it.preview}
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="sr-edit-btn"
-                      onClick={() => {
-                        setDraftTitle(it.title)
-                        setEditingId(it.id)
-                        // 编辑期间冻结隐显：取消在途倒计时并强制常亮
-                        cancelHide()
-                        setFading(false)
-                        setRevealed(true)
-                      }}
-                      title={t('sessionRail.rename')}
-                      aria-label={t('sessionRail.rename')}
-                    >
-                      <IconEdit3 size={12} />
-                    </button>
-                    {!it.is_active && (
+                    <div className="sr-head">
                       <button
                         type="button"
-                        className="sr-edit-btn sr-archive-btn"
-                        onClick={() => setConfirmArchiveId(it.id)}
-                        disabled={!canSwitch}
-                        title={t('sessionRail.archive')}
-                        aria-label={t('sessionRail.archive')}
+                        className={`sr-title-btn${it.is_active ? ' active' : ''}`}
+                        disabled={it.is_active}
+                        onClick={() => void handleSwitch(it.id, it.is_active)}
                       >
-                        <IconTrash2 size={12} />
+                        {it.title || t('sessionRail.untitled')}
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        className="sr-edit-btn"
+                        onClick={() => {
+                          setDraftTitle(it.title)
+                          setEditingId(it.id)
+                          // 编辑期间冻结隐显：取消在途倒计时并强制常亮
+                          cancelHide()
+                          setFading(false)
+                          setRevealed(true)
+                        }}
+                        title={t('sessionRail.rename')}
+                        aria-label={t('sessionRail.rename')}
+                      >
+                        <IconEdit3 size={12} />
+                      </button>
+                      {!it.is_active && (
+                        <button
+                          type="button"
+                          className="sr-edit-btn sr-archive-btn"
+                          onClick={() => setConfirmArchiveId(it.id)}
+                          disabled={!canSwitch}
+                          title={t('sessionRail.archive')}
+                          aria-label={t('sessionRail.archive')}
+                        >
+                          <IconTrash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {/* 预览并入气泡：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」
+                        互补，hover 条���时与标题一体呈现（统一整体，非独立 tooltip）。
+                        编辑态隐藏（改名输入时不被预览挤占） */}
+                    {it.preview && editingId !== it.id ? (
+                      <div className="sr-preview">{it.preview}</div>
+                    ) : null}
                   </>
                 )}
               </div>
