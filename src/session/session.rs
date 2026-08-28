@@ -6,6 +6,11 @@
 use crate::session::types::*;
 use serde::{Deserialize, Serialize};
 
+/// 提炼摘要 System 消息的元说明前缀（replace_with_distill / accumulate_distill 写入，
+/// 会话预览据此剥离元说明只展示摘要正文）
+pub const REFINE_SYSTEM_PREFIX: &str =
+    "[当前 session 对话内容已触发提炼，以下是提炼的内容，非当前指令]";
+
 /// 会话
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -268,10 +273,7 @@ impl Session {
         self.messages.push(Message {
             role: MessageRole::System,
             content: vec![ContentBlock::Text {
-                text: format!(
-                    "[当前 session 对话内容已触发提炼，以下是提炼的内容，非当前指令]\n\n{}",
-                    distill_content
-                ),
+                text: format!("{}\n\n{}", REFINE_SYSTEM_PREFIX, distill_content),
                 reasoning: None,
             }],
             internal: true,
@@ -287,10 +289,7 @@ impl Session {
         self.messages.push(Message {
             role: MessageRole::System,
             content: vec![ContentBlock::Text {
-                text: format!(
-                    "[当前 session 对话内容已触发提炼，以下是提炼的内容，非当前指令]\n\n{}",
-                    distill_content
-                ),
+                text: format!("{}\n\n{}", REFINE_SYSTEM_PREFIX, distill_content),
                 reasoning: None,
             }],
             internal: true,

@@ -191,6 +191,29 @@ pub(crate) fn derive_preview(session: &Session) -> String {
         }
         return truncate_chars(&sanitize_preview(t), 400);
     }
+    // 回退 2：仅剩提炼摘要的会话——refine 后旧历史清空、只剩 internal System 摘要
+    // （replace_with_distill / accumulate_distill），前两循环全部跳过导致预览恒空
+    // （实测回归）。摘要本身就是「这个会话浓缩了什么」，剥离元说明前缀后展示。
+    if session.is_refined() {
+        for m in session.messages().iter().rev() {
+            if m.internal || !matches!(m.role, MessageRole::System) {
+                continue;
+            }
+            let text = m.text_content();
+            let t = text.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let body = t
+                .strip_prefix(nuphus::session::session::REFINE_SYSTEM_PREFIX)
+                .map(|s| s.trim())
+                .unwrap_or(t);
+            if body.is_empty() {
+                continue;
+            }
+            return truncate_chars(&sanitize_preview(body), 400);
+        }
+    }
     String::new()
 }
 
