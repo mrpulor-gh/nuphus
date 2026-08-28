@@ -297,10 +297,23 @@ function BlockRenderer({
   if (headerMatch) {
     const level = headerMatch[1].length
     const Tag = `h${level}` as keyof JSX.IntrinsicElements
-    return (
+    // 模型输出可能标题与正文之间无空行（紧凑风格）——此时两者被分进同一个
+    // 块，rest 是标题下方的正文。只渲染 lines[0] 会把正文静默丢弃，表现为
+    // 「回复块有标题但没有内容」。剩余行递归回 MarkdownText 再分块渲染。
+    const rest = lines.slice(1)
+    const heading = (
       <Tag className={`markdown-h markdown-h${level}`}>
         <MarkdownInline text={headerMatch[2]} onFileClick={onFileClick} />
       </Tag>
+    )
+    if (rest.length === 0 || rest.every(l => l.trim() === '')) {
+      return heading
+    }
+    return (
+      <>
+        {heading}
+        <MarkdownText text={rest.join('\n')} onFileClick={onFileClick} />
+      </>
     )
   }
 
