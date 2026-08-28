@@ -3,7 +3,7 @@ import '../../styles/markdown.css'
 
 interface MarkdownContentProps {
   content: string
-  /** 可选：点击裸文件路径（Windows 绝对路径 + 白名单扩展名）时回调 */
+  /** 可选：点击裸文件路径（绝对路径 + 白名单扩展名）时回调 */
   onFileClick?: (path: string) => void
 }
 
@@ -378,8 +378,9 @@ function TableRenderer({
  *  是「下载完成但打不开」的前端放大因素之一 */
 const FILE_EXT_WHITELIST =
   /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_])/i
-/** 盘符开头绝对路径候选：`:` 在排除集中，天然在第二个冒号处截断（分隔相邻路径） */
-const PATH_CANDIDATE_RE = /[A-Za-z]:[\\/][^\r\n<>:"|?*]*/g
+/** 绝对路径候选：Windows 盘符开头 + macOS/Linux 用户目录（/Users、/home）。
+ *  盘符路径 `:` 在排除集中，天然在第二个冒号处截断（分隔相邻路径） */
+const PATH_CANDIDATE_RE = /(?:[A-Za-z]:[\\/]|\/(?:Users|home)\/)[^\r\n<>:"|?*]*/g
 
 /** 在文本中提取所有「盘符开头 + 白名单扩展名」的路径区间 */
 function extractFilePaths(text: string): Array<{ start: number; end: number }> {

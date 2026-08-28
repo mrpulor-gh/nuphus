@@ -13,6 +13,7 @@ mod handoff_server;
 mod mobile_server;
 mod models;
 mod plugin_apps;
+mod preview_protocol;
 mod relay_client;
 mod render;
 mod shortcut;
@@ -74,7 +75,7 @@ fn main() {
     // Initialize logging (tracing + file output)
     nuphus::utils::init_logging();
 
-    let app = tauri::Builder::default()
+    let app = preview_protocol::register(tauri::Builder::default())
         .manage(state::AppState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(

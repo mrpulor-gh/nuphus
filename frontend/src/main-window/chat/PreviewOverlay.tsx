@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { X, FolderOpen, ExternalLink } from 'lucide-react'
 import MarkdownContent from './MarkdownContent'
 import { readFile, readFileBase64, openPath, revealPath } from '../lib/api'
@@ -54,14 +55,17 @@ function baseName(path: string): string {
 /**
  * 全屏文件预览覆盖层（对齐工作流画布 .wfc-page 交互范式，非居中弹窗）。
  * - 关闭按钮在工具栏最左侧，防连续点击误触主窗口关闭
- * - .md 排版渲染、.html 用 iframe 渲染成页面、代码文件复用 MarkdownContent 高亮
+ * - .md 排版渲染、.html 经 preview:// 协议在沙箱 iframe 运行（游戏/交互 demo 可玩），
+ *   代码文件复用 MarkdownContent 高亮
  * - 图片（png/jpg/gif/webp/svg 等）经后端 base64 读取后内联渲染
  * - pdf 等不支持内联预览 → 直接调系统默认程序打开
  */
 export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
   const ext = extOf(path)
   const isImage = IMAGE_EXTS.has(ext)
-  const isText = MD_EXTS.has(ext) || HTML_EXTS.has(ext) || CODE_EXTS.has(ext)
+  // HTML 经 preview:// 协议在沙箱 iframe 中运行（脚本可执行、同目录资源可引用），
+  // 不走文本读取——src 直连协议 URL
+  const isText = MD_EXTS.has(ext) || CODE_EXTS.has(ext)
   const [content, setContent] = useState<string | null>(null)
   const [imageData, setImageData] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -231,8 +235,8 @@ export function PreviewOverlay({ path, onClose }: PreviewOverlayProps) {
           <iframe
             className="pv-iframe"
             title={path}
-            srcDoc={content ?? ''}
-            sandbox="allow-scripts"
+            src={convertFileSrc(path, 'preview')}
+            sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-modals allow-forms"
           />
         ) : (
           <div className="pv-code">

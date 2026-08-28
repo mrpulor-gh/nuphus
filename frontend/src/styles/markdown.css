@@ -86,7 +86,7 @@
   color: var(--accent-hover);
 }
 
-/* ── 可点击文件路径（AI 回复中的 Windows 绝对路径） ── */
+/* ── 可点击文件路径（AI 回复中的绝对路径） ── */
 .markdown-file-path {
   color: var(--accent);
   text-decoration: none;
