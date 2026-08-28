@@ -512,6 +512,7 @@ const zh: Record<string, string> = {
   'models.noApiKey': '请先输入 API 密钥',
   'models.switchTo': '已切换到 {0}',
   'models.switchFail': '切换失败',
+  'models.listLoading': '模型列表加载中，请稍候再试',
   'models.inputApiKey': '输入 {0} API 密钥',
   'models.baseUrl': '接口地址',
   'models.baseUrlPlaceholder': '你的中转站 / OpenAI 兼容接口地址，如 https://api.example.com/v1',

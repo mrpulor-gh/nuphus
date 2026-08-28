@@ -535,6 +535,7 @@ const en: Record<string, string> = {
   'models.noApiKey': 'Please enter API Key first',
   'models.switchTo': 'Switched to {0}',
   'models.switchFail': 'Switch failed',
+  'models.listLoading': 'Model list is loading, please try again shortly',
   'models.inputApiKey': 'Enter {0} API Key',
   'models.baseUrl': 'Base URL',
   'models.baseUrlPlaceholder': 'https://your-custom-api.com/v1',

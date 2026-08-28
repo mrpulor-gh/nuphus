@@ -259,7 +259,8 @@ export function ModelsPage({
   const { t } = useLanguage()
   const [currentModel, setCurrentModel] = useState('')
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [provider, setProvider] = useState('deepseek')
+  const [providersLoading, setProvidersLoading] = useState(true)
+  const [provider, setProvider] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [inputVal, setInputVal] = useState('')
@@ -331,32 +332,31 @@ export function ModelsPage({
   }
 
   useEffect(() => {
-    getSupportedProviders()
-      .then(list => {
-        if (Array.isArray(list)) {
-          setProviders(list)
-        }
-      })
-      .catch(() => {})
-    getCurrentConfig().then(cfg => {
-      if (cfg) {
-        setCurrentModel(cfg.model || '')
-        const prov = cfg.provider || 'deepseek'
-        // 同步持久化：确保 localStorage 与后端一致,provider change useEffect 读到的就是 cfg.model
-        try {
-          if (cfg.model) {
-            localStorage.setItem(`nuphus_current_model_${prov}`, cfg.model)
+    Promise.all([
+      getSupportedProviders()
+        .then(list => {
+          if (Array.isArray(list)) setProviders(list)
+        })
+        .catch(() => {}),
+      getCurrentConfig().then(cfg => {
+        if (cfg) {
+          setCurrentModel(cfg.model || '')
+          const prov = cfg.provider || 'deepseek'
+          try {
+            if (cfg.model) {
+              localStorage.setItem(`nuphus_current_model_${prov}`, cfg.model)
+            }
+          } catch {
+            /* localStorage 写入失败不阻塞 UI */
           }
-        } catch {
-          /* localStorage 写入失败不阻塞 UI */
+          setProvider(prov)
+          setApiKey('')
+          setHasKey(!!cfg.has_key)
+          setBaseUrl(cfg.base_url || '')
+          if (cfg.configured_providers) setConfiguredProviders(cfg.configured_providers)
         }
-        setProvider(prov)
-        setApiKey('') // key 从不暴露给前端，始终显示空
-        setHasKey(!!cfg.has_key)
-        setBaseUrl(cfg.base_url || '')
-        if (cfg.configured_providers) setConfiguredProviders(cfg.configured_providers)
-      }
-    })
+      }),
+    ]).finally(() => setProvidersLoading(false))
     getCapabilities()
       .then(m => {
         if (m) {
@@ -592,8 +592,17 @@ export function ModelsPage({
   }
 
   const switchModel = async (name: string) => {
+    if (providersLoading || providers.length === 0) {
+      setFeedback({ ok: false, msg: t('models.listLoading') })
+      setTimeout(() => setFeedback(null), 2500)
+      return
+    }
     const p = providers.find(x => x.id === provider)
-    if (!p) return
+    if (!p) {
+      setFeedback({ ok: false, msg: t('models.switchFail') })
+      setTimeout(() => setFeedback(null), 2500)
+      return
+    }
     setFeedback(null)
     const resolvedBaseUrl = baseUrl || p.base_url
     try {
