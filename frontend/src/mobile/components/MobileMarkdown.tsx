@@ -318,10 +318,22 @@ function BlockRenderer({ block }: { block: string }) {
   if (headerMatch) {
     const level = headerMatch[1].length
     const Tag = `h${level}` as keyof JSX.IntrinsicElements
-    return (
+    // 与桌面端 MarkdownContent 同款修复：紧凑 Markdown（标题与正文间无空行）
+    // 会把正文并进标题块，只渲染 lines[0] 会静默丢弃正文
+    const rest = lines.slice(1)
+    const heading = (
       <Tag className={`m-md-h m-md-h${level}`}>
         <MarkdownInline text={headerMatch[2]} />
       </Tag>
+    )
+    if (rest.length === 0 || rest.every(l => l.trim() === '')) {
+      return heading
+    }
+    return (
+      <>
+        {heading}
+        <MarkdownText text={rest.join('\n')} />
+      </>
     )
   }
 
