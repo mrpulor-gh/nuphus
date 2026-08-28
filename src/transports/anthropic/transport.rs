@@ -43,26 +43,18 @@ impl AnthropicTransport {
     /// Build the Anthropic Messages API request body from a Nuphus
     /// `MessageRequest` (which uses Chat-Completions-style message roles).
     fn build_request_body(&self, request: &MessageRequest) -> serde_json::Value {
-        let mut body = if let Some(max_tokens) = request.max_tokens {
-            serde_json::json!({
-                "model": if request.model.is_empty() {
-                    &self.config.model
-                } else {
-                    &request.model
-                },
-                "max_tokens": max_tokens,
-                "stream": request.stream,
-            })
-        } else {
-            serde_json::json!({
-                "model": if request.model.is_empty() {
-                    &self.config.model
-                } else {
-                    &request.model
-                },
-                "stream": request.stream,
-            })
-        };
+        // Anthropic Messages API 强制要求 max_tokens（缺失即 HTTP 400）。
+        // 显式值优先；None 兜底 8192（主流模型输出上限的最大公约数）。
+        let max_tokens = request.max_tokens.unwrap_or(8192);
+        let mut body = serde_json::json!({
+            "model": if request.model.is_empty() {
+                &self.config.model
+            } else {
+                &request.model
+            },
+            "max_tokens": max_tokens,
+            "stream": request.stream,
+        });
 
         // ── system prompt ────────────────────────────────────────────────
         if let Some(ref merged) = request.merged_system {

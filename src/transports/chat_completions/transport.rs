@@ -797,20 +797,16 @@ impl ChatCompletionsTransport {
             }
         }
 
-        let mut body = if let Some(max_tokens) = request.max_tokens {
-            serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "stream": request.stream,
-            })
-        } else {
-            serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "stream": request.stream,
-            })
-        };
+        // max_tokens：显式值优先；None 时兜底 8192 —— 否则请求体不带该字段，
+        // 服务端用保守默认（常见 1024~4096）截断长回复（「回复末尾缺失」根因）。
+        // 8192 = 主流模型输出上限的最大公约数（GLM/DeepSeek/MiniMax/Kimi 均 ≥8K）。
+        let max_tokens = request.max_tokens.unwrap_or(8192);
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": request.stream,
+        });
         // Sampling temperature — only when explicitly set (provider default otherwise)
         if let Some(temperature) = request.temperature {
             body["temperature"] = serde_json::json!(temperature);
