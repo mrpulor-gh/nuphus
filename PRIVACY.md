@@ -49,7 +49,7 @@ Each provider has its own data handling policy. Please refer to the respective p
 
 ## Security
 
-- API keys are encrypted at rest via Windows DPAPI (`enc:v1:` format, user-bound); macOS/Linux currently store keys in plain text (OS file permissions apply), with OS keychain integration on the roadmap
+- API keys are encrypted at rest via Windows DPAPI (`enc:v1:` format, user-bound); macOS/Linux currently store keys in plain text (OS file permissions apply), with OS keychain integration on the roadmap — this is a deliberate trade-off, not an oversight: there is no cross-platform OS enclave API, and per-platform keychain integration adds authorization prompts plus headless/CI failure paths. An honestly documented plain-text fallback beats a veneer of protection
 - Tool execution is subject to permission policies and injection detection
 - File operations are sandboxed by configurable path scopes
 - Desktop automation requires explicit user approval for high-risk operations
