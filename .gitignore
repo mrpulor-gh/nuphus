@@ -163,3 +163,5 @@ mobile-link-diagnosis.md
 CLAUDE.md
 # 独立 target 目录（cargo 检查/实验性构建产物，不入库）
 target-check/
+
+tsc-out.txt
