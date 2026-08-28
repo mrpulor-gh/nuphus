@@ -13,6 +13,7 @@ import splashJs from '../../public/splash.js?raw'
  * 1. HTML 默认态：skipWrap/bar 自带 hidden —— 缓存启动零事件 = 纯文字；
  * 2. 亮出按钮必须通过 lastPct<100 门 —— 完成/非下载态绝不出现；
  * 3. ensureSkipTimer 只允许在数字 pct 分支内调用 —— 纯文字阶段不计时。
+ * 另有品牌钉：splash 遵循黑白反色视觉，禁旧蓝紫/靛蓝调色板回潮。
  */
 describe('splash 后台下载按钮防回归', () => {
   it('防线1：skipWrap 与 bar 默认 hidden（缓存启动零事件=纯文字）', () => {
@@ -32,5 +33,39 @@ describe('splash 后台下载按钮防回归', () => {
     expect(trigger).toBeGreaterThan(-1)
     expect(occ[0]).toBeLessThan(trigger)
     expect(occ[1]).toBeGreaterThan(trigger)
+  })
+})
+
+describe('splash 品牌视觉防回归（黑白反色）', () => {
+  // 2026-08-28 品牌重构前的旧调色板：蓝紫渐变进度条 + 靛蓝按钮 + 蓝调灰阶。
+  // 这些色值一旦回潮 = 彩色样式混入黑白反色视觉，直接红灯。
+  const legacyPalette = [
+    '#5b5be6', // 旧进度条渐变起
+    '#8b8bf5', // 旧进度条渐变止
+    '#6366f1', // 旧按钮靛蓝文字
+    '#d3d3e0', // 旧按钮描边
+    '#f0f0ff', // 旧按钮 hover 底
+    '#9a9ab0', // 旧说明文字蓝灰
+    '#5a5a6e', // 旧 hint 蓝灰
+    '#e9e9ef', // 旧进度条轨道
+    '#1a1a2e', // 旧 logo 蓝调墨
+  ]
+
+  it('品牌钉1：不得出现旧蓝紫/靛蓝调色板', () => {
+    const html = splashHtml.toLowerCase()
+    for (const hex of legacyPalette) {
+      expect(html).not.toContain(hex)
+    }
+  })
+
+  it('品牌钉2：进度条填充与按钮反色必须使用墨色 #111111', () => {
+    // 样式经 :root 变量单一数据源管理：钉变量定义（锁死色值）+ 变量引用（锁死使用处）。
+    // 有人改 --ink/--paper 色值 → 红灯；有人绕开变量直填杂色 → 红灯。
+    expect(splashHtml).toMatch(/--ink:\s*#111111/)
+    expect(splashHtml).toMatch(/--paper:\s*#ffffff/)
+    expect(splashHtml).toMatch(/\.bar-fill\s*\{[^}]*background:\s*var\(--ink\)/)
+    expect(splashHtml).toMatch(
+      /\.skip-btn:hover\s*\{[^}]*background:\s*var\(--ink\)[^}]*color:\s*var\(--paper\)/,
+    )
   })
 })

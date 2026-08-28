@@ -9,6 +9,14 @@
       :root {
         --font-ui:
           system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        --ink: #111111;
+        --ink-2: #444444;
+        --ink-3: #777777;
+        --ink-4: #999999;
+        --paper: #ffffff;
+        --paper-2: #fafafa;
+        --track: #ececec;
+        --hairline: #e5e5e5;
       }
       * {
         margin: 0;
@@ -19,7 +27,7 @@
       body {
         width: 100%;
         height: 100%;
-        background: #ffffff;
+        background: var(--paper);
         overflow: hidden;
         font-family: var(--font-ui);
         -webkit-font-smoothing: antialiased;
@@ -32,7 +40,15 @@
         justify-content: center;
         gap: 10px;
       }
-      /* ── 虚拟形象动效令牌 ── */
+
+      /* ── 等待态（默认）：logo + hint ── */
+      .logo {
+        position: relative;
+      }
+      /* 下载面板出现时，logo 缩小让位（节奏：视口小，download 面板更高） */
+      body.downloading .logo {
+        display: none;
+      }
       .nv-eye {
         transform-box: fill-box;
       }
@@ -74,23 +90,62 @@
 
       .hint {
         font-size: 12px;
-        color: #5a5a6e;
+        color: var(--ink-2);
+        letter-spacing: 0.02em;
         transition: opacity 0.3s ease;
       }
 
-      /* 进度条：pct 已知时定宽过渡；未知（pct: null）时不定宽滑动 */
+      /* ── 下载态：面板式布局，黑白反色纪律（纸白底 + 墨色元素）── */
+      .dl-panel {
+        display: none;
+        flex-direction: column;
+        align-items: stretch;
+        width: 212px;
+        gap: 8px;
+      }
+      body.downloading .dl-panel {
+        display: flex;
+      }
+
+      .dl-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .dl-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: 0.02em;
+      }
+      .dl-pct {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .dl-file {
+        font-size: 10px;
+        color: var(--ink-3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* 进度条：pct 已知时定宽过渡；未知（pct: null）时不定宽滑动。
+         品牌纪律：黑白反色——实心墨色填充，不用彩色渐变 */
       .bar {
-        width: 180px;
-        height: 4px;
+        width: 100%;
+        height: 6px;
         border-radius: 999px;
-        background: #e9e9ef;
+        background: var(--track);
         overflow: hidden;
       }
       .bar-fill {
         height: 100%;
         width: 0%;
         border-radius: 999px;
-        background: linear-gradient(90deg, #5b5be6, #8b8bf5);
+        background: var(--ink);
         transition: width 0.25s ease;
       }
       .bar.indeterminate .bar-fill {
@@ -106,7 +161,8 @@
         }
       }
 
-      /* 「后台下载」：下载卡住 10s 才出现，先放用户进主界面，下载继续 */
+      /* 「后台下载」出口：下载卡住 10s 才出现。黑白反色——纸白底墨字
+         墨描边，hover 反转为墨底纸白字 */
       .skip-wrap {
         display: flex;
         flex-direction: column;
@@ -115,21 +171,24 @@
       }
       .skip-btn {
         font-size: 11px;
-        color: #6366f1;
+        color: var(--ink);
         background: none;
-        border: 1px solid #d3d3e0;
+        border: 1px solid var(--ink);
         border-radius: 999px;
         padding: 3px 12px;
         cursor: pointer;
         font-family: var(--font-ui);
-        transition: background 0.2s ease;
+        transition:
+          background 0.2s ease,
+          color 0.2s ease;
       }
       .skip-btn:hover {
-        background: #f0f0ff;
+        background: var(--ink);
+        color: var(--paper);
       }
       .skip-note {
         font-size: 10px;
-        color: #9a9ab0;
+        color: var(--ink-4);
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -142,43 +201,54 @@
     </style>
   </head>
   <body>
-    <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
-      <g class="nv-whole">
-        <path
-          d="M64 20 H192 A44 44 0 0 1 236 64 V156"
-          stroke="#1a1a2e"
-          stroke-width="24"
-          stroke-linecap="round"
-          fill="none"
-        />
-        <path
-          d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"
-          stroke="#1a1a2e"
-          stroke-width="24"
-          stroke-linecap="round"
-          fill="none"
-        />
-        <path
-          class="nv-eye l"
-          d="M80 180 L80 76"
-          stroke="#1a1a2e"
-          stroke-width="24"
-          stroke-linecap="round"
-          fill="none"
-        />
-        <path
-          class="nv-eye r"
-          d="M176 180 L176 76"
-          stroke="#1a1a2e"
-          stroke-width="24"
-          stroke-linecap="round"
-          fill="none"
-        />
-      </g>
-    </svg>
+    <div class="logo">
+      <svg class="st-idle" width="64" height="64" viewBox="0 0 256 256" fill="none">
+        <g class="nv-whole">
+          <path
+            d="M64 20 H192 A44 44 0 0 1 236 64 V156"
+            stroke="#111111"
+            stroke-width="24"
+            stroke-linecap="round"
+            fill="none"
+          />
+          <path
+            d="M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20"
+            stroke="#111111"
+            stroke-width="24"
+            stroke-linecap="round"
+            fill="none"
+          />
+          <path
+            class="nv-eye l"
+            d="M80 180 L80 76"
+            stroke="#111111"
+            stroke-width="24"
+            stroke-linecap="round"
+            fill="none"
+          />
+          <path
+            class="nv-eye r"
+            d="M176 180 L176 76"
+            stroke="#111111"
+            stroke-width="24"
+            stroke-linecap="round"
+            fill="none"
+          />
+        </g>
+      </svg>
+    </div>
     <div class="hint">正在启动…</div>
-    <!-- 加载条默认隐藏：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
-    <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
+
+    <!-- 下载面板：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
+    <div class="dl-panel" id="dlPanel">
+      <div class="dl-head">
+        <span class="dl-title">正在下载内置模型</span>
+        <span class="dl-pct" id="dlPct"></span>
+      </div>
+      <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
+      <div class="dl-file" id="dlFile"></div>
+    </div>
+
     <div id="skipWrap" class="skip-wrap" hidden>
       <button id="skipBtn" class="skip-btn">后台下载</button>
       <div class="skip-note">除视觉定位，不影响正常使用！</div>

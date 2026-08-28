@@ -19,6 +19,10 @@ static EMBEDDER_LOCK: OnceLock<Mutex<Option<&'static Embedder>>> = OnceLock::new
 /// 进程内同类初始化错误只记录一次（节流），成功加载后重置
 static ERROR_LOGGED: AtomicBool = AtomicBool::new(false);
 
+/// 毒化自愈（删权重重下）每进程只允许一次：加载失败未必是文件损坏（如
+/// debug 构建下 Candle 加载瞬时失败），无上限的删 95MB 权重重下必须掐断。
+static SELF_HEAL_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+
 fn embedder_lock() -> &'static Mutex<Option<&'static Embedder>> {
     EMBEDDER_LOCK.get_or_init(|| Mutex::new(None))
 }
@@ -94,12 +98,17 @@ impl Embedder {
 
         for file in MODEL_FILES {
             let path = dir.join(file);
-            if path.exists() {
+            let min_size = Self::min_file_size(file);
+            // 跳过判定带体积下限（反毒化）：与 bootstrap.rs 视觉模型同型——
+            // 纯 exists() 会让截断/错误页文件被永远跳过、永不自愈
+            if std::fs::metadata(&path)
+                .map(|m| m.len() >= min_size)
+                .unwrap_or(false)
+            {
                 tracing::info!("[Embed]  跳过已存在的: {}", file);
                 continue;
             }
 
-            let min_size = Self::min_file_size(file);
             let mut last_err = String::new();
             let mut downloaded = false;
 
@@ -222,9 +231,14 @@ impl Embedder {
     ) -> Result<Self, String> {
         let dir = model_dir.unwrap_or_else(Self::model_dir);
 
-        // 按文件检查完整性（而非目录存在性），空目录/部分缺失的残留都会触发补下载；
-        // download_model 内部跳过已存在文件，天然支持断点续传
-        if MODEL_FILES.iter().any(|f| !dir.join(f).exists()) {
+        // 按文件检查完整性（体积下限而非纯存在性），空目录/部分缺失/截断残留
+        // 都会触发补下载；download_model 内部跳过达标文件，天然支持断点续传
+        let file_ok = |f: &str| {
+            std::fs::metadata(dir.join(f))
+                .map(|m| m.len() >= Self::min_file_size(f))
+                .unwrap_or(false)
+        };
+        if MODEL_FILES.iter().any(|f| !file_ok(f)) {
             tracing::info!("[Embed] 模型文件不完整，尝试自动下载: {}", dir.display());
             Self::download_model(&dir, on_progress)?;
         }
@@ -232,7 +246,14 @@ impl Embedder {
         match Self::load_from_dir(&dir) {
             Ok(embedder) => Ok(embedder),
             Err(first_err) => {
-                // 毒化文件自愈：删除权重文件，重新下载并再加载一次
+                // 毒化文件自愈：删除权重文件，重新下载并再加载一次。
+                // 每进程只做一次——第二次失败说明问题大概率不在文件（如 debug
+                // 构建的 Candle 瞬时失败），继续重下只会无限循环。
+                if SELF_HEAL_ATTEMPTED.swap(true, Ordering::SeqCst) {
+                    let msg = format!("模型加载失败且毒化自愈已尝试过，不再重下: {first_err}");
+                    write_embed_error(&msg);
+                    return Err(msg);
+                }
                 tracing::warn!("[Embed] 模型加载失败（{}），删除权重后重新下载", first_err);
                 let _ = std::fs::remove_file(dir.join("pytorch_model.bin"));
                 Self::download_model(&dir, on_progress)

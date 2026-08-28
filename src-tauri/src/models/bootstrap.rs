@@ -23,6 +23,11 @@
 //! - Files that already exist AND meet `min_size` are skipped (anti-poisoning:
 //!   an undersized file is treated as an error page and re-downloaded), so a
 //!   re-run resumes at file granularity. Partial files are deleted on failure.
+//! - A file missing from the data dir is first *adopted* from the bundled
+//!   `desktop/models` shipped next to the exe (or the dev repo layout) when
+//!   present ≥ `min_size` — copied locally with no splash pct and no network.
+//!   Only files absent from BOTH locations hit the network (prevents the
+//!   "already bundled but still background-downloading" false positive).
 //! - YOLO is *optional*: a YOLO download failure degrades to OCR-only and does
 //!   NOT end in a terminal error event (OCR failures still do).
 //! - Mirror order mirrors `speech/download.rs`: hf-mirror.com → huggingface.co.
@@ -177,6 +182,43 @@ fn models_dir_hint() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("Nuphus").join("models"))
 }
 
+/// Bundled ("内置") vision-models directory shipped with the app: the
+/// exe-adjacent `desktop/models` (release portable layout) or the dev repo's
+/// `src-tauri/desktop/models` (cwd / CARGO_MANIFEST_DIR candidates). Mirrors
+/// the tail of `nuphus::desktop::resolve_models_dir` but EXCLUDES the env
+/// override and data_dir candidates, so callers can tell "shipped with the
+/// app" apart from "downloaded into user data".
+fn bundled_models_dir() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut base = exe.parent().map(Path::to_path_buf);
+        for _ in 0..=2 {
+            let Some(p) = base else { break };
+            let candidate = p.join("desktop").join("models");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            base = p.parent().map(Path::to_path_buf);
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut bases = vec![cwd.clone()];
+        if let Some(parent) = cwd.parent() {
+            bases.push(parent.to_path_buf());
+        }
+        for b in bases {
+            let candidate = b.join("src-tauri").join("desktop").join("models");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src-tauri/desktop/models");
+    if dev_path.exists() {
+        return Some(dev_path);
+    }
+    None
+}
+
 /// A file is "present" if it exists AND meets its anti-poisoning floor.
 fn file_present(dir: &Path, name: &str) -> bool {
     let files = vision_files();
@@ -256,9 +298,11 @@ fn download_once(
 
 fn run_download(app: &AppHandle) -> Result<(), String> {
     let dir = models_dir_for_write()?;
+    let bundled_dir = bundled_models_dir();
     tracing::info!(
-        "[vision-dl] downloading vision models into {}",
-        dir.display()
+        "[vision-dl] downloading vision models into {} (bundled: {:?})",
+        dir.display(),
+        bundled_dir.as_ref().map(|p| p.display().to_string())
     );
 
     // No total timeout: YOLO (12 MB) over slow links exceeds any sane fixed
@@ -309,6 +353,52 @@ fn run_download(app: &AppHandle) -> Result<(), String> {
                 meta.len(),
                 mf.min_size
             );
+        }
+
+        // AppData 缺失/不足 → 先采用随应用分发的内置模型（本地复制，不走网络）。
+        // 不发 splash 数值 pct：复制是秒级本地操作、不是下载——非下载动作绝不
+        // 驱动加载条与「后台下载」按钮（d99fe72 同型教训）。复制失败降级为下载。
+        if let Some(bundled) = bundled_dir.as_ref() {
+            if bundled != &dir {
+                let src = bundled.join(mf.name);
+                if let Ok(bmeta) = std::fs::metadata(&src) {
+                    if bmeta.len() >= mf.min_size {
+                        tracing::info!(
+                            "[vision-dl] 采用内置模型: {} ← {}",
+                            mf.name,
+                            bundled.display()
+                        );
+                        crate::splash::emit_splash_progress(app, None, "正在启用内置模型…");
+                        match std::fs::copy(&src, &path) {
+                            Ok(n) if n >= mf.min_size => {
+                                emit(
+                                    app,
+                                    ModelsEvent::Progress {
+                                        file: mf.name.to_string(),
+                                        downloaded: n,
+                                        total: n,
+                                        index,
+                                        count,
+                                    },
+                                );
+                                done_bytes += mf.min_size;
+                                continue;
+                            }
+                            Ok(n) => {
+                                tracing::warn!(
+                                    "[vision-dl] 内置副本体积异常 ({} < {}), 改走下载",
+                                    n,
+                                    mf.min_size
+                                );
+                                let _ = std::fs::remove_file(&path);
+                            }
+                            Err(e) => {
+                                tracing::warn!("[vision-dl] 复制内置模型失败: {e}, 改走下载");
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Progress events are throttled to ~1 MiB deltas to avoid flooding
@@ -447,6 +537,19 @@ fn emit_splash_pct(app: &AppHandle, done: u64, total: u64, text: &str) {
 /// 进度事件无法投递（`run_download` 内部使用 reqwest::blocking）。
 pub fn ensure_vision_models_blocking(app: &AppHandle) -> Result<(), String> {
     let status = scan_status();
+    // 诊断：目录视图一行汇总——排障「为何要下载 / 为何误报后台下载」的关键证据
+    //（splash 判定只看 data_dir；bundled 是随应用分发的 desktop/models）。
+    if let Ok(env_dir) = std::env::var("NUPHUS_MODELS_DIR") {
+        tracing::warn!("[vision-dl] NUPHUS_MODELS_DIR 覆盖生效: {env_dir}");
+    }
+    tracing::info!(
+        "[vision-dl] scan: dir={:?} ocr={} yolo={} missing={:?} bundled={:?}",
+        models_dir_hint().map(|p| p.display().to_string()),
+        status.ocr_ready,
+        status.yolo_ready,
+        status.missing,
+        bundled_models_dir().map(|p| p.display().to_string()),
+    );
     if status.ocr_ready && status.yolo_ready {
         tracing::info!("[vision-dl] all vision models ready, skip (blocking)");
         return Ok(());

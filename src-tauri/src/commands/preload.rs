@@ -34,9 +34,14 @@ pub async fn preload_model(app: AppHandle) -> Result<bool, String> {
 
     if loaded {
         tracing::info!("[Preload] Embedding model loaded successfully");
+        // 阶段完成信号：pct=null 强制 splash 收尾（撤下载载条与「后台下载」
+        // 按钮）。没有这条，下载路径的最后一个数值 pct 会把加载条/按钮
+        // 留在屏幕上直到窗口关闭——"下载完了还挂着后台下载"的根源之一。
+        crate::splash::emit_splash_progress(&app, None, "嵌入模型就绪");
         Ok(true)
     } else {
         tracing::warn!("[Preload] Embedding model failed to load (will lazy-init on first use)");
+        crate::splash::emit_splash_progress(&app, None, "继续启动…");
         Ok(false)
     }
 }
@@ -59,5 +64,8 @@ pub async fn preload_ocr(app: AppHandle) -> Result<bool, String> {
     .await
     .map_err(|e| format!("视觉模型预加载任务失败: {e}"))?;
     inner?;
+    // 阶段完成信号：与 preload_model 同理，覆盖 skip / 内置采用 / 真实下载
+    // 全部路径——视觉模型阶段结束时 splash 必须收尾。
+    crate::splash::emit_splash_progress(&app, None, "视觉模型就绪");
     Ok(true)
 }
