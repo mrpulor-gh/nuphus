@@ -44,6 +44,8 @@ pub struct ShelfEntry {
     pub id: String,
     pub mode: String,
     pub title: String,
+    /// hover 预览：最后一条可见消息脱敏截断（≤400 字符），与标题「话题 ↔ 细节」互补
+    pub preview: String,
     pub message_count: usize,
     /// Unix 毫秒；最后一条消息 timestamp，缺省为归档时刻
     pub updated_at: u64,
@@ -100,9 +102,11 @@ impl ShelfState {
 
 // ── 纯函数辅助 ──
 
-/// 默认标题：第一条可见 user 消息截断（跳过内部提示/追加段/提炼词/系统方括号前缀）
+/// 默认标题：**最后一条**可见 user 消息截断（跳过内部提示/追加段/提炼词/系统方括号前缀）。
+/// 反向取最近话题——首条 user 作标题会随对话演进失真，最后一条常读常新（2026-08-27 设计）。
+/// 自定义标题（rename_session_cmd 持久化到 store.summary）优先级不受影响。
 pub(crate) fn derive_title(session: &Session) -> String {
-    for m in session.messages() {
+    for m in session.messages().iter().rev() {
         if !matches!(m.role, MessageRole::User) {
             continue;
         }
@@ -117,6 +121,75 @@ pub(crate) fn derive_title(session: &Session) -> String {
             continue;
         }
         return truncate_chars(t, 30);
+    }
+    String::new()
+}
+
+/// 预览脱敏：疑似密钥/token 的词元打码——`sk-`/`ghp_`/`gho_`/`xox`/`github_pat_` 前缀、
+/// `Bearer` 授权头、≥32 位连续字母数字串（JWT/hex）。rail 常驻展示，防敏感信息上屏。
+fn sanitize_preview(s: &str) -> String {
+    let is_token_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '.';
+    let sensitive_prefixes = ["sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "bearer"];
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if is_token_char(ch) {
+            let start = idx;
+            let mut end = idx + ch.len_utf8();
+            while let Some(&(j, c2)) = chars.peek() {
+                if is_token_char(c2) {
+                    end = j + c2.len_utf8();
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let word = &s[start..end];
+            let lower = word.to_lowercase();
+            let masked = sensitive_prefixes.iter().any(|p| lower.starts_with(p))
+                || (word.len() >= 32 && word.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.'));
+            out.push_str(if masked { "***" } else { word });
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// 会话预览：**agent 最终回复**脱敏截断（≤400 字符）——hover 呈现「这个会话产出了什么」，
+/// 与派生标题（最后一轮 user，短）形成「话题 ↔ 结果」互补（2026-08-27 大王定调）。
+/// rail 可见状态下会话的最后完整消息几乎总是 assistant 回复（执行中 rail 隐藏）；
+/// 无回复时（新会话/发送失败等边缘态）回退最后一条可见 user 消息。assistant 侧剥离
+/// thinking 块与泄漏的工具 XML；user 侧沿用 derive_title 的可见性过滤。
+pub(crate) fn derive_preview(session: &Session) -> String {
+    // 第一优先：最后一条可见 assistant 消息（agent 最终回复）
+    for m in session.messages().iter().rev() {
+        if m.internal || !matches!(m.role, MessageRole::Assistant) {
+            continue;
+        }
+        let text = m.text_content();
+        let t = nuphus::utils::strip_tool_xml_tags(&nuphus::utils::strip_think_tags(&text));
+        let t = t.trim();
+        if t.is_empty() {
+            continue;
+        }
+        return truncate_chars(&sanitize_preview(t), 400);
+    }
+    // 回退：无 assistant 回复时取最后一条可见 user 消息
+    for m in session.messages().iter().rev() {
+        if m.internal || !matches!(m.role, MessageRole::User) {
+            continue;
+        }
+        let text = m.text_content();
+        let t = text.trim();
+        if t.is_empty()
+            || t.starts_with('[')
+            || t.starts_with("开始进行上下文提炼")
+            || nuphus::mobile_append::is_append_section(&text)
+        {
+            continue;
+        }
+        return truncate_chars(&sanitize_preview(t), 400);
     }
     String::new()
 }
@@ -322,6 +395,7 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
             title: stored_title
                 .clone()
                 .unwrap_or_else(|| derive_title(&file_session)),
+            preview: derive_preview(&file_session),
             message_count: file_session.messages().len(),
             updated_at: rfc3339_to_millis(&updated_at).unwrap_or_else(now_millis),
         };
@@ -443,6 +517,7 @@ fn build_entry(
             .filter(|t| !t.trim().is_empty())
             .map(|t| t.to_string())
             .unwrap_or_else(|| derive_title(session)),
+        preview: derive_preview(session),
         message_count: session.messages().len(),
         updated_at: session
             .messages()
@@ -522,6 +597,7 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
                 e.id.clone(),
                 serde_json::json!({
                     "id": e.id, "mode": e.mode, "title": e.title,
+                    "preview": e.preview,
                     "message_count": e.message_count, "updated_at": e.updated_at,
                     "is_active": true,
                 }),
@@ -540,6 +616,7 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
                 e.id.clone(),
                 serde_json::json!({
                     "id": e.id, "mode": e.mode, "title": e.title,
+                    "preview": e.preview,
                     "message_count": e.message_count, "updated_at": e.updated_at,
                     "is_active": false,
                 }),
@@ -914,6 +991,7 @@ mod tests {
                 id: s.id.clone(),
                 mode: "leader".into(),
                 title: format!("会话{i}"),
+                preview: String::new(),
                 message_count: s.messages().len(),
                 updated_at: now_millis(),
             };
@@ -1053,6 +1131,7 @@ mod tests {
             id: target_id.clone(),
             mode: "leader".into(),
             title: "目标会话".into(),
+            preview: String::new(),
             message_count: target_msg_count,
             updated_at: now_millis(),
         };

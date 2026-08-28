@@ -191,6 +191,41 @@
   transform: translateY(-50%) translateX(0);
 }
 
+/* ── hover 长预览：agent 最终回复（脱敏截断）──
+   挂 sr-bubble 内 absolute 下方展开；hover 标题按钮才出现（~ 兄弟选择器，
+   扫过条目不闪 tooltip）；不用原生 title 属性（长文本不可控 + 延迟 1s）。
+   pointer-events none 防止 tooltip 挡鼠标造成 hover 抖动。 */
+.sr-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(340px, 56vw);
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  font-size: var(--fz-sm);
+  line-height: 1.55;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: hidden;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.15s ease 0.12s,
+    transform 0.15s ease 0.12s;
+  pointer-events: none;
+  z-index: 5;
+}
+.sr-title-btn:hover ~ .sr-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .sr-title-btn {
   display: inline-block;
   min-width: 0;

@@ -133,7 +133,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         // 签名守卫：id+active+标题+顺序未变则不 setItems——提炼/追加等后台写入只改
         // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
         // 仍基于本轮新数据，不受影响。签名含顺序（数组序），新建/归档必然变化。
-        const sig = list.map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}`).join(';')
+        const sig = list.map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}|${i.preview || ''}`).join(';')
         if (sig !== listSigRef.current) {
           listSigRef.current = sig
           setItems(list)
@@ -452,12 +452,18 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
                     <button
                       type="button"
                       className={`sr-title-btn${it.is_active ? ' active' : ''}`}
-                      title={it.title}
                       disabled={it.is_active}
                       onClick={() => void handleSwitch(it.id, it.is_active)}
                     >
                       {it.title || t('sessionRail.untitled')}
                     </button>
+                    {/* hover 长预览：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」互补；
+                        DOM 呈现不受条目空间限制（原生 title 属性长文本体验差） */}
+                    {it.preview ? (
+                      <div className="sr-tip" role="tooltip">
+                        {it.preview}
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       className="sr-edit-btn"

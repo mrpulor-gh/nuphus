@@ -341,6 +341,8 @@ export interface ShelfSessionItem {
   id: string
   mode: string
   title: string
+  /** hover 预览：agent 最终回复脱敏截断（≤400 字符），与标题「话题 ↔ 结果」互补 */
+  preview?: string
   message_count: number
   updated_at: number
   is_active: boolean
