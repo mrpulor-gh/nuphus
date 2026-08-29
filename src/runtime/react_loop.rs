@@ -176,9 +176,15 @@ impl super::Runtime {
                 if !tenets.is_empty() {
                     l1_buf.push(format!("## 用户原则\n{}", tenets));
                 }
-                if let Some(md) = crate::agent::ReactAgent::load_cross_session_context(Some(&self.agent.session.id)) {
-                    l1_buf.push(format!("## 跨阶段上下文\n{}\n\n> 以上具体记忆内容可通过 memory_search / memory_recent / memory_session_context 工具查询完整记录。\n", md));
-                    tracing::debug!("[CROSS_SESSION] Injected cross-session context ({} chars)", md.len());
+                // WorkflowAgent 不注入 Leader 记忆（cross_session_context 含 Leader 记忆日志 +
+                // 蒸馏标题）：其跨会话记忆由 workflow-memory.md 专属注入承载
+                //（workflow_agent::inject_memory_snapshot，已含 session id 与记忆文件导航），
+                // 避免 Leader 发布/CI 等记忆混入工作流设计上下文。
+                if self.config.mode != crate::runtime::Mode::Workflow {
+                    if let Some(md) = crate::agent::ReactAgent::load_cross_session_context(Some(&self.agent.session.id)) {
+                        l1_buf.push(format!("## 跨阶段上下文\n{}\n\n> 以上具体记忆内容可通过 memory_search / memory_recent / memory_session_context 工具查询完整记录。\n", md));
+                        tracing::debug!("[CROSS_SESSION] Injected cross-session context ({} chars)", md.len());
+                    }
                 }
 l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config.supports_vision, self.agent.config.vision_model.as_deref(), prompt::EnvAudience::Leader));
                 let skill_reg = prompt::skill_registry_section();

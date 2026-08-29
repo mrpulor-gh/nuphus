@@ -277,16 +277,18 @@ impl WorkflowAgent {
         }
     }
 
-    /// Inject memory snapshot from workflow-memory.md
+    /// Inject workflow memory tail from workflow-memory.md（append 日志，最新条目）
     pub fn inject_memory_snapshot(&mut self) {
         if self.session.is_empty() {
             let wmem_path = crate::utils::nuphus_data_dir().join("workflow-memory.md");
             if wmem_path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&wmem_path) {
-                    let trimmed = content.trim();
+                    // append 日志：只注入最新条目 tail（≤2000 字符），与 Leader memory journal 注入一致
+                    let tail = crate::utils::memory_journal_tail(&content, 2000);
+                    let trimmed = tail.trim();
                     if !trimmed.is_empty() {
                         self.session.push_user(format!(
-                            "=== 历史工作流记忆（来自 workflow-memory.md 快照，可能过时）===\n{trimmed}\n\n当前 session id：{}\n记忆快照文件：read {}（覆盖写入，最新即所读）\n> 更新用 workflow_memory_update；跨会话检索用 memory_search / memory_recent",
+                            "=== 历史工作流记忆（来自 workflow-memory.md，追加式日志，最新即所读）===\n{trimmed}\n\n当前 session id：{}\n记忆快照文件：read {}（追加式日志，tail 即最新）\n> 更新用 workflow_memory_update；跨会话检索用 memory_search / memory_recent",
                             self.session.id,
                             wmem_path.display()
                         ));
@@ -376,7 +378,7 @@ impl WorkflowAgent {
         self.execution_steps.clear();
         // 新任务开始时清空上一任务残留的追加指令队列（防跨任务泄漏，与 react_loop 入口一致）
         crate::mobile_append::clear();
-        // 首轮注入 workflow 记忆快照（session 为空时生效，同会话仅一次）
+        // 首轮注入 workflow 记忆 tail（session 为空时生效，同会话仅一次）
         self.inject_memory_snapshot();
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();

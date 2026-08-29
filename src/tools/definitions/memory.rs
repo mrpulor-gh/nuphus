@@ -378,16 +378,17 @@ impl ToolRegistry {
     ///
     /// 写入 ~/.nuphus/workflow-memory.md（用户数据目录，见 utils::nuphus_data_dir）。
     /// 会被注入到后续 Workflow 会话 prompt 中作为跨会话参考。
-    /// 每次调用覆盖上次快照（纯文件工作记忆，不入 SQLite）。
-    /// 自动截断到 2000 字符。
+    /// 机制与 Leader memory journal 对齐：append 追加式（读旧→拼条目→cap 裁剪→写回），
+    /// 条目含署名行（时间 + session 前 8 位）与摘要锚点 frontmatter；session id 由系统自动追加。
+    /// 自动截断条目到 2000 字符。
     pub(crate) fn register_workflow_memory_update(&mut self) {
         self.register(ToolDef {
             name: "workflow_memory_update".to_string(),
-            description: "Overwrite the workflow working memory snapshot (.nuphus/workflow-memory.md), injected into new Workflow Agent sessions. Maintain the latest status as a searchable digest: phase progress, key findings, parameter experiments, blocking items — not full details; deep history lives in SQLite, reachable via memory_search when needed. Skip temporary step-by-step logs. Maximum length: 2000 characters.".to_string(),
+            description: "Append a dated summary entry to the workflow working memory (.nuphus/workflow-memory.md), injected into new Workflow Agent sessions. Write a SEARCHABLE digest: phase progress, key findings, parameter experiments, blocking items — not full details; deep history stays in SQLite, reachable via memory_search / memory_session_context using the session id shown in each signature line. Session id is auto-appended by the system — do not repeat it. Write INCREMENTAL changes only (new phase, new decision, resolved blocker) — do not restate unchanged items. Max 2000 chars per entry. Suggested structure: ##Phase / ##File / ##Blocker / ##Decision.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "记忆内容（建议结构化格式）"},
+                    "content": {"type": "string", "description": "记忆内容（建议结构化格式：## phase / ## files / ## blockers / ## decisions）"},
                 },
                 "required": ["content"]
             }),
@@ -402,14 +403,34 @@ impl ToolRegistry {
                 } else {
                     content
                 };
+                // ── 对齐 Leader：append 追加式日志 + 署名行（时间 + session8）+ 摘要锚点 + cap ──
+                let sid_full = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("workflow-current");
+                let sid8: String = sid_full.chars().take(8).collect();
+                let ts = chrono::Local::now();
+                let sig = format!("[{} · {}]", ts.format("%m-%d %H:%M"), sid8);
+
                 let nuphus_dir = crate::utils::nuphus_data_dir();
                 let path = nuphus_dir.join("workflow-memory.md");
                 if let Err(e) = std::fs::create_dir_all(&nuphus_dir) {
                     return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
                 }
-                match std::fs::write(&path, trimmed) {
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                let anchors = extract_memory_anchors(trimmed);
+                let journal_entry =
+                    format!("{}{}{trimmed}\n\n", sig, memory_anchors_frontmatter(&anchors));
+                let capped = crate::utils::trim_memory_journal_to_cap(
+                    &format!("{existing}{journal_entry}"),
+                    crate::utils::MEMORY_JOURNAL_CAP_BYTES,
+                );
+                match std::fs::write(&path, &capped) {
                     Ok(_) => {
-                        Ok(ToolResult::success(format!("Workflow 记忆已保存 ({} chars)", trimmed.len())))
+                        Ok(ToolResult::success(format!(
+                            "Workflow 记忆已追加 ({} chars)",
+                            trimmed.len()
+                        )))
                     }
                     Err(e) => Ok(ToolResult::failure(format!("写入失败: {}", e))),
                 }
