@@ -126,6 +126,9 @@ interface ChatPanelProps {
   /** 提炼执行中（全局）：驱动提炼中全屏遮罩（弹窗路径与 refine-pending-btn 路径统一） */
   refining?: boolean
   setRefining?: (v: boolean) => void
+  /** 手动关闭「提炼中」弹窗/遮罩：复位提炼 UI + 追踪 refs（后台提炼不中断，
+   *  完成后 session_refined / refine_failed 照常落地）。缺省退化为仅收起遮罩 */
+  onDismissRefine?: () => void
   onOpenPalette?: () => void
   onCommand?: (id: string) => void
   mode?: string
@@ -187,6 +190,7 @@ export function ChatPanel({
   onSkipRefine,
   refining,
   setRefining,
+  onDismissRefine,
   onOpenPalette,
   onCommand,
   mode,
@@ -1524,6 +1528,29 @@ export function ChatPanel({
             >
               <div className="compact-header">
                 <span className="compact-header-title">{t('refine.title')}</span>
+                {/* 提炼中允许关闭：后端失败（key 失效/连不上）不再广播结束事件时，
+                    用户不会被全屏弹窗困死（后台提炼继续，完成后照常落地） */}
+                {refining && (
+                  <button
+                    className="compact-header-close"
+                    title={t('refine.dismissHint')}
+                    aria-label={t('refine.dismissHint')}
+                    onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div className="compact-divider" />
               <div className="compact-body">
@@ -1693,8 +1720,8 @@ export function ChatPanel({
 
       {/* ── 提炼中全屏遮罩（refine-pending-btn 路径 / 弹窗已关闭但后端仍在提炼）──
           弹窗路径的提炼中状态内嵌在 refineState 弹窗里；pending 路径 refineState
-          为 null，需独立遮罩。含关闭按钮逃生通道——后端失败/超时未发 session_refined
-          时用户可手动关闭，避免困在全屏遮罩无法回到界面。 */}
+          为 null，需独立遮罩。关闭按钮走 onDismissRefine（复位 UI + 提炼追踪
+          refs）——后端失败/超时未发结束事件时可手动退出，不困在全屏遮罩里。 */}
       {refining &&
         !refineState &&
         !pendingRefine &&
@@ -1708,9 +1735,9 @@ export function ChatPanel({
                 <span className="compact-header-title">{t('refine.title')}</span>
                 <button
                   className="compact-header-close"
-                  title="关闭"
-                  aria-label="关闭"
-                  onClick={() => setRefining?.(false)}
+                  title={t('refine.dismissHint')}
+                  aria-label={t('refine.dismissHint')}
+                  onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
                 >
                   <svg
                     width="14"

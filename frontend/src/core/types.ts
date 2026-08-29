@@ -606,6 +606,9 @@ export type NuphusEvent =
       message_count: number
       session_id: string
     }
+  /** 提炼失败（LLM 调用失败/超时/空摘要）：与 refine_executing 配对的结束事件，
+   *  双端据此退出"提炼中"UI 并展示错误——缺失会导致永久 spinner（假死） */
+  | { type: 'refine_failed'; message: string }
   | { type: 'hud_update'; text: string; phase: string; step_kind?: string | null }
   | { type: 'leader_done'; message: string }
   /** 会话切换（桌面 rail 或手机遥控触发）：手机收到后重拉 /history 跟随桌面当前视图 */

@@ -867,6 +867,7 @@ const zh: Record<string, string> = {
   'refine.usage': '上下文用量 {0}%（{1} / {2} Token）',
   'refine.pendingBtn': '可提炼',
   'refine.pendingDesc': '上下文已使用 {0}% — 现在提炼？',
+  'refine.dismissHint': '提炼仍在后台进行，完成后将自动更新会话上下文',
 
   'message.system': '系统',
 

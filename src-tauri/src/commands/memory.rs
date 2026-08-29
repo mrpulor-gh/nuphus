@@ -714,6 +714,7 @@ pub async fn list_memories(
         None,                                                       // exclude_goal_types
         filter.as_ref().and_then(|f| f.search.as_deref()),          // search_text
         5000, // limit (still high for min_quality fallback)
+        true, // all_projects: 记忆页是全局浏览器，不做项目隔离
     )
     .map_err(|e| e.to_string())?;
 

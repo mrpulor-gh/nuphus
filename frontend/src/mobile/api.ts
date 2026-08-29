@@ -217,6 +217,9 @@ export async function fetchCustomAgents(token: string): Promise<CustomAgentsInfo
 /** GET /agent-status 返回：桌面端当前执行状态 */
 export interface AgentStatus {
   running: boolean
+  /** 桌面端提炼进行中（refine_active 原子锁）：重连/刷新后恢复提炼状态。
+   *  可选——旧后端无此字段（视为 false） */
+  refine_active?: boolean
 }
 
 /** 查询桌面端执行状态（刷新/重连后恢复 running，补齐 broadcast 不重传的间隙事件） */
@@ -795,13 +798,18 @@ export function wfResume(token: string, workflowId: string): Promise<void> {
 export function wfStop(token: string, workflowId: string): Promise<void> {
   return postWorkflowControl(token, './workflow-stop', workflowId)
 }
-/** 会话提炼（refine）：手机端触发（对齐桌面 execute_session_refine） */
+/** 会话提炼（refine）：手机端触发（对齐桌面 execute_session_refine）。
+ *  显式 100s 超时 > 后端 Leader 90s 硬超时——默认 20s 会在提炼正常进行中误杀请求。 */
 export async function triggerRefine(token: string): Promise<void> {
   const res = await checkAuth(
-    await fetch(resolveApi('./refine'), {
-      method: 'POST',
-      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
-    }),
+    await fetchWithTimeout(
+      resolveApi('./refine'),
+      {
+        method: 'POST',
+        headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+      },
+      100_000,
+    ),
   )
   if (!res.ok) {
     let err = `refine failed: ${res.status}`

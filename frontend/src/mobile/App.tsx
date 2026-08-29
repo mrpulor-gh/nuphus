@@ -517,8 +517,12 @@ export default function App() {
           // 恢复执行状态：broadcast 事件不为迟到订阅者补发，刷新/断线间隙的
           // execution_started/completed 会丢失——据此恢复 running，让后续 delta 正常
           // 累积气泡、完成结果经历史拉取落地（修复刷新后回复看不到）。
+          // refine_active 同理：恢复「正在提炼」态，结束事件照常复位。
           void fetchAgentStatus(token)
-            .then(s => dispatch({ type: 'sync_running', running: s.running }))
+            .then(s => {
+              dispatch({ type: 'sync_running', running: s.running })
+              dispatch({ type: 'refine_state', refining: s.refine_active === true })
+            })
             .catch(e => console.warn('[mobile] fetchAgentStatus failed:', e))
         },
         onStatus: s => {

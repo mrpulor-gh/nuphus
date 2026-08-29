@@ -1,5 +1,5 @@
 // useEvents.ts — Event listener (nuphus-event + toolbar:action)
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
@@ -149,6 +149,34 @@ export function useEvents(h: EventHandlers) {
   const refineOutputRef = useRef('')
   const refineStartTimeRef = useRef(0)
   const refineMsgIdRef = useRef<string | null>(null)
+
+  // ── 提炼状态统一复位（四个出口共用，勿在各处复制）──
+  // 出口：refine_failed 事件 / forced invoke 失败兜底 / 超时 guard / 手动关闭弹窗。
+  // 复位提炼 refs（refineActiveRef 卡 true 会让后续 refine_prompt 被忽略、
+  // execution_started 被误判为 refine 模式）+ 全部提炼 UI + 流式 refine 气泡。
+  // 仅引用稳定值（useState setter / MutableRefObject.current），可安全跨闭包使用。
+  const resetRefineUI = useCallback(() => {
+    const msgId = refineMsgIdRef.current
+    refineActiveRef.current = false
+    refineStartTimeRef.current = 0
+    refineOutputRef.current = ''
+    refineMsgIdRef.current = null
+    h.setRefining(false)
+    h.setRefineState(null)
+    h.setPendingRefine(null)
+    h.setIsProcessing(false)
+    h.refs.executionActiveRef.current = false
+    h.refs.processingRef.current = false
+    if (msgId) h.setMessages(prev => prev.filter(m => m.id !== msgId))
+  }, [
+    h.setRefining,
+    h.setRefineState,
+    h.setPendingRefine,
+    h.setIsProcessing,
+    h.setMessages,
+    h.refs.executionActiveRef,
+    h.refs.processingRef,
+  ])
   // mode_changed 是用户切换模式的权威广播；execution_started 的 mode 只是执行事实。
   // 记录最近一次 mode_changed 值，execution_started 不再覆盖（防迟到旧执行事件把 mode 打回旧值）
   const lastModeChangedRef = useRef<string | null>(null)
@@ -757,7 +785,11 @@ export function useEvents(h: EventHandlers) {
             h.setIsProcessing(true)
             h.setRefineState({ usagePercent: 0, totalLimit: 0 })
             import('../main-window/lib/api').then(({ executeSessionRefine }) => {
-              executeSessionRefine().catch(() => {})
+              executeSessionRefine().catch(() => {
+                // RefineFailed 事件是主复位路径；此处兜底 invoke 层失败（事件
+                // 丢失/旧后端）——静默吞掉会导致 forced 弹窗永久 spinner
+                resetRefineUI()
+              })
             })
             break
           }
@@ -854,6 +886,19 @@ export function useEvents(h: EventHandlers) {
             )
           }
           break
+        case 'refine_failed': {
+          // 提炼失败（LLM key 失效/连不上/超时/空摘要）：与 refine_executing 配对的
+          // 结束事件。复位提炼状态、移除流式气泡、系统消息明示失败原因（后端
+          // message 已含完整描述）——缺失此分支时弹窗/遮罩永久 spinner（假死根因）。
+          resetRefineUI()
+          h.setCompleted(true)
+          h.setPauseState(null)
+          h.setDismissThinking(false)
+          h.setMood('error')
+          setTimeout(() => h.setMood('idle'), 3000)
+          addSystemMsg(event.message || '提炼失败，会话保持不变。')
+          break
+        }
       }
     }).then(fn => {
       if (cancelled) return
@@ -873,6 +918,7 @@ export function useEvents(h: EventHandlers) {
     h.refs.processingRef,
     h.refs.toolCallCountRef,
     h.addMessage,
+    resetRefineUI,
   ])
 
   // ── 移动端安全确认回执：手机端完成确认后，桌面弹窗同步关闭 ──
@@ -916,21 +962,21 @@ export function useEvents(h: EventHandlers) {
     }
   }, [h.setUserInputRequest])
 
-  // ── Refine timeout guard: auto-reset if SessionRefined not received within 70s ──
+  // ── Refine timeout guard: 事件彻底丢失时的兜底复位 ──
+  // 95s > 后端 90s 硬超时：正常慢提炼不被误掐；旧版只复位 isProcessing 不复位
+  // refining/refineState（弹窗仍卡 spinner）+ 70s 会误杀后端还在跑的提炼。
   useEffect(() => {
     const interval = setInterval(() => {
       if (refineActiveRef.current && refineStartTimeRef.current > 0) {
         const elapsed = Date.now() - refineStartTimeRef.current
-        if (elapsed > 70000) {
+        if (elapsed > 95000) {
           console.warn('[REFINE] Timeout guard triggered, resetting refine state')
-          refineActiveRef.current = false
-          refineStartTimeRef.current = 0
-          h.setIsProcessing(false)
+          resetRefineUI()
         }
       }
     }, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [resetRefineUI])
 
   // ── Heartbeat check: detect event stream stalls ──
   useEffect(() => {
@@ -980,4 +1026,12 @@ export function useEvents(h: EventHandlers) {
       unlisten?.()
     }
   }, [h.setRegionPickerMode])
+
+  // ── 手动关闭「提炼中」弹窗/遮罩 ──
+  // 后台提炼不中断：完成后 session_refined / refine_failed 照常落地（结果入会话）。
+  const dismissRefine = useCallback(() => {
+    resetRefineUI()
+  }, [resetRefineUI])
+
+  return { dismissRefine }
 }

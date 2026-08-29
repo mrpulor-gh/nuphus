@@ -10,8 +10,10 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    // CompoundEmitter 双推：RefineExecuting/SessionRefined 同时到桌面 Tauri 与手机 WS，
-    // 手机端 refine 弹窗状态同步（桌面端零回归：mobile 为 None 时退化为纯 Tauri）。
+    // CompoundEmitter 双推：RefineExecuting/SessionRefined/RefineFailed 同时到桌面
+    // Tauri 与手机 WS，手机端 refine 弹窗状态同步（桌面端零回归：mobile 为 None 时
+    // 退化为纯 Tauri）。RefineFailed 与 RefineExecuting 必须成对——失败不广播结束
+    // 事件会让双端提炼 UI 永久卡在 spinner。
     let emitter = CompoundEmitter::new(app.clone(), &state);
 
     let refine_active = state.refine_active.clone();
@@ -98,23 +100,29 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
             rt_owned.resume(refine_prompt, &cancel_flag),
         )
         .await
-        .map_err(|_| "提炼超时（90s）。".to_string())
-        .and_then(|r| r.map_err(|e| format!("提炼失败：{}", e)));
+        .map_err(|_| "提炼超时（90s）".to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
         rt_owned.restore_emitter(saved_emitter);
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         guard.leader_agent = Some(rt_owned);
-        result?
+        match result {
+            Ok(output) => output,
+            Err(reason) => {
+                // 失败也必须广播结束事件：RefineExecuting 已让双端进入「提炼中」UI，
+                // 只 return Err 会让非发起方（forced 自动提炼弹窗 / 手机提炼卡片）
+                // 永久 spinner——LLM key 失效/连不上时的假死根因。
+                emitter.emit(NuphusEvent::RefineFailed {
+                    message: format!("提炼失败：{reason}，会话保持不变。"),
+                });
+                return Err(format!("提炼失败：{reason}。"));
+            }
+        }
     };
 
     let distill = refine_output.message.trim().to_string();
     if distill.is_empty() || !refine_output.success {
-        emitter.emit(NuphusEvent::SessionRefined {
-            summary: String::new(),
-            message_count: total_msgs,
-            session_id: session_id.clone(),
-        });
-        emitter.emit(NuphusEvent::DirectResponse {
-            message: "提炼失败，会话保持不变。".to_string(),
+        emitter.emit(NuphusEvent::RefineFailed {
+            message: "提炼失败：未产出有效摘要，会话保持不变。".to_string(),
         });
         return Err("提炼失败：未产出有效摘要。".to_string());
     }
@@ -183,24 +191,28 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
             wa_owned.run(refine_prompt, &None, cancel_flag),
         )
         .await
-        .map_err(|_| "提炼超时（60s）。".to_string())
-        .and_then(|r| r.map_err(|e| format!("Workflow refine failed: {}", e)));
+        .map_err(|_| "提炼超时（60s）".to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
         wa_owned.set_emitter(saved_emitter);
         wa_owned.set_internal_input(false);
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         guard.workflow_agent = Some(wa_owned);
-        result?
+        match result {
+            Ok(output) => output,
+            Err(reason) => {
+                // 同 Leader 分支：失败广播 RefineFailed，双端提炼 UI 才能退出 spinner
+                emitter.emit(NuphusEvent::RefineFailed {
+                    message: format!("提炼失败：{reason}，会话保持不变。"),
+                });
+                return Err(format!("提炼失败：{reason}。"));
+            }
+        }
     };
 
     let distill = refine_output.message.trim().to_string();
     if distill.is_empty() || !refine_output.success {
-        emitter.emit(NuphusEvent::SessionRefined {
-            summary: String::new(),
-            message_count: total_msgs,
-            session_id: session_id.clone(),
-        });
-        emitter.emit(NuphusEvent::DirectResponse {
-            message: "提炼失败，会话保持不变。".to_string(),
+        emitter.emit(NuphusEvent::RefineFailed {
+            message: "提炼失败：未产出有效摘要，会话保持不变。".to_string(),
         });
         return Err("提炼失败：未产出有效摘要。".to_string());
     }

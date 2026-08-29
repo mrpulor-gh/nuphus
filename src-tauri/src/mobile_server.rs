@@ -1531,7 +1531,12 @@ async fn get_agent_status<R: tauri::Runtime>(
     }
     let state = ctx.app.state::<AppState>();
     let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
-    Json(serde_json::json!({ "running": busy })).into_response()
+    // refine_active 一并返回：手机端重连/刷新后恢复提炼状态（broadcast 不为迟到
+    // 订阅者补发，refine_executing/session_refined/refine_failed 间隙事件会丢失）
+    let refine_active = state
+        .refine_active
+        .load(std::sync::atomic::Ordering::SeqCst);
+    Json(serde_json::json!({ "running": busy, "refine_active": refine_active })).into_response()
 }
 
 /// GET /relay-hint — 手机端获取中继配置（外网模式下经中继发送消息）。
@@ -1594,10 +1599,13 @@ async fn get_boot<R: tauri::Runtime>(
     }
     let state = ctx.app.state::<AppState>();
     let running = state.busy.load(std::sync::atomic::Ordering::SeqCst);
+    let refine_active = state
+        .refine_active
+        .load(std::sync::atomic::Ordering::SeqCst);
     let cfg = crate::relay_client::load_config();
     Json(serde_json::json!({
         "identity": identity_json(state.inner()),
-        "agentStatus": { "running": running },
+        "agentStatus": { "running": running, "refine_active": refine_active },
         "relayHint": relay_hint_json(&cfg, ctx.port),
         // 会话清单投影（只读）：手机「会话」抽屉数据源——桌面当前视图的镜像，
         // 手机不维护独立会话状态（含 can_switch：busy/追加挂起时切换被禁）

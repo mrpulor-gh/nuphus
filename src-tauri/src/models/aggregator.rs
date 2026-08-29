@@ -325,19 +325,6 @@ pub fn lookup<'a>(
     None
 }
 
-/// Convenience: read the cache from disk and look up — no network, used by
-/// synchronous commands (list_models / mobile model-config) that must not
-/// block on the sync path.
-pub fn lookup_cached(
-    config_dir: &Path,
-    provider_id: &str,
-    model_id: &str,
-) -> Option<OpenRouterEntry> {
-    let path = cache_path(config_dir);
-    let cache = load_cache(&path)?;
-    lookup(&cache.entries, provider_id, model_id).cloned()
-}
-
 /// Two-tier read-only-cache lookup:
 /// tier 1 — known vendor via [`lookup`]（builtin 映射表里的厂商）；
 /// tier 2 — unknown/custom providers（中转站、自建网关）：无法静态映射 vendor，

@@ -897,6 +897,8 @@ const en: Record<string, string> = {
   'refine.usage': 'Context usage {0}%（{1} / {2} Token）',
   'refine.pendingBtn': 'Refine available',
   'refine.pendingDesc': 'Context usage {0}% — refine now?',
+  'refine.dismissHint':
+    'Refine continues in the background; the session will update when it finishes',
 
   'message.system': 'System',
 

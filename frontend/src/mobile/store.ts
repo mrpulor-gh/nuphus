@@ -576,6 +576,20 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         pendingRefine: null,
       }
 
+    case 'refine_failed':
+      // 提炼失败（LLM key 失效/连不上/超时/空摘要）：与 refine_executing 配对的
+      // 结束事件——退出「正在提炼」卡片并明示原因（message 已含完整描述），
+      // 缺失此分支时卡片永久显示（假死）。
+      return {
+        ...state,
+        refining: false,
+        pendingRefine: null,
+        messages: [
+          ...finalizeStreaming(state.messages),
+          { id: rid(), role: 'system', content: ev.message },
+        ],
+      }
+
     case 'user_input_request':
       // request_user_input：手机端渲染输入弹窗（text 类可直接交互；
       // 截图/坐标/取色/图标确认等依赖桌面能力的类型由弹窗内提示去桌面完成）

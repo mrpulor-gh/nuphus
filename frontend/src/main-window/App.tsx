@@ -135,7 +135,7 @@ export default function App() {
     return () => window.removeEventListener('nuphus-nav-models', handler)
   }, [s.setShowModels])
 
-  useEvents(s)
+  const { dismissRefine } = useEvents(s)
 
   // ── Keyboard shortcuts (Ctrl+K opens cmd palette from s.cmdItems) ──
   const [runWorkflow, setRunWorkflow] = useState<WorkflowItem | null>(null)
@@ -271,6 +271,11 @@ export default function App() {
               onSkipRefine={s.handleSkipRefine}
               refining={s.refining}
               setRefining={s.setRefining}
+              onDismissRefine={() => {
+                // 复位提炼 UI + 追踪 refs（后台提炼不中断）；toast 明示后台仍在跑
+                dismissRefine()
+                s.showToast(t('refine.dismissHint'), 'info')
+              }}
               isWorkflowRunning={s.workflowRunSteps.length > 0}
               showDesktopToolbar={showDesktopToolbar}
               onToggleDesktopToolbar={() => setShowDesktopToolbar(o => !o)}
