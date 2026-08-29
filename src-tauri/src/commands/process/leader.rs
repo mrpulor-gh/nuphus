@@ -210,9 +210,6 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
         }
     }
 
-    // memory.md snapshot
-    runtime.inject_memory_snapshot();
-
     // ── Apply mode before execution (covers new Runtime and config-changed paths) ──
     if let Some(m) = mode {
         runtime.set_mode(m);
