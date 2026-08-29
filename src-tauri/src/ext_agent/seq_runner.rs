@@ -70,11 +70,9 @@ pub(crate) fn substitute_value(
                 .map(|(k, v)| (k.clone(), substitute_value(v, vars)))
                 .collect(),
         ),
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.iter()
-                .map(|v| substitute_value(v, vars))
-                .collect(),
-        ),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(|v| substitute_value(v, vars)).collect())
+        }
         other => other.clone(),
     }
 }
@@ -127,9 +125,7 @@ pub async fn run_steps(
 }
 
 /// DesktopClient 包装结果解析：Result<Value, NuphusError> + {success,result/error} → Result<(), String>
-fn unwrap(
-    r: std::result::Result<serde_json::Value, nuphus::NuphusError>,
-) -> Result<(), String> {
+fn unwrap(r: std::result::Result<serde_json::Value, nuphus::NuphusError>) -> Result<(), String> {
     let value = r.map_err(|e| e.to_string())?;
     if value
         .get("success")
@@ -148,13 +144,12 @@ fn unwrap(
 
 /// 参数提取：接受数值（12345）或占位符替换后的数字字符串（"{hwnd}" → "12345"）
 fn i32_at(with: &serde_json::Value, key: &str) -> Option<i32> {
-    with.get(key).and_then(|v| {
-        v.as_i64().or_else(|| {
-            v.as_str()
-                .and_then(|s| s.trim().parse::<i64>().ok())
+    with.get(key)
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
         })
-    })
-    .map(|v| v as i32)
+        .map(|v| v as i32)
 }
 
 fn required_i32(with: &serde_json::Value, key: &str) -> Result<i32, String> {
@@ -430,6 +425,9 @@ mod tests {
         let e = tokio_test::block_on(run_steps(&steps, &vars(), &client, None)).unwrap_err();
         assert_eq!(e.step_index, 1, "第 2 步失败即中止，不继续执行第 3 步");
         assert_eq!(e.tool, "desktop_unknown_tool");
-        assert!(e.to_string().contains("desktop_unknown_tool"), "错误含步骤名");
+        assert!(
+            e.to_string().contains("desktop_unknown_tool"),
+            "错误含步骤名"
+        );
     }
 }

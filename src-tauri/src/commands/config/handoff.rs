@@ -525,7 +525,9 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
     // [1] 身份与凭证：首屏取齐调用所需
     s.push_str(&format!("agent: {agent}\n"));
     s.push_str(&format!("task_id: {task_id}\n"));
-    s.push_str(&format!("门铃端点 doorbell endpoint (回调 webhook): {endpoint}\n"));
+    s.push_str(&format!(
+        "门铃端点 doorbell endpoint (回调 webhook): {endpoint}\n"
+    ));
     if info.available {
         s.push_str(&format!("令牌 token: {}\n", info.token));
     } else {
@@ -890,7 +892,10 @@ mod tests {
         std::fs::write(root.join("secret.txt"), "x").unwrap();
         let err = delete_agent_deliverable_at(&root, "web_agent", r"..\..\secret.txt")
             .expect_err("穿越必须被拒");
-        assert!(err.contains("非法") || err.contains("briefs"), "意外错误: {err}");
+        assert!(
+            err.contains("非法") || err.contains("briefs"),
+            "意外错误: {err}"
+        );
         assert!(root.join("secret.txt").exists(), "文件不应被误删");
 
         // 首组件非 briefs/projects 拒绝 → 核心文件受保护

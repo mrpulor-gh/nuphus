@@ -255,7 +255,10 @@ impl ChatCompletionsTransport {
                 Ok(s) => s,
                 Err(e) => {
                     last_error = format!("invalid utf-8 in stream response: {e}");
-                    tracing::warn!("[STREAM] invalid utf-8 ({} bytes), retrying", e.utf8_error().valid_up_to());
+                    tracing::warn!(
+                        "[STREAM] invalid utf-8 ({} bytes), retrying",
+                        e.utf8_error().valid_up_to()
+                    );
                     continue;
                 }
             };

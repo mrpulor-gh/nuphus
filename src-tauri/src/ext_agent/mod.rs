@@ -27,7 +27,6 @@ use seq_runner::SeqError;
 /// AppHandle for the bridge path（工具 executor 无 Tauri State 访问，模式对齐 render/video）
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
-
 /// main.rs setup 调用：存 AppHandle + 注册桥实现。
 pub fn init_bridge(app: &AppHandle) {
     let _ = APP.set(app.clone());
@@ -37,9 +36,9 @@ pub fn init_bridge(app: &AppHandle) {
 
 /// 桥入口（同步 fn）：在 Leader 的 tokio 上下文内驱动 async 编排。
 fn bridge_dispatch(params: &serde_json::Value) -> Result<String, String> {
-    let app = APP
-        .get()
-        .ok_or_else(|| "agent_dispatch 桥接未初始化（桌面壳未注册 ext_agent bridge）".to_string())?;
+    let app = APP.get().ok_or_else(|| {
+        "agent_dispatch 桥接未初始化（桌面壳未注册 ext_agent bridge）".to_string()
+    })?;
     let app = app.clone();
     let params = params.clone();
     nuphus::tools::builtin::run_blocking(move || {
@@ -98,7 +97,11 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
     let full_brief = format!("{brief}\n\n---\n{contract}\n");
     crate::commands::config::handoff::ensure_handoff_at(&root, &agent, &task_id, &full_brief)?;
     // 可选产物子目录（对齐 read.md「产物写 projects/{project}/」）
-    if let Some(project) = params.get("project").and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
+    if let Some(project) = params
+        .get("project")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty())
+    {
         if !project
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -122,8 +125,9 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
         .tools
         .desktop_client()
         .ok_or_else(|| "桌面自动化不可用（desktop_client 未连接）".to_string())?;
-    let cfg = crate::commands::config::team::agent_config(&agent)?
-        .ok_or_else(|| format!("agent「{agent}」未在 team.toml 登记，请先在外部 Agent 配置中心登记"))?;
+    let cfg = crate::commands::config::team::agent_config(&agent)?.ok_or_else(|| {
+        format!("agent「{agent}」未在 team.toml 登记，请先在外部 Agent 配置中心登记")
+    })?;
 
     // 实测记录（note）：Leader 专属的特别注意事项备忘，随 team 配置一并读取，
     // 注入工具结果供 Leader 派发决策参考（如「ctrl+v 无效用直输」）。
@@ -142,9 +146,8 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
     // 渲染投递指令：message 覆盖模板或默认单行指令。
     // 终端直输只承载一行指针——任务细节全部走 brief 文件（多行/中文直输有 IME 上屏风险，
     // 实测不可靠）；协议纪律由契约自身携带，无需在指令中反复叮嘱。
-    let mut message = message_override.unwrap_or_else(|| {
-        format!("Read {brief_path_str} and execute it exactly as written.")
-    });
+    let mut message = message_override
+        .unwrap_or_else(|| format!("Read {brief_path_str} and execute it exactly as written."));
     for (k, v) in &vars {
         message = message.replace(&format!("{{{k}}}"), v);
     }
@@ -195,7 +198,11 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
             let tool_names: Vec<String> = steps
                 .iter()
                 .take(n)
-                .filter_map(|s| s.get("tool").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .filter_map(|s| {
+                    s.get("tool")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
             // 门铃为异步推送（事件到达后自动注入 Leader 上下文）——同步路径不做任何等待，
             // 第一声拉铃与本轮工具结果本就分属两条链路，等待只会顶撞工具层超时上限。
@@ -255,17 +262,16 @@ async fn capture_process(
         });
     }
 
-    find_window(client, &hint).await.ok_or_else(|| format!(
+    find_window(client, &hint).await.ok_or_else(|| {
+        format!(
         "未在当次窗口列表中找到「{hint}」（agent 未启动、窗口未就绪、或标题被覆写导致特征失配）。\n\
          请按 skill §2 启动 SOP 手动启动/核验后重试——禁止依赖历史缓存句柄。"
-    ))
+    )
+    })
 }
 
 /// 按 PID 在当次 windows_list 匹配可见窗口并提取 hwnd。
-async fn resolve_hwnd_by_pid(
-    client: &DesktopClient,
-    pid: u32,
-) -> Option<HashMap<String, String>> {
+async fn resolve_hwnd_by_pid(client: &DesktopClient, pid: u32) -> Option<HashMap<String, String>> {
     let list = client.windows_list().await.ok()?;
     let windows = list.get("result")?.as_array()?;
     for w in windows {
@@ -284,10 +290,7 @@ async fn resolve_hwnd_by_pid(
 }
 
 /// 按 window_hint 在 windows_list 中匹配（标题/进程名包含，大小写不敏感）。
-async fn find_window(
-    client: &DesktopClient,
-    hint: &str,
-) -> Option<HashMap<String, String>> {
+async fn find_window(client: &DesktopClient, hint: &str) -> Option<HashMap<String, String>> {
     let list = client.windows_list().await.ok()?;
     let windows = list.get("result")?.as_array()?;
     let hint_lower = hint.to_lowercase();

@@ -1004,12 +1004,12 @@ pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> 
             app2.clone(),
             st.inner(),
             message,
-            None,  // images
-            None,  // history
-            None,  // relation
-            None,  // mode
-            None,  // references
-            None,  // send_id
+            None,                        // images
+            None,                        // history
+            None,                        // relation
+            None,                        // mode
+            None,                        // references
+            None,                        // send_id
             Some("handoff".to_string()), // source 标记：门铃自动唤醒
         )
         .await

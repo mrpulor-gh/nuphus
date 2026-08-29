@@ -971,7 +971,10 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
             // OpenRouter supported_efforts. Unknown models → no effort knob.
             let (mut reasoning_efforts, mut default_effort) = if !model.reasoning_efforts.is_empty()
             {
-                (model.reasoning_efforts.clone(), model.default_effort.clone())
+                (
+                    model.reasoning_efforts.clone(),
+                    model.default_effort.clone(),
+                )
             } else {
                 match builtin.find_model(&model.id) {
                     Some((_, m)) => (
@@ -1292,10 +1295,7 @@ async fn fetch_provider_models(
             .get("error")
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
-            .or_else(|| {
-                body.get("error")
-                    .and_then(|e| e.as_str())
-            })
+            .or_else(|| body.get("error").and_then(|e| e.as_str()))
             .unwrap_or("未知错误");
         let msg = match status.as_u16() {
             401 | 403 => format!(

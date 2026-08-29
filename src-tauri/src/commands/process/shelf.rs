@@ -129,7 +129,15 @@ pub(crate) fn derive_title(session: &Session) -> String {
 /// `Bearer` 授权头、≥32 位连续字母数字串（JWT/hex）。rail 常驻展示，防敏感信息上屏。
 fn sanitize_preview(s: &str) -> String {
     let is_token_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '.';
-    let sensitive_prefixes = ["sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "bearer"];
+    let sensitive_prefixes = [
+        "sk-",
+        "ghp_",
+        "gho_",
+        "github_pat_",
+        "xoxb-",
+        "xoxp-",
+        "bearer",
+    ];
     let mut out = String::with_capacity(s.len());
     let mut chars = s.char_indices().peekable();
     while let Some((idx, ch)) = chars.next() {
@@ -147,7 +155,10 @@ fn sanitize_preview(s: &str) -> String {
             let word = &s[start..end];
             let lower = word.to_lowercase();
             let masked = sensitive_prefixes.iter().any(|p| lower.starts_with(p))
-                || (word.len() >= 32 && word.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.'));
+                || (word.len() >= 32
+                    && word
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.'));
             out.push_str(if masked { "***" } else { word });
         } else {
             out.push(ch);
@@ -1129,7 +1140,10 @@ mod tests {
             for i in 0..3 {
                 let s = session_with_user(&[&format!("驻留成员{i}")]);
                 let title = format!("驻留成员{i}");
-                shelf.put(build_entry(s.id.clone(), "leader", &s, Some(title.as_str())), s);
+                shelf.put(
+                    build_entry(s.id.clone(), "leader", &s, Some(title.as_str())),
+                    s,
+                );
             }
             shelf.order.clone()
         };

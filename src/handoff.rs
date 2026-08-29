@@ -311,7 +311,10 @@ pub async fn wait_first_ringer(prefix: &str, timeout: Duration) -> Option<Handof
         if let Some(ev) = with_state(|s| s.peek_first_ringer(prefix)) {
             return Some(ev);
         }
-        if tokio::time::timeout(remaining, &mut notified).await.is_err() {
+        if tokio::time::timeout(remaining, &mut notified)
+            .await
+            .is_err()
+        {
             continue; // 超时 → 回到顶部做最终状态检查
         }
     }
@@ -508,11 +511,8 @@ mod tests {
     #[serial]
     fn test_waiter_prefix_matches_terminal_events() {
         push_event("wait-test-done", "blocked", "等待确认", None).unwrap();
-        let hit = tokio_test::block_on(wait_first_ringer(
-            "wait-test-done",
-            Duration::from_secs(2),
-        ))
-        .expect("blocked 终态事件应算第一声拉铃");
+        let hit = tokio_test::block_on(wait_first_ringer("wait-test-done", Duration::from_secs(2)))
+            .expect("blocked 终态事件应算第一声拉铃");
         assert_eq!(hit.status, HandoffStatus::Blocked);
         let _ = drain_for_injection();
     }

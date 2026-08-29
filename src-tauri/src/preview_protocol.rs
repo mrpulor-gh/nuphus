@@ -46,7 +46,10 @@ fn serve(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         return error_response(StatusCode::BAD_REQUEST, "路径不是文件");
     }
     if meta.len() > MAX_PREVIEW_BYTES {
-        return error_response(StatusCode::PAYLOAD_TOO_LARGE, "文件超过预览大小上限（64 MB）");
+        return error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "文件超过预览大小上限（64 MB）",
+        );
     }
 
     match std::fs::read(&path) {
@@ -66,7 +69,9 @@ fn serve(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
                 .header(header::CACHE_CONTROL, "no-store")
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .body(bytes)
-                .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "响应构建失败"))
+                .unwrap_or_else(|_| {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "响应构建失败")
+                })
         }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("读取失败: {e}")),
     }
@@ -147,17 +152,26 @@ mod tests {
 
     #[test]
     fn percent_decode_windows_path() {
-        assert_eq!(percent_decode("C%3A%5CUsers%5Cgame.html"), "C:\\Users\\game.html");
+        assert_eq!(
+            percent_decode("C%3A%5CUsers%5Cgame.html"),
+            "C:\\Users\\game.html"
+        );
     }
 
     #[test]
     fn percent_decode_unix_path() {
-        assert_eq!(percent_decode("%2FUsers%2Fme%2Findex.html"), "/Users/me/index.html");
+        assert_eq!(
+            percent_decode("%2FUsers%2Fme%2Findex.html"),
+            "/Users/me/index.html"
+        );
     }
 
     #[test]
     fn percent_decode_preserves_plus() {
-        assert_eq!(percent_decode("C%3A%5C C%2B%2B%5Cindex.html"), "C:\\ C++\\index.html");
+        assert_eq!(
+            percent_decode("C%3A%5C C%2B%2B%5Cindex.html"),
+            "C:\\ C++\\index.html"
+        );
     }
 
     #[test]

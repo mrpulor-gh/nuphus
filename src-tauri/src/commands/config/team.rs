@@ -193,9 +193,7 @@ fn agent_json(key: &str, obj: &toml::Table) -> serde_json::Value {
 
 /// 段内整数字段（缺省 = 给定默认）
 fn int_or(obj: &toml::Table, key: &str, default: i64) -> i64 {
-    obj.get(key)
-        .and_then(|v| v.as_integer())
-        .unwrap_or(default)
+    obj.get(key).and_then(|v| v.as_integer()).unwrap_or(default)
 }
 
 /// dispatch_steps（array of tables）→ JSON 数组（每项 {tool, with}）
@@ -368,10 +366,16 @@ fn build_agent_block(key: &str, f: &AgentFields) -> String {
         s.push_str(&format!("await_timeout_secs = {}\n", f.await_timeout_secs));
     }
     if !f.timeout_action.is_empty() {
-        s.push_str(&format!("timeout_action = {}\n", toml_lit(&f.timeout_action)));
+        s.push_str(&format!(
+            "timeout_action = {}\n",
+            toml_lit(&f.timeout_action)
+        ));
     }
     if !f.timeout_script.is_empty() {
-        s.push_str(&format!("timeout_script = {}\n", toml_lit(&f.timeout_script)));
+        s.push_str(&format!(
+            "timeout_script = {}\n",
+            toml_lit(&f.timeout_script)
+        ));
     }
     if !f.auto_approve.is_empty() {
         s.push_str(&format!("auto_approve = {}\n", toml_lit(&f.auto_approve)));
@@ -540,12 +544,8 @@ fn extract_agent_fields(
         Some(n) => n.to_string(),
         None => note_fallback.to_string(), // 更新时保留原 note
     };
-    let get_i64 = |k: &str, default: i64| -> i64 {
-        agent
-            .get(k)
-            .and_then(|v| v.as_i64())
-            .unwrap_or(default)
-    };
+    let get_i64 =
+        |k: &str, default: i64| -> i64 { agent.get(k).and_then(|v| v.as_i64()).unwrap_or(default) };
     let get_steps = |k: &str| -> Vec<serde_json::Value> {
         agent
             .get(k)

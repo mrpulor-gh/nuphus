@@ -79,7 +79,11 @@ async fn post_handoff(headers: HeaderMap, Json(payload): Json<HandoffPayload>) -
             // busy 预检在 try_spawn_leader_round 内；忙碌 → 事件留队列，轮次边界自然消化。
             if payload.status == "done" || payload.status == "blocked" {
                 if let Some(app) = APP.get() {
-                    let verb = if payload.status == "done" { "已完成" } else { "受阻" };
+                    let verb = if payload.status == "done" {
+                        "已完成"
+                    } else {
+                        "受阻"
+                    };
                     let report = report_path.as_deref().unwrap_or("（未提供）");
                     let message = format!(
                         "外部任务 {} {}，summary: {}，验收产物 report_path: {}",

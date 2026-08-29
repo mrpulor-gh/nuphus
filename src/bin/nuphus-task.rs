@@ -58,7 +58,11 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("{}", usage());
-        return if args.is_empty() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+        return if args.is_empty() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        };
     }
     if args.first().map(String::as_str) != Some("task") {
         eprintln!("[error] 未知子命令。{}", usage());
@@ -103,14 +107,17 @@ fn main() -> ExitCode {
             "done" => (
                 "done",
                 summary.ok_or_else(|| "done 需要 --summary/--message".to_string())?,
-                flags.get("report").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+                flags
+                    .get("report")
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty()),
             ),
-            "blocked" => (
-                "blocked",
-                required("reason")?,
-                None,
-            ),
-            other => return Err(format!("未知任务动词「{other}」（ready|progress|done|blocked）")),
+            "blocked" => ("blocked", required("reason")?, None),
+            other => {
+                return Err(format!(
+                    "未知任务动词「{other}」（ready|progress|done|blocked）"
+                ))
+            }
         };
 
         let payload = serde_json::json!({
@@ -144,10 +151,7 @@ fn main() -> ExitCode {
 /// no_proxy：本机系统代理（如 Clash）会拦截 loopback 请求返回 503/10053 ——
 /// 门铃是本地端点，必须直连（与 handoff_server 测试的 no_proxy 处理一致）。
 fn post_doorbell(endpoint: &str, token: &str, payload: &serde_json::Value) -> Result<(), String> {
-    let client = match reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-    {
+    let client = match reqwest::blocking::Client::builder().no_proxy().build() {
         Ok(c) => c,
         Err(e) => return Err(format!("初始化 HTTP 客户端失败: {e}")),
     };

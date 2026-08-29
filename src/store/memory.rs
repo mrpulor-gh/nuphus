@@ -336,7 +336,9 @@ pub fn search_entries_scored(
         crate::utils::active_project_tag()
     };
     if project_tag.is_some() {
-        sql.push_str(" AND e.session_id IN (SELECT session_id FROM session_meta WHERE project_tag = ?)");
+        sql.push_str(
+            " AND e.session_id IN (SELECT session_id FROM session_meta WHERE project_tag = ?)",
+        );
     }
     sql.push_str(" ORDER BY score LIMIT ?");
 
@@ -914,8 +916,8 @@ pub fn search_entries_semantic(
         if let Some(tag) = crate::utils::active_project_tag() {
             let project_sids: std::collections::HashSet<String> = {
                 let guard = crate::store::db::acquire()?;
-                let mut stmt = guard
-                    .prepare("SELECT session_id FROM session_meta WHERE project_tag = ?1")?;
+                let mut stmt =
+                    guard.prepare("SELECT session_id FROM session_meta WHERE project_tag = ?1")?;
                 // 中间变量绑定：块尾链式临时会与块内 guard/stmt 的 drop 顺序冲突（E0597）
                 let rows: std::collections::HashSet<String> = stmt
                     .query_map(params![&tag], |r| r.get::<_, String>(0))?
