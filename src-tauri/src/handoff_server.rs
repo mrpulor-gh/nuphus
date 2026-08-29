@@ -444,8 +444,9 @@ mod tests {
         assert!(dir.join("projects").join("web-redesign").is_dir());
 
         // 契约含 CLI 上报示例（done/blocked）+ 门铃事件 id + 令牌行（门铃语义=交付上报，不含 ready）
-        assert!(contract.contains("nuphus task done --id claude-code::task-001"));
-        assert!(contract.contains("nuphus task blocked --id claude-code::task-001"));
+        // cli_cmd 前缀为 current_exe 动态值，断言不依赖前缀
+        assert!(contract.contains("task done --id claude-code::task-001"));
+        assert!(contract.contains("task blocked --id claude-code::task-001"));
         assert!(!contract.contains("curl"), "契约不得再宣传 curl 上报");
         assert!(!contract.contains("\"status\":\"done\""));
         assert!(!contract.contains("\"status\":\"ready\""));

@@ -878,7 +878,7 @@ pub fn other_project_memory_paths() -> Vec<(String, PathBuf)> {
         })
         .filter(|(tag, _, _)| *tag != current_tag)
         .collect();
-    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out.sort_by_key(|b| std::cmp::Reverse(b.2));
     out.into_iter().map(|(tag, path, _)| (tag, path)).collect()
 }
 

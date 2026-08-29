@@ -714,9 +714,9 @@ mod tests {
             contract.contains("http://127.0.0.1:/handoff")
                 || contract.contains("http://127.0.0.1:18771/handoff")
         );
-        // 上报通道唯一化：CLI 示例（done/blocked），curl 已从契约移除
-        assert!(contract.contains("nuphus task done --id web_agent::task-001"));
-        assert!(contract.contains("nuphus task blocked --id web_agent::task-001"));
+        // 上报通道唯一化：CLI 示例（done/blocked）——cli_cmd 前缀为 current_exe 动态值，断言不依赖前缀
+        assert!(contract.contains("task done --id web_agent::task-001"));
+        assert!(contract.contains("task blocked --id web_agent::task-001"));
         assert!(!contract.contains("curl"), "契约不得再宣传 curl 上报");
         assert!(!contract.contains("\"status\":\"done\""));
         assert!(contract.contains("web_agent::task-001"));

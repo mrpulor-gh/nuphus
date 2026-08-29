@@ -1081,7 +1081,9 @@ mod tests {
         let a = session_with_user(&["旧快照"]);
         let b = session_with_user(&["新快照"]);
         write_mirror("leader", &a, &[]);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // upsert_snapshot 的 updated_at 为 RFC3339 秒级精度——sleep 必须跨秒，
+        // 否则两条快照时间戳相同、ORDER BY updated_at DESC 排序不稳定（Windows 偶发返回旧快照）
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         write_mirror("workflow", &b, &[]);
 
         let (mode, latest) = load_latest_mirror().expect("应有最新快照");

@@ -243,7 +243,7 @@ static STORE: OnceLock<Mutex<HandoffState>> = OnceLock::new();
 static RINGER: OnceLock<tokio::sync::Notify> = OnceLock::new();
 
 fn ringer() -> &'static tokio::sync::Notify {
-    RINGER.get_or_init(|| tokio::sync::Notify::new())
+    RINGER.get_or_init(tokio::sync::Notify::new)
 }
 
 fn with_state<R>(f: impl FnOnce(&mut HandoffState) -> R) -> R {
