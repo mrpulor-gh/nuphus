@@ -296,13 +296,18 @@ export function ChatInputBar({
     const unlisteners: (() => void)[] = []
     // ⚠️ 开始事件必须也监听：挂载时后端空闲（busy=false）不启动轮询，若无开始事件驱动
     // 重新查询，执行开始后 backendBusy 永远 false → 终止按钮永不显示（2026-08-26 实测）。
-    void listen<unknown>('execution_started', () => void check()).then(u => {
-      if (!cancelled) unlisteners.push(u)
-    })
-    void listen<unknown>('execution_completed', onExecFinished).then(u => {
-      if (!cancelled) unlisteners.push(u)
-    })
-    void listen<unknown>('execution_error', onExecFinished).then(u => {
+    // ⚠️ 事件名修正（回归 2026-08-30）：后端只发单个 `nuphus-event`（FramedEvent 包装，
+    // event.type 区分 execution_started/completed/error），此前直接 listen('execution_*')
+    // 独立事件名永远收不到 → 桌面端 backendBusy 不更新 → 终止按钮消失（手机端轮询正常）。
+    const onNuphusEvent = (payload: unknown) => {
+      // ChatInputBar 直连 @tauri-apps/api/event：handler 收到 Event<T>，数据在 .payload
+      // （useEvents 经 bridge 已解包，此处需要多剥一层）
+      const p = payload as { payload?: { event?: { type?: string } } }
+      const type = p?.payload?.event?.type
+      if (type === 'execution_started') void check()
+      else if (type === 'execution_completed' || type === 'execution_error') onExecFinished()
+    }
+    void listen<unknown>('nuphus-event', onNuphusEvent).then(u => {
       if (!cancelled) unlisteners.push(u)
     })
     void check()

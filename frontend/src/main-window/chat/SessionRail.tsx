@@ -8,7 +8,6 @@ import {
   switchSession,
   renameSession,
   archiveSession,
-  setMode,
   type ShelfSessionItem,
 } from '../lib/api'
 import '../../styles/session-rail.css'
@@ -22,6 +21,11 @@ interface SessionRailProps {
   onSessionChanged: () => void
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
+  /** 跨 mode 会话切换成功后同步前端 mode state（后端原子切换不单独广播 mode_changed，
+   *   mode chip 依赖此回调保持一致） */
+  onModeSwitched?: (mode: string) => void
+  /** 后端执行态实时镜像（App isProcessing）：执行中滑块隐藏、hover 不唤出 */
+  locked?: boolean
 }
 
 type NoticeTone = 'info' | 'warning' | 'error'
@@ -88,7 +92,12 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
  *   横杠同步 shake）。新建对话入口在 TitleBar 与 Ctrl+N（底部无虚线杠）。
  * - 执行中整轨降透明度锁定（can_switch），与后端守卫双保险。
  */
-export default function SessionRail({ onSessionChanged, onNewChat }: SessionRailProps) {
+export default function SessionRail({
+  onSessionChanged,
+  onNewChat,
+  onModeSwitched,
+  locked = false,
+}: SessionRailProps) {
   const { t } = useLanguage()
   const [items, setItems] = useState<ShelfSessionItem[]>([])
   const [canSwitch, setCanSwitch] = useState(true)
@@ -115,6 +124,28 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 编辑中镜像：渐隐定时器回调里读最新值，避免闭包过期 */
   const editingRef = useRef(false)
+
+  // ── 执行态锁定：canSwitch（轮询后端权威）或 locked（实时镜像）任一执行中 → 滑块隐藏 ──
+  const hardLocked = !canSwitch || locked
+  const hardLockedRef = useRef(hardLocked)
+  useEffect(() => {
+    hardLockedRef.current = hardLocked
+  }, [hardLocked])
+  // 执行开始 → 立即收起（清在途定时器与编辑态），不等 10s 计时
+  useEffect(() => {
+    if (!hardLocked) return
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current)
+      leaveTimer.current = null
+    }
+    if (fadeTimer.current) {
+      clearTimeout(fadeTimer.current)
+      fadeTimer.current = null
+    }
+    setRevealed(false)
+    setFading(false)
+    setEditingId(null)
+  }, [hardLocked])
 
   useEffect(() => {
     editingRef.current = editingId !== null
@@ -230,14 +261,16 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
     async (id: string, isActive: boolean) => {
       if (isActive) return
       try {
-        // 跨 mode 会话：目标 session 的 mode 与当前 active session 不同 → 先自动切 mode
-        //（后端 current_mode 联动 get_chat_history 路由，mode_changed 事件触发历史重载）
+        // 输入框 mode 以 session 选择为准：点击列表后，session 存储的 mode 是哪个，
+        // 输入框 mode 就切到哪个。目标 mode 直接取条目存储归属（list 已保证
+        // mode 来自 SQLite 快照，不依赖 currentMode 推断），无条件传给后端原子切换
+        // （归档原槽→切 current_mode→安装目标槽；同 mode 点击走同槽切换，无副作用）。
+        // 后端是唯一权威：mode_mismatch 安全失败，不污染状态。
         const target = items.find(i => i.id === id)
-        const active = items.find(i => i.is_active)
-        if (target && active && target.mode !== active.mode) {
-          await setMode(target.mode)
-        }
-        await switchSession(id)
+        if (!target) return
+        await switchSession(id, target.mode)
+        // 同步前端输入框 mode（后端原子切换后前端 mode chip 保持一致）
+        onModeSwitched?.(target.mode)
         // 主动切换：先登记基准，避免下轮轮询把这次变化再判成外部变更重复触发重拉
         lastActiveIdRef.current = id
         onSessionChanged()
@@ -246,7 +279,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
-    [items, onSessionChanged, refresh, flashNotice],
+    [items, onSessionChanged, onModeSwitched, refresh, flashNotice],
   )
 
   /** 手动归档：确认弹窗后移出展示台（元数据+文本记忆保留可查）；失败映射稳定错误码 */
@@ -276,6 +309,8 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
   const insideRef = useRef(false)
 
   const startReveal = useCallback(() => {
+    // 后端执行态（busy / 提炼中）不唤出：会话台只服务空闲态（2026-08-30 修正）
+    if (hardLockedRef.current) return
     if (leaveTimer.current) {
       clearTimeout(leaveTimer.current)
       leaveTimer.current = null
@@ -364,10 +399,9 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
     [draftTitle, refresh, flashNotice],
   )
 
-  // 执行中（!canSwitch）强制隐藏：此时 rail 锁定不可切换，显示出来只会让用户
-  // 「看得见摸不着」（旧逻辑 hover 会 reveal 但切换被禁）。完成后经 can_switch
-  // 翻转强制 reveal（见 refresh）。其余隐藏/渐隐逻辑保持现状。
-  const shown = canSwitch && (revealed || fading || editingId !== null)
+  // 执行中（hardLocked）滑块强制隐藏：hover 不唤出、已显示立即收起；
+  // 引导块只跟随滑块显隐（滑块出则藏、滑块隐则显），不受执行态影响
+  const shown = (revealed || fading || editingId !== null) && !hardLocked
 
   return (
     <>
@@ -386,7 +420,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
       <div
         className={[
           'session-rail-zone',
-          canSwitch ? '' : 'is-locked',
+          hardLocked ? 'is-locked' : '',
           shown ? (fading ? 'fading' : 'revealed') : 'concealed',
         ]
           .filter(Boolean)
@@ -402,7 +436,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
                 type="button"
                 className="add-agent-entry sr-new-chat-btn"
                 onClick={onNewChat}
-                disabled={!canSwitch}
+                disabled={hardLocked}
                 title={t('sessionRail.newChat')}
                 aria-label={t('sessionRail.newChat')}
               >
@@ -462,10 +496,25 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
                 ) : (
                   <>
                     <div className="sr-head">
+                      {it.mode === 'workflow' && (
+                        <span className="sr-mode-badge mode-workflow" aria-hidden="true">
+                          {t('input.mode.workflow').toUpperCase()}
+                        </span>
+                      )}
+                      {it.mode === 'leader' && (
+                        <span className="sr-mode-badge mode-leader" aria-hidden="true">
+                          {t('input.mode.leader').toUpperCase()}
+                        </span>
+                      )}
+                      {it.mode === 'custom' && (
+                        <span className="sr-mode-badge mode-custom" aria-hidden="true">
+                          {t('input.mode.custom').toUpperCase()}
+                        </span>
+                      )}
                       <button
                         type="button"
                         className={`sr-title-btn${it.is_active ? ' active' : ''}`}
-                        disabled={it.is_active}
+                        disabled={it.is_active || hardLocked}
                         onClick={() => void handleSwitch(it.id, it.is_active)}
                       >
                         {it.title || t('sessionRail.untitled')}

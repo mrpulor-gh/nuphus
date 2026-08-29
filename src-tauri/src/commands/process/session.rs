@@ -297,10 +297,34 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
         return Ok(primary);
     }
 
-    // 空闲且主模式 session 空/不可用 → 回退另一侧（不丢历史）。
+    // 空闲且主模式 session 空/不可用 → 先检查切换中转 backup，再回退另一侧（不丢历史）。
     // busy=true（执行中 agent 被 take）→ 不回退另一侧，直接走 session_backup（当前模式快照）
     let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
     if !busy {
+        // 切换中转目标优先：跨 mode 点击会话、目标 agent 槽为 None 时，目标会话经
+        // switch_session 降级路径写入 session_backup。此时 primary 为空，必须先返回
+        // backup 中的目标会话；否则回退另一侧 agent 会显示「当前对话」而非目标会话
+        // （回归 2026-08-30：点击其它 mode 会话聊天区不变）。
+        if let Ok(sb) = state.session.lock() {
+            if let Some(ref json) = sb.session_backup {
+                if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
+                    let messages = extract_history(&sess);
+                    if !messages.is_empty() {
+                        let messages = append_last_turn_user(
+                            messages,
+                            &sb.last_message,
+                            &sb.last_message_images,
+                        );
+                        tracing::info!(
+                            "[CHAT] get_chat_history returned {} messages from switch backup (current_mode={})",
+                            messages.len(),
+                            current_mode
+                        );
+                        return Ok(messages);
+                    }
+                }
+            }
+        }
         let secondary = if is_workflow {
             guard
                 .leader_agent
@@ -756,6 +780,37 @@ mod tests {
         let hist = chat_history(&state).unwrap();
         assert_eq!(hist.len(), 2);
         assert_eq!(hist[0].content, "工作流问题");
+    }
+
+    /// 跨 mode 切换降级中转：current_mode=leader + leader agent 槽为 None（重启后
+    /// agent 未创建）+ 空闲 + workflow 非空 + session_backup 为目标会话
+    /// → 必须返回 backup 目标会话，而非回退 workflow（点击其它 mode 会话聊天区不变，回归 2026-08-30）
+    #[test]
+    fn chat_history_switch_backup_priority_over_secondary() {
+        let state = AppState::default();
+        set_current_mode(&state, "leader"); // 已切到目标 mode
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.leader_agent = None; // 目标 agent 槽为 None → 降级 backup 中转
+            guard.workflow_agent = Some(workflow_agent_with(session_with_ts(
+                &[("当前对话", "当前回复")],
+                None,
+            )));
+        }
+        // switch_session 降级路径写入的目标会话（与 workflow 内容不同）
+        let target_sess = {
+            let mut s = Session::new();
+            s.push_user("目标会话消息".to_string());
+            s.push_assistant(assistant("目标会话回复"));
+            serde_json::to_string(&s).unwrap()
+        };
+        {
+            let mut sb = state.session.lock().unwrap();
+            sb.session_backup = Some(target_sess);
+        }
+        let hist = chat_history(&state).unwrap();
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0].content, "目标会话消息");
     }
 
     /// 无 agent、无备份 → 空列表（欢迎页，不回归）

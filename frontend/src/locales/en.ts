@@ -87,6 +87,7 @@ const en: Record<string, string> = {
   'input.placeholder.executing': 'Executing · type & send to append instruction to current task',
   'input.mode.leader': 'Leader',
   'input.mode.workflow': 'Workflow',
+  'input.mode.custom': 'Custom',
   'input.mode.leader.desc': 'Understand, plan, dispatch',
   'input.mode.workflow.desc': 'Parse templates into executable workflows',
   'input.mode.custom.desc': 'My own agent',

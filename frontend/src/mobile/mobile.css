@@ -1425,6 +1425,9 @@ body {
   line-height: 1.5;
   overflow-wrap: anywhere; /* 任意长串强制断行 */
   overflow: hidden; /* 兜底：任何不可断行元素不撑出气泡 */
+  /* flex 列表内禁止收缩：overflow:hidden 使 min-height:auto 退化为 0，
+     内容超高时会被 .mobile-messages 的 flex 压缩裁剪（高度限死根因） */
+  flex-shrink: 0;
 }
 
 .mobile-msg-refine-head {
@@ -2966,6 +2969,10 @@ body {
 }
 
 .mobile-sess-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.35;
@@ -2973,6 +2980,31 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+/* 会话 mode 铭牌：与桌面 rail 同源配色（leader 蓝 / workflow 橙 / custom 紫） */
+.mobile-sess-mode {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+}
+.mobile-sess-mode.mode-workflow {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+.mobile-sess-mode.mode-custom {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+}
+.mobile-sess-mode.mode-leader {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .mobile-sess-meta {

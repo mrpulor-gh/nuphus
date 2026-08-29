@@ -23,7 +23,6 @@ import {
   getCurrentConfig,
   isBusy,
   getChatHistory,
-  newChatSessionCmd,
   resumeLatestSession,
   type HistoryMessage,
 } from '../main-window/lib/api'
@@ -381,6 +380,7 @@ export function useSession(): SessionAPI {
     setModelName,
     setSessionId,
     messagesRestoredRef,
+    setMode: setModeState,
   })
 
   const execUI = useExecutionUI(showToast)
@@ -435,19 +435,20 @@ export function useSession(): SessionAPI {
     async (input: string, images?: string[], forceMode?: string, refs?: ChatReference[]) => {
       if (!(await agentControl.checkBackendReady())) return
 
+      // 后端 busy 是追加判定的权威（不依赖前端 isProcessing）：execution_completed 事件
+      // 早于后端收尾 guard drop——存在"前端已空闲、后端仍 busy"窗口期，此时发送后端会
+      // 走 mobile_append 队列当作追加注入；若按前端状态误判为新执行，会清空执行窗口
+      // （timeline）并覆盖 streamingMsgId（实测 bug：追加后执行过程全消失）。
       let backendBusy = true
-      if (isProcessing) {
-        // 执行中（后端 busy）发送 = 追加指令：不清执行态，交给后端入队注入。
-        // 仅当后端已空闲（UI 残留 processing 状态）时才复位，避免新执行态被吞。
-        try {
-          backendBusy = (await isBusy()) ?? true
-        } catch {
-          backendBusy = true
-        }
-        if (!backendBusy) {
-          setIsProcessing(false)
-          executionActiveRef.current = false
-        }
+      try {
+        backendBusy = (await isBusy()) ?? true
+      } catch {
+        backendBusy = true
+      }
+      // UI 残留 processing 但后端已空闲 → 复位，避免新执行态被吞
+      if (isProcessing && !backendBusy) {
+        setIsProcessing(false)
+        executionActiveRef.current = false
       }
 
       const configured = await isLlmConfigured()
@@ -459,7 +460,9 @@ export function useSession(): SessionAPI {
       // 执行中（后端 busy）发送 = 追加指令：不创建独立 user 气泡。
       // 追加消息只入后端队列注入执行——显示新气泡会让前端以为要开启新回合，
       // 并覆盖 streamingMsgId 导致 agent 当前气泡瞬间封闭、最终回复丢失。
-      const isAppendAttempt = isProcessing && backendBusy
+      // 判定只看后端 busy（权威），不看前端 isProcessing：前端状态可能因
+      // execution_completed 早于收尾 guard drop 而先复位，此时发送仍属追加。
+      const isAppendAttempt = backendBusy
 
       const msg: ChatMessage = {
         id: crypto.randomUUID(),
@@ -497,6 +500,10 @@ export function useSession(): SessionAPI {
       try {
         const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }))
         const relation = loadRelation()
+        // welcome 直发 = 创建新对话：前端当前无会话（messages 空）且非追加 →
+        // 传 new_session=true，后端 force_new 创建该 mode 新会话并进入。
+        // 会话内发送（有历史）→ new_session=false → 后端按 rule2 判定归属。
+        const newSession = messagesRef.current.length === 0 && !isAppendAttempt
         const result = await processInput(
           input,
           history,
@@ -505,6 +512,7 @@ export function useSession(): SessionAPI {
           forceMode || mode,
           images,
           refs,
+          newSession,
         )
         if (result === null) {
           invoke('hud_update', {
@@ -569,11 +577,15 @@ export function useSession(): SessionAPI {
   }, [])
 
   const handleNewChat = useCallback(() => {
+    // 新建对话 = 只回到 welcome 界面（清空聊天区 → WelcomeScreen）。
+    // 不创建任何会话、不切 mode、不做其它任何事——解耦：
+    // 对话只在「welcome 界面发送消息」时才创建（前端发送时带 new_session 标记，
+    // 后端 force_new）。规避空对话存在：新建按钮永不产生空白会话。
+    // welcome 的「继续对话」「会话台点击」各有自己的出口，不受影响。
     // 执行中禁止新建（全入口统一防护：Ctrl+N / TitleBar / SessionRail + / 命令面板）：
-    // 后端 guard_switch 会拒绝 busy，但前端必须同步停手——旧逻辑无条件清 UI，
-    // 后端拒绝后消息/执行状态被清空而 agent 仍在后台跑 → 界面与真实状态撕裂（实测）。
+    // 后端 guard_switch 会拒绝 busy，前端必须同步停手——否则消息/执行状态被清空而
+    // agent 仍在后台跑 → 界面与真实状态撕裂（实测）。
     if (isProcessing) return
-    newChatSessionCmd().catch(() => {})
     resetTransientUI()
   }, [resetTransientUI, isProcessing])
 

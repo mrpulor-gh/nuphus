@@ -199,6 +199,36 @@
   gap: 10px;
 }
 
+/* ── 会话模式铭牌：LEADER/WORKFLOW 会话在标题前显示模式标识牌，
+   颜色与输入框 mode chip 同源（chat-input.css 双主题固定）：
+   leader=#3b82f6 蓝 / workflow=#f59e0b 橙；同色 12% 底 + 实色字 = 铭牌质感。
+   margin-right 负值收紧 sr-head 的 10px gap，视觉贴近标题 */
+.sr-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: -2px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.sr-mode-badge.mode-leader {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+}
+.sr-mode-badge.mode-workflow {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+.sr-mode-badge.mode-custom {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+}
+
 /* ── 预览块：agent 最终回复（脱敏截断 ≤400 字符），与标题「话题 ↔ 结果」互补。
    并入气泡统一整体（非独立 tooltip）；pre-wrap 保留回复换行结构，
    max-height 兜底超长回复，底部渐隐暗示可切会话看全文 */

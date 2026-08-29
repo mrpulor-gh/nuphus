@@ -985,6 +985,7 @@ pub async fn handle_task<R: tauri::Runtime>(
         None, // references
         None, // send_id
         Some("relay".to_string()),
+        false, // new_session：远程任务续聊当前，非新建
     )
     .await?;
 

@@ -200,6 +200,7 @@ export async function processInput(
   mode?: string,
   images?: string[],
   references?: { type: string; id: string; label: string }[],
+  newSession?: boolean,
 ): Promise<ProcessInputResponse | null> {
   // 首次尝试通过 Tauri IPC 发送
   const firstResult = await invoke<ProcessInputResponse>('send_message_cmd', {
@@ -210,6 +211,7 @@ export async function processInput(
     mode,
     images,
     references,
+    new_session: newSession ?? false,
   })
 
   // invoke 返回 null 说明 IPC 调用失败（ERR_CONNECTION_REFUSED 等）
@@ -255,6 +257,11 @@ export function forceReset() {
 
 export function setMode(mode: string) {
   return invoke<string>('set_mode', { mode })
+}
+
+/** 获取当前权威 mode（启动时同步镜像恢复结果） */
+export function getCurrentMode() {
+  return invoke<string>('get_current_mode')
 }
 
 // ── Custom Agents（自定义 Agent，全体用户可用）──
@@ -359,9 +366,11 @@ export function listShelfSessions() {
   return invoke<ShelfListResponse>('list_shelf_sessions')
 }
 
-/** 切换会话（同 backing mode）；失败 reject 稳定错误码字符串 */
-export function switchSession(id: string) {
-  return invoke<void>('switch_session', { id })
+/** 切换会话；mode 为可选目标 mode——跨 mode 切换由后端原子完成
+ * （归档原槽 → 切 current_mode → 安装目标槽），避免前端先 set_mode 再
+ * switch_session 两次 IPC 的竞态。失败 reject 稳定错误码字符串 */
+export function switchSession(id: string, mode?: string) {
+  return invoke<void>('switch_session', { id, mode: mode ?? null })
 }
 
 /** 新建对话：归档当前 → 安装空白会话，返回新会话 id */

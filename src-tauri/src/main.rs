@@ -164,6 +164,7 @@ fn main() {
             commands::graceful_stop,
             commands::force_reset,
             commands::set_mode,
+            commands::get_current_mode,
             commands::is_busy,
             commands::list_custom_agents,
             commands::save_custom_agent,
@@ -528,6 +529,15 @@ fn main() {
                     crate::commands::process::shelf::warm_from_disk(&mut shelf);
                     let n = shelf.len();
                     tracing::info!("[Shelf] 预热完成，装载 {n} 个镜像会话");
+                }
+                // 启动恢复 current_mode：有镜像则跟随镜像 mode（leader/workflow/custom
+                // 三态均支持），无镜像默认 leader。UI 仍停在欢迎页（不自动进入会话），
+                // 用户点「继续对话」/会话台/手动 chip 后按选择覆盖。
+                if let Some((mode, _)) = crate::commands::process::shelf::load_latest_mirror() {
+                    if let Ok(mut cm) = state.current_mode.write() {
+                        *cm = mode.clone();
+                    }
+                    tracing::info!("[MODE] 启动恢复 current_mode from 镜像: {}", mode);
                 }
             }
 

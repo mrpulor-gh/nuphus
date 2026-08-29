@@ -93,6 +93,8 @@ interface ChatPanelProps {
   onNewChat?: () => void
   /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
   onChatReplaced?: () => void
+  /** Session Rail 跨 mode 切换成功后：同步前端 mode state（mode chip 一致性） */
+  onModeSwitched?: (mode: string) => void
   /** 欢迎页「继续对话」：先调后端 resume_latest_session 装镜像再渲染完整历史 */
   onResumeLast?: () => void
   /** +号菜单：打开教导原则弹窗 */
@@ -163,6 +165,7 @@ export function ChatPanel({
   focusSignal,
   onNewChat,
   onChatReplaced,
+  onModeSwitched,
   onResumeLast,
   onOpenPrinciples,
   onOpenAnnotations,
@@ -1149,7 +1152,14 @@ export function ChatPanel({
     <div className="chat-panel">
       {/* ── Session Rail：面板级左缘挂载（自聊天区顶部 10% 起锚，
           感应区纯几何不拦截点击）── */}
-      {onChatReplaced && <SessionRail onSessionChanged={onChatReplaced} onNewChat={onNewChat} />}
+      {onChatReplaced && (
+        <SessionRail
+          onSessionChanged={onChatReplaced}
+          onNewChat={onNewChat}
+          onModeSwitched={onModeSwitched}
+          locked={isProcessing}
+        />
+      )}
       {/* ── Chat Header (command palette entry) ── */}
       <div className="chat-header">
         <div className="chat-header-left" />

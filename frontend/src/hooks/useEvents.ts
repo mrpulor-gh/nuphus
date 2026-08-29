@@ -289,14 +289,14 @@ export function useEvents(h: EventHandlers) {
         }
         // mode_changed: 手机端 /switch-mode（与桌面 set_mode 共用后端 set_mode_impl）
         // 事件双推桌面 Tauri + 手机 WS；桌面端收到后同步 mode state——ChatInputBar
-        // 的 mode chip / 状态随之更新（与 execution_started 里 setMode 同源写法）
+        // 的 mode chip / 状态随之更新（与 execution_started 里 setMode 同源写法）。
+        // ⚠️ 只更新 mode chip，不重载历史、不切换会话（2026-08-30 解耦）：
+        // 输入框 mode 与当前 session 解耦——mode 只管「下次发送的归属判定」，
+        // session 刷新/切换只由会话台点击 / 新建 / 继续对话触发。
         case 'mode_changed':
           if (event.mode) {
             lastModeChangedRef.current = event.mode
             h.setMode?.(event.mode)
-            // mode 联动会话视图：后端 current_mode 已切换，重载历史以显示目标
-            // mode 的 active 会话（有历史则继续，无历史则为空白新对话）
-            void h.reloadChatFromBackend?.()
           }
           break
         case 'execution_started': {
@@ -545,13 +545,18 @@ export function useEvents(h: EventHandlers) {
           h.setPauseState(null)
           h.setMood('thinking')
           // Refine mode: route text to refineOutput instead of message bubble
-          if (refineActiveRef.current && !event.is_thinking) {
-            refineOutputRef.current += event.text
-            const msgId = refineMsgIdRef.current
-            if (msgId) {
-              h.setMessages((prev: ChatMessage[]) =>
-                prev.map(m => (m.id === msgId ? { ...m, content: refineOutputRef.current } : m)),
-              )
+          if (refineActiveRef.current) {
+            // 正文 delta → 提炼气泡流式渲染（后端 RefineStreamFilter 放行 LlmTextDelta）；
+            // thinking delta 忽略——提炼思考不进执行轨迹 timeline（session_refined
+            // 不清 timeline，残留会一直挂到下次执行覆盖）
+            if (!event.is_thinking) {
+              refineOutputRef.current += event.text
+              const msgId = refineMsgIdRef.current
+              if (msgId) {
+                h.setMessages((prev: ChatMessage[]) =>
+                  prev.map(m => (m.id === msgId ? { ...m, content: refineOutputRef.current } : m)),
+                )
+              }
             }
             break
           }

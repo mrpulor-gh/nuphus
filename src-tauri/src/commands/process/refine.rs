@@ -6,6 +6,25 @@ use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Refine 内部流程的过滤发射器：只放行 LlmTextDelta（前端提炼气泡流式渲染），
+/// 静默其余事件（ExecutionStarted / UserMessageReceived / ExecutionCompleted /
+/// DirectResponse / TokenUsage / ToolCall* 等）。
+/// 此前 Leader/Workflow 两路径均 take_emitter 全静默：提炼期间前端收不到任何
+/// delta，气泡空转直到 session_refined 一次性填 summary——双 mode 提炼均无
+/// 流式输出的根因（2026-08-30 修复）。REFINE_PROMPT 是纯总结任务，正常不产生
+/// 工具调用；即使 LLM 意外调工具，ToolCall* 也被静默（提炼不污染执行轨迹）。
+struct RefineStreamFilter {
+    inner: Arc<dyn EventEmitter>,
+}
+
+impl EventEmitter for RefineStreamFilter {
+    fn emit(&self, event: NuphusEvent) {
+        if matches!(event, NuphusEvent::LlmTextDelta { .. }) {
+            self.inner.emit(event);
+        }
+    }
+}
+
 pub async fn execute_session_refine<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
@@ -93,8 +112,13 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         rt_owned
             .session_mut()
             .push_user_internal(refine_prompt.to_string());
-        // 静默 resume 内的 ExecutionStarted（goal=REFINE_PROMPT 开头，也不应显示在前端）。
+        // 静默 resume 内的 ExecutionStarted（goal=REFINE_PROMPT 开头，也不应显示在前端）：
+        // 用过滤器替换而非 take 成 None——LlmTextDelta 放行供前端提炼气泡流式渲染，
+        // 生命周期事件仍被拦截（全静默会让提炼等 session_refined 才一次性出结果）。
         let saved_emitter = rt_owned.take_emitter();
+        if let Some(ref e) = saved_emitter {
+            rt_owned.restore_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
+        }
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(90),
             rt_owned.resume(refine_prompt, &cancel_flag),
@@ -102,6 +126,7 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         .await
         .map_err(|_| "提炼超时（90s）".to_string())
         .and_then(|r| r.map_err(|e| e.to_string()));
+        let _ = rt_owned.take_emitter(); // 丢弃过滤器
         rt_owned.restore_emitter(saved_emitter);
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         guard.leader_agent = Some(rt_owned);
@@ -186,6 +211,13 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
             .session_mut()
             .push_user_internal(refine_prompt.to_string());
         let saved_emitter = wa_owned.take_emitter();
+        // 同 Leader 路径：过滤器替换而非全静默——放行 LlmTextDelta（提炼气泡流式），
+        // 拦截 ExecutionStarted 等生命周期事件。llm_stream_with_streaming 每次 attempt
+        // 从 self.emitter.clone() 取发射器（workflow_agent.rs），run 期间 emitter 为
+        // 过滤器即生效；run 结束后 take 丢弃过滤器、还原原发射器。
+        if let Some(ref e) = saved_emitter {
+            wa_owned.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
+        }
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(60),
             wa_owned.run(refine_prompt, &None, cancel_flag),
@@ -193,6 +225,7 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
         .await
         .map_err(|_| "提炼超时（60s）".to_string())
         .and_then(|r| r.map_err(|e| e.to_string()));
+        let _ = wa_owned.take_emitter(); // 丢弃过滤器
         wa_owned.set_emitter(saved_emitter);
         wa_owned.set_internal_input(false);
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;

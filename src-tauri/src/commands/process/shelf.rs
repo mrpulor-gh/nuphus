@@ -14,6 +14,7 @@
 //! 幂等导入 SQLite 后保留不删（保守）。
 
 use crate::state::AppState;
+use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::session::{MessageRole, Session};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -235,10 +236,13 @@ fn truncate_chars(s: &str, max: usize) -> String {
     format!("{}…", s.chars().take(max).collect::<String>())
 }
 
-/// 归属模式归一化："workflow" → workflow；其余（leader/custom）→ leader
+/// 归属模式归一化：workflow → workflow；custom → custom（custom 会话走 leader 主循环，
+/// 但 mode 标签须保留 custom，保证展示台/镜像/切换不丢失身份）；其余（leader/free/plan 残留）→ leader
 pub(crate) fn normalize_mode(current_mode: &str) -> &'static str {
     if current_mode == "workflow" {
         "workflow"
+    } else if current_mode == "custom" {
+        "custom"
     } else {
         "leader"
     }
@@ -441,7 +445,11 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
         }
         shelf.entries.insert(id.clone(), entry);
         shelf.sessions.insert(id.clone(), file_session);
-        shelf.order.insert(0, id);
+        // order 保持 newest-first（与 ShelfState::put 语义一致）：list_snapshots
+        // 返回 updated_at DESC（最新在前），逐个 append 到末尾 → order[0]=最新、
+        // 末尾=最旧；此后 put 超限 pop() 移除的正是最旧（回归 2026-08-30：
+        // 此前 insert(0) 把顺序倒转，重启后首次 put 会误淘汰「最新」）。
+        shelf.order.push(id);
     }
 }
 
@@ -564,7 +572,7 @@ fn build_entry(
 /// 归档 active 到展示台 + 镜像 + 元数据行。空会话跳过（不占槽）。
 /// 注意：调用方持有 runtime 锁期间传入 ctx——保护名单经
 /// protected_snapshot_ids_with_ctx 从 ctx 直取，绝不嵌套加锁。
-fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind: &str) {
+pub(crate) fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeContext, kind: &str) {
     let Some(sess_ref) = active_session(ctx, kind) else {
         return;
     };
@@ -619,13 +627,21 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     // 稳定，让 SessionRail 只在真正切换时刷新。
     if let Ok(ctx) = state.runtime.lock() {
         if let Some(sess) = active_session(&ctx, kind) {
+            // mode 以存储归属为准（sessions 表快照列随 upsert_snapshot 绑定），
+            // 不依赖 current_mode 推断——跨 mode 切换后 active 会话的真实归属
+            // 仍以持久化记录为准；新会话尚未持久化时 fallback 当前 kind。
+            let stored_mode = nuphus::store::session::get_snapshot(&sess.id)
+                .ok()
+                .flatten()
+                .map(|(m, _)| m)
+                .unwrap_or_else(|| kind.to_string());
             let title = state
                 .shelf
                 .lock()
                 .ok()
                 .and_then(|s| s.titles.get(&sess.id).cloned())
                 .unwrap_or_default();
-            let e = build_entry(sess.id.clone(), kind, sess, Some(&title));
+            let e = build_entry(sess.id.clone(), &stored_mode, sess, Some(&title));
             active_id = Some(e.id.clone());
             candidates.push((
                 e.id.clone(),
@@ -688,16 +704,48 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
 /// 切换会话。守卫/归属校验失败返回稳定错误码字符串（busy / append_pending /
 /// mode_mismatch / not_found），前端映射文案。无 agent 槽（重启后新进程
 /// leader/workflow 槽为空）时降级 backup 中转成功返回，不再报 no_agent。
+///
+/// `mode` 为可选目标 mode：跨 mode 会话切换由后端原子完成（归档原槽 →
+/// 切 current_mode → 安装目标），前端**不再**先 set_mode 再 switch_session
+/// 两次 IPC——此前 split 调用存在竞态：set_mode 触发的 mode_changed 事件
+/// 会抢先 reloadChatFromBackend，若 switch_session 随后失败，聊天区与
+/// mode chip 已错乱（回归 2026-08-30）。
 #[tauri::command]
-pub fn switch_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    switch_session_inner(&state, id)
+pub fn switch_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    mode: Option<String>,
+) -> Result<(), String> {
+    let before = state
+        .current_mode
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "leader".to_string());
+    switch_session_inner_mode(&state, id, mode)?;
+    let after = state
+        .current_mode
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "leader".to_string());
+    // 跨 mode 会话切换（current_mode 变化）→ 广播 ModeChanged 双推（桌面+手机跟随）。
+    // 手机端依赖 ModeChanged 同步 mode 显示；原子切换此前只广播 SessionChanged，手机
+    // 端 mode 显示滞后（回归 2026-08-30）。
+    if normalize_mode(&before) != normalize_mode(&after) {
+        let emitter = crate::emitter::CompoundEmitter::new(app, &state);
+        emitter.emit(NuphusEvent::ModeChanged {
+            mode: after.clone(),
+        });
+    }
+    // 会话台点击 = 显式选择已有会话：会话归属由发送时「输入框 mode vs session 绑定
+    // mode」实时比较判定（规则2），不再需要 pending 状态机（2026-08-30 解耦）。
+    Ok(())
 }
 
 /// 手机端跟随广播：会话切换后经 mobile WS 通道通知（mobile_server 未启动时 no-op）。
 /// 镜像模型：手机不维护独立会话状态，收到 SessionChanged 后重拉 /history，
 /// 呈现桌面当前会话。帧格式与 CompoundEmitter 的 WS 分支一致（裸 NuphusEvent JSON）。
 fn broadcast_session_changed_mobile(state: &AppState, session_id: &str) {
-    use nuphus::agent::events::EventEmitter;
     let Some(tx) = state.mobile_ws_tx.lock().ok().and_then(|g| g.clone()) else {
         return;
     };
@@ -708,8 +756,15 @@ fn broadcast_session_changed_mobile(state: &AppState, session_id: &str) {
     );
 }
 
-/// 内部实现（&AppState 直取）：mobile_server 的遥控切换端点复用
-pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), String> {
+/// 切换会话核心。`requested_mode` 为 None = 同 mode 切换（手机/测试兼容）；
+/// Some(target) = 跨 mode 原子切换——先归档**原 mode** 的 active 会话，再切
+/// current_mode，最后把目标安装进目标 mode 槽，全程一次加锁无竞态窗口。
+/// 目标归属与目标 mode 不符返回稳定错误码 mode_mismatch。
+pub(crate) fn switch_session_inner_mode(
+    state: &AppState,
+    id: String,
+    requested_mode: Option<String>,
+) -> Result<(), String> {
     guard_switch(state).map_err(|c| c.to_string())?;
 
     let current_mode = state
@@ -717,13 +772,17 @@ pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), S
         .read()
         .map(|g| g.clone())
         .unwrap_or_else(|_| "leader".to_string());
-    let kind = normalize_mode(&current_mode);
+    let current_kind = normalize_mode(&current_mode);
+    let target_kind = requested_mode
+        .as_deref()
+        .map(normalize_mode)
+        .unwrap_or(current_kind);
 
     // 目标归属校验（内存中的条目）
     {
         let shelf = state.shelf.lock().map_err(|e| e.to_string())?;
         if let Some(e) = shelf.get(&id) {
-            if e.mode != kind {
+            if e.mode != target_kind {
                 return Err("mode_mismatch".to_string());
             }
         }
@@ -738,7 +797,7 @@ pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), S
         Some(pair) => pair,
         None => match read_mirror(&id) {
             Some((mode, session)) => {
-                if mode != kind {
+                if mode != target_kind {
                     return Err("mode_mismatch".to_string());
                 }
                 let title = state
@@ -755,11 +814,22 @@ pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), S
         },
     };
 
+    // 跨 mode：先切换 current_mode（在归档/安装之前，确保此后 get_chat_history
+    // 与后续命令按目标 mode 路由）
+    if target_kind != current_kind {
+        if let Ok(mut cm) = state.current_mode.write() {
+            *cm = target_kind.to_string();
+        }
+    }
+
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
 
-    archive_active(state, &mut ctx, kind);
+    // 归档**当前（原）**mode 的 active 会话——跨 mode 时必须归档用户正在离开的
+    // 槽位，而非目标槽位（此前用切换后的 kind 归档，会把原会话留在原槽不归档，
+    // 展示台/恢复链错乱：切走 leader 会话后 leader 槽仍驻留旧会话）
+    archive_active(state, &mut ctx, current_kind);
 
-    let Some(slot) = active_session_mut(&mut ctx, kind) else {
+    let Some(slot) = active_session_mut(&mut ctx, target_kind) else {
         // 无 agent 槽可装（重启/build 后新进程 leader/workflow 槽为 None，agent 仅在
         // 发送消息时才创建）：
         // 降级为 backup 中转——与 resume_latest_session 同机制：目标会话序列化进
@@ -778,13 +848,18 @@ pub(crate) fn switch_session_inner(state: &AppState, id: String) -> Result<(), S
         if let Ok(mut shelf) = state.shelf.lock() {
             shelf.put(entry, target_session);
         }
-        tracing::info!("[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({kind})");
+        tracing::info!(
+            "[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({current_kind} -> {target_kind})"
+        );
         broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
     *slot = target_session;
 
-    tracing::info!("[Shelf] 切换到会话 {} ({kind})", entry.id);
+    tracing::info!(
+        "[Shelf] 切换到会话 {} ({current_kind} -> {target_kind})",
+        entry.id
+    );
     broadcast_session_changed_mobile(state, &entry.id);
     Ok(())
 }
@@ -833,7 +908,6 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
         sb.last_message_images.clear();
     }
     tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
-    use nuphus::agent::events::EventEmitter;
     crate::emitter::CompoundEmitter::new(app.clone(), state).emit(
         nuphus::agent::events::NuphusEvent::SessionChanged {
             session_id: new_id.clone(),
@@ -845,6 +919,7 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
 /// 重命名：覆盖表 + 元数据行；对 active 会话立即生效（归档时沿用）
 #[tauri::command]
 pub fn rename_session_cmd(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
     title: String,
@@ -878,7 +953,11 @@ pub fn rename_session_cmd(
             summary: String::new(),
         })
     };
-    nuphus::store::session::upsert_session(&row).map_err(|e| e.to_string())
+    nuphus::store::session::upsert_session(&row).map_err(|e| e.to_string())?;
+    // 展示台列表变化 → 双端同步（手机刷新会话清单标题；当前会话未变）
+    crate::emitter::CompoundEmitter::new(app, state.inner())
+        .emit(nuphus::agent::events::NuphusEvent::ShelfUpdated);
+    Ok(())
 }
 
 /// 用户手动归档：把 rail 中指定会话移出展示台并清快照（元数据行+文本记忆保留可查）。
@@ -886,7 +965,11 @@ pub fn rename_session_cmd(
 /// active 会话在 runtime 不在 shelf，无法经此归档（前端不显示按钮）。错误码：
 /// busy / append_pending / not_found。
 #[tauri::command]
-pub fn archive_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn archive_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
     guard_switch(&state).map_err(|c| c.to_string())?;
 
     let removed = {
@@ -901,23 +984,30 @@ pub fn archive_session(state: State<'_, AppState>, id: String) -> Result<(), Str
     upsert_meta_row(&session, &entry.title);
     delete_mirror(&id);
     tracing::info!("[Shelf] 用户手动归档会话 {} ({})", entry.id, entry.mode);
+    // 展示台列表变化 → 双端同步（手机刷新会话清单；当前会话未变，手机不重拉历史）
+    crate::emitter::CompoundEmitter::new(app, state.inner())
+        .emit(nuphus::agent::events::NuphusEvent::ShelfUpdated);
     Ok(())
 }
 
-/// 是否存在可恢复的最近会话镜像（leader 归属、非空）——欢迎页「继续对话」按钮显示条件
+/// 是否存在可恢复的最近会话镜像（leader/workflow/custom 全 mode 支持）——
+/// 欢迎页「继续对话」按钮显示条件：只看重启前最后对话镜像是否非空，
+/// 不按 mode 排除（2026-08-30 起全 mode 统一支持继续对话）。
 #[tauri::command]
 pub fn has_resume_candidate() -> bool {
     matches!(
         load_latest_mirror(),
-        Some((mode, ref s)) if mode != "workflow" && !s.is_empty()
+        Some((_, ref s)) if !s.is_empty()
     )
 }
 
-/// 「继续对话」：把最新 leader 镜像写入 session_backup——
+/// 「继续对话」：把最新镜像写入 session_backup——
 /// 1) get_chat_history 的 backup 回退路径立即返回完整历史（无需构建 Runtime，
 ///    欢迎页保持存在，恢复是显式用户动作）
 /// 2) 下一条消息提交时 run_runtime_with_config 经同一 JSON 恢复完整上下文
 ///    （retry.rs 同一先例），新指令即续聊
+/// 3) current_mode 跟随镜像 mode（leader/workflow/custom 均支持）——重启后
+///    mode 先落镜像，随后用户选择（继续对话/会话台/手动 chip）覆盖
 #[tauri::command]
 pub fn resume_latest_session(
     state: State<'_, AppState>,
@@ -925,7 +1015,7 @@ pub fn resume_latest_session(
     let Some((mode, sess)) = load_latest_mirror() else {
         return Err("no_resume".to_string());
     };
-    if mode == "workflow" || sess.is_empty() {
+    if sess.is_empty() {
         return Err("no_resume".to_string());
     }
     let json = serde_json::to_string(&sess).map_err(|e| e.to_string())?;
@@ -934,6 +1024,10 @@ pub fn resume_latest_session(
         sb.session_backup = Some(json);
         sb.last_message.clear();
         sb.last_message_images.clear();
+    }
+    // 镜像 mode 同步为当前权威（跨 mode 恢复：workflow/custom 会话不再被强制归 leader）
+    if let Ok(mut cm) = state.current_mode.write() {
+        *cm = mode.clone();
     }
     crate::commands::process::session::chat_history(&state)
 }
@@ -985,6 +1079,39 @@ pub fn flush_active_mirror(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct MockApiClient;
+    #[async_trait::async_trait]
+    impl nuphus::api::ApiClient for MockApiClient {
+        async fn stream(
+            &self,
+            _request: nuphus::api::MessageRequest,
+        ) -> nuphus::Result<Vec<nuphus::api::AssistantEvent>> {
+            Ok(vec![])
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn provider_kind(&self) -> nuphus::api::ProviderKind {
+            nuphus::api::ProviderKind::MiniMax
+        }
+    }
+
+    fn workflow_agent_with(sess: nuphus::session::Session) -> nuphus::runtime::WorkflowAgent {
+        let mut wa = nuphus::runtime::WorkflowAgent::new(
+            std::sync::Arc::new(MockApiClient),
+            nuphus::ToolRegistry::work_agent(),
+            None,
+            None,
+            "mock".to_string(),
+            "user".to_string(),
+            "Nuphus".to_string(),
+            nuphus::permissions::ToolPermissions::default(),
+            0.5,
+        );
+        wa.session_mut().replace_messages(sess.messages().to_vec());
+        wa
+    }
 
     fn session_with_user(texts: &[&str]) -> Session {
         let mut s = Session::new();
@@ -1071,6 +1198,18 @@ mod tests {
         assert!(shelf.contains(&b.id), "B 应被装载");
         let entry_b = shelf.get(&b.id).expect("B 应有条目");
         assert_eq!(entry_b.mode, "workflow", "mode 应来自快照");
+        // order 必须 newest-first：最新（B）在 order[0]，最旧（A）在末尾——
+        // 保证此后 put 超限 pop() 淘汰的是最旧而非最新（回归 2026-08-30）
+        assert_eq!(
+            shelf.order.first().map(String::as_str),
+            Some(b.id.as_str()),
+            "order[0] 应为最新快照 B"
+        );
+        assert_eq!(
+            shelf.order.last().map(String::as_str),
+            Some(a.id.as_str()),
+            "order 末尾应为最旧快照 A（put 超限时淘汰它）"
+        );
 
         let _ = nuphus::store::session::delete_session(&a.id);
         let _ = nuphus::store::session::delete_session(&b.id);
@@ -1157,6 +1296,53 @@ mod tests {
         }
     }
 
+    /// 拉取会话台：active 条目 mode 必须来自存储快照归属（upsert_snapshot 写入的
+    /// mode），不依赖 current_mode 推断。构造：current_mode=workflow + workflow_agent
+    /// 槽内有会话，但该会话 SQLite 快照归属为 leader（跨 mode 切换后真实归属）。
+    /// → active 条目 mode 应显示 leader，而非 workflow。
+    #[test]
+    fn list_shelf_active_mode_uses_stored_snapshot_not_current_mode() {
+        let state = AppState::default();
+        // current_mode = workflow
+        {
+            let mut cm = state.current_mode.write().unwrap();
+            *cm = "workflow".to_string();
+        }
+        let sess = session_with_user(&["跨 mode 会话"]);
+        let sess_id = sess.id.clone();
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.workflow_agent = Some(workflow_agent_with(sess));
+        }
+        // 存储快照归属 leader（upsert_snapshot 绑定 mode 与快照）
+        let json = serde_json::to_string(&session_with_user(&["跨 mode 会话"])).unwrap();
+        nuphus::store::session::upsert_snapshot(&sess_id, "leader", &json).unwrap();
+
+        let r = list_shelf_sessions_inner(&state).unwrap();
+        let items = r["items"].as_array().unwrap();
+        let active = items.iter().find(|i| i["is_active"] == true).unwrap();
+        assert_eq!(
+            active["mode"].as_str().unwrap(),
+            "leader",
+            "active 条目 mode 应来自存储快照归属，而非 current_mode"
+        );
+
+        let _ = nuphus::store::session::delete_session(&sess_id);
+    }
+
+    /// 欢迎页「继续对话」：workflow 镜像也应显示按钮（全 mode 统一支持，
+    /// 不再排除 workflow——只看重启前最后对话镜像是否非空）。
+    #[test]
+    fn has_resume_candidate_accepts_workflow_mirror() {
+        let sess = session_with_user(&["工作流最后对话"]);
+        write_mirror("workflow", &sess, &[]);
+        assert!(
+            has_resume_candidate(),
+            "workflow 镜像也应可继续对话（全 mode 支持）"
+        );
+        let _ = nuphus::store::session::delete_session(&sess.id);
+    }
+
     /// 重启后新进程 leader_agent/workflow_agent 槽为 None（agent 仅在发送消息时创建）。
     /// switch_session 此时不应报 no_agent，而降级 backup 中转：session_backup 写入目标、
     /// 目标放回展示台。前端经 backup 回退路径显示历史，下次发消息经 JSON 恢复上下文。
@@ -1178,7 +1364,7 @@ mod tests {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(entry, target);
         }
-        let r = switch_session_inner(&state, target_id.clone());
+        let r = switch_session_inner_mode(&state, target_id.clone(), None);
         assert!(r.is_ok(), "无 agent 槽时应降级成功: {:?}", r.err());
 
         // 目标会话已写入 session_backup

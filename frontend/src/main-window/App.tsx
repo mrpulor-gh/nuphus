@@ -239,6 +239,7 @@ export default function App() {
               focusSignal={s.focusSignal}
               onNewChat={s.handleNewChat}
               onChatReplaced={() => void s.reloadChatFromBackend()}
+              onModeSwitched={m => s.setMode(m)}
               onResumeLast={() => void s.resumeLastSession()}
               onOpenPrinciples={() => setMemoryDialog('tenets')}
               onOpenAnnotations={() => setMemoryDialog('annotations')}

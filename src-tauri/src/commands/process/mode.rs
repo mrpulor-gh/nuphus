@@ -51,8 +51,13 @@ pub async fn set_mode_impl<R: tauri::Runtime>(
 
     // 后端权威 current_mode：chat_history 按此选择 agent 会话（替换旧「最近活跃」猜测）。
     // current_mode 是独立 RwLock，与已释放的 runtime 锁无冲突。
-    if let Ok(mut cm) = state.current_mode.write() {
-        *cm = parsed.as_str().to_string();
+    // 切换语义（2026-08-30 解耦后）：手动切换只更新 current_mode，不设任何 pending 状态。
+    // 会话归属判定完全由 submit_user_message 实时比较「发送 mode vs session 绑定 mode」
+    // 决定（规则2）：不一致 → 新建该 mode 会话；一致 → 续聊当前 session。
+    {
+        if let Ok(mut cm) = state.current_mode.write() {
+            *cm = parsed.as_str().to_string();
+        }
     }
 
     // 广播 mode 变更：双推桌面 Tauri + 手机 WS（mobile_server 未启动时 CompoundEmitter
@@ -76,4 +81,15 @@ pub async fn set_mode(
     mode: String,
 ) -> Result<(), String> {
     set_mode_impl(app, state, mode).await
+}
+
+/// 获取当前权威 mode：前端启动时调用，使 mode state 与后端镜像恢复结果一致
+/// （启动恢复 current_mode from 镜像——leader/workflow/custom 三态）。
+#[tauri::command]
+pub fn get_current_mode(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state
+        .current_mode
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "leader".to_string()))
 }

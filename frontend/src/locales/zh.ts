@@ -85,6 +85,7 @@ const zh: Record<string, string> = {
   'input.placeholder.executing': '执行中 · 输入内容并发送 = 追加指令，立即纳入当前任务',
   'input.mode.leader': 'Leader',
   'input.mode.workflow': 'Workflow',
+  'input.mode.custom': 'Custom',
   'input.mode.leader.desc': '理解、规划、派发',
   'input.mode.workflow.desc': '解析模板生成可执行工作流',
   'input.mode.custom.desc': '我的专属 Agent',

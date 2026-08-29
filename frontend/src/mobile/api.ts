@@ -484,10 +484,12 @@ export async function startNewChat(
   }
 }
 
-/** POST /session/switch —— 遥控切换桌面当前会话（手机视图经 SessionChanged 事件跟随刷新） */
+/** POST /session/switch —— 遥控切换桌面当前会话（手机视图经 SessionChanged 事件跟随刷新）。
+ *  与桌面端统一：传 session 存储归属 mode，跨 mode 原子切换由后端完成。 */
 export async function switchSession(
   token: string,
   id: string,
+  mode?: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const res = await checkAuth(
@@ -500,7 +502,7 @@ export async function switchSession(
             'Content-Type': 'application/json',
             ...tunnelDeviceHeaders(),
           },
-          body: JSON.stringify({ id }),
+          body: JSON.stringify({ id, ...(mode ? { mode } : {}) }),
         },
         SEND_TIMEOUT_MS,
       ),
@@ -533,6 +535,8 @@ const SEND_TIMEOUT_MS = 15000
 export interface SendOptions {
   images?: string[]
   mode?: string
+  /** welcome 直发标记：true = 创建新对话（与桌面端 new_session 语义一致） */
+  newSession?: boolean
 }
 
 export async function sendMessage(
@@ -561,6 +565,7 @@ export async function sendMessage(
           send_id: sendId,
           ...(opts?.images && opts.images.length > 0 ? { images: opts.images } : {}),
           ...(opts?.mode ? { mode: opts.mode } : {}),
+          ...(opts?.newSession ? { new_session: true } : {}),
         }),
         ...(controller ? { signal: controller.signal } : {}),
       }),

@@ -116,6 +116,7 @@ pub async fn send_message_cmd(
     mode: Option<String>,
     references: Option<Vec<ChatReference>>,
     send_id: Option<String>,
+    new_session: Option<bool>,
 ) -> Result<ProcessInputResponse, String> {
     submit_user_message(
         app,
@@ -128,6 +129,7 @@ pub async fn send_message_cmd(
         references,
         send_id,
         None, // source 缺省 "desktop"，桌面行为与抽取前完全一致
+        new_session.unwrap_or(false),
     )
     .await
 }
@@ -176,6 +178,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     references: Option<Vec<ChatReference>>,
     send_id: Option<String>,
     source: Option<String>,
+    new_session: bool,
 ) -> Result<ProcessInputResponse, String> {
     // Must contain at least text or images
     if message.trim().is_empty() && images.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
@@ -219,6 +222,41 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     // 去重防线：与最近受理/已注入内容相同且在 30s 内 → 丢弃（防刷新/重试导致的重复提交）。
     // 主指令受理时会写 guard.last_message（见下方非 busy 分支），此处直接复用该记录。
     if state.busy.load(Ordering::SeqCst) {
+        // 规则3 兜底：执行中 mode 不应改变——若 current_mode 与当前执行 session
+        // 绑定的 mode 不一致（异常，如执行期间外部/手机端切换了 mode），以 session
+        // 存储快照的 mode 为准刷新 current_mode，避免后续按错误 mode 路由。
+        // busy 期间 agent 被 take 出 runtime 槽，session 在执行前快照 session_backup
+        // 中（主指令受理时已写入）——从那里取 session id 再查存储归属。
+        // 追加本身不改变 session 归属（append 只注入当前执行会话）。
+        let session_mode = {
+            let sb = state.session.lock().ok();
+            sb.and_then(|g| g.session_backup.clone())
+                .and_then(|json| {
+                    serde_json::from_str::<nuphus::session::Session>(&json).ok()
+                })
+                .and_then(|sess| {
+                    crate::commands::process::shelf::read_mirror(&sess.id).map(|(m, _)| m)
+                })
+        };
+        if let Some(sm) = session_mode {
+            let cur = state
+                .current_mode
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "leader".to_string());
+            if crate::commands::process::shelf::normalize_mode(&cur)
+                != crate::commands::process::shelf::normalize_mode(&sm)
+            {
+                tracing::warn!(
+                    "[MODE] 执行中 mode 异常漂移 current={} session={}，以 session 绑定 mode 兜底刷新",
+                    cur,
+                    sm
+                );
+                if let Ok(mut cm) = state.current_mode.write() {
+                    *cm = crate::commands::process::shelf::normalize_mode(&sm).to_string();
+                }
+            }
+        }
         if !message.trim().is_empty() {
             let duplicate = {
                 let guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -350,6 +388,47 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         .and_then(|m| nuphus::runtime::Mode::from_str(m).ok());
     let is_workflow = mode_parsed == Some(nuphus::runtime::Mode::Workflow);
 
+    // 发送归属判定（解耦，规则2）：比较「发送时刻输入框 mode」与「当前 active session
+    // 绑定的 mode（存储快照归属）」——不一致 → force_new：立即创建发送 mode 的新会话
+    // 并进入（归档目标槽旧会话）；一致 → 无论中途 mode 如何切换，保持当前 session 续聊。
+    // 唯一判据是 session 绑定的 mode 与发送时刻的输入框 mode（2026-08-30 解耦）。
+    // new_session=true（welcome 界面直发）：无条件创建新对话——不比较任何 session mode，
+    // 规避空对话存在（新建按钮只回 welcome，对话只在发送时创建）。
+    let mut force_new = new_session;
+    if !force_new && mode.is_some() {
+        let parsed_str = mode_parsed.unwrap_or_default().as_str().to_string();
+        // 当前 active session 绑定的 mode：读 runtime 槽内 session 的存储归属
+        // （get_snapshot 返回持久化 mode；无快照 = 新会话尚未落库 → 视为与发送 mode 一致，
+        // 即新会话首次发送直接续聊，不误判新建）。
+        let session_mode = state
+            .runtime
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                if is_workflow {
+                    guard.workflow_agent.as_ref().map(|a| a.session().id.clone())
+                } else {
+                    guard.leader_agent.as_ref().map(|rt| rt.session().id.clone())
+                }
+            })
+            .and_then(|sid| {
+                crate::commands::process::shelf::read_mirror(&sid).map(|(m, _)| m)
+            });
+        match session_mode {
+            Some(sm) => {
+                if crate::commands::process::shelf::normalize_mode(&parsed_str)
+                    != crate::commands::process::shelf::normalize_mode(&sm)
+                {
+                    // 输入框 mode ≠ session 绑定 mode → 新建该 mode 会话
+                    force_new = true;
+                }
+                // 一致 → 保持当前 session 续聊（即使中途 mode 切换过）
+            }
+            // 无 session 快照（新会话/未落库）→ 直接续聊当前槽，不新建
+            None => {}
+        }
+    }
+
     // 发送确认当前模式：前端传的 mode 与后端权威一致（手机端发消息默认带 mode，
     // 桌面端 set_mode 已显式切换；None 兼容旧调用——保持 current_mode 不变）。
     // current_mode 是独立 RwLock，不持有 runtime 锁，无死锁风险。
@@ -365,19 +444,25 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     // workflow 模式备份 workflow_agent.session()：workflow 消息存于 workflow_agent 独立
     // session（leader_agent.session() 不增长），且执行中 agent 被 take 后若只备份 leader
     // 会是旧/空数据——手机端执行中重进页面 session_backup 为空，拉不到 workflow 历史。
-    let backup_session = state.runtime.lock().ok().and_then(|guard| {
-        if is_workflow {
-            guard
-                .workflow_agent
-                .as_ref()
-                .map(|agent| agent.session().clone())
-        } else {
-            guard
-                .leader_agent
-                .as_ref()
-                .map(|agent| agent.session().clone())
-        }
-    });
+    // force_new（手动切 mode 后首次发送=新建）不备份旧槽会话：旧会话将归档进展示台，
+    // backup 只留给「续聊当前会话」路径，避免新建后 backup 残留旧会话污染 get_chat_history。
+    let backup_session = if force_new {
+        None
+    } else {
+        state.runtime.lock().ok().and_then(|guard| {
+            if is_workflow {
+                guard
+                    .workflow_agent
+                    .as_ref()
+                    .map(|agent| agent.session().clone())
+            } else {
+                guard
+                    .leader_agent
+                    .as_ref()
+                    .map(|agent| agent.session().clone())
+            }
+        })
+    };
 
     // Persist session backup to AppState so it survives Tauri command cancellation (IPC break).
     // When IPC breaks mid-execution, the command's async task may be cancelled,
@@ -399,7 +484,27 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             state.busy.store(false, Ordering::SeqCst);
             e.to_string()
         })?;
-        if is_workflow {
+        if force_new {
+            // 手动切 mode 后首次发送 = 新建该 mode 会话：归档目标槽旧会话
+            // （有内容才占槽，无 agent 槽则 no-op），existing 传 None → 空白新会话。
+            // custom 会话走 leader 槽：归档 kind 取槽内会话镜像真实 mode（custom 不得
+            // 标 leader，否则展示台/镜像身份丢失）；无镜像回落目标 kind。
+            let kind = if is_workflow { "workflow" } else { "leader" };
+            let real_kind = if is_workflow {
+                kind.to_string()
+            } else {
+                guard
+                    .leader_agent
+                    .as_ref()
+                    .and_then(|rt| {
+                        let id = rt.session().id.clone();
+                        crate::commands::process::shelf::read_mirror(&id).map(|(m, _)| m)
+                    })
+                    .unwrap_or_else(|| kind.to_string())
+            };
+            crate::commands::process::shelf::archive_active(&state, &mut guard, &real_kind);
+            (None, None)
+        } else if is_workflow {
             (None, guard.workflow_agent.take())
         } else {
             let mut agent = guard.leader_agent.take();
@@ -454,6 +559,17 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         let _task_guard = TaskBusyGuard(&state.busy);
         // CompoundEmitter: mobile_server 运行时事件双推（桌面 + 手机 WS），否则纯 Tauri
         let emitter = crate::emitter::CompoundEmitter::new(app_handle.clone(), state.inner());
+        // force_new（welcome 首发新建 / rule2 跨 mode 新建）→ 广播 SessionChanged：
+        // 手机端重拉历史（新会话为空 → 清掉残留的旧会话消息，防跨会话串内容）+
+        // 刷新会话清单（新会话入列、旧会话归档）。桌面端无 session_changed 处理
+        // （聊天区由发送流程自身驱动）→ 零影响。session_id 空值：新会话 id 在
+        // run_runtime_with_config 内部才生成，手机镜像模型重拉「桌面当前会话」，
+        // 不依赖 id（与 switch/new-chat 广播路径的手机端消费方式一致）。
+        if force_new {
+            emitter.emit(NuphusEvent::SessionChanged {
+                session_id: String::new(),
+            });
+        }
         // ── Agent 级模型解析（单一入口 effective_model）：
         //    leader(锚点) → default → 各自 agent；「可用」= registry 命中。──
         let registry = factory2.registry();
@@ -1011,6 +1127,7 @@ pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> 
             None,                        // references
             None,                        // send_id
             Some("handoff".to_string()), // source 标记：门铃自动唤醒
+            false,                       // new_session：自动唤醒续跑，非新建
         )
         .await
         {

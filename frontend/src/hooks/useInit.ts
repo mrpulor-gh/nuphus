@@ -4,6 +4,7 @@ import { invoke, listen } from '../core/bridge'
 import type { ChatMessage, TimelineEntry } from '../core/types'
 import {
   getChatHistory,
+  getCurrentMode,
   getTools,
   getMemoryStats,
   isLlmConfigured,
@@ -25,6 +26,8 @@ export interface InitDeps {
   setModelName: (name: string) => void
   setSessionId: (id: string) => void
   messagesRestoredRef: React.MutableRefObject<boolean>
+  /** 启动时同步后端权威 mode（镜像恢复结果 leader/workflow/custom） */
+  setMode: (mode: string) => void
 }
 
 /**
@@ -81,7 +84,7 @@ export function toTimelineEntry(ti: HistoryTraceItem): TimelineEntry {
 }
 
 export function useInit(deps: InitDeps) {
-  const { setMessages, setModelName, setSessionId, messagesRestoredRef } = deps
+  const { setMessages, setModelName, setSessionId, messagesRestoredRef, setMode } = deps
 
   // ── App lifecycle state ──
   const [appState, setAppState] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -169,6 +172,14 @@ export function useInit(deps: InitDeps) {
         }
       } catch {}
       updateInitItem('memory', 'done')
+
+      // 2.5 Mode: 启动同步后端权威 mode（镜像恢复 leader/workflow/custom）——
+      // 输入框 mode chip 与后端 current_mode 一致；会话视图由 get_chat_history
+      // 按 current_mode 返回（有历史则显示，无历史则欢迎页，不自动进入会话）
+      try {
+        const m = await getCurrentMode()
+        if (m) setMode(m)
+      } catch {}
 
       // 3. Model: preload Candle embed model
       invoke('splash_status_update', { text: 'Loading model…' }).catch(() => {})

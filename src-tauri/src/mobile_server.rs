@@ -1117,6 +1117,8 @@ struct MobileMessage {
     mode: Option<String>,
     references: Option<Vec<crate::commands::process::ChatReference>>,
     send_id: Option<String>,
+    /// welcome 直发标记：true = 创建新对话（与桌面端 new_session 语义一致）
+    new_session: Option<bool>,
 }
 
 /// 手机消息入口：走共享入口 submit_user_message，source="mobile"。
@@ -1144,6 +1146,41 @@ async fn post_message<R: tauri::Runtime>(
                 Json(serde_json::json!({ "error": "Message cannot be empty" })),
             )
                 .into_response();
+        }
+        // 规则3 兜底（与桌面端 submit_user_message busy 分支一致）：执行中 mode 不应
+        // 改变——若 current_mode 与当前执行 session 绑定的 mode 不一致（异常，如执行
+        // 期间外部/桌面端切换了 mode），以 session 存储快照的 mode 为准刷新 current_mode。
+        // busy 期间 agent 被 take 出 runtime 槽，session 在执行前快照 session_backup 中
+        // （主指令受理时已写入）——从那里取 session id 再查存储归属。
+        // 追加本身不改变 session 归属（append 只注入当前执行会话）。
+        let session_mode = {
+            let sb = state.session.lock().ok();
+            sb.and_then(|g| g.session_backup.clone())
+                .and_then(|json| {
+                    serde_json::from_str::<nuphus::session::Session>(&json).ok()
+                })
+                .and_then(|sess| {
+                    crate::commands::process::shelf::read_mirror(&sess.id).map(|(m, _)| m)
+                })
+        };
+        if let Some(sm) = session_mode {
+            let cur = state
+                .current_mode
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "leader".to_string());
+            if crate::commands::process::shelf::normalize_mode(&cur)
+                != crate::commands::process::shelf::normalize_mode(&sm)
+            {
+                tracing::warn!(
+                    "[MODE] 手机端执行中 mode 异常漂移 current={} session={}，以 session 绑定 mode 兜底刷新",
+                    cur,
+                    sm
+                );
+                if let Ok(mut cm) = state.current_mode.write() {
+                    *cm = crate::commands::process::shelf::normalize_mode(&sm).to_string();
+                }
+            }
         }
         // 追加通道不携带图片（PauseDecision::Append / mobile_append 均为纯文本），
         // 显式告知前端图片被丢弃——避免用户以为带图发送成功（审计 P3-1）
@@ -1226,6 +1263,7 @@ async fn post_message<R: tauri::Runtime>(
         payload.references,
         payload.send_id,
         Some("mobile".to_string()),
+        payload.new_session.unwrap_or(false),
     )
     .await
     {
@@ -1638,11 +1676,13 @@ async fn get_sessions<R: tauri::Runtime>(
 #[derive(Debug, Deserialize)]
 struct SwitchSessionPayload {
     id: String,
+    /// 目标会话存储归属 mode（与桌面端一致：点击列表后输入框 mode 跟随 session 存储 mode）
+    mode: Option<String>,
 }
 
 /// POST /session/switch —— 手机遥控切换桌面当前会话。
 /// 镜像模型：切的就是电脑端正显示的视图（桌面 rail 同步跟随），非移动端独立选态。
-/// 成功后 switch_session_inner 已向 WS 广播 SessionChanged，双端各自刷新呈现。
+/// 成功后 switch_session_inner_mode 已向 WS 广播 SessionChanged，双端各自刷新呈现。
 /// 错误码为稳定字符串（busy / append_pending / mode_mismatch / not_found）→ 409 {"error": code}。
 async fn post_switch_session<R: tauri::Runtime>(
     State(ctx): State<MobileCtx<R>>,
@@ -1654,7 +1694,13 @@ async fn post_switch_session<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    match crate::commands::process::shelf::switch_session_inner(state.inner(), payload.id) {
+    // 与桌面端统一：传 session 存储归属 mode（无条件），跨 mode 原子切换由后端完成；
+    // 兼容旧客户端不带 mode → 同 mode 切换（switch_session_inner_mode 的 None 语义）。
+    match crate::commands::process::shelf::switch_session_inner_mode(
+        state.inner(),
+        payload.id,
+        payload.mode,
+    ) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(code) => (
             StatusCode::CONFLICT,

@@ -15,7 +15,6 @@ import {
   triggerRefine,
   refineSkip,
   fetchRelayHint,
-  startNewChat,
   wfPause,
   wfResume,
   wfStop,
@@ -334,10 +333,11 @@ export default function App() {
    *  成功后后端已广播 SessionChanged（本机也会收到一次），此处立即重拉双份数据。
    *  位置约束：依赖 loadHistory/refreshSessions，必须定义于二者之后。 */
   const handleSwitchSession = useCallback(
-    (id: string) => {
-      if (switchBusy) return
+    (id: string, mode?: string) => {
+      // 执行中锁定（与桌面 rail 一致）：后端 guard_switch 也会拒绝，UI 双保险
+      if (switchBusy || state.activity.running) return
       setSwitchBusy(true)
-      switchSession(token ?? '', id)
+      switchSession(token ?? '', id, mode)
         .then(res => {
           if (res.ok) {
             showToast('已切换会话')
@@ -350,7 +350,7 @@ export default function App() {
         .catch(() => showToast('切换失败'))
         .finally(() => setSwitchBusy(false))
     },
-    [switchBusy, token, loadHistory, refreshSessions, showToast],
+    [switchBusy, state.activity, token, loadHistory, refreshSessions, showToast],
   )
 
   // 会话清单镜像自愈：WS 未就绪/瞬断期 fetchSessions 失败会留下 null（弹层显示空），
@@ -501,6 +501,10 @@ export default function App() {
             void loadHistory(token ?? '')
             refreshSessions(token ?? '')
             showToast('桌面已切换会话')
+          }
+          // 展示台列表变化（桌面归档/重命名会话）：当前会话未变，只刷新清单
+          if (event.type === 'shelf_updated') {
+            refreshSessions(token ?? '')
           }
           if (event.type === 'execution_completed' && document.visibilityState === 'hidden') {
             notifyExecutionDone(event.output?.result_message)
@@ -764,11 +768,18 @@ export default function App() {
       // ── 空闲：乐观回显 → POST（send_id 去重）→ 失败撤销 ──
       const optimistic = makeOptimisticMessage(content, opts?.images)
       dispatch({ type: 'optimistic', message: optimistic })
+      // welcome 直发 = 创建新对话：本端 messages 为空（电脑端欢迎界面）→ 传
+      // new_session=true，后端 force_new 创建该 mode 新会话（与桌面端一致）。
+      // 手机是第二块屏，以电脑端实时状态为准——messages 空即电脑端无会话。
+      const newSession = state.messages.length === 0
       // ⚠️ 2026-08-26 移除「发送前探测局域网」：resolveLanUrl 经中继 fetchRelayHint
       // 慢（国际链路 20s 超时）会阻塞发送 → 实测「发消息卡死」（气泡永久 pending）。
       // 发送立即走当前通道（中继/直连），通道切换由 8s 巡检/进入探测负责——发送不等待探测。
       try {
-        const result = await sendMessage(token, content, optimistic.id, opts)
+        const result = await sendMessage(token, content, optimistic.id, {
+          ...opts,
+          newSession,
+        })
         if (result.ok && result.timeout) {
           // 响应超时（后端同步等待整轮执行完成，15s 内大概率未返回）：
           // 保留乐观气泡 pending，等待 WS 事件（user_message_received /
@@ -937,27 +948,15 @@ export default function App() {
               .catch(() => showToast(t('mobile.stopFailed')))
           }}
           onNewChat={() => {
-            // 单一路径：手机新建 = 遥控桌面执行权威新建（复用桌面 new_chat_session_cmd），
-            // 后端经 SessionChanged 事件广播，手机收到后跟随显示欢迎页。
-            // HTTP 成功响应兜底清一次本端视图（WS 事件可能瞬时漏收，幂等）。
+            // 与桌面端统一（2026-08-30 解耦）：新建对话只回 welcome 界面，
+            // 不创建任何会话、不调 /new-chat——对话只在 welcome 发送消息时创建
+            // （发送带 new_session=true）。手机是第二块屏，行为与电脑端完全一致。
+            // 本端清空视图回 welcome；后端状态不变（无空会话产生）。
             if (!token) return
-            void startNewChat(token).then(r => {
-              if (r.ok) {
-                dispatch({ type: 'new_chat' })
-                showToast(t('mobile.newChatStarted'))
-                // 兜底重拉：即使 SessionChanged 漏收，本端也立即呈现新会话欢迎页
-                void loadHistory(token)
-                refreshSessions(token)
-              } else {
-                // busy/append_pending：后端 guard_switch 已拒绝（执行中禁止新建），
-                // 前端给明确提示而非裸错误码；其余失败走通用文案
-                showToast(
-                  r.error === 'busy' || r.error === 'append_pending'
-                    ? t('mobile.newChatBusy')
-                    : r.error || t('mobile.newChatFailed'),
-                )
-              }
-            })
+            dispatch({ type: 'new_chat' })
+            showToast(t('mobile.newChatStarted'))
+            void loadHistory(token)
+            refreshSessions(token)
           }}
           onDisconnect={() => {
             // 断开连接：清除 token + WS，回到配对页

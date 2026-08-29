@@ -70,7 +70,7 @@ interface Props {
   /** 桌面展示台会话清单镜像（null = 未加载/不可用） */
   sessions?: ShelfSessions | null
   /** 遥控切换桌面当前会话（App 层 POST /session/switch + 刷新） */
-  onSwitchSession?: (id: string) => void
+  onSwitchSession?: (id: string, mode?: string) => void
   /** 工作流执行实时状态（workflow_event 驱动，存在即渲染 WorkflowRunCard） */
   workflowRun?: WorkflowRunState
   /** 工作流遥控请求进行中（防重复提交） */

@@ -91,6 +91,8 @@
   justify-content: flex-end;
   gap: 10px;
   padding-top: var(--space-2);
+  padding-bottom: 20px;
+  padding-right: 20px;
 }
 
 /* ── 表单控件（子弹窗自包含，不依赖 memories.css）── */

@@ -613,6 +613,8 @@ export type NuphusEvent =
   | { type: 'leader_done'; message: string }
   /** 会话切换（桌面 rail 或手机遥控触发）：手机收到后重拉 /history 跟随桌面当前视图 */
   | { type: 'session_changed'; session_id: string }
+  /** 展示台列表变化（桌面归档/重命名会话）：手机刷新会话清单，当前会话未变 */
+  | { type: 'shelf_updated' }
   | {
       type: 'workflow_event'
       /** WorkflowEvent 子类型（run_started / step_run_started / step_run_completed /
