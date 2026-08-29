@@ -716,7 +716,7 @@ async fn post_configure(
         let agg_ctx = if or_agg::has_vendor(resolved_provider) {
             let cache_path = toml_config_path
                 .parent()
-                .map(|p| or_agg::cache_path(p))
+                .map(or_agg::cache_path)
                 .unwrap_or_else(openrouter_cache_path);
             let entries = or_agg::ensure_cache(&cache_path).await;
             or_agg::lookup(&entries, resolved_provider, resolved_model)
@@ -742,17 +742,11 @@ async fn post_configure(
         }
     }
 
-    match persist_ctx {
-        Some(ctx) => {
-            let _ = update_model_context_window(
-                &toml_config_path,
-                resolved_provider,
-                resolved_model,
-                ctx,
-            );
-        }
-        None => {} // 来源②用户手写 / ⑤⑥猜测或未知：不落盘
+    if let Some(ctx) = persist_ctx {
+        let _ =
+            update_model_context_window(&toml_config_path, resolved_provider, resolved_model, ctx);
     }
+    // 来源②用户手写 / ⑤⑥猜测或未知：不落盘
 
     // Vision probe — provider-driven: prefer metadata from ProviderRegistry over HTTP probing.
     // Only HTTP-probe when metadata doesn't have a definitive answer (e.g. custom / new models).
@@ -1004,11 +998,11 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                     Some(entry) => (
                         a.or_else(|| {
                             (entry.pricing_prompt_per_million > 0.0)
-                                .then(|| entry.pricing_prompt_per_million * 1_000_000.0)
+                                .then_some(entry.pricing_prompt_per_million * 1_000_000.0)
                         }),
                         b.or_else(|| {
                             (entry.pricing_completion_per_million > 0.0)
-                                .then(|| entry.pricing_completion_per_million * 1_000_000.0)
+                                .then_some(entry.pricing_completion_per_million * 1_000_000.0)
                         }),
                     ),
                     None => (a, b),

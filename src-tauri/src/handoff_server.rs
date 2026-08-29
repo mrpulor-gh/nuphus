@@ -451,7 +451,7 @@ mod tests {
         assert!(!contract.contains("\"status\":\"done\""));
         assert!(!contract.contains("\"status\":\"ready\""));
         assert!(contract.contains("claude-code::task-001"));
-        assert!(contract.contains("令牌:"));
+        assert!(contract.contains("令牌 token:"));
 
         // 幂等：二次派发不破坏既有结构
         let contract2 = dispatch_at_root(&root, &payload).unwrap();

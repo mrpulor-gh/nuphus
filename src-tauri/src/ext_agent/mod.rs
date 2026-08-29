@@ -184,7 +184,7 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
                 "hint": "按 skill §5.6 接管 SOP：核对进程/窗口实况后补投递；若 agent 进程已死则重走 §2 启动 SOP",
                 "note": field_note,
             });
-            return Ok(out.to_string());
+            Ok(out.to_string())
         }
         Ok(n) => {
             tracing::info!("[ext_agent] {agent}::{task_id} dispatch_steps 完成 {n} 步");
@@ -231,8 +231,8 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
 /// 进程目标解析（Leader 主导启动模型）——只对「当次实况」负责：
 /// 1. 显式 pid：在当次 windows_list 中按 process_id 匹配可见窗口（进程死即明确报错）；
 /// 2. 无 pid：按 window_hint/process 当次全表扫描；
-/// 禁止读取历史缓存句柄、禁止隐式冷启动——进程生命周期归 Leader（skill §2 启动 SOP），
-/// PID/hwnd 每次启动必变且 hwnd 编号会被 OS 复用，任何固化缓存都是错误派发依据。
+///    禁止读取历史缓存句柄、禁止隐式冷启动——进程生命周期归 Leader（skill §2 启动 SOP），
+///    PID/hwnd 每次启动必变且 hwnd 编号会被 OS 复用，任何固化缓存都是错误派发依据。
 async fn capture_process(
     agent: &str,
     cfg: &serde_json::Value,

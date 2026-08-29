@@ -2,7 +2,7 @@
 //!
 //! 设计定位（大王定调）：功能底座，不绑死 HTML。通用能力 = 路径 → 文件字节
 //! + mime 推断 + 独立安全头。任何前端组件（当前 PreviewOverlay，未来画廊 /
-//! 音视频面板等）经 convertFileSrc(path, 'preview') 即可获得可运行文档。
+//!   音视频面板等）经 convertFileSrc(path, 'preview') 即可获得可运行文档。
 //!
 //! 安全模型（与主应用 CSP 隔离）：
 //! - iframe `sandbox` 属性：无相同源泄漏面，预览内容碰不到主应用与系统

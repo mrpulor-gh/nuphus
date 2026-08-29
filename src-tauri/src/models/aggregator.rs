@@ -299,10 +299,7 @@ pub fn lookup<'a>(
         return None;
     }
 
-    let vendor = match vendor_for(provider_id) {
-        Some(v) => v,
-        None => return None,
-    };
+    let vendor = vendor_for(provider_id)?;
 
     // ① 精确 vendor/model_id
     let exact = format!("{}/{}", vendor, model_lower);
