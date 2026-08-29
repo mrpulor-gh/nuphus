@@ -652,8 +652,10 @@ mod tests {
         let read = std::fs::read_to_string(dir.join("read.md")).unwrap();
         assert!(read.contains("# web_agent 对接协议"));
         assert!(read.contains("负责网页任务"));
-        // 门铃语义=交付上报：read.md 不再要求 ready 握手，仅含 done
-        assert!(read.contains("status:\"done\""));
+        // 门铃语义=交付上报：read.md 用文字描述上报状态（progress/done/blocked），无 JSON 字面示例
+        assert!(read.contains("done"));
+        assert!(read.contains("progress"));
+        assert!(!read.contains("status:\"done\""));
         assert!(!read.contains("status:\"ready\""));
         let memory = std::fs::read_to_string(dir.join("memory.md")).unwrap();
         assert!(memory.starts_with("# web_agent 跨任务记忆"));
@@ -704,7 +706,8 @@ mod tests {
         let status: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
                 .unwrap();
-        assert_eq!(status["state"], "in_progress");
+        // 上板≠执行：派发仅置 dispatched（in_progress 由外部 Agent 拉铃触发）
+        assert_eq!(status["state"], "dispatched");
         assert_eq!(status["task_id"], "task-001");
         // 契约含门铃 URL / token / CLI 上报示例 / 产物路径（token 不落 status.json）
         assert!(
@@ -733,7 +736,7 @@ mod tests {
         // 注入两个已初始化 agent（含 '-' 命名，与 team.toml 对齐）
         init_agent_at(&root, "web_agent", "网页任务").unwrap();
         init_agent_at(&root, "claude-code", "编码任务").unwrap();
-        // 派发任务 → task_id + in_progress 落盘（验证列表读到的是 status.json 实际内容）
+        // 派发任务 → task_id + dispatched 落盘（验证列表读到的是 status.json 实际内容）
         ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面").unwrap();
 
         let statuses = list_agent_statuses_at(&root);
@@ -741,7 +744,7 @@ mod tests {
         // 每个元素含 agent 字段；按名排序
         assert_eq!(statuses[0]["agent"], "claude-code");
         assert_eq!(statuses[1]["agent"], "web_agent");
-        assert_eq!(statuses[1]["state"], "in_progress");
+        assert_eq!(statuses[1]["state"], "dispatched");
         assert_eq!(statuses[1]["task_id"], "task-001");
 
         // 无 status.json 的目录 → 跳过，不影响其余
@@ -757,13 +760,13 @@ mod tests {
         let root = tmp_root("group");
         init_agent_at(&root, "web_agent", "desc").unwrap();
 
-        // ready 命中 agent 前缀 → state=ready + last_event
+        // ready 命中 agent 前缀 → state=in_progress（ready/progress 都是「开始确认」拉铃）+ last_event 保留原始值
         update_agent_status_from_doorbell_at(&root, "web_agent::task-001", "ready", "已就位", None);
         let status: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(root.join("web_agent").join("status.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(status["state"], "ready");
+        assert_eq!(status["state"], "in_progress");
         assert_eq!(status["last_event"]["status"], "ready");
 
         // done 映射 + report_path
@@ -878,8 +881,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("projects").join("sub")).unwrap();
         std::fs::write(dir.join("projects").join("sub").join("out.json"), "{}").unwrap();
 
-        // 正常删除：嵌套产物
-        delete_agent_deliverable_at(&root, "web_agent", r"projects\sub\out.json")
+        // 正常删除：嵌套产物（正斜杠跨平台，Windows/Linux 均解析为分隔符）
+        delete_agent_deliverable_at(&root, "web_agent", "projects/sub/out.json")
             .expect("合法产物应可删除");
         assert!(!dir.join("projects").join("sub").join("out.json").exists());
 
@@ -890,7 +893,7 @@ mod tests {
 
         // 路径穿越拒绝（.. 组件）
         std::fs::write(root.join("secret.txt"), "x").unwrap();
-        let err = delete_agent_deliverable_at(&root, "web_agent", r"..\..\secret.txt")
+        let err = delete_agent_deliverable_at(&root, "web_agent", "../../secret.txt")
             .expect_err("穿越必须被拒");
         assert!(
             err.contains("非法") || err.contains("briefs"),
@@ -918,8 +921,8 @@ mod tests {
         // 未知 agent（目录不存在）→ 报错而非 panic
         assert!(delete_agent_deliverable_at(&root, "ghost_agent", "briefs/x.md").is_err());
 
-        // Windows 反斜杠也能命中正斜杠创建的路径（Path 拼接统一解析）
+        // 路径分隔符统一解析（正斜杠在 Windows/Linux 均为合法分隔符）
         std::fs::write(dir.join("projects").join("a.txt"), "1").unwrap();
-        delete_agent_deliverable_at(&root, "web_agent", r"projects\a.txt").unwrap();
+        delete_agent_deliverable_at(&root, "web_agent", "projects/a.txt").unwrap();
     }
 }

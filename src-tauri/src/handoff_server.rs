@@ -137,7 +137,7 @@ async fn dispatch(
 
 /// 派发核心（root 注入：HTTP handler 传 handoff_root()，测试传 tmp 根）。
 /// 顺序：校验（先于任何落盘）→ 确保 agent 目录（未初始化则 init，幂等）→
-/// 可选产物子目录 → ensure_handoff_at 写 brief + status.json(in_progress+task_id+dispatched_at)。
+/// 可选产物子目录 → ensure_handoff_at 写 brief + status.json(dispatched+task_id+dispatched_at)。
 fn dispatch_at_root(root: &Path, payload: &DispatchPayload) -> Result<String, String> {
     handoff::validate_agent(&payload.agent)?;
     handoff::validate_task_id(&payload.task_id)?;
@@ -429,11 +429,12 @@ mod tests {
             "任务：重构登录页"
         );
 
-        // status.json：in_progress + task_id + dispatched_at；token 不落盘
+        // status.json：dispatched + task_id + dispatched_at；token 不落盘
+        // （上板≠执行：in_progress 由外部 Agent 拉铃触发，此处仅置 dispatched）
         let status: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("status.json")).unwrap())
                 .unwrap();
-        assert_eq!(status["state"], "in_progress");
+        assert_eq!(status["state"], "dispatched");
         assert_eq!(status["task_id"], "task-001");
         assert!(status["dispatched_at"].is_string());
         let status_str = std::fs::read_to_string(dir.join("status.json")).unwrap();
