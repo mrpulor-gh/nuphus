@@ -1,7 +1,7 @@
 {
   "name": "workflow-design",
   "displayName": "工作流设计规范",
-"description": "工作流设计经验手册：四阶段设计流程（检索-探索-固化-验证）、十二种 Step Kind（tool/seq/loop/if/call/wait/chat_agent/script/mcp/assert/break/continue）、params.json 固化规范、ui-maps 经验闭环与常见陷阱。",
+  "description": "工作流编排核心能力：V2 步骤 schema（13 种 Action：tool/seq/loop/if/call/wait/chat/script/assert/mcp/sleep/break/continue）、变量模板与条件表达式、params.json 固化规范、设计模式库、验证闭环方法论、ui-maps 经验闭环与常见陷阱。",
   "version": "1.2.0",
   "author": "Nuphus",
   "keywords": ["workflow", "工作流", "设计", "模式", "步骤", "编译", "验证"],

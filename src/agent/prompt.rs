@@ -976,10 +976,10 @@ Explore → Solidify → Design → Verify → Decide
 
 ## Output Discipline
 
-- 最终回复必须写入 `text`，且为本轮最后一轮输出：工具调用（含收尾动作）全部前置，输出后不得再调用任何工具
-- 禁止以 `reasoning` / `thinking` 替代最终交付
-- 禁止在工作流文件中写入敏感数据（密码/token/API Key）
-- 汇报精简：结论与关键信息（结果 / 产物路径 / 异常）前置，过程细节省略；控制总长度防末尾截断，宁可短不可冗
+- 禁止以 `reasoning` / `thinking` 替代最终交付，最终回复必须单独以 `text` 直接交付
+- 汇报精简：复杂内容使用结构化输出（层级 / 表格 / 代码块），结论与关键信息（结果 / 产物路径 / 异常）前置，过程细节省略，宁短勿冗
+- 产出文件供用户查看时，用裸的绝对路径（Windows 盘符 / macOS·Linux 用户目录）单独成行、不加反引号——前端自动识别为可点击路径，点击后应用内预览
+- 禁止在工作流文件中写入敏感数据（密码 / token / API Key）
 
 ---
 
@@ -992,7 +992,7 @@ Explore → Solidify → Design → Verify → Decide
 
 /// WorkAgent L2 — unified methodology
 ///
-/// 阶段流程骨架、产出规范、验证闭环。阶段 1 的具体操作方法和工具参考由模式指引注入。
+/// 阶段流程骨架、产出规范、验证闭环。阶段 1 的具体操作方法和工具参考由 skill: workflow-design 注入。
 const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 
 ### Phase 0：复用检索
@@ -1004,19 +1004,16 @@ const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 
 ### Phase 1：探索跑通
 
-前置：向用户确认目标界面的已知行为约束（触发方式、关闭方式、按钮可用状态）
+前置：向用户确认目标界面的已知行为约束（触发方式、关闭方式、按钮可用状态）——完整对齐清单见 skill: workflow-design
 
-浏览器第一屏必须反爬预检：`browser_screenshot` → `desktop_vision` 检测登录/验证码/Captcha/空状态。命中 → 立即标记 exceptions，预设 `wait` 步骤。
-
-屏幕解析：先 `desktop_vision` 理解界面语义（布局、文字、图标功能），再 `desktop_perceive` 获取元素精确坐标。vision 坐标不可用于点击——perceive 的 center 才是点击坐标。
-逐屏解析，每屏经用户确认后 `ui_maps_save_screen`；异常即时记录。
+浏览器反爬预检、屏幕解析（vision→perceive）、逐屏确认流程见 skill: workflow-design
 
 退出：所有目标界面布局已保存确认 + 核心路径手动跑通至少一次 + 异常全部记录
 
 ---
 
 ### Phase 2：参数固化
-从 ui-maps 提取 → 写入 `params.json`（字段规范见 skill: workflow-design）。
+从 ui-maps 提取 → 写入 `params.json`（字段规范与模板见 skill: workflow-design）。
 
 退出：每个定位参数都有界面证据，异常路径已记录
 
@@ -1072,8 +1069,6 @@ dry_run 编译校验 → 干净环境 workflow_run → 分析异常 → 修正�
 
 ## Output Specification
 
-汇报文件路径时，用裸的绝对路径（Windows 盘符 / macOS·Linux 用户目录）单独成行、不加反引号——前端自动识别为可点击路径，点击后应用内预览。
-
 ### 文件结构
 ```
 plugin/workflows/{id}/
@@ -1094,46 +1089,14 @@ plugin/workflows/index.json  ← 注册（id / name / status / step_count / upda
 | `timeout_secs` | 否 | 整体超时秒数 |
 | `dry_run` | 否 | `true`=仅编译校验不执行步骤 |
 
-### 步骤类型
+### 步骤与变量（完整 schema 见 `src/workflow/step_schema.json`，解读见 skill: workflow-design）
 
-所有步骤使用统一的 V2 格式。完整 schema 见 `src/workflow/step_schema.json`。
-
-公共字段（所有 step 共有）：
-- `id`: string (必填) — 步骤唯一标识
-- `name`: string (必填) — 人类可读名称  
-- `description`: string (可选，默认 "") — 详细说明
-- `on_error`: "abort" | "skip" | { retry: { max: N, backoff_ms?: N } } | { allow_codes: { codes: [...] } } (可选，默认 "abort")
-- `capture`: string (可选) — 输出存入此变量
-- `timeout_secs`: integer (可选) — 超时秒数
-- `do`: object (必填) — 动作定义，以下之一：
-
-  `{ "tool": "工具名", "with": {...} }` — 工具调用
-  `{ "seq": [...] }` — 顺序执行子步骤
-  `{ "loop": { "for_each": { "items": { "var": "items" }, "as": "it" }, "do": [...] } }` — 遍历循环
-  `{ "loop": { "repeat": N, "do": [...] } }` — 固定次数循环
-  `{ "loop": { "until": { "condition" }, "max": N, "do": [...] } }` — 条件循环
-  `{ "if": { "condition": {...}, "then": [...], "else": [...] } }` — 条件分支
-  `{ "call": "workflow_id", "with": {...} }` — 调用子工作流
-  `{ "wait": "提示信息" }` — 暂停等待用户
-  `{ "chat": "任务描述", "with": { "screenshot": true } }` — LLM 决策。with 支持 `model`（registry 模型 ID，走对应 provider 专属 client；未配置该 ID 时按裸模型名回退主模型）、`temperature`、`max_tokens`、`system_prompt`、`persona`、`goal`、`constraints`、`requirements`、`agent_id` 等
-  `{ "script": { "runtime": "python", "code": "..." } }` — 脚本执行
-  `{ "assert": { "condition": {...}, "message": "错误消息" } }` — 断言
-  `{ "mcp": { "server": "name", "tool": "name", "with": {...} } }` — MCP 调用
-  `{ "sleep": N }` — 等待 N 秒
-  `{ "break": true }` — 跳出循环
-  `{ "continue": true }` — 跳过本次迭代
-
-容器 step（seq/loop/if）同样支持 on_error。
-
-变量引用：`{ "var": "变量名" }`（变量名支持点号路径，如 `{ "var": "coords.need_scroll" }`）；纯字符串为字面量。
-
-条件表达式（V2 untagged key-value 结构）：
-- `{ "equals": [ { "var": "a" }, "target" ] }`, `{ "not_equals": [...] }`
-- `{ "contains": [ { "var": "text" }, "keyword" ] }`, `{ "starts_with": [ { "var": "text" }, "prefix" ] }`
-- `{ "regex": [ { "var": "text" }, "pattern" ] }`
-- `{ "not_empty": { "var": "x" } }`, `{ "empty": { "var": "x" } }`
-- `{ "gt": [ { "var": "a" }, { "var": "b" } ] }`, `{ "lt": [...] }`, `{ "gte": [...] }`, `{ "lte": [...] }`
-- `{ "always": true }`
+- 步骤 V2 格式：`do: {...}` 单一动作，13 种：tool / seq / loop / if / call / wait / chat / script / assert / mcp / sleep / break / continue
+- 公共字段：`id`(必填) / `name`(必填) / `description` / `on_error`(abort|skip|retry|allow_codes，默认 abort) / `capture`(字符串) / `timeout_secs`
+- `capture` 为字符串存输出；`call` 用 `with.inputs` / `with.outputs` 跨子工作流传参与回写
+- 容器（seq / loop / if）支持 on_error；chat 为 LLM 决策节点（原 chat_agent）
+- 变量引用三种：`{{var}}` 模板（内嵌文本字符串化、整串保留类型）、`{params.x}` 固化参数（原始类型、点号下钻）、`{ "var": "name" }` 对象引用（条件表达式）
+- 条件表达式：equals / not_equals / contains / starts_with / regex / not_empty / empty / gt / lt / gte / lte / always
 
 ### 变量语法
 | 语法 | 含义 |
@@ -1153,9 +1116,9 @@ plugin/workflows/index.json  ← 注册（id / name / status / step_count / upda
 Phase 3 提交前逐项勾选：
 
 - [ ] 所有步骤引用 `params.json`，无硬编码坐标/选择器/文案
-- [ ] `tool`/`script`/`chat_agent` 的输出若被后续引用，必有 `capture`；`call` 用 `params.outputs` 回传
+- [ ] `tool` / `script` / `chat` 的输出若被后续引用，必有 `capture`；`call` 用 `with.outputs` 回写
 - [ ] 第一步为环境重置（浏览器 `about:blank` / 桌面 resize 到固化尺寸）
-- [ ] 登录检测在需要登录的操作之前，用语义判断（`chat_agent` + `login_detection`），不用 `if contains` 文案
+- [ ] 登录检测在需要登录的操作之前，用语义判断（`chat` + `login_detection`），不用 `if contains` 文案
 - [ ] 关键步骤后有验证步骤（`assert` 或状态检查）
 - [ ] 所有分支路径可测试，降级逻辑非空且不导致重复提交/丢失数据
 - [ ] `wait` 步骤 prompt 对用户友好（不含内部变量名）

@@ -186,12 +186,12 @@
     },
 
     "DoCall": {
-      "description": "调用子工作流",
+      "description": "调用子工作流。with 支持 inputs（传变量入子工作流）与 outputs（子工作流变量回写父变量池）。",
       "type": "object",
       "required": ["call"],
       "properties": {
         "call": { "type": "string", "minLength": 1, "description": "子工作流 ID" },
-        "with": { "type": "object", "default": {}, "description": "传入子工作流的参数" }
+        "with": { "type": "object", "default": {}, "description": "inputs: {子变量名: 值}；outputs: {子变量名: 父变量名}（子工作流执行后按映射回写）" }
       },
       "additionalProperties": false
     },

@@ -2,7 +2,7 @@
 title: MCP 工具参考
 id: mcp-tools
 type: skill
-tags: [mcp, 工具, cli, 集成, server]
+tags: [mcp, 工具, 集成, server, 工作流]
 ---
 
 # MCP 工具参考
@@ -11,83 +11,50 @@ tags: [mcp, 工具, cli, 集成, server]
 
 ## 原理
 
-Nuphus 通过 MCP (Model Context Protocol) 连接外部工具。每个 MCP server 暴露一组 `tools`——像内置工具一样，可以在工作流中用 `kind: "mcp"` 步骤调用：
+Nuphus 通过 MCP (Model Context Protocol) 连接外部工具。每个 MCP server 暴露一组 `tools`，可在工作流中用 `do.mcp` 步骤调用（V2 格式，与内置工具同级别）：
 
 ```json
-{ "kind": "mcp", "server": "github", "tool": "search_issues",
-  "params": { "query": "repo:nuphus bug", "limit": 5 },
-  "capture": { "as": "issues", "as_type": "json" } }
+{ "id": "search", "name": "搜问题",
+  "do": { "mcp": { "server": "github", "tool": "search_issues",
+    "with": { "query": "repo:nuphus bug", "limit": 5 } } },
+  "capture": "issues" }
 ```
 
-`server` 对应 `plugin/mcp/servers.yaml` 中的 key，`tool` 为 MCP 工具名，`capture.as_type: "json"` 自动解析响应。可选 `timeout_secs`、`on_error`（支持 abort/skip/retry/allow_codes）。
-
-## 已配置的 Server
-
-以下列表来自 `plugin/mcp/servers.yaml`。具体工具签名见各 server 小节。
-
-> 暂无已配置的 MCP server。在 `plugin/mcp/servers.yaml` 中配置后需更新本文档「已配置的 Server」章节。
-
----
+- `server`：`plugin/mcp/servers.yaml` 中的 key
+- `tool`：MCP 工具名
+- `with`：工具参数（支持 `{{var}}` 模板）
+- `capture`：**字符串**，输出存入变量（V2 规范，无 `as_type` 对象格式）
 
 ## 工具发现
 
-如果 servers.yaml 中配置了新 server 但本文档未列出其工具：
+servers.yaml 配置了新 server 但不确定其工具签名时，运行时自省：
 
-1. 在工作流中调用 `tools/list` 自省：
 ```json
-{ "kind": "mcp", "server": "github", "tool": "tools/list",
-  "params": {}, "capture": { "as": "tools", "as_type": "json" } }
+{ "id": "list", "name": "列工具",
+  "do": { "mcp": { "server": "github", "tool": "tools/list", "with": {} } },
+  "capture": "tools" }
 ```
-2. 检查 `{{tools}}` 变量获取完整的工具名和 inputSchema
 
----
+`{{tools}}` 含完整工具名与 inputSchema。
 
-## 常用 MCP Server 速查
+## 已配置的 Server
 
-### GitHub (`@modelcontextprotocol/server-github`)
+以下列表来自 `plugin/mcp/servers.yaml`。配置变更后需同步更新本文档。
 
-环境变量：`GITHUB_PERSONAL_ACCESS_TOKEN`
+> 暂无已配置的 MCP server。在 `plugin/mcp/servers.yaml` 配置后更新本段。
 
-| 工具 | 说明 |
-|------|------|
-| `search_repositories` | 搜索仓库 |
-| `search_issues` | 搜索 Issues |
-| `create_issue` | 创建 Issue |
-| `create_pull_request` | 创建 PR |
-| `get_file_contents` | 读取文件内容 |
-| `create_or_update_file` | 创建或更新文件 |
+## 常用 Server 速查
 
-### Postgres (`@modelcontextprotocol/server-postgres`)
-
-环境变量：`DATABASE_URL`
-
-| 工具 | 说明 |
-|------|------|
-| `query` | 执行 SQL 查询 |
-
-### Slack (`@modelcontextprotocol/server-slack`)
-
-环境变量：`SLACK_BOT_TOKEN`
-
-| 工具 | 说明 |
-|------|------|
-| `send_message` | 发送消息 |
-| `list_channels` | 列出频道 |
-| `get_channel_history` | 获取频道历史 |
-
-### Filesystem (`@modelcontextprotocol/server-filesystem`)
-
-参数：`--directory /path/to/allowed/dir`
-
-| 工具 | 说明 |
-|------|------|
-| `read_file` | 读取文件 |
-| `write_file` | 写入文件 |
-| `list_directory` | 列目录 |
-| `search_files` | 搜索文件 |
+| Server | 环境变量 | 常用工具 |
+|--------|---------|---------|
+| GitHub `@modelcontextprotocol/server-github` | `GITHUB_PERSONAL_ACCESS_TOKEN` | `search_repositories` / `search_issues` / `create_issue` / `get_file_contents` |
+| Postgres `@modelcontextprotocol/server-postgres` | `DATABASE_URL` | `query`（执行 SQL） |
+| Slack `@modelcontextprotocol/server-slack` | `SLACK_BOT_TOKEN` | `send_message` / `list_channels` / `get_channel_history` |
+| Filesystem `@modelcontextprotocol/server-filesystem` | 参数 `--directory <允许目录>` | `read_file` / `write_file` / `list_directory` / `search_files` |
 
 ## 设计原则
 
-- **MCP 优先于 GUI**：目标软件有 MCP server 时优先走 `kind: "mcp"`，更快更稳且不依赖布局。
-- **MCP 优先于 system_shell**：MCP 返回结构化 JSON，比 CLI 文本解析可靠。
-- **降级路径**：MCP server 不可用时降级到 system_shell 调用对应 CLI。
+- **MCP 优先于 GUI**：目标软件有 MCP server 时优先走 `do.mcp`，更快更稳且不依赖布局解析
+- **MCP 优先于 system_shell**：MCP 返回结构化 JSON，比 CLI 文本解析可靠
+- **降级路径**：MCP server 不可用时降级到 system_shell 调用对应 CLI
+- **MCP 调用超时/失败**：用 `on_error`（retry / allow_codes）控制，勿用死循环重试
