@@ -8,6 +8,7 @@ import {
   switchSession,
   renameSession,
   archiveSession,
+  setMode,
   type ShelfSessionItem,
 } from '../lib/api'
 import '../../styles/session-rail.css'
@@ -229,6 +230,13 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
     async (id: string, isActive: boolean) => {
       if (isActive) return
       try {
+        // 跨 mode 会话：目标 session 的 mode 与当前 active session 不同 → 先自动切 mode
+        //（后端 current_mode 联动 get_chat_history 路由，mode_changed 事件触发历史重载）
+        const target = items.find(i => i.id === id)
+        const active = items.find(i => i.is_active)
+        if (target && active && target.mode !== active.mode) {
+          await setMode(target.mode)
+        }
         await switchSession(id)
         // 主动切换：先登记基准，避免下轮轮询把这次变化再判成外部变更重复触发重拉
         lastActiveIdRef.current = id
@@ -238,7 +246,7 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         flashNotice(typeof e === 'string' ? e : String(e))
       }
     },
-    [onSessionChanged, refresh, flashNotice],
+    [items, onSessionChanged, refresh, flashNotice],
   )
 
   /** 手动归档：确认弹窗后移出展示台（元数据+文本记忆保留可查）；失败映射稳定错误码 */

@@ -118,6 +118,8 @@ export interface EventHandlers {
   setUserInputRequest: (v: UserInputRequest | null) => void
   setRegionPickerMode: (v: RegionPickerMode) => void
   setMode?: (v: string) => void
+  /** 切换 mode 后重载聊天历史（mode 联动会话视图：目标 mode 有历史则显示继续，无则空白新对话） */
+  reloadChatFromBackend?: () => Promise<void>
 
   // Callbacks
   addMessage: (msg: ChatMessage) => void
@@ -292,6 +294,9 @@ export function useEvents(h: EventHandlers) {
           if (event.mode) {
             lastModeChangedRef.current = event.mode
             h.setMode?.(event.mode)
+            // mode 联动会话视图：后端 current_mode 已切换，重载历史以显示目标
+            // mode 的 active 会话（有历史则继续，无历史则为空白新对话）
+            void h.reloadChatFromBackend?.()
           }
           break
         case 'execution_started': {
