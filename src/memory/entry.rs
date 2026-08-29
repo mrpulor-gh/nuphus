@@ -62,7 +62,8 @@ pub enum MemoryKind {
     Distill,
     /// 实战模式（评分产出，人工验证），评分链路写入，永久保留
     Pattern,
-    /// 工作记忆快照（memory_update 主动策展），每 session 保留最新
+    /// 历史遗留：工作记忆已迁出 SQLite（纯 md 文件注入），不再产生新记录，
+    /// 仅为历史数据查询兼容保留
     Snapshot,
 }
 

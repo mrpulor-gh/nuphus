@@ -350,19 +350,26 @@ impl ReactAgent {
         self.pause_flag = flag;
     }
 
-    /// Load cross-phase context (historical conversation refine titles + current memory.md)
-    /// 1. Read recent N titles/IDs with goal_type=session_refine from SQLite (guide LLM to self-check memory)
-    /// 2. Read .nuphus/memory.md as current state reference
-    ///
-    /// Return format:
-    ///   [Historical Conversation Refine]
-    ///   - <title> (ID: <refine-id>)
-    ///   [Current State]
-    ///   <memory.md content>
-    pub fn load_cross_session_context() -> Option<String> {
+    /// Load cross-phase context — the single L1 memory injection block:
+    /// 1. Project memory journal tail (.nuphus/memory/{tag}.md, ≤2000 chars) — current state
+    /// 2. Recent distill titles (global, guides memory_search self-check)
+    /// 3. Tail lines: current session id + journal path + other-projects index
+    ///    （跨话题切换时 read 对应项目文件恢复感知，不被 tag 隔离切断）
+    pub fn load_cross_session_context(session_id: Option<&str>) -> Option<String> {
         let mut parts: Vec<String> = Vec::new();
 
-        // Part 1: Recent distill record titles+IDs (to guide LLM to call memory_search for self-check)
+        // Part 1: 项目记忆日志尾部（唯一注入源；append 日志按条目取 tail，≤2000 字符）
+        let md_path = crate::utils::active_memory_md_path();
+        if md_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&md_path) {
+                let tail = crate::utils::memory_journal_tail(&content, 2000);
+                if !tail.trim().is_empty() {
+                    parts.push(format!("## Leader Memory Update (跨会话传递)\n{tail}"));
+                }
+            }
+        }
+
+        // Part 2: Recent distill record titles+IDs (to guide LLM to call memory_search for self-check)
         if let Ok(entries) = crate::store::memory::search_entries_filtered(
             None,
             None,
@@ -376,6 +383,7 @@ impl ReactAgent {
             None,
             None,
             5,
+            true,
         ) {
             let distill_titles: Vec<String> = entries
                 .iter()
@@ -397,25 +405,33 @@ impl ReactAgent {
             }
         }
 
-        // Part 2: Current memory.md
-        let md_path = crate::utils::nuphus_data_dir().join("memory.md");
-        if md_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&md_path) {
-                let trimmed = content.trim().to_string();
-                if !trimmed.is_empty() {
-                    parts.push(format!("## Leader Memory Update (跨会话传递)\n{}", trimmed));
-                }
-            }
-        }
-
-        if parts.is_empty() {
+        if parts.is_empty() && session_id.is_none() {
             return None;
         }
+
+        // Part 3: 尾部导航——当前 session id（细节精查外键）+ 记忆文件路径 + 其它项目索引
+        let mut nav = String::from("## 记忆导航");
+        if let Some(sid) = session_id {
+            nav.push_str(&format!(
+                "\n- 当前 session id：{sid}（memory_session_context 精查本会话细节）"
+            ));
+        }
+        nav.push_str(&format!(
+            "\n- 更多记忆摘要：read {}（记忆日志全文，工作记忆）",
+            md_path.display()
+        ));
+        let others = crate::utils::other_project_memory_paths();
+        if !others.is_empty() {
+            nav.push_str("\n- 其它项目记忆（跨话题切换时 read 对应文件恢复项目感知）：");
+            for (tag, path) in others.iter().take(8) {
+                nav.push_str(&format!("\n  - {tag}: {}", path.display()));
+            }
+        }
+        parts.push(nav);
+
         Some(parts.join("\n\n"))
     }
 
-    /// Read .nuphus/memory.md as cross-phase session reference (kept old function name as alias)
-    /// Now delegates to load_cross_session_context, returns merged refine titles
     /// Switch current model
     pub fn switch_model(&mut self, model_id: &str) -> Result<()> {
         if let Some(ref factory) = self.client_factory {

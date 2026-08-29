@@ -249,7 +249,16 @@ impl ChatCompletionsTransport {
                 continue;
             }
 
-            let resp_body = String::from_utf8_lossy(&body_bytes).to_string();
+            // 严格 UTF-8 校验：字节流损坏（网关转码缺陷/上游异常）必须显式失败并重试，
+            // 禁止 from_utf8_lossy 静默替换成 U+FFFD——那会把乱码写进工具参数与用户文件
+            let resp_body = match String::from_utf8(body_bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    last_error = format!("invalid utf-8 in stream response: {e}");
+                    tracing::warn!("[STREAM] invalid utf-8 ({} bytes), retrying", e.utf8_error().valid_up_to());
+                    continue;
+                }
+            };
 
             if status == 200 {
                 if attempt > 0 {

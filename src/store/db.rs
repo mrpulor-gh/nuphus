@@ -300,6 +300,18 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_column(conn, "sessions", "mode", "TEXT NOT NULL DEFAULT 'leader'")?;
     ensure_column(conn, "sessions", "snapshot", "TEXT")?;
 
+    // session_meta：session → 项目 tag 归属（记忆检索的项目过滤依据）。
+    // 由 insert_entry 惰性登记（首次记忆写入时），无 meta 的历史 session 不参与过滤。
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS session_meta (
+            session_id      TEXT PRIMARY KEY,
+            project_tag     TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+    ",
+    )?;
+
     Ok(())
 }
 

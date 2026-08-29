@@ -133,7 +133,7 @@ pub(crate) async fn handle_task_dispatch(
     // bm25 返回负值（越小越好）：以最佳命中为基准归一化相关度百分比。
     // （历史 bug：曾用 score > 0.0 过滤，bm25 恒为负 → lessons 永远为空，注入失效）
     let lessons: Vec<String> =
-        match crate::store::memory::search_entries_scored(description, 5, None, false) {
+        match crate::store::memory::search_entries_scored(description, 5, None, false, true) {
             Ok(entries) => {
                 let best = entries.first().map(|(_, s)| *s).unwrap_or(0.0);
                 entries

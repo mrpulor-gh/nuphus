@@ -852,7 +852,35 @@ pub fn migrate_legacy_memory_md() {
 }
 
 /// 记忆日志单文件容量上限：超出时从头丢弃最旧条目（整条目粒度）
-pub const MEMORY_JOURNAL_CAP_BYTES: usize = 16 * 1024;
+pub const MEMORY_JOURNAL_CAP_BYTES: usize = 32 * 1024;
+
+/// 列出**其它项目**的记忆日志路径（排除当前 active tag），
+/// 供 L1 注入尾部构建跨项目索引——用户切换话题到其它项目时，
+/// Leader 可直接 read 对应文件恢复项目感知，不因 tag 隔离而失联。
+/// 返回 (tag, 绝对路径)，按文件修改时间新→旧排序。
+pub fn other_project_memory_paths() -> Vec<(String, PathBuf)> {
+    let dir = nuphus_data_dir().join("memory");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return vec![];
+    };
+    let current_tag = active_project_tag().unwrap_or_else(|| "default".to_string());
+    let mut out: Vec<(String, PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.ends_with(".md")
+        })
+        .filter_map(|e| {
+            let path = e.path();
+            let tag = path.file_stem()?.to_string_lossy().to_string();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            Some((tag, path, mtime))
+        })
+        .filter(|(tag, _, _)| *tag != current_tag)
+        .collect();
+    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out.into_iter().map(|(tag, path, _)| (tag, path)).collect()
+}
 
 /// 按条目切分日志（旧→新）。条目以 '[' 署名行起始、空行分隔；
 /// 整条目粒度操作，杜绝 UTF-8 多字节中间截断。无署名头的旧整文件视为单条。

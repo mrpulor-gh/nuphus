@@ -286,8 +286,9 @@ impl WorkflowAgent {
                     let trimmed = content.trim();
                     if !trimmed.is_empty() {
                         self.session.push_user(format!(
-                            "=== 历史工作流记忆（来自 workflow-memory.md 快照，可能过时）===\n{}\n\n> 以上记忆内容可通过 workflow_memory_update 工具更新，通过 memory_search / memory_recent 查询关联记录。",
-                            trimmed
+                            "=== 历史工作流记忆（来自 workflow-memory.md 快照，可能过时）===\n{trimmed}\n\n当前 session id：{}\n记忆快照文件：read {}（覆盖写入，最新即所读）\n> 更新用 workflow_memory_update；跨会话检索用 memory_search / memory_recent",
+                            self.session.id,
+                            wmem_path.display()
                         ));
                         tracing::info!("[WORKFLOW-MEMORY] Injected workflow-memory.md snapshot");
                     }
@@ -375,6 +376,8 @@ impl WorkflowAgent {
         self.execution_steps.clear();
         // 新任务开始时清空上一任务残留的追加指令队列（防跨任务泄漏，与 react_loop 入口一致）
         crate::mobile_append::clear();
+        // 首轮注入 workflow 记忆快照（session 为空时生效，同会话仅一次）
+        self.inject_memory_snapshot();
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();
         self.max_warning_injected = 0;

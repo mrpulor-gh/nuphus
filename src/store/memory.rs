@@ -57,6 +57,17 @@ pub fn insert_entry(entry: &MemoryEntry) -> crate::Result<()> {
     let children_ids_str = entry.children_ids.join(",");
     let exec_steps_str = serde_json::to_string(&entry.execution_steps).unwrap_or_default();
 
+    // ── 项目归属登记（惰性）：session → 项目 tag，供记忆检索默认项目过滤。
+    // 失败仅告警，不阻断主写入。
+    if let Some(tag) = crate::utils::active_project_tag() {
+        if let Err(e) = guard.execute(
+            "INSERT OR IGNORE INTO session_meta (session_id, project_tag, created_at) VALUES (?1, ?2, ?3)",
+            params![entry.session_id, tag, entry.created_at],
+        ) {
+            tracing::warn!("[memory] session_meta register failed: {e}");
+        }
+    }
+
     let tx = guard.transaction()?;
     tx.execute(
         "INSERT OR REPLACE INTO memory_entries
@@ -288,6 +299,7 @@ pub fn search_entries_scored(
     limit: usize,
     kind: Option<MemoryKind>,
     exclude_task_trace: bool,
+    all_projects: bool,
 ) -> crate::Result<Vec<(MemoryEntry, f32)>> {
     let guard = crate::store::db::acquire()?;
 
@@ -316,7 +328,17 @@ pub fn search_entries_scored(
         Some(_) => sql.push_str(" AND e.custom_agent_id = ?"),
         None => sql.push_str(" AND e.custom_agent_id IS NULL"),
     }
-    sql.push_str(" ORDER BY CASE e.kind WHEN 'snapshot' THEN 0 WHEN 'distill' THEN 1 ELSE 2 END, score LIMIT ?");
+    // ── 项目记忆隔离：默认只看当前项目的 session（session_meta 登记）；
+    // all_projects=true 或未配置项目目录时不过滤。? 顺序：fts → kind → custom → project → LIMIT。
+    let project_tag = if all_projects {
+        None
+    } else {
+        crate::utils::active_project_tag()
+    };
+    if project_tag.is_some() {
+        sql.push_str(" AND e.session_id IN (SELECT session_id FROM session_meta WHERE project_tag = ?)");
+    }
+    sql.push_str(" ORDER BY score LIMIT ?");
 
     let limit_i = limit as i64;
     let kind_str = kind.map(|k| k.as_str());
@@ -333,6 +355,9 @@ pub fn search_entries_scored(
     }
     if let Some(ref cid) = custom_id {
         param_values.push(Box::new(cid.clone()));
+    }
+    if let Some(tag) = project_tag {
+        param_values.push(Box::new(tag));
     }
     param_values.push(Box::new(limit_i));
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
@@ -365,6 +390,7 @@ pub fn search_entries_filtered(
     exclude_goal_types: Option<&[String]>,
     search_text: Option<&str>,
     limit: usize,
+    all_projects: bool,
 ) -> crate::Result<Vec<MemoryEntry>> {
     let guard = crate::store::db::acquire()?;
 
@@ -399,6 +425,19 @@ pub fn search_entries_filtered(
     if let Some(gt) = goal_type {
         conditions.push("e.goal_type = ?".to_string());
         param_values.push(Box::new(gt.to_string()));
+    }
+    // ── 项目记忆隔离：默认只看当前项目的 session（session_meta 登记）。
+    // 豁免：all_projects=true（显式全局）、显式传 session_id（精确定位键跨项目合法——
+    // 与 memory_session_context 语义对齐，md 索引引导的跨项目 sid 精查不被卡死）、
+    // 未配置项目目录。无 meta 的历史 session 不命中 IN 子查询 = 默认不可见（查全局才可见）。
+    if !all_projects && session_id.is_none() {
+        if let Some(tag) = crate::utils::active_project_tag() {
+            conditions.push(
+                "e.session_id IN (SELECT session_id FROM session_meta WHERE project_tag = ?)"
+                    .to_string(),
+            );
+            param_values.push(Box::new(tag));
+        }
     }
     if let Some(sid) = session_id {
         conditions.push("e.session_id = ?".to_string());
@@ -543,15 +582,32 @@ pub fn recent_entries(
     limit: usize,
     kind: Option<MemoryKind>,
     exclude_kinds: &[MemoryKind],
+    all_projects: bool,
 ) -> crate::Result<Vec<MemoryEntry>> {
     let guard = crate::store::db::acquire()?;
 
     let mut where_parts: Vec<String> = Vec::new();
+    // 编号占位符必须连续（?1 = LIMIT，其后按序递增）。留空洞（如 kind 缺席时 ?2 缺失）
+    // 会让 rusqlite 按最大编号计数要求更多绑定参数 → "Got N, needed N+1" 运行时报错。
+    let mut next_idx = 2usize;
     if kind.is_some() {
-        where_parts.push("kind = ?2".to_string());
+        where_parts.push(format!("kind = ?{next_idx}"));
+        next_idx += 1;
     }
-    for (i, _) in exclude_kinds.iter().enumerate() {
-        where_parts.push(format!("kind != ?{}", i + 3));
+    for _ in exclude_kinds.iter() {
+        where_parts.push(format!("kind != ?{next_idx}"));
+        next_idx += 1;
+    }
+    // ── 项目记忆隔离：默认只看当前项目的 session；无 meta 的历史 session 不命中，查全局才可见。
+    let project_tag = if all_projects {
+        None
+    } else {
+        crate::utils::active_project_tag()
+    };
+    if project_tag.is_some() {
+        where_parts.push(format!(
+            "session_id IN (SELECT session_id FROM session_meta WHERE project_tag = ?{next_idx})"
+        ));
     }
     let where_clause = if where_parts.is_empty() {
         String::new()
@@ -571,6 +627,9 @@ pub fn recent_entries(
     }
     for k in exclude_kinds {
         param_values.push(Box::new(k.as_str().to_string()));
+    }
+    if let Some(tag) = project_tag {
+        param_values.push(Box::new(tag));
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|p| p.as_ref()).collect();
@@ -797,6 +856,7 @@ pub fn search_entries_semantic(
     query: &str,
     limit: usize,
     kind: Option<MemoryKind>,
+    all_projects: bool,
 ) -> crate::Result<Vec<(MemoryEntry, f32)>> {
     let embedder = crate::embed::Embedder::get()
         .ok_or_else(|| crate::NuphusError::store("Embedder 未初始化".to_string()))?;
@@ -849,22 +909,25 @@ pub fn search_entries_semantic(
     // Some(id)==Some(id) 保留同卡片，其余组合排除——一行覆盖双向。
     let custom_id = crate::custom_agents::current_custom_agent_id();
     results.retain(|(e, _)| e.custom_agent_id == custom_id);
-    // snapshot 条目相似度乘 1.2 重新排序
-    results.sort_by(|a, b| {
-        let a_boost = if a.0.kind == MemoryKind::Snapshot {
-            1.2
-        } else {
-            1.0
-        };
-        let b_boost = if b.0.kind == MemoryKind::Snapshot {
-            1.2
-        } else {
-            1.0
-        };
-        (b.1 * b_boost)
-            .partial_cmp(&(a.1 * a_boost))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // 项目记忆隔离（取回后过滤）：默认只保留当前项目的 session（session_meta 登记）
+    if !all_projects {
+        if let Some(tag) = crate::utils::active_project_tag() {
+            let project_sids: std::collections::HashSet<String> = {
+                let guard = crate::store::db::acquire()?;
+                let mut stmt = guard
+                    .prepare("SELECT session_id FROM session_meta WHERE project_tag = ?1")?;
+                // 中间变量绑定：块尾链式临时会与块内 guard/stmt 的 drop 顺序冲突（E0597）
+                let rows: std::collections::HashSet<String> = stmt
+                    .query_map(params![&tag], |r| r.get::<_, String>(0))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                rows
+            };
+            results.retain(|(e, _)| project_sids.contains(&e.session_id));
+        }
+    }
+    // 按相似度降序
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
 
     Ok(results)

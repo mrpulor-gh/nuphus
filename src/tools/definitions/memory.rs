@@ -110,16 +110,17 @@ impl ToolRegistry {
     pub(crate) fn register_search_timeline(&mut self) {
         self.register(ToolDef {
             name: "memory_search".to_string(),
-            description: "搜索记忆条目。kind 五类：conversation（用户对话对，找\"当时说了什么\"）、task_trace（任务执行轨迹，含工具调用摘要，排查执行问题）、distill（会话提炼，LLM 压缩的语义摘要）、pattern（实战模式，经评分验证的可复用经验）、snapshot（工作记忆快照）。最佳实践：找经验用 kind=pattern/distill，找对话用 conversation，排查执行用 task_trace。不指定 kind 时默认排除 task_trace（执行轨迹噪声大），需要排查执行过程时显式传 kind=task_trace。关键词必须优先从用户当前消息中提取 1-2 个核心原词（用户原词比自行推测命中率高），避免多词严格 AND 互相绞杀。默认关键词 FTS5 检索（多关键词=严格 AND（虚词/单字自动过滤，自然句式可直接查询），不返回部分匹配；已支持前缀匹配，如\"单例\"可命中\"单例化\"；零结果时返回逐词命中数诊断——可减少关键词重试，或用 semantic=true 语义搜索）；semantic=true 用向量语义搜索；标签式查询（如 check_pattern）走标签匹配。可选 session_id/goal_type/kind 过滤，include_annotations 附加标注结果。".to_string(),
+            description: "搜索记忆条目。kind 四类：conversation（用户对话对，找\"当时说了什么\"）、task_trace（任务执行轨迹，含工具调用摘要，排查执行问题）、distill（会话提炼，LLM 压缩的语义摘要）、pattern（实战模式，经评分验证的可复用经验）。最佳实践：找经验用 kind=pattern/distill，找对话用 conversation，排查执行用 task_trace。不指定 kind 时默认排除 task_trace（执行轨迹噪声大），需要排查执行过程时显式传 kind=task_trace。默认只检索当前项目的记忆（session 归属由 session_meta 自动登记）；跨项目检索先 read 记忆索引中其它项目的文件获取线索，再传 all_projects=true 看全局。关键词必须优先从用户当前消息中提取 1-2 个核心原词（用户原词比自行推测命中率高），避免多词严格 AND 互相绞杀。默认关键词 FTS5 检索（多关键词=严格 AND（虚词/单字自动过滤，自然句式可直接查询），不返回部分匹配；已支持前缀匹配，如\"单例\"可命中\"单例化\"；零结果时返回逐词命中数诊断——可减少关键词重试，或用 semantic=true 语义搜索）；semantic=true 用向量语义搜索；标签式查询（如 check_pattern）走标签匹配。可选 session_id/goal_type/kind 过滤（session_id 精查不受项目过滤限制），include_annotations 附加标注结果。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
                     "limit": {"type": "integer", "default": 10, "description": "Max results"},"session_id": {"type": "string", "description": "按会话 ID 过滤，追踪因果链"},
                     "goal_type": {"type": "string", "description": "按操作类型过滤"},
-                    "kind": {"type": "string", "enum": ["conversation", "task_trace", "distill", "pattern", "snapshot"], "description": "按记忆类别过滤：conversation=对话对 / task_trace=执行轨迹 / distill=会话提炼 / pattern=实战模式 / snapshot=工作快照"},
+                    "kind": {"type": "string", "enum": ["conversation", "task_trace", "distill", "pattern"], "description": "按记忆类别过滤：conversation=对话对 / task_trace=执行轨迹 / distill=会话提炼 / pattern=实战模式"},
                     "semantic": {"type": "boolean", "default": false, "description": "Use semantic (vector) search instead of keyword FTS5"},
-                    "include_annotations": {"type": "boolean", "default": false, "description": "Also search annotations by the same keyword and append results"}
+                    "include_annotations": {"type": "boolean", "default": false, "description": "Also search annotations by the same keyword and append results"},
+                    "all_projects": {"type": "boolean", "default": false, "description": "true = 不限当前项目，检索所有项目的记忆（跨项目场景先 read 其它项目记忆文件获取线索）"}
                 },
                 "required": ["query"]
             }),
@@ -136,6 +137,8 @@ impl ToolRegistry {
                 };
                 let semantic = params.get("semantic").and_then(|v| v.as_bool()).unwrap_or(false);
                 let include_annotations = params.get("include_annotations").and_then(|v| v.as_bool()).unwrap_or(false);
+                // 项目隔离：默认只查当前项目（session_meta 归属），all_projects=true 看全局
+                let all_projects = params.get("all_projects").and_then(|v| v.as_bool()).unwrap_or(false);
                 // 默认排除 TaskTrace（执行轨迹噪声大），显式传 kind 时不过滤
                 let exclude_task_trace = kind.is_none();
                 // semantic / filtered 路径为 Rust 后过滤，需 3x 取回兜底；
@@ -146,7 +149,7 @@ impl ToolRegistry {
                 let mut zero_result_diagnostic: Option<String> = None;
                 #[allow(clippy::unnecessary_unwrap)]
                 let entries: Vec<String> = if semantic && query_ref.is_some() {
-                    let mut results = memory::search_entries_semantic(query_ref.unwrap(), fetch_limit, kind)
+                    let mut results = memory::search_entries_semantic(query_ref.unwrap(), fetch_limit, kind, all_projects)
                         .map_err(|e| format!("semantic search failed: {}", e))?;
                     if let Some(sid) = session_id { results.retain(|(e,_)| e.session_id == sid); }
                     if let Some(gt) = goal_type { results.retain(|(e,_)| e.goal_type.as_deref() == Some(gt)); }
@@ -155,7 +158,7 @@ impl ToolRegistry {
                         .take(limit)
                         .map(|(e, score)| format_entry(&e, Some(score))).collect()
                 } else if session_id.is_some() || goal_type.is_some() {
-                    let results = memory::search_entries_filtered(query, session_id, goal_type, None, kind, None, None, None, None, None, None, fetch_limit)
+                    let results = memory::search_entries_filtered(query, session_id, goal_type, None, kind, None, None, None, None, None, None, fetch_limit, all_projects)
                         .map_err(|e| format!("search failed: {}", e))?;
                     results.iter()
                         .filter(|e| !exclude_task_trace || !matches!(e.kind, crate::memory::entry::MemoryKind::TaskTrace))
@@ -163,7 +166,7 @@ impl ToolRegistry {
                         .map(|e| format_entry(e, None)).collect()
                 } else if query.map(is_tag_like).unwrap_or(false) {
                     // 标签式查询：走 LIKE 匹配 tags/summary，比 FTS5 BM25 更精准
-                    let results = memory::search_entries_filtered(None, None, None, None, kind, None, None, None, None, None, query, fetch_limit)
+                    let results = memory::search_entries_filtered(None, None, None, None, kind, None, None, None, None, None, query, fetch_limit, all_projects)
                         .map_err(|e| format!("search failed: {}", e))?;
                     results.iter()
                         .filter(|e| !exclude_task_trace || !matches!(e.kind, crate::memory::entry::MemoryKind::TaskTrace))
@@ -173,12 +176,15 @@ impl ToolRegistry {
                     // ── FTS5 关键词搜索路径（含 BM25 分数）──
                     // task_trace 排除已下推 SQL 层，直接取 limit，无需 Rust 后过滤
                     let q = query.unwrap_or("");
-                    let results = memory::search_entries_scored(q, limit, kind, exclude_task_trace)
+                    let results = memory::search_entries_scored(q, limit, kind, exclude_task_trace, all_projects)
                         .map_err(|e| format!("search failed: {}", e))?;
                     if results.is_empty() {
                         // AND 零结果：逐词命中数诊断 + 行动引导，不降级返回结果集
                         let counts = memory::token_hit_counts(q).unwrap_or_default();
-                        zero_result_diagnostic = Some(format_zero_result_diagnostic(&counts));
+                        zero_result_diagnostic = Some(format!(
+                            "{}\n提示：默认仅检索当前项目的记忆（session_meta 归属）；若预期命中其它项目，先 read 记忆索引中该项目文件获取线索，再传 all_projects=true。",
+                            format_zero_result_diagnostic(&counts)
+                        ));
                     }
                     results
                         .into_iter()
@@ -220,12 +226,13 @@ impl ToolRegistry {
     pub(crate) fn register_recent_timeline(&mut self) {
         self.register(ToolDef {
             name: "memory_recent".to_string(),
-            description: "查看最近的跨会话记忆记录（时间/状态/kind/摘要/标签）。kind 未指定时默认排除 task_trace（执行轨迹噪声大，只看高价值记录：对话/提炼/模式/快照）；需要排查执行过程时显式指定 kind=task_trace。".to_string(),
+            description: "查看最近的跨会话记忆记录（时间/状态/kind/摘要/标签）。默认只看当前项目的记忆（all_projects=true 看全局）。kind 未指定时默认排除 task_trace（执行轨迹噪声大，只看高价值记录：对话/提炼/模式）；需要排查执行过程时显式指定 kind=task_trace。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "default": 10, "description": "返回多少条最近记录"},
-                    "kind": {"type": "string", "enum": ["conversation", "task_trace", "distill", "pattern", "snapshot"], "description": "按记忆类别过滤；不指定时默认排除 task_trace"}
+                    "kind": {"type": "string", "enum": ["conversation", "task_trace", "distill", "pattern"], "description": "按记忆类别过滤；不指定时默认排除 task_trace"},
+                    "all_projects": {"type": "boolean", "default": false, "description": "true = 不限当前项目，查看所有项目的最近记录"}
                 }
             }),
             category: ToolCategory::Core,
@@ -236,13 +243,14 @@ impl ToolRegistry {
                     Ok(k) => k,
                     Err(tr) => return Ok(tr),
                 };
+                let all_projects = params.get("all_projects").and_then(|v| v.as_bool()).unwrap_or(false);
                 // kind 未指定时排除 task_trace（噪声最大），指定时精确过滤
                 let exclude: &[MemoryKind] = if kind.is_none() {
                     &[MemoryKind::TaskTrace]
                 } else {
                     &[]
                 };
-                let results = memory::recent_entries(limit, kind, exclude).map_err(|e| format!("recent failed: {}", e))?;
+                let results = memory::recent_entries(limit, kind, exclude, all_projects).map_err(|e| format!("recent failed: {}", e))?;
                 let count = results.len().min(limit);
                 let entries: Vec<String> = results.into_iter().take(limit).map(|e| format_entry(&e, None)).collect();
                 let result = if entries.is_empty() {
@@ -303,7 +311,7 @@ impl ToolRegistry {
     pub(crate) fn register_leader_memory_update(&mut self) {
         self.register(ToolDef {
             name: "leader::memory_update".to_string(),
-            description: "Append a dated entry to the project memory journal (.nuphus/memory/{tag}.md). Write INCREMENTAL changes only (new phase, new decision, resolved blocker) — do not restate unchanged items; each call becomes one timestamped journal entry attributed to this session, kept in SQLite for full causal-chain search. The newest tail of this journal is auto-injected into future sessions of the same project. Skip temporary step-by-step logs. Max 2000 chars per entry. Suggested structure: ##Phase / ##File / ##Blocker / ##Decision.".to_string(),
+            description: "Append a dated summary entry to the project memory journal (.nuphus/memory/{tag}.md) — the LLM working memory whose newest tail is auto-injected into new sessions of the same project. Write a SEARCHABLE digest: key decisions, file names, error signatures, next steps — not full details. Deep history stays in SQLite (conversation / task_trace / distill); when the digest is not enough, locate details via memory_search / memory_session_context using the session id shown in each signature line. Session id is auto-appended by the system — do not repeat it. Write INCREMENTAL changes only (new phase, new decision, resolved blocker) — do not restate unchanged items. Max 2000 chars per entry. Suggested structure: ##Phase / ##File / ##Blocker / ##Decision.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -332,12 +340,7 @@ impl ToolRegistry {
                     .unwrap_or("leader-current");
                 let sid8: String = sid_full.chars().take(8).collect();
                 let ts = chrono::Local::now();
-                let entry = format!(
-                    "[{} · {}]\n{}\n\n",
-                    ts.format("%m-%d %H:%M"),
-                    sid8,
-                    trimmed
-                );
+                let sig = format!("[{} · {}]", ts.format("%m-%d %H:%M"), sid8);
 
                 let path = crate::utils::active_memory_md_path();
                 if let Some(parent) = path.parent() {
@@ -345,34 +348,20 @@ impl ToolRegistry {
                         return Ok(ToolResult::failure(format!("Failed to create dir: {}", e)));
                     }
                 }
-                // 追加：读旧 → 拼（署名行 + 锚点 frontmatter）→ 16KB 整条目容量
+                // 追加：读旧 → 拼（署名行 + 锚点 frontmatter + 内容）→ 32KB 整条目容量
                 // 裁剪（丢最旧）→ 写回。失败必须可见，不允许静默假成功。
                 let existing = std::fs::read_to_string(&path).unwrap_or_default();
-                // ── Project Map: 锚点随条目一并保留 ──
+                // ── Project Map: 锚点 frontmatter 置于条目头部，内容只写一份 ──
+                // （旧实现 entry 与 frontmatter 各拼一次全文 → 条目双份，tail 有效容量减半）
                 let anchors = extract_memory_anchors(trimmed);
-                let body = build_memory_frontmatter(trimmed, &anchors);
-                let journal_entry = format!("{entry}{body}\n\n");
+                let journal_entry =
+                    format!("{}{}{trimmed}\n\n", sig, memory_anchors_frontmatter(&anchors));
                 let capped = crate::utils::trim_memory_journal_to_cap(
                     &format!("{existing}{journal_entry}"),
                     crate::utils::MEMORY_JOURNAL_CAP_BYTES,
                 );
                 match std::fs::write(&path, &capped) {
                     Ok(_) => {
-                        // ── SQLite 追加式登记：每次更新一条独立记录（唯一 id 含毫秒戳），
-                        // 保留跨会话因果链；不再按 session 覆盖（与 md 日志语义对齐）──
-                        let snapshot_sid = params
-                            .get("session_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("leader-current");
-                        register_snapshot_entry(
-                            snapshot_sid,
-                            "leader-snapshot",
-                            crate::memory::entry::AgentType::Leader,
-                            "memory_snapshot",
-                            vec!["memory_snapshot".to_string(), "leader".to_string()],
-                            trimmed,
-                            "memory.md journal",
-                        );
                         Ok(ToolResult::success(format!(
                             "Memory appended ({} chars)",
                             trimmed.len()
@@ -389,12 +378,12 @@ impl ToolRegistry {
     ///
     /// 写入 ~/.nuphus/workflow-memory.md（用户数据目录，见 utils::nuphus_data_dir）。
     /// 会被注入到后续 Workflow 会话 prompt 中作为跨会话参考。
-    /// 每次调用覆盖上次快照，最新内容同步登记到 SQLite（每 session 一行）。
+    /// 每次调用覆盖上次快照（纯文件工作记忆，不入 SQLite）。
     /// 自动截断到 2000 字符。
     pub(crate) fn register_workflow_memory_update(&mut self) {
         self.register(ToolDef {
             name: "workflow_memory_update".to_string(),
-            description: "Overwrite the workflow session working memory snapshot (located at .nuphus/workflow-memory.md). Each call will replace the previous snapshot in the SQLite timeline. Will be injected into the Workflow Agent's prompt during new sessions. Maintain the latest status: phase progress, key findings, parameter experiments, blocking items. Skip temporary step-by-step logs. Maximum length: 2000 characters.".to_string(),
+            description: "Overwrite the workflow working memory snapshot (.nuphus/workflow-memory.md), injected into new Workflow Agent sessions. Maintain the latest status as a searchable digest: phase progress, key findings, parameter experiments, blocking items — not full details; deep history lives in SQLite, reachable via memory_search when needed. Skip temporary step-by-step logs. Maximum length: 2000 characters.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -420,20 +409,6 @@ impl ToolRegistry {
                 }
                 match std::fs::write(&path, trimmed) {
                     Ok(_) => {
-                        // ── 写入后登记：SQLite 每 session 一行，内容 = 本 session 最新快照 ──
-                        let snapshot_sid = params
-                            .get("session_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("workflow-snapshot-current");
-                        register_snapshot_entry(
-                            snapshot_sid,
-                            "wflow-snapshot",
-                            crate::memory::entry::AgentType::WorkAgent,
-                            "workflow_memory_snapshot",
-                            vec!["workflow_memory".to_string(), "workagent".to_string()],
-                            trimmed,
-                            "workflow-memory.md snapshot",
-                        );
                         Ok(ToolResult::success(format!("Workflow 记忆已保存 ({} chars)", trimmed.len())))
                     }
                     Err(e) => Ok(ToolResult::failure(format!("写入失败: {}", e))),
@@ -470,13 +445,13 @@ impl ToolRegistry {
                 let results = if let Some(tid) = turn_id {
                     // ── 精确到轮次：查该 session + turn 的所有条目（ASC 时间顺序） ──
                     let mut all = memory::search_entries_filtered(
-                        None, Some(session_id), None, None, None, None, None, None, None, None, None, 500,
+                        None, Some(session_id), None, None, None, None, None, None, None, None, None, 500, true,
                     ).map_err(|e| format!("session query failed: {}", e))?;
                     all.retain(|e| e.turn_id == tid);
                     all
                 } else {
                     memory::search_entries_filtered(
-                        None, Some(session_id), None, None, None, None, None, None, None, None, None, limit,
+                        None, Some(session_id), None, None, None, None, None, None, None, None, None, limit, true,
                     ).map_err(|e| format!("session query failed: {}", e))?
                 };
 
@@ -551,67 +526,6 @@ impl ToolRegistry {
     }
 }
 
-// ── 快照登记（memory_update 写入文件成功后调用）──
-
-/// SQLite 快照登记：每 session 一行（id 固定 + INSERT OR REPLACE），
-/// 内容恒等于本 session 最新 memory.md。文件是注入源，SQLite 行是展示/检索源，
-/// 两者必须同步为同一份最新内容——旧的"写入前归档旧版"语义已废弃
-///（旧语义下 SQLite 行永远落后文件一个版本，且新 session 首次写入会把上个
-///  session 的内容归档到新 session id 名下，归属错位）。
-#[allow(clippy::too_many_arguments)]
-fn register_snapshot_entry(
-    session_id: &str,
-    id_prefix: &str,
-    agent_type: crate::memory::entry::AgentType,
-    goal_type: &str,
-    tags: Vec<String>,
-    content: &str,
-    default_intent: &str,
-) {
-    let ts = chrono::Utc::now();
-    let ts_ms = ts.timestamp_millis();
-    let intent = content
-        .lines()
-        .find(|l| {
-            let t = l.trim();
-            !t.is_empty() && !t.starts_with('#') && !t.starts_with("---")
-        })
-        .map(|l| l.trim().chars().take(200).collect())
-        .unwrap_or_else(|| default_intent.to_string());
-    let entry = crate::memory::entry::MemoryEntry {
-        // 追加式语义：id 含毫秒戳 → 每次调用一条独立记录，不覆盖
-        id: format!("{}-{}-{}", id_prefix, session_id, ts_ms),
-        session_id: session_id.to_string(),
-        turn_id: format!("snapshot-{}", ts_ms),
-        sequence: 0,
-        created_at: ts.to_rfc3339(),
-        wall_clock_ms: ts_ms as u64,
-        agent_type,
-        kind: crate::memory::entry::MemoryKind::Snapshot,
-        task_chain_id: None,
-        chain_step: None,
-        goal_type: Some(goal_type.to_string()),
-        tags,
-        intent,
-        summary: content.to_string(),
-        user_message: content.to_string(),
-        assistant_message: String::new(),
-        tools_used: vec![],
-        success: true,
-        output: None,
-        artifacts: vec![],
-        is_marked: false,
-        execution_steps: vec![],
-        parent_id: None,
-        children_ids: vec![],
-        pattern: None,
-        custom_agent_id: None,
-    };
-    if let Err(e) = crate::store::memory::insert_entry(&entry) {
-        tracing::warn!("[snapshot] Failed to register snapshot entry: {}", e);
-    }
-}
-
 // ── Project Map: memory.md frontmatter helpers ──
 
 /// 从 memory.md 正文中提取文件路径锚点
@@ -643,18 +557,16 @@ fn extract_memory_anchors(content: &str) -> Vec<String> {
     anchors
 }
 
-/// 构建带 YAML frontmatter 的 memory.md 内容
-fn build_memory_frontmatter(content: &str, anchors: &[String]) -> String {
+/// 锚点 YAML frontmatter 块（无锚点时返回空串）。插在条目头部，内容不重复。
+fn memory_anchors_frontmatter(anchors: &[String]) -> String {
     if anchors.is_empty() {
-        return content.to_string();
+        return String::new();
     }
-    let mut fm = String::from("---\n");
-    fm.push_str("anchors:\n");
+    let mut fm = String::from("---\nanchors:\n");
     for a in anchors {
         fm.push_str(&format!("  - \"{}\"\n", a));
     }
     fm.push_str("---\n\n");
-    fm.push_str(content);
     fm
 }
 

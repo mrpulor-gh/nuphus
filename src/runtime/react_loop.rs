@@ -176,7 +176,7 @@ impl super::Runtime {
                 if !tenets.is_empty() {
                     l1_buf.push(format!("## 用户原则\n{}", tenets));
                 }
-                if let Some(md) = crate::agent::ReactAgent::load_cross_session_context() {
+                if let Some(md) = crate::agent::ReactAgent::load_cross_session_context(Some(&self.agent.session.id)) {
                     l1_buf.push(format!("## 跨阶段上下文\n{}\n\n> 以上具体记忆内容可通过 memory_search / memory_recent / memory_session_context 工具查询完整记录。\n", md));
                     tracing::debug!("[CROSS_SESSION] Injected cross-session context ({} chars)", md.len());
                 }

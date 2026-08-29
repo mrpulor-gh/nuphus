@@ -403,30 +403,6 @@ impl Runtime {
         }
     }
 
-    /// Inject memory.md snapshot as cross-phase reference (when session is empty)
-    pub fn inject_memory_snapshot(&mut self) {
-        if !self.agent.session().is_empty() {
-            return;
-        }
-        // 追加式日志：按当前项目标签定位，取尾部 ≤2000 字符一次性注入；
-        // 同 session 内不再变动（缓存命中纪律）。前缀带标签名便于自查偏差。
-        let path = crate::utils::active_memory_md_path();
-        if !path.exists() {
-            return;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return; // 读取失败降级为不注入
-        };
-        let tail = crate::utils::memory_journal_tail(&content, 2000);
-        if tail.trim().is_empty() {
-            return;
-        }
-        let tag = crate::utils::active_project_tag().unwrap_or_else(|| "default".to_string());
-        self.agent.session_mut().push_user_internal(format!(
-            "=== 项目记忆（当前项目：{tag}；来自记忆日志尾部，可能不完整）===\n{tail}\n\n> 可通过 leader_memory_update 追加更新；memory_search / memory_recent / memory_session_context 检索完整记录"
-        ))
-    }
-
     /// Set execution resources (for task_dispatch)
     pub fn set_exec_resources<E: EventEmitter + 'static>(
         &mut self,

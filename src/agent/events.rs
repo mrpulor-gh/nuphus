@@ -249,6 +249,10 @@ pub enum NuphusEvent {
         session_id: String,
     },
 
+    /// 提炼失败（LLM 调用失败/超时/空摘要）：与 RefineExecuting 配对的结束事件。
+    /// 缺失它会让双端"提炼中"UI（桌面弹窗 spinner / 手机提炼卡片）永久卡死。
+    RefineFailed { message: String },
+
     // ── HUD Overlay events ──
     /// Update HUD overlay text and phase
     HudUpdate {
