@@ -52,7 +52,7 @@ Each provider has its own data handling policy. Please refer to the respective p
 - API keys are encrypted at rest via Windows DPAPI (`enc:v1:` format, user-bound); macOS/Linux currently store keys in plain text (OS file permissions apply), with OS keychain integration on the roadmap — this is a deliberate trade-off, not an oversight: there is no cross-platform OS enclave API, and per-platform keychain integration adds authorization prompts plus headless/CI failure paths. An honestly documented plain-text fallback beats a veneer of protection
 - Tool execution is subject to permission policies and injection detection
 - File operations are sandboxed by configurable path scopes
-- Desktop automation requires explicit user approval for high-risk operations
+- Desktop automation requires explicit user approval for high-risk operations. In automated workflows, approval is granted at **workflow construction time** rather than per operation at runtime: workflows are built together with you and validated by a trial run before being finalized, so the high-risk operations they contain are approved during that phase. At runtime, automated workflows do not re-prompt per operation — confirmation happens while you are present, and execution proceeds without a dialog waiting on an absent user. This is not a bypass: the same gating applies, its approval point is simply moved earlier
 
 ## Updates
 
@@ -64,4 +64,4 @@ For privacy concerns or questions, please [open an issue](https://github.com/mrp
 
 ---
 
-*Last updated: 2026-08-23*
+*Last updated: 2026-08-29*
