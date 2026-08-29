@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-29
+
+### Added
+- 记忆系统闭环重构：md=工作记忆（leader `memory/{tag}.md` append cap 32K / workflow 快照 overwrite）、SQLite=恒久历史，去双写；L1 注入三段式（md tail + distill 标题 + 记忆导航），L2 注入去重（唯一 system 注入）；session_meta 项目绑定，记忆检索默认当前项目过滤、all_projects=true 逃生
+- 会话工作台 hover 预览：agent 最终回复与派生标题互补，预览并入气泡统一整体，指向箭头固定不随高度漂移
+- preview:// 沙箱文件运行底座：HTML 游戏/交互 demo 可玩（内联脚本/CDN/同目录资源）+ 跨平台路径识别，主 CSP 不动双层沙箱隔离
+- 后台下载引导闭环：阶段收尾信号（pct=null）根治完成仍挂按钮 + 品牌黑白反色
+
+### Fixed
+- 传输层 UTF-8 严格校验：`from_utf8_lossy` 静默放行改 `String::from_utf8` 严格校验，失败走既有 retry 显式重试（显式失败优于假成功）
+- 紧凑 Markdown（标题与正文间无空行）正文静默丢失：桌面/移动双端标题分支补剩余行递归渲染 + renderToString 回归钉 4 例
+- 回复块标题后内容静默丢失：BlockRenderer 标题分支补剩余行递归 MarkdownText 再分块
+- 主聊天 max_tokens 兜底 8192：修复长回复末尾被服务端默认值截断 + 缺字段 400
+- 启动期模型弹窗切换竞态：providers 加载门控 + provider 初始值去硬编码 + 消灭静默失败
+- refine：busy 字段 Arc 化，修复 RefineGuard 借用与 workflow 分支 move 冲突（E0505）
+- 仅剩提炼摘要的会话 hover 预览缺失：补 refine 态回退分支
+- 移除误提交的 tsc-out.txt 工作产物并加入 .gitignore
+
+### Changed
+- 输出纪律：汇报精简（结论/路径/待办/风险前置防截断）+ 路径表述跨平台化
+- 隐私声明：阐明 macOS/Linux 明文存储是有意取舍——无跨平台 OS enclave API，诚实降级优于虚构防护
+
 ## [0.1.9] - 2026-08-27
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "nuphus-desktop"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mrpulor-gh/nuphus"
