@@ -58,12 +58,12 @@ import {
   IconPalette,
   IconShield,
   IconBrowser,
-   IconSparkles,
-   IconSquare,
-   IconGrid,
-   IconChevronUp,
-   IconChevronDown,
- } from '../../ui/Icons'
+  IconSparkles,
+  IconSquare,
+  IconGrid,
+  IconChevronUp,
+  IconChevronDown,
+} from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
@@ -661,7 +661,10 @@ export function ChatPanel({
   }, [modelOpen])
 
   const peekSwitch = useCallback(
-    (cfg: { id: string; label: string; model: string; provider: string; baseUrl: string }, dir: 1 | -1) => {
+    (
+      cfg: { id: string; label: string; model: string; provider: string; baseUrl: string },
+      dir: 1 | -1,
+    ) => {
       const models = allModels.filter(m => m.provider === cfg.provider)
       if (models.length <= 1) return
       // 浏览基准 = 当前显示中的模型（含预览态），非已保存配置
@@ -1995,74 +1998,73 @@ export function ChatPanel({
                     <div className="cmd-modal-empty-hint">{t('modelManager.noConfigsHint')}</div>
                   </div>
                 ) : (
-                   <div className="cmd-modal-list">
-                     {savedConfigs.map(cfg => {
-                       // 卡片当前显���的模型 = 预览态（上下按钮浏览）|| 已保存配置
-                       const displayedModel = peekModels[cfg.provider] || cfg.model
-                       // ✓ 只标真正生效的模型：预览到别的模型时该卡不视为 active
-                       const isActive =
-                         !peekModels[cfg.provider] && modelLabel === cfg.model
-                       // 同 provider 全部模型（上下浏览数据源；仅 1 个时禁用浏览）
-                       const providerModels = allModels.filter(m => m.provider === cfg.provider)
-                       return (
-                         <div key={cfg.provider}>
-                           <div
-                             className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''}`}
-                             onClick={() =>
-                               switchConfig(
-                                 {
-                                   ...cfg,
-                                   id: `${cfg.provider}::${displayedModel}`,
-                                   model: displayedModel,
-                                 },
-                                 true,
-                               )
-                             }
-                           >
-                             <div className="cmd-modal-card-left">
-                               <span className="cmd-modal-provider-icon">
-                                 {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
-                               </span>
-                             </div>
-                             <div className="cmd-modal-card-body">
-                               <div className="cmd-modal-card-name">{cfg.label}</div>
-                               <div className="cmd-modal-card-meta">{displayedModel}</div>
-                             </div>
-                             {switchingId === cfg.id ? (
-                               <div className="cmd-modal-card-spinner" />
-                             ) : isActive ? (
-                               <span className="cmd-modal-card-check">✓</span>
-                             ) : null}
-                             {/* 上下浏览按钮：仅预览相邻模型，不切换——切换靠点击卡片本身 */}
-                             <div className="cmd-modal-card-peek">
-                               <button
-                                 type="button"
-                                 className="cmd-modal-card-peek-btn"
-                                  title={t('modelManager.peekPrev')}
-                                  aria-label={t('modelManager.peekPrev')}
-                                  disabled={providerModels.length <= 1}
-                                 onClick={e => {
-                                   e.stopPropagation()
-                                   peekSwitch(cfg, -1)
-                                 }}
-                               >
-                                 <IconChevronUp size={12} />
-                               </button>
-                               <button
-                                 type="button"
-                                 className="cmd-modal-card-peek-btn"
-                                  title={t('modelManager.peekNext')}
-                                  aria-label={t('modelManager.peekNext')}
-                                  disabled={providerModels.length <= 1}
-                                 onClick={e => {
-                                   e.stopPropagation()
-                                   peekSwitch(cfg, 1)
-                                 }}
-                               >
-                                 <IconChevronDown size={12} />
-                               </button>
-                             </div>
-                           </div>
+                  <div className="cmd-modal-list">
+                    {savedConfigs.map(cfg => {
+                      // 卡片当前显���的模型 = 预览态（上下按钮浏览）|| 已保存配置
+                      const displayedModel = peekModels[cfg.provider] || cfg.model
+                      // ✓ 只标真正生效的模型：预览到别的模型时该卡不视为 active
+                      const isActive = !peekModels[cfg.provider] && modelLabel === cfg.model
+                      // 同 provider 全部模型（上下浏览数据源；仅 1 个时禁用浏览）
+                      const providerModels = allModels.filter(m => m.provider === cfg.provider)
+                      return (
+                        <div key={cfg.provider}>
+                          <div
+                            className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''}`}
+                            onClick={() =>
+                              switchConfig(
+                                {
+                                  ...cfg,
+                                  id: `${cfg.provider}::${displayedModel}`,
+                                  model: displayedModel,
+                                },
+                                true,
+                              )
+                            }
+                          >
+                            <div className="cmd-modal-card-left">
+                              <span className="cmd-modal-provider-icon">
+                                {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="cmd-modal-card-body">
+                              <div className="cmd-modal-card-name">{cfg.label}</div>
+                              <div className="cmd-modal-card-meta">{displayedModel}</div>
+                            </div>
+                            {switchingId === cfg.id ? (
+                              <div className="cmd-modal-card-spinner" />
+                            ) : isActive ? (
+                              <span className="cmd-modal-card-check">✓</span>
+                            ) : null}
+                            {/* 上下浏览按钮：仅预览相邻模型，不切换——切换靠点击卡片本身 */}
+                            <div className="cmd-modal-card-peek">
+                              <button
+                                type="button"
+                                className="cmd-modal-card-peek-btn"
+                                title={t('modelManager.peekPrev')}
+                                aria-label={t('modelManager.peekPrev')}
+                                disabled={providerModels.length <= 1}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  peekSwitch(cfg, -1)
+                                }}
+                              >
+                                <IconChevronUp size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                className="cmd-modal-card-peek-btn"
+                                title={t('modelManager.peekNext')}
+                                aria-label={t('modelManager.peekNext')}
+                                disabled={providerModels.length <= 1}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  peekSwitch(cfg, 1)
+                                }}
+                              >
+                                <IconChevronDown size={12} />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )
                     })}

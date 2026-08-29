@@ -15,7 +15,13 @@ import {
   setAgentModel,
   sttStatus,
 } from '../lib/api'
-import type { ProviderInfo, ModelInfo, ProviderModelBrief, SttStatus, AgentModels } from '../lib/api'
+import type {
+  ProviderInfo,
+  ModelInfo,
+  ProviderModelBrief,
+  SttStatus,
+  AgentModels,
+} from '../lib/api'
 import {
   useSttModelDownload,
   sttDownloadProgressPct,
@@ -226,9 +232,7 @@ function loadDetectedModels(provider: string): ProviderModelBrief[] {
   try {
     const raw = JSON.parse(localStorage.getItem(DETECTED_KEY_PREFIX + provider) || '[]')
     if (!Array.isArray(raw)) return []
-    return raw.map(item =>
-      typeof item === 'string' ? { id: item } : item,
-    ) as ProviderModelBrief[]
+    return raw.map(item => (typeof item === 'string' ? { id: item } : item)) as ProviderModelBrief[]
   } catch {
     return []
   }
@@ -763,9 +767,7 @@ export function ModelsPage({
             {/* ── 可用模型列表（后端已配置 + 本地检测结果并集，实时筛选）+ radio 选择 (大王需求 ②+⑤) ── */}
             {(() => {
               const configured = allModels.filter(m => m.provider === provider).map(m => m.id)
-              const display = Array.from(
-                new Set([...detectedModels.map(d => d.id), ...configured]),
-              )
+              const display = Array.from(new Set([...detectedModels.map(d => d.id), ...configured]))
               const q = filterInput.trim().toLowerCase()
               const filtered = q ? display.filter(m => m.toLowerCase().includes(q)) : display
               if (filtered.length === 0) {

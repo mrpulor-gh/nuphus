@@ -641,8 +641,7 @@ export default function Composer({
                 {cacheRate >= 0 && ctxUsed > 0 && <span className="mobile-plus-status-sep">·</span>}
                 {ctxUsed > 0 && (
                   <span>
-                    tok {fmtTokens(ctxUsed)} /{' '}
-                    {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
+                    tok {fmtTokens(ctxUsed)} / {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
                   </span>
                 )}
               </div>

@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  IconPlus,
-  IconX,
-  IconFile,
-  IconEye,
-  IconTrash2,
-} from '../../ui/Icons'
+import { IconPlus, IconX, IconFile, IconEye, IconTrash2 } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 import {
   listAgentStatuses,
@@ -634,9 +628,7 @@ function DeliverableRow({
       </span>
       {confirming ? (
         <>
-          <span className="ext-agent-del-confirm-hint">
-            {t('extAgents.deliver.confirmHint')}
-          </span>
+          <span className="ext-agent-del-confirm-hint">{t('extAgents.deliver.confirmHint')}</span>
           {hasActions && (
             <>
               <button

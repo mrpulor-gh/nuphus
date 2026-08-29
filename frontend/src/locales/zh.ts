@@ -206,7 +206,8 @@ const zh: Record<string, string> = {
 ]`,
   'extAgents.cfg.awaitTimeout': '等待确认上限（秒）',
   'extAgents.cfg.timeoutAction': '超时自检策略',
-  'extAgents.cfg.timeoutActionHint': 'detect_confirm=词表匹配确认屏（默认）/ screenshot_alive=窗口存活+截图 / notify_user=转呈大王 / redeliver=自动重投 / 自定义脚本优先',
+  'extAgents.cfg.timeoutActionHint':
+    'detect_confirm=词表匹配确认屏（默认）/ screenshot_alive=窗口存活+截图 / notify_user=转呈大王 / redeliver=自动重投 / 自定义脚本优先',
   'extAgents.cfg.timeoutScript': '自定义自检脚本',
   'extAgents.cfg.timeoutScriptHint': '设置后优先于 timeout_action；stdout 作为自检结论',
   'extAgents.cfg.autoApprove': '确认态代答白名单 (auto_approve)',
@@ -547,7 +548,7 @@ const zh: Record<string, string> = {
   'models.capVision': '支持视觉理解',
   'models.capAudio': '支持语音',
   'models.capImageGen': '支持图像生成',
-   'models.capContext': '上下文窗口',
+  'models.capContext': '上下文窗口',
   'models.capContextUnknown': '上下文窗口未知',
   'models.clearKeyConfirm': '确认清除该服务商的 API Key？此操作不可恢复。',
   'models.clearKeySuccess': 'API Key 已清除',

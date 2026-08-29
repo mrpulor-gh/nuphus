@@ -133,7 +133,9 @@ export default function SessionRail({ onSessionChanged, onNewChat }: SessionRail
         // 签名守卫：id+active+标题+顺序未变则不 setItems——提炼/追加等后台写入只改
         // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
         // 仍基于本轮新数据，不受影响。签名含顺序（数组序），新建/归档必然变化。
-        const sig = list.map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}|${i.preview || ''}`).join(';')
+        const sig = list
+          .map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}|${i.preview || ''}`)
+          .join(';')
         if (sig !== listSigRef.current) {
           listSigRef.current = sig
           setItems(list)

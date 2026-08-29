@@ -10,10 +10,7 @@ import {
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button } from '../../ui/Button'
 import { Section, FormRow } from '../../ui/PageLayout'
-import {
-  IconPlus,
-  IconX,
-} from '../../ui/Icons'
+import { IconPlus, IconX } from '../../ui/Icons'
 import {
   AgentIconAuto,
   agentKind,
@@ -299,9 +296,7 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
       } catch (e) {
         setSaving(false)
         setError(
-          `${t('extAgents.cfg.dispatchSteps')}: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
+          `${t('extAgents.cfg.dispatchSteps')}: ${e instanceof Error ? e.message : String(e)}`,
         )
         return
       }
@@ -468,10 +463,7 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div className="ext-agents-identity-field">
-                <span
-                  className="ext-agents-identity-label"
-                  title={t('extAgents.cfg.dirHint')}
-                >
+                <span className="ext-agents-identity-label" title={t('extAgents.cfg.dirHint')}>
                   {t('extAgents.cfg.dir')}
                 </span>
                 <input
@@ -509,94 +501,94 @@ export function ExternalAgentsPage({ onClose }: { onClose: () => void }) {
         >
           {advancedOpen && (
             <>
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.key')}
-            hint={t('extAgents.cfg.keyHint')}
-            control={
-              <input
-                className="input"
-                value={draft.key}
-                disabled={!isNew}
-                onChange={e => update({ key: e.target.value.trim() })}
-                placeholder="e.g. claude-code"
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.key')}
+                hint={t('extAgents.cfg.keyHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.key}
+                    disabled={!isNew}
+                    onChange={e => update({ key: e.target.value.trim() })}
+                    placeholder="e.g. claude-code"
+                  />
+                }
               />
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.open')}
-            hint={t('extAgents.cfg.openHint')}
-            control={
-              <input
-                className="input"
-                value={draft.open}
-                onChange={e => update({ open: e.target.value })}
-                placeholder="e.g. C:\\...\\claude.exe 或 终端执行 xxx"
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.open')}
+                hint={t('extAgents.cfg.openHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.open}
+                    onChange={e => update({ open: e.target.value })}
+                    placeholder="e.g. C:\\...\\claude.exe 或 终端执行 xxx"
+                  />
+                }
               />
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.args')}
-            hint={t('extAgents.cfg.argsHint')}
-            control={
-              <input
-                className="input"
-                value={draft.args}
-                onChange={e => update({ args: e.target.value })}
-                placeholder="--flag1 --flag2"
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.args')}
+                hint={t('extAgents.cfg.argsHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.args}
+                    onChange={e => update({ args: e.target.value })}
+                    placeholder="--flag1 --flag2"
+                  />
+                }
               />
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.mode')}
-            control={
-              <select
-                className="select"
-                value={draft.mode}
-                onChange={e => update({ mode: e.target.value })}
-              >
-                {MODE_OPTIONS.map(m => (
-                  <option key={m} value={m}>
-                    {t(`extAgents.cfg.mode.${m}`)}
-                  </option>
-                ))}
-              </select>
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.process')}
-            hint={t('extAgents.cfg.processHint')}
-            control={
-              <input
-                className="input"
-                value={draft.process}
-                onChange={e => update({ process: e.target.value })}
-                placeholder="e.g. claude.exe"
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.mode')}
+                control={
+                  <select
+                    className="select"
+                    value={draft.mode}
+                    onChange={e => update({ mode: e.target.value })}
+                  >
+                    {MODE_OPTIONS.map(m => (
+                      <option key={m} value={m}>
+                        {t(`extAgents.cfg.mode.${m}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
               />
-            }
-          />
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.description')}
-            hint={t('extAgents.cfg.descriptionHint')}
-            control={
-              <textarea
-                className="textarea"
-                rows={3}
-                value={draft.description}
-                onChange={e => update({ description: e.target.value })}
-                placeholder={t('extAgents.cfg.descriptionPlaceholder')}
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.process')}
+                hint={t('extAgents.cfg.processHint')}
+                control={
+                  <input
+                    className="input"
+                    value={draft.process}
+                    onChange={e => update({ process: e.target.value })}
+                    placeholder="e.g. claude.exe"
+                  />
+                }
               />
-            }
-          />
-          {/* ── v8 交互固化字段 ── */}
-          <FormRow
-            stacked
-            label={t('extAgents.cfg.launch')}
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.description')}
+                hint={t('extAgents.cfg.descriptionHint')}
+                control={
+                  <textarea
+                    className="textarea"
+                    rows={3}
+                    value={draft.description}
+                    onChange={e => update({ description: e.target.value })}
+                    placeholder={t('extAgents.cfg.descriptionPlaceholder')}
+                  />
+                }
+              />
+              {/* ── v8 交互固化字段 ── */}
+              <FormRow
+                stacked
+                label={t('extAgents.cfg.launch')}
                 hint={t('extAgents.cfg.launchHint')}
                 control={
                   <input
