@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-30
+
+### Added
+- 会话工作台 mode 联动：切换 mode 重载对应会话历史，点击跨 mode 会话自动切换 mode（桌面/手机双端统一）
+- 手机端会话列表 mode 铭牌三态：LEADER 蓝 / WORKFLOW 橙 / CUSTOM 紫，与桌面 rail 对齐
+- find_image 算法重构：金字塔降采样粗扫 + Top-N 候选 + 原图精扫，多格式模板支持，未命中返回最近候选与诊断
+
+### Fixed
+- 会话生命周期解耦：新建对话只回欢迎页消灭空会话（welcome 直发 force_new 创建）；追加判定以后端 busy 为权威，修复追加后执行窗口消失；switch_session 支持跨 mode 原子切换（归档原槽→切 mode→安装目标槽）；启动恢复 current_mode；双端会话台跟随（ShelfUpdated 事件 / 执行中锁定）
+- workflow 记忆机制对齐 Leader（append+签名+摘要锚点）并隔离 Leader 记忆注入
+- 手机端切换跨 mode 会话报「该会话不属于当前模式」：前端产物过期导致切换请求体缺 mode，重建产物后请求携带会话归属 mode
+
+### Changed
+- workflow：L2 方法论精简 + skill 编排核心能力重构，schema 补 DoCall inputs/outputs 文档
+- 桌面/浏览器工具描述短句化精简——保留关键参数与硬约束，降低提示词注入开销
+- 自动化工作流审批时机明确：构建期确认，运行时不再逐操作弹窗
+- title-bar 背景对齐对话区并移除底部分隔线
+- cargo fmt 全库格式化
+
 ## [0.1.10] - 2026-08-29
 
 ### Added
