@@ -314,7 +314,7 @@ export default function NavBar({
                   }}
                 >
                   <span className="mobile-sess-title">
-                    {item.mode && item.mode !== 'leader' && (
+                    {item.mode && (
                       <span
                         className={`mobile-sess-mode mode-${item.mode}`}
                         aria-hidden="true"
