@@ -231,9 +231,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         let session_mode = {
             let sb = state.session.lock().ok();
             sb.and_then(|g| g.session_backup.clone())
-                .and_then(|json| {
-                    serde_json::from_str::<nuphus::session::Session>(&json).ok()
-                })
+                .and_then(|json| serde_json::from_str::<nuphus::session::Session>(&json).ok())
                 .and_then(|sess| {
                     crate::commands::process::shelf::read_mirror(&sess.id).map(|(m, _)| m)
                 })
@@ -406,14 +404,18 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             .ok()
             .and_then(|guard| {
                 if is_workflow {
-                    guard.workflow_agent.as_ref().map(|a| a.session().id.clone())
+                    guard
+                        .workflow_agent
+                        .as_ref()
+                        .map(|a| a.session().id.clone())
                 } else {
-                    guard.leader_agent.as_ref().map(|rt| rt.session().id.clone())
+                    guard
+                        .leader_agent
+                        .as_ref()
+                        .map(|rt| rt.session().id.clone())
                 }
             })
-            .and_then(|sid| {
-                crate::commands::process::shelf::read_mirror(&sid).map(|(m, _)| m)
-            });
+            .and_then(|sid| crate::commands::process::shelf::read_mirror(&sid).map(|(m, _)| m));
         match session_mode {
             Some(sm) => {
                 if crate::commands::process::shelf::normalize_mode(&parsed_str)

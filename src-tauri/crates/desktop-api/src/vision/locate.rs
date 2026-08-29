@@ -70,7 +70,9 @@ impl Locator {
             Ok(img) => img.to_rgba8(),
             Err(e) => {
                 tracing::warn!("[find_image] 模板解码失败: {}", e);
-                return Err(anyhow::anyhow!("模板图片解码失败: {} (支持 PNG/JPG/BMP/GIF)", e).into());
+                return Err(
+                    anyhow::anyhow!("模板图片解码失败: {} (支持 PNG/JPG/BMP/GIF)", e).into(),
+                );
             }
         };
 
@@ -179,7 +181,8 @@ impl Locator {
             let ey = (oy + fine_radius).min(fh.saturating_sub(th));
             for y in sy..=ey {
                 for x in sx..=ex {
-                    let diff = Self::window_diff(&frame.pixels, fw, tpl_pixels, tw, th, x, y, best_diff);
+                    let diff =
+                        Self::window_diff(&frame.pixels, fw, tpl_pixels, tw, th, x, y, best_diff);
                     if diff < best_diff {
                         best_diff = diff;
                         best_x = x;

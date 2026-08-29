@@ -1156,9 +1156,7 @@ async fn post_message<R: tauri::Runtime>(
         let session_mode = {
             let sb = state.session.lock().ok();
             sb.and_then(|g| g.session_backup.clone())
-                .and_then(|json| {
-                    serde_json::from_str::<nuphus::session::Session>(&json).ok()
-                })
+                .and_then(|json| serde_json::from_str::<nuphus::session::Session>(&json).ok())
                 .and_then(|sess| {
                     crate::commands::process::shelf::read_mirror(&sess.id).map(|(m, _)| m)
                 })
