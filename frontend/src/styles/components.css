@@ -28,8 +28,7 @@
   justify-content: space-between;
   height: var(--titlebar-h);
   padding: 0 14px;
-  background: var(--void-primary);
-  border-bottom: 1px solid var(--glass-1);
+  background: var(--void-deepest);
   -webkit-user-select: none;
   -moz-user-select: none;
   user-select: none;

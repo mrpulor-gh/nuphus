@@ -67,7 +67,7 @@
     display: flex !important;
     height: 44px !important;
     padding: 0 8px !important;
-    border-bottom: 1px solid var(--glass-1) !important;
+    border-bottom: none !important;
     -webkit-app-region: no-drag !important;
   }
   .title-bar-right.title-bar-desktop-controls {
