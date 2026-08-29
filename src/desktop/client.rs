@@ -10,7 +10,8 @@ use std::path::PathBuf;
 #[cfg(not(windows))]
 use desktop_api::SendEnigo;
 use desktop_api::{
-    capture, clipboard as desk_clip, input, Frame, FrameSource, Locator, Query, Scope, Target,
+    capture, clipboard as desk_clip, input, FindResult, Frame, FrameSource, Locator, Query, Scope,
+    Target,
 };
 #[cfg(windows)]
 use desktop_api::{sendinput, WindowManager};
@@ -1423,19 +1424,32 @@ end tell"#,
         let locate = Locator::new();
         let min_confidence = threshold.unwrap_or(0.9) as f32;
 
+        // 记录所有模板中最接近的候选（即使未达 threshold，用于失败诊断）
+        let mut diag: Option<(FindResult, String)> = None;
+        // 记录第一个加载失败的模板（文件不存在/不可读/解码失败，用于诊断）
+        let mut load_error: Option<String> = None;
+
         for tpl in &templates {
+            let name = std::path::Path::new(tpl)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+
             let template_bytes = match std::fs::read(tpl) {
                 Ok(b) => b,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!("[find_image] 模板文件读取失败 {}: {}", tpl, e);
+                    if load_error.is_none() {
+                        load_error = Some(name);
+                    }
+                    continue;
+                }
             };
 
             let query = Query::Image(template_bytes);
             match locate.find_with_fallback(&frame, &query).await {
                 Ok(result) if result.found && result.confidence >= min_confidence => {
-                    let name = std::path::Path::new(tpl)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
                     if let Some(mut rect) = result.rect {
                         // Restore to screen coordinates
                         rect.x += region_x;
@@ -1451,8 +1465,54 @@ end tell"#,
                         }));
                     }
                 }
-                _ => continue,
+                Ok(result) => {
+                    // 未达 threshold：记录最接近候选，供诊断
+                    match &diag {
+                        None => diag = Some((result, name)),
+                        Some((best, _)) if result.confidence > best.confidence => {
+                            diag = Some((result, name))
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    // 模板解码失败等：记录诊断，继续尝试后续模板
+                    tracing::warn!("[find_image] 模板匹配异常 {}: {}", tpl, e);
+                    if load_error.is_none() {
+                        load_error = Some(name);
+                    }
+                    continue;
+                }
             }
+        }
+
+        // 全部模板均未达 threshold：返回最接近候选位置与置信度（found=false）
+        if let Some((r, name)) = diag {
+            if let Some(mut rect) = r.rect {
+                rect.x += region_x;
+                rect.y += region_y;
+                return Ok(serde_json::json!({
+                    "found": false,
+                    "x": rect.x,
+                    "y": rect.y,
+                    "w": rect.w,
+                    "h": rect.h,
+                    "confidence": (r.confidence * 10000.0).round() / 10000.0,
+                    "template": name,
+                    "diagnostic": "not found: closest candidate below threshold",
+                }));
+            }
+        }
+
+        // 模板文件存在但无法加载/解码（如文件损坏、格式不支持）：给出明确诊断
+        if let Some(name) = load_error {
+            return Ok(serde_json::json!({
+                "found": false,
+                "x": 0, "y": 0, "w": 0, "h": 0,
+                "confidence": 0.0,
+                "template": name,
+                "diagnostic": "template file not found or unreadable",
+            }));
         }
 
         Ok(serde_json::json!({"found": false, "x": 0, "y": 0, "confidence": 0.0}))

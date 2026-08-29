@@ -55,30 +55,29 @@ impl Locator {
         }
     }
 
-    /// 找图 - 像素级滑动窗口匹配（降采样搜索 + 提前终止）
+    /// 找图 - 静态图片模板匹配（按模板原始尺寸，不缩放）
+    ///
+    /// 策略：金字塔降采样粗扫（多级）→ Top-N 候选 → 原图精扫 → 差分提前终止。
+    /// - 多格式解码：image crate 支持 PNG / JPEG / BMP / GIF 等
+    /// - 尺寸随原图：模板多大就在帧里找多大，不做任何缩放匹配
+    /// - 失败诊断：未命中时仍返回最接近候选的位置与置信度（供上层返回给 Agent）
     async fn find_image(&self, frame: &Frame, template: &[u8]) -> Result<FindResult> {
         const THRESHOLD: f32 = 30.0;
-        const COARSE_STEP: u32 = 4;
+        const TOP_N: usize = 6;
 
-        // 1. 解码模板 PNG
+        // 1. 解码模板（多格式）
         let template_img = match image::load_from_memory(template) {
             Ok(img) => img.to_rgba8(),
             Err(e) => {
                 tracing::warn!("[find_image] 模板解码失败: {}", e);
-                return Ok(FindResult {
-                    found: false,
-                    rect: None,
-                    confidence: 0.0,
-                    method: FindMethod::ImageMatch,
-                });
+                return Err(anyhow::anyhow!("模板图片解码失败: {} (支持 PNG/JPG/BMP/GIF)", e).into());
             }
         };
 
         let (tw, th) = (template_img.width(), template_img.height());
-        let fw = frame.width;
-        let fh = frame.height;
+        let (fw, fh) = (frame.width, frame.height);
 
-        if tw > fw || th > fh {
+        if tw == 0 || th == 0 || tw > fw || th > fh {
             return Ok(FindResult {
                 found: false,
                 rect: None,
@@ -88,46 +87,104 @@ impl Locator {
         }
 
         let tpl_pixels = template_img.as_raw();
-        let frame_pixels = &frame.pixels;
 
-        // 2. 粗扫（步长=4）
-        let mut best_x = 0u32;
-        let mut best_y = 0u32;
-        let mut best_diff = f32::MAX;
+        // 2. 金字塔层级自适应：模板越大，粗扫降采样倍数越高
+        //    （粗扫只做候选定位，最终仍回到原图原尺寸精扫）
+        let max_side = tw.max(th);
+        let scale: u32 = if max_side >= 64 {
+            4
+        } else if max_side >= 24 {
+            2
+        } else {
+            1
+        };
 
-        let coarse_y_max = fh - th + 1;
-        let coarse_x_max = fw - tw + 1;
+        // 3. 构建降采样帧与降采样模板（2x2 平均，与帧同比例）
+        let (coarse_frame, cw, ch) = match scale {
+            4 => {
+                let (h1, w1, hh1) = Self::downsample_avg(&frame.pixels, fw, fh);
+                Self::downsample_avg(&h1, w1, hh1)
+            }
+            2 => Self::downsample_avg(&frame.pixels, fw, fh),
+            _ => (frame.pixels.clone(), fw, fh),
+        };
+        let (coarse_tpl, ctw, cth) = match scale {
+            4 => {
+                let (h1, w1, hh1) = Self::downsample_avg(tpl_pixels, tw, th);
+                Self::downsample_avg(&h1, w1, hh1)
+            }
+            2 => Self::downsample_avg(tpl_pixels, tw, th),
+            _ => (tpl_pixels.to_vec(), tw, th),
+        };
+        // 降采样后模板过小（<4px）则退回原图扫描
+        let (coarse_frame, cw, ch, coarse_tpl, ctw, cth) = if ctw < 4 || cth < 4 {
+            (frame.pixels.clone(), fw, fh, tpl_pixels.to_vec(), tw, th)
+        } else {
+            (coarse_frame, cw, ch, coarse_tpl, ctw, cth)
+        };
 
-        let start = std::time::Instant::now();
+        // 4. 粗扫（降采样图，步长=2）→ Top-N 候选
+        let cy_max = ch.saturating_sub(cth) + 1;
+        let cx_max = cw.saturating_sub(ctw) + 1;
+        let mut candidates: Vec<(u32, u32, f32)> = Vec::with_capacity(TOP_N + 4);
+        let mut worst_in_cands = f32::MAX;
 
-        for cy in (0..coarse_y_max).step_by(COARSE_STEP as usize) {
-            for cx in (0..coarse_x_max).step_by(COARSE_STEP as usize) {
-                let diff = Self::window_diff(frame_pixels, fw, tpl_pixels, tw, th, cx, cy);
-                if diff < best_diff {
-                    best_diff = diff;
-                    best_x = cx;
-                    best_y = cy;
+        for cy in (0..cy_max).step_by(2) {
+            for cx in (0..cx_max).step_by(2) {
+                let diff = Self::window_diff(
+                    &coarse_frame,
+                    cw,
+                    &coarse_tpl,
+                    ctw,
+                    cth,
+                    cx,
+                    cy,
+                    worst_in_cands,
+                );
+                if candidates.len() < TOP_N {
+                    candidates.push((cx, cy, diff));
+                    if diff < worst_in_cands {
+                        worst_in_cands = diff;
+                    }
+                    continue;
+                }
+                if diff < worst_in_cands {
+                    // 替换当前最差候选
+                    let mut wi = 0usize;
+                    for (i, c) in candidates.iter().enumerate() {
+                        if c.2 > candidates[wi].2 {
+                            wi = i;
+                        }
+                    }
+                    candidates[wi] = (cx, cy, diff);
+                    worst_in_cands = candidates.iter().map(|c| c.2).fold(f32::MIN, f32::max);
                 }
             }
         }
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
-        // 3. 精扫（在粗扫最佳位置的邻域内逐像素搜索）
-        let fine_start_x = best_x.saturating_sub(COARSE_STEP);
-        let fine_start_y = best_y.saturating_sub(COARSE_STEP);
-        let fine_end_x = (best_x + COARSE_STEP).min(coarse_x_max.saturating_sub(1));
-        let fine_end_y = (best_y + COARSE_STEP).min(coarse_y_max.saturating_sub(1));
+        // 5. 原图精扫：候选映射回原图坐标，邻域 ±(2*scale+2) 逐像素
+        let fine_radius = 2 * scale + 2;
+        let mut best_diff = f32::MAX;
+        let mut best_x = 0u32;
+        let mut best_y = 0u32;
 
-        let mut fine_best_x = best_x;
-        let mut fine_best_y = best_y;
-        let mut fine_best_diff = best_diff;
-
-        for fy in fine_start_y..=fine_end_y {
-            for fx in fine_start_x..=fine_end_x {
-                let diff = Self::window_diff(frame_pixels, fw, tpl_pixels, tw, th, fx, fy);
-                if diff < fine_best_diff {
-                    fine_best_diff = diff;
-                    fine_best_x = fx;
-                    fine_best_y = fy;
+        let start = std::time::Instant::now();
+        for &(ccx, ccy, _) in &candidates {
+            let ox = ccx * scale;
+            let oy = ccy * scale;
+            let sx = ox.saturating_sub(fine_radius);
+            let sy = oy.saturating_sub(fine_radius);
+            let ex = (ox + fine_radius).min(fw.saturating_sub(tw));
+            let ey = (oy + fine_radius).min(fh.saturating_sub(th));
+            for y in sy..=ey {
+                for x in sx..=ex {
+                    let diff = Self::window_diff(&frame.pixels, fw, tpl_pixels, tw, th, x, y, best_diff);
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_x = x;
+                        best_y = y;
+                    }
                 }
             }
         }
@@ -135,39 +192,82 @@ impl Locator {
         let elapsed = start.elapsed().as_millis();
         if elapsed > 500 {
             tracing::warn!(
-                "[find_image] 搜索耗时 {}ms ({}x{} 帧, {}x{} 模板)",
+                "[find_image] 搜索耗时 {}ms ({}x{} 帧, {}x{} 模板, scale={})",
                 elapsed,
                 fw,
                 fh,
                 tw,
-                th
+                th,
+                scale
             );
         }
 
-        // 4. 判断是否匹配
-        if fine_best_diff < THRESHOLD {
+        // 6. 判定 + 失败诊断（未命中也返回最接近候选）
+        let confidence = Self::confidence_from_diff(best_diff, THRESHOLD);
+        if best_diff < THRESHOLD {
             Ok(FindResult {
                 found: true,
                 rect: Some(Rect {
-                    x: fine_best_x as i32,
-                    y: fine_best_y as i32,
+                    x: best_x as i32,
+                    y: best_y as i32,
                     w: tw,
                     h: th,
                 }),
-                confidence: 1.0 - (fine_best_diff / (THRESHOLD * 2.0)),
+                confidence,
                 method: FindMethod::ImageMatch,
             })
         } else {
             Ok(FindResult {
                 found: false,
-                rect: None,
-                confidence: 0.0,
+                rect: Some(Rect {
+                    x: best_x as i32,
+                    y: best_y as i32,
+                    w: tw,
+                    h: th,
+                }),
+                confidence,
                 method: FindMethod::ImageMatch,
             })
         }
     }
 
-    /// 滑动窗口差异计算
+    /// diff → confidence（0..1），diff 越小置信度越高
+    fn confidence_from_diff(diff: f32, threshold: f32) -> f32 {
+        (1.0 - diff / (threshold * 2.0)).clamp(0.0, 1.0)
+    }
+
+    /// 2x2 平均降采样（RGBA），返回 (像素, 宽, 高)
+    fn downsample_avg(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+        let nw = w / 2;
+        let nh = h / 2;
+        if nw == 0 || nh == 0 {
+            return (pixels.to_vec(), w, h);
+        }
+        let mut out = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut sums = [0u64; 4];
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let idx = (((y * 2 + dy) * w + (x * 2 + dx)) * 4) as usize;
+                        for c in 0..4 {
+                            sums[c] += pixels[idx + c] as u64;
+                        }
+                    }
+                }
+                let oidx = ((y * nw + x) * 4) as usize;
+                for c in 0..4 {
+                    out[oidx + c] = (sums[c] / 4) as u8;
+                }
+            }
+        }
+        (out, nw, nh)
+    }
+
+    /// 滑动窗口差异计算（平均绝对差，带提前终止）
+    ///
+    /// `early_stop_at` 为当前最优平均差；累计差一旦超过
+    /// `early_stop_at * 像素数 * 3` 立即终止，跳过不可能胜出的窗口。
     #[allow(clippy::too_many_arguments)]
     fn window_diff(
         frame_pixels: &[u8],
@@ -177,11 +277,17 @@ impl Locator {
         th: u32,
         x: u32,
         y: u32,
+        early_stop_at: f32,
     ) -> f32 {
         let mut total_diff: u64 = 0;
         let pixel_count = (tw * th) as u64;
+        let stop_total = if early_stop_at < f32::MAX {
+            (early_stop_at * pixel_count as f32 * 3.0) as u64
+        } else {
+            u64::MAX
+        };
 
-        for ty in 0..th {
+        'outer: for ty in 0..th {
             for tx in 0..tw {
                 let f_idx = (((y + ty) * fw + (x + tx)) * 4) as usize;
                 let t_idx = ((ty * tw + tx) * 4) as usize;
@@ -191,6 +297,9 @@ impl Locator {
                 let db = frame_pixels[f_idx + 2].abs_diff(tpl_pixels[t_idx + 2]) as u64;
 
                 total_diff += dr + dg + db;
+                if total_diff >= stop_total {
+                    break 'outer;
+                }
             }
         }
 

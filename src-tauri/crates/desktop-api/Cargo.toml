@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 xcap.workspace = true
 
 # 图像处理（bmp 用于读取截图 BMP 输入）
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif"] }
 
 # 缓存
 lru = "0.12"
