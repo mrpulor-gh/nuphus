@@ -4,6 +4,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](https://rustup.rs/)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-ffc131)](https://v2.tauri.app)
 [![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev)
+[![npm version](https://img.shields.io/npm/v/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![npm downloads](https://img.shields.io/npm/dm/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![CI](https://github.com/mrpulor-gh/nuphus/actions/workflows/ci.yml/badge.svg)](https://github.com/mrpulor-gh/nuphus/actions/workflows/ci.yml)
 
 **English** | [中文](README.md)
 
