@@ -2016,8 +2016,9 @@ body {
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 24px;
   background: rgba(0, 0, 0, 0.45);
   animation: mobile-fade-in 150ms ease-out;
   /* 阻断滚动链：弹窗打开时滚动不传递到背后的会话层 */
@@ -2034,13 +2035,26 @@ body {
 }
 
 .mobile-modal {
-  width: 100%;
-  max-height: 82dvh;
+  width: min(92vw, 420px);
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
   background: var(--m-bg);
-  border-radius: 20px 20px 0 0;
-  animation: mobile-sheet-up 220ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  border: 0.5px solid var(--m-separator);
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  animation: mobile-center-pop 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes mobile-center-pop {
+  from {
+    transform: scale(0.96) translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 
 @keyframes mobile-sheet-up {
@@ -2058,7 +2072,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 16px 10px;
+  padding: 4px 4px 14px;
   border-bottom: 0.5px solid var(--m-separator);
 }
 
@@ -2115,10 +2129,10 @@ body {
   overscroll-behavior: contain;
   /* 底部大 padding：最后一条内容滚到底时不被输入框/Home 条遮挡
      （实测 36px 仍不够——输入框约 60px 高，需 ≥72px + 安全区） */
-  padding: 14px 16px calc(72px + env(safe-area-inset-bottom, 0px));
+  padding: 16px 4px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .mobile-modal-trace-empty {
@@ -2754,8 +2768,8 @@ body {
   background: var(--m-bg);
   border: 0.5px solid var(--m-separator);
   overflow: hidden;
-  padding: 12px 24px 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  padding: 16px 24px 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
   animation: mobile-sheet-in 160ms ease-out;
 }
 
@@ -3021,22 +3035,33 @@ body {
   opacity: 0.75;
 }
 
-/* 设置弹窗：fixed 底部弹出（点击 logo → 设置 打开；跟随主题毛玻璃）
-   高于底部输入栏(210)：弹窗 bottom 12px 正落于输入栏区域内，
+/* 设置/会话抽屉：右侧整面滑出（点击 logo → 设置 打开；跟随主题毛玻璃）
+   高于底部输入栏(210)：右侧全高抽屉不受输入栏遮挡，内容可纵向舒展
    同级 z-index 时 DOM 靠后的 Composer 会压住弹窗底部（重置按钮不可见） */
 .mobile-settings-sheet {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(85vw, 360px);
   z-index: 220;
-  border-radius: var(--m-radius-card);
+  border-radius: 20px 0 0 20px;
   background: var(--m-bg);
-  border: 0.5px solid var(--m-separator);
-  overflow: hidden;
-  padding: 12px 16px 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-  animation: mobile-sheet-in 160ms ease-out;
+  border-left: 0.5px solid var(--m-separator);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.2);
+  animation: mobile-drawer-in 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes mobile-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
 }
 
 @supports (backdrop-filter: blur(20px)) {
@@ -3060,8 +3085,8 @@ body {
   border-radius: var(--m-radius-card);
   background: var(--m-plus-bg);
   border: 0.5px solid var(--m-plus-separator);
-  padding: 12px 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  padding: 16px 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
   animation: mobile-sheet-in 160ms ease-out;
 }
 
@@ -3403,16 +3428,16 @@ body {
   animation: mobile-fade-in 150ms ease-out;
 }
 
-/* 居中卡片：宽度自适应 + 阴影，对齐桌面端 rating-modal */
+/* 居中卡片：宽度自适应 + 阴影，对齐桌面端 rating-modal（舒展：420px 宽 + 20px 内边距） */
 .mobile-rating {
   width: 100%;
-  max-width: 360px;
-  padding: 16px;
+  max-width: 420px;
+  padding: 20px;
   border-radius: var(--m-radius-card);
   background: var(--m-surface);
   border: 1px solid var(--m-separator);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
-  animation: mobile-sheet-in 160ms ease-out;
+  animation: mobile-center-pop 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
 .mobile-rating-head {
