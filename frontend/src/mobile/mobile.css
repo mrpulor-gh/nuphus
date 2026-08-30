@@ -2035,7 +2035,9 @@ body {
 }
 
 .mobile-modal {
-  width: min(92vw, 420px);
+  /* 中心弹窗：宽度受 overlay 24px 边距约束（两侧各留 24px 间隔），上限 420px */
+  width: min(calc(100vw - 48px), 420px);
+  max-width: calc(100vw - 48px);
   max-height: 80dvh;
   display: flex;
   flex-direction: column;
@@ -2072,7 +2074,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 4px 14px;
+  padding: 14px 20px 14px;
   border-bottom: 0.5px solid var(--m-separator);
 }
 
@@ -2129,7 +2131,7 @@ body {
   overscroll-behavior: contain;
   /* 底部大 padding：最后一条内容滚到底时不被输入框/Home 条遮挡
      （实测 36px 仍不够——输入框约 60px 高，需 ≥72px + 安全区） */
-  padding: 16px 4px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: 16px 20px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2593,21 +2595,64 @@ body {
 /* 「+」扩展面板：轻面板贴输入框上方（absolute 锚定 bottom:100%），
    内部功能为反色胶囊列表（每项一行、宽度自适应不贯穿、居中、上下间距适中） */
 .mobile-plus-sheet {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 100%; /* 贴合输入行上缘，无间隔 */
+  /* iOS 原生 Action Sheet：固定底部弹出（毛玻璃 + 大圆角 + 弹簧滑入） */
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   z-index: 95;
-  border-radius: var(--m-radius-card);
+  border-radius: 16px;
   background: var(--m-bg);
   border: 0.5px solid var(--m-separator);
   overflow: hidden;
-  padding: 34px 24px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-  animation: mobile-sheet-in 160ms ease-out;
+  padding: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  animation: mobile-action-sheet-in 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* 毛玻璃增强：容器跟随主题（浅色=白 / 深色=黑），反色胶囊在其上强对比 */
+/* Action Sheet 遮罩：全屏点击关闭 */
+.mobile-plus-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  background: rgba(0, 0, 0, 0.4);
+  animation: mobile-fade-in 150ms ease-out;
+}
+
+/* iOS 弹簧滑入：底部 64px 上浮 + 淡入 */
+@keyframes mobile-action-sheet-in {
+  from {
+    transform: translateY(64px);
+    opacity: 0.5;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* 取消按钮：灰底圆角，与列表卡片同宽（iOS 独立于列表，视觉分明） */
+.mobile-plus-cancel {
+  margin-top: 8px;
+  width: 100%;
+  min-height: 50px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(120, 120, 128, 0.12);
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
+}
+
+.mobile-plus-cancel:active {
+  background: rgba(120, 120, 128, 0.22);
+}
+
+/* 毛玻璃增强：容器跟随主题（浅色=白 / 深色=黑），列表行在其上左对齐强对比 */
 @supports (backdrop-filter: blur(20px)) {
   .mobile-plus-sheet {
     background: rgba(255, 255, 255, 0.9);
@@ -2631,58 +2676,53 @@ body {
   }
 }
 
-/* 功能胶囊：主题反色（浅色=黑胶囊白字 / 深色=白胶囊黑字），全部同宽（留白由容器 padding 提供）。
-   内部布局：第一行 = icon + 标题（同行居中）；第二行 = 内容/说明（居中）；整体内容垂直居中 */
+/* 功能列表行：iOS Action Sheet 行（左对齐、透明底、active 高亮、行高 56px 触控目标）。
+   内部布局：第一行 = icon（圆角方块）+ 标题；第二行 = 说明（左对齐弱化） */
 .mobile-plus-capsule {
   position: relative; /* 透明 file input 铺满锚点 */
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  max-width: 100%;
-  /* 等高：无论单行（标题）还是双行（标题+说明），胶囊高度统一（内容垂直居中） */
-  min-height: 66px;
-  padding: 13px 18px;
+  min-height: 56px;
+  padding: 8px 12px;
   border: none;
-  border-radius: var(--m-radius-pill);
-  background: var(--m-plus-bg);
-  color: var(--m-plus-fg);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--m-fg);
   font-family: inherit;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    opacity 120ms ease-out,
-    transform 80ms ease;
+  transition: background 120ms ease-out;
 }
 
 .mobile-plus-capsule + .mobile-plus-capsule {
-  margin-top: 18px; /* 胶囊间上下间距 */
+  margin-top: 2px; /* 列表行紧凑，间隔由行高承载 */
 }
 
-/* 文本区：固定两行（第一行 icon+标题 / 第二行内容），全部居中 */
+/* 文本区：左对齐两行（第一行 icon+标题 / 第二行说明） */
 .mobile-plus-capsule-text {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 3px;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
+  text-align: left;
 }
 
-/* 第一行：icon + 标题 同行居中 */
+/* 第一行：icon + 标题 同行左对齐 */
 .mobile-plus-capsule-line {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
 }
 
 .mobile-plus-capsule:active:not(.is-disabled) {
-  transform: scale(0.98);
-  opacity: 0.85;
+  background: rgba(120, 120, 128, 0.12);
+  opacity: 1;
 }
 
 /* 禁用态：背景保持实色（不整体透明透底），仅内部内容弱化表达不可点 */
@@ -2705,7 +2745,11 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--m-plus-fg);
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(120, 120, 128, 0.12);
+  color: var(--m-fg);
 }
 
 .mobile-plus-capsule-title {
@@ -2719,20 +2763,21 @@ body {
   line-height: 1.3;
   font-size: 12px;
   font-weight: 500;
-  color: var(--m-plus-fg-secondary);
+  color: var(--m-fg-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
 }
 
-/* 底部当前执行状态：纯文字弱化（cache 缓存命中率 · tok 用量） */
+/* 底部当前执行状态：纯文字弱化左对齐（cache 缓存命中率 · tok 用量） */
 .mobile-plus-status {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 5px;
-  margin-top: 18px;
+  margin-top: 8px;
+  padding: 0 12px 4px;
   font-size: 12px;
   font-weight: 500;
   color: var(--m-fg-secondary);

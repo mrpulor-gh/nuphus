@@ -474,10 +474,10 @@ export default function Composer({
                 {imageDone + 1}/{imageTotal}
               </span>
               <span>处理图片中…</span>
-            </div>
-          )}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        )}
       <div className="mobile-composer-inner">
         <div className="mobile-composer-pill">
           <button
@@ -543,9 +543,11 @@ export default function Composer({
           )}
         </div>
 
-        {/* ── 「+」扩展面板：轻面板贴输入框上方，功能项为反色胶囊列表（每项一行、不贯穿、居中） ── */}
+        {/* ── 「+」扩展面板：iOS 原生 Action Sheet（固定底部弹出 + 毛玻璃 + 取消按钮） ── */}
         {menuOpen && (
-          <div className="mobile-plus-sheet" role="menu" ref={sheetRef} aria-label="扩展菜单">
+          <>
+            <div className="mobile-plus-overlay" onClick={() => setMenuOpen(false)} />
+            <div className="mobile-plus-sheet" role="menu" ref={sheetRef} aria-label="扩展菜单">
             <label className="mobile-plus-capsule" role="menuitem">
               {/* file input 内嵌 label：点击 label 由浏览器原生触发选择器——
                   standalone PWA（主屏幕启动）拦截 JS input.click()，label 触发不受限 */}
@@ -646,7 +648,15 @@ export default function Composer({
                 )}
               </div>
             )}
+            <button
+              type="button"
+              className="mobile-plus-cancel"
+              onClick={() => setMenuOpen(false)}
+            >
+              取消
+            </button>
           </div>
+          </>
         )}
 
         {/* ── 模式子弹窗：独立弹窗（贴输入框上方，沿用主弹窗风格），右上角 X 关闭 ── */}
