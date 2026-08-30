@@ -1200,17 +1200,24 @@ mod tests {
         assert!(shelf.contains(&b.id), "B 应被装载");
         let entry_b = shelf.get(&b.id).expect("B 应有条目");
         assert_eq!(entry_b.mode, "workflow", "mode 应来自快照");
-        // order 必须 newest-first：最新（B）在 order[0]，最旧（A）在末尾——
-        // 保证此后 put 超限 pop() 淘汰的是最旧而非最新（回归 2026-08-30）
-        assert_eq!(
-            shelf.order.first().map(String::as_str),
-            Some(b.id.as_str()),
-            "order[0] 应为最新快照 B"
-        );
-        assert_eq!(
-            shelf.order.last().map(String::as_str),
-            Some(a.id.as_str()),
-            "order 末尾应为最旧快照 A（put 超限时淘汰它）"
+        // order 必须 newest-first：最新（B）在 order[0]，较旧（A）排在其后——
+        // 保证此后 put 超限 pop() 淘汰的是最旧而非最新（回归 2026-08-30）。
+        // 注意：共享测试库可能存在其他测试残留快照，order 末尾不一定是 A，
+        // 因此断言位置先后而非「A 恰在末尾」。
+        let pos_a = shelf
+            .order
+            .iter()
+            .position(|id| id == &a.id)
+            .expect("A 应在 order 中");
+        let pos_b = shelf
+            .order
+            .iter()
+            .position(|id| id == &b.id)
+            .expect("B 应在 order 中");
+        assert_eq!(pos_b, 0, "最新快照 B 应在 order[0]");
+        assert!(
+            pos_a > pos_b,
+            "较旧快照 A 应排在较新快照 B 之后（newest-first）"
         );
 
         let _ = nuphus::store::session::delete_session(&a.id);
@@ -1320,13 +1327,7 @@ mod tests {
         // 而 fallback current_mode（回归 2026-08-30：断言拿到 workflow 而非 leader）
         let agent_sess_id = {
             let guard = state.runtime.lock().unwrap();
-            guard
-                .workflow_agent
-                .as_ref()
-                .unwrap()
-                .session()
-                .id
-                .clone()
+            guard.workflow_agent.as_ref().unwrap().session().id.clone()
         };
         // 存储快照归属 leader（upsert_snapshot 绑定 mode 与快照）
         let json = serde_json::to_string(&session_with_user(&["跨 mode 会话"])).unwrap();
