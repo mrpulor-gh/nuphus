@@ -17,29 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Send,
-  Plus,
-  Camera,
-  Image as ImageIcon,
-  Mic,
-  Square,
-  Zap,
-  Brain,
-  Check,
-  X,
-  Loader2,
-  Sparkles,
-  RefreshCw,
-} from 'lucide-react'
-import {
-  fetchModelConfig,
-  switchMobileModel,
-  switchMobileMode,
-  fetchCustomAgents,
-  type ModelConfig,
-  type CustomAgentBrief,
-} from '../api'
+import { Send, Plus, Camera, Image as ImageIcon, Mic, Square, X, Loader2 } from 'lucide-react'
 import { t } from '../i18n'
 
 /**
@@ -156,135 +134,29 @@ export default function Composer({
   const [sending, setSending] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // ── 「+」扩展菜单状态 ──
+  // ── 「+」扩展菜单状态（图片入口专用：拍摄 / 相册；模式/模型/重拉已整合进设置抽屉） ──
   const [menuOpen, setMenuOpen] = useState(false)
-  /** 模式子弹窗（独立弹窗，贴输入框上方，沿用主弹窗风格） */
-  const [modeSheetOpen, setModeSheetOpen] = useState(false)
-  const [modelInfoOpen, setModelInfoOpen] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
   /** 图片压缩处理中（选图后立即反馈，避免「无反应」感） */
   const [imageProcessing, setImageProcessing] = useState(false)
   /** 处理中进度：当前第几张 / 共几张 */
   const [imageTotal, setImageTotal] = useState(0)
   const [imageDone, setImageDone] = useState(0)
-  // 模式本地选择：默认跟随 store（WS 同步），切换后发送时显式带 mode
-  const [selectedMode, setSelectedMode] = useState(mode)
-  useEffect(() => {
-    setSelectedMode(mode)
-  }, [mode])
-
-  // ── Custom agents：模式子弹窗打开时拉取（列表 + 激活卡片名），卡片管理在桌面端 ──
-  const [customAgents, setCustomAgents] = useState<CustomAgentBrief[]>([])
-  const [activeCustomName, setActiveCustomName] = useState<string | null>(null)
-  useEffect(() => {
-    if (!modeSheetOpen || !token) return
-    fetchCustomAgents(token)
-      .then(info => {
-        setCustomAgents(info.agents || [])
-        setActiveCustomName(info.active?.name ?? null)
-      })
-      .catch(() => {})
-  }, [modeSheetOpen, token])
 
   const plusBtnRef = useRef<HTMLButtonElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
-  const modeSheetRef = useRef<HTMLDivElement>(null)
-  // 轻面板：无全屏遮罩，点击面板外任意处关闭（主弹窗 + 模式子弹窗）
+  // 轻面板：无全屏遮罩，点击面板外任意处关闭
   useEffect(() => {
-    if (!menuOpen && !modeSheetOpen) return
+    if (!menuOpen) return
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node
       if (plusBtnRef.current?.contains(target)) return
       if (sheetRef.current?.contains(target)) return
-      if (modeSheetRef.current?.contains(target)) return
       setMenuOpen(false)
-      setModeSheetOpen(false)
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [menuOpen, modeSheetOpen])
-
-  // ── 模型配置（GET /model-config，桌面端 config.toml 同源）──
-  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
-  const [modelLoading, setModelLoading] = useState(false)
-  /** 配置读取失败态（隧道半死/超时）——模型卡显示重试按钮而非永久转圈（实测卡死反馈） */
-  const [modelError, setModelError] = useState(false)
-  /** 正在切换的模型 id（切换中该项显示 spinner，其余项禁用） */
-  const [switchingModel, setSwitchingModel] = useState<string | null>(null)
-  const modelCardRef = useRef<HTMLDivElement>(null)
-
-  // 挂载时静默拉一次配置：session_info 事件只在发送消息时下发 model，
-  // 首载/久未发言时 + 面板「当前模型」需用 modelConfig.current 兜底显示。
-  // 按当前 mode 解析生效模型；mode（activity.mode，WS 同步）变化时跟随重拉。
-  // model（store.model）变化时也重拉：桌面端切模型经 WS 广播 session_info，
-  // 手机端据此刷新 modelConfig.current，模型卡「当前模型」实时跟随桌面切换。
-  useEffect(() => {
-    if (!token) return
-    let alive = true
-    fetchModelConfig(token, mode)
-      .then(cfg => {
-        if (alive) setModelConfig(cfg)
-      })
-      .catch(() => {
-        /* 静默：模型卡打开时会重试并提示 */
-      })
-    return () => {
-      alive = false
-    }
-  }, [token, mode, model])
-  // 模型卡：轻面板，无遮罩，外部点击关闭（与 + 面板一致）
-  useEffect(() => {
-    if (!modelInfoOpen) return
-    const onDown = (e: PointerEvent) => {
-      const target = e.target as Node
-      if (modelCardRef.current?.contains(target)) return
-      setModelInfoOpen(false)
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [modelInfoOpen])
-
-  const loadModelConfig = useCallback(() => {
-    setModelLoading(true)
-    setModelError(false)
-    fetchModelConfig(token, selectedMode)
-      .then(cfg => setModelConfig(cfg))
-      .catch(() => setModelError(true))
-      .finally(() => setModelLoading(false))
-  }, [token, selectedMode])
-
-  const openModelInfo = () => {
-    setMenuOpen(false)
-    setModelInfoOpen(true)
-    // 每次打开都重新拉取（不缓存）——桌面端改配置后手机端立即可见；
-    // 失败落入错误态（模型卡内重试按钮），fetchWithTimeout 20s 兜底不会永久转圈
-    loadModelConfig()
-  }
-
-  /** 手动重新拉取历史：关闭 + 弹窗并触发上层重拉（成功/失败 toast 由 App 层反馈） */
-  const handleReloadHistory = () => {
-    setMenuOpen(false)
-    onReloadHistory?.()
-  }
-
-  /** 模型卡点击切换：provider-driven（后端读 config.toml 的 key），成功后刷新配置并同步 store */
-  const switchToModel = async (id: string, provider: string) => {
-    if (switchingModel) return
-    setSwitchingModel(id)
-    try {
-      await switchMobileModel(token, id, provider, selectedMode)
-      // 重新拉配置：current 更新 → 列表 active 标记与「当前模型」同步刷新（按当前 mode 解析）
-      const cfg = await fetchModelConfig(token, selectedMode)
-      setModelConfig(cfg)
-      onModelChanged?.(id)
-      onToast?.(t('mobile.modelSwitched'))
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : t('mobile.switchFailed')
-      onToast?.(`${t('mobile.switchFailed')}: ${reason}`)
-    } finally {
-      setSwitchingModel(null)
-    }
-  }
+  }, [menuOpen])
 
   const hasText = value.trim().length > 0
   const hasImages = pendingImages.length > 0
@@ -315,7 +187,7 @@ export default function Composer({
     // （用户实测：发送后按钮直接锁住，无法再发消息）。
     void onSend(content, {
       images,
-      mode: selectedMode,
+      mode,
     })
       .catch(() => {})
       .finally(() => {
@@ -341,15 +213,6 @@ export default function Composer({
       if (next) inputRef.current?.blur()
       return next
     })
-    // 点 + 号时清理 + 号内的所有子弹窗（模式/模型），避免叠层残留
-    setModeSheetOpen(false)
-    setModelInfoOpen(false)
-  }
-
-  /** 打开模式子弹窗：关闭主弹窗，独立弹出（沿用主弹窗风格） */
-  const openModeSheet = () => {
-    setMenuOpen(false)
-    setModeSheetOpen(true)
   }
 
   /** 图片文件 → Worker 压缩 → 入胶囊区（最多 9 张）。
@@ -396,27 +259,6 @@ export default function Composer({
     }
   }
 
-  const selectMode = (m: string) => {
-    setSelectedMode(m)
-    setModeSheetOpen(false)
-    setMenuOpen(false)
-    const label =
-      m === 'workflow' ? 'Workflow' : m === 'custom' ? activeCustomName || 'Custom' : 'Leader'
-    // 走后端 set_mode（唯一权威源）：切换后广播 ModeChanged，双端同步
-    // （手机端 activity.mode 经 WS 更新，selectedMode 随之跟随，无需本地独立维护）。
-    switchMobileMode(token, m)
-      .then(() => {
-        onToast?.(isProcessing ? `已切换为 ${label}（下次执行生效）` : `已切换为 ${label}`)
-        // 切 mode 后重新拉取该 mode 的生效模型：模型卡「当前模型」跟随模式。
-        fetchModelConfig(token, m)
-          .then(cfg => setModelConfig(cfg))
-          .catch(() => {})
-      })
-      .catch(() => {
-        onToast?.(t('mobile.modeSwitchFailed'))
-      })
-  }
-
   /** 语音输入（A 方案：系统键盘听写，零权限零后端）：
    *  关闭面板 → 聚焦输入框弹出系统键盘 → 引导点击键盘麦克风图标说话。
    *  ⚠️ iOS 要求 focus() 在用户手势同步栈内执行——setTimeout 延迟会丢失
@@ -431,24 +273,6 @@ export default function Composer({
   const removeImage = (idx: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== idx))
   }
-
-  const modeLabel =
-    selectedMode === 'workflow'
-      ? 'Workflow'
-      : selectedMode === 'custom'
-        ? activeCustomName || 'Custom'
-        : 'Leader'
-
-  // ── 上下文用量（模型卡「上下文 xx%」展示，与桌面端 ctx 同色三档）──
-  const ctxUsed = tokenUsage?.inputTokens || 0
-  // 分母缺失（contextWindow 0/未知）→ 显示 "--"，不伪装 128000 假数
-  const ctxLimit = modelConfig?.contextWindow || 0
-  const ctxPct = ctxLimit > 0 ? Math.min(ctxUsed / ctxLimit, 1) : 0
-  const ctxColor = ctxPct > 0.8 ? '#ef4444' : ctxPct > 0.6 ? '#f59e0b' : '#22c55e'
-  // ── 缓存命中率（模型卡「缓存命中 xx%」展示，公式与三档配色对齐桌面 ChatInputBar）──
-  const cacheHit = tokenUsage?.cacheHitTokens || 0
-  const cacheRate = ctxUsed > 0 ? (cacheHit / ctxUsed) * 100 : -1
-  const cacheColor = cacheRate > 60 ? '#22c55e' : cacheRate > 30 ? '#f59e0b' : '#ef4444'
 
   return (
     <footer className="mobile-composer">
@@ -546,7 +370,6 @@ export default function Composer({
         {/* ── 「+」扩展面板：iOS 原生 Action Sheet（固定底部弹出 + 毛玻璃 + 取消按钮） ── */}
         {menuOpen && (
           <>
-            <div className="mobile-plus-overlay" onClick={() => setMenuOpen(false)} />
             <div className="mobile-plus-sheet" role="menu" ref={sheetRef} aria-label="扩展菜单">
             <label className="mobile-plus-capsule" role="menuitem">
               {/* file input 内嵌 label：点击 label 由浏览器原生触发选择器——
@@ -586,253 +409,10 @@ export default function Composer({
                 <span className="mobile-plus-capsule-sub">从相册选择图片</span>
               </span>
             </label>
-            <button
-              type="button"
-              className="mobile-plus-capsule"
-              role="menuitem"
-              onClick={openModeSheet}
-            >
-              <span className="mobile-plus-capsule-text">
-                <span className="mobile-plus-capsule-line">
-                  <span className="mobile-plus-capsule-icon">
-                    <Zap size={18} aria-hidden="true" />
-                  </span>
-                  <span className="mobile-plus-capsule-title">模式</span>
-                </span>
-                <span className="mobile-plus-capsule-sub">{modeLabel}</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="mobile-plus-capsule"
-              role="menuitem"
-              onClick={openModelInfo}
-            >
-              <span className="mobile-plus-capsule-text">
-                <span className="mobile-plus-capsule-line">
-                  <span className="mobile-plus-capsule-icon">
-                    <Brain size={18} aria-hidden="true" />
-                  </span>
-                  <span className="mobile-plus-capsule-title">模型</span>
-                </span>
-                <span className="mobile-plus-capsule-sub">
-                  {modelConfig?.current || model || '—'}
-                </span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="mobile-plus-capsule"
-              role="menuitem"
-              onClick={handleReloadHistory}
-            >
-              <span className="mobile-plus-capsule-text">
-                <span className="mobile-plus-capsule-line">
-                  <span className="mobile-plus-capsule-icon">
-                    <RefreshCw size={18} aria-hidden="true" />
-                  </span>
-                  <span className="mobile-plus-capsule-title">{t('mobile.reloadHistory')}</span>
-                </span>
-                <span className="mobile-plus-capsule-sub">历史异常时刷新</span>
-              </span>
-            </button>
-            {/* 底部当前执行状态（纯文字，弱化）：缓存命中率 / token 用量 */}
-            {(ctxUsed > 0 || cacheHit > 0) && (
-              <div className="mobile-plus-status">
-                {cacheRate >= 0 && <span>cache {Math.round(cacheRate)}%</span>}
-                {cacheRate >= 0 && ctxUsed > 0 && <span className="mobile-plus-status-sep">·</span>}
-                {ctxUsed > 0 && (
-                  <span>
-                    tok {fmtTokens(ctxUsed)} / {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
-                  </span>
-                )}
-              </div>
-            )}
-            <button
-              type="button"
-              className="mobile-plus-cancel"
-              onClick={() => setMenuOpen(false)}
-            >
-              取消
-            </button>
           </div>
           </>
         )}
-
-        {/* ── 模式子弹窗：独立弹窗（贴输入框上方，沿用主弹窗风格），右上角 X 关闭 ── */}
-        {modeSheetOpen && (
-          <div className="mobile-mode-sheet" role="menu" ref={modeSheetRef} aria-label="模式选择">
-            <div className="mobile-mode-head">
-              <span className="mobile-mode-title">模式</span>
-              <button
-                type="button"
-                className="mobile-model-card-x"
-                onClick={() => setModeSheetOpen(false)}
-                aria-label="关闭"
-              >
-                <X size={16} aria-hidden="true" />
-              </button>
-            </div>
-            <button
-              type="button"
-              className={`mobile-mode-capsule ${selectedMode !== 'workflow' ? 'active' : ''}`}
-              role="menuitem"
-              onClick={() => selectMode('leader')}
-            >
-              <span className="mobile-mode-capsule-name">Leader</span>
-              <span className="mobile-mode-capsule-desc">自主判断路径，复杂任务先规划</span>
-              {selectedMode !== 'workflow' && <Check size={16} aria-hidden="true" />}
-            </button>
-            <button
-              type="button"
-              className={`mobile-mode-capsule ${selectedMode === 'workflow' ? 'active' : ''}`}
-              role="menuitem"
-              onClick={() => selectMode('workflow')}
-            >
-              <span className="mobile-mode-capsule-name">Workflow</span>
-              <span className="mobile-mode-capsule-desc">解析模板生成可执行工作流</span>
-              {selectedMode === 'workflow' && <Check size={16} aria-hidden="true" />}
-            </button>
-            {/* ── Custom 档：有卡片可切换 / 无卡片引导桌面端创建 ── */}
-            {activeCustomName ? (
-              <button
-                type="button"
-                className={`mobile-mode-capsule mobile-mode-capsule-custom ${selectedMode === 'custom' ? 'active' : ''}`}
-                role="menuitem"
-                onClick={() => selectMode('custom')}
-              >
-                <span className="mobile-mode-capsule-name">
-                  <Sparkles size={13} aria-hidden="true" /> {activeCustomName}
-                </span>
-                <span className="mobile-mode-capsule-desc">我的专属 Agent</span>
-                {selectedMode === 'custom' && <Check size={16} aria-hidden="true" />}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="mobile-mode-capsule mobile-mode-capsule-locked"
-                disabled
-              >
-                <span className="mobile-mode-capsule-name">
-                  <Sparkles size={13} aria-hidden="true" /> Custom
-                </span>
-                <span className="mobile-mode-capsule-desc">桌面端「管理 Agent」创建后可用</span>
-              </button>
-            )}
-          </div>
-        )}
       </div>
-
-      {/* 相机 / 相册 file input 已内嵌于 + 面板的 label（standalone PWA 兼容），
-          此处无独立 input */}
-
-      {/* ── 模型配置卡：轻面板（贴输入行上方，无遮罩，外部点击关闭）── */}
-      {modelInfoOpen && (
-        <div className="mobile-model-card" role="dialog" aria-label="模型设置" ref={modelCardRef}>
-          <div className="mobile-model-card-head">
-            <span className="mobile-model-card-title">模型</span>
-            <button
-              type="button"
-              className="mobile-model-card-x"
-              onClick={() => setModelInfoOpen(false)}
-              aria-label="关闭"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          </div>
-          {modelLoading ? (
-            <div className="mobile-model-card-loading" role="status">
-              <Loader2 size={14} className="mobile-spin" aria-hidden="true" /> 读取配置中…
-            </div>
-          ) : modelError ? (
-            <div className="mobile-model-card-loading" role="alert">
-              <span>{t('mobile.readConfigFailed')}</span>
-              <button type="button" className="mobile-model-card-retry" onClick={loadModelConfig}>
-                {t('mobile.retry')}
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="mobile-model-card-current">
-                <span className="mobile-model-card-current-label">{t('mobile.currentModel')}</span>
-                <span className="mobile-model-card-current-name">
-                  {modelConfig?.current || model || t('mobile.notFetched')}
-                </span>
-              </div>
-              <div className="mobile-model-card-ctx">
-                <span className="mobile-model-card-ctx-label">{t('mobile.context')}</span>
-                <span className="mobile-model-card-ctx-pct" style={{ color: ctxColor }}>
-                  {ctxLimit > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
-                </span>
-                <span className="mobile-model-card-ctx-nums">
-                  {fmtTokens(ctxUsed)} / {ctxLimit > 0 ? fmtTokens(ctxLimit) : '--'}
-                </span>
-              </div>
-              {cacheRate >= 0 && (
-                <div className="mobile-model-card-ctx">
-                  <span className="mobile-model-card-ctx-label">{t('mobile.cacheHit')}</span>
-                  <span className="mobile-model-card-ctx-pct" style={{ color: cacheColor }}>
-                    {Math.round(cacheRate)}%
-                  </span>
-                  <span className="mobile-model-card-ctx-nums">
-                    {fmtTokens(cacheHit)} / {fmtTokens(ctxUsed)}
-                  </span>
-                </div>
-              )}
-              {modelConfig && modelConfig.models.length > 0 && (
-                <div className="mobile-model-card-list">
-                  {modelConfig.models.map((m, i) => {
-                    const isCurrent = m.id === modelConfig.current
-                    const isSwitching = switchingModel === m.id
-                    return (
-                      <button
-                        key={i}
-                        type="button"
-                        className={`mobile-model-card-item ${isCurrent ? 'active' : ''}`}
-                        disabled={!!switchingModel || isCurrent}
-                        onClick={() => switchToModel(m.id, m.provider)}
-                      >
-                        <span className="mobile-model-card-item-provider">{m.provider}</span>
-                        <span className="mobile-model-card-item-main">
-                          <span className="mobile-model-card-item-id">{m.id}</span>
-                          {m.alias.length > 0 && (
-                            <span className="mobile-model-card-item-alias">
-                              {m.alias.join(' / ')}
-                            </span>
-                          )}
-                        </span>
-                        {(m.supports_vision || m.supports_audio) && (
-                          <span className="mobile-model-card-item-caps">
-                            {m.supports_vision ? t('mobile.capVision') : ''}
-                            {m.supports_vision && m.supports_audio ? '·' : ''}
-                            {m.supports_audio ? t('mobile.capAudio') : ''}
-                          </span>
-                        )}
-                        {isSwitching ? (
-                          <Loader2
-                            size={14}
-                            className="mobile-spin mobile-model-card-item-check"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          isCurrent && (
-                            <Check
-                              size={14}
-                              className="mobile-model-card-item-check"
-                              aria-hidden="true"
-                            />
-                          )
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="mobile-model-card-note">点击列表项切换当前模型</div>
-            </>
-          )}
-        </div>
-      )}
     </footer>
   )
 }

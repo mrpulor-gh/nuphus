@@ -2595,73 +2595,19 @@ body {
 /* 「+」扩展面板：轻面板贴输入框上方（absolute 锚定 bottom:100%），
    内部功能为反色胶囊列表（每项一行、宽度自适应不贯穿、居中、上下间距适中） */
 .mobile-plus-sheet {
-  /* iOS 原生 Action Sheet：固定底部弹出（毛玻璃 + 大圆角 + 弹簧滑入） */
-  position: fixed;
-  left: 8px;
-  right: 8px;
-  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  /* 「+」图片快捷面板：贴输入栏上缘轻浮层（实色无毛玻璃，外部点击关闭） */
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
   z-index: 95;
   border-radius: 16px;
   background: var(--m-bg);
   border: 0.5px solid var(--m-separator);
   overflow: hidden;
-  padding: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-  animation: mobile-action-sheet-in 300ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-/* Action Sheet 遮罩：全屏点击关闭 */
-.mobile-plus-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 94;
-  background: rgba(0, 0, 0, 0.4);
-  animation: mobile-fade-in 150ms ease-out;
-}
-
-/* iOS 弹簧滑入：底部 64px 上浮 + 淡入 */
-@keyframes mobile-action-sheet-in {
-  from {
-    transform: translateY(64px);
-    opacity: 0.5;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
-
-/* 取消按钮：灰底圆角，与列表卡片同宽（iOS 独立于列表，视觉分明） */
-.mobile-plus-cancel {
-  margin-top: 8px;
-  width: 100%;
-  min-height: 50px;
-  border: none;
-  border-radius: 12px;
-  background: rgba(120, 120, 128, 0.12);
-  color: var(--m-fg);
-  font-family: inherit;
-  font-size: 17px;
-  font-weight: 500;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 120ms ease-out;
-}
-
-.mobile-plus-cancel:active {
-  background: rgba(120, 120, 128, 0.22);
-}
-
-/* 毛玻璃增强：容器跟随主题（浅色=白 / 深色=黑），列表行在其上左对齐强对比 */
-@supports (backdrop-filter: blur(20px)) {
-  .mobile-plus-sheet {
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(30px) saturate(1.5);
-    -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  }
-  :root[data-theme='dark'] .mobile-plus-sheet {
-    background: rgba(28, 28, 33, 0.9);
-  }
+  padding: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
+  animation: mobile-sheet-in 160ms ease-out;
 }
 
 /* mobile-sheet-in：轻面板上浮入场（模型卡 / 设置卡引用，勿删） */
@@ -3107,6 +3053,121 @@ body {
   to {
     transform: none;
   }
+}
+
+/* ── 设置抽屉「对话」区：分组标题 / 行按钮 / 子面板 ── */
+.mobile-settings-group {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-settings-group:first-of-type {
+  margin-top: 4px;
+}
+
+.mobile-settings-row-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 4px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
+}
+
+.mobile-settings-row-btn:active {
+  background: rgba(120, 120, 128, 0.12);
+}
+
+.mobile-settings-row-btn-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mobile-settings-row-btn-value {
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+
+.mobile-settings-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 8px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--m-fill);
+}
+
+.mobile-settings-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
+}
+
+.mobile-settings-sub-item:active {
+  background: rgba(120, 120, 128, 0.14);
+}
+
+.mobile-settings-sub-item.is-active {
+  background: rgba(120, 120, 128, 0.16);
+  font-weight: 600;
+}
+
+.mobile-settings-sub-item svg {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--m-accent);
+}
+
+.mobile-settings-sub-name {
+  flex-shrink: 0;
+}
+
+.mobile-settings-sub-desc {
+  font-size: 12px;
+  color: var(--m-fg-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-settings-sub-note {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--m-fg-secondary);
 }
 
 @supports (backdrop-filter: blur(20px)) {

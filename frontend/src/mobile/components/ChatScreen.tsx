@@ -123,6 +123,9 @@ export default function ChatScreen({
       <NavBar
         wsStatus={wsStatus}
         activity={activity}
+        token={token}
+        model={model}
+        onReloadHistory={onReloadHistory}
         onNewChat={onNewChat}
         onDisconnect={onDisconnect}
         sessions={sessions}

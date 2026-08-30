@@ -9,11 +9,32 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ALargeSmall, Check, Layers, Moon, RotateCcw, Settings, Sun, Wrench, X } from 'lucide-react'
+import {
+  ALargeSmall,
+  Brain,
+  Check,
+  Layers,
+  Moon,
+  RefreshCw,
+  RotateCcw,
+  Settings,
+  Sun,
+  Wrench,
+  X,
+  Zap,
+} from 'lucide-react'
 import { getTheme, toggleTheme, type MobileTheme } from '../theme'
 import { getCachedLanUrl, getCachedRelayUrl } from '../connection'
 import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
-import type { ShelfSessions } from '../api'
+import {
+  fetchCustomAgents,
+  fetchModelConfig,
+  switchMobileMode,
+  switchMobileModel,
+  type CustomAgentBrief,
+  type ModelConfig,
+  type ShelfSessions,
+} from '../api'
 import type { ActivityState } from '../store'
 import type { WsStatus } from '../ws'
 import { t } from '../i18n'
@@ -21,6 +42,12 @@ import { t } from '../i18n'
 interface Props {
   wsStatus: WsStatus
   activity: ActivityState
+  /** 鉴权 token（拉取模型配置 / 切换模式模型） */
+  token: string
+  /** 当前执行模型（store.model，session_info 事件下发，只读展示） */
+  model?: string
+  /** 手动重新拉取历史（网络/应用切换后历史不显示时一键刷新） */
+  onReloadHistory?: () => void
   /** 新会话（点击 logo 菜单触发）：清空前端消息 */
   onNewChat?: () => void
   /** 重置连接（设置弹窗触发）：清除 token 回到配对页 */
@@ -105,6 +132,9 @@ function BlinkLogo() {
 export default function NavBar({
   wsStatus,
   activity,
+  token,
+  model,
+  onReloadHistory,
   onNewChat,
   onDisconnect,
   sessions,
@@ -115,6 +145,68 @@ export default function NavBar({
   const [fontSize, setFs] = useState<MobileFontSize>(getFontSize)
   const [fsOpen, setFsOpen] = useState(false)
   const fsWrapRef = useRef<HTMLDivElement>(null)
+
+  // ── 设置抽屉「对话」区：模式 / 模型选择 ──
+  const [modePickerOpen, setModePickerOpen] = useState(false)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null)
+  const [modelLoading, setModelLoading] = useState(false)
+  const [customAgents, setCustomAgents] = useState<CustomAgentBrief[]>([])
+  const [activeCustomName, setActiveCustomName] = useState<string | null>(null)
+  const currentMode = activity.mode || 'leader'
+  const modeLabel =
+    currentMode === 'workflow'
+      ? 'Workflow'
+      : currentMode === 'custom'
+        ? activeCustomName || 'Custom'
+        : 'Leader'
+
+  // 自定义 Agent：挂载时拉取（列表 + 激活卡片名），卡片管理在桌面端
+  useEffect(() => {
+    if (!token) return
+    fetchCustomAgents(token)
+      .then(info => {
+        setCustomAgents(info.agents || [])
+        setActiveCustomName(info.active?.name ?? null)
+      })
+      .catch(() => {})
+  }, [token])
+
+  /** 模式切换：走后端 set_mode（唯一权威源），WS 广播 ModeChanged 双端同步 */
+  const selectMode = (m: string) => {
+    setModePickerOpen(false)
+    const label = m === 'workflow' ? 'Workflow' : m === 'custom' ? activeCustomName || 'Custom' : 'Leader'
+    switchMobileMode(token, m)
+      .then(() => {
+        setModePickerOpen(false)
+        // 切 mode 后重拉该 mode 生效模型
+        fetchModelConfig(token, m).then(cfg => setModelConfig(cfg)).catch(() => {})
+      })
+      .catch(() => {})
+  }
+
+  /** 打开模型选择：拉取配置（不缓存——桌面端改配置后立即可见） */
+  const openModelPicker = () => {
+    setModelPickerOpen(o => !o)
+    if (!modelConfig) {
+      setModelLoading(true)
+      fetchModelConfig(token, currentMode)
+        .then(cfg => setModelConfig(cfg))
+        .catch(() => setModelConfig(null))
+        .finally(() => setModelLoading(false))
+    }
+  }
+
+  /** 模型切换：provider-driven（后端读 config.toml），成功后刷新配置 */
+  const switchToModel = async (id: string, provider: string) => {
+    try {
+      await switchMobileModel(token, id, provider, currentMode)
+      const cfg = await fetchModelConfig(token, currentMode)
+      setModelConfig(cfg)
+    } catch {
+      /* toast 由上层反馈（模型行点击后可见状态） */
+    }
+  }
   // 品牌菜单（点击 logo 弹出：新会话 / 会话 / 设置）与设置弹窗
   const [logoMenuOpen, setLogoMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -247,6 +339,101 @@ export default function NavBar({
             <X size={16} aria-hidden="true" />
           </button>
         </div>
+        {/* ── 对话区：模式 / 模型 / 重新拉取（与输入栏「+」整合） ── */}
+        <div className="mobile-settings-group">对话</div>
+        <button
+          type="button"
+          className="mobile-settings-row-btn"
+          onClick={() => {
+            setModePickerOpen(o => !o)
+            setModelPickerOpen(false)
+          }}
+          aria-expanded={modePickerOpen}
+        >
+          <span className="mobile-settings-row-btn-label">
+            <Zap size={14} aria-hidden="true" /> 模式
+          </span>
+          <span className="mobile-settings-row-btn-value">{modeLabel}</span>
+        </button>
+        {modePickerOpen && (
+          <div className="mobile-settings-sub" role="menu" aria-label="模式选择">
+            <button
+              type="button"
+              className={`mobile-settings-sub-item${currentMode !== 'workflow' ? ' is-active' : ''}`}
+              onClick={() => selectMode('leader')}
+            >
+              <span className="mobile-settings-sub-name">Leader</span>
+              <span className="mobile-settings-sub-desc">自主判断路径</span>
+              {currentMode !== 'workflow' && <Check size={15} aria-hidden="true" />}
+            </button>
+            <button
+              type="button"
+              className={`mobile-settings-sub-item${currentMode === 'workflow' ? ' is-active' : ''}`}
+              onClick={() => selectMode('workflow')}
+            >
+              <span className="mobile-settings-sub-name">Workflow</span>
+              <span className="mobile-settings-sub-desc">解析模板生成可执行工作流</span>
+              {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
+            </button>
+            {activeCustomName ? (
+              <button
+                type="button"
+                className={`mobile-settings-sub-item${currentMode === 'custom' ? ' is-active' : ''}`}
+                onClick={() => selectMode('custom')}
+              >
+                <span className="mobile-settings-sub-name">{activeCustomName}</span>
+                <span className="mobile-settings-sub-desc">我的专属 Agent</span>
+                {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
+              </button>
+            ) : (
+              <div className="mobile-settings-sub-note">自定义 Agent 请在桌面端创建</div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className="mobile-settings-row-btn"
+          onClick={openModelPicker}
+          aria-expanded={modelPickerOpen}
+        >
+          <span className="mobile-settings-row-btn-label">
+            <Brain size={14} aria-hidden="true" /> 模型
+          </span>
+          <span className="mobile-settings-row-btn-value">{model || modelConfig?.current || '—'}</span>
+        </button>
+        {modelPickerOpen && (
+          <div className="mobile-settings-sub" role="menu" aria-label="模型选择">
+            {modelLoading && <div className="mobile-settings-sub-note">加载中…</div>}
+            {!modelLoading &&
+              modelConfig?.models?.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`mobile-settings-sub-item${modelConfig.current === m.id ? ' is-active' : ''}`}
+                  onClick={() => void switchToModel(m.id, m.provider)}
+                >
+                  <span className="mobile-settings-sub-name">{m.alias?.[0] || m.id}</span>
+                  {modelConfig.current === m.id && <Check size={15} aria-hidden="true" />}
+                </button>
+              ))}
+            {!modelLoading && (!modelConfig?.models || modelConfig.models.length === 0) && (
+              <div className="mobile-settings-sub-note">暂无模型，请先在桌面端配置</div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className="mobile-settings-row-btn"
+          onClick={() => {
+            setSettingsOpen(false)
+            onReloadHistory?.()
+          }}
+        >
+          <span className="mobile-settings-row-btn-label">
+            <RefreshCw size={14} aria-hidden="true" /> 重新拉取
+          </span>
+          <span className="mobile-settings-row-btn-value">历史异常时刷新</span>
+        </button>
         <div className="mobile-settings-info">
           <div className="mobile-settings-row">
             <span className="mobile-settings-label">连接</span>
