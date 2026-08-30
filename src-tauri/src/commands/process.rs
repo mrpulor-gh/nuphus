@@ -416,19 +416,13 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 }
             })
             .and_then(|sid| crate::commands::process::shelf::read_mirror(&sid).map(|(m, _)| m));
-        match session_mode {
-            Some(sm) => {
-                if crate::commands::process::shelf::normalize_mode(&parsed_str)
-                    != crate::commands::process::shelf::normalize_mode(&sm)
-                {
-                    // 输入框 mode ≠ session 绑定 mode → 新建该 mode 会话
-                    force_new = true;
-                }
-                // 一致 → 保持当前 session 续聊（即使中途 mode 切换过）
-            }
-            // 无 session 快照（新会话/未落库）→ 直接续聊当前槽，不新建
-            None => {}
+        if let Some(sm) = session_mode {
+            // 输入框 mode ≠ session 绑定 mode → 新建该 mode 会话；
+            // 一致 → 保持当前 session 续聊（即使中途 mode 切换过）
+            force_new = crate::commands::process::shelf::normalize_mode(&parsed_str)
+                != crate::commands::process::shelf::normalize_mode(&sm);
         }
+        // 无 session 快照（新会话/未落库）→ 直接续聊当前槽，不新建
     }
 
     // 发送确认当前模式：前端传的 mode 与后端权威一致（手机端发消息默认带 mode，
@@ -504,7 +498,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     })
                     .unwrap_or_else(|| kind.to_string())
             };
-            crate::commands::process::shelf::archive_active(&state, &mut guard, &real_kind);
+            crate::commands::process::shelf::archive_active(state, &mut guard, &real_kind);
             (None, None)
         } else if is_workflow {
             (None, guard.workflow_agent.take())

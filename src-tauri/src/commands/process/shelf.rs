@@ -1189,7 +1189,9 @@ mod tests {
         let a = session_with_user(&["快照A"]);
         let b = session_with_user(&["快照B"]);
         write_mirror("leader", &a, &[]);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // upsert_snapshot 的 updated_at 为 RFC3339 秒级精度——sleep 必须跨秒，
+        // 否则两条快照时间戳相同、ORDER BY updated_at DESC 排序不稳定（回归 2026-08-30）
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         write_mirror("workflow", &b, &[]);
 
         let mut shelf = ShelfState::default();
@@ -1309,14 +1311,26 @@ mod tests {
             *cm = "workflow".to_string();
         }
         let sess = session_with_user(&["跨 mode 会话"]);
-        let sess_id = sess.id.clone();
         {
             let mut guard = state.runtime.lock().unwrap();
             guard.workflow_agent = Some(workflow_agent_with(sess));
         }
+        // workflow_agent_with 内部创建新 Session（只复制消息、id 为新生成）——
+        // 快照 key 必须用 agent 实际 session id，否则 get_snapshot 查不到
+        // 而 fallback current_mode（回归 2026-08-30：断言拿到 workflow 而非 leader）
+        let agent_sess_id = {
+            let guard = state.runtime.lock().unwrap();
+            guard
+                .workflow_agent
+                .as_ref()
+                .unwrap()
+                .session()
+                .id
+                .clone()
+        };
         // 存储快照归属 leader（upsert_snapshot 绑定 mode 与快照）
         let json = serde_json::to_string(&session_with_user(&["跨 mode 会话"])).unwrap();
-        nuphus::store::session::upsert_snapshot(&sess_id, "leader", &json).unwrap();
+        nuphus::store::session::upsert_snapshot(&agent_sess_id, "leader", &json).unwrap();
 
         let r = list_shelf_sessions_inner(&state).unwrap();
         let items = r["items"].as_array().unwrap();
@@ -1327,7 +1341,7 @@ mod tests {
             "active 条目 mode 应来自存储快照归属，而非 current_mode"
         );
 
-        let _ = nuphus::store::session::delete_session(&sess_id);
+        let _ = nuphus::store::session::delete_session(&agent_sess_id);
     }
 
     /// 欢迎页「继续对话」：workflow 镜像也应显示按钮（全 mode 统一支持，
