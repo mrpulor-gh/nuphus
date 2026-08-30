@@ -9,7 +9,7 @@
  * 轻量原则：执行过程不再内嵌列表，收敛为一行状态行 + 弹窗详情。
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   ChevronRight,
@@ -107,6 +107,18 @@ export default function MessageBubble({
   const [copied, setCopied] = useState(false)
   // 图片放大预览（点击缩略图打开全屏 Lightbox）
   const [previewImg, setPreviewImg] = useState<string | null>(null)
+
+  // 执行弹窗自动关闭：点开时消息正在流式（执行中）→ 流式结束（执行完成，
+  // streaming 置 false）自动关闭弹窗回到对话；点开时已完成的（历史消息）不自动关。
+  const wasStreamingOnOpenRef = useRef(false)
+  useEffect(() => {
+    if (traceOpen) wasStreamingOnOpenRef.current = !!message.streaming
+  }, [traceOpen])
+  useEffect(() => {
+    if (traceOpen && wasStreamingOnOpenRef.current && !message.streaming) {
+      setTraceOpen(false)
+    }
+  }, [message.streaming, traceOpen])
 
   if (message.role === 'system') {
     return <div className="mobile-msg-system">{message.content}</div>

@@ -299,11 +299,14 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       // 手机端「执行过程」应展示完整链路（与桌面端 timeline 一致）。
       const messages = state.messages.slice()
       const last = messages[messages.length - 1]
-      // 执行过程统一进 traceItems（思考 + agent 流式文本，按实际顺序）；content 仅最终回复
+      // 执行过程统一进 traceItems（思考 + agent 流式文本，按实际顺序）；正文 delta
+      // 同时实时累积到 content（流式显示，对齐桌面端），execution_completed 时以
+      // result_message 覆盖定稿——流式过程可见、最终回复干净（中间过程文本仅流式可见）。
       const kind: 'thinking' | 'text' = ev.is_thinking ? 'thinking' : 'text'
       if (last && last.role === 'assistant' && last.streaming) {
         messages[messages.length - 1] = {
           ...last,
+          content: kind === 'text' ? (last.content ?? '') + ev.text : last.content,
           thinking: kind === 'thinking' ? (last.thinking ?? '') + ev.text : last.thinking,
           traceItems: appendTraceItem(last.traceItems, kind, ev.text),
         }
@@ -311,7 +314,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         messages.push({
           id: rid(),
           role: 'assistant',
-          content: '',
+          content: kind === 'text' ? ev.text : '',
           thinking: kind === 'thinking' ? ev.text : undefined,
           traceItems: [{ kind, text: ev.text }],
           streaming: true,
