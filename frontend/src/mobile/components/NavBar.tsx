@@ -293,48 +293,45 @@ export default function NavBar({
             <X size={16} aria-hidden="true" />
           </button>
         </div>
-          {sessions && sessions.items.length > 0 ? (
-            <div className="mobile-sess-list">
-              {sessions.items.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={['mobile-sess-item', item.is_active ? 'is-active' : '']
-                    .filter(Boolean)
-                    .join(' ')}
-                  disabled={activity.running}
-                  onClick={() => {
-                    if (item.is_active) {
-                      setSessionsOpen(false)
-                      return
-                    }
+        {sessions && sessions.items.length > 0 ? (
+          <div className="mobile-sess-list">
+            {sessions.items.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={['mobile-sess-item', item.is_active ? 'is-active' : '']
+                  .filter(Boolean)
+                  .join(' ')}
+                disabled={activity.running}
+                onClick={() => {
+                  if (item.is_active) {
                     setSessionsOpen(false)
-                    // 传 session 存储归属 mode（与桌面端统一：输入框 mode 跟随 session mode）
-                    onSwitchSession?.(item.id, item.mode)
-                  }}
-                >
-                  <span className="mobile-sess-title">
-                    {item.mode && (
-                      <span
-                        className={`mobile-sess-mode mode-${item.mode}`}
-                        aria-hidden="true"
-                      >
-                        {item.mode.toUpperCase()}
-                      </span>
-                    )}
-                    {item.title || item.id}
-                  </span>
-                  <span className="mobile-sess-meta">
-                    {item.is_active ? '当前 · ' : ''}
-                    {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
-                    {item.message_count} 条
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="mobile-sess-empty">暂无会话记录</div>
-          )}
+                    return
+                  }
+                  setSessionsOpen(false)
+                  // 传 session 存储归属 mode（与桌面端统一：输入框 mode 跟随 session mode）
+                  onSwitchSession?.(item.id, item.mode)
+                }}
+              >
+                <span className="mobile-sess-title">
+                  {item.mode && (
+                    <span className={`mobile-sess-mode mode-${item.mode}`} aria-hidden="true">
+                      {item.mode.toUpperCase()}
+                    </span>
+                  )}
+                  {item.title || item.id}
+                </span>
+                <span className="mobile-sess-meta">
+                  {item.is_active ? '当前 · ' : ''}
+                  {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
+                  {item.message_count} 条
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mobile-sess-empty">暂无会话记录</div>
+        )}
         <div className="mobile-settings-reset-hint">切换的是电脑端正在显示的对话，两端同步</div>
       </div>
     ) : null
