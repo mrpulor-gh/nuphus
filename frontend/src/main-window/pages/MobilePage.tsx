@@ -27,6 +27,7 @@ import {
   relayClientUpdateNode,
   relayCallerTokenRotate,
   type MobileServerStatus,
+  type RelayChannelState,
   type RelayClientStatus,
 } from '../lib/api'
 import '../../styles/mobile-panel.css'
@@ -39,6 +40,16 @@ function cleanIpcError(e: unknown): string {
   const s = String(e)
   const m = s.match(/failed:\s*(.+)$/)
   return m ? m[1].trim() : s
+}
+
+/** 通道状态 → 连线视觉态（真实映射：connected=通 / retrying=重连中 / fault=阻断 / 其余=关） */
+type LineState = 'active' | 'warn' | 'err' | 'off'
+function lineStateFor(ch: RelayChannelState | undefined, running: boolean): LineState {
+  if (!running) return 'off'
+  if (ch?.status === 'connected') return 'active'
+  if (ch?.status === 'retrying') return 'warn'
+  if (ch?.status === 'fault') return 'err'
+  return 'off'
 }
 
 /** 可展开列表项 id */
@@ -103,14 +114,10 @@ export function MobilePage() {
     return 'off'
   })()
 
-  const lineCls =
-    topo === 'off'
-      ? ''
-      : topo === 'fault'
-        ? 'active-err'
-        : topo === 'retrying'
-          ? 'active-warn'
-          : 'active'
+  // 两条连线独立映射真实通道（LAN 直连时整链视为通）：
+  //   PC → 中间 = relay 通道；中间 → MOB = tunnel 通道
+  const lineClsRelay = topo === 'lan' ? 'active' : lineStateFor(relay?.state?.relay, running)
+  const lineClsTunnel = topo === 'lan' ? 'active' : lineStateFor(relay?.state?.tunnel, running)
   const midIcon = topo === 'off' ? '···' : topo === 'lan' ? 'LAN' : 'REL'
   const midLabel =
     topo === 'lan'
@@ -337,28 +344,34 @@ export function MobilePage() {
           />
         }
       >
-        {/* 拓扑管线：PC → 中间节点 → MOB（状态直接显示在图形节点上） */}
+        {/* 拓扑管线：PC → 中间节点 → MOB（状态直接显示在图形节点/连线颜色上） */}
         <div className="mobile-topology">
           <div className="mobile-topo-pipeline">
-            <div className="mobile-topo-node">
-              <div className="mobile-topo-icon">PC</div>
+            <div className={`mobile-topo-node state-${running ? 'on' : 'off'}`}>
+              <div
+                className="mobile-topo-icon"
+                title={running ? t('mobile.statusRunning') : t('mobile.statusStopped')}
+              >
+                PC
+              </div>
               <span className="mobile-topo-label">{t('mobile.topoDeskLabel')}</span>
-              <span className="mobile-topo-sub">
-                {running ? t('mobile.statusRunning') : t('mobile.statusStopped')}
-              </span>
             </div>
-            <div className={`mobile-topo-line ${lineCls}`} />
+            <div className={`mobile-topo-line ${lineClsRelay}`} />
             <div className={`mobile-topo-node is-mid state-${topo}`}>
-              <div className="mobile-topo-icon">{midIcon}</div>
+              <div className="mobile-topo-icon" title={midLabel}>
+                {midIcon}
+              </div>
               <span className="mobile-topo-label">{midLabel}</span>
             </div>
-            <div className={`mobile-topo-line ${lineCls}`} />
-            <div className="mobile-topo-node">
-              <div className="mobile-topo-icon">MOB</div>
+            <div className={`mobile-topo-line ${lineClsTunnel}`} />
+            <div className={`mobile-topo-node state-${status?.token ? 'on' : 'off'}`}>
+              <div
+                className="mobile-topo-icon"
+                title={status?.token ? t('mobile.paired') : t('mobile.unpaired')}
+              >
+                MOB
+              </div>
               <span className="mobile-topo-label">{t('mobile.topoPhoneLabel')}</span>
-              <span className="mobile-topo-sub">
-                {status?.token ? t('mobile.paired') : t('mobile.unpaired')}
-              </span>
             </div>
           </div>
         </div>

@@ -513,18 +513,24 @@
   white-space: nowrap;
 }
 
-/* 节点状态小字（直接显示在拓扑图形节点上） */
-.mobile-topo-sub {
-  font-size: var(--fz-2xs);
-  color: var(--fg-4);
-  white-space: nowrap;
+/* 两端节点（PC / MOB）：就绪 = 主题色；未就绪 = 灰（状态不再用小字，直接看 icon 颜色） */
+.mobile-topo-node.state-on .mobile-topo-icon {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-/* 连线：灰=断开 / 主题色=正常 / 橙=重连 / 红=故障 */
+.mobile-topo-node.state-off .mobile-topo-icon {
+  opacity: 0.45;
+}
+
+/* 连线：灰=关 / 主题色流动=通 / 橙流动=重连中 / 红闪烁=阻断 */
 .mobile-topo-line {
+  position: relative;
+  overflow: hidden;
   flex: 1;
-  height: 2px;
-  border-radius: 1px;
+  height: 3px;
+  border-radius: 2px;
   background: var(--line-2);
 }
 
@@ -532,12 +538,65 @@
   background: var(--accent);
 }
 
+/* 通：光点沿线流动（数据流动感） */
+.mobile-topo-line.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 7px,
+    color-mix(in srgb, var(--accent) 35%, white) 7px 14px
+  );
+  animation: mobile-line-flow 1.1s linear infinite;
+}
+
 .mobile-topo-line.active-warn {
   background: var(--warning);
+  animation: mobile-line-pulse 1.5s ease-in-out infinite;
+}
+
+/* 重连中：暗纹流动（提示正在尝试恢复） */
+.mobile-topo-line.active-warn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 5px, transparent 5px 12px);
+  animation: mobile-line-flow 1.5s linear infinite;
 }
 
 .mobile-topo-line.active-err {
   background: var(--danger);
+  animation: mobile-line-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes mobile-line-flow {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(14px);
+  }
+}
+
+@keyframes mobile-line-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes mobile-line-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .mobile-topo-status {
