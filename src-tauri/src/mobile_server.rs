@@ -1694,12 +1694,32 @@ async fn post_switch_session<R: tauri::Runtime>(
     let state = ctx.app.state::<AppState>();
     // 与桌面端统一：传 session 存储归属 mode（无条件），跨 mode 原子切换由后端完成；
     // 兼容旧客户端不带 mode → 同 mode 切换（switch_session_inner_mode 的 None 语义）。
+    let before = state
+        .current_mode
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "leader".to_string());
     match crate::commands::process::shelf::switch_session_inner_mode(
         state.inner(),
         payload.id,
         payload.mode,
     ) {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            // 跨 mode 切换 → 广播 ModeChanged 双推，与桌面 switch_session 命令同一逻辑：
+            // 桌面 mode chip 与手机「当前模式」都依赖此事件同步，缺发会两端 mode 滞后。
+            let after = state
+                .current_mode
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "leader".to_string());
+            if crate::commands::process::shelf::normalize_mode(&before)
+                != crate::commands::process::shelf::normalize_mode(&after)
+            {
+                let emitter = crate::emitter::CompoundEmitter::new(ctx.app.clone(), state.inner());
+                emitter.emit(NuphusEvent::ModeChanged { mode: after });
+            }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Err(code) => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": code })),
@@ -1708,10 +1728,12 @@ async fn post_switch_session<R: tauri::Runtime>(
     }
 }
 
-/// POST /new-chat —— 手机遥控桌面新建对话（单一路径：复用桌面 new_chat_session_cmd
-/// 同一权威入口，非移动端独立建会话）。成功后 new_chat_session_cmd 经 CompoundEmitter
-/// 双推 SessionChanged（桌面 + 手机 WS），手机收到事件跟随显示欢迎页。
-/// 错误码为稳定字符串（busy / append_pending）→ 409 {"error": code}。
+/// POST /new-chat —— 手机遥控新建对话：**纯意图广播，后端不创建任何 session**
+/// （无空会话逻辑；会话只在 welcome 直发消息时 force_new 创建，与桌面端
+/// handleNewChat 语义完全一致 = 只是回到 welcome 界面）。
+/// guard_switch 守卫执行中拒绝（busy / append_pending → 409），空闲时
+/// CompoundEmitter 双推 NewChatBroadcast：桌面端收到执行本地 handleNewChat
+/// （清聊天区回欢迎页），手机端本机已在发送前先行清视图（幂等）。
 async fn post_new_chat<R: tauri::Runtime>(
     State(ctx): State<MobileCtx<R>>,
     headers: HeaderMap,
@@ -1721,17 +1743,19 @@ async fn post_new_chat<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    match crate::commands::process::shelf::new_chat_session_with_event(&ctx.app, state.inner()) {
-        Ok(id) => Json(serde_json::json!({ "ok": true, "session_id": id })).into_response(),
-        Err(e) => {
-            let status = if e == "busy" || e == "append_pending" {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            (status, Json(serde_json::json!({ "error": e }))).into_response()
-        }
+    // 执行中/追加待处理：拒绝（后端权威判定，与桌面 isProcessing 守卫同源语义）
+    if let Err(e) = crate::commands::process::shelf::guard_switch(state.inner()) {
+        let status = if e == "busy" || e == "append_pending" {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return (status, Json(serde_json::json!({ "error": e }))).into_response();
     }
+    // 纯意图广播：不动任何会话状态（不归档、不安装、不落库）
+    crate::emitter::CompoundEmitter::new(ctx.app.clone(), state.inner())
+        .emit(NuphusEvent::NewChatBroadcast);
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// GET /model-config — 手机端读取桌面端模型配置（与桌面端 list_models / get_default_model 同源）

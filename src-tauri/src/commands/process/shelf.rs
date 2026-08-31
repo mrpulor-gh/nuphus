@@ -314,7 +314,8 @@ pub(crate) fn protected_snapshot_ids(state: &AppState) -> Vec<String> {
 }
 
 /// 切换守卫。Err(稳定错误码) 供前端映射文案。
-fn guard_switch(state: &AppState) -> Result<(), &'static str> {
+/// pub(crate)：mobile_server /new-chat 纯意图广播复用同一守卫（busy/append 拒绝）。
+pub(crate) fn guard_switch(state: &AppState) -> Result<(), &'static str> {
     if state.busy.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("busy");
     }

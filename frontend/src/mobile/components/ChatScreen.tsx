@@ -125,6 +125,7 @@ export default function ChatScreen({
         activity={activity}
         token={token}
         model={model}
+        tokenUsage={tokenUsage}
         onReloadHistory={onReloadHistory}
         onNewChat={onNewChat}
         onDisconnect={onDisconnect}

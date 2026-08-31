@@ -12,6 +12,7 @@ import {
   fetchAgentStatus,
   fetchSessions,
   switchSession,
+  newChatSession,
   triggerRefine,
   refineSkip,
   fetchRelayHint,
@@ -86,6 +87,11 @@ export default function App() {
   /** 通道判定完成即可聊（lan/wan 均可） */
   const canChat = connMode !== null
   const [state, dispatch] = useReducer(chatReducer, initialChatState)
+  // messages 镜像 ref：handleSend 判定 welcome 直发时读取（桌面端 messagesRef 同款）。
+  // messages 变化不在 handleSend 依赖数组里，闭包捕获的 state.messages 会过期——
+  // 曾导致历史加载后的首条消息被误判为 welcome 直发，force_new 误建新会话。
+  const messagesRef = useRef(state.messages)
+  messagesRef.current = state.messages
   // 任务执行中保持屏幕常亮（仅中继 HTTPS 下生效，局域网 HTTP 静默降级）
   useWakeLock(state.activity.running)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
@@ -340,7 +346,9 @@ export default function App() {
       switchSession(token ?? '', id, mode)
         .then(res => {
           if (res.ok) {
-            showToast('已切换会话')
+            // 成功反馈统一走 WS SessionChanged 事件（本机也收到一次 → toast「桌面已切换会话」
+            // + 重拉历史，单一路径）；此处仅兜底立即重拉（对应桌面 rail 切换后主动刷新），
+            // 不再本地重复 toast
             void loadHistory(token ?? '')
             refreshSessions(token ?? '')
           } else {
@@ -768,10 +776,11 @@ export default function App() {
       // ── 空闲：乐观回显 → POST（send_id 去重）→ 失败撤销 ──
       const optimistic = makeOptimisticMessage(content, opts?.images)
       dispatch({ type: 'optimistic', message: optimistic })
-      // welcome 直发 = 创建新对话：本端 messages 为空（电脑端欢迎界面）→ 传
-      // new_session=true，后端 force_new 创建该 mode 新会话（与桌面端一致）。
-      // 手机是第二块屏，以电脑端实时状态为准——messages 空即电脑端无会话。
-      const newSession = state.messages.length === 0
+      // welcome 直发 = 创建新对话：本端 messages 为空（welcome 界面）→ 传
+      // new_session=true，后端 force_new 创建该 mode 新会话。判定与桌面端
+      // useSession.ts 的 messagesRef.current.length === 0 完全同源（ref 取最新值，
+      // 不受闭包过期影响）；会话内发送（有历史）→ new_session=false，消息进当前会话。
+      const newSession = messagesRef.current.length === 0
       // ⚠️ 2026-08-26 移除「发送前探测局域网」：resolveLanUrl 经中继 fetchRelayHint
       // 慢（国际链路 20s 超时）会阻塞发送 → 实测「发消息卡死」（气泡永久 pending）。
       // 发送立即走当前通道（中继/直连），通道切换由 8s 巡检/进入探测负责——发送不等待探测。
@@ -948,15 +957,22 @@ export default function App() {
               .catch(() => showToast(t('mobile.stopFailed')))
           }}
           onNewChat={() => {
-            // 与桌面端统一（2026-08-30 解耦）：新建对话只回 welcome 界面，
-            // 不创建任何会话、不调 /new-chat——对话只在 welcome 发送消息时创建
-            // （发送带 new_session=true）。手机是第二块屏，行为与电脑端完全一致。
-            // 本端清空视图回 welcome；后端状态不变（无空会话产生）。
-            if (!token) return
-            dispatch({ type: 'new_chat' })
-            showToast(t('mobile.newChatStarted'))
-            void loadHistory(token)
-            refreshSessions(token)
+            // 新建对话 = 双端纯视图回 welcome，后端零会话创建（与桌面 handleNewChat
+            // 语义完全一致，手机就是个控制按钮）。遥控路径：POST /new-chat 仅做
+            // guard_switch 守卫 + NewChatBroadcast 双推——不归档、不安装空会话；
+            // 会话创建仍只发生在 welcome 直发消息（new_session=true → force_new）。
+            // 桌面端收到广播执行本地 handleNewChat（Ctrl+N 同款）跟随回欢迎页。
+            // 成功后本地立即清视图（不等 WS 事件，即时反馈；广播对本机幂等）。
+            // ⚠️ 失败（busy/网络）不动视图：本地清了后端没广播，双端视图撕裂——只 toast。
+            // 执行中禁用：本地守卫（NavBar disabled + 此处）→ 后端 guard_switch 三层。
+            if (state.activity.running) return
+            void newChatSession(token ?? '').then(res => {
+              if (res.ok) {
+                dispatch({ type: 'new_chat' })
+              } else {
+                showToast(res.error)
+              }
+            })
           }}
           onDisconnect={() => {
             // 断开连接：清除 token + WS，回到配对页

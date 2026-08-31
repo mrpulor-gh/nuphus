@@ -278,6 +278,13 @@ pub enum NuphusEvent {
     /// 会话清单结构变化（手动归档 / 重命名）——当前会话未变，手机端只需刷新
     /// 会话清单，不重拉历史、不弹跟随提示。
     ShelfUpdated,
+
+    // ── 新建对话意图（手机遥控 → 双端回 welcome）──
+    /// 新建对话纯视图意图广播：后端**不创建/不切换任何 session**（无空会话逻辑，
+    /// 会话只在 welcome 直发消息时 force_new 创建）。手机 /new-chat 触发；
+    /// 桌面端收到后执行本地 handleNewChat（清聊天区回欢迎页，执行中自守卫）；
+    /// 手机端本机发送前已先行清视图（幂等）。
+    NewChatBroadcast,
 }
 
 // ── Helper types ──

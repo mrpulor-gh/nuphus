@@ -72,6 +72,13 @@
   --m-radius-bubble: 18px;
   --m-radius-card: 12px;
   --m-radius-pill: 999px;
+  /* 语义色（参考 gemini 风格：绿=在线/直连、蓝=中继/模式、红=危险） */
+  --m-green: #10b981;
+  --m-green-bg: #ecfdf5;
+  --m-blue: #3b82f6;
+  --m-blue-bg: #eff6ff;
+  --m-red: #ef4444;
+  --m-red-bg: #fef2f2;
   /* 消息文字大小缩放（标准 16px 基准；large=17px、xlarge=18px 由
      <html data-fontsize> 覆盖，见 fontsize.ts）。只作用于消息正文区
      （.mobile-msg-bubble / .mobile-msg-final 及其 Markdown 内容），
@@ -129,6 +136,13 @@
   --m-refine-fill: rgba(0, 0, 0, 0.07);
   --m-refine-btn-bg: #1c1c1e;
   --m-refine-btn-fg: #ffffff;
+  /* 语义色（深色主题：降低饱和提亮，浅底徽章 → 半透明底） */
+  --m-green: #34d399;
+  --m-green-bg: rgba(16, 185, 129, 0.16);
+  --m-blue: #60a5fa;
+  --m-blue-bg: rgba(59, 130, 246, 0.16);
+  --m-red: #f87171;
+  --m-red-bg: rgba(239, 68, 68, 0.16);
 }
 
 /* ── 文字大小档位（独立于主题，亮/深共用；见 fontsize.ts） ────────── */
@@ -268,7 +282,6 @@ body {
 }
 
 .mobile-nav-brand-wrap {
-  position: relative; /* logo 菜单 absolute 锚点 */
   justify-self: start;
   min-width: 0;
 }
@@ -290,14 +303,6 @@ body {
 
 .mobile-nav-brand:active {
   background: var(--m-fill);
-}
-
-/* 品牌菜单（新会话 / 设置）：复用字号浮层样式，锚定品牌区左侧下方 */
-.mobile-nav-logo-pop {
-  top: calc(100% + 6px);
-  left: 0;
-  right: auto;
-  min-width: 168px;
 }
 
 /* 状态 pill 容器：绝对居中，长文本由 pill 自身 ellipsis 约束 */
@@ -694,7 +699,9 @@ body {
   overflow-y: auto;
   overflow-x: hidden; /* 兜底：任何子元素溢出不产生横向滚动/界面偏移 */
   -webkit-overflow-scrolling: touch;
-  padding: 16px 12px 8px;
+  /* 底部 24px：执行中自动滚底后，执行胶囊/流式气泡与输入框留出可见间隙
+     （原 8px 几乎贴死输入栏，实测观感拥挤） */
+  padding: 16px 12px 24px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2018,7 +2025,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* 12px 边距：手机竖屏下弹窗宽度的实际瓶颈（100vw - 24px），留出阴影呼吸空间 */
+  padding: 12px;
   background: rgba(0, 0, 0, 0.45);
   animation: mobile-fade-in 150ms ease-out;
   /* 阻断滚动链：弹窗打开时滚动不传递到背后的会话层 */
@@ -2035,9 +2043,10 @@ body {
 }
 
 .mobile-modal {
-  /* 中心弹窗：宽度受 overlay 24px 边距约束（两侧各留 24px 间隔），上限 420px */
-  width: min(calc(100vw - 48px), 420px);
-  max-width: calc(100vw - 48px);
+  /* 中心弹窗：宽度受 overlay 12px 边距约束，宽屏（平板）上限 560px——
+     执行过程含工具参数等长文本，尽量给内容区让宽度 */
+  width: min(calc(100vw - 24px), 560px);
+  max-width: calc(100vw - 24px);
   max-height: 80dvh;
   display: flex;
   flex-direction: column;
@@ -2074,7 +2083,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 20px 14px;
+  padding: 14px 16px;
   border-bottom: 0.5px solid var(--m-separator);
 }
 
@@ -2131,7 +2140,7 @@ body {
   overscroll-behavior: contain;
   /* 底部大 padding：最后一条内容滚到底时不被输入框/Home 条遮挡
      （实测 36px 仍不够——输入框约 60px 高，需 ≥72px + 安全区） */
-  padding: 16px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2789,6 +2798,53 @@ body {
   color: var(--m-fg-secondary);
 }
 
+/* 抽屉头部品牌：logo + 字标（主视图，logo 即核心入口身份） */
+.mobile-settings-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobile-settings-brand .mobile-nav-logo {
+  width: 24px;
+  height: 24px;
+}
+
+.mobile-settings-brand-name {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--m-fg);
+}
+
+/* 抽屉头部返回：← + 标题（子视图，点选项后同面板刷新）
+   注意：颜色用 --m-fg（前景色，亮=黑/深=白），不可用 --m-accent
+   （反色表面 token，亮=白/深=黑，会造成白底白字/黑底黑字不可见） */
+.mobile-settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 0;
+  margin-left: -8px;
+  border: none;
+  background: transparent;
+  color: var(--m-fg);
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 8px;
+}
+
+.mobile-settings-back:active {
+  background: rgba(120, 120, 128, 0.12);
+}
+
+.mobile-settings-back .mobile-mode-title {
+  color: var(--m-fg);
+  font-size: 15px;
+}
+
 /* 模式选项胶囊：同主弹窗反色胶囊风格（同宽）；
    当前 mode = 反色背景突出，其它 mode = 中间色弱化 */
 .mobile-mode-capsule {
@@ -2870,76 +2926,22 @@ body {
   opacity: 0.5;
 }
 
-/* 设置弹窗：连接信息行 + 断开按钮（沿用主弹窗反色胶囊风格） */
-.mobile-settings-info {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.mobile-settings-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 16px;
-  border-radius: var(--m-radius-pill);
-  background: var(--m-plus-bg);
-  color: var(--m-plus-fg);
-  font-size: 13px;
-}
-
-.mobile-settings-label {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--m-plus-fg-secondary);
-  min-width: 34px;
-}
-
-.mobile-settings-value {
-  flex: 1;
-  min-width: 0;
-  word-break: break-all;
-  line-height: 1.4;
-}
-
-.mobile-settings-disconnect {
-  display: block;
-  width: 100%;
-  padding: 11px 0;
-  border: none;
-  border-radius: var(--m-radius-pill);
-  background: rgba(239, 68, 68, 0.14);
-  color: #ef4444;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 120ms ease-out;
-}
-
-.mobile-settings-disconnect:active {
-  background: rgba(239, 68, 68, 0.28);
-}
-
 /* 重置小字说明：警示性弱文本，解释点击后果（防误触） */
 .mobile-settings-reset-hint {
-  margin-top: 8px;
-  text-align: center;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--m-plus-fg-secondary);
-  opacity: 0.75;
+  color: var(--m-fg-secondary);
+  opacity: 0.7;
+  text-align: center;
 }
 
-/* ── 会话清单（桌面展示台镜像，NavBar「会话」弹层）────────────────────── */
+/* ── 会话清单（桌面展示台镜像，设置抽屉「会话」视图）────────────────── */
 .mobile-sess-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 42vh;
-  overflow-y: auto;
+  /* 高度自适应：抽屉（.mobile-settings-body）是唯一滚动区，
+     列表不再自设 max-height/overflow（旧弹层遗产，会截断成内嵌滚动） */
   margin-top: 10px;
 }
 
@@ -2967,10 +2969,29 @@ body {
   background: rgba(127, 127, 127, 0.12);
 }
 
-/* 当前会话：高亮描边 + 禁用态（已在看，无需切换） */
+/* 当前会话：反色胶囊底（亮=酷炫黑 / 深=简白）+ 主题色描边（已在看，无需切换）。
+   文字整体取胶囊前景保证 meta 可读；标题再用主题色 --m-accent
+   （亮=白 / 深=黑，与反色底天然强对比） */
 .mobile-sess-item.is-active {
   border-color: var(--m-accent, #f0b429);
-  opacity: 0.85;
+  background: var(--m-wf-pill-bg);
+  color: var(--m-wf-pill-fg);
+}
+
+.mobile-sess-item.is-active .mobile-sess-title {
+  color: var(--m-accent);
+}
+
+/* 点选待确认（先选后确定）：前景描边 + 浅填充，与「当前会话」反色底明确区分 */
+.mobile-sess-item.is-selected {
+  border-color: var(--m-fg);
+  background: var(--m-fill);
+}
+
+/* 执行中锁定（can_switch=false / running）：可看不可点 */
+.mobile-sess-item:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .mobile-sess-title {
@@ -3034,16 +3055,27 @@ body {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(85vw, 360px);
+  width: min(90vw, 420px);
   z-index: 220;
   border-radius: 20px 0 0 20px;
-  background: var(--m-bg);
+  background: var(--m-bg-grouped);
   border-left: 0.5px solid var(--m-separator);
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: 24px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  /* header / footer 固定，唯一滚动区为 .mobile-settings-body */
+  overflow: hidden;
+  padding: 24px 20px 0;
   box-shadow: -8px 0 32px rgba(0, 0, 0, 0.2);
   animation: mobile-drawer-in 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* 内容区：唯一可滚动区域（header/footer 固定不跳动） */
+.mobile-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 20px;
 }
 
 @keyframes mobile-drawer-in {
@@ -3055,10 +3087,106 @@ body {
   }
 }
 
-/* ── 设置抽屉「对话」区：分组标题 / 行按钮 / 子面板 ── */
-.mobile-settings-group {
-  margin: 16px 0 6px;
+/* ── 设置抽屉「对话」区：分组标题 / 卡片 / 行按钮 / 子面板 ── */
+
+/* 实时模型信息卡（header 下方第一块）：反色舒展设计——--m-plus 反色底 + 大内边距。
+   结构对齐桌面 ChatInputBar ctx 区：第一行模型名（左）+ 上下文窗口数值（右）；
+   第二行 ctx 5 格 gauge（桌面同款规格）+ 已用/容量 + 百分比（三档色）；
+   第三行 meta：cache/step/time（WS token_usage 事件实时同步） */
+.mobile-model-info {
+  background: var(--m-plus-bg);
+  color: var(--m-plus-fg);
+  border-radius: 18px;
+  padding: 20px;
+  margin: 4px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mobile-model-info-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-model-info-name {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+/* 上下文窗口数值：右侧直接显示（如 1.0M），粗体等宽 */
+.mobile-model-info-cap {
+  font-family: var(--m-font-mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.mobile-model-info-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-model-info-ctx-label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  text-transform: lowercase;
+}
+
+/* 桌面 input-bar-ctx-gauge 同款 5 格迷你进度条（3×8px、gap 2px、圆角 1px） */
+.mobile-model-info-ctx-gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.mobile-model-info-ctx-cell {
+  width: 3px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--m-plus-fg);
+  opacity: 0.15;
+  transition: background 0.3s ease;
+}
+
+.mobile-model-info-ctx-usage {
+  font-family: var(--m-font-mono, ui-monospace, monospace);
   font-size: 12px;
+  font-weight: 500;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+.mobile-model-info-pct {
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.mobile-model-info-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: var(--m-font-mono, ui-monospace, monospace);
+  color: var(--m-plus-fg);
+  opacity: 0.88;
+}
+
+.mobile-settings-group {
+  margin: 18px 0 8px 6px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--m-fg-secondary);
 }
@@ -3067,45 +3195,244 @@ body {
   margin-top: 4px;
 }
 
-.mobile-settings-row-btn {
+/* 卡片：白/深色圆角 18px（参考 gemini 风格，选项分组悬浮于分组底色上） */
+.mobile-settings-card {
+  background: var(--m-bg);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.mobile-settings-card-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: 44px;
-  padding: 8px 4px;
+  min-height: 50px;
+  padding: 13px 16px;
   border: none;
-  border-radius: 10px;
   background: transparent;
   color: var(--m-fg);
   font-family: inherit;
   font-size: 15px;
-  font-weight: 500;
   text-align: left;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  border-bottom: 0.5px solid var(--m-separator);
   transition: background 120ms ease-out;
 }
 
-.mobile-settings-row-btn:active {
-  background: rgba(120, 120, 128, 0.12);
+.mobile-settings-card-row:last-child {
+  border-bottom: none;
 }
 
-.mobile-settings-row-btn-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+.mobile-settings-card-row:active {
+  background: rgba(120, 120, 128, 0.08);
+}
+
+.mobile-settings-card-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mobile-settings-card-row.is-secondary {
+  min-height: 44px;
+  padding: 11px 16px;
+}
+
+.mobile-settings-card-icon {
+  flex-shrink: 0;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-settings-card-title {
+  flex: 1;
   min-width: 0;
+  font-weight: 500;
+  color: var(--m-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.mobile-settings-row-btn-value {
+.mobile-settings-card-title.is-secondary {
+  color: var(--m-fg-secondary);
+  font-weight: 400;
+}
+
+.mobile-settings-card-value {
   font-size: 13px;
   color: var(--m-fg-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mobile-settings-card-value.is-action {
+  color: var(--m-blue);
+  font-weight: 500;
+}
+
+/* 值徽章：运行模式（蓝）/ 模型（代码标签） */
+.mobile-settings-tag.is-mode {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-blue);
+  background: var(--m-blue-bg);
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.mobile-settings-code-tag {
+  font-family: SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  background: var(--m-fill);
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: var(--m-fg);
   max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 连接信息卡：浅灰圆角项 + 语义标签 + 等宽 IP + 复制 */
+.mobile-settings-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 14px;
+}
+
+.mobile-settings-conn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--m-bg-grouped);
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.mobile-settings-conn-label {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.mobile-settings-conn-label.is-direct {
+  color: var(--m-green);
+  background: var(--m-green-bg);
+}
+
+.mobile-settings-conn-label.is-relay {
+  color: var(--m-blue);
+  background: var(--m-blue-bg);
+}
+
+.mobile-settings-conn-ip {
+  font-family: SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  color: var(--m-fg);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-settings-conn-copy {
+  background: none;
+  border: none;
+  color: var(--m-fg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 危险区：浅红底圆角按钮 + 提示小字 */
+.mobile-settings-danger {
+  margin-top: 24px;
+}
+
+.mobile-settings-reset-btn {
+  width: 100%;
+  background: var(--m-red-bg);
+  color: var(--m-red);
+  border: none;
+  padding: 14px;
+  border-radius: 16px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 120ms ease-out;
+}
+
+.mobile-settings-reset-btn:active {
+  opacity: 0.7;
+}
+
+.mobile-settings-tip {
+  text-align: center;
+  font-size: 12px;
+  color: var(--m-fg-secondary);
+  margin-top: 8px;
+}
+
+/* header 状态徽章（参考 gemini：绿点 + 在线胶囊） */
+.mobile-settings-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  margin-left: 6px;
+}
+
+.mobile-settings-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mobile-settings-badge.is-online {
+  color: var(--m-green);
+  background: var(--m-green-bg);
+}
+.mobile-settings-badge.is-online .mobile-settings-badge-dot {
+  background: var(--m-green);
+}
+
+.mobile-settings-badge.is-connecting {
+  color: var(--m-blue);
+  background: var(--m-blue-bg);
+}
+.mobile-settings-badge.is-connecting .mobile-settings-badge-dot {
+  background: var(--m-blue);
+}
+
+.mobile-settings-badge.is-offline {
+  color: var(--m-red);
+  background: var(--m-red-bg);
+}
+.mobile-settings-badge.is-offline .mobile-settings-badge-dot {
+  background: var(--m-red);
+}
+
+/* 右侧 chevron：弱化的小箭头，暗示可进入（仅操作行） */
+.mobile-settings-row-chevron {
+  flex-shrink: 0;
+  color: var(--m-fg-secondary);
+  opacity: 0.45;
 }
 
 .mobile-settings-sub {
@@ -3170,14 +3497,134 @@ body {
   color: var(--m-fg-secondary);
 }
 
+/* ── 模型子视图：提供商手风琴分组（同一时刻只展开一组） ── */
+.mobile-model-group {
+  margin-bottom: 8px;
+}
+
+.mobile-model-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 12px;
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
+}
+
+.mobile-model-group-head:active {
+  background: rgba(120, 120, 128, 0.2);
+}
+
+.mobile-model-group-head.is-open {
+  background: rgba(120, 120, 128, 0.2);
+}
+
+.mobile-model-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.mobile-model-group-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--m-fg-secondary);
+  background: var(--m-fill);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.mobile-model-group-arrow {
+  flex-shrink: 0;
+  color: var(--m-fg-secondary);
+  transition: transform 160ms ease-out;
+}
+
+.mobile-model-group-arrow.is-open {
+  transform: rotate(180deg);
+}
+
+.mobile-model-group-body {
+  margin: 4px 0 0;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--m-fill);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── 子视图底部操作栏：返回（ghost）+ 确定（主按钮）——固定在抽屉底部，不随内容跳动 ── */
+.mobile-settings-footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: 12px;
+  margin: 0 -20px;
+  padding: 12px 20px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--m-bg);
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.mobile-settings-footer-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--m-radius-pill);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    opacity 120ms ease-out,
+    background 120ms ease-out;
+}
+
+.mobile-settings-footer-btn:active {
+  opacity: 0.85;
+}
+
+.mobile-settings-footer-btn.is-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--m-fg-secondary);
+  border: 0.5px solid var(--m-separator);
+}
+
+.mobile-settings-footer-btn.is-confirm {
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+}
+
+/* 未点选/执行中锁定的禁用态（会话视图等）：弱化但可辨识 */
+.mobile-settings-footer-btn:disabled {
+  opacity: 0.4;
+}
+
 @supports (backdrop-filter: blur(20px)) {
+  /* 抽屉实底分组色（参考 gemini：浅灰底 + 白色卡片），不做毛玻璃 */
   .mobile-settings-sheet {
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(30px) saturate(1.5);
-    -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  }
-  :root[data-theme='dark'] .mobile-settings-sheet {
-    background: rgba(28, 28, 33, 0.9);
+    background: var(--m-bg-grouped);
   }
 }
 

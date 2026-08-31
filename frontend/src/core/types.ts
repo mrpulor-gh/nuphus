@@ -615,6 +615,9 @@ export type NuphusEvent =
   | { type: 'session_changed'; session_id: string }
   /** 展示台列表变化（桌面归档/重命名会话）：手机刷新会话清单，当前会话未变 */
   | { type: 'shelf_updated' }
+  /** 新建对话纯意图广播（手机 /new-chat 触发）：后端不创建任何 session，
+   *  桌面端收到执行本地 handleNewChat（清聊天区回欢迎页）；手机端本机已先行清视图 */
+  | { type: 'new_chat_broadcast' }
   | {
       type: 'workflow_event'
       /** WorkflowEvent 子类型（run_started / step_run_started / step_run_completed /

@@ -452,38 +452,6 @@ const SWITCH_ERROR_TEXT: Record<string, string> = {
   not_found: '会话不存在或已归档',
 }
 
-export interface NewChatResult {
-  ok: boolean
-  session_id?: string
-}
-
-/** POST /new-chat —— 遥控桌面新建对话（单一路径：桌面执行权威创建，手机经
- *  SessionChanged 事件跟随显示欢迎页；本端 HTTP 成功响应兜底清一次视图）。 */
-export async function startNewChat(
-  token: string,
-): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
-  try {
-    const res = await checkAuth(
-      await fetchWithTimeout(
-        resolveApi('./new-chat'),
-        {
-          method: 'POST',
-          headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
-        },
-        SEND_TIMEOUT_MS,
-      ),
-    )
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      return { ok: false, error: body.error ?? `新建会话失败（${res.status}）` }
-    }
-    const data = (await res.json()) as NewChatResult
-    return { ok: true, sessionId: data.session_id ?? '' }
-  } catch {
-    return { ok: false, error: '网络异常，请重试' }
-  }
-}
-
 /** POST /session/switch —— 遥控切换桌面当前会话（手机视图经 SessionChanged 事件跟随刷新）。
  *  与桌面端统一：传 session 存储归属 mode，跨 mode 原子切换由后端完成。 */
 export async function switchSession(
@@ -513,6 +481,38 @@ export async function switchSession(
       ok: false,
       error: SWITCH_ERROR_TEXT[body.error ?? ''] ?? `切换失败（${body.error ?? res.status}）`,
     }
+  } catch {
+    return { ok: false, error: '网络异常，请重试' }
+  }
+}
+
+/** POST /new-chat —— 手机遥控新建对话（复用桌面 new_chat_session_cmd 同一后端权威入口，
+ *  非移动端独立建会话）。成功后后端归档当前会话 + 安装空白槽 + SessionChanged 双推：
+ *  电脑端 rail 轮询跟随回欢迎页；手机端本机也收到事件（loadHistory 空 → welcome）。
+ *  错误码为稳定字符串（busy / append_pending）→ 转用户文案。 */
+export async function newChatSession(
+  token: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await checkAuth(
+      await fetchWithTimeout(
+        resolveApi('./new-chat'),
+        {
+          method: 'POST',
+          headers: {
+            'X-Mobile-Token': token,
+            ...tunnelDeviceHeaders(),
+          },
+        },
+        SEND_TIMEOUT_MS,
+      ),
+    )
+    if (res.ok) return { ok: true }
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    if (body.error === 'busy') return { ok: false, error: '执行中无法新建，请等待完成或终止' }
+    if (body.error === 'append_pending')
+      return { ok: false, error: '追加指令处理中，稍后可新建' }
+    return { ok: false, error: `新建失败（${body.error ?? res.status}）` }
   } catch {
     return { ok: false, error: '网络异常，请重试' }
   }

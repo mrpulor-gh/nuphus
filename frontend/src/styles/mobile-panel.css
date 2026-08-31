@@ -185,6 +185,52 @@
   background: var(--success);
 }
 
+/* 中继通道状态（issue #7 诊断）：橙 = 重连中，红 = 故障 */
+.mobile-status-dot-warn {
+  background: #f59e0b;
+}
+
+.mobile-status-dot-err {
+  background: var(--danger);
+}
+
+/* ── 中继通道诊断区（双端状态 Section 内，中继启用时显示） ── */
+
+.mobile-relay-channels {
+  margin-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mobile-relay-ch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mobile-relay-ch-label {
+  flex: none;
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+}
+
+.mobile-relay-ch-state {
+  flex: none;
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+}
+
+.mobile-relay-ch-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
 /* ── 地址 / URL 复制按钮 ── */
 
 .mobile-panel-url {
@@ -387,5 +433,537 @@
   margin: var(--space-2) 0 0;
   font-size: var(--fz-xs);
   color: var(--fg-4);
+  line-height: var(--leading-normal);
+}
+
+/* ═══════════════════════════════════════════
+   网络控制中心 v3（极简黑白，Gemini 模板风格）：
+   拓扑管线 + 四条网络通路，无彩色板块装饰，
+   状态仅用单色 dot 区分（绿=正常 / 橙=重连 / 红=故障 / 灰=关闭）
+   ═══════════════════════════════════════════ */
+
+/* ── 拓扑：桌面端 → 中间节点 → 移动端（跟随主题色 accent） ── */
+.mobile-topology {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+}
+
+.mobile-topo-pipeline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-topo-node {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 52px;
+}
+
+.mobile-topo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-2);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mobile-topo-node.is-mid .mobile-topo-icon {
+  border-radius: 50%;
+}
+
+/* 中间节点：连接正常 = 主题色；重连 = warning；故障 = danger；关闭 = 灰 */
+.mobile-topo-node.is-mid.state-lan .mobile-topo-icon,
+.mobile-topo-node.is-mid.state-relay .mobile-topo-icon {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mobile-topo-node.is-mid.state-retrying .mobile-topo-icon {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.mobile-topo-node.is-mid.state-fault .mobile-topo-icon {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.mobile-topo-node.is-mid.state-off .mobile-topo-icon {
+  opacity: 0.45;
+}
+
+.mobile-topo-label {
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+
+/* 节点状态小字（直接显示在拓扑图形节点上） */
+.mobile-topo-sub {
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+
+/* 连线：灰=断开 / 主题色=正常 / 橙=重连 / 红=故障 */
+.mobile-topo-line {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-2);
+}
+
+.mobile-topo-line.active {
+  background: var(--accent);
+}
+
+.mobile-topo-line.active-warn {
+  background: var(--warning);
+}
+
+.mobile-topo-line.active-err {
+  background: var(--danger);
+}
+
+.mobile-topo-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+}
+
+/* ── 四条网络通路：简单行，无彩色板块 ── */
+.mobile-paths {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-3);
+}
+
+.mobile-path {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.mobile-path:last-child {
+  border-bottom: none;
+}
+
+.mobile-path-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mobile-path-name {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.mobile-path-state {
+  flex: none;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* 状态可用时用主题色强调（已连接/可用） */
+.mobile-path-state.is-on {
+  color: var(--accent);
+}
+
+.mobile-path-desc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  line-height: var(--leading-normal);
+}
+
+.mobile-path-addr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+/* ═══════════════════════════════════════════
+   网络控制中心 v4（Gemini 模板形态）：
+   中继节点 radio 选择 + 自定义输入 + 保存按钮
+   ═══════════════════════════════════════════ */
+
+/* 面板加宽：设置区舒展，随窗口调整 */
+.mobile-panel {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* ── 中继节点配置 ── */
+.mobile-node-config {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.mobile-node-title {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.mobile-radio-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.mobile-radio-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.mobile-radio-card:hover {
+  border-color: var(--line-2);
+}
+
+.mobile-radio-card.selected {
+  border-color: var(--accent);
+  color: var(--fg-1);
+}
+
+.mobile-radio-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line-2);
+  box-sizing: border-box;
+}
+
+.mobile-radio-card.selected .mobile-radio-dot {
+  border-color: var(--accent);
+  border-width: 4px;
+}
+
+/* 自定义节点展开表单 */
+.mobile-node-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+}
+
+.mobile-node-hint {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+}
+
+.mobile-node-label {
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+}
+
+.mobile-node-input {
+  padding: var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  color: var(--fg-1);
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+}
+
+.mobile-node-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.mobile-node-save {
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-2);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  font-size: var(--fz-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mobile-node-save:hover {
+  opacity: 0.9;
+}
+
+.mobile-node-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mobile-node-msg {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* ── 头部双端状态行 + 局域网直连地址（v5） ── */
+.mobile-dual-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+.mobile-dual-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mobile-dual-sep {
+  color: var(--line-2);
+}
+
+.mobile-lan-addr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--line-1);
+}
+
+.mobile-lan-addr-label {
+  flex: none;
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+}
+/* ═══════════════════════════════════════════
+   网络通道四条卡片（v7）：自动/可选一目了然
+   ═══════════════════════════════════════════ */
+.mobile-routes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mobile-route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+}
+
+.mobile-route-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.mobile-route-title {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+/* 自动/可选 标签：细边框文字标签，无彩色底 */
+.mobile-route-mode {
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+}
+
+.mobile-route-state {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+.mobile-route-state.is-on {
+  color: var(--accent);
+}
+
+.mobile-route-action {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  color: var(--fg-2);
+  font-size: var(--fz-2xs);
+  cursor: pointer;
+}
+
+.mobile-route-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mobile-route-desc {
+  margin: 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  line-height: var(--leading-normal);
+}
+
+/* P2P 启用指南展开区 */
+.mobile-route-guide {
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--line-2);
+  background: var(--surface-inset);
+  border-radius: 0 var(--radius-2) var(--radius-2) 0;
+}
+
+.mobile-route-guide-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+
+.mobile-route-guide-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--fz-xs);
+  color: var(--fg-2);
+  line-height: var(--leading-normal);
+}
+
+.mobile-route-guide-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fz-2xs);
+  color: var(--fg-4);
+  line-height: var(--leading-normal);
+}
+
+/* ═══════════════════════════════════════════
+   网络控制中心 v8：列表式点击展开
+   ═══════════════════════════════════════════ */
+.mobile-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+  overflow: hidden;
+  background: var(--surface-1); /* 实色底，不透明 */
+}
+
+.mobile-list-item {
+  border-bottom: 1px solid var(--line-1);
+}
+
+.mobile-list-item:last-child {
+  border-bottom: none;
+}
+
+.mobile-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-3);
+  border: none;
+  background: var(--surface-1); /* 实色底，不透明 */
+  color: var(--fg-1);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mobile-list-head:hover {
+  background: var(--surface-hover);
+}
+
+.mobile-list-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mobile-list-title {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+/* 必填标记：小字 + 主题色 */
+.mobile-required {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: var(--fz-2xs);
+  color: var(--accent);
+  line-height: 16px;
+}
+
+.mobile-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-inset); /* 实色底，不透明 */
+  border-top: 1px solid var(--line-1);
+}
+
+.mobile-list-hint {
+  margin: 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  line-height: var(--leading-normal);
+}
+
+/* 官方中继地址行 */
+.mobile-relay-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* 鉴权类故障提示（issue #7）：警告色小字 */
+.mobile-list-warn {
+  margin: 0;
+  font-size: var(--fz-xs);
+  color: var(--danger);
   line-height: var(--leading-normal);
 }

@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke } from '../core/bridge'
+import { invoke, listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
 import { wfStop, wfPause, wfResume, getToolPermissions } from './lib/api'
 import { TenetsDialog } from './dialogs/TenetsDialog'
@@ -182,6 +182,23 @@ export default function App() {
     },
     { key: 'u', ctrl: true, handler: () => setShowDesktopToolbar((p: boolean) => !p) },
   ])
+
+  // ── 手机端「新会话」遥控跟随：后端 /new-chat 广播 new_chat_broadcast（纯意图，
+  // 不创建任何 session），桌面端执行与 Ctrl+N 完全相同的 handleNewChat——清聊天区
+  // 回 welcome；执行中 handleNewChat 自守卫（isProcessing 直接 return）。
+  // ref 镜像：handleNewChat 引用随 isProcessing 变化，once-registered 监听若闭包
+  // 捕获旧实例，执行中守卫会失效（旧 isProcessing=false）→ 用 ref 取最新。
+  const handleNewChatRef = useRef(s.handleNewChat)
+  handleNewChatRef.current = s.handleNewChat
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    void listen<{ seq: number; event: { type: string } }>('nuphus-event', ({ event }) => {
+      if (event.type === 'new_chat_broadcast') handleNewChatRef.current()
+    }).then(u => {
+      unlisten = u
+    })
+    return () => unlisten?.()
+  }, [])
 
   // ── 实际启动工作流（权限与模式均已确认后调用） ──
   const executeWorkflowRun = async (id: string) => {
