@@ -15,6 +15,7 @@ import type {
 } from '../store'
 import type { WsStatus } from '../ws'
 import type { ShelfSessions } from '../api'
+import type { ConnectionMode } from '../connection'
 import { Loader2 } from 'lucide-react'
 import { t } from '../i18n'
 import NavBar from './NavBar'
@@ -41,6 +42,8 @@ interface Props {
   model?: string
   /** 会话累计上下文用量（token_usage 事件，Composer 模型卡展示） */
   tokenUsage?: { inputTokens: number; cacheHitTokens?: number }
+  /** 当前连接渠道（lan=局域网直连 / wan=中继）；透传 NavBar header 状态 pill */
+  connMode?: ConnectionMode | null
   onSend: (content: string, opts?: { images?: string[]; mode?: string }) => Promise<void>
   /** 确认卡提交成功回调（携带 approved 结果，供上层 toast 反馈） */
   onConfirmResolved: (approved: boolean) => void
@@ -95,6 +98,7 @@ export default function ChatScreen({
   assistantName,
   model,
   tokenUsage,
+  connMode,
   onSend,
   onConfirmResolved,
   onUserInputResolved,
@@ -126,6 +130,7 @@ export default function ChatScreen({
         token={token}
         model={model}
         tokenUsage={tokenUsage}
+        connMode={connMode}
         onReloadHistory={onReloadHistory}
         onNewChat={onNewChat}
         onDisconnect={onDisconnect}

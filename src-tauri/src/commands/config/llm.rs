@@ -1824,10 +1824,22 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
             model,
             window
         );
+        // 广播 model 用「当前生效模型」（effective_model 单一入口，与桌面输入框同源）：
+        // 此前用 runtime llm_config 的模型（可能是 config.toml 根模型 glm），校准广播
+        // 会在启动时把手机端 store.model 覆盖为根模型，与输入框不一致（2026-08-31 修复）。
+        let mode_now = state
+            .current_mode
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "leader".to_string());
+        let effective = nuphus::config::load_registry()
+            .ok()
+            .map(|reg| effective_model(&state.llm_config_path, &reg, &mode_now))
+            .unwrap_or_else(|| model.clone());
         let emitter = CompoundEmitter::new(app.clone(), &state);
         emitter.emit(NuphusEvent::SessionInfo {
             session_id: uuid::Uuid::new_v4().to_string(),
-            model: model.clone(),
+            model: effective,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

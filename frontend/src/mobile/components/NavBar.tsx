@@ -11,22 +11,18 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ALargeSmall,
-  Brain,
   Check,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
-  Layers,
   Moon,
+  Plus,
   RefreshCw,
-  RotateCcw,
   Sun,
   Wrench,
   X,
-  Zap,
 } from 'lucide-react'
 import { getTheme, toggleTheme, type MobileTheme } from '../theme'
-import { getCachedLanUrl, getCachedRelayUrl } from '../connection'
+import { getCachedLanUrl, getCachedRelayUrl, type ConnectionMode } from '../connection'
 import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
 import {
   fetchCustomAgents,
@@ -50,9 +46,11 @@ interface Props {
   model?: string
   /** 会话累计上下文用量（token_usage 事件实时累计；驱动 header 下模型信息卡 ctx 行） */
   tokenUsage?: { inputTokens: number; outputTokens?: number; cacheHitTokens?: number }
+  /** 当前连接渠道（lan=局域网直连 / wan=中继）；header 状态 pill 显示渠道 + 状态色 */
+  connMode?: ConnectionMode | null
   /** 手动重新拉取历史（网络/应用切换后历史不显示时一键刷新） */
   onReloadHistory?: () => void
-  /** 新会话（设置抽屉触发）：清空前端消息 */
+  /** 新会话（设置抽屉 header 按钮 → 选 mode → 遥控 /new-chat 广播，双端回 welcome） */
   onNewChat?: () => void
   /** 重置连接（设置弹窗触发）：清除 token 回到配对页 */
   onDisconnect?: () => void
@@ -63,8 +61,9 @@ interface Props {
 }
 
 /** 设置抽屉视图：单面板内容切换（点选项 → 面板内刷新）
- *  主列表 main / 子视图 sessions / mode / model / network（字号/主题在顶栏，抽屉不重复） */
-type SettingsView = 'main' | 'sessions' | 'mode' | 'model' | 'network'
+ *  主列表 main / 子视图 model（mode 改主视图手风琴直切，网络与连接走 header
+ *  状态 pill 独立弹窗——均已从抽屉移除） */
+type SettingsView = 'main' | 'model'
 
 const STATUS_LABEL: Record<WsStatus, () => string> = {
   connecting: () => t('mobile.connecting'),
@@ -143,6 +142,7 @@ export default function NavBar({
   token,
   model,
   tokenUsage,
+  connMode,
   onReloadHistory,
   onNewChat,
   onDisconnect,
@@ -164,26 +164,21 @@ export default function NavBar({
   // 会话切换锁定：与桌面 rail hardLocked 同一逻辑（canSwitch || locked 双源镜像）——
   // can_switch = 后端 guard_switch 权威守卫（busy/追加挂起，随 /sessions 下发）；
   // activity.running = 执行态实时镜像（对应桌面 locked prop）。锁定时列表可看、
-  // 点选与「确定」禁用；sessions 未加载时退回 running 单源，后端守卫仍兜底。
+  // 点选禁用（主视图会话列表点选即切换）；sessions 未加载时退回 running 单源，后端守卫仍兜底。
   const sessLocked = activity.running || (sessions ? !sessions.can_switch : false)
-  const activeSessionId = sessions?.items.find(i => i.is_active)?.id ?? null
   const modeLabel =
     currentMode === 'workflow'
       ? 'Workflow'
       : currentMode === 'custom'
         ? activeCustomName || 'Custom'
         : 'Leader'
-
-  // 自定义 Agent：挂载时拉取（列表 + 激活卡片名），卡片管理在桌面端
-  useEffect(() => {
-    if (!token) return
-    fetchCustomAgents(token)
-      .then(info => {
-        setCustomAgents(info.agents || [])
-        setActiveCustomName(info.active?.name ?? null)
-      })
-      .catch(() => {})
-  }, [token])
+  // mode 卡片描述（与 mode 子视图选项 desc 文案一致）
+  const modeDesc =
+    currentMode === 'workflow'
+      ? '解析模板生成可执行工作流'
+      : currentMode === 'custom'
+        ? '我的专属 Agent'
+        : '自主判断路径'
 
   // 模型配置：进入即主动拉取（不依赖 session_info 事件，与桌面端 config.toml 同源）；
   // mode 变化后也重拉（selectMode 内已处理，此处兜底 token/首次）
@@ -195,15 +190,34 @@ export default function NavBar({
   }, [token, currentMode])
 
   /** 模式切换：走后端 set_mode（唯一权威源），WS 广播 ModeChanged 双端同步；
-   *  选中后自动回主列表（简单直接，无认知负担）。 */
+   *  主视图手风琴直接切换（不再子视图先选后确定），成功后收起列表。 */
   const selectMode = (m: string) => {
     switchMobileMode(token, m)
       .then(() => {
-        setSettingsView('main')
+        setModeOpen(false)
         // 切 mode 后重拉该 mode 生效模型
         fetchModelConfig(token, m).then(cfg => setModelConfig(cfg)).catch(() => {})
       })
       .catch(() => {})
+  }
+
+  /** 新会话弹窗（设置抽屉 header「+」）：屏幕中心弹窗选 mode → 切 mode → 回 welcome。
+   *  后端链路与电脑端统一：set_mode（广播 ModeChanged）→ POST /new-chat（纯意图广播，
+   *  桌面 handleNewChat 跟随回欢迎页，后端零会话创建）。失败静默关闭（与 selectMode 一致）。 */
+  const openNewChatModal = () => {
+    setPickedMode(currentMode)
+    setNewChatOpen(true)
+  }
+
+  const startNewChatWithMode = (m: string) => {
+    if (activity.running) return
+    switchMobileMode(token, m)
+      .then(() => {
+        setNewChatOpen(false)
+        closeSettings()
+        onNewChat?.()
+      })
+      .catch(() => setNewChatOpen(false))
   }
 
   /** 打开模型视图：拉取配置（不缓存——桌面端改配置后立即可见），
@@ -238,16 +252,55 @@ export default function NavBar({
     }
   }
   // 设置抽屉（点击 logo 直接侧滑）——单面板 + 视图切换：
-  // main（选项列表）/ sessions（会话镜像）/ mode / model / font（点选项在面板内刷新内容）
+  // main（mode 手风琴卡 + 模型卡 + 会话列表）/ model（子视图）/ network（header 弹窗）
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsView, setSettingsView] = useState<SettingsView>('main')
   const logoWrapRef = useRef<HTMLDivElement>(null)
   const settingsSheetRef = useRef<HTMLDivElement>(null)
 
-  // 子视图「先选后确定」暂存值：进入子视图初始化为当前值，点选仅改暂存，确定才提交
-  const [pendingMode, setPendingMode] = useState<string | null>(null)
+  // 右滑关闭手势：抽屉为右侧滑出，向右滑动（水平位移 > 60px 且垂直位移小，
+  // 防纵向滚动误触发）→ 关闭。主视图无 X，右滑是主关闭手势之一（外部点击亦可）。
+  const swipeStartXRef = useRef<number | null>(null)
+  const swipeStartYRef = useRef<number | null>(null)
+  const onSheetTouchStart = (e: React.TouchEvent) => {
+    swipeStartXRef.current = e.touches[0].clientX
+    swipeStartYRef.current = e.touches[0].clientY
+  }
+  const onSheetTouchEnd = (e: React.TouchEvent) => {
+    if (swipeStartXRef.current == null || swipeStartYRef.current == null) return
+    const dx = e.changedTouches[0].clientX - swipeStartXRef.current
+    const dy = e.changedTouches[0].clientY - swipeStartYRef.current
+    swipeStartXRef.current = null
+    swipeStartYRef.current = null
+    if (dx > 60 && Math.abs(dy) < 40) closeSettings()
+  }
+
+  // mode 手风琴（主视图直接切换，不再子视图）：展开显示 Leader/Workflow/Custom
+  const [modeOpen, setModeOpen] = useState(false)
+
+  // 自定义 Agent：拉取列表 + 激活卡片名（卡片管理在桌面端）。
+  // 刷新时机三触发：token（挂载/重连）、settingsOpen（打开设置抽屉——桌面端换卡后
+  // 手机端打开即取最新名，双端一致）、currentMode（ModeChanged 切 mode 场景）。
+  // 桌面端 set_active_custom_agent 无事件广播（custom_agent.rs 只刷新 runtime），
+  // 故以「抽屉打开 + mode 变化」两个高频交互点兜底，避免 stale 卡片名显示。
+  useEffect(() => {
+    if (!token) return
+    fetchCustomAgents(token)
+      .then(info => {
+        setCustomAgents(info.agents || [])
+        setActiveCustomName(info.active?.name ?? null)
+      })
+      .catch(() => {})
+  }, [token, settingsOpen, currentMode])
+
+  // 新会话弹窗（header「+」→ 中心弹窗选 mode）：pickedMode 先选后确定
+  const [newChatOpen, setNewChatOpen] = useState(false)
+  const [pickedMode, setPickedMode] = useState<string>('leader')
+  // 网络与连接弹窗（header 状态 pill 点击 → 独立中心弹窗，已从抽屉移除）
+  const [networkOpen, setNetworkOpen] = useState(false)
+
+  // 子视图「先选后确定」暂存值：model 子视图先选后确定（mode 已改主视图直切，无暂存）
   const [pendingModel, setPendingModel] = useState<{ id: string; provider: string } | null>(null)
-  const [pendingSession, setPendingSession] = useState<{ id: string; mode?: string } | null>(null)
 
   // 模型子视图：当前展开的提供商组（手风琴——同一时刻只展开一组；null=全部收起）
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
@@ -260,21 +313,14 @@ export default function NavBar({
 
   /** 返回主视图（header ← / 底部「返回」共用）：放弃子视图未确认的暂存选择 */
   const backToMain = () => {
-    setPendingMode(null)
     setPendingModel(null)
-    setPendingSession(null)
     setSettingsView('main')
   }
 
-  /** 子视图底部「确定」：按视图提交暂存选择（模式/模型走后端，会话遥控切换） */
+  /** 子视图底部「确定」：按视图提交暂存选择（模型走后端权威入口） */
   const confirmView = () => {
-    if (settingsView === 'mode' && pendingMode) {
-      selectMode(pendingMode)
-    } else if (settingsView === 'model' && pendingModel) {
+    if (settingsView === 'model' && pendingModel) {
       void switchToModel(pendingModel.id, pendingModel.provider)
-    } else if (settingsView === 'sessions' && pendingSession) {
-      onSwitchSession?.(pendingSession.id, pendingSession.mode)
-      closeSettings()
     }
   }
 
@@ -378,7 +424,14 @@ export default function NavBar({
 
   const renderSettings = () =>
     settingsOpen ? (
-      <div className="mobile-settings-sheet" role="dialog" aria-label="设置" ref={settingsSheetRef}>
+      <div
+        className="mobile-settings-sheet"
+        role="dialog"
+        aria-label="设置"
+        ref={settingsSheetRef}
+        onTouchStart={onSheetTouchStart}
+        onTouchEnd={onSheetTouchEnd}
+      >
         {/* 头部：主列表=logo 信息（品牌）| 子视图=返回 + 标题；右侧统一关闭 */}
         <div className="mobile-mode-head">
           {settingsView === 'main' ? (
@@ -398,27 +451,32 @@ export default function NavBar({
               aria-label="返回"
             >
               <ChevronLeft size={18} aria-hidden="true" />
-              <span className="mobile-mode-title">
-                {settingsView === 'sessions'
-                  ? '会话'
-                  : settingsView === 'mode'
-                    ? '模式'
-                    : settingsView === 'model'
-                      ? '模型'
-                      : settingsView === 'network'
-                        ? '网络与连接'
-                        : '字号'}
-              </span>
+              <span className="mobile-mode-title">模型</span>
             </button>
           )}
-          <button
-            type="button"
-            className="mobile-model-card-x"
-            onClick={closeSettings}
-            aria-label="关闭"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
+          <div className="mobile-mode-head-actions">
+            <button
+              type="button"
+              className="mobile-settings-newchat"
+              onClick={openNewChatModal}
+              disabled={activity.running}
+              aria-label={t('mobile.newChat')}
+            >
+              <Plus size={15} aria-hidden="true" />
+              <span>{t('mobile.newChat')}</span>
+            </button>
+            {/* 主视图无 X 关闭（右滑关闭 + 外部点击关闭）；子视图保留 X */}
+            {settingsView !== 'main' && (
+              <button
+                type="button"
+                className="mobile-model-card-x"
+                onClick={closeSettings}
+                aria-label="关闭"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
         {/* 内容区：唯一可滚动区域（header/footer 固定不跳动） */}
         <div className="mobile-settings-body">
@@ -429,6 +487,75 @@ export default function NavBar({
                 5 格 gauge 同款，已用/容量=token_usage WS 实时累计 input + model-config
                 contextWindow（0=未知显示--）；cache/step/time=命中率/工具步数/执行用时。
                 WS 事件驱动实时同步。 */}
+            {/* 运行模式卡（模型卡上方；样式仿模型信息卡）：手风琴直接切换——
+                头部点开/收起模式列表（Leader/Workflow/Custom 点击即切，与桌面 mode
+                铭牌同源）；「当前模式」徽章放在介绍前做引导，箭头下标即展开入口 */}
+            <div className="mobile-mode-info">
+              <button
+                type="button"
+                className="mobile-mode-info-head"
+                onClick={() => setModeOpen(o => !o)}
+                aria-expanded={modeOpen}
+              >
+                <span className="mobile-mode-info-name">{modeLabel}</span>
+                <ChevronDown
+                  size={16}
+                  className={['mobile-mode-info-arrow', modeOpen ? 'is-open' : ''].filter(Boolean).join(' ')}
+                  aria-hidden="true"
+                />
+              </button>
+              {modeOpen && (
+                <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={currentMode === 'leader'}
+                    className={['mobile-mode-info-opt', currentMode === 'leader' ? 'is-active' : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => selectMode('leader')}
+                  >
+                    <span className="mobile-mode-info-opt-name">Leader</span>
+                    <span className="mobile-mode-info-opt-desc">自主判断路径</span>
+                    {currentMode === 'leader' && <Check size={15} aria-hidden="true" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={currentMode === 'workflow'}
+                    className={['mobile-mode-info-opt', currentMode === 'workflow' ? 'is-active' : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => selectMode('workflow')}
+                  >
+                    <span className="mobile-mode-info-opt-name">Workflow</span>
+                    <span className="mobile-mode-info-opt-desc">解析模板生成可执行工作流</span>
+                    {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
+                  </button>
+                  {activeCustomName ? (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={currentMode === 'custom'}
+                      className={['mobile-mode-info-opt', currentMode === 'custom' ? 'is-active' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => selectMode('custom')}
+                    >
+                      <span className="mobile-mode-info-opt-name">{activeCustomName}</span>
+                      <span className="mobile-mode-info-opt-desc">我的专属 Agent</span>
+                      {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
+                    </button>
+                  ) : (
+                    <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
+                  )}
+                </div>
+              )}
+              <div className="mobile-mode-info-desc-row">
+                <span className="mobile-mode-info-badge">{t('mobile.currentMode')}</span>
+                <span className="mobile-mode-info-desc">{modeDesc}</span>
+              </div>
+            </div>
             <div className="mobile-model-info">
               <div className="mobile-model-info-head">
                 <span className="mobile-model-info-name">{model || modelConfig?.current || '—'}</span>
@@ -452,223 +579,59 @@ export default function NavBar({
                   {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
                 </span>
               </div>
-              <div className="mobile-model-info-meta">
-                {cacheRate >= 0 && (
-                  <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
-                )}
-                <span>step {execSteps}</span>
-                <span>time {formatElapsed(execDuration)}</span>
-              </div>
-            </div>
-            {/* 对话设置：卡片化主操作（参考 gemini 风格：卡片分组 + 值徽章） */}
-            <div className="mobile-settings-group">对话设置</div>
-            <div className="mobile-settings-card">
-              <button
-                type="button"
-                className="mobile-settings-card-row"
-                disabled={activity.running}
-                onClick={() => {
-                  closeSettings()
-                  onNewChat?.()
-                }}
-              >
-                <RotateCcw size={15} className="mobile-settings-card-icon" aria-hidden="true" />
-                <span className="mobile-settings-card-title">新会话</span>
-                <span className="mobile-settings-card-value">
-                  {activity.running ? '执行中' : '回到欢迎页'}
-                </span>
-                <ChevronRight size={16} className="mobile-settings-row-chevron" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="mobile-settings-card-row"
-                onClick={() => {
-                  const active = sessions?.items.find(i => i.is_active)
-                  setPendingSession(active ? { id: active.id, mode: active.mode } : null)
-                  setSettingsView('sessions')
-                }}
-              >
-                <Layers size={15} className="mobile-settings-card-icon" aria-hidden="true" />
-                <span className="mobile-settings-card-title">当前会话</span>
-                <span className="mobile-settings-card-value">桌面展示台镜像</span>
-                <ChevronRight size={16} className="mobile-settings-row-chevron" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="mobile-settings-card-row"
-                onClick={() => {
-                  setPendingMode(currentMode)
-                  setSettingsView('mode')
-                }}
-              >
-                <Zap size={15} className="mobile-settings-card-icon" aria-hidden="true" />
-                <span className="mobile-settings-card-title">运行模式</span>
-                <span className="mobile-settings-tag is-mode">{modeLabel}</span>
-                <ChevronRight size={16} className="mobile-settings-row-chevron" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="mobile-settings-card-row"
-                onClick={openModelView}
-              >
-                <Brain size={15} className="mobile-settings-card-icon" aria-hidden="true" />
-                <span className="mobile-settings-card-title">模型选择</span>
-                <span className="mobile-settings-code-tag">
-                  {modelLoading ? '加载中…' : model || modelConfig?.current || '—'}
-                </span>
-                <ChevronRight size={16} className="mobile-settings-row-chevron" aria-hidden="true" />
-              </button>
-            </div>
-
-            {/* 网络与连接：入口行 → network 子视图（历史拉取/地址复制/重置配对）。
-                重置配对为危险操作（误触即断连回配对页），收进子视图并加二次确认 */}
-            <button
-              type="button"
-              className="mobile-settings-card-row"
-              onClick={() => setSettingsView('network')}
-            >
-              <RefreshCw size={15} className="mobile-settings-card-icon" aria-hidden="true" />
-              <span className="mobile-settings-card-title">网络与连接</span>
-              <span className="mobile-settings-card-value">{STATUS_LABEL[wsStatus]()}</span>
-              <ChevronRight size={16} className="mobile-settings-row-chevron" aria-hidden="true" />
-            </button>
-          </>
-        ) : settingsView === 'network' ? (
-          <>
-            <div className="mobile-settings-sub-note">连接信息与网络操作；历史拉取即时生效</div>
-            <div className="mobile-settings-card">
-              <button
-                type="button"
-                className="mobile-settings-card-row is-secondary"
-                onClick={() => {
-                  closeSettings()
-                  onReloadHistory?.()
-                }}
-              >
-                <RefreshCw size={14} className="mobile-settings-card-icon" aria-hidden="true" />
-                <span className="mobile-settings-card-title is-secondary">历史记录</span>
-                <span className="mobile-settings-card-value is-action">拉取同步</span>
-              </button>
-              <div className="mobile-settings-conn-list">
-                <div className="mobile-settings-conn-item">
-                  <span className="mobile-settings-conn-label is-direct">直连</span>
-                  <span className="mobile-settings-conn-ip">{getCachedLanUrl() || '局域网直连'}</span>
-                  <button
-                    type="button"
-                    className="mobile-settings-conn-copy"
-                    onClick={() => void navigator.clipboard?.writeText(getCachedLanUrl() || '')}
-                  >
-                    复制
-                  </button>
+              <div className="mobile-model-info-foot">
+                <div className="mobile-model-info-meta">
+                  {cacheRate >= 0 && (
+                    <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
+                  )}
+                  <span>step {execSteps}</span>
+                  <span>time {formatElapsed(execDuration)}</span>
                 </div>
-                {getCachedRelayUrl() && (
-                  <div className="mobile-settings-conn-item">
-                    <span className="mobile-settings-conn-label is-relay">中继</span>
-                    <span className="mobile-settings-conn-ip">{getCachedRelayUrl()}</span>
-                    <button
-                      type="button"
-                      className="mobile-settings-conn-copy"
-                      onClick={() => void navigator.clipboard?.writeText(getCachedRelayUrl() || '')}
-                    >
-                      复制
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 危险区：重置配对（误触即断连回配对页）——已在子视图深处，仍加二次确认双保险 */}
-            <div className="mobile-settings-danger">
-              <button
-                type="button"
-                className="mobile-settings-reset-btn"
-                onClick={() => {
-                  if (!window.confirm('确定重置客户端配对？将清除本地配对并断开连接，需重新扫码关联设备')) return
-                  closeSettings()
-                  onDisconnect?.()
-                }}
-              >
-                重置客户端配对
-              </button>
-              <p className="mobile-settings-tip">清除本地配对后需重新扫码关联设备</p>
-            </div>
-          </>
-        ) : settingsView === 'sessions' ? (
-          <>
-            <div className="mobile-settings-sub-note">桌面展示台镜像；选择后点「确定」切换电脑端视图</div>
-            {sessions && sessions.items.length > 0 ? (
-              <div className="mobile-sess-list">
-                {sessions.items.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={[
-                      'mobile-sess-item',
-                      item.is_active ? 'is-active' : '',
-                      // 点选待确认（先选后确定）：与「当前会话」is-active 分离的选中态
-                      pendingSession?.id === item.id && !item.is_active ? 'is-selected' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    disabled={sessLocked}
-                    onClick={() => setPendingSession({ id: item.id, mode: item.mode })}
-                  >
-                    <span className="mobile-sess-title">
-                      {item.mode && (
-                        <span className={`mobile-sess-mode mode-${item.mode}`} aria-hidden="true">
-                          {item.mode.toUpperCase()}
-                        </span>
-                      )}
-                      {item.title || item.id}
-                    </span>
-                    <span className="mobile-sess-meta">
-                      {item.is_active ? '当前 · ' : ''}
-                      {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
-                      {item.message_count} 条
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="mobile-sess-empty">暂无会话记录</div>
-            )}
-            <div className="mobile-settings-reset-hint">切换的是电脑端正在显示的对话，两端同步</div>
-          </>
-        ) : settingsView === 'mode' ? (
-          <>
-            <div className="mobile-settings-sub-note">对话处理模式，与桌面端同步切换；选择后点「确定」生效</div>
-            <div className="mobile-settings-sub" role="menu" aria-label="模式选择">
-              <button
-                type="button"
-                className={`mobile-settings-sub-item${(pendingMode ?? currentMode) !== 'workflow' ? ' is-active' : ''}`}
-                onClick={() => setPendingMode('leader')}
-              >
-                <span className="mobile-settings-sub-name">Leader</span>
-                <span className="mobile-settings-sub-desc">自主判断路径</span>
-                {(pendingMode ?? currentMode) !== 'workflow' && <Check size={15} aria-hidden="true" />}
-              </button>
-              <button
-                type="button"
-                className={`mobile-settings-sub-item${(pendingMode ?? currentMode) === 'workflow' ? ' is-active' : ''}`}
-                onClick={() => setPendingMode('workflow')}
-              >
-                <span className="mobile-settings-sub-name">Workflow</span>
-                <span className="mobile-settings-sub-desc">解析模板生成可执行工作流</span>
-                {(pendingMode ?? currentMode) === 'workflow' && <Check size={15} aria-hidden="true" />}
-              </button>
-              {activeCustomName ? (
                 <button
                   type="button"
-                  className={`mobile-settings-sub-item${(pendingMode ?? currentMode) === 'custom' ? ' is-active' : ''}`}
-                  onClick={() => setPendingMode('custom')}
+                  className="mobile-model-info-switch"
+                  onClick={openModelView}
                 >
-                  <span className="mobile-settings-sub-name">{activeCustomName}</span>
-                  <span className="mobile-settings-sub-desc">我的专属 Agent</span>
-                  {(pendingMode ?? currentMode) === 'custom' && <Check size={15} aria-hidden="true" />}
+                  {t('mobile.switchModel')}
                 </button>
+              </div>
+            </div>
+            {/* 会话列表：主视图直接展示（不再子视图）——点选即切换电脑端视图，
+                与桌面 rail 同语义；执行中/后端守卫锁定时禁用 */}
+            <div className="mobile-sess-section">
+              <div className="mobile-settings-group">会话</div>
+              {sessions && sessions.items.length > 0 ? (
+                <div className="mobile-sess-list">
+                  {sessions.items.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={['mobile-sess-item', item.is_active ? 'is-active' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      disabled={sessLocked}
+                      onClick={() => onSwitchSession?.(item.id, item.mode)}
+                    >
+                      <span className="mobile-sess-title">
+                        {item.mode && (
+                          <span className={`mobile-sess-mode mode-${item.mode}`} aria-hidden="true">
+                            {item.mode.toUpperCase()}
+                          </span>
+                        )}
+                        {item.title || item.id}
+                      </span>
+                      <span className="mobile-sess-meta">
+                        {item.is_active ? '当前 · ' : ''}
+                        {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
+                        {item.message_count} 条
+                      </span>
+                    </button>
+                  ))}
+                </div>
               ) : (
-                <div className="mobile-settings-sub-note">自定义 Agent 请在桌面端创建</div>
+                <div className="mobile-sess-empty">暂无会话记录</div>
               )}
+              <div className="mobile-settings-reset-hint">切换的是电脑端正在显示的对话，两端同步</div>
             </div>
           </>
         ) : (
@@ -734,28 +697,176 @@ export default function NavBar({
             >
               <ChevronLeft size={16} aria-hidden="true" /> 返回
             </button>
-            {/* network 视图为即时操作列表（无暂存选择），无「确定」——只留返回 */}
-            {settingsView !== 'network' && (
-              <button
-                type="button"
-                className="mobile-settings-footer-btn is-confirm"
-                disabled={
-                  (settingsView === 'mode' && !pendingMode) ||
-                  (settingsView === 'model' && !pendingModel) ||
-                  // 会话视图：未点选 / 点选即当前会话（与桌面 rail isActive no-op 一致）/
-                  // 执行中锁定 → 均不可确定
-                  (settingsView === 'sessions' &&
-                    (!pendingSession || pendingSession.id === activeSessionId || sessLocked))
-                }
-                onClick={confirmView}
-              >
-                确定
-              </button>
-            )}
+            <button
+              type="button"
+              className="mobile-settings-footer-btn is-confirm"
+              disabled={settingsView === 'model' && !pendingModel}
+              onClick={confirmView}
+            >
+              确定
+            </button>
           </div>
         )}
       </div>
     ) : null
+
+  /** 新会话弹窗：屏幕中心 modal——选 mode（先选后确定）→「开始」= 切 mode（set_mode 权威源）
+   *  + 遥控 /new-chat 广播（桌面 handleNewChat 跟随回 welcome）。与桌面 Ctrl+N 统一语义：
+   *  不创建空会话，只回欢迎页；后端零会话创建，会话只在 welcome 直发时 force_new。 */
+  const renderNewChatModal = () => (
+    <div className="mobile-newchat-overlay" onClick={() => setNewChatOpen(false)}>
+      <div
+        className="mobile-newchat-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('mobile.newChat')}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="mobile-newchat-title">{t('mobile.newChat')}</div>
+        <div className="mobile-newchat-sub">{t('mobile.newChatPickMode')}</div>
+        <div className="mobile-newchat-modes" role="radiogroup" aria-label="模式">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={pickedMode === 'leader'}
+            className={`mobile-newchat-mode${pickedMode === 'leader' ? ' is-active' : ''}`}
+            onClick={() => setPickedMode('leader')}
+          >
+            <span className="mobile-newchat-mode-name">Leader</span>
+            <span className="mobile-newchat-mode-desc">自主判断路径</span>
+            {pickedMode === 'leader' && <Check size={16} aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={pickedMode === 'workflow'}
+            className={`mobile-newchat-mode${pickedMode === 'workflow' ? ' is-active' : ''}`}
+            onClick={() => setPickedMode('workflow')}
+          >
+            <span className="mobile-newchat-mode-name">Workflow</span>
+            <span className="mobile-newchat-mode-desc">解析模板生成可执行工作流</span>
+            {pickedMode === 'workflow' && <Check size={16} aria-hidden="true" />}
+          </button>
+          {activeCustomName ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={pickedMode === 'custom'}
+              className={`mobile-newchat-mode${pickedMode === 'custom' ? ' is-active' : ''}`}
+              onClick={() => setPickedMode('custom')}
+            >
+              <span className="mobile-newchat-mode-name">{activeCustomName}</span>
+              <span className="mobile-newchat-mode-desc">我的专属 Agent</span>
+              {pickedMode === 'custom' && <Check size={16} aria-hidden="true" />}
+            </button>
+          ) : (
+            <div className="mobile-newchat-mode-note">自定义 Agent 请在桌面端创建</div>
+          )}
+        </div>
+        <div className="mobile-newchat-actions">
+          <button
+            type="button"
+            className="mobile-newchat-btn is-cancel"
+            onClick={() => setNewChatOpen(false)}
+          >
+            {t('mobile.newChatCancel')}
+          </button>
+          <button
+            type="button"
+            className="mobile-newchat-btn is-start"
+            disabled={activity.running}
+            onClick={() => startNewChatWithMode(pickedMode)}
+          >
+            {t('mobile.newChatStart')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  /** 网络与连接弹窗：header 状态 pill 点击打开（已从设置抽屉移除）——
+   *  历史拉取即时生效；连接信息只读 + 一键复制；重置配对为危险操作（二次确认） */
+  const renderNetworkModal = () => (
+    <div className="mobile-newchat-overlay" onClick={() => setNetworkOpen(false)}>
+      <div
+        className="mobile-newchat-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="网络与连接"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="mobile-newchat-title">网络与连接</div>
+        <div className="mobile-newchat-sub">连接信息与网络操作；历史拉取即时生效</div>
+        <div className="mobile-network-body">
+          <div className="mobile-settings-card">
+            <button
+              type="button"
+              className="mobile-settings-card-row is-secondary"
+              onClick={() => {
+                setNetworkOpen(false)
+                onReloadHistory?.()
+              }}
+            >
+              <RefreshCw size={14} className="mobile-settings-card-icon" aria-hidden="true" />
+              <span className="mobile-settings-card-title is-secondary">历史记录</span>
+              <span className="mobile-settings-card-value is-action">拉取同步</span>
+            </button>
+            <div className="mobile-settings-conn-list">
+              <div className="mobile-settings-conn-item">
+                <span className="mobile-settings-conn-label is-direct">直连</span>
+                <span className="mobile-settings-conn-ip">{getCachedLanUrl() || '局域网直连'}</span>
+                <button
+                  type="button"
+                  className="mobile-settings-conn-copy"
+                  onClick={() => void navigator.clipboard?.writeText(getCachedLanUrl() || '')}
+                >
+                  复制
+                </button>
+              </div>
+              {getCachedRelayUrl() && (
+                <div className="mobile-settings-conn-item">
+                  <span className="mobile-settings-conn-label is-relay">中继</span>
+                  <span className="mobile-settings-conn-ip">{getCachedRelayUrl()}</span>
+                  <button
+                    type="button"
+                    className="mobile-settings-conn-copy"
+                    onClick={() => void navigator.clipboard?.writeText(getCachedRelayUrl() || '')}
+                  >
+                    复制
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 危险区：重置配对（误触即断连回配对页）——独立弹窗仍加二次确认双保险 */}
+          <div className="mobile-settings-danger">
+            <button
+              type="button"
+              className="mobile-settings-reset-btn"
+              onClick={() => {
+                if (!window.confirm('确定重置客户端配对？将清除本地配对并断开连接，需重新扫码关联设备')) return
+                setNetworkOpen(false)
+                onDisconnect?.()
+              }}
+            >
+              重置客户端配对
+            </button>
+            <p className="mobile-settings-tip">清除本地配对后需重新扫码关联设备</p>
+          </div>
+        </div>
+        <div className="mobile-newchat-actions">
+          <button
+            type="button"
+            className="mobile-newchat-btn is-cancel"
+            onClick={() => setNetworkOpen(false)}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 
   const renderActions = () => (
     <div className="mobile-nav-right">
@@ -840,20 +951,33 @@ export default function NavBar({
     )
   }
 
-  // 空闲：连接状态（居中锚点）
+  // 空闲：连接状态（居中锚点）。pill 即网络与连接入口——显示当前渠道（局域网/中继）
+  // + 状态色（绿=在线 / 黄=连接中 / 红=断开），点击进入设置抽屉 network 子视图。
   return (
     <>
       <header className="mobile-nav">
         {renderBrand()}
         <div className="mobile-nav-center">
-          <span className={`mobile-status-pill is-${wsStatus}`} role="status">
+          <button
+            type="button"
+            className={`mobile-status-pill is-${wsStatus}${connMode ? ` is-${connMode}` : ''}`}
+            onClick={() => setNetworkOpen(true)}
+            aria-label="网络与连接"
+          >
             <span className="mobile-status-dot" aria-hidden="true" />
+            {connMode === 'lan'
+              ? `${t('mobile.connLan')} · `
+              : connMode === 'wan'
+                ? `${t('mobile.connRelay')} · `
+                : ''}
             {STATUS_LABEL[wsStatus]()}
-          </span>
+          </button>
         </div>
         {renderActions()}
       </header>
       {renderSettings()}
+      {newChatOpen && renderNewChatModal()}
+      {networkOpen && renderNetworkModal()}
     </>
   )
 }

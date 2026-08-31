@@ -363,7 +363,21 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         state.busy.store(false, Ordering::SeqCst);
     })?;
 
-    let model_name = factory.registry().model.clone();
+    // 实际生效模型（单一入口 effective_model，与桌面输入框 getEffectiveModel 同源）：
+    // 此前广播 factory.registry().model（config.toml 根模型）——mode 级 agent_models
+    // 配置（如 leader=DeepSeek）存在时根模型可能是另一模型（如 glm），手机端模型卡
+    // 显示与电脑端输入框不一致（实测 2026-08-31）。按发送 mode 解析后双端一致。
+    let mode_effective = mode
+        .as_deref()
+        .and_then(|m| nuphus::runtime::Mode::from_str(m).ok())
+        .unwrap_or_default()
+        .as_str()
+        .to_string();
+    let model_name = crate::commands::config::llm::effective_model(
+        &state.llm_config_path,
+        factory.registry(),
+        &mode_effective,
+    );
     let tools = state.tools.clone();
     // CompoundEmitter: mobile_server 运行时事件双推（桌面 + 手机 WS），否则纯 Tauri
     let emitter = crate::emitter::CompoundEmitter::new(app.clone(), state);

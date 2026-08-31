@@ -932,6 +932,7 @@ export default function App() {
           assistantName={state.identity?.assistantName}
           model={state.model}
           tokenUsage={state.tokenUsage}
+          connMode={connMode}
           workflowRun={state.workflowRun}
           wfControlBusy={wfControlBusy}
           onWorkflowPause={() =>
