@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { approveOnceSecurity, approveSessionSecurity, rejectSecurity } from '../lib/api'
 import { IconX, IconShield } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
+import { playPopupSound, playUiSound } from '../../ui/sound'
 import { useLanguage } from '../../locales'
 
 interface SecurityPromptProps {
@@ -47,14 +48,17 @@ export function SecurityPrompt({
       setBusy(true)
       switch (choice) {
         case 'once':
+          playUiSound('send')
           await approveOnceSecurity(actionId)
           onApprove(actionId)
           break
         case 'session':
+          playUiSound('send')
           await approveSessionSecurity(actionId, tool)
           onApprove(actionId)
           break
         case 'deny':
+          playUiSound('deny')
           await rejectSecurity(actionId)
           onReject(actionId)
           break
@@ -106,6 +110,11 @@ export function SecurityPrompt({
     getCurrentWindow()
       .setFocus()
       .catch(() => {})
+  }, [])
+
+  // 弹窗出现提示音：审批型打断（agent 请求权限，需用户决策）
+  useEffect(() => {
+    playPopupSound('approval')
   }, [])
 
   const promptContent = (

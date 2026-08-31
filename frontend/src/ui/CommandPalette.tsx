@@ -50,6 +50,21 @@ export function CommandPalette({
     setSelectedIdx(next)
   }, [])
 
+  /**
+   * hover 选择：事件委托到结果容器（onMouseOver 基础事件冒泡，比 React onMouseEnter
+   * 在 Tauri WebView2 中更可靠——enter 的 fromElement 判定偶发失效导致无声）。
+   * 同一 item 内移动不重复响（moveSelection 索引判断过滤）。
+   */
+  const handleResultsMouseOver = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const el = (e.target as HTMLElement).closest('.cmd-item')
+      if (!el) return
+      const idx = itemRefs.current.indexOf(el as HTMLDivElement)
+      if (idx >= 0) moveSelection(idx)
+    },
+    [moveSelection],
+  )
+
   const filtered = query
     ? items.filter(
         i =>
@@ -170,6 +185,7 @@ export function CommandPalette({
         <div
           className="cmd-palette-results"
           ref={resultsRef}
+          onMouseOver={handleResultsMouseOver}
           onWheel={e => {
             e.preventDefault()
             if (e.deltaY > 0) {
@@ -195,10 +211,10 @@ export function CommandPalette({
                       }}
                       className={`cmd-item ${flatIdx === selectedIdx ? 'selected' : ''}`}
                       onClick={() => {
+                        playUiSound('send')
                         item.action()
                         onClose()
                       }}
-                      onMouseEnter={() => setSelectedIdx(flatIdx)}
                     >
                       {iconMap?.[item.id] && <span className="cmd-icon">{iconMap[item.id]}</span>}
                       <span className="cmd-label">{item.label}</span>
@@ -222,7 +238,6 @@ export function CommandPalette({
                   item.action()
                   onClose()
                 }}
-                onMouseEnter={() => moveSelection(i)}
               >
                 {iconMap?.[item.id] && <span className="cmd-icon">{iconMap[item.id]}</span>}
                 <span className="cmd-label">{item.label}</span>

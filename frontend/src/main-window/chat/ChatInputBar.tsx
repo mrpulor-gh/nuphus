@@ -9,7 +9,7 @@ import {
   IconWrench,
 } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
-import { playUiSound } from '../../ui/sound'
+import { playUiSound, playPopupSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
@@ -893,6 +893,8 @@ export function ChatInputBar({
               label={t('input.interrupt')}
               title={t('input.interruptTitle')}
               onClick={() => {
+                // 中断提示音：注意（即将终止当前执行）
+                playPopupSound('confirm')
                 // 应用内确认弹窗（window.confirm 在 Tauri WebView 中被屏蔽，用模态防误触）
                 setStopConfirmOpen(true)
               }}

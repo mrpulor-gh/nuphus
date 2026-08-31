@@ -50,7 +50,7 @@ import { ScreenCaptureTool } from './tools/ScreenCaptureTool'
 import { DesktopToolbar } from './tools/DesktopToolbar'
 import { useSession } from '../hooks/useSession'
 import { useEvents } from '../hooks/useEvents'
-import { playPopupSound } from '../ui/sound'
+import { playPopupSound, ensureAudioCtx } from '../ui/sound'
 import '../styles/mobile.css'
 import '../styles/desktop-toolbar.css'
 
@@ -127,6 +127,19 @@ export default function App() {
   useEffect(() => {
     if (s.showWorkflowPermConfirm) playPopupSound('confirm')
   }, [s.showWorkflowPermConfirm])
+
+  // ── 音效预热：首次用户手势（pointerdown/keydown）即创建并恢复 AudioContext，
+  //    在用户手势同步栈中完成，state 直接为 running——此后交互音效即时可用，
+  //    避免首次点击时才创建、异步 resume 丢音 ──
+  useEffect(() => {
+    const warm = () => ensureAudioCtx()
+    window.addEventListener('pointerdown', warm, { once: true })
+    window.addEventListener('keydown', warm, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', warm)
+      window.removeEventListener('keydown', warm)
+    }
+  }, [])
 
   // ── Voice button navigates to /models ──
   useEffect(() => {

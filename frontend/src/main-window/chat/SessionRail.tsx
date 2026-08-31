@@ -327,10 +327,18 @@ export default function SessionRail({
     [refresh, flashNotice, t],
   )
 
-  // ── 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
-  //    window mousemove + rAF 节流做矩形包含检测，移开 10s 后 0.6s 渐隐 ──
+  /** 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
+   *    window mousemove + rAF 节流做矩形包含检测，移开 10s 后 0.6s 渐隐 ── */
   const zoneRef = useRef<HTMLDivElement>(null)
   const rafId = useRef(0)
+  // hover 音效节流：鼠标扫过列表时避免连续爆音（120ms 内只响一次）
+  const hoverSoundAt = useRef(0)
+  const playHoverSound = useCallback(() => {
+    const now = Date.now()
+    if (now - hoverSoundAt.current < 120) return
+    hoverSoundAt.current = now
+    playUiSound('session')
+  }, [])
   const insideRef = useRef(false)
 
   const startReveal = useCallback(() => {
@@ -475,6 +483,10 @@ export default function SessionRail({
               className={`sr-item${it.is_active ? ' active' : ''}${
                 editingId === it.id ? ' editing' : ''
               }`}
+              onMouseEnter={() => {
+                // hover 可切换项（非当前、非编辑态、未锁定）响轻音反馈
+                if (!it.is_active && editingId !== it.id && !hardLocked) playHoverSound()
+              }}
             >
               <span
                 className="sr-bar"

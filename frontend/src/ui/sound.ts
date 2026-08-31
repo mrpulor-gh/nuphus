@@ -38,6 +38,14 @@ function getCtx(): AudioContext | null {
   }
 }
 
+/**
+ * 预热：首次用户手势时创建并恢复 AudioContext（在 pointerdown 同步栈中创建，
+ * state 直接为 running；避免首次音效在 click 时才创建、异步 resume 丢音）。
+ */
+export function ensureAudioCtx(): void {
+  getCtx()
+}
+
 /** 单音：正弦波 + 快速起音 + 指数衰减（避免电子音生硬感） */
 function tone(freq: number, delay: number, duration: number, peak = 0.06): void {
   const ctx = getCtx()
@@ -76,29 +84,34 @@ export function playPopupSound(kind: PopupSound): void {
   }
 }
 
-export type UiSound = 'send' | 'session' | 'done' | 'switch'
+export type UiSound = 'send' | 'session' | 'done' | 'switch' | 'deny'
 
 export function playUiSound(kind: UiSound): void {
   switch (kind) {
     case 'send':
       // 发送：C5→G5 短促上行，指令已发出
-      tone(523.25, 0, 0.08, 0.05)
-      tone(783.99, 0.045, 0.1, 0.03)
+      tone(523.25, 0, 0.08, 0.16)
+      tone(783.99, 0.045, 0.1, 0.1)
       break
     case 'session':
-      // 会话选中：A5 极轻单音，导航定位不打扰
-      tone(880, 0, 0.06, 0.025)
+      // 会话选中：A5 轻单音，导航定位不打扰
+      tone(880, 0, 0.06, 0.09)
       break
     case 'done':
       // 执行完成：E5→B5 上行双音 + 高八度泛音，任务完成上扬收稳
-      tone(659.25, 0, 0.12, 0.05)
-      tone(987.77, 0.09, 0.18, 0.045)
-      tone(1975.53, 0.09, 0.14, 0.012)
+      tone(659.25, 0, 0.12, 0.14)
+      tone(987.77, 0.09, 0.18, 0.12)
+      tone(1975.53, 0.09, 0.14, 0.04)
       break
     case 'switch':
       // 切换：G5→C6 清脆双响，状态切换
-      tone(783.99, 0, 0.07, 0.045)
-      tone(1046.5, 0.06, 0.09, 0.035)
+      tone(783.99, 0, 0.07, 0.12)
+      tone(1046.5, 0.06, 0.09, 0.09)
+      break
+    case 'deny':
+      // 拒绝/取消：C5→G4 低沉下行，否定操作
+      tone(523.25, 0, 0.14, 0.12)
+      tone(392, 0.07, 0.16, 0.09)
       break
   }
 }
