@@ -171,6 +171,19 @@ impl super::Runtime {
                 } else {
                     l1_buf.push(prompt::build_l2_leader());
                 }
+                // Custom knowledge 绑定（目录/文件 → 读取注入）。位于 get_or_insert_with
+                // 内 → 仅在首次构建时读取，session 内编辑卡片不重读（同 session 不变，
+                // 与 save_custom_agent 缓存纪律一致）；换卡 invalidate 后随新卡片重注入。
+                if self.config.mode == crate::runtime::Mode::Custom {
+                    if let Some(cfg) = crate::custom_agents::CustomAgentStore::get_active() {
+                        if !cfg.knowledge.is_empty() {
+                            let ks = prompt::custom_knowledge_section(&cfg.knowledge);
+                            if !ks.is_empty() {
+                                l1_buf.push(ks);
+                            }
+                        }
+                    }
+                }
                 l1_buf.push(prompt::tool_schemas_section(&tool_schemas));
                 let tenets = prompt::tenets_section();
                 if !tenets.is_empty() {

@@ -310,7 +310,9 @@ pub fn search_entries_scored(
 
     let custom_id = crate::custom_agents::current_custom_agent_id();
     // 匿名 ? 按文本顺序绑定：MATCH → kind → custom → LIMIT。
-    // Custom 双向隔离：Custom 会话只看本卡片，非 Custom 排除所有 Custom 记忆。
+    // Custom 记忆分层（2026-08-31）：Custom 会话可检索「本卡片私有 + 项目公共（未打标）」
+    // 记忆——上下文过渡靠记忆承载，不能隔离到空白；非 Custom（Leader/Workflow）仍排除
+    // 所有 Custom 记忆（IS NULL），Custom 私有沉淀不污染公共检索。
     let mut sql = format!(
         "SELECT {}, bm25(memory_fts_v4) as score
          FROM memory_entries e
@@ -325,7 +327,7 @@ pub fn search_entries_scored(
         sql.push_str(" AND e.kind != 'task_trace'");
     }
     match &custom_id {
-        Some(_) => sql.push_str(" AND e.custom_agent_id = ?"),
+        Some(_) => sql.push_str(" AND (e.custom_agent_id = ? OR e.custom_agent_id IS NULL)"),
         None => sql.push_str(" AND e.custom_agent_id IS NULL"),
     }
     // ── 项目记忆隔离：默认只看当前项目的 session（session_meta 登记）；
@@ -411,12 +413,14 @@ pub fn search_entries_filtered(
         None
     };
 
-    // ── Custom 记忆双向隔离（最高优先级过滤）──
-    // Custom 会话 → 只看本卡片记忆；非 Custom（Leader/Workflow）→ 排除所有 Custom 记忆。
+    // ── Custom 记忆分层（最高优先级过滤，2026-08-31）──
+    // Custom 会话 → 本卡片私有（custom_agent_id = cid）+ 项目公共（IS NULL）皆可检索，
+    // 上下文过渡靠记忆承载；非 Custom（Leader/Workflow）→ 排除所有 Custom 记忆（IS NULL），
+    // Custom 私有沉淀不污染公共检索。
     // 全局共享层（Soul/Tenet/Knowledge）走 prompt 注入，不经此检索，天然不受影响。
     match crate::custom_agents::current_custom_agent_id() {
         Some(cid) => {
-            conditions.push("e.custom_agent_id = ?".to_string());
+            conditions.push("(e.custom_agent_id = ? OR e.custom_agent_id IS NULL)".to_string());
             param_values.push(Box::new(cid));
         }
         None => {

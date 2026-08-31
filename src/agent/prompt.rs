@@ -49,6 +49,61 @@ pub fn skill_registry_section() -> String {
     lines.join("\n")
 }
 
+/// Custom 卡片知识库绑定注入 — 读取目录（.md 文件）或单文件内容注入 L1。
+///
+/// 路径缺失/读取失败仅告警跳过（不阻断 Custom 启动）；内容在 prompt 缓存构建时
+/// 一次性读取——session 内编辑卡片不重读（同 session 不变，与 save_custom_agent
+/// 缓存纪律一致），换卡 invalidate 后随新卡片重新注入。
+pub fn custom_knowledge_section(paths: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for p in paths {
+        let path = std::path::Path::new(p);
+        if path.is_dir() {
+            let mut files: Vec<_> = std::fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| {
+                    e.path().is_file()
+                        && e.path()
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                })
+                .collect();
+            files.sort_by_key(|e| e.file_name());
+            for entry in files {
+                match std::fs::read_to_string(entry.path()) {
+                    Ok(content) if !content.trim().is_empty() => parts.push(format!(
+                        "--- {} ---\n{}",
+                        entry.path().display(),
+                        content.trim_end()
+                    )),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(
+                        "[Custom] Knowledge file read failed: {}: {e}",
+                        entry.path().display()
+                    ),
+                }
+            }
+        } else if path.is_file() {
+            match std::fs::read_to_string(path) {
+                Ok(content) if !content.trim().is_empty() => {
+                    parts.push(format!("--- {} ---\n{}", p, content.trim_end()))
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("[Custom] Knowledge file read failed: {}: {e}", p),
+            }
+        } else {
+            tracing::warn!("[Custom] Knowledge path not found: {}", p);
+        }
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("## 知识库\n{}", parts.join("\n\n"))
+    }
+}
+
 // ═══════════════════════════════════════════════════════
 //  Shared L0 framework (Leader + Exec both use it)
 // ═══════════════════════════════════════════════════════
