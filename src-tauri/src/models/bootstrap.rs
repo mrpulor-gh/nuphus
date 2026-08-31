@@ -260,6 +260,52 @@ pub fn vision_models_status() -> VisionModelsStatus {
     scan_status()
 }
 
+/// Splash 启动时的主动状态查询：确认「是否真的需要下载模型」。
+///
+/// 这是 splash 的逻辑起点——不是靠「有没有收到下载进度事件」来推断，而是
+/// 前端一上来就主动问一句。事件流可能因 webview 时序丢失，状态查询不会丢：
+/// 全就绪 → splash 本次会话绝不亮出下载面板/「后台下载」按钮；
+/// 缺模型 → 才允许亮出下载 UI（进度事件随后驱动数值/文案）。
+/// 纯本地文件检查，无副作用、无网络。覆盖嵌入模型 + 视觉模型（OCR/YOLO）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SplashBootstrapStatus {
+    /// true = 有模型缺失/未达标，需要下载 → 前端才允许显示下载面板与按钮
+    pub needs_download: bool,
+    /// 缺失项列表（供文案/排查）
+    pub missing: Vec<String>,
+    /// 人类可读说明
+    pub text: String,
+}
+
+#[tauri::command]
+pub fn splash_bootstrap_status() -> SplashBootstrapStatus {
+    let vision = scan_status();
+    let embed_ok = nuphus::embed::Embedder::files_ready();
+    let mut missing = vision.missing.clone();
+    if !embed_ok {
+        missing.insert(0, "bge-small-zh（嵌入模型）".to_string());
+    }
+    let needs_download = !embed_ok || !(vision.ocr_ready && vision.yolo_ready);
+    let text = if needs_download {
+        format!("需要下载模型：{}", missing.join("、"))
+    } else {
+        "模型已全部就绪，无需下载".to_string()
+    };
+    tracing::info!(
+        "[SplashBootstrapStatus] needs_download={needs_download} embed_ok={embed_ok} ocr_ready={} yolo_ready={} missing={:?} dir={:?}",
+        vision.ocr_ready,
+        vision.yolo_ready,
+        missing,
+        vision.dir
+    );
+    SplashBootstrapStatus {
+        needs_download,
+        missing,
+        text,
+    }
+}
+
 // ── Download worker ─────────────────────────────────────────────────────
 
 /// One HTTP attempt: stream `url` to `path`, reporting progress.

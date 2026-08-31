@@ -256,6 +256,9 @@
     <!-- 进度由 splash.js 监听 splash:progress 事件驱动（旧 setStatus 定义在
        内联 <script>，被 CSP script-src 'self' 拦截从未执行过；withGlobalTauri 注入的
        __TAURI__ 走 AddScriptToExecuteOnDocumentCreated，不受页面 CSP 限制） -->
-    <script src="splash.js"></script>
+    <!-- 版本号缓存破坏符：WebView2 曾长期缓存旧版 splash.js（URL 不变缓存不失效），
+       导致"已全就绪仍显示后台下载"改了源码也变不过来的历史根因之一。
+       每次改 splash.js 必须同时 bump 这个版本号，强制 WebView2 换 URL 重新拉取。 -->
+    <script src="splash.js?v=20260831"></script>
   </body>
 </html>

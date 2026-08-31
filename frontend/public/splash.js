@@ -62,6 +62,22 @@
   // 双保险（后端已保证已存在文件不发 pct，此处兜底防止任何 pct 事件误亮按钮）。
   var lastPct = -1
 
+  // ── 逻辑起点：先主动查一次「是否真的需要下载」──
+  // 不靠「有没有收到进度事件」推断（事件可能因 webview 时序丢失，查询不会）。
+  // 全就绪 → 本次会话绝不亮下载面板/按钮；缺模型 → 才允许亮出下载 UI。
+  // 查询返回前的保守默认 true（允许显示），失败退化为旧的事件驱动行为。
+  var needsDownload = true
+  ;(function checkBootstrapStatus() {
+    var t = window.__TAURI__
+    if (!t || !t.core) return
+    t.core
+      .invoke('splash_bootstrap_status')
+      .then(function (s) {
+        needsDownload = !!(s && s.needs_download)
+      })
+      .catch(function () {})
+  })()
+
   function showBar() {
     if (bar) bar.hidden = false
     document.body.classList.add('downloading')
@@ -87,8 +103,9 @@
     if (skipTimer || !skipWrap) return
     skipTimer = setTimeout(function () {
       skipTimer = null
-      // 仅仍在下载（加载条可见）且未完成（pct<100）时才亮出按钮
-      if ((!bar || !bar.hidden) && lastPct >= 0 && lastPct < 100) {
+      // 仅在「确认需要下载」+ 仍在下载（加载条可见）+ 未完成（pct<100）时
+      // 才亮出按钮——10s 后状态查询早已返回，needsDownload 是权威判定。
+      if (needsDownload && (!bar || !bar.hidden) && lastPct >= 0 && lastPct < 100) {
         skipWrap.hidden = false
       }
     }, SKIP_DELAY_MS)
@@ -105,10 +122,16 @@
       .listen('splash:progress', function (ev) {
         var d = ev.payload || {}
         if (typeof d.pct === 'number') {
-          // pct 只由真实下载发出 → 此刻才亮出下载面板与（延时后）后台下载按钮
-          showBar()
+          // 真实下载进行中（下载文案）→ 拉高确认态：覆盖启动后新增的下载
+          // （如嵌入模型毒化自愈重下），自愈下载同样要有「后台下载」出口。
+          if (/正在下载/.test(d.text || '')) needsDownload = true
+          // 只在「已确认需要下载」的会话里亮出下载面板与（延时后）后台下载按钮。
+          // 全就绪但收到数值 pct（历史回归形态）→ 不亮面板、不启动倒计时。
+          if (needsDownload) {
+            showBar()
+            ensureSkipTimer()
+          }
           setPct(d.pct)
-          ensureSkipTimer()
         } else {
           // 纯文字阶段：隐藏下载面板/按钮
           hideBar()

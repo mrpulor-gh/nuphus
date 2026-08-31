@@ -128,6 +128,7 @@ fn main() {
             commands::preload_model,
             commands::preload_ocr,
             models::bootstrap::vision_models_status,
+            models::bootstrap::splash_bootstrap_status,
             commands::approve_once_security,
             commands::approve_session_security,
             commands::reject_security,

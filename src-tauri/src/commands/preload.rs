@@ -29,20 +29,28 @@ pub async fn preload_model(app: AppHandle) -> Result<bool, String> {
         // get_with_progress: 首次调用自动下载（进度回调推进）；已加载则立即返回不回调。
         nuphus::embed::Embedder::get_with_progress(&mut on_progress).is_some()
     })
-    .await
-    .map_err(|e| format!("嵌入模型预加载任务失败: {e}"))?;
+    .await;
 
-    if loaded {
-        tracing::info!("[Preload] Embedding model loaded successfully");
-        // 阶段完成信号：pct=null 强制 splash 收尾（撤下载载条与「后台下载」
-        // 按钮）。没有这条，下载路径的最后一个数值 pct 会把加载条/按钮
-        // 留在屏幕上直到窗口关闭——"下载完了还挂着后台下载"的根源之一。
-        crate::splash::emit_splash_progress(&app, None, "嵌入模型就绪");
-        Ok(true)
-    } else {
-        tracing::warn!("[Preload] Embedding model failed to load (will lazy-init on first use)");
-        crate::splash::emit_splash_progress(&app, None, "继续启动…");
-        Ok(false)
+    match loaded {
+        Ok(true) => {
+            tracing::info!("[Preload] Embedding model loaded successfully");
+            // 阶段完成信号：pct=null 强制 splash 收尾（撤下载载条与「后台下载」
+            // 按钮）。没有这条，下载路径的最后一个数值 pct 会把加载条/按钮
+            // 留在屏幕上直到窗口关闭——"下载完了还挂着后台下载"的根源之一。
+            crate::splash::emit_splash_progress(&app, None, "嵌入模型就绪");
+            Ok(true)
+        }
+        Ok(false) => {
+            tracing::warn!("[Preload] Embedding model failed to load (will lazy-init on first use)");
+            crate::splash::emit_splash_progress(&app, None, "继续启动…");
+            Ok(false)
+        }
+        Err(e) => {
+            // 阶段完成信号必须无条件发送：下载/加载线程 panic 或失败时，splash
+            // 同样要回到非下载态——否则「后台下载」按钮会在失败后一直挂着。
+            crate::splash::emit_splash_progress(&app, None, "继续启动…");
+            Err(format!("嵌入模型预加载任务失败: {e}"))
+        }
     }
 }
 
@@ -61,11 +69,15 @@ pub async fn preload_ocr(app: AppHandle) -> Result<bool, String> {
     let inner = tauri::async_runtime::spawn_blocking(move || {
         crate::models::bootstrap::ensure_vision_models_blocking(&worker_app)
     })
-    .await
-    .map_err(|e| format!("视觉模型预加载任务失败: {e}"))?;
-    inner?;
-    // 阶段完成信号：与 preload_model 同理，覆盖 skip / 内置采用 / 真实下载
-    // 全部路径——视觉模型阶段结束时 splash 必须收尾。
+    .await;
+    let result = match inner {
+        Ok(Ok(())) => Ok(true),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(format!("视觉模型预加载任务失败: {e}")),
+    };
+    // 阶段完成信号：与 preload_model 同理，覆盖 skip / 内置采用 / 真实下载 /
+    // 下载失败 全部路径——无论成败，视觉阶段结束时 splash 必须收尾，
+    // 否则失败路径会把「后台下载」按钮一直留在 splash 上。
     crate::splash::emit_splash_progress(&app, None, "视觉模型就绪");
-    Ok(true)
+    result
 }

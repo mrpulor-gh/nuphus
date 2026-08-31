@@ -377,6 +377,18 @@ impl Embedder {
         embedder_lock().lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
+    /// 嵌入模型文件是否已全部就绪（体积下限判定，与 init 的补下载逻辑一致）。
+    /// 纯本地文件检查——不触发加载、不触发下载、无副作用，供 splash 启动时
+    /// 主动查询「是否需要下载模型」。事件流可能因 webview 时序丢失，此查询不会。
+    pub fn files_ready() -> bool {
+        let dir = Self::model_dir();
+        MODEL_FILES.iter().all(|f| {
+            std::fs::metadata(dir.join(f))
+                .map(|m| m.len() >= Self::min_file_size(f))
+                .unwrap_or(false)
+        })
+    }
+
     pub fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
         self.embed_inner(text, true)
     }

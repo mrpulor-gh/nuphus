@@ -7,12 +7,17 @@ import splashJs from '../../public/splash.js?raw'
 /**
  * Splash「后台下载」按钮防回归钉。
  *
- * 该按钮曾三次被报告"全模型已就绪仍显示"，历次根因不同：后端跳过分支
+ * 该按钮曾多次被报告"全模型已就绪仍显示"，历次根因不同：后端跳过分支
  * 误发 pct（286ecb2 修）、前端无守卫、用户运行陈旧二进制。
- * 此测试把前端三条防线锁死，任何一条被改坏立即红灯：
+ * 2026-08-31 重构逻辑起点：不再靠"有没有收到事件"推断，启动即主动查询
+ * `splash_bootstrap_status`（纯本地文件检查，不依赖易丢失的事件流）——
+ * 全就绪 → 本次会话绝不亮下载面板/按钮；确需下载才亮。
+ * 此测试把前端四条防线锁死，任何一条被改坏立即红灯：
  * 1. HTML 默认态：skipWrap/bar 自带 hidden —— 缓存启动零事件 = 纯文字；
  * 2. 亮出按钮必须通过 lastPct<100 门 —— 完成/非下载态绝不出现；
- * 3. ensureSkipTimer 只允许在数字 pct 分支内调用 —— 纯文字阶段不计时。
+ * 3. ensureSkipTimer 只允许在数字 pct 分支内调用 —— 纯文字阶段不计时；
+ * 4. 逻辑起点 = splash_bootstrap_status 主动查询，面板/按钮必须经
+ *    needsDownload 门（含 10s 触发点复查）——事件推断被彻底替代。
  * 另有品牌钉：splash 遵循黑白反色视觉，禁旧蓝紫/靛蓝调色板回潮。
  */
 describe('splash 后台下载按钮防回归', () => {
@@ -33,6 +38,15 @@ describe('splash 后台下载按钮防回归', () => {
     expect(trigger).toBeGreaterThan(-1)
     expect(occ[0]).toBeLessThan(trigger)
     expect(occ[1]).toBeGreaterThan(trigger)
+  })
+
+  it('防线4：逻辑起点=主动查询 splash_bootstrap_status，UI 必须经 needsDownload 门', () => {
+    // 根治"已就绪仍显示后台下载"：不靠事件流推断，启动即问模型状态；
+    // 下载面板/按钮只在 needsDownload 为真时亮出，10s 触发点同样复查。
+    expect(splashJs).toMatch(/splash_bootstrap_status/)
+    expect(splashJs).toMatch(/needsDownload\s*&&\s*\(!bar\s*\|\|\s*!bar\.hidden\)/)
+    // 面板只在确认态下 showBar()——全就绪收到数值 pct（历史回归形态）不亮面板
+    expect(splashJs).toMatch(/if\s*\(needsDownload\)\s*\{\s*showBar\(\)/)
   })
 })
 

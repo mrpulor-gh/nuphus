@@ -26,6 +26,21 @@ fn main() {
 
     tauri_build::build();
 
+    // ═══ 前端产物必须触发构建脚本重跑（重新内嵌 frontend/dist）═══
+    // tauri_build 默认不把 dist 内容计入 rerun-if-changed（实测 build 脚本
+    // output 里只有 tauri.conf.json / capabilities / sherpa 库）。后果：
+    // 只改前端（npm run build 产物）再 cargo build，构建脚本不重跑，
+    // exe 内嵌的还是旧前端——用户反复重建却永远看到旧 splash 行为的
+    // 历史根因。显式把 dist 目录声明为重跑条件，前端一变就重新内嵌。
+    println!(
+        "cargo:rerun-if-changed={}",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("frontend")
+            .join("dist")
+            .display()
+    );
+
     // macOS：把 sherpa/onnxruntime dylib 的运行时查找路径写进二进制的 @rpath。
     // dev 时 dylib 被 sync_sherpa_libs 拷到 target/<profile>/（与二进制同目录），
     // 打包成 .app 后 dylib 放在 Contents/Frameworks/ 下；@executable_path 与
