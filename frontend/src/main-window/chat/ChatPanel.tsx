@@ -68,6 +68,7 @@ import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
 import { NuphusLogo } from '../../ui/NuphusLogo'
+import { playUiSound } from '../../ui/sound'
 import type { MoodState } from '../../ui/MoodFace'
 import '../../styles/chat.css'
 import { StatusBar } from '../layout/StatusBar'
@@ -627,6 +628,7 @@ export function ChatPanel({
         // provider-driven: switch_model reads key from config.toml, no key param
         // 按当前 mode 写入对应 agent 模型配置（Leader/Workflow/Custom 联动）
         await switchModel(cfg.model, cfg.provider, resolvedUrl, undefined, mode)
+        playUiSound('switch')
         const limit = await getContextLimit()
         if (limit != null && limit > 0) setContextTotal(limit)
         onModelChanged?.()
@@ -919,6 +921,7 @@ export function ChatPanel({
   const handleSubmit = () => {
     // 执行中发送 = 追加指令（与手机端一致）：不禁用。仅 refine 弹窗打开时拦截。
     if (!input.trim() || refineState) return
+    playUiSound('send')
     // 将 pendingFiles 注入到 input 文本末尾
     let finalInput = input
     if (pendingFiles.length > 0) {

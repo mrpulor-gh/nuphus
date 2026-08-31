@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useLanguage } from '../locales'
+import { playUiSound } from './sound'
 import '../styles/cmd-palette.css'
 
 interface CommandItem {
@@ -33,6 +34,21 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
+  // 选择索引镜像：document 级键盘 handler 用 ref 读最新值（闭包不依赖 selectedIdx，
+  // 避免 effect 依赖重挂；setState updater 保持纯函数，音效判断放外面）
+  const selectedIdxRef = useRef(selectedIdx)
+  useEffect(() => {
+    selectedIdxRef.current = selectedIdx
+  }, [selectedIdx])
+
+  /** 选择移动反馈（键盘/鼠标共用）：索引实际变化才响；同步镜像 ref 防快速连按误响 */
+  const moveSelection = useCallback((next: number) => {
+    if (next !== selectedIdxRef.current) {
+      selectedIdxRef.current = next
+      playUiSound('session')
+    }
+    setSelectedIdx(next)
+  }, [])
 
   const filtered = query
     ? items.filter(
@@ -69,6 +85,7 @@ export function CommandPalette({
 
   const execute = useCallback(() => {
     if (filtered[selectedIdx]) {
+      playUiSound('send')
       filtered[selectedIdx].action()
       onClose()
     }
@@ -83,12 +100,12 @@ export function CommandPalette({
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setSelectedIdx(i => Math.min(i + 1, filtered.length - 1))
+        moveSelection(Math.min(selectedIdxRef.current + 1, filtered.length - 1))
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setSelectedIdx(i => Math.max(i - 1, 0))
+        moveSelection(Math.max(selectedIdxRef.current - 1, 0))
         return
       }
       if (e.key === 'Enter') {
@@ -99,7 +116,7 @@ export function CommandPalette({
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [open, placement, filtered.length, execute, onClose])
+  }, [open, placement, filtered.length, execute, onClose, moveSelection])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -109,12 +126,12 @@ export function CommandPalette({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSelectedIdx(i => Math.min(i + 1, filtered.length - 1))
+      moveSelection(Math.min(selectedIdxRef.current + 1, filtered.length - 1))
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setSelectedIdx(i => Math.max(i - 1, 0))
+      moveSelection(Math.max(selectedIdxRef.current - 1, 0))
       return
     }
     if (e.key === 'Enter') {
@@ -201,10 +218,11 @@ export function CommandPalette({
                 }}
                 className={`cmd-item ${i === selectedIdx ? 'selected' : ''}`}
                 onClick={() => {
+                  playUiSound('send')
                   item.action()
                   onClose()
                 }}
-                onMouseEnter={() => setSelectedIdx(i)}
+                onMouseEnter={() => moveSelection(i)}
               >
                 {iconMap?.[item.id] && <span className="cmd-icon">{iconMap[item.id]}</span>}
                 <span className="cmd-label">{item.label}</span>

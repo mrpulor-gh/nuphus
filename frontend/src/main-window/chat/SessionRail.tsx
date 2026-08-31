@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck, IconEdit3, IconX, IconTrash2, IconPlus } from '../../ui/Icons'
+import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
 import {
@@ -155,6 +156,7 @@ export default function SessionRail({
       setEditingId(null)
     } else if (was) {
       // 执行完成：弹出会话台（清除 10s 渐隐倒计时重新计时；鼠标移出感应区才重新计时）
+      playUiSound('done')
       if (leaveTimer.current) {
         clearTimeout(leaveTimer.current)
         leaveTimer.current = null
@@ -290,6 +292,8 @@ export default function SessionRail({
         const target = items.find(i => i.id === id)
         if (!target) return
         await switchSession(id, target.mode)
+        // 会话切换成功：轻触反馈（导航定位）
+        playUiSound('session')
         // 同步前端输入框 mode（后端原子切换后前端 mode chip 保持一致）
         onModeSwitched?.(target.mode)
         // 主动切换：先登记基准，避免下轮轮询把这次变化再判成外部变更重复触发重拉

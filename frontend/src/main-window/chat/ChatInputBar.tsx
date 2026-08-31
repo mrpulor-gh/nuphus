@@ -9,6 +9,7 @@ import {
   IconWrench,
 } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
+import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
@@ -425,6 +426,7 @@ export function ChatInputBar({
       if (m === (mode ?? 'leader')) return
       if (modeSwitchLock.current) return
       modeSwitchLock.current = true
+      playUiSound('switch')
       if (m === 'workflow') {
         onToggleWorkAgentMode?.()
       } else if (m === 'custom') {
@@ -449,6 +451,7 @@ export function ChatInputBar({
       setActiveCustomAgent(agentId)
         .then(() => {
           setActiveCustomId(agentId)
+          playUiSound('switch')
           onSetMode?.('custom')
         })
         .catch(() => {})

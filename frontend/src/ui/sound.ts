@@ -1,13 +1,18 @@
 /**
- * 弹窗音效 — Web Audio API 合成，零依赖零资源（不引入任何音频文件）。
+ * UI 音效体系 — Web Audio API 合成，零依赖零资源（不引入任何音频文件）。
  *
- * 三档音色（仅用于 agent/后端驱动的打断型弹窗，用户主动触发的 UI 不出声）：
- * - request  上行双音（G5→C6），柔和、邀请输入
- * - confirm  下行双音（A5→E5），注意、轻微紧迫
- * - approval 三连音（C6→E6→G6），审批/审阅提示
+ * 两类用途，音色刻意区分：
+ * 1. 弹窗音效（agent/后端驱动的打断型弹窗）：request / confirm / approval
+ * 2. 交互反馈（用户主动操作，短促克制）：send / session / done / switch
+ *
+ * 音高走向即语义：
+ * - send     C5→G5 短促上行（523→784Hz）＝ 指令已发出，轻快肯定
+ * - session  A5 极轻单音（880Hz）＝ 导航定位，不打扰
+ * - done     E5→B5 上行双音 + 泛音（659→988Hz）＝ 任务完成，上扬收稳
+ * - switch   G5→C6 清脆双响（784→1046Hz）＝ 状态切换
  *
  * 浏览器自动播放策略：AudioContext 首次创建后通常 suspended，直到出现一次用户手势；
- * 这里挂一次性全局手势监听，用户任意交互后恢复上下文，此后弹窗音效即时可用。
+ * 这里挂一次性全局手势监听，用户任意交互后恢复上下文，此后音效即时可用。
  */
 
 let audioCtx: AudioContext | null = null
@@ -67,6 +72,33 @@ export function playPopupSound(kind: PopupSound): void {
       tone(1046.5, 0, 0.15)
       tone(1318.5, 0.08, 0.15)
       tone(1567.98, 0.16, 0.26)
+      break
+  }
+}
+
+export type UiSound = 'send' | 'session' | 'done' | 'switch'
+
+export function playUiSound(kind: UiSound): void {
+  switch (kind) {
+    case 'send':
+      // 发送：C5→G5 短促上行，指令已发出
+      tone(523.25, 0, 0.08, 0.05)
+      tone(783.99, 0.045, 0.1, 0.03)
+      break
+    case 'session':
+      // 会话选中：A5 极轻单音，导航定位不打扰
+      tone(880, 0, 0.06, 0.025)
+      break
+    case 'done':
+      // 执行完成：E5→B5 上行双音 + 高八度泛音，任务完成上扬收稳
+      tone(659.25, 0, 0.12, 0.05)
+      tone(987.77, 0.09, 0.18, 0.045)
+      tone(1975.53, 0.09, 0.14, 0.012)
+      break
+    case 'switch':
+      // 切换：G5→C6 清脆双响，状态切换
+      tone(783.99, 0, 0.07, 0.045)
+      tone(1046.5, 0.06, 0.09, 0.035)
       break
   }
 }
