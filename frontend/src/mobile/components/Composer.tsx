@@ -298,10 +298,10 @@ export default function Composer({
                 {imageDone + 1}/{imageTotal}
               </span>
               <span>处理图片中…</span>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="mobile-composer-inner">
         <div className="mobile-composer-pill">
           <button
@@ -371,45 +371,45 @@ export default function Composer({
         {menuOpen && (
           <>
             <div className="mobile-plus-sheet" role="menu" ref={sheetRef} aria-label="扩展菜单">
-            <label className="mobile-plus-capsule" role="menuitem">
-              {/* file input 内嵌 label：点击 label 由浏览器原生触发选择器——
+              <label className="mobile-plus-capsule" role="menuitem">
+                {/* file input 内嵌 label：点击 label 由浏览器原生触发选择器——
                   standalone PWA（主屏幕启动）拦截 JS input.click()，label 触发不受限 */}
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="mobile-file-input-sr"
-                onChange={handleFiles}
-              />
-              <span className="mobile-plus-capsule-text">
-                <span className="mobile-plus-capsule-line">
-                  <span className="mobile-plus-capsule-icon">
-                    <Camera size={18} aria-hidden="true" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="mobile-file-input-sr"
+                  onChange={handleFiles}
+                />
+                <span className="mobile-plus-capsule-text">
+                  <span className="mobile-plus-capsule-line">
+                    <span className="mobile-plus-capsule-icon">
+                      <Camera size={18} aria-hidden="true" />
+                    </span>
+                    <span className="mobile-plus-capsule-title">拍摄</span>
                   </span>
-                  <span className="mobile-plus-capsule-title">拍摄</span>
+                  <span className="mobile-plus-capsule-sub">拍照后发送</span>
                 </span>
-                <span className="mobile-plus-capsule-sub">拍照后发送</span>
-              </span>
-            </label>
-            <label className="mobile-plus-capsule" role="menuitem">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="mobile-file-input-sr"
-                onChange={handleFiles}
-              />
-              <span className="mobile-plus-capsule-text">
-                <span className="mobile-plus-capsule-line">
-                  <span className="mobile-plus-capsule-icon">
-                    <ImageIcon size={18} aria-hidden="true" />
+              </label>
+              <label className="mobile-plus-capsule" role="menuitem">
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="mobile-file-input-sr"
+                  onChange={handleFiles}
+                />
+                <span className="mobile-plus-capsule-text">
+                  <span className="mobile-plus-capsule-line">
+                    <span className="mobile-plus-capsule-icon">
+                      <ImageIcon size={18} aria-hidden="true" />
+                    </span>
+                    <span className="mobile-plus-capsule-title">从相册选择</span>
                   </span>
-                  <span className="mobile-plus-capsule-title">从相册选择</span>
+                  <span className="mobile-plus-capsule-sub">从相册选择图片</span>
                 </span>
-                <span className="mobile-plus-capsule-sub">从相册选择图片</span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
           </>
         )}
       </div>

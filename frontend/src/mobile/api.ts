@@ -510,8 +510,7 @@ export async function newChatSession(
     if (res.ok) return { ok: true }
     const body = (await res.json().catch(() => ({}))) as { error?: string }
     if (body.error === 'busy') return { ok: false, error: '执行中无法新建，请等待完成或终止' }
-    if (body.error === 'append_pending')
-      return { ok: false, error: '追加指令处理中，稍后可新建' }
+    if (body.error === 'append_pending') return { ok: false, error: '追加指令处理中，稍后可新建' }
     return { ok: false, error: `新建失败（${body.error ?? res.status}）` }
   } catch {
     return { ok: false, error: '网络异常，请重试' }

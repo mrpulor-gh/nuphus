@@ -785,18 +785,23 @@ const en: Record<string, string> = {
   'mobile.topoMidLabelOff': 'Offline',
   'mobile.topoPhoneLabel': 'Phone',
   'mobile.routesTitle': 'Network paths',
-  'mobile.routesDesc': 'Four paths with automatic fallback; auto paths need no action, optional paths are your choice',
+  'mobile.routesDesc':
+    'Four paths with automatic fallback; auto paths need no action, optional paths are your choice',
   'mobile.routeLanTitle': 'LAN direct',
-  'mobile.routeLanDesc': 'Used automatically when phone and computer share a Wi-Fi — fastest, no mobile data',
+  'mobile.routeLanDesc':
+    'Used automatically when phone and computer share a Wi-Fi — fastest, no mobile data',
   'mobile.routeLanBadge': 'Preferred',
   'mobile.routeP2PTitle': 'P2P direct',
-  'mobile.routeP2PDesc': 'Direct connection across networks without the official relay — self-host with a mature mesh solution (Tailscale)',
+  'mobile.routeP2PDesc':
+    'Direct connection across networks without the official relay — self-host with a mature mesh solution (Tailscale)',
   'mobile.routeP2PBadge': 'Planned',
   'mobile.routeRelayTitle': 'Official relay (fallback)',
-  'mobile.routeRelayDesc': 'Used automatically when direct paths fail — reach this computer from anywhere',
+  'mobile.routeRelayDesc':
+    'Used automatically when direct paths fail — reach this computer from anywhere',
   'mobile.routeRelayBadge': 'Fallback',
   'mobile.routeVpsTitle': 'Self-hosted VPS node',
-  'mobile.routeVpsDesc': 'Advanced users can point to their own relay server so traffic bypasses the official node',
+  'mobile.routeVpsDesc':
+    'Advanced users can point to their own relay server so traffic bypasses the official node',
   'mobile.routeVpsBadge': 'Supported',
   'mobile.routeStateOn': 'Available',
   'mobile.routeStateOff': 'Off',
@@ -817,9 +822,11 @@ const en: Record<string, string> = {
   'mobile.routeP2PGuideBtn': 'Enable guide',
   'mobile.routeP2PGuideTitle': 'How to enable P2P direct (Tailscale free)',
   'mobile.routeP2PGuideStep1': 'Install the Tailscale client on this PC and sign in',
-  'mobile.routeP2PGuideStep2': 'Install the Tailscale app on your phone and sign in with the same account',
+  'mobile.routeP2PGuideStep2':
+    'Install the Tailscale app on your phone and sign in with the same account',
   'mobile.routeP2PGuideStep3': 'Open http://<desktop Tailscale IP>:18772 in your phone browser',
-  'mobile.routeP2PGuideNote': 'P2P is enabled by you: success depends on your network. Nuphus treats Tailscale addresses as direct connections automatically',
+  'mobile.routeP2PGuideNote':
+    'P2P is enabled by you: success depends on your network. Nuphus treats Tailscale addresses as direct connections automatically',
   'mobile.routeVpsConfigBtn': 'Configure',
   'mobile.listPassword': 'Pairing password',
   'mobile.listLan': 'LAN direct',
@@ -828,7 +835,8 @@ const en: Record<string, string> = {
   'mobile.listVps': 'Self-hosted VPS node',
   'mobile.relayServerAddr': 'Relay server',
   'mobile.deviceIdLabel': 'Device ID',
-  'mobile.relayAuthWarn': 'Auth rejected (HTTP 403/401): token does not match the relay server. Use the official release for the official relay; for self-hosted, check the token in relay_client.json',
+  'mobile.relayAuthWarn':
+    'Auth rejected (HTTP 403/401): token does not match the relay server. Use the official release for the official relay; for self-hosted, check the token in relay_client.json',
   'mobile.required': 'Required',
   'mobile.maintainTitle': 'Maintenance',
   'mobile.blockPassword': 'Set a pairing password',

@@ -644,7 +644,9 @@
   font-size: var(--fz-sm);
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .mobile-radio-card:hover {

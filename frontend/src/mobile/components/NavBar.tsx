@@ -196,7 +196,9 @@ export default function NavBar({
       .then(() => {
         setModeOpen(false)
         // 切 mode 后重拉该 mode 生效模型
-        fetchModelConfig(token, m).then(cfg => setModelConfig(cfg)).catch(() => {})
+        fetchModelConfig(token, m)
+          .then(cfg => setModelConfig(cfg))
+          .catch(() => {})
       })
       .catch(() => {})
   }
@@ -480,212 +482,246 @@ export default function NavBar({
         </div>
         {/* 内容区：唯一可滚动区域（header/footer 固定不跳动） */}
         <div className="mobile-settings-body">
-        {settingsView === 'main' ? (
-          <>
-            {/* 实时模型信息卡（反色舒展）：header 下方第一块。数据源=桌面输入框模型
+          {settingsView === 'main' ? (
+            <>
+              {/* 实时模型信息卡（反色舒展）：header 下方第一块。数据源=桌面输入框模型
                 + ctx hover 同源同字段：模型名=effective_model 单点；ctx 进度条=桌面
                 5 格 gauge 同款，已用/容量=token_usage WS 实时累计 input + model-config
                 contextWindow（0=未知显示--）；cache/step/time=命中率/工具步数/执行用时。
                 WS 事件驱动实时同步。 */}
-            {/* 运行模式卡（模型卡上方；样式仿模型信息卡）：手风琴直接切换——
+              {/* 运行模式卡（模型卡上方；样式仿模型信息卡）：手风琴直接切换——
                 头部点开/收起模式列表（Leader/Workflow/Custom 点击即切，与桌面 mode
                 铭牌同源）；「当前模式」徽章放在介绍前做引导，箭头下标即展开入口 */}
-            <div className="mobile-mode-info">
-              <button
-                type="button"
-                className="mobile-mode-info-head"
-                onClick={() => setModeOpen(o => !o)}
-                aria-expanded={modeOpen}
-              >
-                <span className="mobile-mode-info-name">{modeLabel}</span>
-                <ChevronDown
-                  size={16}
-                  className={['mobile-mode-info-arrow', modeOpen ? 'is-open' : ''].filter(Boolean).join(' ')}
-                  aria-hidden="true"
-                />
-              </button>
-              {modeOpen && (
-                <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={currentMode === 'leader'}
-                    className={['mobile-mode-info-opt', currentMode === 'leader' ? 'is-active' : '']
+              <div className="mobile-mode-info">
+                <button
+                  type="button"
+                  className="mobile-mode-info-head"
+                  onClick={() => setModeOpen(o => !o)}
+                  aria-expanded={modeOpen}
+                >
+                  <span className="mobile-mode-info-name">{modeLabel}</span>
+                  <ChevronDown
+                    size={16}
+                    className={['mobile-mode-info-arrow', modeOpen ? 'is-open' : '']
                       .filter(Boolean)
                       .join(' ')}
-                    onClick={() => selectMode('leader')}
-                  >
-                    <span className="mobile-mode-info-opt-name">Leader</span>
-                    <span className="mobile-mode-info-opt-desc">自主判断路径</span>
-                    {currentMode === 'leader' && <Check size={15} aria-hidden="true" />}
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={currentMode === 'workflow'}
-                    className={['mobile-mode-info-opt', currentMode === 'workflow' ? 'is-active' : '']
-                      .filter(Boolean)
-                      .join(' ')}
-                    onClick={() => selectMode('workflow')}
-                  >
-                    <span className="mobile-mode-info-opt-name">Workflow</span>
-                    <span className="mobile-mode-info-opt-desc">解析模板生成可执行工作流</span>
-                    {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
-                  </button>
-                  {activeCustomName ? (
+                    aria-hidden="true"
+                  />
+                </button>
+                {modeOpen && (
+                  <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
                     <button
                       type="button"
                       role="radio"
-                      aria-checked={currentMode === 'custom'}
-                      className={['mobile-mode-info-opt', currentMode === 'custom' ? 'is-active' : '']
+                      aria-checked={currentMode === 'leader'}
+                      className={[
+                        'mobile-mode-info-opt',
+                        currentMode === 'leader' ? 'is-active' : '',
+                      ]
                         .filter(Boolean)
                         .join(' ')}
-                      onClick={() => selectMode('custom')}
+                      onClick={() => selectMode('leader')}
                     >
-                      <span className="mobile-mode-info-opt-name">{activeCustomName}</span>
-                      <span className="mobile-mode-info-opt-desc">我的专属 Agent</span>
-                      {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
+                      <span className="mobile-mode-info-opt-name">Leader</span>
+                      <span className="mobile-mode-info-opt-desc">自主判断路径</span>
+                      {currentMode === 'leader' && <Check size={15} aria-hidden="true" />}
                     </button>
-                  ) : (
-                    <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
-                  )}
-                </div>
-              )}
-              <div className="mobile-mode-info-desc-row">
-                <span className="mobile-mode-info-badge">{t('mobile.currentMode')}</span>
-                <span className="mobile-mode-info-desc">{modeDesc}</span>
-              </div>
-            </div>
-            <div className="mobile-model-info">
-              <div className="mobile-model-info-head">
-                <span className="mobile-model-info-name">{model || modelConfig?.current || '—'}</span>
-                {ctxCap > 0 && <span className="mobile-model-info-cap">{fmtTokens(ctxCap)}</span>}
-              </div>
-              <div className="mobile-model-info-ctx">
-                <span className="mobile-model-info-ctx-label">ctx</span>
-                <span className="mobile-model-info-ctx-gauge" aria-hidden>
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <span
-                      key={i}
-                      className="mobile-model-info-ctx-cell"
-                      style={i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined}
-                    />
-                  ))}
-                </span>
-                <span className="mobile-model-info-ctx-usage">
-                  {ctxCap > 0 ? `${fmtTokens(ctxUsed)}/${fmtTokens(ctxCap)}` : `${fmtTokens(ctxUsed)}/--`}
-                </span>
-                <span className="mobile-model-info-pct" style={{ color: ctxColor }}>
-                  {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
-                </span>
-              </div>
-              <div className="mobile-model-info-foot">
-                <div className="mobile-model-info-meta">
-                  {cacheRate >= 0 && (
-                    <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
-                  )}
-                  <span>step {execSteps}</span>
-                  <span>time {formatElapsed(execDuration)}</span>
-                </div>
-                <button
-                  type="button"
-                  className="mobile-model-info-switch"
-                  onClick={openModelView}
-                >
-                  {t('mobile.switchModel')}
-                </button>
-              </div>
-            </div>
-            {/* 会话列表：主视图直接展示（不再子视图）——点选即切换电脑端视图，
-                与桌面 rail 同语义；执行中/后端守卫锁定时禁用 */}
-            <div className="mobile-sess-section">
-              <div className="mobile-settings-group">会话</div>
-              {sessions && sessions.items.length > 0 ? (
-                <div className="mobile-sess-list">
-                  {sessions.items.map(item => (
                     <button
-                      key={item.id}
                       type="button"
-                      className={['mobile-sess-item', item.is_active ? 'is-active' : '']
+                      role="radio"
+                      aria-checked={currentMode === 'workflow'}
+                      className={[
+                        'mobile-mode-info-opt',
+                        currentMode === 'workflow' ? 'is-active' : '',
+                      ]
                         .filter(Boolean)
                         .join(' ')}
-                      disabled={sessLocked}
-                      onClick={() => onSwitchSession?.(item.id, item.mode)}
+                      onClick={() => selectMode('workflow')}
                     >
-                      <span className="mobile-sess-title">
-                        {item.mode && (
-                          <span className={`mobile-sess-mode mode-${item.mode}`} aria-hidden="true">
-                            {item.mode.toUpperCase()}
-                          </span>
-                        )}
-                        {item.title || item.id}
-                      </span>
-                      <span className="mobile-sess-meta">
-                        {item.is_active ? '当前 · ' : ''}
-                        {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
-                        {item.message_count} 条
-                      </span>
+                      <span className="mobile-mode-info-opt-name">Workflow</span>
+                      <span className="mobile-mode-info-opt-desc">解析模板生成可执行工作流</span>
+                      {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
                     </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="mobile-sess-empty">暂无会话记录</div>
-              )}
-              <div className="mobile-settings-reset-hint">切换的是电脑端正在显示的对话，两端同步</div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mobile-settings-sub-note">模型与桌面端同源配置；选择后点「确定」生效</div>
-            {modelLoading && <div className="mobile-settings-sub-note">加载中…</div>}
-            {!modelLoading && (!modelConfig?.models || modelConfig.models.length === 0) && (
-              <div className="mobile-settings-sub-note">暂无模型，请先在桌面端配置</div>
-            )}
-            {!modelLoading &&
-              modelConfig &&
-              modelConfig.models.length > 0 &&
-              // 按 provider 分组（保持首次出现顺序）；手风琴——同一时刻只展开一组
-              [...new Map(modelConfig.models.map(m => [m.provider, m.provider])).keys()].map(provider => {
-                const models = modelConfig.models.filter(m => m.provider === provider)
-                const open = expandedProvider === provider
-                return (
-                  <div key={provider} className="mobile-model-group">
-                    <button
-                      type="button"
-                      className={['mobile-model-group-head', open ? 'is-open' : ''].filter(Boolean).join(' ')}
-                      onClick={() => setExpandedProvider(open ? null : provider)}
-                      aria-expanded={open}
-                    >
-                      <span className="mobile-model-group-name">{provider || '未分类'}</span>
-                      <span className="mobile-model-group-count">{models.length}</span>
-                      <ChevronDown
-                        size={15}
-                        className={['mobile-model-group-arrow', open ? 'is-open' : ''].filter(Boolean).join(' ')}
-                        aria-hidden="true"
-                      />
-                    </button>
-                    {open && (
-                      <div className="mobile-model-group-body" role="group" aria-label={provider}>
-                        {models.map(m => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            className={`mobile-settings-sub-item${(pendingModel?.id ?? modelConfig.current) === m.id ? ' is-active' : ''}`}
-                            onClick={() => setPendingModel({ id: m.id, provider: m.provider })}
-                          >
-                            <span className="mobile-settings-sub-name">{m.alias?.[0] || m.id}</span>
-                            {(pendingModel?.id ?? modelConfig.current) === m.id && (
-                              <Check size={15} aria-hidden="true" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
+                    {activeCustomName ? (
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={currentMode === 'custom'}
+                        className={[
+                          'mobile-mode-info-opt',
+                          currentMode === 'custom' ? 'is-active' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => selectMode('custom')}
+                      >
+                        <span className="mobile-mode-info-opt-name">{activeCustomName}</span>
+                        <span className="mobile-mode-info-opt-desc">我的专属 Agent</span>
+                        {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
+                      </button>
+                    ) : (
+                      <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
                     )}
                   </div>
-                )
-              })}
-          </>
-        )}
+                )}
+                <div className="mobile-mode-info-desc-row">
+                  <span className="mobile-mode-info-badge">{t('mobile.currentMode')}</span>
+                  <span className="mobile-mode-info-desc">{modeDesc}</span>
+                </div>
+              </div>
+              <div className="mobile-model-info">
+                <div className="mobile-model-info-head">
+                  <span className="mobile-model-info-name">
+                    {model || modelConfig?.current || '—'}
+                  </span>
+                  {ctxCap > 0 && <span className="mobile-model-info-cap">{fmtTokens(ctxCap)}</span>}
+                </div>
+                <div className="mobile-model-info-ctx">
+                  <span className="mobile-model-info-ctx-label">ctx</span>
+                  <span className="mobile-model-info-ctx-gauge" aria-hidden>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <span
+                        key={i}
+                        className="mobile-model-info-ctx-cell"
+                        style={i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined}
+                      />
+                    ))}
+                  </span>
+                  <span className="mobile-model-info-ctx-usage">
+                    {ctxCap > 0
+                      ? `${fmtTokens(ctxUsed)}/${fmtTokens(ctxCap)}`
+                      : `${fmtTokens(ctxUsed)}/--`}
+                  </span>
+                  <span className="mobile-model-info-pct" style={{ color: ctxColor }}>
+                    {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
+                  </span>
+                </div>
+                <div className="mobile-model-info-foot">
+                  <div className="mobile-model-info-meta">
+                    {cacheRate >= 0 && (
+                      <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
+                    )}
+                    <span>step {execSteps}</span>
+                    <span>time {formatElapsed(execDuration)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="mobile-model-info-switch"
+                    onClick={openModelView}
+                  >
+                    {t('mobile.switchModel')}
+                  </button>
+                </div>
+              </div>
+              {/* 会话列表：主视图直接展示（不再子视图）——点选即切换电脑端视图，
+                与桌面 rail 同语义；执行中/后端守卫锁定时禁用 */}
+              <div className="mobile-sess-section">
+                <div className="mobile-settings-group">会话</div>
+                {sessions && sessions.items.length > 0 ? (
+                  <div className="mobile-sess-list">
+                    {sessions.items.map(item => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={['mobile-sess-item', item.is_active ? 'is-active' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        disabled={sessLocked}
+                        onClick={() => onSwitchSession?.(item.id, item.mode)}
+                      >
+                        <span className="mobile-sess-title">
+                          {item.mode && (
+                            <span
+                              className={`mobile-sess-mode mode-${item.mode}`}
+                              aria-hidden="true"
+                            >
+                              {item.mode.toUpperCase()}
+                            </span>
+                          )}
+                          {item.title || item.id}
+                        </span>
+                        <span className="mobile-sess-meta">
+                          {item.is_active ? '当前 · ' : ''}
+                          {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
+                          {item.message_count} 条
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mobile-sess-empty">暂无会话记录</div>
+                )}
+                <div className="mobile-settings-reset-hint">
+                  切换的是电脑端正在显示的对话，两端同步
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mobile-settings-sub-note">
+                模型与桌面端同源配置；选择后点「确定」生效
+              </div>
+              {modelLoading && <div className="mobile-settings-sub-note">加载中…</div>}
+              {!modelLoading && (!modelConfig?.models || modelConfig.models.length === 0) && (
+                <div className="mobile-settings-sub-note">暂无模型，请先在桌面端配置</div>
+              )}
+              {!modelLoading &&
+                modelConfig &&
+                modelConfig.models.length > 0 &&
+                // 按 provider 分组（保持首次出现顺序）；手风琴——同一时刻只展开一组
+                [...new Map(modelConfig.models.map(m => [m.provider, m.provider])).keys()].map(
+                  provider => {
+                    const models = modelConfig.models.filter(m => m.provider === provider)
+                    const open = expandedProvider === provider
+                    return (
+                      <div key={provider} className="mobile-model-group">
+                        <button
+                          type="button"
+                          className={['mobile-model-group-head', open ? 'is-open' : '']
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => setExpandedProvider(open ? null : provider)}
+                          aria-expanded={open}
+                        >
+                          <span className="mobile-model-group-name">{provider || '未分类'}</span>
+                          <span className="mobile-model-group-count">{models.length}</span>
+                          <ChevronDown
+                            size={15}
+                            className={['mobile-model-group-arrow', open ? 'is-open' : '']
+                              .filter(Boolean)
+                              .join(' ')}
+                            aria-hidden="true"
+                          />
+                        </button>
+                        {open && (
+                          <div
+                            className="mobile-model-group-body"
+                            role="group"
+                            aria-label={provider}
+                          >
+                            {models.map(m => (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className={`mobile-settings-sub-item${(pendingModel?.id ?? modelConfig.current) === m.id ? ' is-active' : ''}`}
+                                onClick={() => setPendingModel({ id: m.id, provider: m.provider })}
+                              >
+                                <span className="mobile-settings-sub-name">
+                                  {m.alias?.[0] || m.id}
+                                </span>
+                                {(pendingModel?.id ?? modelConfig.current) === m.id && (
+                                  <Check size={15} aria-hidden="true" />
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  },
+                )}
+            </>
+          )}
         </div>
         {/* 子视图底部操作栏：返回（回主视图，放弃未确认选择）+ 确定（提交暂存选择） */}
         {settingsView !== 'main' && (
@@ -845,7 +881,12 @@ export default function NavBar({
               type="button"
               className="mobile-settings-reset-btn"
               onClick={() => {
-                if (!window.confirm('确定重置客户端配对？将清除本地配对并断开连接，需重新扫码关联设备')) return
+                if (
+                  !window.confirm(
+                    '确定重置客户端配对？将清除本地配对并断开连接，需重新扫码关联设备',
+                  )
+                )
+                  return
                 setNetworkOpen(false)
                 onDisconnect?.()
               }}

@@ -788,7 +788,8 @@ const zh: Record<string, string> = {
   'mobile.routeP2PGuideStep1': '电脑安装 Tailscale 客户端并登录',
   'mobile.routeP2PGuideStep2': '手机安装 Tailscale App，同一账号登录',
   'mobile.routeP2PGuideStep3': '手机浏览器访问 http://电脑的Tailscale地址:18772',
-  'mobile.routeP2PGuideNote': 'P2P 由你自行启用：能否打通取决于你的网络环境，Nuphus 自动把 Tailscale 地址当直连处理',
+  'mobile.routeP2PGuideNote':
+    'P2P 由你自行启用：能否打通取决于你的网络环境，Nuphus 自动把 Tailscale 地址当直连处理',
   'mobile.routeVpsConfigBtn': '配置',
   'mobile.listPassword': '设置密码',
   'mobile.listLan': '局域网直连',
@@ -797,7 +798,8 @@ const zh: Record<string, string> = {
   'mobile.listVps': '自建 VPS 节点',
   'mobile.relayServerAddr': '中继服务器',
   'mobile.deviceIdLabel': '设备标识',
-  'mobile.relayAuthWarn': '鉴权被拒（HTTP 403/401）：token 与中继服务器不匹配。官方中继请使用官方发布包；自建中继请核对 relay_client.json 的 token',
+  'mobile.relayAuthWarn':
+    '鉴权被拒（HTTP 403/401）：token 与中继服务器不匹配。官方中继请使用官方发布包；自建中继请核对 relay_client.json 的 token',
   'mobile.required': '必填',
   'mobile.maintainTitle': '维护',
   'mobile.blockPassword': '设置配对密码',

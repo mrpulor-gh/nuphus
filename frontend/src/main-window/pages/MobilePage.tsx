@@ -104,7 +104,13 @@ export function MobilePage() {
   })()
 
   const lineCls =
-    topo === 'off' ? '' : topo === 'fault' ? 'active-err' : topo === 'retrying' ? 'active-warn' : 'active'
+    topo === 'off'
+      ? ''
+      : topo === 'fault'
+        ? 'active-err'
+        : topo === 'retrying'
+          ? 'active-warn'
+          : 'active'
   const midIcon = topo === 'off' ? '···' : topo === 'lan' ? 'LAN' : 'REL'
   const midLabel =
     topo === 'lan'

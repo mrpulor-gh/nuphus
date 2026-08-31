@@ -41,7 +41,9 @@ pub async fn preload_model(app: AppHandle) -> Result<bool, String> {
             Ok(true)
         }
         Ok(false) => {
-            tracing::warn!("[Preload] Embedding model failed to load (will lazy-init on first use)");
+            tracing::warn!(
+                "[Preload] Embedding model failed to load (will lazy-init on first use)"
+            );
             crate::splash::emit_splash_progress(&app, None, "继续启动…");
             Ok(false)
         }
