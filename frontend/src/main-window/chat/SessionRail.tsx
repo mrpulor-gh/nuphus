@@ -131,20 +131,41 @@ export default function SessionRail({
   useEffect(() => {
     hardLockedRef.current = hardLocked
   }, [hardLocked])
-  // 执行开始 → 立即收起（清在途定时器与编辑态），不等 10s 计时
+  // 翻转方向检测：记录上一帧 hardLocked，区分「执行开始」（false→true）与
+  // 「执行完成」（true→false）——初始挂载 false→false 不触发任何动作
+  const prevHardLockedRef = useRef(hardLocked)
+  // 执行开始 → 立即收起；执行完成（true→false 翻转）→ 立即弹出，与 HUD「执行完成」
+  // 同步推送完成状态（2026-08-31 修正：此前完成时不主动 reveal，等鼠标移入感应区/
+  // 轮询才弹出，而 10s 渐隐倒计时早已启动 → 刚弹出又隐藏；现在完成瞬间 reveal 并
+  // 清除旧倒计时重新计时，用户能立即看到结果会话）
   useEffect(() => {
-    if (!hardLocked) return
-    if (leaveTimer.current) {
-      clearTimeout(leaveTimer.current)
-      leaveTimer.current = null
+    const was = prevHardLockedRef.current
+    prevHardLockedRef.current = hardLocked
+    if (hardLocked) {
+      if (leaveTimer.current) {
+        clearTimeout(leaveTimer.current)
+        leaveTimer.current = null
+      }
+      if (fadeTimer.current) {
+        clearTimeout(fadeTimer.current)
+        fadeTimer.current = null
+      }
+      setRevealed(false)
+      setFading(false)
+      setEditingId(null)
+    } else if (was) {
+      // 执行完成：弹出会话台（清除 10s 渐隐倒计时重新计时；鼠标移出感应区才重新计时）
+      if (leaveTimer.current) {
+        clearTimeout(leaveTimer.current)
+        leaveTimer.current = null
+      }
+      if (fadeTimer.current) {
+        clearTimeout(fadeTimer.current)
+        fadeTimer.current = null
+      }
+      setRevealed(true)
+      setFading(false)
     }
-    if (fadeTimer.current) {
-      clearTimeout(fadeTimer.current)
-      fadeTimer.current = null
-    }
-    setRevealed(false)
-    setFading(false)
-    setEditingId(null)
   }, [hardLocked])
 
   useEffect(() => {
@@ -186,8 +207,8 @@ export default function SessionRail({
         // 会因基准过期误判为外部变更，必然整表重拉（实测 2026-08-25）。
         const flip = prevCanSwitchRef.current !== canSwitch
         prevCanSwitchRef.current = canSwitch
-        // 执行完成不再自动弹出整条 rail（2026-08-26）：UI 只响应用户显式交互或
-        // 外部会话变更；执行/提炼的后台写入对 rail 完全静默，唤醒走左缘感应区。
+        // 执行完成弹出由 hardLocked effect 负责（2026-08-31 起与 HUD 同步、实时）；
+        // 此处轮询仍不做整表重拉/外部变更误判，flip 轮只校准基准不触发（2026-08-25）。
         const activeId = list.find(i => i.is_active)?.id ?? null
         if (flip) {
           lastActiveIdRef.current = activeId
