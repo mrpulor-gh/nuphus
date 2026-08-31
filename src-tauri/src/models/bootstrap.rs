@@ -286,7 +286,7 @@ pub fn splash_bootstrap_status() -> SplashBootstrapStatus {
     if !embed_ok {
         missing.insert(0, "bge-small-zh（嵌入模型）".to_string());
     }
-    let needs_download = !embed_ok || !(vision.ocr_ready && vision.yolo_ready);
+    let needs_download = !embed_ok || !vision.ocr_ready || !vision.yolo_ready;
     let text = if needs_download {
         format!("需要下载模型：{}", missing.join("、"))
     } else {
