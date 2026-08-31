@@ -25,10 +25,13 @@ const WATCHDOG_INTERVAL_MS = 10000
 /** 静默阈值：服务端心跳 15s/次，45s（3 个周期）无任何帧即判定僵尸连接 */
 const SILENCE_THRESHOLD_MS = 45000
 /** 客户端活性 ping 间隔：产生 mobile→relay 方向流量，刷新中继隧道 idle 计时。
- *  背景（审计 R3.2）：中继 idle 30s 只看手机→中继方向流量，而服务端心跳是
- *  relay→mobile 的 Text 帧（浏览器不自动应答）→ 空闲会话 30s 必被掐断重连。
- *  浏览器 API 无法发协议级 Ping，只能发应用层 Text——mobile_server 读循环已忽略文本帧。 */
-const CLIENT_PING_INTERVAL_MS = 20000
+ *  背景（审计 R3.2）：中继 idle 30s 双向共享刷新（读写任一方向有流量即可），
+ *  但服务端心跳是 relay→mobile 的 Text 帧（浏览器不自动应答）——若手机方向
+ *  长时间零流量且事件稀疏，仍可能逼近 idle 阈值。浏览器 API 无法发协议级 Ping，
+ *  只能发应用层 Text——mobile_server 读循环已忽略文本帧。
+ *  15s：与 idle 30s 保持 2 倍余量（原 20s 余量偏小，事件循环繁忙/后台挂起时
+ *  可能延迟触发 idle 掐断 → 对话中偶发重连，2026-08-31 排查）。 */
+const CLIENT_PING_INTERVAL_MS = 15000
 
 interface WsCallbacks {
   /** 收到业务事件（NuphusEvent，ws_connected 已被本类消费） */
@@ -104,7 +107,11 @@ export class MobileWsClient {
     }, WATCHDOG_INTERVAL_MS)
   }
 
-  /** 僵尸斩杀：旧连接三个 handler 置 null（防 onclose 重入退避）→ close → 立即重连 */
+  /** 僵尸斩杀：旧连接三个 handler 置 null（防 onclose 重入退避）→ close → 按退避重连。
+   *  ⚠️ 2026-08-31 修复：此前立即重连 + 重置 backoff——中继/网络持续异常（如隧道
+   *  间歇停滞）时会形成「每 45s 斩杀一次」的高频重连循环。改为与 onclose 一致的
+   *  指数退避（1s→2s→…→30s），循环频率随退避自然衰减；连接成功收到 ws_connected
+   *  时仍会重置退避（见 onmessage），正常恢复不受影响。 */
   private killZombie(): void {
     const ws = this.ws
     if (ws) {
@@ -118,8 +125,10 @@ export class MobileWsClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    this.backoffMs = BACKOFF_MIN_MS
-    this.connect()
+    this.cb.onStatus('offline')
+    // 遵循退避：不立即重连、不重置 backoff——避免持续异常时的高频重连循环
+    this.reconnectTimer = setTimeout(() => this.connect(), this.backoffMs)
+    this.backoffMs = Math.min(this.backoffMs * 2, BACKOFF_MAX_MS)
   }
 
   private connect(): void {
@@ -156,7 +165,9 @@ export class MobileWsClient {
       /^10\./.test(hostname) ||
       /^192\.168\./.test(hostname) ||
       /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
-      /^169\.254\./.test(hostname)
+      /^169\.254\./.test(hostname) ||
+      // Tailscale CGNAT 段（100.64.0.0/10）——用户自建组网后按局域网直连处理
+      /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hostname)
     const protocols = isPrivateHost ? undefined : [`auth.${this.token}`]
     // 多租户归属标记：WS 无法带自定义 Header，query 是唯一通道（中继请求行解析
     // ?device= 优先于 sole-online 决策）。局域网直连同样携带，mobile_server 忽略未知 query。

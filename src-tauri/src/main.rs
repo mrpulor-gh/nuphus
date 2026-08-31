@@ -216,6 +216,7 @@ fn main() {
             mobile_server::mobile_password_set,
             relay_client::relay_client_status,
             relay_client::relay_client_set_enabled,
+            relay_client::relay_client_update_node,
             relay_client::relay_caller_token_rotate,
             commands::get_session_refine_config,
             commands::set_session_refine_config,

@@ -1124,6 +1124,8 @@ export interface RelayChannelState {
   since?: number
   /** retrying: 连续失败次数 */
   attempts?: number
+  /** retrying: 最近一次失败摘要（连接成功后随状态复位消失） */
+  last_error?: string
   /** fault: 故障原因摘要 */
   reason?: string
 }
@@ -1133,6 +1135,8 @@ export interface RelayClientStatus {
   state: { relay: RelayChannelState; tunnel: RelayChannelState }
   /** 隧道公网入口（http://host:18081），中继未启用时为 null；远程配对链接的 base */
   public_url?: string | null
+  /** 本机设备标识（中继按此路由）；排查 device_id 不一致用 */
+  device_id?: string
 }
 
 export function relayClientStatus() {
@@ -1142,6 +1146,11 @@ export function relayClientStatus() {
 /** 中继开关：持久化 enabled + 运行时即时启停（免重启） */
 export function relayClientSetEnabled(enabled: boolean) {
   return invoke<string>('relay_client_set_enabled', { enabled })
+}
+
+/** 更新中继节点配置（官方/自建 VPS）：持久化 url/token + 热重启连接 */
+export function relayClientUpdateNode(url: string, token: string) {
+  return invoke<string>('relay_client_update_node', { url, token })
 }
 
 /** 轮换中继调用凭据（caller_token）：服务端热生效，旧凭据即刻失效，已配对手机外网访问需重新扫码 */

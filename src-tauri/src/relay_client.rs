@@ -128,24 +128,46 @@ pub fn load_config() -> RelayClientConfig {
             match serde_json::from_str::<RelayClientConfig>(raw.trim_start_matches('\u{feff}')) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    tracing::error!(
-                        "[Relay] relay_client.json 解析失败（回退默认值，原文件保留）: {e}"
-                    );
+                    // 解析失败不再无声当默认配置用：旧链路会一路走到
+                    // ensure_default_config 重新生成 device_id 并覆盖保存——自建中继的
+                    // url/token 丢失 + 设备身份漂移（issue #7 的 a49f/7d0d 劈叉即此）。
+                    // 损坏文件先备份留证（用户可从中找回自建配置），再走全新初始化。
+                    let backup = path.with_extension("json.broken");
+                    match std::fs::rename(&path, &backup) {
+                        Ok(()) => tracing::error!(
+                            "[Relay] relay_client.json 解析失败: {e}（已备份为 {}，将重新初始化配置）",
+                            backup.display()
+                        ),
+                        Err(_) => tracing::error!(
+                            "[Relay] relay_client.json 解析失败: {e}（备份失败，原文件保留）"
+                        ),
+                    }
                     RelayClientConfig::default()
                 }
             }
         }
-        Err(_) => RelayClientConfig::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => RelayClientConfig::default(),
+        Err(e) => {
+            // 读取失败（权限/占用）：按默认值处理。ensure_default_config 后续写入若
+            // 同样被占用会失败——原文件不会被破坏；占用解除后读到原文件恢复如常
+            tracing::error!("[Relay] relay_client.json 读取失败: {e}");
+            RelayClientConfig::default()
+        }
     }
 }
 
-/// 配置写入（中继开关等设置页入口）
+/// 配置写入（中继开关等设置页入口）。原子替换（tmp + rename）：写一半崩溃/断电
+/// 不再产生截断 JSON——损坏文件曾触发 load_config 静默回退 → device_id 重新生成
+/// （设备身份漂移，issue #7）。std rename 在 Windows 带 REPLACE_EXISTING 语义。
 pub fn save_config(cfg: &RelayClientConfig) -> Result<(), String> {
     if let Some(parent) = config_path().parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
     let data = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化配置失败: {e}"))?;
-    std::fs::write(config_path(), data).map_err(|e| format!("写入配置失败: {e}"))
+    let path = config_path();
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, data).map_err(|e| format!("写入配置失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换配置失败: {e}"))
 }
 
 /// 中继开关（MobilePage「中继转发」开关）：持久化 enabled + 运行时即时启停（免重启）。
@@ -172,6 +194,92 @@ pub async fn relay_client_set_enabled(
     }
 }
 
+/// 更新中继节点配置（官方节点 / 自建 VPS）：持久化 url/token 到 relay_client.json，
+/// 已启用时热重启中继连接（stop + spawn），无需重启应用。
+#[tauri::command]
+pub async fn relay_client_update_node(
+    app: tauri::AppHandle,
+    url: String,
+    token: String,
+) -> Result<String, String> {
+    let mut cfg = load_config();
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("中继地址不能为空".into());
+    }
+    cfg.url = url;
+    if !token.is_empty() {
+        cfg.token = token.trim().to_string();
+    }
+    if !relay_loops_allowed(&cfg) {
+        return Err("中继配置不完整（url/device_id/token），请检查后重试".into());
+    }
+    save_config(&cfg)?;
+    if cfg.enabled {
+        stop_relay_loops().await;
+        spawn_relay_loops(app);
+    }
+    Ok("中继节点已更新".into())
+}
+
+// ── relay HTTP 请求（统一出口 + 代理故障自愈，issue #7）────────────────────
+// 背景两行：reqwest 默认跟随系统/环境代理，WS 通道走 tungstenite 裸 TCP 天然直连——
+// 系统代理（如 Clash）劫持中继域名时曾出现「HTTP 过不去（502/TLS 失败）而 WS 能到
+// （报鉴权错）」的劈叉状态。统一出口后：默认仍走代理（需要代理才能到中继的用户不受
+// 影响），网络层失败或网关类 5xx 时自动直连重试一次，无需用户改任何配置。
+
+fn relay_http_client(direct: bool) -> reqwest::Client {
+    let builder = reqwest::Client::builder();
+    let builder = if direct { builder.no_proxy() } else { builder };
+    builder.build().unwrap_or_default()
+}
+
+/// relay HTTP 请求统一出口。第一次按默认代理策略发送（reqwest 跟随系统/环境代理）；
+/// 网络层失败（连接/TLS/超时）或网关类 5xx（502/503/504 = 中间层应答，中继服务端
+/// 自身不产生这些状态）时换 no_proxy 直连客户端重试一次——直连到达的应答是服务端
+/// 权威应答，状态码交调用方分类。两次都失败返回网络/代理类错误文案（与鉴权类
+/// 401/403 明确区分，issue #7 方案②）。
+async fn relay_http_send(
+    method: reqwest::Method,
+    url: String,
+    headers: &[(&'static str, &str)],
+) -> Result<reqwest::Response, String> {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let build = |client: reqwest::Client| {
+        let mut req = client.request(method.clone(), &url).timeout(TIMEOUT);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        req
+    };
+
+    let proxy_fail: Option<String> = match build(relay_http_client(false)).send().await {
+        Ok(resp) => {
+            let s = resp.status();
+            if matches!(
+                s,
+                reqwest::StatusCode::BAD_GATEWAY
+                    | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    | reqwest::StatusCode::GATEWAY_TIMEOUT
+            ) {
+                Some(format!("HTTP {s}（代理网关应答）"))
+            } else {
+                return Ok(resp);
+            }
+        }
+        Err(e) => Some(e.to_string()),
+    };
+
+    match build(relay_http_client(true)).send().await {
+        Ok(resp) => Ok(resp),
+        Err(e) => Err(format!(
+            "请求失败（网络/代理类）：代理路径 {}；直连 {e}。系统代理（如 Clash）\
+             开启时请将中继域名加入直连规则，或检查代理可用性",
+            proxy_fail.as_deref().unwrap_or("未触发")
+        )),
+    }
+}
+
 /// caller_token 轮换（MobilePage「重新生成调用凭据」按钮）。
 /// 调中继管理端点（device_token 鉴权）→ 服务端写 relay_caller.token 热生效；
 /// 成功后更新本地 relay_client.json 并重启中继回路。旧凭据即刻失效——
@@ -187,17 +295,29 @@ pub async fn relay_caller_token_rotate(app: tauri::AppHandle) -> Result<String, 
     let http_base = base
         .replacen("wss://", "https://", 1)
         .replacen("ws://", "http://", 1);
-    let resp = reqwest::Client::new()
-        .post(format!("{http_base}/admin/rotate-caller-token"))
-        .header("X-Relay-Token", &cfg.token)
-        .timeout(std::time::Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|e| format!("轮换请求失败: {e}"))?;
+    let resp = relay_http_send(
+        reqwest::Method::POST,
+        format!("{http_base}/admin/rotate-caller-token"),
+        &[("X-Relay-Token", &cfg.token)],
+    )
+    .await?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Err("中继服务端版本过旧（无轮换端点），请先升级 VPS 上的 relay-server".into());
     }
     if !resp.status().is_success() {
+        // 鉴权类失败与网络类区分（issue #7 方案①）：403/401 = token 不匹配，
+        // 与 device_id 无关（服务端按共享 device_token 校验，device_id 仅路由键）。
+        if matches!(
+            resp.status(),
+            reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::UNAUTHORIZED
+        ) {
+            return Err(format!(
+                "轮换被拒: HTTP {}——token 与中继服务器 device_token 不匹配\
+                 （与 device_id 无关）。官方中继请使用官方发布包；自建中继请核对 \
+                 relay_client.json 的 token",
+                resp.status()
+            ));
+        }
         return Err(format!("轮换被拒: HTTP {}", resp.status()));
     }
     let body: serde_json::Value = resp
@@ -257,6 +377,108 @@ fn ws_request(url: &str, token: &str) -> Result<http::Request<()>, String> {
     Ok(req)
 }
 
+/// TCP 建连（代理感知，issue #7 对齐 HTTP 双路径）：
+/// 优先经系统代理 CONNECT 隧道（HTTPS_PROXY/HTTP_PROXY/ALL_PROXY，NO_PROXY 豁免），
+/// 无代理 / CONNECT 失败 / 被豁免 → 回退直连。
+async fn connect_tcp_with_proxy(host: &str, port: u16) -> std::io::Result<tokio::net::TcpStream> {
+    if !should_bypass_proxy(host) {
+        for var in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            if let Ok(p) = std::env::var(var) {
+                if let Some(stream) = connect_via_proxy(&p, host, port).await? {
+                    return Ok(stream);
+                }
+            }
+        }
+    }
+    tokio::net::TcpStream::connect((host, port)).await
+}
+
+/// 经 HTTP 代理建立 CONNECT 隧道；无代理信息 / CONNECT 失败返回 None（调用方回退直连）。
+async fn connect_via_proxy(
+    proxy: &str,
+    host: &str,
+    port: u16,
+) -> std::io::Result<Option<tokio::net::TcpStream>> {
+    let Some((phost, pport)) = parse_proxy_addr(proxy) else {
+        return Ok(None);
+    };
+    let mut stream = match tokio::time::timeout(
+        Duration::from_secs(8),
+        tokio::net::TcpStream::connect((phost, pport)),
+    )
+    .await
+    {
+        Ok(Ok(s)) => s,
+        _ => return Ok(None),
+    };
+    // CONNECT 建立到目标 host:port 的隧道（HTTP/1.1 常规代理语义）
+    let req = format!(
+        "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Connection: keep-alive\r\n\r\n"
+    );
+    if stream.write_all(req.as_bytes()).await.is_err() {
+        return Ok(None);
+    }
+    // 读响应头直到 \r\n\r\n
+    let mut buf = [0u8; 4096];
+    let mut resp = Vec::new();
+    loop {
+        match stream.read(&mut buf).await {
+            Ok(0) => return Ok(None),
+            Ok(n) => {
+                resp.extend_from_slice(&buf[..n]);
+                if resp.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(_) => return Ok(None),
+        }
+    }
+    let head = String::from_utf8_lossy(&resp);
+    if head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200") {
+        Ok(Some(stream))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 解析代理地址（http://host:port / host:port）；缺端口默认 8080。
+fn parse_proxy_addr(p: &str) -> Option<(String, u16)> {
+    let p = p.trim();
+    let p = p
+        .strip_prefix("http://")
+        .or_else(|| p.strip_prefix("https://"))
+        .unwrap_or(p)
+        .trim_end_matches('/');
+    if p.is_empty() {
+        return None;
+    }
+    match p.rsplit_once(':') {
+        Some((h, port)) if !h.is_empty() => {
+            Some((h.to_string(), port.parse::<u16>().ok().unwrap_or(8080)))
+        }
+        _ => Some((p.to_string(), 8080)),
+    }
+}
+
+/// NO_PROXY 豁免判定：`*` 或精确/域名后缀匹配。
+fn should_bypass_proxy(host: &str) -> bool {
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let h = host.to_lowercase();
+    no_proxy.split(',').any(|d| {
+        let d = d.trim().trim_start_matches('.').to_lowercase();
+        d == "*" || d == h || h.ends_with(&format!(".{d}"))
+    })
+}
+
 /// 建立带 TCP keepalive 的 WS 连接（防 NAT 空闲掐断「半死连接」）。
 ///
 /// 背景：桌面 relay 双回路（/ws/device + /ws/tunnel）空闲时无任何帧，运营商 NAT 会在
@@ -268,6 +490,10 @@ fn ws_request(url: &str, token: &str) -> Result<http::Request<()>, String> {
 /// - 若 NAT 已掐断，探测无 ACK，TCP 层重试后报错 → read 返回 Err → 触发重连。
 ///
 /// 这是 TCP 层标准保活，非业务层「心跳」，符合「无心跳无服务器检测」架构意图。
+///
+/// 代理感知（issue #7 对齐 HTTP 双路径）：TCP 建连优先经系统代理 CONNECT 隧道，
+/// 无代理 / CONNECT 失败 / NO_PROXY 豁免 → 回退直连。必须代理才能访问境外中继的
+/// 用户（墙内/受限网络）此前 WS 永远失败——现在与 relay_http_send 行为一致。
 async fn connect_ws_with_keepalive(
     url: &str,
     token: &str,
@@ -287,7 +513,7 @@ async fn connect_ws_with_keepalive(
         _ => 80,
     });
 
-    let tcp = tokio::net::TcpStream::connect((host, port))
+    let tcp = connect_tcp_with_proxy(host, port)
         .await
         .map_err(|e| ConnectError::Handshake(Box::new(tungstenite::Error::Io(e))))?;
 
@@ -506,8 +732,15 @@ enum Chan {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ChannelState {
     Connected,
-    Retrying { since: i64, attempts: u32 },
-    Fault { reason: String },
+    Retrying {
+        since: i64,
+        attempts: u32,
+        /// 最近一次失败摘要（连接成功后随状态复位消失）——设置页诊断展示（issue #7）
+        last_error: String,
+    },
+    Fault {
+        reason: String,
+    },
     Disabled,
 }
 
@@ -566,6 +799,7 @@ fn update_state_on_failure(chan: Chan, kind: FailKind, fail_count: u32, summary:
             *cur = ChannelState::Retrying {
                 since,
                 attempts: fail_count,
+                last_error: summary.to_string(),
             };
         }
     }
@@ -712,6 +946,8 @@ pub struct RelayClientStatus {
     /// 未启用中继时为 None；
     /// 设置页「远程访问」引导用它拼接配对链接
     pub public_url: Option<String>,
+    /// 本机设备标识（中继按此路由）；展示用——排查 device_id 与配置文件不一致
+    pub device_id: String,
 }
 
 #[tauri::command]
@@ -729,6 +965,7 @@ pub fn relay_client_status() -> RelayClientStatus {
         state: relay_conn_state(),
         // 二维码/配对链接是导航入口：携带 ?device= 供中继按设备路由（多用户改造）
         public_url: public_tunnel_entry_url(&cfg),
+        device_id: cfg.device_id,
     }
 }
 
@@ -842,6 +1079,7 @@ pub async fn run_relay_loop<F, Fut>(
         ChannelState::Retrying {
             since: now_unix(),
             attempts: 0,
+            last_error: String::new(),
         },
     );
     let mut backoff = RelayBackoff::new();
@@ -1054,6 +1292,7 @@ pub async fn run_tunnel_loop(
         ChannelState::Retrying {
             since: now_unix(),
             attempts: 0,
+            last_error: String::new(),
         },
     );
     let mut backoff = RelayBackoff::new();

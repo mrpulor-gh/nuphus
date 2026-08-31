@@ -21,6 +21,8 @@ export function isPrivateHost(hostname: string): boolean {
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true
   // 链路本地
   if (/^169\.254\./.test(h)) return true
+  // Tailscale CGNAT 段（100.64.0.0/10）——用户自建 Tailscale 组网后按局域网直连处理
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true
   return false
 }
 
