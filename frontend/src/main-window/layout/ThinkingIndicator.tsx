@@ -2,6 +2,7 @@ import type { TimelineEntry } from '../../core/types'
 import { MoodFace } from '../../ui/MoodFace'
 import type { MoodState } from '../../ui/MoodFace'
 import { IconButton } from '../../ui/Button'
+import { playUiSound } from '../../ui/sound'
 import { useLanguage } from '../../locales'
 
 interface ThinkingIndicatorProps {
@@ -33,6 +34,16 @@ const PHASE_COLORS: Record<string, string> = {
   retrying: '#f97316',
 }
 
+/** 最近一次工具调用名（执行中无 agent text 时提示用；无则 null） */
+function lastToolName(timeline?: TimelineEntry[]): string | null {
+  if (!timeline) return null
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i]
+    if (e.kind === 'tool_call' && e.toolName) return e.toolName
+  }
+  return null
+}
+
 export function ThinkingIndicator({
   step,
   isThinking,
@@ -53,6 +64,13 @@ export function ThinkingIndicator({
   const phaseColor = completed ? '#22c55e' : phase ? PHASE_COLORS[phase] : '#3b82f6'
 
   const callCount = timeline ? timeline.filter(t => t.kind === 'tool_call').length : 0
+  const toolName = lastToolName(timeline)
+
+  // 点开执行详情窗口：播放切换音（展开动作反馈）
+  const handleExpand = () => {
+    playUiSound('switch')
+    onExpand?.()
+  }
 
   return (
     <div
@@ -61,7 +79,7 @@ export function ThinkingIndicator({
         boxShadow: `0 0 24px ${phaseColor}08, var(--shadow-elevated)`,
       }}
     >
-      <div className="thinking-indicator-inner" onClick={() => onExpand?.()}>
+      <div className="thinking-indicator-inner" onClick={handleExpand}>
         <div className="thinking-mood-box">
           <MoodFace mood={mood || 'idle'} size={36} />
         </div>
@@ -81,17 +99,15 @@ export function ThinkingIndicator({
           </div>
           <div className="thinking-text-wrap">
             <span className="thinking-text">
-              {completed ? t('thinking.completed') : step || t('thinking.inProgress')}
+              {completed
+                ? t('thinking.completed')
+                : step || (toolName ? t('thinking.toolCall', toolName) : t('thinking.inProgress'))}
             </span>
           </div>
         </div>
 
         <div className="thinking-actions" onClick={e => e.stopPropagation()}>
-          <IconButton
-            variant="ghost"
-            label={t('thinking.viewDetails')}
-            onClick={() => onExpand?.()}
-          >
+          <IconButton variant="ghost" label={t('thinking.viewDetails')} onClick={handleExpand}>
             <svg
               width="13"
               height="13"

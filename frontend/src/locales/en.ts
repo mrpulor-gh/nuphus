@@ -700,6 +700,7 @@ const en: Record<string, string> = {
   'thinking.workflow': 'Workflow',
   'thinking.retrying': 'Retrying',
   'thinking.steps': '{0} steps',
+  'thinking.toolCall': 'Calling {0}',
   'thinking.completed': 'Reply done — click to review',
   'thinking.inProgress': 'Thinking...',
   'thinking.viewDetails': 'View details',

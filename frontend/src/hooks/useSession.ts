@@ -844,16 +844,12 @@ export function useSession(): SessionAPI {
   const thinkingStep = useMemo(() => {
     const timeline = execUI.timeline
     if (timeline.length === 0) return ''
-    // 显示优先级：agent 正文输出（text）> 思考（thinking）> 工具调用。
-    // bar 语义是「agent 现在在产出什么」——agent 输出正文时显示正文，
-    // 否则显示思考过程；仅当完全没有 agent 文本（思考/正文都无）时才回退
-    // 显示当前 running 工具调用（tool_call 优先会导致思考与工具交替时
-    // 在两个文案间每帧跳变（闪抖））。
+    // 显示优先级：agent 正文输出（text）。不再显示 thinking（思考过程）——
+    // 指示器只反映 agent 对外产出：有正文显示正文；无正文返回空，
+    // 由 ThinkingIndicator 兜底显示当前工具调用。
     const lastText = timeline.filter(t => t.kind === 'text').pop() as
       { kind: 'text'; text: string } | undefined
-    const lastThinking = timeline.filter(t => t.kind === 'thinking').pop() as
-      { kind: 'thinking'; text: string } | undefined
-    const text = lastText?.text || lastThinking?.text || ''
+    const text = lastText?.text || ''
     if (text && text.trim().length >= 2) {
       const firstPara = text.split('\n\n')[0]?.trim() || ''
       if (firstPara.length <= 200) return firstPara
@@ -862,15 +858,8 @@ export function useSession(): SessionAPI {
         return firstSentence + (firstSentence.length < firstPara.length ? '…' : '')
       return firstPara.slice(0, 160) + '…'
     }
-    // 无 agent 文本 → 显示当前正在执行的工具（仅 running 态；成功/失败不产生
-    // "执行中"文案，否则执行完成后标签永远停留在 xxx executing... 无法闭合）
-    const last = timeline[timeline.length - 1]
-    if (last.kind === 'tool_call' && last.toolName && last.status === 'running') {
-      return last.toolName + ' executing...'
-    }
-    if (execUI.currentTaskDesc) return execUI.currentTaskDesc
     return ''
-  }, [execUI.timeline, execUI.currentTaskDesc])
+  }, [execUI.timeline])
 
   const displayTokenUsage = useMemo(() => execUI.mainTokenUsage, [execUI.mainTokenUsage])
   const liveCalls = useMemo(

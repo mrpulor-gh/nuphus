@@ -670,6 +670,7 @@ const zh: Record<string, string> = {
   'thinking.workflow': '工作流',
   'thinking.retrying': '重试中',
   'thinking.steps': '{0} 步',
+  'thinking.toolCall': '正在调用 {0}',
   'thinking.completed': '回复完成，点击回顾过程',
   'thinking.inProgress': '思考中...',
   'thinking.viewDetails': '查看执行详情',
