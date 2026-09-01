@@ -9,7 +9,7 @@
 //
 // 所有命令 async + spawn_blocking：ffmpeg 耗时，不在 UI 线程执行。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::video::deps::{ensure_ffmpeg_suite, quiet_command, run_capture};
 
@@ -28,7 +28,7 @@ fn ensure_input_video(path: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-fn ensure_output_dir(path: &PathBuf) -> Result<(), String> {
+fn ensure_output_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建输出目录失败：{}", e))?;

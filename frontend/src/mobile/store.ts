@@ -580,30 +580,29 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     case 'refine_executing':
       return { ...state, refining: true, pendingRefine: null }
 
-    case 'session_refined':
-      // 提炼完成：清状态 + **显示摘要气泡**（role:'refine'，与后端 extract_history
-      // 的 refine 角色对齐——重拉历史时摘要仍在，不闪失）。原实现只清状态不生成气泡
-      // → 手机端「输出完毕后不显示」（2026-09-02 大王反馈；桌面端有独立提炼 UI，
-      // 手机端需气泡承载提炼结果）。
-      {
-        const summary = ev.summary?.trim()
-        return {
-          ...state,
-          refining: false,
-          pendingRefine: null,
-          messages: summary
-            ? [
-                ...state.messages,
-                {
-                  id: rid(),
-                  role: 'refine',
-                  content: summary,
-                  timestamp: Date.now(),
-                },
-              ]
-            : state.messages,
-        }
+    case 'session_refined': // 提炼完成：清状态 + **显示摘要气泡**（role:'refine'，与后端 extract_history
+    // 的 refine 角色对齐——重拉历史时摘要仍在，不闪失）。原实现只清状态不生成气泡
+    // → 手机端「输出完毕后不显示」（2026-09-02 大王反馈；桌面端有独立提炼 UI，
+    // 手机端需气泡承载提炼结果）。
+    {
+      const summary = ev.summary?.trim()
+      return {
+        ...state,
+        refining: false,
+        pendingRefine: null,
+        messages: summary
+          ? [
+              ...state.messages,
+              {
+                id: rid(),
+                role: 'refine',
+                content: summary,
+                timestamp: Date.now(),
+              },
+            ]
+          : state.messages,
       }
+    }
 
     case 'refine_failed':
       // 提炼失败（LLM key 失效/连不上/超时/空摘要）：与 refine_executing 配对的
