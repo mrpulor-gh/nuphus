@@ -649,6 +649,13 @@ pub fn ensure_vision_models_blocking(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    use std::sync::Mutex;
+
+    /// `NUPHUS_MODELS_DIR` 是进程级共享环境变量；这三个测试并行时
+    /// set_var/remove_var 会互相污染（scan 测试改 env，write_dir 测试读到
+    /// 残留值导致断言失败）。用互斥锁串行化，避免并行时序 flaky。
+    static NUPHUS_MODELS_DIR_LOCK: Mutex<()> = Mutex::new(());
+
     /// The manifest must stay in sync with the exact filenames the runtime
     /// reads (src/desktop/paddle_ocr.rs L119-121, yolo_detect.rs L46) — drift
     /// here silently breaks auto-healing.
@@ -682,6 +689,9 @@ mod tests {
     /// never looks.
     #[test]
     fn write_dir_matches_read_dir() {
+        let _guard = NUPHUS_MODELS_DIR_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = models_dir_for_write().expect("data_dir resolvable on dev machine");
         assert!(
             dir.ends_with("Nuphus\\models") || dir.ends_with("Nuphus/models"),
@@ -692,6 +702,9 @@ mod tests {
 
     #[test]
     fn scan_status_reports_missing_in_empty_dir() {
+        let _guard = NUPHUS_MODELS_DIR_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Override env so the scan points at a guaranteed-empty temp dir.
         let tmp = std::env::temp_dir().join("nuphus_vision_scan_test");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -707,6 +720,9 @@ mod tests {
 
     #[test]
     fn scan_status_ready_when_files_present() {
+        let _guard = NUPHUS_MODELS_DIR_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join("nuphus_vision_scan_ready_test");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
