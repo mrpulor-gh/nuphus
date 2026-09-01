@@ -7,6 +7,23 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-02
+
+### Added
+- 内置工具页：23 个处理命令（PDF / 图像 / 视频 / 音频 / 语音克隆 / 文档），拖放上传 + 参数表单 + 应用内全屏预览，无需安装外部工具
+- 语音克隆（云端 OpenAI 兼容 /audio/speech），音频独立分类、PDF 置末
+- Agent 内置工具感知：Leader / WorkflowAgent 提示词声明工具页能力（仅内部机制注册，用户经工具页使用）
+- 音效提醒扩展：LLM 执行错误三音下行、重试咚咚中性音（网络重试耗尽不误报失败）
+
+### Changed
+- 工具 skill（tools-internal）精简为 Agent 参数手册（23 命令）
+- 模型页 custom tab 改名「图像音频配置」，新增语音克隆配置
+- README 重构：设计哲学独立成章（Leader / Workflow 两篇），移除「为什么是 Nuphus」整章，开篇改为极简实用主义表述
+- cargo fmt 全 workspace 格式规范化
+
+### Fixed
+- README 错误信息：版本号、架构图三模式（Free/Plan → Leader/Workflow/Custom）、中继「不转发内容」→「不落盘存储内容」、Rust 构建要求、配置路径（config.toml → providers.toml），含 relay-server/README、relay-usage-policy、config.example.toml 同步
+
 ## [0.2.2] - 2026-09-01
 
 ### Added
