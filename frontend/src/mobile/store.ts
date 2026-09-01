@@ -580,10 +580,9 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     case 'refine_executing':
       return { ...state, refining: true, pendingRefine: null }
 
-    case 'session_refined': // 的 refine 角色对齐——重拉历史时摘要仍在，不闪失）。原实现只清状态不生成气泡 // 提炼完成：清状态 + **显示摘要气泡**（role:'refine'，与后端 extract_history
-    // → 手机端「输出完毕后不显示」（2026-09-02 大王反馈；桌面端有独立提炼 UI，
-    // 手机端需气泡承载提炼结果）。
-    {
+    case 'session_refined': {
+      // 提炼完成：清状态 + 显示摘要气泡（role:'refine'，与后端 extract_history 对齐，重拉历史不闪失）
+      // 手机端需气泡承载提炼结果（2026-09-02 大王反馈；桌面端有独立提炼 UI）
       const summary = ev.summary?.trim()
       return {
         ...state,
