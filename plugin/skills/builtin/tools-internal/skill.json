@@ -1,7 +1,7 @@
 {
   "name": "tools-internal",
   "displayName": "内置工具（PDF/图像/视频/音频/文档）",
-  "description": "Nuphus 内置工具页的 23 个内部机制命令（PDF 处理 7 个、图像处理 7 个、视频处理 5 个、音频处理 3 个含语音克隆、文档转文本 1 个）能力说明、命令签名、参数与使用边界。工具仅注册 invoke_handler，不进 agent 工具列表——Agent/Workflow 需要引导用户在工具页手动调用，或经 Rust 命令函数/引擎二进制执行。语音克隆走云端，模型在模型界面配置（capabilities.voice）。",
+  "description": "Nuphus 工具页 23 个内部机制命令参数手册（PDF 7 / 图像 7 / 视频 5 / 音频 3 含语音克隆 / 文档 1）：签名、关键参数、调用边界。工具仅注册 invoke_handler 不注册为 agent 工具（LLM 不可经 execute_tool 调用），Agent 感知能力后引导用户经工具页使用。",
   "version": "1.1.0",
   "author": "Nuphus",
   "keywords": ["工具", "内置工具", "PDF", "图像", "图片", "视频", "音频", "语音克隆", "文档", "merge", "compress", "extract", "convert", "resize", "stitch", "gif", "rotate", "ocr", "工具页", "tools", "pdf_merge", "image_compress", "video_to_gif", "doc_extract_text", "voice_clone", "voiceClone"],

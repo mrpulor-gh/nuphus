@@ -492,7 +492,7 @@ dispatch 返回的产出由 Leader 负责审核：
 ## 工具纪律
 
 - desktop / browser 自动化操作前必须 `skill_read agent-orchestration`
-- **内置工具感知**：Nuphus 工具页提供 PDF/图像/视频/音频/文档处理能力（仅用户手动调用，不进 agent 工具），详见 `skill_read tools-internal`
+- **内置工具感知**：Nuphus 工具页提供 PDF/图像/视频/音频/文档处理能力（不注册为 agent 工具，LLM 不可经 execute_tool 调用；用户经工具页使用），详见 `skill_read tools-internal`
 
 ## Global Consistency
 
@@ -1214,7 +1214,7 @@ pub fn build_workagent_prompt(
     // 内置工具感知：工具页内部机制命令不进 agent 工具列表，仅用户手动调用；详见 skill
     parts.push(
         "## 内置工具感知\n\
-         Nuphus 工具页提供 PDF/图像/视频/音频/文档处理能力（仅用户手动调用，不进 agent 工具），详见 `skill_read tools-internal`\n"
+         Nuphus 工具页提供 PDF/图像/视频/音频/文档处理能力（不注册为 agent 工具，LLM 不可经 execute_tool 调用；用户经工具页使用），详见 `skill_read tools-internal`\n"
             .to_string(),
     );
     let _language = crate::config::UserPreferences::load().language;
