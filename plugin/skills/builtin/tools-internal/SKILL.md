@@ -1,19 +1,19 @@
 ---
-title: 内置工具（PDF/图像/视频/文档）内部说明
+title: 内置工具（PDF/图像/视频/音频/文档）内部说明
 id: tools-internal
 type: skill
-tags: [工具, PDF, 图像, 视频, 文档, 内部机制, invoke]
+tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, 内部机制, invoke]
 ---
 
 # 内置工具内部说明
 
-> Nuphus 内置工具页（ToolsPage）的 **22 个内部机制命令** 能力全集。
+> Nuphus 内置工具页（ToolsPage）的 **23 个内部机制命令** 能力全集。
 > 工具设计定位（大王定调）：工具是**内部机制命令**（仅 `invoke_handler` 注册），
 > **绝不注册进 `get_tools` / `execute_tool` 的 agent 工具列表**——用户经工具页手动调用，
 > Agent/Workflow 不直接持有这些工具的调用入口。
 >
 > 本 skill 的作用：让 Agent 与 Workflow **感知**这些能力存在，
-> 在对话/方案中知道「用户可经工具页处理 PDF/图像/视频」，并可引导使用。
+> 在对话/方案中知道「用户可经工具页处理 PDF/图像/视频/音频」，并可引导使用。
 > 工具页 UI 在桌面端导航「工具」；实现位于 `src-tauri/src/commands/tools/*`。
 
 ---
@@ -22,18 +22,18 @@ tags: [工具, PDF, 图像, 视频, 文档, 内部机制, invoke]
 
 | 角色 | 感知方式 | 能否直接调用 |
 |------|----------|-------------|
-| 用户 | 桌面端工具页（19 张能力卡片，两级导航：分类 tab → 卡片 → 详情页） | ✅ 手动调用 |
+| 用户 | 桌面端工具页（20 张能力卡片，两级导航：分类 tab → 卡片 → 详情页） | ✅ 手动调用 |
 | Agent（Leader/Exec） | 本 skill（`skill_read tools-internal` / `skill_query`） | ❌ 不在 agent 工具列表，不可经 `execute_tool` 调用 |
 | Workflow | 本 skill（`skill_query tools-internal` 检索） | ❌ 不可经 do.tool 调用（非 agent 工具） |
 
 **Agent/Workflow 的正确姿态**：
-- 用户需求涉及 PDF/图像/视频/文档处理 → 引导用户打开工具页操作，或说明能力清单让用户选择
+- 用户需求涉及 PDF/图像/视频/音频/文档处理 → 引导用户打开工具页操作，或说明能力清单让用户选择
 - 若需程序化执行（自动化/批处理），路径是 **Rust 命令函数**（`src-tauri/src/commands/tools/*` 的 `#[tauri::command]` 函数，可被 Rust 测试/内部代码直接调用）或 **引擎二进制**（`nuphus-tools-rs/target/release/nuphus-{pdf,image,video}.exe`，仅覆盖部分命令）
-- 实现要点：命令全部 `Result<serde_json::Value, String>` 返回，错误信息中文可读；PDF 走 lopdf、图像走 image crate、视频走 ffmpeg（`ensure_ffmpeg_suite` 定位）
+- 实现要点：命令全部 `Result<serde_json::Value, String>` 返回，错误信息中文可读；PDF 走 lopdf、图像走 image crate、视频/音频走 ffmpeg（`ensure_ffmpeg_suite` 定位）、语音克隆走云端（读 `capabilities.voice`）
 
 ---
 
-## 一、命令总览（22 个）
+## 一、命令总览（23 个）
 
 | 类别 | 命令 | 函数 | 输入 → 输出 |
 |------|------|------|------------|
@@ -52,12 +52,13 @@ tags: [工具, PDF, 图像, 视频, 文档, 内部机制, invoke]
 | 图像 | 批量压缩 | `image_compress_batch` | N 图 → 目录（原名-out.扩展名） |
 | 图像 | 批量转换 | `image_convert_batch` | N 图 → 目录（目标格式） |
 | 视频 | 压缩 | `video_compress` | 视频 → 视频（libx264 重编码） |
-| 视频 | 提取音频 | `video_extract_audio` | 视频 → 音频（wav/mp3） |
 | 视频 | 抽帧 | `video_extract_frames` | 视频 → 目录（frame_%04d.jpg） |
 | 视频 | 信息 | `video_info` | 视频 → 时长/编码/分辨率（ffprobe） |
 | 视频 | 转 GIF | `video_to_gif` | 视频 → GIF（palettegen+paletteuse） |
 | 视频 | 截取片段 | `video_cut` | 视频 → 片段（-ss 快速 seek + -c copy） |
-| 视频 | 音频转换 | `audio_convert` | 音频/视频 → 音频（mp3/wav/m4a/flac） |
+| 音频 | 提取音频 | `video_extract_audio` | 视频/音频 → 音频（wav/mp3） |
+| 音频 | 音频转换 | `audio_convert` | 音频/视频 → 音频（mp3/wav/m4a/flac） |
+| 音频 | 语音克隆 | `voice_clone` | 参考音频 + 文本 → 克隆语音（走云端） |
 | 文档 | 文档转文本 | `doc_extract_text` | docx/pptx/xls/ods/odt/odp/pdf → 文本 |
 
 ---
@@ -214,6 +215,39 @@ async fn audio_convert(input_path, output_path, bitrate: Option<String>) -> Resu
 
 ---
 
+## 四·五、音频命令（`src-tauri/src/commands/tools/video.rs` 音频部分 + `voice.rs`）
+
+工具页「音频」分类收纳 3 个能力：提取音频（`video_extract_audio`，视频/音频→音频）、音频转换（`audio_convert`，格式互转）、语音克隆（`voice_clone`，走云端）。前两者实现见 video.rs（ffmpeg），语音克隆独立于 voice.rs。
+
+### video_extract_audio（归入音频分类）
+```rust
+async fn video_extract_audio(input_path, output_path, format: Option<String>) -> Result<Value, String>
+```
+- wav（pcm_s16le 44100 stereo）/ 默认 mp3（libmp3lame 192k）
+
+### audio_convert（归入音频分类）
+```rust
+async fn audio_convert(input_path, output_path, bitrate: Option<String>) -> Result<Value, String>
+```
+- 输出扩展名决定编码：mp3=libmp3lame / wav=pcm_s16le / m4a=aac / flac=flac
+- bitrate 可选（如 "192k"，mp3/m4a 生效）；输入可为音频或视频（提取音轨）
+
+### voice_clone（语音克隆，走云端）
+```rust
+pub async fn voice_clone(
+    reference_path: String,   // 参考音频（克隆音色样本）
+    text: String,             // 要合成的文字
+    output_path: String,      // 输出音频路径（扩展名决定格式）
+) -> Result<Value, String>
+```
+- **走云端**：读取 `capabilities.voice`（providers.toml [capabilities] voice=模型ID）解析 provider/model/base_url/api_key，调用 OpenAI 兼容 `POST {base_url}/audio/speech` 合成 mp3/wav
+- **未配置引导**：未配置 voice 能力时返回中文提示「请在模型界面 → 图像音频配置 → 语音克隆 配置语音克隆模型」（配置入口在模型界面，不走工具页）
+- 校验：text 非空、参考音频存在且格式 mp3/wav/m4a/flac/ogg/aac、输出扩展名白名单；120s 超时
+- 返回 `output` / `format` / `size_bytes`
+- 实现边界：克隆音色由所选模型/云端默认 voice 处理，参考音频暂作触发凭证（协议因平台而异，不臆造私有协议）
+
+---
+
 ## 五、文档命令（`src-tauri/src/commands/tools/doc.rs`）
 
 ### doc_extract_text
@@ -227,10 +261,11 @@ doc_extract_text(path: String) -> Result<Value, String>
 
 ## 六、注册与调用链
 
-- 注册：`src-tauri/src/main.rs` `invoke_handler`（L335-357 段，22 个命令全部 `commands::tools::*`）
-- 模块：`src-tauri/src/commands/tools.rs`（声明 `pub mod pdf/image/video/doc`，并承载 agent 工具 `get_tools`/`execute_tool`——两者职责隔离，内部机制命令绝不进 agent 工具列表）
-- 前端：`frontend/src/main-window/tools/ToolsPage.tsx`（ABILITIES 配置表驱动）+ `lib/api.ts` wrappers
+- 注册：`src-tauri/src/main.rs` `invoke_handler`（L335-358 段，23 个命令全部 `commands::tools::*`，含 `voice_clone`）
+- 模块：`src-tauri/src/commands/tools.rs`（声明 `pub mod pdf/image/video/doc/voice`，并承载 agent 工具 `get_tools`/`execute_tool`——两者职责隔离，内部机制命令绝不进 agent 工具列表）
+- 前端：`frontend/src/main-window/tools/ToolsPage.tsx`（ABILITIES 配置表驱动，五分类：图片/视频/文档/音频/PDF）+ `lib/api.ts` wrappers
 - 预览：`frontend/src/main-window/chat/PreviewOverlay.tsx`（`FilePreviewContent` 无壳内嵌预览）
+- 模型配置：语音克隆模型在「模型界面 → 图像音频配置 → 语音克隆」配置（`capabilities.voice`，走云端）
 - 引擎二进制（覆盖子集，可命令行调用）：`nuphus-tools-rs/target/release/nuphus-{pdf,image,video}.exe`
   - `nuphus-pdf.exe merge/info/extract-text/compress`
   - `nuphus-image.exe compress/convert/resize/info`

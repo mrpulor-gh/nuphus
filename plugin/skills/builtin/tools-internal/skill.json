@@ -1,13 +1,13 @@
 {
   "name": "tools-internal",
-  "displayName": "内置工具（PDF/图像/视频/文档）",
-  "description": "Nuphus 内置工具页的 22 个内部机制命令（PDF 处理 7 个、图像处理 7 个、视频处理 7 个、文档转文本 1 个）能力说明、命令签名、参数与使用边界。工具仅注册 invoke_handler，不进 agent 工具列表——Agent/Workflow 需要引导用户在工具页手动调用，或经 Rust 命令函数/引擎二进制执行。",
-  "version": "1.0.0",
+  "displayName": "内置工具（PDF/图像/视频/音频/文档）",
+  "description": "Nuphus 内置工具页的 23 个内部机制命令（PDF 处理 7 个、图像处理 7 个、视频处理 5 个、音频处理 3 个含语音克隆、文档转文本 1 个）能力说明、命令签名、参数与使用边界。工具仅注册 invoke_handler，不进 agent 工具列表——Agent/Workflow 需要引导用户在工具页手动调用，或经 Rust 命令函数/引擎二进制执行。语音克隆走云端，模型在模型界面配置（capabilities.voice）。",
+  "version": "1.1.0",
   "author": "Nuphus",
-  "keywords": ["工具", "内置工具", "PDF", "图像", "图片", "视频", "音频", "文档", "merge", "compress", "extract", "convert", "resize", "stitch", "gif", "rotate", "ocr", "工具页", "tools", "pdf_merge", "image_compress", "video_to_gif", "doc_extract_text"],
+  "keywords": ["工具", "内置工具", "PDF", "图像", "图片", "视频", "音频", "语音克隆", "文档", "merge", "compress", "extract", "convert", "resize", "stitch", "gif", "rotate", "ocr", "工具页", "tools", "pdf_merge", "image_compress", "video_to_gif", "doc_extract_text", "voice_clone", "voiceClone"],
   "triggers": {
     "auto_suggest": true,
-    "context_hints": ["工具", "工具页", "PDF处理", "图片处理", "视频处理", "压缩PDF", "合并PDF", "提取文本", "图片压缩", "格式转换", "视频压缩", "提取音频", "抽帧", "转GIF", "裁剪视频", "音频转换", "文档转文本", "拼接图片", "批量压缩", "图片旋转"]
+    "context_hints": ["工具", "工具页", "PDF处理", "图片处理", "视频处理", "音频处理", "语音克隆", "克隆声音", "压缩PDF", "合并PDF", "提取文本", "图片压缩", "格式转换", "视频压缩", "提取音频", "抽帧", "转GIF", "裁剪视频", "音频转换", "文档转文本", "拼接图片", "批量压缩", "图片旋转"]
   },
   "data_sources": [
     {
