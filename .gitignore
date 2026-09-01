@@ -168,3 +168,6 @@ tsc-out.txt
 
 # 审计/分析产出（不入库）
 projects/
+
+# 绕道编译/检查目录（cargo CARGO_TARGET_DIR 独立产物，不提交）
+target-test/

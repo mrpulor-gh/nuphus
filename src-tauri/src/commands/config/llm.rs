@@ -1467,6 +1467,7 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
         "vision": caps.vision,
         "stt": caps.stt,
         "tts": caps.tts,
+        "voice": caps.voice,
         "chat_agent_max_iterations": caps.chat_agent_max_iterations,
     });
 

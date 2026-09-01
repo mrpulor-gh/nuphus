@@ -4,7 +4,7 @@
  */
 import type { TraceItem } from './store'
 import { t } from './i18n'
-import { resolveTunnelDeviceId } from './connection'
+import { isPrivateHost, resolveTunnelDeviceId } from './connection'
 
 /**
  * 当前 REST 通道地址（null=当前页面 origin；非 null=桌面局域网直连地址）。
@@ -62,12 +62,24 @@ const DEFAULT_FETCH_TIMEOUT_MS = 20000
  * 多租户隧道归属标记：中继（公网入口）按 ?device= 或本头路由到归属桌面。
  * apiBase 是裸 origin 前缀拼接（query 进 base 会打废后续路径，实测事故），
  * query 无法贯穿页面内全部 API/WS——头是唯一能统一注入的显式归属通道。
- * ⚠️ 仅中继通道（apiBase=null，相对 origin）注入：局域网直连不经中继路由，
- * 无需标记；且该头会让跨域 LAN 请求触发 CORS 预检——老桌面白名单没有它时
- * 会被整批拦下（实测：同 WiFi 自动切直连后历史加载全挂）。
+ * 注入判定 = **目标 host 非私有网段**（中继），而非 apiBase 是否为空：
+ * - 中继 origin 页面（apiBase=null，相对 origin）→ 当前 origin 非私有 → 注入
+ * - 局域网 origin 页面故障转移切中继（apiBase=relayUrl 非 null）→ 目标非私有 → 注入
+ *   （2026-09-01 修复：原判定 apiBase!==null 不注入 → 中继多设备在线 Ambiguous
+ *   引导页 → 历史拉取/发送全失败，而 WS 带 ?device= 正常——两侧状态不一致）
+ * - 局域网直连（apiBase=私有 host）→ 不注入：不经中继路由，无需标记；且该头
+ *   会让跨域 LAN 请求触发 CORS 预检——老桌面白名单没有它时会被整批拦下
+ *   （实测：同 WiFi 自动切直连后历史加载全挂）。
  */
 function tunnelDeviceHeaders(): Record<string, string> {
-  if (apiBase !== null) return {}
+  const target = apiBase ?? window.location.origin
+  let hostname: string
+  try {
+    hostname = new URL(target).hostname
+  } catch {
+    hostname = window.location.hostname
+  }
+  if (isPrivateHost(hostname)) return {}
   const id = resolveTunnelDeviceId()
   return id ? { 'X-Tunnel-Device': id } : {}
 }

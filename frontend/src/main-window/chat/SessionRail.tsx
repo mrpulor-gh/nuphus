@@ -27,6 +27,9 @@ interface SessionRailProps {
   onModeSwitched?: (mode: string) => void
   /** 后端执行态实时镜像（App isProcessing）：执行中滑块隐藏、hover 不唤出 */
   locked?: boolean
+  /** 当前情绪（App mood）：执行错误（'error'）时结束翻转不播完成音效，
+   *   避免与 execution_error 的错误音效重叠 */
+  mood?: string
 }
 
 type NoticeTone = 'info' | 'warning' | 'error'
@@ -98,6 +101,7 @@ export default function SessionRail({
   onNewChat,
   onModeSwitched,
   locked = false,
+  mood,
 }: SessionRailProps) {
   const { t } = useLanguage()
   const [items, setItems] = useState<ShelfSessionItem[]>([])
@@ -155,8 +159,9 @@ export default function SessionRail({
       setFading(false)
       setEditingId(null)
     } else if (was) {
-      // 执行完成：弹出会话台（清除 10s 渐隐倒计时重新计时；鼠标移出感应区才重新计时）
-      playUiSound('done')
+      // 执行完成：弹出会话台（清除 10s 渐隐倒计时重新计时；鼠标移出感应区才重新计时）。
+      // 错误结束（mood='error'）不播完成音效——execution_error 已播错误音效，避免重叠
+      if (mood !== 'error') playUiSound('done')
       if (leaveTimer.current) {
         clearTimeout(leaveTimer.current)
         leaveTimer.current = null

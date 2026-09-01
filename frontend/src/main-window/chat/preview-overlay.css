@@ -215,3 +215,63 @@
   color: var(--error, #ef4444);
   overflow-wrap: anywhere;
 }
+
+/* ── PDF 内联预览（pdf.js canvas + 翻页） ── */
+.pv-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.pv-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+.pv-pdf-pagenum {
+  min-width: 64px;
+  text-align: center;
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+.pv-pdf-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+}
+.pv-pdf-canvas {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+  background: #fff;
+}
+
+/* ── 视频 / 音频内联预览（preview:// 源） ── */
+.pv-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #000;
+}
+.pv-video {
+  max-width: 100%;
+  max-height: 100%;
+  outline: none;
+}
+.pv-audio {
+  width: min(560px, 92%);
+}

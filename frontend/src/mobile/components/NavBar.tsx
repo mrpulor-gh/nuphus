@@ -260,13 +260,31 @@ export default function NavBar({
   const logoWrapRef = useRef<HTMLDivElement>(null)
   const settingsSheetRef = useRef<HTMLDivElement>(null)
 
-  // 右滑关闭手势：抽屉为右侧滑出，向右滑动（水平位移 > 60px 且垂直位移小，
-  // 防纵向滚动误触发）→ 关闭。主视图无 X，右滑是主关闭手势之一（外部点击亦可）。
+  // 右滑关闭手势（跟随手指 + 阈值触发）：抽屉随手指右移，松手时
+  // 位移 > 抽屉宽度 60% → 滑出关闭；未达 → 弹回。原实现 touchEnd 直接关（无跟随、
+  // 无动画，突兀）。拖拽中禁用 transition（跟手），松手/关闭启用（平滑）。
+  const [sheetDragX, setSheetDragX] = useState(0)
+  const [sheetClosing, setSheetClosing] = useState(false)
+  const dragRef = useRef(false)
+
   const swipeStartXRef = useRef<number | null>(null)
   const swipeStartYRef = useRef<number | null>(null)
   const onSheetTouchStart = (e: React.TouchEvent) => {
     swipeStartXRef.current = e.touches[0].clientX
     swipeStartYRef.current = e.touches[0].clientY
+    dragRef.current = false
+    setSheetClosing(false)
+    setSheetDragX(0)
+  }
+  const onSheetTouchMove = (e: React.TouchEvent) => {
+    if (swipeStartXRef.current == null || swipeStartYRef.current == null) return
+    const dx = e.touches[0].clientX - swipeStartXRef.current
+    const dy = e.touches[0].clientY - swipeStartYRef.current
+    // 仅横向手势跟随（防纵向滚动误触发）；右滑才动（dx>0），左滑/无位移保持
+    if (Math.abs(dx) > Math.abs(dy) && dx > 0) {
+      dragRef.current = true
+      setSheetDragX(dx)
+    }
   }
   const onSheetTouchEnd = (e: React.TouchEvent) => {
     if (swipeStartXRef.current == null || swipeStartYRef.current == null) return
@@ -274,7 +292,17 @@ export default function NavBar({
     const dy = e.changedTouches[0].clientY - swipeStartYRef.current
     swipeStartXRef.current = null
     swipeStartYRef.current = null
-    if (dx > 60 && Math.abs(dy) < 40) closeSettings()
+    dragRef.current = false // 先解除跟手态，让弹回/滑出启用 transition
+    if (dx > 0 && Math.abs(dy) < 40) {
+      // 阈值：抽屉宽度 60%（下限 60px）→ 滑出关闭；未达 → 弹回
+      const width = settingsSheetRef.current?.offsetWidth ?? 0
+      if (dx > Math.max(width * 0.6, 60)) {
+        setSheetClosing(true)
+        window.setTimeout(() => closeSettings(), 240)
+        return
+      }
+    }
+    setSheetDragX(0)
   }
 
   // mode 手风琴（主视图直接切换，不再子视图）：展开显示 Leader/Workflow/Custom
@@ -310,6 +338,8 @@ export default function NavBar({
   /** 关闭抽屉：统一重置回主列表（避免下次打开停留在子视图） */
   const closeSettings = () => {
     setSettingsView('main')
+    setSheetClosing(false)
+    setSheetDragX(0)
     setSettingsOpen(false)
   }
 
@@ -432,7 +462,13 @@ export default function NavBar({
         aria-label="设置"
         ref={settingsSheetRef}
         onTouchStart={onSheetTouchStart}
+        onTouchMove={onSheetTouchMove}
         onTouchEnd={onSheetTouchEnd}
+        style={{
+          transform: sheetClosing ? 'translateX(100%)' : `translateX(${sheetDragX}px)`,
+          // 拖拽中跟手（禁 transition），松手弹回/滑出启用过渡
+          transition: dragRef.current ? 'none' : 'transform 240ms cubic-bezier(0.2, 0.8, 0.3, 1)',
+        }}
       >
         {/* 头部：主列表=logo 信息（品牌）| 子视图=返回 + 标题；右侧统一关闭 */}
         <div className="mobile-mode-head">

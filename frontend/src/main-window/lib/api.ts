@@ -658,6 +658,7 @@ export interface Capabilities {
   vision: string
   stt: string
   tts: string
+  voice: string
   chat_agent_max_iterations: number | null
 }
 
@@ -1148,9 +1149,15 @@ export function relayClientSetEnabled(enabled: boolean) {
   return invoke<string>('relay_client_set_enabled', { enabled })
 }
 
-/** 更新中继节点配置（官方/自建 VPS）：持久化 url/token + 热重启连接 */
-export function relayClientUpdateNode(url: string, token: string) {
-  return invoke<string>('relay_client_update_node', { url, token })
+/** 更新中继节点配置（官方/自建 VPS）：持久化 url/token/public_url + 热重启连接。
+ *  token / publicUrl 传空 = 保留现状 */
+export function relayClientUpdateNode(url: string, token: string, publicUrl?: string) {
+  return invoke<string>('relay_client_update_node', { url, token, publicUrl })
+}
+
+/** 恢复官方中继节点（自建 VPS 不满意一键回退）：url/public_url/token 重置官方默认 + 热重启 */
+export function relayClientResetOfficial() {
+  return invoke<string>('relay_client_reset_official')
 }
 
 /** 轮换中继调用凭据（caller_token）：服务端热生效，旧凭据即刻失效，已配对手机外网访问需重新扫码 */
@@ -1209,4 +1216,302 @@ export function listMcpServers() {
 /** 查询某 MCP server 的工具列表（tools/list 原始响应，解析 .tools 数组） */
 export function listMcpTools(server: string) {
   return invoke<{ tools?: McpToolInfo[] }>('list_mcp_tools', { server })
+}
+
+// ── 内置工具（tools/*，内部机制命令；用户手动经工具页调用，非 agent 工具） ──
+
+export interface PdfMergeResult {
+  output: string
+  pages: number
+  sources: number
+}
+export interface PdfCompressResult {
+  output: string
+  pages: number
+  removed_objects: number
+  size_before: number
+  size_after: number
+  saved_bytes: number
+}
+export interface PdfPageCountResult {
+  path: string
+  pages: number
+}
+export interface PdfExtractTextResult {
+  path: string
+  pages: number
+  extracted_pages: number
+  truncated: boolean
+  text: string
+}
+
+/** 合并多个 PDF 为一个文件 */
+export function pdfMerge(inputPaths: string[], outputPath: string) {
+  return invoke<PdfMergeResult>('pdf_merge', { inputPaths, outputPath })
+}
+/** 压缩 PDF（清理未引用对象） */
+export function pdfCompress(inputPath: string, outputPath: string) {
+  return invoke<PdfCompressResult>('pdf_compress', { inputPath, outputPath })
+}
+/** 获取 PDF 页数 */
+export function pdfPageCount(path: string) {
+  return invoke<PdfPageCountResult>('pdf_page_count', { path })
+}
+/** 提取 PDF 文本（逐页，maxPages 可选，默认 200） */
+export function pdfExtractText(path: string, maxPages?: number) {
+  return invoke<PdfExtractTextResult>('pdf_extract_text', { path, maxPages })
+}
+
+export interface ImageCompressResult {
+  output: string
+  width: number
+  height: number
+  size_before: number
+  size_after: number
+  saved_bytes: number
+}
+export interface ImageConvertResult {
+  output: string
+  width: number
+  height: number
+  format: string
+  size_after: number
+}
+export interface ImageResizeResult {
+  output: string
+  source_width: number
+  source_height: number
+  width: number
+  height: number
+  size_after: number
+}
+export interface ImageInfoResult {
+  path: string
+  width: number
+  height: number
+  size_bytes: number
+  format: string
+}
+
+/** 压缩图片（可指定最大宽/高与质量；输出格式随扩展名推断） */
+export function imageCompress(
+  inputPath: string,
+  outputPath: string,
+  maxWidth?: number,
+  maxHeight?: number,
+  quality?: number,
+) {
+  return invoke<ImageCompressResult>('image_compress', {
+    inputPath,
+    outputPath,
+    maxWidth,
+    maxHeight,
+    quality,
+  })
+}
+/** 转换图片格式 */
+export function imageConvert(inputPath: string, outputPath: string) {
+  return invoke<ImageConvertResult>('image_convert', { inputPath, outputPath })
+}
+/** 缩放图片（保纵横比，目标框内不放大） */
+export function imageResize(inputPath: string, outputPath: string, width: number, height: number) {
+  return invoke<ImageResizeResult>('image_resize', { inputPath, outputPath, width, height })
+}
+/** 获取图片信息 */
+export function imageInfo(path: string) {
+  return invoke<ImageInfoResult>('image_info', { path })
+}
+
+export interface VideoCompressResult {
+  output: string
+  quality: string
+  size_before: number
+  size_after: number
+  saved_bytes: number
+}
+export interface VideoExtractAudioResult {
+  output: string
+  format: string
+  size_after: number
+}
+export interface VideoExtractFramesResult {
+  output_dir: string
+  frames: number
+  interval_secs: number
+}
+export interface VideoInfoResult {
+  path: string
+  duration_seconds: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  width: number | null
+  height: number | null
+  size_bytes: number
+}
+
+/** 压缩视频（quality: low/medium/high） */
+export function videoCompress(inputPath: string, outputPath: string, quality?: string) {
+  return invoke<VideoCompressResult>('video_compress', { inputPath, outputPath, quality })
+}
+/** 提取音频（format: mp3/wav） */
+export function videoExtractAudio(inputPath: string, outputPath: string, format?: string) {
+  return invoke<VideoExtractAudioResult>('video_extract_audio', { inputPath, outputPath, format })
+}
+/** 抽帧（intervalSecs 秒一张，输出目录 frame_0001.jpg ...） */
+export function videoExtractFrames(inputPath: string, outputDir: string, intervalSecs?: number) {
+  return invoke<VideoExtractFramesResult>('video_extract_frames', {
+    inputPath,
+    outputDir,
+    intervalSecs,
+  })
+}
+/** 获取视频信息（ffprobe） */
+export function videoInfo(path: string) {
+  return invoke<VideoInfoResult>('video_info', { path })
+}
+
+/** 图片转 PDF（多图各占一页，页面尺寸=图片像素） */
+export function pdfImagesToPdf(inputPaths: string[], outputPath: string) {
+  return invoke<PdfImagesToPdfResult>('pdf_images_to_pdf', { inputPaths, outputPath })
+}
+export interface PdfImagesToPdfResult {
+  output: string
+  pages: number
+  sources: number
+}
+
+/** 长图拼接（direction: horizontal 横向统一高度 / vertical 纵向统一宽度） */
+export function imageStitch(inputPaths: string[], outputPath: string, direction?: string) {
+  return invoke<ImageStitchResult>('image_stitch', { inputPaths, outputPath, direction })
+}
+export interface ImageStitchResult {
+  output: string
+  width: number
+  height: number
+  direction: string
+  sources: number
+  size_after: number
+}
+
+/** 视频转 GIF（fps 1-30 默认 10；scale 输出宽度默认 480） */
+export function videoToGif(inputPath: string, outputPath: string, fps?: number, scale?: number) {
+  return invoke<VideoToGifResult>('video_to_gif', { inputPath, outputPath, fps, scale })
+}
+export interface VideoToGifResult {
+  output: string
+  size_before: number
+  size_after: number
+  fps: number
+  scale: number
+}
+
+/** 提取 PDF 指定页（1-based 页码数组） */
+export function pdfExtractPages(inputPath: string, pages: number[], outputPath: string) {
+  return invoke<PdfExtractPagesResult>('pdf_extract_pages', { inputPath, pages, outputPath })
+}
+export interface PdfExtractPagesResult {
+  output: string
+  pages: number
+  requested: number
+}
+
+/** 旋转 PDF 页面（degrees 90/180/270；pages 缺省=全部） */
+export function pdfRotate(
+  inputPath: string,
+  outputPath: string,
+  degrees: number,
+  pages?: number[],
+) {
+  return invoke<PdfRotateResult>('pdf_rotate', { inputPath, outputPath, degrees, pages })
+}
+export interface PdfRotateResult {
+  output: string
+  degrees: number
+  rotated_pages: number
+  total_pages: number
+}
+
+/** 视频截取片段（-c copy 流复制；start 缺省 0，end 缺省到末尾） */
+export function videoCut(
+  inputPath: string,
+  outputPath: string,
+  startSec?: number,
+  endSec?: number,
+) {
+  return invoke<VideoCutResult>('video_cut', { inputPath, outputPath, startSec, endSec })
+}
+export interface VideoCutResult {
+  output: string
+  start_sec: number
+  end_sec: number | null
+  size_bytes: number
+}
+
+/** 音频格式转换（输出扩展名决定格式 mp3/wav/m4a/flac；bitrate 可选如 "192k"） */
+export function audioConvert(inputPath: string, outputPath: string, bitrate?: string) {
+  return invoke<AudioConvertResult>('audio_convert', { inputPath, outputPath, bitrate })
+}
+export interface AudioConvertResult {
+  output: string
+  format: string
+  size_bytes: number
+}
+
+/** 语音克隆：参考音频 + 文本 → 克隆音色合成语音（走云端，需在模型界面配置语音克隆模型） */
+export function voiceClone(referencePath: string, text: string, outputPath: string) {
+  return invoke<VoiceCloneResult>('voice_clone', {
+    referencePath,
+    text,
+    outputPath,
+  })
+}
+export interface VoiceCloneResult {
+  output: string
+  format: string
+  size_bytes: number
+}
+
+/** 批量压缩图片（多输入 → 输出目录，原名-out.原扩展名） */
+export function imageCompressBatch(
+  inputPaths: string[],
+  outputDir: string,
+  maxWidth?: number,
+  maxHeight?: number,
+  quality?: number,
+) {
+  return invoke<ImageBatchResult>('image_compress_batch', {
+    inputPaths,
+    outputDir,
+    maxWidth,
+    maxHeight,
+    quality,
+  })
+}
+
+/** 批量格式转换（多输入 → 输出目录，统一 format） */
+export function imageConvertBatch(inputPaths: string[], outputDir: string, format: string) {
+  return invoke<ImageBatchResult>('image_convert_batch', { inputPaths, outputDir, format })
+}
+export interface ImageBatchResult {
+  output_dir: string
+  format?: string
+  count: number
+  results: Array<{
+    input: string
+    output: string
+    saved_bytes?: number
+    size_after?: number
+    width?: number
+    height?: number
+  }>
+}
+
+/** 文档转文本（docx/pptx/xls/ods/odt/odp/pdf） */
+export function docExtractText(path: string) {
+  return invoke<DocExtractTextResult>('doc_extract_text', { path })
+}
+export interface DocExtractTextResult {
+  path: string
+  chars: number
+  text: string
 }

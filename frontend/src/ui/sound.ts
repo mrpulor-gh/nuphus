@@ -84,7 +84,7 @@ export function playPopupSound(kind: PopupSound): void {
   }
 }
 
-export type UiSound = 'send' | 'session' | 'done' | 'switch' | 'deny'
+export type UiSound = 'send' | 'session' | 'done' | 'switch' | 'deny' | 'error' | 'retry'
 
 export function playUiSound(kind: UiSound): void {
   switch (kind) {
@@ -112,6 +112,19 @@ export function playUiSound(kind: UiSound): void {
       // 拒绝/取消：C5→G4 低沉下行，否定操作
       tone(523.25, 0, 0.14, 0.12)
       tone(392, 0.07, 0.16, 0.09)
+      break
+    case 'error':
+      // 执行错误：A4→E4→C4 三音下行（440→330→262Hz），节奏拉长低沉警示，
+      // 与 deny 双音区分——错误是「执行中断」而非「操作否定」
+      tone(440, 0, 0.16, 0.11)
+      tone(329.63, 0.13, 0.18, 0.1)
+      tone(261.63, 0.28, 0.24, 0.09)
+      break
+    case 'retry':
+      // 重试提醒：G4→C4 两声短促低音「咚咚」，中性提示「还在重试、请稍候」，
+      // 区别于 error 三音下行——重试不是失败，不打断不恐慌
+      tone(392, 0, 0.1, 0.12)
+      tone(261.63, 0.16, 0.16, 0.12)
       break
   }
 }

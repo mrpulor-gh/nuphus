@@ -99,7 +99,10 @@
   /* 执行状态胶囊呼吸色（反色胶囊半透明版：深色主题=白胶囊明灭） */
   --m-exec-line-dim: rgba(255, 255, 255, 0.7);
   --m-surface: #1a1a1e;
-  --m-fg: #e4e4e7;
+  /* 主文字：原 #e4e4e7 偏白（与深背景高对比但无层级）——调暗至 zinc-300，
+     普通文字（--m-fg）与次级文字（--m-fg-secondary）拉开视觉差，
+     粗体/细体可分辨（2026-09-02 大王反馈「白色太亮无层次」） */
+  --m-fg: #c9c9cf;
   --m-fg-secondary: #a1a1aa;
   --m-separator: rgba(255, 255, 255, 0.1);
   --m-fill: rgba(255, 255, 255, 0.12);
@@ -3124,13 +3127,24 @@ body {
   animation: mobile-drawer-in 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
-/* 内容区：唯一可滚动区域（header/footer 固定不跳动） */
+/* 内容区：唯一可滚动区域（header/footer 固定不跳动）
+   滚动条隐藏：抽屉为模态面板，触摸滚动即可，无可见滚动条价值；
+   且实测新版 Blink 中 scrollbar-width/::-webkit-scrollbar 窄条均无法稳定贴面板右缘
+   （滚动条会浮在选项文字右侧/占宽挤压内容——大王反馈「滚动条在内容区右侧」）。
+   隐藏后跨 iOS/Android/桌面 WebView 行为统一，彻底消除遮挡。 */
 .mobile-settings-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 20px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.mobile-settings-body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 @keyframes mobile-drawer-in {
@@ -4572,4 +4586,25 @@ body {
   max-height: 46vh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+/* ── 滚动条贴边（全局，2026-09-02 大王反馈「滚动条在内容区影响内容」） ──
+   移动端所有滚动容器统一：窄条贴右/下边缘、透明轨道、不占内容宽度、不遮挡内容。
+   覆盖 .mobile-settings-body 等一切 overflow 容器（* 通配，无 overflow 的元素不受影响）。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 140, 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 140, 0.35);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 140, 0.55);
 }

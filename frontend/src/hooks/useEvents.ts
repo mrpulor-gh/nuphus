@@ -14,6 +14,7 @@ import type {
 } from '../core/types'
 import type { MutableRefObject } from 'react'
 import type { MoodState } from '../ui/MoodFace'
+import { playUiSound } from '../ui/sound'
 
 type RegionPickerMode = 'picker' | 'capture' | 'ocr' | null
 type TokenUsageState = { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
@@ -231,6 +232,8 @@ export function useEvents(h: EventHandlers) {
           break
         }
         case 'execution_error': {
+          // LLM 执行中错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
+          playUiSound('error')
           const s = h.refs.streamingMsgId.current
           if (s) {
             h.setMessages(prev =>
@@ -258,6 +261,8 @@ export function useEvents(h: EventHandlers) {
         case 'error':
           addSystemMsg(`遇到了问题：${event.message}`)
           if (!event.from_subtask) {
+            // 主执行错误：播放错误音效（子任务错误不打断主执行，不提示）
+            playUiSound('error')
             h.refs.executionActiveRef.current = false
             h.setIsProcessing(false)
             h.setCompleted(true)
@@ -265,9 +270,16 @@ export function useEvents(h: EventHandlers) {
             h.setMood('error')
           }
           break
-        case 'warning':
+        case 'warning': {
           invoke('hud_update', { text: event.message, phase: 'warning' })
+          // LLM 重试提醒：收到重试告警（llm_retry / llm_network_retry）播放「咚咚」提示音，
+          // 中性语义「还在重试、请稍候」——不是失败，不打断不恐慌。
+          // 后端重试间隔带指数退避（2s/4s/8s...），不会连续轰炸。
+          if (event.code === 'llm_retry' || event.code === 'llm_network_retry') {
+            playUiSound('retry')
+          }
           break
+        }
         // user_message_received: 手机端/插件消息需在桌面补显用户气泡；
         // 桌面自己的消息走 handleSend 乐观更新（source==='desktop'），跳过避免重复
         case 'user_message_received': {

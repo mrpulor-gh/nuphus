@@ -283,6 +283,10 @@ export function ModelsPage({
   const [ttsModel, setTtsModel] = useState('')
   const [ttsSaving, setTtsSaving] = useState(false)
   const [ttsFeedback, setTtsFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  // 语音克隆模型（capabilities.voice；走云端克隆 API，配置后工具页「语音克隆」可用）
+  const [voiceModel, setVoiceModel] = useState('')
+  const [voiceSaving, setVoiceSaving] = useState(false)
+  const [voiceFeedback, setVoiceFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
   // Agent 级模型配置（高级设置）：leader/workflow/exec/custom 各自模型，空 = 跟随 default
   const [agentModels, setAgentModels] = useState<AgentModels>({
@@ -367,6 +371,7 @@ export function ModelsPage({
           setVisionModel(m.vision)
           setTtsModel(m.tts)
           setSttModel(m.stt)
+          setVoiceModel(m.voice)
         }
       })
       .catch(() => {})
@@ -1295,6 +1300,52 @@ export function ModelsPage({
                 />
               }
             />
+          </Section>
+
+          {/* ── 语音克隆 ── 走云端克隆 API：配置语音克隆模型后，工具页「语音克隆」能力可用 ── */}
+          <Section
+            title="语音克隆"
+            description="配置语音克隆模型，用于克隆音色合成语音（工具页「语音克隆」能力）。走云端 API，需先在基础配置中配置对应提供商的 API Key。"
+          >
+            <FormRow
+              stacked
+              label="语音克隆模型"
+              hint="配置后可在工具页使用语音克隆；清除则禁用该能力"
+              control={
+                <VisionModelSelect
+                  value={voiceModel}
+                  models={allModels}
+                  placeholder="请选择语音克隆模型"
+                  showVisionIcons={false}
+                  onChange={async modelId => {
+                    setVoiceSaving(true)
+                    setVoiceFeedback(null)
+                    try {
+                      await setCapability('voice', modelId)
+                      setVoiceModel(modelId)
+                      setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
+                      setTimeout(() => setVoiceFeedback(null), 2000)
+                    } catch (e: any) {
+                      setVoiceFeedback({ ok: false, msg: e?.message || '保存失败' })
+                    } finally {
+                      setVoiceSaving(false)
+                    }
+                  }}
+                  t={t}
+                />
+              }
+            />
+            {voiceFeedback && (
+              <div
+                className="text-caption"
+                style={{
+                  color: voiceFeedback.ok ? 'var(--success)' : 'var(--error)',
+                  marginTop: 4,
+                }}
+              >
+                {voiceFeedback.msg}
+              </div>
+            )}
           </Section>
         </>
       )}

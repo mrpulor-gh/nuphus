@@ -40,11 +40,9 @@ import RatingSheet from './components/RatingSheet'
 import PairingGuide from './components/PairingGuide'
 import {
   isPrivateHost,
-  isStandalone,
   probeLanDirect,
   getCachedLanUrl,
   getCachedRelayUrl,
-  resolveTunnelDeviceId,
   saveRelayCache,
   type ConnectionMode,
 } from './connection'
@@ -112,6 +110,9 @@ export default function App() {
   /** 历史拉取失败自动重试：timer + 退避计数（指数退避 3s→30s 上限，中继慢/半死时自愈） */
   const historyRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const historyRetryAttemptRef = useRef(0)
+  /** 历史是否已成功加载完成（wan→lan 自动切回前必须等待：历史首拉走中继链路，若在
+   *  拉取中切换重建 WS 会中断历史 → 界面空白。成功置 true 后 blocked/ok 探测才切）。 */
+  const historyLoadedRef = useRef(false)
 
   /** connMode 镜像：发送分流等回调内同步读取，避免 state 变化引发 handleSend 重建 */
   const connModeRef = useRef<ConnectionMode | null>(null)
@@ -162,24 +163,6 @@ export default function App() {
       setConnMode('lan')
     },
     [markSwitchTime],
-  )
-
-  /** 明文门导航（v0.1.5 切换逻辑，2026-08-26 大王确认）：探测到局域网（ok/blocked）→
-   *  导航到中继明文口（http origin）。PWA 桌面快捷方式无地址栏，导航视觉无感（界面不变）；
-   *  http origin 页面 WS/REST 到局域网均不被混合内容拦 → 完整直连（HTTPS 页 WS 被拦导致
-   *  掉线反向切回的根治）。明文门探测失败不回跳 → 无循环。 */
-  const navigateToLanProbe = useCallback(
-    (tok: string) => {
-      if (withinSwitchCooldown()) return
-      markSwitchTime()
-      const host = window.location.hostname
-      const dev = resolveTunnelDeviceId()
-      const lanProbeUrl = `http://${host}:18081/?token=${encodeURIComponent(tok)}${
-        dev ? `&device=${encodeURIComponent(dev)}` : ''
-      }`
-      window.location.replace(lanProbeUrl)
-    },
-    [withinSwitchCooldown, markSwitchTime],
   )
 
   /** 页面内回退到中继通道：REST 基址 + 连接模式置 wan。
@@ -280,6 +263,8 @@ export default function App() {
           }))
         dispatch({ type: 'history_merge', messages, manual: opts?.manual })
         setHistoryError(null)
+        // 历史加载完成：wan→lan 自动切回可安全执行（不中断首拉）
+        historyLoadedRef.current = true
         // 成功：重置退避计数，取消未决重试
         historyRetryAttemptRef.current = 0
         if (historyRetryTimerRef.current) {
@@ -455,9 +440,12 @@ export default function App() {
     // 中继入口：拉取历史前并行发起一次局域网探测（路线选择的加速，不阻塞历史拉取、
     // 不改历史拉取逻辑——历史照常走当前通道发起）。本地网络探测 ok → 页面内切回直连，
     // connMode 变化触发本 effect 重跑 → WS/历史走局域网（更快）；异地/被拦 → 保持中继，
-    // 交由下方 8s 巡检持续探测（blocked 导航等完整逻辑在那里，对齐 v0.1.5）。
+    // 交由下方 8s 巡检持续探测。
     // 快路径：缓存 lan_url 直接探测（本地网络 <100ms，不依赖隧道）；缓存缺失/失败
     // 才走 resolveLanUrl（hint 实时地址，IP 变化可感知）→ 探测。
+    // ⚠️ 2026-09-01 实测：blocked 不切换——iOS HTTPS 中继页应用内切 http 局域网被
+    // Mixed Content 拦死（WS 连接中 + 发送失败 + 8s 振荡）。blocked 表示探测被拦，
+    // 无法确认同 WiFi；保持中继，等探测真正 ok 才应用内切（不跳转不丢全屏）。
     if (connMode === 'wan') {
       void (async () => {
         try {
@@ -583,10 +571,21 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'paired' || !token || connMode !== 'lan') return
-    // 局域网 origin 页面：有缓存的隧道入口才有故障转移目标，
-    // 否则离线巡检无意义（保持原「无路可退」行为，不空耗探测）
+    // 局域网 origin 页面：有缓存的隧道入口才有故障转移目标。
+    // 无缓存时补拉一次 hint（在家可达时写入）——但不阻塞巡检 interval 建立：
+    // interval 内每次探测时再查缓存，补拉成功后下一 tick 即能切中继
+    // （2026-09-01 修复：此前补拉后 return 跳过 interval → 永不巡检 → 断网不切中继）。
     const lanOrigin = isPrivateHost(window.location.hostname)
-    if (lanOrigin && !getCachedRelayUrl()) return
+    if (lanOrigin && !getCachedRelayUrl()) {
+      void fetchRelayHint(token).then(hint => {
+        if (hint)
+          saveRelayCache({
+            lan_url: hint.lan_url,
+            relay_url: hint.tunnel_url,
+            device_id: hint.device_id,
+          })
+      })
+    }
     const iv = setInterval(async () => {
       // 仅离线累计超 10s 才探测（滞回：原 5s 在边缘网络下过灵敏 → 与 wan→lan 探测
       // 交替触发形成通道振荡，页面反复闪动）。判定条件必须是非 online（offline 或
@@ -664,23 +663,18 @@ export default function App() {
       const r = await probeLanDirect(lanUrl, token)
       if (r === 'ok') {
         consecutiveOk += 1
-        if (consecutiveOk >= 2 && !withinSwitchCooldown()) {
+        if (consecutiveOk >= 2 && !withinSwitchCooldown() && historyLoadedRef.current) {
           if (cancelled) return
           switchToLan(lanUrl)
           showToast(t('mobile.switchedBackLan'))
         }
       } else if (r === 'blocked') {
-        // Mixed Content 拦截（HTTPS 中继页）：不代表不可达——回到 WiFi 后实际可直连。
-        // 立即导航到中继 HTTP 口重载，App 以 http origin 重新 resolve 即切回直连。
-        // 仍在异地（外网）时导航后同样走中继，仅多一次跳转，不打断使用。
-        // ⚠️ standalone PWA（主屏幕图标）跨 origin 导航丢全屏 → 不导航，继续中继；
-        //    iOS 下 HTTPS 页探测 HTTP 局域网恒被拦（blocked），跳过即保持全屏。
+        // Mixed Content 拦截（HTTPS 中继页探测 HTTP 局域网被拦）——**不切换**：
+        // 2026-09-01 实测应用内 switchToLan 后 WS/REST 走 http 局域网被 iOS 拦死
+        // （连接中 + 发送失败 + 与 2s 反向巡检 8s 振荡）。blocked 表示探测被拦无法
+        // 确认同 WiFi；保持中继，等探测真正 ok 才应用内切。
         if (cancelled) return
-        if (isStandalone()) {
-          consecutiveOk = 0
-        } else {
-          navigateToLanProbe(token)
-        }
+        consecutiveOk = 0
         return
       } else {
         consecutiveOk = 0
@@ -700,7 +694,7 @@ export default function App() {
     switchToLan,
     showToast,
     withinSwitchCooldown,
-    navigateToLanProbe,
+    historyLoadedRef,
   ])
 
   // ── 前台恢复探测：切后台会静默挂起 TCP（iOS/微信 WebView），回前台必须主动体检 ──
@@ -781,9 +775,9 @@ export default function App() {
       // useSession.ts 的 messagesRef.current.length === 0 完全同源（ref 取最新值，
       // 不受闭包过期影响）；会话内发送（有历史）→ new_session=false，消息进当前会话。
       const newSession = messagesRef.current.length === 0
-      // ⚠️ 2026-08-26 移除「发送前探测局域网」：resolveLanUrl 经中继 fetchRelayHint
-      // 慢（国际链路 20s 超时）会阻塞发送 → 实测「发消息卡死」（气泡永久 pending）。
-      // 发送立即走当前通道（中继/直连），通道切换由 8s 巡检/进入探测负责——发送不等待探测。
+      // 发送立即走当前通道（中继/直连），不做发送前探测切换——https 中继页应用内切
+      // http 局域网被 iOS Mixed Content 拦会导致发送失败（2026-09-01 实测）。
+      // 通道切换由 8s 巡检（探测 ok 才应用内切）负责；发送失败时 catch 反向回退。
       try {
         const result = await sendMessage(token, content, optimistic.id, {
           ...opts,

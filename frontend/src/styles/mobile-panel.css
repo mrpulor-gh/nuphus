@@ -789,6 +789,29 @@
   cursor: default;
 }
 
+.mobile-node-reset {
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border-2, #2a2e38);
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mobile-node-reset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mobile-node-reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .mobile-node-msg {
   font-size: var(--fz-xs);
   color: var(--fg-4);

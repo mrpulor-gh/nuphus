@@ -82,6 +82,7 @@ const ExternalAgentsPage = lazy(() =>
   import('./pages/ExternalAgentsPage').then(m => ({ default: m.ExternalAgentsPage })),
 )
 const McpPage = lazy(() => import('./pages/McpPage').then(m => ({ default: m.McpPage })))
+const ToolsPage = lazy(() => import('./tools/ToolsPage').then(m => ({ default: m.ToolsPage })))
 const HelpPage = lazy(() => import('./pages/HelpPage').then(m => ({ default: m.HelpPage })))
 const PlannerModal = lazy(() =>
   import('./components/PlannerModal').then(m => ({ default: m.PlannerModal })),
@@ -181,6 +182,7 @@ export default function App() {
     'force-reset': <IconX size={14} />,
     help: <IconKeyboard size={14} />,
     'external-agents': <IconCpu size={14} />,
+    tools: <IconWrench size={14} />,
   }
   useKeyboard([
     { key: 'k', ctrl: true, handler: () => s.setCmdPaletteOpen((p: boolean) => !p) },
@@ -371,6 +373,9 @@ export default function App() {
                     break
                   case 'external-agents':
                     s.setShowExternalAgents(true)
+                    break
+                  case 'tools':
+                    s.setShowTools(true)
                     break
                 }
               }}
@@ -718,6 +723,12 @@ export default function App() {
               <McpPage onClose={() => s.setShowMcp(false)} />
             </Suspense>
           </CompactModal>
+          {/* ── 工具页：应用内全屏覆盖层（对齐 preview 壳，非弹窗；图片/视频预览放得下） ── */}
+          {s.showTools && (
+            <Suspense fallback={null}>
+              <ToolsPage onClose={() => s.setShowTools(false)} />
+            </Suspense>
+          )}
           {/* ── 插件市场：筹备提示弹窗（市场体系不开源阶段；市场 ready 后恢复 PluginAppsPage 全屏面板）── */}
           <CompactModal
             open={s.showPlugins}

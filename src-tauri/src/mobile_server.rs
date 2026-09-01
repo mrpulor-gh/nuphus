@@ -1592,14 +1592,32 @@ async fn get_relay_hint<R: tauri::Runtime>(
 
 /// relay-hint JSON 构建（get_relay_hint / get_boot 共用）
 fn relay_hint_json(cfg: &crate::relay_client::RelayClientConfig, port: u16) -> serde_json::Value {
-    if cfg.enabled
+    relay_hint_json_with_state(cfg, port, crate::relay_client::relay_conn_state())
+}
+
+/// relay-hint JSON 纯函数（state 注入便于单测）
+fn relay_hint_json_with_state(
+    cfg: &crate::relay_client::RelayClientConfig,
+    port: u16,
+    state: crate::relay_client::RelayConnState,
+) -> serde_json::Value {
+    // lan_url：桌面局域网直连地址，与中继状态无关（局域网直连不经中继）——任何状态都下发。
+    let lan_url = primary_lan_ip().map(|ip| format!("http://{ip}:{port}"));
+    // 中继可用判定：配置完整 + 隧道通道 Connected（手机 REST/WS 流量走 /ws/tunnel 隧道）。
+    // ⚠️ 2026-09-01 大王裁定：自建中继配置错误不兜底官方——「错了就错了，自建者知道出错」。
+    // 此前仅校验配置字段非空（不校验连通性）→ 错误自定义 VPS 也返回 enabled:true + 错误
+    // tunnel_url → 手机端「显示已连接却连不上」（与 09-01 故障体验一致）。现检查 relay_conn_state：
+    // 隧道未 Connected（Retrying/Fault/Disabled）→ enabled:false，不下发 tunnel_url；
+    // 状态随 state 下发供诊断（桌面设置页已有 last_error/reason 展示，手机端 WS/历史失败可感知）。
+    let usable = cfg.enabled
         && !cfg.url.is_empty()
         && !cfg.device_id.is_empty()
         && !cfg.caller_token.is_empty()
-    {
-        // lan_url：桌面局域网直连地址。手机外网（中继）页面借此探测局域网可达性——
-        // 回到同一 WiFi 后自动切回本地直连，中继仅在无局域网时兜底。
-        let lan_url = primary_lan_ip().map(|ip| format!("http://{ip}:{port}"));
+        && matches!(
+            state.tunnel,
+            crate::relay_client::ChannelState::Connected
+        );
+    if usable {
         serde_json::json!({
             "enabled": true,
             "url": cfg.url,
@@ -1609,12 +1627,13 @@ fn relay_hint_json(cfg: &crate::relay_client::RelayClientConfig, port: u16) -> s
             // 隧道公网入口（https://r.example.com 或 http://host:18081）：局域网 origin
             // 页面离开 WiFi 后页面内故障转移到中继用——非凭据，可缓存（P3-5 只禁 caller_token）。
             "tunnel_url": crate::relay_client::public_tunnel_url(cfg),
-            "state": crate::relay_client::relay_conn_state(),
+            "state": state,
         })
     } else {
         serde_json::json!({
             "enabled": false,
-            "state": crate::relay_client::relay_conn_state(),
+            "lan_url": lan_url,
+            "state": state,
         })
     }
 }
@@ -2012,6 +2031,17 @@ fn cors_allowed_origin(origin: Option<&str>) -> Option<&str> {
             }
         }
     }
+    // 本机局域网直连源（手机 PWA 局域网 origin 页面）：http://192.168.x.x:{mobile_server_port}
+    // 场景（2026-09-01）：局域网 origin 页面出门切中继（apiBase=中继公网入口）后，页面内
+    // 跨源 REST 请求经中继隧道转发回本机——预检 OPTIONS 的 Origin 为局域网 IP，白名单不放行
+    // 则浏览器拦截，历史拉取/发送全失败（而 WS 带 ?device= 正常，两侧状态不一致）。
+    // 仅放行 mobile_server 实际监听端口（默认 18772），不宽泛放行任意私有网段；
+    // 全端点 token 鉴权兜底（token 鉴权不依赖 CORS），放行不扩大实际攻击面。
+    if let Some((h, p)) = origin_port_host(o) {
+        if p == load_config().port && is_private_hostname(&h) {
+            return Some(o);
+        }
+    }
     // 本地开发源
     if o.starts_with("http://localhost") || o.starts_with("http://127.0.0.1") {
         return Some(o);
@@ -2038,6 +2068,51 @@ fn origin_host_of(url: &str) -> Option<String> {
     } else {
         Some(authority.split(':').next()?.to_string())
     }
+}
+
+/// 从 origin URL 提取 (host, port)；无端口/非法端口 → None。
+/// 用于「本机局域网直连源」白名单：仅放行 mobile_server 实际监听端口的私有网段 origin。
+fn origin_port_host(origin: &str) -> Option<(String, u16)> {
+    let trimmed = origin.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let rest = trimmed.split_once("://").map(|(_, r)| r).unwrap_or(trimmed);
+    let authority = rest.split('/').next()?;
+    // IPv6 字面量 [::1]:port
+    if let Some(end) = authority.strip_prefix('[').and_then(|a| a.find(']')) {
+        let host = authority[..=end + 1].to_string();
+        let port = authority[end + 2..].trim_start_matches(':').parse().ok()?;
+        return Some((host, port));
+    }
+    // host:port
+    let (h, p) = authority.rsplit_once(':')?;
+    let port = p.parse().ok()?;
+    if h.is_empty() {
+        return None;
+    }
+    Some((h.to_string(), port))
+}
+
+/// 私有/本机网段 host 判定（对齐前端 connection.ts isPrivateHost）。
+/// 用于「本机局域网直连源」白名单判定。
+fn is_private_hostname(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]" {
+        return true;
+    }
+    if h.starts_with("10.") || h.starts_with("192.168.") || h.starts_with("169.254.") {
+        return true;
+    }
+    // 172.16.0.0/12
+    if let Some(rest) = h.strip_prefix("172.") {
+        if let Some(first) = rest.split('.').next().and_then(|s| s.parse::<u8>().ok()) {
+            if (16..=31).contains(&first) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 构建路由（提取为独立函数：start_server 与集成测试共用同一路由定义）
@@ -3623,6 +3698,96 @@ mod tests {
         // 非法输入
         assert_eq!(origin_host_of(""), None);
         assert_eq!(origin_host_of("://"), None);
+    }
+
+    #[test]
+    fn origin_port_host_parses_host_and_port() {
+        // 常规 host:port
+        assert_eq!(
+            origin_port_host("http://192.168.1.79:18772")
+                .as_ref()
+                .map(|(h, p)| (h.as_str(), *p)),
+            Some(("192.168.1.79", 18772))
+        );
+        // IPv6 字面量
+        assert_eq!(
+            origin_port_host("http://[::1]:18772")
+                .as_ref()
+                .map(|(h, p)| (h.as_str(), *p)),
+            Some(("[::1]", 18772))
+        );
+        // 无端口 / 非法端口 → None（不是移动端局域网入口）
+        assert_eq!(origin_port_host("https://r.example.com"), None);
+        assert_eq!(origin_port_host("http://192.168.1.5"), None);
+        assert_eq!(origin_port_host("http://192.168.1.5:abc"), None);
+        assert_eq!(origin_port_host(""), None);
+    }
+
+    #[test]
+    fn is_private_hostname_recognizes_private_ranges() {
+        assert!(is_private_hostname("192.168.1.79"));
+        assert!(is_private_hostname("10.0.0.1"));
+        assert!(is_private_hostname("172.16.0.1"));
+        assert!(is_private_hostname("172.31.255.255"));
+        assert!(is_private_hostname("127.0.0.1"));
+        assert!(is_private_hostname("localhost"));
+        assert!(is_private_hostname("[::1]"));
+        assert!(is_private_hostname("169.254.169.254"));
+        // 公网 host 不放行
+        assert!(!is_private_hostname("r.example.com"));
+        assert!(!is_private_hostname("172.32.0.1"));
+        assert!(!is_private_hostname("8.8.8.8"));
+    }
+
+    // ── relay-hint 中继可用判定（2026-09-01 大王裁定：自建配置错误不兜底，状态真实下发）──
+    fn hint_cfg() -> crate::relay_client::RelayClientConfig {
+        crate::relay_client::RelayClientConfig {
+            enabled: true,
+            url: "wss://custom.example.com".to_string(),
+            device_id: "dev-1".to_string(),
+            token: "t".to_string(),
+            caller_token: "ct".to_string(),
+            public_url: "https://custom.example.com".to_string(),
+        }
+    }
+
+    fn hint_state(tunnel: crate::relay_client::ChannelState) -> crate::relay_client::RelayConnState {
+        crate::relay_client::RelayConnState {
+            relay: crate::relay_client::ChannelState::Connected,
+            tunnel,
+        }
+    }
+
+    #[test]
+    fn relay_hint_usable_only_when_tunnel_connected() {
+        use crate::relay_client::ChannelState;
+        // 隧道 Connected → enabled:true + 下发 tunnel_url（自定义 public_url）
+        let ok = relay_hint_json_with_state(&hint_cfg(), 18772, hint_state(ChannelState::Connected));
+        assert_eq!(ok["enabled"], true);
+        assert_eq!(ok["tunnel_url"], "https://custom.example.com");
+        assert!(ok["lan_url"].is_string() || ok["lan_url"].is_null());
+        // 隧道 Fault（自建 VPS 配错/宕机）→ enabled:false，不下发 tunnel_url（不误导）
+        let fault = relay_hint_json_with_state(
+            &hint_cfg(),
+            18772,
+            hint_state(ChannelState::Fault { reason: "connection refused".into() }),
+        );
+        assert_eq!(fault["enabled"], false);
+        assert!(fault.get("tunnel_url").is_none());
+        assert!(fault["state"]["tunnel"]["status"] == "fault");
+        // 隧道 Retrying（启动/重连中）→ enabled:false，避免「显示可用却连不上」
+        let retrying = relay_hint_json_with_state(
+            &hint_cfg(),
+            18772,
+            hint_state(ChannelState::Retrying { since: 0, attempts: 3, last_error: "timeout".into() }),
+        );
+        assert_eq!(retrying["enabled"], false);
+        assert!(retrying.get("tunnel_url").is_none());
+        // 配置不完整（caller_token 空）即使隧道 Connected → enabled:false（原有约束保持）
+        let mut incomplete = hint_cfg();
+        incomplete.caller_token = String::new();
+        let ic = relay_hint_json_with_state(&incomplete, 18772, hint_state(ChannelState::Connected));
+        assert_eq!(ic["enabled"], false);
     }
 }
 // touch-force-recompile

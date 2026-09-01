@@ -1,0 +1,607 @@
+/* ═══════════════════════════════════════════
+   tools.css — ToolsPage（内置工具页）特有样式
+   两级导航：分类选择器 + 能力卡片网格 → 详情页（文件区 + 设置区）
+   仅使用 tokens.css 语义变量，禁止硬编码色值
+   ═══════════════════════════════════════════ */
+@import '../../styles/tokens.css';
+
+.tools-page {
+  position: fixed;
+  inset: 0;
+  /* 对齐 preview 覆盖层（.pv-page z-index:200） */
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-0);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-md);
+}
+
+/* ── 顶部工具栏（对齐 preview 壳 .pv-toolbar） ── */
+.tools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line-1);
+  flex-shrink: 0;
+}
+
+.tools-toolbar-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.tools-toolbar-close:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.tools-toolbar-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tools-toolbar-title {
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: 600;
+}
+
+.tools-toolbar-spacer {
+  flex: 1;
+}
+
+.tools-toolbar-view {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+
+/* ── Level 1: 分类选择器（Chip 模式，默认态即可见容器） ── */
+.tools-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.tools-cats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tools-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-5);
+  background: var(--glass-1);
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.tools-cat:hover {
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.tools-cat:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tools-cat--active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.tools-cat--active:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ── Level 1: 能力卡片网格 ── */
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+.tools-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  text-align: left;
+  background: var(--glass-0);
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font: inherit;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.tools-card:hover {
+  border-color: var(--accent);
+  background: var(--glass-1);
+}
+.tools-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tools-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--glass-2);
+  color: var(--accent);
+}
+
+.tools-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tools-card-title {
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: 600;
+}
+
+.tools-card-desc {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tools-card-arrow {
+  flex-shrink: 0;
+  margin-top: 10px;
+  color: var(--fg-4);
+}
+
+/* ── Level 2: 详情页 ── */
+.tools-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+.tools-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tools-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-sm);
+  background: var(--glass-0);
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.tools-back:hover {
+  background: var(--glass-2);
+  color: var(--fg-1);
+}
+.tools-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tools-detail-title {
+  color: var(--fg-1);
+  font-size: var(--fz-lg);
+  font-weight: 600;
+}
+
+.tools-detail-desc {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+  flex-basis: 100%;
+  margin-top: -2px;
+}
+
+/* ── 左右分栏：左=上传+预览合并容器（大区），右=设置+保存+状态合并面板 ── */
+.tools-detail-split {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 左侧：上传 + 预览合并为一个容器 ── */
+.tools-upload-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 拖放上传引导（空态，虚线边框整块可点） */
+.tools-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-8);
+  border: 1.5px dashed var(--line-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--fg-4);
+  cursor: pointer;
+}
+.tools-dropzone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tools-drop-title {
+  color: var(--fg-1);
+  font-size: var(--fz-xl);
+  font-weight: 600;
+}
+
+.tools-drop-sub {
+  color: var(--fg-3);
+  font-size: var(--fz-md);
+}
+
+.tools-drop-btn {
+  margin-top: var(--space-2);
+}
+
+.tools-drop-hint {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+
+/* 已选文件条（合并容器内顶部） */
+.tools-file-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  flex-shrink: 0;
+}
+
+.tools-file-label {
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+}
+
+.tools-file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tools-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--glass-1);
+}
+
+.tools-file-chip-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools-file-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.tools-file-chip-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.tools-file-chip-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── 右侧：设置 + 保存 + 状态合并为一个面板 ── */
+.tools-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 0 0 300px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.tools-side-title {
+  color: var(--fg-1);
+  font-size: var(--fz-lg);
+  font-weight: 600;
+}
+
+.tools-side-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tools-side-section--action {
+  border-top: 1px solid var(--line-1);
+  padding-top: var(--space-3);
+}
+
+/* 保存主按钮：全宽，避免窄栏内错位 */
+.tools-run-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── 分区小标题（设置区 / 输出区） ── */
+.tools-zone-title {
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tools-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tools-field-label {
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+}
+
+.tools-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 行内输入框：flex 占剩余空间，避免 width:100% 挤压/遮挡右侧按钮 */
+.tools-field-row .tools-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+/* 行内按钮：保持自然宽度，禁止压缩换行竖排 */
+.tools-field-row > .compact-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.tools-file-label {
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+}
+
+/* ── 参数输入 ── */
+.tools-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-sm);
+  background: var(--glass-0);
+  color: var(--fg-1);
+  font: inherit;
+  font-size: var(--fz-sm);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.tools-input:focus {
+  border-color: var(--accent);
+}
+.tools-input::placeholder {
+  color: var(--fg-4);
+}
+.tools-input--textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+/* ── 结果卡 ── */
+.tools-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--space-3);
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-md);
+  background: var(--glass-0);
+}
+
+.tools-result--error {
+  border-color: var(--error);
+}
+
+.tools-result-title {
+  color: var(--fg-1);
+  font-size: var(--fz-sm);
+  font-weight: 600;
+}
+
+.tools-result-msg {
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.tools-result-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ── 同窗口内嵌预览面板（FilePreviewContent 容器） ── */
+.tools-preview-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+/* 左栏预览大区：占满左栏剩余高度 */
+.tools-preview-panel--main {
+  flex: 1;
+  min-height: 0;
+}
+
+.tools-preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--fg-4);
+  font-size: var(--fz-md);
+}
+
+.tools-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-1);
+  flex-shrink: 0;
+}
+
+.tools-preview-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools-preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.tools-preview-close:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.tools-preview-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 内嵌 FilePreviewContent：.pv-body 撑满面板剩余高度 */
+.tools-preview-panel .pv-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── busy 旋转 ── */
+.tools-spin {
+  animation: tools-spin 0.9s linear infinite;
+}
+@keyframes tools-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

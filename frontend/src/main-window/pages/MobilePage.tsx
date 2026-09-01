@@ -25,6 +25,7 @@ import {
   relayClientStatus,
   relayClientSetEnabled,
   relayClientUpdateNode,
+  relayClientResetOfficial,
   relayCallerTokenRotate,
   type MobileServerStatus,
   type RelayChannelState,
@@ -73,6 +74,7 @@ export function MobilePage() {
   // 中继节点设置
   const [vpsUrl, setVpsUrl] = useState('')
   const [vpsToken, setVpsToken] = useState('')
+  const [vpsPublicUrl, setVpsPublicUrl] = useState('')
   const [nodeSaving, setNodeSaving] = useState(false)
   const [nodeMsg, setNodeMsg] = useState<string | null>(null)
 
@@ -194,7 +196,7 @@ export function MobilePage() {
     }
   }, [busy, running, refresh])
 
-  /** 保存自建 VPS 节点：调后端持久化 + 热重启连接 */
+  /** 保存自建 VPS 节点：调后端持久化 + 热重启连接（public_url 留空 = 后端自动派生） */
   const handleSaveNode = useCallback(async () => {
     if (busy || nodeSaving) return
     setNodeSaving(true)
@@ -205,7 +207,7 @@ export function MobilePage() {
         setNodeMsg(t('mobile.nodeUrlEmpty'))
         return
       }
-      await relayClientUpdateNode(url, vpsToken.trim())
+      await relayClientUpdateNode(url, vpsToken.trim(), vpsPublicUrl.trim())
       setNodeMsg(t('mobile.nodeSaved'))
       await refresh()
       window.setTimeout(() => void refresh(), 1500)
@@ -214,7 +216,28 @@ export function MobilePage() {
     } finally {
       setNodeSaving(false)
     }
-  }, [busy, nodeSaving, vpsUrl, vpsToken, t, refresh])
+  }, [busy, nodeSaving, vpsUrl, vpsToken, vpsPublicUrl, t, refresh])
+
+  /** 恢复官方中继节点：url/public_url/token 重置官方默认 + 热重启 */
+  const handleResetOfficial = useCallback(async () => {
+    if (busy || nodeSaving) return
+    if (!window.confirm(t('mobile.nodeResetOfficialConfirm'))) return
+    setNodeSaving(true)
+    setNodeMsg(null)
+    try {
+      await relayClientResetOfficial()
+      setVpsUrl('')
+      setVpsToken('')
+      setVpsPublicUrl('')
+      setNodeMsg(t('mobile.nodeResetOfficialDone'))
+      await refresh()
+      window.setTimeout(() => void refresh(), 1500)
+    } catch (e) {
+      setNodeMsg(cleanIpcError(e))
+    } finally {
+      setNodeSaving(false)
+    }
+  }, [busy, nodeSaving, t, refresh])
 
   /** 遗留状态修复路径：服务在跑但中继未开——扫码入口内一键接入中继 */
   const handleEnableRelay = useCallback(async () => {
@@ -564,6 +587,17 @@ export function MobilePage() {
                   setNodeMsg(null)
                 }}
               />
+              <label className="mobile-node-label">{t('mobile.nodePublicUrlLabel')}</label>
+              <input
+                className="mobile-node-input"
+                value={vpsPublicUrl}
+                placeholder="https://relay.yourdomain.com"
+                onChange={e => {
+                  setVpsPublicUrl(e.target.value)
+                  setNodeMsg(null)
+                }}
+              />
+              <p className="mobile-list-hint">{t('mobile.nodePublicUrlHint')}</p>
               <button
                 type="button"
                 className="mobile-node-save"
@@ -571,6 +605,14 @@ export function MobilePage() {
                 onClick={handleSaveNode}
               >
                 {nodeSaving ? t('mobile.nodeSaving') : t('mobile.nodeSave')}
+              </button>
+              <button
+                type="button"
+                className="mobile-node-reset"
+                disabled={busy || nodeSaving}
+                onClick={handleResetOfficial}
+              >
+                {t('mobile.nodeResetOfficial')}
               </button>
               {nodeMsg && <div className="mobile-node-msg">{nodeMsg}</div>}
             </div>

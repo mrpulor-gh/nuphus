@@ -194,13 +194,15 @@ pub async fn relay_client_set_enabled(
     }
 }
 
-/// 更新中继节点配置（官方节点 / 自建 VPS）：持久化 url/token 到 relay_client.json，
+/// 更新中继节点配置（官方节点 / 自建 VPS）：持久化 url/token/public_url 到 relay_client.json，
 /// 已启用时热重启中继连接（stop + spawn），无需重启应用。
+/// token/public_url 传空 = 保留现状（自建 VPS 保存时只改需要改的字段）。
 #[tauri::command]
 pub async fn relay_client_update_node(
     app: tauri::AppHandle,
     url: String,
     token: String,
+    public_url: String,
 ) -> Result<String, String> {
     let mut cfg = load_config();
     let url = url.trim().to_string();
@@ -211,6 +213,9 @@ pub async fn relay_client_update_node(
     if !token.is_empty() {
         cfg.token = token.trim().to_string();
     }
+    if !public_url.trim().is_empty() {
+        cfg.public_url = public_url.trim().to_string();
+    }
     if !relay_loops_allowed(&cfg) {
         return Err("中继配置不完整（url/device_id/token），请检查后重试".into());
     }
@@ -220,6 +225,33 @@ pub async fn relay_client_update_node(
         spawn_relay_loops(app);
     }
     Ok("中继节点已更新".into())
+}
+
+/// 恢复官方中继节点（自建 VPS 不满意时一键回退）：url/public_url 重置官方默认，
+/// token 重置为官方注入值（构建/运行环境变量；未注入则保留现状——通常是官方 token）。
+/// 已启用时热重启连接，无需重启应用。
+#[tauri::command]
+pub async fn relay_client_reset_official(app: tauri::AppHandle) -> Result<String, String> {
+    let mut cfg = load_config();
+    cfg.url = DEFAULT_RELAY_URL.to_string();
+    cfg.public_url = DEFAULT_RELAY_PUBLIC_URL.to_string();
+    // 官方 device token：构建期注入（env!）优先，其次运行时环境变量；均未注入则保留
+    // 现有 token（已启用场景下现有 token 通常即官方 token，避免自建 token 残留）。
+    let injected = env!("NUPHUS_RELAY_DEVICE_TOKEN").trim().to_string();
+    let rt = std::env::var("NUPHUS_RELAY_DEVICE_TOKEN").unwrap_or_default();
+    let t = if !injected.is_empty() { injected } else { rt };
+    if !t.is_empty() {
+        cfg.token = t;
+    }
+    if !relay_loops_allowed(&cfg) {
+        return Err("官方中继配置不完整（url/device_id/token），请检查后重试".into());
+    }
+    save_config(&cfg)?;
+    if cfg.enabled {
+        stop_relay_loops().await;
+        spawn_relay_loops(app);
+    }
+    Ok("已恢复官方中继节点".into())
 }
 
 // ── relay HTTP 请求（统一出口 + 代理故障自愈，issue #7）────────────────────

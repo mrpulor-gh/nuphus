@@ -97,6 +97,9 @@ pub struct Capabilities {
     /// 文字转语音模型
     #[serde(default)]
     pub tts: String,
+    /// 语音克隆模型（走云端克隆 API，空 = 不支持）
+    #[serde(default)]
+    pub voice: String,
     /// 图片生成模型（空 = 不支持）
     #[serde(default)]
     pub image_generation: String,

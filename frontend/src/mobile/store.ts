@@ -254,8 +254,15 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     }
 
     case 'execution_started':
+      // 新一轮执行开始：兜底复位提炼态（提炼期间 ExecutionStarted 被后端过滤不会到，
+      // 此处只处理「SessionRefined 事件丢失/晚到导致 refining 残留」场景——残留 true
+      // 会拦截后续 execution_completed 的 result（!state.refining 判断），表现为
+      // 「下一次 user 新消息结果静默吞并」（2026-09-02 大王反馈）。新执行开始即提炼
+      // 必然已结束/被用户打断，安全复位）。
       return {
         ...state,
+        refining: false,
+        pendingRefine: null,
         activity: {
           running: true,
           goal: ev.goal,
@@ -294,7 +301,10 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     case 'llm_text_delta': {
       // 非执行中忽略：息屏/切应用返回后积压的旧轮次 delta 重放时，
       // running 已为 false（execution_completed 先到）→ 忽略，防创建孤立空气泡。
-      if (!state.activity.running) return state
+      // ⚠️ 提炼（refining）例外：refine 的 ExecutionStarted 被后端 RefineStreamFilter
+      // 拦截（提炼不污染执行轨迹），running 恒 false——但 LlmTextDelta 放行（提炼流式）。
+      // 若不放行，手机端 refine 确认后看不到任何流式内容（2026-09-02 大王反馈）。
+      if (!state.activity.running && !state.refining) return state
       // 不拦截 from_task：子任务（ExecAgent）的思考/文本也是执行过程的一部分，
       // 手机端「执行过程」应展示完整链路（与桌面端 timeline 一致）。
       const messages = state.messages.slice()
@@ -571,12 +581,28 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       return { ...state, refining: true, pendingRefine: null }
 
     case 'session_refined':
-      // 提炼完成：只清状态（弹窗自然关闭）。提炼结果/提示属系统内容，
-      // 不生成消息气泡（对齐后端 extract_history 过滤，前端不显示系统提示）。
-      return {
-        ...state,
-        refining: false,
-        pendingRefine: null,
+      // 提炼完成：清状态 + **显示摘要气泡**（role:'refine'，与后端 extract_history
+      // 的 refine 角色对齐——重拉历史时摘要仍在，不闪失）。原实现只清状态不生成气泡
+      // → 手机端「输出完毕后不显示」（2026-09-02 大王反馈；桌面端有独立提炼 UI，
+      // 手机端需气泡承载提炼结果）。
+      {
+        const summary = ev.summary?.trim()
+        return {
+          ...state,
+          refining: false,
+          pendingRefine: null,
+          messages: summary
+            ? [
+                ...state.messages,
+                {
+                  id: rid(),
+                  role: 'refine',
+                  content: summary,
+                  timestamp: Date.now(),
+                },
+              ]
+            : state.messages,
+        }
       }
 
     case 'refine_failed':

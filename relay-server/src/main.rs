@@ -69,13 +69,32 @@ use tokio::sync::{mpsc, oneshot};
 const TASK_TIMEOUT_SECS: u64 = 120;
 const MAX_CONTENT_BYTES: usize = 512 * 1024; // 单条任务内容上限 512KB
 
-// ── 安全加固参数（防公网暴露 DoS / 扫描） ────────────────────────────────
-/// 隧道：每 IP 每分钟最多新建连接数（移动端 SPA 首载 + WS 重连 + 正常操作，20 过严会误杀）
-const TUNNEL_RATE_PER_IP_MIN: usize = 60;
+// ── 安全加固参数（防公网暴露 DoS / 扫描 / 流量滥用） ─────────────────────
+/// 免费层月度流量配额（MB/设备）：100MB × 5000 用户 = 500GB ≈ 0.5T 总量预算。
+/// 大王裁定：免费用户每月 100MB（够日常外出办公），超额拒绝；Pro 未来可提额。
+/// 计量 = 隧道双向字节（请求+响应都走中继带宽），自然月重置，落盘 usage.json。
+const QUOTA_MB_PER_MONTH: u64 = 100;
+const QUOTA_BYTES_PER_MONTH: u64 = QUOTA_MB_PER_MONTH * 1024 * 1024;
+/// 免费层容量规划：设备数上限（5000 × 100MB = 0.5T）。超过时 warn（扩容/Pro 层面决策）
+const CAPACITY_USERS: usize = 5000;
+/// 隧道：每 IP 每分钟最多新建连接数（移动端 SPA 首载 + WS 重连峰值约 15-20，30 留 1.5 倍余量）
+const TUNNEL_RATE_PER_IP_MIN: usize = 30;
 /// 隧道：全局并发连接上限（超过直接拒绝，防资源耗尽）
 const TUNNEL_MAX_ACTIVE_TOTAL: usize = 256;
 /// 隧道：单 IP 并发连接上限（移动端首载静态资源+API+WS长连接+keep-alive 峰值约 15-20，8 过严误杀）
 const TUNNEL_MAX_ACTIVE_PER_IP: usize = 32;
+/// 隧道：无归属请求（Ambiguous/离线页，必回静态页无业务价值）每 IP 每分钟上限——爬虫闸门
+const UNROUTED_TUNNEL_RATE_PER_IP_MIN: usize = 30;
+/// 单连接写方向带宽限速（MB/s，桌面→手机大流量方向削峰）：
+/// 正常聊天/历史/图片（KB~MB 级）零感知；视频/大文件被削（100MB 配额下 ~50 秒拉满）
+const TUNNEL_BANDWIDTH_MBPS: u64 = 2;
+const TUNNEL_BANDWIDTH_BYTES_PER_SEC: u64 = TUNNEL_BANDWIDTH_MBPS * 1024 * 1024;
+/// 单连接最大时长（秒），超时强制断（防占线；重连即恢复）
+const TUNNEL_MAX_DURATION_SECS: u64 = 1800;
+/// per-IP 分钟级字节上限（防瞬时突发；IP 维度防 NAT 共享误伤 device 维度）
+const IP_MINUTE_BYTES: u64 = 20 * 1024 * 1024;
+/// per-IP 小时级字节上限（防持续下载/爬取）
+const IP_HOUR_BYTES: u64 = 200 * 1024 * 1024;
 /// 隧道：空闲（无任何数据帧）超时秒数，超时强制关闭。
 /// 历史教训：曾降到 12s 防 HTTP 资源挂起，但桌面 WS 心跳间隔 15s（mobile_server
 /// WS_HEARTBEAT_INTERVAL）> 12s → WS 隧道在心跳前被杀 → 手机「连接中」永不连上（实测 P0）。
@@ -91,7 +110,8 @@ const TUNNEL_READY_TIMEOUT_SECS: u64 = 20;
 /// 5s 超时判定半死主动断开隧道 WS，触发桌面重连自愈（对齐桌面 relay_client 5s 写看门狗）。
 const TUNNEL_WRITE_TIMEOUT_SECS: u64 = 5;
 /// HTTP：每 IP 每分钟请求上限（health 豁免——健康检查应始终可答）
-const HTTP_RATE_PER_IP_MIN: usize = 120;
+/// HTTP API（18080）每 IP 每分钟请求上限（/health 豁免）：正常手机操作低频，60 留足余量
+const HTTP_RATE_PER_IP_MIN: usize = 60;
 /// HTTP：限流窗口（秒）
 const RATE_WINDOW_SECS: u64 = 60;
 
@@ -157,6 +177,16 @@ struct AppState {
     /// （老客户端发不出任何标记）凭此路由——扫码一次终身有效，**服务重启不清零**。
     /// 容量上限 1024 条防无限增长；文件含敏感映射，权限与数据目录一致。
     token_routes: Arc<Mutex<HashMap<String, String>>>,
+    /// 设备月度流量配额计量：device_id → 当月用量（字节）。免费层 100MB/月 硬顶，
+    /// 自然月重置，定期落盘 usage.json（服务重启不清零）。
+    usage: Arc<Mutex<HashMap<String, DeviceUsage>>>,
+    /// 隧道无归属请求（Ambiguous/离线页）独立限流窗口：IP → 窗口内连接时间戳。
+    /// 与 tunnel_rate 分离：无归属请求必回静态页（无业务价值），频率闸门更严。
+    unrouted_rate: Arc<Mutex<HashMap<IpAddr, Vec<Instant>>>>,
+    /// per-IP 分钟级字节计数：IP → (窗口起始, 窗口内字节)
+    ip_bytes_min: Arc<Mutex<HashMap<IpAddr, (Instant, u64)>>>,
+    /// per-IP 小时级字节计数：IP → (窗口起始, 窗口内字节)
+    ip_bytes_hour: Arc<Mutex<HashMap<IpAddr, (Instant, u64)>>>,
 }
 
 impl AppState {
@@ -174,8 +204,184 @@ impl AppState {
             tunnel_active_ip: Arc::new(Mutex::new(HashMap::new())),
             device_lan_urls: Arc::new(Mutex::new(HashMap::new())),
             token_routes: Arc::new(Mutex::new(load_bindings(&data_dir()))),
+            usage: Arc::new(Mutex::new(load_usage(&data_dir()))),
+            unrouted_rate: Arc::new(Mutex::new(HashMap::new())),
+            ip_bytes_min: Arc::new(Mutex::new(HashMap::new())),
+            ip_bytes_hour: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+}
+
+// ── 设备月度流量配额（免费层 100MB/月 硬顶） ──────────────────────────────
+
+/// 设备当月用量：month = YYYY-MM 数值（202609 = 2026 年 9 月）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DeviceUsage {
+    pub month: u64,
+    pub bytes: u64,
+}
+
+/// 当前月份 key（YYYY-MM 数值）：Howard Hinnant civil_from_days 算法，无 chrono 依赖。
+/// 仅用于配额周期判定（自然月重置），忽略闰秒的 ±1 秒误差可接受。
+fn current_month_key() -> u64 {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86400) as i64;
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    (year as u64) * 100 + month as u64
+}
+
+/// 读设备当月已用字节（非当月条目按 0 计——跨月自动重置）
+fn device_used_bytes(usage: &Mutex<HashMap<String, DeviceUsage>>, device_id: &str) -> u64 {
+    let m = current_month_key();
+    let u = lock_recover(usage);
+    u.get(device_id)
+        .filter(|du| du.month == m)
+        .map(|du| du.bytes)
+        .unwrap_or(0)
+}
+
+/// 累加设备字节并返回是否超配额（超配额调用方断连/拒绝）
+fn device_add_bytes(usage: &Mutex<HashMap<String, DeviceUsage>>, device_id: &str, n: u64) -> bool {
+    let m = current_month_key();
+    let mut u = lock_recover(usage);
+    let e = u.entry(device_id.to_string()).or_insert(DeviceUsage { month: m, bytes: 0 });
+    if e.month != m {
+        *e = DeviceUsage { month: m, bytes: 0 };
+    }
+    e.bytes = e.bytes.saturating_add(n);
+    e.bytes >= QUOTA_BYTES_PER_MONTH
+}
+
+/// per-IP 滑动窗口字节计数（分钟/小时两档），超限返回 true（调用方断连）
+fn ip_add_bytes(
+    map: &Mutex<HashMap<IpAddr, (Instant, u64)>>,
+    ip: IpAddr,
+    n: u64,
+    window: Duration,
+    limit: u64,
+) -> bool {
+    let now = Instant::now();
+    let mut g = lock_recover(map);
+    let (start, used) = g.entry(ip).or_insert((now, 0));
+    if now.duration_since(*start) >= window {
+        *start = now;
+        *used = 0;
+    }
+    *used = used.saturating_add(n);
+    *used >= limit
+}
+
+/// 隧道转发计量总入口：设备配额 + per-IP 分钟/小时字节。任一超限返回 true（断连）。
+fn meter_bandwidth(
+    usage: &Mutex<HashMap<String, DeviceUsage>>,
+    ip_min: &Mutex<HashMap<IpAddr, (Instant, u64)>>,
+    ip_hour: &Mutex<HashMap<IpAddr, (Instant, u64)>>,
+    device_id: &str,
+    ip: IpAddr,
+    n: u64,
+) -> bool {
+    if device_add_bytes(usage, device_id, n) {
+        tracing::warn!(
+            "[relay] 配额超限断连：device={} (100MB/月)",
+            device_id
+        );
+        return true;
+    }
+    if ip_add_bytes(ip_min, ip, n, Duration::from_secs(60), IP_MINUTE_BYTES) {
+        tracing::warn!("[relay] per-IP 分钟字节超限断连：{}", ip);
+        return true;
+    }
+    if ip_add_bytes(ip_hour, ip, n, Duration::from_secs(3600), IP_HOUR_BYTES) {
+        tracing::warn!("[relay] per-IP 小时字节超限断连：{}", ip);
+        return true;
+    }
+    false
+}
+
+/// 连接级带宽限速（桌面→手机大流量方向削峰）：1s 滑动窗口 2MB/s，超配额 sleep 到窗口边界。
+/// 正常聊天/历史/图片（KB~MB 级瞬时）无感；视频/大文件被削。
+async fn throttle_bandwidth(bw: &Mutex<(Instant, u64)>, n: u64) {
+    loop {
+        let (start, used) = *lock_recover(bw);
+        let now = Instant::now();
+        if now.duration_since(start).as_secs() >= 1 {
+            *lock_recover(bw) = (now, n);
+            return;
+        }
+        if used.saturating_add(n) <= TUNNEL_BANDWIDTH_BYTES_PER_SEC {
+            *lock_recover(bw) = (start, used + n);
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// 月度流量配额静态页（免费层超额拒绝时返回；浏览器可见、轻量）
+fn quota_html() -> String {
+    format!(
+        r#"<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuphus · 本月流量已用完</title>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}html,body{{height:100%}}
+body{{display:flex;align-items:center;justify-content:center;padding:24px;background:#0f1115;color:#e6e8ee;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}}
+.card{{width:100%;max-width:420px;padding:36px 28px;background:#1a1d24;border:1px solid #2a2e38;border-radius:16px}}
+.dot{{width:14px;height:14px;margin:0 auto 20px;background:#f0b429;border-radius:50%}}
+h1{{font-size:21px;font-weight:600;margin-bottom:14px;text-align:center}}
+p{{font-size:15px;line-height:1.9;color:#a8adb8}}</style></head><body><div class="card">
+<div class="dot"></div><h1>本月流量已用完</h1>
+<p>免费用户每月 {QUOTA_MB_PER_MONTH}MB 流量已用完，下月 1 日自动恢复。日常聊天、外出办公完全够用；如需更多流量，请升级 Pro 套餐。</p>
+</div></body></html>"#,
+        QUOTA_MB_PER_MONTH = QUOTA_MB_PER_MONTH,
+    )
+}
+
+/// 加载 usage.json（data_dir；缺失/损坏 → 空表）
+fn load_usage(dir: &std::path::Path) -> HashMap<String, DeviceUsage> {
+    let path = dir.join("usage.json");
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str::<HashMap<String, DeviceUsage>>(&raw).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// 保存 usage.json（幂等，失败仅 warn）
+fn save_usage(dir: &std::path::Path, usage: &HashMap<String, DeviceUsage>) {
+    let path = dir.join("usage.json");
+    match serde_json::to_string(usage) {
+        Ok(data) => {
+            if let Err(e) = std::fs::write(&path, data) {
+                tracing::warn!("[relay] usage.json 保存失败: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("[relay] usage.json 序列化失败: {e}"),
+    }
+}
+
+/// 定期落盘任务：每 60s 保存一次配额计量（服务重启不清零）
+fn spawn_usage_persist(state: AppState) {
+    let usage = Arc::clone(&state.usage);
+    let dir = data_dir();
+    tokio::spawn(async move {
+        let mut iv = tokio::time::interval(Duration::from_secs(60));
+        iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            iv.tick().await;
+            let snapshot = lock_recover(&usage).clone();
+            save_usage(&dir, &snapshot);
+        }
+    });
 }
 
 // ── 安全：token 解析（文件 > 环境变量，改文件即热轮换） ───────────────────
@@ -1773,6 +1979,31 @@ async fn handle_tunnel_conn(
     }
 
     let mobile_token = extract_mobile_token(&request_line_for_token, &head_str);
+
+    // ── CORS 预检（OPTIONS）直接回握手响应，不路由设备 ──
+    // 背景（2026-09-01 实测）：跨源手机页面（局域网 origin PWA 切中继）的浏览器预检
+    // 只声明 Access-Control-Request-Headers，**不携带** X-Tunnel-Device 实际头 → 无归属
+    // 标记 → 多设备在线被 Ambiguous 引导页糊弄（浏览器照样失败：历史拉取/发送全挂）。
+    // 预检仅握手、无业务数据，直接回放行头即可；实际请求（带归属标记）仍走完整路由
+    // + 桌面 token 鉴权，攻击面不变。Allow-Headers 对齐桌面 mobile_server 的
+    // add_cors_headers（X-Mobile-Token / X-Tunnel-Device）。ACAO * 与现有 axum
+    // cors_mw 的 OPTIONS 行为一致（预检响应不含业务数据，不播种 cookie）。
+    {
+        let method = request_line_for_token.split_whitespace().next().unwrap_or("");
+        if method.eq_ignore_ascii_case("OPTIONS") {
+            tracing::info!("[relay] tunnel conn {} OPTIONS 预检直回 CORS（不路由设备）", ip);
+            let resp = "HTTP/1.1 204 No Content\r\n\
+                Access-Control-Allow-Origin: *\r\n\
+                Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+                Access-Control-Allow-Headers: Content-Type, X-Relay-Token, Authorization, X-Mobile-Token, X-Tunnel-Device\r\n\
+                Access-Control-Max-Age: 86400\r\n\
+                Content-Length: 0\r\n\
+                Connection: close\r\n\r\n";
+            let _ = tcp.write_all(resp.as_bytes()).await;
+            let _ = tcp.shutdown().await;
+            return;
+        }
+    }
     // 是否经显式标记路由（Cookie/token 学习只信任显式来源——启发式路由绝不播种，
     // 防止 sole-online 误归属被钉死进浏览器）
     let routed_explicitly = explicit_device.is_some();
@@ -1794,11 +2025,21 @@ async fn handle_tunnel_conn(
                 {
                     Ok(t) => t,
                     Err(RouteReject::NoDevices) => {
+                        // 无归属请求独立限流（爬虫打离线页/引导页的闸门，比正常隧道限速更严）
+                        if !rate_check(&state.unrouted_rate, ip, UNROUTED_TUNNEL_RATE_PER_IP_MIN) {
+                            tracing::warn!("[relay] unrouted rate limited: {}", ip);
+                            return;
+                        }
                         tracing::info!("[relay] 隧道分流：无任何设备在线，回离线页");
                         write_static_page(&mut tcp, &offline_html(None)).await;
                         return;
                     }
                     Err(RouteReject::Ambiguous) => {
+                        // 无归属请求独立限流（爬虫打引导页/离线页的闸门，比正常隧道限速更严）
+                        if !rate_check(&state.unrouted_rate, ip, UNROUTED_TUNNEL_RATE_PER_IP_MIN) {
+                            tracing::warn!("[relay] unrouted rate limited: {}", ip);
+                            return;
+                        }
                         tracing::warn!(
                             "[relay] 隧道分流：{} 台设备在线且请求未带归属标记，回多设备引导页",
                             online_devices.len()
@@ -1839,6 +2080,31 @@ async fn handle_tunnel_conn(
         target,
         head_bytes.len()
     );
+
+    // ── 免费层月度配额检查（100MB/月硬顶）：超额拒绝新连接 + 配额页 ──
+    // 大王裁定：免费用户 100MB/月（够日常外出办公），超额拒绝；Pro 未来提额。
+    // 计量为隧道双向字节（device_add_bytes 在转发循环累加），自然月重置（usage.json 持久化）。
+    {
+        let used = device_used_bytes(&state.usage, &target);
+        if used >= QUOTA_BYTES_PER_MONTH {
+            tracing::warn!(
+                "[relay] 配额超限拒绝：device={} used={}MB (100MB/月)",
+                target,
+                used / (1024 * 1024)
+            );
+            write_static_page(&mut tcp, &quota_html()).await;
+            return;
+        }
+        // 容量规划 warn：在线设备数接近/超过 5000（5000 × 100MB = 0.5T 总量预算）
+        let online = lock_recover(&state.devices).len();
+        if online >= CAPACITY_USERS {
+            tracing::warn!(
+                "[relay] 在线设备数 {} 达容量上限 {}，需扩容或引导 Pro（配额 100MB/月仍封顶）",
+                online,
+                CAPACITY_USERS
+            );
+        }
+    }
 
     // 1. 链路分流（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）：
     //    链路离线 → 按设备通道（/ws/device）是否在线区分「连接中」与「真离线」，
@@ -1980,6 +2246,18 @@ async fn handle_tunnel_conn(
     // 写活动，防止读侧空闲误判腰斩响应。
     let last_activity = Arc::new(AtomicU64::new(now_unix_millis()));
     let last_activity_writer = Arc::clone(&last_activity);
+    // 流量计量引用（writer/reader 共享；免费层 100MB/月配额 + per-IP 分钟/小时闸门）
+    let usage_m = Arc::clone(&state.usage);
+    let ip_min_m = Arc::clone(&state.ip_bytes_min);
+    let ip_hour_m = Arc::clone(&state.ip_bytes_hour);
+    let meter_device = target.clone();
+    let meter_ip = ip;
+    // 连接级带宽限速窗口（2MB/s 滑动窗口）
+    let bw = Arc::new(Mutex::new((Instant::now(), 0u64)));
+    let bw_w = Arc::clone(&bw);
+    let started_at_w = Instant::now();
+    // writer move 闭包专用 tunnel_id（避免 move 后主函数 reader 再借用）
+    let tunnel_id_w = tunnel_id.clone();
     let writer = tokio::spawn(async move {
     let mut pending: Vec<u8> = Vec::new();
     let mut inject: Option<String> = Some(plant_cookie);
@@ -1995,6 +2273,10 @@ async fn handle_tunnel_conn(
         if let TunnelFrame::Data { data, .. } = frame {
             use base64::Engine as _;
             if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                throttle_bandwidth(&bw_w, bytes.len() as u64).await;
+                if meter_bandwidth(usage_m.as_ref(), ip_min_m.as_ref(), ip_hour_m.as_ref(), &meter_device, meter_ip, bytes.len() as u64) {
+                    closed = true;
+                }
                 pending.extend_from_slice(&bytes);
             }
         }
@@ -2024,6 +2306,11 @@ async fn handle_tunnel_conn(
             TunnelFrame::Data { data, .. } => {
                 use base64::Engine as _;
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                    throttle_bandwidth(&bw_w, bytes.len() as u64).await;
+                    if meter_bandwidth(usage_m.as_ref(), ip_min_m.as_ref(), ip_hour_m.as_ref(), &meter_device, meter_ip, bytes.len() as u64) {
+                        tracing::warn!("[relay] tunnel {} 配额/IP 超限断连", tunnel_id_w);
+                        break;
+                    }
                     pending.extend_from_slice(&bytes);
                     if flush_device_bytes(
                         &mut tcp_w,
@@ -2048,6 +2335,11 @@ async fn handle_tunnel_conn(
             TunnelFrame::Close { .. } | TunnelFrame::Error { .. } => break,
             _ => {}
         }
+        // 连接时长上限（防占线；重连即恢复）
+        if started_at_w.elapsed().as_secs() >= TUNNEL_MAX_DURATION_SECS {
+            tracing::warn!("[relay] tunnel {} 连接时长超限关闭", tunnel_id_w);
+            break;
+        }
     }
     let _ = tcp_w.shutdown().await;
 });
@@ -2056,6 +2348,12 @@ async fn handle_tunnel_conn(
     // 纯下载（设备→手机持续推流、手机方向静默）30s 即被误判空闲 → writer.abort()
     // 腰斩响应 → 大资源/慢网络必现截断（白屏/卡死根因，实测）。现由读写两侧共同
     // 刷新 last_activity，仅当「双向均静默」满阈值才回收。
+    // 计量引用（writer 已 move 同名字段，reader 重新 clone——请求方向也计带宽配额）
+    let usage_m2 = Arc::clone(&state.usage);
+    let ip_min_m2 = Arc::clone(&state.ip_bytes_min);
+    let ip_hour_m2 = Arc::clone(&state.ip_bytes_hour);
+    let meter_device2 = target.clone();
+    let meter_ip2 = ip;
     let mut buf = [0u8; 16384];
     let idle_ms = TUNNEL_IDLE_TIMEOUT_SECS as u64 * 1000;
     loop {
@@ -2069,6 +2367,11 @@ async fn handle_tunnel_conn(
             Ok(Ok(0)) => break,
             Ok(Ok(n)) => {
                 last_activity.store(now_unix_millis(), Ordering::Relaxed);
+                // 请求方向计量（也走中继带宽，计入 100MB/月配额 + per-IP 闸门）
+                if meter_bandwidth(usage_m2.as_ref(), ip_min_m2.as_ref(), ip_hour_m2.as_ref(), &meter_device2, meter_ip2, n as u64) {
+                    tracing::warn!("[relay] tunnel {} 请求方向配额/IP 超限断连", tunnel_id);
+                    break;
+                }
                 use base64::Engine as _;
                 let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                 // 无界 send 非阻塞：不因单隧道慢而阻塞共享读循环饿死其他并发隧道
@@ -2134,7 +2437,7 @@ async fn main() {
         .layer(middleware::from_fn(cors_mw))
         // 安全中间件：IP 速率限制 + 访问日志（需 ConnectInfo 注入对端 IP）
         .layer(middleware::from_fn_with_state(state.clone(), security_mw))
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = format!("0.0.0.0:{}", port);
     tracing::info!(
@@ -2146,6 +2449,8 @@ async fn main() {
 
     // 隧道监听独立 spawn：失败仅 warn（不影响主服务）
     tokio::spawn(spawn_tunnel_listener(tunnel_state));
+    // 设备月度配额计量落盘（每 60s；服务重启不清零）
+    spawn_usage_persist(state.clone());
 
     // ── 服务启动：明文 http/ws（生产 TLS 在 nginx 终结；进程内 TLS 已随
     // axum-server tls-rustls 特性一并移除——该特性拉入 aws-lc-sys，交叉编译过重且产线未使用）──

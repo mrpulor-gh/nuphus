@@ -116,6 +116,8 @@ export interface SessionAPI {
   setShowPlugins: (v: boolean) => void
   showPluginDev: boolean
   setShowPluginDev: (v: boolean) => void
+  showTools: boolean
+  setShowTools: (v: boolean) => void
 
   // ── Execution ──
   showExecTrace: boolean
@@ -725,6 +727,16 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowMcp(true)
+        },
+      },
+      {
+        id: 'tools',
+        label: t('cmd.tools'),
+        desc: t('cmd.toolsDesc'),
+        category: t('cmd.category.browse'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowTools(true)
         },
       },
       {

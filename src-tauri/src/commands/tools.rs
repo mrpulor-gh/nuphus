@@ -1,3 +1,15 @@
+// tools.rs — agent 工具调用命令（get_tools/execute_tool/get_desktop_status）
+//
+// 注意：本文件是 agent 工具列表的对外入口，内部机制命令（PDF/图片/视频
+// 处理工具页）作为子模块挂载，绝不注册进 get_tools / execute_tool 的
+// agent 工具列表——两者职责隔离：这里暴露给 LLM 编排，tools/* 由用户在
+// 工具页手动调用。
+pub mod image;
+pub mod pdf;
+pub mod video;
+pub mod doc;
+pub mod voice;
+
 use crate::state::{AppState, DesktopStatus, HookScriptInfo, HooksConfigStatus, ToolSchema};
 use tauri::State;
 

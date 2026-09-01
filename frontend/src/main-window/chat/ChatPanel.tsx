@@ -1161,6 +1161,7 @@ export function ChatPanel({
           onNewChat={onNewChat}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}
+          mood={mood}
         />
       )}
       {/* ── Chat Header (command palette entry) ── */}
