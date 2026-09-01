@@ -46,7 +46,7 @@ Thumbs.db
 audit-*.md
 # 前端内部设计文档（不公开，与 docs/ 同策略）
 frontend/docs/
-# 源码内设计文档（不公开）
+# 源码内部设计文档（不公开）
 src/memory/agent-memory-design.md
 # 审计报告目录（内部文档，不公开）
 audit/
@@ -130,7 +130,7 @@ relay-server/src/sponsor_wechat_qr.png
 relay-server/src/sponsor_wechat_qr.b64
 # 本地 Agent 登记（含本机路径/账号信息）
 plugin/team.toml
-# 本地验证工作流（含真实窗口快照/截图/运行痕迹，非产品示例）
+# 本地验证工作流（含真实窗口快照/截图/运行轨迹，非产品示例）
 plugin/workflows/chatagent-opencode-verify/
 plugin/workflows/nuphus-tour-v4/
 # 本地工作流注册表（UUID 实例，用户数据）
@@ -159,9 +159,9 @@ npm-desktop/install-test/
 relay-device-routing.md
 mobile-link-diagnosis.md
 
-# ���� AI ����ָ�������
+# 本地 AI 助手指引不入库
 CLAUDE.md
-# 独立 target 目录（cargo 检查/实验性构建产物，不入库）
+# 独立 target 目录（cargo 检查/试验性构建产物，不入库）
 target-check/
 
 tsc-out.txt
