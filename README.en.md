@@ -17,9 +17,7 @@
 
 **Nuphus is an AI Agent that runs on your computer — local, private, and with real desktop execution power. Your phone is its second screen.**
 
-It reads the screen, drives the mouse and keyboard, controls windows, reads and writes files, and orchestrates the browser — turning LLM reasoning into real automation. Data stays on your machine, the model is your choice, and the Agent gets things done for you.
-
-Every session you start on the desktop is synced to your phone in real time — the same memory, the same Agent, the same conversation, continuing wherever you are.
+It reads the screen, drives the mouse and keyboard, controls windows, reads and writes files, and orchestrates the browser — turning LLM reasoning into real automation. Data stays on your machine, the model is your choice, and the Agent gets things done for you. Every session you start on the desktop is synced to your phone in real time — the same memory, the same Agent, the same conversation, continuing wherever you are.
 
 ---
 
@@ -37,95 +35,97 @@ Nuphus breaks these boundaries. It isn't just a tool that "helps you write code"
 
 ### Design philosophy
 
-The fundamental tension of an agent: reasoning needs intelligence, but repeated execution needs determinism. Making an LLM spend tokens to solve 85%-identical tasks every time is a double waste of compute and time.
-
-Nuphus's answer — let the LLM reason once, compile it into a workflow, then execute repeatedly with **zero tokens**:
+The fundamental tension of an agent: reasoning needs intelligence, but repeated execution needs determinism. Nuphus's answer — **let the LLM reason once, compile it into a workflow, then execute repeatedly with zero tokens**:
 
 ```
 User intent → LLM reasons & explores once (compile) → deterministic workflow → ChatAgent smart decision points → engine repeats
 ```
 
-Compilation is a one-time cost that buys **deterministic, repeatable, near-zero marginal cost** automation.
-
-> **Typical scenario**: "Back up my project folder to the desktop every day at 6 PM" → Nuphus compiles it into a workflow → it runs automatically every day after that, zero tokens, zero conversation. When you're out and about, just glance at the execution status on your phone.
-
-### Serial reasoning, parallel execution
-
-Nuphus's core engine is built in Rust; tool calls complete in milliseconds. The latency bottleneck is model inference, not the engine.
-
-Agent decisions are themselves causal chains — each step depends on the result of the previous one, and desktop system operations should follow serial logic. Nuphus's parallelism lives in the execution layer: through explicit instruction passing, it can simultaneously open Cline to fix a bug, Claude Code to write tests, and the browser to look up docs — Nuphus can orchestrate as much parallelism as each external agent has. External agents have their own context understanding; Nuphus sits on top, verifying with screenshots, reading the output, and consolidating decisions.
-
-**What is serial is thinking; what is parallel is execution.**
+Compilation is a one-time cost that buys **deterministic, repeatable, near-zero marginal cost** automation. Typical scenario: "Back up my project folder to the desktop every day at 6 PM" → Nuphus compiles it into a workflow → it runs automatically every day after that, zero tokens, zero conversation; when you're out and about, just glance at the execution status on your phone.
 
 ---
 
 ## Core Highlights
 
-### Real desktop execution
+### Real Desktop Execution
 
-Nuphus installs directly on your OS with native-grade screen awareness and input control:
+Nuphus installs directly on your OS with native-grade screen perception and input control:
 
-- **Drive any GUI** — window + OCR + mouse/keyboard; automate any desktop app or webpage without needing their API
-- **Built-in browser** — a programmable browser engine; web automation, data collection, and form interaction all happen on your machine
-- **Coding & project analysis** — project analysis, code generation, debugging diagnostics, and file operations with deep understanding of project context
-- **Multi-agent orchestration** — orchestrate external agents like Cline and Claude Code in parallel, consolidating their decisions
+- **Drive any GUI** — window + OCR + mouse/keyboard; automate any desktop app or web page without needing their API
+- **Built-in browser** — a programmable browser engine; web automation, data collection, and form interaction all run locally
+- **Programming & project analysis** — project analysis, code generation, debugging, file operations with deep project context
+- **Multi-agent orchestration** — run Cline, Claude Code and other external agents in parallel, consolidating decisions
 
-### Dual-device real-time sync: the desktop works, the phone controls
+### Dual-Device Sync: Desktop Works, Phone Controls
 
-Nuphus separates "execution" from "control": **the desktop is the Agent's hands; the phone is your remote control.**
+Nuphus separates "execution" from "control": **the desktop is the Agent's hands, your phone is the remote.**
 
-- **Same session, synced on both ends** — the phone connects to the very same desktop Agent: messages go through the same session entry point, and both devices share history, memory, and state — continue the conversation from either end
-- **Real-time event stream** — every step of the Agent (thinking, tool calls, execution results) is pushed to the phone over WebSocket in real time; watch the computer work from your couch
-- **Workflow remote control** — pause, resume, or stop a running workflow right from the phone, taking over control at any time
-- **Execution trace replay** — review the Agent's full execution trace on the phone; every step is transparent and auditable
-- **Remote access is free** — automatic direct connection on LAN (zero config); away from home, remote access goes through a relay server that stores nothing and forwards no content — identity verification and routing only
+- **Same session, synced across devices** — the phone connects to the same desktop Agent: messages share one entry point; history, memory and state are shared
+- **Real-time event stream** — every step (thinking, tool calls, results) streams to the phone over WebSocket
+- **Workflow remote control** — pause, resume, stop running workflows from your phone
+- **Execution trace playback** — view the Agent's full trace on the phone; every step is transparent
+- **Free remote access** — auto direct LAN connection (zero config); outside the LAN it routes through a relay server that never stores or forwards content, only authenticates and routes
 
-Dual-channel auto-switching: on the same Wi-Fi the phone connects directly to the desktop (fast, free); away from the LAN it automatically switches to the relay (stable, reliable), and switches back to direct when you return.
+Auto channel switching: on the same WiFi the phone connects to the desktop directly (fast, free); leaving the LAN automatically switches to the relay (stable, reliable); returning switches back.
 
-### Local-first, privacy by default
+### Local-First, Private by Default
 
-- **Data stays local** — conversations, memory, and plugins are all stored on your machine
-- **Local AI engine** — PP-OCRv4 (OCR) and Candle (semantic search) run entirely locally; everyday recognition costs zero API calls
-- **4-layer security** — permission switches → human-in-the-loop → injection detection → circuit-breaker protection
-- **Model freedom** — unified access to major vendors including OpenAI / Anthropic / DeepSeek / Qwen / Zhipu; switch anytime
+- **Data stays on your machine** — conversations, memory, plugins all stored locally
+- **Local AI engines** — PP-OCRv4 (OCR) and Candle (semantic search) run locally; everyday recognition costs zero API calls
+- **4-layer security** — permission gates → human-in-the-loop → injection detection → circuit breaker
+- **Model freedom** — unified access to OpenAI / Anthropic / DeepSeek / Qwen / Zhipu and other mainstream providers, switch anytime
 
-### More capabilities
+### Built-in Tools: PDF / Image / Video / Audio / Docs
+
+No external tools to install — 23 built-in processing commands:
+
+| Category | Capabilities |
+|----------|--------------|
+| PDF | Merge / Compress / Text extraction / Images to PDF / Extract pages / Rotate |
+| Image | Compress / Convert / Resize / Stitch / Batch compress / Batch convert |
+| Video | Compress / Extract frames / To GIF / Cut clip |
+| Audio | Extract audio / Audio convert / **Voice clone** (cloud) |
+| Docs | docx / pptx / xls / pdf → text |
+
+### More Capabilities
 
 | Capability | Description |
 |------------|-------------|
-| **Memory system** | Cross-session experience accumulation; SQLite persistence + FTS5 + vector semantic retrieval — the more you use it, the better it knows you |
-| **Zero-compile extensions** | Knowledge bases, skills, workflows, and ui-maps are all plain-text files; drop them into `plugin/` and they take effect |
+| **Memory system** | Cross-session experience accumulation; SQLite + FTS5 + vector semantic search — gets smarter the more you use it |
+| **Zero-compile extension** | Knowledge, skills, workflows, ui-maps are plain-text files; drop into `plugin/` and they load |
 | **Three-layer vision** | Built-in OCR (zero API cost) → configurable vision model (complex scenes) → user-guided vision (most flexible fallback) |
+| **Deterministic workflows** | Compile recurring tasks into workflows and run with zero tokens (see philosophy above) |
+| **Sound feedback** | Task done / error / retry all have distinct sounds — know the state without staring at the screen |
 
 ---
 
 ## Installation
 
-### One-click npm install (recommended)
+### One-command npm install (recommended)
 
-One command installs everything and automatically matches your platform's binary (Windows x64 / macOS arm64 / Linux x64). **No installer download, no Node.js / Rust environment needed**:
+A single command installs and auto-matches your platform's binary (Windows x64 / macOS arm64 / Linux x64). **No installer download, no Node.js / Rust required**:
 
 ```bash
-# Global install (provides the `nuphus` command)
+# Global install (provides the nuphus command)
 npm install -g @nuphus/nuphus-desktop
 
-# Or try it without installing (doesn't write to global)
+# Or try without installing (no global write)
 npx @nuphus/nuphus-desktop
 ```
 
-After installation, type `nuphus` in your terminal to launch.
+Then type `nuphus` in your terminal to launch.
 
-> The first install is large (the desktop app bundles local OCR / speech models), so please be patient.
+> First install is large (desktop app bundles local OCR / speech models), please be patient.
 
-### Download the installer
+### Download installers
 
-For users unfamiliar with the command line — **no terminal, no Node.js / Rust environment needed**:
+For users unfamiliar with the command line — **no CLI, no Node.js / Rust required**:
 
 1. Download the installer for your platform from [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases):
-   - **Windows**: `.exe` (NSIS installer, per-user install, **no administrator rights needed**)
+   - **Windows**: `.exe` (NSIS installer, per-user, **no admin rights needed**)
    - **macOS**: `.dmg`
    - **Linux**: `.deb` / `.AppImage`
-2. Double-click the installer to complete the install (on Windows a **Nuphus** desktop shortcut is created)
+2. Double-click to install (Windows creates a **Nuphus** desktop shortcut)
 3. Double-click the shortcut to launch
 
 ### Build from source (developers)
@@ -134,7 +134,7 @@ For users unfamiliar with the command line — **no terminal, no Node.js / Rust 
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Rust](https://rustup.rs/) | ≥ 1.78 | Compile the core engine |
+| [Rust](https://rustup.rs/) | ≥ 1.78 | Core engine compilation |
 | [Node.js](https://nodejs.org/) | ≥ 18 | Tauri frontend build |
 | Tauri CLI | `cargo install tauri-cli --version "^2"` | Desktop app development |
 
@@ -142,121 +142,118 @@ For users unfamiliar with the command line — **no terminal, no Node.js / Rust 
 git clone https://github.com/mrpulor-gh/nuphus.git
 cd nuphus
 
-# Install dependencies (root Tauri CLI + frontend dependencies)
+# Install dependencies (root Tauri CLI + frontend deps)
 npm install
-cd frontend && npm install && cd ..
 
-# Launch the desktop app (dev mode: compiles Rust + starts the frontend automatically)
+# Run in dev mode
 npx tauri dev
-
-# Production build (outputs installers to src-tauri/target/release/bundle/)
-npx tauri build
 ```
 
-> The root `npm run dev` / `npm run build` are frontend-only commands; for the desktop app use `npx tauri dev` / `npx tauri build`.
+---
 
-### First-time setup
+## Quick Start
 
-First launch shows a 2-step onboarding (applies to all install methods above):
+### Configure a model
 
-1. **Choose a model provider** — pick from the preset templates (OpenAI / Anthropic / DeepSeek / Qwen / Zhipu, etc.)
-2. **Enter your API Key** — press Enter to submit and you're done
+1. On first launch, follow the onboarding to pick a provider and enter your API key
+2. Press Enter to finish
 
-> Environment variables are also supported for config-free launch: `QWEN_API_KEY="sk-xxx" npx tauri dev`
+> You can also skip config with env vars: `QWEN_API_KEY="sk-xxx" npx tauri dev`
+
+> After onboarding, modify config in **Settings → Models**. API keys are encrypted: on Windows they're encrypted with system-level DPAPI into local config.toml (`enc:v1:` format, bound to the current user); macOS/Linux currently store plaintext (relying on file permissions; OS credential integration is on the roadmap). Never share or commit this file.
 
 ### Connect your phone
 
-1. Enable the mobile service in the desktop "Phone" settings page (default port 18772)
-2. Open the pairing page in your phone's browser and enter the pairing password to bind
-3. Add to home screen (PWA) and use it like an app
+1. On the desktop, enable the mobile service in the **Phone** settings page (default port 18772)
+2. Open the pairing page in your phone browser, enter the pairing password
+3. Add to Home Screen (PWA); use it like an app from then on
 
-Auto LAN direct-connect on the same Wi-Fi; auto relay remote channel when away from the LAN — all zero-config.
+Auto LAN direct connection on the same WiFi; automatic relay channel outside the LAN — zero config end to end.
 
 ---
 
 ## Architecture Overview
 
-Nuphus uses a six-layer architecture, bottom-up, with security woven through every layer:
+Nuphus uses a six-layer architecture, security threaded through every layer:
 
 ```
-┌──────────────────────────────┐
-│ Tauri shell                  │  ← frontend UI + OS-level abilities (notifications, tray, hotkeys)
-├──────────────────────────────┤
-│ Runtime                      │  ← unified main loop, 3-mode routing (Free / Plan / Workflow)
-├──────────────────────────────┤
-│ Agent                        │  ← Leader decision / ExecAgent execution / WorkflowAgent design
-├──────────────────────────────┤
-│ Transport                    │  ← multi-provider abstraction (major AI vendors unified)
-├──────────────────────────────┤
-│ Tools / Memory / Workflow    │  ← execution infrastructure
-├──────────────────────────────┤
-│ Security / Permissions       │  ← security chain across all layers (injection detection / permission tiers / review)
-└──────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ Tauri shell                                 │  ← frontend UI + OS capabilities (notify, tray, hotkeys)
+├─────────────────────────────────────────────┤
+│ Runtime                                     │  ← unified main loop, 3-mode routing (Free / Plan / Workflow)
+├─────────────────────────────────────────────┤
+│ Agent                                       │  ← Leader decision / ExecAgent execution / WorkflowAgent design
+├─────────────────────────────────────────────┤
+│ Transport                                   │  ← multi-provider abstraction (unified access to major AI vendors)
+├─────────────────────────────────────────────┤
+│ Tools / Memory / Workflow                   │  ← execution infrastructure
+├─────────────────────────────────────────────┤
+│ Security / Permissions                      │  ← security chain across all layers (injection detection / permission tiers / review)
+└─────────────────────────────────────────────┘
 ```
 
 **Dual-device sync architecture**:
 
 ```
-┌───────────────┐   WebSocket live event stream   ┌─────────────────┐
-│ Phone PWA     │ ←────────────────────────────→  │ Desktop mobile  │
-│ (chat/remote) │   POST /message shared entry     │ server (18772) │
-└───────────────┘                                  └────────┬────────┘
-        ↕ LAN direct (auto on same Wi-Fi)                  │ shared session/memory/state
-┌───────────────┐                                  ┌────────┴────────┐
-│ Relay server  │ ←────── remote channel (free) ──→ │ Nuphus desktop  │
-│  (no storage) │                                  │  Agent engine   │
-└───────────────┘                                  └─────────────────┘
+┌──────────┐   WebSocket real-time event stream   ┌──────────────┐
+│  Phone PWA│ ←────────────────────────────────→  │ desktop mobile│
+│(chat/remote)│   POST /message shared entry        │ server(18772)│
+└──────────┘                                      └──────┬───────┘
+      ↕ LAN direct (auto on same WiFi)                   │ shared session/memory/state
+┌──────────┐                                      ┌──────┴───────┐
+│ Relay    │ ←──── remote channel (free) ────→    │  Nuphus      │
+│ server   │                                      │  desktop     │
+│ (no store)│                                     │  Agent engine │
+└──────────┘                                      └──────────────┘
 ```
 
-Phone messages go through `submit_user_message(source="mobile")`, sharing the same `leader_agent` / busy lock / dedup logic as the desktop — both devices are **two front-ends for the same Agent**, not two independent systems. On disconnect it reconnects with exponential backoff, and after reconnecting it re-fetches history to fill the gap — no messages are lost.
+Phone messages go through `submit_user_message(source="mobile")`, sharing the same `leader_agent` / busy lock / dedup logic as the desktop — the two devices are **two views of one Agent**, not two separate systems. Disconnects auto-reconnect with exponential backoff and re-pull history to fill gaps; no messages are lost.
 
-**Data flow**: user input → Tauri event → Runtime routing → Leader decision → `task_dispatch` → ExecAgent execution → result returns → frontend display (synced on desktop and phone)
+**Data flow**: user input → Tauri event → Runtime routing → Leader decision → `task_dispatch` → ExecAgent execution → result return → frontend display (synced to desktop & phone)
 
 ---
 
 ## Configuration
 
-Nuphus uses a TOML config file, searched by priority in `src/config/mod.rs::load_registry`:
+Nuphus uses a TOML config file; `src/config/mod.rs::load_registry` searches by priority:
 
-| # | Path | Use case |
-|---|------|----------|
-| 1 | `<exe_dir>/config.toml` | Portable / green deployment |
+| # | Path | Use |
+|---|------|-----|
+| 1 | `<exe_dir>/config.toml` | Portable deployment |
 | 2 | `./config.toml` | Development |
 | 3 | `~/.config/nuphus/config.toml` | Linux/macOS user-level |
-| 4 | `~/.nuphus/config.toml` | Backward compatibility |
-| 5 | `<AppData>/nuphus/config.toml` | Windows desktop, auto-generated on first launch |
-
-> After onboarding you can edit settings in the "Settings → Models" panel. API keys are encrypted at rest: on Windows they are encrypted via the OS-level DPAPI before being written to local config.toml (`enc:v1:` format, bound to your user account); on macOS/Linux they are currently stored in plain text (OS file permissions apply; OS keychain integration is on the roadmap). Do not share or commit this file.
+| 4 | `~/.nuphus/config.toml` | Legacy compatibility |
+| 5 | `<AppData>/nuphus/config.toml` | Auto-generated on first Windows desktop launch |
 
 ---
 
 ## Design Principles
 
-1. **Local-first** — data stays on your machine by default; the cloud only steps in when you choose
-2. **Minimal mental model** — every feature stays as simple as possible, avoiding over-abstraction
+1. **Local-first** — data stays local by default; cloud only when you opt in
+2. **Minimal mental model** — keep every feature simple, avoid over-abstraction
 3. **Determinism first** — compile to a workflow instead of re-reasoning; reuse instead of rewriting
-4. **Long-Term First** — prefer solutions consistent with the existing architecture and maintainable over time
-5. **Restraint over accumulation** — every new feature must prove itself irreplaceable
-6. **Closed-loop design** — every feature module forms a complete loop from input to output
+4. **Long-term first** — prefer solutions consistent with the existing architecture and maintainable
+5. **Restraint over stacking** — every new feature must prove it's irreplaceable
+6. **Closed-loop design** — every module forms a complete loop from input to output
 
 ---
 
-## How to Contribute
+## Contributing
 
-Nuphus is a community-driven open-source project. Besides code, you can help grow the ecosystem in these ways:
+Nuphus is a community-driven open-source project. Besides code, you can help build the ecosystem:
 
-### Contribute plugins (opening soon)
+### Contribute plugins (coming soon)
 
 | Plugin type | Description | Examples |
 |-------------|-------------|----------|
-| **ui-maps** | Interface layout descriptions for any software (button positions, window recognition signatures) | Photoshop export panel, enterprise ERP layouts |
-| **workflows** | Reusable workflow templates | "Daily project folder backup", "Batch image compression" |
-| **skills** | Domain methodologies and operating guides | "Frontend UI design standards", "Code patterns for specific frameworks" |
-| **knowledge** | Project domain knowledge documents | API references, configuration notes, architecture docs |
+| **ui-maps** | UI layout descriptions for any software (button positions, window identification) | Photoshop export panel, enterprise ERP layout |
+| **workflows** | Reusable workflow templates | "Daily project backup", "Batch image compression" |
+| **skills** | Domain methodologies and operation guides | "Frontend UI design guidelines", "Code patterns for a framework" |
+| **knowledge** | Project domain knowledge docs | API references, config notes, architecture docs |
 
-All plugins are plain-text files (.md / .json) — drop them into the matching directory under `plugin/` and Nuphus loads them.
+All plugins are plain-text files (.md / .json); drop them into the matching `plugin/` directory and Nuphus loads them.
 
-### Join the discussion
+### Get involved
 
 - GitHub Issues: bug reports and feature requests
 - GitHub Discussions: usage questions, experience sharing, plugin recommendations
