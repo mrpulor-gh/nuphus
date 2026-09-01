@@ -11,8 +11,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use lopdf::{Bookmark, Dictionary, Document, Object, ObjectId, Stream};
 use lopdf::xobject;
+use lopdf::{Bookmark, Dictionary, Document, Object, ObjectId, Stream};
 
 /// 单文件大小上限：防超大 PDF 加载耗尽内存（500MB，超出提示用系统程序）
 const PDF_MAX_BYTES: u64 = 500 * 1024 * 1024;
@@ -59,7 +59,10 @@ fn ensure_output_pdf(path: &str) -> Result<PathBuf, String> {
 
 /// 合并多个 PDF 为单个文件（lopdf 官方合并方式：renumber + 重建 Catalog/Pages）
 #[tauri::command]
-pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_json::Value, String> {
+pub fn pdf_merge(
+    input_paths: Vec<String>,
+    output_path: String,
+) -> Result<serde_json::Value, String> {
     if input_paths.is_empty() {
         return Err("至少需要选择一个 PDF 文件".to_string());
     }
@@ -79,7 +82,8 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
     // 加载全部文档
     let mut documents = Vec::with_capacity(inputs.len());
     for p in &inputs {
-        let doc = Document::load(p).map_err(|e| format!("加载 PDF 失败（{}）：{}", p.display(), e))?;
+        let doc =
+            Document::load(p).map_err(|e| format!("加载 PDF 失败（{}）：{}", p.display(), e))?;
         documents.push(doc);
     }
 
@@ -97,12 +101,8 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
         let mut first_page = true;
         for (_, object_id) in doc.get_pages() {
             if first_page {
-                let bookmark = Bookmark::new(
-                    format!("Page_{}", page_num),
-                    [0.0, 0.0, 1.0],
-                    0,
-                    object_id,
-                );
+                let bookmark =
+                    Bookmark::new(format!("Page_{}", page_num), [0.0, 0.0, 1.0], 0, object_id);
                 document.add_bookmark(bookmark, None);
                 first_page = false;
                 page_num += 1;
@@ -124,7 +124,11 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
         match object.type_name().unwrap_or("") {
             "Catalog" => {
                 catalog_object = Some((
-                    if let Some((id, _)) = catalog_object { id } else { *object_id },
+                    if let Some((id, _)) = catalog_object {
+                        id
+                    } else {
+                        *object_id
+                    },
                     object.clone(),
                 ));
             }
@@ -137,7 +141,11 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
                         }
                     }
                     pages_object = Some((
-                        if let Some((id, _)) = pages_object { id } else { *object_id },
+                        if let Some((id, _)) = pages_object {
+                            id
+                        } else {
+                            *object_id
+                        },
                         Object::Dictionary(dictionary),
                     ));
                 }
@@ -184,7 +192,9 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
                     .map(|id| Object::Reference(*id))
                     .collect::<Vec<_>>(),
             );
-            document.objects.insert(pages_id, Object::Dictionary(dictionary));
+            document
+                .objects
+                .insert(pages_id, Object::Dictionary(dictionary));
         }
     }
 
@@ -194,7 +204,9 @@ pub fn pdf_merge(input_paths: Vec<String>, output_path: String) -> Result<serde_
             let mut dictionary = dictionary.clone();
             dictionary.set("Pages", pages_id);
             dictionary.remove(b"Outlines");
-            document.objects.insert(catalog_id, Object::Dictionary(dictionary));
+            document
+                .objects
+                .insert(catalog_id, Object::Dictionary(dictionary));
         }
     }
 
@@ -231,11 +243,10 @@ pub fn pdf_compress(input_path: String, output_path: String) -> Result<serde_jso
     let mut doc = Document::load(&input).map_err(|e| format!("加载 PDF 失败：{}", e))?;
     let pages_before = doc.get_pages().len();
     let removed = doc.prune_objects().len();
-    doc.save(&output).map_err(|e| format!("保存压缩 PDF 失败：{}", e))?;
+    doc.save(&output)
+        .map_err(|e| format!("保存压缩 PDF 失败：{}", e))?;
 
-    let size_before = std::fs::metadata(&input)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
     let size_after = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
 
     Ok(serde_json::json!({
@@ -263,10 +274,7 @@ pub fn pdf_page_count(path: String) -> Result<serde_json::Value, String> {
 /// 使用 lopdf 官方 extract_text：覆盖 TJ 数组 / 十六进制串 / 引号操作符，
 /// 替代 tools-rs 只解析 `(...) Tj` 的玩具级实现。
 #[tauri::command]
-pub fn pdf_extract_text(
-    path: String,
-    max_pages: Option<u32>,
-) -> Result<serde_json::Value, String> {
+pub fn pdf_extract_text(path: String, max_pages: Option<u32>) -> Result<serde_json::Value, String> {
     let input = ensure_input_file(&path)?;
     let doc = Document::load(&input).map_err(|e| format!("加载 PDF 失败：{}", e))?;
 
@@ -448,7 +456,8 @@ pub fn pdf_extract_pages(
     // 重建：拷贝全部对象（引用关系已随 renumber 一致），选中页 Parent 指向新根
     let mut out = Document::with_version("1.5");
     let pages_id = out.new_object_id();
-    out.objects.extend(doc.objects.iter().map(|(k, v)| (*k, v.clone())));
+    out.objects
+        .extend(doc.objects.iter().map(|(k, v)| (*k, v.clone())));
     for pid in &selected {
         if let Some(Object::Dictionary(dict)) = out.objects.get_mut(pid) {
             dict.set("Parent", Object::Reference(pages_id));
@@ -477,7 +486,8 @@ pub fn pdf_extract_pages(
     // 清理旧 Pages/Catalog 等未引用对象后压缩保存
     out.prune_objects();
     out.compress();
-    out.save(&output).map_err(|e| format!("保存 PDF 失败：{}", e))?;
+    out.save(&output)
+        .map_err(|e| format!("保存 PDF 失败：{}", e))?;
 
     Ok(serde_json::json!({
         "output": output.display().to_string(),
@@ -517,7 +527,9 @@ pub fn pdf_rotate(
                     return Err(format!("页码 {} 超出范围（1-{}）", p, max_page));
                 }
             }
-            list.iter().filter_map(|n| all_pages.get(n).copied()).collect()
+            list.iter()
+                .filter_map(|n| all_pages.get(n).copied())
+                .collect()
         }
         None => all_pages.values().copied().collect(),
     };
@@ -537,7 +549,8 @@ pub fn pdf_rotate(
             rotated += 1;
         }
     }
-    doc.save(&output).map_err(|e| format!("保存 PDF 失败：{}", e))?;
+    doc.save(&output)
+        .map_err(|e| format!("保存 PDF 失败：{}", e))?;
 
     Ok(serde_json::json!({
         "output": output.display().to_string(),

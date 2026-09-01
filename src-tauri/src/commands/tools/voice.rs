@@ -67,7 +67,12 @@ pub async fn voice_clone(
     if input
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| !matches!(e.to_ascii_lowercase().as_str(), "mp3" | "wav" | "m4a" | "flac" | "ogg" | "aac"))
+        .map(|e| {
+            !matches!(
+                e.to_ascii_lowercase().as_str(),
+                "mp3" | "wav" | "m4a" | "flac" | "ogg" | "aac"
+            )
+        })
         .unwrap_or(true)
     {
         return Err("参考音频格式不支持（支持 mp3 / wav / m4a / flac / ogg / aac）".to_string());
@@ -110,16 +115,25 @@ pub async fn voice_clone(
         .map_err(|e| format!("语音合成客户端创建失败：{e}"))?;
     let resp = client
         .post(&url)
-        .header(&cfg.auth_header, format!("{}{}", cfg.auth_prefix, cfg.api_key))
+        .header(
+            &cfg.auth_header,
+            format!("{}{}", cfg.auth_prefix, cfg.api_key),
+        )
         .header("content-type", "application/json")
         .body(body.to_string())
         .send()
         .await
         .map_err(|e| format!("语音合成请求失败：{e}"))?;
     let status = resp.status();
-    let bytes = resp.bytes().await.map_err(|e| format!("读取语音响应失败：{e}"))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取语音响应失败：{e}"))?;
     if !status.is_success() {
-        let detail = String::from_utf8_lossy(&bytes).chars().take(300).collect::<String>();
+        let detail = String::from_utf8_lossy(&bytes)
+            .chars()
+            .take(300)
+            .collect::<String>();
         return Err(format!("语音合成失败 (HTTP {status}): {detail}"));
     }
 

@@ -4,10 +4,10 @@
 // 处理工具页）作为子模块挂载，绝不注册进 get_tools / execute_tool 的
 // agent 工具列表——两者职责隔离：这里暴露给 LLM 编排，tools/* 由用户在
 // 工具页手动调用。
+pub mod doc;
 pub mod image;
 pub mod pdf;
 pub mod video;
-pub mod doc;
 pub mod voice;
 
 use crate::state::{AppState, DesktopStatus, HookScriptInfo, HooksConfigStatus, ToolSchema};

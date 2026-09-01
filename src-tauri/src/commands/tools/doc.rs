@@ -18,8 +18,8 @@ pub fn doc_extract_text(path: String) -> Result<serde_json::Value, String> {
             }))
         }
         Some(Err(e)) => Err(format!("提取文档文本失败：{}", e)),
-        None => Err(
-            "不支持的文档格式（支持 docx / pptx / xls / ods / odt / odp / pdf）".to_string(),
-        ),
+        None => {
+            Err("不支持的文档格式（支持 docx / pptx / xls / ods / odt / odp / pdf）".to_string())
+        }
     }
 }

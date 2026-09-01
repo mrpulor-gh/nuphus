@@ -35,10 +35,7 @@ fn ensure_input_image(path: &str) -> Result<PathBuf, String> {
     }
     let meta = std::fs::metadata(&p).map_err(|e| format!("读取图片信息失败：{}", e))?;
     if meta.len() > IMAGE_MAX_BYTES {
-        return Err(format!(
-            "图片超过 {}MB 上限",
-            IMAGE_MAX_BYTES / 1024 / 1024
-        ));
+        return Err(format!("图片超过 {}MB 上限", IMAGE_MAX_BYTES / 1024 / 1024));
     }
     // 解码前检查像素总量（OOM 防线：解码一幅 2 亿像素图可吃掉数 GB 内存）
     let (w, h) = image_dimensions(&p).map_err(|e| format!("读取图片尺寸失败：{}", e))?;
@@ -80,13 +77,21 @@ fn ensure_output_dir(path: &Path) -> Result<(), String> {
 }
 
 /// 保纵横比缩放（contain：目标框内完整放下，不放大）
-fn contain_dimensions(width: u32, height: u32, max_w: Option<u32>, max_h: Option<u32>) -> (u32, u32) {
+fn contain_dimensions(
+    width: u32,
+    height: u32,
+    max_w: Option<u32>,
+    max_h: Option<u32>,
+) -> (u32, u32) {
     let target_w = max_w.unwrap_or(width).max(1);
     let target_h = max_h.unwrap_or(height).max(1);
     if width <= target_w && height <= target_h {
         return (width, height);
     }
-    let scale = f64::min(target_w as f64 / width as f64, target_h as f64 / height as f64);
+    let scale = f64::min(
+        target_w as f64 / width as f64,
+        target_h as f64 / height as f64,
+    );
     let scale = f64::min(scale, 1.0);
     (
         ((width as f64 * scale).round() as u32).max(1),
@@ -96,11 +101,7 @@ fn contain_dimensions(width: u32, height: u32, max_w: Option<u32>, max_h: Option
 
 /// 按输出扩展名写文件：JPEG 用 quality，PNG 用真压缩（Best + Adaptive），
 /// 其余格式直接保存。
-fn save_image(
-    img: &DynamicImage,
-    output: &Path,
-    quality: u8,
-) -> Result<u64, String> {
+fn save_image(img: &DynamicImage, output: &Path, quality: u8) -> Result<u64, String> {
     let format = output_format(output)
         .ok_or_else(|| "输出扩展名必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string())?;
     let file = std::fs::File::create(output).map_err(|e| format!("创建输出文件失败：{}", e))?;
@@ -172,10 +173,7 @@ pub fn image_compress(
 
 /// 格式转换：输出格式随扩展名推断（JPEG 默认 quality 90）
 #[tauri::command]
-pub fn image_convert(
-    input_path: String,
-    output_path: String,
-) -> Result<serde_json::Value, String> {
+pub fn image_convert(input_path: String, output_path: String) -> Result<serde_json::Value, String> {
     let input = ensure_input_image(&input_path)?;
     let output = PathBuf::from(&output_path);
     let format = output_format(&output)
@@ -304,9 +302,17 @@ pub fn image_stitch(
         } else {
             img
         };
-        let (x, y) = if is_horizontal { (offset, 0) } else { (0, offset) };
+        let (x, y) = if is_horizontal {
+            (offset, 0)
+        } else {
+            (0, offset)
+        };
         image::imageops::overlay(&mut canvas, &scaled, x.into(), y.into());
-        offset += if is_horizontal { scaled.width() } else { scaled.height() };
+        offset += if is_horizontal {
+            scaled.width()
+        } else {
+            scaled.height()
+        };
     }
 
     let size_after = save_image(&canvas, &output, 90)?;

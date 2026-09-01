@@ -222,12 +222,18 @@ pub async fn video_info(path: String) -> Result<serde_json::Value, String> {
             let codec_type = s.get("codec_type").and_then(|v| v.as_str()).unwrap_or("");
             match codec_type {
                 "video" => {
-                    video_codec = s.get("codec_name").cloned().unwrap_or(serde_json::Value::Null);
+                    video_codec = s
+                        .get("codec_name")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     width = s.get("width").cloned().unwrap_or(serde_json::Value::Null);
                     height = s.get("height").cloned().unwrap_or(serde_json::Value::Null);
                 }
                 "audio" => {
-                    audio_codec = s.get("codec_name").cloned().unwrap_or(serde_json::Value::Null);
+                    audio_codec = s
+                        .get("codec_name")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                 }
                 _ => {}
             }
@@ -357,7 +363,15 @@ pub async fn video_cut(
     tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = quiet_command(ffmpeg);
         // -ss 置于 -i 前 = 快速 seek；-c copy = 流复制不重编码
-        cmd.args(["-hide_banner", "-ss", &start_arg, "-i", &input_arg, "-c", "copy"]);
+        cmd.args([
+            "-hide_banner",
+            "-ss",
+            &start_arg,
+            "-i",
+            &input_arg,
+            "-c",
+            "copy",
+        ]);
         if let Some(e) = &end_arg {
             cmd.args(["-to", e]);
         }

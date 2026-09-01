@@ -1613,10 +1613,7 @@ fn relay_hint_json_with_state(
         && !cfg.url.is_empty()
         && !cfg.device_id.is_empty()
         && !cfg.caller_token.is_empty()
-        && matches!(
-            state.tunnel,
-            crate::relay_client::ChannelState::Connected
-        );
+        && matches!(state.tunnel, crate::relay_client::ChannelState::Connected);
     if usable {
         serde_json::json!({
             "enabled": true,
@@ -3751,7 +3748,9 @@ mod tests {
         }
     }
 
-    fn hint_state(tunnel: crate::relay_client::ChannelState) -> crate::relay_client::RelayConnState {
+    fn hint_state(
+        tunnel: crate::relay_client::ChannelState,
+    ) -> crate::relay_client::RelayConnState {
         crate::relay_client::RelayConnState {
             relay: crate::relay_client::ChannelState::Connected,
             tunnel,
@@ -3762,7 +3761,8 @@ mod tests {
     fn relay_hint_usable_only_when_tunnel_connected() {
         use crate::relay_client::ChannelState;
         // 隧道 Connected → enabled:true + 下发 tunnel_url（自定义 public_url）
-        let ok = relay_hint_json_with_state(&hint_cfg(), 18772, hint_state(ChannelState::Connected));
+        let ok =
+            relay_hint_json_with_state(&hint_cfg(), 18772, hint_state(ChannelState::Connected));
         assert_eq!(ok["enabled"], true);
         assert_eq!(ok["tunnel_url"], "https://custom.example.com");
         assert!(ok["lan_url"].is_string() || ok["lan_url"].is_null());
@@ -3770,7 +3770,9 @@ mod tests {
         let fault = relay_hint_json_with_state(
             &hint_cfg(),
             18772,
-            hint_state(ChannelState::Fault { reason: "connection refused".into() }),
+            hint_state(ChannelState::Fault {
+                reason: "connection refused".into(),
+            }),
         );
         assert_eq!(fault["enabled"], false);
         assert!(fault.get("tunnel_url").is_none());
@@ -3779,14 +3781,19 @@ mod tests {
         let retrying = relay_hint_json_with_state(
             &hint_cfg(),
             18772,
-            hint_state(ChannelState::Retrying { since: 0, attempts: 3, last_error: "timeout".into() }),
+            hint_state(ChannelState::Retrying {
+                since: 0,
+                attempts: 3,
+                last_error: "timeout".into(),
+            }),
         );
         assert_eq!(retrying["enabled"], false);
         assert!(retrying.get("tunnel_url").is_none());
         // 配置不完整（caller_token 空）即使隧道 Connected → enabled:false（原有约束保持）
         let mut incomplete = hint_cfg();
         incomplete.caller_token = String::new();
-        let ic = relay_hint_json_with_state(&incomplete, 18772, hint_state(ChannelState::Connected));
+        let ic =
+            relay_hint_json_with_state(&incomplete, 18772, hint_state(ChannelState::Connected));
         assert_eq!(ic["enabled"], false);
     }
 }
