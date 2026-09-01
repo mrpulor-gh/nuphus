@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.0 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.2 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -21,27 +21,37 @@ It reads the screen, drives the mouse and keyboard, controls windows, reads and 
 
 ---
 
-## Why Nuphus
+## Design Philosophy
 
-Existing agent products all work within their own boundaries:
+We don't chase flashy tricks — we value practical capability. Minimalist pragmatism: features appear on demand; no bloated shells, no repeated exploration, no wasted effort. Everything must land in daily work.
 
-| Category | Examples | Boundary |
-|----------|----------|----------|
-| Coding agents | Cursor, Cline | Can't leave the IDE |
-| Chat agents | OpenClaw | Remote control inside a chat app |
-| Cloud agents | Codex Computer Use | Runs in someone else's VM |
+### Leader: Serial thinking, parallel execution
 
-Nuphus breaks these boundaries. It isn't just a tool that "helps you write code" — it's an **Agent that does your daily work for you**, and it follows you wherever you go.
+Nuphus's core engine is built in Rust; tool calls complete in milliseconds, so the latency bottleneck is model inference, not the engine. Agent decisions are themselves causal chains — each step depends on the result of the previous one, and desktop system operations should follow serial logic.
 
-### Design philosophy
+- **Global understanding, task ownership** — the Leader parses the goal, plans the path, monitors progress, and consolidates delivery
+- **Internal orchestration (serial)** — dispatches built-in GoalType ExecAgents (project analysis / code generation / debugging / file operations, etc.) along the causal chain
+- **External orchestration (parallel)** — through explicit interaction instructions, it can open Cline to fix a bug, Claude Code to write tests, and the browser to look up docs simultaneously — each external agent has its own context; Nuphus sits on top, verifying with screenshots, reading output, and consolidating decisions
+- **Context passing** — explicit instructions give external agents task context, reducing repeated instructions and re-exploration
 
-The fundamental tension of an agent: reasoning needs intelligence, but repeated execution needs determinism. Nuphus's answer — **let the LLM reason once, compile it into a workflow, then execute repeatedly with zero tokens**:
+**What is serial is thinking; what is parallel is execution.**
+
+### Workflow: Turning one exploration into deterministic execution
+
+Making an LLM spend tokens to solve 85%-identical tasks every time is a double waste of compute and time. Nuphus's answer — **let the LLM reason once, compile it into a workflow, then execute repeatedly with near-zero tokens**:
 
 ```
-User intent → LLM reasons & explores once (compile) → deterministic workflow → ChatAgent smart decision points → engine repeats
+Natural language interaction → Agent co-explores (understand UI/flow/params) → solidify parameters step by step → compile into a deterministic execution sequence → engine repeats
 ```
 
-Compilation is a one-time cost that buys **deterministic, repeatable, near-zero marginal cost** automation. Typical scenario: "Back up my project folder to the desktop every day at 6 PM" → Nuphus compiles it into a workflow → it runs automatically every day after that, zero tokens, zero conversation; when you're out and about, just glance at the execution status on your phone.
+This is not scheduled tasks — it is **turning one intelligent exploration into repeatable deterministic execution**:
+
+- **Natural language exploration** — interact with the Agent in natural language: grading exam papers, browser automation, desktop software operations... the Agent understands intent, recognizes the UI, and operates frame by frame
+- **Parameter solidification** — after co-exploring, solidify each step's locating, operation, and exception handling into parameters (parameters are the contract, all backed by UI evidence)
+- **Deterministic execution** — the compiled sequence repeats with near-zero tokens, no longer relying on the LLM to re-reason every time
+- **Guardian repair** — at runtime the Agent stands guard: on errors, it fixes, records, and optimizes according to the design intent and goal, rather than blindly retrying
+
+One compile-time investment buys **deterministic, repeatable, near-zero marginal cost** automation.
 
 ---
 
@@ -64,7 +74,7 @@ Nuphus separates "execution" from "control": **the desktop is the Agent's hands,
 - **Real-time event stream** — every step (thinking, tool calls, results) streams to the phone over WebSocket
 - **Workflow remote control** — pause, resume, stop running workflows from your phone
 - **Execution trace playback** — view the Agent's full trace on the phone; every step is transparent
-- **Free remote access** — auto direct LAN connection (zero config); outside the LAN it routes through a relay server that never stores or forwards content, only authenticates and routes
+- **Free remote access** — auto direct LAN connection (zero config); outside the LAN it routes through a relay server that never stores content, only authenticates and forwards
 
 Auto channel switching: on the same WiFi the phone connects to the desktop directly (fast, free); leaving the LAN automatically switches to the relay (stable, reliable); returning switches back.
 
@@ -134,7 +144,7 @@ For users unfamiliar with the command line — **no CLI, no Node.js / Rust requi
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Rust](https://rustup.rs/) | ≥ 1.78 | Core engine compilation |
+| [Rust](https://rustup.rs/) | ≥ 1.95 | Core engine compilation |
 | [Node.js](https://nodejs.org/) | ≥ 18 | Tauri frontend build |
 | Tauri CLI | `cargo install tauri-cli --version "^2"` | Desktop app development |
 
@@ -180,7 +190,7 @@ Nuphus uses a six-layer architecture, security threaded through every layer:
 ┌─────────────────────────────────────────────┐
 │ Tauri shell                                 │  ← frontend UI + OS capabilities (notify, tray, hotkeys)
 ├─────────────────────────────────────────────┤
-│ Runtime                                     │  ← unified main loop, 3-mode routing (Free / Plan / Workflow)
+│ Runtime                                     │  ← unified main loop, 3-mode routing (Leader / Workflow / Custom)
 ├─────────────────────────────────────────────┤
 │ Agent                                       │  ← Leader decision / ExecAgent execution / WorkflowAgent design
 ├─────────────────────────────────────────────┤
@@ -223,7 +233,7 @@ Nuphus uses a TOML config file; `src/config/mod.rs::load_registry` searches by p
 | 2 | `./config.toml` | Development |
 | 3 | `~/.config/nuphus/config.toml` | Linux/macOS user-level |
 | 4 | `~/.nuphus/config.toml` | Legacy compatibility |
-| 5 | `<AppData>/nuphus/config.toml` | Auto-generated on first Windows desktop launch |
+| 5 | `<AppData>/nuphus/providers.toml` | Windows desktop canonical config (anchored by desktop, auto-generated on first launch) |
 
 ---
 

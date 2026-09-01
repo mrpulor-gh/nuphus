@@ -14,7 +14,7 @@
 #   4. ./nuphus.toml
 #   5. ~/.config/nuphus/config.toml
 #   6. ~/.nuphus/config.toml
-#   7. <AppData>/nuphus/config.toml     (Windows 桌面版首次启动自动生成)
+#   7. <AppData>/nuphus/providers.toml (Windows 桌面版规范配置，桌面端锚定；config.toml 为其别名)
 #   8. 环境变量回退（DEEPSEEK_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / ...）
 
 # ──────────────────────────────────────────────────────────────────────
