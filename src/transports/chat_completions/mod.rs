@@ -159,6 +159,40 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_no_max_tokens_when_unconfigured() {
+        // Regression pin: when neither the request nor providers.toml sets
+        // max_tokens, the field must be OMITTED so the provider's official
+        // default (≫ 8K) applies. e22542c broke this by forcing 8192, which
+        // truncated long thinking streams for reasoning models.
+        let config = ChatCompletionsConfig {
+            name: "deepseek".into(),
+            api_key: "sk-test".into(),
+            base_url: "https://api.deepseek.com".into(),
+            model: "deepseek-v4-flash".into(),
+            timeout_secs: 30,
+            auth_header: "authorization".into(),
+            auth_prefix: "Bearer ".into(),
+            provider_kind: Some(crate::api::ProviderKind::DeepSeek),
+            quirks: crate::config::provider::ProviderQuirks::default(),
+            reasoning_effort: None,
+        };
+        let transport = ChatCompletionsTransport::new(config);
+        let request = crate::api::MessageRequest::new("deepseek-v4-flash", vec![]);
+        let body = transport.build_request_body(&request);
+        assert!(
+            body.get("max_tokens").is_none(),
+            "unconfigured max_tokens must be omitted from request body (got {:?})",
+            body.get("max_tokens")
+        );
+
+        // Explicit request max_tokens → field present
+        let request =
+            crate::api::MessageRequest::new("deepseek-v4-flash", vec![]).with_max_tokens(16_384);
+        let body = transport.build_request_body(&request);
+        assert_eq!(body["max_tokens"], serde_json::json!(16_384));
+    }
+
+    #[test]
     fn test_build_request_body_reasoning_effort_ignored_for_other_provider() {
         // Default quirks (supports_reasoning_effort=false) → even a configured
         // value must NOT leak into other providers' request bodies.

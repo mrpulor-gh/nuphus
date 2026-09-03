@@ -482,6 +482,23 @@ impl ModelRegistry {
         // 3. Fallback
         128_000
     }
+
+    /// Resolve the effective max output token budget for a model.
+    ///
+    /// Returns Some ONLY when the user explicitly configured `max_tokens` for
+    /// this model in providers.toml. Returns None when unset — callers must
+    /// then OMIT the field from the request body so the provider's official
+    /// default applies (correct "no limit" semantics).
+    ///
+    /// ⚠️ Do NOT fall back to builtin metadata here: builtin `max_output_tokens`
+    /// values (8192 for most providers) are conservative assumptions that
+    /// truncated long thinking streams for reasoning models (see transport).
+    pub fn get_max_output_tokens(&self, model_id: &str) -> Option<u32> {
+        if let Some((_, model)) = self.find_model(model_id) {
+            return model.max_tokens;
+        }
+        None
+    }
 }
 
 #[cfg(test)]

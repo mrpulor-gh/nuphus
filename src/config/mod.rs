@@ -85,6 +85,29 @@ pub fn load_registry() -> crate::Result<ModelRegistry> {
     tracing::info!("no config file found, falling back to environment variables");
     ModelRegistry::from_env()
 }
+
+/// Resolve the effective max output token budget for a model.
+///
+/// Transport layer entry point — called on every request build, so results
+/// are cached per model id (registry file is only parsed on first miss).
+/// Priority follows `ModelRegistry::get_max_output_tokens` (see model.rs).
+pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<u32>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = cache.lock() {
+        if let Some(v) = guard.get(model_id) {
+            return *v;
+        }
+        let resolved = load_registry()
+            .ok()
+            .and_then(|r| r.get_max_output_tokens(model_id));
+        guard.insert(model_id.to_string(), resolved);
+        return resolved;
+    }
+    None
+}
 /// 视觉理解策略
 pub enum VisionStrategy {
     /// 主模型直接支持多模态，不需要额外配置

@@ -278,8 +278,12 @@ pub(crate) async fn handle_task_dispatch(
                     summary: format!("Executor error: {}", e).chars().take(300).collect(),
                 });
             }
-            // Return to pool on error (consistent with pre-compress behavior)
-            agent.exec_agent_pool.insert(reuse_key, exec_agent);
+            // Executor error: agent discarded, do NOT return to pool —
+            // failed/errored agents carry broken context that poisons later dispatches.
+            tracing::warn!(
+                "[ExecPool] Executor error，Exec agent 丢弃不回池 (key={})",
+                reuse_key
+            );
             return Ok((
                 ToolResult::failure(
                     serde_json::to_string(&serde_json::json!({
@@ -310,7 +314,16 @@ pub(crate) async fn handle_task_dispatch(
     }
 
     // P2 — Exec returns to pool, same-turn tasks share raw session
-    agent.exec_agent_pool.insert(reuse_key, exec_agent);
+    // 失败任务不回池：失败 agent 携带错误上下文/截断残留，复用会污染同 turn
+    // 后续 dispatch（表现为「连续失败」）。成功 agent 才保留供复用。
+    if run_success {
+        agent.exec_agent_pool.insert(reuse_key, exec_agent);
+    } else {
+        tracing::warn!(
+            "[ExecPool] 任务失败 (success=false)，Exec agent 丢弃不回池 (key={})",
+            reuse_key
+        );
+    }
 
     // Check if dispatch subtask was aborted due to circuit breaker
     if !run_success && summary.contains("安全检查未通过") {

@@ -21,15 +21,17 @@ pub fn truncate_output(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Smart truncation: Read/Grep use 16000 + head-tail preservation, others use simple tail truncation.
+/// Smart truncation: Read/Grep use 60000 + head-tail preservation, others use simple tail truncation.
 /// Head-tail keeps 60% head + 40% tail so LLM doesn't miss bottom-of-file logic.
+/// 60000 chars ≈ 15000 tokens, matches Read's enlarged 5000-line cap so big files
+/// (previously truncated mid-body) now reach the model coherently.
 /// task_dispatch 豁免：Exec 报告是给 Leader 的核心交付物，截断等于砍掉工作成果。
 pub fn truncate_tool_output(text: &str, max_chars: usize, tool_name: &str) -> String {
     if tool_name == "task_dispatch" {
         return text.to_string();
     }
     let is_reader = tool_name == "Read" || tool_name == "Grep";
-    let limit = if is_reader { 16000 } else { max_chars };
+    let limit = if is_reader { 60000 } else { max_chars };
 
     if text.chars().count() <= limit {
         return text.to_string();

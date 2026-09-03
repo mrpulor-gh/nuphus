@@ -1072,16 +1072,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                     };
                     let tool_schemas = engine_guard.tools().map(|t| t.get_schemas());
                     let exec_result = engine_guard
-                        .executor
-                        .execute_v2(
+                        .execute_workflow(
                             &workflow_id,
-                            &engine_guard.store,
-                            &engine_guard.events,
                             tool_exec,
-                            engine_guard.llm_client(),
+                            tool_schemas,
                             self.agent.exec_emitter.as_deref(),
-                            tool_schemas.as_deref(),
                             inputs,
+                            crate::workflow::WorkflowRunSource::Agent {
+                                owner: self.config.mode,
+                            },
                         )
                         .await;
                     let was_user_cancelled = crate::workflow::hud_control::take_user_cancelled();

@@ -441,6 +441,11 @@ impl ChatCompletionsTransport {
                 std::collections::HashMap::new();
             let mut tool_id_order: Vec<usize> = Vec::new();
             let mut final_usage: Option<StreamEvent> = None;
+            // finish_reason=length → response hit the max_tokens ceiling mid-stream.
+            // Reasoning models commonly spend the whole budget on thinking, leaving
+            // text/tool_calls behind the cut. Downstream must distinguish this from a
+            // clean MessageStop (previously a fake-success / empty-delivery source).
+            let mut finish_reason_length = false;
 
             {
                 use futures_util::StreamExt;
@@ -503,6 +508,15 @@ impl ChatCompletionsTransport {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
+
+                        // finish_reason detection — set flag, keep parsing (usage may still arrive)
+                        if json
+                            .pointer("/choices/0/finish_reason")
+                            .and_then(|v| v.as_str())
+                            == Some("length")
+                        {
+                            finish_reason_length = true;
+                        }
 
                         // Parse delta
                         if let Some(delta) = json.pointer("/choices/0/delta") {
@@ -737,6 +751,26 @@ impl ChatCompletionsTransport {
                 });
             }
 
+            // finish_reason=length: the stream hit the max_tokens ceiling. If no
+            // text and no tool call made it out (pure-thinking truncation), warn
+            // loudly — upstream's reasoning-only guard then asks for a formal
+            // reply instead of reporting a fake success.
+            if finish_reason_length {
+                if current_text.is_empty() && tool_id_order.is_empty() {
+                    tracing::warn!(
+                        "[STREAM] finish_reason=length with NO text/tool output — \
+                         thinking exhausted max_tokens. Consider raising the model's \
+                         max_tokens in providers.toml (ModelEntry.max_tokens)."
+                    );
+                } else {
+                    tracing::debug!(
+                        "[STREAM] finish_reason=length (text={} chars, tools={})",
+                        current_text.chars().count(),
+                        tool_id_order.len()
+                    );
+                }
+            }
+
             emitter(AssistantEvent::MessageStop);
             return Ok(());
         }
@@ -809,16 +843,22 @@ impl ChatCompletionsTransport {
             }
         }
 
-        // max_tokens：显式值优先；None 时兜底 8192 —— 否则请求体不带该字段，
-        // 服务端用保守默认（常见 1024~4096）截断长回复（「回复末尾缺失」根因）。
-        // 8192 = 主流模型输出上限的最大公约数（GLM/DeepSeek/MiniMax/Kimi 均 ≥8K）。
-        let max_tokens = request.max_tokens.unwrap_or(8192);
+        // max_tokens：显式配置才写字段；未配置不带——让服务端用官方默认上限。
+        // ⚠️ 历史教训（e22542c 回归）：曾把 None 兜底为 8192，导致长 thinking 流
+        // （reasoning 模型，如 deepseek-v4 1M 上下文）被 8K 输出预算截断——
+        // thinking 占满预算后 text/tool_call 无法生成 → Exec/Leader 空交付。
+        // 不带字段 = 服务端官方默认（远大于 8K），是「不做限制」的正确语义。
         let mut body = serde_json::json!({
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
             "stream": request.stream,
         });
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        } else if let Some(cfg_max) = crate::config::resolve_max_output_tokens(&model) {
+            // 用户显式在 providers.toml 配置了模型级 max_tokens → 遵循
+            body["max_tokens"] = serde_json::json!(cfg_max);
+        }
         // Sampling temperature — only when explicitly set (provider default otherwise)
         if let Some(temperature) = request.temperature {
             body["temperature"] = serde_json::json!(temperature);

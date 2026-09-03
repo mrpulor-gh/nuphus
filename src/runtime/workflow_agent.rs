@@ -837,6 +837,9 @@ impl WorkflowAgent {
                                     tool_schemas,
                                     self.emitter.as_deref(),
                                     inputs,
+                                    crate::workflow::WorkflowRunSource::Agent {
+                                        owner: crate::runtime::Mode::Workflow,
+                                    },
                                 )
                                 .await;
                             // ── 用户主动终止检测（与 react_loop 对齐）──

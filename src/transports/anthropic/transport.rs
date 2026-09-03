@@ -44,8 +44,16 @@ impl AnthropicTransport {
     /// `MessageRequest` (which uses Chat-Completions-style message roles).
     fn build_request_body(&self, request: &MessageRequest) -> serde_json::Value {
         // Anthropic Messages API 强制要求 max_tokens（缺失即 HTTP 400）。
-        // 显式值优先；None 兜底 8192（主流模型输出上限的最大公约数）。
-        let max_tokens = request.max_tokens.unwrap_or(8192);
+        // 显式值优先；None 走配置解析链（providers.toml ModelEntry.max_tokens → builtin → 8192 兜底），
+        // 避免长 thinking 流被静默截断（thinking 占满输出预算 → text/tool_call 缺失 → 空交付）。
+        let max_tokens = request.max_tokens.unwrap_or_else(|| {
+            let model = if request.model.is_empty() {
+                &self.config.model
+            } else {
+                &request.model
+            };
+            crate::config::resolve_max_output_tokens(model).unwrap_or(8192)
+        });
         let mut body = serde_json::json!({
             "model": if request.model.is_empty() {
                 &self.config.model

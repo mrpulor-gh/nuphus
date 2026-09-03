@@ -53,6 +53,8 @@ impl super::SubTaskRunner {
 
         let mut iter_timer = std::time::Instant::now();
         let mut user_requested_stop = false;
+        let mut reasoning_followup_done = false;
+        let mut consecutive_empty = 0u32;
         for iteration in 0..self.config.max_iterations {
             if cancel_flag.load(Ordering::SeqCst) {
                 if !self.suppress_error_events {
@@ -150,8 +152,27 @@ impl super::SubTaskRunner {
             });
 
             if assistant_blocks.is_empty() {
+                // Empty response guard (mirrors react_loop.rs): a stream that
+                // yields zero blocks repeatedly means the model is stuck (e.g.
+                // transport produced MessageStop without content). Bound it —
+                // otherwise the loop spins until max_iterations with no progress.
+                consecutive_empty += 1;
+                if consecutive_empty >= 3 {
+                    tracing::warn!(
+                        "[Exec] {} consecutive empty responses, aborting task",
+                        consecutive_empty
+                    );
+                    let total_duration = self.execution_started_at.elapsed().as_millis() as u64;
+                    let result_msg = "模型连续返回空响应（无文本无工具调用），任务中止".to_string();
+                    if let Err(e) = self.learn_from_success(total_duration, &result_msg).await {
+                        tracing::warn!("Failed to learn from empty stall: {}", e);
+                    }
+                    return Ok((false, result_msg, vec![]));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
             }
+            consecutive_empty = 0;
 
             let tool_calls = crate::agent::common::extract_tool_calls(&assistant_blocks);
             tracing::debug!(
@@ -181,6 +202,51 @@ impl super::SubTaskRunner {
                     .collect::<Vec<_>>()
                     .join("");
                 let result_msg = text.trim().to_string();
+
+                // ── Reasoning-only guard ──
+                // Model produced only thinking (reasoning) but no text and no tool
+                // call — typically the stream was truncated (thinking exhausted the
+                // output budget) and text/tool_call never materialised. Treating
+                // this as "task complete" is a false success (empty delivery).
+                // Ask once for a formal text reply, mirroring react_loop.rs.
+                if result_msg.is_empty() {
+                    let has_reasoning = assistant_blocks.iter().any(|b| {
+                        matches!(
+                            b,
+                            ContentBlock::Text {
+                                reasoning: Some(_),
+                                ..
+                            }
+                        )
+                    });
+                    if has_reasoning && !reasoning_followup_done {
+                        reasoning_followup_done = true;
+                        self.session.push_user_internal(
+                            "【系统】你刚才只输出了思考过程，没有给出正式交付。请直接输出面向 Leader 的正式回复（任务结果摘要）；如仍需执行工具，请继续调用。不要重复思考过程。".to_string(),
+                        );
+                        tracing::warn!(
+                            "[Exec] reasoning-only turn without text/tool — requesting formal reply"
+                        );
+                        continue;
+                    }
+                    // Follow-up still produced only reasoning → explicit failure,
+                    // never report a fake success for an empty delivery.
+                    if has_reasoning {
+                        let fail_msg = "模型连续两轮仅输出思考、未产出正式回复或工具调用（疑似输出被长度限制截断）。任务未完成，无交付物。".to_string();
+                        let total_duration = self.execution_started_at.elapsed().as_millis() as u64;
+                        if let Err(e) = self.learn_from_success(total_duration, &fail_msg).await {
+                            tracing::warn!("Failed to learn from reasoning stall: {}", e);
+                        }
+                        if !self.suppress_lifecycle_events {
+                            self.emit(NuphusEvent::ExecutionError {
+                                step_index: 0,
+                                error: fail_msg.clone(),
+                            });
+                        }
+                        return Ok((false, fail_msg, vec![]));
+                    }
+                }
+
                 // When only XML tags were present (e.g. <invoke>/<parameter> that got
                 // stripped), fall back to a sensible summary so the caller never receives
                 // an empty string.

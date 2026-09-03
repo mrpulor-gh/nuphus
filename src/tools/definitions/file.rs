@@ -66,7 +66,7 @@ impl ToolRegistry {
                 "properties": {
                     "path": { "type": "string", "description": "Path to the file to read" },
                     "offset": { "type": "integer", "description": "Line number to start from (1-based). Negative = from end (-1 = last line)" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Max lines to return" }
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 5000, "description": "Max lines to return (default 2000)" }
                 },
                 "required": ["path"]
             }),
@@ -77,8 +77,8 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure("path is required".to_string()));
                 }
                 let offset_param = params.get("offset").and_then(|v| v.as_i64()).unwrap_or(1);
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(500) as usize;
-                let limit = limit.min(2000);
+                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
+                let limit = limit.min(5000);
 
                 // .xlsx 文件走 calamine 解析 → Markdown 表格
                 if path.to_lowercase().ends_with(".xlsx") {
@@ -119,7 +119,7 @@ impl ToolRegistry {
                         .collect();
                     let text = selected.join("\n");
                     let range_note = if end < total_lines {
-                        format!(" (xlsx as markdown [TRUNCATED: lines {}-{} of {}])", start + 1, end, total_lines)
+                        format!(" (xlsx as markdown [还有 {} 行未显示，已显示 {}-{}，共 {} 行])", total_lines - end, start + 1, end, total_lines)
                     } else {
                         format!(" (xlsx as markdown, lines {}-{} of {})", start + 1, end, total_lines)
                     };
@@ -152,7 +152,7 @@ impl ToolRegistry {
                         .collect();
                     let text = selected.join("\n");
                     let range_note = if end < total_lines {
-                        format!(" (office doc [TRUNCATED: lines {}-{} of {}])", start + 1, end, total_lines)
+                        format!(" (office doc [还有 {} 行未显示，已显示 {}-{}，共 {} 行])", total_lines - end, start + 1, end, total_lines)
                     } else {
                         format!(" (lines {}-{} of {})", start + 1, end, total_lines)
                     };
@@ -201,8 +201,12 @@ impl ToolRegistry {
                 let text = selected.join("\n");
                 let range_note = if end < total_lines {
                     format!(
-                        " [TRUNCATED: lines {}-{} of {} shown — use offset={} to continue]",
-                        start + 1, end, total_lines, end + 1
+                        " [还有 {} 行未显示（已显示 {}-{}，共 {} 行）；需要续读请用 offset={}]",
+                        total_lines - end,
+                        start + 1,
+                        end,
+                        total_lines,
+                        end + 1
                     )
                 } else {
                     format!(" (lines {}-{} of {})", start + 1, end, total_lines)
