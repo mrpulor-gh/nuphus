@@ -651,7 +651,7 @@ fn capture_once_windows(
         }
         let msg = wparam.0 as u32;
         let info = &*(lparam.0 as *const windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT);
-        let vk = info.vkCode as u32;
+        let vk = info.vkCode;
         let target = TARGET.load(Ordering::SeqCst);
 
         // VK codes
@@ -687,70 +687,70 @@ fn capture_once_windows(
         }
 
         // 主键按下 → 组合当前修饰键
-        if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
-            if target == CaptureKind::Hotkey as u32 || target == CaptureKind::Any as u32 {
-                let mods = MOD_KEYS.load(Ordering::SeqCst);
-                let mut keys: Vec<String> = Vec::new();
-                if mods & 1 != 0 {
-                    keys.push("ctrl".into());
-                }
-                if mods & 2 != 0 {
-                    keys.push("shift".into());
-                }
-                if mods & 4 != 0 {
-                    keys.push("alt".into());
-                }
-                if mods & 8 != 0 {
-                    keys.push("win".into());
-                }
-                // 主键名：字母/数字/常用功能键
-                let name = if (0x41..=0x5A).contains(&vk) {
-                    Some(((vk - 0x41 + b'a' as u32) as u8) as char)
-                } else if (0x30..=0x39).contains(&vk) {
-                    Some(vk as u8 as char)
-                } else {
-                    match vk {
-                        0x0D => Some('⏎'), // enter
-                        0x1B => Some('⎋'), // esc
-                        0x09 => Some('⇥'), // tab
-                        0x20 => Some('␣'), // space
-                        0x08 => Some('⌫'), // backspace
-                        0x2E => Some('⌦'), // delete
-                        0x24 => Some('↖'), // home
-                        0x23 => Some('↘'), // end
-                        0x21 => Some('⇞'), // pageup
-                        0x22 => Some('⇟'), // pagedown
-                        0x25 => Some('←'),
-                        0x26 => Some('↑'),
-                        0x27 => Some('→'),
-                        0x28 => Some('↓'),
-                        0x70..=0x87 => None, // F1..F24 单独处理
-                        _ => None,
-                    }
-                };
-                if let Some(c) = name {
-                    keys.push(c.to_string());
-                } else if (0x70..=0x87).contains(&vk) {
-                    keys.push(format!("f{}", vk - 0x70 + 1));
-                } else {
-                    return release();
-                }
-
-                let fg = foreground_info();
-                send_event(CaptureEvent {
-                    kind: "hotkey".into(),
-                    button: None,
-                    x: 0,
-                    y: 0,
-                    wheel_delta: None,
-                    keys,
-                    window_title: fg.title,
-                    hwnd: fg.hwnd,
-                    pid: fg.pid,
-                    process_name: fg.process_name,
-                    ts_ms: now_ms(),
-                });
+        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
+            && (target == CaptureKind::Hotkey as u32 || target == CaptureKind::Any as u32)
+        {
+            let mods = MOD_KEYS.load(Ordering::SeqCst);
+            let mut keys: Vec<String> = Vec::new();
+            if mods & 1 != 0 {
+                keys.push("ctrl".into());
             }
+            if mods & 2 != 0 {
+                keys.push("shift".into());
+            }
+            if mods & 4 != 0 {
+                keys.push("alt".into());
+            }
+            if mods & 8 != 0 {
+                keys.push("win".into());
+            }
+            // 主键名：字母/数字/常用功能键
+            let name = if (0x41..=0x5A).contains(&vk) {
+                Some(((vk - 0x41 + b'a' as u32) as u8) as char)
+            } else if (0x30..=0x39).contains(&vk) {
+                Some(vk as u8 as char)
+            } else {
+                match vk {
+                    0x0D => Some('⏎'), // enter
+                    0x1B => Some('⎋'), // esc
+                    0x09 => Some('⇥'), // tab
+                    0x20 => Some('␣'), // space
+                    0x08 => Some('⌫'), // backspace
+                    0x2E => Some('⌦'), // delete
+                    0x24 => Some('↖'), // home
+                    0x23 => Some('↘'), // end
+                    0x21 => Some('⇞'), // pageup
+                    0x22 => Some('⇟'), // pagedown
+                    0x25 => Some('←'),
+                    0x26 => Some('↑'),
+                    0x27 => Some('→'),
+                    0x28 => Some('↓'),
+                    0x70..=0x87 => None, // F1..F24 单独处理
+                    _ => None,
+                }
+            };
+            if let Some(c) = name {
+                keys.push(c.to_string());
+            } else if (0x70..=0x87).contains(&vk) {
+                keys.push(format!("f{}", vk - 0x70 + 1));
+            } else {
+                return release();
+            }
+
+            let fg = foreground_info();
+            send_event(CaptureEvent {
+                kind: "hotkey".into(),
+                button: None,
+                x: 0,
+                y: 0,
+                wheel_delta: None,
+                keys,
+                window_title: fg.title,
+                hwnd: fg.hwnd,
+                pid: fg.pid,
+                process_name: fg.process_name,
+                ts_ms: now_ms(),
+            });
         }
         release()
     }
@@ -844,7 +844,6 @@ fn capture_once_windows(
     let timeout = if timeout_secs == 0 { 60 } else { timeout_secs };
     let (watch_stop_tx, watch_stop_rx) = mpsc::channel::<()>();
     let watch = {
-        let timeout = timeout;
         std::thread::spawn(move || {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
             loop {
