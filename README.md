@@ -1,4 +1,4 @@
-# Nuphus — 本地优先的 AI Agent
+# Nuphus — 本地优先面向个人用户日常编程、办公、自动化工作流的 AI 协作伙伴
 
 [![Apache-2.0 License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](https://rustup.rs/)

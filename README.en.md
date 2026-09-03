@@ -1,4 +1,4 @@
-# Nuphus — Local-First AI Agent
+# Nuphus — Local-First AI Companion for Daily Coding, Office Work & Automation Workflows
 
 [![Apache-2.0 License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](https://rustup.rs/)
