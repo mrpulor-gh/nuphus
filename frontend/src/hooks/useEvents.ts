@@ -788,6 +788,12 @@ export function useEvents(h: EventHandlers) {
             h.setPendingRefine(null)
             if (refineActiveRef.current) break // already refining
             refineActiveRef.current = true
+            // ⚠️ 本地立即置 refining（不能依赖后续 RefineExecuting 事件）：
+            // refineActiveRef 已置 true，后端 RefineExecuting 到达时会被下方
+            // refine_executing case 的 `if (refineActiveRef.current) break` 吞掉，
+            // setRefining(true) 永不执行 → refining=false → 提炼执行中 refine
+            // 弹窗仍显示可操作态（可再次触发第二次 refine）。
+            h.setRefining(true)
             refineStartTimeRef.current = Date.now()
             refineOutputRef.current = ''
             const refineMsgId = crypto.randomUUID()
@@ -807,7 +813,13 @@ export function useEvents(h: EventHandlers) {
             h.setIsProcessing(true)
             h.setRefineState({ usagePercent: 0, totalLimit: 0 })
             import('../main-window/lib/api').then(({ executeSessionRefine }) => {
-              executeSessionRefine().catch(() => {
+              executeSessionRefine().catch((err: unknown) => {
+                // 后端防重拒绝（提炼进行中）说明另一端/本端已真实在提炼：
+                // 不 reset（否则 refineActiveRef=false + refining=false 会破坏真实
+                // 提炼的 UI 锁，弹窗/入口提前重新可触发）——等 RefineExecuting /
+                // session_refined / refine_failed 事件权威收敛。
+                const msg = err instanceof Error ? err.message : String(err ?? '')
+                if (msg.includes('提炼进行中')) return
                 // RefineFailed 事件是主复位路径；此处兜底 invoke 层失败（事件
                 // 丢失/旧后端）——静默吞掉会导致 forced 弹窗永久 spinner
                 resetRefineUI()
@@ -815,6 +827,11 @@ export function useEvents(h: EventHandlers) {
             })
             break
           }
+
+          // 提炼执行中收到新的 refine_prompt（refineActiveRef=true）：忽略——
+          // 正在提炼会话，不再弹新提示/累计跳过（否则提炼结束后残留 refineState/
+          // pendingRefine 会让弹窗/入口重新可触发，锁释放语义破坏）。
+          if (refineActiveRef.current) break
 
           // 如果已经有 pendingRefine（用户已跳过弹窗）→ 只更新数据，不弹窗
           if (pendingRefineRef.current) {

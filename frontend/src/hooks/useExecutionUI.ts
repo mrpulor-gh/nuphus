@@ -1,5 +1,5 @@
 // useExecutionUI — 执行追踪、上下文精炼、工作流运行时、Planner/Approval 状态
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
 import type {
   SecurityCheck,
@@ -116,18 +116,37 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   const reorderTask = useCallback((_taskId: number, _direction: -1 | 1) => {}, [])
 
   // ── Refine handlers ──
+  // in-flight 锁：executeSessionRefine 是 await 整轮提炼的 invoke（90s 级），期间
+  // refining=true。双击/重复触发会在 refining state 渲染生效前再进 handleRefine，
+  // 第二发 invoke 被后端防重拒绝 → catch/finally 提前 setRefining(false)，
+  // 破坏第一发提炼执行的 UI 锁（大王实测：提炼执行中 refine 入口可再触发）。
+  // 用 ref 锁（不依赖 state 渲染时机）挡住并发重入；finally 统一释放。
+  const refineInvokeLockRef = useRef(false)
   const handleRefine = useCallback(async () => {
+    if (refineInvokeLockRef.current) return
+    refineInvokeLockRef.current = true
     showToast('Refining session context...', 'info')
     setRefining(true)
+    // 后端防重拒绝时是否已置 true（另一端真实提炼中）：不释放锁，等事件收敛
+    let unlock = true
     try {
       await executeSessionRefine()
     } catch (e: any) {
-      showToast('Refine failed: ' + (e.message || e), 'error')
-      // Reset refine state so modal doesn't stay stuck in loading
-      setRefineState(null)
+      const msg = e?.message ?? String(e ?? '')
+      if (msg.includes('提炼进行中')) {
+        // 另一端已开始提炼（本端点击时 refine_active=true）：refining 保持 true
+        // 由 RefineExecuting/session_refined/refine_failed 事件权威收敛——此处
+        // 释放会让弹窗/入口在真实提炼执行中重新可触发（大王实测）。
+        unlock = false
+      } else {
+        showToast('Refine failed: ' + msg, 'error')
+        // Reset refine state so modal doesn't stay stuck in loading
+        setRefineState(null)
+      }
     } finally {
       // 成功/失败都恢复提炼中遮罩——失败不留全屏遮罩（否则用户无法回到原有界面）
-      setRefining(false)
+      if (unlock) setRefining(false)
+      refineInvokeLockRef.current = false
     }
   }, [showToast, setRefineState, setRefining])
 

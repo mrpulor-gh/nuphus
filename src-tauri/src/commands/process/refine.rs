@@ -33,10 +33,20 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     // Tauri 与手机 WS，手机端 refine 弹窗状态同步（桌面端零回归：mobile 为 None 时
     // 退化为纯 Tauri）。RefineFailed 与 RefineExecuting 必须成对——失败不广播结束
     // 事件会让双端提炼 UI 永久卡在 spinner。
-    let emitter = CompoundEmitter::new(app.clone(), &state);
-
+    // ── refine 专属防重（同 session 双 refine 拒绝）──
+    // refine_active 原子 compare_exchange：第一次 false→true 成功；第二次（提炼
+    // 执行中，桌面/手机任一端再触发）读到已 true → 立即 Err「提炼进行中」，
+    // 不 broadcast 任何事件（RefineExecuting 已由首次触发广播，双端 UI 已在锁）。
+    // 此前只有 busy guard：busy 在普通执行中也为 true，无法区分「提炼进行中」。
     let refine_active = state.refine_active.clone();
-    refine_active.store(true, Ordering::SeqCst);
+    if refine_active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("提炼进行中，请等待当前提炼完成后再试。".to_string());
+    }
+
+    let emitter = CompoundEmitter::new(app.clone(), &state);
     // ── busy 置位（强刷���因修复）── refine 期间 leader/workflow agent 被 take 移出
     // runtime，若不声明 busy：① guard_switch 放行 → can_switch=true，SessionRail 轮询
     // 看到 activeId 突变（active 条目消失）误判外部切换 → 前端整列重拉旧历史（实测
