@@ -1418,7 +1418,14 @@ async fn plugin_workflow_run_inner(
 
     match tokio::time::timeout(
         PLUGIN_WORKFLOW_TIMEOUT,
-        engine_r.execute_workflow(workflow_id, tool_exec, tool_schemas, None, None),
+        engine_r.execute_workflow(
+            workflow_id,
+            tool_exec,
+            tool_schemas,
+            None,
+            None,
+            nuphus::workflow::WorkflowRunSource::Plugin,
+        ),
     )
     .await
     {

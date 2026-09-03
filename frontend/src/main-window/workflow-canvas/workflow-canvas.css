@@ -785,6 +785,77 @@
   box-shadow: var(--shadow-focus);
 }
 
+/* ── 连线中点插入手柄（SequenceEdge；大王反馈）──
+   命中区唯一可点（pointer-events:all），视觉子元素不拦截事件；
+   常驻圆点 hover 变「+」高亮；readOnly 边不渲染 */
+.wfc-edge-insert {
+  cursor: pointer;
+}
+.wfc-edge-insert-hit {
+  pointer-events: all;
+  cursor: pointer;
+  fill: transparent;
+}
+.wfc-edge-insert-dot,
+.wfc-edge-insert-ring,
+.wfc-edge-insert-plus,
+.wfc-edge-insert-plus line {
+  pointer-events: none;
+}
+.wfc-edge-insert-dot {
+  fill: var(--surface-0);
+  stroke: var(--fg-4);
+  stroke-width: 1.6;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.wfc-edge-insert-ring {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.4;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    stroke var(--dur-fast) var(--ease-out);
+}
+.wfc-edge-insert-plus {
+  opacity: 0;
+  stroke: var(--accent-hover);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.wfc-edge-insert:hover .wfc-edge-insert-dot {
+  opacity: 0;
+}
+.wfc-edge-insert:hover .wfc-edge-insert-ring {
+  opacity: 1;
+  stroke: var(--accent);
+}
+.wfc-edge-insert:hover .wfc-edge-insert-plus {
+  opacity: 1;
+}
+
+/* ── 连线中点「在此插入」菜单（fixed 定位 + 复用 wfc-add-menu/wfc-add-item 项样式）── */
+.wfc-edge-add-menu {
+  position: fixed;
+  right: auto;
+  z-index: 30;
+  max-height: 66vh;
+  overflow-y: auto;
+}
+.wfc-edge-add-title {
+  grid-column: 1 / -1;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line-1);
+  margin-bottom: 2px;
+  font-family: var(--font-ui);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── 工具面板（左侧分类竖条 + hover 浮出工具列表）── */
 .wfc-palette {
   position: absolute;
@@ -1242,7 +1313,8 @@ textarea.wfc-input {
 .wfc-confirm-mask {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  /* 高于录制浮层/面板（rec-* z 9500~9600）：草稿面板内「清空草稿」等 askConfirm 必须可点 */
+  z-index: 9700;
   display: flex;
   align-items: center;
   justify-content: center;

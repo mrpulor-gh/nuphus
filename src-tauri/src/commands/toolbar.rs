@@ -261,6 +261,9 @@ pub async fn overlay_magnifier_region(x: i32, y: i32, size: u32) -> Result<Strin
 ///
 /// * mode = "screenshot" (default): hide overlay → live screenshot (with dynamic content) → restore overlay
 /// * mode = "ocr" / "picker": crop directly from PRE_SCREENSHOT (clean, no overlay mask interference)
+/// * mode = "rec_region" / "rec_template": crop directly from PRE_SCREENSHOT（录制铁律：ROI 证据与
+///   find_image 模板一律走预截图裁剪，禁止 live capture——透明竞态根因），PNG 保存到当前录制会话
+///   screenshots 目录（rec.rs 会话 state 注入），返回结构不变。
 /// Overlay is closed by overlay_capture_done (confirm) or overlay_capture_cancel (cancel).
 #[tauri::command]
 pub async fn overlay_capture_confirm(
@@ -274,6 +277,13 @@ pub async fn overlay_capture_confirm(
     use base64::Engine;
 
     let is_screenshot = mode.as_deref() == Some("screenshot");
+    // 录制框选（ROI 证据 / find_image 模板）：走 PRE_SCREENSHOT 裁剪分支（is_screenshot=false 即命中），
+    // 保存目录/文件名前缀按 mode 区分，其余行为与 ocr/picker 完全一致。
+    let rec_prefix = match mode.as_deref() {
+        Some("rec_region") => Some("rec_region"),
+        Some("rec_template") => Some("rec_template"),
+        _ => None,
+    };
 
     let (pw, ph, pixels) = if is_screenshot {
         // ── Screenshot mode: hide overlay → live capture (dynamic content) ─
@@ -314,12 +324,21 @@ pub async fn overlay_capture_confirm(
             .ok_or_else(|| "创建裁剪图像失败".to_string())?,
     );
 
-    // Save as PNG
-    let captures_dir =
-        nuphus::desktop::captures_dir_path().map_err(|e| format!("获取截图目录失败: {e}"))?;
-    std::fs::create_dir_all(&captures_dir).map_err(|e| format!("创建截图目录失败: {e}"))?;
+    // Save as PNG —— 录制模式保存到当前录制会话截图目录（会话未初始化则报错）
+    let (save_dir, file_prefix) = if let Some(prefix) = rec_prefix {
+        (
+            crate::commands::rec::rec_active_screenshots_dir()?,
+            prefix.to_string(),
+        )
+    } else {
+        (
+            nuphus::desktop::captures_dir_path().map_err(|e| format!("获取截图目录失败: {e}"))?,
+            "capture".to_string(),
+        )
+    };
+    std::fs::create_dir_all(&save_dir).map_err(|e| format!("创建截图目录失败: {e}"))?;
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
-    let save_path = captures_dir.join(format!("capture_{ts}.png"));
+    let save_path = save_dir.join(format!("{file_prefix}_{ts}.png"));
 
     dyn_img
         .save(&save_path)

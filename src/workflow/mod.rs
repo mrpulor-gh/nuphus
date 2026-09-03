@@ -32,6 +32,60 @@ pub type ScheduleExecCallback = Arc<
     dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 
+/// Agent 执行态读取器 — 由 Tauri shell 注入读 AppState.busy 的闭包（无宿主 = 视为空闲）
+pub type BusyProvider = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// workflow 执行发起方（全局执行闸门语义）
+///
+/// 大王铁律：无并行机制、禁止并行、系统操作更禁止并行。
+/// - `Agent`：发起 workflow_run 的 Agent 本身已持有 busy（Leader/Workflow/Custom 任一在执行），
+///   豁免 busy 检查；但已有 active workflow 时仍拒绝（防同 wf 重复 / 双 run）。
+/// - `Ui` / `Schedule` / `Plugin`：busy 或 active workflow 任一存在即拒绝。
+#[derive(Debug, Clone, Copy)]
+pub enum WorkflowRunSource {
+    /// Agent（Leader/Workflow/Custom 运行中）发起 workflow_run
+    Agent { owner: crate::runtime::Mode },
+    /// 画布 / 前台用户直接触发（wf_run 命令）
+    Ui,
+    /// 定时调度触发（cron）
+    Schedule,
+    /// 插件宿主触发
+    Plugin,
+}
+
+impl WorkflowRunSource {
+    pub fn is_agent(&self) -> bool {
+        matches!(self, WorkflowRunSource::Agent { .. })
+    }
+
+    /// 登记 owner label（active_run 查询 / 错误提示用）
+    pub fn owner_label(&self) -> &'static str {
+        match self {
+            WorkflowRunSource::Agent { owner } => owner.as_str(),
+            WorkflowRunSource::Ui => "ui",
+            WorkflowRunSource::Schedule => "schedule",
+            WorkflowRunSource::Plugin => "plugin",
+        }
+    }
+}
+
+/// 全局 active run 注册信息（闸门登记使用；execute_v2 内部另有真实 run_id）
+#[derive(Debug, Clone)]
+pub struct ActiveRunInfo {
+    pub workflow_id: String,
+    pub run_id: String,
+    /// 发起方 label（leader / workflow / custom / ui / schedule / plugin）
+    pub owner: String,
+    pub started_at_ms: u64,
+}
+
+fn gate_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// WorkflowEngine — workflow orchestration core
 pub struct WorkflowEngine {
     pub store: WorkflowStore,
@@ -45,6 +99,70 @@ pub struct WorkflowEngine {
     /// Schedule execution callback (injected externally)
     /// Uses std::sync::Mutex — written once during setup, read on set_schedule clone
     schedule_exec: std::sync::Mutex<Option<ScheduleExecCallback>>,
+    /// 全局执行闸门：当前 active workflow run（大王铁律：同一时刻至多一个）。
+    /// std::sync::Mutex —— 登记/释放/查询均短临界区（无跨 await 持锁）；
+    /// RAII Drop 保证 execute_workflow 无论 Ok/Err/panic/task-abort/超时被 drop
+    /// 都释放（async 无法在 Drop 中 await，故不用 tokio RwLock）。
+    active_run: std::sync::Mutex<Option<ActiveRunInfo>>,
+    /// Agent 执行态读取器（读 AppState.busy），由 Tauri setup 注入；None = 无宿主（视为空闲）。
+    /// std::sync::Mutex — 写入一次（setup），每次闸门/查询时读取。
+    busy_provider: std::sync::Mutex<Option<BusyProvider>>,
+}
+
+/// RAII：持有期间全局 active workflow run 生效；Drop 无条件释放。
+///
+/// 为什么不用 async finally：execute_workflow 的 future 可能被外部整体 drop
+/// （plugin 300s 硬超时经 tokio::time::timeout 丢弃 inner future / task abort / panic），
+/// 这些路径上 await 之后的清理代码不会执行；Drop 必然执行，且 std Mutex 可在 Drop
+/// 中同步加锁（tokio RwLock 无法在 Drop 中 await）。
+struct ActiveRunGuard<'a> {
+    engine: &'a WorkflowEngine,
+}
+
+impl<'a> ActiveRunGuard<'a> {
+    /// 闸门检查 + 登记（check-then-set 在同一 std Mutex 临界区内，并发仅一路成功）
+    fn acquire(
+        engine: &'a WorkflowEngine,
+        workflow_id: &str,
+        source: &WorkflowRunSource,
+    ) -> crate::Result<ActiveRunGuard<'a>> {
+        let mut slot = engine.active_run.lock().unwrap();
+        if let Some(existing) = slot.as_ref() {
+            if source.is_agent() {
+                return Err(crate::NuphusError::agent(format!(
+                    "工作流正在执行中，请等待完成后重试（当前：{}）",
+                    existing.owner
+                )));
+            }
+            return Err(crate::NuphusError::agent(
+                "当前有任务执行中，暂不可用！".to_string(),
+            ));
+        }
+        // Agent 自身发起：豁免 busy 检查（发起者即 busy 持有者）；Ui/Schedule/Plugin 双查
+        if !source.is_agent() {
+            let busy_guard = engine.busy_provider.lock().unwrap();
+            if let Some(cb) = busy_guard.as_ref() {
+                if cb() {
+                    return Err(crate::NuphusError::agent(
+                        "当前有任务执行中，暂不可用！".to_string(),
+                    ));
+                }
+            }
+        }
+        *slot = Some(ActiveRunInfo {
+            workflow_id: workflow_id.to_string(),
+            run_id: uuid::Uuid::new_v4().to_string(),
+            owner: source.owner_label().to_string(),
+            started_at_ms: gate_now_ms(),
+        });
+        Ok(ActiveRunGuard { engine })
+    }
+}
+
+impl Drop for ActiveRunGuard<'_> {
+    fn drop(&mut self) {
+        *self.engine.active_run.lock().unwrap() = None;
+    }
 }
 
 impl WorkflowEngine {
@@ -57,12 +175,27 @@ impl WorkflowEngine {
             llm_client: None,
             tools: None,
             schedule_exec: std::sync::Mutex::new(None),
+            active_run: std::sync::Mutex::new(None),
+            busy_provider: std::sync::Mutex::new(None),
         }
     }
 
     /// Set the schedule execution callback (called once at Tauri startup)
     pub fn set_schedule_exec_callback(&self, cb: ScheduleExecCallback) {
         *self.schedule_exec.lock().unwrap() = Some(cb);
+    }
+
+    // ── 全局执行闸门（大王铁律：无并行机制、禁止并行、系统操作更禁止并行）──
+
+    /// 注入 Agent 执行态读取器（Tauri shell setup 注入读 AppState.busy 的闭包；
+    /// 无宿主（单元测试 / headless）时为 None，视为空闲）
+    pub fn set_busy_provider(&self, cb: BusyProvider) {
+        *self.busy_provider.lock().unwrap() = Some(cb);
+    }
+
+    /// 当前 active workflow run（None = 空闲）
+    pub fn active_run_info(&self) -> Option<ActiveRunInfo> {
+        self.active_run.lock().unwrap().clone()
     }
 
     /// Set the LLM client
@@ -152,6 +285,9 @@ impl WorkflowEngine {
     /// Execute a workflow (delegates to executor.execute_v2)
     ///
     /// Runs Compiler validation before execution to ensure basic correctness.
+    ///
+    /// `source` 标识发起方，驱动全局执行闸门（大王铁律）：
+    /// Agent 自身发起豁免 busy；Ui/Schedule/Plugin 在 busy 或已有 active workflow 时拒绝。
     pub async fn execute_workflow<F, Fut>(
         &self,
         workflow_id: &str,
@@ -159,11 +295,17 @@ impl WorkflowEngine {
         tool_schemas: Option<Vec<ToolDefinition>>,
         emitter: Option<&dyn crate::agent::events::EventEmitter>,
         inputs: Option<std::collections::HashMap<String, serde_json::Value>>,
+        source: WorkflowRunSource,
     ) -> Result<String>
     where
         F: Fn(String, serde_json::Value) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = std::result::Result<String, String>> + Send,
     {
+        // ── 全局执行闸门 ──
+        // validation 之前：资源校验不必要先跑；guard 持有期间本 run 独占执行权，
+        // guard drop（含 validation 失败早退 / Ok / Err / panic / future 被 drop）自动释放。
+        let _gate = ActiveRunGuard::acquire(self, workflow_id, &source)?;
+
         // ── Pre-execution validation（与 execute_v2 内部校验同源）──
         // tool_schemas 提前构建，供校验与执行共用
         let tool_schemas = tool_schemas.or_else(|| self.tools.as_ref().map(|t| t.get_schemas()));
@@ -208,6 +350,7 @@ impl WorkflowEngine {
             }
         }
 
+        // guard 在此作用域末尾 drop → 释放全局 active run（Ok/Err 同路径）
         result
     }
 
@@ -356,5 +499,115 @@ impl WorkflowEngine {
 impl Default for WorkflowEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    fn engine() -> WorkflowEngine {
+        WorkflowEngine::new()
+    }
+
+    #[tokio::test]
+    async fn agent_allowed_when_idle_even_busy() {
+        // Agent 自身豁免 busy：busy provider = true 也放行，且登记 active_run
+        let e = engine();
+        e.set_busy_provider(Arc::new(|| true));
+        let guard = ActiveRunGuard::acquire(
+            &e,
+            "wf-a",
+            &WorkflowRunSource::Agent {
+                owner: crate::runtime::Mode::Leader,
+            },
+        )
+        .expect("agent should pass gate when idle (busy exempt)");
+        let info = e.active_run_info().expect("registered");
+        assert_eq!(info.workflow_id, "wf-a");
+        assert_eq!(info.owner, "leader");
+        drop(guard);
+        assert!(e.active_run_info().is_none(), "released after guard drop");
+    }
+
+    #[tokio::test]
+    async fn non_agent_rejected_when_busy() {
+        let e = engine();
+        e.set_busy_provider(Arc::new(|| true));
+        let err = ActiveRunGuard::acquire(&e, "wf-a", &WorkflowRunSource::Ui)
+            .err()
+            .expect("gate should reject")
+            .to_string();
+        assert!(err.contains("当前有任务执行中"), "unexpected: {err}");
+        assert!(e.active_run_info().is_none(), "nothing registered");
+    }
+
+    #[tokio::test]
+    async fn non_agent_rejected_when_active_run_exists() {
+        let e = engine();
+        let _guard = ActiveRunGuard::acquire(
+            &e,
+            "wf-a",
+            &WorkflowRunSource::Agent {
+                owner: crate::runtime::Mode::Workflow,
+            },
+        )
+        .unwrap();
+        let err = ActiveRunGuard::acquire(&e, "wf-b", &WorkflowRunSource::Schedule)
+            .err()
+            .expect("gate should reject")
+            .to_string();
+        assert!(err.contains("当前有任务执行中"), "unexpected: {err}");
+    }
+
+    #[tokio::test]
+    async fn agent_rejected_when_active_run_exists() {
+        let e = engine();
+        let _guard = ActiveRunGuard::acquire(
+            &e,
+            "wf-a",
+            &WorkflowRunSource::Agent {
+                owner: crate::runtime::Mode::Leader,
+            },
+        )
+        .unwrap();
+        let err = ActiveRunGuard::acquire(
+            &e,
+            "wf-b",
+            &WorkflowRunSource::Agent {
+                owner: crate::runtime::Mode::Leader,
+            },
+        )
+        .err()
+        .expect("gate should reject")
+        .to_string();
+        assert!(err.contains("工作流正在执行中"), "unexpected: {err}");
+    }
+
+    #[tokio::test]
+    async fn concurrent_acquire_only_one_wins() {
+        // check-then-set 在同一 std Mutex 临界区内：a 登记期间 b 并发 acquire 必然被拒
+        let e = std::sync::Arc::new(engine());
+        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<()>(1);
+        let (tx2, mut rx2) = tokio::sync::mpsc::channel::<()>(1);
+        let e2 = e.clone();
+        let a = tokio::spawn(async move {
+            let _guard = ActiveRunGuard::acquire(&e, "wf-a", &WorkflowRunSource::Schedule)
+                .expect("a should register");
+            let _ = tx1.send(()).await; // 告知 b：a 已登记且 guard 仍存活
+            let _ = rx2.recv().await; // 保持 guard 直到 b 尝试完
+            true
+        });
+        let b = tokio::spawn(async move {
+            let _ = rx1.recv().await;
+            let ok = ActiveRunGuard::acquire(&e2, "wf-b", &WorkflowRunSource::Schedule).is_ok();
+            let _ = tx2.send(()).await;
+            ok
+        });
+        let (ra, rb) = (a.await.unwrap(), b.await.unwrap());
+        assert!(
+            ra && !rb,
+            "concurrent acquire must admit exactly one run (a={ra}, b={rb})"
+        );
     }
 }

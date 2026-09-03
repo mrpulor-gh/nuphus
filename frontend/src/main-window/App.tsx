@@ -156,6 +156,57 @@ export default function App() {
   const [wfRunning, setWfRunning] = useState(false)
   // ── 工作流节点画布（Pro 位；全屏覆盖层，无路由——主窗口不用 react-router）──
   const [canvasWorkflowId, setCanvasWorkflowId] = useState<string | null>(null)
+  // ── 输入栏 workflow 扳手菜单「工作流画布」直达（2026-09-03 大王定稿）：
+  //    有未完成（draft）工作流 → 续编最近草稿；否则新建空白工作流并进入画布。
+  //    闸门铁律同 WorkflowPage：任意执行态禁止进入画布（点击级 gate 复核）。──
+  const handleWorkflowCanvasDirect = async () => {
+    try {
+      const { listWorkflows, wfGateStatus, wfSave } = await import('./lib/api')
+      const gate = (await wfGateStatus()) ?? { locked: false, reason: 'idle' }
+      if (gate.locked) {
+        s.showToast(
+          gate.reason === 'workflow'
+            ? '工作流正在执行中，暂不可用！'
+            : '当前有任务执行中，暂不可用！',
+          'warning',
+        )
+        return
+      }
+      const list = (await listWorkflows()) ?? []
+      const drafts = list
+        .filter(w => w.status === 'draft')
+        .sort((a, b) => b.updated_at - a.updated_at)
+      if (drafts[0]) {
+        setCanvasWorkflowId(drafts[0].id)
+        return
+      }
+      // 无草稿 → 新建空白工作流并入画布（对齐 WorkflowPage.handleCanvasNew：
+      // status 必须 PascalCase——后端 WorkflowStatus serde 枚举无 rename）
+      const id = crypto.randomUUID()
+      const resp = await wfSave({
+        id,
+        name: '未命名工作流',
+        status: 'Draft',
+        steps: [],
+        doc: null,
+        schedule: null,
+        run_history: [],
+        dry_run: false,
+      })
+      if (!resp?.saved) {
+        s.showToast(
+          (resp?.report?.errors as string[] | undefined)?.join('；') || '工作流创建失败，请重试',
+          'warning',
+        )
+        return
+      }
+      setCanvasWorkflowId(id)
+    } catch {
+      s.showToast('打开工作流画布失败，请重试', 'warning')
+    }
+  }
+  /** 输入栏 workflow 扳手菜单「工作流列表」：等同 Ctrl+K → 工作流（WorkflowPage 弹窗） */
+  const handleOpenWorkflowList = () => s.setShowWorkflow(true)
   // ── 应用插件全屏宿主（App Plugin 体系；打开即关闭列表弹窗，仿画布模式）──
   const [runningPluginId, setRunningPluginId] = useState<string | null>(null)
   // ── 宿主最小化态：true 时 AppShellPage 保持挂载但 visibility 隐藏（iframe 保活），
@@ -312,6 +363,8 @@ export default function App() {
               isWorkflowRunning={s.workflowRunSteps.length > 0}
               showDesktopToolbar={showDesktopToolbar}
               onToggleDesktopToolbar={() => setShowDesktopToolbar(o => !o)}
+              onOpenWorkflowCanvas={() => void handleWorkflowCanvasDirect()}
+              onOpenWorkflowList={handleOpenWorkflowList}
               onRate={s.handleRate}
               onShowExecTrace={trace => {
                 s.setExecTraceOverride(trace)

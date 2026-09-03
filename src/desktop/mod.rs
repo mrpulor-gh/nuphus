@@ -7,6 +7,7 @@ pub mod client;
 pub mod dict_ocr;
 pub mod linux_window;
 pub mod paddle_ocr;
+pub mod rec_hook;
 pub mod ui_perception;
 pub mod vision;
 pub mod vision_ocr;

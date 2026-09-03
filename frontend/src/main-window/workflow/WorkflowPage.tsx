@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { listWorkflows, wfDelete, wfSave } from '../lib/api'
+import { useWorkflowGate } from '../lib/useWorkflowGate'
 import type { WorkflowItem } from '../../core/types'
 import { IconSearch, IconTrash2, IconX, IconWorkflow, IconPlay, IconBot } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
@@ -45,6 +46,12 @@ interface WorkflowPageProps {
 
 export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPageProps) {
   const { t } = useLanguage()
+  // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 进入画布）──
+  const gate = useWorkflowGate()
+  const gateLocked = gate.locked
+  const gateRefresh = gate.refresh
+  const gateLockNotice =
+    gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
   const [items, setItems] = useState<WorkflowItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -52,6 +59,39 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   const [showChatAgent, setShowChatAgent] = useState(false)
   // ── 画布新建：创建中防重复点击 ──
   const [canvasCreating, setCanvasCreating] = useState(false)
+
+  // 行内「运行 / 画布」入口点击级复核（禁用态之外收窄轮询竞态窗口）
+  const requestRun = useCallback(
+    async (item: WorkflowItem) => {
+      const cur = await gateRefresh()
+      if (cur.locked) {
+        setError(
+          cur.reason === 'workflow'
+            ? '工作流正在执行中，暂不可用！'
+            : '当前有任务执行中，暂不可用！',
+        )
+        return
+      }
+      onRunClick(item)
+    },
+    [gateRefresh, onRunClick],
+  )
+
+  const requestCanvas = useCallback(
+    async (item: WorkflowItem) => {
+      const cur = await gateRefresh()
+      if (cur.locked) {
+        setError(
+          cur.reason === 'workflow'
+            ? '工作流正在执行中，暂不可用！'
+            : '当前有任务执行中，暂不可用！',
+        )
+        return
+      }
+      onCanvasClick(item)
+    },
+    [gateRefresh, onCanvasClick],
+  )
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -102,6 +142,14 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   // ── 画布新建：直建空白工作流并打开画布 ──
   const handleCanvasNew = useCallback(async () => {
     if (canvasCreating) return
+    // 闸门点击级复核（轮询窗口内竞态收口；后端 wf_gate/rec 另有兜底）
+    const cur = await gateRefresh()
+    if (cur.locked) {
+      setError(
+        cur.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！',
+      )
+      return
+    }
     setCanvasCreating(true)
     setError(null)
     try {
@@ -150,7 +198,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
     } finally {
       setCanvasCreating(false)
     }
-  }, [canvasCreating, onCanvasClick])
+  }, [canvasCreating, gateRefresh, onCanvasClick])
 
   // ── Chat Agent 配置模式 ──
   if (showChatAgent) {
@@ -171,16 +219,24 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
         <Button variant="default" onClick={() => setShowChatAgent(true)} title="Chat Agent">
           <IconBot size={12} /> Chat Agent
         </Button>
-        {/* 画布新建入口 */}
+        {/* 画布新建入口（闸门锁定态禁用：执行中禁止进入画布） */}
         <Button
           variant="default"
           onClick={() => void handleCanvasNew()}
           loading={canvasCreating}
-          title="新建空白工作流并直接在画布中编排"
+          disabled={gateLocked}
+          title={gateLocked ? gateLockNotice : '新建空白工作流并直接在画布中编排'}
         >
           <LayoutDashboard size={12} /> 画布新建
         </Button>
       </div>
+
+      {/* ── 全局执行闸门锁定提示 ── */}
+      {gateLocked && (
+        <div className="gate-banner">
+          <span>{gateLockNotice}</span>
+        </div>
+      )}
 
       {/* ── 错误提示 ── */}
       {error && (
@@ -233,16 +289,20 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
                     <IconButton
                       variant="default"
                       label={t('workflow.run')}
-                      onClick={() => onRunClick(item)}
+                      onClick={() => void requestRun(item)}
+                      disabled={gateLocked}
+                      title={gateLocked ? gateLockNotice : t('workflow.run')}
                       className="wf-action-run"
                     >
                       <IconPlay size={14} />
                     </IconButton>
-                    {/* 画布入口 */}
+                    {/* 画布入口（闸门锁定态禁用：执行中禁止进入画布） */}
                     <IconButton
                       variant="ghost"
                       label={t('workflow.canvas')}
-                      onClick={() => onCanvasClick(item)}
+                      onClick={() => void requestCanvas(item)}
+                      disabled={gateLocked}
+                      title={gateLocked ? gateLockNotice : t('workflow.canvas')}
                     >
                       <LayoutDashboard size={14} />
                     </IconButton>

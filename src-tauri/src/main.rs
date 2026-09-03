@@ -264,6 +264,7 @@ fn main() {
             commands::wf_validate,
             commands::wf_save,
             commands::wf_run,
+            commands::wf_gate_status,
             commands::wf_tools,
             commands::wf_layout_get,
             commands::wf_layout_save,
@@ -311,6 +312,20 @@ fn main() {
             commands::overlay_capture_cancel,
             commands::overlay_pick_color,
             commands::take_capture_result,
+            // -- 工作流录制（rec_*；Windows 低层 hook 捕获 + 会话状态机） --
+            commands::rec_set_workflow,
+            commands::rec_session_status,
+            commands::rec_start,
+            commands::rec_cancel,
+            commands::rec_abort,
+            commands::rec_complete,
+            commands::rec_save_pending,
+            commands::rec_load_pending,
+            commands::rec_discard_pending,
+            // -- 浏览器网页点击录制（rec_browser_*；CDP 注入捕获真实点击） --
+            commands::rec_browser_capture_click_start,
+            commands::rec_browser_capture_click_poll,
+            commands::rec_browser_capture_cancel,
             // -- HUD overlay --
             commands::hud::hud_update,
             commands::hud::hud_hide,
@@ -521,7 +536,17 @@ fn main() {
                         let engine = state.workflow_engine.read().await;
                         // For scheduled execution, tool schemas are not available (no Tauri state access)
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
-                        if let Err(e) = engine.execute_workflow(&workflow_id, tool_exec, Some(vec![]), None, None).await {
+                        if let Err(e) = engine
+                            .execute_workflow(
+                                &workflow_id,
+                                tool_exec,
+                                Some(vec![]),
+                                None,
+                                None,
+                                nuphus::workflow::WorkflowRunSource::Schedule,
+                            )
+                            .await
+                        {
                             tracing::error!("[Scheduler] Cron-triggered workflow {} failed: {}", workflow_id, e);
                         }
                     })
@@ -529,6 +554,12 @@ fn main() {
 
                 let engine = state.workflow_engine.blocking_write();
                 engine.set_schedule_exec_callback(exec_cb);
+                // 全局执行闸门：注入 Agent 执行态读取器（读 state.busy）——
+                // Ui/Schedule/Plugin 在 Agent 跑任务时禁止再启动 workflow
+                let busy_flag = state.busy.clone();
+                engine.set_busy_provider(std::sync::Arc::new(move || {
+                    busy_flag.load(std::sync::atomic::Ordering::SeqCst)
+                }));
                 drop(engine);
 
                 // 恢复持久化的调度任务（在 tokio runtime 上异步执行）
@@ -747,12 +778,9 @@ fn main() {
         } = event
         {
             if label == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = win_event {
-                    // 拦截关闭事件：隐藏到托盘而非退出；隐藏前先保存
-                    // （用户可能此后不再经托盘 quit，元数据行+镜像必须此刻落盘）
-                    api.prevent_close();
+                if let tauri::WindowEvent::CloseRequested { .. } = win_event {
+                    // 关闭前保存当前 session（元数据行 + Shelf 磁盘镜像）
                     if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
-                        // 快照保护名单先于 runtime 锁收集，避免嵌套加锁
                         let protected =
                             crate::commands::process::shelf::protected_snapshot_ids(state.inner());
                         if let Ok(guard) = state.runtime.lock() {
@@ -772,9 +800,8 @@ fn main() {
                             }
                         }
                     }
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
+                    // 直接退出应用
+                    app_handle.exit(0);
                 }
             }
         }

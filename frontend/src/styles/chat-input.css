@@ -429,31 +429,80 @@
   background: var(--surface-active);
   color: #f59e0b;
 }
-/* 工具箱按钮 hover 提示：复用输入栏弹窗容器样式（void-primary/glass-3/shadow），
-   纯文字、宽度跟随内容（white-space:nowrap、无 min-width）、文字无 hover 特效 */
+/* 执行态锁定：半透明 + hover 不变亮 + not-allowed（伪可点感消除）；功能入口在
+   ChatInputBar 内以 gate.locked 收起为「仅原因提示层」，此处只管视觉 */
+.input-bar-toolbox-btn.is-locked,
+.input-bar-toolbox-btn.is-locked:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--surface-2);
+  color: var(--fg-2);
+}
+/* workflow 扳手工具菜单（2026-09-03 大王定稿：画布/列表/工具箱三入口）：复用输入栏
+   弹窗容器样式（void-primary/glass-3/shadow），替代原单行 hover 提示。菜单可点击，
+   hover 桥接 180ms（鼠标从按钮移向菜单间隙不闪关）。 */
 .input-bar-toolbox-wrap {
   position: relative;
   display: inline-flex;
 }
-.input-bar-toolbox-tip {
+.input-bar-toolbox-menu {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  padding: 4px 8px;
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   background: var(--void-primary);
   border: 1px solid var(--glass-3);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   z-index: 200;
-  white-space: nowrap;
-  pointer-events: none;
   animation: effortMenuIn 0.12s ease-out;
 }
-.input-bar-toolbox-tip-text {
+.input-bar-toolbox-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--spark-secondary);
   font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--spark-secondary);
   line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.input-bar-toolbox-item:hover {
+  background: var(--surface-hover);
+  color: var(--spark-primary);
+}
+.input-bar-toolbox-item-key {
+  flex: none;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--spark-tertiary);
+  border: 1px solid var(--glass-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 15px;
+  opacity: 0.85;
+}
+/* 锁定态说明行（菜单容器内，无可用项） */
+.input-bar-toolbox-lock {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--spark-tertiary);
+  line-height: 1.5;
+  white-space: nowrap;
 }
 .input-bar-sep {
   font-size: 11px;

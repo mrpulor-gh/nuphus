@@ -24,7 +24,7 @@ import {
   type Viewport,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { X, Save, Play, Undo2, Redo2, Plus, CircleCheckBig, CornerUpLeft } from 'lucide-react'
+import { X, Save, Play, Undo2, Redo2, Plus, CircleCheckBig, CornerUpLeft, Mic } from 'lucide-react'
 
 import type { WorkflowStep, ToolSchema } from '../../core/types'
 import {
@@ -36,6 +36,7 @@ import {
   wfLayoutSave,
   type ValidationReport,
 } from '../lib/api'
+import { useWorkflowGate } from '../lib/useWorkflowGate'
 import type {
   WorkflowIR,
   CanvasLayoutSidecar,
@@ -45,6 +46,8 @@ import type {
   StepVisualStatus,
 } from './types'
 import { projectWorkflow, containerLanes, laneSteps, stepKind } from './projection'
+import { walkSteps } from './dataEdges'
+import { playUiSound } from '../../ui/sound'
 import {
   layoutLayer,
   layerDir,
@@ -67,13 +70,17 @@ import { subscribeRunStatus, aggregateContainerBadges, type RunStatusSnapshot } 
 import { StepNode, NodeActionsContext } from './nodes/StepNode'
 import { ContainerNode } from './nodes/ContainerNode'
 import { LaneFrame } from './nodes/LaneFrame'
-import { SequenceEdge } from './edges/SequenceEdge'
+import { SequenceEdge, EDGE_INSERT_EVENT } from './edges/SequenceEdge'
 import { DataEdge } from './edges/DataEdge'
 import { Inspector, loadToolsOnce } from './Inspector'
 import { ToolPalette, TOOL_DRAG_MIME } from './ToolPalette'
 import { skeletonFromSchema } from './toolSkeleton'
 import { ProblemsPanel } from './ProblemsPanel'
 import { OutlinePanel } from './OutlinePanel'
+import { useWorkflowRecorder } from './recorder/useWorkflowRecorder'
+import type { InsertedRecordedStep, RecDraftPatch } from './recorder/useWorkflowRecorder'
+import { RecorderBar } from './recorder/RecorderBar'
+import { RecIntentPanel } from './recorder/RecIntentPanel'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -169,6 +176,14 @@ interface ConfirmState {
 
 function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const rf = useReactFlow()
+  // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
+  // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
+  // snapshot.running 只读锁覆盖，闸门轮询感知其它 agent/workflow 的执行态）。
+  const gate = useWorkflowGate()
+  const gateLocked = gate.locked
+  const gateRefresh = gate.refresh
+  const gateLockNotice =
+    gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
   const [ir, setIr] = useState<WorkflowIR | null>(null)
   const [steps, setSteps] = useState<WorkflowStep[] | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -210,6 +225,57 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   }, [addMenuOpen])
   const [flowNodes, setFlowNodes] = useState<FlowNode[]>([])
   const [flashId, setFlashId] = useState<string | null>(null)
+  /** 连线中点「在此插入」菜单（edgeId = layer.edges 的 CanvasEdge id；x/y = 屏幕坐标） */
+  const [edgeInsert, setEdgeInsert] = useState<{ edgeId: string; x: number; y: number } | null>(
+    null,
+  )
+  const edgeMenuWrapRef = useRef<HTMLDivElement>(null)
+  // 连线插入菜单：点击外部收起（Escape 见键盘表；项内点击见 insertAtEdge）
+  useEffect(() => {
+    if (!edgeInsert) return
+    const onDown = (e: PointerEvent) => {
+      if (edgeMenuWrapRef.current && !edgeMenuWrapRef.current.contains(e.target as Node)) {
+        setEdgeInsert(null)
+      }
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [edgeInsert])
+
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 新节点闪光高亮（连线插入 / 录制入画布）；复用既有 wfc-flash CSS（0.6s × 2） */
+  const flashStep = useCallback((id: string) => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    setFlashId(id)
+    flashTimerRef.current = setTimeout(() => setFlashId(null), 1500)
+  }, [])
+
+  /**
+   * 新节点入视口（大王反馈#7 根因修复）：applyEdit → setSteps → 投影 → flowNodes → ReactFlow store
+   * 是多级 effect 链，旧代码只等一帧 rAF 就 fitView({nodes:[{id}]})——此时节点多半还没进 store，
+   * 或已进但未 measure（宽度 0）会被 fitView 过滤 → 视口不跟随新步骤（表现「预览位置不正确」）。
+   * 这里轮询等待节点进入 store 后按节点中心 setCenter（不依赖 measure 完成，默认尺寸兜底），
+   * 保证新增节点真实出现在可视区中央附近。
+   */
+  const focusStepFlow = useCallback(
+    (stepId: string) => {
+      const attempt = (tries: number) => {
+        const node = rf.getNodes().find(n => n.id === stepId)
+        if (node && Number.isFinite(node.position.x)) {
+          const w = node.measured?.width ?? 200
+          const h = node.measured?.height ?? 56
+          void rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+            zoom: Math.max(rf.getZoom(), 0.8),
+            duration: 200,
+          })
+          return
+        }
+        if (tries < 12) requestAnimationFrame(() => attempt(tries + 1))
+      }
+      requestAnimationFrame(() => attempt(0))
+    },
+    [rf],
+  )
 
   const historyRef = useRef(new IrEditHistory())
   const viewportMem = useRef(new Map<string, Viewport>())
@@ -260,6 +326,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
   const readOnly = snapshot.running || !!projection?.index.hasCustomNodes
+  // 只读翻转（运行开始等）时自动收起残留的连线插入菜单
+  useEffect(() => {
+    if (readOnly) setEdgeInsert(null)
+  }, [readOnly])
 
   // ── L2 实时校验（防抖 300ms，3.4）──
   useEffect(() => {
@@ -510,12 +580,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         source: e.source,
         target: e.target,
         type: 'sequence',
-        data: { decorative, label: e.label },
+        // readOnly 透传给 SequenceEdge：只读画布不渲染中点插入手柄（运行中/旧格式只读）
+        data: { decorative, label: e.label, readOnly },
         selectable: false,
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       }
     })
-  }, [layer])
+  }, [layer, readOnly])
 
   // ── 视口记忆（2.4）──
   const switchLayer = useCallback(
@@ -525,6 +596,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       setLayerId(next)
       setSelectedId(null)
       setInspectorOpen(false)
+      setEdgeInsert(null) // 连线插入菜单绑定旧层边 id，切层即失效
       requestAnimationFrame(() => {
         const mem = viewportMem.current.get(next)
         if (mem) void rf.setViewport(mem)
@@ -642,12 +714,20 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       setNotice('有未保存的编辑，请先保存（Ctrl+S）再运行')
       return
     }
+    // 闸门点击级复核（轮询窗口内竞态收口；后端 execute_workflow 另有兜底）
+    const cur = await gateRefresh()
+    if (cur.locked) {
+      setNotice(
+        cur.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！',
+      )
+      return
+    }
     try {
       await wfRun(workflowId)
     } catch (e) {
       setNotice(`启动失败：${String(e)}`)
     }
-  }, [workflowId, dirty, snapshot.running])
+  }, [workflowId, dirty, snapshot.running, gateRefresh])
 
   // ── sidecar 持久化（防抖）──
   const persistSidecar = useCallback(
@@ -894,6 +974,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
 
   // ── 删除 / 复制 / 添加 ──
   // id 可选：传入则操作指定节点（hover 操作按钮），缺省操作当前选中节点（快捷键）
+  // 录制双向同步：rec 在下方才创建，这里经 ref 转发 removeDraftByStepId（删除画布节点 → 反向删草稿）
+  const removeDraftByStepIdRef = useRef<(stepId: string) => void>(() => {})
   const deleteSelected = useCallback(
     async (id?: string) => {
       const targetId = id ?? selectedId
@@ -907,9 +989,11 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         )
         if (!ok) return
       }
-      await applyEdit({ op: 'remove_step', stepId: targetId })
+      const ok = await applyEdit({ op: 'remove_step', stepId: targetId })
       setSelectedId(null)
       setInspectorOpen(false)
+      // 大王反馈#8：画布删除成功 → 若该节点是录制草稿绑定的画布节点，联动删除对应草稿
+      if (ok) removeDraftByStepIdRef.current(targetId)
     },
     [selectedId, readOnly, applyEdit, askConfirm],
   )
@@ -973,13 +1057,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         setSelectedId(step.id)
         setInspectorOpen(true)
         setToolFocusId(kind === 'tool' ? step.id : null)
-        // 新节点可能落在当前视口外：重投影后聚焦到它（与 locateNode 同模式）
-        requestAnimationFrame(() => {
-          void rf.fitView({ nodes: [{ id: step.id }], padding: 0.4, duration: 200 })
-        })
+        focusStepFlow(step.id)
       }
     },
-    [layer, readOnly, selectedId, applyEdit, rf],
+    [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow],
   )
 
   // ── 工具面板：点击/拖拽创建 tool 步骤（with 按 input_schema required 预填骨架）──
@@ -1026,12 +1107,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       if (ok) {
         setSelectedId(step.id)
         setInspectorOpen(true)
-        requestAnimationFrame(() => {
-          void rf.fitView({ nodes: [{ id: step.id }], padding: 0.4, duration: 200 })
-        })
+        focusStepFlow(step.id)
       }
     },
-    [layer, readOnly, selectedId, laneFrames, applyEdit, rf],
+    [layer, readOnly, selectedId, laneFrames, applyEdit, rf, focusStepFlow],
   )
 
   // 工具注册表（与 Inspector/ToolPalette 共享模块级缓存）：拖拽 drop 时按名查 schema 预填骨架
@@ -1045,6 +1124,133 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       alive = false
     }
   }, [])
+
+  // ── 工作流录制：录制步骤带参真实入画布（applyEdit add_step，撤销一步可回退）──
+  // 返回新节点 id（成功）或 null（只读/插入被拒）——confirmPending 将其绑定到 draft.canvas_step_id
+  const addRecordedStep = useCallback(
+    async (req: InsertedRecordedStep): Promise<string | null> => {
+      const cur = stepsRef.current
+      if (!cur || !layer || readOnly) return null
+      const step = newStep(req.kind, collectIds(cur))
+      // 大王反馈#9：录制生成节点 name = 用户填的意图（非空；过长截断），避免运行校验「name 不能为空」
+      const name = req.name?.trim() || '录制步骤'
+      step.name = name.length > 40 ? `${name.slice(0, 40)}…` : name
+      step.do = req.do
+      if (req.capture) step.capture = req.capture
+      const { lane, index } = clickInsertion(cur, layer, selectedId)
+      const ok = await applyEdit({
+        op: 'add_step',
+        parent: { layerId: layer.layerId },
+        lane,
+        index,
+        step,
+      })
+      if (!ok) return null
+      setSelectedId(step.id)
+      flashStep(step.id) // 大王反馈：录制步骤确认入画布后闪光高亮，让用户立刻看到它出现在哪个间隙
+      focusStepFlow(step.id)
+      return step.id
+    },
+    [layer, readOnly, selectedId, applyEdit, rf, flashStep, focusStepFlow],
+  )
+
+  // ── 删除草稿联动画布节点：readOnly 守卫 + remove_step（deleteSelected 同管线）──
+  // 返回是否成功；节点不在画布/只读 → false（调用方仍删 draft，按边界降级提示）
+  const removeRecordedStep = useCallback(
+    async (stepId: string): Promise<boolean> => {
+      const cur = stepsRef.current
+      if (!cur || readOnly) return false
+      const loc = locateStep(cur, stepId)
+      if (!loc) return false // 节点不在画布（未 Ctrl+S 保存过 / 已手动删）→ 由草稿侧仅删 draft
+      const ok = await applyEdit({ op: 'remove_step', stepId })
+      if (ok && selectedId === stepId) {
+        setSelectedId(null)
+        setInspectorOpen(false)
+      }
+      return ok
+    },
+    [readOnly, selectedId, applyEdit],
+  )
+
+  const notifyRec = useCallback((msg: string) => setNotice(msg), [])
+
+  /** C3 前置检查的画布侧数据源：画布（含录制前手动添加的节点）是否已有 browser_navigate 步骤 */
+  const hasCanvasNavigateStep = useCallback(() => {
+    const cur = stepsRef.current
+    if (!cur) return false
+    let found = false
+    walkSteps(cur, s => {
+      if (found) return
+      const d = s.do as { tool?: unknown } | null | undefined
+      if (d && typeof d === 'object' && (d as { tool?: unknown }).tool === 'browser_navigate') {
+        found = true
+      }
+    })
+    return found
+  }, [])
+
+  const rec = useWorkflowRecorder({
+    workflowId,
+    readOnly,
+    notify: notifyRec,
+    insertStep: addRecordedStep,
+    removeStep: removeRecordedStep,
+    hasCanvasNavigateStep,
+  })
+  // 画布删除录制节点 → 反向删草稿（deleteSelected 经 ref 调用，避免重排 hook 顺序）
+  removeDraftByStepIdRef.current = rec.removeDraftByStepId
+
+  const requestAbortRec = useCallback(() => {
+    const n = rec.drafts.length
+    // 0 步直接结束（header「录制」再点=关闭的快捷路径，无需确认）；有草稿才二次确认防误丢
+    if (n === 0) {
+      void rec.abortSession()
+      return
+    }
+    void askConfirm(`放弃录制将清空已录制的 ${n} 步（画布中的节点保留，可撤销）。确认放弃？`).then(
+      ok => {
+        if (ok) void rec.abortSession()
+      },
+    )
+  }, [rec, askConfirm])
+
+  const requestCompleteRec = useCallback(
+    (notes: string) => {
+      void rec.completeSession(notes)
+    },
+    [rec],
+  )
+
+  // ── 进度持久化 + 草稿管理回调（RecorderBar/RecDraftPanel → rec hook）──
+  const requestSaveProgressRec = useCallback(
+    (notes: string) => {
+      void rec.saveProgress(notes)
+    },
+    [rec],
+  )
+
+  const requestEditDraftRec = useCallback(
+    (index: number, patch: RecDraftPatch) => {
+      rec.updateDraft(index, patch)
+    },
+    [rec],
+  )
+
+  const requestDeleteDraftRec = useCallback(
+    (index: number) => {
+      void rec.deleteDraft(index)
+    },
+    [rec],
+  )
+
+  const requestClearDraftsRec = useCallback(() => {
+    const n = rec.drafts.length
+    void askConfirm(
+      `清空草稿将删除全部 ${n} 步草稿记录与待恢复进度，并同步删除画布上对应的 ${n} 个录制节点（Ctrl+Z 可撤销画布删除）。确认清空？`,
+    ).then(ok => {
+      if (ok) void rec.clearDrafts()
+    })
+  }, [rec, askConfirm])
 
   // ── 工具面板拖拽入画布（HTML5 DnD）──
   const onToolDragOver = useCallback(
@@ -1107,7 +1313,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       } else if (e.key === 'Enter' && selectedId) {
         setInspectorOpen(true)
       } else if (e.key === 'Escape') {
-        if (addMenuOpen) setAddMenuOpen(false)
+        if (edgeInsert) setEdgeInsert(null)
+        else if (addMenuOpen) setAddMenuOpen(false)
         else if (inspectorOpen) setInspectorOpen(false)
         else setSelectedId(null)
       } else if (e.altKey && e.key === 'ArrowLeft') {
@@ -1131,6 +1338,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     readOnly,
     selectedId,
     addMenuOpen,
+    edgeInsert,
     inspectorOpen,
     layer,
     switchLayer,
@@ -1145,11 +1353,72 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       setSelectedId(stepId)
       setFlashId(stepId)
       setTimeout(() => setFlashId(null), 1500)
-      requestAnimationFrame(() => {
-        void rf.fitView({ nodes: [{ id: stepId }], padding: 0.4, duration: 200 })
-      })
+      focusStepFlow(stepId)
     },
-    [projection, layerId, switchLayer, rf],
+    [projection, layerId, switchLayer, rf, focusStepFlow],
+  )
+
+  // ── 连线中点插入（大王反馈）：SequenceEdge 派发 wf-insert-at → 记录 target edgeId + 屏幕坐标 ──
+  useEffect(() => {
+    const onInsertAt = (e: Event) => {
+      if (readOnly) return
+      const d = (e as CustomEvent<{ edgeId?: string; x?: number; y?: number }>).detail
+      if (!d?.edgeId) return
+      setEdgeInsert({ edgeId: d.edgeId, x: d.x ?? 0, y: d.y ?? 0 })
+    }
+    window.addEventListener(EDGE_INSERT_EVENT, onInsertAt)
+    return () => window.removeEventListener(EDGE_INSERT_EVENT, onInsertAt)
+  }, [readOnly])
+
+  /** 菜单标题预览：该边终点（插入后紧跟新节点的那个步骤）显示名 */
+  const edgeTargetName = useMemo(() => {
+    if (!edgeInsert || !steps || !layer) return null
+    const ce = layer.edges.find(e => e.id === edgeInsert.edgeId && e.kind === 'sequence')
+    if (!ce) return null
+    const loc = locateStep(steps, ce.target)
+    return loc?.step.name || loc?.step.id || null
+  }, [edgeInsert, steps, layer])
+
+  /**
+   * 从连线中点插入：把新步骤插到 target 节点前（原 sequence 边 source→target 变
+   * source→新→target 两条边——projection 由层内步骤顺序推导 seq 边，add_step 后自动重建）。
+   * 单次 applyEdit → undo 一步整体回退。
+   */
+  const insertAtEdge = useCallback(
+    async (kind: string) => {
+      const target = edgeInsert
+      setEdgeInsert(null) // 先收菜单：只读/失效/失败也不留残影
+      const cur = stepsRef.current
+      if (!cur || !layer || readOnly || !target) return
+      const ce = layer.edges.find(e => e.id === target.edgeId && e.kind === 'sequence')
+      if (!ce) {
+        setNotice('插入位置已失效（边结构已变化），请重新点击连线中点')
+        return
+      }
+      const tLoc = locateStep(cur, ce.target)
+      if (!tLoc) {
+        setNotice('无法定位该连线终点节点，未插入')
+        return
+      }
+      if (tLoc.layerId !== layer.layerId) {
+        setNotice('跨层连线暂不支持插入，请进入对应子层操作')
+        return
+      }
+      const step = newStep(kind, collectIds(cur))
+      const ok = await applyEdit({
+        op: 'add_step',
+        parent: { layerId: tLoc.layerId },
+        lane: tLoc.lane,
+        index: tLoc.index, // target 节点前 = 原边 source→新、新→target
+        step,
+      })
+      if (!ok) return
+      setSelectedId(step.id)
+      setInspectorOpen(true)
+      flashStep(step.id)
+      focusStepFlow(step.id)
+    },
+    [edgeInsert, layer, readOnly, applyEdit, rf, flashStep, focusStepFlow],
   )
 
   // ── 面包屑 ──
@@ -1186,6 +1455,19 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     return locateStep(steps, selectedId)?.step ?? null
   }, [selectedId, steps])
 
+  // ── 录制插入目标文案（大王反馈）：与 clickInsertion 同锚点语义，展示给 RecorderBar / 意图面板 ──
+  // 选中节点在当前层 → 「<锚点名> 之后」；否则首泳道末尾（与 add 行为一致）
+  const insertTargetLabel = useMemo(() => {
+    if (!steps || !layer) return null
+    const sel = selectedId ? locateStep(steps, selectedId) : null
+    const anchor = sel && sel.layerId === layer.layerId ? sel : null
+    if (anchor) {
+      const name = anchor.step.name || anchor.step.id
+      return `「${name}」之后`
+    }
+    return layer.swimlanes.length > 1 ? `${layer.swimlanes[0].title} 泳道末尾` : '层末尾'
+  }, [steps, layer, selectedId])
+
   if (!ir || !steps || !projection) {
     return (
       <div className="wfc-page">
@@ -1208,6 +1490,44 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         )}
 
         <div className="wfc-toolbar-spacer" />
+
+        <button
+          type="button"
+          className={`wfc-btn${rec.status !== 'off' ? ' wfc-btn--recording' : ''}`}
+          onClick={() => {
+            playUiSound('switch')
+            if (rec.status === 'off') {
+              // 闸门点击级复核（轮询窗口内竞态收口；后端 rec_set_workflow 另有兜底）
+              void (async () => {
+                const cur = await gateRefresh()
+                if (cur.locked) {
+                  setNotice(
+                    cur.reason === 'workflow'
+                      ? '工作流正在执行中，暂不可用！'
+                      : '当前有任务执行中，暂不可用！',
+                  )
+                  return
+                }
+                void rec.begin()
+              })()
+            } else requestAbortRec() // 录制进行中再点 = 关闭（0 步直接结束，有草稿二次确认）
+          }}
+          // 闸门锁定只锁「入口」：录制会话已建立（status !== off）时不禁用，否则无法收尾
+          disabled={readOnly || (gateLocked && rec.status === 'off')}
+          title={
+            readOnly
+              ? snapshot.running
+                ? '运行中 · 画布只读，不可录制'
+                : '只读画布，不可录制'
+              : gateLocked && rec.status === 'off'
+                ? gateLockNotice
+                : rec.status === 'off'
+                  ? '录制本工作流：演示操作 → 意图标注 → 生成 record-draft 草稿'
+                  : '录制进行中 — 再点此按钮结束录制（有草稿时需确认）'
+          }
+        >
+          <Mic size={13} /> 录制
+        </button>
 
         <button
           type="button"
@@ -1275,8 +1595,12 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           type="button"
           className="wfc-btn wfc-btn--primary"
           onClick={() => void runWorkflow()}
-          disabled={snapshot.running}
-          title="运行 / 断点续跑（R）：自动跳过上次已完成步骤"
+          disabled={snapshot.running || gateLocked}
+          title={
+            gateLocked && !snapshot.running
+              ? gateLockNotice
+              : '运行 / 断点续跑（R）：自动跳过上次已完成步骤'
+          }
         >
           <Play size={13} /> {lastRunFailed ? '续跑' : '运行'}
         </button>
@@ -1425,6 +1749,34 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         )}
       </div>
 
+      {/* ── 连线中点「在此插入」菜单（fixed 定位在圆点屏幕坐标旁；复用 wfc-add-item 项样式）── */}
+      {edgeInsert && (
+        <div
+          ref={edgeMenuWrapRef}
+          className="wfc-add-menu wfc-edge-add-menu"
+          style={{
+            left: Math.max(8, Math.min(edgeInsert.x + 12, window.innerWidth - 296)),
+            top: Math.max(8, Math.min(edgeInsert.y + 12, window.innerHeight - 400)),
+          }}
+        >
+          <div className="wfc-edge-add-title">
+            {edgeTargetName ? `在此插入（插到「${edgeTargetName}」之前）` : '在此插入'}
+          </div>
+          {ADDABLE_KINDS.map(({ kind, desc }) => (
+            <button
+              type="button"
+              key={kind}
+              className="wfc-add-item"
+              title={desc}
+              onClick={() => void insertAtEdge(kind)}
+            >
+              <span className="wfc-add-item-kind">{kind}</span>
+              <span className="wfc-add-item-desc">{desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── 问题面板 ── */}
       <ProblemsPanel
         problems={problems}
@@ -1462,6 +1814,35 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
             </div>
           </div>
         </div>
+      )}
+      {/* ── 录制浮层（idle/capturing；pending 由意图面板接管） ── */}
+      {(rec.status === 'idle' || rec.status === 'capturing') && (
+        <RecorderBar
+          status={rec.status}
+          action={rec.capturingAction}
+          drafts={rec.drafts}
+          insertTargetLabel={insertTargetLabel}
+          onPick={a => void rec.pick(a)}
+          onCancelCapture={rec.cancelCapture}
+          onAbort={requestAbortRec}
+          onComplete={requestCompleteRec}
+          onSaveProgress={requestSaveProgressRec}
+          onEditDraft={requestEditDraftRec}
+          onDeleteDraft={requestDeleteDraftRec}
+          onClearDrafts={requestClearDraftsRec}
+        />
+      )}
+
+      {/* ── 意图面板（每步确认 → 真实入画布 + draft 计数+1） ── */}
+      {rec.status === 'pending' && rec.pending && (
+        <RecIntentPanel
+          pending={rec.pending}
+          onConfirm={rec.confirmPending}
+          onCancel={rec.discardPending}
+          onRecapture={() => void rec.recaptureBrowserClick()}
+          onSelectElement={() => void rec.captureBrowserExtractElement()}
+          insertTargetLabel={insertTargetLabel}
+        />
       )}
     </div>
   )

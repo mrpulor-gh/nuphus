@@ -154,6 +154,10 @@ interface ChatPanelProps {
   /** 桌面工具箱（Ctrl+U）显示状态与切换（workflow 模式输入栏按钮） */
   showDesktopToolbar?: boolean
   onToggleDesktopToolbar?: () => void
+  /** workflow 扳手菜单「工作流画布」：直达画布（续草稿或新建） */
+  onOpenWorkflowCanvas?: () => void
+  /** workflow 扳手菜单「工作流列表」：打开 WorkflowPage（等同 Ctrl+K → 工作流） */
+  onOpenWorkflowList?: () => void
 }
 
 export function ChatPanel({
@@ -206,6 +210,8 @@ export function ChatPanel({
   isWorkflowRunning,
   showDesktopToolbar,
   onToggleDesktopToolbar,
+  onOpenWorkflowCanvas,
+  onOpenWorkflowList,
   onRate,
   onShowExecTrace,
 }: ChatPanelProps) {
@@ -1229,6 +1235,12 @@ export function ChatPanel({
                   <button
                     className="refine-confirm-btn"
                     onClick={() => {
+                      // 提炼执行中（refining 由另一端/本端刚触发）不重复触发：
+                      // 关闭确认弹窗但不发起第二次 refine
+                      if (refining) {
+                        setShowRefineConfirm(false)
+                        return
+                      }
                       setShowRefineConfirm(false)
                       // 与 refine 弹窗路径一致：进入提炼中状态（全屏遮罩由全局
                       // refining 驱动，refine-pending-btn 路径同样触发）
@@ -1837,6 +1849,8 @@ export function ChatPanel({
           isWorkflowRunning={isWorkflowRunning}
           showDesktopToolbar={showDesktopToolbar}
           onToggleDesktopToolbar={onToggleDesktopToolbar}
+          onOpenWorkflowCanvas={onOpenWorkflowCanvas}
+          onOpenWorkflowList={onOpenWorkflowList}
           toolPermissions={toolPermissions}
           onFileSelect={handleFileSelect}
           onImageAttach={handleImageAttach}

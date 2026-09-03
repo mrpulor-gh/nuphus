@@ -382,6 +382,18 @@
   color: var(--error);
 }
 
+/* ── 全局执行闸门锁定提示条（大王铁律：执行中禁止启动工作流/进入画布）── */
+.gate-banner {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(var(--warning-rgb), 0.1);
+  border-radius: var(--radius-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--fz-sm);
+  color: var(--warning);
+}
+
 /* ── 删除按钮（hover 变红，替代 JS 事件改 style 的反模式）── */
 .delete-btn {
   opacity: 0.5;

@@ -572,7 +572,6 @@ export function switchModel(
 // ── Agent 级模型配置（高级设置） ──
 
 export interface AgentModels {
-  default: string
   leader: string
   workflow: string
   exec: string
@@ -912,6 +911,20 @@ export function wfRun(id: string) {
   return invoke<string>('wf_run', { id })
 }
 
+export interface WfGateStatus {
+  /** true = 已锁定（有 active workflow run 或 Agent busy） */
+  locked: boolean
+  /** 'workflow'（工作流执行中）| 'agent'（Agent 跑任务）| 'idle' */
+  reason: 'workflow' | 'agent' | 'idle'
+  owner?: string
+  workflow_id?: string
+}
+
+/** 全局执行闸门查询（WorkflowPage / CanvasPage 锁定态权威源） */
+export function wfGateStatus() {
+  return invoke<WfGateStatus>('wf_gate_status')
+}
+
 /** 读取画布布局 sidecar（缺失/损坏返回 null → 全量自动布局） */
 export function wfLayoutGet(id: string) {
   return invoke<Record<string, unknown> | null>('wf_layout_get', { id })
@@ -1087,6 +1100,8 @@ export interface MobileServerStatus {
   port: number
   token: string
   lan_url: string | null
+  /** 局域网 HTTPS 直连地址（https://IP:18773，自签 CA）；TLS 未启动时为 null */
+  lan_url_https: string | null
   /** 是否已设置配对密码（配对凭证：密码换 token） */
   password_set: boolean
 }

@@ -213,6 +213,18 @@ pub async fn wf_run(state: State<'_, AppState>, id: String) -> Result<String, St
 
     let engine = state.workflow_engine.clone();
     let tools = state.tools.clone();
+
+    // ── 全局执行闸门前置（大王铁律）──
+    // 让 UI 直接拿到拒绝（而非 spawn 内 execute_workflow 拒绝后只有服务端日志）；
+    // 后端 execute_workflow 仍会二次校验（防 spawn 竞态窗口）。
+    {
+        let engine_r = engine.read().await;
+        let active = engine_r.active_run_info();
+        if active.is_some() || state.busy.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("当前有任务执行中，暂不可用！".to_string());
+        }
+    }
+
     tauri::async_runtime::spawn(async move {
         let tool_exec = move |tool: String, params: serde_json::Value| {
             let tools = tools.clone();
@@ -230,7 +242,14 @@ pub async fn wf_run(state: State<'_, AppState>, id: String) -> Result<String, St
         let engine_r = engine.read().await;
         let tool_schemas = engine_r.tools().map(|t| t.get_schemas());
         if let Err(e) = engine_r
-            .execute_workflow(&id, tool_exec, tool_schemas, None, None)
+            .execute_workflow(
+                &id,
+                tool_exec,
+                tool_schemas,
+                None,
+                None,
+                nuphus::workflow::WorkflowRunSource::Ui,
+            )
             .await
         {
             tracing::error!("[wf_run] Workflow {} failed: {}", id, e);
@@ -283,4 +302,28 @@ pub async fn wf_layout_save(id: String, layout: serde_json::Value) -> Result<(),
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 全局执行闸门查询（WorkflowPage / CanvasPage 锁定态唯一权威源）
+///
+/// locked = 已有 active workflow run 或 Agent busy（state.busy）。
+/// reason: "workflow"（工作流执行中）| "agent"（Agent 跑代码/跑任务）| "idle"。
+#[tauri::command]
+pub async fn wf_gate_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let engine = state.workflow_engine.read().await;
+    let active = engine.active_run_info();
+    let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
+    let (locked, reason) = if active.is_some() {
+        (true, "workflow")
+    } else if busy {
+        (true, "agent")
+    } else {
+        (false, "idle")
+    };
+    Ok(serde_json::json!({
+        "locked": locked,
+        "reason": reason,
+        "owner": active.as_ref().map(|a| a.owner.as_str()),
+        "workflow_id": active.as_ref().map(|a| a.workflow_id.as_str()),
+    }))
 }
