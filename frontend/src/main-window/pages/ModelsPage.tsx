@@ -288,9 +288,8 @@ export function ModelsPage({
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [voiceFeedback, setVoiceFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
-  // Agent 级模型配置（高级设置）：leader/workflow/exec/custom 各自模型，空 = 跟随 default
+  // Agent 级模型配置（高级设置）：exec 模型
   const [agentModels, setAgentModels] = useState<AgentModels>({
-    default: '',
     leader: '',
     workflow: '',
     exec: '',
@@ -922,43 +921,20 @@ export function ModelsPage({
             {detectError && <div className="detect-error">{detectError}</div>}
           </Section>
 
-          {/* ── 高级设置：Agent 级模型配置 ── */}
+          {/* ── 高级设置：ExecAgent ── */}
           <Section
             title="高级设置"
-            description="默认模型（未设置时跟随 Leader）与 ExecAgent 模型。Leader / Workflow / Custom 的模型由输入框按当前模式选择。"
+            description="ExecAgent（子Agent）由 leader 模式下派发，执行任务所使用的模型。"
           >
-            <div className="agent-models-grid">
-              {(
-                [
-                  ['default', '默认模型', '未设置时跟随 Leader 模型'],
-                  ['exec', 'ExecAgent', '子任务执行的模型（仅在此配置，未设置跟随默认模型）'],
-                ] as [string, string, string][]
-              ).map(([agent, label, hint]) => (
-                <FormRow
-                  key={agent}
-                  stacked
-                  label={
-                    <>
-                      {label}
-                      <span className="agent-models-hint">{hint}</span>
-                    </>
-                  }
-                  control={
-                    <VisionModelSelect
-                      value={agentModels[agent as keyof AgentModels]}
-                      models={allModels}
-                      onChange={m => void saveAgentModel(agent, m)}
-                      t={t}
-                      placeholder={agent === 'default' ? '跟随 Leader' : '跟随默认模型'}
-                    />
-                  }
-                />
-              ))}
-            </div>
+            <VisionModelSelect
+              value={agentModels.exec}
+              models={allModels}
+              onChange={m => void saveAgentModel('exec', m)}
+              t={t}
+              placeholder="跟随 Leader"
+            />
             <div className="form-hint agent-models-feedback">
-              {agentFeedback
-                ? `${agentFeedback.ok ? '✓' : '⚠'} ${agentFeedback.msg}`
-                : '在 Leader / Workflow / Custom 模式切换模型会自动写入对应 agent 配置'}
+              {agentFeedback ? `${agentFeedback.ok ? '✓' : '⚠'} ${agentFeedback.msg}` : ''}
             </div>
           </Section>
 

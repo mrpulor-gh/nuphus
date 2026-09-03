@@ -203,7 +203,6 @@ fn update_last_used(
 /// Agent 级模型配置（空字符串 = 未设置 → 跟随 default → 跟随 leader）
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AgentModels {
-    pub default: String,
     pub leader: String,
     pub workflow: String,
     pub exec: String,
@@ -211,7 +210,7 @@ pub struct AgentModels {
 }
 
 impl AgentModels {
-    pub const AGENTS: [&'static str; 5] = ["default", "leader", "workflow", "exec", "custom"];
+    pub const AGENTS: [&'static str; 4] = ["leader", "workflow", "exec", "custom"];
 
     pub fn set(&mut self, agent: &str, model: String) {
         match agent {
@@ -219,7 +218,7 @@ impl AgentModels {
             "workflow" => self.workflow = model,
             "exec" => self.exec = model,
             "custom" => self.custom = model,
-            _ => self.default = model,
+            _ => {}
         }
     }
 }
@@ -239,12 +238,6 @@ pub fn load_agent_models(providers_path: &std::path::Path) -> AgentModels {
     for agent in AgentModels::AGENTS {
         if let Some(v) = section.get(agent).and_then(|v| v.as_str()) {
             out.set(agent, v.to_string());
-        }
-    }
-    // 兼容旧字段：`global`（旧版全局默认）→ `default`
-    if out.default.is_empty() {
-        if let Some(v) = section.get("global").and_then(|v| v.as_str()) {
-            out.default = v.to_string();
         }
     }
     out
@@ -286,8 +279,7 @@ fn save_agent_model(
 ///
 /// 解析链（「可用」= 非空且 `registry.find_model` 命中）：
 ///   leader_eff   = leader 可用 ? leader : registry.model（锚点，providers.toml 顶部 model 字段）
-///   default_eff  = default 可用 ? default : leader_eff
-///   workflow/custom/exec_eff = 各自可用 ? 各自 : default_eff
+///   workflow/custom/exec_eff = 各自可用 ? 各自 : leader_eff
 /// `mode` 为 "leader" 或未知 → leader_eff。
 pub fn effective_model(
     providers_path: &std::path::Path,
@@ -302,32 +294,27 @@ pub fn effective_model(
     } else {
         registry.model.clone()
     };
-    let default = if avail(&am.default) {
-        am.default.clone()
-    } else {
-        leader.clone()
-    };
 
     match mode {
         "workflow" => {
             if avail(&am.workflow) {
                 am.workflow.clone()
             } else {
-                default
+                leader
             }
         }
         "custom" => {
             if avail(&am.custom) {
                 am.custom.clone()
             } else {
-                default
+                leader
             }
         }
         "exec" => {
             if avail(&am.exec) {
                 am.exec.clone()
             } else {
-                default
+                leader
             }
         }
         _ => leader,
@@ -1878,10 +1865,9 @@ mod tests {
 
     #[test]
     fn effective_model_full_resolution() {
-        let am = "[agent_models]\nleader = \"leader-model\"\ndefault = \"default-model\"\nworkflow = \"wf-model\"\nexec = \"exec-model\"\ncustom = \"custom-model\"\n";
+        let am = "[agent_models]\nleader = \"leader-model\"\nworkflow = \"wf-model\"\nexec = \"exec-model\"\ncustom = \"custom-model\"\n";
         let ids = [
             "leader-model",
-            "default-model",
             "wf-model",
             "exec-model",
             "custom-model",
@@ -1911,7 +1897,7 @@ mod tests {
     #[test]
     fn effective_model_fallback_chain() {
         // leader 配置了但 registry 无此模型（不可用）→ 回退顶部 model
-        let am = "[agent_models]\nleader = \"missing-leader\"\ndefault = \"missing-default\"\n";
+        let am = "[agent_models]\nleader = \"missing-leader\"\n";
         let ids = ["wf-model", "fallback-model"];
         let (am_path, cfg_path) = write_fixtures(am, &ids, "fallback-model");
         let registry =
@@ -1922,12 +1908,7 @@ mod tests {
             effective_model(&am_path, &registry, "leader"),
             "fallback-model"
         );
-        // default 不可用 → 回退 leader（=fallback-model）
-        assert_eq!(
-            effective_model(&am_path, &registry, "default"),
-            "fallback-model"
-        );
-        // workflow 未配置（空）→ 回退 default → leader → fallback-model
+        // workflow 未配置（空）→ 回退 leader → fallback-model
         // （注意：registry 里有 wf-model，但 agent_models 未显式配置 workflow 字段，
         //   effective_model 不会「发现」它——只有显式配置才生效）
         assert_eq!(
