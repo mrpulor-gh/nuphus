@@ -18,6 +18,7 @@ import {
   Plus,
   RefreshCw,
   Sun,
+  Wifi,
   Wrench,
   X,
 } from 'lucide-react'
@@ -58,6 +59,12 @@ interface Props {
   sessions?: ShelfSessions | null
   /** 遥控切换桌面当前会话（切的就是电脑端正显示的视图） */
   onSwitchSession?: (id: string, mode?: string) => void
+  /** 中继通道手动「切换到本地网络」：整页跳转 http 局域网（NavBar 网络弹窗中展示，仅 wan） */
+  onSwitchToLanManual?: () => void
+  /** header wifi 图标：打开切本地网络确认弹窗（仅 wan 展示；样式同主题/字体图标钮） */
+  onLanSwitchRequest?: () => void
+  /** 手动切本地请求进行中（跳转解析中；按钮 disabled + busy 提示） */
+  lanSwitching?: boolean
 }
 
 /** 设置抽屉视图：单面板内容切换（点选项 → 面板内刷新）
@@ -148,6 +155,9 @@ export default function NavBar({
   onDisconnect,
   sessions,
   onSwitchSession,
+  onSwitchToLanManual,
+  onLanSwitchRequest,
+  lanSwitching,
 }: Props) {
   const [now, setNow] = useState(Date.now())
   const [theme, setTheme] = useState<MobileTheme>(getTheme)
@@ -883,6 +893,27 @@ export default function NavBar({
               <span className="mobile-settings-card-title is-secondary">历史记录</span>
               <span className="mobile-settings-card-value is-action">拉取同步</span>
             </button>
+            {/* 中继通道手动「切换到本地网络」：整页跳转 http 局域网（top-level 不受 mixed
+                content 限制）。仅 wan（经中继打开）展示；局域网 http 页已直连无需切。 */}
+            {connMode === 'wan' && onSwitchToLanManual && (
+              <button
+                type="button"
+                className="mobile-settings-card-row is-secondary"
+                disabled={lanSwitching}
+                onClick={() => {
+                  setNetworkOpen(false)
+                  onSwitchToLanManual?.()
+                }}
+              >
+                <RefreshCw size={14} className="mobile-settings-card-icon" aria-hidden="true" />
+                <span className="mobile-settings-card-title is-secondary">
+                  {t('mobile.networkSwitchLan')}
+                </span>
+                <span className="mobile-settings-card-value is-action">
+                  {lanSwitching ? t('mobile.networkSwitchLanBusy') : t('mobile.networkSwitchLanGo')}
+                </span>
+              </button>
+            )}
             <div className="mobile-settings-conn-list">
               <div className="mobile-settings-conn-item">
                 <span className="mobile-settings-conn-label is-direct">直连</span>
@@ -987,6 +1018,19 @@ export default function NavBar({
           </div>
         )}
       </div>
+      {/* 中继通道手动「切换到本地网络」快捷入口（wifi 图标，仅 wan；点击弹确认框展示直连地址）。
+          样式与字体/主题按钮一致（32px 圆形图标钮，44pt 热区）；lan 已直连无需切换故隐藏。 */}
+      {connMode === 'wan' && onLanSwitchRequest && (
+        <button
+          type="button"
+          className="mobile-nav-theme"
+          aria-label={t('mobile.networkSwitchLan')}
+          disabled={lanSwitching}
+          onClick={onLanSwitchRequest}
+        >
+          <Wifi size={16} aria-hidden="true" />
+        </button>
+      )}
       <button
         type="button"
         className="mobile-nav-theme"

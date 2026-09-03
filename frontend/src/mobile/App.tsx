@@ -101,6 +101,12 @@ export default function App() {
   const [ratingMsg, setRatingMsg] = useState<ChatMessage | null>(null)
   /** 工作流遥控请求进行中（防重复提交；失败 toast 提示） */
   const [wfControlBusy, setWfControlBusy] = useState(false)
+  /** 会话提炼确认 in-flight 锁：POST /refine 是 await 整轮提炼的请求（90s 级），
+   *  提炼执行中 refining=true。同帧双击 / 重复点击会在 state 渲染生效前再触发
+   *  onRefineConfirm → 第二发 POST 被后端防重拒绝（提炼进行中）→ catch 提前
+   *  dispatch refining:false，破坏第一发提炼执行的 UI 锁（弹窗/入口重新可触发）。
+   *  用 ref 锁（不依赖 state 渲染时机）挡住并发重入；请求 settle 后释放。 */
+  const refineTriggerLockRef = useRef(false)
   /** 桌面展示台会话清单镜像（null = 未加载/不可用，隐藏「会话」入口） */
   const [sessions, setSessions] = useState<ShelfSessions | null>(null)
   const [switchBusy, setSwitchBusy] = useState(false)
@@ -133,13 +139,14 @@ export default function App() {
     [],
   )
 
-  /** 获取最新桌面局域网地址：优先 /relay-hint（桌面实时下发，IP 变化可感知），缓存兜底。 */
+  /** 获取最新桌面局域网地址：优先 /relay-hint（桌面实时下发，IP 变化可感知），缓存兜底。
+   *  返回 http 基址（top-level 导航/旧路径兼容）——手动「切到本地网络」整页跳转用。 */
   const resolveLanUrl = useCallback(async (): Promise<string | null> => {
     try {
       const hint = await fetchRelayHint(token ?? '')
       if (hint) {
-        // 只缓存非凭据字段（lan_url + relay_url 隧道入口）：hint 里的 caller_token 已无
-        // 消费方（POST /task 通道已移除），长期缓存高权限凭据只会扩大 XSS 泄漏面（审计 P3-5 修复）
+        // 只缓存非凭据字段（lan_url + relay_url 隧道入口）：hint 里的 caller_token
+        // 已无消费方（POST /task 通道已移除），长期缓存高权限凭据只会扩大 XSS 泄漏面
         saveRelayCache({
           lan_url: hint.lan_url,
           relay_url: hint.tunnel_url,
@@ -184,6 +191,151 @@ export default function App() {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4000)
   }, [])
+
+  /**
+   * 手动「切换到本地网络」：中继页(https) 应用内切 http 局域网被 Mixed Content 拦（iOS），
+   * 唯一本地直连形态 = 整页跳转 http://<IP>:18772?token=（top-level 导航不受 mixed content 限制）。
+   * resolveLanUrl 刷新 hint（IP 变化可感知）；拿不到（hint 不通/无缓存）→ toast 不跳转。
+   */
+  const [lanSwitching, setLanSwitching] = useState(false)
+
+  /** 切本地网络确认弹窗（header wifi 图标入口）：null=关闭 / resolving=解析中 / ready=已拿地址 / error=拿不到 */
+  type LanDialogState =
+    { status: 'resolving' } | { status: 'ready'; url: string } | { status: 'error' }
+  const [lanDialog, setLanDialog] = useState<LanDialogState | null>(null)
+
+  /** 跳转看门狗（根治「一直解析中」）：location.assign 后若导航被拦 / 页面经 bfcache
+   *  恢复未卸载，lanSwitching 会永久卡 true。定时器 6s 内仍在本页 → 自动复位 + 提示
+   * （成功跳转则页面卸载，定时器随 effect cleanup 消失；幂等，重复触发无害）。 */
+  useEffect(() => {
+    if (!lanSwitching) return
+    const startedAt = Date.now()
+    const tid = window.setInterval(() => {
+      if (Date.now() - startedAt >= 6000) {
+        window.clearInterval(tid)
+        setLanSwitching(false)
+        showToast(t('mobile.lanSwitchJumpFailed'))
+      }
+    }, 1000)
+    return () => window.clearInterval(tid)
+  }, [lanSwitching, showToast])
+
+  /** 执行整页跳转到局域网直连（top-level 导航不受 mixed content 限制） */
+  const doLanJump = useCallback(
+    (lanUrl: string) => {
+      if (!token) return
+      const base = lanUrl.replace(/\/+$/, '')
+      const sep = base.includes('?') ? '&' : '?'
+      setLanSwitching(true)
+      window.location.assign(`${base}${sep}token=${encodeURIComponent(token)}`)
+    },
+    [token],
+  )
+
+  /** 网络弹窗行「切换到本地网络」：解析最新地址后直接整页跳转（行入口已表达意图，不二次确认） */
+  const goLanDirect = useCallback(async () => {
+    if (!token || lanSwitching) return
+    setLanSwitching(true)
+    try {
+      const lanUrl = await resolveLanUrl()
+      if (!lanUrl) {
+        showToast(t('mobile.lanSwitchNoUrl'))
+        setLanSwitching(false)
+        return
+      }
+      doLanJump(lanUrl)
+    } catch {
+      setLanSwitching(false)
+      showToast(t('mobile.lanSwitchFailed'))
+    }
+  }, [token, lanSwitching, resolveLanUrl, showToast, doLanJump])
+
+  /** header wifi 图标：打开确认弹窗。缓存即时可用先展示（可立即确定），后台刷 hint 更新地址 */
+  const requestLanSwitch = useCallback(async () => {
+    if (lanDialog && lanDialog.status !== 'error') return
+    const cached = getCachedLanUrl()
+    if (cached) {
+      setLanDialog({ status: 'ready', url: cached })
+    } else {
+      setLanDialog({ status: 'resolving' })
+    }
+    let fresh: string | null = null
+    try {
+      fresh = await resolveLanUrl()
+    } catch {
+      fresh = null
+    }
+    setLanDialog(prev => {
+      if (!prev) return prev
+      if (fresh) return { status: 'ready', url: fresh }
+      if (prev.status === 'resolving') return { status: 'error' }
+      return prev // 缓存已 ready 且刷新失败 → 保持缓存
+    })
+  }, [lanDialog, resolveLanUrl])
+
+  const confirmLanSwitch = useCallback(() => {
+    if (lanDialog?.status !== 'ready') return
+    const url = lanDialog.url
+    setLanDialog(null)
+    doLanJump(url)
+  }, [lanDialog, doLanJump])
+
+  const cancelLanSwitch = useCallback(() => {
+    setLanDialog(null)
+  }, [])
+
+  /** 手动切本地网络确认弹窗（header wifi 图标入口）：地址展示 + 取消/确定（主题色） */
+  const renderLanSwitchDialog = () => {
+    if (!lanDialog) return null
+    return (
+      <div className="mobile-newchat-overlay" onClick={cancelLanSwitch}>
+        <div
+          className="mobile-newchat-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('mobile.lanSwitchDialogTitle')}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="mobile-newchat-title">{t('mobile.lanSwitchDialogTitle')}</div>
+          <div className="mobile-lan-dialog-body">
+            <p className="mobile-lan-dialog-desc">{t('mobile.lanSwitchDialogDesc')}</p>
+            {lanDialog.status === 'resolving' ? (
+              <p className="mobile-lan-dialog-addr is-busy" role="status">
+                <span className="mobile-boot-spinner" aria-hidden="true" />
+                <span>{t('mobile.networkSwitchLanBusy')}</span>
+              </p>
+            ) : lanDialog.status === 'ready' ? (
+              <p className="mobile-lan-dialog-addr">
+                {t('mobile.lanSwitchDialogDirect')}
+                <code>{lanDialog.url}</code>
+              </p>
+            ) : (
+              <p className="mobile-lan-dialog-addr is-err">{t('mobile.lanSwitchDialogError')}</p>
+            )}
+          </div>
+          <div className="mobile-newchat-actions">
+            <button
+              type="button"
+              className="mobile-newchat-btn is-cancel"
+              onClick={cancelLanSwitch}
+            >
+              {t('mobile.lanSwitchCancel')}
+            </button>
+            <button
+              type="button"
+              className="mobile-newchat-btn is-start"
+              disabled={lanDialog.status === 'resolving'}
+              onClick={
+                lanDialog.status === 'error' ? () => void requestLanSwitch() : confirmLanSwitch
+              }
+            >
+              {lanDialog.status === 'error' ? t('mobile.lanSwitchRetry') : t('mobile.lanSwitchOk')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   /** 刷新会话清单镜像（失败静默 → 入口隐藏，不打扰主流程） */
   const refreshSessions = useCallback((tk: string) => {
@@ -287,7 +439,11 @@ export default function App() {
             historyRetryAttemptRef.current = attempt + 1
             historyRetryTimerRef.current = setTimeout(() => {
               historyRetryTimerRef.current = null
-              void loadHistory(token)
+              // manual=true：与手动重拉同理由——自动重试本质是断线/隧道半死期的补拉，
+              // 此时 WS 可能离线导致 running 失真（false），后端若正在执行（session_backup
+              // 缺当前轮），stalePending 对账会误删本地已受理 pending 消息（实测同因，
+              // 2026-09-03 审查）。补拉只做合并，对账留给通道健康路径（首拉 / onReady）。
+              void loadHistory(token, { manual: true })
             }, delay)
           }
         }
@@ -416,7 +572,7 @@ export default function App() {
       // origin 跳转；浏览器/扫码入口同样先中继界面，视觉原生统一）。
       if (cancelled) return
       setConnMode('wan')
-      // 后台顺手拉一次 hint：缓存隧道入口 + 局域网地址（不阻塞启动；切回局域网用）
+      // 后台顺手拉一次 hint：缓存隧道入口 + 局域网 http 地址（不阻塞启动；切回局域网用）
       void fetchRelayHint(token).then(hint => {
         if (hint)
           saveRelayCache({
@@ -449,6 +605,8 @@ export default function App() {
     if (connMode === 'wan') {
       void (async () => {
         try {
+          // 快路径：缓存 lan_url 直接探测（本地网络 <100ms，不依赖隧道）；
+          // 缓存缺失/失败才走 resolveLanUrl（hint 实时地址，IP 变化可感知）→ 探测。
           const cached = getCachedLanUrl()
           if (cached) {
             const r0 = await probeLanDirect(cached, token)
@@ -508,22 +666,28 @@ export default function App() {
           dispatch({ type: 'event', event })
         },
         onReady: () => {
-          // 订阅激活（含每次重连）：立即拉取历史补齐断线间隙（v0.1.5 逻辑）。
+          // 订阅激活（含每次重连）：拉取历史补齐断线间隙（v0.1.5 逻辑）。
           // ⚠️ 不做「等 snapshot 再拉」——snapshot 只负责 welcome/running 快速呈现，
           // 历史以 loadHistory 全量拉取为准；onReady 每次连接都拉 → 与桌面永远一致，
           // 不同步根治（2026-08-26 实测：快照清空 + 依赖拉取时机 = 断线重连丢历史）。
+          // 顺序约束：必须先 fetchAgentStatus 恢复 running，再 loadHistory——断线期间
+          // 后端可能已开始执行（前端 running 失真 false，broadcast 事件不为迟到订阅者
+          // 补发）；若 history_merge 先跑，live 保护读到的 running=false，会误把「已受理
+          // 但后端执行中 session_backup 缺当前轮」的本地 pending 消息判为未送达而删除
+          // （与手动重拉误删同因，2026-09-03 审查发现）。fetchAgentStatus 先恢复 running，
+          // merge 对账才有正确的执行态输入。
           refreshSessions(token)
-          void loadHistory(token)
-          // 恢复执行状态：broadcast 事件不为迟到订阅者补发，刷新/断线间隙的
-          // execution_started/completed 会丢失——据此恢复 running，让后续 delta 正常
-          // 累积气泡、完成结果经历史拉取落地（修复刷新后回复看不到）。
-          // refine_active 同理：恢复「正在提炼」态，结束事件照常复位。
           void fetchAgentStatus(token)
             .then(s => {
               dispatch({ type: 'sync_running', running: s.running })
               dispatch({ type: 'refine_state', refining: s.refine_active === true })
+              void loadHistory(token)
             })
-            .catch(e => console.warn('[mobile] fetchAgentStatus failed:', e))
+            .catch(e => {
+              console.warn('[mobile] fetchAgentStatus failed:', e)
+              // 状态恢复失败仍要补拉历史（running 未知按旧值，历史一致性优先）
+              void loadHistory(token)
+            })
         },
         onStatus: s => {
           wsStatusRef.current = s
@@ -657,7 +821,7 @@ export default function App() {
     let consecutiveOk = 0
     const probe = async () => {
       // resolveLanUrl 优先 fetchRelayHint（经隧道），隧道半死时回退 getCachedLanUrl
-      // （localStorage 缓存的 lan_url）→ 仍能拿到局域网地址去探测。
+      // （localStorage 缓存的 lan_url）→ 仍能拿到局域网地址去探测（http-only）。
       const lanUrl = await resolveLanUrl()
       if (cancelled || !lanUrl) return
       const r = await probeLanDirect(lanUrl, token)
@@ -672,7 +836,8 @@ export default function App() {
         // Mixed Content 拦截（HTTPS 中继页探测 HTTP 局域网被拦）——**不切换**：
         // 2026-09-01 实测应用内 switchToLan 后 WS/REST 走 http 局域网被 iOS 拦死
         // （连接中 + 发送失败 + 与 2s 反向巡检 8s 振荡）。blocked 表示探测被拦无法
-        // 确认同 WiFi；保持中继，等探测真正 ok 才应用内切。
+        // 确认同 WiFi；保持中继，等探测真正 ok 才应用内切。手动切本地走连接状态区按钮
+        // （top-level 整页跳转，不受 mixed content 限制）。
         if (cancelled) return
         consecutiveOk = 0
         return
@@ -894,7 +1059,14 @@ export default function App() {
         </div>
       )
     }
-    return <div className="mobile-boot" />
+    return (
+      <div className="mobile-boot">
+        <div className="mobile-boot-status">
+          <span className="mobile-boot-spinner" aria-hidden="true" />
+          <span>{phase === 'loading' ? t('mobile.bootStarting') : t('mobile.bootConnecting')}</span>
+        </div>
+      </div>
+    )
   }
   if (phase === 'guide') {
     return <PairingGuide invalid={authInvalid} onPair={handlePair} />
@@ -927,6 +1099,9 @@ export default function App() {
           model={state.model}
           tokenUsage={state.tokenUsage}
           connMode={connMode}
+          onSwitchToLanManual={goLanDirect}
+          onLanSwitchRequest={requestLanSwitch}
+          lanSwitching={lanSwitching}
           workflowRun={state.workflowRun}
           wfControlBusy={wfControlBusy}
           onWorkflowPause={() =>
@@ -994,13 +1169,27 @@ export default function App() {
             showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
           }}
           onRefineConfirm={() => {
+            // in-flight 锁：提炼请求已发出/提炼执行中不重复触发（双击 / 另一端
+            // 已开始 refine 时，弹窗虽被 refining 隐藏但请求仍可能被重复 POST）
+            if (refineTriggerLockRef.current) return
+            refineTriggerLockRef.current = true
             dispatch({ type: 'refine_resolve' })
             dispatch({ type: 'refine_state', refining: true })
             // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
-            triggerRefine(token ?? '').catch(() => {
-              dispatch({ type: 'refine_state', refining: false })
-              showToast(t('mobile.refineFailed'))
-            })
+            triggerRefine(token ?? '')
+              .catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : String(err ?? '')
+                // 后端防重拒绝（提炼进行中）说明另一端/本端第一发已在提炼：
+                // 不置 refining=false（否则会破坏真实提炼的 UI 锁，弹窗/入口
+                // 提前重新可触发），等 RefineExecuting/session_refined 事件权威收敛。
+                if (msg.includes('提炼进行中')) return
+                // 请求层失败（网络/后端不可用）：释放锁，避免 UI 永久锁死
+                dispatch({ type: 'refine_state', refining: false })
+                showToast(t('mobile.refineFailed'))
+              })
+              .finally(() => {
+                refineTriggerLockRef.current = false
+              })
           }}
           onRefineSkip={() => {
             dispatch({ type: 'refine_resolve' })
@@ -1023,6 +1212,7 @@ export default function App() {
           />
         )}
       </MobileErrorBoundary>
+      {renderLanSwitchDialog()}
     </>
   )
 }

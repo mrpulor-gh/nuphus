@@ -999,7 +999,10 @@ const en: Record<string, string> = {
   'mobile.backupInline': 'Same Wi-Fi backup',
   'mobile.relayHost': 'Relay address',
   'mobile.relayWaveNote': 'The relay server is hosted overseas — network may fluctuate',
-  'mobile.qrCaption': 'Scan with your phone (works away from home)',
+  'mobile.qrStep1': 'First connection: set a pairing password to generate your private QR code',
+  'mobile.qrStep2':
+    'The QR code is the single entry: relay by default, switch to LAN direct manually when needed',
+  'mobile.qrStep3': 'LAN direct syncs in milliseconds — lower latency, more stable (recommended)',
   'mobile.qrConnecting': 'Relay connecting — the QR code will appear shortly…',
   'mobile.copyUrl': 'Click to copy link',
   'mobile.copyAddress': 'Copy address',
@@ -1053,8 +1056,6 @@ const en: Record<string, string> = {
   'mobile.pairStatusLabel': 'Pairing',
   'mobile.paired': 'Ready',
   'mobile.unpaired': 'Not started',
-  'mobile.relayShortcutGuide':
-    'After pairing in the browser, "Add to Home Screen" on your phone creates a desktop icon for one-tap access',
   'security.title': 'Permission Request',
   'security.hintUpDown': '↑↓ select',
   'security.hintEnter': 'Enter confirm',
@@ -1301,6 +1302,11 @@ const en: Record<string, string> = {
   'workflow.runCount': 'Run {0} times',
   'workflow.run': 'Run',
   'workflow.canvas': 'Canvas',
+  // 输入栏 workflow 模式扳手菜单（工作流画布 / 工作流列表 / 工具箱）
+  'wfMenu.title': 'Workflow tools',
+  'wfMenu.canvas': 'Workflow canvas',
+  'wfMenu.list': 'Workflow list',
+  'wfMenu.toolbox': 'Toolbox',
 
   'workflowCreate.title': 'Create Workflow',
   'workflowCreate.errorName': 'Please enter a workflow name',
@@ -1446,14 +1452,14 @@ const en: Record<string, string> = {
   'mobile.refining': 'Refining…',
   'mobile.refine': 'Refine',
   'mobile.skip': 'Skip',
-  'mobile.a2hsTitle': 'Add to Home Screen to launch standalone',
-  'mobile.a2hsIosStep': 'Tap Share at the bottom → "Add to Home Screen"',
-  'mobile.a2hsAndroidStep': 'Tap the "⋮" menu → "Add to Home Screen"',
-  'mobile.a2hsLanTitle': 'Add to Home Screen for fullscreen direct LAN',
-  'mobile.a2hsLanIosStep':
-    'Tap Share at the bottom → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
-  'mobile.a2hsLanAndroidStep':
-    'Tap the "⋮" menu → "Add to Home Screen"; launches fullscreen with the fastest direct LAN connection',
+  'mobile.a2hsTitle': 'Add to Home Screen (works at home & away)',
+  'mobile.a2hsIosStep':
+    'Tap Share at the bottom → “Add to Home Screen”. One icon connects via LAN at home and via relay when away',
+  'mobile.a2hsAndroidStep':
+    'Tap the “⋮” menu → “Add to Home Screen”. One icon connects via LAN at home and via relay when away',
+  'mobile.a2hsLanTitle': 'Direct connection works at home',
+  'mobile.a2hsLanNote':
+    'No home-screen icon needed here: scan the QR code or open the LAN address to connect at home. If you also use Nuphus away from home, add the relay HTTPS link to your home screen — one icon works both at home and away',
   'mobile.closeHint': 'Dismiss',
   'mobile.pairTitle': 'Connect to desktop Nuphus',
   'mobile.pairInvalid':
@@ -1475,17 +1481,36 @@ const en: Record<string, string> = {
   'mobile.pairTooManyRetry': 'Too many attempts, try again later',
   'mobile.pairNoPasswordShort': 'No pairing password set on desktop',
   'mobile.pairFailed': 'Pairing failed: HTTP',
-  'mobile.historyLoadFailed': 'History load failed; will retry automatically on reconnect',
+  'mobile.historyLoadFailed': 'History load failed; will retry automatically',
   'mobile.reloadHistory': 'Reload history',
   'mobile.historyReloaded': 'History refreshed',
   'mobile.historyReloadFailed': 'History refresh failed, check network',
   'mobile.lanDisconnectedSwitchWan': 'LAN disconnected, switched to relay channel',
   'mobile.lanDisconnectedSwitchWanRetry': 'LAN disconnected, switched to relay channel — resend',
   'mobile.bootTimeoutTitle': 'Connection timed out',
+  'mobile.bootStarting': 'Starting…',
+  'mobile.bootConnecting': 'Connecting to your computer…',
   'mobile.bootTimeoutDesc':
     'Could not reach your computer. The tunnel may still be establishing or the network is unstable. Retry, or clear pairing info and scan the QR code again.',
   'mobile.repair': 'Repair pairing',
   'mobile.switchedBackLan': 'Switched back to LAN direct connection',
+  'mobile.lanSwitchNoUrl':
+    'LAN address not available yet — make sure your phone and computer are on the same network',
+  'mobile.lanSwitchFailed': 'Could not fetch LAN address, check network and retry',
+  // 中继通道手动「切换到本地网络」（NavBar 网络弹窗入口）
+  'mobile.networkSwitchLan': 'Switch to local network',
+  'mobile.networkSwitchLanGo': 'Switch',
+  'mobile.networkSwitchLanBusy': 'Resolving…',
+  // 手动切本地网络确认弹窗（header wifi 图标入口）
+  'mobile.lanSwitchDialogTitle': 'Switch to local network',
+  'mobile.lanSwitchDialogDesc': 'Switch to your local Wi-Fi network? Lower latency, more stable',
+  'mobile.lanSwitchDialogDirect': 'Direct: ',
+  'mobile.lanSwitchDialogError':
+    'Could not get the direct address — make sure your phone and computer are on the same Wi-Fi, then retry',
+  'mobile.lanSwitchJumpFailed': 'Page did not switch, please retry',
+  'mobile.lanSwitchCancel': 'Cancel',
+  'mobile.lanSwitchOk': 'OK',
+  'mobile.lanSwitchRetry': 'Retry',
   'mobile.acceptedImagesNotSent': 'Accepted (images not sent while executing)',
   'mobile.sentAwaitConfirm': 'Sent, takes effect after current execution',
   'mobile.messageSent': 'Message sent!',

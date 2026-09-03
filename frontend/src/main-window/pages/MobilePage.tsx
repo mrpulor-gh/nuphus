@@ -457,17 +457,25 @@ export function MobilePage() {
                   </button>
                 </div>
               ) : remoteUrl ? (
-                <div className="mobile-qr-block">
-                  <QrCode value={remoteUrl} size={150} />
-                  <span className="mobile-qr-caption">{t('mobile.qrCaption')}</span>
-                  <button
-                    className="mobile-panel-url"
-                    onClick={handleCopyRemoteUrl}
-                    title={t('mobile.copyUrl')}
-                  >
-                    {copiedRemote ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                    <span>{t('mobile.copyRemoteLink')}</span>
-                  </button>
+                <div className="mobile-qr-split">
+                  {/* 左：二维码 + 复制链接（并列紧凑块） */}
+                  <div className="mobile-qr-block">
+                    <QrCode value={remoteUrl} size={150} />
+                    <button
+                      className="mobile-panel-url"
+                      onClick={handleCopyRemoteUrl}
+                      title={t('mobile.copyUrl')}
+                    >
+                      {copiedRemote ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                      <span>{t('mobile.copyRemoteLink')}</span>
+                    </button>
+                  </div>
+                  {/* 右：三段说明（与二维码平行显示，大王 2026-09-03 定稿） */}
+                  <ol className="mobile-qr-steps">
+                    <li>{t('mobile.qrStep1')}</li>
+                    <li>{t('mobile.qrStep2')}</li>
+                    <li>{t('mobile.qrStep3')}</li>
+                  </ol>
                 </div>
               ) : (
                 <p className="mobile-pro-locked-text">{t('mobile.qrConnecting')}</p>

@@ -187,6 +187,33 @@ body {
   height: 100vh;
   height: 100dvh;
   background: var(--m-bg);
+  /* boot 期非空屏：居中显示「连接中」状态，避免中继慢链路/隧道建立期观感白屏 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-boot-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--m-fg-muted, #8b919c);
+  font-size: 14px;
+}
+
+.mobile-boot-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--m-border, #2a2e38);
+  border-top-color: var(--m-accent, #f0b429);
+  border-radius: 50%;
+  animation: mobile-boot-spin 0.9s linear infinite;
+}
+
+@keyframes mobile-boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* boot 超时错误界面：白屏根治——给用户可见出口（重试/重新配对） */
@@ -380,6 +407,12 @@ body {
 .mobile-nav-theme:active {
   background: var(--m-fg-secondary);
   opacity: 0.8;
+}
+
+/* wifi 快捷钮切换进行中禁用态（字体/主题钮无 disabled，此规则只作用于 wifi 图标） */
+.mobile-nav-theme:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* 终止执行按钮已移至输入框按钮区（mobile-composer-stop，与桌面端三态一致）——
@@ -644,6 +677,9 @@ body {
   }
 }
 
+/* 中继通道手动「切换到本地网络」入口位于 NavBar 网络弹窗（mobile-settings-card-row），
+   https 直连横幅/证书引导已移除（2026-09-03：不作为默认发布）。 */
+
 /* ── 添加到主屏幕引导条（PWA 桌面快捷方式入口）── */
 .mobile-a2hs {
   flex-shrink: 0;
@@ -684,6 +720,7 @@ body {
 .mobile-a2hs-steps {
   margin-top: 2px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--m-fg-secondary);
 }
 
@@ -4607,4 +4644,57 @@ body {
 }
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(128, 128, 140, 0.55);
+}
+
+/* 手动切本地网络确认弹窗（header wifi 图标入口；复用 newchat 弹窗外壳 + 主题色确定钮） */
+.mobile-lan-dialog-body {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-lan-dialog-desc {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--m-fg);
+}
+
+.mobile-lan-dialog-addr {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-lan-dialog-addr code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--m-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--m-fg);
+  background: var(--m-fill);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.mobile-lan-dialog-addr.is-busy {
+  color: var(--m-fg-secondary);
+}
+
+.mobile-lan-dialog-addr.is-err {
+  color: var(--m-red);
+}
+
+.mobile-lan-dialog-addr .mobile-boot-spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }

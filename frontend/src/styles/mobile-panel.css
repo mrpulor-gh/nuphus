@@ -121,9 +121,59 @@
   border: 1px solid var(--line-2);
 }
 
-.mobile-qr-caption {
+/* 二维码下说明两段：主（统一入口）清晰、次（主屏用法）弱化；两段之间靠间距分层 */
+.mobile-qr-note {
+  margin: 0;
+  width: 100%;
+  max-width: 380px;
   font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: var(--leading-normal);
+  text-align: left;
+}
+
+.mobile-qr-note-sub {
+  margin-top: var(--space-2);
   color: var(--fg-4);
+}
+
+/* 二维码区 v9：二维码+复制 在左、三段说明 在右（与二维码平行显示，大王 2026-09-03） */
+.mobile-qr-split {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* 右列说明：编号列表，横向空间不足时换行保留阅读性 */
+.mobile-qr-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+  font-size: var(--fz-xs);
+  color: var(--fg-2);
+  line-height: var(--leading-normal);
+}
+
+.mobile-qr-steps li {
+  margin: 0;
+}
+
+/* 面板过窄时上下堆叠（二维码置顶居中、说明全宽） */
+@media (max-width: 620px) {
+  .mobile-qr-split {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .mobile-qr-steps {
+    width: 100%;
+    max-width: 380px;
+  }
 }
 
 /* 中继地址行（域名展示，去协议端口） */
@@ -927,14 +977,6 @@
 }
 
 /* P2P 启用指南展开区 */
-.mobile-route-guide {
-  margin-top: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border-left: 2px solid var(--line-2);
-  background: var(--surface-inset);
-  border-radius: 0 var(--radius-2) var(--radius-2) 0;
-}
-
 .mobile-route-guide-title {
   margin: 0 0 var(--space-1);
   font-size: var(--fz-xs);

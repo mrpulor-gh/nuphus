@@ -1,16 +1,14 @@
 /**
- * AddToHomeScreen — 「添加到主屏幕」引导条（PWA 桌面快捷方式入口）
+ * AddToHomeScreen — 主屏幕图标引导条
  *
  * 显示时机：配对成功（visible）+ 非 standalone 模式（浏览器内打开）+ 未关闭过。
- * 目的：扫码/输密码配对成功后引导用户把手机端生成桌面快捷方式——之后随时独立开启，
- * 不被微信/抖音等宿主 App 锁死（打开后无法回到其他主应用的问题根源）。
+ * 目的：引导用户用一个主屏图标随时独立开启，不被微信/抖音等宿主 App 锁死。
  *
- * 两种 origin 都显示，但目的不同：
- * - 公网 origin（r.example.com 等）：引导生成桌面快捷方式，异地/中继入口。
- * - 局域网 origin（192.168.x.x）：**全屏直连**关键入口——iOS 从局域网地址添加主屏幕
- *   后，PWA scope 绑定局域网 origin：standalone 全屏 + 同 origin 直连桌面（速度最快，
- *   无 Mixed Content 拦截，也无需绕中继）。这是「同 WiFi 全屏 + 直连」的唯一实现路径。
- *   注：桌面 IP 变化后该快捷方式失效，需重新添加（局域网 DHCP 一般长期稳定）。
+ * 图标心智（发布口径，2026-09-03）：
+ * - 中继 HTTPS origin（r.nuphus.com 等）：**推荐常驻图标**——在家打开自动直连局域网，
+ *   出门自动走中继，一个图标家里家外通用。
+ * - 局域网 http origin：**不再引导加局域网 http 图标当远程入口**（旧坑：http 出门白屏）。
+ *   家内直连扫码/输地址即可，无需图标；如需出门也能用，用中继 HTTPS 地址添加图标。
  *
  * 交互：
  * - 按 origin 区分 localStorage 记录（公网/局域网各自独立关闭）。
@@ -66,9 +64,7 @@ export default function AddToHomeScreen({ visible }: { visible: boolean }) {
   const ios = detectIos()
   const titleText = isLan ? t('mobile.a2hsLanTitle') : t('mobile.a2hsTitle')
   const stepText = isLan
-    ? ios
-      ? t('mobile.a2hsLanIosStep')
-      : t('mobile.a2hsLanAndroidStep')
+    ? t('mobile.a2hsLanNote')
     : ios
       ? t('mobile.a2hsIosStep')
       : t('mobile.a2hsAndroidStep')

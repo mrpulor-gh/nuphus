@@ -64,6 +64,12 @@ interface Props {
   onRetryHistory?: () => void
   /** 手动重新拉取历史（+ 弹窗胶囊触发，网络/应用切换后历史不显示时一键刷新） */
   onReloadHistory?: () => void
+  /** 中继通道手动「切换到本地网络」（透传 NavBar 网络弹窗，仅 wan 展示） */
+  onSwitchToLanManual?: () => void
+  /** header wifi 图标：打开切本地网络确认弹窗（透传 NavBar，仅 wan 展示） */
+  onLanSwitchRequest?: () => void
+  /** 手动切本地请求进行中 */
+  lanSwitching?: boolean
   /** 终止执行（执行中 NavBar 显示终止按钮，POST /stop 直接终止） */
   onStopExecution?: () => void
   /** 新会话（Composer + 弹窗触发）：清空前端消息 */
@@ -110,6 +116,9 @@ export default function ChatScreen({
   onToast,
   onRetryHistory,
   onReloadHistory,
+  onSwitchToLanManual,
+  onLanSwitchRequest,
+  lanSwitching,
   onStopExecution,
   onNewChat,
   onDisconnect,
@@ -132,6 +141,9 @@ export default function ChatScreen({
         tokenUsage={tokenUsage}
         connMode={connMode}
         onReloadHistory={onReloadHistory}
+        onSwitchToLanManual={onSwitchToLanManual}
+        onLanSwitchRequest={onLanSwitchRequest}
+        lanSwitching={lanSwitching}
         onNewChat={onNewChat}
         onDisconnect={onDisconnect}
         sessions={sessions}

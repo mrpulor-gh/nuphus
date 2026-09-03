@@ -552,6 +552,10 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       }
 
     case 'refine_prompt':
+      // 提炼执行中（refining=true，本端已触发或桌面/手机另一端已触发）收到新的
+      // refine_prompt：忽略——正在提炼会话，不叠加/不覆盖 pendingRefine，
+      // 否则执行完成后残留的 pendingRefine 会重新弹出可触发入口（锁释放语义破坏）。
+      if (state.refining) return state
       // 上下文超阈值：forced=true 自动执行（不弹窗，直接触发 /refine）；
       // 否则弹窗询问用户（本端与桌面弹窗并存，先响应者生效）。
       if (ev.forced) {

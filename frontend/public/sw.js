@@ -10,8 +10,20 @@
  * - 构建产物 assets/*（带 hash）：cache-first（immutable，长缓存）
  * - manifest/icons：cache-first（静态资源）
  * - 其余（/message /history /ws 等 API）：一律不拦截，直连网络
+ *
+ * 2026-09-03 加固（外部直连白屏排查）：
+ * - CACHE 升 v3：每次发版清空旧 assets 缓存——旧版 hash 资源（含已知 bug 的旧
+ *   bundle）不得在离线兜底路径被旧 HTML 重新命中（此前多轮「删 PWA 重加」的
+ *   根因之一：旧 HTML + 旧 JS 被 SW 缓存长期保留，新发版后仍跑旧代码/404）。
+ * - 导航入口只缓存「真正的应用 HTML」（含 <div id="root">）。中继在隧道离线/
+ *   设备未识别时会以 200 返回自己的静态页（设备离线/正在识别/重试页）——
+ *   此前 network-first 会把这种非应用页也写进出入口缓存，之后离线兜底就一直
+ *   给用户回非应用页（观感「打不开/白屏」）。现改为只缓存应用页，静态页
+ *   照常透传（自带 meta refresh / 自动探测，不落缓存），入口缓存恒为最近一次
+ *   真正加载成功的应用页。
  */
-const CACHE = 'nuphus-mobile-v2'
+
+const CACHE = 'nuphus-mobile-v3'
 const PRECACHE = [
   './mobile.html',
   './manifest.json',
@@ -21,6 +33,18 @@ const PRECACHE = [
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon-180.png',
 ]
+
+/** 是否为 Nuphus 移动端应用入口 HTML（区别于中继静态页：设备离线/识别中/重试页）。
+ * 中继静态页同样是 200 HTML，但无 React 挂载点；只有应用页值得写入入口缓存。 */
+function isAppEntryHtml(res) {
+  if (!res || !res.ok) return false
+  const ct = res.headers.get('content-type') || ''
+  if (ct.indexOf('text/html') === -1) return false
+  return res.text().then(
+    body => body.indexOf('<div id="root">') !== -1,
+    () => false,
+  )
+}
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -60,9 +84,13 @@ self.addEventListener('fetch', event => {
   if (url.pathname.endsWith('/mobile.html') || url.pathname === '/' || url.pathname === '') {
     event.respondWith(
       fetch(req)
-        .then(res => {
-          const copy = res.clone()
-          caches.open(CACHE).then(c => c.put(req, copy))
+        .then(async res => {
+          // 只把真正的应用页写进缓存；中继静态页（离线/识别中/重试）不落缓存，
+          // 避免离线兜底永远回非应用页（观感白屏/打不开）。
+          if (await isAppEntryHtml(res.clone())) {
+            const copy = res.clone()
+            caches.open(CACHE).then(c => c.put(req, copy))
+          }
           return res
         })
         .catch(() => caches.match(req).then(m => m || caches.match('./mobile.html'))),

@@ -793,6 +793,9 @@ registerMock('mobile_server_status', () => ({
   port: MOCK_MOBILE_STATE.port,
   token: MOCK_MOBILE_STATE.token,
   lan_url: MOCK_MOBILE_STATE.running ? `http://192.168.1.100:${MOCK_MOBILE_STATE.port}` : null,
+  lan_url_https: MOCK_MOBILE_STATE.running
+    ? `https://192.168.1.100:${MOCK_MOBILE_STATE.port + 1}`
+    : null,
 }))
 registerMock('mobile_server_start', args => {
   const port = typeof args?.port === 'number' ? args.port : MOCK_MOBILE_STATE.port
@@ -803,6 +806,7 @@ registerMock('mobile_server_start', args => {
     port,
     token: MOCK_MOBILE_STATE.token,
     lan_url: `http://192.168.1.100:${port}`,
+    lan_url_https: `https://192.168.1.100:${port + 1}`,
   }
 })
 registerMock('mobile_server_stop', () => {
