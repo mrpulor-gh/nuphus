@@ -11,9 +11,9 @@
                        "url":  "git+https://github.com/mrpulor-gh/nuphus.git"
                    },
     "optionalDependencies":  {
-                                    "@nuphus/nuphus-desktop-win32-x64": "0.2.3",
-                                    "@nuphus/nuphus-desktop-osx-arm64": "0.2.3",
-                                    "@nuphus/nuphus-desktop-linux-x64": "0.2.3"
+                                    "@nuphus/nuphus-desktop-win32-x64": "0.2.5",
+                                    "@nuphus/nuphus-desktop-osx-arm64": "0.2.5",
+                                    "@nuphus/nuphus-desktop-linux-x64": "0.2.5"
                                 },
     "engines":  {
                     "node":  "\u003e=16"
