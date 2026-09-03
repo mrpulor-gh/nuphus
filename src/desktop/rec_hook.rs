@@ -44,6 +44,8 @@ pub enum CaptureKind {
 }
 
 impl CaptureKind {
+    // 固有字符串解析（非 FromStr trait：调用点用 CaptureKind::from_str 语义更清晰）
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_ascii_lowercase().as_str() {
             "click" => Ok(Self::Click),
