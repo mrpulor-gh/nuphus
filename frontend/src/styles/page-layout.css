@@ -325,6 +325,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 工作流行内重命名输入（WorkflowPage 铅笔入口） */
+.wf-rename-input {
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-medium);
+  font-family: inherit;
+  color: var(--fg-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  padding: 1px 8px;
+  min-width: 0;
+  width: 240px;
+  outline: none;
+}
+.wf-rename-input:focus {
+  border-color: var(--accent);
+}
 .item-sub {
   font-size: var(--fz-xs);
   color: var(--fg-3);

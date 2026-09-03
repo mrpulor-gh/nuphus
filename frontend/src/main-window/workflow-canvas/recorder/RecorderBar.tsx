@@ -51,6 +51,8 @@ interface RecorderBarProps {
   onCancelCapture: () => void
   onAbort: () => void
   onComplete: (notes: string) => void
+  /** 完成并一键交给 WorkflowAgent 优化（生成草稿 + 保存画布 + 注入聊天指令） */
+  onCompleteAi?: (notes: string) => void
   onSaveProgress: (notes: string) => void
   onEditDraft: (index: number, patch: RecDraftPatch) => void
   onDeleteDraft: (index: number) => void
@@ -122,6 +124,7 @@ export function RecorderBar({
   onCancelCapture,
   onAbort,
   onComplete,
+  onCompleteAi,
   onSaveProgress,
   onEditDraft,
   onDeleteDraft,
@@ -191,6 +194,12 @@ export function RecorderBar({
 
   const submitComplete = () => {
     onComplete(notes)
+    setCompleteOpen(false)
+  }
+
+  const submitCompleteAi = () => {
+    if (!onCompleteAi) return
+    onCompleteAi(notes)
     setCompleteOpen(false)
   }
 
@@ -339,11 +348,22 @@ export function RecorderBar({
                   </button>
                   <button
                     type="button"
-                    className="rec-btn rec-btn--primary"
+                    className="rec-btn"
+                    title="仅生成 record-draft JSON，稍后自行处理"
                     onClick={submitComplete}
                   >
                     生成录制草稿
                   </button>
+                  {onCompleteAi && (
+                    <button
+                      type="button"
+                      className="rec-btn rec-btn--primary"
+                      title="生成草稿并交给 WorkflowAgent 按设计标准编辑、测试、优化（自动保存画布并填入聊天指令）"
+                      onClick={submitCompleteAi}
+                    >
+                      完成并交给 WorkflowAgent
+                    </button>
+                  )}
                 </div>
               </>
             ) : (

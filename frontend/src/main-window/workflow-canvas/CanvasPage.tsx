@@ -202,6 +202,9 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [backendReport, setBackendReport] = useState<ValidationReport | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
+  // ── 工作流重命名（wfc-title 双击/铅笔进入；提交走 save(name)，连同当前步骤一并保存）──
+  const [nameEditing, setNameEditing] = useState(false)
+  const [nameInput, setNameInput] = useState('')
   // ── 拖拽插入指示（阶段 3：顺序重排改为明确插入，拖动不再自动重排）──
   const [dragInsert, setDragInsert] = useState<{ lane: LaneId; index: number } | null>(null)
   const dragInsertRef = useRef<{ lane: LaneId; index: number } | null>(null)
@@ -668,29 +671,34 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     }
   }, [readOnly])
 
-  // ── 保存（1.6：wf_save 后端强制校验，errors 阻断回 ProblemsPanel）──
-  const save = useCallback(async () => {
-    const cur = stepsRef.current
-    if (!cur || !ir) return
-    const payload = { ...ir, steps: cur }
-    try {
-      const resp = await wfSave(payload)
-      if (!resp) {
-        setNotice('保存失败：后端无响应')
-        return
+  // ── 保存（1.6：wf_save 后端强制校验，errors 阻断回 ProblemsPanel）
+  // nameOverride：重命名时传入新名（与当前步骤编辑一并保存；空/省略则沿用原名）──
+  const save = useCallback(
+    async (nameOverride?: string) => {
+      const cur = stepsRef.current
+      if (!cur || !ir) return
+      const name = nameOverride?.trim()
+      const payload = { ...ir, steps: cur, ...(name ? { name } : {}) }
+      try {
+        const resp = await wfSave(payload)
+        if (!resp) {
+          setNotice('保存失败：后端无响应')
+          return
+        }
+        setBackendReport(resp.report)
+        if (resp.saved) {
+          setDirty(false)
+          setNotice(name ? `已保存，工作流已重命名为「${name}」` : '已保存')
+          setIr(payload)
+        } else {
+          setNotice('保存被阻断：存在校验错误，详见问题面板「后端校验」')
+        }
+      } catch (e) {
+        setNotice(`保存失败：${String(e)}`)
       }
-      setBackendReport(resp.report)
-      if (resp.saved) {
-        setDirty(false)
-        setNotice('已保存')
-        setIr(payload)
-      } else {
-        setNotice('保存被阻断：存在校验错误，详见问题面板「后端校验」')
-      }
-    } catch (e) {
-      setNotice(`保存失败：${String(e)}`)
-    }
-  }, [ir])
+    },
+    [ir],
+  )
 
   const runCheck = useCallback(async () => {
     const cur = stepsRef.current
@@ -1221,6 +1229,32 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     [rec],
   )
 
+  /** 完成 + 一键交给 WorkflowAgent（2026-09-03 方案A）：落盘 record-draft →
+   *  保存当前画布步骤（录制已入画布可能未 Ctrl+S）→ 关画布 → 以隐式提示词 user
+   *  消息注入 workflow 输入框（带 draft 路径 + workflow id + 目录 + 名称，用户确认后发送） */
+  const requestCompleteRecAndAgent = useCallback(
+    async (notes: string) => {
+      const res = await rec.completeSession(notes)
+      if (!res) return
+      await save()
+      onClose()
+      if (!res.path) return
+      const wid = res.workflow_id ?? workflowId
+      const name = ir?.name || '未命名工作流'
+      const text =
+        `[录制草稿转工作流] 这是操作录制产物（非 V2 工作流）：${res.path}\n` +
+        `按你的设计标准整理为可执行 V2 工作流：意图解析、步骤前置与重置、循环合并、` +
+        `异常分支、缺失参数补偿；覆写 plugin/workflows/${wid}/workflow.json（保留 id=${wid}）并跑通验证。\n` +
+        `当前工作流：${name}`
+      window.dispatchEvent(
+        new CustomEvent('nuphus:append-to-chat', {
+          detail: { text, mode: 'workflow' },
+        }),
+      )
+    },
+    [rec, save, onClose, ir, workflowId],
+  )
+
   // ── 进度持久化 + 草稿管理回调（RecorderBar/RecDraftPanel → rec hook）──
   const requestSaveProgressRec = useCallback(
     (notes: string) => {
@@ -1476,6 +1510,18 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     )
   }
 
+  /** 工作流重命名提交：空名/未变化 → 退出编辑；否则保存当前步骤 + 新名 */
+  const commitNameRename = () => {
+    const name = nameInput.trim()
+    if (!name || !ir || name === ir.name) {
+      setNameInput(ir?.name ?? '')
+      setNameEditing(false)
+      return
+    }
+    setNameEditing(false)
+    void save(name)
+  }
+
   return (
     <div className="wfc-page">
       {/* ── 工具栏 ── */}
@@ -1483,7 +1529,35 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         <button type="button" className="wfc-icon-btn" onClick={handleClose} title="关闭画布">
           <X size={15} />
         </button>
-        <span className="wfc-title">{ir.name}</span>
+        {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
+        {nameEditing && ir && !readOnly ? (
+          <input
+            className="wfc-title-input"
+            autoFocus
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            onBlur={commitNameRename}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitNameRename()
+              else if (e.key === 'Escape') {
+                setNameInput(ir?.name ?? '')
+                setNameEditing(false)
+              }
+            }}
+          />
+        ) : (
+          <span
+            className="wfc-title"
+            title={readOnly ? undefined : '双击重命名工作流'}
+            onDoubleClick={() => {
+              if (readOnly) return
+              setNameInput(ir?.name ?? '')
+              setNameEditing(true)
+            }}
+          >
+            {ir.name}
+          </span>
+        )}
         {dirty && <span className="wfc-badge wfc-badge--dirty">未保存</span>}
         {readOnly && (
           <span className="wfc-badge">{snapshot.running ? '运行中 · 只读' : '只读'}</span>
@@ -1826,6 +1900,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           onCancelCapture={rec.cancelCapture}
           onAbort={requestAbortRec}
           onComplete={requestCompleteRec}
+          onCompleteAi={requestCompleteRecAndAgent}
           onSaveProgress={requestSaveProgressRec}
           onEditDraft={requestEditDraftRec}
           onDeleteDraft={requestDeleteDraftRec}

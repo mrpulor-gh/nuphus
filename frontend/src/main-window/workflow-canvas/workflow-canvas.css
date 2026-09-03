@@ -43,6 +43,34 @@
   font-size: var(--fz-lg);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--ls-tight);
+  cursor: default;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.wfc-title:hover {
+  background: var(--surface-hover);
+}
+
+/* 重命名输入：与 wfc-title 同尺寸，输入态替代标题 */
+.wfc-title-input {
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  font-family: inherit;
+  color: var(--fg-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 1px 6px;
+  width: 220px;
+  outline: none;
+}
+
+.wfc-title-input:focus {
+  border-color: var(--accent);
 }
 
 .wfc-toolbar-spacer {

@@ -2,14 +2,14 @@
 // 搜索、列表展示、删除、触发创建弹窗
 
 import { useState, useEffect, useCallback } from 'react'
-import { listWorkflows, wfDelete, wfSave } from '../lib/api'
+import { listWorkflows, wfDelete, wfGetRaw, wfSave } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
 import type { WorkflowItem } from '../../core/types'
 import { IconSearch, IconTrash2, IconX, IconWorkflow, IconPlay, IconBot } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ChatAgentConfig } from './ChatAgentConfig'
-import { LayoutDashboard } from 'lucide-react'
+import { LayoutDashboard, Pencil } from 'lucide-react'
 
 function formatTime(ts: number, t?: (key: string, ...args: string[]) => string): string {
   try {
@@ -138,6 +138,50 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   }, [])
 
   const results = filtered()
+
+  // ── 行内重命名（铅笔 → 标题变 input → Enter/失焦保存；Esc 取消）──
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  const startRename = (item: WorkflowItem) => {
+    setRenamingId(item.id)
+    setRenameValue(item.title)
+  }
+
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  const commitRename = useCallback(
+    async (item: WorkflowItem) => {
+      const name = renameValue.trim()
+      if (!name || name === item.title || renamingId !== item.id) {
+        cancelRename()
+        return
+      }
+      try {
+        const raw = await wfGetRaw(item.id)
+        if (!raw) {
+          setError('读取工作流失败：后端无响应')
+          cancelRename()
+          return
+        }
+        const resp = await wfSave({ ...(raw as object), name })
+        if (!resp?.saved) {
+          setError((resp?.report?.errors as string[])?.join('；') || '重命名失败，请重试')
+          cancelRename()
+          return
+        }
+        setItems(prev => prev.map(i => (i.id === item.id ? { ...i, title: name } : i)))
+      } catch (e) {
+        setError(String(e))
+      } finally {
+        cancelRename()
+      }
+    },
+    [renameValue, renamingId],
+  )
 
   // ── 画布新建：直建空白工作流并打开画布 ──
   const handleCanvasNew = useCallback(async () => {
@@ -279,13 +323,37 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
                 <div className="item-row">
                   <div className="item-main">
                     <div className="item-head">
-                      <span className="item-title">{item.title}</span>
+                      {renamingId === item.id ? (
+                        <input
+                          className="wf-rename-input"
+                          autoFocus
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onBlur={() => void commitRename(item)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') void commitRename(item)
+                            else if (e.key === 'Escape') cancelRename()
+                          }}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className="item-title">{item.title}</span>
+                      )}
                       <span className={st.badge}>{t(st.textKey)}</span>
                     </div>
                     {item.description && <div className="item-desc">{item.description}</div>}
                     <div className="item-meta-line">{metaLine}</div>
                   </div>
                   <div className="item-actions">
+                    <IconButton
+                      variant="ghost"
+                      label="重命名工作流"
+                      title="重命名工作流"
+                      onClick={() => startRename(item)}
+                      className="wf-action-rename"
+                    >
+                      <Pencil size={13} />
+                    </IconButton>
                     <IconButton
                       variant="default"
                       label={t('workflow.run')}
