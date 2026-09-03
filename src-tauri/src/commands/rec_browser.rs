@@ -46,6 +46,7 @@ use serde_json::Value;
 ///   2. class：单 class 唯一 → 全部 class 组合 → 逐步缩短仍唯一
 ///   3. 兜底：el → body 的 `tag:nth-of-type(n) > ...` 层级路径，超过 5 层放弃
 ///      （避免超长脆弱 selector），仍不唯一返回 null
+///
 /// 点击以 capture 阶段监听（addEventListener 第三参 true）：先于页面自身
 /// handler 且对 document 必达；只记录最后一次未消费点击（录制 UI 单步语义）。
 const INJECT_CAPTURE_JS: &str = r#"(() => {
