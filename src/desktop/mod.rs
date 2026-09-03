@@ -7,7 +7,69 @@ pub mod client;
 pub mod dict_ocr;
 pub mod linux_window;
 pub mod paddle_ocr;
+// 桌面操作录制（低层 hook 捕获）仅 Windows 平台实现（WH_MOUSE_LL/KEYBOARD_LL）。
+// 其余平台提供同名 stub：命令层 rec.rs 引用 rec_hook:: 符号时无需逐处 cfg，
+// 运行期 capture_once 返回明确错误（2026-09-03 CI clippy -D warnings 修复）。
+#[cfg(windows)]
 pub mod rec_hook;
+
+#[cfg(not(windows))]
+pub mod rec_hook {
+    // ── 非 Windows stub ──
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct CaptureEvent {
+        pub kind: String,
+        pub button: Option<String>,
+        pub x: i32,
+        pub y: i32,
+        pub wheel_delta: Option<i32>,
+        pub keys: Vec<String>,
+        pub window_title: String,
+        pub hwnd: isize,
+        pub pid: u32,
+        pub process_name: Option<String>,
+        pub ts_ms: u64,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum CaptureKind {
+        Click,
+        Scroll,
+        Hotkey,
+        Any,
+    }
+
+    impl CaptureKind {
+        pub fn from_str(s: &str) -> Result<Self, String> {
+            match s.to_ascii_lowercase().as_str() {
+                "click" => Ok(Self::Click),
+                "scroll" => Ok(Self::Scroll),
+                "hotkey" => Ok(Self::Hotkey),
+                "any" => Ok(Self::Any),
+                _ => Err(format!("未知捕获类型: {s}")),
+            }
+        }
+
+        pub fn as_str(&self) -> &'static str {
+            match self {
+                Self::Click => "click",
+                Self::Scroll => "scroll",
+                Self::Hotkey => "hotkey",
+                Self::Any => "any",
+            }
+        }
+    }
+
+    pub fn rec_cancel_current() {}
+
+    pub fn capture_once(
+        _kind: CaptureKind,
+        _timeout_secs: u64,
+        _ignore_self_window: bool,
+    ) -> Result<CaptureEvent, String> {
+        Err("桌面操作录制当前仅支持 Windows 平台".to_string())
+    }
+}
 pub mod ui_perception;
 pub mod vision;
 pub mod vision_ocr;
