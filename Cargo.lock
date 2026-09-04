@@ -4705,6 +4705,7 @@ dependencies = [
  "chrono",
  "cpal",
  "dirs 5.0.1",
+ "flate2",
  "futures-util",
  "hex",
  "http",
