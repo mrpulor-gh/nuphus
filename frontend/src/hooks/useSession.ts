@@ -302,7 +302,7 @@ export interface SessionAPI {
   handleNewChat: () => void
   reloadChatFromBackend: () => Promise<void>
   resumeLastSession: () => Promise<void>
-  handleRetryAgent: (input: string) => Promise<void>
+  handleRetryAgent: (input: string, messageId?: string) => Promise<void>
   handlePause: () => Promise<void>
   handleContinue: (actionId: string) => Promise<void>
   handleInterrupt: () => Promise<void>
@@ -543,6 +543,38 @@ export function useSession(): SessionAPI {
           invoke('hud_update', {
             text: result.message || '发送失败，请重试',
             phase: 'error',
+          })
+          // ── 失败分流（仅本地展示：后端失败不 push session，错误气泡不入 agent 上下文）──
+          // - steps_count > 0：已执行工具后失败 → 优雅停止（执行结果已保留，不提供重试）
+          // - steps_count == 0：首轮 LLM 调用即失败 → 标记该 user 消息 failed，hover 可重试
+          const stepsCount = result.steps_count ?? 0
+          const errorText =
+            result.message && result.message.trim()
+              ? result.message
+              : `${t('chat.llmErrorPrefix')}：未知错误`
+          setMessages(prev => {
+            // execution_started 已创建的流式 assistant 气泡在失败时无 execution_completed
+            // 收敛——先移除残留空气泡，避免错误提示上方出现空白行
+            const base = [...prev]
+            const last = base[base.length - 1]
+            if (last?.role === 'assistant' && last.runtime === 'live' && !last.content) {
+              base.pop()
+            }
+            const list =
+              stepsCount > 0 ? base : base.map(m => (m.id === msg.id ? { ...m, failed: true } : m))
+            return [
+              ...list,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content:
+                  stepsCount > 0
+                    ? t('chat.gracefulStop', errorText, String(stepsCount))
+                    : errorText,
+                runtime: 'done',
+                timestamp: Date.now(),
+              },
+            ]
           })
           return
         }
@@ -1063,7 +1095,13 @@ export function useSession(): SessionAPI {
     handleNewChat,
     reloadChatFromBackend,
     resumeLastSession,
-    handleRetryAgent: agentControl.handleRetryAgent,
+    handleRetryAgent: async (input, messageId) => {
+      // 重试触发后清除该 user 消息 failed 标记（重试仅存在于 failed user 气泡 hover）
+      if (messageId) {
+        setMessages(prev => prev.map(m => (m.id === messageId ? { ...m, failed: false } : m)))
+      }
+      await agentControl.handleRetryAgent(input)
+    },
     handlePause: agentControl.handlePause,
     handleContinue: agentControl.handleContinue,
     handleInterrupt: agentControl.handleInterrupt,

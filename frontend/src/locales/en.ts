@@ -919,6 +919,9 @@ const en: Record<string, string> = {
   'chat.systemLabel': 'System',
   'chat.errorPrefix': 'Error',
   'chat.llmErrorPrefix': 'LLM Error',
+  'chat.retry': 'Retry',
+  'chat.gracefulStop':
+    'LLM request failed: {0}\nExecuted {1} step(s), results preserved; not retrying this round. Check model quota/connection and resend.',
 
   'sessionDivider.refined': 'Session refined',
   'sessionDivider.messages': '{0} messages',

@@ -211,6 +211,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 message: String::new(),
                 appended: None,
                 image_warning: None,
+                steps_count: 0,
             });
         }
         // Reserve slot, only add after completion (prevent concurrent misjudgment)
@@ -281,6 +282,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             message: message.clone(),
             appended: Some(true),
             image_warning: None,
+            steps_count: 0,
         });
     }
 
@@ -313,6 +315,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 message: String::new(),
                 appended: None,
                 image_warning: None,
+                steps_count: 0,
             });
         }
         guard.last_message = message.clone();
@@ -1131,6 +1134,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             message: response_message,
             appended: None,
             image_warning,
+            steps_count: output.steps.len(),
         })
     });
 

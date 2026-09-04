@@ -201,5 +201,6 @@ pub async fn retry_agent(
         message: response_message,
         appended: None,
         image_warning: None,
+        steps_count: output.steps.len(),
     })
 }

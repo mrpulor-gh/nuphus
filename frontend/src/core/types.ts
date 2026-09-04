@@ -74,6 +74,8 @@ export interface ChatMessage {
   sourceLabel?: string
   /** live=正在流式写入中, done=已完成(或历史消息) */
   runtime?: 'live' | 'done'
+  /** 本次发送首轮 LLM 即失败（无工具执行）——user 气泡 hover 显示「重试」 */
+  failed?: boolean
   timestamp: number
   /** ── refine 消息专用 ── */
   messageCount?: number
@@ -414,6 +416,10 @@ export interface ProcessInputResponse {
   appended?: boolean
   /** 图片降级警告：主模型与 vision 模型都不支持视觉时返回，前端弹窗提示 */
   image_warning?: string
+  /** 本次执行已执行工具步数（后端 output.steps.len()）。
+   *  失败分流依据：0 = 首轮 LLM 调用即失败（user 气泡可重试）；
+   *  >0 = 已执行工具后失败（优雅停止，不重试） */
+  steps_count?: number
 }
 
 // ── TimelineEntry (从 App.tsx / ExecutionPanel.tsx 提取，避免重复定义) ──

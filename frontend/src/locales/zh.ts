@@ -883,6 +883,9 @@ const zh: Record<string, string> = {
   'chat.systemLabel': '系统',
   'chat.errorPrefix': '错误',
   'chat.llmErrorPrefix': 'LLM请求失败',
+  'chat.retry': '重试',
+  'chat.gracefulStop':
+    'LLM请求失败：{0}\n已执行 {1} 步，执行结果已保留；本次不重试，请检查模型额度/连接后重新发送',
 
   'sessionDivider.refined': '会话已提炼',
   'sessionDivider.messages': '{0}条消息',

@@ -312,6 +312,11 @@ pub struct ProcessInputResponse {
     /// 图片仍降级发送（保存临时文件路径占位），不阻塞消息。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_warning: Option<String>,
+    /// 本次执行已执行工具步数（output.steps.len()）。前端失败分流依据：
+    /// 0 = 首轮 LLM 调用即失败（无工具执行）→ user 气泡标记 failed、hover 可重试；
+    /// >0 = 已执行工具后失败 → 优雅停止提示（执行结果已保留，不重试）。
+    #[serde(default)]
+    pub steps_count: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

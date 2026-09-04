@@ -89,7 +89,7 @@ interface ChatPanelProps {
   startupStats: { tools: number; memories: number }
   onGracefulStop?: () => void
   onInterrupt?: () => void
-  onRetry?: (input: string) => void
+  onRetry?: (input: string, messageId?: string) => void
   focusSignal?: number
   onNewChat?: () => void
   /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
@@ -950,8 +950,8 @@ export function ChatPanel({
     })
   }
 
-  const handleRetry = (msgContent: string) => {
-    onRetry?.(msgContent)
+  const handleRetry = (msg: ChatMessage) => {
+    onRetry?.(msg.content, msg.id)
   }
 
   const handleCopy = async (msgId: string, text: string) => {
@@ -1290,11 +1290,6 @@ export function ChatPanel({
                         />
                       )
                     }
-                    const isError =
-                      (msg.role === 'system' && msg.content.startsWith('错误')) ||
-                      (msg.role === 'assistant' && msg.content.includes('LLM请求失败'))
-                    const prevIsUser = idx > 0 && messages[idx - 1]?.role === 'user'
-                    // Execution in progress: only the last agent message shows animation
                     const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1
                     // Avatar settings
                     const showAvatar = localStorage.getItem('nuphus_show_avatar') === 'true'
@@ -1507,20 +1502,17 @@ export function ChatPanel({
                                 )}
                               </div>
                             )}
+                            {/* user 消息首轮 LLM 失败：hover 显示重试（优雅停止气泡无此标记） */}
+                            {msg.role === 'user' && msg.failed && !isProcessing && onRetry && (
+                              <div className="message-retry-user">
+                                <Button variant="ghost" size="sm" onClick={() => handleRetry(msg)}>
+                                  {t('chat.retry')}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                           {msg.role === 'user' && showAvatar && (
                             <div className="message-avatar user-side">{AvatarComp}</div>
-                          )}
-                          {isError && prevIsUser && !isProcessing && onRetry && (
-                            <div className="message-retry">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleRetry(messages[idx - 1].content)}
-                              >
-                                重试 ↻
-                              </Button>
-                            </div>
                           )}
                         </div>
                       </React.Fragment>

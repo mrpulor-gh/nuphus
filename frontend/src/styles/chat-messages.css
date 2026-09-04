@@ -1655,3 +1655,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* user 消息首轮 LLM 失败（msg.failed）：hover 气泡显示「重试」；
+   优雅停止（已执行工具后失败）气泡无 failed 标记，无此入口 */
+.message-retry-user {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.message-bubble.user:hover .message-retry-user,
+.message-retry-user:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.message-retry-user .compact-btn.ghost-btn {
+  color: var(--spark-dim);
+}
+.message-retry-user .compact-btn.ghost-btn:hover {
+  color: var(--accent);
+  background: var(--void-hover);
+}
