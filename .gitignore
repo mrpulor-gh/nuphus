@@ -14,7 +14,8 @@ temp/
 frontend/dist/
 compare_preprocess/
 *.bmp
-*.py
+# 根目录临时 Python 脚本（AI 会话产物，不入库）；scripts/ 正式脚本（generate_icons.py 等）不受影响
+/*.py
 py_ocr_results.txt
 ocr_report.txt
 test_ocr_page.html
@@ -41,6 +42,9 @@ Thumbs.db
 
 # 根目录临时运维脚本（AI 会话产物，不入库）
 /*.ps1
+
+# 前端设计预览稿（AI 会话产物，不入库）
+/preview-*.html
 
 # 内部审计文件（不公开）
 audit-*.md
