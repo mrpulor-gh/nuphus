@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use std::io::Read;
 
-use flate2::read::Decoder;
-use flate2::write::Encoder;
+use flate2::read::ZlibDecoder as Decoder;
+use flate2::write::ZlibEncoder as Encoder;
 use flate2::Compression;
 use lopdf::xobject;
 use lopdf::{Bookmark, Dictionary, Document, Object, ObjectId, Stream};
@@ -264,7 +264,7 @@ pub async fn pdf_compress(
             if let Some(obj) = doc.objects.get_mut(&id) {
                 if let Object::Stream(ref mut stream) = obj {
                     // 仅处理 FlateDecode 流（PDF 中最常见的压缩流）
-                    let filter = stream.dict.get(b"Filter").and_then(|v| v.to_owned()).ok();
+                    let filter = stream.dict.get(b"Filter").ok().cloned();
                     let is_flate = match &filter {
                         Some(Object::Name(n)) => n == b"FlateDecode",
                         Some(Object::Array(arr)) => arr

@@ -323,7 +323,7 @@ pub async fn image_stitch(
             } else {
                 (0, offset)
             };
-            image::imageops::overlay(&mut canvas, &scaled, x, y);
+            image::imageops::overlay(&mut canvas, &scaled, i64::from(x), i64::from(y));
             offset += if is_horizontal {
                 scaled.width()
             } else {
