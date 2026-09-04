@@ -806,6 +806,25 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                         phase: "done".into(),
                         step_kind: None,
                     });
+                    // Terminate（用户暂停时选择终止）也属正常收尾：补齐
+                    // HudUpdate + ExecutionCompleted + LeaderDone 三连，否则前端
+                    // 收不到执行完成事件 → 执行气泡不关闭、输入保持禁用（实测 2026-09-05）。
+                    let total_duration = loop_start.elapsed().as_millis() as u64;
+                    let tool_calls_count = self.agent.steps.len();
+                    emitter.emit(NuphusEvent::ExecutionCompleted {
+                        step_index: 0,
+                        output: crate::agent::events::StepOutput {
+                            step_index: 0,
+                            result_message: result_msg.clone(),
+                            artifacts: vec![],
+                            tool_calls_count,
+                        },
+                        total_duration_ms: total_duration,
+                        total_calls: tool_calls_count,
+                    });
+                    emitter.emit(NuphusEvent::LeaderDone {
+                        message: "任务完成".into(),
+                    });
                 }
                 return Ok(crate::AgentOutput {
                     message: result_msg,
