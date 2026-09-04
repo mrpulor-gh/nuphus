@@ -24,6 +24,7 @@ import {
   isBusy,
   getChatHistory,
   resumeLatestSession,
+  newChatSessionCmd,
   type HistoryMessage,
 } from '../main-window/lib/api'
 import { foldHistoryAssistants, toTimelineEntry } from './useInit'
@@ -502,10 +503,11 @@ export function useSession(): SessionAPI {
       try {
         const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }))
         const relation = loadRelation()
-        // welcome 直发 = 创建新对话：前端当前无会话（messages 空）且非追加 →
-        // 传 new_session=true，后端 force_new 创建该 mode 新会话并进入。
-        // 会话内发送（有历史）→ new_session=false → 后端按 rule2 判定归属。
-        const newSession = messagesRef.current.length === 0 && !isAppendAttempt
+        // welcome 直发 = 创建新对话。判定与后端空态权威一致：新建对话（handleNewChat）
+        // 已把后端当前 mode 槽置 None 并清 backup，welcome 时 messages 必为空 →
+        // new_session=true；会话内 messages 非空 → new_session=false，后端按 rule2/
+        // 续聊路径判定归属（后端空态判据兜底前端误判，见 process.rs）。
+        const newSession = !isAppendAttempt && messagesRef.current.length === 0
         const result = await processInput(
           input,
           history,
@@ -560,6 +562,8 @@ export function useSession(): SessionAPI {
 
   // ── handleNewChat (kept in useSession due to tight coupling with messages) ──
   const resetTransientUI = useCallback(() => {
+    // 本地清空聊天区回 welcome（进既有会话 / 继续对话 / 新建成功都经此）。
+    // 会话归属以后端为权威，前端无需维护任何"下一发送=新建"意图状态。
     setMessages([])
     setIsProcessing(false)
     execUI.setCompleted(false)
@@ -578,18 +582,23 @@ export function useSession(): SessionAPI {
     lastStreamingMsgId.current = null
   }, [])
 
-  const handleNewChat = useCallback(() => {
-    // 新建对话 = 只回到 welcome 界面（清空聊天区 → WelcomeScreen）。
-    // 不创建任何会话、不切 mode、不做其它任何事——解耦：
-    // 对话只在「welcome 界面发送消息」时才创建（前端发送时带 new_session 标记，
-    // 后端 force_new）。规避空对话存在：新建按钮永不产生空白会话。
-    // welcome 的「继续对话」「会话台点击」各有自己的出口，不受影响。
-    // 执行中禁止新建（全入口统一防护：Ctrl+N / TitleBar / SessionRail + / 命令面板）：
-    // 后端 guard_switch 会拒绝 busy，前端必须同步停手——否则消息/执行状态被清空而
-    // agent 仍在后台跑 → 界面与真实状态撕裂（实测）。
-    if (isProcessing) return
+  const handleNewChat = useCallback(async () => {
+    // 新建对话 = 后端真转场 + 本地回 welcome。new_chat_session_cmd 由后端权威完成：
+    // guard_switch（拒绝 busy/append_pending）→ 归档当前会话 → 当前 mode 槽置 None →
+    // 清 backup/去重/重试 → 双推 SessionChanged。槽 None = 后端欢迎页（无会话），不创建
+    // 任何空会话；新会话只在 welcome 直发消息时由后端空态判据创建。
+    // 执行中禁止新建判定以后端为权威（前端 isProcessing 可能与 execution_completed 后的
+    // 收尾窗口不一致）：guard 拒绝时不重置界面，避免消息/执行状态被清空而 agent 仍在
+    // 后台跑 → 界面与真实状态撕裂（实测）。所有入口（Ctrl+N / TitleBar / SessionRail+ /
+    // 命令面板 / ChatPanel）统一走这里。
+    try {
+      await newChatSessionCmd()
+    } catch {
+      invoke('hud_update', { text: '任务正在执行中，无法新建对话', phase: 'error' })
+      return
+    }
     resetTransientUI()
-  }, [resetTransientUI, isProcessing])
+  }, [resetTransientUI])
 
   /**
    * Session Shelf 切换/新建后：从后端重拉当前会话历史并整体替换气泡。

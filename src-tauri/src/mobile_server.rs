@@ -1744,12 +1744,11 @@ async fn post_switch_session<R: tauri::Runtime>(
     }
 }
 
-/// POST /new-chat —— 手机遥控新建对话：**纯意图广播，后端不创建任何 session**
-/// （无空会话逻辑；会话只在 welcome 直发消息时 force_new 创建，与桌面端
-/// handleNewChat 语义完全一致 = 只是回到 welcome 界面）。
-/// guard_switch 守卫执行中拒绝（busy / append_pending → 409），空闲时
-/// CompoundEmitter 双推 NewChatBroadcast：桌面端收到执行本地 handleNewChat
-/// （清聊天区回欢迎页），手机端本机已在发送前先行清视图（幂等）。
+/// POST /new-chat —— 手机遥控新建对话：与桌面 new_chat_session_cmd 同一后端转场
+/// （guard_switch → 归档当前 → 当前 mode 槽置 None → 清 backup/去重键/重试 → 双推
+/// SessionChanged）。不创建任何空会话：新会话只在 welcome 直发消息时由 process.rs
+/// 空态判据创建。随后 NewChatBroadcast 通知桌面端仅本地清 view（后端转场已由本端点
+/// 完成，桌面不再重复调后端）。执行中/追加待处理拒绝（busy / append_pending → 409）。
 async fn post_new_chat<R: tauri::Runtime>(
     State(ctx): State<MobileCtx<R>>,
     headers: HeaderMap,
@@ -1759,8 +1758,11 @@ async fn post_new_chat<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    // 执行中/追加待处理：拒绝（后端权威判定，与桌面 isProcessing 守卫同源语义）
-    if let Err(e) = crate::commands::process::shelf::guard_switch(state.inner()) {
+    // 同一后端转场（与桌面 new_chat_session_cmd 同源）：内部 guard_switch 拒绝执行中/
+    // 追加待处理；空闲时归档当前会话 → 当前槽置 None → 清 backup/去重/重试 → 双推
+    // SessionChanged。busy/append_pending → 409，其余 → 400。
+    let res = crate::commands::process::shelf::new_chat_session_with_event(&ctx.app, state.inner());
+    if let Err(e) = res {
         let status = if e == "busy" || e == "append_pending" {
             StatusCode::CONFLICT
         } else {
@@ -1768,7 +1770,7 @@ async fn post_new_chat<R: tauri::Runtime>(
         };
         return (status, Json(serde_json::json!({ "error": e }))).into_response();
     }
-    // 纯意图广播：不动任何会话状态（不归档、不安装、不落库）
+    // NewChatBroadcast：桌面端收到仅本地清 view（后端转场已由本端点完成）
     crate::emitter::CompoundEmitter::new(ctx.app.clone(), state.inner())
         .emit(NuphusEvent::NewChatBroadcast);
     Json(serde_json::json!({ "ok": true })).into_response()

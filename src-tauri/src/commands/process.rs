@@ -439,6 +439,45 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         // 无 session 快照（新会话/未落库）→ 直接续聊当前槽，不新建
     }
 
+    // 空态判据（后端权威，不依赖前端 new_session 标记）：空闲受理时，若当前 mode 槽
+    // 无任何会话内容、且 session_backup 为空（无"进行中/待续"上下文）——即后端处于
+    // 欢迎页状态（新建对话已把槽置 None 并清 backup）——则本次发送必然是全新会话。
+    // 覆盖：欢迎页直发传 new_session=false、以及跨端残留续聊标记/历史被当成新对话。
+    if !force_new {
+        let slot_empty = state
+            .runtime
+            .lock()
+            .ok()
+            .map(|guard| {
+                if is_workflow {
+                    guard
+                        .workflow_agent
+                        .as_ref()
+                        .map(|a| a.session().is_empty())
+                        .unwrap_or(true)
+                } else {
+                    guard
+                        .leader_agent
+                        .as_ref()
+                        .map(|rt| rt.session().is_empty())
+                        .unwrap_or(true)
+                }
+            })
+            .unwrap_or(true);
+        let backup_none = state
+            .session
+            .lock()
+            .ok()
+            .map(|sb| sb.session_backup.is_none())
+            .unwrap_or(true);
+        if slot_empty && backup_none {
+            tracing::info!(
+                "[MODE] 空态判据：无活动会话上下文（槽空/无且无 backup）→ 按新建会话处理"
+            );
+            force_new = true;
+        }
+    }
+
     // 发送确认当前模式：前端传的 mode 与后端权威一致（手机端发消息默认带 mode，
     // 桌面端 set_mode 已显式切换；None 兼容旧调用——保持 current_mode 不变）。
     // current_mode 是独立 RwLock，不持有 runtime 锁，无死锁风险。
@@ -457,6 +496,12 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     // force_new（手动切 mode 后首次发送=新建）不备份旧槽会话：旧会话将归档进展示台，
     // backup 只留给「续聊当前会话」路径，避免新建后 backup 残留旧会话污染 get_chat_history。
     let backup_session = if force_new {
+        // force_new 新建会话：不备份旧槽（旧会话将归档进展示台）；
+        // 同时清掉 AppState 残留的旧备份——leader.rs 在「新 Runtime session 空」时会
+        // 兜底从 AppState 恢复，残留旧备份会把新建对话恢复成原会话（实测 bug）。
+        if let Ok(mut sb) = state.session.lock() {
+            sb.session_backup = None;
+        }
         None
     } else {
         state.runtime.lock().ok().and_then(|guard| {
@@ -788,6 +833,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 mode_parsed,
                 state.workflow_engine.clone(),
                 false,
+                force_new, // fresh：welcome/rule2/空态判据 新建 → 空 session 第一轮，不注入旧上下文
             )
             .await
             {
@@ -902,6 +948,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                                 m2,
                                 state.workflow_engine.clone(),
                                 false,
+                                force_new, // fresh：与主路径一致，新建失败重建也不注入旧上下文
                             )
                             .await
                         };

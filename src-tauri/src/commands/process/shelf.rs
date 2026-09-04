@@ -865,7 +865,9 @@ pub(crate) fn switch_session_inner_mode(
     Ok(())
 }
 
-/// 新建对话：归档当前（有内容才占槽）→ 安装空白会话，返回新 id
+/// 新建对话 = 后端真转场（单一权威状态）：归档当前（有内容才占槽）→ 当前 mode 槽置
+/// None（**不创建任何空会话**——「新建对话」只回到无会话的欢迎页，新会话仅在欢迎页
+/// 直发消息时由 process.rs 空态判据创建）→ 清 session_backup/去重键/重试现场。
 /// 广播：CompoundEmitter 双推（桌面 Tauri IPC + 手机 WS）——手机「新建对话」遥控桌面
 /// 走同一入口，变更经 SessionChanged 事件回传，双端跟随显示（单一路径，手机跟随）。
 #[tauri::command]
@@ -893,22 +895,28 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
     archive_active(state, &mut ctx, kind);
 
-    let fresh = Session::new();
-    let new_id = fresh.id.clone();
-    if let Some(slot) = active_session_mut(&mut ctx, kind) {
-        *slot = fresh;
+    // 离开 active：当前 mode 槽整体置 None（无 agent = 欢迎页/无会话）。不装空会话。
+    // 新会话只在下一次欢迎页直发消息时由 process.rs 空态判据创建。
+    let new_id = uuid::Uuid::new_v4().to_string(); // SessionChanged 事件 token，非真实会话 id
+    match kind {
+        "workflow" => ctx.workflow_agent = None,
+        _ => ctx.leader_agent = None,
     }
     drop(ctx);
 
-    // 会话边界必须同步清理恢复快照与消息去重键。否则新会话第一条消息若恰好与
-    // 上一会话末条相同，会被 completion dedup 当成重复提交而静默丢弃。
+    // 会话边界必须同步清理恢复快照/去重键/重试现场。否则：新会话第一条消息若恰好
+    // 与上一会话末条相同，会被 completion dedup 当成重复提交而静默丢弃；或旧失败回合
+    // 仍可被「重试」复活进新会话。
     if let Ok(mut sb) = state.session.lock() {
         sb.session_backup = None;
         sb.last_message.clear();
         sb.last_send_id = None;
         sb.last_message_images.clear();
     }
-    tracing::info!("[Shelf] 新建对话 {new_id} ({kind})");
+    if let Ok(mut ex) = state.execution.lock() {
+        ex.pending_retry = None;
+    }
+    tracing::info!("[Shelf] 新建对话：归档并清空当前 {kind} 槽（回到欢迎页）");
     crate::emitter::CompoundEmitter::new(app.clone(), state).emit(
         nuphus::agent::events::NuphusEvent::SessionChanged {
             session_id: new_id.clone(),

@@ -253,11 +253,12 @@ fn append_last_turn_user(
 ///
 /// 选择策略（后端权威 current_mode 驱动，替换旧「最近活跃 timestamp 猜测」）：
 /// 1. 主模式 session（current_mode 对应 agent）非空 → 返回主模式历史
-/// 2. 空闲（busy=false）且主模式 session 空/不可用 → 回退另一侧 agent（不丢历史）
-/// 3. session_backup（AppState 持久化 JSON）—— 执行中 agent 被 take() 移出
-///    （process.rs 执行开始前备份，执行完成放回），busy=true 时跳过另一侧回退，
-///    直接走 backup：手机端在电脑端执行中重进页面仍能拉到执行前历史；agent
-///    从未创建（无备份）→ 空列表欢迎页
+/// 2. session_backup（AppState 持久化 JSON）—— 执行中 agent 被 take() 移出
+///    （process.rs 执行开始前备份，执行完成放回），busy=true 时 agent 已不在槽，
+///    走 backup：手机端在电脑端执行中重进页面仍能拉到执行前历史；idle 时 backup
+///    是「会话台降级切换 / 继续对话」中转的目标会话（先于空列表返回）。
+/// 3. 主槽空/无 + backup 无 → 空列表欢迎页（不回退另一侧 agent——那会复活其它
+///    mode 的旧会话，「新建对话」后首页又显示旧 workflow/leader 对话的源头）。
 ///
 /// ⚠️ 注意：不要在此附加 append_queue 的 pending 消息为 user——追加消息只应以
 /// [APPEND] 段经 extract_history 提取（extract_append_user_text）进入历史，
@@ -297,14 +298,14 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
         return Ok(primary);
     }
 
-    // 空闲且主模式 session 空/不可用 → 先检查切换中转 backup，再回退另一侧（不丢历史）。
-    // busy=true（执行中 agent 被 take）→ 不回退另一侧，直接走 session_backup（当前模式快照）
+    // 主槽空/无：idle 时仅回退「切换中转 / 继续对话」写入的 session_backup（目标会话，
+    // 跨 mode 点击会话、目标 agent 槽为 None 时经 switch_session 降级路径写入——此时
+    // 必须返回 backup 中的目标会话，否则会显示空列表；回归 2026-08-30）。
+    // busy=true（执行中 agent 被 take）→ 下方统一走 session_backup（当前模式快照）。
+    // 不再回退另一侧 agent：主槽空 = 该 mode 无会话（欢迎页），回退会把其它 mode 的
+    // 旧会话复活进「新建对话」后的首页（2026-09-04「新建对话回旧对话」根因之一）。
     let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
     if !busy {
-        // 切换中转目标优先：跨 mode 点击会话、目标 agent 槽为 None 时，目标会话经
-        // switch_session 降级路径写入 session_backup。此时 primary 为空，必须先返回
-        // backup 中的目标会话；否则回退另一侧 agent 会显示「当前对话」而非目标会话
-        // （回归 2026-08-30：点击其它 mode 会话聊天区不变）。
         if let Ok(sb) = state.session.lock() {
             if let Some(ref json) = sb.session_backup {
                 if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
@@ -324,28 +325,6 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
                     }
                 }
             }
-        }
-        let secondary = if is_workflow {
-            guard
-                .leader_agent
-                .as_ref()
-                .map(|a| extract_history(a.session()))
-                .unwrap_or_default()
-        } else {
-            guard
-                .workflow_agent
-                .as_ref()
-                .map(|a| extract_history(a.session()))
-                .unwrap_or_default()
-        };
-        if !secondary.is_empty() {
-            tracing::info!(
-                "[CHAT] get_chat_history returned {} messages from {} agent (fallback, current_mode={})",
-                secondary.len(),
-                if is_workflow { "leader" } else { "workflow" },
-                current_mode
-            );
-            return Ok(secondary);
         }
     }
 
@@ -712,10 +691,11 @@ mod tests {
         assert_eq!(hist[1].content, "leader 新回复");
     }
 
-    /// current_mode=workflow + workflow session 空 + 空闲（busy=false）+ leader 非空
-    /// → 回退 leader（不丢历史）
+    /// current_mode=workflow + workflow session 空 + 空闲（busy=false）+ backup 无
+    /// → workflow 欢迎页空列表（不回退另一侧 leader——那会复活其它 mode 旧会话，
+    /// 「新建对话」后首页显示旧对话的根因，2026-09-04）
     #[test]
-    fn chat_history_workflow_mode_falls_back_to_leader_when_idle() {
+    fn chat_history_workflow_mode_empty_returns_welcome() {
         let state = AppState::default();
         set_current_mode(&state, "workflow");
         {
@@ -726,10 +706,12 @@ mod tests {
                 None,
             )));
         }
-        // busy 默认 false（空闲）
+        // busy 默认 false（空闲），无 backup
         let hist = chat_history(&state).unwrap();
-        assert_eq!(hist.len(), 2);
-        assert_eq!(hist[0].content, "leader 问题");
+        assert!(
+            hist.is_empty(),
+            "workflow 主槽空 = workflow 欢迎页，不显示 leader 会话"
+        );
     }
 
     /// current_mode=workflow + workflow agent 被 take（None）+ 执行中（busy=true）
@@ -763,10 +745,11 @@ mod tests {
         assert_eq!(hist[0].content, "备份消息");
     }
 
-    /// current_mode=leader + leader session 空 + 空闲（busy=false）+ workflow 非空
-    /// → 回退 workflow（不丢历史）
+    /// current_mode=leader + leader session 空 + 空闲（busy=false）+ backup 无
+    /// → leader 欢迎页空列表（不回退 workflow；「新建对话」后 leader 首页的旧
+    /// workflow 会话不再被复活，2026-09-04）
     #[test]
-    fn chat_history_leader_mode_falls_back_to_workflow() {
+    fn chat_history_leader_mode_empty_returns_welcome() {
         let state = AppState::default();
         set_current_mode(&state, "leader");
         {
@@ -778,8 +761,31 @@ mod tests {
             )));
         }
         let hist = chat_history(&state).unwrap();
-        assert_eq!(hist.len(), 2);
-        assert_eq!(hist[0].content, "工作流问题");
+        assert!(
+            hist.is_empty(),
+            "leader 主槽空 = leader 欢迎页，不显示 workflow 会话"
+        );
+    }
+
+    /// 新建对话后首页：current_mode=leader + leader agent 槽为 None（新建已把槽置
+    /// None）+ 空闲 + backup 无 + workflow 非空 → 空列表欢迎页（workflow 不被复活）
+    #[test]
+    fn chat_history_after_new_chat_leader_slot_none_returns_welcome() {
+        let state = AppState::default();
+        set_current_mode(&state, "leader");
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.leader_agent = None; // 新建对话后当前 mode 槽为 None
+            guard.workflow_agent = Some(workflow_agent_with(session_with_ts(
+                &[("工作流问题", "工作流回复")],
+                None,
+            )));
+        }
+        let hist = chat_history(&state).unwrap();
+        assert!(
+            hist.is_empty(),
+            "新建后 leader 槽 None + 无 backup = 欢迎页"
+        );
     }
 
     /// 跨 mode 切换降级中转：current_mode=leader + leader agent 槽为 None（重启后

@@ -249,17 +249,18 @@ export default function App() {
     { key: 'u', ctrl: true, handler: () => setShowDesktopToolbar((p: boolean) => !p) },
   ])
 
-  // ── 手机端「新会话」遥控跟随：后端 /new-chat 广播 new_chat_broadcast（纯意图，
-  // 不创建任何 session），桌面端执行与 Ctrl+N 完全相同的 handleNewChat——清聊天区
-  // 回 welcome；执行中 handleNewChat 自守卫（isProcessing 直接 return）。
-  // ref 镜像：handleNewChat 引用随 isProcessing 变化，once-registered 监听若闭包
-  // 捕获旧实例，执行中守卫会失效（旧 isProcessing=false）→ 用 ref 取最新。
-  const handleNewChatRef = useRef(s.handleNewChat)
-  handleNewChatRef.current = s.handleNewChat
+  // ── 手机端「新会话」遥控跟随：POST /new-chat 已完成**后端转场**（归档 → 当前槽置
+  // None → 清 backup → SessionChanged 双推），NewChatBroadcast 只通知桌面**本地清 view**：
+  // reloadChatFromBackend = resetTransientUI + 重拉历史（后端空态 → 空列表欢迎页）。
+  // 绝不在此重复调 new_chat_session_cmd——会二次转场并多广播一次 SessionChanged。
+  // 本机新建（Ctrl+N / TitleBar / SessionRail+ / 命令面板）走 s.handleNewChat（后端转场）。
+  // ref 镜像避免 once-registered 监听捕获陈旧闭包。
+  const reloadFromBackendRef = useRef(s.reloadChatFromBackend)
+  reloadFromBackendRef.current = s.reloadChatFromBackend
   useEffect(() => {
     let unlisten: (() => void) | undefined
     void listen<{ seq: number; event: { type: string } }>('nuphus-event', ({ event }) => {
-      if (event.type === 'new_chat_broadcast') handleNewChatRef.current()
+      if (event.type === 'new_chat_broadcast') void reloadFromBackendRef.current()
     }).then(u => {
       unlisten = u
     })
