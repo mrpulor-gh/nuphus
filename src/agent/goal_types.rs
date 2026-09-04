@@ -186,10 +186,20 @@ impl fmt::Display for GoalType {
 /// Prefers explicit context_window from config.toml (set after API query),
 /// falls back to built-in ProviderRegistry metadata, then a reasonable default.
 pub fn get_context_window(model_name: &str) -> usize {
+    try_get_context_window(model_name).unwrap_or(128_000)
+}
+
+/// Context window lookup WITHOUT the 128K guess: explicit config → builtin
+/// metadata → None (unknown). Runtime sizing (refine budget etc.) may still
+/// want the fallback via `get_context_window`; callers that surface the value
+/// to the UI (startup load / is_llm_configured) must use this variant so an
+/// unknown model (e.g. a new model listed by the provider UI but not yet in
+/// our metadata) shows as 0/“--” instead of a fabricated 128K.
+pub fn try_get_context_window(model_name: &str) -> Option<usize> {
     if let Ok(registry) = crate::config::load_registry() {
         if let Some((_, model)) = registry.find_model(model_name) {
             if let Some(window) = model.context_window {
-                return window;
+                return Some(window);
             }
         }
     }
@@ -197,9 +207,9 @@ pub fn get_context_window(model_name: &str) -> usize {
     if let Some((_, meta)) =
         crate::config::registry::ProviderRegistry::builtin().find_model(model_name)
     {
-        return meta.context_window as usize;
+        return Some(meta.context_window as usize);
     }
-    128_000
+    None
 }
 
 // Warmup reminders — compile-time embedded from goal_warmups.toml

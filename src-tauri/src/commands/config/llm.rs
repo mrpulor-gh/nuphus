@@ -140,7 +140,11 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
 
     if let Ok(mut guard) = state.runtime.lock() {
         guard.llm_config = Some(cfg.clone());
-        guard.model_context_window = nuphus::agent::goal_types::get_context_window(&model_id);
+        // 启动加载：未知模型（如 provider UI 新列出的模型、元数据未收录）不得
+        // 把 128K 猜测固化进 model_context_window → UI 显示错误上限。用无 fallback
+        // 变体：显式配置 → builtin → 0（未知，前端显示 "--"），后台校准可后续修正。
+        guard.model_context_window =
+            nuphus::agent::goal_types::try_get_context_window(&model_id).unwrap_or(0);
     }
 
     tracing::info!(
@@ -886,7 +890,10 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                             reasoning_effort: None,
                                         });
                                         guard.model_context_window =
-                                            nuphus::agent::goal_types::get_context_window(model_id);
+                                            nuphus::agent::goal_types::try_get_context_window(
+                                                model_id,
+                                            )
+                                            .unwrap_or(0);
                                         tracing::info!("[is_llm_configured] Loaded from providers.toml: provider={}, model={}, context_window={}",
                                                 provider_type, model_id, guard.model_context_window);
                                         break;
