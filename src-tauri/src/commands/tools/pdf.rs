@@ -261,37 +261,35 @@ pub async fn pdf_compress(
         let object_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
         let mut recompressed = 0u32;
         for id in object_ids {
-            if let Some(obj) = doc.objects.get_mut(&id) {
-                if let Object::Stream(ref mut stream) = obj {
-                    // 仅处理 FlateDecode 流（PDF 中最常见的压缩流）
-                    let filter = stream.dict.get(b"Filter").ok().cloned();
-                    let is_flate = match &filter {
-                        Some(Object::Name(n)) => n == b"FlateDecode",
-                        Some(Object::Array(arr)) => arr
-                            .iter()
-                            .any(|o| matches!(o, Object::Name(n) if n == b"FlateDecode")),
-                        _ => false,
-                    };
-                    if !is_flate {
-                        continue;
-                    }
-                    // 解压
-                    let mut decoder = Decoder::new(&stream.content[..]);
-                    let mut decompressed = Vec::new();
-                    if decoder.read_to_end(&mut decompressed).is_err() {
-                        continue;
-                    }
-                    // 用 Best 压缩重编码
-                    let mut encoder = Encoder::new(Vec::new(), Compression::best());
-                    if std::io::Write::write_all(&mut encoder, &decompressed).is_err() {
-                        continue;
-                    }
-                    let recompressed_data = encoder.finish().unwrap_or_default();
-                    // 仅当新数据更小时才替换
-                    if recompressed_data.len() < stream.content.len() {
-                        stream.content = recompressed_data;
-                        recompressed += 1;
-                    }
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                // 仅处理 FlateDecode 流（PDF 中最常见的压缩流）
+                let filter = stream.dict.get(b"Filter").ok().cloned();
+                let is_flate = match &filter {
+                    Some(Object::Name(n)) => n == b"FlateDecode",
+                    Some(Object::Array(arr)) => arr
+                        .iter()
+                        .any(|o| matches!(o, Object::Name(n) if n == b"FlateDecode")),
+                    _ => false,
+                };
+                if !is_flate {
+                    continue;
+                }
+                // 解压
+                let mut decoder = Decoder::new(&stream.content[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    continue;
+                }
+                // 用 Best 压缩重编码
+                let mut encoder = Encoder::new(Vec::new(), Compression::best());
+                if std::io::Write::write_all(&mut encoder, &decompressed).is_err() {
+                    continue;
+                }
+                let recompressed_data = encoder.finish().unwrap_or_default();
+                // 仅当新数据更小时才替换
+                if recompressed_data.len() < stream.content.len() {
+                    stream.content = recompressed_data;
+                    recompressed += 1;
                 }
             }
         }
