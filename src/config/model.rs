@@ -149,6 +149,26 @@ impl ModelRegistry {
                 None => {}
             }
         }
+        // 模型真值 = [agent_models].leader（主模型，mode 绑定单一数据源）。
+        // providers.toml 顶层 model 字段已退役：不构成覆盖层。leader 可用时以 leader
+        // 为准（覆盖 serde 读入的顶层旧值）；leader 空（旧文件未迁移绑定）→ 保留顶层
+        // 历史值作一次性兼容兜底，不写回、不参与任何优先级比较。
+        if let Ok(doc) = content.parse::<toml::Value>() {
+            if let Some(leader) = doc
+                .get("agent_models")
+                .and_then(|a| a.get("leader"))
+                .and_then(|v| v.as_str())
+            {
+                let avail = !leader.is_empty()
+                    && registry
+                        .providers
+                        .iter()
+                        .any(|p| p.models.iter().any(|m| m.id == leader));
+                if avail {
+                    registry.model = leader.to_string();
+                }
+            }
+        }
         registry.build_alias_map();
         Ok(registry)
     }
