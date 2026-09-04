@@ -210,7 +210,9 @@ export function CommandPalette({
           ) : grouped ? (
             grouped.map(([category, groupItems]) => (
               <div key={category} className="cmd-group" role="group" aria-label={category}>
-                <div className="cmd-group-label" aria-hidden="true">{category}</div>
+                <div className="cmd-group-label" aria-hidden="true">
+                  {category}
+                </div>
                 {groupItems.map(item => {
                   const flatIdx = filtered.indexOf(item)
                   return (

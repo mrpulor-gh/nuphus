@@ -37,7 +37,7 @@ export const MoodFace: React.FC<MoodFaceProps> = ({ mood, size = 16 }) => {
         xmlns="http://www.w3.org/2000/svg"
         style={{ width: size, height: size }}
       >
-{mood === 'idle' && (
+        {mood === 'idle' && (
           <g className="nuphus-idle">
             <g className="idle-bubble">
               {/* 圆角对话气泡 + 左下小尾巴：等你说话 */}
@@ -50,9 +50,27 @@ export const MoodFace: React.FC<MoodFaceProps> = ({ mood, size = 16 }) => {
                 fill="none"
               />
               {/* typing 三点，顺序脉动 */}
-              <circle className="idle-dot idle-dot-1" cx="9"  cy="10.5" r="0.9" fill="currentColor" />
-              <circle className="idle-dot idle-dot-2" cx="12" cy="10.5" r="0.9" fill="currentColor" />
-              <circle className="idle-dot idle-dot-3" cx="15" cy="10.5" r="0.9" fill="currentColor" />
+              <circle
+                className="idle-dot idle-dot-1"
+                cx="9"
+                cy="10.5"
+                r="0.9"
+                fill="currentColor"
+              />
+              <circle
+                className="idle-dot idle-dot-2"
+                cx="12"
+                cy="10.5"
+                r="0.9"
+                fill="currentColor"
+              />
+              <circle
+                className="idle-dot idle-dot-3"
+                cx="15"
+                cy="10.5"
+                r="0.9"
+                fill="currentColor"
+              />
             </g>
           </g>
         )}

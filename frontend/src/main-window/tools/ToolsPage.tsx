@@ -117,9 +117,19 @@ interface AbilityDef {
   /** 布局模式：split=左右分栏(默认) / stacked=单栏堆叠 */
   layout?: 'split' | 'stacked'
   /** 专用文件卡渲染（替代默认 chip 列表） */
-  renderFileCard?: (props: { inputs: string[]; onRemove: (path: string) => void; onMove?: (from: number, to: number) => void }) => ReactNode
+  renderFileCard?: (props: {
+    inputs: string[]
+    onRemove: (path: string) => void
+    onMove?: (from: number, to: number) => void
+  }) => ReactNode
   /** 专用设置面板渲染（layout='stacked' 时替代 fields 表单） */
-  renderSettings?: (props: { values: Record<string, string>; onChange: (key: string, value: string) => void; inputs: string[]; result: Record<string, unknown> | null; busy: boolean }) => ReactNode
+  renderSettings?: (props: {
+    values: Record<string, string>
+    onChange: (key: string, value: string) => void
+    inputs: string[]
+    result: Record<string, unknown> | null
+    busy: boolean
+  }) => ReactNode
   /** 专用结果渲染（替代默认 JSON） */
   renderResult?: (props: { result: Record<string, unknown> }) => ReactNode
 }
@@ -127,7 +137,11 @@ interface AbilityDef {
 /* ───────────── PDF 压缩专用组件 ───────────── */
 
 function PdfCompressSettings({
-  values, onChange, inputs, result, busy,
+  values,
+  onChange,
+  inputs,
+  result,
+  busy,
 }: {
   values: Record<string, string>
   onChange: (key: string, value: string) => void
@@ -151,8 +165,12 @@ function PdfCompressSettings({
             onClick={() => onChange('compressMode', m)}
           >
             <span className="tools-mode-card-icon">{m === 'smart' ? 'S' : 'T'}</span>
-            <span className="tools-mode-card-title">{t(`tools.compress${m === 'smart' ? 'Smart' : 'Target'}`)}</span>
-            <span className="tools-mode-card-desc">{t(`tools.compress${m === 'smart' ? 'SmartDesc' : 'TargetDesc'}`)}</span>
+            <span className="tools-mode-card-title">
+              {t(`tools.compress${m === 'smart' ? 'Smart' : 'Target'}`)}
+            </span>
+            <span className="tools-mode-card-desc">
+              {t(`tools.compress${m === 'smart' ? 'SmartDesc' : 'TargetDesc'}`)}
+            </span>
           </button>
         ))}
       </div>
@@ -160,20 +178,26 @@ function PdfCompressSettings({
       {/* 质量档位（仅智能压缩） */}
       {mode === 'smart' && (
         <>
-          <div className="tools-zone-title" style={{ marginTop: 12 }}>{t('tools.qualityLevel')}</div>
+          <div className="tools-zone-title" style={{ marginTop: 12 }}>
+            {t('tools.qualityLevel')}
+          </div>
           <div className="tools-quality-grid">
-            {([
-              { value: 'low', label: t('tools.qualityLow'), pct: '30%' },
-              { value: 'medium', label: t('tools.qualityMedium'), pct: '55%' },
-              { value: 'high', label: t('tools.qualityHigh'), pct: '80%' },
-            ] as const).map(p => (
+            {(
+              [
+                { value: 'low', label: t('tools.qualityLow'), pct: '30%' },
+                { value: 'medium', label: t('tools.qualityMedium'), pct: '55%' },
+                { value: 'high', label: t('tools.qualityHigh'), pct: '80%' },
+              ] as const
+            ).map(p => (
               <button
                 key={p.value}
                 type="button"
                 className={`tools-quality-card ${(values.quality || 'medium') === p.value ? 'tools-quality-card--active' : ''}`}
                 onClick={() => onChange('quality', p.value)}
               >
-                <div className="tools-quality-radio">{(values.quality || 'medium') === p.value ? '●' : '○'}</div>
+                <div className="tools-quality-radio">
+                  {(values.quality || 'medium') === p.value ? '●' : '○'}
+                </div>
                 <div className="tools-quality-label">
                   {p.label}
                   {p.value === 'medium' && <span className="tools-quality-badge">RECOMMENDED</span>}
@@ -207,9 +231,7 @@ function PdfCompressSettings({
       )}
 
       {/* 执行后压缩结果 */}
-      {result && typeof result.size_before === 'number' && (
-        <PdfCompressResult result={result} />
-      )}
+      {result && typeof result.size_before === 'number' && <PdfCompressResult result={result} />}
     </>
   )
 }
@@ -226,14 +248,20 @@ function PdfCompressResult({ result }: { result: Record<string, unknown> }) {
       <div className="tools-compare-row">
         <span className="tools-compare-label">{t('tools.compressBefore')}</span>
         <div className="tools-compare-bar" style={{ width: maxBar }}>
-          <div className="tools-compare-bar-fill tools-compare-bar-fill--before" style={{ width: '100%' }} />
+          <div
+            className="tools-compare-bar-fill tools-compare-bar-fill--before"
+            style={{ width: '100%' }}
+          />
         </div>
         <span className="tools-compare-size">{formatBytes(r.size_before)}</span>
       </div>
       <div className="tools-compare-row">
         <span className="tools-compare-label">{t('tools.compressAfter')}</span>
         <div className="tools-compare-bar" style={{ width: maxBar }}>
-          <div className="tools-compare-bar-fill tools-compare-bar-fill--after" style={{ width: `${100 - ratio}%` }} />
+          <div
+            className="tools-compare-bar-fill tools-compare-bar-fill--after"
+            style={{ width: `${100 - ratio}%` }}
+          />
         </div>
         <span className="tools-compare-size">{formatBytes(r.size_after)}</span>
       </div>
@@ -274,7 +302,10 @@ function InfoResult({ result }: { result: Record<string, unknown> }) {
       {rows.map(([k, v]) => (
         <div className="tools-info-row" key={k}>
           <span className="tools-info-key">{k.replace(/_/g, ' ')}</span>
-          <span className="tools-info-value" title={k === 'path' && typeof v === 'string' ? v : undefined}>
+          <span
+            className="tools-info-value"
+            title={k === 'path' && typeof v === 'string' ? v : undefined}
+          >
             {pretty(v, k)}
           </span>
         </div>
@@ -285,7 +316,15 @@ function InfoResult({ result }: { result: Record<string, unknown> }) {
 
 /* ───────────── 多文件列表卡片（带排序） ───────────── */
 
-function FileListCard({ inputs, onRemove, onMove }: { inputs: string[]; onRemove: (path: string) => void; onMove?: (from: number, to: number) => void }) {
+function FileListCard({
+  inputs,
+  onRemove,
+  onMove,
+}: {
+  inputs: string[]
+  onRemove: (path: string) => void
+  onMove?: (from: number, to: number) => void
+}) {
   const { t } = useLanguage()
   return (
     <div className="tools-file-cards">
@@ -294,7 +333,9 @@ function FileListCard({ inputs, onRemove, onMove }: { inputs: string[]; onRemove
           <div className="tools-file-card-icon">FILE</div>
           <div className="tools-file-card-info">
             <div className="tools-file-card-name">{fileLabel(p)}</div>
-            <div className="tools-file-card-meta">{i + 1}/{inputs.length}</div>
+            <div className="tools-file-card-meta">
+              {i + 1}/{inputs.length}
+            </div>
           </div>
           {onMove && inputs.length > 1 && (
             <div className="tools-file-card-reorder">
@@ -304,14 +345,18 @@ function FileListCard({ inputs, onRemove, onMove }: { inputs: string[]; onRemove
                 disabled={i === 0}
                 onClick={() => onMove(i, i - 1)}
                 title={t('tools.moveUp')}
-              >↑</button>
+              >
+                ↑
+              </button>
               <button
                 type="button"
                 className="tools-file-card-btn"
                 disabled={i === inputs.length - 1}
                 onClick={() => onMove(i, i + 1)}
                 title={t('tools.moveDown')}
-              >↓</button>
+              >
+                ↓
+              </button>
             </div>
           )}
           <button
@@ -362,7 +407,13 @@ function QualityPresetCards({ value, onChange }: { value: string; onChange: (v: 
 
 /* ───────────── 方向预设卡片（拼接方向） ───────────── */
 
-function DirectionPresetCards({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function DirectionPresetCards({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
   const { t } = useLanguage()
   const dirs = [
     { value: 'horizontal', icon: '↔', label: t('tools.stitchHorizontal') },
@@ -387,7 +438,15 @@ function DirectionPresetCards({ value, onChange }: { value: string; onChange: (v
 
 /* ───────────── 格式选择卡片（通用） ───────────── */
 
-function FormatSelectCards({ value, options, onChange }: { value: string; options: { value: string; label: string; icon?: string }[]; onChange: (v: string) => void }) {
+function FormatSelectCards({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: { value: string; label: string; icon?: string }[]
+  onChange: (v: string) => void
+}) {
   return (
     <div className="tools-card-selector">
       {options.map(o => (
@@ -407,7 +466,13 @@ function FormatSelectCards({ value, options, onChange }: { value: string; option
 
 /* ───────────── 批量格式选择设置 ───────────── */
 
-function BatchFormatSettings({ values, onChange }: { values: Record<string, string>; onChange: (k: string, v: string) => void }) {
+function BatchFormatSettings({
+  values,
+  onChange,
+}: {
+  values: Record<string, string>
+  onChange: (k: string, v: string) => void
+}) {
   const { t } = useLanguage()
   return (
     <div className="tools-stacked-section">
@@ -461,7 +526,13 @@ function VideoQualityCards({ value, onChange }: { value: string; onChange: (v: s
 
 /* ───────────── 时间范围字段（视频裁剪） ───────────── */
 
-function TimeRangeFields({ values, onChange }: { values: Record<string, string>; onChange: (key: string, value: string) => void }) {
+function TimeRangeFields({
+  values,
+  onChange,
+}: {
+  values: Record<string, string>
+  onChange: (key: string, value: string) => void
+}) {
   const { t } = useLanguage()
   return (
     <>
@@ -526,7 +597,13 @@ function RotationAngleCards({ value, onChange }: { value: string; onChange: (v: 
 
 /* ───────────── 通用预设卡片组件 ───────────── */
 
-function ImageSizePresetCards({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ImageSizePresetCards({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
   const { t } = useLanguage()
   const presets = [
     { value: '480', label: '480', desc: t('tools.sizeSmall') },
@@ -604,7 +681,13 @@ function GifPresetCards({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
-function FrameIntervalPresetCards({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function FrameIntervalPresetCards({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
   const { t } = useLanguage()
   const presets = [
     { value: '0.5', label: '0.5s', desc: t('tools.intervalDense') },
@@ -633,9 +716,12 @@ function FrameIntervalPresetCards({ value, onChange }: { value: string; onChange
 
 function gifPresetToValues(preset: string): { fps: number; scale: number } {
   switch (preset) {
-    case 'low': return { fps: 5, scale: 320 }
-    case 'high': return { fps: 15, scale: 640 }
-    default: return { fps: 10, scale: 480 }
+    case 'low':
+      return { fps: 5, scale: 320 }
+    case 'high':
+      return { fps: 15, scale: 640 }
+    default:
+      return { fps: 10, scale: 480 }
   }
 }
 
@@ -665,16 +751,35 @@ const ABILITIES: AbilityDef[] = [
       if (inputs.length === 1) {
         return imageCompress(inputs[0], output, numOrUndef(values.maxWidth), undefined, quality)
       }
-      return imageCompressBatch(inputs, outputDirFrom(output, inputs), numOrUndef(values.maxWidth), undefined, quality)
+      return imageCompressBatch(
+        inputs,
+        outputDirFrom(output, inputs),
+        numOrUndef(values.maxWidth),
+        undefined,
+        quality,
+      )
     },
-    resultPath: res => typeof res.output_dir === 'string' ? res.output_dir : typeof res.output === 'string' ? res.output : null,
-    renderFileCard: (props) => <FileListCard {...props} />,
+    resultPath: res =>
+      typeof res.output_dir === 'string'
+        ? res.output_dir
+        : typeof res.output === 'string'
+          ? res.output
+          : null,
+    renderFileCard: props => <FileListCard {...props} />,
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">最大宽度</div>
-        <ImageSizePresetCards value={values.maxWidth || '1920'} onChange={v => onChange('maxWidth', v)} />
-        <div className="tools-zone-title" style={{ marginTop: 12 }}>质量</div>
-        <QualityPresetCards value={values.quality || 'medium'} onChange={v => onChange('quality', v)} />
+        <ImageSizePresetCards
+          value={values.maxWidth || '1920'}
+          onChange={v => onChange('maxWidth', v)}
+        />
+        <div className="tools-zone-title" style={{ marginTop: 12 }}>
+          质量
+        </div>
+        <QualityPresetCards
+          value={values.quality || 'medium'}
+          onChange={v => onChange('quality', v)}
+        />
       </>
     ),
   },
@@ -698,8 +803,13 @@ const ABILITIES: AbilityDef[] = [
       }
       return imageConvertBatch(inputs, outputDirFrom(output, inputs), fmt)
     },
-    resultPath: res => typeof res.output_dir === 'string' ? res.output_dir : typeof res.output === 'string' ? res.output : null,
-    renderFileCard: (props) => <FileListCard {...props} />,
+    resultPath: res =>
+      typeof res.output_dir === 'string'
+        ? res.output_dir
+        : typeof res.output === 'string'
+          ? res.output
+          : null,
+    renderFileCard: props => <FileListCard {...props} />,
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">输出格式</div>
@@ -736,12 +846,20 @@ const ABILITIES: AbilityDef[] = [
       }
       return imageResizeBatch(inputs, outputDirFrom(output, inputs), w, h)
     },
-    resultPath: res => typeof res.output_dir === 'string' ? res.output_dir : typeof res.output === 'string' ? res.output : null,
-    renderFileCard: (props) => <FileListCard {...props} />,
+    resultPath: res =>
+      typeof res.output_dir === 'string'
+        ? res.output_dir
+        : typeof res.output === 'string'
+          ? res.output
+          : null,
+    renderFileCard: props => <FileListCard {...props} />,
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">输出尺寸</div>
-        <ResizePresetCards value={values.resizePreset || '1280x720'} onChange={v => onChange('resizePreset', v)} />
+        <ResizePresetCards
+          value={values.resizePreset || '1280x720'}
+          onChange={v => onChange('resizePreset', v)}
+        />
       </>
     ),
   },
@@ -758,12 +876,16 @@ const ABILITIES: AbilityDef[] = [
     run: ({ inputs }) => imageInfo(inputs[0]),
     resultText: res => {
       const keys = ['path', 'format', 'width', 'height', 'size_bytes']
-      return keys.filter(k => k in res).map(k => {
-        const v = res[k]
-        const label = k.replace(/_/g, ' ')
-        if (k === 'size_bytes' && typeof v === 'number') return `${label}: ${(v / 1024).toFixed(1)} KB`
-        return `${label}: ${v}`
-      }).join('\n')
+      return keys
+        .filter(k => k in res)
+        .map(k => {
+          const v = res[k]
+          const label = k.replace(/_/g, ' ')
+          if (k === 'size_bytes' && typeof v === 'number')
+            return `${label}: ${(v / 1024).toFixed(1)} KB`
+          return `${label}: ${v}`
+        })
+        .join('\n')
     },
     renderResult: ({ result }) => <InfoResult result={result} />,
   },
@@ -780,7 +902,7 @@ const ABILITIES: AbilityDef[] = [
     outputExt: 'pdf',
     fields: [],
     run: ({ inputs, output }) => pdfImagesToPdf(inputs, output),
-    renderFileCard: (props) => <FileListCard {...props} />,
+    renderFileCard: props => <FileListCard {...props} />,
   },
   {
     id: 'image-stitch',
@@ -796,9 +918,12 @@ const ABILITIES: AbilityDef[] = [
     fields: [],
     run: ({ inputs, output, values }) =>
       imageStitch(inputs, output, values.direction || 'horizontal'),
-    renderFileCard: (props) => <FileListCard {...props} />,
+    renderFileCard: props => <FileListCard {...props} />,
     renderSettings: ({ values, onChange }) => (
-      <DirectionPresetCards value={values.direction || 'horizontal'} onChange={v => onChange('direction', v)} />
+      <DirectionPresetCards
+        value={values.direction || 'horizontal'}
+        onChange={v => onChange('direction', v)}
+      />
     ),
   },
   {
@@ -826,13 +951,21 @@ const ABILITIES: AbilityDef[] = [
       )
     },
     resultPath: res => (typeof res.output_dir === 'string' ? `${res.output_dir}` : null),
-    renderFileCard: (props) => <FileListCard {...props} />,
+    renderFileCard: props => <FileListCard {...props} />,
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">最大宽度</div>
-        <ImageSizePresetCards value={values.maxWidth || '1920'} onChange={v => onChange('maxWidth', v)} />
-        <div className="tools-zone-title" style={{ marginTop: 12 }}>质量</div>
-        <QualityPresetCards value={values.quality || 'medium'} onChange={v => onChange('quality', v)} />
+        <ImageSizePresetCards
+          value={values.maxWidth || '1920'}
+          onChange={v => onChange('maxWidth', v)}
+        />
+        <div className="tools-zone-title" style={{ marginTop: 12 }}>
+          质量
+        </div>
+        <QualityPresetCards
+          value={values.quality || 'medium'}
+          onChange={v => onChange('quality', v)}
+        />
       </>
     ),
   },
@@ -851,8 +984,8 @@ const ABILITIES: AbilityDef[] = [
     fields: [],
     run: ({ inputs, output, values }) => imageConvertBatch(inputs, output, values.format || 'jpg'),
     resultPath: res => (typeof res.output_dir === 'string' ? `${res.output_dir}` : null),
-    renderFileCard: (props) => <FileListCard {...props} />,
-    renderSettings: (props) => <BatchFormatSettings {...props} />,
+    renderFileCard: props => <FileListCard {...props} />,
+    renderSettings: props => <BatchFormatSettings {...props} />,
   },
   // ── 视频 ──
   {
@@ -881,7 +1014,10 @@ const ABILITIES: AbilityDef[] = [
     run: ({ inputs, output, values }) =>
       videoCompress(inputs[0], output, values.quality || 'medium'),
     renderSettings: ({ values, onChange }) => (
-      <VideoQualityCards value={values.quality || 'medium'} onChange={v => onChange('quality', v)} />
+      <VideoQualityCards
+        value={values.quality || 'medium'}
+        onChange={v => onChange('quality', v)}
+      />
     ),
   },
   {
@@ -923,12 +1059,14 @@ const ABILITIES: AbilityDef[] = [
     fields: [],
     run: ({ inputs, output, values }) =>
       videoExtractFrames(inputs[0], output, Number(values.interval) || 1),
-    resultPath: res =>
-      typeof res.output_dir === 'string' ? res.output_dir : null,
+    resultPath: res => (typeof res.output_dir === 'string' ? res.output_dir : null),
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">抽帧间隔</div>
-        <FrameIntervalPresetCards value={values.interval || '1'} onChange={v => onChange('interval', v)} />
+        <FrameIntervalPresetCards
+          value={values.interval || '1'}
+          onChange={v => onChange('interval', v)}
+        />
       </>
     ),
   },
@@ -945,11 +1083,13 @@ const ABILITIES: AbilityDef[] = [
     run: ({ inputs }) => videoInfo(inputs[0]),
     resultText: res => {
       const parts: string[] = []
-      if (typeof res.duration_seconds === 'number') parts.push(`Duration: ${res.duration_seconds.toFixed(1)}s`)
+      if (typeof res.duration_seconds === 'number')
+        parts.push(`Duration: ${res.duration_seconds.toFixed(1)}s`)
       if (res.video_codec) parts.push(`Video: ${res.video_codec}`)
       if (res.audio_codec) parts.push(`Audio: ${res.audio_codec}`)
       if (res.width && res.height) parts.push(`Resolution: ${res.width}×${res.height}`)
-      if (typeof res.size_bytes === 'number') parts.push(`Size: ${(res.size_bytes / 1024 / 1024).toFixed(1)} MB`)
+      if (typeof res.size_bytes === 'number')
+        parts.push(`Size: ${(res.size_bytes / 1024 / 1024).toFixed(1)} MB`)
       return parts.join('\n') || null
     },
     renderResult: ({ result }) => <InfoResult result={result} />,
@@ -972,7 +1112,10 @@ const ABILITIES: AbilityDef[] = [
     renderSettings: ({ values, onChange }) => (
       <>
         <div className="tools-zone-title">GIF 质量</div>
-        <GifPresetCards value={values.gifQuality || 'medium'} onChange={v => onChange('gifQuality', v)} />
+        <GifPresetCards
+          value={values.gifQuality || 'medium'}
+          onChange={v => onChange('gifQuality', v)}
+        />
       </>
     ),
   },
@@ -996,7 +1139,7 @@ const ABILITIES: AbilityDef[] = [
       if (end !== undefined && !(end > start)) throw '结束时间需大于开始时间'
       return videoCut(inputs[0], output, start, end)
     },
-    renderSettings: (props) => <TimeRangeFields values={props.values} onChange={props.onChange} />,
+    renderSettings: props => <TimeRangeFields values={props.values} onChange={props.onChange} />,
   },
   {
     id: 'audio-convert',
@@ -1057,7 +1200,7 @@ const ABILITIES: AbilityDef[] = [
     outputExt: '',
     fields: [],
     run: ({ inputs }) => pdfPageCount(inputs[0]),
-    resultText: res => typeof res.pages === 'number' ? `Pages: ${res.pages}` : null,
+    resultText: res => (typeof res.pages === 'number' ? `Pages: ${res.pages}` : null),
     renderResult: ({ result }) => <InfoResult result={result} />,
   },
   {
@@ -1073,7 +1216,7 @@ const ABILITIES: AbilityDef[] = [
     outputExt: 'pdf',
     fields: [],
     run: ({ inputs, output }) => pdfMerge(inputs, output),
-    renderFileCard: (props) => <FileListCard {...props} />,
+    renderFileCard: props => <FileListCard {...props} />,
   },
   {
     id: 'pdf-compress',
@@ -1087,7 +1230,7 @@ const ABILITIES: AbilityDef[] = [
     outputExt: 'pdf',
     fields: [],
     run: ({ inputs, output }) => pdfCompress(inputs[0], output),
-    resultPath: res => typeof res.output === 'string' ? res.output : null,
+    resultPath: res => (typeof res.output === 'string' ? res.output : null),
   },
   {
     id: 'pdf-extract',
@@ -1103,7 +1246,7 @@ const ABILITIES: AbilityDef[] = [
     ],
     run: ({ inputs, values }) =>
       pdfExtractText(inputs[0], values.maxPages ? Number(values.maxPages) : undefined),
-    resultText: res => typeof res.text === 'string' ? res.text : null,
+    resultText: res => (typeof res.text === 'string' ? res.text : null),
   },
   {
     id: 'pdf-extract-pages',
@@ -1386,58 +1529,79 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
             </div>
           ) : (
             <>
-              {ability.renderFileCard
-                ? ability.renderFileCard({ inputs, onRemove: removeInput, onMove: moveInput })
-                : (
-                  <div className="tools-file-cards">
-                    {inputs.map(p => (
-                      <div key={p} className="tools-file-card">
-          <div className="tools-file-card-icon">PDF</div>
-                        <div className="tools-file-card-info">
-                          <div className="tools-file-card-name">{fileLabel(p)}</div>
-                        </div>
-                        <button
-                          type="button"
-                          className="tools-file-card-remove"
-                          onClick={() => removeInput(p)}
-                          title="移除"
-                        >
-                          <IconX size={14} />
-                        </button>
+              {ability.renderFileCard ? (
+                ability.renderFileCard({ inputs, onRemove: removeInput, onMove: moveInput })
+              ) : (
+                <div className="tools-file-cards">
+                  {inputs.map(p => (
+                    <div key={p} className="tools-file-card">
+                      <div className="tools-file-card-icon">PDF</div>
+                      <div className="tools-file-card-info">
+                        <div className="tools-file-card-name">{fileLabel(p)}</div>
                       </div>
-                    ))}
-                    <Button variant="default" size="sm" onClick={() => void pickInputs()}>
-                      <IconFolder size={13} /> {t('tools.addFiles')}
-                    </Button>
-                  </div>
-                )
-              }
+                      <button
+                        type="button"
+                        className="tools-file-card-remove"
+                        onClick={() => removeInput(p)}
+                        title="移除"
+                      >
+                        <IconX size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <Button variant="default" size="sm" onClick={() => void pickInputs()}>
+                    <IconFolder size={13} /> {t('tools.addFiles')}
+                  </Button>
+                </div>
+              )}
 
               {/* 设置面板 */}
-              {ability.renderSettings
-                ? ability.renderSettings({ values, onChange: updateValue, inputs, result: result ? JSON.parse(result) : null, busy })
-                : ability.fields.length > 0
-                  ? (
-                    <div className="tools-stacked-section">
-                      <div className="tools-zone-title">{t('tools.settingsArea')}</div>
-                      {ability.fields.map(f => (
-                        <div key={f.key} className="tools-field">
-                          <div className="tools-field-label">{t(f.labelKey)}</div>
-                          {f.kind === 'select' ? (
-                            <select className="tools-input" value={values[f.key] ?? ''} onChange={e => updateValue(f.key, e.target.value)}>
-                              {f.options?.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
-                            </select>
-                          ) : f.kind === 'text' ? (
-                            <textarea className="tools-input tools-input--textarea" rows={4} value={values[f.key] ?? ''} onChange={e => updateValue(f.key, e.target.value)} placeholder={f.placeholder} />
-                          ) : (
-                            <input className="tools-input" value={values[f.key] ?? ''} onChange={e => updateValue(f.key, e.target.value)} placeholder={f.placeholder} />
-                          )}
-                        </div>
-                      ))}
+              {ability.renderSettings ? (
+                ability.renderSettings({
+                  values,
+                  onChange: updateValue,
+                  inputs,
+                  result: result ? JSON.parse(result) : null,
+                  busy,
+                })
+              ) : ability.fields.length > 0 ? (
+                <div className="tools-stacked-section">
+                  <div className="tools-zone-title">{t('tools.settingsArea')}</div>
+                  {ability.fields.map(f => (
+                    <div key={f.key} className="tools-field">
+                      <div className="tools-field-label">{t(f.labelKey)}</div>
+                      {f.kind === 'select' ? (
+                        <select
+                          className="tools-input"
+                          value={values[f.key] ?? ''}
+                          onChange={e => updateValue(f.key, e.target.value)}
+                        >
+                          {f.options?.map(o => (
+                            <option key={o.value} value={o.value}>
+                              {t(o.labelKey)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : f.kind === 'text' ? (
+                        <textarea
+                          className="tools-input tools-input--textarea"
+                          rows={4}
+                          value={values[f.key] ?? ''}
+                          onChange={e => updateValue(f.key, e.target.value)}
+                          placeholder={f.placeholder}
+                        />
+                      ) : (
+                        <input
+                          className="tools-input"
+                          value={values[f.key] ?? ''}
+                          onChange={e => updateValue(f.key, e.target.value)}
+                          placeholder={f.placeholder}
+                        />
+                      )}
                     </div>
-                  )
-                  : null
-              }
+                  ))}
+                </div>
+              ) : null}
 
               {/* 输出路径 */}
               {ability.needsOutput && (
@@ -1451,8 +1615,13 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
                       value={output}
                       onChange={e => setOutput(e.target.value)}
                     />
-                    <Button variant="default" size="sm" onClick={() => void (ability.outputIsDir ? pickOutputDir() : pickOutput())}>
-                      <IconFolder size={13} /> {ability.outputIsDir ? t('tools.chooseDir') : t('tools.browse')}
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => void (ability.outputIsDir ? pickOutputDir() : pickOutput())}
+                    >
+                      <IconFolder size={13} />{' '}
+                      {ability.outputIsDir ? t('tools.chooseDir') : t('tools.browse')}
                     </Button>
                   </div>
                 </div>
@@ -1475,16 +1644,15 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
                     <div className="tools-result-msg">{error}</div>
                   </div>
                 )}
-                {result && (
-                  ability.renderResult
-                    ? ability.renderResult({ result: JSON.parse(result) })
-                    : (
-                      <div className="tools-result">
-                        <div className="tools-result-title">{t('tools.resultDone')}</div>
-                        <pre className="tools-result-msg">{result}</pre>
-                      </div>
-                    )
-                )}
+                {result &&
+                  (ability.renderResult ? (
+                    ability.renderResult({ result: JSON.parse(result) })
+                  ) : (
+                    <div className="tools-result">
+                      <div className="tools-result-title">{t('tools.resultDone')}</div>
+                      <pre className="tools-result-msg">{result}</pre>
+                    </div>
+                  ))}
                 {result && resultPath && (
                   <div className="tools-result-actions">
                     {ability.outputIsDir ? (
@@ -1497,7 +1665,11 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
                       </Button>
                     ) : (
                       <>
-                        <Button variant="default" size="sm" onClick={() => setPreviewPath(resultPath!)}>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => setPreviewPath(resultPath!)}
+                        >
                           <IconEye size={13} /> {t('tools.preview')}
                         </Button>
                         <Button
@@ -1750,16 +1922,15 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
                 <div className="tools-result-msg">{error}</div>
               </div>
             )}
-            {result && (
-              ability.renderResult
-                ? ability.renderResult({ result: JSON.parse(result) })
-                : (
-                  <div className="tools-result">
-                    <div className="tools-result-title">{t('tools.resultDone')}</div>
-                    <pre className="tools-result-msg">{result}</pre>
-                  </div>
-                )
-            )}
+            {result &&
+              (ability.renderResult ? (
+                ability.renderResult({ result: JSON.parse(result) })
+              ) : (
+                <div className="tools-result">
+                  <div className="tools-result-title">{t('tools.resultDone')}</div>
+                  <pre className="tools-result-msg">{result}</pre>
+                </div>
+              ))}
             {result && resultPath && (
               <div className="tools-result-actions">
                 {ability.outputIsDir ? (

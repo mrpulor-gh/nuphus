@@ -745,7 +745,9 @@
   border-radius: var(--radius-md);
   background: var(--surface-1);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
   text-align: left;
 }
 .tools-mode-card:hover {
@@ -786,7 +788,9 @@
   border-radius: var(--radius-md);
   background: var(--surface-1);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 .tools-quality-card:hover {
   border-color: var(--fg-4);

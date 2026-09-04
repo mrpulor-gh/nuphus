@@ -433,7 +433,8 @@ const en: Record<string, string> = {
   'tools.ability.imageConvert': 'Convert Image Format',
   'tools.ability.imageConvertDesc': 'Convert between PNG / JPG / BMP / GIF',
   'tools.ability.imageResize': 'Resize Image',
-  'tools.ability.imageResizeDesc': 'Scale proportionally to target size, preserving aspect ratio; select multiple files to batch-scale into a directory',
+  'tools.ability.imageResizeDesc':
+    'Scale proportionally to target size, preserving aspect ratio; select multiple files to batch-scale into a directory',
   'tools.ability.imageInfo': 'Image Info',
   'tools.ability.imageInfoDesc': 'View dimensions, format and file size',
   'tools.ability.imageToPdf': 'Images to PDF',
