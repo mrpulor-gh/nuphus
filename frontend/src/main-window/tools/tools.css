@@ -520,6 +520,38 @@
   flex-wrap: wrap;
 }
 
+/* 信息类结果（图片/视频/PDF 信息查看） */
+.tools-info-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border: 1px solid var(--glass-1);
+  border-radius: var(--radius-md);
+  background: var(--glass-0);
+}
+
+.tools-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--fz-sm);
+}
+
+.tools-info-key {
+  color: var(--fg-3);
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+
+.tools-info-value {
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  text-align: right;
+  word-break: break-all;
+}
+
 /* ── 同窗口内嵌预览面板（FilePreviewContent 容器） ── */
 .tools-preview-panel {
   display: flex;
@@ -604,4 +636,299 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ═══════════════════════════════════════════
+   Stacked Layout（单栏堆叠 — PDF 等工具专用）
+   ═══════════════════════════════════════════ */
+
+.tools-detail--stacked {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.tools-detail--stacked .tools-detail-head {
+  flex-shrink: 0;
+}
+.tools-stacked-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  overflow-y: auto;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--space-3) var(--space-4);
+}
+.tools-stacked-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.tools-stacked-section--action {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line-1);
+}
+
+/* ── 文件卡（stacked 布局） ── */
+.tools-file-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tools-file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+.tools-file-card-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-2);
+  border-radius: var(--radius-sm);
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.tools-file-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.tools-file-card-name {
+  font-weight: 500;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tools-file-card-meta {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+}
+.tools-file-card-remove {
+  border: none;
+  background: none;
+  color: var(--fg-4);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-1);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.tools-file-card-remove:hover {
+  color: var(--fg-2);
+  background: var(--glass-1);
+}
+
+/* ── 模式卡片选择器 ── */
+.tools-card-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.tools-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+}
+.tools-mode-card:hover {
+  border-color: var(--fg-4);
+}
+.tools-mode-card--active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.tools-mode-card-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.tools-mode-card-title {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.tools-mode-card-desc {
+  font-size: 11px;
+  color: var(--fg-3);
+  line-height: 1.3;
+}
+
+/* ── 质量档位选择 ── */
+.tools-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.tools-quality-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.tools-quality-card:hover {
+  border-color: var(--fg-4);
+}
+.tools-quality-card--active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.tools-quality-radio {
+  font-size: 10px;
+  color: var(--accent);
+  height: 12px;
+}
+.tools-quality-label {
+  font-size: var(--fz-sm);
+  font-weight: 500;
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tools-quality-badge {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.tools-quality-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--glass-1);
+  overflow: hidden;
+}
+.tools-quality-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.tools-quality-ratio {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+
+/* ── 输出文件名行 ── */
+.tools-field-suffix {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  flex-shrink: 0;
+}
+.tools-field-hint {
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+/* ── 压缩结果可视化 ── */
+.tools-compress-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+.tools-compress-result-title {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.tools-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tools-compare-label {
+  font-size: 12px;
+  color: var(--fg-3);
+  width: 48px;
+  flex-shrink: 0;
+}
+.tools-compare-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--glass-1);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.tools-compare-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.tools-compare-bar-fill--before {
+  background: var(--fg-3);
+}
+.tools-compare-bar-fill--after {
+  background: var(--accent);
+}
+.tools-compare-size {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-1);
+  min-width: 60px;
+  text-align: right;
+}
+.tools-compress-saved {
+  font-size: var(--fz-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+.tools-result-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── 文件卡排序按钮（FileListCard） ── */
+.tools-file-card-reorder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.tools-file-card-btn {
+  border: none;
+  background: var(--glass-1);
+  color: var(--fg-4);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+}
+.tools-file-card-btn:hover {
+  background: var(--glass-2);
+  color: var(--fg-2);
 }

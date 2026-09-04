@@ -2,8 +2,7 @@
 //
 // 移植自 nuphus-tools-rs engines/pdf.rs，修复已知缺陷：
 // - 路径 to_str().unwrap() → to_string_lossy + 错误传播，杜绝 panic
-// - extract_text 不再手写 Tj 玩具解析：直接用 lopdf 官方 extract_text
-//   （内部处理 TJ 数组 / 十六进制串 / 引号操作符），逐页返回带页码分隔
+// - extract_text 三层降级：pdf.js 桥（CID 字体）→ lopdf → 渲染 + OCR
 // - 命令全部 Result<Value, String> 返回，错误信息中文可读，不 panic
 //
 // lopdf 0.34 与 nuphus core（src/utils/office.rs read_pdf）共用同一依赖。
@@ -11,8 +10,16 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use std::io::Read;
+
+use flate2::read::Decoder;
+use flate2::write::Encoder;
+use flate2::Compression;
 use lopdf::xobject;
 use lopdf::{Bookmark, Dictionary, Document, Object, ObjectId, Stream};
+
+/// OCR 单次最大页数（与 office.rs 一致）
+const MAX_OCR_PAGES: u32 = 50;
 
 /// 单文件大小上限：防超大 PDF 加载耗尽内存（500MB，超出提示用系统程序）
 const PDF_MAX_BYTES: u64 = 500 * 1024 * 1024;
@@ -231,32 +238,82 @@ pub fn pdf_merge(
 
 /// 压缩 PDF：清理未引用对象（prune_objects）后重写
 #[tauri::command]
-pub fn pdf_compress(input_path: String, output_path: String) -> Result<serde_json::Value, String> {
-    let input = ensure_input_file(&input_path)?;
-    let output = ensure_output_pdf(&output_path)?;
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建输出目录失败：{}", e))?;
+pub async fn pdf_compress(
+    input_path: String,
+    output_path: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let input = ensure_input_file(&input_path)?;
+        let output = ensure_output_pdf(&output_path)?;
+        if let Some(parent) = output.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("创建输出目录失败：{}", e))?;
+            }
         }
-    }
 
-    let mut doc = Document::load(&input).map_err(|e| format!("加载 PDF 失败：{}", e))?;
-    let pages_before = doc.get_pages().len();
-    let removed = doc.prune_objects().len();
-    doc.save(&output)
-        .map_err(|e| format!("保存压缩 PDF 失败：{}", e))?;
+        let mut doc = Document::load(&input).map_err(|e| format!("加载 PDF 失败：{}", e))?;
+        let pages_before = doc.get_pages().len();
 
-    let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-    let size_after = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+        // 1. 移除未引用对象
+        let removed = doc.prune_objects().len();
 
-    Ok(serde_json::json!({
-        "output": output.display().to_string(),
-        "pages": pages_before,
-        "removed_objects": removed,
-        "size_before": size_before,
-        "size_after": size_after,
-        "saved_bytes": size_before.saturating_sub(size_after),
-    }))
+        // 2. 逐流重新压缩：解压后用最高压缩级别重编码，真正减小体积
+        let object_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+        let mut recompressed = 0u32;
+        for id in object_ids {
+            if let Some(obj) = doc.objects.get_mut(&id) {
+                if let Object::Stream(ref mut stream) = obj {
+                    // 仅处理 FlateDecode 流（PDF 中最常见的压缩流）
+                    let filter = stream.dict.get(b"Filter").and_then(|v| v.to_owned()).ok();
+                    let is_flate = match &filter {
+                        Some(Object::Name(n)) => n == b"FlateDecode",
+                        Some(Object::Array(arr)) => arr
+                            .iter()
+                            .any(|o| matches!(o, Object::Name(n) if n == b"FlateDecode")),
+                        _ => false,
+                    };
+                    if !is_flate {
+                        continue;
+                    }
+                    // 解压
+                    let mut decoder = Decoder::new(&stream.content[..]);
+                    let mut decompressed = Vec::new();
+                    if decoder.read_to_end(&mut decompressed).is_err() {
+                        continue;
+                    }
+                    // 用 Best 压缩重编码
+                    let mut encoder = Encoder::new(Vec::new(), Compression::best());
+                    if std::io::Write::write_all(&mut encoder, &decompressed).is_err() {
+                        continue;
+                    }
+                    let recompressed_data = encoder.finish().unwrap_or_default();
+                    // 仅当新数据更小时才替换
+                    if recompressed_data.len() < stream.content.len() {
+                        stream.content = recompressed_data;
+                        recompressed += 1;
+                    }
+                }
+            }
+        }
+
+        doc.save(&output)
+            .map_err(|e| format!("保存压缩 PDF 失败：{}", e))?;
+
+        let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+        let size_after = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+
+        Ok(serde_json::json!({
+            "output": output.display().to_string(),
+            "pages": pages_before,
+            "removed_objects": removed,
+            "recompressed_streams": recompressed,
+            "size_before": size_before,
+            "size_after": size_after,
+            "saved_bytes": size_before.saturating_sub(size_after),
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 /// 获取 PDF 页数
@@ -271,15 +328,85 @@ pub fn pdf_page_count(path: String) -> Result<serde_json::Value, String> {
 }
 
 /// 提取 PDF 文本（逐页，页码分隔）。max_pages 缺省 200 页，防超长文档拖死命令。
-/// 使用 lopdf 官方 extract_text：覆盖 TJ 数组 / 十六进制串 / 引号操作符，
-/// 替代 tools-rs 只解析 `(...) Tj` 的玩具级实现。
+///
+/// 三层降级（对齐 office.rs read_pdf 策略）：
+///   1. pdf.js 桥：通过桌面壳 webview 的 getTextContent 提取，支持 CID 字体
+///   2. lopdf extract_text：覆盖 TJ 数组 / 十六进制串 / 引号操作符
+///   3. 渲染 + OCR：扫描件兜底（仅全部页无文本层时触发）
 #[tauri::command]
 pub fn pdf_extract_text(path: String, max_pages: Option<u32>) -> Result<serde_json::Value, String> {
     let input = ensure_input_file(&path)?;
     let doc = Document::load(&input).map_err(|e| format!("加载 PDF 失败：{}", e))?;
 
-    let pages = doc.get_pages();
+    let pages: BTreeMap<u32, ObjectId> = doc.get_pages();
+    let total_pages = pages.len();
     let limit = max_pages.unwrap_or(EXTRACT_MAX_PAGES).max(1);
+
+    // ── Tier 1：pdf.js 桥（支持 CID 字体，覆盖 lopdf 无法解码的场景） ──
+    if nuphus::render_bridge::is_text_available() {
+        if let Ok(page_texts) =
+            nuphus::render_bridge::extract_pdf_text(input.to_str().unwrap_or_default(), limit)
+        {
+            let mut text = String::new();
+            let mut any_text = false;
+            let mut ocr_pages: Vec<u32> = Vec::new();
+
+            for (idx, page_text) in page_texts.iter().enumerate() {
+                let page_no = (idx as u32) + 1;
+                if !page_text.trim().is_empty() {
+                    any_text = true;
+                    text.push_str(&format!("--- Page {} ---\n", page_no));
+                    text.push_str(page_text.trim());
+                    text.push('\n');
+                } else {
+                    ocr_pages.push(page_no);
+                }
+            }
+
+            // 无文本层的页走渲染 + OCR 兜底
+            if !ocr_pages.is_empty() {
+                let to_ocr: Vec<u32> = ocr_pages
+                    .iter()
+                    .take(MAX_OCR_PAGES as usize)
+                    .copied()
+                    .collect();
+                if let Ok(pages_png) = nuphus::render_bridge::render_pdf_pages(
+                    input.to_str().unwrap_or_default(),
+                    &to_ocr,
+                ) {
+                    if let Ok(mut engine) = nuphus::desktop::paddle_ocr::PaddleOcr::new() {
+                        for (page_no, png) in to_ocr.iter().zip(pages_png.iter()) {
+                            if let Ok(img) = image::load_from_memory(png) {
+                                let rgb = img.to_rgb8();
+                                if let Ok(t) = engine.ocr_image(&rgb) {
+                                    if !t.trim().is_empty() {
+                                        any_text = true;
+                                        text.push_str(&format!("--- Page {} (OCR) ---\n", page_no));
+                                        text.push_str(t.trim());
+                                        text.push('\n');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if any_text {
+                let truncated = total_pages > limit as usize;
+                return Ok(serde_json::json!({
+                    "path": input.display().to_string(),
+                    "pages": total_pages,
+                    "extracted_pages": page_texts.len(),
+                    "truncated": truncated,
+                    "text": text,
+                }));
+            }
+            // 桥返回全部空（异常 PDF）→ 降级到 lopdf
+        }
+    }
+
+    // ── Tier 2：lopdf extract_text ──
     let mut text = String::new();
     let mut extracted_pages = 0u32;
 
@@ -297,10 +424,41 @@ pub fn pdf_extract_text(path: String, max_pages: Option<u32>) -> Result<serde_js
         }
     }
 
-    let truncated = pages.len() > limit as usize;
+    // ── Tier 3：扫描件 OCR 兜底（lopdf 全部页返回空时触发） ──
+    if text.trim().is_empty() && nuphus::render_bridge::is_available() {
+        let to_ocr: Vec<u32> = pages.keys().take(MAX_OCR_PAGES as usize).copied().collect();
+        if let Ok(pages_png) =
+            nuphus::render_bridge::render_pdf_pages(input.to_str().unwrap_or_default(), &to_ocr)
+        {
+            if let Ok(mut engine) = nuphus::desktop::paddle_ocr::PaddleOcr::new() {
+                let mut ocr_text = String::new();
+                let mut any_ocr = false;
+                for (page_no, png) in to_ocr.iter().zip(pages_png.iter()) {
+                    if let Ok(img) = image::load_from_memory(png) {
+                        let rgb = img.to_rgb8();
+                        match engine.ocr_image(&rgb) {
+                            Ok(t) if !t.trim().is_empty() => {
+                                any_ocr = true;
+                                ocr_text.push_str(&format!("--- Page {} (OCR) ---\n", page_no));
+                                ocr_text.push_str(t.trim());
+                                ocr_text.push('\n');
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if any_ocr {
+                    text = ocr_text;
+                    extracted_pages = pages_png.len() as u32;
+                }
+            }
+        }
+    }
+
+    let truncated = total_pages > limit as usize;
     Ok(serde_json::json!({
         "path": input.display().to_string(),
-        "pages": pages.len(),
+        "pages": total_pages,
         "extracted_pages": extracted_pages,
         "truncated": truncated,
         "text": text,

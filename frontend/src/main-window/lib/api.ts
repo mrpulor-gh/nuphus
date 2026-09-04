@@ -1507,6 +1507,16 @@ export function imageCompressBatch(
 export function imageConvertBatch(inputPaths: string[], outputDir: string, format: string) {
   return invoke<ImageBatchResult>('image_convert_batch', { inputPaths, outputDir, format })
 }
+
+/** 批量缩放图片（多输入 → 输出目录，目标宽高框内保纵横比） */
+export function imageResizeBatch(
+  inputPaths: string[],
+  outputDir: string,
+  width: number,
+  height: number,
+) {
+  return invoke<ImageBatchResult>('image_resize_batch', { inputPaths, outputDir, width, height })
+}
 export interface ImageBatchResult {
   output_dir: string
   format?: string

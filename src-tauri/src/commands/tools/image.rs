@@ -135,99 +135,114 @@ fn save_image(img: &DynamicImage, output: &Path, quality: u8) -> Result<u64, Str
 /// 压缩图片：可指定最大宽/高（保纵横比）+ 质量；输出格式随扩展名推断。
 /// JPEG 质量参数生效；PNG 走 Best+Adaptive 真压缩。
 #[tauri::command]
-pub fn image_compress(
+pub async fn image_compress(
     input_path: String,
     output_path: String,
     max_width: Option<u32>,
     max_height: Option<u32>,
     quality: Option<u8>,
 ) -> Result<serde_json::Value, String> {
-    let input = ensure_input_image(&input_path)?;
-    let output = PathBuf::from(&output_path);
-    if output_format(&output).is_none() {
-        return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
-    }
-    ensure_output_dir(&output)?;
+    tokio::task::spawn_blocking(move || {
+        let input = ensure_input_image(&input_path)?;
+        let output = PathBuf::from(&output_path);
+        if output_format(&output).is_none() {
+            return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
+        }
+        ensure_output_dir(&output)?;
 
-    let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
-    let (w, h) = img.dimensions();
-    let (new_w, new_h) = contain_dimensions(w, h, max_width, max_height);
-    let resized = if (new_w, new_h) != (w, h) {
-        img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
-    } else {
-        img
-    };
+        let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
+        let (w, h) = img.dimensions();
+        let (new_w, new_h) = contain_dimensions(w, h, max_width, max_height);
+        let resized = if (new_w, new_h) != (w, h) {
+            img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
 
-    let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-    let size_after = save_image(&resized, &output, quality.unwrap_or(82))?;
+        let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+        let size_after = save_image(&resized, &output, quality.unwrap_or(82))?;
 
-    Ok(serde_json::json!({
-        "output": output.display().to_string(),
-        "width": new_w,
-        "height": new_h,
-        "size_before": size_before,
-        "size_after": size_after,
-        "saved_bytes": size_before.saturating_sub(size_after),
-    }))
+        Ok(serde_json::json!({
+            "output": output.display().to_string(),
+            "width": new_w,
+            "height": new_h,
+            "size_before": size_before,
+            "size_after": size_after,
+            "saved_bytes": size_before.saturating_sub(size_after),
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 /// 格式转换：输出格式随扩展名推断（JPEG 默认 quality 90）
 #[tauri::command]
-pub fn image_convert(input_path: String, output_path: String) -> Result<serde_json::Value, String> {
-    let input = ensure_input_image(&input_path)?;
-    let output = PathBuf::from(&output_path);
-    let format = output_format(&output)
-        .ok_or_else(|| "输出扩展名必须是 png / jpg / jpeg / bmp / gif 之一".to_string())?;
-    ensure_output_dir(&output)?;
+pub async fn image_convert(
+    input_path: String,
+    output_path: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let input = ensure_input_image(&input_path)?;
+        let output = PathBuf::from(&output_path);
+        let format = output_format(&output)
+            .ok_or_else(|| "输出扩展名必须是 png / jpg / jpeg / bmp / gif 之一".to_string())?;
+        ensure_output_dir(&output)?;
 
-    let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
-    let size_after = save_image(&img, &output, 90)?;
+        let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
+        let size_after = save_image(&img, &output, 90)?;
 
-    Ok(serde_json::json!({
-        "output": output.display().to_string(),
-        "width": img.width(),
-        "height": img.height(),
-        "format": format!("{:?}", format).to_ascii_lowercase(),
-        "size_after": size_after,
-    }))
+        Ok(serde_json::json!({
+            "output": output.display().to_string(),
+            "width": img.width(),
+            "height": img.height(),
+            "format": format!("{:?}", format).to_ascii_lowercase(),
+            "size_after": size_after,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 /// 缩放图片：目标宽高框内保纵横比缩放（contain，不放大）
 #[tauri::command]
-pub fn image_resize(
+pub async fn image_resize(
     input_path: String,
     output_path: String,
     width: u32,
     height: u32,
 ) -> Result<serde_json::Value, String> {
-    if width == 0 || height == 0 {
-        return Err("目标宽高必须大于 0".to_string());
-    }
-    let input = ensure_input_image(&input_path)?;
-    let output = PathBuf::from(&output_path);
-    if output_format(&output).is_none() {
-        return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif 之一".to_string());
-    }
-    ensure_output_dir(&output)?;
+    tokio::task::spawn_blocking(move || {
+        if width == 0 || height == 0 {
+            return Err("目标宽高必须大于 0".to_string());
+        }
+        let input = ensure_input_image(&input_path)?;
+        let output = PathBuf::from(&output_path);
+        if output_format(&output).is_none() {
+            return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif 之一".to_string());
+        }
+        ensure_output_dir(&output)?;
 
-    let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
-    let (w, h) = img.dimensions();
-    let (new_w, new_h) = contain_dimensions(w, h, Some(width), Some(height));
-    let resized = if (new_w, new_h) != (w, h) {
-        img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
-    } else {
-        img
-    };
-    let size_after = save_image(&resized, &output, 90)?;
+        let img = image::open(&input).map_err(|e| format!("打开图片失败：{}", e))?;
+        let (w, h) = img.dimensions();
+        let (new_w, new_h) = contain_dimensions(w, h, Some(width), Some(height));
+        let resized = if (new_w, new_h) != (w, h) {
+            img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
+        let size_after = save_image(&resized, &output, 90)?;
 
-    Ok(serde_json::json!({
-        "output": output.display().to_string(),
-        "source_width": w,
-        "source_height": h,
-        "width": new_w,
-        "height": new_h,
-        "size_after": size_after,
-    }))
+        Ok(serde_json::json!({
+            "output": output.display().to_string(),
+            "source_width": w,
+            "source_height": h,
+            "width": new_w,
+            "height": new_h,
+            "size_after": size_after,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 /// 获取图片信息（尺寸 / 文件大小 / 格式）
@@ -251,186 +266,262 @@ pub fn image_info(path: String) -> Result<serde_json::Value, String> {
 /// 长图拼接：多张图片拼接为一张。direction: horizontal（横向，统一高度）/
 /// vertical（纵向，统一宽度）。输出格式随扩展名推断。
 #[tauri::command]
-pub fn image_stitch(
+pub async fn image_stitch(
     input_paths: Vec<String>,
     output_path: String,
     direction: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    if input_paths.is_empty() {
-        return Err("至少需要选择一张图片".to_string());
-    }
-    let dir = direction.unwrap_or_else(|| "horizontal".to_string());
-    if dir != "horizontal" && dir != "vertical" {
-        return Err("拼接方向必须是 horizontal 或 vertical".to_string());
-    }
-    let output = PathBuf::from(&output_path);
-    if output_format(&output).is_none() {
-        return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
-    }
-    ensure_output_dir(&output)?;
+    tokio::task::spawn_blocking(move || {
+        if input_paths.is_empty() {
+            return Err("至少需要选择一张图片".to_string());
+        }
+        let dir = direction.unwrap_or_else(|| "horizontal".to_string());
+        if dir != "horizontal" && dir != "vertical" {
+            return Err("拼接方向必须是 horizontal 或 vertical".to_string());
+        }
+        let output = PathBuf::from(&output_path);
+        if output_format(&output).is_none() {
+            return Err("输出扩展名必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
+        }
+        ensure_output_dir(&output)?;
 
-    // 预检 + 解码全部输入（像素上限在 ensure_input_image 内）
-    let mut imgs: Vec<DynamicImage> = Vec::with_capacity(input_paths.len());
-    for p in &input_paths {
-        let input = ensure_input_image(p)?;
-        imgs.push(image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?);
-    }
+        // 预检 + 解码全部输入（像素上限在 ensure_input_image 内）
+        let mut imgs: Vec<DynamicImage> = Vec::with_capacity(input_paths.len());
+        for p in &input_paths {
+            let input = ensure_input_image(p)?;
+            imgs.push(image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?);
+        }
 
-    // 画布尺寸：横向 = 各宽之和 + 统一高度（取最大）；纵向 = 统一宽度（取最大）+ 各高之和
-    let (canvas_w, canvas_h, unit, is_horizontal) = if dir == "horizontal" {
-        let h = imgs.iter().map(|i| i.height()).max().unwrap_or(1);
-        let w: u32 = imgs.iter().map(|i| i.width()).sum();
-        (w, h, h, true)
-    } else {
-        let w = imgs.iter().map(|i| i.width()).max().unwrap_or(1);
-        let h: u32 = imgs.iter().map(|i| i.height()).sum();
-        (w, h, w, false)
-    };
+        // 画布尺寸：横向 = 各宽之和 + 统一高度（取最大）；纵向 = 统一宽度（取最大）+ 各高之和
+        let (canvas_w, canvas_h, unit, is_horizontal) = if dir == "horizontal" {
+            let h = imgs.iter().map(|i| i.height()).max().unwrap_or(1);
+            let w: u32 = imgs.iter().map(|i| i.width()).sum();
+            (w, h, h, true)
+        } else {
+            let w = imgs.iter().map(|i| i.width()).max().unwrap_or(1);
+            let h: u32 = imgs.iter().map(|i| i.height()).sum();
+            (w, h, w, false)
+        };
 
-    let mut canvas = DynamicImage::new_rgb8(canvas_w, canvas_h);
-    let mut offset: u32 = 0;
-    for img in imgs {
-        // 统一缩放：横向统一高度，纵向统一宽度（保纵横比）
-        let scaled = if is_horizontal {
-            if img.height() != unit {
-                img.resize(0, unit, image::imageops::FilterType::Lanczos3)
+        let mut canvas = DynamicImage::new_rgba8(canvas_w, canvas_h);
+        let mut offset: u32 = 0;
+        for img in imgs {
+            // 统一缩放：横向统一高度，纵向统一宽度（保纵横比）
+            let scaled = if is_horizontal {
+                if img.height() != unit {
+                    img.resize(0, unit, image::imageops::FilterType::Lanczos3)
+                } else {
+                    img
+                }
+            } else if img.width() != unit {
+                img.resize(unit, 0, image::imageops::FilterType::Lanczos3)
             } else {
                 img
-            }
-        } else if img.width() != unit {
-            img.resize(unit, 0, image::imageops::FilterType::Lanczos3)
-        } else {
-            img
-        };
-        let (x, y) = if is_horizontal {
-            (offset, 0)
-        } else {
-            (0, offset)
-        };
-        image::imageops::overlay(&mut canvas, &scaled, x.into(), y.into());
-        offset += if is_horizontal {
-            scaled.width()
-        } else {
-            scaled.height()
-        };
-    }
+            };
+            let (x, y) = if is_horizontal {
+                (offset, 0)
+            } else {
+                (0, offset)
+            };
+            image::imageops::overlay(&mut canvas, &scaled, x, y);
+            offset += if is_horizontal {
+                scaled.width()
+            } else {
+                scaled.height()
+            };
+        }
 
-    let size_after = save_image(&canvas, &output, 90)?;
-    Ok(serde_json::json!({
-        "output": output.display().to_string(),
-        "width": canvas_w,
-        "height": canvas_h,
-        "direction": dir,
-        "sources": input_paths.len(),
-        "size_after": size_after,
-    }))
+        let size_after = save_image(&canvas, &output, 90)?;
+        Ok(serde_json::json!({
+            "output": output.display().to_string(),
+            "width": canvas_w,
+            "height": canvas_h,
+            "direction": dir,
+            "sources": input_paths.len(),
+            "size_after": size_after,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 /// 批量压缩图片：多张输入 → 输出目录，每张按输入扩展名保存为 `原名-out.扩展名`。
 /// 复用单文件压缩逻辑（保纵横比 + JPEG quality / PNG Best 压缩）。
 #[tauri::command]
-pub fn image_compress_batch(
+pub async fn image_compress_batch(
     input_paths: Vec<String>,
     output_dir: String,
     max_width: Option<u32>,
     max_height: Option<u32>,
     quality: Option<u8>,
 ) -> Result<serde_json::Value, String> {
-    if input_paths.is_empty() {
-        return Err("至少需要选择一张图片".to_string());
-    }
-    let dir = PathBuf::from(&output_dir);
-    if dir.is_file() {
-        return Err("输出路径是文件，应为目录".to_string());
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建输出目录失败：{}", e))?;
+    tokio::task::spawn_blocking(move || {
+        if input_paths.is_empty() {
+            return Err("至少需要选择一张图片".to_string());
+        }
+        let dir = PathBuf::from(&output_dir);
+        if dir.is_file() {
+            return Err("输出路径是文件，应为目录".to_string());
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建输出目录失败：{}", e))?;
 
-    let mut results = Vec::with_capacity(input_paths.len());
-    for p in &input_paths {
-        let input = ensure_input_image(p)?;
-        let stem = input
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image")
-            .to_string();
-        let ext = input
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png")
-            .to_ascii_lowercase();
-        let output = dir.join(format!("{}-out.{}", stem, ext));
+        let mut results = Vec::with_capacity(input_paths.len());
+        for p in &input_paths {
+            let input = ensure_input_image(p)?;
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("image")
+                .to_string();
+            let ext = input
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png")
+                .to_ascii_lowercase();
+            let output = dir.join(format!("{}-out.{}", stem, ext));
 
-        let img = image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?;
-        let (w, h) = img.dimensions();
-        let (new_w, new_h) = contain_dimensions(w, h, max_width, max_height);
-        let resized = if (new_w, new_h) != (w, h) {
-            img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
-        } else {
-            img
-        };
-        let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-        let size_after = save_image(&resized, &output, quality.unwrap_or(82))?;
-        results.push(serde_json::json!({
-            "input": p,
-            "output": output.display().to_string(),
-            "saved_bytes": size_before.saturating_sub(size_after),
-            "size_after": size_after,
-        }));
-    }
+            let img = image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?;
+            let (w, h) = img.dimensions();
+            let (new_w, new_h) = contain_dimensions(w, h, max_width, max_height);
+            let resized = if (new_w, new_h) != (w, h) {
+                img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+            } else {
+                img
+            };
+            let size_before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+            let size_after = save_image(&resized, &output, quality.unwrap_or(82))?;
+            results.push(serde_json::json!({
+                "input": p,
+                "output": output.display().to_string(),
+                "saved_bytes": size_before.saturating_sub(size_after),
+                "size_after": size_after,
+            }));
+        }
 
-    Ok(serde_json::json!({
-        "output_dir": dir.display().to_string(),
-        "count": results.len(),
-        "results": results,
-    }))
+        Ok(serde_json::json!({
+            "output_dir": dir.display().to_string(),
+            "count": results.len(),
+            "results": results,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
+}
+
+/// 批量缩放图片：多张输入 → 输出目录，每张按目标宽高框内保纵横比缩放。
+#[tauri::command]
+pub async fn image_resize_batch(
+    input_paths: Vec<String>,
+    output_dir: String,
+    width: u32,
+    height: u32,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        if input_paths.is_empty() {
+            return Err("至少需要选择一张图片".to_string());
+        }
+        if width == 0 || height == 0 {
+            return Err("目标宽高必须大于 0".to_string());
+        }
+        let dir = PathBuf::from(&output_dir);
+        if dir.is_file() {
+            return Err("输出路径是文件，应为目录".to_string());
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建输出目录失败：{}", e))?;
+
+        let mut results = Vec::with_capacity(input_paths.len());
+        for p in &input_paths {
+            let input = ensure_input_image(p)?;
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("image")
+                .to_string();
+            let ext = input
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png")
+                .to_ascii_lowercase();
+            let output = dir.join(format!("{}-out.{}", stem, ext));
+
+            let img = image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?;
+            let (w, h) = img.dimensions();
+            let (new_w, new_h) = contain_dimensions(w, h, Some(width), Some(height));
+            let resized = if (new_w, new_h) != (w, h) {
+                img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+            } else {
+                img
+            };
+            let size_after = save_image(&resized, &output, 90)?;
+            results.push(serde_json::json!({
+                "input": p,
+                "output": output.display().to_string(),
+                "width": new_w,
+                "height": new_h,
+                "size_after": size_after,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "output_dir": dir.display().to_string(),
+            "count": results.len(),
+            "results": results,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 /// 批量格式转换：多张输入 → 输出目录，统一转为 format（png/jpg/bmp/gif/webp）。
 #[tauri::command]
-pub fn image_convert_batch(
+pub async fn image_convert_batch(
     input_paths: Vec<String>,
     output_dir: String,
     format: String,
 ) -> Result<serde_json::Value, String> {
-    if input_paths.is_empty() {
-        return Err("至少需要选择一张图片".to_string());
-    }
-    let fmt = format.to_ascii_lowercase();
-    if !["png", "jpg", "jpeg", "bmp", "gif", "webp"].contains(&fmt.as_str()) {
-        return Err("目标格式必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
-    }
-    let dir = PathBuf::from(&output_dir);
-    if dir.is_file() {
-        return Err("输出路径是文件，应为目录".to_string());
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建输出目录失败：{}", e))?;
+    tokio::task::spawn_blocking(move || {
+        if input_paths.is_empty() {
+            return Err("至少需要选择一张图片".to_string());
+        }
+        let fmt = format.to_ascii_lowercase();
+        if !["png", "jpg", "jpeg", "bmp", "gif", "webp"].contains(&fmt.as_str()) {
+            return Err("目标格式必须是 png / jpg / jpeg / bmp / gif / webp 之一".to_string());
+        }
+        let dir = PathBuf::from(&output_dir);
+        if dir.is_file() {
+            return Err("输出路径是文件，应为目录".to_string());
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建输出目录失败：{}", e))?;
 
-    let out_ext = if fmt == "jpeg" { "jpg" } else { fmt.as_str() };
-    let mut results = Vec::with_capacity(input_paths.len());
-    for p in &input_paths {
-        let input = ensure_input_image(p)?;
-        let stem = input
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image")
-            .to_string();
-        let output = dir.join(format!("{}.{}", stem, out_ext));
+        let out_ext = if fmt == "jpeg" { "jpg" } else { fmt.as_str() };
+        let mut results = Vec::with_capacity(input_paths.len());
+        for p in &input_paths {
+            let input = ensure_input_image(p)?;
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("image")
+                .to_string();
+            let output = dir.join(format!("{}.{}", stem, out_ext));
 
-        let img = image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?;
-        let (w, h) = img.dimensions();
-        let size_after = save_image(&img, &output, 90)?;
-        results.push(serde_json::json!({
-            "input": p,
-            "output": output.display().to_string(),
-            "width": w,
-            "height": h,
-            "size_after": size_after,
-        }));
-    }
+            let img = image::open(&input).map_err(|e| format!("打开图片失败（{}）：{}", p, e))?;
+            let (w, h) = img.dimensions();
+            let size_after = save_image(&img, &output, 90)?;
+            results.push(serde_json::json!({
+                "input": p,
+                "output": output.display().to_string(),
+                "width": w,
+                "height": h,
+                "size_after": size_after,
+            }));
+        }
 
-    Ok(serde_json::json!({
-        "output_dir": dir.display().to_string(),
-        "format": fmt,
-        "count": results.len(),
-        "results": results,
-    }))
+        Ok(serde_json::json!({
+            "output_dir": dir.display().to_string(),
+            "format": fmt,
+            "count": results.len(),
+            "results": results,
+        }))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }

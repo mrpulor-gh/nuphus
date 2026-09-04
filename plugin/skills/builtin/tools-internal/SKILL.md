@@ -7,10 +7,10 @@ tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, invoke]
 
 # 内置工具参数手册
 
-> Nuphus 工具页 23 个内部机制命令。仅注册 invoke_handler，**不注册为 agent 工具**（LLM 不可经 execute_tool 调用）；用户经工具页手动使用。
+> Nuphus 工具页 24 个内部机制命令。仅注册 invoke_handler，**不注册为 agent 工具**（LLM 不可经 execute_tool 调用）；用户经工具页手动使用。
 > 本手册供 Agent 感知能力与引导用户，非用户文档。
 
-## 能力总览（23）
+## 能力总览（24）
 
 | 分类 | 命令 | 输入 → 输出 |
 |------|------|------------|
@@ -28,6 +28,7 @@ tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, invoke]
 | 图像 | `image_stitch` | N 图→长图（horizontal/vertical） |
 | 图像 | `image_compress_batch` | N 图→目录（原名-out.扩展名） |
 | 图像 | `image_convert_batch` | N 图→目录（目标格式） |
+| 图像 | `image_resize_batch` | N 图→目录（目标宽高 contain） |
 | 视频 | `video_compress` | 视频→视频（libx264 重编码） |
 | 视频 | `video_extract_frames` | 视频→目录（frame_%04d.jpg） |
 | 视频 | `video_info` | 视频→时长/编码/分辨率（ffprobe） |
@@ -57,6 +58,7 @@ tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, invoke]
 - `image_stitch(input_paths, output, direction: Option<String>)` — horizontal 默认/vertical
 - `image_compress_batch(input_paths, output_dir, max_width?, max_height?, quality?)` — 输出 `原名-out.扩展名`
 - `image_convert_batch(input_paths, output_dir, format: String)` — 目标 png/jpg/jpeg/bmp/gif/webp；jpeg→jpg
+- `image_resize_batch(input_paths, output_dir, width: u32, height: u32)` — contain 保比例，不放大；输出 `原名-out.扩展名`
 
 ### 视频（`video.rs`，ffmpeg）
 - `video_compress(input, output, quality: Option<String>)` — low(1M/64k)/medium(2M/96k 默认)/high(4M/128k)
@@ -77,7 +79,7 @@ tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, invoke]
 
 - 命令全部 `Result<serde_json::Value, String>`，错误中文可读，不 panic
 - 注册：`src-tauri/src/main.rs` invoke_handler（`commands::tools::*`）；模块 `commands/tools.rs` 声明 `pub mod pdf/image/video/doc/voice`
-- 前端：`ToolsPage.tsx`（五分类：图片/视频/文档/音频/PDF）+ `lib/api.ts` wrappers
+- 前端：`ToolsPage.tsx`（六分类：全部/图片/视频/文档/音频/PDF，20+3 信息卡=23 能力卡，映射 24 命令）+ `lib/api.ts` wrappers
 - 语音克隆模型配置：模型界面 → 图像音频配置 → 语音克隆（capabilities.voice）
 - 程序化执行：Rust 命令函数（内部代码/测试）或引擎二进制 `nuphus-tools-rs/target/release/nuphus-{pdf,image,video}.exe`（仅 merge/info/extract-text/compress 等子集）
 - 引导用户：涉及 PDF/图像/视频/音频/文档处理 → 让用户打开工具页操作

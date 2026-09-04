@@ -75,6 +75,7 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp", 
 # 与 nuphus core（src/utils/office.rs read_pdf）共用同一 lopdf 0.34，不引入新版本
 # embed_image: 图片转 PDF（xobject::image + insert_image 嵌入图片流）
 lopdf = { version = "0.34", features = ["embed_image"] }
+flate2 = "1"
 
 # xcap screen capture (used directly in toolbar.rs for overlay screenshots)
 xcap.workspace = true

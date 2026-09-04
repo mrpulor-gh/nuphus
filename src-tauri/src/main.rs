@@ -362,6 +362,7 @@ fn main() {
             commands::tools::image::image_stitch,
             commands::tools::image::image_compress_batch,
             commands::tools::image::image_convert_batch,
+            commands::tools::image::image_resize_batch,
             commands::tools::video::video_compress,
             commands::tools::video::video_extract_audio,
             commands::tools::video::video_extract_frames,
