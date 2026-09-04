@@ -35,10 +35,8 @@ export function SessionDivider({
     setExpanded(true)
   }, [isStreaming])
 
-  useEffect(() => {
-    if (!isStreaming || !bodyRef.current) return
-    bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [streamingContent, isStreaming])
+  // 注：流式滚动跟随由外层消息列表承担（ChatPanel 监听 messages 滚底），
+  // 本容器 expanded/streaming 均为 max-height:none，不设内部滚动。旧 scrollTop 跟随逻辑已移除。
 
   const handleToggle = useCallback(() => {
     if (isStreaming) return

@@ -71,21 +71,23 @@
 }
 
 /* ── Content 展开/折叠 ── */
+/* 展开态不使用 max-height 伪上限：提炼摘要可能远超 2000px，
+   固定上限 + overflow hidden 会把超长内容隐形截断（无滚动、无提示）。
+   故 expanded/streaming 一律 max-height: none，内容完整展示。 */
 .message-content.refine {
   overflow: hidden;
-  transition:
-    max-height 0.3s ease,
-    opacity 0.2s ease;
+  transition: opacity 0.2s ease;
 }
 
 .message-content.refine.collapsed {
   max-height: 0;
   opacity: 0;
   padding: 0;
+  visibility: hidden;
 }
 
 .message-content.refine.expanded {
-  max-height: 2000px;
+  max-height: none;
   opacity: 1;
   padding: var(--space-2) 0 0 0;
 }
