@@ -47,8 +47,12 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         }
     };
 
-    // 1. 读顶部 model 字段（系统默认模型），定位其 provider（拿 api_key/base_url）。
-    //    已废弃 [last_used]：模型选择由 agent_models + 顶部 model 字段承载，无跨启动记忆。
+    // 1. 读顶部 model 字段（系统默认锚点），定位其 provider（拿 api_key/base_url）。
+    //    已废弃 [last_used]：模型选择由 agent_models + 顶部 model 字段承载。
+    //    ⚠️ mode 与模型绑定（[agent_models]）才是用户真实选择：leader 已配置且可用时
+    //    必须以 leader 为准，顶部 model 仅作 leader 未配置时的回退——否则启动加载会
+    //    被陈旧/错误的顶层值带偏（实测：顶层残留 gpt-5.6-sol → 重启把激活模型错读为
+    //    custom、ctx 128K；models 弹窗重选 DeepSeek 走 agent_models 才恢复）。
     let top_model = doc.get("model").and_then(|v| v.as_str()).unwrap_or("");
 
     let find_by_model = |model: &str| -> Option<(String, String, String, String)> {
@@ -81,7 +85,20 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         None
     };
 
-    let (provider_name, model_id, base_url, api_key) = match find_by_model(top_model) {
+    // 2. mode 绑定覆盖：leader 已配置且能在 providers 定位 → 用它作为激活模型。
+    //    顶部 model（锚点）仅当 leader 未配置/不可用时生效。
+    let am = load_agent_models(&config_path);
+    let mut effective_top = top_model.to_string();
+    if !am.leader.is_empty() && find_by_model(&am.leader).is_some() {
+        effective_top = am.leader.clone();
+        tracing::info!(
+            "[STARTUP] agent_models.leader 覆盖顶部 model：{} → {}",
+            top_model,
+            am.leader
+        );
+    }
+
+    let (provider_name, model_id, base_url, api_key) = match find_by_model(&effective_top) {
         Some(v) => v,
         None => {
             // 2. Fallback: first provider with a non-empty api_key
