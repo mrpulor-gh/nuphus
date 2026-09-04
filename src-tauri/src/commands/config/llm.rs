@@ -1759,7 +1759,7 @@ pub fn get_context_limit(state: State<'_, AppState>) -> Result<usize, String> {
 /// 时跳过校准，不覆盖用户意图（kimi k3=1048576 等合法显式值保持不动）。
 pub async fn startup_model_calibration(app: &tauri::AppHandle) {
     let state = app.state::<crate::state::AppState>();
-    let (provider, model) = {
+    let (provider, model, base_url, api_key) = {
         let guard = match state.runtime.lock() {
             Ok(g) => g,
             Err(e) => {
@@ -1768,35 +1768,86 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
             }
         };
         match guard.llm_config.as_ref() {
-            Some(cfg) if !cfg.model.is_empty() => (cfg.provider.clone(), cfg.model.clone()),
+            Some(cfg) if !cfg.model.is_empty() => (
+                cfg.provider.clone(),
+                cfg.model.clone(),
+                cfg.base_url.clone(),
+                cfg.api_key.clone(),
+            ),
             _ => return, // 未配置 LLM
         }
     };
-
-    if !or_agg::has_vendor(&provider) {
-        return; // custom/local/未知提供商：聚合库无对应 vendor
-    }
 
     // ① 用户手写/历史显式值（信任链最高层）→ 不覆盖
     if read_model_context_window(&state.llm_config_path, &provider, &model).is_some() {
         return;
     }
 
-    // 读缓存判断 TTL → 过期/缺失则后台拉取更新缓存（失败静默降级旧缓存）
-    let config_dir = state
-        .llm_config_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_default();
-    let cache_path = or_agg::cache_path(&config_dir);
-    let entries = or_agg::ensure_cache(&cache_path).await;
-    let Some(entry) = or_agg::lookup(&entries, &provider, &model) else {
+    // ② OpenRouter 聚合库权威值（vendor provider 专属；custom/中转等无 vendor 映射）
+    let mut window: Option<usize> = None;
+    if or_agg::has_vendor(&provider) {
+        let config_dir = state
+            .llm_config_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let cache_path = or_agg::cache_path(&config_dir);
+        let entries = or_agg::ensure_cache(&cache_path).await;
+        window = or_agg::lookup(&entries, &provider, &model)
+            .and_then(|e| e.context_length)
+            .map(|v| v as usize);
+        // OR 权威值命中 → 写盘显式 context_window：下次启动直接命中信任链①，
+        // 不再依赖 OR 缓存可用性（离线/缓存过期也能拿到正确窗口）。
+        if let Some(ctx) = window {
+            let _ = update_model_context_window(&state.llm_config_path, &provider, &model, ctx);
+            tracing::info!(
+                "[startup-calibration] provider={}, model={}, context_window → {} (OpenRouter 权威值，已写盘)",
+                provider,
+                model,
+                ctx
+            );
+        }
+    }
+
+    // ③ OR miss 或非 vendor（custom / 本地中转等）→ 官方 /models 探测兜底：
+    //    严格遵守「首次连接官方返回」数据源（用户手写值除外），命中后写盘
+    //    providers.toml 显式 context_window → 下次启动命中信任链①，自愈持久化。
+    //    全程 spawn_blocking（blocking reqwest），不阻塞校准任务。
+    if window.is_none() && !api_key.is_empty() {
+        let (auth_header, auth_prefix) = ProviderRegistry::builtin()
+            .get(&provider)
+            .map(|p| (p.auth_header().to_string(), p.auth_prefix().to_string()))
+            .unwrap_or(("authorization".to_string(), "Bearer ".to_string()));
+        let (bu, m, key, hdr, prefix) = (
+            base_url.clone(),
+            model.clone(),
+            api_key,
+            auth_header,
+            auth_prefix,
+        );
+        let probed = tokio::task::spawn_blocking(move || {
+            query_model_metadata_from_api(&bu, &m, &key, &hdr, &prefix)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(meta) = probed {
+            if let Some(ctx) = meta.context_length {
+                window = Some(ctx);
+                let _ = update_model_context_window(&state.llm_config_path, &provider, &model, ctx);
+                tracing::info!(
+                    "[startup-calibration] provider={}, model={}, context_window → {} (官方 /models 探测，已写盘)",
+                    provider,
+                    model,
+                    ctx
+                );
+            }
+        }
+    }
+
+    let Some(window) = window else {
         return;
     };
-    let Some(window) = entry.context_length else {
-        return;
-    };
-    let window = window as usize;
 
     let changed = {
         let mut cw = match state.runtime.lock() {
@@ -1814,7 +1865,7 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
 
     if changed {
         tracing::info!(
-            "[startup-calibration] provider={}, model={}, context_window → {} (OpenRouter 权威值)",
+            "[startup-calibration] provider={}, model={}, context_window → {} (OpenRouter 或官方探测权威值)",
             provider,
             model,
             window
