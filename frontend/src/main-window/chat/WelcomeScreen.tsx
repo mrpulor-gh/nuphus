@@ -102,7 +102,7 @@ export function WelcomeScreen({ onResume }: WelcomeScreenProps) {
     <div className="welcome-screen">
       <ParticleField />
       <div className="welcome-logo" ref={logoRef}>
-        <NuphusAvatar state={state} size={88} gaze={gaze} />
+        <NuphusAvatar state={state} size={68} gaze={gaze} />
       </div>
       <div className={`welcome-brand${revealed ? ' is-revealed' : ''}`}>
         <h1 className="welcome-name" aria-label={BRAND}>

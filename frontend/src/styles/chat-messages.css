@@ -1119,168 +1119,50 @@
 .mood-face.waiting {
   animation: waitingFloat 2.5s ease-in-out infinite;
 }
-/* ── Nuphus idle：3D 小人，会抖会瞪眼 ── */
-/* 1. 3D 摇摆 */
-.nuphus-idle {
-  animation: idleSway 4.2s ease-in-out infinite;
-}
-@keyframes idleSway {
-  0%,
-  22%,
-  to {
-    transform: rotateY(0);
-  }
-  36% {
-    transform: rotateY(14deg);
-  }
-  50%,
-  64% {
-    transform: rotateY(0);
-  }
-  74% {
-    transform: rotateY(-11deg);
-  }
-  86% {
-    transform: rotateY(0);
-  }
-}
-/* 2. 阴影跟随 */
-.nuphus-idle .idle-shadow {
-  animation: idleShadowShift 4.2s ease-in-out infinite;
-}
-@keyframes idleShadowShift {
-  0%,
-  22%,
-  50%,
-  64%,
-  86%,
-  to {
-    opacity: 0.1;
-  }
-  36% {
-    opacity: 0.2;
-  }
-  74% {
-    opacity: 0.17;
-  }
-}
-/* 3. 底壳 */
-.nuphus-idle .idle-bg {
-  opacity: 0.05;
-}
-/* 4. 高光随角度 */
-.nuphus-idle .idle-highlight {
-  animation: idleHighlightSway 4.2s ease-in-out infinite;
-}
-@keyframes idleHighlightSway {
-  0%,
-  22%,
-  50%,
-  64%,
-  86%,
-  to {
-    opacity: 0.5;
-  }
-  36% {
-    opacity: 0.75;
-  }
-  74% {
-    opacity: 0.3;
-  }
-}
-/* 5. 弹跳 */
-.nuphus-idle .idle-shell {
-  animation: idleBounce 2s ease-in-out infinite;
-}
-@keyframes idleBounce {
-  0%,
-  44%,
-  to {
-    transform: translateY(0);
-  }
-  52% {
-    transform: translateY(-1.8px);
-  }
-  60% {
-    transform: translateY(0);
-  }
-}
-/* 6. 抖动 wrapper — 偶尔颤一下 */
-.nuphus-idle .idle-shiver-wrap {
-  animation: idleShiver 7s steps(4) infinite;
-}
-@keyframes idleShiver {
-  0%,
-  7%,
-  14%,
-  21%,
-  to {
-    transform: translateX(0);
-  }
-  3.5%,
-  17.5% {
-    transform: translateX(0.7px);
-  }
-  10.5%,
-  24.5% {
-    transform: translateX(-0.6px);
-  }
-}
-/* 7. 眼睛 — 眨眼 + 偶尔瞪眼（合并单动画） */
-.nuphus-idle .idle-eye-l,
-.nuphus-idle .idle-eye-r {
-  animation: idleEyeMorph 5s ease-in-out infinite;
+/* ── Nuphus idle：对话气泡 + typing 点，等你说话 ── */
+/* 1. 气泡整体：微浮 + 透明度呼吸 */
+.nuphus-idle .idle-bubble {
   transform-origin: center;
+  animation: idleBubbleFloat 3.2s ease-in-out infinite;
 }
-@keyframes idleEyeMorph {
+@keyframes idleBubbleFloat {
   0%,
-  36%,
-  42%,
-  58%,
-  to {
-    transform: scale(1, 1);
+  100% {
+    transform: translateY(0);
+    opacity: 0.7;
   }
-  39% {
-    transform: scale(1, 0.08);
-  }
-  52% {
-    transform: scale(0.5, 1);
-  }
-  55% {
-    transform: scale(1, 1);
+  50% {
+    transform: translateY(-1.2px);
+    opacity: 1;
   }
 }
-/* 8. 星星闪烁 */
-.nuphus-idle .idle-sparkle-l {
-  animation: idleSparkleL 2.4s ease-in-out infinite;
+/* 2. typing 三点：顺序脉动 1.6s/周期 */
+.nuphus-idle .idle-dot {
+  transform-origin: center;
+  animation: idleDotPulse 1.6s ease-in-out infinite;
 }
-.nuphus-idle .idle-sparkle-r {
-  animation: idleSparkleR 2.4s ease-in-out infinite;
+.nuphus-idle .idle-dot-1 {
+  animation-delay: 0s;
 }
-@keyframes idleSparkleL {
+.nuphus-idle .idle-dot-2 {
+  animation-delay: 0.2s;
+}
+.nuphus-idle .idle-dot-3 {
+  animation-delay: 0.4s;
+}
+@keyframes idleDotPulse {
   0%,
-  28%,
-  54%,
-  to {
-    opacity: 0.45;
+  100% {
+    opacity: 0.3;
+    transform: scale(0.85);
   }
-  40% {
-    opacity: 0;
-  }
-}
-@keyframes idleSparkleR {
-  0%,
-  28%,
-  to {
-    opacity: 0.45;
-  }
-  40% {
-    opacity: 0;
-  }
-  54% {
-    opacity: 0.45;
+  50% {
+    opacity: 1;
+    transform: scale(1);
   }
 }
+
+/* ── Nuphus success：√ 勾选 ── */
 .mood-success .check {
   stroke-dasharray: 30;
   stroke-dashoffset: 30;

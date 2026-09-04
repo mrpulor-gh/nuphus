@@ -1206,42 +1206,40 @@ export function ChatInputBar({
             {/* ── 状态：唯一常驻 ctx，迷你进度条 + hover 弹窗详情 ── */}
             <span className="input-bar-ctx" onMouseEnter={openCtx} onMouseLeave={closeCtx}>
               <span className="input-bar-ctx-label">ctx</span>
-              <span className="input-bar-ctx-gauge" aria-hidden>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <span
-                    key={i}
-                    className="input-bar-ctx-gauge-cell"
-                    style={i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined}
-                  />
-                ))}
-              </span>
-              <span className="input-bar-ctx-pct" style={{ color: ctxColor }}>
-                {ctxLimit > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
+              <span className="input-bar-ctx-value" style={{ color: ctxColor }}>
+                {/* used 用状态色（红/黄/绿）暗示进度；sep + cap 中性不抢戏 */}
+                {ctxUsed > 0 ? fmt(ctxUsed) : '--'}
+                {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
+                {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
               </span>
               {ctxHover && (
                 <span className="input-bar-ctx-detail">
-                  {cacheRate >= 0 && (
-                    <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">cache</span>
-                      <span>{cacheRate.toFixed(0)}%</span>
-                    </span>
-                  )}
+                  {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
+                      cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">tok</span>
-                    <span>{fmt(execTokens)}</span>
+                    <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
                   </span>
                   {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">cap</span>
-                    <span>{ctxLimit > 0 ? fmt(ctxLimit) : '--'}</span>
+                    <span className="input-bar-ctx-value">
+                      {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
+                    </span>
                   </span>
+                  {cacheRate >= 0 && (
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">cache</span>
+                      <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
+                    </span>
+                  )}
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">step</span>
-                    <span>{totalCalls || 0}</span>
+                    <span className="input-bar-ctx-value">{totalCalls || 0}</span>
                   </span>
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">time</span>
-                    <span>{fmtDur(liveDuration)}</span>
+                    <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
                   </span>
                 </span>
               )}

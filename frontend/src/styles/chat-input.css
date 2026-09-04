@@ -109,7 +109,7 @@
   transition: all var(--transition-fast);
 }
 .input-tool-btn:hover {
-  background: var(--void-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-send-btn {
   display: flex;
@@ -127,7 +127,7 @@
   box-shadow: 0 2px 6px #0000004d;
 }
 .input-send-btn:hover {
-  background: var(--void-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-send-btn.active {
   background: var(--accent);
@@ -194,15 +194,15 @@
   flex-shrink: 0;
 }
 .input-tool-plus-btn:hover {
-  background: var(--void-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 .input-tool-plus-btn:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
 .input-tool-plus-btn:active {
-  background: var(--surface-active);
+  background: rgba(255, 255, 255, 0.05);
 }
 /* 语音按钮在容器内：取消 absolute 独立定位，由 flex 排布 */
 .input-actions .chat-voice-btn {
@@ -210,35 +210,35 @@
   bottom: auto;
   right: auto;
 }
-/* 工具弹窗：轻风格，从 + 按钮向上弹出 */
+/* 工具弹窗：轻风格，从 + 按钮向上弹出（统一 menu token：8px 圆角 / line-1 / 柔和阴影 / menuPopIn） */
 .input-tool-menu {
   position: absolute;
   bottom: calc(100% + 6px);
   right: 0;
-  min-width: 150px;
+  min-width: 152px;
   padding: 4px;
   background: var(--void-primary);
-  border: 1px solid var(--glass-3);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  animation: effortMenuIn 0.12s ease-out;
+  gap: 1px;
+  animation: menuPopIn 0.12s var(--ease-out);
 }
 .input-tool-menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 10px;
-  font-size: 12.5px;
+  padding: 6px 10px;
+  font-size: 12px;
   font-family: inherit;
-  color: var(--spark-secondary);
+  color: var(--fg-2);
   background: transparent;
   border: none;
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
   text-align: left;
   transition:
@@ -246,8 +246,8 @@
     color var(--transition-fast);
 }
 .input-tool-menu-item:hover {
-  background: var(--void-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 .input-tool-menu-item:disabled {
   opacity: 0.5;
@@ -261,95 +261,89 @@
   white-space: nowrap;
 }
 
-/* ── ctx 状态：迷你进度条 + 百分比 + 标签，hover 弹出 cache/tok/step/ms 轻风格（与 mode/model chip 同尺寸胶囊）── */
+/* ── ctx 状态：used / cap 文字比例（去 gauge 进度条，克制不画视觉元素）
+   与 mode/model chip 同视觉 token：6px 圆角 / 3% 白透 hover / 8px menu / 柔和阴影 ── */
 .input-bar-ctx {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
+  padding: 0 9px;
+  border-radius: 6px;
   cursor: help;
   background: transparent;
   user-select: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
 .input-bar-ctx:hover {
-  background: var(--surface-2);
+  background: rgba(255, 255, 255, 0.03);
 }
-.input-bar-ctx-bar {
-  display: inline-block;
-  width: 34px;
-  height: 4px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.input-bar-ctx-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.input-bar-ctx-gauge {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.input-bar-ctx-gauge-cell {
-  width: 3px;
-  height: 8px;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.12);
-  transition: background 0.3s var(--ease-out);
-}
-.input-bar-ctx-pct {
-  font-size: 10.5px;
+.input-bar-ctx-value {
+  font-size: 11px;
   font-family: var(--font-mono);
   font-weight: 600;
+  letter-spacing: 0.02em;
   line-height: 1;
+  /* color 由 inline style 根据 ctxColor（红/黄/绿）覆盖——克制地只染 used */
+}
+.input-bar-ctx-sep {
+  margin: 0 3px;
+  color: var(--spark-tertiary);
+  opacity: 0.45;
+  font-weight: 400;
+}
+.input-bar-ctx-cap {
+  color: var(--fg-2);
+  font-weight: 500;
 }
 .input-bar-ctx-label {
   font-size: 10px;
   color: var(--spark-tertiary);
   opacity: 0.7;
   font-family: var(--font-mono);
+  letter-spacing: 0.04em;
   line-height: 1;
 }
 .input-bar-ctx-detail {
   position: absolute;
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 6px);
   left: 0;
-  min-width: 160px;
-  padding: 10px 14px;
+  min-width: 132px;
+  padding: 5px 4px;
   background: var(--void-primary);
-  border: 1px solid var(--glass-3);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  animation: effortMenuIn 0.12s ease-out;
+  gap: 1px;
+  animation: menuPopIn 0.12s var(--ease-out);
 }
 .input-bar-ctx-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  font-size: 13.5px;
+  gap: 16px;
+  padding: 4px 10px;
+  font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--spark-secondary);
+  color: var(--fg-2);
   white-space: nowrap;
-  line-height: 1.4;
+  line-height: 1.3;
+  border-radius: 5px;
+}
+.input-bar-ctx-value {
+  font-weight: 500;
+  color: var(--fg-1);
 }
 .input-bar-ctx-detail-label {
   color: var(--spark-tertiary);
-  opacity: 0.75;
-  font-size: 12px;
+  opacity: 0.65;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
 }
 
 /* ═══════════════════════════════════════
@@ -379,18 +373,6 @@
   align-items: center;
   gap: 6px;
 }
-.input-bar-mode {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  cursor: pointer;
-  line-height: 1;
-  user-select: none;
-  transition: opacity 0.12s;
-}
-.input-bar-mode:hover {
-  opacity: 0.7;
-}
 /* mode chip 内：图标 + 文字 */
 .input-bar-mode-text {
   font-size: 12px;
@@ -403,7 +385,7 @@
 .input-bar-chip svg {
   flex-shrink: 0;
 }
-/* workflow 桌面工具箱按钮（Ctrl+U）：与 mode chip 同视觉语言（胶囊 + surface-2），active 态高亮。
+/* workflow 桌面工具箱按钮（Ctrl+U）：与 mode chip 同视觉语言（6px 圆角 + 灰透），active 态 inset 浅边。
    ⚠️ 必须配合 variant="raw" 使用——variant="ghost" 会附加 compact-btn ghost-btn，
    .compact-btn.ghost-btn 特异性更高会把背景压成 transparent 导致按钮隐形 */
 .input-bar-toolbox-btn {
@@ -411,23 +393,26 @@
   align-items: center;
   justify-content: center;
   height: 24px;
-  padding: 0 7px;
+  padding: 0 9px;
   border: none;
-  border-radius: 999px;
+  border-radius: 6px;
   cursor: pointer;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--fg-2);
+  box-shadow: inset 0 0 0 1px transparent;
   transition:
+    color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .input-bar-toolbox-btn:hover {
-  background: var(--surface-hover);
   color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-bar-toolbox-btn.is-active {
-  background: var(--surface-active);
-  color: #f59e0b;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 /* 执行态锁定：半透明 + hover 不变亮 + not-allowed（伪可点感消除）；功能入口在
    ChatInputBar 内以 gate.locked 收起为「仅原因提示层」，此处只管视觉 */
@@ -435,11 +420,11 @@
 .input-bar-toolbox-btn.is-locked:hover {
   opacity: 0.45;
   cursor: not-allowed;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--fg-2);
 }
 /* workflow 扳手工具菜单（2026-09-03 大王定稿：画布/列表/工具箱三入口）：复用输入栏
-   弹窗容器样式（void-primary/glass-3/shadow），替代原单行 hover 提示。菜单可点击，
+   弹窗容器样式，统一 menu token（8px 圆角 / line-1 / 柔和阴影 / menuPopIn）。菜单可点击，
    hover 桥接 180ms（鼠标从按钮移向菜单间隙不闪关）。 */
 .input-bar-toolbox-wrap {
   position: relative;
@@ -455,11 +440,11 @@
   flex-direction: column;
   gap: 1px;
   background: var(--void-primary);
-  border: 1px solid var(--glass-3);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   z-index: 200;
-  animation: effortMenuIn 0.12s ease-out;
+  animation: menuPopIn 0.12s var(--ease-out);
 }
 .input-bar-toolbox-item {
   display: flex;
@@ -481,15 +466,15 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 .input-bar-toolbox-item:hover {
-  background: var(--surface-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 .input-bar-toolbox-item-key {
   flex: none;
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--spark-tertiary);
-  border: 1px solid var(--glass-3);
+border: 1px solid var(--line-1);
   border-radius: 4px;
   padding: 1px 5px;
   line-height: 15px;
@@ -517,113 +502,114 @@
   white-space: nowrap;
   line-height: 1.2;
 }
-/* 可切换项（mode/model）：flat 简约——默认弱背景胶囊（surface-2）标识可交互，
-   hover 提亮反馈；文字柔和 fg-2（不刺眼）；min-width 固定 100px + 内容居中：
-   LEADER/WORKFLOW 切换宽度不变，与走马灯占位零跳动 */
+/* ════════════════════════════════════════════════════════
+   mode / model chip — 克制灰透明 token 体系
+   - 圆角 6px（与输入框 10px 协调，非胶囊）
+   - 统一中性灰，去 mode 颜色编码（黄/紫/蓝）
+   - active 态：inset 1px 浅边 + 5% 背景
+   - 字号 12px monospace，描述 11px text-3，caret 8px
+   - menu 8px 圆角 + 柔和阴影（0 4px 16px rgba(0,0,0,0.35)）
+   ════════════════════════════════════════════════════════ */
 .input-bar-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 24px;
   min-width: 100px;
-  padding: 0 8px;
-  border-radius: 999px;
+  padding: 0 9px;
+  border-radius: 6px;
   cursor: pointer;
   user-select: none;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--fg-2);
+  box-shadow: inset 0 0 0 1px transparent;
   transition:
+    color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .input-bar-chip:hover {
-  background: var(--surface-hover);
   color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-bar-chip:active {
-  background: var(--surface-active);
   color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.05);
 }
 .input-bar-chip:focus-visible {
   outline: none;
-  box-shadow: var(--shadow-focus);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
-/* 模式色：Leader=品牌蓝（与 thinking/reading 同义），Workflow=橙（与 working 同义），双主题固定可读 */
-.input-bar-chip.mode-leader {
-  color: #3b82f6;
-}
-.input-bar-chip.mode-leader:hover {
-  color: #60a5fa;
-}
-.input-bar-chip.mode-workflow {
-  color: #f59e0b;
-}
-.input-bar-chip.mode-workflow:hover {
-  color: #fbbf24;
-}
+/* mode chip 去色编码：active 态由 inset 1px 浅边 + 5% 背景区分 */
+.input-bar-chip.mode-leader,
+.input-bar-chip.mode-workflow,
 .input-bar-chip.mode-custom {
-  color: #8b5cf6;
+  color: var(--fg-2);
 }
+.input-bar-chip.mode-leader:hover,
+.input-bar-chip.mode-workflow:hover,
 .input-bar-chip.mode-custom:hover {
-  color: #a78bfa;
+  color: var(--fg-1);
 }
 /* 下拉符号：model chip 内的弱化 SVG caret（> 旋转 90° 的下箭头） */
 .input-bar-effort-caret {
   display: inline-block;
   margin-left: 5px;
   color: var(--spark-tertiary);
-  opacity: 0.6;
+  opacity: 0.55;
   flex-shrink: 0;
   transform: translateY(0.5px);
 }
 
-/* ── 推理深度 chip：轻量下拉（与 input-bar-chip 同一视觉语言，非 native select）── */
+/* ── 推理深度 chip：轻量下拉（与 mode chip 同一视觉语言）── */
 .input-bar-model {
   position: relative;
   display: inline-flex;
 }
-.input-bar-effort-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  min-width: 148px;
-  padding: 4px;
-  background: var(--void-primary);
-  border: 1px solid var(--glass-3);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  z-index: 200;
-  animation: effortMenuIn 0.12s ease-out;
-}
-@keyframes effortMenuIn {
+/* 通用 menu 弹出动画（mode / effort 共用） */
+@keyframes menuPopIn {
   0% {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(3px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
+.input-bar-effort-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 152px;
+  padding: 4px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 200;
+  animation: menuPopIn 0.12s var(--ease-out);
+}
 .input-bar-effort-option {
   padding: 6px 10px;
-  font-size: var(--fz-sm);
+  font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--spark-secondary);
+  color: var(--fg-2);
   cursor: pointer;
   border-radius: 6px;
   white-space: nowrap;
   line-height: 1.3;
-  transition: background var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 .input-bar-effort-option:hover {
-  background: var(--void-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 .input-bar-effort-option.active {
-  color: var(--accent);
-  font-weight: 600;
-  background: rgba(var(--accent-rgb), 0.06);
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .input-bar .status-dl-pct {
@@ -635,58 +621,59 @@
   position: relative;
   display: inline-flex;
 }
-/* mode hover 弹窗：Leader/Workflow 两档，选项带描述 */
+/* ── mode 选择菜单 ── */
 .input-bar-mode-menu {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  min-width: 200px;
+  min-width: 204px;
   padding: 4px;
   background: var(--void-primary);
-  border: 1px solid var(--glass-3);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  animation: effortMenuIn 0.12s ease-out;
+  gap: 1px;
+  animation: menuPopIn 0.12s var(--ease-out);
 }
 .input-bar-mode-option {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 7px 10px;
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
 .input-bar-mode-option:hover {
-  background: var(--void-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-bar-mode-option.active {
-  background: rgba(var(--accent-rgb), 0.06);
+  background: rgba(255, 255, 255, 0.05);
 }
 .input-bar-mode-option-name {
-  font-size: 12.5px;
+  font-size: 12px;
   font-family: var(--font-mono);
   font-weight: 600;
-  color: var(--spark-primary);
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+}
+.input-bar-mode-option.active .input-bar-mode-option-name {
+  color: var(--fg-1);
+}
+/* mode 名称去色：继承父级颜色，由 active 背景区分 */
+.input-bar-mode-option-name.mode-leader,
+.input-bar-mode-option-name.mode-workflow,
+.input-bar-mode-option-name.mode-custom {
+  color: inherit;
 }
 .input-bar-mode-option-desc {
   font-size: 11px;
   color: var(--spark-tertiary);
-  line-height: 1.4;
-}
-/* 模式名称色：Leader=蓝 / Workflow=橙（与 chip 模式色一致）；active 由背景高亮区分，名称保持模式色 */
-.input-bar-mode-option-name.mode-leader {
-  color: #3b82f6;
-}
-.input-bar-mode-option-name.mode-workflow {
-  color: #f59e0b;
-}
-.input-bar-mode-option-name.mode-custom {
-  color: #8b5cf6;
+  opacity: 0.7;
+  line-height: 1.45;
 }
 /* 管理 Agent 入口（弹窗底部弱分隔链接） */
 .input-bar-mode-manage {
@@ -696,14 +683,14 @@
   font-size: 11px;
   color: var(--spark-tertiary);
   cursor: pointer;
-  border-radius: 0 0 7px 7px;
+  border-radius: 0 0 6px 6px;
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
 }
 .input-bar-mode-manage:hover {
-  background: var(--void-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 
 /* Icon buttons in input bar: compact flat */
@@ -718,7 +705,7 @@
   color: var(--spark-tertiary);
 }
 .input-bar .input-tool-btn:hover {
-  background: var(--void-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 .input-bar .input-tool-btn .icon-btn-label {
   font-size: var(--fz-xs);
@@ -860,10 +847,10 @@
 @keyframes modeBreath {
   0%,
   100% {
-    background: var(--surface-2);
+    background: transparent;
   }
   50% {
-    background: var(--surface-hover);
+    background: rgba(255, 255, 255, 0.04);
   }
 }
 /* ── 语音输入（STT）── */
@@ -894,15 +881,15 @@
   flex-shrink: 0;
 }
 .chat-voice-btn:hover {
-  background: var(--void-hover);
-  color: var(--spark-primary);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg-1);
 }
 .chat-voice-btn:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
 .chat-voice-btn:active {
-  background: var(--surface-active);
+  background: rgba(255, 255, 255, 0.05);
 }
 .chat-voice-btn:disabled {
   opacity: 0.5;

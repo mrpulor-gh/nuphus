@@ -170,6 +170,13 @@ export function CommandPalette({
               ref={inputRef}
               className="cmd-palette-input"
               placeholder={t('cmd.searchPlaceholder')}
+              role="combobox"
+              aria-expanded="true"
+              aria-controls="cmd-palette-results"
+              aria-autocomplete="list"
+              aria-activedescendant={
+                filtered[selectedIdx] ? `cmd-option-${filtered[selectedIdx].id}` : undefined
+              }
               value={query}
               onChange={e => {
                 setQuery(e.target.value)
@@ -183,8 +190,11 @@ export function CommandPalette({
         )}
 
         <div
+          id="cmd-palette-results"
           className="cmd-palette-results"
           ref={resultsRef}
+          role="listbox"
+          aria-label={t('cmd.searchPlaceholder')}
           onMouseOver={handleResultsMouseOver}
           onWheel={e => {
             e.preventDefault()
@@ -199,17 +209,20 @@ export function CommandPalette({
             <div className="cmd-palette-empty">{t('cmd.noResults')}</div>
           ) : grouped ? (
             grouped.map(([category, groupItems]) => (
-              <div key={category} className="cmd-group">
-                <div className="cmd-group-label">{category}</div>
+              <div key={category} className="cmd-group" role="group" aria-label={category}>
+                <div className="cmd-group-label" aria-hidden="true">{category}</div>
                 {groupItems.map(item => {
                   const flatIdx = filtered.indexOf(item)
                   return (
                     <div
                       key={item.id}
+                      id={`cmd-option-${item.id}`}
                       ref={el => {
                         itemRefs.current[flatIdx] = el
                       }}
                       className={`cmd-item ${flatIdx === selectedIdx ? 'selected' : ''}`}
+                      role="option"
+                      aria-selected={flatIdx === selectedIdx}
                       onClick={() => {
                         playUiSound('send')
                         item.action()
@@ -229,10 +242,13 @@ export function CommandPalette({
             filtered.map((item, i) => (
               <div
                 key={item.id}
+                id={`cmd-option-${item.id}`}
                 ref={el => {
                   itemRefs.current[i] = el
                 }}
                 className={`cmd-item ${i === selectedIdx ? 'selected' : ''}`}
+                role="option"
+                aria-selected={i === selectedIdx}
                 onClick={() => {
                   playUiSound('send')
                   item.action()

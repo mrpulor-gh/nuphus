@@ -5,7 +5,8 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 左缘感应区：从区域顶部起锚（top:10%），不垂直居中 ── */
+/* ── 左缘感应区：从区域顶部起锚（top:10%），不垂直居中 ──
+   padding-left: 0 让 .sr-item 紧贴应用左缘，书签「看起来就是伸出来一点」 */
 .session-rail-zone {
   position: absolute;
   left: 0;
@@ -14,7 +15,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 10px 8px;
+  padding: 10px 8px 10px 0;
   border-radius: 0 14px 14px 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
@@ -47,44 +48,47 @@
 }
 /* 标题气泡：复用 sr-bubble 外观（玻璃卡片 + 箭头），hover 标志块时淡入。
    双向 hover 桥接：气泡延伸覆盖标志块右缘，鼠标移向气泡不丢 hover。 */
+/* 与 .sr-bubble 同源：实色 surface-0 + 弱阴影 + 极细线箭头。
+   背景实色避免与消息流文字叠影，克制感由边框/阴影/箭头弱化表达。 */
 .session-rail-guide-title {
   position: absolute;
-  left: 44px;
+  left: 48px; /* 与书签右端对接，保持悬停桥一致 */
   top: 50%;
-  transform: translateY(-50%) translateX(-6px);
+  transform: translateY(-50%) translateX(-4px) scale(0.96);
+  transform-origin: left center;
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
   max-width: 380px;
   min-height: 36px;
-  padding: 9px 16px;
+  padding: 9px 14px;
   border-radius: 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--line-2);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   font-size: var(--fz-md);
   color: var(--fg-1);
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 0.18s var(--ease-out),
-    transform 0.18s var(--ease-out);
+    opacity 0.22s var(--ease-out),
+    transform 0.22s var(--ease-out);
 }
 .session-rail-guide-title::before {
   content: '';
   position: absolute;
-  left: -5px;
+  left: -4px;
   top: 50%;
   transform: translateY(-50%) rotate(45deg);
-  width: 8px;
-  height: 8px;
-  background: var(--bg-card);
-  border-left: 1px solid var(--line-2);
-  border-bottom: 1px solid var(--line-2);
+  width: 7px;
+  height: 7px;
+  background: var(--surface-0);
+  border-left: 1px solid var(--line-1);
+  border-bottom: 1px solid var(--line-1);
 }
 .session-rail-guide:hover .session-rail-guide-title {
   opacity: 1;
-  transform: translateY(-50%) translateX(0);
+  transform: translateY(-50%) translateX(0) scale(1);
 }
 .session-rail-guide:hover .session-rail-guide-bar {
   background: var(--accent);
@@ -97,99 +101,165 @@
 .session-rail {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 3px; /* 间距缩小（12→3），书签密集排布 */
 }
 
 /* ── 单条会话项 ──
-   padding-right 是悬停桥：把命中区从横杠右缘无缝延伸到气泡左缘，
-   鼠标移向标题时 .sr-item:hover 不再断链（气泡是指定子元素，
-   进入后由它接管续住 hover） */
+   书签右端（hover 时在 .sr-item 内 +48px）与气泡左缘（left: 48px）精确对接，
+   无重叠无间隙 → 鼠标从书签移到气泡永远不丢 hover。
+   padding-right 4px 仅作 hover 边缘冗余保险。 */
 .sr-item {
   position: relative;
   display: flex;
   align-items: center;
-  height: 22px;
-  padding-right: 32px;
+  height: 28px;
+  padding-right: 4px;
 }
 
-/* 粗横杠本体：矮胖方圆块（12px 高），只做宽度动画 */
+/* ── 书签本体（横向开关） ──
+   隐喻：「book 漏出书签右侧」——完整 48×28 横向细长条，
+   左端紧贴应用边缘（border-left: none），左端直角，仅右侧椭圆角。
+   静态左 30px 在应用边界外隐藏，只露右端 18px（够 mode 首字母居中）。
+   hover / active / 区域 hover 时左端滑出到 margin-left: 0（露完整 48px）。
+   内容：mode 首字母（W/L/C）—— 书签仅做类型识别开关，
+   真正的标题/预览/时间都在 hover 弹窗里。 */
 .sr-bar {
-  height: 12px;
-  width: 12px; /* idle 微露小方墩 */
+  flex: none;
+  width: 48px;
+  height: 28px;
+  margin-left: -30px; /* 静态左 30px 隐藏，露 18px */
   padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: var(--fg-5);
-  /* 纯视觉指示条，不参与点击（切换入口 = 气泡标题文本） */
-  pointer-events: none;
+  border: 1px solid var(--line-2);
+  border-left: none; /* 紧贴应用边缘：左无 border */
+  border-radius: 0 4px 4px 0; /* 仅右侧椭圆角，左端直角 */
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
   transition:
-    width 0.32s var(--ease-out),
-    background-color 0.18s ease,
-    box-shadow 0.18s ease;
+    margin-left 0.28s var(--ease-out),
+    background 0.18s ease,
+    border-color 0.18s ease;
 }
-.session-rail-zone:hover .sr-bar {
-  width: 22px;
-  background: var(--fg-4);
+/* ── 深度渐透（透明背景下用整体 opacity） ──
+   新→旧：1 → 0.16，越远越像沉在书页深处看不太清。
+   不用色相、不加 glow，与主体「克制灰透明」主线一致 */
+.sr-bar[data-depth='0'] {
+  opacity: 1;
 }
-.sr-item.active .sr-bar {
-  background: var(--accent);
-  width: 16px;
-  box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
+.sr-bar[data-depth='1'] {
+  opacity: 0.86;
 }
-.session-rail-zone:hover .sr-item.active .sr-bar {
-  width: 28px;
+.sr-bar[data-depth='2'] {
+  opacity: 0.72;
 }
-.sr-item:hover .sr-bar {
-  width: 34px !important;
-  background: var(--accent) !important;
-  box-shadow: 0 0 12px var(--accent-dim, rgba(59, 130, 246, 0.45));
-  transition-delay: 0s !important;
+.sr-bar[data-depth='3'] {
+  opacity: 0.58;
+}
+.sr-bar[data-depth='4'] {
+  opacity: 0.44;
+}
+.sr-bar[data-depth='5'] {
+  opacity: 0.32;
+}
+.sr-bar[data-depth='6'] {
+  opacity: 0.22;
+}
+.sr-bar[data-depth='7'] {
+  opacity: 0.16;
 }
 
-/* ── hover 玻璃气泡：标题（可点击切换）+ 重命名 ──
-   背景必须实色（--bg-card 三主题均为不透明 hex）：气泡悬浮在消息流上方，
-   半透明 + backdrop-filter 会与 agent 文字叠影；不用任何透明/模糊 */
+/* ── 书签内容：mode 首字母（唯一信息）──
+   书签仅做类型识别开关：W=workflow / L=leader / C=custom。
+   静态露 18px 时首字母居中显示，hover 完整 48px 时仍居中（不增加信息密度）。 */
+.sr-bar-letter {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--fg-3);
+  line-height: 1;
+  user-select: none;
+  pointer-events: none; /* 命中交给 .sr-bar 接管，避免点击冲突 */
+}
+.sr-bar-letter.mode-workflow {
+  color: var(--fg-2);
+  font-weight: 700;
+}
+.sr-bar-letter.mode-custom {
+  font-style: italic;
+}
+
+/* 单条 hover / active / 区域 hover：左端滑出到完整 48px。
+   三个状态都让书签完全滑出，避免静态与滑出的视觉割裂 */
+.sr-item:hover .sr-bar,
+.sr-item.active .sr-bar,
+.session-rail-zone:hover .sr-bar {
+  margin-left: 0;
+}
+/* 单条 hover：微提亮（bg +4% 白） */
+.sr-item:hover .sr-bar {
+  background: rgba(255, 255, 255, 0.04);
+}
+/* active（当前会话）：更高亮（bg +5% 白）+ 边框加强 */
+.sr-item.active .sr-bar {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--line-2);
+}
+/* active 区域 hover：不重复叠加（保留 active 的更高亮） */
+
+/* ── hover 玻璃气泡：标题（可点击切换）+ 重命名 + 预览 ──
+   背景 = var(--surface-0) 实色（dark 下与窗口基底同色）：气泡悬浮在消息流上方，
+   必须实色避免与 agent 文字叠影（半透明会让人感觉杂乱）；克制感靠
+   边框/阴影/箭头/铭牌/按钮的弱化来表达，不靠背景透明度。 */
 .sr-bubble {
   position: absolute;
-  left: 44px;
+  left: 48px; /* 与书签右端 +48 精确对接，鼠标从书签移到气泡不丢 hover */
   top: 0; /* 顶对齐条目、向下展开：预览高度可变，指向箭头钉在条目中心不漂移 */
-  transform: translateX(-6px);
+  transform: translateX(-4px) scale(0.96);
+  transform-origin: left center;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   max-width: 380px;
   min-height: 36px;
-  padding: 9px 16px;
+  padding: 9px 14px;
   border-radius: 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--line-2);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 0.18s var(--ease-out),
-    transform 0.18s var(--ease-out);
+    opacity 0.22s var(--ease-out),
+    transform 0.22s var(--ease-out);
   z-index: 60;
 }
 .sr-bubble::before {
   content: '';
   position: absolute;
-  left: -5px;
-  top: 7px; /* 固定：条目高 22px 的中心（11px）- 方块半高（4px） */
+  left: -4px;
+  top: 10px; /* 固定：条目高 28px 的中心（14px）- 方块半高（3.5px）≈ 10-11px */
   transform: rotate(45deg);
-  width: 8px;
-  height: 8px;
-  background: var(--bg-card);
-  border-left: 1px solid var(--line-2);
-  border-bottom: 1px solid var(--line-2);
+  width: 7px;
+  height: 7px;
+  background: var(--surface-0);
+  border-left: 1px solid var(--line-1);
+  border-bottom: 1px solid var(--line-1);
 }
 .sr-item:hover .sr-bubble,
 .sr-item.editing .sr-bubble {
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
+  transform: translateX(0) scale(1);
+}
+/* 编辑态视觉区分：内嵌细线阴影暗示「在此会话内编辑」 */
+.sr-item.editing .sr-bubble {
+  box-shadow:
+    inset 0 0 0 1px var(--line-1),
+    0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 /* ── 标题行：标题 + 编辑/归档按钮（气泡统一整体的头部）── */
@@ -199,9 +269,9 @@
   gap: 10px;
 }
 
-/* ── 会话模式铭牌：LEADER/WORKFLOW 会话在标题前显示模式标识牌，
-   颜色与输入框 mode chip 同源（chat-input.css 双主题固定）：
-   leader=#3b82f6 蓝 / workflow=#f59e0b 橙；同色 12% 底 + 实色字 = 铭牌质感。
+/* ── 会话模式铭牌：LEADER/WORKFLOW/CUSTOM 会话在标题前显示模式标识牌。
+   去色相后统一 fg-3 中性灰 + 6% 白底 + line-1 边框，与「克制灰透明」主线一致；
+   区分性靠字重 / italic 保留（leader 500 / workflow 600 / custom 500 italic）。
    margin-right 负值收紧 sr-head 的 10px gap，视觉贴近标题 */
 .sr-mode-badge {
   display: inline-flex;
@@ -216,28 +286,38 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+/* mode 铭牌去色相：统一 fg-3 中性灰 + 6% 白底 + line-1 边框，
+   与主体「克制灰透明」节奏一致。靠字重与 italic 保留微弱区分：
+   leader 常规 / workflow 略重 / custom 斜体 */
+.sr-mode-badge.mode-leader,
+.sr-mode-badge.mode-workflow,
+.sr-mode-badge.mode-custom {
+  color: var(--fg-3);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line-1);
+}
 .sr-mode-badge.mode-leader {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
+  font-weight: 500;
 }
 .sr-mode-badge.mode-workflow {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.12);
+  font-weight: 600;
 }
 .sr-mode-badge.mode-custom {
-  color: #8b5cf6;
-  background: rgba(139, 92, 246, 0.12);
+  font-weight: 500;
+  font-style: italic;
 }
 
 /* ── 预览块：agent 最终回复（脱敏截断 ≤400 字符），与标题「话题 ↔ 结果」互补。
    并入气泡统一整体（非独立 tooltip）；pre-wrap 保留回复换行结构，
-   max-height 兜底超长回复，底部渐隐暗示可切会话看全文 */
+   max-height 兜底超长回复，底部渐隐暗示可切会话看全文。
+   与 head 间分隔由原硬切 border-top 改为 line-3 极弱实线 + 8px 间距主导。 */
 .sr-preview {
   min-width: 0;
   max-height: 180px;
   overflow: hidden;
-  padding-top: 6px;
-  border-top: 1px solid var(--line-2);
+  padding-top: 8px;
+  margin-top: 0;
+  border-top: 1px solid var(--line-3);
   font-size: var(--fz-sm);
   line-height: 1.55;
   color: var(--fg-2);
@@ -263,17 +343,16 @@
   cursor: pointer;
   text-align: left;
   border-radius: 8px;
-  transform-origin: left center;
   transition:
-    transform var(--dur-med) var(--ease-spring),
+    background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
+/* hover：bg 加亮到 0.10（接近 active 书签视觉）+ inset 边框（与 active 书签 line-2 一致），
+   视觉上与当前 session 标签对齐 → 「容易看到」（大王反馈） */
 .sr-title-btn:hover:not(:disabled) {
-  color: var(--accent);
-  transform: scale(1.05) translateY(-1px);
-}
-.sr-title-btn:active:not(:disabled) {
-  transform: scale(0.97);
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px var(--line-2);
 }
 .sr-title-btn:disabled {
   cursor: default;
@@ -281,8 +360,9 @@
 .sr-title-btn.active {
   font-weight: 600;
 }
+/* focus-visible 也去 accent：换 fg-2 中性 */
 .sr-title-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--fg-4);
   outline-offset: 2px;
 }
 
@@ -301,21 +381,27 @@
     color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
 }
+/* hover 去 accent 蓝：与气泡克制风格一致 */
 .sr-edit-btn:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
+  color: var(--fg-2);
+  background: var(--line-1);
 }
 
+/* input 边框去 accent 蓝：换 line-2 + focus 时再深一点（fg-4） */
 .sr-rename-input {
   width: 220px;
   font-size: var(--fz-md);
   color: var(--fg-1);
   /* 窗口基底（--bg token 不存在，勿用） */
   background: var(--surface-0);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--line-2);
   border-radius: 6px;
   padding: 5px 8px;
   outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.sr-rename-input:focus {
+  border-color: var(--fg-4);
 }
 
 /* ── 通知浮层（按 tone 差异化视觉：业务等待=info 蓝，模式不匹配=warning 橙，真错误=error 红）──
@@ -418,19 +504,44 @@
   line-height: 1.6;
   color: var(--fg-3);
 }
-/* ── 顶部新建对话 + 按钮：复用外部 Agent 状态栏 add-agent-entry 视觉，
-     适配 rail 窄条节奏（22px 圆，与 sr-item 等高对齐）── */
+/* ── 顶部新建对话 = 永远完整显示的书签（默认就是 hover 样式）──
+   与 .sr-bar 同 48×28 横向条，但 margin-left: 0 永远滑出（不像书签默认藏左端）。
+   内容是文字「新建」（短版 i18n newChatLabel，48px 装得下）。
+   与下方书签列表形成「永远是开关 / 偶尔是书签」的节奏对比。 */
 .sr-new-chat {
   display: flex;
   align-items: center;
-  height: 22px;
-  padding-right: 32px; /* 与 sr-item 悬停桥一致：命中区延伸到气泡左缘 */
+  height: 28px;
+  padding-right: 4px; /* 与 sr-item 悬停桥一致：冗余保险 */
 }
 .sr-new-chat-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
   flex: none;
+  width: 48px;
+  height: 28px;
+  margin-left: 0; /* 永远完整显示，不需要滑出动画 */
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-left: none; /* 紧贴应用边界 */
+  border-radius: 0 4px 4px 0; /* 仅右侧椭圆角，左端直角 */
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-3);
+  user-select: none;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+.sr-new-chat-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line-2);
+  color: var(--fg-2);
 }
 /* 执行中（!canSwitch）禁用：整轨已 is-locked 降透明度，按钮再明确置灰 */
 .sr-new-chat-btn:disabled,

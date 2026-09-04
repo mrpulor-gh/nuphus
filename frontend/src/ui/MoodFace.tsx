@@ -37,94 +37,22 @@ export const MoodFace: React.FC<MoodFaceProps> = ({ mood, size = 16 }) => {
         xmlns="http://www.w3.org/2000/svg"
         style={{ width: size, height: size }}
       >
-        {mood === 'idle' && (
-          <g transform="translate(3.6, 3.8) scale(0.7)">
-            <g className="nuphus-idle">
-              <g className="idle-shiver-wrap">
-                {/* 3D 阴影层 */}
-                <path
-                  d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  fill="none"
-                  opacity="0.1"
-                  className="idle-shadow"
-                />
-                <path
-                  d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  fill="none"
-                  opacity="0.1"
-                  className="idle-shadow"
-                />
-                {/* 底壳 */}
-                <rect
-                  x="3"
-                  y="3"
-                  width="18"
-                  height="18"
-                  rx="3.5"
-                  fill="currentColor"
-                  className="idle-bg"
-                />
-                {/* 窗口框 */}
-                <g className="idle-shell">
-                  <path
-                    d="M 6.5 2.5 H 17.5 A 3.5 3.5 0 0 1 21 6 V 13.5"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                  <path
-                    d="M 18.5 21.5 H 6.5 A 3.5 3.5 0 0 1 3 18 V 6 A 3.5 3.5 0 0 1 6.5 2.5"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                </g>
-                {/* 左上高光 */}
-                <path
-                  d="M 7 3 H 16"
-                  stroke="currentColor"
-                  strokeWidth="0.6"
-                  strokeLinecap="round"
-                  className="idle-highlight"
-                />
-                <path
-                  d="M 3.5 7 V 12"
-                  stroke="currentColor"
-                  strokeWidth="0.4"
-                  strokeLinecap="round"
-                  className="idle-highlight"
-                />
-                {/* 眼睛 — 眨眼+瞪眼合并 */}
-                <rect
-                  x="7.2"
-                  y="7.5"
-                  width="3.2"
-                  height="7"
-                  rx="1.6"
-                  fill="currentColor"
-                  className="idle-eye-l"
-                />
-                <rect
-                  x="13.6"
-                  y="7.5"
-                  width="3.2"
-                  height="7"
-                  rx="1.6"
-                  fill="currentColor"
-                  className="idle-eye-r"
-                />
-                {/* 眼中高光 */}
-                <circle cx="8.2" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-l" />
-                <circle cx="14.6" cy="8.8" r="0.7" fill="currentColor" className="idle-sparkle-r" />
-              </g>
+{mood === 'idle' && (
+          <g className="nuphus-idle">
+            <g className="idle-bubble">
+              {/* 圆角对话气泡 + 左下小尾巴：等你说话 */}
+              <path
+                d="M 4.5 6.5 A 2.5 2.5 0 0 1 7 4 H 17 A 2.5 2.5 0 0 1 19.5 6.5 V 14 A 2.5 2.5 0 0 1 17 16.5 H 9 L 5.5 19.5 V 16.5 A 2.5 2.5 0 0 1 4.5 14 Z"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                fill="none"
+              />
+              {/* typing 三点，顺序脉动 */}
+              <circle className="idle-dot idle-dot-1" cx="9"  cy="10.5" r="0.9" fill="currentColor" />
+              <circle className="idle-dot idle-dot-2" cx="12" cy="10.5" r="0.9" fill="currentColor" />
+              <circle className="idle-dot idle-dot-3" cx="15" cy="10.5" r="0.9" fill="currentColor" />
             </g>
           </g>
         )}

@@ -85,7 +85,7 @@
    dark #0a0a10↔#f5f5fa / light #e8e8ea↔#1a1a1a / tech #020408↔#eeeff4 */
 .welcome-resume-btn {
   margin-top: 40px;
-  padding: 13px 44px;
+  padding: 8px 28px;
   background: var(--surface-0);
   color: var(--fg-1);
   border: 2px solid var(--fg-1);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { IconCheck, IconEdit3, IconX, IconTrash2, IconPlus } from '../../ui/Icons'
+import { IconCheck, IconEdit3, IconX, IconTrash2 } from '../../ui/Icons'
 import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
@@ -48,6 +48,14 @@ function codeToTone(code: string): NoticeTone {
   if (code === 'busy' || code === 'append_pending') return 'info'
   if (code === 'mode_mismatch') return 'warning'
   return 'error'
+}
+
+/** mode → 书签首字母（书签唯一信息，类型识别开关） */
+function modeToLetter(mode: string): string {
+  if (mode === 'workflow') return 'W'
+  if (mode === 'leader') return 'L'
+  if (mode === 'custom') return 'C'
+  return '·'
 }
 
 /** 通知浮层图标：按 tone 切换内嵌 SVG，避免引入额外 icon 包污染主图标库 */
@@ -465,20 +473,21 @@ export default function SessionRail({
           .join(' ')}
       >
         <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
-          {/* 顶部新建对话：复用外部 Agent 状态栏 + 按钮（add-agent-entry 视觉），
+          {/* 顶部新建对话 = 永远完整显示的书签（默认 hover 样式），
+            内容是文字「新建」（短版 i18n newChatLabel，48px 装得下）。
             与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat）。
             执行中（!canSwitch）禁用：后端 guard_switch 也会拒绝，UI 双保险。 */}
           {onNewChat && (
             <div className="sr-new-chat">
               <button
                 type="button"
-                className="add-agent-entry sr-new-chat-btn"
+                className="sr-new-chat-btn"
                 onClick={onNewChat}
                 disabled={hardLocked}
                 title={t('sessionRail.newChat')}
                 aria-label={t('sessionRail.newChat')}
               >
-                <IconPlus size={15} />
+                {t('sessionRail.newChatLabel')}
               </button>
             </div>
           )}
@@ -495,9 +504,22 @@ export default function SessionRail({
             >
               <span
                 className="sr-bar"
+                data-depth={Math.min(idx, 7)}
                 style={{ transitionDelay: `${idx * 0.02}s` }}
-                aria-hidden="true"
-              />
+                role="button"
+                aria-label={it.title || t('sessionRail.untitled')}
+                tabIndex={it.is_active || hardLocked ? -1 : 0}
+                onClick={() => {
+                  // 复用 sr-title-btn 的点击逻辑：当前会话 / 执行中禁用，
+                  // 其余走 handleSwitch 切到目标会话
+                  if (it.is_active || hardLocked) return
+                  void handleSwitch(it.id, it.is_active)
+                }}
+              >
+                <span className={`sr-bar-letter mode-${it.mode}`} aria-hidden="true">
+                  {modeToLetter(it.mode)}
+                </span>
+              </span>
               <div className="sr-bubble">
                 {editingId === it.id ? (
                   <>
