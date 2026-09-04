@@ -4,9 +4,11 @@
 //! progress rendering, and tool parameter formatting.
 //! Avoids introducing traits or inheritance — pure functions + data.
 
+use crate::agent::events::{EventEmitter, NuphusEvent};
 use crate::api::AssistantEvent;
 use crate::session::ContentBlock;
 use crate::ToolCall;
+use std::sync::atomic::AtomicU32;
 
 /// Return result of process_events
 pub struct ProcessEventsResult {
@@ -117,8 +119,9 @@ pub fn process_events(
                     crate::utils::strip_tool_xml_tags_with_extra(&clean_text, content_tool_tags)
                         .trim()
                         .to_string();
-                // Final safety net: strip any residual tag fragments
-                let clean_text = crate::utils::clean_think_remnants(&clean_text);
+                // Final safety net: strip residual orphaned/truncated close tags
+                // (think + built-in tool set + provider extras).
+                let clean_text = crate::utils::clean_tag_remnants(&clean_text, content_tool_tags);
 
                 if !clean_text.is_empty() || reasoning.is_some() {
                     blocks.push(ContentBlock::Text {
@@ -167,8 +170,9 @@ pub fn process_events(
                     crate::utils::strip_tool_xml_tags_with_extra(&clean_body, content_tool_tags)
                         .trim()
                         .to_string();
-                // Final safety net: strip any residual tag fragments
-                let text = crate::utils::clean_think_remnants(&text);
+                // Final safety net: strip residual orphaned/truncated close tags
+                // (think + built-in tool set + provider extras).
+                let text = crate::utils::clean_tag_remnants(&text, content_tool_tags);
 
                 let mut reasoning = std::mem::take(&mut current_reasoning);
                 if !think_reasoning.is_empty() {
@@ -219,6 +223,41 @@ pub fn process_events(
         blocks,
         usage,
         cache_hit_tokens,
+    }
+}
+
+/// Route one streaming `TextDelta` through the shared text cleaner and forward
+/// the split results as frontend events.
+///
+/// Single entry point used by the three runtime stream emitters
+/// (react_loop / sub_task_loop / workflow_agent). Runs
+/// [`crate::utils::process_text_delta`] with the provider-declared tool tags,
+/// then emits any reasoning chunk first (`is_thinking: true`) and any non-empty
+/// content text second (`is_thinking: false`) so the frontend timeline always
+/// shows thinking before content. A `None` emitter makes this a no-op.
+pub fn route_stream_text_delta(
+    text: &str,
+    think_state: &AtomicU32,
+    extra_tags: &[&str],
+    from_task: bool,
+    emitter: Option<&dyn EventEmitter>,
+) {
+    let (reasoning, text_clean) = crate::utils::process_text_delta(text, think_state, extra_tags);
+    if let Some(emitter) = emitter {
+        if let Some(r) = reasoning {
+            emitter.emit(NuphusEvent::LlmTextDelta {
+                text: r,
+                is_thinking: true,
+                from_task,
+            });
+        }
+        if !text_clean.is_empty() {
+            emitter.emit(NuphusEvent::LlmTextDelta {
+                text: text_clean,
+                is_thinking: false,
+                from_task,
+            });
+        }
     }
 }
 

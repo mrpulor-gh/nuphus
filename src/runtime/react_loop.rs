@@ -352,6 +352,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
 
             self.agent.emit_pre_llm_diag(iteration, &request.messages);
 
+            // Provider-declared content tool tags. Hoisted before the stream
+            // emitter so the per-chunk TextDelta cleaner strips exactly the set
+            // the terminal normalizer uses for session storage.
+            let content_tool_tags = crate::config::registry::ProviderRegistry::builtin()
+                .get(&self.agent.config.provider)
+                .map(|p| p.quirks().content_tool_tags)
+                .unwrap_or(&[]);
+
             // ── LLM call span ──
             let llm_span = tracing::info_span!("llm_call", turn = iteration);
             let _llm_enter = llm_span.enter();
@@ -370,27 +378,17 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                 let think_state = in_think.clone();
                 let emitter = Box::new(move |event: crate::api::AssistantEvent| {
                     if let crate::api::AssistantEvent::TextDelta(text) = &event {
-                        // Route <think> content to reasoning (is_thinking=true) and
-                        // non-think text to chat bubble (is_thinking=false).
-                        // Each thinking delta emitted immediately — no buffering.
-                        let (reasoning, text_clean) =
-                            crate::utils::process_text_delta(text, &think_state);
-                        if let Some(ref emitter) = exec_emitter {
-                            if let Some(r) = reasoning {
-                                emitter.emit(NuphusEvent::LlmTextDelta {
-                                    text: r,
-                                    is_thinking: true,
-                                    from_task: false,
-                                });
-                            }
-                            if !text_clean.is_empty() {
-                                emitter.emit(NuphusEvent::LlmTextDelta {
-                                    text: text_clean,
-                                    is_thinking: false,
-                                    from_task: false,
-                                });
-                            }
-                        }
+                        // Single routing entry: process_text_delta (think split +
+                        // tool-XML strip with the provider tag set), then emit
+                        // thinking (is_thinking=true) before content
+                        // (is_thinking=false) so the frontend order is stable.
+                        crate::agent::common::route_stream_text_delta(
+                            text,
+                            &think_state,
+                            content_tool_tags,
+                            false,
+                            exec_emitter.as_deref(),
+                        );
                     }
                     if let crate::api::AssistantEvent::Reasoning(text) = &event {
                         // DeepSeek thinking mode: reasoning_content deltas arrive as
@@ -524,12 +522,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                 });
             }
 
-            // Process events — pass provider-specific content tool tags
-            // so XML-embedded tool calls (MiniMax etc.) are parsed as ToolUse
-            let content_tool_tags = crate::config::registry::ProviderRegistry::builtin()
-                .get(&self.agent.config.provider)
-                .map(|p| p.quirks().content_tool_tags)
-                .unwrap_or(&[]);
+            // Process events — pass provider-specific content tool tags (hoisted
+            // above) so XML-embedded tool calls (MiniMax etc.) are parsed as ToolUse
             let processed = crate::agent::common::process_events(events, content_tool_tags);
             if let Some((input, output)) = &processed.usage {
                 self.agent.session.update_api_input_tokens(*input as u64);

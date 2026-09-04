@@ -739,27 +739,27 @@ impl super::SubTaskRunner {
             let think_state = think_depth.clone();
             let exec_emitter = self.event_emitter.clone();
             let is_task = self.is_task;
+            // Provider-declared content tool tags. Hoisted before the stream
+            // emitter so per-chunk TextDelta cleaning uses the same tag set as
+            // the terminal normalizer in process_events().
+            let content_tool_tags = crate::config::registry::ProviderRegistry::builtin()
+                .get(self.llm.provider_kind().as_str())
+                .map(|p| p.quirks().content_tool_tags)
+                .unwrap_or(&[]);
 
             let emitter = Box::new(move |event: AssistantEvent| {
                 if let AssistantEvent::TextDelta(text) = &event {
-                    let (reasoning, text_clean) =
-                        crate::utils::process_text_delta(text, &think_state);
-                    if let Some(ref em) = exec_emitter {
-                        if let Some(r) = reasoning {
-                            em.emit(NuphusEvent::LlmTextDelta {
-                                text: r,
-                                is_thinking: true,
-                                from_task: is_task,
-                            });
-                        }
-                        if !text_clean.is_empty() {
-                            em.emit(NuphusEvent::LlmTextDelta {
-                                text: text_clean,
-                                is_thinking: false,
-                                from_task: is_task,
-                            });
-                        }
-                    }
+                    // Single routing entry: process_text_delta (think split +
+                    // tool-XML strip with the provider tag set), then emit
+                    // thinking (is_thinking=true) before content
+                    // (is_thinking=false) so the frontend order is stable.
+                    crate::agent::common::route_stream_text_delta(
+                        text,
+                        &think_state,
+                        content_tool_tags,
+                        is_task,
+                        exec_emitter.as_deref(),
+                    );
                 }
                 if let AssistantEvent::Reasoning(text) = &event {
                     // reasoning_content deltas arrive as Reasoning events (not TextDelta).

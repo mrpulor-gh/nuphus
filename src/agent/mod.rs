@@ -111,10 +111,15 @@ pub(crate) fn extract_tool_calls_from_text_with_tags(
 
         while let Some(open_pos) = result.find(&open_tag) {
             let search_from = open_pos + open_tag.len();
-            let close_pos = match result[search_from..].find(&close_tag) {
-                Some(p) => search_from + p,
-                None => break,
-            };
+            // Close tag search accepts optional whitespace before '>' (e.g.
+            // `</tool_call >`) and reports the matched length so the whole
+            // tag is removed. No close → break: the residual block is stripped
+            // by the terminal cleaner in process_events.
+            let (close_pos, close_len) =
+                match crate::utils::close_tag_search(&result[search_from..], &close_tag) {
+                    Some((p, l)) => (search_from + p, l),
+                    None => break,
+                };
 
             let json_content = result[search_from..close_pos].trim().to_string();
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_content) {
@@ -136,8 +141,8 @@ pub(crate) fn extract_tool_calls_from_text_with_tags(
                     });
                 }
             }
-            // Remove entire <tag>...</tag>
-            result.replace_range(open_pos..close_pos + close_tag.len(), "");
+            // Remove entire <tag>...</tag> (close_len covers any whitespace before '>')
+            result.replace_range(open_pos..close_pos + close_len, "");
         }
     }
 
@@ -730,5 +735,27 @@ mod tests {
 
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].tool, "Read");
+    }
+
+    #[test]
+    fn test_extract_tool_call_close_tag_with_space() {
+        // </tool_call >（'>' 前空白）应被空格容错识别并连同整块一起剥除
+        let (clean, calls) = extract_tool_calls_from_text_with_tags(
+            "前<tool_call>{\"name\":\"Read\",\"arguments\":{\"path\":\"/tmp/a\"}}</tool_call >后",
+            &[],
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "Read");
+        assert_eq!(calls[0].arguments["path"], "/tmp/a");
+        assert_eq!(clean, "前后");
+    }
+
+    #[test]
+    fn test_extract_tool_call_no_close_keeps_text() {
+        // 无闭合标签：既有 break 语义保留，交由终态 strip 兜底剥除
+        let (clean, calls) =
+            extract_tool_calls_from_text_with_tags("text <tool_call>{\"name\":\"Read\"}", &[]);
+        assert!(calls.is_empty());
+        assert!(clean.contains("<tool_call>"));
     }
 }

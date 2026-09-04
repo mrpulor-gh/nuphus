@@ -91,6 +91,12 @@ pub fn strip_think_tags(text: &str) -> String {
     strip_xml_block(text, "<think", "</think>")
 }
 
+/// Built-in XML tool-call tag names (without `<>`) that leak from MiniMax /
+/// fine-tuned models into `content` text. Providers may declare extra tags via
+/// their `quirks().content_tool_tags`; the runtime always passes the union of
+/// these and the built-ins to the text cleaner.
+pub const BUILTIN_TOOL_TAGS: &[&str] = &["invoke", "command", "parameter", "tool_call"];
+
 /// Strip tool-call XML blocks from text.
 ///
 /// Removes `<invoke>...</invoke>`, `<command>...</command>`,
@@ -100,11 +106,8 @@ pub fn strip_think_tags(text: &str) -> String {
 ///
 /// Pass additional tag names in `extra_tags` for provider-specific formats.
 pub fn strip_tool_xml_tags_with_extra(text: &str, extra_tags: &[&str]) -> String {
-    let mut text = strip_xml_block(text, "<invoke", "</invoke>");
-    text = strip_xml_block(&text, "<command", "</command>");
-    text = strip_xml_block(&text, "<parameter", "</parameter>");
-    text = strip_xml_block(&text, "<tool_call", "</tool_call>");
-    for tag in extra_tags {
+    let mut text = text.to_string();
+    for tag in BUILTIN_TOOL_TAGS.iter().chain(extra_tags.iter()) {
         let open = format!("<{}", tag);
         let close = format!("</{}>", tag);
         text = strip_xml_block(&text, &open, &close);
@@ -123,7 +126,7 @@ pub fn strip_tool_xml_tags(text: &str) -> String {
 ///
 /// Example: searching `</think>` in `"...</think >..."` returns the position
 /// of `</think` with `matched_len = 9` (`</think >`).
-fn close_tag_search(haystack: &str, close_tag: &str) -> Option<(usize, usize)> {
+pub(crate) fn close_tag_search(haystack: &str, close_tag: &str) -> Option<(usize, usize)> {
     // close_tag is e.g. "</think>", we search for the base "</think"
     let base = close_tag.trim_end_matches('>');
     let pos = haystack.find(base)?;
@@ -191,6 +194,35 @@ pub fn clean_think_remnants(text: &str) -> String {
     result = result.replace("</think", "");
     result = result.replace("</invoke", "");
     result = result.replace("</parameter", "");
+    result
+}
+
+/// Final sanitisation pass over an arbitrary tag set: removes residual
+/// orphaned/truncated close-tag fragments that survive the main
+/// extract/strip loops, so they never reach session storage or the frontend.
+///
+/// The tag set is `think` + [`BUILTIN_TOOL_TAGS`] + `extra_tags` (provider
+/// declared). For each tag it removes the three shapes handled by
+/// [`clean_think_remnants`]:
+/// - complete close tag: `</x>`
+/// - close tag with spurious whitespace before `>`: `</x >`
+/// - cross-chunk truncated fragment missing `>`: `</x`
+///
+/// Semantics mirror `clean_think_remnants`: plain `replace`, no boundary
+/// folding and no lookahead — safe to run on any text.
+pub fn clean_tag_remnants(text: &str, extra_tags: &[&str]) -> String {
+    let mut result = text.to_string();
+    for tag in std::iter::once("think")
+        .chain(BUILTIN_TOOL_TAGS.iter().copied())
+        .chain(extra_tags.iter().copied())
+    {
+        let full = format!("</{}>", tag);
+        let spaced = format!("</{} >", tag);
+        let partial = format!("</{}", tag);
+        result = result.replace(&full, "");
+        result = result.replace(&spaced, "");
+        result = result.replace(&partial, "");
+    }
     result
 }
 
@@ -434,9 +466,14 @@ pub fn convert_bmp_data_url_to_png(data_url: &str) -> Result<String, String> {
 /// Returns `(reasoning_to_emit, text_to_emit)` — both owned `String`s.
 /// - `reasoning_to_emit`: thinking chunk to stream immediately (Some for each delta)
 /// - `text_to_emit`: non-think text; caller emits both in order (reasoning first)
+///
+/// `extra_tags` are provider-declared tool XML tag names (from
+/// `quirks().content_tool_tags`); every non-think text path is cleaned with the
+/// union of the built-in set and `extra_tags`.
 pub fn process_text_delta(
     text: &str,
     think_depth: &std::sync::atomic::AtomicU32,
+    extra_tags: &[&str],
 ) -> (Option<String>, String) {
     use std::sync::atomic::Ordering;
 
@@ -447,7 +484,7 @@ pub fn process_text_delta(
         let (reasoning, remaining, new_depth) = scan_think_with_depth(text, depth);
         think_depth.store(new_depth, Ordering::SeqCst);
         let text_out = if new_depth == 0 {
-            strip_tool_xml_tags(&remaining)
+            strip_tool_xml_tags_with_extra(&remaining, extra_tags)
         } else {
             String::new()
         };
@@ -471,7 +508,7 @@ pub fn process_text_delta(
                 if !looks_like_tag {
                     // 字面量讨论（如 "剥离 <think 标签"）：不是 think 标签，
                     // 整块按普通文本输出，绝不在 start 处截断。
-                    return (None, strip_tool_xml_tags(text));
+                    return (None, strip_tool_xml_tags_with_extra(text, extra_tags));
                 }
                 let after = after.strip_prefix('>').unwrap_or(after);
 
@@ -482,13 +519,16 @@ pub fn process_text_delta(
                     // think 块在本 chunk 内完整闭合：折叠 before 尾部与 remaining 头部的
                     // 边界空白（与 extract_think_blocks 的折叠语义一致），避免
                     // "正文\n\n\n\n后续" 式多余空白泄漏进消息气泡。
-                    strip_tool_xml_tags(&fold_boundary_whitespace(before, &remaining))
+                    strip_tool_xml_tags_with_extra(
+                        &fold_boundary_whitespace(before, &remaining),
+                        extra_tags,
+                    )
                 } else {
-                    strip_tool_xml_tags(before)
+                    strip_tool_xml_tags_with_extra(before, extra_tags)
                 };
                 (reasoning, text_out)
             }
-            None => (None, strip_tool_xml_tags(text)),
+            None => (None, strip_tool_xml_tags_with_extra(text, extra_tags)),
         }
     }
 }
@@ -1093,7 +1133,7 @@ mod tests {
         use std::sync::atomic::AtomicU32;
         let depth = AtomicU32::new(0);
         let (reasoning, text_out) =
-            process_text_delta("剥离 <think 标签时后续内容必须保留", &depth);
+            process_text_delta("剥离 <think 标签时后续内容必须保留", &depth, &[]);
         assert!(reasoning.is_none());
         assert_eq!(text_out, "剥离 <think 标签时后续内容必须保留");
         assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1116,12 +1156,101 @@ mod tests {
     fn process_delta_nested_literal_think_keeps_close() {
         use std::sync::atomic::AtomicU32;
         let depth = AtomicU32::new(1); // 已在 think 块内（跨 chunk 场景）
-        let (reasoning, text_out) =
-            process_text_delta("思考：不要剥离 <think 标签 否则坏</think> 后文", &depth);
+        let (reasoning, text_out) = process_text_delta(
+            "思考：不要剥离 <think 标签 否则坏</think> 后文",
+            &depth,
+            &[],
+        );
         assert!(reasoning.is_some());
         let r = reasoning.unwrap();
         assert!(r.contains("思考：不要剥离 <think 标签 否则坏"));
         assert_eq!(text_out.trim(), "后文");
+        assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    // ── clean_tag_remnants（think + BUILTIN_TOOL_TAGS + extra_tags）──────────
+
+    #[test]
+    fn clean_tag_remnants_removes_full_close_tags() {
+        // 完整闭合 + built-in tool 标签：非 MiniMax（extra 为空）下残余闭合被剥除
+        assert_eq!(clean_tag_remnants("text</think>", &[]), "text");
+        assert_eq!(
+            clean_tag_remnants("a</invoke>b</command>c</parameter>d</tool_call>e", &[]),
+            "abcde"
+        );
+    }
+
+    #[test]
+    fn clean_tag_remnants_removes_close_with_space() {
+        // '>' 前空白形态：</x >（单空格）
+        assert_eq!(clean_tag_remnants("text</think >", &[]), "text");
+        assert_eq!(clean_tag_remnants("a</tool_call >b</invoke >c", &[]), "abc");
+    }
+
+    #[test]
+    fn clean_tag_remnants_removes_partial_close() {
+        // 跨 chunk 截断：缺 '>' 的残余片段
+        assert_eq!(clean_tag_remnants("text</tool_call", &[]), "text");
+        assert_eq!(clean_tag_remnants("text</think", &[]), "text");
+        assert_eq!(
+            clean_tag_remnants("a</invoke b</command c</parameter d</tool_call", &[]),
+            "a b c d"
+        );
+    }
+
+    #[test]
+    fn clean_tag_remnants_handles_extra_tags() {
+        // provider 声明 extra_tags：完整闭合 / '>' 前空白 / 截断 各形态
+        assert_eq!(
+            clean_tag_remnants("a</function_call>b", &["function_call"]),
+            "ab"
+        );
+        assert_eq!(clean_tag_remnants("a</tool >b", &["tool"]), "ab");
+        assert_eq!(clean_tag_remnants("a</action", &["action"]), "a");
+        // 与 think + built-in 标签混合
+        assert_eq!(
+            clean_tag_remnants("x</think>y</tool_call>z</action", &["action"]),
+            "xyz"
+        );
+    }
+
+    #[test]
+    fn clean_tag_remnants_leaves_plain_text_untouched() {
+        // 无标签正文不受影响（普通 replace，无边界折叠）
+        let input = "普通正文 </html 讨论 </div> 标签";
+        assert_eq!(clean_tag_remnants(input, &["function_call"]), input);
+    }
+
+    // ── process_text_delta + extra_tags（provider 声明 function_call 剥离）────
+
+    #[test]
+    fn process_delta_strips_extra_function_call_block() {
+        use std::sync::atomic::AtomicU32;
+        let depth = AtomicU32::new(0);
+        // 无 think 块：extra 标签整块剥离
+        let (reasoning, text_out) = process_text_delta(
+            "hi <function_call>{\"name\":\"x\"}</function_call> there",
+            &depth,
+            &["function_call", "tool", "action"],
+        );
+        assert!(reasoning.is_none());
+        assert_eq!(text_out, "hi  there");
+        assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn process_delta_extra_tags_with_think_block() {
+        use std::sync::atomic::AtomicU32;
+        let depth = AtomicU32::new(0);
+        // think 块拆离 + extra 标签在 content 侧被剥离
+        let (reasoning, text_out) = process_text_delta(
+            "前 <think>思考</think><function_call>{\"name\":\"x\"}</function_call>后",
+            &depth,
+            &["function_call", "tool", "action"],
+        );
+        assert!(reasoning.is_some());
+        assert_eq!(reasoning.unwrap(), "思考");
+        assert_eq!(text_out, "前 后");
         assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
