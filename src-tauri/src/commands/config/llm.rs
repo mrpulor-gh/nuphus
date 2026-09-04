@@ -47,13 +47,10 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         }
     };
 
-    // 1. 读顶部 model 字段（系统默认锚点），定位其 provider（拿 api_key/base_url）。
-    //    已废弃 [last_used]：模型选择由 agent_models + 顶部 model 字段承载。
-    //    ⚠️ mode 与模型绑定（[agent_models]）才是用户真实选择：leader 已配置且可用时
-    //    必须以 leader 为准，顶部 model 仅作 leader 未配置时的回退——否则启动加载会
-    //    被陈旧/错误的顶层值带偏（实测：顶层残留 gpt-5.6-sol → 重启把激活模型错读为
-    //    custom、ctx 128K；models 弹窗重选 DeepSeek 走 agent_models 才恢复）。
-    let top_model = doc.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    // 模型真值 = [agent_models] mode 绑定，不存在顶层覆盖层。leader 为文本任务锚点
+    // 绑定；leader 为空（首装/未配置）→ 下方回退首个可用 provider。providers.toml
+    // 顶层 model 字段已退役：不再参与启动加载（曾致陈旧值把激活模型/ctx 带偏，
+    // 2026-09-05 实测顶层残留 gpt-5.6-sol → 重启 ctx 128K）。
 
     let find_by_model = |model: &str| -> Option<(String, String, String, String)> {
         if model.is_empty() {
@@ -85,18 +82,9 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         None
     };
 
-    // 2. mode 绑定覆盖：leader 已配置且能在 providers 定位 → 用它作为激活模型。
-    //    顶部 model（锚点）仅当 leader 未配置/不可用时生效。
+    // leader 绑定为空 → find_by_model("") 返回 None → 走下方首个可用 provider 回退。
     let am = load_agent_models(&config_path);
-    let mut effective_top = top_model.to_string();
-    if !am.leader.is_empty() && find_by_model(&am.leader).is_some() {
-        effective_top = am.leader.clone();
-        tracing::info!(
-            "[STARTUP] agent_models.leader 覆盖顶部 model：{} → {}",
-            top_model,
-            am.leader
-        );
-    }
+    let effective_top = am.leader.clone();
 
     let (provider_name, model_id, base_url, api_key) = match find_by_model(&effective_top) {
         Some(v) => v,
@@ -299,7 +287,8 @@ fn save_agent_model(
 /// 单一模型解析入口：计算某 agent 的生效模型（唯一解析点，process/retry 共用）。
 ///
 /// 解析链（「可用」= 非空且 `registry.find_model` 命中）：
-///   leader_eff   = leader 可用 ? leader : registry.model（锚点，providers.toml 顶部 model 字段）
+///   leader_eff   = leader 绑定可用 ? leader : ""（未配置——顶层 model 已退役，
+///                  不再回退 providers.toml 顶层字段，模型真值只有 mode 绑定）
 ///   workflow/custom/exec_eff = 各自可用 ? 各自 : leader_eff
 /// `mode` 为 "leader" 或未知 → leader_eff。
 pub fn effective_model(
@@ -313,7 +302,7 @@ pub fn effective_model(
     let leader = if avail(&am.leader) {
         am.leader.clone()
     } else {
-        registry.model.clone()
+        String::new()
     };
 
     match mode {
@@ -591,6 +580,11 @@ pub async fn configure_llm(
         ) {
             tracing::error!("[configure_llm] Failed to update config.toml: {}", e);
             return Err(format!("保存 API Key 到配置文件失败: {}", e));
+        }
+        // 模型单一真值 = mode 绑定：配置的模型写入 leader 绑定（[agent_models]），
+        // config.toml JSON 的 model 字段仅作 key 载体兼容、不再当模型权威。
+        if let Err(e) = save_agent_model(config_path, "leader", &resolved_model) {
+            tracing::error!("[configure_llm] Failed to write agent_models.leader: {}", e);
         }
     }
 
