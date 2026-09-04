@@ -1965,31 +1965,27 @@ mod tests {
 
     #[test]
     fn effective_model_fallback_chain() {
-        // leader 配置了但 registry 无此模型（不可用）→ 回退顶部 model
+        // leader 配置了但 registry 无此模型（不可用）→ 视为未配置返回空
+        // （顶层 model 已退役：不再回退 providers.toml 顶层字段，模型真值只有绑定）
         let am = "[agent_models]\nleader = \"missing-leader\"\n";
         let ids = ["wf-model", "fallback-model"];
         let (am_path, cfg_path) = write_fixtures(am, &ids, "fallback-model");
         let registry =
             nuphus::config::ModelRegistry::from_toml(cfg_path.to_str().unwrap()).unwrap();
 
-        // leader 不可用 → 回退 registry.model
-        assert_eq!(
-            effective_model(&am_path, &registry, "leader"),
-            "fallback-model"
-        );
-        // workflow 未配置（空）→ 回退 leader → fallback-model
-        // （注意：registry 里有 wf-model，但 agent_models 未显式配置 workflow 字段，
+        // leader 不可用 → 空（未配置）
+        assert_eq!(effective_model(&am_path, &registry, "leader"), "");
+        // workflow 未配置（空）→ 回退 leader → 空
+        // （registry 里有 wf-model，但 agent_models 未显式配置 workflow 字段，
         //   effective_model 不会「发现」它——只有显式配置才生效）
-        assert_eq!(
-            effective_model(&am_path, &registry, "workflow"),
-            "fallback-model"
-        );
+        assert_eq!(effective_model(&am_path, &registry, "workflow"), "");
         std::fs::remove_dir_all(am_path.parent().unwrap()).ok();
     }
 
     #[test]
     fn effective_model_missing_agent_models_file() {
-        // providers.toml 不存在 → AgentModels 全空 → 全部回退顶部 model
+        // providers.toml 不存在 agent_models 段 → 无绑定 → leader 未配置返回空
+        // （顶层 model 已退役，不再是「回退锚点」）
         let dir =
             std::env::temp_dir().join(format!("nuphus-llm-test-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1999,14 +1995,8 @@ mod tests {
         let registry =
             nuphus::config::ModelRegistry::from_toml(cfg_path.to_str().unwrap()).unwrap();
 
-        assert_eq!(
-            effective_model(&am_path, &registry, "leader"),
-            "fallback-model"
-        );
-        assert_eq!(
-            effective_model(&am_path, &registry, "workflow"),
-            "fallback-model"
-        );
+        assert_eq!(effective_model(&am_path, &registry, "leader"), "");
+        assert_eq!(effective_model(&am_path, &registry, "workflow"), "");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
