@@ -77,6 +77,7 @@ function TextField({
   multiline,
   title,
   required,
+  error,
 }: {
   label: string
   value: string
@@ -88,6 +89,8 @@ function TextField({
   title?: string
   /** 语法必填字段：label 追加「（必填）」标记（对齐 compiler.rs 校验） */
   required?: boolean
+  /** 字段级内联错误文案（D2：空名称/必填缺失时展示，与 JsonField 同款样式） */
+  error?: string | null
 }) {
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
@@ -102,7 +105,7 @@ function TextField({
       </span>
       {multiline ? (
         <textarea
-          className={`wfc-input${mono ? ' wfc-input--mono' : ''}`}
+          className={`wfc-input${mono ? ' wfc-input--mono' : ''}${error ? ' wfc-input--error' : ''}`}
           value={draft}
           rows={mono ? 8 : 3}
           readOnly={readOnly}
@@ -112,7 +115,7 @@ function TextField({
         />
       ) : (
         <input
-          className={`wfc-input${mono ? ' wfc-input--mono' : ''}`}
+          className={`wfc-input${mono ? ' wfc-input--mono' : ''}${error ? ' wfc-input--error' : ''}`}
           value={draft}
           readOnly={readOnly}
           placeholder={placeholder}
@@ -123,6 +126,7 @@ function TextField({
           }}
         />
       )}
+      {error && <span className="wfc-field-error">{error}</span>}
     </label>
   )
 }
@@ -602,6 +606,7 @@ export function Inspector({
           readOnly={readOnly}
           onCommit={v => onPatch({ name: v })}
           required
+          error={!readOnly && !step.name.trim() ? '名称必填：尚未命名无法保存/通过校验' : undefined}
         />
         <TextField
           label={idReferenced ? 'ID（有历史运行记录，修改需确认）' : 'ID'}

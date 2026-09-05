@@ -906,9 +906,13 @@ export function wfSave(workflow: unknown) {
   return invoke<WfSaveResponse>('wf_save', { workflow })
 }
 
-/** 画布确定性触发执行（同 id 自动断点续连）；进度经 workflow-event 推送 */
-export function wfRun(id: string) {
-  return invoke<string>('wf_run', { id })
+/**
+ * 画布确定性触发执行；进度经 workflow-event 推送。
+ * fresh=true：失败后从头完整执行（force_fresh，跳过上次断点）；
+ * fresh=false / 缺省：断点续连（Paused 续跑自动跳过已完成步骤）。
+ */
+export function wfRun(id: string, fresh?: boolean) {
+  return invoke<string>('wf_run', { id, fresh })
 }
 
 export interface WfGateStatus {

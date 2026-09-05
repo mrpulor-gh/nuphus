@@ -1,0 +1,214 @@
+/* ═══════════════════════════════════════════════════════════════
+   intent-form.css — 意图表单（IntentFormPanel）样式
+   视觉规范同 workflow-canvas.css：仅引用 tokens.css 语义层变量
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 弹层遮罩（对齐 wfc-confirm-mask：fixed + overlay-bg；独立 z 以低于确认弹窗） ── */
+.wfc-intent-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg);
+}
+
+.wfc-intent {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-4);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+/* ── 头部 ── */
+.wfc-intent-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line-1);
+}
+.wfc-intent-title {
+  margin: 0;
+  font-size: var(--fz-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-1);
+  letter-spacing: var(--ls-tight);
+}
+.wfc-intent-sub {
+  margin-top: 2px;
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+}
+.wfc-intent-wf {
+  color: var(--fg-1);
+  font-weight: var(--fw-medium);
+}
+
+/* ── 阶段卡片列表 ── */
+.wfc-intent-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.wfc-intent-stage {
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+  background: var(--surface-2);
+  padding: var(--space-3);
+}
+.wfc-intent-stage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wfc-intent-stage-no {
+  flex-shrink: 0;
+  font-size: var(--fz-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--accent-hover);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+}
+.wfc-intent-stage-name {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: var(--fw-medium);
+}
+.wfc-intent-stage-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.wfc-intent-stage-name::placeholder {
+  color: var(--fg-5);
+  font-weight: var(--fw-normal);
+}
+
+/* ── 子步骤行列表 ── */
+.wfc-intent-step-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.wfc-intent-step-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+}
+.wfc-intent-step-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.wfc-intent-step-input::placeholder {
+  color: var(--fg-5);
+}
+.wfc-intent-step-empty {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+.wfc-intent-empty {
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--fg-4);
+  font-size: var(--fz-md);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-3);
+}
+
+/* ── 添加按钮 ── */
+.wfc-intent-add-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: 2px 10px;
+  height: 26px;
+  border: 1px dashed var(--line-3);
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.wfc-intent-add-row:hover:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+.wfc-intent-add-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.wfc-intent-add-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: center;
+  padding: 6px 14px;
+  border: 1px dashed var(--line-3);
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-2);
+  font-size: var(--fz-md);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.wfc-intent-add-stage:hover:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+.wfc-intent-add-stage:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── 底部操作区 ── */
+.wfc-intent-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--line-1);
+}
+.wfc-intent-foot-hint {
+  flex: 1;
+  margin-right: var(--space-2);
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}

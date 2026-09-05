@@ -1090,6 +1090,13 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+.wfc-input--error {
+  border-color: var(--error);
+}
+.wfc-input--error:focus {
+  border-color: var(--error);
+  box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.12);
+}
 .wfc-input--mono {
   font-family: var(--font-mono);
   font-size: var(--fz-mono);
@@ -1389,7 +1396,8 @@ textarea.wfc-input {
   z-index: 5;
   pointer-events: none;
 }
-.wfc-node:hover .wfc-node-actions {
+.wfc-node:hover .wfc-node-actions,
+.wfc-node.is-selected .wfc-node-actions {
   opacity: 1;
   pointer-events: auto;
 }
