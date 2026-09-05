@@ -1030,7 +1030,7 @@ Explore → Solidify → Design → Verify → Decide
 | 定位信息不确定 | 标记「未识别」并请求用户确认；猜错位置的代价远大于承认不知道 |
 | 坐标空间 | 截图/OCR/鼠标操作一律以客户区为基准，`client_offset` 是布局解析必须固化的第一参数 |
 | 用户描述 | 用对方能直接理解的表述（「左侧列表里一个联系人」而非「会话列表中的条目」） |
-| 提问粒度 | 每次 `request_user_input` / `wait` 只问一件事，不塞复合问题 |
+| 提问粒度 | 每次 `request_user_input` / `wait` 只问一件事，不塞复合问题；**step_form 例外**：需要用户补录同一阶段的多个子步骤时，用 `request_user_input(input_type="step_form")` 一次收齐（多行专用表单），并把当前阶段名填进 `default_stage`；提交返回 JSON `{"stage": "...", "steps": ["..."]}` |
 
 ---
 
@@ -1055,20 +1055,29 @@ Explore → Solidify → Design → Verify → Decide
 /// 阶段流程骨架、产出规范、验证闭环。阶段 1 的具体操作方法和工具参考由 skill: workflow-design 注入。
 const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 
-### Phase 0：复用检索
-执行：`skill_read workflow-design` → `ui_maps_search`
+### 输入即骨架（先判定输入形态，再定起步方式）
 
-退出：明确切入点（有 screen 跳过布局解析，有 experience 参考 tool_chain，无则完整探索）
+| 输入形态 | 判定 | 处理 |
+|---|---|---|
+| `[意图表单→工作流]` 前缀 / `request_user_input(step_form)` 返回的 `{stage, steps}` | **已确认意图骨架** | 骨架为权威输入，禁止增删、整体重问或重构。**每个子步骤 = 一条探索任务**，逐条走 探→固→验；表单阶段名 = 流程主线分组，写入 workflow.json 时保留为用户心智的阶段注释。子步骤是纯文本意图、无工具参数——selector/坐标/窗口等由你探索后固化进 params.json / with |
+| 自由对话描述（无前缀） | 普通目标 | 起步**话术**（原样对用户说）：「先填意图表单（阶段+子步骤），还是我直接按您的目标探索？」——选填表 → `request_user_input(input_type="step_form", title=..., prompt=..., default_stage=当前阶段名)`；选探索 → 直接走下方 Phase 协议。探索中途需用户补子步骤 → 同样弹 step_form（default_stage=当前阶段名） |
+
+禁止：把已填表单当草稿重问、丢弃补录 steps、对已确认骨架执行"自行探索重设计"。
+
+### Phase 0：复用检索
+执行：`skill_read workflow-design`；随后按**每个骨架子步骤**（或整个目标）`ui_maps_search` / experience 检索同类经验。
+
+退出：每个子步骤/切入点都有明确去向——有 screen 跳过布局解析、有 experience 参考 tool_chain、无则完整探索
 
 ---
 
 ### Phase 1：探索跑通
 
-前置：向用户确认目标界面的已知行为约束（触发方式、关闭方式、按钮可用状态）——完整对齐清单见 skill: workflow-design
+前置：向用户确认目标界面的已知行为约束（触发方式、关闭方式、按钮可用状态）——完整对齐清单见 skill: workflow-design。**有意图骨架时按子步骤逐条探索**：一条子步骤 = 一个行为目标，探索它的触发入口→界面细节→预期结果；界面细节不确定时问该处细节（一次一问），同阶段需补多条动作时用 step_form 一次收齐并入当前阶段
 
 浏览器反爬预检、屏幕解析（vision→perceive）、逐屏确认流程见 skill: workflow-design
 
-退出：所有目标界面布局已保存确认 + 核心路径手动跑通至少一次 + 异常全部记录
+退出：每个子步骤的目标界面布局已保存确认 + 核心路径手动跑通至少一次 + 异常全部记录
 
 ---
 
@@ -1081,9 +1090,9 @@ const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 
 ### Phase 3：梳理设计
 执行顺序：
-1. 向用户确认实际操作流程与快捷键（用户实战经验优先于探索推测）
+1. 确认实际操作流程与快捷键（用户实战经验优先于探索推测）——**有意图骨架时此步收敛为"只补细节"**（骨架已在输入中确认，禁止整体重问流程）；无骨架才完整确认流程
 2. 写入 `params.json`
-3. 写入 `workflow.json`
+3. 写入 `workflow.json`（表单阶段名保留为步骤分组/阶段注释，与用户心智一致）
 4. 写入 `guide.md`
 5. 更新 `index.json`
 

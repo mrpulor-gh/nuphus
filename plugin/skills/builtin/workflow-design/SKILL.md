@@ -23,6 +23,11 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
   └─ [馈] 跑通后 ui_maps_save_experience 提炼经验；新异常回写 params.json exceptions
 ```
 
+**任务输入形态（先识别再走闭环）**：
+- 用户输入带 `[意图表单→工作流]` 前缀，或来自 `request_user_input(step_form)` 的 `{stage, steps}`：这些阶段/子步骤是**用户确认的意图骨架**。表单阶段 = 流程主线分组（写入 workflow.json 保留为用户心智的阶段注释）；**每个子步骤 = 一条探索任务**，逐条走 [探]→[固]→[设]→[验]；骨架为权威输入，不得重新向用户收集流程、整体重构或丢弃补录 steps。
+- 自由对话描述：起步先问「先填意图表单（阶段+子步骤），还是我直接按您的目标探索？」——选填表 → `request_user_input(input_type="step_form", default_stage=当前阶段名)`；选探索 → 走闭环。探索中途需用户补子步骤 → 同样弹 step_form。
+- 表单行意图是纯文本，无工具参数；工具参数（selector/坐标/窗口等）由你探索后固化进 `params.json` / `with` 字段。
+
 ---
 
 ## 一、步骤 Schema（V2，唯一真相源 `src/workflow/step_schema.json`）
