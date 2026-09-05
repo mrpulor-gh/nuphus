@@ -203,8 +203,15 @@ pub fn inject_workflow_runtime(state: &AppState, engine: &mut nuphus::workflow::
 /// 与 workflow_run 工具同一条 execute_workflow 链路；前台交互运行，
 /// 不施加 scheduler 的 has_frontend_step 后台限制（desktop_/browser_ 工具本就面向桌面前台）。
 /// 异步 spawn：立即返回，进度经 workflow-event 事件流推送。
+/// fresh=true：上次运行失败后画布「运行」从头执行（force_fresh，跳过逻辑失效）；
+/// 缺省/续跑（fresh=false）保留断点续连语义。
 #[tauri::command]
-pub async fn wf_run(state: State<'_, AppState>, id: String) -> Result<String, String> {
+pub async fn wf_run(
+    state: State<'_, AppState>,
+    id: String,
+    fresh: Option<bool>,
+) -> Result<String, String> {
+    let force_fresh = fresh.unwrap_or(false);
     // 注入 LLM client + ToolRegistry（ChatAgent 步骤依赖），与 plugin_workflow_run 共用公共函数
     {
         let mut engine = state.workflow_engine.write().await;
@@ -248,6 +255,7 @@ pub async fn wf_run(state: State<'_, AppState>, id: String) -> Result<String, St
                 tool_schemas,
                 None,
                 None,
+                force_fresh,
                 nuphus::workflow::WorkflowRunSource::Ui,
             )
             .await

@@ -595,6 +595,7 @@ impl ReactAgent {
                                 rel_x: pending.rel_x,
                                 rel_y: pending.rel_y,
                                 default_note: pending.default_note.clone(),
+                                default_stage: pending.default_stage.clone(),
                             });
                         }
                     }

@@ -24,6 +24,9 @@ pub struct PendingInput {
     pub rel_y: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_note: Option<String>,
+    // ── step_form 专用字段 ──
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_stage: Option<String>,
 }
 
 fn cleanup_expired(map: &mut std::collections::HashMap<String, crate::state::StoredInput>) {
@@ -43,6 +46,7 @@ pub fn add(
     rel_x: Option<i32>,
     rel_y: Option<i32>,
     default_note: Option<&str>,
+    default_stage: Option<&str>,
 ) -> String {
     let action_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -59,6 +63,7 @@ pub fn add(
         rel_x,
         rel_y,
         default_note: default_note.map(|s| s.to_string()),
+        default_stage: default_stage.map(|s| s.to_string()),
     };
     let mut state = crate::state::SignalState::write(signals);
     cleanup_expired(&mut state.security.pending_inputs);
@@ -149,6 +154,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         let input = get(&signals, &id).unwrap();
         assert_eq!(input.title, "API Key");
@@ -174,6 +180,7 @@ mod tests {
             "test prompt",
             false,
             "text",
+            None,
             None,
             None,
             None,

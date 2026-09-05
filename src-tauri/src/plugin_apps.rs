@@ -1424,6 +1424,7 @@ async fn plugin_workflow_run_inner(
             tool_schemas,
             None,
             None,
+            false,
             nuphus::workflow::WorkflowRunSource::Plugin,
         ),
     )

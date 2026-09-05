@@ -31,6 +31,8 @@ fn request_user_input_handler(
         .and_then(|v| v.as_i64())
         .map(|v| v as i32);
     let default_note = params.get("default_note").and_then(|v| v.as_str());
+    // ── step_form 专用参数：预填当前阶段名（WorkflowAgent 自填；用户可改）──
+    let default_stage = params.get("default_stage").and_then(|v| v.as_str());
 
     if title.is_empty() {
         return Ok(ToolResult::failure("title 不能为空"));
@@ -51,6 +53,7 @@ fn request_user_input_handler(
         rel_x,
         rel_y,
         default_note,
+        default_stage,
     );
 
     Ok(ToolResult::success(format!(
@@ -67,6 +70,9 @@ impl ToolRegistry {
 text 类型用于 API Key/密码/验证码等敏感文本；screenshot/region/mouse_pos/color 类型用于视觉定位——\
 WorkAgent 应先尝试 OCR 自动定位，失败后再用这些类型向用户请求视觉输入。\
 icon_confirm 类型用于确认纯图标功能：显示图标预览 + 功能名称/快捷键/坐标/备注表单，一次交互获取精准结构化数据。\
+step_form 类型用于让用户一次性补录「某阶段（default_stage 预填，可改）下的多个纯文本子步骤意图」：\
+WorkflowAgent 在需要把当前阶段拆成多个子步骤时调用，提交返回 JSON {\"stage\": \"...\", \"steps\": [\"...\"]}，\
+用户取消返回 __CANCELLED__。\
 用户提交后返回所输入的值（非文本类型返回 JSON 字符串）。用户输入不会出现在日志中。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -86,9 +92,9 @@ icon_confirm 类型用于确认纯图标功能：显示图标预览 + 功能名�
                     },
                     "input_type": {
                         "type": "string",
-                        "enum": ["text", "screenshot", "region", "mouse_pos", "color", "icon_confirm"],
+                        "enum": ["text", "screenshot", "region", "mouse_pos", "color", "icon_confirm", "step_form"],
                         "default": "text",
-                        "description": "输入类型：text=文本, screenshot=截图, region=框选坐标, mouse_pos=鼠标坐标, color=取色, icon_confirm=图标确认(复合表单)"
+                        "description": "输入类型：text=文本, screenshot=截图, region=框选坐标, mouse_pos=鼠标坐标, color=取色, icon_confirm=图标确认(复合表单), step_form=阶段子步骤补录(多行专用表单)"
                     },
                     "icon_path": {
                         "type": "string",
@@ -113,6 +119,10 @@ icon_confirm 类型用于确认纯图标功能：显示图标预览 + 功能名�
                     "default_note": {
                         "type": "string",
                         "description": "(icon_confirm) 预装备注"
+                    },
+                    "default_stage": {
+                        "type": "string",
+                        "description": "(step_form) 预填当前阶段名（WorkflowAgent 自填，用户可改）"
                     }
                 },
                 "required": ["title", "prompt"]

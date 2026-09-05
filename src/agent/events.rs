@@ -147,6 +147,9 @@ pub enum NuphusEvent {
         rel_y: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         default_note: Option<String>,
+        // ── step_form 专用字段（全 optional，不破坏既有 text/icon_confirm/capture 路径）──
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default_stage: Option<String>,
     },
 
     /// 安全确认/输入请求弹窗已超时（或等待被取消），前端应清除对应 action_id 的弹窗
@@ -452,6 +455,7 @@ mod tests {
             rel_x: None,
             rel_y: None,
             default_note: None,
+            default_stage: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let parsed: NuphusEvent = serde_json::from_str(&json).unwrap();

@@ -1091,6 +1091,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                             tool_schemas,
                             self.agent.exec_emitter.as_deref(),
                             inputs,
+                            false,
                             crate::workflow::WorkflowRunSource::Agent {
                                 owner: self.config.mode,
                             },

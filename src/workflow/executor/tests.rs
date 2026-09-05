@@ -45,7 +45,9 @@ async fn test_executor_linear_single_step() {
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
 
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -67,7 +69,9 @@ async fn test_compiler_rejects_empty_steps() {
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
 
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -116,7 +120,9 @@ async fn test_executor_with_real_system_shell() {
     };
 
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -191,7 +197,7 @@ async fn test_wf_call_single_level() {
 
     let result = executor
         .execute_v2(
-            &parent_id, &store, &events, tool_exec, None, None, None, None,
+            &parent_id, &store, &events, tool_exec, None, None, None, None, false,
         )
         .await;
 
@@ -244,7 +250,9 @@ async fn test_wf_call_with_seq_nesting() {
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
 
     let result = executor
-        .execute_v2(&l0_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &l0_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -288,7 +296,9 @@ async fn test_wf_call_deep_nesting() {
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
 
     let result = executor
-        .execute_v2(&l0_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &l0_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -327,7 +337,7 @@ async fn test_wf_call_error_propagation() {
 
     let result = executor
         .execute_v2(
-            &parent_id, &store, &events, tool_exec, None, None, None, None,
+            &parent_id, &store, &events, tool_exec, None, None, None, None, false,
         )
         .await;
 
@@ -365,7 +375,9 @@ async fn test_run_record_steps_populated() {
 
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 
@@ -457,6 +469,7 @@ async fn test_for_each_nested_path() {
             None,
             None,
             Some(inputs),
+            false,
         )
         .await;
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -517,6 +530,7 @@ async fn test_failed_run_creates_error_record_without_corrupting_previous() {
             None,
             None,
             None,
+            false,
         )
         .await;
     assert!(r1.is_ok(), "first run should succeed: {:?}", r1.err());
@@ -539,6 +553,7 @@ async fn test_failed_run_creates_error_record_without_corrupting_previous() {
             None,
             None,
             None,
+            false,
         )
         .await;
     assert!(r2.is_err(), "second run should fail");
@@ -612,7 +627,17 @@ async fn test_resume_skips_completed_steps() {
 
     // 首次执行：s1 成功、s2 失败
     let r1 = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec(), None, None, None, None)
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
         .await;
     assert!(r1.is_err(), "first run should fail at s2");
 
@@ -629,7 +654,17 @@ async fn test_resume_skips_completed_steps() {
 
     // 重试：completed_ids 应从上次 Error 记录提取 s1（Success）→ s1 跳过，只重跑 s2
     let r2 = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec(), None, None, None, None)
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
         .await;
     assert!(r2.is_err(), "second run should fail at s2 again");
     assert_eq!(
@@ -712,7 +747,17 @@ async fn test_paused_resume_skips_completed_steps() {
     };
 
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec(), None, None, None, None)
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
         .await;
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 
@@ -785,7 +830,17 @@ async fn test_resume_survives_hot_reload() {
 
     // 第一次执行：s1 成功、s2 失败
     let r1 = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec(), None, None, None, None)
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
         .await;
     assert!(r1.is_err(), "first run should fail at s2");
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -795,7 +850,17 @@ async fn test_resume_survives_hot_reload() {
 
     // 第二次执行：resume 应跳过 s1，只重跑 s2
     let r2 = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec(), None, None, None, None)
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
         .await;
     assert!(r2.is_err(), "second run should fail at s2 again");
     assert_eq!(
@@ -891,6 +956,7 @@ async fn test_chat_model_fallback_bare_name() {
             None,
             None,
             None,
+            false,
         )
         .await;
 
@@ -930,6 +996,7 @@ async fn test_chat_model_routed_to_registry_client() {
             None,
             None,
             None,
+            false,
         )
         .await;
 
@@ -969,6 +1036,7 @@ async fn test_chat_no_model_uses_main_client() {
             None,
             None,
             None,
+            false,
         )
         .await;
 
@@ -1004,7 +1072,9 @@ async fn test_failed_step_emits_error_and_step_run_completed_error() {
     let tool_exec = |tool: String, params: serde_json::Value| fail_tool_exec(tool, params);
 
     let result = executor
-        .execute_v2(&wf_id, &store, &events, tool_exec, None, None, None, None)
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
         .await;
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;

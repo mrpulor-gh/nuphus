@@ -295,6 +295,7 @@ impl WorkflowEngine {
         tool_schemas: Option<Vec<ToolDefinition>>,
         emitter: Option<&dyn crate::agent::events::EventEmitter>,
         inputs: Option<std::collections::HashMap<String, serde_json::Value>>,
+        force_fresh: bool,
         source: WorkflowRunSource,
     ) -> Result<String>
     where
@@ -340,6 +341,7 @@ impl WorkflowEngine {
                 emitter,
                 tool_schemas.as_deref(),
                 inputs,
+                force_fresh,
             )
             .await;
 

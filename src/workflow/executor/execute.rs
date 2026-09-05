@@ -15,6 +15,7 @@ impl Executor {
         emitter: Option<&dyn EventEmitter>,
         tool_schemas: Option<&[ToolDefinition]>,
         inputs: Option<std::collections::HashMap<String, serde_json::Value>>,
+        force_fresh: bool,
     ) -> Result<String>
     where
         F: Fn(String, serde_json::Value) -> Fut + Send + Sync,
@@ -65,19 +66,25 @@ impl Executor {
         }
 
         // ── 断点续连：跳过已完成步骤（Success + Skipped）──
-        let completed_ids: std::collections::HashSet<String> = wf
-            .last_run()
-            .filter(|r| r.status == RunStatus::Paused || matches!(r.status, RunStatus::Error(_)))
-            .map(|r| {
-                r.steps
-                    .iter()
-                    .filter(|s| {
-                        s.status == StepRunStatus::Success || s.status == StepRunStatus::Skipped
-                    })
-                    .map(|s| s.step_id.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
+        // force_fresh=true（画布失败后「运行」从头执行）→ completed_ids 置空，跳过逻辑整体失效
+        let completed_ids: std::collections::HashSet<String> = if force_fresh {
+            std::collections::HashSet::new()
+        } else {
+            wf.last_run()
+                .filter(|r| {
+                    r.status == RunStatus::Paused || matches!(r.status, RunStatus::Error(_))
+                })
+                .map(|r| {
+                    r.steps
+                        .iter()
+                        .filter(|s| {
+                            s.status == StepRunStatus::Success || s.status == StepRunStatus::Skipped
+                        })
+                        .map(|s| s.step_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
 
         // 恢复/重试时继承上次已完成步骤记录，保持本次 run_record 视图完整
         // （对应步骤经 completed_ids 跳过不再执行，故无重复记录）

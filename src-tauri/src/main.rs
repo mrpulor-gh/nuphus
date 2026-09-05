@@ -544,6 +544,7 @@ fn main() {
                                 Some(vec![]),
                                 None,
                                 None,
+                                false,
                                 nuphus::workflow::WorkflowRunSource::Schedule,
                             )
                             .await

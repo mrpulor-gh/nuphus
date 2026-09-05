@@ -837,6 +837,7 @@ impl WorkflowAgent {
                                     tool_schemas,
                                     self.emitter.as_deref(),
                                     inputs,
+                                    false,
                                     crate::workflow::WorkflowRunSource::Agent {
                                         owner: crate::runtime::Mode::Workflow,
                                     },
@@ -908,6 +909,7 @@ impl WorkflowAgent {
                                     rel_x: pending.rel_x,
                                     rel_y: pending.rel_y,
                                     default_note: pending.default_note.clone(),
+                                    default_stage: pending.default_stage.clone(),
                                 });
                             }
                             let value = crate::agent::exec_tool::wait_for_user_input_async(
