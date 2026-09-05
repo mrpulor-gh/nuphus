@@ -689,6 +689,7 @@ export function useEvents(h: EventHandlers) {
             relX: event.rel_x,
             relY: event.rel_y,
             defaultNote: event.default_note,
+            defaultStage: event.default_stage,
           })
           break
         case 'prompt_timeout':

@@ -589,6 +589,7 @@ export default function App() {
               relX={s.userInputRequest.relX}
               relY={s.userInputRequest.relY}
               defaultNote={s.userInputRequest.defaultNote}
+              defaultStage={s.userInputRequest.defaultStage}
               onSubmit={() => s.setUserInputRequest(null)}
               onReject={() => s.setUserInputRequest(null)}
             />

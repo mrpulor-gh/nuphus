@@ -248,3 +248,37 @@
 .uip-hint--spaced {
   margin-top: 6px;
 }
+
+/* ── step_form（补录阶段子步骤行列表）── */
+.uip-step-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.uip-step-row .uip-input {
+  flex: 1;
+  min-width: 0;
+}
+.uip-add-line {
+  margin-top: 2px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-2);
+  border: 1px dashed var(--line-3);
+  background: transparent;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.uip-add-line:hover:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+.uip-add-line:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

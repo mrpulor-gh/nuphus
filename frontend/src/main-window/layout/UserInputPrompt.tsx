@@ -14,6 +14,7 @@ import {
   inputTypeToCaptureMode,
 } from '../tools/useToolCapture'
 import { playPopupSound } from '../../ui/sound'
+import { INTENT_FORM_LIMITS } from '../workflow-canvas/intentTypes'
 
 /// 将文件系统路径转为浏览器可访问的 URL（Tauri asset protocol）
 function toAssetUrl(path: string | null | undefined): string | null {
@@ -42,6 +43,8 @@ interface UserInputPromptProps {
   relX?: number | null
   relY?: number | null
   defaultNote?: string | null
+  // ── step_form：预填当前阶段名（WorkflowAgent 自填，用户可改）──
+  defaultStage?: string | null
 }
 
 const CAPTURE_LABELS: Record<string, string> = {
@@ -65,6 +68,7 @@ export function UserInputPrompt({
   relX,
   relY,
   defaultNote,
+  defaultStage,
 }: UserInputPromptProps) {
   // ── text state ──
   const [value, setValue] = useState('')
@@ -92,6 +96,12 @@ export function UserInputPrompt({
   const [busy, setBusy] = useState(false)
   const isText = inputType === 'text'
   const isIconConfirm = inputType === 'icon_confirm'
+  const isStepForm = inputType === 'step_form'
+
+  // ── step_form state（当前阶段名 + 子步骤行；至少保底 1 行）──
+  const [stageName, setStageName] = useState(defaultStage || '')
+  const [stepLines, setStepLines] = useState<string[]>([''])
+  const stepFormValid = stageName.trim().length > 0 && stepLines.some(l => l.trim().length > 0)
 
   // ══════════════════════════════════════════
   // Text submit
@@ -157,6 +167,39 @@ export function UserInputPrompt({
   }, [busy, iconName, iconShortcut, iconX, iconY, iconNote, actionId, onSubmit])
 
   // ══════════════════════════════════════════
+  // step_form submit（JSON {stage, steps}，与 icon_confirm 同协议：submitUserInput(actionId, JSON.stringify(payload))）
+  // ══════════════════════════════════════════
+  const handleStepFormSubmit = useCallback(async () => {
+    if (busy || !stepFormValid) return
+    setBusy(true)
+    try {
+      const payload = {
+        stage: stageName.trim(),
+        steps: stepLines.map(l => l.trim()).filter(Boolean),
+      }
+      await submitUserInput(actionId, JSON.stringify(payload))
+      onSubmit(actionId)
+    } catch (e) {
+      console.warn('step_form submission failed:', e)
+      setBusy(false)
+    }
+  }, [busy, stepFormValid, stageName, stepLines, actionId, onSubmit])
+
+  // step_form 行操作：受控数组更新 + 至少保底 1 行
+  const updateStepLine = useCallback((index: number, text: string) => {
+    setStepLines(prev => prev.map((l, i) => (i === index ? text : l)))
+  }, [])
+  const addStepLine = useCallback(() => {
+    setStepLines(prev =>
+      prev.length >= INTENT_FORM_LIMITS.maxStepsPerStage ? prev : [...prev, ''],
+    )
+  }, [])
+  const removeStepLine = useCallback((index: number) => {
+    setStepLines(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
+  }, [])
+  const stepLinesFull = stepLines.length >= INTENT_FORM_LIMITS.maxStepsPerStage
+
+  // ══════════════════════════════════════════
   // Reject
   // ══════════════════════════════════════════
   const handleReject = useCallback(async () => {
@@ -219,7 +262,9 @@ export function UserInputPrompt({
 
   const promptContent = (
     <div className="uip-overlay">
-      <div className={`uip-panel ${isIconConfirm ? 'uip-panel--lg' : 'uip-panel--md'}`}>
+      <div
+        className={`uip-panel ${isIconConfirm || isStepForm ? 'uip-panel--lg' : 'uip-panel--md'}`}
+      >
         {/* Header */}
         <div className="uip-header">
           <div className="uip-title-group">
@@ -359,8 +404,75 @@ export function UserInputPrompt({
           </>
         )}
 
+        {/* ── STEP_FORM（补录当前阶段下多个子步骤；提交 JSON {stage, steps}） ── */}
+        {isStepForm && (
+          <>
+            <div className="uip-field">
+              <div className="uip-label">当前阶段（可修改）</div>
+              <input
+                value={stageName}
+                onChange={e => setStageName(e.target.value)}
+                placeholder="如：登录管理后台"
+                className="uip-input"
+              />
+            </div>
+
+            <div className="uip-field--spaced">
+              <div className="uip-label">子步骤（每个子步骤一行，纯文本描述意图）</div>
+              {stepLines.map((line, i) => (
+                <div className="uip-step-row" key={i}>
+                  <input
+                    value={line}
+                    onChange={e => updateStepLine(i, e.target.value)}
+                    placeholder={`子步骤 ${i + 1}：描述这一步做什么`}
+                    className="uip-input"
+                  />
+                  <Button
+                    variant="ghost"
+                    onClick={() => removeStepLine(i)}
+                    disabled={busy || stepLines.length <= 1}
+                    aria-label="删除该子步骤"
+                  >
+                    删除
+                  </Button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="uip-add-line"
+                onClick={addStepLine}
+                disabled={busy || stepLinesFull}
+                title={
+                  stepLinesFull
+                    ? `每阶段最多 ${INTENT_FORM_LIMITS.maxStepsPerStage} 个子步骤`
+                    : '添加一个子步骤'
+                }
+              >
+                + 添加子步骤
+              </button>
+            </div>
+
+            {/* actions */}
+            <div className="uip-actions uip-actions--spaced">
+              <Button variant="ghost" onClick={handleReject} disabled={busy}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleStepFormSubmit}
+                disabled={busy || !stepFormValid}
+              >
+                {busy ? '处理中...' : '确认提交'}
+              </Button>
+            </div>
+            {!stepFormValid && (
+              <div className="uip-hint uip-hint--spaced">请填写阶段名与至少一个子步骤后再提交</div>
+            )}
+          </>
+        )}
+
         {/* ── CAPTURE TYPES (screenshot / region / mouse_pos / color) ── */}
-        {!isText && !isIconConfirm && (
+        {!isText && !isIconConfirm && !isStepForm && (
           <>
             {!captureResult ? (
               <div>

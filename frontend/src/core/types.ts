@@ -121,6 +121,8 @@ export interface UserInputRequest {
   relX?: number | null
   relY?: number | null
   defaultNote?: string | null
+  // ── step_form：预填当前阶段名（WorkflowAgent 自填，用户可改）──
+  defaultStage?: string | null
 }
 
 export interface SecurityCheck {
@@ -547,6 +549,7 @@ export type NuphusEvent =
       rel_x?: number | null
       rel_y?: number | null
       default_note?: string | null
+      default_stage?: string | null
     }
   | { type: 'prompt_timeout'; action_id: string }
   | {
