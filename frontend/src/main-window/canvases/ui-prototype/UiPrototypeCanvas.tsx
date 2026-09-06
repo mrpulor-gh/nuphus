@@ -118,6 +118,8 @@ import {
   translateDefaultFrameName,
   translateDefaultText,
 } from './lib/i18n'
+import './ui-proto-tailwind.css'
+import './ui-proto-base.css'
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) =>
@@ -378,6 +380,9 @@ const LEFT_TABS: {
 
 export function UiPrototypeCanvas() {
   /* ---------- document ---------- */
+  /** 画布根 ref：原实现的 document.body/html 样式副作用一律收敛到画布根，
+   *  卸载随 DOM 移除自动清除，避免污染 Nuphus 主窗 */
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const [editAccess, setEditAccess] = useState<'checking' | 'editable' | 'readonly'>('checking')
   const [groups, setGroups] = useState<Group[]>(seed)
   const [frames, setFrames] = useState<Frame[]>(SEED_FRAMES)
@@ -726,9 +731,8 @@ export function UiPrototypeCanvas() {
   }, [])
 
   useEffect(() => {
-    document.documentElement.lang = lang
     /* the editor's own text and the parts both pick up the language's Noto face */
-    document.body.style.fontFamily = uiFontFamily(lang)
+    if (rootRef.current) rootRef.current.style.fontFamily = uiFontFamily(lang)
     ensureLangFontLoaded(lang, () => setWidths({}))
   }, [lang])
 
@@ -739,8 +743,10 @@ export function UiPrototypeCanvas() {
 
   /* the page background outside the app root follows the scheme, so dark mode has no white edges */
   useEffect(() => {
-    document.body.style.background = p.surface
-    document.body.style.color = p.onSurface
+    const el = rootRef.current
+    if (!el) return
+    el.style.background = p.surface
+    el.style.color = p.onSurface
   }, [p.surface, p.onSurface])
 
   /* in-app browsers size the page behind their own toolbars and may ignore dvh,
@@ -749,7 +755,7 @@ export function UiPrototypeCanvas() {
   useEffect(() => {
     const apply = () => {
       const h = Math.round(window.innerHeight)
-      if (h > 0) document.documentElement.style.setProperty('--app-h', `${h}px`)
+      if (h > 0) rootRef.current?.style.setProperty('--app-h', `${h}px`)
     }
     /* in-app browsers (X, Instagram, LINE...) keep their own action bar over the
        page bottom, so the controls sit one button higher there. App names in the
@@ -759,7 +765,7 @@ export function UiPrototypeCanvas() {
     const iosWebView = /iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua)
     const androidWebView = /Android/.test(ua) && /(?:^|\W)wv(?:\W|$)/.test(ua)
     if (iosWebView || androidWebView || /Twitter|Instagram|FBAN|FBAV|Line\//i.test(ua)) {
-      document.documentElement.style.setProperty('--bottom-ui', '64px')
+      rootRef.current?.style.setProperty('--bottom-ui', '64px')
     }
     apply()
     window.addEventListener('resize', apply)
@@ -3286,6 +3292,7 @@ export function UiPrototypeCanvas() {
     <LangContext.Provider value={lang}>
       <ThemeContext.Provider value={theme}>
         <div
+          ref={rootRef}
           className={revealing ? 'app-root nuphus-reveal' : 'app-root'}
           {...({
             inert: editAccess !== 'editable',

@@ -139,3 +139,62 @@
   text-align: center;
   color: var(--fg-5, #6e7681);
 }
+
+/* ═══════════════════════════════════════════════
+   全屏画布壳 — 画布打开后的通用页面壳（App.tsx showUiProto 使用）
+   返回条 + body 区；样式对齐 canvas-hub-toolbar 风格
+   ═══════════════════════════════════════════════ */
+
+.canvas-page-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1, #0e0f13);
+}
+
+.canvas-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-1, rgba(255, 255, 255, 0.08));
+  background: var(--surface-1, #14161c);
+  flex-shrink: 0;
+}
+
+.canvas-page-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3, #a0a0b0);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.canvas-page-back:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--fg-1, #fff);
+}
+
+.canvas-page-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-2, #d6dbe1);
+}
+
+.canvas-page-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}

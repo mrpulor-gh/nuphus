@@ -1,0 +1,223 @@
+/* ═══════════════════════════════════════════════════════════════
+   UI 原型画布基础样式（原 m3e globals.css 搬运 + Nuphus 作用域改造）
+
+   ▸ 仅由 UiPrototypeCanvas.tsx 懒加载 import —— 实际影响面仅画布打开时
+   ▸ 原 html/body 全局规则（height/background/color/overscroll）已删除：
+     高度链改由全屏壳 .canvas-page-host > .canvas-page-body 提供；
+     文字/背景色由画布 JS 依 palette 注入内联样式，不依赖 body 主题色
+   ▸ 类名 / keyframes 对齐画布端已改名版本（m3e-* → nuphus-*）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 画布根容器：占满 .canvas-page-body（壳已提供固定高度 flex 链） */
+.app-root {
+  height: 100%;
+}
+
+/* Material Symbols Rounded (variable font) */
+.msr {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  /* Reserve the glyph box before the font loads, not the ligature text width. */
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+  user-select: none;
+}
+.msr[data-fill='1'] {
+  font-variation-settings:
+    'FILL' 1,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+}
+
+.no-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb, #d6cfe0) transparent;
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.no-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--sb, #d6cfe0);
+  border-radius: 999px;
+}
+.no-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* press feedback shared by toolbar and inspector buttons */
+.m3-press {
+  transition:
+    transform 120ms cubic-bezier(0.2, 0, 0, 1),
+    background 120ms,
+    color 120ms;
+  /* a fast double tap on a button must not start selecting its label */
+  user-select: none;
+}
+.m3-press:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* parts palette tiles: the star only shows on hover */
+.m3-tile {
+  transition:
+    transform 140ms cubic-bezier(0.2, 0, 0, 1),
+    background 120ms;
+}
+.m3-tile:hover {
+  transform: translateY(-1px);
+}
+.m3-tile:active {
+  transform: scale(0.96);
+}
+.m3-tile .m3-star {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.m3-tile:hover .m3-star,
+.m3-tile .m3-star[style*='opacity: 1'] {
+  opacity: 1;
+}
+
+/* range input, themed per palette via CSS vars */
+input[type='range'].m3-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+input[type='range'].m3-range::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track, #e8def8);
+}
+input[type='range'].m3-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 6px;
+  height: 26px;
+  margin-top: -8px;
+  border-radius: 3px;
+  background: var(--thumb, #6750a4);
+  border: none;
+}
+input[type='range'].m3-range::-moz-range-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track, #e8def8);
+}
+input[type='range'].m3-range::-moz-range-thumb {
+  width: 6px;
+  height: 26px;
+  border-radius: 3px;
+  background: var(--thumb, #6750a4);
+  border: none;
+}
+
+input.m3-number::-webkit-outer-spin-button,
+input.m3-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.m3-number {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-press,
+  .m3-tile {
+    transition: none;
+  }
+  .m3-spin,
+  .nuphus-reveal [data-screen] > * {
+    animation: none;
+  }
+  .nuphus-reveal,
+  .nuphus-reveal * {
+    transition: none !important;
+  }
+  [style*='nuphus-drift'] {
+    animation: none;
+  }
+}
+
+/* a design arriving from a model or a link: colours ease over instead of snapping,
+   and the screens fade in. The class stays on the root only for the moment it takes. */
+.nuphus-reveal,
+.nuphus-reveal * {
+  transition:
+    background-color 700ms ease,
+    background 700ms ease,
+    color 700ms ease,
+    border-color 700ms ease,
+    box-shadow 700ms ease,
+    fill 700ms ease !important;
+}
+@keyframes nuphus-fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.nuphus-reveal [data-screen] > * {
+  animation: nuphus-fadein 600ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* the screens while a model drafts: a gradient that drifts across them */
+@keyframes nuphus-drift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* the AI button while a request is in flight */
+@keyframes m3-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.m3-spin {
+  animation: m3-spin 1.1s linear infinite;
+}
+
+/* buttons inside a run share fused corners, like a connected button group */
+.m3-run > * {
+  border-radius: 8px !important;
+}
+.m3-run > :first-child {
+  border-top-left-radius: 22px !important;
+  border-bottom-left-radius: 22px !important;
+}
+.m3-run > :last-child {
+  border-top-right-radius: 22px !important;
+  border-bottom-right-radius: 22px !important;
+}
