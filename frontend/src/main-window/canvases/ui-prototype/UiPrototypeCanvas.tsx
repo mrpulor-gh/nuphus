@@ -153,6 +153,13 @@ const BEFORE_KEY = 'nuphus.ui_proto.doc:before'
 const DOC_LOCK = 'nuphus.ui_proto.doc:editor'
 const UI_KEY = 'nuphus.ui_proto.ui'
 
+/** Nuphus 默认画布主题：进入即暗色商务（不再 M3 浅色全白）。
+ *  lib DEFAULT_THEME 保持上游默认（prompt/导出语义与测试基线不动），
+ *  仅在画布应用层把入口默认翻暗；浅色可由 ColorPanel/Mobile 亮度开关切回。 */
+const DEFAULT_CANVAS_THEME: Theme = { ...DEFAULT_THEME, dark: true }
+/** Nuphus 默认主题色：指向 PALETTES 中 seed=#3B82F6 的 brand 预设 */
+const DEFAULT_PALETTE_KEY = 'brand'
+
 type View = { x: number; y: number; z: number }
 type Snap = { groupId: string; index: number; pull: number }
 
@@ -386,10 +393,10 @@ export function UiPrototypeCanvas() {
   const [editAccess, setEditAccess] = useState<'checking' | 'editable' | 'readonly'>('checking')
   const [groups, setGroups] = useState<Group[]>(seed)
   const [frames, setFrames] = useState<Frame[]>(SEED_FRAMES)
-  const [paletteKey, setPaletteKey] = useState('purple')
+  const [paletteKey, setPaletteKey] = useState(DEFAULT_PALETTE_KEY)
   const [customPalette, setCustomPalette] = useState<Palette | null>(null)
   const [dynamicColor, setDynamicColor] = useState(false)
-  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME)
+  const [theme, setTheme] = useState<Theme>(DEFAULT_CANVAS_THEME)
   const patchTheme = (patch: Partial<Theme>) => setTheme(t => ({ ...t, ...patch }))
   const [frame, setFrame] = useState<FrameMode>('phone')
   const [lang, setLang] = useState<Lang>('ja')
@@ -657,14 +664,14 @@ export function UiPrototypeCanvas() {
     if (Array.isArray(doc.groups)) setGroups(migrateGroups(doc.groups, frames))
     if (Array.isArray(doc.frames)) setFrames(doc.frames)
     if (typeof doc.paletteKey === 'string' && doc.paletteKey) setPaletteKey(doc.paletteKey)
-    else if (reset) setPaletteKey('purple')
+    else if (reset) setPaletteKey(DEFAULT_PALETTE_KEY)
     if (doc.customPalette && typeof doc.customPalette.primary === 'string')
       setCustomPalette(doc.customPalette)
     else if (reset) setCustomPalette(null)
     if (typeof doc.dynamicColor === 'boolean') setDynamicColor(doc.dynamicColor)
     else if (reset) setDynamicColor(false)
     if (doc.theme && typeof doc.theme === 'object') setTheme(normalizeTheme(doc.theme))
-    else if (reset) setTheme(normalizeTheme(undefined))
+    else if (reset) setTheme(DEFAULT_CANVAS_THEME)
     if (typeof doc.title === 'string') setTitle(doc.title)
     else if (reset) setTitle('')
     if (typeof doc.brief === 'string') setBrief(doc.brief)
@@ -3265,7 +3272,7 @@ export function UiPrototypeCanvas() {
   const handMode = !isMobile && (mode === 'hand' || spaceHeld)
   const panning = gesture?.kind === 'pan'
   const marquee = gesture?.kind === 'marquee' && gesture.moved ? gesture : null
-  const canvasBg = frame === 'phone' ? p.surfaceContainerLow : '#ffffff'
+  const canvasBg = frame === 'phone' ? p.surfaceContainerLow : p.surfaceContainer
 
   const panelStyle: React.CSSProperties = {
     background: p.surface,

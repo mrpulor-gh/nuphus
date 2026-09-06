@@ -109,6 +109,9 @@ const ERROR = {
   onErrorContainer: '#410E0B',
 }
 
+/** Nuphus 品牌强调色（styles/tokens.css --accent） */
+export const BRAND_SEED = '#3B82F6'
+
 export const PALETTES: Palette[] = [
   {
     key: 'purple',
@@ -284,6 +287,13 @@ export const PALETTES: Palette[] = [
     inverseSurface: '#313033',
     inverseOnSurface: '#F4EFF4',
     ...ERROR,
+  },
+  {
+    /* Nuphus 品牌主题：seed 即 --accent #3B82F6。浅色/标准对比直接使用此
+     * 静态方案；暗色或高对比时 paletteOf 以同一 seed 重新生成，
+     * 暗色表面沿用品牌色相（不刺眼紫）。 */
+    ...schemeFromSeed(BRAND_SEED, 'Nuphus'),
+    key: 'brand',
   },
 ]
 

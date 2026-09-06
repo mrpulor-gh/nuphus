@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CONTRASTS, Contrast, PALETTES, Palette, Theme } from '../lib/tokens'
+import { BRAND_SEED, CONTRASTS, Contrast, PALETTES, Palette, Theme } from '../lib/tokens'
 import { isHex, onColorFor, schemeFromSeed } from '../lib/color'
 import { t, useLang } from '../lib/i18n'
 import { Section, Segmented } from './ui'
@@ -263,7 +263,7 @@ export function ColorPanel({
   const [tab, setTab] = useState<'templates' | 'custom'>(
     paletteKey === 'custom' ? 'custom' : 'templates',
   )
-  const [seed, setSeed] = useState(custom?.seed ?? custom?.primary ?? '#6750A4')
+  const [seed, setSeed] = useState(custom?.seed ?? custom?.primary ?? BRAND_SEED)
 
   const applySeed = (hex: string) => {
     setSeed(hex)
@@ -439,6 +439,7 @@ export function ColorPanel({
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 2px' }}>
             {[
+              BRAND_SEED,
               '#6750A4',
               '#0B57D0',
               '#2E6A45',
