@@ -643,6 +643,62 @@ pub fn clear_provider_api_key(state: State<'_, AppState>, provider: String) -> R
     Ok(())
 }
 
+/// 手动设置某 provider 下某模型的 context_window（ModelsPage 模型行内编辑）。
+///
+/// - 持久化到 providers.toml 对应模型条目（真实用户意图，信任链来源①最高层，
+///   与 configure_llm/switch_model 的显式 context_window 行为一致）
+/// - 若该模型正是当前激活模型 → 同步更新运行时 model_context_window，
+///   refine 阈值与桌面/手机上下文占用展示立即按新窗口计算
+/// - 找不到对应 provider/model 条目时返回明确错误（写盘原语对缺失静默 Ok，
+///   此处回读校验把「未生效」暴露给 UI，禁止假装保存成功）
+#[tauri::command]
+pub fn set_model_context_window(
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+    context_window: usize,
+) -> Result<String, String> {
+    if context_window == 0 || context_window > 10_000_000 {
+        return Err(format!(
+            "Context Window 需在 1 ~ 10,000,000 之间，收到: {}",
+            context_window
+        ));
+    }
+    if provider.trim().is_empty() || model.trim().is_empty() {
+        return Err("provider 与 model 不能为空".to_string());
+    }
+
+    let toml_config_path =
+        get_config_path().unwrap_or_else(|| state.llm_config_path.with_file_name("providers.toml"));
+
+    update_model_context_window(&toml_config_path, &provider, &model, context_window)?;
+
+    if read_model_context_window(&toml_config_path, &provider, &model) != Some(context_window) {
+        return Err(format!(
+            "未在配置中找到 {}/{} 模型条目，未写入（请先连接/配置该模型）",
+            provider, model
+        ));
+    }
+
+    // 当前激活模型命中 → 同步运行时窗口（get_context_limit 与 refine 按此值计算）
+    {
+        let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
+        if let Some(cfg) = guard.llm_config.as_ref() {
+            if cfg.provider == provider && cfg.model == model {
+                guard.model_context_window = context_window;
+                tracing::info!(
+                    "[set_model_context_window] runtime updated: {}/{} = {}",
+                    provider,
+                    model,
+                    context_window
+                );
+            }
+        }
+    }
+
+    Ok(format!("已设置 {}/{} 上下文窗口 = {}", provider, model, context_window))
+}
+
 /// Post-config steps: query context window from API + probe vision support.
 async fn post_configure(
     state: &State<'_, AppState>,
@@ -660,8 +716,9 @@ async fn post_configure(
     let toml_config_path =
         get_config_path().unwrap_or_else(|| state.llm_config_path.with_file_name("providers.toml"));
 
-    // ── context_window 四层信任链解析（不再有 128_000 伪默认）──
-    // ① local: 前端显式值（ModelsPage 手动校准，尊重用户意图）
+    // ── context_window 信任链解析（不再有 128_000 伪默认）──
+    // ① 前端显式值（任何 provider，含 custom/local）—— ModelsPage 行内/全局手动校准，
+    //    尊重用户意图，为最高信任级：运行时 + 写盘均用该值
     // ② providers.toml existing_ctx（用户手写/历史记录，保留不动）
     // ③ API 实测（query_model_metadata_from_api 返回 Some 且带 context_length）
     // ④ OpenRouter 聚合库 lookup（权威源）
@@ -669,72 +726,76 @@ async fn post_configure(
     // ⑥ None → 未知（runtime 0，禁止落盘）
     //
     // 写入纪律：
-    // - local 且前端显式传值 → 写盘（原行为保留，来源①用户意图）
-    // - 非 local 且 existing_ctx 为 None 且来源为 ③④（实测/权威）→ 写盘
+    // - 前端显式传值（来源①，任意 provider）→ 写盘（local 原有行为扩展至 custom 等，
+    //   根治「custom 中转 API 探测不到 context_length → refine 阈值错位」的缺配置通道）
+    // - existing_ctx 为 None 且来源为 ③④（实测/权威）→ 写盘
     // - 来源 ⑤⑥ 只进运行时，禁止落盘（根治「兜底猜测值固化」缺陷：
     //   探测失败 → 128_000 猜测值被 update_model_context_window 写盘 → 永不自愈）
     let existing_ctx =
         read_model_context_window(&toml_config_path, resolved_provider, resolved_model);
 
-    let (runtime_ctx, persist_ctx): (Option<usize>, Option<usize>) = if resolved_provider == "local"
-    {
-        // ① 前端显式值优先；前端未传时保留本地记录；都无 → 未知(0)
-        (context_window.or(existing_ctx), context_window)
-    } else if let Some(ctx) = existing_ctx {
-        // ② 用户手写/历史记录：保留不动（API/权威值不覆盖），运行时直接用
-        (Some(ctx), None)
-    } else {
-        // ③ API 实测（spawn_blocking，原逻辑保留 reasoning-effort 持久化）
-        let api_ctx = {
-            let base_url = resolved_base_url.to_string();
-            let model = resolved_model.to_string();
-            let key = api_key.to_string();
-            let hdr = auth_header.to_string();
-            let prefix = auth_prefix.to_string();
-            match tokio::task::spawn_blocking(move || {
-                query_model_metadata_from_api(&base_url, &model, &key, &hdr, &prefix)
-            })
-            .await
-            {
-                Ok(Some(meta)) => {
-                    // Persist discovered effort capability into the model entry so
-                    // list_models can serve it without a builtin-registry hit.
-                    if !meta.reasoning_efforts.is_empty() {
-                        let _ = update_model_reasoning_efforts(
-                            &toml_config_path,
-                            resolved_provider,
-                            resolved_model,
-                            &meta.reasoning_efforts,
-                            meta.default_effort.as_deref(),
-                        );
-                    }
-                    meta.context_length
-                }
-                _ => None,
-            }
-        };
-        // ④ OpenRouter 聚合库（stale-while-revalidate：缓存新鲜直接查，过期拉一次）
-        // custom/local 无 vendor 映射 → 不触发网络，直接 None
-        let agg_ctx = if or_agg::has_vendor(resolved_provider) {
-            let cache_path = toml_config_path
-                .parent()
-                .map(or_agg::cache_path)
-                .unwrap_or_else(openrouter_cache_path);
-            let entries = or_agg::ensure_cache(&cache_path).await;
-            or_agg::lookup(&entries, resolved_provider, resolved_model)
-                .and_then(|e| e.context_length)
-                .map(|v| v as usize)
+    let (runtime_ctx, persist_ctx): (Option<usize>, Option<usize>) =
+        if let Some(ctx) = context_window {
+            // ① 用户显式值（任何 provider）：尊重用户意图，运行时 + 写盘一致
+            (Some(ctx), Some(ctx))
+        } else if resolved_provider == "local" {
+            // local 无显式值 → 保留本地记录（历史/手写）；都无 → 未知(0)，不写盘
+            (existing_ctx, None)
+        } else if let Some(ctx) = existing_ctx {
+            // ② 用户手写/历史记录：保留不动（API/权威值不覆盖），运行时直接用
+            (Some(ctx), None)
         } else {
-            None
+            // ③ API 实测（spawn_blocking，原逻辑保留 reasoning-effort 持久化）
+            let api_ctx = {
+                let base_url = resolved_base_url.to_string();
+                let model = resolved_model.to_string();
+                let key = api_key.to_string();
+                let hdr = auth_header.to_string();
+                let prefix = auth_prefix.to_string();
+                match tokio::task::spawn_blocking(move || {
+                    query_model_metadata_from_api(&base_url, &model, &key, &hdr, &prefix)
+                })
+                .await
+                {
+                    Ok(Some(meta)) => {
+                        // Persist discovered effort capability into the model entry so
+                        // list_models can serve it without a builtin-registry hit.
+                        if !meta.reasoning_efforts.is_empty() {
+                            let _ = update_model_reasoning_efforts(
+                                &toml_config_path,
+                                resolved_provider,
+                                resolved_model,
+                                &meta.reasoning_efforts,
+                                meta.default_effort.as_deref(),
+                            );
+                        }
+                        meta.context_length
+                    }
+                    _ => None,
+                }
+            };
+            // ④ OpenRouter 聚合库（stale-while-revalidate：缓存新鲜直接查，过期拉一次）
+            // custom/local 无 vendor 映射 → 不触发网络，直接 None
+            let agg_ctx = if or_agg::has_vendor(resolved_provider) {
+                let cache_path = toml_config_path
+                    .parent()
+                    .map(or_agg::cache_path)
+                    .unwrap_or_else(openrouter_cache_path);
+                let entries = or_agg::ensure_cache(&cache_path).await;
+                or_agg::lookup(&entries, resolved_provider, resolved_model)
+                    .and_then(|e| e.context_length)
+                    .map(|v| v as usize)
+            } else {
+                None
+            };
+            // ⑤ builtin ProviderRegistry 表（仅运行时）
+            let builtin_ctx = ProviderRegistry::builtin()
+                .find_model(resolved_model)
+                .map(|(_, m)| m.context_window as usize);
+            // ③④ = 权威，可落盘；⑤ 仅运行时；⑥ 全 None → 未知
+            let authoritative = api_ctx.or(agg_ctx);
+            (authoritative.or(builtin_ctx), authoritative)
         };
-        // ⑤ builtin ProviderRegistry 表（仅运行时）
-        let builtin_ctx = ProviderRegistry::builtin()
-            .find_model(resolved_model)
-            .map(|(_, m)| m.context_window as usize);
-        // ③④ = 权威，可落盘；⑤ 仅运行时；⑥ 全 None → 未知
-        let authoritative = api_ctx.or(agg_ctx);
-        (authoritative.or(builtin_ctx), authoritative)
-    };
 
     {
         let mut cw = state.runtime.lock().ok();

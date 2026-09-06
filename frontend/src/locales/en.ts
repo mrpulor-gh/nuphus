@@ -16,6 +16,7 @@ const en: Record<string, string> = {
   'common.noData': 'No data',
   'common.copy': 'Copy',
   'common.copied': 'Copied',
+  'common.askNuphus': 'Ask Nuphus',
   'common.retry': 'Retry',
   'common.confirm': 'Confirm',
   'common.back': 'Back',
@@ -736,6 +737,7 @@ const en: Record<string, string> = {
   'models.llamacpp': 'llama.cpp',
   'models.localBaseUrlPlaceholder': 'Base URL (e.g. http://localhost:11434/v1)',
   'models.localModelPlaceholder': 'Enter local model name (e.g. qwen3-coder:7b)',
+  'models.localCtxPlaceholder': 'Leave empty to skip (set context per model below)',
   'models.visionModel': 'Vision Model',
   'models.visionModelDesc':
     'OCR uses Nuphus built-in models by default. External vision models are only used for semantic image understanding and complex chart analysis.',
@@ -750,6 +752,11 @@ const en: Record<string, string> = {
   'models.capImageGen': 'Image generation',
   'models.capContext': 'Context window',
   'models.capContextUnknown': 'Context window unknown',
+  'models.editContext': 'Edit context window',
+  'models.ctxInvalid':
+    'Enter a valid context size (unit K, e.g. 128 = 128K tokens, range 0.001–10000)',
+  'models.ctxSaved': 'Context window set to {0}',
+  'models.ctxSaveFail': 'Failed to save context window',
   'models.clearKeyConfirm': "Clear this provider's API Key? This cannot be undone.",
   'models.clearKeySuccess': 'API Key cleared',
   'models.clearKeyFail': 'Failed to clear key',

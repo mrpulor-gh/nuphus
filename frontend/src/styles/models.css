@@ -246,6 +246,53 @@
   opacity: 0.6;
   padding: 2px 4px;
 }
+
+/* ── 模型行内 Context Window 编辑（ModelsPage 手动校准入口）── */
+.model-ctx-edit-btn {
+  padding: 2px;
+  margin-left: 2px;
+  opacity: 0.45;
+}
+.model-ctx-edit-btn:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+.ctx-inline-input {
+  width: 96px;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  outline: none;
+}
+.ctx-inline-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+/* 隐藏 number input 的上下箭头，行内保持紧凑 */
+.ctx-inline-input::-webkit-outer-spin-button,
+.ctx-inline-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ctx-inline-input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* 行内编辑单位（K）容器：input + 单位后缀 */
+.ctx-inline-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.ctx-unit {
+  font-size: 10px;
+  color: var(--fg-4);
+  user-select: none;
+  flex-shrink: 0;
+}
 /* ── Agent 级模型配置（高级设置）── */
 .agent-models-grid {
   display: flex;

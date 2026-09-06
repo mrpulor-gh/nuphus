@@ -120,6 +120,7 @@ fn main() {
             commands::configure_llm,
             commands::clear_provider_api_key,
             commands::switch_model,
+            commands::set_model_context_window,
             commands::set_relation,
             commands::get_agent_models,
             commands::get_effective_model,

@@ -106,6 +106,13 @@ export function clearProviderApiKey(provider: string) {
   return invoke<void>('clear_provider_api_key', { provider })
 }
 
+/** 手动设置某 provider 下某模型的 context_window（ModelsPage 模型行内编辑）。
+ *  持久化到 providers.toml（真实用户意图，非探测猜测）；若为当前激活模型，
+ *  后端同步更新运行时窗口 —— refine 阈值与上下文占用百分比立即按新值计算。 */
+export function setModelContextWindow(provider: string, model: string, contextWindow: number) {
+  return invoke<string>('set_model_context_window', { provider, model, contextWindow })
+}
+
 export function getSessionInfo() {
   return invoke<SessionInfo>('get_session_info')
 }

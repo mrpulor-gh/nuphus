@@ -13,6 +13,7 @@ import {
   refreshProviderModels,
   getAgentModels,
   setAgentModel,
+  setModelContextWindow,
   sttStatus,
 } from '../lib/api'
 import type {
@@ -41,6 +42,7 @@ import {
   IconAlertTriangle,
   IconRefresh,
   IconBrushCleaning,
+  IconEdit3,
 } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
@@ -253,6 +255,87 @@ function formatContextWindow(n?: number): string {
   return `${n}`
 }
 
+/**
+ * 模型行内 Context Window 编辑：未编辑时显示 ctx badge（未知显示 '?'）+ 铅笔入口；
+ * 编辑中显示数字输入框（Enter 提交 / Esc 取消 / 失焦提交）。
+ * 模块级组件（参考 VisionModelSelect 注释：组件内定义会被父渲染重建导致丢焦点）。
+ */
+function RowCtxEditor({
+  ctx,
+  isEditing,
+  value,
+  onValueChange,
+  onStart,
+  onCommit,
+  onCancel,
+  t,
+}: {
+  ctx?: number
+  isEditing: boolean
+  value: string
+  onValueChange: (v: string) => void
+  onStart: () => void
+  onCommit: (name: string) => void
+  onCancel: () => void
+  t: any
+}) {
+  if (isEditing) {
+    return (
+      <span className="ctx-inline-wrap" onClick={e => e.stopPropagation()}>
+        <input
+          autoFocus
+          type="number"
+          className="ctx-inline-input input-num"
+          min={0.1}
+          max={10000}
+          step={0.001}
+          value={value}
+          onChange={e => onValueChange(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.stopPropagation()
+              onCommit(value)
+            } else if (e.key === 'Escape') {
+              e.stopPropagation()
+              onCancel()
+            }
+          }}
+          onBlur={() => onCommit(value)}
+        />
+        <span className="ctx-unit">K</span>
+      </span>
+    )
+  }
+  return (
+    <>
+      {ctx && ctx > 0 ? (
+        <span className="model-badge model-badge--ctx" title={t('models.capContext')}>
+          {formatContextWindow(ctx)}
+        </span>
+      ) : (
+        <span
+          className="model-badge model-badge--ctx model-badge--ctx-unknown"
+          title={t('models.capContextUnknown')}
+        >
+          ?
+        </span>
+      )}
+      <button
+        type="button"
+        className="icon-btn-ghost model-ctx-edit-btn"
+        title={t('models.editContext')}
+        aria-label={t('models.editContext')}
+        onClick={e => {
+          e.stopPropagation()
+          onStart()
+        }}
+      >
+        <IconEdit3 size={11} />
+      </button>
+    </>
+  )
+}
+
 export function ModelsPage({
   onClose,
   onModelChanged,
@@ -392,6 +475,9 @@ export function ModelsPage({
     setDetectedModels(loadDetectedModels(provider))
     setBaseUrl('') // 清空避免跨 provider 泄漏
     setFilterInput('') // 切换 provider 清空筛选
+    setCtxOverrides({}) // 行内 ctx 覆盖是页面级临时态：切换 provider 清空防串
+    setEditingCtxModel(null)
+    editingCtxRef.current = null
     // 加载该 provider 持久化的当前 model,供弹窗读取
     try {
       const saved = localStorage.getItem(`nuphus_current_model_${provider}`)
@@ -401,13 +487,24 @@ export function ModelsPage({
     }
   }, [provider])
 
-  const [localCtxWindow, setLocalCtxWindow] = useState(() => {
+  // local 默认上下文：仅在用户显式设置过（localStorage 有记录）时作为「新模型默认值」；
+  // 无记录 = null（不传参 → 后端不写盘，避免把 128K 猜测值固化进每个 local 模型）。
+  const [localCtxWindow, setLocalCtxWindow] = useState<number | null>(() => {
     try {
-      return parseInt(localStorage.getItem('nuphus_local_context_window') || '128000')
+      const raw = localStorage.getItem('nuphus_local_context_window')
+      if (!raw) return null
+      const v = parseInt(raw, 10)
+      return Number.isInteger(v) && v > 0 ? v : null
     } catch {
-      return 128000
+      return null
     }
   })
+  // 模型行内 context_window 编辑：ctxOverrides 保存成功后即时刷新 badge；
+  // editingCtxRef 防 blur/移除输入框触发的重复提交
+  const [ctxOverrides, setCtxOverrides] = useState<Record<string, number>>({})
+  const [editingCtxModel, setEditingCtxModel] = useState<string | null>(null)
+  const [editingCtxValue, setEditingCtxValue] = useState('')
+  const editingCtxRef = useRef<string | null>(null)
 
   const curProvider = providers.find(p => p.id === provider)
   const isCustom = provider === 'custom'
@@ -538,25 +635,29 @@ export function ModelsPage({
     const p = providers.find(x => x.id === provider)
     if (p) {
       const resolvedBaseUrl = baseUrl || p.base_url
+      // local 防覆盖：模型已有 per-model 显式窗口（覆盖/落盘）→ 传 undefined 保留该值；
+      // 无 per-model 且用户显式设置了 local 默认 → 按默认应用一次（新模型场景）；
+      // local 默认未设置 → undefined（不写盘，模型上下文未知待单独设置）
+      const addCtxArg =
+        isLocal &&
+        localCtxWindow != null &&
+        ctxOverrides[name] === undefined &&
+        !allModels.some(
+          m =>
+            m.provider === provider &&
+            m.id === name &&
+            m.context_window != null &&
+            m.context_window > 0,
+        )
+          ? localCtxWindow
+          : undefined
       try {
         if (effectiveKey) {
           // 用户输入了新 key → 先保存，再激活
-          await configureLlm(
-            effectiveKey,
-            name,
-            provider,
-            resolvedBaseUrl,
-            isLocal ? localCtxWindow : undefined,
-          )
+          await configureLlm(effectiveKey, name, provider, resolvedBaseUrl, addCtxArg)
         } else {
           // 已有存储的 key → switchModel 直接读取 config.toml
-          await switchModelCmd(
-            name,
-            provider,
-            resolvedBaseUrl,
-            isLocal ? localCtxWindow : undefined,
-            'global',
-          )
+          await switchModelCmd(name, provider, resolvedBaseUrl, addCtxArg, 'global')
         }
         setCurrentModel(name)
         persistCurrentProvider(name)
@@ -599,6 +700,85 @@ export function ModelsPage({
     }
   }
 
+  /** 模型当前生效 context_window（行内已保存覆盖 > 检测 brief > list_models info） */
+  const rowCtx = (name: string): number | undefined => {
+    const ov = ctxOverrides[name]
+    if (ov !== undefined) return ov
+    const brief = detectedModels.find(d => d.id === name)
+    if (brief?.context_window !== undefined && brief?.context_window !== null) {
+      return brief.context_window
+    }
+    const info = allModels.find(m => m.provider === provider && m.id === name)
+    return info?.context_window
+  }
+
+  /** 该模型是否已有 per-model 显式 context_window（覆盖/检测/落盘任意来源命中即 true）。
+   *  用于 local「全局默认值防覆盖 per-model」：已显式设置过的模型切换时不再被全局值覆盖。 */
+  const hasExplicitCtx = (name: string): boolean =>
+    ctxOverrides[name] !== undefined ||
+    detectedModels.some(d => d.id === name && d.context_window != null && d.context_window > 0) ||
+    allModels.some(
+      m =>
+        m.provider === provider &&
+        m.id === name &&
+        m.context_window != null &&
+        m.context_window > 0,
+    )
+
+  const startCtxEdit = (name: string) => {
+    if (editingCtxRef.current !== null) return // 已有输入框打开，先关闭旧的再开新的（由失焦提交）
+    const cur = rowCtx(name)
+    editingCtxRef.current = name
+    setEditingCtxModel(name)
+    // 输入单位 = K（千 tokens）：预填 tokens/1000，用户只填数字（如 128 = 128K）
+    setEditingCtxValue(cur !== undefined && cur > 0 ? String(cur / 1000) : '')
+  }
+
+  const cancelCtxEdit = () => {
+    if (editingCtxRef.current === null) return
+    editingCtxRef.current = null
+    setEditingCtxModel(null)
+    setEditingCtxValue('')
+  }
+
+  const commitCtxEdit = async (name: string, rawValue: string) => {
+    if (editingCtxRef.current !== name) return // 已取消/已提交/另一行编辑中 → 忽略（防双触发）
+    editingCtxRef.current = null
+    setEditingCtxModel(null)
+    const raw = String(rawValue ?? '').trim()
+    if (raw === '') return // 取消语义：清空输入即不保存
+    const k = Number(raw)
+    if (!Number.isFinite(k) || k <= 0) {
+      setFeedback({ ok: false, msg: t('models.ctxInvalid') })
+      setTimeout(() => setFeedback(null), 2500)
+      return
+    }
+    // K 单位 → tokens（吸收浮点误差）
+    const v = Math.round(k * 1000)
+    if (v < 1 || v > 10000000) {
+      setFeedback({ ok: false, msg: t('models.ctxInvalid') })
+      setTimeout(() => setFeedback(null), 2500)
+      return
+    }
+    const p = providers.find(x => x.id === provider)
+    if (!p) return
+    try {
+      await setModelContextWindow(provider, name, v)
+      // 立即刷新行内 badge（list_models 往返之前 UI 不回跳）
+      setCtxOverrides(prev => ({ ...prev, [name]: v }))
+      setFeedback({ ok: true, msg: t('models.ctxSaved', formatContextWindow(v)) })
+      // 后端已落盘，重新拉取让 badges / 其它消费方数据源同步到权威值
+      listModels()
+        .then(list => {
+          if (Array.isArray(list)) setAllModels(list)
+        })
+        .catch(() => {})
+    } catch (e: any) {
+      setFeedback({ ok: false, msg: e?.message || t('models.ctxSaveFail') })
+    }
+    setTimeout(() => setFeedback(null), 2500)
+  }
+
   const switchModel = async (name: string) => {
     if (providersLoading || providers.length === 0) {
       setFeedback({ ok: false, msg: t('models.listLoading') })
@@ -613,16 +793,14 @@ export function ModelsPage({
     }
     setFeedback(null)
     const resolvedBaseUrl = baseUrl || p.base_url
+    // local 防覆盖：已有 per-model 显式窗口 → 传 undefined（后端保留该模型值）；
+    // 否则用全局默认值（新模型/未设置模型按用户全局输入应用一次）
+    const ctxArg =
+      isLocal && localCtxWindow != null && !hasExplicitCtx(name) ? localCtxWindow : undefined
     try {
       // provider-driven: switch_model 从 config.toml 读取 API key，前端不传 key
       // mode='default'：模型页主切换写入默认模型（聊天界面按当前 mode 写对应 agent）
-      await switchModelCmd(
-        name,
-        provider,
-        resolvedBaseUrl,
-        isLocal ? localCtxWindow : undefined,
-        'default',
-      )
+      await switchModelCmd(name, provider, resolvedBaseUrl, ctxArg, 'default')
       setCurrentModel(name)
       persistCurrentProvider(name)
       onModelChanged?.()
@@ -797,7 +975,9 @@ export function ModelsPage({
                       const isActive = currentModel === name
                       const brief = briefById.get(name)
                       const info = infoById.get(name)
-                      const ctx = brief?.context_window ?? info?.context_window
+                      // 行内已保存覆盖优先（list_models 往返前 UI 即时刷新）
+                      const ctx =
+                        ctxOverrides[name] ?? brief?.context_window ?? info?.context_window
                       const caps = {
                         vision: brief?.supports_vision || info?.supports_vision || false,
                         audio: brief?.supports_audio || info?.supports_audio || false,
@@ -806,11 +986,17 @@ export function ModelsPage({
                           info?.supports_image_generation ||
                           false,
                       }
+                      const rowCtxArg =
+                        isLocal && localCtxWindow != null && !hasExplicitCtx(name)
+                          ? localCtxWindow
+                          : undefined
                       return (
                         <div
                           key={name}
                           className={'model-list-item' + (isActive ? ' active' : '')}
                           onClick={async () => {
+                            // 行内 ctx 编辑打开时禁止行点击触发切换
+                            if (editingCtxModel === name) return
                             const p = providers.find(x => x.id === provider)
                             if (!p) return
                             try {
@@ -823,7 +1009,7 @@ export function ModelsPage({
                                   name,
                                   provider,
                                   resolvedBaseUrl,
-                                  undefined,
+                                  rowCtxArg,
                                   'default',
                                 )
                               }
@@ -844,40 +1030,33 @@ export function ModelsPage({
                         >
                           <div className={'model-radio' + (isActive ? ' selected' : '')} />
                           <div className="model-list-name">{name}</div>
-                          {(caps.vision || caps.audio || caps.image || ctx !== undefined) && (
-                            <div className="model-list-badges">
-                              {caps.vision && (
-                                <span className="model-badge" title={t('models.capVision')}>
-                                  <IconEye size={12} />
-                                </span>
-                              )}
-                              {caps.audio && (
-                                <span className="model-badge" title={t('models.capAudio')}>
-                                  <IconMic size={12} />
-                                </span>
-                              )}
-                              {caps.image && (
-                                <span className="model-badge" title={t('models.capImageGen')}>
-                                  <IconImage size={12} />
-                                </span>
-                              )}
-                              {ctx ? (
-                                <span
-                                  className="model-badge model-badge--ctx"
-                                  title={t('models.capContext')}
-                                >
-                                  {formatContextWindow(ctx)}
-                                </span>
-                              ) : (
-                                <span
-                                  className="model-badge model-badge--ctx model-badge--ctx-unknown"
-                                  title={t('models.capContextUnknown')}
-                                >
-                                  ?
-                                </span>
-                              )}
-                            </div>
-                          )}
+                          <div className="model-list-badges">
+                            {caps.vision && (
+                              <span className="model-badge" title={t('models.capVision')}>
+                                <IconEye size={12} />
+                              </span>
+                            )}
+                            {caps.audio && (
+                              <span className="model-badge" title={t('models.capAudio')}>
+                                <IconMic size={12} />
+                              </span>
+                            )}
+                            {caps.image && (
+                              <span className="model-badge" title={t('models.capImageGen')}>
+                                <IconImage size={12} />
+                              </span>
+                            )}
+                            <RowCtxEditor
+                              ctx={ctx}
+                              isEditing={editingCtxModel === name}
+                              value={editingCtxValue}
+                              onValueChange={setEditingCtxValue}
+                              onStart={() => startCtxEdit(name)}
+                              onCommit={(raw: string) => commitCtxEdit(name, raw)}
+                              onCancel={cancelCtxEdit}
+                              t={t}
+                            />
+                          </div>
                           {isActive && <IconCheck size={12} className="icon-accent" />}
                         </div>
                       )
@@ -893,13 +1072,29 @@ export function ModelsPage({
               <div className="model-list model-list--spaced">
                 {models.map(m => {
                   const isActive = currentModel === m
+                  const mctx = ctxOverrides[m] ?? rowCtx(m)
                   return (
                     <div
                       key={m}
                       className={'model-list-item' + (isActive ? ' active' : '')}
-                      onClick={() => switchModel(m)}
+                      onClick={() => {
+                        if (editingCtxModel === m) return // 编辑中禁止切换
+                        void switchModel(m)
+                      }}
                     >
                       <div className="model-list-name">{m}</div>
+                      <div className="model-list-badges">
+                        <RowCtxEditor
+                          ctx={mctx}
+                          isEditing={editingCtxModel === m}
+                          value={editingCtxValue}
+                          onValueChange={setEditingCtxValue}
+                          onStart={() => startCtxEdit(m)}
+                          onCommit={(raw: string) => commitCtxEdit(m, raw)}
+                          onCancel={cancelCtxEdit}
+                          t={t}
+                        />
+                      </div>
                       {isActive && <IconCheck size={12} className="icon-accent" />}
                       <button
                         className="icon-btn-ghost"
@@ -966,15 +1161,24 @@ export function ModelsPage({
                   <input
                     className="compact-input input-num"
                     type="number"
-                    value={localCtxWindow}
+                    value={localCtxWindow ?? ''}
                     onChange={e => {
-                      const v = parseInt(e.target.value) || 128000
+                      const raw = e.target.value.trim()
+                      if (raw === '') {
+                        // 清空 = 不再自动写入任何 local 模型（保留 per-model 已设置值）
+                        setLocalCtxWindow(null)
+                        localStorage.removeItem('nuphus_local_context_window')
+                        return
+                      }
+                      const v = parseInt(raw, 10)
+                      if (!Number.isInteger(v) || v <= 0) return // 非法输入不写、不回填 128K
                       setLocalCtxWindow(v)
                       localStorage.setItem('nuphus_local_context_window', String(v))
                     }}
                     min={1024}
                     max={10000000}
                     step={1024}
+                    placeholder={t('models.localCtxPlaceholder')}
                   />
                 }
               />
