@@ -1,0 +1,149 @@
+/* ═══════════════════════════════════════════
+   security.css — SecurityPrompt（输入条安全审批卡）商务化
+   信息架构：工具 + 风险徽标 → 原因/证据 → 允许/拒绝 决策组
+   仅视觉/布局层
+   ═══════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 请求行：工具（左）+ 风险徽标（右，语义色）── */
+.security-request {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.security-tool {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.security-risk {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-1);
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ── 原因/证据：凹陷读区，与 ApprovalModal .approval-content 同语言 ── */
+.security-reason {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  font-size: var(--fz-md);
+  line-height: var(--leading-normal);
+  color: var(--fg-2);
+  white-space: pre-wrap;
+}
+
+/* ── 决策组：单选行（radio 语义），拒绝行分隔为次级危险动作 ── */
+.security-options {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+.security-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.security-options > div + div {
+  margin-top: 2px;
+}
+.security-choice:hover {
+  background: var(--surface-hover);
+}
+.security-choice.is-selected {
+  background: var(--accent-dim);
+  border-color: rgba(var(--accent-rgb), 0.18);
+}
+.security-choice-marker {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.security-choice.is-selected .security-choice-marker {
+  border-color: var(--accent);
+}
+.security-choice.is-selected .security-choice-marker::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.security-choice-copy {
+  flex: 1;
+  min-width: 0;
+}
+.security-choice-label {
+  font-size: var(--fz-md);
+  font-weight: 500;
+  color: var(--fg-1);
+  line-height: 1.35;
+}
+.security-choice-desc {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--fg-4);
+  line-height: 1.4;
+}
+
+/* ── 允许/拒绝分组分隔（纯视觉，不影响键盘遍历顺序）── */
+.security-divider {
+  height: 1px;
+  background: var(--line-1);
+  margin: 4px 2px;
+}
+/* 拒绝 = 危险动作：选中态使用 error 语义色 */
+.security-choice--deny.is-selected {
+  background: var(--status-error-soft);
+  border-color: rgba(var(--error-rgb), 0.2);
+}
+.security-choice--deny.is-selected .security-choice-marker {
+  border-color: var(--status-error);
+}
+.security-choice--deny.is-selected .security-choice-marker::after {
+  background: var(--status-error);
+}
+
+/* 提交中：整组失活 */
+.security-options.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ── 快捷键提示 ── */
+.security-hints {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--fg-5);
+}

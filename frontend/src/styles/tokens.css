@@ -84,6 +84,19 @@
   --info: var(--accent);
   --info-rgb: var(--accent-rgb);
 
+  /* ── ① 语义层：状态语义命名（商务基线）
+     running=accent（运行/等待审批），success/error/warning 指向原色。
+     别名经 var() 间接引用 → 在 light/tech 主题自动跟随对应主题色值；
+     如需主题差异，请在对应主题块内覆盖。soft = 同色 10% 底纹（徽标/状态卡/结果图标）── */
+  --status-running: var(--accent);
+  --status-success: var(--success);
+  --status-error: var(--error);
+  --status-warning: var(--warning);
+  --status-running-soft: rgba(var(--accent-rgb), 0.1);
+  --status-success-soft: rgba(var(--success-rgb), 0.1);
+  --status-error-soft: rgba(var(--error-rgb), 0.1);
+  --status-warning-soft: rgba(var(--warning-rgb), 0.1);
+
   /* ── ① 语义层：模式标识色（Leader/Workflow）── */
   --mode-workflow: var(--warning);
 
@@ -140,6 +153,7 @@
     0 0 0 1px rgba(0, 0, 0, 0.3) inset;
   --shadow-inset: 0 0 16px rgba(0, 0, 0, 0.4) inset;
   --shadow-focus: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  --shadow-drop: var(--shadow-elevated); /* 浮层落影别名（= elevated，随主题解析） */
   --thinking-shadow: 0 4px 32px rgba(0, 0, 0, 0.4);
 
   /* ── ② 基础层：玻璃拟态（仅弹窗/浮层使用）── */

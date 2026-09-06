@@ -123,7 +123,7 @@ export function ApprovalModal({
           <div className="approval-result">
             <div
               className={`approval-result-icon ${
-                result === 'approved' ? 'approval-result-icon--ok' : 'approval-result-icon--neutral'
+                result === 'approved' ? 'approval-result-icon--ok' : 'approval-result-icon--err'
               }`}
             >
               {result === 'approved' ? (
@@ -175,7 +175,7 @@ export function ApprovalModal({
             <div className="approval-content">{content}</div>
             {tenetCount !== undefined && (
               <div className="approval-tenet">
-                <span className="approval-tenet-dot">●</span>
+                <span className="approval-tenet-dot" aria-hidden="true" />
                 <span>{t('approval.count', String(tenetCount))}</span>
               </div>
             )}

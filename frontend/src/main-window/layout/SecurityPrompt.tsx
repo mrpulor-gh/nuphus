@@ -6,6 +6,7 @@ import { IconX, IconShield } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playPopupSound, playUiSound } from '../../ui/sound'
 import { useLanguage } from '../../locales'
+import '../../styles/security.css'
 
 interface SecurityPromptProps {
   tool: string
@@ -17,10 +18,10 @@ interface SecurityPromptProps {
 }
 
 const RISK_CONFIG: Record<string, { color: string; bg: string }> = {
-  low: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.1)' },
-  medium: { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
-  high: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
-  critical: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' },
+  low: { color: 'var(--status-success)', bg: 'var(--status-success-soft)' },
+  medium: { color: 'var(--status-warning)', bg: 'var(--status-warning-soft)' },
+  high: { color: 'var(--status-error)', bg: 'var(--status-error-soft)' },
+  critical: { color: 'var(--status-error)', bg: 'rgba(var(--error-rgb), 0.16)' },
 }
 
 export function SecurityPrompt({
@@ -140,91 +141,40 @@ export function SecurityPrompt({
         </div>
         <div className="compact-divider" />
         <div className="compact-body">
-          {/* Risk indicator + tool */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span
-              style={{
-                padding: '2px 8px',
-                borderRadius: 4,
-                fontSize: 10,
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                color: config.color,
-                background: config.bg,
-              }}
-            >
+          {/* Request: tool + risk badge（工具左、风险徽标右） */}
+          <div className="security-request">
+            <span className="security-tool">{tool}</span>
+            <span className="security-risk" style={{ color: config.color, background: config.bg }}>
               {t(`security.${risk}`)}
             </span>
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--spark-primary)',
-                fontFamily: 'var(--font-mono)',
-              }}
-            >
-              {tool}
-            </span>
           </div>
 
-          {/* Reason */}
-          <div
-            style={{
-              fontSize: 13,
-              color: 'var(--spark-secondary)',
-              lineHeight: 1.5,
-              marginBottom: 14,
-            }}
-          >
-            {reason}
-          </div>
+          {/* Reason / evidence */}
+          <div className="security-reason">{reason}</div>
 
-          {/* Options */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+          {/* Decision group: allow ×2 / deny（radio 单选行，危险色仅用于拒绝） */}
+          <div className={`security-options${busy ? ' is-disabled' : ''}`}>
             {options.map((opt, idx) => (
-              <div
-                key={opt.id}
-                className={`compact-row ${idx === selected ? 'selected' : ''}`}
-                onClick={() => !busy && handleChoice(opt.id)}
-                style={{
-                  cursor: busy ? 'not-allowed' : 'pointer',
-                  padding: '8px 10px',
-                  borderRadius: 8,
-                  border: 'none',
-                  opacity: busy ? 0.5 : 1,
-                  background: idx === selected ? 'var(--void-hover)' : 'transparent',
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: 'var(--accent)',
-                    width: 14,
-                    flexShrink: 0,
-                    fontFamily: 'var(--font-mono)',
-                  }}
+              <div key={opt.id}>
+                {opt.id === 'deny' && <div className="security-divider" role="presentation" />}
+                <div
+                  className={`security-choice ${opt.id === 'deny' ? 'security-choice--deny' : ''} ${
+                    idx === selected ? 'is-selected' : ''
+                  }`}
+                  onClick={() => !busy && handleChoice(opt.id)}
                 >
-                  {idx === selected ? '▸' : ' '}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: 'var(--spark-primary)', fontWeight: 500 }}>
-                    {t(opt.textKey)}
+                  <span className="security-choice-marker" aria-hidden="true" />
+                  <div className="security-choice-copy">
+                    <div className="security-choice-label">{t(opt.textKey)}</div>
+                    <div className="security-choice-desc">{t(opt.descKey)}</div>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--spark-muted)' }}>{t(opt.descKey)}</div>
                 </div>
               </div>
             ))}
           </div>
 
           {/* Shortcuts */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 12,
-              fontSize: 10,
-              color: 'var(--spark-dim)',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
+          <div className="security-hints">
             <span>{t('security.hintUpDown')}</span>
             <span>{t('security.hintEnter')}</span>
             <span>{t('security.hintEsc')}</span>
