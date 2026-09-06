@@ -147,11 +147,13 @@ const RAIL_W = 52
 const MIN_Z = 0.25
 const MAX_Z = 3
 const HISTORY_MAX = 100
-const DOC_KEY = 'nuphus.ui_proto.doc'
+/* v2：默认主题升级为 Nuphus 暗色商务（brand seed）。旧 v1 文档（light/purple）不再
+   自动加载——保留旧键数据不删，用户可经 Open project 导入旧稿；新进入即全新默认。 */
+const DOC_KEY = 'nuphus.ui_proto.doc.v2'
 /** the design a draft or a link replaced, until the author keeps or undoes it */
-const BEFORE_KEY = 'nuphus.ui_proto.doc:before'
-const DOC_LOCK = 'nuphus.ui_proto.doc:editor'
-const UI_KEY = 'nuphus.ui_proto.ui'
+const BEFORE_KEY = 'nuphus.ui_proto.doc.v2:before'
+const DOC_LOCK = 'nuphus.ui_proto.doc.v2:editor'
+const UI_KEY = 'nuphus.ui_proto.ui.v2'
 
 /** Nuphus 默认画布主题：进入即暗色商务（不再 M3 浅色全白）。
  *  lib DEFAULT_THEME 保持上游默认（prompt/导出语义与测试基线不动），
@@ -2658,24 +2660,77 @@ export function UiPrototypeCanvas() {
   const duplicateFrameRef = useRef(duplicateFrame)
   duplicateFrameRef.current = duplicateFrame
 
-  /** The screen is re-rendered offscreen at 1:1 with static parts, so the
-   *  canvas zoom, selection outlines and in-flight animations never leak into the PNG. */
-  const saveFrameImage = async (f: Frame) => {
+  /** Renders the screen offscreen at 1:1 with static parts and returns its PNG
+   *  data URL. The canvas zoom, selection outlines and in-flight animations never
+   *  leak into the PNG. Shared by the PNG download and by "send to Leader". */
+  const captureFramePng = async (f: Frame): Promise<string | null> => {
     setExportFrame(f)
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
     try {
       await document.fonts?.ready
       const el = document.querySelector<HTMLElement>(`[data-export="${f.id}"]`)
-      if (!el) return
+      if (!el) return null
       const { w, h } = frameSizeOf(f)
-      const url = await toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h })
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${f.name || 'screen'}.png`
-      a.click()
+      return await toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h })
     } finally {
       setExportFrame(null)
     }
+  }
+
+  /** Downloads one screen as a PNG. */
+  const saveFrameImage = async (f: Frame) => {
+    const url = await captureFramePng(f)
+    if (!url) return
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${f.name || 'screen'}.png`
+    a.click()
+  }
+
+  /** The screen the prompt panel's toolbar acts on: the selected screen, else the
+   *  screen under the selected part, else the first. */
+  const exportTargetFrame = (): Frame | null =>
+    selectedFrame ?? selectedPartFrame ?? frames[0] ?? null
+
+  /** Prompt panel "download prototype image": same PNG export as the inspector. */
+  const downloadPromptPng = async () => {
+    const f = exportTargetFrame()
+    if (!f) {
+      showToast(t('noScreenForExport', lang))
+      return
+    }
+    try {
+      await saveFrameImage(f)
+    } catch (err) {
+      console.error('PNG export failed', err)
+      showToast(t('exportFailed', lang), 3000, 'error')
+    }
+  }
+
+  /** Prompt panel "send to Leader": puts the prompt text into the chat and starts
+   *  the Leader on it. The current screen PNG travels along as an image when the
+   *  offscreen capture succeeds; a failed image never blocks the text. */
+  const sendPromptToLeader = async (text: string) => {
+    if (!text.trim()) {
+      showToast(t('sendEmptyPrompt', lang))
+      return
+    }
+    let images: string[] | undefined
+    const f = exportTargetFrame()
+    if (f) {
+      try {
+        const url = await captureFramePng(f)
+        if (url) images = [url]
+      } catch (err) {
+        console.error('PNG capture for Leader failed', err)
+      }
+    }
+    window.dispatchEvent(
+      new CustomEvent('nuphus:send-message', {
+        detail: { text, images },
+      }),
+    )
+    showToast(t('sentToLeader', lang), 2000, 'check')
   }
 
   /** the runs of one screen drawn with plain divs: the export layer */
@@ -4215,6 +4270,8 @@ export function UiPrototypeCanvas() {
                       if ('platform' in patch)
                         setPlatform(isPlatform(patch.platform) ? patch.platform : null)
                     }}
+                    onDownloadImage={() => void downloadPromptPng()}
+                    onSendToLeader={text => void sendPromptToLeader(text)}
                   />
                 )}
               </div>

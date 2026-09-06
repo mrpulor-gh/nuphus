@@ -10,17 +10,26 @@ export function PromptPanel({
   widths,
   palette: p,
   onDoc,
+  onDownloadImage,
+  onSendToLeader,
 }: {
   doc: Doc
   widths: Record<string, number>
   palette: Palette
   onDoc: (patch: Partial<Doc>) => void
+  /** export the design as a PNG (single screen, matching the canvas export) */
+  onDownloadImage?: () => void | Promise<void>
+  /** send the generated prompt to the chat so the Leader can act on it */
+  onSendToLeader?: (text: string) => void | Promise<void>
 }) {
   const lang = useLang()
   const generated = useMemo(() => buildPrompt(doc, widths, undefined, lang), [doc, widths, lang])
   const edited = doc.promptEdit !== undefined
   const text = edited ? doc.promptEdit! : generated
   const [copied, setCopied] = useState(false)
+  /** a PNG export or a Leader send is running; keep both tool buttons from racing */
+  const [busy, setBusy] = useState<'download' | 'send' | null>(null)
+  const [sent, setSent] = useState(false)
 
   useEffect(() => {
     if (!copied) return
@@ -28,11 +37,42 @@ export function PromptPanel({
     return () => clearTimeout(t)
   }, [copied])
 
+  useEffect(() => {
+    if (!sent) return
+    const t = setTimeout(() => setSent(false), 1400)
+    return () => clearTimeout(t)
+  }, [sent])
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
     } catch {}
+  }
+
+  const download = async () => {
+    if (!onDownloadImage || busy) return
+    setBusy('download')
+    try {
+      await onDownloadImage()
+    } catch {
+      // the owner reports the failure through its own toast
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const send = async () => {
+    if (!onSendToLeader || busy) return
+    setBusy('send')
+    try {
+      await onSendToLeader(text)
+      setSent(true)
+    } catch {
+      // the owner reports the failure through its own toast
+    } finally {
+      setBusy(null)
+    }
   }
 
   const projectButton = (icon: string, label: string, onClick: () => void) => (
@@ -124,28 +164,52 @@ export function PromptPanel({
           </div>
         )}
       </div>
-      <button
-        onClick={copy}
-        className="m3-press"
-        style={{
-          height: 48,
-          borderRadius: 24,
-          border: 'none',
-          background: copied ? p.tertiaryContainer : p.primary,
-          color: copied ? p.onTertiaryContainer : p.onPrimary,
-          fontSize: 14,
-          fontWeight: 600,
-          cursor: 'pointer',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 8,
-          transition: 'background 160ms, color 160ms',
-        }}
-      >
-        <Icon name={copied ? 'check' : 'content_copy'} size={20} />
-        {copied ? t('copied', lang) : t('copyPrompt', lang)}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={copy}
+          className="m3-press"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: 48,
+            borderRadius: 24,
+            border: 'none',
+            background: copied ? p.tertiaryContainer : p.primary,
+            color: copied ? p.onTertiaryContainer : p.onPrimary,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            transition: 'background 160ms, color 160ms',
+          }}
+        >
+          <Icon name={copied ? 'check' : 'content_copy'} size={20} />
+          {copied ? t('copied', lang) : t('copyPrompt', lang)}
+        </button>
+        {onDownloadImage && (
+          <IconBtn
+            icon={busy === 'download' ? 'hourglass_top' : 'download'}
+            p={p}
+            size={48}
+            onClick={() => void download()}
+            disabled={busy !== null}
+            title={t('downloadPromptPng', lang)}
+          />
+        )}
+        {onSendToLeader && (
+          <IconBtn
+            icon={sent ? 'check' : 'send'}
+            p={p}
+            size={48}
+            onClick={() => void send()}
+            disabled={busy !== null || !text.trim()}
+            title={t('sendToLeader', lang)}
+          />
+        )}
+      </div>
     </div>
   )
 }

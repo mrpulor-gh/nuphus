@@ -821,6 +821,24 @@ export function ChatPanel({
     return () => window.removeEventListener('nuphus:append-to-chat', handler)
   }, [])
 
+  // Canvas "send to Leader": a full-screen canvas (e.g. UI prototype) can start a
+  // real send without touching the input first. The listener is registered once and
+  // always reads the current onSend through a ref, so a send never fires a stale
+  // session handle.
+  const onSendRef = useRef(onSend)
+  onSendRef.current = onSend
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const text = detail?.text
+      if (!text) return
+      const images = Array.isArray(detail?.images) ? (detail.images as string[]) : undefined
+      onSendRef.current(text, images)
+    }
+    window.addEventListener('nuphus:send-message', handler)
+    return () => window.removeEventListener('nuphus:send-message', handler)
+  }, [])
+
   // Reset refining and selection state when refine modal closes
   useEffect(() => {
     if (!refineState) {
