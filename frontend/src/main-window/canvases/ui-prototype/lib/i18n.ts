@@ -443,6 +443,11 @@ export const UI = {
     en: 'Sent to Leader',
     zh: '已发送给 Leader',
   },
+  busyLocked: {
+    ja: 'タスク実行中は利用できません',
+    en: 'Unavailable while a task is running',
+    zh: '任务执行中，暂不可用',
+  },
   exportFailed: {
     ja: '画像の書き出しに失敗しました',
     en: 'Failed to export the image',
@@ -798,6 +803,7 @@ export const KO: Record<UIKey, string> = {
   downloadPromptPng: 'PNG로 내보내기',
   sendToLeader: 'Leader에게 보내기',
   sentToLeader: 'Leader에게 전송했습니다',
+  busyLocked: '작업 실행 중에는 사용할 수 없습니다',
   exportFailed: '이미지 내보내기 실패',
   noScreenForExport: '내보낼 화면이 없습니다',
   sendEmptyPrompt: '보낼 프롬프트가 비어 있습니다',

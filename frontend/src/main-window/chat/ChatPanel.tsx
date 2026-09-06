@@ -827,13 +827,29 @@ export function ChatPanel({
   // session handle.
   const onSendRef = useRef(onSend)
   onSendRef.current = onSend
+  // 带 mode 的发送（如「发送 Leader」）需先切模式再发；用 ref 防闭包拿旧 onSetMode
+  const onSetModeRef = useRef(onSetMode)
+  onSetModeRef.current = onSetMode
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       const text = detail?.text
       if (!text) return
       const images = Array.isArray(detail?.images) ? (detail.images as string[]) : undefined
-      onSendRef.current(text, images)
+      const mode = detail?.mode
+      const send = () => onSendRef.current(text, images)
+      const setMode = onSetModeRef.current
+      if (typeof mode === 'string' && mode && setMode) {
+        // 先切到事件要求的模式（leader）再发送，避免被 workflow 等当前模式劫持；
+        // 切换失败则放弃发送（与 App 内「切模式 → 发送」顺序一致，失败即中止）
+        Promise.resolve(setMode(mode))
+          .then(send)
+          .catch(err => {
+            console.error('[nuphus:send-message] mode switch failed, send skipped', err)
+          })
+      } else {
+        send()
+      }
     }
     window.addEventListener('nuphus:send-message', handler)
     return () => window.removeEventListener('nuphus:send-message', handler)

@@ -79,6 +79,8 @@ export function ShareDialog({
   onClose,
   onDraft,
   onSetupAi,
+  draftLocked = false,
+  lockedHint,
 }: {
   p: Palette
   doc: Doc
@@ -92,6 +94,10 @@ export function ShareDialog({
   onDraft: (idea: string) => void
   /** opens the AI settings so a key can be entered */
   onSetupAi: () => void
+  /** Nuphus 执行闸门：任务执行中禁用「AI 来画/生成」，避免双执行/状态错乱 */
+  draftLocked?: boolean
+  /** 禁用原因提示（任务执行中文案） */
+  lockedHint?: string
 }) {
   const lang = useLang()
   const [copied, setCopied] = useState<'ask' | 'link' | null>(null)
@@ -277,6 +283,8 @@ export function ShareDialog({
                   </>
                 ) : !aiReady ? (
                   t('aiSetupHint', lang)
+                ) : draftLocked ? (
+                  (lockedHint ?? t('busyLocked', lang))
                 ) : null}
               </span>
               <div style={{ display: 'inline-flex', gap: 3, flex: '0 0 auto' }}>
@@ -289,9 +297,11 @@ export function ShareDialog({
                 {aiReady
                   ? pill('auto_awesome', t('askAiGenerate', lang), () => onDraft(idea), {
                       primary: true,
-                      disabled: !idea.trim(),
+                      disabled: !idea.trim() || draftLocked,
                       corners: 'right',
-                      title: t('askAiGenerateTitle', lang),
+                      title: draftLocked
+                        ? (lockedHint ?? t('busyLocked', lang))
+                        : t('askAiGenerateTitle', lang),
                     })
                   : pill('key', t('aiSetup', lang), onSetupAi, {
                       primary: true,

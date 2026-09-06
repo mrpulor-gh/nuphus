@@ -12,6 +12,8 @@ export function PromptPanel({
   onDoc,
   onDownloadImage,
   onSendToLeader,
+  sendLocked = false,
+  sendLockHint,
 }: {
   doc: Doc
   widths: Record<string, number>
@@ -21,6 +23,10 @@ export function PromptPanel({
   onDownloadImage?: () => void | Promise<void>
   /** send the generated prompt to the chat so the Leader can act on it */
   onSendToLeader?: (text: string) => void | Promise<void>
+  /** Nuphus 执行闸门：任务执行中禁用「发送 Leader」，避免双执行/状态错乱 */
+  sendLocked?: boolean
+  /** 禁用原因提示（任务执行中文案） */
+  sendLockHint?: string
 }) {
   const lang = useLang()
   const generated = useMemo(() => buildPrompt(doc, widths, undefined, lang), [doc, widths, lang])
@@ -63,7 +69,7 @@ export function PromptPanel({
   }
 
   const send = async () => {
-    if (!onSendToLeader || busy) return
+    if (!onSendToLeader || busy || sendLocked) return
     setBusy('send')
     try {
       await onSendToLeader(text)
@@ -205,8 +211,8 @@ export function PromptPanel({
             p={p}
             size={48}
             onClick={() => void send()}
-            disabled={busy !== null || !text.trim()}
-            title={t('sendToLeader', lang)}
+            disabled={busy !== null || !text.trim() || sendLocked}
+            title={sendLocked ? (sendLockHint ?? t('sendToLeader', lang)) : t('sendToLeader', lang)}
           />
         )}
       </div>

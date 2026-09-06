@@ -78,6 +78,7 @@ import { PromptPanel } from './components/PromptPanel'
 import { GitHubLink, Mode, Toolbar } from './components/Toolbar'
 import { LangMenu } from './components/Menus'
 import { AiActionKey, AiPanel, aiErrorText } from './components/AiPanel'
+import { useWorkflowGate } from '../../lib/useWorkflowGate'
 import { TidyState } from './components/ui'
 import {
   AiSettings,
@@ -503,6 +504,14 @@ export function UiPrototypeCanvas() {
   const projectFileRef = useRef<HTMLInputElement>(null)
   const aiNoteTimer = useRef<number | null>(null)
   const aiAbortRef = useRef<AbortController | null>(null)
+
+  /* ── Nuphus 执行闸门（大王决策）──
+     画布编辑/复制/下载/预览/返回全程自由；仅两个会 Panic 的冲突点加锁：
+     ①「发送 Leader」②「AI 来画」外部模型请求。任务执行中（Agent busy /
+     workflow active_run）这两类入口禁用并提示。1.2s 轮询感知执行开始/结束。 */
+  const gate = useWorkflowGate(1200)
+  const gateLocked = gate.locked
+  const gateLockText = t('busyLocked', lang)
 
   const p = paletteOf(paletteKey, customPalette, theme)
   /* corner helpers read the shape scale outside React; keep it current before anything renders */
@@ -2214,6 +2223,10 @@ export function UiPrototypeCanvas() {
   }
 
   const startDraft = async (idea: string) => {
+    if (gateLocked) {
+      showToast(gateLockText, 2200, 'info')
+      return
+    }
     setShareOpen(false)
     setDraftBusy(true)
     try {
@@ -2482,6 +2495,10 @@ export function UiPrototypeCanvas() {
   /** Writes one field with the model: a part's behavior note, or a screen's description.
    *  The result goes straight in; the field remembers what it said so the rewrite can be undone. */
   const runAi = async (action: AiActionKey, f: Frame, itemId?: string) => {
+    if (gateLocked) {
+      showToast(gateLockText, 2200, 'info')
+      return
+    }
     if (!aiReady) {
       showToast(t('aiNoKey', lang))
       return
@@ -2711,6 +2728,10 @@ export function UiPrototypeCanvas() {
    *  the Leader on it. The current screen PNG travels along as an image when the
    *  offscreen capture succeeds; a failed image never blocks the text. */
   const sendPromptToLeader = async (text: string) => {
+    if (gateLocked) {
+      showToast(gateLockText, 2200, 'info')
+      return
+    }
     if (!text.trim()) {
       showToast(t('sendEmptyPrompt', lang))
       return
@@ -2727,7 +2748,8 @@ export function UiPrototypeCanvas() {
     }
     window.dispatchEvent(
       new CustomEvent('nuphus:send-message', {
-        detail: { text, images },
+        // mode:'leader'：ChatPanel 先切 leader 再发送，不被 workflow 等当前模式劫持
+        detail: { text, images, mode: 'leader' },
       }),
     )
     showToast(t('sentToLeader', lang), 2000, 'check')
@@ -4227,8 +4249,8 @@ export function UiPrototypeCanvas() {
                     onTidy={() => tidy(selectedFrame)}
                     onPlace={pl => setPlace(selectedFrame, pl)}
                     ai={{
-                      ready: aiReady,
-                      reason: aiReason,
+                      ready: aiReady && !gateLocked,
+                      reason: gateLocked ? gateLockText : aiReason,
                       busy: aiBusy && aiFrameId === selectedFrame.id,
                       onRun: () => runAi('describe', selectedFrame),
                       onCancel: cancelAi,
@@ -4237,8 +4259,8 @@ export function UiPrototypeCanvas() {
                 ) : rightTab === 'edit' ? (
                   <Inspector
                     ai={{
-                      ready: aiReady && !!tidyTarget,
-                      reason: aiReason,
+                      ready: aiReady && !!tidyTarget && !gateLocked,
+                      reason: gateLocked ? gateLockText : aiReason,
                       busy: aiBusy,
                       onRun: () => {
                         if (tidyTarget && selected) runAi('behavior', tidyTarget, selected.id)
@@ -4272,6 +4294,8 @@ export function UiPrototypeCanvas() {
                     }}
                     onDownloadImage={() => void downloadPromptPng()}
                     onSendToLeader={text => void sendPromptToLeader(text)}
+                    sendLocked={gateLocked}
+                    sendLockHint={gateLockText}
                   />
                 )}
               </div>
@@ -4322,6 +4346,8 @@ export function UiPrototypeCanvas() {
               setLeftOpen(true)
               setLeftTab('ai')
             }}
+            draftLocked={gateLocked}
+            lockedHint={gateLockText}
           />
 
           <ConfirmDialog
