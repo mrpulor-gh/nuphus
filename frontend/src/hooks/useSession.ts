@@ -119,6 +119,8 @@ export interface SessionAPI {
   setShowPluginDev: (v: boolean) => void
   showTools: boolean
   setShowTools: (v: boolean) => void
+  showCanvasHub: boolean
+  setShowCanvasHub: (v: boolean) => void
 
   // ── Execution ──
   showExecTrace: boolean
@@ -738,6 +740,16 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowWorkflow(true)
+        },
+      },
+      {
+        id: 'canvas-hub',
+        label: t('cmd.canvas'),
+        desc: t('cmd.canvasDesc'),
+        category: t('cmd.category.canvas'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowCanvasHub(true)
         },
       },
       {

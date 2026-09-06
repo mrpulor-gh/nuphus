@@ -319,6 +319,20 @@ const en: Record<string, string> = {
 
   'cmd.tools': 'Tools',
   'cmd.toolsDesc': 'PDF / Image / Video processing tools',
+  'cmd.canvas': 'Canvas',
+  'cmd.canvasDesc': 'Open Canvas Hub: workflow editing, UI prototyping, more',
+  'cmd.category.canvas': 'Canvas',
+
+  'canvas.title': 'Canvas Hub',
+  'canvas.workflow': 'Workflow Canvas',
+  'canvas.workflowDesc':
+    'Visually compose agent tasks: intent forms, tool steps, branches, retries',
+  'canvas.uiPrototype': 'UI Prototype',
+  'canvas.uiPrototypeDesc':
+    'Drag-and-drop UI screens, export as a concise prompt for AI coding agents',
+  'canvas.comingSoon': 'Porting',
+  'canvas.footNote':
+    'Canvas capabilities keep growing: UI prototyping, motion recording, screen casting and device debugging land here',
 
   'tools.tabImage': 'Image',
   'tools.tabVideo': 'Video',

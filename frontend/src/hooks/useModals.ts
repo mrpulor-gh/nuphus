@@ -21,6 +21,7 @@ export function useModals() {
   const [showPlugins, setShowPlugins] = useState(false)
   const [showPluginDev, setShowPluginDev] = useState(false)
   const [showTools, setShowTools] = useState(false)
+  const [showCanvasHub, setShowCanvasHub] = useState(false)
 
   return {
     showWorkflow,
@@ -61,5 +62,7 @@ export function useModals() {
     setShowPluginDev,
     showTools,
     setShowTools,
+    showCanvasHub,
+    setShowCanvasHub,
   }
 }

@@ -100,6 +100,9 @@ const WorkflowPage = lazy(() =>
 const CanvasPage = lazy(() =>
   import('./workflow-canvas/CanvasPage').then(m => ({ default: m.CanvasPage })),
 )
+const CanvasHubPage = lazy(() =>
+  import('./canvases/CanvasHubPage').then(m => ({ default: m.CanvasHubPage })),
+)
 // ── 插件市场体系不开源阶段：入口仅展示筹备提示（PluginComingSoon）。
 //    市场 ready 后恢复下面两个 lazy 声明与挂载块即可（可逆）。
 // const PluginAppsPage = lazy(() =>
@@ -217,6 +220,8 @@ export default function App() {
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
+    'canvas-hub': <IconPalette size={14} />,
+    'ui-prototype': <IconPalette size={14} />,
     memories: <IconHistory size={14} />,
     skills: <IconWrench size={14} />,
     knowledge: <IconFile size={14} />,
@@ -845,6 +850,15 @@ export default function App() {
           {canvasWorkflowId && (
             <Suspense fallback={null}>
               <CanvasPage workflowId={canvasWorkflowId} onClose={() => setCanvasWorkflowId(null)} />
+            </Suspense>
+          )}
+          {/* ── 画布中心（Ctrl+K → 画布）：全屏覆盖层 ── */}
+          {s.showCanvasHub && (
+            <Suspense fallback={null}>
+              <CanvasHubPage
+                onClose={() => s.setShowCanvasHub(false)}
+                onOpenWorkflow={() => void handleWorkflowCanvasDirect()}
+              />
             </Suspense>
           )}
           {/* ── 应用插件宿主：全屏覆盖层（App Plugin 体系 §4.2）── */}

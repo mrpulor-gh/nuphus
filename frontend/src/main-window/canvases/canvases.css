@@ -1,0 +1,141 @@
+@import '../../styles/tokens.css';
+
+/* ═══════════════════════════════════════════════
+   CanvasHubPage — 画布平台首页（全屏覆盖层）
+   对齐 Nuphus tokens 体系；未来画布壳复用本页网格
+   ═══════════════════════════════════════════════ */
+
+.canvas-hub {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1, #0e0f13);
+}
+
+.canvas-hub-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-1, rgba(255, 255, 255, 0.08));
+  background: var(--surface-1, #14161c);
+  flex-shrink: 0;
+}
+
+.canvas-hub-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3, #a0a0b0);
+  cursor: pointer;
+}
+
+.canvas-hub-close:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--fg-1, #fff);
+}
+
+.canvas-hub-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-2, #d6dbe1);
+}
+
+.canvas-hub-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 24px;
+}
+
+.canvas-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.canvas-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line-2, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-2, 10px);
+  background: var(--surface-2, #1a1c22);
+  color: var(--fg-2, #d6dbe1);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.canvas-card:hover:not(:disabled) {
+  border-color: var(--accent, #4f8cff);
+  background: var(--surface-3, #22242c);
+  transform: translateY(-1px);
+}
+
+.canvas-card:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.canvas-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(79, 140, 255, 0.12);
+  color: var(--accent, #4f8cff);
+  flex-shrink: 0;
+}
+
+.canvas-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.canvas-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-1, #fff);
+}
+
+.canvas-card-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(250, 173, 20, 0.16);
+  color: #f5b342;
+}
+
+.canvas-card-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-4, #8b949e);
+}
+
+.canvas-hub-foot {
+  margin-top: 22px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--fg-5, #6e7681);
+}
