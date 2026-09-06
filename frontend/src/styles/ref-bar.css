@@ -181,3 +181,79 @@
   background: var(--error);
   color: #fff;
 }
+
+/* ════════ 类型标签 + 点击预览 ════════ */
+.ref-img-pill-type {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(128, 138, 160, 0.16);
+  color: var(--fg-4, #8b949e);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  font-family: var(--font-ui);
+  line-height: 1.5;
+}
+
+.ref-img-pill--clickable {
+  cursor: pointer;
+}
+
+.ref-img-pill--clickable:hover {
+  border-color: var(--accent, #4f8cff);
+}
+
+/* ════════ 图片大图 lightbox（引用栏点击预览） ════════ */
+.ref-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 3100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.ref-lightbox img {
+  max-width: min(92vw, 1400px);
+  max-height: 82vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+}
+
+.ref-lightbox-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #d6dbe1;
+  font-size: 13px;
+  font-family: var(--font-ui);
+}
+
+.ref-lightbox-name {
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+}
+
+.ref-lightbox-footer button {
+  padding: 4px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ref-lightbox-footer button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}

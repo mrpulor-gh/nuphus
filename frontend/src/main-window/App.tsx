@@ -8,6 +8,7 @@ import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
 import { TitleBar } from './layout/TitleBar'
 import { ChatPanel } from './chat/ChatPanel'
+import AppContextMenu from '../ui/AppContextMenu'
 import { ExecutionTraceFloating } from './layout/ExecutionTraceFloating'
 import { ThinkingIndicator } from './layout/ThinkingIndicator'
 // ModalPage replaced by CompactModal
@@ -287,6 +288,8 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {/* 自绘右键复制菜单（拦截浏览器原生导航菜单，防误点刷新/检查中断运行） */}
+      <AppContextMenu />
       {/* ── Splash Screen: loading / fade-out state ── */}
       {(s.appState === 'loading' || s.fadeOut) && (
         <SplashScreen items={s.initItems} fadeOut={s.fadeOut} />

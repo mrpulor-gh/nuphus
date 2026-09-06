@@ -803,6 +803,15 @@ export function ChatPanel({
       if (text) {
         setInput(prev => (prev ? prev + '\n' + text : text))
         autoResize()
+        // 追加后聚焦输入框并置光标到末尾（右键「问问 Nuphus」/工作流导出体验一致）
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current
+          if (ta) {
+            ta.focus()
+            const len = ta.value.length
+            ta.setSelectionRange(len, len)
+          }
+        })
       }
       if (mode && onSetMode) {
         onSetMode(mode)
@@ -1863,6 +1872,7 @@ export function ChatPanel({
           onRemoveReference={removeReference}
           onRemoveImage={removePendingImage}
           onRemoveFile={removePendingFile}
+          onPreviewFile={setPreviewPath}
         />
       </div>
 

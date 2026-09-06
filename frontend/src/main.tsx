@@ -16,8 +16,9 @@ import './core/pdf-render'
   document.documentElement.setAttribute('data-theme', theme)
 })()
 
-// Disable global context menu
-window.addEventListener('contextmenu', e => e.preventDefault())
+// Right-click handling moved to ui/AppContextMenu (self-drawn copy menu;
+// editable fields keep the native menu for paste). Avoids exposing the
+// browser navigation menu (reload/inspect) in the desktop UI.
 
 // Listen for shortcut events intercepted in index.html
 window.addEventListener('nuphus-shortcut', (e: Event) => {

@@ -95,6 +95,8 @@ interface ChatInputBarProps {
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void
   /** 拖拽/粘贴图片时回调（dataUrl → processImageAttachment + 输入框指示） */
   onImageAttach: (file: { name: string; dataUrl: string }) => void
+  /** 点击引用栏文档 chip 预览（父级 PreviewOverlay） */
+  onPreviewFile?: (path: string) => void
   /** 项目目录 */
   projectDir: string
   onOpenProjectDir: () => void
@@ -171,6 +173,7 @@ export function ChatInputBar({
   onRemoveImage,
   onRemoveFile,
   onFileAttach,
+  onPreviewFile,
 }: ChatInputBarProps) {
   const { t } = useLanguage()
   const [localTextareaRef, setLocalTextareaRef] = useState<HTMLTextAreaElement | null>(null)
@@ -710,6 +713,7 @@ export function ChatInputBar({
           onRemoveReference={onRemoveReference || (() => {})}
           onRemoveImage={onRemoveImage || (() => {})}
           onRemoveFile={onRemoveFile || (() => {})}
+          onPreviewFile={onPreviewFile}
         />
         {/* ── Input row: textarea + send button ── */}
         <div className="chat-input-row">
@@ -721,6 +725,28 @@ export function ChatInputBar({
                 placeholder={placeholderText}
                 value={voicePartial || input}
                 onChange={handleChange}
+                onPaste={e => {
+                  // 截图/图片直接粘贴：剪贴板图片 → pendingImages（与拖拽图片同一通道）
+                  const items = e.clipboardData?.items
+                  if (!items) return
+                  for (const item of items) {
+                    if (item.kind === 'file' && item.type.startsWith('image/')) {
+                      const file = item.getAsFile()
+                      if (!file) continue
+                      e.preventDefault() // 阻止图片二进制被当文本粘入
+                      const reader = new FileReader()
+                      reader.onload = () => {
+                        const dataUrl = reader.result as string
+                        if (!dataUrl) return
+                        const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+                        const name = file.name || `pasted-${Date.now()}.${ext}`
+                        onImageAttachRef.current({ name, dataUrl })
+                      }
+                      reader.readAsDataURL(file)
+                      return // 一次只处理首个图片
+                    }
+                  }
+                }}
                 onKeyDown={e => {
                   // 录音/识别中按 Enter = 说完发送：先冲刷语音会话再发送
                   if (
