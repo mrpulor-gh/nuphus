@@ -8,6 +8,14 @@
    ▸ 类名 / keyframes 对齐画布端已改名版本（m3e-* → nuphus-*）
    ═══════════════════════════════════════════════════════════════ */
 
+/* Material Symbols Rounded 图标字体（本地 vendor，离线可用） */
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  src: url('/fonts/material-symbols-rounded.woff2') format('woff2-variations');
+  font-style: normal;
+  font-display: block;
+}
+
 /* 画布根容器：占满 .canvas-page-body（壳已提供固定高度 flex 链） */
 .app-root {
   height: 100%;
