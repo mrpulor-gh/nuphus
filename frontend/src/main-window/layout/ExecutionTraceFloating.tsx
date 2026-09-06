@@ -517,6 +517,14 @@ function StatusIcon({ status }: { status?: string }) {
   )
 }
 
+// ── 工具步骤状态微标签（UI 卡片模式 tc-option 徽标文案）──
+function toolStatusLabel(status?: string): string {
+  if (status === 'running') return '运行中'
+  if (status === 'success') return '完成'
+  if (status === 'error') return '失败'
+  return ''
+}
+
 // ── Tool icon (different tools suggest different icons) ──
 function ToolIcon({ name }: { name: string }) {
   // Use simple text label instead, don't increase complexity
@@ -1289,6 +1297,11 @@ export function ExecutionTraceFloating({
                           )}
                         </div>
                         <StatusIcon status={entry.status} />
+                        {entry.status && (
+                          <span className={`tc-status-chip ${entry.status}`}>
+                            {toolStatusLabel(entry.status)}
+                          </span>
+                        )}
                         <span className="tc-duration">
                           {entry.durationMs ? formatMs(entry.durationMs) : ''}
                         </span>

@@ -386,3 +386,49 @@
 .markdown-code-block .token-diff-file {
   color: var(--accent-hover);
 }
+
+/* ── 统一 diff 行级视图（markdown-code-block--diff）──
+   整行绿/红软底 + 语义色文字；@@ 段头中性高亮；文件头/元信息弱化。
+   保留行前缀字符（文本结构不变），仅展示层着色。 */
+.markdown-code-block--diff {
+  padding: 10px 0 12px;
+  overflow-x: auto;
+}
+.markdown-code-block--diff .code-lang-label {
+  margin-left: 16px;
+}
+.markdown-code-block--diff code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+}
+.markdown-code-block--diff .diff-row {
+  display: block;
+  padding: 0 16px;
+  white-space: pre;
+  border-radius: 0;
+}
+.markdown-code-block--diff .diff-row--add {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
+.markdown-code-block--diff .diff-row--del {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+.markdown-code-block--diff .diff-row--hunk {
+  background: var(--surface-inset);
+  color: var(--syntax-diff-header);
+  font-weight: 600;
+}
+.markdown-code-block--diff .diff-row--meta {
+  color: var(--syntax-diff-meta);
+  font-style: italic;
+}
+.markdown-code-block--diff .diff-row--file {
+  color: var(--accent-hover);
+}
+.markdown-code-block--diff .diff-row--ctx {
+  color: inherit;
+}

@@ -51,18 +51,22 @@ const MarkdownContent = React.memo(function MarkdownContent({
 
   return (
     <>
-      {parts.map((part, i) =>
-        part.type === 'code' ? (
-          <pre key={i} className="markdown-code-block">
+      {parts.map((part, i) => {
+        const isDiff = part.type === 'code' && isDiffContent(part.code, part.lang)
+        return part.type === 'code' ? (
+          <pre
+            key={i}
+            className={`markdown-code-block${isDiff ? ' markdown-code-block--diff' : ''}`}
+          >
             {part.lang && <div className="code-lang-label">{part.lang}</div>}
             <code className={part.lang ? `lang-${part.lang}` : ''}>
-              {highlightCode(part.code, part.lang)}
+              {isDiff ? highlightDiffCode(part.code) : highlightCode(part.code, part.lang)}
             </code>
           </pre>
         ) : (
           <MarkdownText key={i} text={part.text} onFileClick={onFileClick} />
-        ),
-      )}
+        )
+      })}
     </>
   )
 })
@@ -773,6 +777,66 @@ const LANG_ALIASES: Record<string, string> = {
   xhtml: 'html',
   vue: 'html',
   svelte: 'html',
+}
+
+// ── Diff 块识别与行级着色 ──
+// 检测条件：lang=diff 或文本带足够 unified-diff 签名（--git/---/+++/@@ hunk）。
+// 仅做展示层识别，不改消息文本结构；非 diff 代码块走 highlightCode 不受影响。
+
+/** 判断一段代码是否为 unified diff（lang 显式 diff 或内容特征足够强） */
+function isDiffContent(code: string, lang: string): boolean {
+  if ((LANG_ALIASES[lang] || lang) === 'diff') return true
+  const sig =
+    (/^diff --git /m.test(code) ? 1 : 0) +
+    (/^index [0-9a-f]{7,}\.\.[0-9a-f]{7,}/m.test(code) ? 1 : 0) +
+    (/^--- [^\s]/m.test(code) ? 1 : 0) +
+    (/^\+\+\+ [^\s]/m.test(code) ? 1 : 0) +
+    (/^@@ -\d+/m.test(code) ? 1 : 0)
+  if (sig >= 2) return true
+  // 宽松兜底：出现标准 hunk 头即按 diff 渲染（git/编辑器 diff 均含 @@ 段头）
+  return /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(code)
+}
+
+/** 单行 diff 类型：add/del/ctx/hunk/meta/file */
+function classifyDiffLine(line: string): 'add' | 'del' | 'ctx' | 'hunk' | 'meta' | 'file' {
+  if (/^@@ /.test(line)) return 'hunk'
+  if (
+    /^diff --git /.test(line) ||
+    /^index [0-9a-f]/.test(line) ||
+    /^(new|deleted) file mode /.test(line) ||
+    /^---$/.test(line) ||
+    /^\+\+\+$/.test(line)
+  ) {
+    return 'meta'
+  }
+  if (/^--- /.test(line) || /^\+\+\+ /.test(line)) return 'file'
+  if (/^\+/.test(line)) return 'add'
+  if (/^-/.test(line)) return 'del'
+  return 'ctx'
+}
+
+/**
+ * diff 行级渲染：+ 行绿软底 / - 行红软底 / @@ 段头高亮 / 文件头与元信息弱化。
+ * 行间以 '\n' 文本节点分隔：块级 span 间空白不渲染，但 textContent 保留换行（手动复制不回归）。
+ */
+function highlightDiffCode(code: string): React.ReactNode[] {
+  const lines = code.split('\n')
+  const out: React.ReactNode[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const type = classifyDiffLine(line)
+    if (type === 'ctx') {
+      out.push(line)
+    } else {
+      out.push(
+        <span key={`diff-${i}`} className={`diff-row diff-row--${type}`}>
+          {line}
+        </span>,
+      )
+    }
+    if (i < lines.length - 1) out.push('\n')
+  }
+  return out
 }
 
 function highlightCode(code: string, lang: string): React.ReactNode[] {
