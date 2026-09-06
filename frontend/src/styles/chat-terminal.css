@@ -178,24 +178,26 @@
 }
 
 .execution-terminal-lines {
-  padding: 8px 0 12px 0;
+  padding: var(--space-2) var(--space-5) var(--space-3) var(--space-5);
 }
 
 .term-call {
-  padding: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+  margin-bottom: var(--space-2);
   border-bottom: none;
   cursor: pointer;
-  transition: background 0.1s ease;
-  margin: 0;
+  transition: background var(--dur-fast) ease;
 }
 .term-call:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-hover);
 }
 .term-call + .term-call {
-  margin-top: 2px;
+  margin-top: 0;
 }
 .term-call:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
 /* 处理中提示符闪烁 */
@@ -215,7 +217,7 @@
 .term-line {
   display: flex;
   gap: 8px;
-  padding: 3px 16px;
+  padding: 3px 0;
   align-items: baseline;
 }
 .term-cmd {
@@ -267,14 +269,27 @@
 .term-out {
   display: flex;
   gap: 8px;
-  padding: 1px 16px 1px 24px;
+  margin: var(--space-2) 0 0 0;
+  padding: 8px 10px;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--fz-sm);
   line-height: 1.5;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.term-out::-webkit-scrollbar {
+  width: 4px;
+}
+.term-out::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 2px;
 }
 .term-out-marker {
-  color: #484f58;
+  color: var(--fg-5);
   flex-shrink: 0;
   user-select: none;
   font-weight: 300;
@@ -288,13 +303,21 @@
 
 /* Terminal mode diff block: indent to align with output text */
 .term-diff-block {
-  padding: 0 16px 0 24px;
+  margin: var(--space-2) 0 0 0;
+  padding: 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  overflow: hidden;
 }
 .term-diff-block .tc-diff-line {
-  padding: 1px 0;
+  padding: 2px 10px;
 }
 .term-diff-block .tc-diff-header {
-  padding: 0 0 3px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  border-bottom: 1px solid var(--line-1);
 }
 
 .term-gutter {
@@ -307,7 +330,7 @@
   color: var(--accent);
   cursor: pointer;
   font-size: var(--fz-xs);
-  padding: 3px 14px 3px 38px;
+  padding: 3px 0;
   display: inline-block;
   opacity: 0.7;
   transition: opacity 0.15s;
@@ -320,9 +343,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 16px 6px 16px;
+  padding: 4px 0 6px 0;
   font-size: 10.5px;
-  color: var(--fg-5);
+  color: var(--fg-4);
 }
 .term-ok {
   color: var(--success);
@@ -360,17 +383,16 @@
 }
 
 .term-expanded {
-  padding: 6px 0 8px 38px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  margin-top: 2px;
+  padding: 6px 0 8px 0;
+  border-top: 1px solid var(--line-1);
+  margin-top: var(--space-2);
 }
 .term-expanded-label {
   font-size: 9.5px;
-  color: var(--spark-muted);
+  color: var(--fg-4);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  margin-bottom: 6px;
-  padding: 0 14px 0 0;
+  margin-bottom: var(--space-2);
 }
 .term-expanded-sep {
   display: none;
@@ -380,47 +402,46 @@
   cursor: pointer;
 }
 .term-call-agent:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: transparent;
 }
 
 .term-agent {
   display: flex;
   gap: 8px;
-  padding: 4px 14px;
+  padding: 4px 0;
   align-items: flex-start;
 }
 .term-agent-tag {
   font-size: 10.5px;
   font-weight: 600;
   flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 8px;
+  border-radius: var(--radius-1);
 }
 .term-agent-tag.observe {
   color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.1);
+  background: var(--accent-dim);
 }
 .term-agent-tag.analyze {
   color: var(--violet);
-  background: rgba(139, 92, 246, 0.1);
+  background: rgba(139, 92, 246, 0.12);
 }
 .term-agent-tag.execute {
   color: var(--success);
-  background: rgba(var(--success-rgb), 0.1);
+  background: rgba(var(--success-rgb), 0.12);
 }
 .term-agent-tag.verify {
   color: var(--warning);
-  background: rgba(var(--warning-rgb), 0.1);
+  background: rgba(var(--warning-rgb), 0.12);
 }
 .term-agent-text {
-  font-size: 12.5px;
-  color: var(--spark-tertiary);
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
   line-height: 1.5;
   word-break: break-word;
 }
 .term-more-line {
-  padding: 2px 14px 2px 38px;
+  padding: 2px 0;
 }
 .term-more-hint {
   color: var(--accent);
@@ -467,7 +488,7 @@
   opacity: 0.5;
 }
 .term-thinking-body {
-  padding-left: 16px;
+  padding-left: 0;
   font-family: var(--font-ui);
 }
 

@@ -1333,15 +1333,16 @@
    Terminal enh: inline hl + code section + color overrides
    ═══════════════════════════════════════════════════════════════ */
 .term-out-marker {
-  color: #484f58 !important;
+  color: var(--fg-5) !important;
   font-weight: 400 !important;
   opacity: 0.6 !important;
 }
 
 /* Card mode tc-code-block: ensure markdown highlighting visible */
 .tc-code-block .markdown-code-block {
-  background: #0d1117;
-  border-color: #21262d;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
 }
 
 /* User plain text message (no markdown rendering) */
@@ -1369,28 +1370,41 @@
 
 /* Terminal output block (MarkdownContent rendered) */
 .term-out-block {
-  padding: 2px 14px 2px 38px;
+  margin: var(--space-2) 0 0 0;
+  padding: 8px 10px;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
   font-size: var(--fz-sm);
   line-height: 1.5;
-  color: #c9d1d9;
+  color: var(--fg-3);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.term-out-block::-webkit-scrollbar {
+  width: 4px;
+}
+.term-out-block::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 2px;
 }
 .term-out-block p {
   margin: 0 0 4px;
 }
 .term-out-block .markdown-code-block {
-  background: #0d1117;
-  border: 1px solid #21262d;
-  border-radius: 6px;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
   margin: 4px 0;
 }
 .term-out-block .code-lang-label {
-  color: #8b949e;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg-4);
+  background: var(--surface-2);
 }
 .term-out-block .markdown-blockquote {
-  border-left: 2px solid #30363d;
+  border-left: 2px solid var(--line-2);
   padding-left: 10px;
-  color: #8b949e;
+  color: var(--fg-4);
   margin: 4px 0;
 }
 .term-out-block .markdown-ul,
