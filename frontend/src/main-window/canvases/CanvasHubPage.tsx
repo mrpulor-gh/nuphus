@@ -15,9 +15,11 @@ import './canvases.css'
 export function CanvasHubPage({
   onClose,
   onOpenWorkflow,
+  onOpenUiPrototype,
 }: {
   onClose: () => void
   onOpenWorkflow: () => void
+  onOpenUiPrototype: () => void
 }) {
   const { t } = useLanguage()
 
@@ -26,8 +28,11 @@ export function CanvasHubPage({
     if (def.id === 'workflow') {
       onClose()
       onOpenWorkflow()
+    } else if (def.id === 'ui-prototype') {
+      onClose()
+      onOpenUiPrototype()
     }
-    // 其它就绪画布在此按 id 分发（ui-prototype 移植完成后接入）
+    // 其它就绪画布在此按 id 分发（未来动效录制/投屏等在此扩展）
   }
 
   return createPortal(

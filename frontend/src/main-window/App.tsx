@@ -103,6 +103,9 @@ const CanvasPage = lazy(() =>
 const CanvasHubPage = lazy(() =>
   import('./canvases/CanvasHubPage').then(m => ({ default: m.CanvasHubPage })),
 )
+const UiPrototypeCanvas = lazy(() =>
+  import('./canvases/ui-prototype/UiPrototypeCanvas').then(m => ({ default: m.UiPrototypeCanvas })),
+)
 // ── 插件市场体系不开源阶段：入口仅展示筹备提示（PluginComingSoon）。
 //    市场 ready 后恢复下面两个 lazy 声明与挂载块即可（可逆）。
 // const PluginAppsPage = lazy(() =>
@@ -216,6 +219,8 @@ export default function App() {
   // ── 宿主最小化态：true 时 AppShellPage 保持挂载但 visibility 隐藏（iframe 保活），
   //    主窗口输入框 dock 左侧悬浮 PluginRestoreFab 点击恢复 ──
   const [pluginMinimized, setPluginMinimized] = useState(false)
+  // ── UI 原型画布全屏（Canvas Hub 进入）──
+  const [showUiProto, setShowUiProto] = useState(false)
   // ── Desktop toolbar (Ctrl+U) ──
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   const cmdIconMap: Record<string, React.ReactNode> = {
@@ -858,7 +863,28 @@ export default function App() {
               <CanvasHubPage
                 onClose={() => s.setShowCanvasHub(false)}
                 onOpenWorkflow={() => void handleWorkflowCanvasDirect()}
+                onOpenUiPrototype={() => setShowUiProto(true)}
               />
+            </Suspense>
+          )}
+          {/* ── UI 原型画布：全屏覆盖层（Canvas 平台首个移植画布）── */}
+          {showUiProto && (
+            <Suspense fallback={null}>
+              <div className="canvas-page-host">
+                <div className="canvas-page-bar">
+                  <button
+                    type="button"
+                    className="canvas-page-back"
+                    onClick={() => setShowUiProto(false)}
+                  >
+                    ← 返回
+                  </button>
+                  <span className="canvas-page-title">UI 原型设计</span>
+                </div>
+                <div className="canvas-page-body">
+                  <UiPrototypeCanvas />
+                </div>
+              </div>
             </Suspense>
           )}
           {/* ── 应用插件宿主：全屏覆盖层（App Plugin 体系 §4.2）── */}

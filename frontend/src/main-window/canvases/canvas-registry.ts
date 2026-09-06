@@ -23,8 +23,6 @@ export const canvasRegistry: CanvasDef[] = [
     descKey: 'canvas.uiPrototypeDesc',
     render: 'native',
     icon: 'ui-prototype',
-    disabled: true,
-    badge: 'canvas.comingSoon',
   },
 ]
 
