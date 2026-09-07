@@ -91,18 +91,6 @@ jobs:
           NUPHUS_RELAY_CALLER_TOKEN: ${{ secrets.NUPHUS_RELAY_CALLER_TOKEN }}
         run: npx tauri build --verbose ${{ runner.os == 'Linux' && '--bundles deb,appimage' || runner.os == 'macOS' && '--bundles app' || '' }}
 
-      - name: Collect updater metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          metadata=$(find target/release/bundle -type f -name latest.json -print -quit || true)
-          if [ -z "$metadata" ]; then
-            echo "Updater metadata latest.json was not generated. Check TAURI_SIGNING_PRIVATE_KEY and updater pubkey configuration."
-            exit 1
-          fi
-          cp "$metadata" latest.json
-          echo "Updater metadata: $metadata"
-
       - name: Deep-sign dylibs & verify (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -175,18 +163,10 @@ jobs:
             Write-Output "NSIS installer: $newName ($([math]::Round($_.Length/1MB,1)) MB)"
           }
 
-      - name: Upload updater metadata artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: updater-metadata-${{ matrix.os }}
-          path: latest.json
-          if-no-files-found: error
-
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            latest.json
             target/release/bundle/nsis/nuphus-win32-x64-*-setup.exe
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
