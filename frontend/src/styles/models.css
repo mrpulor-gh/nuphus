@@ -311,7 +311,6 @@
   }
 }
 
-
 /* ── Ctrl+K ModelsPage：整页布局与左侧导航 ── */
 .models-page-host {
   position: fixed;
@@ -332,7 +331,9 @@
   background: var(--surface-1);
   flex-shrink: 0;
 }
-.models-page-close { flex-shrink: 0; }
+.models-page-close {
+  flex-shrink: 0;
+}
 .models-page-title {
   font-size: var(--fz-xl);
   font-weight: 600;
@@ -393,7 +394,10 @@
   font-size: var(--fz-md);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .models-rail-item:hover {
   background: var(--surface-hover);
@@ -416,8 +420,12 @@
   border-radius: 50%;
   background: var(--fg-5);
 }
-.models-rail-dot.on { background: var(--success); }
-.models-rail-dot.active { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14); }
+.models-rail-dot.on {
+  background: var(--success);
+}
+.models-rail-dot.active {
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
 .models-rail-name {
   min-width: 0;
   flex: 1;
@@ -425,7 +433,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.models-rail-badge { flex-shrink: 0; }
+.models-rail-badge {
+  flex-shrink: 0;
+}
 .models-rail-note {
   padding: var(--space-2);
   color: var(--fg-4);
@@ -469,10 +479,22 @@
   border-radius: var(--radius-2);
   background: var(--surface-inset);
 }
-.models-provider-current-name { color: var(--fg-1); font-weight: 600; }
-.models-provider-current-id { color: var(--fg-4); font: var(--fz-sm) var(--font-mono); }
-.models-provider-current-hint { margin-left: auto; color: var(--fg-4); font-size: var(--fz-sm); }
-.models-list-wrap { margin-top: var(--space-4); }
+.models-provider-current-name {
+  color: var(--fg-1);
+  font-weight: 600;
+}
+.models-provider-current-id {
+  color: var(--fg-4);
+  font: var(--fz-sm) var(--font-mono);
+}
+.models-provider-current-hint {
+  margin-left: auto;
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+.models-list-wrap {
+  margin-top: var(--space-4);
+}
 .model-list {
   display: flex;
   max-height: min(440px, 52vh);
@@ -486,16 +508,35 @@
   border-color: var(--accent);
   box-shadow: var(--shadow-focus);
 }
-.model-list-item:disabled { cursor: wait; opacity: 0.6; }
+.model-list-item:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
 @media (max-width: 720px) {
-  .models-page-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .models-rail { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line-1); }
-  .models-rail-scroll { padding: var(--space-3); }
-  .models-rail-group + .models-rail-group { margin-top: var(--space-3); }
-  .models-main-scroll { padding: var(--space-4); }
+  .models-page-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .models-rail {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-1);
+  }
+  .models-rail-scroll {
+    padding: var(--space-3);
+  }
+  .models-rail-group + .models-rail-group {
+    margin-top: var(--space-3);
+  }
+  .models-main-scroll {
+    padding: var(--space-4);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .models-rail-item, .model-list-item { transition: none; }
+  .models-rail-item,
+  .model-list-item {
+    transition: none;
+  }
 }
 
 /* ── API 密钥输入行：输入框与操作按钮同一行，眼睛图标内嵌输入框 ── */
@@ -530,7 +571,9 @@
   background: transparent;
   color: var(--fg-4);
   cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .models-key-eye:hover {
   color: var(--fg-1);
@@ -554,7 +597,10 @@
   background: transparent;
   color: var(--fg-3);
   cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .models-key-clear:hover:not(:disabled) {
   color: var(--error);
@@ -600,7 +646,10 @@
   font: inherit;
   font-size: var(--fz-xs);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .models-preset-btn:hover {
   background: var(--surface-hover);

@@ -52,7 +52,7 @@ export interface AgentControlDeps {
   setMode: (v: string) => void
   // Refs
   messagesRef: React.MutableRefObject<any[]>
-streamingMsgId: React.MutableRefObject<string | null>
+  streamingMsgId: React.MutableRefObject<string | null>
   lastStreamingMsgId: React.MutableRefObject<string | null>
   executionActiveRef: React.MutableRefObject<boolean>
   /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
@@ -91,7 +91,7 @@ export function useAgentControl(deps: AgentControlDeps) {
     setPauseState,
     setMode: setModeState,
     messagesRef,
-streamingMsgId,
+    streamingMsgId,
     lastStreamingMsgId,
     executionActiveRef,
     interruptedRef,
@@ -275,7 +275,7 @@ streamingMsgId,
     showToast('Graceful stop requested', 'info')
   }, [showToast])
 
-// ── handleInterrupt ──
+  // ── handleInterrupt ──
   const handleInterrupt = useCallback(async () => {
     await interrupt()
     // 置位中断标记：后端 cancel_flag 是异步收敛（下个检查点才真正停），

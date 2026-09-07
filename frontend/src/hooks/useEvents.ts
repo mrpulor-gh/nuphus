@@ -43,7 +43,7 @@ const toolToMood: Record<string, MoodState> = {
 
 export interface EventHandlers {
   // Refs
-refs: {
+  refs: {
     streamingMsgId: MutableRefObject<string | null>
     lastStreamingMsgId: MutableRefObject<string | null>
     executionActiveRef: MutableRefObject<boolean>
@@ -235,7 +235,7 @@ export function useEvents(h: EventHandlers) {
           finishWithMessage((event.message || '').trim(), 'success')
           break
         }
-case 'execution_error': {
+        case 'execution_error': {
           const isInterrupted = h.refs.interruptedRef.current
           // 用户中断：不播错误音效、mood 回到 idle（中断不是失败）；
           // 其余 LLM 错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
@@ -273,10 +273,10 @@ case 'execution_error': {
             playUiSound('error')
             h.refs.executionActiveRef.current = false
             h.setIsProcessing(false)
-             h.setCompleted(true)
-             h.setAppendQueue([])
-             h.setGoalType(null)
-             h.setMood('error')
+            h.setCompleted(true)
+            h.setAppendQueue([])
+            h.setGoalType(null)
+            h.setMood('error')
           }
           break
         case 'warning': {
@@ -358,7 +358,7 @@ case 'execution_error': {
           h.setTotalCalls(0)
           h.setExecTokenUsage(null)
           h.setExecPhase('understanding')
-h.refs.executionActiveRef.current = true
+          h.refs.executionActiveRef.current = true
           h.refs.lastStreamingMsgId.current = null
           // 新一轮执行开始：清除中断标记（此前中断状态已收敛）
           h.refs.interruptedRef.current = false
@@ -408,10 +408,8 @@ h.refs.executionActiveRef.current = true
               fromTask: event.from_task,
             },
           ])
-h.setMood(
-            h.refs.interruptedRef.current
-              ? 'idle'
-              : toolToMood[event.tool_name] || 'working',
+          h.setMood(
+            h.refs.interruptedRef.current ? 'idle' : toolToMood[event.tool_name] || 'working',
           )
 
           // planner_update → task_status changed (from inline tool call)

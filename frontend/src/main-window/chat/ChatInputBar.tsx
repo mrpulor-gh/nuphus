@@ -88,7 +88,7 @@ interface ChatInputBarProps {
   onModelSwitch: () => void
   /** 权限状态（用于 WORKFLOW 模式权限检查） */
   toolPermissions?: { file_access: boolean; web_search: boolean; system_automation: boolean }
-/** 发送 / 中断 */
+  /** 发送 / 中断 */
   onSend: () => void
   onInterrupt?: () => void
   /** 优雅终止（AI 整理输出后结束）——终止确认弹窗选项 */
@@ -159,7 +159,7 @@ export function ChatInputBar({
   defaultEffort,
   onEffortChange,
   onModelSwitch,
-onSend,
+  onSend,
   onInterrupt,
   onGracefulStop,
   isWorkflowRunning,
@@ -1004,7 +1004,7 @@ onSend,
             // 仅 workflow 权限锁定 / 暂停等待决策时禁用。
             disabled={workflowLocked || !!pauseState}
           />
-{/* 发送 / 终止按钮三态：
+          {/* 发送 / 终止按钮三态：
                   执行中（仅后端 is_busy 判断）且输入框无任何内容（含语音 partial）→ 终止按钮（可点，终止当前执行）；
                   执行中 + 有内容 → 发送按钮（追加指令）；
                   空闲 + 空内容 → 发送按钮灰显（待命）；
@@ -1385,12 +1385,16 @@ onSend,
         </div>
       )}
 
-{/* 终止选项弹窗：复用权限/refine 弹窗选择样式（compact-overlay + 选项行）。
+      {/* 终止选项弹窗：复用权限/refine 弹窗选择样式（compact-overlay + 选项行）。
           提供：继续执行 / 优雅终止（AI 整理输出后结束）/ 强制终止（立即中断）。
           追加功能已迁输入框（执行中发送 = 追加），此处不再提供追加选项。 */}
       {stopConfirmOpen &&
         createPortal(
-          <div className="compact-overlay" style={{ zIndex: 210 }} onClick={() => setStopConfirmOpen(false)}>
+          <div
+            className="compact-overlay"
+            style={{ zIndex: 210 }}
+            onClick={() => setStopConfirmOpen(false)}
+          >
             <div
               className="compact-modal compact-modal--sm compact-modal--fit"
               onClick={e => e.stopPropagation()}
@@ -1411,10 +1415,18 @@ onSend,
                 >
                   {t('input.forceStopConfirm')}
                 </div>
-<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {[
-                    { id: 'continue', textKey: 'input.stopContinue', descKey: 'input.stopContinueDesc' },
-                    { id: 'graceful', textKey: 'input.stopGraceful', descKey: 'input.stopGracefulDesc' },
+                    {
+                      id: 'continue',
+                      textKey: 'input.stopContinue',
+                      descKey: 'input.stopContinueDesc',
+                    },
+                    {
+                      id: 'graceful',
+                      textKey: 'input.stopGraceful',
+                      descKey: 'input.stopGracefulDesc',
+                    },
                     { id: 'force', textKey: 'input.stopForce', descKey: 'input.stopForceDesc' },
                   ].map(opt => (
                     <div
@@ -1429,9 +1441,7 @@ onSend,
                     >
                       <div
                         className="compact-option-label"
-                        style={
-                          opt.id === 'force' ? { color: 'var(--danger, #ef4444)' } : undefined
-                        }
+                        style={opt.id === 'force' ? { color: 'var(--danger, #ef4444)' } : undefined}
                       >
                         {t(opt.textKey)}
                       </div>

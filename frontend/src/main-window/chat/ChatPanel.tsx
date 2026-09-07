@@ -1906,7 +1906,7 @@ export function ChatPanel({
           defaultEffort={currentModelDefaultEffort}
           onEffortChange={handleEffortChange}
           onModelSwitch={() => setModelOpen(true)}
-onSend={handleSubmit}
+          onSend={handleSubmit}
           onInterrupt={onInterrupt}
           onGracefulStop={onGracefulStop}
           appendQueue={appendQueue}

@@ -286,7 +286,7 @@ export interface SessionAPI {
     lastSentRef: React.MutableRefObject<{ content: string; time: number } | null>
     sendSeqRef: React.MutableRefObject<number>
     messagesRef: React.MutableRefObject<ChatMessage[]>
-toolCallCountRef: React.MutableRefObject<number>
+    toolCallCountRef: React.MutableRefObject<number>
     messagesRestoredRef: React.MutableRefObject<boolean>
     /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
     interruptedRef: React.MutableRefObject<boolean>
@@ -366,7 +366,7 @@ export function useSession(): SessionAPI {
   const sendSeqRef = useRef(0)
   const messagesRef = useRef<ChatMessage[]>(messages)
   messagesRef.current = messages
-const toolCallCountRef = useRef(0)
+  const toolCallCountRef = useRef(0)
   /** 用户已点击强制中断（interrupt）：置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
   const interruptedRef = useRef(false)
 
@@ -432,7 +432,7 @@ const toolCallCountRef = useRef(0)
     setShowWorkflowExitConfirm: execUI.setShowWorkflowExitConfirm,
     setPauseState: execUI.setPauseState,
     setMode: setModeState,
-messagesRef,
+    messagesRef,
     streamingMsgId,
     lastStreamingMsgId,
     executionActiveRef,
@@ -1092,7 +1092,7 @@ messagesRef,
     setExpandedCalls,
 
     // Refs
-refs: {
+    refs: {
       streamingMsgId,
       lastStreamingMsgId,
       executionActiveRef,

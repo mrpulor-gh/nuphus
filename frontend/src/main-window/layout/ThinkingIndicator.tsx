@@ -68,7 +68,8 @@ function looksPathLike(v: string): boolean {
   if (v.length < 2 || v.length > 260 || v.includes('\n')) return false
   if (/^[a-zA-Z]:[\\/]/.test(v)) return true // C:\...
   if (/^https?:\/\//i.test(v)) return true // URL
-  if (v.startsWith('/') || v.startsWith('~') || v.startsWith('./') || v.startsWith('../')) return true
+  if (v.startsWith('/') || v.startsWith('~') || v.startsWith('./') || v.startsWith('../'))
+    return true
   return v.includes('/') || v.includes('\\') // 相对路径/嵌套路径
 }
 
@@ -161,7 +162,9 @@ export function ThinkingIndicator({
             <span className="thinking-text">
               {completed
                 ? t('thinking.completed')
-                : step || toolLabel || (toolName ? t('thinking.toolCall', toolName) : t('thinking.inProgress'))}
+                : step ||
+                  toolLabel ||
+                  (toolName ? t('thinking.toolCall', toolName) : t('thinking.inProgress'))}
             </span>
           </div>
         </div>

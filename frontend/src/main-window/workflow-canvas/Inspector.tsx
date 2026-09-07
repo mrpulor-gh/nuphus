@@ -796,7 +796,9 @@ export function Inspector({
                   {typeof chatWith.model === 'string' &&
                     chatWith.model !== '' &&
                     !models.some(m => m.id === chatWith.model) && (
-                      <option value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}>
+                      <option
+                        value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
+                      >
                         {chatWith.model}（不在 registry）
                       </option>
                     )}
