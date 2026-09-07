@@ -1,6 +1,6 @@
 [package]
 name = "nuphus-desktop"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mrpulor-gh/nuphus"
@@ -105,6 +105,8 @@ sha2 = "0.10"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2.11.0"
+tauri-plugin-process = "2.3.1"
 
 # Windows API（emitter.rs 置前不抢焦点：SetWindowPos + SWP_NOACTIVATE）
 # 用 windows-sys 而非 windows crate——tauri 内部依赖 windows-sys，

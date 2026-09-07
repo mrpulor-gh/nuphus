@@ -5,7 +5,23 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.2.8] - 2026-09-08
+
+### Added
+- 应用内版本更新：Ctrl+K → 管理 → 检查版本，获取官方发布信息、下载、安装并重启（Tauri updater 签名验证）
+- 追加消息队列 UI：输入框右上提示 + hover 面板可删除未消费消息，已消费自动隐藏
+- 画布统一工作台：工作流编辑器 / UI 原型设计 / 工具三种编辑工具共用全屏宿主与 Header
+
+### Changed
+- 模型 Provider 归属显式化：`[last_model]` 持久化 model→provider，同名模型按运行时配置路由，切换不再串卡
+- 追加消息链路修复：主执行循环每迭代 drain 追加队列，执行中追加下轮即注入；新任务清残留防跨任务泄漏
+- ExecAgent 继承全局 signals：追加消息与暂停决策透传，与 Leader 行为对齐
+- 外部 Agent 主题适配：胶囊 / popover / tooltip 改用语义 token，明暗主题统一
+
+### Fixed
+- 强制中断后状态一致：中断事件收敛前端 mood，终止按钮随完成事件即时隐藏
+- 撤销无效删除：追加消息已被消费时后端拒绝删除并回读真实队列
+- 工作区卫生：cargo fmt 全量格式化 + clippy 门禁清理（doc 缩进、derive、field reassign 等 5 项）
 
 ## [0.2.7] - 2026-09-05
 

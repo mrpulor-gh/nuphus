@@ -2,12 +2,23 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nuphus",
   "identifier": "com.nuphus.app",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5174",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../frontend/dist"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0N0ZGMDRGRkQzOUI2OApSV1JvbTlQL0JQOUhCbmU1NHZVY1lsL0FZZElGSmRFWTJUaVlnSnl2cFZmVTFCeHordWlIK1EyYgo=",
+      "endpoints": [
+        "https://github.com/mrpulor-gh/nuphus/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   },
   "app": {
     "withGlobalTauri": true,
@@ -72,6 +83,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["deb", "appimage", "nsis", "dmg"],
     "windows": {
       "nsis": {
