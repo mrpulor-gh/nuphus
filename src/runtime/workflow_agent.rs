@@ -454,6 +454,20 @@ impl WorkflowAgent {
                 });
             }
 
+            // ── Immediate append queue: WorkflowAgent is the active consumer ──
+            let active_appends = {
+                let mut signals = crate::state::SignalState::write(self.tools.signals());
+                std::mem::take(&mut signals.append_queue)
+            };
+            if !active_appends.is_empty() {
+                self.session.push_user_internal(
+                    crate::mobile_append::format_mobile_append_section(&active_appends),
+                );
+                self.emit(crate::agent::events::NuphusEvent::AppendQueueUpdated {
+                    messages: vec![],
+                });
+            }
+
             // ── Pause check ──
             if let Some(ref pause_flag) = self.pause_flag {
                 if pause_flag.load(Ordering::SeqCst) {

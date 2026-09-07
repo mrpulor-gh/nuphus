@@ -6,9 +6,9 @@
 //! replaces the scattered `default_base_url()` / `context_window_heuristic()`
 //! switches in `config/model.rs`.
 //!
-//! All 12 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
-//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local) are registered
-//! in `builtin()`.
+//! All 13 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
+//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local, OpenCode Go)
+//! are registered in `builtin()`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -78,14 +78,11 @@ impl ProviderRegistry {
         self.providers.get(id).map(Arc::clone)
     }
 
-    /// Snapshot of every registered Provider. Iteration order is unspecified.
-    pub fn all(&self) -> Vec<Arc<dyn Provider>> {
-        self.providers.values().map(Arc::clone).collect()
-    }
-
-    /// Frontend-facing Provider list — same order as `all()`.
+    /// Frontend-facing Provider list — sorted by display name (stable A-Z order)
+    /// so the UI never depends on HashMap iteration order.
     pub fn list_info(&self) -> Vec<FrontendProviderInfo> {
-        self.providers
+        let mut infos: Vec<FrontendProviderInfo> = self
+            .providers
             .values()
             .map(|p| FrontendProviderInfo {
                 id: p.id(),
@@ -95,7 +92,9 @@ impl ProviderRegistry {
                 auth_header: p.auth_header(),
                 auth_prefix: p.auth_prefix(),
             })
-            .collect()
+            .collect();
+        infos.sort_by(|a, b| a.name.cmp(b.name));
+        infos
     }
 
     /// Built-in Provider registry.
@@ -106,8 +105,8 @@ impl ProviderRegistry {
         let mut r = Self::new();
         use super::providers::{
             AnthropicProvider, ByteDanceProvider, CustomProvider, DeepSeekProvider, GoogleProvider,
-            KimiProvider, LocalProvider, MiniMaxProvider, OpenAIProvider, OpenRouterProvider,
-            QwenProvider, ZhipuProvider,
+            KimiProvider, LocalProvider, MiniMaxProvider, OpenAIProvider, OpenCodeGoProvider,
+            OpenRouterProvider, QwenProvider, ZhipuProvider,
         };
         r.register(Arc::new(DeepSeekProvider));
         r.register(Arc::new(KimiProvider));
@@ -121,6 +120,7 @@ impl ProviderRegistry {
         r.register(Arc::new(AnthropicProvider));
         r.register(Arc::new(CustomProvider));
         r.register(Arc::new(LocalProvider));
+        r.register(Arc::new(OpenCodeGoProvider));
         r
     }
 }

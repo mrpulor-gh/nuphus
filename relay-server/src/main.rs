@@ -70,12 +70,27 @@ const TASK_TIMEOUT_SECS: u64 = 120;
 const MAX_CONTENT_BYTES: usize = 512 * 1024; // 单条任务内容上限 512KB
 
 // ── 安全加固参数（防公网暴露 DoS / 扫描 / 流量滥用） ─────────────────────
-/// 免费层月度流量配额（MB/设备）：100MB × 5000 用户 = 500GB ≈ 0.5T 总量预算。
-/// 大王裁定：免费用户每月 100MB（够日常外出办公），超额拒绝；Pro 未来可提额。
+/// 默认月度流量配额（MB/设备）：500MB × 5000 用户 ≈ 2.5TB 总量预算。
 /// 计量 = 隧道双向字节（请求+响应都走中继带宽），自然月重置，落盘 usage.json。
-const QUOTA_MB_PER_MONTH: u64 = 100;
-const QUOTA_BYTES_PER_MONTH: u64 = QUOTA_MB_PER_MONTH * 1024 * 1024;
-/// 免费层容量规划：设备数上限（5000 × 100MB = 0.5T）。超过时 warn（扩容/Pro 层面决策）
+/// 可通过 RELAY_DEVICE_QUOTA_MB 覆盖默认值；RELAY_QUOTA_DEVICE_IDS 中的设备可使用该专属额度。
+const QUOTA_MB_PER_MONTH: u64 = 500;
+fn quota_mb_for_device(device_id: &str) -> u64 {
+    let configured = std::env::var("RELAY_DEVICE_QUOTA_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(QUOTA_MB_PER_MONTH);
+    let privileged = std::env::var("RELAY_QUOTA_DEVICE_IDS")
+        .ok()
+        .map(|ids| ids.split(',').any(|id| id.trim() == device_id))
+        .unwrap_or(false);
+    if privileged { configured } else { QUOTA_MB_PER_MONTH }
+}
+
+fn quota_bytes_for_device(device_id: &str) -> u64 {
+    quota_mb_for_device(device_id).saturating_mul(1024 * 1024)
+}
+/// 免费层容量规划：设备数上限（5000 × 500MB = 2.5TB）。超过时 warn（扩容/运营策略）。
 const CAPACITY_USERS: usize = 5000;
 /// 隧道：每 IP 每分钟最多新建连接数（移动端 SPA 首载 + WS 重连峰值约 15-20，30 留 1.5 倍余量）
 const TUNNEL_RATE_PER_IP_MIN: usize = 30;
@@ -260,7 +275,7 @@ fn device_add_bytes(usage: &Mutex<HashMap<String, DeviceUsage>>, device_id: &str
         *e = DeviceUsage { month: m, bytes: 0 };
     }
     e.bytes = e.bytes.saturating_add(n);
-    e.bytes >= QUOTA_BYTES_PER_MONTH
+    e.bytes >= quota_bytes_for_device(device_id)
 }
 
 /// per-IP 滑动窗口字节计数（分钟/小时两档），超限返回 true（调用方断连）
@@ -2086,7 +2101,7 @@ async fn handle_tunnel_conn(
     // 计量为隧道双向字节（device_add_bytes 在转发循环累加），自然月重置（usage.json 持久化）。
     {
         let used = device_used_bytes(&state.usage, &target);
-        if used >= QUOTA_BYTES_PER_MONTH {
+        if used >= quota_bytes_for_device(&target) {
             tracing::warn!(
                 "[relay] 配额超限拒绝：device={} used={}MB (100MB/月)",
                 target,

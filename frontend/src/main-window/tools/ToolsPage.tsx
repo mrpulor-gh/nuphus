@@ -1966,23 +1966,30 @@ function ToolDetail({ ability, onBack }: { ability: AbilityDef; onBack: () => vo
 
 /* ────────────────────────── 入口（全屏壳） ────────────────────────── */
 
-export function ToolsPage({ onClose }: { onClose: () => void }) {
+export function ToolsPage({
+  onClose,
+  embedded = false,
+}: {
+  onClose: () => void
+  embedded?: boolean
+}) {
   const { t } = useLanguage()
   const [abilityId, setAbilityId] = useState<string | null>(null)
   const ability = ABILITIES.find(a => a.id === abilityId) ?? null
   return (
-    <div className="tools-page">
-      {/* ── 顶部工具栏：关闭最左，标题，spacer 后为当前视图状态（对齐 preview 壳） ── */}
-      <div className="tools-toolbar">
-        <button type="button" className="tools-toolbar-close" onClick={onClose} title="关闭工具">
-          <IconX size={15} />
-        </button>
-        <span className="tools-toolbar-title">{t('app.tools')}</span>
-        <div className="tools-toolbar-spacer" />
-        <span className="tools-toolbar-view">
-          {ability ? t(ability.titleKey) : t('tools.catAll')}
-        </span>
-      </div>
+    <div className={`tools-page${embedded ? ' tools-page--embedded' : ''}`}>
+      {!embedded && (
+        <div className="tools-toolbar">
+          <button type="button" className="tools-toolbar-close" onClick={onClose} title="关闭工具">
+            <IconX size={15} />
+          </button>
+          <span className="tools-toolbar-title">{t('app.tools')}</span>
+          <div className="tools-toolbar-spacer" />
+          <span className="tools-toolbar-view">
+            {ability ? t(ability.titleKey) : t('tools.catAll')}
+          </span>
+        </div>
+      )}
       {ability ? (
         <ToolDetail ability={ability} onBack={() => setAbilityId(null)} />
       ) : (

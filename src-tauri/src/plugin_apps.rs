@@ -1228,16 +1228,16 @@ async fn plugin_agent_chat_inner(
         .map(nuphus::llm::ClientFactory::new)
         .map_err(|e| format!("无法加载模型配置，请检查 config.toml: {e}"))?;
     let registry = factory.registry();
-    // 单一模型解析入口：与主 Agent 相同的 leader 生效模型
-    let model =
-        crate::commands::config::llm::effective_model(&state.llm_config_path, registry, "leader");
+    // Leader binding is already provider+model atomic; do not infer the provider
+    // from a model-only lookup (official and OpenCode GO may share the model ID).
+    let (provider, model) = crate::commands::config::llm::effective_model_binding(
+        &state.llm_config_path,
+        registry,
+        "leader",
+    )?;
     let llm = factory
-        .create_client(&model)
-        .map_err(|e| format!("创建 LLM 客户端失败 ({model}): {e}"))?;
-    let provider = registry
-        .find_model(&model)
-        .map(|(p, _)| p.name.clone())
-        .unwrap_or_default();
+        .create_client_for(&provider, &model)
+        .map_err(|e| format!("创建 LLM 客户端失败 ({provider}:{model}): {e}"))?;
 
     // 与用户全局设置同源的 tool_permissions（只读快照 + 共享实时引用）
     let tool_permissions = *state

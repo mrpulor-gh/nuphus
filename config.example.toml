@@ -75,7 +75,7 @@ supports_streaming = true
 name = "minimax"
 provider_type = "minimax"
 api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-# base_url 省略 → 使用 ProviderType::default_base_url() 的默认值
+# base_url 省略 → 使用 ProviderKind::default_base_url() 的默认值
 
 [[providers.models]]
 id = "MiniMax-M2.7"

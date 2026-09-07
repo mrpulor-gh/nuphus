@@ -358,13 +358,30 @@ impl Compiler {
                     ctx.errors
                         .push(format!("Chat step '{}': message 不能为空", step.name));
                 }
-                // with.model 优先按 registry 模型 ID 路由；不在 registry 时回退裸模型名（warning 提示）
+                // 显式 provider+model 必须存在；旧数据无 provider 时仅允许唯一候选。
                 if let (Some(model_id), Some(registry)) = (&opts.model, ctx.models) {
-                    if registry.find_model(model_id).is_none() {
-                        ctx.warnings.push(format!(
-                            "Chat step '{}': 模型 '{}' 不在 registry 中，执行时将回退为主模型客户端（裸模型名）",
-                            step.name, model_id
-                        ));
+                    if let Some(provider) = &opts.provider {
+                        if registry
+                            .find_model_for_provider(provider, model_id)
+                            .is_none()
+                        {
+                            ctx.errors.push(format!(
+                                "Chat step '{}': 模型 '{}' 不存在于 provider '{}'",
+                                step.name, model_id, provider
+                            ));
+                        }
+                    } else {
+                        match registry.find_model_candidates(model_id).len() {
+                            0 => ctx.warnings.push(format!(
+                                "Chat step '{}': 模型 '{}' 不在 registry 中，执行时无法精确路由",
+                                step.name, model_id
+                            )),
+                            1 => {}
+                            count => ctx.errors.push(format!(
+                                "Chat step '{}': 模型 '{}' 在 registry 中有 {} 个 provider 候选，必须指定 provider",
+                                step.name, model_id, count
+                            )),
+                        }
                     }
                 }
                 if let Some(ref knowledge) = opts.knowledge {

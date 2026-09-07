@@ -498,13 +498,6 @@
 .rating-btn.secondary {
   color: var(--spark-muted);
 }
-
-.empty-state {
-  font-size: var(--fz-md);
-  color: var(--spark-muted);
-  padding: 40px 0;
-  text-align: center;
-}
 /* ── Slash Command Palette ── */
 .cmd-overlay {
   position: fixed;
@@ -706,21 +699,6 @@
   font-size: var(--fz-md);
   outline: none;
 }
-.cmd-modal-btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: var(--fz-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-.cmd-modal-btn:hover {
-  background: var(--accent-hover);
-}
 
 /* ── Model Manager Cards ── */
 .cmd-modal-list {
@@ -755,9 +733,6 @@
   opacity: 0.7;
   pointer-events: none;
 }
-.cmd-modal-card-left {
-  flex-shrink: 0;
-}
 .cmd-modal-provider-icon {
   width: 32px;
   height: 32px;
@@ -770,10 +745,6 @@
   font-weight: 700;
   color: var(--spark-secondary);
   font-family: var(--font-mono);
-}
-.cmd-modal-card-body {
-  flex: 1;
-  min-width: 0;
 }
 .cmd-modal-card-name {
   font-size: var(--fz-md);
@@ -799,23 +770,6 @@
   font-size: var(--fz-xs);
   font-weight: 700;
 }
-.cmd-modal-card-spinner {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.cmd-modal-card-spinner::after {
-  content: '';
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(var(--accent-rgb), 0.25);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: cmdModalSpin 0.6s linear infinite;
-}
 @keyframes cmdModalSpin {
   to {
     transform: rotate(360deg);
@@ -830,45 +784,6 @@
   border-top: 1px solid var(--glass-1);
 }
 
-/* 正面卡片右侧「上下浏览」按钮组：仅预览模型（↑↓），不负责切换——切换 = 点击卡片本身 */
-.cmd-modal-card-peek {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.cmd-modal-card-peek-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 16px;
-  padding: 0;
-  border-radius: 5px;
-  border: 1px solid var(--glass-3);
-  background: var(--surface-2);
-  color: var(--fg-3);
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.cmd-modal-card-peek-btn:hover {
-  background: var(--surface-hover);
-  color: var(--fg-1);
-  border-color: var(--line-3);
-}
-.cmd-modal-card-peek-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.cmd-modal-card-peek-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
 /* ── STT 模型下载进度条（VoiceButton 确认弹窗 / ModelsPage STT 卡片共用，确定性宽度）── */
 .stt-dl-progress {
   height: 4px;
@@ -885,4 +800,239 @@
 .stt-dl-progress-text {
   font-size: var(--fz-xs);
   color: var(--spark-muted);
+}
+
+/* Provider hover model picker: the provider column stays aligned with the mode menu, while the concrete model list opens beside it. */
+/* Anchored submenu refinement: keep the model list attached to the hovered provider row. */
+.model-provider-picker {
+  display: block;
+  gap: 8px;
+  align-items: stretch;
+  min-height: 0;
+}
+.model-provider-list {
+  display: flex;
+  flex: 0 0 170px;
+  flex-direction: column;
+  gap: 3px;
+}
+.model-provider-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: default;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.model-provider-option:hover,
+.model-provider-option.active {
+  background: var(--surface-hover);
+  border-color: var(--line-2);
+}
+.model-provider-option-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.model-provider-option:focus-visible {
+  outline: none;
+  border-color: var(--line-2);
+  box-shadow: var(--shadow-focus);
+}
+.model-provider-models {
+  position: fixed;
+  top: auto;
+  left: auto;
+  z-index: 3;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 236px;
+  min-width: 0;
+  max-height: min(320px, 48vh);
+  overflow-y: auto;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-1);
+  border-radius: 9px;
+  background: var(--void-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+}
+.model-provider-models-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px 6px;
+  border-bottom: 1px solid var(--glass-1);
+  color: var(--spark-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  letter-spacing: 0.02em;
+}
+.model-provider-models-header span:last-child {
+  color: var(--spark-muted);
+  font-variant-numeric: tabular-nums;
+}
+.model-provider-model {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--spark-secondary);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.model-provider-model:hover,
+.model-provider-model:focus-visible,
+.model-provider-model.active {
+  background: var(--surface-hover);
+  border-color: var(--line-2);
+  color: var(--fg-1);
+}
+.model-provider-model:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.model-provider-model:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.model-provider-empty {
+  padding: 10px 7px;
+  color: var(--spark-muted);
+  font-size: var(--fz-xs);
+}
+.model-provider-model-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+.model-provider-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-provider-model-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+  color: var(--spark-muted);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.model-provider-model-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.model-provider-context {
+  color: var(--spark-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* GO 网关模型徽标：模型名旁小字标注 opencode-go，与官方厂商同 id 模型区分。
+   低调样式（细字 + 描边），不抢主文本、不与 active 选中色冲突。 */
+.model-go-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  user-select: none;
+}
+
+/* ── Canvas unified workbench: direct full-screen editor surface ── */
+.canvas-workbench-host {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+}
+.canvas-workbench-host .workflow-workbench {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.canvas-workbench-host .workflow-workbench-header {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 0 18px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line-2);
+}
+.canvas-workbench-host .workflow-workbench-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.canvas-workbench-host .workflow-workbench-close {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* CanvasPage 自带 fixed 编辑层时，将其约束在统一工作台 Header 之下，
+   避免覆盖三种编辑器入口。 */
+.canvas-workbench-host .wfc-page {
+  position: absolute;
+  inset: 48px 0 0;
+  z-index: 0;
+}
+.canvas-workbench-host .wfc-page .wfc-toolbar {
+  z-index: 1;
+}
+.canvas-workbench-host .workflow-workbench-header {
+  position: relative;
+  z-index: 10;
+}
+
+/* Embedded tools stay inside the canvas workbench body; never cover the shared Header. */
+.canvas-workbench-host .tools-page--embedded {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  min-height: 0;
+}
+.canvas-workbench-host .workflow-workbench-body--tools {
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
 }

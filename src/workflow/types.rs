@@ -335,10 +335,12 @@ pub struct ChatOpts {
     pub tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledge: Option<Vec<String>>,
-    /// 内联模型：优先按 registry 模型 ID 路由专属 provider client；
-    /// registry 无此 ID 时回退为裸模型名沿用主模型客户端（向后兼容）
+    /// 内联模型 ID。与 provider 一起构成持久化的精确路由绑定。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// 内联模型所属 provider。缺失时仅对 registry 中唯一的模型候选执行兼容推断。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// 内联模型显示名称
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_display: Option<String>,

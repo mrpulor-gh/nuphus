@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { listen } from '@tauri-apps/api/event'
 import {
   IconSend,
@@ -8,9 +9,8 @@ import {
   IconSparkles,
   IconWrench,
 } from '../../ui/Icons'
-import { Button, IconButton } from '../../ui/Button'
+import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
-import { CompactModal } from '../layout/CompactModal'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { VoiceButton, type VoiceButtonHandle } from './VoiceButton'
@@ -22,6 +22,8 @@ import {
   getActiveCustomAgent,
   setActiveCustomAgent,
   isBusy,
+  getAppendQueue,
+  removeAppendQueueItem,
   type CustomAgentConfig,
 } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
@@ -86,11 +88,15 @@ interface ChatInputBarProps {
   onModelSwitch: () => void
   /** 权限状态（用于 WORKFLOW 模式权限检查） */
   toolPermissions?: { file_access: boolean; web_search: boolean; system_automation: boolean }
-  /** 发送 / 中断 */
+/** 发送 / 中断 */
   onSend: () => void
   onInterrupt?: () => void
+  /** 优雅终止（AI 整理输出后结束）——终止确认弹窗选项 */
+  onGracefulStop?: () => void
   /** Leader 暂停是否禁用（workflow 运行时禁用） */
   isWorkflowRunning?: boolean
+  /** 后端真实追加队列快照 */
+  appendQueue?: string[]
   /** 文件选择 */
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void
   /** 拖拽/粘贴图片时回调（dataUrl → processImageAttachment + 输入框指示） */
@@ -153,9 +159,11 @@ export function ChatInputBar({
   defaultEffort,
   onEffortChange,
   onModelSwitch,
-  onSend,
+onSend,
   onInterrupt,
+  onGracefulStop,
   isWorkflowRunning,
+  appendQueue = [],
   onFileSelect,
   onImageAttach,
   projectDir,
@@ -296,9 +304,27 @@ export function ChatInputBar({
   // ⚠️ 完成感知必须事件驱动：仅靠 1.5s 轮询，执行完成后终止按钮会延迟 1.5~3s
   // 才变回发送（后端 busy=false 在收尾 guard drop，晚于 execution_completed 事件）。
   const [backendBusy, setBackendBusy] = useState(false)
+  const [appendQueueState, setAppendQueueState] = useState<string[]>([])
   // 执行态合成：事件驱动（isProcessing，即时）∨ 后端权威（backendBusy，挂载即查、刷新/HMR 后可恢复）。
   // 与后端执行强绑定的 UI 锁（mode 切换等）必须用它——纯事件 state 在界面刷新后丢失会导致锁失效。
   const executing = isProcessing || backendBusy
+  // 追加队列只属于当前执行轮次。完成事件到达后即隐藏，即使后端 busy 标志
+  // 因收尾稍晚才变为 false，也不能让旧轮询快照把已消费消息重新显示出来。
+  const [appendExecutionFinished, setAppendExecutionFinished] = useState(false)
+  // 后端轮询/消费事件是唯一显示真源；不能回退到父级旧快照，否则删除或消费后
+  // 旧 prop 会把消息重新显示出来，造成「删除无效」的假象。
+  const visibleAppendQueue = !appendExecutionFinished && executing ? appendQueueState : []
+  const handleRemoveAppend = async (index: number) => {
+    try {
+      const remaining = await removeAppendQueueItem(index)
+      setAppendQueueState(remaining ?? [])
+    } catch {
+      // 消费竞态：消息已被后端取走时保持下一次事件/轮询的权威快照。
+      void getAppendQueue()
+        .then(messages => setAppendQueueState(messages ?? []))
+        .catch(() => {})
+    }
+  }
   // 终止确认弹窗：应用内模态（window.confirm 在 Tauri WebView 中被屏蔽不弹窗），防误触
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
   useEffect(() => {
@@ -323,6 +349,11 @@ export function ChatInputBar({
                 if (!cancelled) setBackendBusy(b === true)
               })
               .catch(() => {})
+            getAppendQueue()
+              .then(messages => {
+                if (!cancelled) setAppendQueueState(messages ?? [])
+              })
+              .catch(() => {})
           }, 1500)
         } else if (!busy && timer) {
           clearInterval(timer)
@@ -331,6 +362,11 @@ export function ChatInputBar({
       } catch {
         /* 后端不可达：保持当前状态，等待下次触发 */
       }
+    }
+    const refreshAppendQueue = () => {
+      getAppendQueue()
+        .then(messages => setAppendQueueState(messages ?? []))
+        .catch(() => {})
     }
     // 执行完成/失败事件 → 立即刷新 busy（消除 1.5s 轮询间隔延迟）；
     // 若后端收尾未完成（busy 仍 true），300ms 快速轮询跟到 false。
@@ -358,13 +394,25 @@ export function ChatInputBar({
       // （useEvents 经 bridge 已解包，此处需要多剥一层）
       const p = payload as { payload?: { event?: { type?: string } } }
       const type = p?.payload?.event?.type
-      if (type === 'execution_started') void check()
-      else if (type === 'execution_completed' || type === 'execution_error') onExecFinished()
+      const event = p?.payload?.event as { type?: string; messages?: string[] } | undefined
+      if (type === 'execution_started') {
+        setAppendExecutionFinished(false)
+        void check()
+        refreshAppendQueue()
+      } else if (type === 'append_queue_updated') {
+        // 消费端发出的空快照是权威的：已插入当前执行轮次的消息不再计入角标。
+        setAppendQueueState(Array.isArray(event?.messages) ? event.messages : [])
+      } else if (type === 'execution_completed' || type === 'execution_error') {
+        setAppendExecutionFinished(true)
+        setAppendQueueState([])
+        onExecFinished()
+      }
     }
     void listen<unknown>('nuphus-event', onNuphusEvent).then(u => {
       if (!cancelled) unlisteners.push(u)
     })
     void check()
+    refreshAppendQueue()
     return () => {
       cancelled = true
       if (timer) clearInterval(timer)
@@ -563,7 +611,7 @@ export function ChatInputBar({
     [onEffortChange],
   )
 
-  // 当前模型支持推理深度时（supportedEfforts 非空）才显示入口
+  // reasoning_efforts 是唯一能力契约；未声明时不显示可配置旋钮，避免伪造等级。
   const effortAvailable = supportedEfforts.length > 0
 
   // WORKFLOW mode requires system_automation permission
@@ -663,7 +711,6 @@ export function ChatInputBar({
   const cacheHit = usage?.cacheHitTokens || 0
   const cacheTotal = usage?.inputTokens || 0
   const cacheRate = cacheTotal > 0 ? (cacheHit / cacheTotal) * 100 : -1
-  const cacheColor = cacheRate > 60 ? '#22c55e' : cacheRate > 30 ? '#f59e0b' : '#ef4444'
   const execTokens = (execTokenUsage?.inputTokens || 0) + (execTokenUsage?.outputTokens || 0)
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
@@ -957,12 +1004,14 @@ export function ChatInputBar({
             // 仅 workflow 权限锁定 / 暂停等待决策时禁用。
             disabled={workflowLocked || !!pauseState}
           />
-          {/* 发送 / 终止按钮三态：
+{/* 发送 / 终止按钮三态：
                   执行中（仅后端 is_busy 判断）且输入框无任何内容（含语音 partial）→ 终止按钮（可点，终止当前执行）；
                   执行中 + 有内容 → 发送按钮（追加指令）；
                   空闲 + 空内容 → 发送按钮灰显（待命）；
-                  空闲 + 有内容 → 发送按钮高亮 */}
-          {backendBusy && !input.trim() && !voicePartial ? (
+                  空闲 + 有内容 → 发送按钮高亮；
+                  完成事件已到达（execution_completed/error）→ 即使后端收尾 busy 仍 true，
+                  终止按钮也立即隐藏——agent 主循环已结束，收尾阶段不可中断，避免按钮滞留 1~3s */}
+          {backendBusy && !appendExecutionFinished && !input.trim() && !voicePartial ? (
             <IconButton
               variant="input-send"
               className="interrupt"
@@ -1242,6 +1291,12 @@ export function ChatInputBar({
                 <span className="input-bar-ctx-detail">
                   {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
                       cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
+                  {cacheRate >= 0 && (
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">cache</span>
+                      <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
+                    </span>
+                  )}
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">tok</span>
                     <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
@@ -1253,12 +1308,6 @@ export function ChatInputBar({
                       {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
                     </span>
                   </span>
-                  {cacheRate >= 0 && (
-                    <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">cache</span>
-                      <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
-                    </span>
-                  )}
                   <span className="input-bar-ctx-row">
                     <span className="input-bar-ctx-detail-label">step</span>
                     <span className="input-bar-ctx-value">{totalCalls || 0}</span>
@@ -1274,32 +1323,127 @@ export function ChatInputBar({
         </div>
       </div>
 
-      {/* 终止确认弹窗：应用内模态，防误触（Tauri 屏蔽 window.confirm，必须用应用内 UI） */}
-      <CompactModal
-        open={stopConfirmOpen}
-        onClose={() => setStopConfirmOpen(false)}
-        title={t('input.interruptTitle')}
-        size="sm"
-        className="compact-modal--fit"
-        footer={
-          <>
-            <Button variant="default" onClick={() => setStopConfirmOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                setStopConfirmOpen(false)
-                onInterrupt?.()
-              }}
+      {/* message 状态栏竖条：附着输入壳右外侧，承载追加消息队列（含角标） */}
+      {visibleAppendQueue.length > 0 && (
+        <div className="input-append-queue-rail">
+          <div className="input-append-queue-wrap">
+            <IconButton
+              variant="raw"
+              className="input-append-queue-btn"
+              label="查看追加消息队列"
+              title="查看追加消息队列"
+              aria-label="查看追加消息队列"
             >
-              {t('input.interrupt')}
-            </Button>
-          </>
-        }
-      >
-        <p style={{ margin: 0 }}>{t('input.forceStopConfirm')}</p>
-      </CompactModal>
+              <svg
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M8 6h13" />
+                <path d="M8 12h13" />
+                <path d="M8 18h13" />
+                <path d="M3 6h.01" />
+                <path d="M3 12h.01" />
+                <path d="M3 18h.01" />
+              </svg>
+            </IconButton>
+            <span className="input-append-queue-badge">
+              {visibleAppendQueue.length > 99 ? '99+' : visibleAppendQueue.length}
+            </span>
+            <div
+              className="input-append-queue-popover"
+              role="dialog"
+              aria-label="消息已添加，等待队列消费"
+            >
+              <div className="input-append-queue-hint">消息已添加，等待队列消费</div>
+              {visibleAppendQueue.map((message, index) => (
+                <div
+                  className="input-append-queue-item"
+                  key={`${index}-${message}`}
+                  title={message}
+                >
+                  <span>{message}</span>
+                  <button
+                    type="button"
+                    className="input-append-queue-remove"
+                    onClick={() => void handleRemoveAppend(index)}
+                    aria-label="删除追加消息"
+                    title="删除"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+{/* 终止选项弹窗：复用权限/refine 弹窗选择样式（compact-overlay + 选项行）。
+          提供：继续执行 / 优雅终止（AI 整理输出后结束）/ 强制终止（立即中断）。
+          追加功能已迁输入框（执行中发送 = 追加），此处不再提供追加选项。 */}
+      {stopConfirmOpen &&
+        createPortal(
+          <div className="compact-overlay" style={{ zIndex: 210 }} onClick={() => setStopConfirmOpen(false)}>
+            <div
+              className="compact-modal compact-modal--sm compact-modal--fit"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="compact-header">
+                <span className="compact-header-title">{t('input.stopChooseTitle')}</span>
+              </div>
+              <div className="compact-divider" />
+              <div className="compact-body">
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--spark-secondary)',
+                    lineHeight: 1.5,
+                    marginBottom: 10,
+                    opacity: 0.85,
+                  }}
+                >
+                  {t('input.forceStopConfirm')}
+                </div>
+<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {[
+                    { id: 'continue', textKey: 'input.stopContinue', descKey: 'input.stopContinueDesc' },
+                    { id: 'graceful', textKey: 'input.stopGraceful', descKey: 'input.stopGracefulDesc' },
+                    { id: 'force', textKey: 'input.stopForce', descKey: 'input.stopForceDesc' },
+                  ].map(opt => (
+                    <div
+                      key={opt.id}
+                      className="compact-option-btn"
+                      onClick={() => {
+                        setStopConfirmOpen(false)
+                        if (opt.id === 'continue') return
+                        if (opt.id === 'graceful') onGracefulStop?.()
+                        else onInterrupt?.()
+                      }}
+                    >
+                      <div
+                        className="compact-option-label"
+                        style={
+                          opt.id === 'force' ? { color: 'var(--danger, #ef4444)' } : undefined
+                        }
+                      >
+                        {t(opt.textKey)}
+                      </div>
+                      <div className="compact-option-desc">{t(opt.descKey)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

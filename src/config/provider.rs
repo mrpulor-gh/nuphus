@@ -2,16 +2,16 @@
 //!
 //! Contract: `docs/refactor/2026-07-11-model-layer-pi-style.md` §4.1
 //!
-//! All 12 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
-//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local) are implemented
-//! under `config/providers/`.
+//! All 13 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
+//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local, OpenCode Go) are
+//! implemented under `config/providers/`.
 //!
 //! All accessor methods carry a safe default body so that an empty stub
 //! implementation (`impl Provider for EmptyStub {}`) compiles. The
 //! `transport()` method deliberately panics — a concrete Provider must
 //! override it before any real traffic flows.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::transports::Transport;
@@ -132,6 +132,26 @@ impl Default for ProviderQuirks {
     }
 }
 
+/// Protocol family used to reach a Provider's API.
+///
+/// Routing metadata, dispatched since P4 (refactor design §4.3 / §7 of
+/// `docs/refactor/2026-09-06-model-routing-auth-system.md`): Providers
+/// *declare* their protocol via [`Provider::default_transport`] /
+/// [`Provider::transport_for`], and `ClientFactory::build_transport` constructs
+/// from the resolved kind — `Responses` builds `ResponsesTransport` in the
+/// factory; `ChatCompletions` / `Anthropic` still delegate to the legacy
+/// [`Provider::transport`] path (13-provider status quo).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransportKind {
+    /// OpenAI-compatible chat protocol — POST `{base}/chat/completions`.
+    ChatCompletions,
+    /// Anthropic Messages protocol — POST `{base}/v1/messages`.
+    Anthropic,
+    /// OpenAI Responses protocol (SSE) — POST `{base}/responses`.
+    Responses,
+}
+
 /// LLM Provider abstraction.
 ///
 /// Each concrete Provider (DeepSeek, Kimi, OpenAI, …) owns its metadata,
@@ -195,6 +215,26 @@ pub trait Provider: Send + Sync {
         ProviderQuirks::default()
     }
 
+    /// Default protocol family for this Provider.
+    ///
+    /// Used when no per-model dispatch is declared. Most chat providers do not
+    /// override this → `ChatCompletions` (status quo). `anthropic.rs`
+    /// overrides it to `Anthropic` to mirror its existing `transport()`
+    /// implementation.
+    fn default_transport(&self) -> TransportKind {
+        TransportKind::ChatCompletions
+    }
+
+    /// Resolve the protocol family for a concrete model id.
+    ///
+    /// Defaults to [`Self::default_transport`]. Only Providers with a
+    /// per-model-family dispatch table (opencode-go responses/anthropic
+    /// families) override this. The resolved kind drives transport
+    /// construction via the P4 dispatch in `ClientFactory::build_transport`.
+    fn transport_for(&self, _model_id: &str) -> TransportKind {
+        self.default_transport()
+    }
+
     /// Build a Transport bound to the supplied user config and model id.
     /// Concrete Providers return either a `ChatCompletionsTransport` or the
     /// Anthropic Messages API transport. Must be overridden.
@@ -204,5 +244,86 @@ pub trait Provider: Send + Sync {
              (Phase 1 stub — Provider files arrive in Phase 2 of \
              docs/refactor/2026-07-11-model-layer-pi-style.md)"
         )
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TransportKind serde kebab-case roundtrip (P1 routing metadata contract).
+    #[test]
+    fn transport_kind_serde_roundtrip() {
+        let cases = [
+            (TransportKind::ChatCompletions, "chat-completions"),
+            (TransportKind::Anthropic, "anthropic"),
+            (TransportKind::Responses, "responses"),
+        ];
+        for (kind, text) in cases {
+            let s = serde_json::to_string(&kind).unwrap();
+            assert_eq!(s, format!("\"{}\"", text), "serialize {}", text);
+            let back: TransportKind = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, kind, "roundtrip {}", text);
+            // TOML roundtrip：实际形态是 providers.toml 中某字段 = "chat-completions"
+            // 等 kebab-case 字符串（config-layer 经 serde 反序列化），故用字段
+            // wrapper 承载而非裸 enum 顶层解析。
+            #[derive(serde::Deserialize)]
+            struct KindField {
+                transport: TransportKind,
+            }
+            let via_toml: KindField =
+                toml::from_str(&format!("transport = \"{}\"\n", text)).unwrap();
+            assert_eq!(via_toml.transport, kind, "toml roundtrip {}", text);
+        }
+    }
+
+    /// anthropic.rs is the only Provider that overrides default_transport —
+    /// it must declare Anthropic to mirror its AnthropicTransport transport().
+    #[test]
+    fn anthropic_default_transport_is_anthropic() {
+        let p = crate::config::providers::AnthropicProvider;
+        assert_eq!(p.default_transport(), TransportKind::Anthropic);
+        // No per-model dispatch declared → transport_for falls back to default.
+        assert_eq!(p.transport_for("claude-sonnet-5"), TransportKind::Anthropic);
+        assert_eq!(p.transport_for("anything"), TransportKind::Anthropic);
+    }
+
+    /// Every other built-in Provider keeps the ChatCompletions default.
+    #[test]
+    fn chat_providers_default_to_chat_completions() {
+        use crate::config::providers::{
+            ByteDanceProvider, CustomProvider, DeepSeekProvider, GoogleProvider, KimiProvider,
+            LocalProvider, MiniMaxProvider, OpenAIProvider, OpenCodeGoProvider, OpenRouterProvider,
+            QwenProvider, ZhipuProvider,
+        };
+        let providers: Vec<Box<dyn Provider>> = vec![
+            Box::new(ByteDanceProvider),
+            Box::new(CustomProvider),
+            Box::new(DeepSeekProvider),
+            Box::new(GoogleProvider),
+            Box::new(KimiProvider),
+            Box::new(LocalProvider),
+            Box::new(MiniMaxProvider),
+            Box::new(OpenAIProvider),
+            Box::new(OpenCodeGoProvider),
+            Box::new(OpenRouterProvider),
+            Box::new(QwenProvider),
+            Box::new(ZhipuProvider),
+        ];
+        for p in &providers {
+            assert_eq!(
+                p.default_transport(),
+                TransportKind::ChatCompletions,
+                "provider {} must keep ChatCompletions default",
+                p.id()
+            );
+            // transport_for: 未覆写的 provider（P4 后仅 opencode-go 覆写）
+            // 一律落回 default_transport；这里用 "any-model" 断言兜底路径。
+            assert_eq!(
+                p.transport_for("any-model"),
+                p.default_transport(),
+                "transport_for must default to default_transport for {}",
+                p.id()
+            );
+        }
     }
 }

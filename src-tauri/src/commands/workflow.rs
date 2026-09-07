@@ -172,29 +172,24 @@ pub async fn wf_save(
 /// wf_run 与 plugin_workflow_run 共用（对齐 workflow_agent 执行前注入逻辑）；
 /// 调用方须已持有 workflow_engine 的写锁。
 pub fn inject_workflow_runtime(state: &AppState, engine: &mut nuphus::workflow::WorkflowEngine) {
-    let llm_config = state
-        .runtime
-        .lock()
-        .ok()
-        .and_then(|g| g.llm_config.clone())
-        .filter(|c| !c.model.is_empty() && !c.api_key.is_empty());
     engine.set_tools(std::sync::Arc::new(state.tools.clone()));
-    // 完整 registry 工厂：chat 步骤 with.model 按模型 ID 路由专属 provider
+    // Both the workflow default client and per-step factory use the complete
+    // provider+model binding. This avoids model-only lookup when names collide.
     if let Ok(full_registry) = nuphus::config::load_registry() {
-        engine.set_client_factory(nuphus::llm::ClientFactory::new(full_registry));
-    }
-    if let Some(cfg) = llm_config {
-        let registry = nuphus::config::ModelRegistry::from_single(
-            cfg.model.clone(),
-            cfg.provider.clone(),
-            cfg.api_key.clone(),
-            cfg.base_url.clone(),
-            cfg.reasoning_effort.clone(),
-        );
-        let factory = nuphus::llm::ClientFactory::new(registry);
-        match factory.create_main_client() {
-            Ok(client) => engine.set_llm_client(client),
-            Err(e) => tracing::warn!("[workflow] Failed to create LLM client: {}", e),
+        let factory = nuphus::llm::ClientFactory::new(full_registry);
+        engine.set_client_factory(factory.clone());
+        match crate::commands::config::llm::effective_model_binding(
+            &state.llm_config_path,
+            factory.registry(),
+            "workflow",
+        ) {
+            Ok((provider, model)) => match factory.create_client_for(&provider, &model) {
+                Ok(client) => engine.set_llm_client(client),
+                Err(e) => tracing::warn!(
+                    "[workflow] Failed to create bound client ({provider}:{model}): {e}"
+                ),
+            },
+            Err(e) => tracing::warn!("[workflow] No workflow provider+model binding: {e}"),
         }
     }
 }

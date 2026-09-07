@@ -770,21 +770,34 @@ export function Inspector({
                 <span className="wfc-field-label">模型（registry 模型 ID）</span>
                 <select
                   className="wfc-input"
-                  value={typeof chatWith.model === 'string' ? chatWith.model : ''}
+                  value={
+                    typeof chatWith.model === 'string'
+                      ? `${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`
+                      : ''
+                  }
                   disabled={readOnly}
-                  onChange={e => patchChatWith('model', e.target.value || undefined)}
+                  onChange={e => {
+                    const [provider, ...modelParts] = e.target.value.split('::')
+                    const model = modelParts.join('::')
+                    const next = { ...chatWith }
+                    if (model) next.model = model
+                    else delete next.model
+                    if (provider) next.provider = provider
+                    else delete next.provider
+                    patchActionKey('with', next)
+                  }}
                 >
                   <option value="">默认（主模型）</option>
                   {models.map(m => (
-                    <option key={m.id} value={m.id}>
+                    <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
                       {m.id} · {m.provider}
                     </option>
                   ))}
                   {typeof chatWith.model === 'string' &&
                     chatWith.model !== '' &&
                     !models.some(m => m.id === chatWith.model) && (
-                      <option value={chatWith.model}>
-                        {chatWith.model}（不在 registry，按裸模型名回退主模型）
+                      <option value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}>
+                        {chatWith.model}（不在 registry）
                       </option>
                     )}
                 </select>

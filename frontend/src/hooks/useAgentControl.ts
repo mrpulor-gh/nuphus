@@ -52,9 +52,11 @@ export interface AgentControlDeps {
   setMode: (v: string) => void
   // Refs
   messagesRef: React.MutableRefObject<any[]>
-  streamingMsgId: React.MutableRefObject<string | null>
+streamingMsgId: React.MutableRefObject<string | null>
   lastStreamingMsgId: React.MutableRefObject<string | null>
   executionActiveRef: React.MutableRefObject<boolean>
+  /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
+  interruptedRef: React.MutableRefObject<boolean>
   // Callbacks
   showToast: (msg: string, type?: Toast['type']) => void
   setMood: (m: MoodState) => void
@@ -89,9 +91,10 @@ export function useAgentControl(deps: AgentControlDeps) {
     setPauseState,
     setMode: setModeState,
     messagesRef,
-    streamingMsgId,
+streamingMsgId,
     lastStreamingMsgId,
     executionActiveRef,
+    interruptedRef,
     showToast,
     setMood,
     removeRetryErrorBubble,
@@ -272,13 +275,18 @@ export function useAgentControl(deps: AgentControlDeps) {
     showToast('Graceful stop requested', 'info')
   }, [showToast])
 
-  // ── handleInterrupt ──
+// ── handleInterrupt ──
   const handleInterrupt = useCallback(async () => {
     await interrupt()
+    // 置位中断标记：后端 cancel_flag 是异步收敛（下个检查点才真正停），
+    // 期间迟到的 tool_call_start 事件不得再把 mood 打回执行中；
+    // 后端真正停止后会发 execution_error("任务已被用户中断") 完成最终收敛。
+    interruptedRef.current = true
+    setMood('idle')
     showToast('Interrupted', 'info')
     setIsProcessing(false)
     setCompleted(true)
-  }, [showToast])
+  }, [showToast, setMood, interruptedRef])
 
   // ── handleWfPause ──
   const handleWfPause = useCallback(async () => {

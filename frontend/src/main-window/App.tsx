@@ -35,6 +35,7 @@ import {
   IconGrid,
   IconMessageCircle,
   IconCpu,
+  IconRefresh,
 } from '../ui/Icons'
 import { CommandPalette } from '../ui/CommandPalette'
 import { useLanguage } from '../locales'
@@ -83,7 +84,6 @@ const ExternalAgentsPage = lazy(() =>
   import('./pages/ExternalAgentsPage').then(m => ({ default: m.ExternalAgentsPage })),
 )
 const McpPage = lazy(() => import('./pages/McpPage').then(m => ({ default: m.McpPage })))
-const ToolsPage = lazy(() => import('./tools/ToolsPage').then(m => ({ default: m.ToolsPage })))
 const HelpPage = lazy(() => import('./pages/HelpPage').then(m => ({ default: m.HelpPage })))
 const PlannerModal = lazy(() =>
   import('./components/PlannerModal').then(m => ({ default: m.PlannerModal })),
@@ -97,14 +97,8 @@ const ApprovalModal = lazy(() =>
 const WorkflowPage = lazy(() =>
   import('./workflow/WorkflowPage').then(m => ({ default: m.WorkflowPage })),
 )
-const CanvasPage = lazy(() =>
-  import('./workflow-canvas/CanvasPage').then(m => ({ default: m.CanvasPage })),
-)
-const CanvasHubPage = lazy(() =>
-  import('./canvases/CanvasHubPage').then(m => ({ default: m.CanvasHubPage })),
-)
-const UiPrototypeCanvas = lazy(() =>
-  import('./canvases/ui-prototype/UiPrototypeCanvas').then(m => ({ default: m.UiPrototypeCanvas })),
+const CanvasWorkbenchPage = lazy(() =>
+  import('./workflow/CanvasWorkbenchPage').then(m => ({ default: m.CanvasWorkbenchPage })),
 )
 // ── 插件市场体系不开源阶段：入口仅展示筹备提示（PluginComingSoon）。
 //    市场 ready 后恢复下面两个 lazy 声明与挂载块即可（可逆）。
@@ -123,6 +117,7 @@ const AppShellPage = lazy(() =>
 const SnakeGamePage = lazy(() =>
   import('./pages/SnakeGame/SnakeGame').then(m => ({ default: m.default })),
 )
+const UpdatePage = lazy(() => import('./pages/UpdatePage').then(m => ({ default: m.UpdatePage })))
 
 export default function App() {
   // ── Hooks ──
@@ -161,56 +156,11 @@ export default function App() {
   // ── Keyboard shortcuts (Ctrl+K opens cmd palette from s.cmdItems) ──
   const [runWorkflow, setRunWorkflow] = useState<WorkflowItem | null>(null)
   const [wfRunning, setWfRunning] = useState(false)
-  // ── 工作流节点画布（Pro 位；全屏覆盖层，无路由——主窗口不用 react-router）──
-  const [canvasWorkflowId, setCanvasWorkflowId] = useState<string | null>(null)
   // ── 输入栏 workflow 扳手菜单「工作流画布」直达（2026-09-03 大王定稿）：
   //    有未完成（draft）工作流 → 续编最近草稿；否则新建空白工作流并进入画布。
   //    闸门铁律同 WorkflowPage：任意执行态禁止进入画布（点击级 gate 复核）。──
   const handleWorkflowCanvasDirect = async () => {
-    try {
-      const { listWorkflows, wfGateStatus, wfSave } = await import('./lib/api')
-      const gate = (await wfGateStatus()) ?? { locked: false, reason: 'idle' }
-      if (gate.locked) {
-        s.showToast(
-          gate.reason === 'workflow'
-            ? '工作流正在执行中，暂不可用！'
-            : '当前有任务执行中，暂不可用！',
-          'warning',
-        )
-        return
-      }
-      const list = (await listWorkflows()) ?? []
-      const drafts = list
-        .filter(w => w.status === 'draft')
-        .sort((a, b) => b.updated_at - a.updated_at)
-      if (drafts[0]) {
-        setCanvasWorkflowId(drafts[0].id)
-        return
-      }
-      // 无草稿 → 新建空白工作流并入画布（对齐 WorkflowPage.handleCanvasNew：
-      // status 必须 PascalCase——后端 WorkflowStatus serde 枚举无 rename）
-      const id = crypto.randomUUID()
-      const resp = await wfSave({
-        id,
-        name: '未命名工作流',
-        status: 'Draft',
-        steps: [],
-        doc: null,
-        schedule: null,
-        run_history: [],
-        dry_run: false,
-      })
-      if (!resp?.saved) {
-        s.showToast(
-          (resp?.report?.errors as string[] | undefined)?.join('；') || '工作流创建失败，请重试',
-          'warning',
-        )
-        return
-      }
-      setCanvasWorkflowId(id)
-    } catch {
-      s.showToast('打开工作流画布失败，请重试', 'warning')
-    }
+    s.setShowCanvas(true)
   }
   /** 输入栏 workflow 扳手菜单「工作流列表」：等同 Ctrl+K → 工作流（WorkflowPage 弹窗） */
   const handleOpenWorkflowList = () => s.setShowWorkflow(true)
@@ -219,14 +169,11 @@ export default function App() {
   // ── 宿主最小化态：true 时 AppShellPage 保持挂载但 visibility 隐藏（iframe 保活），
   //    主窗口输入框 dock 左侧悬浮 PluginRestoreFab 点击恢复 ──
   const [pluginMinimized, setPluginMinimized] = useState(false)
-  // ── UI 原型画布全屏（Canvas Hub 进入）──
-  const [showUiProto, setShowUiProto] = useState(false)
   // ── Desktop toolbar (Ctrl+U) ──
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
-    'canvas-hub': <IconPalette size={14} />,
-    'ui-prototype': <IconPalette size={14} />,
+    canvas: <IconPalette size={14} />,
     memories: <IconHistory size={14} />,
     skills: <IconWrench size={14} />,
     knowledge: <IconFile size={14} />,
@@ -244,7 +191,7 @@ export default function App() {
     'force-reset': <IconX size={14} />,
     help: <IconKeyboard size={14} />,
     'external-agents': <IconCpu size={14} />,
-    tools: <IconWrench size={14} />,
+    'check-update': <IconRefresh size={14} />,
   }
   useKeyboard([
     { key: 'k', ctrl: true, handler: () => s.setCmdPaletteOpen((p: boolean) => !p) },
@@ -347,6 +294,7 @@ export default function App() {
               pauseState={s.pauseState}
               onContinue={s.handleContinue}
               onAppendInstruction={s.handleAppendInstruction}
+              appendQueue={s.appendQueue}
               onTerminate={s.handleTerminate}
               onApproveSecurity={() => s.setSecurity(null)}
               onRejectSecurity={() => s.setSecurity(null)}
@@ -389,6 +337,9 @@ export default function App() {
                 switch (id) {
                   case 'workflows':
                     s.setShowWorkflow(true)
+                    break
+                  case 'canvas':
+                    s.setShowCanvas(true)
                     break
                   case 'memories':
                     s.setShowMemories(true)
@@ -440,9 +391,6 @@ export default function App() {
                     break
                   case 'external-agents':
                     s.setShowExternalAgents(true)
-                    break
-                  case 'tools':
-                    s.setShowTools(true)
                     break
                 }
               }}
@@ -668,23 +616,36 @@ export default function App() {
               <SkillsPage />
             </Suspense>
           </CompactModal>
-          <CompactModal
-            open={s.showModels}
-            onClose={() => {
-              s.setShowModels(false)
-              s.refreshModelInfo()
-            }}
-            title={t('app.models')}
-            icon={<IconBrain size={14} />}
-            size="md"
-          >
+          {/* ── 模型管理：全屏整页（模型页整页化样板；左侧 X = 关页 + 刷新模型信息；X 左置避免与右上窗口控制重叠误关） ── */}
+          {s.showModels && (
             <Suspense fallback={null}>
-              <ModelsPage
-                onClose={() => s.setShowModels(false)}
-                onModelChanged={() => s.refreshModelInfo()}
-              />
+              <div className="models-page-host">
+                <div className="models-page-bar">
+                  <IconButton
+                    variant="modal-close"
+                    label="关闭"
+                    className="models-page-close"
+                    onClick={() => {
+                      s.setShowModels(false)
+                      s.refreshModelInfo()
+                    }}
+                  >
+                    <IconX size={14} />
+                  </IconButton>
+                  <span className="models-page-title">{t('app.models')}</span>
+                </div>
+                <div className="models-page-body">
+                  <ModelsPage
+                    onClose={() => {
+                      s.setShowModels(false)
+                      s.refreshModelInfo()
+                    }}
+                    onModelChanged={() => s.refreshModelInfo()}
+                  />
+                </div>
+              </div>
             </Suspense>
-          </CompactModal>
+          )}
           <CompactModal
             open={s.showThemes}
             onClose={() => s.setShowThemes(false)}
@@ -705,6 +666,17 @@ export default function App() {
           >
             <Suspense fallback={null}>
               <ProjectPage onClose={() => s.setShowProject(false)} />
+            </Suspense>
+          </CompactModal>
+          <CompactModal
+            open={s.showUpdate}
+            onClose={() => s.setShowUpdate(false)}
+            title={t('app.update')}
+            icon={<IconRefresh size={14} />}
+            size="sm"
+          >
+            <Suspense fallback={null}>
+              <UpdatePage />
             </Suspense>
           </CompactModal>
           <CompactModal
@@ -791,12 +763,6 @@ export default function App() {
               <McpPage onClose={() => s.setShowMcp(false)} />
             </Suspense>
           </CompactModal>
-          {/* ── 工具页：应用内全屏覆盖层（对齐 preview 壳，非弹窗；图片/视频预览放得下） ── */}
-          {s.showTools && (
-            <Suspense fallback={null}>
-              <ToolsPage onClose={() => s.setShowTools(false)} />
-            </Suspense>
-          )}
           {/* ── 插件市场：筹备提示弹窗（市场体系不开源阶段；市场 ready 后恢复 PluginAppsPage 全屏面板）── */}
           <CompactModal
             open={s.showPlugins}
@@ -843,47 +809,14 @@ export default function App() {
               <WorkflowPage
                 onClose={() => s.setShowWorkflow(false)}
                 onRunClick={wf => setRunWorkflow(wf)}
-                onCanvasClick={wf => {
-                  // 画布是全屏目的地：关闭列表弹窗，避免双层堆叠
-                  s.setShowWorkflow(false)
-                  setCanvasWorkflowId(wf.id)
-                }}
+                onCanvasClick={() => s.setShowCanvas(true)}
               />
             </Suspense>
           </CompactModal>
-          {/* ── 工作流节点画布：全屏覆盖层 ── */}
-          {canvasWorkflowId && (
+          {s.showCanvas && (
             <Suspense fallback={null}>
-              <CanvasPage workflowId={canvasWorkflowId} onClose={() => setCanvasWorkflowId(null)} />
-            </Suspense>
-          )}
-          {/* ── 画布中心（Ctrl+K → 画布）：全屏覆盖层 ── */}
-          {s.showCanvasHub && (
-            <Suspense fallback={null}>
-              <CanvasHubPage
-                onClose={() => s.setShowCanvasHub(false)}
-                onOpenWorkflow={() => void handleWorkflowCanvasDirect()}
-                onOpenUiPrototype={() => setShowUiProto(true)}
-              />
-            </Suspense>
-          )}
-          {/* ── UI 原型画布：全屏覆盖层（Canvas 平台首个移植画布）── */}
-          {showUiProto && (
-            <Suspense fallback={null}>
-              <div className="canvas-page-host">
-                <div className="canvas-page-bar">
-                  <button
-                    type="button"
-                    className="canvas-page-back"
-                    onClick={() => setShowUiProto(false)}
-                  >
-                    ← 返回
-                  </button>
-                  <span className="canvas-page-title">UI 原型设计</span>
-                </div>
-                <div className="canvas-page-body">
-                  <UiPrototypeCanvas />
-                </div>
+              <div className="canvas-workbench-host">
+                <CanvasWorkbenchPage onClose={() => s.setShowCanvas(false)} />
               </div>
             </Suspense>
           )}

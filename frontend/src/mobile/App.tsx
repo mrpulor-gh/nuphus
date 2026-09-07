@@ -113,6 +113,8 @@ export default function App() {
   /** boot 超时兜底：连接模式判定卡住（隧道半死/慢）时不再无限白屏——
    *  超时后显示错误界面（重试/重新配对），给用户可见出口（2026-08-25 白屏根治）。 */
   const [bootTimeout, setBootTimeout] = useState(false)
+  /** 启动失败页上的 WLAN 回退反馈；该页早于 ChatScreen 渲染，不能依赖 NavBar/toast。 */
+  const [bootLanError, setBootLanError] = useState<string | null>(null)
   /** 历史拉取失败自动重试：timer + 退避计数（指数退避 3s→30s 上限，中继慢/半死时自愈） */
   const historyRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const historyRetryAttemptRef = useRef(0)
@@ -1029,11 +1031,40 @@ export default function App() {
     // boot 超时兜底：不再无限白屏——给「重试」与「重新配对」两个可见出口。
     // 重试 = 重新加载页面（隧道恢复后即正常进入）；重新配对 = 清 token 回配对页。
     if (bootTimeout) {
+      const switchBootToLan = async () => {
+        if (!token) return
+        setBootLanError(t('mobile.networkSwitchLanBusy'))
+        try {
+          const lanUrl = await resolveLanUrl()
+          if (!lanUrl) {
+            setBootLanError(t('mobile.lanSwitchNoUrl'))
+            return
+          }
+          const probe = await probeLanDirect(lanUrl, token)
+          if (probe === 'timeout') {
+            setBootLanError(t('mobile.lanSwitchFailed'))
+            return
+          }
+          // 与正常网络中心相同的真实路径：先切换当前通道状态，再以 token 导航到 WLAN。
+          switchToLan(lanUrl)
+          doLanJump(lanUrl)
+        } catch {
+          setBootLanError(t('mobile.lanSwitchFailed'))
+        }
+      }
       return (
         <div className="mobile-boot mobile-boot-error">
           <div className="mobile-boot-card">
             <h2>{t('mobile.bootTimeoutTitle')}</h2>
             <p>{t('mobile.bootTimeoutDesc')}</p>
+            <button
+              type="button"
+              className="mobile-boot-btn is-secondary"
+              disabled={bootLanError === t('mobile.networkSwitchLanBusy')}
+              onClick={() => void switchBootToLan()}
+            >
+              {bootLanError || t('mobile.networkSwitchLan')}
+            </button>
             <div className="mobile-boot-actions">
               <button
                 type="button"

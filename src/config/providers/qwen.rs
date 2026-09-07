@@ -10,7 +10,7 @@ impl Provider for QwenProvider {
         "qwen"
     }
     fn display_name(&self) -> &'static str {
-        "通义千问 (Qwen)"
+        "Qwen"
     }
     fn default_base_url(&self) -> &'static str {
         "https://dashscope.aliyuncs.com/compatible-mode/v1"

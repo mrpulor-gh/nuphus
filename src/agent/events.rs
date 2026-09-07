@@ -118,6 +118,9 @@ pub enum NuphusEvent {
     /// User paused execution (waiting for continue/append/terminate decision)
     ExecutionPaused { action_id: String },
 
+    /// Snapshot of the backend-owned append queue for the input UI.
+    AppendQueueUpdated { messages: Vec<String> },
+
     /// Dangerous operation requiring user confirmation
     SecurityCheck {
         action_id: String,

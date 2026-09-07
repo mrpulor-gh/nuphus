@@ -10,7 +10,7 @@ impl Provider for ZhipuProvider {
         "zhipu"
     }
     fn display_name(&self) -> &'static str {
-        "GLM（BigModel）"
+        "Zhipu"
     }
     fn default_base_url(&self) -> &'static str {
         "https://open.bigmodel.cn/api/paas/v4"

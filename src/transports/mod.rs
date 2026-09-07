@@ -20,6 +20,8 @@
 pub mod anthropic;
 pub mod chat_completions;
 pub mod mock_transport;
+pub mod opencode_session;
+pub mod responses;
 pub mod transport_base;
 
 pub use chat_completions::{ChatCompletionsConfig, ChatCompletionsTransport};

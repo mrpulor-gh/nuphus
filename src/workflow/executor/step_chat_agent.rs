@@ -25,28 +25,46 @@ impl Executor {
             crate::NuphusError::agent("ChatAgent step requires LLM client".to_string())
         })?;
 
-        // 0. 模型路由：opts.model 为 registry 模型 ID 时经 ClientFactory 装配专属 client
-        //    （provider/key/transport quirks 由 factory 封装）；registry 无此 ID 时回退为
-        //    裸模型名沿用主 client（向后兼容存量工作流，如 'deepseek-v4-pro'）。
+        // 0. 模型路由：显式 provider 必须精确创建；旧数据无 provider 时仅允许
+        //    registry 中唯一候选推断。未知模型继续保留裸模型名兼容语义。
         let mut routed_client: Option<std::sync::Arc<dyn ApiClient>> = None;
         if let Some(ref model_id) = opts.model {
             if let Some(ref factory) = self.client_factory {
-                match factory.create_client(model_id) {
-                    Ok(client) => {
-                        tracing::info!(
-                            "[ChatAgent] step '{}': routed to registry model '{}'",
-                            step.name,
-                            model_id
-                        );
-                        routed_client = Some(client);
+                let client_result = if let Some(ref provider) = opts.provider {
+                    Some(factory.create_client_for(provider, model_id))
+                } else {
+                    let candidates = factory.registry().find_model_candidates(model_id);
+                    match candidates.as_slice() {
+                        // Preserve the legacy bare-model fallback for old workflows whose
+                        // model was never registered; ambiguity, however, is never guessed.
+                        [] => None,
+                        [(provider, model)] => Some(factory.create_client_for(&provider.name, &model.id)),
+                        candidates => Some(Err(crate::NuphusError::llm(format!(
+                            "model '{}' is ambiguous across providers ({} candidates); specify provider",
+                            model_id,
+                            candidates.len()
+                        )))),
                     }
-                    Err(_) => {
-                        tracing::warn!(
-                            "[ChatAgent] step '{}': model '{}' not in registry, fallback to main client (bare model name)",
-                            step.name,
-                            model_id
-                        );
+                };
+                if let Some(client_result) = client_result {
+                    match client_result {
+                        Ok(client) => {
+                            tracing::info!(
+                                "[ChatAgent] step '{}': routed to {}{}",
+                                step.name,
+                                opts.provider.as_deref().unwrap_or("unique provider"),
+                                format!("/{}", model_id)
+                            );
+                            routed_client = Some(client);
+                        }
+                        Err(err) => return Err(err),
                     }
+                } else {
+                    tracing::warn!(
+                        "[ChatAgent] step '{}': model '{}' not in registry, fallback to main client (bare model name)",
+                        step.name,
+                        model_id
+                    );
                 }
             }
         }

@@ -128,11 +128,14 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     };
 
     // Set execution resources — Exec 子任务使用独立 exec_llm（Agent 级配置，可不同于 Leader）
-    runtime.set_exec_resources(
-        nuphus::ToolRegistry::exec(),
-        exec_llm.clone(),
-        emitter.clone(),
-    );
+    // ⚠️ Exec tools 必须与全局 signals 对齐：ToolRegistry::exec() 默认新建独立
+    // SharedSignals（registry.rs default → new_shared_signals），桌面端追加写入的是
+    // 全局 state.signals 队列；未对齐时 ExecAgent 的 sub_task_loop 每次迭代 drain
+    // 读不到追加消息，暂停决策（Terminate/Continue/Append 走 signals 决策表）也不透传
+    // ——build_runtime 对 Leader registry 已有同样对齐（L36-37），此处是同类遗漏。
+    let mut exec_registry = nuphus::ToolRegistry::exec();
+    exec_registry.set_signals(tools.signals().clone());
+    runtime.set_exec_resources(exec_registry, exec_llm.clone(), emitter.clone());
 
     // ── Apply mode: preserve mode from frontend (e.g., 'workflow') across Runtime rebuild ──
     if let Some(m) = mode {

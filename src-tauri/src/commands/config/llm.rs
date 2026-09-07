@@ -57,6 +57,11 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
             return None;
         }
         let providers = doc.get("providers").and_then(|p| p.as_array())?;
+        // 同 id 跨段（官方 deepseek vs opencode-go）时，[last_model] 的最近切换
+        // 归属优先于文件段顺序——否则重启后 chat 会用官方段密钥路由，用户 GO
+        // 选择在磁盘上被静默改写（与 get_provider_context 同一权威链）。
+        let recorded = nuphus::config::load_last_model_provider(&config_path, model);
+        let mut first_hit: Option<(String, String, String, String)> = None;
         for entry in providers {
             let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
@@ -71,15 +76,23 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                 })
                 .unwrap_or(false);
             if has_model && !k.is_empty() {
-                return Some((
+                let hit = (
                     name.to_string(),
                     model.to_string(),
                     u.to_string(),
                     k.to_string(),
-                ));
+                );
+                match &recorded {
+                    Some(rec) if *rec == hit.0 => return Some(hit),
+                    _ => {
+                        if first_hit.is_none() {
+                            first_hit = Some(hit);
+                        }
+                    }
+                }
             }
         }
-        None
+        first_hit
     };
 
     // leader 绑定为空 → find_by_model("") 返回 None → 走下方首个可用 provider 回退。
@@ -159,50 +172,6 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
     );
 }
 
-/// (废弃) 模型选择已由 agent_models + 顶部 model 字段承载，此函数保留仅供兼容。
-#[allow(dead_code)]
-fn update_last_used(
-    providers_path: &std::path::Path,
-    provider: &str,
-    model: &str,
-    base_url: &str,
-) -> Result<(), String> {
-    let content = std::fs::read_to_string(providers_path).unwrap_or_default();
-    let mut doc: toml::Value = content.parse().unwrap_or_else(|_| {
-        let table = toml::value::Table::new();
-        toml::Value::Table(table)
-    });
-
-    let table = doc
-        .as_table_mut()
-        .ok_or_else(|| "providers.toml is not a table".to_string())?;
-
-    let mut last_used = toml::value::Table::new();
-    last_used.insert(
-        "provider".to_string(),
-        toml::Value::String(provider.to_string()),
-    );
-    last_used.insert("model".to_string(), toml::Value::String(model.to_string()));
-    last_used.insert(
-        "base_url".to_string(),
-        toml::Value::String(base_url.to_string()),
-    );
-    table.insert("last_used".to_string(), toml::Value::Table(last_used));
-
-    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
-    let new_content = toml::to_string_pretty(&doc)
-        .map_err(|e| format!("serialize providers.toml failed: {}", e))?;
-    std::fs::write(providers_path, new_content)
-        .map_err(|e| format!("write providers.toml failed: {}", e))?;
-
-    tracing::info!(
-        "[last_used] updated: provider={}, model={}",
-        provider,
-        model
-    );
-    Ok(())
-}
-
 // ════════════════════════════════════════════════════════════════════
 // Agent 级模型配置（高级设置）：leader / workflow / exec / custom 各自模型，
 // 空 = 跟随默认模型（default），default 空 = 跟随 leader（锚点）。
@@ -213,21 +182,51 @@ fn update_last_used(
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AgentModels {
     pub leader: String,
+    #[serde(default)]
+    pub leader_provider: String,
     pub workflow: String,
+    #[serde(default)]
+    pub workflow_provider: String,
     pub exec: String,
+    #[serde(default)]
+    pub exec_provider: String,
     pub custom: String,
+    #[serde(default)]
+    pub custom_provider: String,
 }
 
 impl AgentModels {
     pub const AGENTS: [&'static str; 4] = ["leader", "workflow", "exec", "custom"];
 
-    pub fn set(&mut self, agent: &str, model: String) {
+    pub fn set_binding(&mut self, agent: &str, model: String, provider: String) {
         match agent {
-            "leader" => self.leader = model,
-            "workflow" => self.workflow = model,
-            "exec" => self.exec = model,
-            "custom" => self.custom = model,
+            "leader" => {
+                self.leader = model;
+                self.leader_provider = provider;
+            }
+            "workflow" => {
+                self.workflow = model;
+                self.workflow_provider = provider;
+            }
+            "exec" => {
+                self.exec = model;
+                self.exec_provider = provider;
+            }
+            "custom" => {
+                self.custom = model;
+                self.custom_provider = provider;
+            }
             _ => {}
+        }
+    }
+
+    pub fn provider(&self, agent: &str) -> &str {
+        match agent {
+            "leader" => &self.leader_provider,
+            "workflow" => &self.workflow_provider,
+            "exec" => &self.exec_provider,
+            "custom" => &self.custom_provider,
+            _ => "",
         }
     }
 }
@@ -245,8 +244,13 @@ pub fn load_agent_models(providers_path: &std::path::Path) -> AgentModels {
         return out;
     };
     for agent in AgentModels::AGENTS {
-        if let Some(v) = section.get(agent).and_then(|v| v.as_str()) {
-            out.set(agent, v.to_string());
+        let model = section.get(agent).and_then(|v| v.as_str()).unwrap_or("");
+        let provider = section
+            .get(&format!("{agent}_provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !model.is_empty() {
+            out.set_binding(agent, model.to_string(), provider.to_string());
         }
     }
     out
@@ -257,6 +261,7 @@ fn save_agent_model(
     providers_path: &std::path::Path,
     agent: &str,
     model: &str,
+    provider: Option<&str>,
 ) -> Result<(), String> {
     if !AgentModels::AGENTS.contains(&agent) {
         return Err(format!("未知 agent: {agent}"));
@@ -274,6 +279,12 @@ fn save_agent_model(
         .as_table_mut()
         .ok_or_else(|| "agent_models is not a table".to_string())?;
     section.insert(agent.to_string(), toml::Value::String(model.to_string()));
+    let provider_key = format!("{agent}_provider");
+    if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+        section.insert(provider_key, toml::Value::String(provider.to_string()));
+    } else {
+        section.remove(&provider_key);
+    }
 
     nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
     let new_content = toml::to_string_pretty(&doc)
@@ -284,6 +295,9 @@ fn save_agent_model(
     Ok(())
 }
 
+// `[last_model]` 记录读写与 provider 归属解析核心在根库 nuphus::config::last_model
+// （与 ModelRegistry 同居配置层，纯函数可脱离 tauri 单测）；此处仅薄调用。
+
 /// 单一模型解析入口：计算某 agent 的生效模型（唯一解析点，process/retry 共用）。
 ///
 /// 解析链（「可用」= 非空且 `registry.find_model` 命中）：
@@ -291,44 +305,70 @@ fn save_agent_model(
 ///                  不再回退 providers.toml 顶层字段，模型真值只有 mode 绑定）
 ///   workflow/custom/exec_eff = 各自可用 ? 各自 : leader_eff
 /// `mode` 为 "leader" 或未知 → leader_eff。
+pub fn effective_model_binding(
+    providers_path: &std::path::Path,
+    registry: &nuphus::config::ModelRegistry,
+    mode: &str,
+) -> Result<(String, String), String> {
+    let am = load_agent_models(providers_path);
+    let agent = if AgentModels::AGENTS.contains(&mode) {
+        mode
+    } else {
+        "leader"
+    };
+    // A mode binding is atomic: when a mode is unset (or its pair is unavailable),
+    // fall back to the complete leader pair. Never combine the mode's provider with
+    // the leader's model (or vice versa), otherwise same-named models can cross-route.
+    let configured = |name: &str| -> Option<(String, String)> {
+        let model = match name {
+            "leader" => &am.leader,
+            "workflow" => &am.workflow,
+            "exec" => &am.exec,
+            "custom" => &am.custom,
+            _ => &am.leader,
+        };
+        if model.is_empty() {
+            return None;
+        }
+        let provider = am.provider(name);
+        if !provider.is_empty() && registry.find_model_for_provider(provider, model).is_some() {
+            return Some((provider.to_string(), model.to_string()));
+        }
+        nuphus::config::load_last_model_provider(providers_path, model)
+            .filter(|p| registry.find_model_for_provider(p, model).is_some())
+            .map(|p| (p, model.to_string()))
+            .or_else(|| {
+                let candidates = registry.find_model_candidates(model);
+                (candidates.len() == 1).then(|| (candidates[0].0.name.clone(), model.to_string()))
+            })
+    };
+    configured(agent)
+        .or_else(|| (agent != "leader").then(|| configured("leader")).flatten())
+        .ok_or_else(|| {
+            let model = match agent {
+                "workflow" => &am.workflow,
+                "exec" => &am.exec,
+                "custom" => &am.custom,
+                _ => &am.leader,
+            };
+            if model.is_empty() {
+                format!("no model configured for mode '{agent}'")
+            } else if registry.find_model_candidates(model).is_empty() {
+                format!("model '{model}' not found")
+            } else {
+                format!("model '{model}' has multiple providers; provider binding is required")
+            }
+        })
+}
+
 pub fn effective_model(
     providers_path: &std::path::Path,
     registry: &nuphus::config::ModelRegistry,
     mode: &str,
 ) -> String {
-    let am = load_agent_models(providers_path);
-    let avail = |m: &str| !m.is_empty() && registry.find_model(m).is_some();
-
-    let leader = if avail(&am.leader) {
-        am.leader.clone()
-    } else {
-        String::new()
-    };
-
-    match mode {
-        "workflow" => {
-            if avail(&am.workflow) {
-                am.workflow.clone()
-            } else {
-                leader
-            }
-        }
-        "custom" => {
-            if avail(&am.custom) {
-                am.custom.clone()
-            } else {
-                leader
-            }
-        }
-        "exec" => {
-            if avail(&am.exec) {
-                am.exec.clone()
-            } else {
-                leader
-            }
-        }
-        _ => leader,
-    }
+    effective_model_binding(providers_path, registry, mode)
+        .map(|(_, model)| model)
+        .unwrap_or_default()
 }
 
 /// Get current agent-level model configuration (advanced settings).
@@ -344,6 +384,23 @@ pub fn get_effective_model(state: State<'_, AppState>, mode: String) -> Result<S
     Ok(effective_model(&state.llm_config_path, &registry, &mode))
 }
 
+/// 生效模型的 provider 归属（mode 感知）：弹窗勾选 / effort 上下文 / 服务商页定位的权威依据。
+///
+/// 职责边界：`get_current_config` = 「当前运行时配置」（runtime 内存态，含
+/// key/base_url，面向连接态展示）；本命令 = 「某 mode 生效模型归属哪段」
+/// （model 与 `get_effective_model` 复用同一 `effective_model` 解析点保证一致，
+/// provider 走 `resolve_model_provider_core`）。同 id 跨 provider（官方
+/// deepseek vs opencode-go）时前端双全等勾选靠本命令落对卡片。
+#[tauri::command]
+pub fn get_provider_context(
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<serde_json::Value, String> {
+    let registry = nuphus::config::load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
+    let (provider, model) = effective_model_binding(&state.llm_config_path, &registry, &mode)?;
+    Ok(serde_json::json!({ "model": model, "provider": provider }))
+}
+
 /// Set one agent's model. `model` empty string = clear (follow default fallback).
 #[tauri::command]
 pub fn set_agent_model(
@@ -351,7 +408,7 @@ pub fn set_agent_model(
     agent: String,
     model: String,
 ) -> Result<String, String> {
-    save_agent_model(&state.llm_config_path, &agent, &model)?;
+    save_agent_model(&state.llm_config_path, &agent, &model, None)?;
     Ok(format!(
         "{agent} 模型已设置为 {}",
         if model.is_empty() {
@@ -405,12 +462,12 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         resolved_base_url
     );
 
-    // Check if model actually changed
-    let prev_model = state
-        .runtime
-        .lock()
-        .ok()
-        .and_then(|g| g.llm_config.as_ref().map(|c| c.model.clone()));
+    // Check if model/provider actually changed (same-named model may switch provider)
+    let prev_binding = state.runtime.lock().ok().and_then(|g| {
+        g.llm_config
+            .as_ref()
+            .map(|c| (c.provider.clone(), c.model.clone()))
+    });
 
     // Carry the reasoning-effort configured for this provider (config.toml
     // [[providers]] reasoning_effort) into runtime so the next client build
@@ -437,16 +494,30 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         .as_deref()
         .filter(|m| AgentModels::AGENTS.contains(m))
         .unwrap_or("leader");
-    let _ = save_agent_model(&state.llm_config_path, agent_key, &resolved_model);
+    let _ = save_agent_model(
+        &state.llm_config_path,
+        agent_key,
+        &resolved_model,
+        Some(&resolved_provider),
+    );
 
-    // Push notification if model changed
-    if let Some(prev) = prev_model {
-        if prev != resolved_model {
+    // provider 归属磁盘记录：[agent_models] 只存 model id，同 id 跨 provider
+    // （官方 deepseek vs opencode-go）时 get_provider_context 靠本表回查归属。
+    let _ = nuphus::config::record_last_model(
+        &state.llm_config_path,
+        &resolved_model,
+        &resolved_provider,
+    );
+
+    // Push notification if model or provider changed
+    if let Some((prev_provider, prev_model)) = prev_binding {
+        if prev_provider != resolved_provider || prev_model != resolved_model {
             let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
             if let Some(agent) = guard.leader_agent.as_mut() {
-                agent
-                    .session_mut()
-                    .push_system(format!("当前模型已切换至 {}", resolved_model));
+                agent.session_mut().push_system(format!(
+                    "当前模型已切换至 {}（provider: {}）",
+                    resolved_model, resolved_provider
+                ));
             }
         }
     }
@@ -583,7 +654,12 @@ pub async fn configure_llm(
         }
         // 模型单一真值 = mode 绑定：配置的模型写入 leader 绑定（[agent_models]），
         // config.toml JSON 的 model 字段仅作 key 载体兼容、不再当模型权威。
-        if let Err(e) = save_agent_model(config_path, "leader", &resolved_model) {
+        if let Err(e) = save_agent_model(
+            config_path,
+            "leader",
+            &resolved_model,
+            Some(&resolved_provider),
+        ) {
             tracing::error!("[configure_llm] Failed to write agent_models.leader: {}", e);
         }
     }
@@ -593,9 +669,10 @@ pub async fn configure_llm(
         if prev != resolved_model || resolved_provider != cfg.provider {
             let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
             if let Some(agent) = guard.leader_agent.as_mut() {
-                agent
-                    .session_mut()
-                    .push_system(format!("当前模型已切换至 {}", resolved_model));
+                agent.session_mut().push_system(format!(
+                    "当前模型已切换至 {}（provider: {}）",
+                    resolved_model, resolved_provider
+                ));
             }
         }
     }
@@ -696,7 +773,10 @@ pub fn set_model_context_window(
         }
     }
 
-    Ok(format!("已设置 {}/{} 上下文窗口 = {}", provider, model, context_window))
+    Ok(format!(
+        "已设置 {}/{} 上下文窗口 = {}",
+        provider, model, context_window
+    ))
 }
 
 /// Post-config steps: query context window from API + probe vision support.
@@ -871,7 +951,25 @@ async fn post_configure(
 pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let configured_providers = list_configured_providers();
 
-    // 优先从 config.toml 读取
+    // 内存 runtime.llm_config 优先：它是 chat 实际路由的 provider/model（switch_model /
+    // configure_llm 写入）。原实现先扫磁盘顶层 model，同 id 跨 provider 段时永远返回
+    // 文件顺序第一段（官方 deepseek 排在 opencode-go 前），导致 GO 切换后弹窗
+    // 勾选串到官方卡。mode 感知的生效模型归属请用 get_provider_context。
+    {
+        let guard = state.runtime.lock().map_err(|e| e.to_string())?;
+        if let Some(cfg) = guard.llm_config.as_ref() {
+            return Ok(serde_json::json!({
+                "api_key": &cfg.api_key,
+                "has_key": !cfg.api_key.is_empty(),
+                "model": cfg.model,
+                "provider": cfg.provider,
+                "base_url": cfg.base_url,
+                "configured_providers": configured_providers,
+            }));
+        }
+    }
+
+    // 仅当内存无配置（首启尚未加载）才扫描 config.toml
     if let Some(config_path) = get_config_path() {
         use nuphus::config::ModelRegistry;
         if let Ok(registry) =
@@ -2022,6 +2120,40 @@ mod tests {
             "leader-model"
         );
         std::fs::remove_dir_all(am_path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn effective_binding_keeps_same_name_provider_pair_and_fallback_pair() {
+        let am = "[agent_models]\nleader = \"same\"\nleader_provider = \"official\"\nworkflow = \"same\"\nworkflow_provider = \"opencode-go\"\nexec = \"\"\ncustom = \"\"\n";
+        let (am_path, dir) = {
+            let dir = std::env::temp_dir().join(format!(
+                "nuphus-binding-test-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let am_path = dir.join("providers.toml");
+            std::fs::write(&am_path, am).unwrap();
+            let cfg = "[[providers]]\nname = \"official\"\nprovider_type = \"openai\"\napi_key = \"sk-official\"\n[[providers.models]]\nid = \"same\"\n\n[[providers]]\nname = \"opencode-go\"\nprovider_type = \"opencode-go\"\napi_key = \"sk-go\"\n[[providers.models]]\nid = \"same\"\n";
+            let cfg_path = dir.join("config.toml");
+            std::fs::write(&cfg_path, cfg).unwrap();
+            (am_path, dir)
+        };
+        let registry =
+            nuphus::config::ModelRegistry::from_toml(dir.join("config.toml").to_str().unwrap())
+                .unwrap();
+        assert_eq!(
+            effective_model_binding(&am_path, &registry, "leader").unwrap(),
+            ("official".into(), "same".into())
+        );
+        assert_eq!(
+            effective_model_binding(&am_path, &registry, "workflow").unwrap(),
+            ("opencode-go".into(), "same".into())
+        );
+        assert_eq!(
+            effective_model_binding(&am_path, &registry, "exec").unwrap(),
+            ("official".into(), "same".into())
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

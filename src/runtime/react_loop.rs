@@ -44,13 +44,37 @@ impl super::Runtime {
             // 0.5b 新任务开始时清空上一任务残留的追加指令队列：
             // 追加指令语义 =「发送时正在执行的任务内生效」，任务结束后残留若不清空，
             // 会在本任务首轮 drain 时被注入——跨任务泄漏（刷新/重连后重复指令的根因之一）。
+            // 双队列都清：mobile_append::PENDING（手机端入口）+ SignalState::append_queue
+            // （桌面端 send/append_instruction 入口）。react_loop 每迭代 drain 后，任务收口时
+            // 若仍有追加滞留（agent 已停止），也应在此清掉而非拖到下一个任务。
             crate::mobile_append::clear();
+            {
+                let mut signals = crate::state::SignalState::write(self.agent.tools.signals());
+                signals.append_queue.clear();
+            }
         }
 
         // 0.6 Reset this round's safety check counter
         self.agent.safety_consecutive_failures = 0;
 
-        // 0.6 Drain leftover pending_append queue
+        // 0.6 Drain the single runtime append queue at the active agent's iteration boundary.
+        // The queue is populated directly by append_instruction while busy, so this does not
+        // wait for Leader/task_dispatch to return. The current loop is the actual consumer.
+        let active_appends = {
+            let mut signals = crate::state::SignalState::write(self.agent.tools.signals());
+            std::mem::take(&mut signals.append_queue)
+        };
+        if !active_appends.is_empty() {
+            self.agent.session.push_user_internal(
+                crate::mobile_append::format_mobile_append_section(&active_appends),
+            );
+            if let Some(ref emitter) = self.agent.exec_emitter {
+                emitter.emit(crate::agent::events::NuphusEvent::AppendQueueUpdated {
+                    messages: vec![],
+                });
+            }
+        }
+        // Consume legacy pause append leftovers without allowing them to leak into a new turn.
         let _ = crate::agent::pause::drain_pending_append();
 
         if cancel_flag.load(Ordering::SeqCst) {
@@ -61,6 +85,13 @@ impl super::Runtime {
                     text: "已中断".into(),
                     phase: "done".into(),
                     step_kind: None,
+                });
+                // 中断必须发收敛事件：前端 useEvents 依赖 execution_error 复位
+                // isProcessing/completed/mood；仅 emit_exec 是纯日志，UI 会永久停在
+                // thinking-indicator 执行中态（mood 卡 working）。
+                emitter.emit(NuphusEvent::ExecutionError {
+                    step_index: 0,
+                    error: "任务已被用户中断".into(),
                 });
             }
             return Ok(crate::AgentOutput {
@@ -246,6 +277,27 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                 self.agent.emit_exec(&progress);
             }
 
+            // ── Per-iteration append queue drain（执行中追加下轮即注入）──
+            // react_loop 是主执行（Leader）当前任务的消费方；此前仅在函数开头 drain 一次，
+            // turn 中段到达的追加会滞留队列到「下一次任务」才注入——用户体感「追加没进队列/
+            // 没生效」（子任务 sub_task_loop / workflow_agent 均为每迭代 drain，此处对齐）。
+            {
+                let active_appends = {
+                    let mut signals = crate::state::SignalState::write(self.agent.tools.signals());
+                    std::mem::take(&mut signals.append_queue)
+                };
+                if !active_appends.is_empty() {
+                    self.agent.session.push_user_internal(
+                        crate::mobile_append::format_mobile_append_section(&active_appends),
+                    );
+                    if let Some(ref emitter) = self.agent.exec_emitter {
+                        emitter.emit(crate::agent::events::NuphusEvent::AppendQueueUpdated {
+                            messages: vec![],
+                        });
+                    }
+                }
+            }
+
             self.agent.session.strip_incomplete_tools();
 
             if cancel_flag.load(Ordering::SeqCst) {
@@ -254,6 +306,12 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                     iteration
                 );
                 self.agent.emit_exec("// interrupted");
+                if let Some(ref emitter) = self.agent.exec_emitter {
+                    emitter.emit(NuphusEvent::ExecutionError {
+                        step_index: 0,
+                        error: "任务已被用户中断".into(),
+                    });
+                }
                 return Ok(crate::AgentOutput {
                     success: false,
                     message: "任务已被用户中断".to_string(),
@@ -1255,6 +1313,12 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                         "[INTERRUPT] Agent cancelled during tool execution, skipping session push"
                     );
                     self.agent.emit_exec("// interrupted");
+                    if let Some(ref emitter) = self.agent.exec_emitter {
+                        emitter.emit(NuphusEvent::ExecutionError {
+                            step_index: 0,
+                            error: "任务已被用户中断".into(),
+                        });
+                    }
                     return Ok(crate::AgentOutput {
                         success: false,
                         message: "任务已被用户中断".to_string(),

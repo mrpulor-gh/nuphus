@@ -273,7 +273,11 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     send_id
                 );
             } else {
-                nuphus::mobile_append::push(message.clone());
+                // Route directly to the shared backend queue. The currently executing
+                // Leader/Exec/Workflow loop is the only consumer; no post-dispatch replay.
+                nuphus::state::SignalState::write(&state.signals)
+                    .append_queue
+                    .push(message.clone());
             }
         }
         return Ok(ProcessInputResponse {
@@ -631,36 +635,39 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         // ── Agent 级模型解析（单一入口 effective_model）：
         //    leader(锚点) → default → 各自 agent；「可用」= registry 命中。──
         let registry = factory2.registry();
-        let leader_model = crate::commands::config::llm::effective_model(
+        let leader_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
             registry,
             "leader",
-        );
-        let workflow_model = crate::commands::config::llm::effective_model(
+        )?;
+        let workflow_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
             registry,
             "workflow",
-        );
-        let exec_model =
-            crate::commands::config::llm::effective_model(&state.llm_config_path, registry, "exec");
-        let custom_model = crate::commands::config::llm::effective_model(
+        )?;
+        let exec_binding = crate::commands::config::llm::effective_model_binding(
+            &state.llm_config_path,
+            registry,
+            "exec",
+        )?;
+        let custom_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
             registry,
             "custom",
-        );
-
-        // create_client：effective_model 已保证模型可用（registry 命中），此处仅创建客户端。
+        )?;
         let resolve_llm =
-            |model: &str| -> Result<(Arc<dyn nuphus::api::ApiClient>, String), String> {
-                let llm = factory2
-                    .create_client(model)
-                    .map_err(|e| format!("创建 LLM 客户端失败 ({model}): {e}"))?;
-                Ok((llm, model.to_string()))
+            |b: &(String, String)| -> Result<Arc<dyn nuphus::api::ApiClient>, String> {
+                factory2
+                    .create_client_for(&b.0, &b.1)
+                    .map_err(|e| format!("create LLM client failed ({}:{}): {e}", b.0, b.1))
             };
-        let (leader_llm, leader_model) = resolve_llm(&leader_model)?;
-        let (workflow_llm, workflow_model) = resolve_llm(&workflow_model)?;
-        let (exec_llm, _exec_model) = resolve_llm(&exec_model)?;
-        let (custom_llm, custom_model) = resolve_llm(&custom_model)?;
+        let leader_llm = resolve_llm(&leader_binding)?;
+        let workflow_llm = resolve_llm(&workflow_binding)?;
+        let exec_llm = resolve_llm(&exec_binding)?;
+        let custom_llm = resolve_llm(&custom_binding)?;
+        let leader_model = leader_binding.1.clone();
+        let workflow_model = workflow_binding.1.clone();
+        let custom_model = custom_binding.1.clone();
 
         // 当前 mode 的活动模型：Custom 走 leader 路径但用 custom 专属模型
         let (active_model, active_llm) = if !is_workflow2 && mode2.as_deref() == Some("custom") {
@@ -668,11 +675,11 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         } else {
             (leader_model.clone(), leader_llm.clone())
         };
-        let active_provider = factory2
-            .registry()
-            .find_model(&active_model)
-            .map(|(p, _)| p.name.clone())
-            .unwrap_or_default();
+        let active_provider = if !is_workflow2 && mode2.as_deref() == Some("custom") {
+            custom_binding.0.clone()
+        } else {
+            leader_binding.0.clone()
+        };
         let main_config = crate::state::LlamaConfig {
             model: active_model.clone(),
             provider: active_provider,

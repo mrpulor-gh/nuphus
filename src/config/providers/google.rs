@@ -10,7 +10,7 @@ impl Provider for GoogleProvider {
         "google"
     }
     fn display_name(&self) -> &'static str {
-        "Google (Gemini)"
+        "Google"
     }
     fn default_base_url(&self) -> &'static str {
         "https://generativelanguage.googleapis.com/v1beta"

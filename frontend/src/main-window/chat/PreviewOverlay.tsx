@@ -43,7 +43,8 @@ const IMAGE_MIME: Record<string, string> = {
 }
 
 function extOf(path: string): string {
-  const m = /\\.([^.\\\\/]+)$/.exec(path)
+  // Windows paths use backslashes; only the final dot introduces the extension.
+  const m = /\.([^.\\/]+)$/.exec(path)
   return m ? m[1].toLowerCase() : ''
 }
 

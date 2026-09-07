@@ -117,10 +117,10 @@ export interface SessionAPI {
   setShowPlugins: (v: boolean) => void
   showPluginDev: boolean
   setShowPluginDev: (v: boolean) => void
-  showTools: boolean
-  setShowTools: (v: boolean) => void
-  showCanvasHub: boolean
-  setShowCanvasHub: (v: boolean) => void
+  showUpdate: boolean
+  setShowUpdate: (v: boolean) => void
+  showCanvas: boolean
+  setShowCanvas: (v: boolean) => void
 
   // ── Execution ──
   showExecTrace: boolean
@@ -136,6 +136,7 @@ export interface SessionAPI {
   security: import('../core/types').SecurityCheck | null
   userInputRequest: import('../core/types').UserInputRequest | null
   pauseState: { actionId: string } | null
+  appendQueue: string[]
   completed: boolean
   timeline: TimelineEntry[]
   goalType: { type: string; label: string; confidence: number } | null
@@ -192,6 +193,7 @@ export interface SessionAPI {
   setSecurity: React.Dispatch<React.SetStateAction<import('../core/types').SecurityCheck | null>>
   setUserInputRequest: (v: import('../core/types').UserInputRequest | null) => void
   setPauseState: React.Dispatch<React.SetStateAction<{ actionId: string } | null>>
+  setAppendQueue: React.Dispatch<React.SetStateAction<string[]>>
   setTimeline: (v: TimelineEntry[] | ((prev: TimelineEntry[]) => TimelineEntry[])) => void
   setGoalType: React.Dispatch<
     React.SetStateAction<{ type: string; label: string; confidence: number } | null>
@@ -284,8 +286,10 @@ export interface SessionAPI {
     lastSentRef: React.MutableRefObject<{ content: string; time: number } | null>
     sendSeqRef: React.MutableRefObject<number>
     messagesRef: React.MutableRefObject<ChatMessage[]>
-    toolCallCountRef: React.MutableRefObject<number>
+toolCallCountRef: React.MutableRefObject<number>
     messagesRestoredRef: React.MutableRefObject<boolean>
+    /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
+    interruptedRef: React.MutableRefObject<boolean>
   }
 
   // ── Computed ──
@@ -362,7 +366,9 @@ export function useSession(): SessionAPI {
   const sendSeqRef = useRef(0)
   const messagesRef = useRef<ChatMessage[]>(messages)
   messagesRef.current = messages
-  const toolCallCountRef = useRef(0)
+const toolCallCountRef = useRef(0)
+  /** 用户已点击强制中断（interrupt）：置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
+  const interruptedRef = useRef(false)
 
   const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set())
 
@@ -426,10 +432,11 @@ export function useSession(): SessionAPI {
     setShowWorkflowExitConfirm: execUI.setShowWorkflowExitConfirm,
     setPauseState: execUI.setPauseState,
     setMode: setModeState,
-    messagesRef,
+messagesRef,
     streamingMsgId,
     lastStreamingMsgId,
     executionActiveRef,
+    interruptedRef,
     showToast,
     setMood,
     removeRetryErrorBubble,
@@ -733,6 +740,16 @@ export function useSession(): SessionAPI {
         },
       },
       {
+        id: 'canvas',
+        label: t('cmd.canvas'),
+        desc: t('cmd.canvasDesc'),
+        category: t('cmd.category.browse'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowCanvas(true)
+        },
+      },
+      {
         id: 'workflows',
         label: t('cmd.workflows'),
         desc: t('cmd.workflowsDesc'),
@@ -740,16 +757,6 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowWorkflow(true)
-        },
-      },
-      {
-        id: 'canvas-hub',
-        label: t('cmd.canvas'),
-        desc: t('cmd.canvasDesc'),
-        category: t('cmd.category.canvas'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowCanvasHub(true)
         },
       },
       {
@@ -783,16 +790,6 @@ export function useSession(): SessionAPI {
         },
       },
       {
-        id: 'tools',
-        label: t('cmd.tools'),
-        desc: t('cmd.toolsDesc'),
-        category: t('cmd.category.browse'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowTools(true)
-        },
-      },
-      {
         id: 'plugins',
         label: t('cmd.plugins'),
         desc: t('cmd.pluginsDesc'),
@@ -812,6 +809,46 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowModels(true)
+        },
+      },
+      {
+        id: 'soul',
+        label: t('cmd.soul'),
+        desc: t('cmd.soulDesc'),
+        category: t('cmd.category.settings'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowSoul(true)
+        },
+      },
+      {
+        id: 'mobile',
+        label: t('cmd.mobile'),
+        desc: t('cmd.mobileDesc'),
+        category: t('cmd.category.settings'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowMobile(true)
+        },
+      },
+      {
+        id: 'browser',
+        label: t('cmd.browser'),
+        desc: t('cmd.browserDesc'),
+        category: t('cmd.category.settings'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowBrowser(true)
+        },
+      },
+      {
+        id: 'project',
+        label: t('cmd.project'),
+        desc: t('cmd.projectDesc'),
+        category: t('cmd.category.settings'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowProject(true)
         },
       },
       {
@@ -835,46 +872,6 @@ export function useSession(): SessionAPI {
         },
       },
       {
-        id: 'project',
-        label: t('cmd.project'),
-        desc: t('cmd.projectDesc'),
-        category: t('cmd.category.settings'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowProject(true)
-        },
-      },
-      {
-        id: 'browser',
-        label: t('cmd.browser'),
-        desc: t('cmd.browserDesc'),
-        category: t('cmd.category.settings'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowBrowser(true)
-        },
-      },
-      {
-        id: 'mobile',
-        label: t('cmd.mobile'),
-        desc: t('cmd.mobileDesc'),
-        category: t('cmd.category.settings'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowMobile(true)
-        },
-      },
-      {
-        id: 'soul',
-        label: t('cmd.soul'),
-        desc: t('cmd.soulDesc'),
-        category: t('cmd.category.settings'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowSoul(true)
-        },
-      },
-      {
         id: 'security',
         label: t('cmd.security'),
         desc: t('cmd.securityDesc'),
@@ -882,6 +879,16 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowSecurity(true)
+        },
+      },
+      {
+        id: 'check-update',
+        label: t('cmd.checkUpdate'),
+        desc: t('cmd.checkUpdateDesc'),
+        category: t('cmd.category.management'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          modals.setShowUpdate(true)
         },
       },
       {
@@ -1038,6 +1045,7 @@ export function useSession(): SessionAPI {
     setSecurity: execUI.setSecurity,
     setUserInputRequest: execUI.setUserInputRequest,
     setPauseState: execUI.setPauseState,
+    setAppendQueue: execUI.setAppendQueue,
     setTimeline: execUI.setTimeline,
     setGoalType: execUI.setGoalType,
     setMainTokenUsage: execUI.setMainTokenUsage,
@@ -1084,7 +1092,7 @@ export function useSession(): SessionAPI {
     setExpandedCalls,
 
     // Refs
-    refs: {
+refs: {
       streamingMsgId,
       lastStreamingMsgId,
       executionActiveRef,
@@ -1094,6 +1102,7 @@ export function useSession(): SessionAPI {
       messagesRef,
       toolCallCountRef,
       messagesRestoredRef,
+      interruptedRef,
     },
 
     // Computed
@@ -1119,6 +1128,7 @@ export function useSession(): SessionAPI {
     handleInterrupt: agentControl.handleInterrupt,
     handleGracefulStop: agentControl.handleGracefulStop,
     handleAppendInstruction: agentControl.handleAppendInstruction,
+    appendQueue: execUI.appendQueue,
     handleTerminate: agentControl.handleTerminate,
     handleSetMode: agentControl.handleSetMode,
     toggleWorkAgentMode: agentControl.toggleWorkAgentMode,

@@ -1,10 +1,12 @@
 //! 配置模块 — 模型配置加载与管理
 
+pub mod last_model;
 pub mod model;
 pub mod preferences;
 pub mod provider;
 pub mod providers;
 pub mod registry;
+pub use last_model::{load_last_model_provider, record_last_model, resolve_model_provider_core};
 pub use model::*;
 pub use preferences::{BrowserIdentity, UserPreferences};
 

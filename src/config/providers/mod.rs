@@ -1,6 +1,6 @@
 //! Provider implementations
 //!
-//! Each concrete Provider gets its own file. All 12 built-in Providers
+//! Each concrete Provider gets its own file. All 13 built-in Providers
 //! (Chat-Completions-based + Anthropic) are implemented.
 
 pub mod anthropic;
@@ -12,6 +12,7 @@ pub mod kimi;
 pub mod local;
 pub mod minimax;
 pub mod openai;
+pub mod opencode_go;
 pub mod openrouter;
 pub mod qwen;
 pub mod zhipu;
@@ -25,6 +26,7 @@ pub use kimi::KimiProvider;
 pub use local::LocalProvider;
 pub use minimax::MiniMaxProvider;
 pub use openai::OpenAIProvider;
+pub use opencode_go::OpenCodeGoProvider;
 pub use openrouter::OpenRouterProvider;
 pub use qwen::QwenProvider;
 pub use zhipu::ZhipuProvider;

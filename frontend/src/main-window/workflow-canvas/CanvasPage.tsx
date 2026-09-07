@@ -1439,9 +1439,6 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     <div className="wfc-page">
       {/* ── 工具栏 ── */}
       <div className="wfc-toolbar">
-        <button type="button" className="wfc-icon-btn" onClick={handleClose} title="关闭画布">
-          <X size={15} />
-        </button>
         {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
         {nameEditing && ir && !readOnly ? (
           <input

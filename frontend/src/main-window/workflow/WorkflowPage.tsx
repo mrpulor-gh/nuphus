@@ -46,9 +46,9 @@ interface WorkflowPageProps {
 
 export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPageProps) {
   const { t } = useLanguage()
-  // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 进入画布）──
+  // 工作流列表只锁定工作流自身的运行/编辑操作；统一工作台的类型切换不受执行态影响。
   const gate = useWorkflowGate()
-  const gateLocked = gate.locked
+  const gateLocked = gate.reason === 'workflow' && gate.locked
   const gateRefresh = gate.refresh
   const gateLockNotice =
     gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
@@ -64,7 +64,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   const requestRun = useCallback(
     async (item: WorkflowItem) => {
       const cur = await gateRefresh()
-      if (cur.locked) {
+      if (cur.reason === 'workflow' && cur.locked) {
         setError(
           cur.reason === 'workflow'
             ? '工作流正在执行中，暂不可用！'
@@ -80,7 +80,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   const requestCanvas = useCallback(
     async (item: WorkflowItem) => {
       const cur = await gateRefresh()
-      if (cur.locked) {
+      if (cur.reason === 'workflow' && cur.locked) {
         setError(
           cur.reason === 'workflow'
             ? '工作流正在执行中，暂不可用！'
@@ -188,10 +188,8 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
     if (canvasCreating) return
     // 闸门点击级复核（轮询窗口内竞态收口；后端 wf_gate/rec 另有兜底）
     const cur = await gateRefresh()
-    if (cur.locked) {
-      setError(
-        cur.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！',
-      )
+    if (cur.reason === 'workflow' && cur.locked) {
+      setError('工作流正在执行中，暂不可用！')
       return
     }
     setCanvasCreating(true)

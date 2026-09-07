@@ -81,18 +81,18 @@ pub async fn retry_agent(
     }
     .ok_or_else(|| "无法加载模型配置".to_string())?;
     let llm = factory
-        .create_client(&config.model)
+        .create_client_for(&config.provider, &config.model)
         .or_else(|_| factory.create_main_client())
         .map_err(|e| format!("创建 LLM 客户端失败: {}", e))?;
 
     // Agent 级 exec 模型（单一入口 effective_model）：exec → default → leader
-    let exec_model = crate::commands::config::llm::effective_model(
+    let (exec_provider, exec_model) = crate::commands::config::llm::effective_model_binding(
         &state.llm_config_path,
         factory.registry(),
         "exec",
-    );
+    )?;
     let exec_llm = factory
-        .create_client(&exec_model)
+        .create_client_for(&exec_provider, &exec_model)
         .map_err(|e| format!("创建 Exec LLM 客户端失败 ({exec_model}): {e}"))?;
 
     // 4. 断点续跑：失败时错误内容从未进入 session（流式缓冲成功才落库，

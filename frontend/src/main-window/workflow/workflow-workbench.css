@@ -1,0 +1,88 @@
+.workflow-workbench {
+  display: flex;
+  flex-direction: column;
+  min-height: 520px;
+  height: 100%;
+  color: var(--fg-1);
+}
+.workflow-workbench-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-1);
+  background: var(--surface-1);
+}
+.workflow-workbench-title,
+.workflow-workbench-types button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflow-workbench-title {
+  color: var(--fg-1);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.workflow-workbench-types {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.workflow-workbench-types button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 9px;
+  color: var(--fg-3);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fz-sm);
+}
+.workflow-workbench-types button:hover {
+  color: var(--fg-1);
+  background: var(--surface-hover);
+}
+.workflow-workbench-types button.is-active {
+  color: var(--accent);
+  border-color: var(--line-2);
+  background: var(--accent-dim);
+}
+.workflow-workbench-close {
+  border: 0;
+  color: var(--fg-3);
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+.workflow-workbench-close:hover {
+  color: var(--fg-1);
+}
+.workflow-workbench-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.workflow-workbench-body > .page {
+  min-height: 100%;
+}
+.workflow-workbench-body--prototype {
+  overflow: hidden;
+}
+.workflow-workbench-prototype {
+  height: 100%;
+  min-height: 520px;
+}
+.workflow-workbench-prototype > * {
+  height: 100%;
+}
+.workflow-workbench-body--tools {
+  padding: 0;
+}
+.workflow-workbench-body--tools .tools-page--embedded {
+  min-height: 520px;
+  height: 100%;
+}

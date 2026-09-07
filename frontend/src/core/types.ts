@@ -20,6 +20,7 @@ export interface InlineChatAgentEntry {
   config: {
     // 模型参数
     model?: string
+    provider?: string
     model_display?: string
     temperature?: number
     max_tokens?: number
@@ -93,19 +94,6 @@ export interface ToolCall {
   status: 'running' | 'success' | 'error'
   durationMs: number
   output: string
-}
-
-export interface ExecState {
-  open: boolean
-  stepIndex: number
-  goal: string
-  tools: string[]
-  toolCalls: ToolCall[]
-  llmOutput: string
-  thinkingText: string
-  progress: { iteration: number; maxIterations: number; toolCallsSoFar: number }
-  error: string | null
-  completed: boolean
 }
 
 export interface UserInputRequest {
@@ -205,31 +193,6 @@ export interface SessionDetailEntry {
 
 // ── Workflow V2 ──
 
-/** VisualAnchor: 截图标注锚点，对齐后端 types.rs */
-export interface VisualAnchor {
-  id: string
-  screenshot_path: string
-  region: { x: number; y: number; width: number; height: number }
-  label: string
-  ocr_result?: string | null
-}
-
-/** 工具调用参数（picker/mouse_pos 捕获的坐标） */
-export interface WorkflowStepToolParams {
-  /** 选区坐标（picker 模式捕获） */
-  region?: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
-  /** 鼠标点击坐标（mouse_pos 模式捕获） */
-  mouse?: {
-    x: number
-    y: number
-  }
-}
-
 // ── OnError ──
 
 export type OnError =
@@ -313,6 +276,7 @@ export interface ChatOpts {
   tools?: string[]
   knowledge?: string[]
   model?: string
+  provider?: string
   model_display?: string
   temperature?: number
   max_tokens?: number
@@ -528,6 +492,7 @@ export type NuphusEvent =
     }
   | { type: 'seed_generated'; seed_id: string; seed_type: string; summary: string }
   | { type: 'execution_paused'; action_id: string }
+  | { type: 'append_queue_updated'; messages: string[] }
   | {
       type: 'security_check'
       action_id: string
@@ -644,14 +609,6 @@ export type NuphusEvent =
     }
 
 // ── Plan / Task types ──
-
-export interface ApprovePendingItem {
-  id: string
-  title: string
-  description?: string
-  reason?: string
-  payload?: unknown
-}
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'failed'
 export type TaskPriority = 'high' | 'medium' | 'low'

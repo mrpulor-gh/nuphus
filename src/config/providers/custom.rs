@@ -10,7 +10,7 @@ impl Provider for CustomProvider {
         "custom"
     }
     fn display_name(&self) -> &'static str {
-        "自定义 (OpenAI 兼容 / 中转站 API)"
+        "Custom"
     }
     fn default_base_url(&self) -> &'static str {
         "https://your-custom-api.com/v1"

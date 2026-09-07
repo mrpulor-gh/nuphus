@@ -18,6 +18,8 @@
     "core:event:allow-emit",
     "core:event:allow-listen",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "updater:default",
+    "process:default"
   ]
 }

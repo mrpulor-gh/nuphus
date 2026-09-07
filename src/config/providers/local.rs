@@ -10,7 +10,7 @@ impl Provider for LocalProvider {
         "local"
     }
     fn display_name(&self) -> &'static str {
-        "Local (Ollama/LM Studio)"
+        "Local"
     }
     fn default_base_url(&self) -> &'static str {
         "http://localhost:11434/v1"

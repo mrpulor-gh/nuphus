@@ -143,14 +143,18 @@ impl ChatCompletionsTransport {
                 self.config.auth_header,
                 self.config.api_key.len()
             );
-            let response = match client
+            let mut req = client
                 .post(&url)
                 .header(&self.config.auth_header, &auth_value)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-            {
+                .header("Content-Type", "application/json");
+            // quirks.extra_headers 静态请求头（如 opencode-go 网关要求的
+            // x-opencode-session）。其他 provider extra_headers 为空 → 循环零生效。
+            for (k, v) in &self.config.quirks.extra_headers {
+                if !k.eq_ignore_ascii_case(&self.config.auth_header) {
+                    req = req.header(k, v);
+                }
+            }
+            let response = match req.json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     let is_connect_err = e.is_connect() || e.is_timeout();
@@ -377,14 +381,18 @@ impl ChatCompletionsTransport {
             };
 
             let auth_value = format!("{}{}", self.config.auth_prefix, self.config.api_key);
-            let response = match client
+            let mut req = client
                 .post(&url)
                 .header(&self.config.auth_header, &auth_value)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-            {
+                .header("Content-Type", "application/json");
+            // quirks.extra_headers 静态请求头（如 opencode-go 网关要求的
+            // x-opencode-session）。其他 provider extra_headers 为空 → 循环零生效。
+            for (k, v) in &self.config.quirks.extra_headers {
+                if !k.eq_ignore_ascii_case(&self.config.auth_header) {
+                    req = req.header(k, v);
+                }
+            }
+            let response = match req.json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     let is_connect_err = e.is_connect() || e.is_timeout();

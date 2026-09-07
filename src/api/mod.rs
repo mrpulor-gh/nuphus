@@ -29,6 +29,8 @@ pub enum ProviderKind {
     Anthropic,
     Custom,
     Local,
+    #[serde(rename = "opencode-go")]
+    OpenCodeGo,
 }
 
 impl ProviderKind {
@@ -47,6 +49,7 @@ impl ProviderKind {
             "anthropic" => Some(Self::Anthropic),
             "custom" => Some(Self::Custom),
             "local" => Some(Self::Local),
+            "opencode-go" => Some(Self::OpenCodeGo),
             _ => None,
         }
     }
@@ -65,6 +68,7 @@ impl ProviderKind {
             Self::Anthropic => "anthropic",
             Self::Custom => "custom",
             Self::Local => "local",
+            Self::OpenCodeGo => "opencode-go",
         }
     }
 }
@@ -120,5 +124,10 @@ mod tests {
     fn test_provider_kind_as_str() {
         assert_eq!(ProviderKind::MiniMax.as_str(), "minimax");
         assert_eq!(ProviderKind::DeepSeek.as_str(), "deepseek");
+        assert_eq!(ProviderKind::OpenCodeGo.as_str(), "opencode-go");
+        assert_eq!(
+            ProviderKind::from_id("opencode-go"),
+            Some(ProviderKind::OpenCodeGo)
+        );
     }
 }

@@ -10,7 +10,7 @@ impl Provider for KimiProvider {
         "kimi"
     }
     fn display_name(&self) -> &'static str {
-        "Kimi (Moonshot)"
+        "Kimi"
     }
     fn default_base_url(&self) -> &'static str {
         "https://api.kimi.com/coding/v1"

@@ -1,14 +1,19 @@
-//! append_queue — 追加指令队列（桌面端 + 手机端共用）
+//! append_queue — 手机端追加指令队列
 //!
 //! 执行中（busy 锁占用）用户发送的消息不再拒绝/丢弃，而是入队本队列，
-//! 由 react_loop 每轮迭代边界被动 drain 并注入 session（与 handoff 门铃同一
-//! 注入位），插入下一迭代——桌面端「执行中发送」与手机端「执行中发送」语义一致：
-//! 追加消息只注入后端 LLM 上下文，前端不显示气泡，仅弹窗提示消息内容。
+//! 由 react_loop 等循环每轮迭代边界被动 drain 并注入 session（与 handoff 门铃
+//! 同一注入位），插入下一迭代。桌面端与手机端「执行中发送」的用户语义一致
+//! （只注入后端 LLM 上下文，前端不显示气泡，仅弹窗提示消息内容），但来源
+//! 队列分工：
+//! - 手机端：mobile_server busy 分支调用本模块 push（经用户鉴权，本人指令，
+//!   直接作为 user 消息注入，无需 UNTRUSTED_BOUNDARY）；
+//! - 桌面端：send_message busy 分支已迁至直接写 `SignalState::append_queue`
+//!   （src-tauri commands/process.rs），不再入本队列。
+//!
+//! 本模块 drain/format 函数仍为三个循环消费两队列的共用注入面。
 //!
 //! ## 设计要点
 //!
-//! - 消息来源：桌面端（send_message_cmd busy 分支）与手机端（mobile_server busy
-//!   分支）均经用户鉴权（本人指令），直接作为 user 消息注入，无需 UNTRUSTED_BOUNDARY
 //! - 队列持久性：全局 static，跨 session 存活；正常路径下每轮迭代即 drain 清空
 //! - 空队列零开销：drain 返回空 Vec，不注入、不产生日志
 //! - 中毒恢复：持锁 panic 不应让追加通道永久不可用（模式对齐 handoff.rs）

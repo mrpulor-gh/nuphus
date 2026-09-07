@@ -1,13 +1,15 @@
 //! LLM Client Factory
 //!
 //! Dynamically creates Client for the corresponding Provider based on ModelRegistry.
-//! All text tasks use the main model. Capability-specific models (vision/stt/tts)
-//! are resolved via `get_capability()`.
+//! All text tasks use the main model; capability-specific models (vision/stt/tts)
+//! are resolved directly by each consumer from `ModelRegistry` fields.
 
 use crate::{
     api::ApiClient,
+    config::provider::TransportKind,
     config::registry::ProviderRegistry,
     config::{ModelRegistry, ProviderConfig},
+    transports::responses::{ResponsesConfig, ResponsesTransport},
     transports::Transport,
     Result,
 };
@@ -41,6 +43,27 @@ impl ClientFactory {
         Ok(Arc::new(client))
     }
 
+    /// Create a client using an exact provider + model binding.
+    pub fn create_client_for(
+        &self,
+        provider_name: &str,
+        model_id: &str,
+    ) -> Result<Arc<dyn ApiClient>> {
+        let (provider, model) = self
+            .registry
+            .find_model_for_provider(provider_name, model_id)
+            .ok_or_else(|| {
+                crate::NuphusError::llm(format!(
+                    "model '{}' not found for provider '{}'",
+                    model_id, provider_name
+                ))
+            })?;
+        let transport = self.build_transport(provider, &model.id)?;
+        Ok(Arc::new(super::client::LlmClient::with_transport_arc(
+            transport,
+        )))
+    }
+
     /// Create Client for the main model (all text tasks)
     pub fn create_main_client(&self) -> Result<Arc<dyn ApiClient>> {
         if self.registry.model.is_empty() {
@@ -49,13 +72,6 @@ impl ClientFactory {
             ));
         }
         self.create_client(&self.registry.model)
-    }
-
-    /// Create Client for a specific capability (vision/stt/tts)
-    /// Falls back to main model when the capability is not configured.
-    pub fn create_capability_client(&self, capability: &str) -> Result<Arc<dyn ApiClient>> {
-        let model_id = self.registry.get_capability(capability);
-        self.create_client(&model_id)
     }
 
     /// Build a Transport for the given Provider + model.
@@ -77,9 +93,74 @@ impl ClientFactory {
                 ))
             })?;
 
-        // Provider.transport() returns the correct transport (ChatCompletions
-        // or Anthropic) with quirks embedded. The ProviderConfig from the
-        // registry already has defaults filled from the TOML layer.
-        Ok(pmeta.transport(provider, model_id))
+        // P4 分派（refactor 设计 §4.3 / §7 P4）：按 pmeta.transport_for(model_id)
+        // 解析出的协议族选择构造器。
+        // - Responses → 新引擎 ResponsesTransport（P4 接线，仅 opencode-go
+        //   responses 模型族会命中；chat/anthropic 路径逐字节不变）。
+        // - ChatCompletions / Anthropic → 继续委托 Provider::transport()
+        //   （现网 13 provider 路径；旧方法退役留后续阶段）。
+        let kind = pmeta.transport_for(model_id);
+        match kind {
+            TransportKind::Responses => {
+                tracing::info!(
+                    "[factory] build_transport provider={} model={} transport_kind=Responses \
+                     (P4 分派；构造 ResponsesTransport)",
+                    provider.provider_type.as_str(),
+                    model_id
+                );
+                // ResponsesConfig 组装字段来源（对齐 custom/local 的 cfg 优先、
+                // provider 常量兜底模式——与 opencode-go chat 族 transport() 鉴权
+                // 语义一致）：
+                // - base_url：cfg.base_url 非空用 cfg，否则 pmeta.default_base_url()
+                // - api_key / timeout_secs / reasoning_effort：透传 ProviderConfig
+                // - auth_header / auth_prefix：cfg 显式配置优先，否则 pmeta 声明常量
+                // - provider_kind：ProviderConfig.provider_type（已规范化 ProviderKind）
+                // - quirks：pmeta.quirks() 的副本；仅 opencode-go 追加稳定会话 ID
+                //   （x-opencode-session，网关 400 MissingSessionID 根因）。守卫限定：
+                //   即便将来有非 opencode-go provider 走到 Responses 分支也不误加头。
+                let mut quirks = pmeta.quirks();
+                if provider.provider_type == crate::api::ProviderKind::OpenCodeGo {
+                    quirks.extra_headers.push((
+                        "x-opencode-session".to_string(),
+                        crate::transports::opencode_session::opencode_session_id(),
+                    ));
+                }
+                Ok(Arc::new(ResponsesTransport::new(ResponsesConfig {
+                    base_url: if provider.base_url.is_empty() {
+                        pmeta.default_base_url().to_string()
+                    } else {
+                        provider.base_url.clone()
+                    },
+                    api_key: provider.api_key.clone(),
+                    model: model_id.to_string(),
+                    timeout_secs: provider.timeout_secs,
+                    auth_header: if provider.auth_header.is_empty() {
+                        pmeta.auth_header().to_string()
+                    } else {
+                        provider.auth_header.clone()
+                    },
+                    auth_prefix: if provider.auth_prefix.is_empty() {
+                        pmeta.auth_prefix().to_string()
+                    } else {
+                        provider.auth_prefix.clone()
+                    },
+                    provider_kind: Some(provider.provider_type),
+                    quirks,
+                    reasoning_effort: provider.reasoning_effort.clone(),
+                })))
+            }
+            // ChatCompletions / Anthropic：现网路径逐字节不变（含 anthropic 官方
+            // provider 的 Anthropic transport；不在此新建构造）。
+            other => {
+                tracing::info!(
+                    "[factory] build_transport provider={} model={} transport_kind={:?} \
+                     (委托 Provider::transport 既有路径)",
+                    provider.provider_type.as_str(),
+                    model_id,
+                    other
+                );
+                Ok(pmeta.transport(provider, model_id))
+            }
+        }
     }
 }

@@ -32,6 +32,7 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   const [security, setSecurity] = useState<SecurityCheck | null>(null)
   const [userInputRequest, setUserInputRequest] = useState<UserInputRequest | null>(null)
   const [pauseState, setPauseState] = useState<{ actionId: string } | null>(null)
+  const [appendQueue, setAppendQueue] = useState<string[]>([])
   const [completed, setCompleted] = useState(false)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
 
@@ -267,6 +268,8 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
     setUserInputRequest,
     pauseState,
     setPauseState,
+    appendQueue,
+    setAppendQueue,
     completed,
     setCompleted,
     timeline,

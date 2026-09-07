@@ -20,8 +20,8 @@ export function useModals() {
   const [showExternalAgents, setShowExternalAgents] = useState(false)
   const [showPlugins, setShowPlugins] = useState(false)
   const [showPluginDev, setShowPluginDev] = useState(false)
-  const [showTools, setShowTools] = useState(false)
-  const [showCanvasHub, setShowCanvasHub] = useState(false)
+  const [showUpdate, setShowUpdate] = useState(false)
+  const [showCanvas, setShowCanvas] = useState(false)
 
   return {
     showWorkflow,
@@ -60,9 +60,9 @@ export function useModals() {
     setShowPlugins,
     showPluginDev,
     setShowPluginDev,
-    showTools,
-    setShowTools,
-    showCanvasHub,
-    setShowCanvasHub,
+    showUpdate,
+    setShowUpdate,
+    showCanvas,
+    setShowCanvas,
   }
 }

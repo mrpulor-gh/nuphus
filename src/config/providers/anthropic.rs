@@ -93,6 +93,11 @@ impl Provider for AnthropicProvider {
         }
     }
 
+    fn default_transport(&self) -> TransportKind {
+        // 声明协议族与既有 transport() 实现一致（返回 AnthropicTransport）。
+        TransportKind::Anthropic
+    }
+
     fn transport(&self, cfg: &ProviderConfig, model_id: &str) -> Arc<dyn Transport> {
         Arc::new(AnthropicTransport::new(AnthropicConfig {
             api_key: cfg.api_key.clone(),

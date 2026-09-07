@@ -17,6 +17,8 @@
     "@dagrejs/dagre": "^3.1.1",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "@xyflow/react": "^12.11.2",
     "html-to-image": "^1.11.13",
     "lucide-react": "^1.14.0",

@@ -6,21 +6,21 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 悬浮胶囊容器：输入框外层右上角（top:-46px / right:0）── */
+/* ── 悬浮胶囊容器：输入框外层左上角（与右侧追加消息提示对称）── */
 .external-agents-bar {
   position: absolute;
   top: -46px;
-  right: 0;
+  left: 0;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
   border-radius: 20px;
-  background: rgba(18, 20, 29, 0.6);
+  background: var(--glass-bg-soft);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--line-2);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-elevated);
   z-index: 51;
 }
 
@@ -65,10 +65,10 @@
   justify-content: center;
 }
 .agent-avatar-icon.is-cli {
-  color: #38bdf8;
+  color: var(--info);
 }
 .agent-avatar-icon.is-agent {
-  color: #a855f7;
+  color: var(--violet);
 }
 
 /* ── 状态点：叠加在头像右上角 ── */
@@ -89,8 +89,8 @@
   background: var(--fg-4);
 }
 .agent-avatar-btn .ext-agent-dot.is-dispatched {
-  background: #38bdf8;
-  box-shadow: 0 0 5px rgba(56, 189, 248, 0.45);
+  background: var(--info);
+  box-shadow: 0 0 5px rgba(var(--info-rgb), 0.45);
 }
 .agent-avatar-btn .ext-agent-dot.is-ready {
   background: var(--success);
@@ -136,10 +136,10 @@
   gap: 2px;
   padding: 5px 9px;
   border-radius: 8px;
-  background: rgba(18, 20, 29, 0.92);
+  background: var(--glass-bg);
   backdrop-filter: blur(8px);
   border: 1px solid var(--line-2);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
@@ -548,17 +548,17 @@
 .ext-agent-popover {
   position: absolute;
   bottom: calc(100% + 8px);
-  right: 0;
+  left: 0;
   width: 340px;
   max-height: 340px;
   display: flex;
   flex-direction: column;
   border-radius: 12px;
-  background: rgba(18, 20, 29, 0.96);
+  background: var(--glass-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--line-2);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
   z-index: 71;
 }
@@ -750,13 +750,11 @@
   border-color: var(--accent);
   background: var(--accent-dim);
 }
-/* ── 可见性引擎：整条胶囊默认隐身，感应区唤醒 ──
-   感应区与胶囊同高同右缘、向左延伸 200px；forced（执行中/阻塞/错误/pin）
-   时 React 挂 .forced 恒可见。移开 10s 后经 .fading 0.6s 渐隐 */
+/* ── 可见性引擎：左侧感应区唤醒 Agent 胶囊，内容从左向右展开 ── */
 .ext-agents-hover-zone {
   position: absolute;
   top: -46px;
-  right: 0;
+  left: 0;
   width: 200px;
   height: 38px;
   z-index: 50;

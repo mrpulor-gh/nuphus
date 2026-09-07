@@ -1807,18 +1807,23 @@ async fn get_model_config<R: tauri::Runtime>(
                         model.reasoning_efforts.clone()
                     } else {
                         builtin
-                            .find_model(&model.id)
-                            .map(|(_, m)| {
-                                m.reasoning_efforts.iter().map(|s| s.to_string()).collect()
+                            .get(provider.provider_type.as_str())
+                            .and_then(|p| {
+                                p.models().iter().find(|m| m.id == model.id).map(|m| {
+                                    m.reasoning_efforts.iter().map(|s| s.to_string()).collect()
+                                })
                             })
                             .unwrap_or_default()
                     };
                     let default_effort = if model.default_effort.is_some() {
                         model.default_effort.clone()
                     } else {
-                        builtin
-                            .find_model(&model.id)
-                            .and_then(|(_, m)| m.default_effort.map(|s| s.to_string()))
+                        builtin.get(provider.provider_type.as_str()).and_then(|p| {
+                            p.models()
+                                .iter()
+                                .find(|m| m.id == model.id)
+                                .and_then(|m| m.default_effort.map(|s| s.to_string()))
+                        })
                     };
                     models.push(nuphus::api::ModelInfo {
                         id: model.id.clone(),
@@ -1829,9 +1834,12 @@ async fn get_model_config<R: tauri::Runtime>(
                         supports_audio: model.supports_audio,
                         supports_image_generation: model.supports_image_generation,
                         context_window: model.context_window.map(|c| c as u64).or_else(|| {
-                            builtin
-                                .find_model(&model.id)
-                                .map(|(_, m)| m.context_window as u64)
+                            builtin.get(provider.provider_type.as_str()).and_then(|p| {
+                                p.models()
+                                    .iter()
+                                    .find(|m| m.id == model.id)
+                                    .map(|m| m.context_window as u64)
+                            })
                         }),
                         reasoning_efforts,
                         default_effort,
@@ -1843,20 +1851,19 @@ async fn get_model_config<R: tauri::Runtime>(
             // 按当前 mode 解析生效模型（agent_models：leader/workflow/custom 各自模型，
             // 空 = 跟随 default → leader → registry.model 锚点）。切换 mode 后模型卡
             // 「当前模型」应跟随该 mode 的生效模型，而非全局 registry.model。
-            let current = crate::commands::config::llm::effective_model(
-                &state.llm_config_path,
-                &registry,
-                query.mode.as_deref().unwrap_or("leader"),
-            );
+            let (current_provider, current) =
+                crate::commands::config::llm::effective_model_binding(
+                    &state.llm_config_path,
+                    &registry,
+                    query.mode.as_deref().unwrap_or("leader"),
+                )
+                .unwrap_or_default();
             // 当前模型上下文窗口（0 = 未知，不伪装默认值）：手机端上下文用量
             // 百分比 = 会话累计 input_tokens / context_window；分母缺失时前端
             // 隐藏百分比显示 "--"，而非用 128000 假数渲染。
             let context_window = registry
-                .providers
-                .iter()
-                .flat_map(|p| p.models.iter())
-                .find(|m| m.id == current)
-                .and_then(|m| m.context_window)
+                .find_model_for_provider(&current_provider, &current)
+                .and_then(|(_, m)| m.context_window)
                 .unwrap_or(0);
             (current, models, context_window)
         }

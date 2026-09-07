@@ -1,0 +1,43 @@
+.update-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 300px;
+  color: var(--fg-2);
+}
+.update-current,
+.update-status,
+.update-available {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.update-current {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.update-current strong,
+.update-version {
+  color: var(--fg-1);
+  font-weight: var(--fw-semibold);
+}
+.update-notes {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+.update-error {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.update-progress progress {
+  width: 100%;
+  accent-color: var(--accent);
+}

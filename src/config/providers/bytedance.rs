@@ -10,7 +10,7 @@ impl Provider for ByteDanceProvider {
         "bytedance"
     }
     fn display_name(&self) -> &'static str {
-        "字节豆包 (Doubao)"
+        "ByteDance"
     }
     fn default_base_url(&self) -> &'static str {
         "https://ark.cn-beijing.volces.com/api/v3"

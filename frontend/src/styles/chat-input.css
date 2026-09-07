@@ -9,7 +9,7 @@
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 16px;
-  box-shadow: 0 4px 32px #0000004d;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
   z-index: 50;
 }
 /* ── 输入区 dock：VideoProgressBadge 与 ChatInputBar 的共享定位容器 ──
@@ -27,9 +27,13 @@
   flex-direction: column;
   gap: var(--space-2);
 }
-/* dock 内的输入框卡片回到文档流，原 fixed 几何由 dock 承担（无 dock 时旧规则仍生效） */
+/* dock 内的输入框卡片回到文档流，原 fixed 几何由 dock 承担（无 dock 时旧规则仍生效）。
+   position: relative + left/bottom:auto：absolute 子级（rail）锚定输入壳本体；
+   同时消除基础规则 left:50% / bottom:20px 在 relative 下造成的右移半宽、上移 20px。 */
 .chat-input-dock .chat-input-area {
-  position: static;
+  position: relative;
+  left: auto;
+  bottom: auto;
   transform: none;
   width: auto;
   min-width: 0;
@@ -39,10 +43,7 @@
   border-color: var(--accent);
   box-shadow:
     0 0 0 2px rgba(var(--accent-rgb), 0.3),
-    0 4px 32px rgba(0, 0, 0, 0.5);
-}
-.chat-input-inner {
-  padding: 8px 12px 8px;
+    0 2px 10px rgba(0, 0, 0, 0.2);
 }
 .chat-input-row {
   display: flex;
@@ -162,6 +163,91 @@
       0 2px 10px rgba(var(--error-rgb), 0.3);
     border-color: rgba(var(--error-rgb), 0.55);
   }
+}
+
+/* ── 后端追加队列：仅有真实消息时占位，hover/focus 可逐条查看 ── */
+.input-append-queue-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.input-append-queue-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--spark-tertiary);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.input-append-queue-btn:hover,
+.input-append-queue-btn:focus-visible {
+  color: var(--fg-1);
+  background: var(--void-hover);
+  border-color: var(--glass-2);
+  outline: none;
+}
+.input-append-queue-btn:active { color: var(--accent); }
+.input-append-queue-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% - 2px);
+  display: none;
+  width: min(320px, 70vw);
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--glass-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-elevated);
+  z-index: 20;
+}
+.input-append-queue-wrap:hover .input-append-queue-popover,
+.input-append-queue-wrap:focus-within .input-append-queue-popover { display: flex; flex-direction: column; gap: 4px; }
+.input-append-queue-item {
+  padding: 6px 8px;
+  color: var(--fg-2);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 5px;
+  background: var(--glass-1);
+}
+
+/* 追加消息提示：输入框右上角，与左侧 Agent 胶囊对称 */
+.input-append-queue-rail {
+  position: absolute;
+  top: -36px;
+  right: 0;
+  transform: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.input-append-queue-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--input-bg);
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* ── 右下角操作组：+ 工具 / 语音 / 发送 整体固定在输入区右下 ── */
@@ -367,8 +453,7 @@
   height: 32px;
   padding: 0 6px 0 10px;
 }
-.input-bar-left,
-.input-bar-right {
+.input-bar-left {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -489,12 +574,6 @@
   line-height: 1.5;
   white-space: nowrap;
 }
-.input-bar-sep {
-  font-size: 11px;
-  color: var(--spark-tertiary);
-  opacity: 0.35;
-  line-height: 1;
-}
 .input-bar-text {
   font-size: 12px;
   color: var(--spark-tertiary);
@@ -610,10 +689,6 @@
 .input-bar-effort-option.active {
   color: var(--fg-1);
   background: rgba(255, 255, 255, 0.05);
-}
-
-.input-bar .status-dl-pct {
-  display: none;
 }
 
 /* ── 模式 chip 容器 ── */
@@ -1079,4 +1154,40 @@
   height: 1px;
   margin: 5px 8px;
   background: var(--line-2);
+}
+.input-append-queue-hint {
+  padding: 4px 8px 6px;
+  color: var(--fg-1);
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+  border-bottom: 1px solid var(--line-1);
+}
+.input-append-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.input-append-queue-item > span:first-child {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.input-append-queue-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--fg-3);
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.input-append-queue-remove:hover,
+.input-append-queue-remove:focus-visible {
+  color: var(--error);
+  background: var(--status-error-soft);
+  outline: none;
 }

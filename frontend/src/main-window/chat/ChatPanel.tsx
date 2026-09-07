@@ -33,6 +33,7 @@ import {
   setReasoningEffort,
   listModels,
   getEffectiveModel,
+  getProviderContext,
   setRelation as persistRelationToBackend,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo } from '../lib/api'
@@ -61,8 +62,10 @@ import {
   IconSparkles,
   IconSquare,
   IconGrid,
-  IconChevronUp,
-  IconChevronDown,
+  IconEye,
+  IconMic,
+  IconImage,
+  IconRadio,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -108,6 +111,7 @@ interface ChatPanelProps {
   pauseState?: { actionId: string } | null
   onContinue?: (actionId: string) => void
   onAppendInstruction?: (actionId: string, instruction: string) => void
+  appendQueue?: string[]
   onTerminate?: (actionId: string) => void
   onApproveSecurity?: (id: string) => void
   onRejectSecurity?: (id: string) => void
@@ -180,6 +184,7 @@ export function ChatPanel({
   pauseState,
   onContinue,
   onAppendInstruction,
+  appendQueue,
   onTerminate,
   onApproveSecurity,
   onRejectSecurity,
@@ -440,6 +445,12 @@ export function ChatPanel({
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
+  const [hoveredProvider, setHoveredProvider] = useState<string | null>(null)
+  const [providerMenuPosition, setProviderMenuPosition] = useState<{
+    top: number
+    left: number
+  } | null>(null)
+  const providerHoverTimer = useRef<number | null>(null)
 
   // ── Slash Commands ──
   const SLASH_ITEMS = useMemo(
@@ -505,11 +516,10 @@ export function ChatPanel({
   // ── Hints ──
   const HINTS = useMemo(
     () => [
-      t('input.placeholder'),
-      t('input.hint.mobile'),
       t('input.hint.shortcuts'),
+      t('input.hint.commandsQueue'),
+      t('input.hint.modes'),
       t('input.hint.desktop'),
-      t('input.hint.workflow'),
     ],
     [t],
   )
@@ -594,13 +604,15 @@ export function ChatPanel({
     return configs
   }
 
-  // ── 推理深度：从当前配置解析 provider，加载已配置值 + 模型元数据（支持的级别）──
+  // ── 推理深度：解析当前 mode 生效模型的 provider 归属，加载已配置值 + 模型元数据（支持的级别）──
   // 注意：本函数只负责 provider/effort 上下文，禁止写 modelLabel——
-  // modelLabel 唯一数据源是 getEffectiveModel(mode)（getCurrentConfig 返回 config.toml
-  // 根模型，不感知 mode，异步覆盖会把输入框显示打回默认模型）。
+  // modelLabel 唯一数据源是 getEffectiveModel(mode)（异步覆盖会把输入框显示打回
+  // 默认模型）。provider 用 get_provider_context（与 getEffectiveModel 同一
+  // effective_model 解析点，mode 感知 + 内存/磁盘/[last_model] 权威归属），不再用
+  // getCurrentConfig——其 provider 是 runtime 全局模型，同 id 跨段时会定位错卡。
   const loadEffortContext = useCallback(async () => {
-    const cfg = await getCurrentConfig().catch(() => null)
-    const provider = cfg?.provider || ''
+    const ctx = await getProviderContext(mode || 'leader').catch(() => null)
+    const provider = ctx?.provider || ''
     setCurrentProvider(provider)
     if (provider) {
       try {
@@ -618,9 +630,45 @@ export function ChatPanel({
     } catch {
       /* 模型元数据加载失败时保持现状（入口隐藏） */
     }
+  }, [mode])
+
+  useEffect(() => {
+    if (!modelOpen) {
+      setHoveredProvider(null)
+      setProviderMenuPosition(null)
+      if (providerHoverTimer.current) window.clearTimeout(providerHoverTimer.current)
+    }
+    return () => {
+      if (providerHoverTimer.current) window.clearTimeout(providerHoverTimer.current)
+    }
+  }, [modelOpen])
+
+  const openProviderModels = useCallback((provider: string, anchor?: HTMLElement) => {
+    if (providerHoverTimer.current) window.clearTimeout(providerHoverTimer.current)
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect()
+      const menuHeight = Math.min(320, window.innerHeight * 0.48)
+      const menuWidth = 236
+      const gap = 8
+      const left =
+        rect.right + gap + menuWidth <= window.innerWidth
+          ? rect.right + gap
+          : Math.max(8, rect.left - gap - menuWidth)
+      const top = Math.min(Math.max(8, rect.top), Math.max(8, window.innerHeight - menuHeight - 8))
+      setProviderMenuPosition({ top, left })
+    }
+    setHoveredProvider(provider)
   }, [])
 
-  // ── 模型切换：点击卡片本身 → 切换到卡片当前显示的模型（所见即所得，切后自动关弹窗）──
+  const closeProviderModelsSoon = useCallback(() => {
+    if (providerHoverTimer.current) window.clearTimeout(providerHoverTimer.current)
+    providerHoverTimer.current = window.setTimeout(() => {
+      setHoveredProvider(null)
+      setProviderMenuPosition(null)
+    }, 160)
+  }, [])
+
+  // ── 模型切换：点击外侧模型项 → 切换到该具体模型（切后自动关弹窗）──
   const switchConfig = useCallback(
     async (
       cfg: { id: string; label: string; model: string; provider: string; baseUrl: string },
@@ -633,7 +681,12 @@ export function ChatPanel({
         const resolvedUrl = prov?.base_url || ''
         // provider-driven: switch_model reads key from config.toml, no key param
         // 按当前 mode 写入对应 agent 模型配置（Leader/Workflow/Custom 联动）
-        await switchModel(cfg.model, cfg.provider, resolvedUrl, undefined, mode)
+        // context_window 兜底：从 list_models 磁盘元数据查该 (provider, model) 行，
+        // 缺失时后端保持原值；显式传入避免切换后 runtime 窗口丢失。
+        const ctxWin = allModels.find(
+          m => m.id === cfg.model && m.provider === cfg.provider,
+        )?.context_window
+        await switchModel(cfg.model, cfg.provider, resolvedUrl, ctxWin, mode)
         playUiSound('switch')
         const limit = await getContextLimit()
         if (limit != null && limit > 0) setContextTotal(limit)
@@ -645,7 +698,7 @@ export function ChatPanel({
         } catch {
           /* localStorage 写入失败不阻塞切换流程 */
         }
-        // 本地同步 savedConfigs（轮播切换后卡片立即显示新模型名 + ✓）
+        // 本地同步 savedConfigs（切换后提供商项立即显示新模型名 + ✓）
         setSavedConfigs(prev =>
           prev.map(c =>
             c.provider === cfg.provider
@@ -660,33 +713,7 @@ export function ChatPanel({
       setSwitchingId(null)
       if (closeAfter) setModelOpen(false)
     },
-    [switchingId, allProviders, mode, onModelChanged],
-  )
-
-  // ── 上下按钮模型浏览：仅预览不切换，直接换显示的模型名（无翻转动画，高效直给）。
-  //    不调用 switch_model、不写 localStorage——真正切换仍靠点击卡片本身确认。
-  //    peekModels: provider → 正在预览的模型 id（关弹窗即清空，避免下次打开残留）
-  const [peekModels, setPeekModels] = useState<Record<string, string>>({})
-  useEffect(() => {
-    if (!modelOpen) setPeekModels({})
-  }, [modelOpen])
-
-  const peekSwitch = useCallback(
-    (
-      cfg: { id: string; label: string; model: string; provider: string; baseUrl: string },
-      dir: 1 | -1,
-    ) => {
-      const models = allModels.filter(m => m.provider === cfg.provider)
-      if (models.length <= 1) return
-      // 浏览基准 = 当前显示中的模型（含预览态），非已保存配置
-      const displayed = peekModels[cfg.provider] || cfg.model
-      const idx = models.findIndex(m => m.id === displayed)
-      if (idx < 0) return
-      const next = models[(idx + dir + models.length) % models.length]
-      if (!next || next.id === displayed) return
-      setPeekModels(prev => ({ ...prev, [cfg.provider]: next.id }))
-    },
-    [allModels, peekModels],
+    [switchingId, allProviders, allModels, mode, onModelChanged],
   )
 
   // 切换推理深度：写入 config.toml + 触发 Runtime 重建（后端已就绪，前端无需额外刷新）
@@ -1879,8 +1906,10 @@ export function ChatPanel({
           defaultEffort={currentModelDefaultEffort}
           onEffortChange={handleEffortChange}
           onModelSwitch={() => setModelOpen(true)}
-          onSend={handleSubmit}
+onSend={handleSubmit}
           onInterrupt={onInterrupt}
+          onGracefulStop={onGracefulStop}
+          appendQueue={appendQueue}
           isWorkflowRunning={isWorkflowRunning}
           showDesktopToolbar={showDesktopToolbar}
           onToggleDesktopToolbar={onToggleDesktopToolbar}
@@ -2063,80 +2092,174 @@ export function ChatPanel({
                   </div>
                 ) : (
                   <div className="cmd-modal-list">
-                    {savedConfigs.map(cfg => {
-                      // 卡片当前显���的模型 = 预览态（上下按钮浏览）|| 已保存配置
-                      const displayedModel = peekModels[cfg.provider] || cfg.model
-                      // ✓ 只标真正生效的模型：预览到别的模型时该卡不视为 active
-                      const isActive = !peekModels[cfg.provider] && modelLabel === cfg.model
-                      // 同 provider 全部模型（上下浏览数据源；仅 1 个时禁用浏览）
-                      const providerModels = allModels.filter(m => m.provider === cfg.provider)
-                      return (
-                        <div key={cfg.provider}>
-                          <div
-                            className={`cmd-modal-card cmd-modal-card-face ${isActive ? 'active' : ''} ${switchingId === cfg.id ? 'switching' : ''}`}
-                            onClick={() =>
-                              switchConfig(
+                    <div className="model-provider-picker">
+                      <div className="model-provider-list">
+                        {savedConfigs.map(cfg => {
+                          const providerModels = allModels.filter(m => m.provider === cfg.provider)
+                          // 勾选态 = (provider, model) 双全等：官方厂商与 opencode-go 存在同 id
+                          // 模型（deepseek-v4-flash 等），仅比 id 会让两 provider 卡片同时打勾。
+                          // currentProvider 来自 get_provider_context（mode 感知的生效模型
+                          // provider 归属，后端权威：内存 runtime → [last_model] → 候选回落），
+                          // 与 modelLabel 同一 effective_model 解析点，两者天然同步。
+                          const isActive =
+                            !!currentProvider &&
+                            cfg.provider === currentProvider &&
+                            cfg.model === modelLabel
+                          const isHovered = hoveredProvider === cfg.provider
+                          return (
+                            <div
+                              key={cfg.provider}
+                              className={`model-provider-option ${isHovered ? 'active' : ''}`}
+                              style={
                                 {
-                                  ...cfg,
-                                  id: `${cfg.provider}::${displayedModel}`,
-                                  model: displayedModel,
-                                },
-                                true,
-                              )
-                            }
-                          >
-                            <div className="cmd-modal-card-left">
-                              <span className="cmd-modal-provider-icon">
+                                  '--provider-index': savedConfigs.indexOf(cfg),
+                                } as React.CSSProperties
+                              }
+                              tabIndex={0}
+                              aria-label={`${cfg.label} models`}
+                              onMouseEnter={e => openProviderModels(cfg.provider, e.currentTarget)}
+                              onMouseLeave={closeProviderModelsSoon}
+                              onFocus={e => openProviderModels(cfg.provider, e.currentTarget)}
+                              onBlur={closeProviderModelsSoon}
+                            >
+                              <span className="cmd-modal-provider-icon" aria-hidden="true">
                                 {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
                               </span>
+                              <span className="model-provider-option-body">
+                                <span className="cmd-modal-card-name">{cfg.label}</span>
+                                <span className="cmd-modal-card-meta">
+                                  {isActive ? cfg.model : t('models.noModels')}
+                                </span>
+                              </span>
+                              {isActive && (
+                                <span className="cmd-modal-card-check" aria-label="当前模型">
+                                  <IconCheck size={13} />
+                                </span>
+                              )}
+                              {isHovered && (
+                                <div
+                                  className="model-provider-models"
+                                  role="menu"
+                                  aria-label={`${cfg.label} models`}
+                                  style={
+                                    providerMenuPosition
+                                      ? {
+                                          top: providerMenuPosition.top,
+                                          left: providerMenuPosition.left,
+                                        }
+                                      : undefined
+                                  }
+                                >
+                                  <div className="model-provider-models-header">
+                                    <span>{cfg.label}</span>
+                                    <span>{providerModels.length}</span>
+                                  </div>
+                                  {providerModels.length === 0 ? (
+                                    <div className="model-provider-empty">
+                                      {t('modelManager.noModels')}
+                                    </div>
+                                  ) : (
+                                    providerModels.map(model => {
+                                      // 同卡片：勾选须 provider+model 双全等，避免官方/GO 同 id
+                                      // 模型在 hover 子菜单里互相打勾。currentProvider 空时保守不勾。
+                                      const modelIsActive =
+                                        !!currentProvider &&
+                                        cfg.provider === currentProvider &&
+                                        modelLabel === model.id
+                                      return (
+                                        <button
+                                          key={model.id}
+                                          type="button"
+                                          className={`model-provider-model ${modelIsActive ? 'active' : ''} ${switchingId === `${cfg.provider}::${model.id}` ? 'switching' : ''}`}
+                                          disabled={switchingId !== null}
+                                          aria-busy={switchingId === `${cfg.provider}::${model.id}`}
+                                          onClick={() =>
+                                            switchConfig(
+                                              {
+                                                ...cfg,
+                                                id: `${cfg.provider}::${model.id}`,
+                                                model: model.id,
+                                              },
+                                              true,
+                                            )
+                                          }
+                                        >
+                                          <span className="model-provider-model-info">
+                                            <span className="model-provider-model-name">
+                                              {model.id}
+                                              {cfg.provider === 'opencode-go' && (
+                                                <span
+                                                  className="model-go-badge"
+                                                  title="OpenCode Go 网关"
+                                                >
+                                                  GO
+                                                </span>
+                                              )}
+                                            </span>
+                                            <span className="model-provider-model-meta">
+                                              {model.supports_vision && (
+                                                <span title="视觉能力" aria-label="视觉能力">
+                                                  <IconEye size={11} /> 视觉
+                                                </span>
+                                              )}
+                                              {model.supports_audio && (
+                                                <span title="音频能力" aria-label="音频能力">
+                                                  <IconMic size={11} /> 音频
+                                                </span>
+                                              )}
+                                              {model.supports_image_generation && (
+                                                <span title="图像生成" aria-label="图像生成">
+                                                  <IconImage size={11} /> 图像
+                                                </span>
+                                              )}
+                                              {model.supports_streaming && (
+                                                <span title="流式输出" aria-label="流式输出">
+                                                  <IconRadio size={11} /> 流式
+                                                </span>
+                                              )}
+                                              <span
+                                                className="model-provider-context"
+                                                title={t('modelManager.unknownContext')}
+                                              >
+                                                {model.context_window
+                                                  ? t(
+                                                      'modelManager.contextUnit',
+                                                      model.context_window.toLocaleString(),
+                                                    )
+                                                  : t('modelManager.unknownContext')}
+                                              </span>
+                                              {model.reasoning_efforts.length > 0 && (
+                                                <span title="推理强度" aria-label="推理强度">
+                                                  {t(
+                                                    'modelManager.reasoning',
+                                                    model.reasoning_efforts.join(' / '),
+                                                  )}
+                                                </span>
+                                              )}
+                                            </span>
+                                          </span>
+                                          {modelIsActive && (
+                                            <span
+                                              className="cmd-modal-card-check"
+                                              aria-label="当前模型"
+                                            >
+                                              <IconCheck size={13} />
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            <div className="cmd-modal-card-body">
-                              <div className="cmd-modal-card-name">{cfg.label}</div>
-                              <div className="cmd-modal-card-meta">{displayedModel}</div>
-                            </div>
-                            {switchingId === cfg.id ? (
-                              <div className="cmd-modal-card-spinner" />
-                            ) : isActive ? (
-                              <span className="cmd-modal-card-check">✓</span>
-                            ) : null}
-                            {/* 上下浏览按钮：仅预览相邻模型，不切换——切换靠点击卡片本身 */}
-                            <div className="cmd-modal-card-peek">
-                              <button
-                                type="button"
-                                className="cmd-modal-card-peek-btn"
-                                title={t('modelManager.peekPrev')}
-                                aria-label={t('modelManager.peekPrev')}
-                                disabled={providerModels.length <= 1}
-                                onClick={e => {
-                                  e.stopPropagation()
-                                  peekSwitch(cfg, -1)
-                                }}
-                              >
-                                <IconChevronUp size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                className="cmd-modal-card-peek-btn"
-                                title={t('modelManager.peekNext')}
-                                aria-label={t('modelManager.peekNext')}
-                                disabled={providerModels.length <= 1}
-                                onClick={e => {
-                                  e.stopPropagation()
-                                  peekSwitch(cfg, 1)
-                                }}
-                              >
-                                <IconChevronDown size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                          )
+                        })}
+                      </div>
+                    </div>
                   </div>
                 )}
-                <div className="cmd-modal-footer-hint">
-                  Tip: Use <strong>/models</strong> to quickly switch models anytime
-                </div>
+                <div className="cmd-modal-footer-hint">{t('modelManager.switchTip')}</div>
               </div>
             </div>
           </div>,

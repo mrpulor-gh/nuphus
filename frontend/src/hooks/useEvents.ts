@@ -43,12 +43,14 @@ const toolToMood: Record<string, MoodState> = {
 
 export interface EventHandlers {
   // Refs
-  refs: {
+refs: {
     streamingMsgId: MutableRefObject<string | null>
     lastStreamingMsgId: MutableRefObject<string | null>
     executionActiveRef: MutableRefObject<boolean>
     processingRef: MutableRefObject<boolean>
     toolCallCountRef: MutableRefObject<number>
+    /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
+    interruptedRef: MutableRefObject<boolean>
   }
 
   // State setters
@@ -69,6 +71,7 @@ export interface EventHandlers {
     React.SetStateAction<'understanding' | 'executing' | 'recording' | 'workflow' | 'retrying' | ''>
   >
   setPauseState: React.Dispatch<React.SetStateAction<{ actionId: string } | null>>
+  setAppendQueue: React.Dispatch<React.SetStateAction<string[]>>
   setMainTokenUsage: React.Dispatch<
     React.SetStateAction<{
       inputTokens: number
@@ -223,6 +226,7 @@ export function useEvents(h: EventHandlers) {
         h.refs.executionActiveRef.current = false
         h.setIsProcessing(false)
         h.setPauseState(null)
+        h.setAppendQueue([])
         h.setMood(mood)
       }
 
@@ -231,9 +235,11 @@ export function useEvents(h: EventHandlers) {
           finishWithMessage((event.message || '').trim(), 'success')
           break
         }
-        case 'execution_error': {
-          // LLM 执行中错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
-          playUiSound('error')
+case 'execution_error': {
+          const isInterrupted = h.refs.interruptedRef.current
+          // 用户中断：不播错误音效、mood 回到 idle（中断不是失败）；
+          // 其余 LLM 错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
+          if (!isInterrupted) playUiSound('error')
           const s = h.refs.streamingMsgId.current
           if (s) {
             h.setMessages(prev =>
@@ -242,11 +248,13 @@ export function useEvents(h: EventHandlers) {
           }
           h.refs.streamingMsgId.current = null
           h.refs.executionActiveRef.current = false
+          h.refs.interruptedRef.current = false
           h.setIsProcessing(false)
           h.setCompleted(true)
           h.setGoalType(null)
           h.setPauseState(null)
-          h.setMood('error')
+          h.setAppendQueue([])
+          h.setMood(isInterrupted ? 'idle' : 'error')
           break
         }
         case 'session_info':
@@ -265,9 +273,10 @@ export function useEvents(h: EventHandlers) {
             playUiSound('error')
             h.refs.executionActiveRef.current = false
             h.setIsProcessing(false)
-            h.setCompleted(true)
-            h.setGoalType(null)
-            h.setMood('error')
+             h.setCompleted(true)
+             h.setAppendQueue([])
+             h.setGoalType(null)
+             h.setMood('error')
           }
           break
         case 'warning': {
@@ -349,8 +358,10 @@ export function useEvents(h: EventHandlers) {
           h.setTotalCalls(0)
           h.setExecTokenUsage(null)
           h.setExecPhase('understanding')
-          h.refs.executionActiveRef.current = true
+h.refs.executionActiveRef.current = true
           h.refs.lastStreamingMsgId.current = null
+          // 新一轮执行开始：清除中断标记（此前中断状态已收敛）
+          h.refs.interruptedRef.current = false
           const streamId = crypto.randomUUID()
           h.refs.streamingMsgId.current = streamId
           h.addMessage({
@@ -368,6 +379,9 @@ export function useEvents(h: EventHandlers) {
         }
         case 'execution_paused':
           h.setPauseState({ actionId: event.action_id })
+          break
+        case 'append_queue_updated':
+          h.setAppendQueue(event.messages)
           break
         case 'goal_type_identified':
           h.setGoalType({ type: event.goal_type, label: event.label, confidence: event.confidence })
@@ -394,7 +408,11 @@ export function useEvents(h: EventHandlers) {
               fromTask: event.from_task,
             },
           ])
-          h.setMood(toolToMood[event.tool_name] || 'working')
+h.setMood(
+            h.refs.interruptedRef.current
+              ? 'idle'
+              : toolToMood[event.tool_name] || 'working',
+          )
 
           // planner_update → task_status changed (from inline tool call)
           if (event.tool_name === 'planner_update' && !event.from_task) {

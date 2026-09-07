@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nuphus</title>
-    <!-- BUILD-SENTINEL-20260826-SPLASH-NODL-BTN -->
+    <!-- BUILD-SENTINEL-20260908-SKIP-HIDDEN-CSS -->
     <style>
       :root {
         --font-ui:
@@ -169,6 +169,12 @@
         align-items: center;
         gap: 5px;
       }
+      /* 根治历史「后台下载常显」：作者样式的 display:flex 会覆盖 UA 默认的
+         [hidden]{display:none} → hidden 属性设了也白设、按钮永远可见。
+         本条（0,2,0 特异性）压过 .skip-wrap（0,1,0），让 hidden 真正生效。 */
+      .skip-wrap[hidden] {
+        display: none;
+      }
       .skip-btn {
         font-size: 11px;
         color: var(--ink);
@@ -259,6 +265,6 @@
     <!-- 版本号缓存破坏符：WebView2 曾长期缓存旧版 splash.js（URL 不变缓存不失效），
        导致"已全就绪仍显示后台下载"改了源码也变不过来的历史根因之一。
        每次改 splash.js 必须同时 bump 这个版本号，强制 WebView2 换 URL 重新拉取。 -->
-    <script src="splash.js?v=20260831"></script>
+    <script src="splash.js?v=20260908"></script>
   </body>
 </html>

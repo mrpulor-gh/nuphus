@@ -28,7 +28,7 @@
     // （曾出现形态：真实下载完成后按钮仍一直挂着；10s 定时器只在触发瞬间
     // 检查 lastPct，错过完成时机就没有任何东西再隐藏它。）
     if (p >= 100) {
-      if (skipWrap) skipWrap.hidden = true
+      hideSkip()
       if (skipTimer) {
         clearTimeout(skipTimer)
         skipTimer = null
@@ -78,6 +78,22 @@
       .catch(function () {})
   })()
 
+  // 「后台下载」出口统一显隐。双保险：
+  //   1. hidden 属性 —— 但 splash.html 里 .skip-wrap{display:flex} 会盖过 UA 的
+  //      [hidden]{display:none}（即便已加 .skip-wrap[hidden] 覆盖，仍保留语义层）
+  //   2. inline style.display —— 优先级最高、不受任何样式表来源/缓存影响，
+  //      即使 WebView2 缓存了旧版 splash.html 的 CSS，这里也能强制隐藏。
+  function hideSkip() {
+    if (!skipWrap) return
+    skipWrap.hidden = true
+    skipWrap.style.display = 'none'
+  }
+  function showSkip() {
+    if (!skipWrap) return
+    skipWrap.hidden = false
+    skipWrap.style.display = ''
+  }
+
   function showBar() {
     if (bar) bar.hidden = false
     document.body.classList.add('downloading')
@@ -91,7 +107,7 @@
     document.body.classList.remove('downloading')
     var pctNum = document.getElementById('dlPct')
     if (pctNum) pctNum.textContent = ''
-    if (skipWrap) skipWrap.hidden = true
+    hideSkip()
     if (skipTimer) {
       clearTimeout(skipTimer)
       skipTimer = null
@@ -106,7 +122,7 @@
       // 仅在「确认需要下载」+ 仍在下载（加载条可见）+ 未完成（pct<100）时
       // 才亮出按钮——10s 后状态查询早已返回，needsDownload 是权威判定。
       if (needsDownload && (!bar || !bar.hidden) && lastPct >= 0 && lastPct < 100) {
-        skipWrap.hidden = false
+        showSkip()
       }
     }, SKIP_DELAY_MS)
   }
@@ -149,12 +165,12 @@
     if (skipBtn) {
       skipBtn.addEventListener('click', function () {
         skipBtn.disabled = true
-        if (skipWrap) skipWrap.hidden = true
+        hideSkip()
         setText('正在打开应用…')
         if (tauri.core) {
           tauri.core.invoke('splash_skip_download').catch(function () {
             skipBtn.disabled = false
-            if (skipWrap) skipWrap.hidden = false
+            showSkip()
           })
         }
       })

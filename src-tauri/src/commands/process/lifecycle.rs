@@ -63,13 +63,26 @@ pub fn append_instruction(
     action_id: String,
     instruction: String,
 ) -> Result<String, String> {
-    nuphus::agent::pause::set_pause_decision(
-        &state.signals,
-        &action_id,
-        nuphus::agent::pause::PauseDecision::Append(instruction),
-    );
-    // PAUSE_CLAIMED 由 Agent 循环统一释放，不在 Tauri 命令中释放
-    tracing::info!("[PAUSE] Append instruction: {}", action_id);
+    let instruction = instruction.trim().to_string();
+    if instruction.is_empty() {
+        return Err("追加消息不能为空".to_string());
+    }
+
+    // 暂停弹窗仍由 action_id 决策表消费；执行中追加则立即进入唯一真实队列，
+    // 由当前 agent 的迭代边界消费，避免等待 Leader dispatch 完成。
+    if state.pause_flag.load(Ordering::SeqCst) {
+        nuphus::agent::pause::set_pause_decision(
+            &state.signals,
+            &action_id,
+            nuphus::agent::pause::PauseDecision::Append(instruction.clone()),
+        );
+    } else if state.busy.load(Ordering::SeqCst) {
+        let mut signals = nuphus::state::SignalState::write(&state.signals);
+        signals.append_queue.push(instruction.clone());
+    } else {
+        return Err("当前没有正在执行的任务".to_string());
+    }
+    tracing::info!("[APPEND] instruction accepted: {}", action_id);
     Ok("appended".to_string())
 }
 
@@ -115,6 +128,9 @@ pub fn graceful_stop(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
+    nuphus::state::SignalState::write(&state.signals)
+        .append_queue
+        .clear();
     let was_busy = state.busy.swap(false, Ordering::SeqCst);
     state.cancel_flag.store(true, Ordering::SeqCst);
     state.pause_flag.store(false, Ordering::SeqCst);
@@ -126,4 +142,27 @@ pub fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 pub fn is_busy(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.busy.load(Ordering::SeqCst))
+}
+
+/// Read the backend-owned append queue for the execution control UI.
+#[tauri::command]
+pub fn get_append_queue(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let signals = nuphus::state::SignalState::read(&state.signals);
+    Ok(signals.append_queue.clone())
+}
+
+/// Remove one still-pending append instruction by its queue index.
+/// The active agent consumes from this same vector, so an already-consumed
+/// instruction cannot be deleted through this command.
+#[tauri::command]
+pub fn remove_append_queue_item(
+    state: State<'_, AppState>,
+    index: usize,
+) -> Result<Vec<String>, String> {
+    let mut signals = nuphus::state::SignalState::write(&state.signals);
+    if index >= signals.append_queue.len() {
+        return Err("追加消息已被执行或不存在".to_string());
+    }
+    signals.append_queue.remove(index);
+    Ok(signals.append_queue.clone())
 }

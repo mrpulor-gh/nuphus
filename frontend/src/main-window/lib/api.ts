@@ -28,10 +28,6 @@ export function getTools() {
   return invoke<ToolSchema[]>('get_tools')
 }
 
-export function executeTool(toolName: string, params: Record<string, unknown>) {
-  return invoke<ToolExecuteResult>('execute_tool', { toolName, params })
-}
-
 // ── Memory ──
 
 export function getMemoryStats() {
@@ -59,14 +55,6 @@ export function deleteTenet(id: string) {
 
 export function addTenet(content: string, priority?: string) {
   return invoke<void>('add_tenet', { content, priority })
-}
-
-export function getKnowledgeItems(category: string) {
-  return invoke<unknown[]>('get_knowledge_items', { category })
-}
-
-export function deleteKnowledgeItem(category: string, id: string) {
-  return invoke<boolean>('delete_knowledge_item', { category, id })
 }
 
 // ── 新知识库 API ──
@@ -111,10 +99,6 @@ export function clearProviderApiKey(provider: string) {
  *  后端同步更新运行时窗口 —— refine 阈值与上下文占用百分比立即按新值计算。 */
 export function setModelContextWindow(provider: string, model: string, contextWindow: number) {
   return invoke<string>('set_model_context_window', { provider, model, contextWindow })
-}
-
-export function getSessionInfo() {
-  return invoke<SessionInfo>('get_session_info')
 }
 
 /** 历史执行过程条目（对齐后端 state::HistoryTraceItem，serde camelCase） */
@@ -173,25 +157,13 @@ export function getSessionDetail(sessionId: string) {
 
 // ── Stats ──
 
-export function getTimelineIndexStats() {
-  return invoke<TimelineIndexStats>('get_timeline_index_stats')
-}
-
 export function getMemoryOverview() {
   return invoke<import('../../core/types-memory').MemoryOverview>('get_memory_overview')
 }
 
 // ── Desktop ──
 
-export function getDesktopStatus() {
-  return invoke<DesktopStatus>('get_desktop_status')
-}
-
 // ── Hooks ──
-
-export function getHooksStatus() {
-  return invoke<HooksConfigStatus>('get_hooks_status')
-}
 
 // ── Control ──
 
@@ -256,6 +228,14 @@ export function gracefulStop() {
 
 export function isBusy() {
   return invoke<boolean>('is_busy')
+}
+
+export function getAppendQueue() {
+  return invoke<string[]>('get_append_queue')
+}
+
+export function removeAppendQueueItem(index: number) {
+  return invoke<string[]>('remove_append_queue_item', { index })
 }
 
 export function forceReset() {
@@ -405,16 +385,6 @@ export function resumeLatestSession() {
   return invoke<HistoryMessage[]>('resume_latest_session')
 }
 
-/** 初始化外部 agent 工作目录（幂等，返回目录绝对路径） */
-export function agentInit(agent: string, description: string) {
-  return invoke<string>('agent_init', { agent, description })
-}
-
-/** 派发任务：写 brief + 置 in_progress，返回含门铃 URL/token 的契约字符串（token 仅出现在返回值，不落盘） */
-export function handoffEnsure(agent: string, taskId: string, brief: string) {
-  return invoke<string>('handoff_ensure', { agent, task_id: taskId, brief })
-}
-
 // ── External Agents 配置中心（plugin/team.toml CRUD）──
 
 /** 外部 Agent 登记项（team.toml 段 → 扁平字段，含默认值补全） */
@@ -489,10 +459,6 @@ export function getToolPermissions() {
   return invoke<string>('get_tool_permissions')
 }
 
-export function getBrowserCdpUrl() {
-  return invoke<string>('get_browser_cdp_url')
-}
-
 /** Identity of a picked external (fingerprint) browser — persisted alongside
  * the CDP URL so a reopened window (new random debug port) can be re-resolved. */
 export interface BrowserIdentity {
@@ -559,10 +525,6 @@ export function listModels() {
   return invoke<ModelInfo[]>('list_models')
 }
 
-export function getDefaultModel() {
-  return invoke<string>('get_default_model')
-}
-
 // ── Model Switch (provider-driven: reads key from config.toml, no key param) ──
 
 /** mode: leader/workflow/exec/custom/global —— 切换写入对应 agent 模型配置（高级设置联动） */
@@ -598,6 +560,21 @@ export function getEffectiveModel(mode: string) {
 /** 设置某个 agent 的模型；model 空串 = 清除（跟随全局 fallback） */
 export function setAgentModel(agent: string, model: string) {
   return invoke<string>('set_agent_model', { agent, model })
+}
+
+/** 生效模型的 provider 归属（mode 感知，后端权威解析）：弹窗勾选/effort 上下文数据源 */
+export interface ProviderContext {
+  model: string
+  provider: string
+}
+
+/**
+ * 某 mode 生效模型 + 其 provider 归属。同 id 跨 provider（官方 deepseek vs
+ * opencode-go）时，get_current_config 的 provider 是 runtime 全局模型（非 mode
+ * 感知），勾选/effort 须以本命令为准，否则会串卡。
+ */
+export function getProviderContext(mode: string) {
+  return invoke<ProviderContext | null>('get_provider_context', { mode })
 }
 
 // ── Reasoning Effort ──
@@ -646,15 +623,6 @@ export interface ProviderInfo {
 
 export function getSupportedProviders() {
   return invoke<ProviderInfo[]>('get_supported_providers')
-}
-
-export function testLlmConnection(
-  apiKey: string,
-  model: string,
-  provider: string,
-  baseUrl: string,
-) {
-  return invoke<string>('test_llm_connection', { apiKey, model, provider, baseUrl })
 }
 
 // ── Capabilities ──
@@ -713,14 +681,6 @@ export function refineSkip() {
 
 export interface SessionRefineConfig {
   threshold: number
-}
-
-export function getSessionRefineConfig() {
-  return invoke<SessionRefineConfig>('get_session_refine_config')
-}
-
-export function setSessionRefineConfig(threshold?: number) {
-  return invoke<string>('set_session_refine_config', { threshold })
 }
 
 // ── User Input ──

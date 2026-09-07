@@ -40,6 +40,8 @@ pub struct SignalState {
     pub pause_decisions: HashMap<String, PauseDecision>,
     /// 当前暂停 action_id
     pub pause_action_id: Option<String>,
+    /// 执行中追加消息的真实消费队列，按当前 agent 单一路由。
+    pub append_queue: Vec<String>,
 
     // ── Security 子系统 ──
     pub security: SecurityState,

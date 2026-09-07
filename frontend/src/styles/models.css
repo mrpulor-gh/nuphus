@@ -1,24 +1,23 @@
-/* ═══════════════════════════════════════════
-   models.css — ModelsPage 页面特有样式
-   骨架：ui/PageLayout Section/FormRow
-   ═══════════════════════════════════════════ */
+/* 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?   models.css 鈥?ModelsPage 椤甸潰鐗规湁鏍峰紡
+   楠ㄦ灦锛歶i/PageLayout Section/FormRow
+   鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?*/
 @import './tokens.css';
 
-/* ── 表单组（label 上 + 控件下，Section 内的纵向节奏）── */
+/* 鈹€鈹€ 琛ㄥ崟缁勶紙label 涓?+ 鎺т欢涓嬶紝Section 鍐呯殑绾靛悜鑺傚锛夆攢鈹€ */
 
-/* ── 小徽记（如「已配置」状态徽章的间距）── */
+/* 鈹€鈹€ 灏忓窘璁帮紙濡傘€屽凡閰嶇疆銆嶇姸鎬佸窘绔犵殑闂磋窛锛夆攢鈹€ */
 .label-badge {
   margin-left: var(--space-2);
 }
 
-/* ── 检测/提示文字 ── */
+/* 鈹€鈹€ 妫€娴?鎻愮ず鏂囧瓧 鈹€鈹€ */
 .detect-status {
   font-size: var(--fz-xs);
   color: var(--fg-4);
   margin-bottom: var(--space-2);
 }
 
-/* ── 幽灵图标按钮（显示密码 / 删除等行内小操作）── */
+/* 鈹€鈹€ 骞界伒鍥炬爣鎸夐挳锛堟樉绀哄瘑鐮?/ 鍒犻櫎绛夎鍐呭皬鎿嶄綔锛夆攢鈹€ */
 .icon-btn-ghost {
   display: inline-flex;
   align-items: center;
@@ -45,7 +44,7 @@
   box-shadow: var(--shadow-focus);
 }
 
-/* ── 清除密钥按钮：默认低调（fg-4/半透明），红色仅 hover/focus 时出现 ── */
+/* 鈹€鈹€ 娓呴櫎瀵嗛挜鎸夐挳锛氶粯璁や綆璋冿紙fg-4/鍗婇€忔槑锛夛紝绾㈣壊浠?hover/focus 鏃跺嚭鐜?鈹€鈹€ */
 .icon-btn-clear:hover:not(:disabled) {
   color: var(--error);
   opacity: 1;
@@ -59,33 +58,13 @@
   cursor: default;
 }
 
-/* ── 密码可见性切换按钮（输入框后缀）── */
-.input-suffix-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--fg-4);
-  font-size: var(--fz-xs);
-  font-family: inherit;
-  padding: 0 var(--space-2);
-  white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-.input-suffix-btn:hover {
-  color: var(--fg-1);
-}
-.input-suffix-btn:focus-visible {
-  outline: none;
-  color: var(--accent);
-}
-
-/* ── 等宽数字输入（上下文窗口等）── */
+/* 鈹€鈹€ 绛夊鏁板瓧杈撳叆锛堜笂涓嬫枃绐楀彛绛夛級鈹€鈹€ */
 .input-num {
   font-family: var(--font-mono);
   font-size: var(--fz-md);
 }
 
-/* ── 浮动反馈 Toast ── */
+/* 鈹€鈹€ 娴姩鍙嶉 Toast 鈹€鈹€ */
 .feedback-toast {
   position: fixed;
   top: var(--space-4);
@@ -107,14 +86,14 @@
   background: rgba(var(--error-rgb), 0.92);
 }
 
-/* ── 下拉选项内联元素 ── */
+/* 鈹€鈹€ 涓嬫媺閫夐」鍐呰仈鍏冪礌 鈹€鈹€ */
 .select-option-provider {
   color: var(--fg-4);
   font-size: var(--fz-xs);
   margin-left: 6px;
 }
 
-/* ── 检测错误提示 ── */
+/* 鈹€鈹€ 妫€娴嬮敊璇彁绀?鈹€鈹€ */
 .detect-error {
   margin-top: var(--space-2);
   font-size: var(--fz-xs);
@@ -122,12 +101,12 @@
   line-height: 1.4;
 }
 
-/* ── 变体与工具类 ── */
+/* 鈹€鈹€ 鍙樹綋涓庡伐鍏风被 鈹€鈹€ */
 .select-menu--up {
   top: auto;
   bottom: calc(100% + 4px);
 }
-/* 提高特异性覆盖 components.css 的 top 定位，避免 !important */
+/* 鎻愰珮鐗瑰紓鎬ц鐩?components.css 鐨?top 瀹氫綅锛岄伩鍏?!important */
 .compact-select-menu.select-menu--up {
   top: auto;
   bottom: calc(100% + 4px);
@@ -140,15 +119,11 @@
 .model-list--spaced {
   margin-top: var(--space-2);
 }
-.segmented-wrap {
-  margin-bottom: var(--space-3);
-  flex-wrap: wrap;
-}
 .hint-text {
   margin-top: 6px;
 }
-/* ── Model list（自 components.css 拆出并入）── */
-/* ── Model list ── */
+/* 鈹€鈹€ Model list锛堣嚜 components.css 鎷嗗嚭骞跺叆锛夆攢鈹€ */
+/* 鈹€鈹€ Model list 鈹€鈹€ */
 .model-list-item {
   display: flex;
   align-items: center;
@@ -213,7 +188,7 @@
   color: var(--spark-primary);
 }
 
-/* ── 模型能力徽标（视觉/音频/图像生成/上下文窗口）── */
+/* 鈹€鈹€ 妯″瀷鑳藉姏寰芥爣锛堣瑙?闊抽/鍥惧儚鐢熸垚/涓婁笅鏂囩獥鍙ｏ級鈹€鈹€ */
 .model-list-badges {
   display: inline-flex;
   align-items: center;
@@ -238,8 +213,8 @@
   background: var(--surface-2);
   color: var(--fg-3);
 }
-/* 上下文窗口未知（builtin miss 且聚合库未命中）——诚实呈现 Unknown 态：
-   显示灰色 ? 而非伪装成 128K 之类的猜测值。 */
+/* 涓婁笅鏂囩獥鍙ｆ湭鐭ワ紙builtin miss 涓旇仛鍚堝簱鏈懡涓級鈥斺€旇瘹瀹炲憟鐜?Unknown 鎬侊細
+   鏄剧ず鐏拌壊 ? 鑰岄潪浼鎴?128K 涔嬬被鐨勭寽娴嬪€笺€?*/
 .model-badge--ctx-unknown {
   background: transparent;
   color: var(--fg-4);
@@ -247,7 +222,7 @@
   padding: 2px 4px;
 }
 
-/* ── 模型行内 Context Window 编辑（ModelsPage 手动校准入口）── */
+/* 鈹€鈹€ 妯″瀷琛屽唴 Context Window 缂栬緫锛圡odelsPage 鎵嬪姩鏍″噯鍏ュ彛锛夆攢鈹€ */
 .model-ctx-edit-btn {
   padding: 2px;
   margin-left: 2px;
@@ -271,7 +246,7 @@
   border-color: var(--accent);
   box-shadow: var(--shadow-focus);
 }
-/* 隐藏 number input 的上下箭头，行内保持紧凑 */
+/* 闅愯棌 number input 鐨勪笂涓嬬澶达紝琛屽唴淇濇寔绱у噾 */
 .ctx-inline-input::-webkit-outer-spin-button,
 .ctx-inline-input::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -281,7 +256,7 @@
   -moz-appearance: textfield;
   appearance: textfield;
 }
-/* 行内编辑单位（K）容器：input + 单位后缀 */
+/* 琛屽唴缂栬緫鍗曚綅锛圞锛夊鍣細input + 鍗曚綅鍚庣紑 */
 .ctx-inline-wrap {
   display: inline-flex;
   align-items: center;
@@ -293,27 +268,8 @@
   user-select: none;
   flex-shrink: 0;
 }
-/* ── Agent 级模型配置（高级设置）── */
-.agent-models-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.agent-models-hint {
-  display: block;
-  font-size: var(--fz-xs);
-  font-weight: 400;
-  color: var(--fg-4);
-  margin-top: 2px;
-}
-.agent-models-feedback {
-  margin-top: 10px;
-  font-size: var(--fz-xs);
-  color: var(--fg-4);
-  line-height: 1.4;
-}
 
-/* ── 模型列表刷新按钮（Section 右上角 actions）：小胶囊 + 图标，加载中旋转 ── */
+/* 鈹€鈹€ 妯″瀷鍒楄〃鍒锋柊鎸夐挳锛圫ection 鍙充笂瑙?actions锛夛細灏忚兌鍥?+ 鍥炬爣锛屽姞杞戒腑鏃嬭浆 鈹€鈹€ */
 .models-refresh-btn {
   display: inline-flex;
   align-items: center;
@@ -353,4 +309,329 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+
+/* ── Ctrl+K ModelsPage：整页布局与左侧导航 ── */
+.models-page-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+  color: var(--fg-1);
+}
+.models-page-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--line-1);
+  background: var(--surface-1);
+  flex-shrink: 0;
+}
+.models-page-close { flex-shrink: 0; }
+.models-page-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.models-page-body {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.models-page-layout {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.models-rail {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--line-1);
+  background: var(--surface-1);
+}
+.models-rail-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+}
+.models-rail-group + .models-rail-group {
+  margin-top: var(--space-5);
+}
+.models-rail-group-title {
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.models-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.models-rail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.models-rail-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.models-rail-item:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.models-rail-item.active {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-rail-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--fg-5);
+}
+.models-rail-dot.on { background: var(--success); }
+.models-rail-dot.active { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14); }
+.models-rail-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.models-rail-badge { flex-shrink: 0; }
+.models-rail-note {
+  padding: var(--space-2);
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+.models-rail-foot {
+  flex-shrink: 0;
+  padding: var(--space-3);
+  border-top: 1px solid var(--line-1);
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  line-height: var(--leading-normal);
+}
+.models-main {
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-0);
+}
+.models-main-scroll {
+  width: min(920px, 100%);
+  height: 100%;
+  margin: 0 auto;
+  overflow-y: auto;
+  padding: var(--space-6) clamp(var(--space-5), 5vw, 72px) var(--space-8);
+}
+.models-page-loading {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  color: var(--fg-3);
+  font-size: var(--fz-md);
+}
+.models-provider-current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin-bottom: var(--space-4);
+  padding: 8px 10px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+}
+.models-provider-current-name { color: var(--fg-1); font-weight: 600; }
+.models-provider-current-id { color: var(--fg-4); font: var(--fz-sm) var(--font-mono); }
+.models-provider-current-hint { margin-left: auto; color: var(--fg-4); font-size: var(--fz-sm); }
+.models-list-wrap { margin-top: var(--space-4); }
+.model-list {
+  display: flex;
+  max-height: min(440px, 52vh);
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+.model-list-item:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.model-list-item:disabled { cursor: wait; opacity: 0.6; }
+@media (max-width: 720px) {
+  .models-page-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .models-rail { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line-1); }
+  .models-rail-scroll { padding: var(--space-3); }
+  .models-rail-group + .models-rail-group { margin-top: var(--space-3); }
+  .models-main-scroll { padding: var(--space-4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .models-rail-item, .model-list-item { transition: none; }
+}
+
+/* ── API 密钥输入行：输入框与操作按钮同一行，眼睛图标内嵌输入框 ── */
+.models-key-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.models-key-field {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.models-key-field .compact-input {
+  width: 100%;
+  padding-right: 34px;
+}
+.models-key-eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.models-key-eye:hover {
+  color: var(--fg-1);
+  background: var(--surface-hover);
+}
+.models-key-eye:focus-visible {
+  outline: none;
+  color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+/* 方形清除按钮：与「连接」按钮同高，带边框；hover 转错误色 */
+.models-key-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.models-key-clear:hover:not(:disabled) {
+  color: var(--error);
+  border-color: rgba(var(--error-rgb), 0.35);
+  background: rgba(var(--error-rgb), 0.08);
+}
+.models-key-clear:focus-visible {
+  outline: none;
+  color: var(--error);
+  box-shadow: var(--shadow-focus);
+}
+.models-key-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 连接按钮同高（small Button 与方形图标按钮视觉一致） */
+.models-key-row .compact-btn.btn--sm {
+  min-height: 30px;
+}
+
+/* ── 去重：Section 标题已表达字段名时隐藏 FormRow 重复 label，保留 hint ── */
+.models-form-row--dedup .form-row-label {
+  display: none;
+}
+
+/* ── 本地模型预设快捷按钮（Ollama / LM Studio / llama.cpp）── */
+.models-local-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.models-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.models-preset-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+  border-color: var(--line-3);
+}
+.models-preset-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.models-preset-btn.active {
+  background: var(--accent-dim);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent-hover);
+}
+
+/* GO 网关模型徽标（opencode-go 页模型行）：低调描边小字，不与选中色/能力徽标冲突 */
+.model-go-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  user-select: none;
 }

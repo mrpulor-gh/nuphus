@@ -12,6 +12,7 @@ import {
   listProviderModels,
   refreshProviderModels,
   getAgentModels,
+  getProviderContext,
   setAgentModel,
   setModelContextWindow,
   sttStatus,
@@ -37,82 +38,109 @@ import {
   IconCheck,
   IconTrash2,
   IconEye,
+  IconEyeOff,
   IconMic,
   IconImage,
   IconAlertTriangle,
   IconRefresh,
   IconBrushCleaning,
   IconEdit3,
+  IconPlug,
 } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import '../../styles/models.css'
 
-function ProviderSelect({
-  value,
-  options,
-  onChange,
-}: {
-  value: string
-  options: ProviderInfo[]
-  onChange: (id: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  const close = useCallback(() => setOpen(false), [])
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) close()
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open, close])
-
-  const selected = options.find(o => o.id === value)
-
-  return (
-    <div className="compact-select-wrap" ref={ref}>
-      <div
-        className="compact-select-trigger"
-        tabIndex={0}
-        onClick={() => setOpen(v => !v)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            setOpen(v => !v)
-          }
-        }}
-      >
-        <span>{selected?.name || value}</span>
-        <span className={`compact-select-arrow ${open ? 'open' : ''}`}>▾</span>
-      </div>
-      {open && (
-        <div className="compact-select-menu">
-          {options.map(o => (
-            <div
-              key={o.id}
-              className={`compact-select-option ${value === o.id ? 'active' : ''}`}
-              onClick={() => {
-                onChange(o.id)
-                close()
-              }}
-            >
-              {o.name}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+// ════════════════════════════════════════════════════════════════
+// 文案表（页面专用，硬编码中文；既有多语言字典仅保留仍在用 keys）
+// 说明：本页历史上大量 t('models.*') 引用并不存在于字典 → 界面泄漏 key。
+// 重构后统一为页内文案，可读中文；通用词条（provider/modelList/…）仍走字典。
+// ════════════════════════════════════════════════════════════════
+const TXT = {
+  providerSelectHint: '选择要配置的服务商。deepseek / kimi / openai 等官方服务与本地兼容端点均可。',
+  apiKeyLabel: 'API 密钥',
+  keyConfiguredBadge: '已配置',
+  keyInputPlaceholder: (name: string) => `输入 ${name} 的 API 密钥`,
+  keyOverwritePlaceholder: '输入新密钥覆盖现有配置',
+  keyShow: '显示',
+  keyHide: '隐藏',
+  connectBtn: '连接',
+  connecting: '连接中…',
+  connectTitle: '用当前密钥探测可用模型',
+  clearKeyTitle: '清除已保存的密钥',
+  clearKeyConfirm: '确定要清除该服务商的 API 密钥吗？\n模型与其它配置会保留，清除后需重新输入才能使用云端服务。',
+  keyHelp: '密钥仅保存在本机配置中，用于向服务商发起请求；页面不展示已存密钥原文。',
+  filterPlaceholder: '筛选模型…',
+  baseUrlLabel: '接口地址',
+  baseUrlPlaceholder: '自定义接口地址（可选）',
+  baseUrlHelp: '默认使用服务商官方地址；OpenAI 兼容代理或本地网关可在此覆盖。',
+  modelListTitle: '可用模型',
+  currentModelOf: (name: string) => `（当前使用：${name}）`,
+  refreshBtn: '刷新',
+  refreshing: '刷新中…',
+  refreshTitle: '用已保存密钥重新拉取最新模型列表',
+  emptyFiltered: (q: string) => `没有匹配「${q}」的模型`,
+  emptyNeedConnect: '尚未检测到模型。填写密钥后点击「连接」，或展开列表用「刷新」同步已保存密钥下的模型。',
+  emptyNeedDetect: '尚无模型。请先在上方连接服务商，或点击「刷新」拉取已保存密钥下的最新模型。',
+  modelsCount: (n: number) => `${n} 个可用模型`,
+  configuredCount: (n: number) => `，含 ${n} 个已配置`,
+  capVision: '支持图像理解',
+  capAudio: '支持语音',
+  capImageGen: '支持图像生成',
+  editContext: '设置上下文窗口（K tokens）',
+  ctxUnknown: '上下文窗口未知',
+  removeModelConfirm: (name: string) => `确定从本地列表移除模型「${name}」吗？`,
+  clearKeySuccess: '密钥已清除',
+  clearKeyFail: '清除失败',
+  savingModel: '切换中…',
+  saveOk: '保存成功',
+  saveFail: '保存失败',
+  apiKeyRequired: '请先输入 API 密钥',
+  ctxUnitHint: '单位 K（千 tokens），例如 128 = 128K',
+  ctxCap: '上下文窗口',
+  visionNone: '未配置（使用默认）',
+  downloadReady: '已就绪',
+  downloadPaused: '下载已暂停',
 }
 
-// Vision Model Select — 模块级组件（参考 ProviderSelect）
-// ⚠️ 禁止移回 ModelsPage 内部：组件内定义的组件每次父渲染都是新类型，
-//    React 会卸载重挂载，open 状态丢失 → 下拉弹起立即缩回、反复抖动
+// ════════════════════════════════════════════════════════════════
+// 左侧两模块导航
+// ════════════════════════════════════════════════════════════════
+type CustomNavKey = 'custom' | 'opencode-go' | 'local' | 'capabilities' | 'agents'
+
+/** 模块二「自定义设置」固定导航项：provider 项（custom/opencode-go/local）路由到对应服务商页 */
+const CUSTOM_NAV_ITEMS: { key: CustomNavKey; label: string }[] = [
+  { key: 'custom', label: 'Custom' },
+  { key: 'opencode-go', label: 'Opencode GO' },
+  { key: 'local', label: '本地模型' },
+  { key: 'capabilities', label: '图像音频模型' },
+  { key: 'agents', label: '子智能体模型' },
+]
+
+/** 归入模块二「自定义设置」的服务商 id（不出现在模块一「模型提供商」分组） */
+function isModule2Provider(id: string): boolean {
+  return id === 'custom' || id === 'opencode-go' || id === 'local'
+}
+
+/**
+ * 服务商排序：按展示名 A-Z（与 Rust ProviderRegistry::list_info 返回规则一致）。
+ * 后端已保证字母序稳定，此函数仅作前端兜底——即使后端顺序漂移，
+ * 左侧导航每次打开/刷新也不跳动；新服务商自动按英文名插入正确位置。
+ */
+function sortProvidersStable(list: ProviderInfo[]): ProviderInfo[] {
+  return [...list].sort((a, b) => {
+    if (a.name < b.name) return -1
+    if (a.name > b.name) return 1
+    return 0
+  })
+}
+
+// ════════════════════════════════════════════════════════════════
+// 能力模型选择（vision/audio 等，模块级组件）
+// 注：服务商选择已从下拉升级为整页左侧导航列（见下方 models-rail），
+// 原 ProviderSelect 组件随之移除——服务商在整页中保持显式可见。
+// ════════════════════════════════════════════════════════════════
 function VisionModelSelect({
   value,
   models,
@@ -121,14 +149,17 @@ function VisionModelSelect({
   placeholder,
   showVisionIcons,
   filterCapability,
+  menuUp = false,
 }: {
   value: string
   models: ModelInfo[]
   onChange: (id: string) => void
-  t: any
+  t: (key: string, ...args: string[]) => string
   placeholder?: string
   showVisionIcons?: boolean
   filterCapability?: 'vision' | 'audio'
+  /** true = 菜单向上展开（接近页面底部时避免溢出）；默认向下 */
+  menuUp?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -143,7 +174,7 @@ function VisionModelSelect({
     return () => document.removeEventListener('mousedown', handler)
   }, [open, close])
 
-  // Sort: vision-capable first (or audio-capable first for audio filter)
+  // Sort: matching capability first
   const filtered = Array.isArray(models)
     ? (() => {
         let list = [...models]
@@ -152,7 +183,6 @@ function VisionModelSelect({
         } else if (filterCapability === 'audio') {
           list = list.filter(m => m.supports_audio)
         }
-        // Sort: matching capability first
         if (filterCapability === 'audio') {
           list.sort((a, b) => (b.supports_audio ? 1 : 0) - (a.supports_audio ? 1 : 0))
         } else {
@@ -162,13 +192,16 @@ function VisionModelSelect({
       })()
     : []
   const selected = filtered.find(m => m.id === value)
-  const emptyText = placeholder || t('models.visionModelNone')
+  const emptyText = placeholder || TXT.visionNone
 
   return (
-    <div className="compact-select-wrap" ref={ref}>
+    <div className="models-select compact-select-wrap" ref={ref}>
       <div
         className="compact-select-trigger"
         tabIndex={0}
+        role="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen(v => !v)}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -177,11 +210,13 @@ function VisionModelSelect({
           }
         }}
       >
-        <span>{selected ? `${selected.id} (${selected.provider})` : emptyText}</span>
+        <span className={`${value ? '' : 'select-placeholder'}`}>
+          {selected ? `${selected.id} (${selected.provider})` : emptyText}
+        </span>
         <span className={`compact-select-arrow ${open ? 'open' : ''}`}>▾</span>
       </div>
       {open && (
-        <div className="compact-select-menu select-menu--up">
+        <div className={`compact-select-menu${menuUp ? ' select-menu--up' : ''}`}>
           {/* Clear option */}
           <div
             className={`compact-select-option ${value === '' ? 'active' : ''}`}
@@ -190,11 +225,16 @@ function VisionModelSelect({
               close()
             }}
           >
-            {emptyText}
+            <span className="select-option-name">{emptyText}</span>
           </div>
+          {filtered.length === 0 && (
+            <div className="compact-select-empty">暂无可选模型（先在上方连接并选择服务商）</div>
+          )}
           {filtered.map(m => (
             <div
               key={m.id}
+              role="option"
+              aria-selected={value === m.id}
               className={`compact-select-option ${value === m.id ? 'active' : ''}`}
               onClick={() => {
                 onChange(m.id)
@@ -204,7 +244,10 @@ function VisionModelSelect({
               {showVisionIcons !== false && m.supports_vision && (
                 <IconEye size={11} className="icon-prefix" />
               )}
-              {m.id}
+              {showVisionIcons !== false && filterCapability === 'audio' && m.supports_audio && (
+                <IconMic size={11} className="icon-prefix" />
+              )}
+              <span className="select-option-name">{m.id}</span>
               <span className="select-option-provider">({m.provider})</span>
             </div>
           ))}
@@ -214,6 +257,9 @@ function VisionModelSelect({
   )
 }
 
+// ════════════════════════════════════════════════════════════════
+// 本地缓存 / 工具函数
+// ════════════════════════════════════════════════════════════════
 const MODELS_KEY_PREFIX = 'nuphus_models_'
 const DETECTED_KEY_PREFIX = 'nuphus_detected_models_'
 
@@ -255,11 +301,7 @@ function formatContextWindow(n?: number): string {
   return `${n}`
 }
 
-/**
- * 模型行内 Context Window 编辑：未编辑时显示 ctx badge（未知显示 '?'）+ 铅笔入口；
- * 编辑中显示数字输入框（Enter 提交 / Esc 取消 / 失焦提交）。
- * 模块级组件（参考 VisionModelSelect 注释：组件内定义会被父渲染重建导致丢焦点）。
- */
+/** 模型行内 Context Window 编辑：未编辑时显示 ctx badge + 铅笔入口；编辑中输入框 */
 function RowCtxEditor({
   ctx,
   isEditing,
@@ -277,7 +319,7 @@ function RowCtxEditor({
   onStart: () => void
   onCommit: (name: string) => void
   onCancel: () => void
-  t: any
+  t: (key: string, ...args: string[]) => string
 }) {
   if (isEditing) {
     return (
@@ -309,13 +351,13 @@ function RowCtxEditor({
   return (
     <>
       {ctx && ctx > 0 ? (
-        <span className="model-badge model-badge--ctx" title={t('models.capContext')}>
+        <span className="model-badge model-badge--ctx" title={TXT.ctxCap}>
           {formatContextWindow(ctx)}
         </span>
       ) : (
         <span
           className="model-badge model-badge--ctx model-badge--ctx-unknown"
-          title={t('models.capContextUnknown')}
+          title={TXT.ctxCap}
         >
           ?
         </span>
@@ -323,8 +365,8 @@ function RowCtxEditor({
       <button
         type="button"
         className="icon-btn-ghost model-ctx-edit-btn"
-        title={t('models.editContext')}
-        aria-label={t('models.editContext')}
+        title={TXT.editContext}
+        aria-label={TXT.editContext}
         onClick={e => {
           e.stopPropagation()
           onStart()
@@ -336,6 +378,9 @@ function RowCtxEditor({
   )
 }
 
+// ════════════════════════════════════════════════════════════════
+// 页面主体
+// ════════════════════════════════════════════════════════════════
 export function ModelsPage({
   onClose,
   onModelChanged,
@@ -357,21 +402,18 @@ export function ModelsPage({
   const [visionModel, setVisionModel] = useState('')
   const [visionSaving, setVisionSaving] = useState(false)
   const [visionFeedback, setVisionFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
-  // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测；探测失败保持 null，静默降级）
+  // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测）
   const [sttLocalStatus, setSttLocalStatus] = useState<SttStatus | null>(null)
-  // 云端 STT 模型（capabilities.stt；配置后语音输入优先走云端 /audio/transcriptions）
   const [sttModel, setSttModel] = useState('')
   const [sttSaving, setSttSaving] = useState(false)
   const [sttFeedback, setSttFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [ttsModel, setTtsModel] = useState('')
   const [ttsSaving, setTtsSaving] = useState(false)
   const [ttsFeedback, setTtsFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
-  // 语音克隆模型（capabilities.voice；走云端克隆 API，配置后工具页「语音克隆」可用）
   const [voiceModel, setVoiceModel] = useState('')
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [voiceFeedback, setVoiceFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
-  // Agent 级模型配置（高级设置）：exec 模型
   const [agentModels, setAgentModels] = useState<AgentModels>({
     leader: '',
     workflow: '',
@@ -380,42 +422,36 @@ export function ModelsPage({
   })
   const [agentSaving, setAgentSaving] = useState(false)
   const [agentFeedback, setAgentFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [activeTab, setActiveTab] = useState<'basic' | 'custom'>('basic')
-  // 当前 provider 是否已存储 API key（从不暴露 key 本身）
+  const [activeView, setActiveView] = useState<'provider' | 'capabilities' | 'agents'>('provider')
   const [hasKey, setHasKey] = useState(false)
-  // 所有已配置（有 API key）的 provider 列表
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
-  // API key 检测 — 通过 /v1/models 列出可用模型
   const [detecting, setDetecting] = useState(false)
-  // 清除 API Key 进行中（防重复点击）
   const [clearingKey, setClearingKey] = useState(false)
   const [detectedModels, setDetectedModels] = useState<ProviderModelBrief[]>([])
-  const [filterInput, setFilterInput] = useState('') // 实时筛选 detectedModels
+  const [filterInput, setFilterInput] = useState('')
   const [detectError, setDetectError] = useState<string | null>(null)
-  // 模型列表刷新（用已存 key 拉取服务商最新模型）
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
 
-  // 本地 STT 探测（一次性，不轮询；调用失败静默降级，与 VoiceButton 策略一致）
+  // 本地 STT 探测（一次性，不轮询；调用失败静默降级）
   const probeStt = useCallback(() => {
     sttStatus()
       .then(s => setSttLocalStatus(s))
       .catch(() => {})
   }, [])
 
-  // STT 模型下载（事件驱动；done 后重新探测，卡片自动转为就绪态）
+  // STT / 视觉模型下载（事件驱动）
   const sttDl = useSttModelDownload(probeStt)
-  // 本地视觉模型（OCR / YOLO）自动下载状态（事件驱动；启动时 bootstrap 已自动发起）
   const visionDl = useVisionModelDownload()
 
-  // 进入 custom tab 时探测本地 STT 状态 + 刷新视觉模型状态
+  // 进入「图像音频模型」页时探测本地 STT 状态 + 刷新视觉模型状态
   useEffect(() => {
-    if (activeTab !== 'custom') return
+    if (activeView !== 'capabilities') return
     probeStt()
     visionDl.refresh()
-  }, [activeTab, probeStt, visionDl.refresh])
+  }, [activeView, probeStt, visionDl.refresh])
 
-  // Load specified provider state (baseUrl + model list only, API key is kept on backend)
+  // Load specified provider state (baseUrl + model list only, key kept on backend)
   const loadProviderState = (id: string) => {
     setBaseUrl('')
     setModels(loadModels(id))
@@ -425,26 +461,32 @@ export function ModelsPage({
     Promise.all([
       getSupportedProviders()
         .then(list => {
-          if (Array.isArray(list)) setProviders(list)
+          if (Array.isArray(list)) setProviders(sortProvidersStable(list))
         })
         .catch(() => {}),
-      getCurrentConfig().then(cfg => {
+      // provider 归属用 mode 感知的 get_provider_context（后端权威）：同 id 跨段
+      // （官方 deepseek vs opencode-go）时 getCurrentConfig 的 provider 可能落在
+      // 文件顺序第一段，直接写 localStorage 会把生效模型记到错误 provider 键下。
+      Promise.all([
+        getCurrentConfig().catch(() => null),
+        getProviderContext('leader').catch(() => null),
+      ]).then(([cfg, pctx]) => {
         if (cfg) {
           setCurrentModel(cfg.model || '')
-          const prov = cfg.provider || 'deepseek'
-          try {
-            if (cfg.model) {
-              localStorage.setItem(`nuphus_current_model_${prov}`, cfg.model)
-            }
-          } catch {
-            /* localStorage 写入失败不阻塞 UI */
-          }
-          setProvider(prov)
           setApiKey('')
           setHasKey(!!cfg.has_key)
           setBaseUrl(cfg.base_url || '')
           if (cfg.configured_providers) setConfiguredProviders(cfg.configured_providers)
         }
+        const prov = pctx?.provider || cfg?.provider || 'deepseek'
+        try {
+          if (cfg?.model) {
+            localStorage.setItem(`nuphus_current_model_${prov}`, cfg.model)
+          }
+        } catch {
+          /* localStorage 写入失败不阻塞 UI */
+        }
+        if (cfg || pctx) setProvider(prov)
       }),
     ]).finally(() => setProvidersLoading(false))
     getCapabilities()
@@ -469,26 +511,58 @@ export function ModelsPage({
       .catch(() => {})
   }, [])
 
-  // Load data when provider changes
+  // Load provider-local state on provider change
   useEffect(() => {
     setModels(loadModels(provider))
     setDetectedModels(loadDetectedModels(provider))
-    setBaseUrl('') // 清空避免跨 provider 泄漏
-    setFilterInput('') // 切换 provider 清空筛选
-    setCtxOverrides({}) // 行内 ctx 覆盖是页面级临时态：切换 provider 清空防串
+    setBaseUrl('')
+    setFilterInput('')
+    setCtxOverrides({})
     setEditingCtxModel(null)
     editingCtxRef.current = null
-    // 加载该 provider 持久化的当前 model,供弹窗读取
     try {
       const saved = localStorage.getItem(`nuphus_current_model_${provider}`)
       if (saved) setCurrentModel(saved)
     } catch {
       setCurrentModel('')
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider])
 
-  // local 默认上下文：仅在用户显式设置过（localStorage 有记录）时作为「新模型默认值」；
-  // 无记录 = null（不传参 → 后端不写盘，避免把 128K 猜测值固化进每个 local 模型）。
+  // ── 进入远程服务商页自动同步网关模型列表（每次挂载每 provider 一次，静默）──
+  // 后端 refresh_provider_models = 拉 /v1/models + upsert_provider_models 持久化进
+  // providers.toml 段：使网关实际在售的新模型（如 opencode-go 的 deepseek 系列）
+  // 无需手动点「刷新」即出现在本页列表与弹窗 hover（list_models 数据源）。
+  // 网络失败静默降级（保留 localStorage 检测缓存 + 磁盘段）；本地段跳过（无远程）。
+  const autoSyncedRef = useRef<Set<string>>(new Set())
+  const providerRef = useRef(provider)
+  useEffect(() => {
+    providerRef.current = provider
+  }, [provider])
+  useEffect(() => {
+    if (activeView !== 'provider') return
+    if (!provider || provider === 'local' || provider === 'custom') return
+    if (!configuredProviders.includes(provider)) return
+    if (autoSyncedRef.current.has(provider)) return
+    autoSyncedRef.current.add(provider)
+    const target = provider
+    const p = providers.find(x => x.id === target)
+    refreshProviderModels(target, p?.base_url || undefined)
+      .then(models => {
+        if (providerRef.current !== target || !Array.isArray(models)) return
+        setDetectedModels(models)
+        saveDetectedModels(target, models)
+        return listModels()
+      })
+      .then(list => {
+        if (Array.isArray(list)) setAllModels(list)
+      })
+      .catch(() => {
+        /* 静默：失败不打扰，手动「刷新」入口仍在 */
+      })
+  }, [activeView, provider, configuredProviders, providers])
+
+  // local 默认上下文（仅在用户显式设置过时作为新模型默认值）
   const [localCtxWindow, setLocalCtxWindow] = useState<number | null>(() => {
     try {
       const raw = localStorage.getItem('nuphus_local_context_window')
@@ -499,8 +573,6 @@ export function ModelsPage({
       return null
     }
   })
-  // 模型行内 context_window 编辑：ctxOverrides 保存成功后即时刷新 badge；
-  // editingCtxRef 防 blur/移除输入框触发的重复提交
   const [ctxOverrides, setCtxOverrides] = useState<Record<string, number>>({})
   const [editingCtxModel, setEditingCtxModel] = useState<string | null>(null)
   const [editingCtxValue, setEditingCtxValue] = useState('')
@@ -509,8 +581,10 @@ export function ModelsPage({
   const curProvider = providers.find(p => p.id === provider)
   const isCustom = provider === 'custom'
   const isLocal = provider === 'local'
+  /** 模块一「模型提供商」= 官方远程服务商（排除归入模块二的 custom / opencode-go / local） */
+  const module1Providers = providers.filter(p => !isModule2Provider(p.id))
 
-  // 持久化当前 provider + current model 到 localStorage，供快捷切换弹窗读取
+  // 持久化当前 provider + current model，供快捷切换弹窗读取
   const persistCurrentProvider = (name?: string) => {
     try {
       if (provider && (name ?? currentModel)) {
@@ -520,24 +594,37 @@ export function ModelsPage({
       /* localStorage 写入失败不阻塞 UI */
     }
   }
+
   const handleProviderChange = (id: string) => {
     setProvider(id)
     loadProviderState(id)
     setInputVal('')
-    setApiKey('') // 清空 key，防止前一个 provider 的 key 泄漏到新 provider
+    setApiKey('')
     setFeedback(null)
     setDetectError(null)
     setRefreshError(null)
     setDetecting(false)
-    // 判断新 provider 是否已有存储的 key
     setHasKey(configuredProviders.includes(id))
+  }
+
+  /** 左侧导航选择某个服务商：切到 provider 内容页并加载该服务商状态 */
+  const openProviderView = (id: string) => {
+    setActiveView('provider')
+    handleProviderChange(id)
+  }
+
+  /** 模块二「自定义设置」选中态：custom/opencode-go/local 跟随对应服务商页 */
+  const isCustomNavActive = (key: CustomNavKey): boolean => {
+    if (key === 'capabilities') return activeView === 'capabilities'
+    if (key === 'agents') return activeView === 'agents'
+    return activeView === 'provider' && provider === key
   }
 
   /** 通过 /v1/models 检测 API key 并列出可用模型 */
   const detectModels = async () => {
     const key = apiKey.trim()
     if (!key) {
-      setDetectError('请先输入 API 密钥')
+      setDetectError(TXT.apiKeyRequired)
       return
     }
     setDetecting(true)
@@ -567,15 +654,13 @@ export function ModelsPage({
       const models = await refreshProviderModels(provider, resolvedBaseUrl || undefined)
       setDetectedModels(models ?? [])
       saveDetectedModels(provider, models ?? [])
-      // 刷新后同步 allModels：图像理解 / STT / TTS 选择器数据源来自 list_models，
-      // 后端已把新模型 upsert 进 config.toml，这里重新拉取让选择器立刻看到新模型
       listModels()
         .then(list => {
           if (Array.isArray(list)) setAllModels(list)
         })
         .catch(() => {})
     } catch (e: any) {
-      setRefreshError(e?.message || '刷新失败')
+      setRefreshError(e?.message || '刷新失败，请检查密钥与网络')
     } finally {
       setRefreshing(false)
     }
@@ -583,12 +668,10 @@ export function ModelsPage({
 
   /** 清除当前 provider 已存储的 API Key（仅清 key，保留 provider/model 配置） */
   const handleClearKey = async () => {
-    if (!window.confirm(t('models.clearKeyConfirm'))) return
+    if (!window.confirm(TXT.clearKeyConfirm)) return
     setClearingKey(true)
     try {
       await clearProviderApiKey(provider)
-      // 重新拉取后端配置刷新 UI：apiKey 从不暴露；hasKey 按 configured_providers 重算
-      // （getCurrentConfig 的 has_key 属于当前激活 provider，不一定是正在查看的 provider）
       const cfg = await getCurrentConfig()
       if (cfg) {
         setApiKey('')
@@ -598,23 +681,23 @@ export function ModelsPage({
           setHasKey(cfg.configured_providers.includes(provider))
         }
       }
-      setFeedback({ ok: true, msg: t('models.clearKeySuccess') })
-      setTimeout(() => setFeedback(null), 2000)
+      setFeedback({ ok: true, msg: TXT.clearKeySuccess })
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || t('models.clearKeyFail') })
-      setTimeout(() => setFeedback(null), 3000)
+      setFeedback({ ok: false, msg: e?.message || TXT.clearKeyFail })
     } finally {
       setClearingKey(false)
     }
+    setTimeout(() => setFeedback(null), 2500)
   }
 
+  // ── 手动添加模型（仅 local 列表使用；basic 模型的真正添加走「连接后点击模型」）──
   const addModel = async () => {
     const name = inputVal.trim()
     if (!name) return
     const list = loadModels(provider)
     if (list.includes(name)) {
-      setFeedback({ ok: false, msg: t('models.existFail', name) })
-      setTimeout(() => setFeedback(null), 1500)
+      setFeedback({ ok: false, msg: `模型「${name}」已在列表中` })
+      setTimeout(() => setFeedback(null), 1800)
       return
     }
     list.push(name)
@@ -622,22 +705,15 @@ export function ModelsPage({
     setModels(list)
     setInputVal('')
 
-    // 规则（provider-driven）：
-    // - 用户填写了 key → configureLlm 保存密钥，再 switchModel 激活
-    // - 用户未填写 key 但已有存储 → switchModel 直接从 config.toml 读取
-    // - 两者都没有 → 提示用户输入 key
     const effectiveKey = apiKey.trim() ? apiKey : ''
     if (!isLocal && !effectiveKey.trim() && !hasKey) {
-      setFeedback({ ok: false, msg: '请先输入API密钥' })
+      setFeedback({ ok: false, msg: TXT.apiKeyRequired })
       setTimeout(() => setFeedback(null), 2500)
       return
     }
     const p = providers.find(x => x.id === provider)
     if (p) {
       const resolvedBaseUrl = baseUrl || p.base_url
-      // local 防覆盖：模型已有 per-model 显式窗口（覆盖/落盘）→ 传 undefined 保留该值；
-      // 无 per-model 且用户显式设置了 local 默认 → 按默认应用一次（新模型场景）；
-      // local 默认未设置 → undefined（不写盘，模型上下文未知待单独设置）
       const addCtxArg =
         isLocal &&
         localCtxWindow != null &&
@@ -653,30 +729,27 @@ export function ModelsPage({
           : undefined
       try {
         if (effectiveKey) {
-          // 用户输入了新 key → 先保存，再激活
           await configureLlm(effectiveKey, name, provider, resolvedBaseUrl, addCtxArg)
         } else {
-          // 已有存储的 key → switchModel 直接读取 config.toml
           await switchModelCmd(name, provider, resolvedBaseUrl, addCtxArg, 'global')
         }
         setCurrentModel(name)
         persistCurrentProvider(name)
         onModelChanged?.()
-        // Refresh model list for custom tab (vision/STT/TTS)
         listModels()
           .then(list => {
             if (Array.isArray(list)) setAllModels(list)
           })
           .catch(() => {})
-        setFeedback({ ok: true, msg: t('models.switchTo', name) })
+        setFeedback({ ok: true, msg: `已切换到 ${name}` })
       } catch (e: any) {
-        setFeedback({ ok: false, msg: e?.message || t('models.switchFail') })
+        setFeedback({ ok: false, msg: e?.message || '切换失败' })
       }
       setTimeout(() => setFeedback(null), 2500)
     }
   }
 
-  // Agent 级模型保存（高级设置）：空串 = 清除（跟随 global fallback）
+  // Agent 级模型保存（高级设置）：空串 = 清除（跟随默认模型）
   const saveAgentModel = async (agent: string, model: string) => {
     setAgentSaving(true)
     setAgentFeedback(null)
@@ -691,7 +764,9 @@ export function ModelsPage({
     setTimeout(() => setAgentFeedback(null), 2500)
   }
 
+  /** 从本地列表移除模型（不删除后端已配置项） */
   const removeModel = (name: string) => {
+    if (!window.confirm(TXT.removeModelConfirm(name))) return
     const list = loadModels(provider).filter(m => m !== name)
     saveModels(provider, list)
     setModels(list)
@@ -712,8 +787,7 @@ export function ModelsPage({
     return info?.context_window
   }
 
-  /** 该模型是否已有 per-model 显式 context_window（覆盖/检测/落盘任意来源命中即 true）。
-   *  用于 local「全局默认值防覆盖 per-model」：已显式设置过的模型切换时不再被全局值覆盖。 */
+  /** 该模型是否已有 per-model 显式 context_window */
   const hasExplicitCtx = (name: string): boolean =>
     ctxOverrides[name] !== undefined ||
     detectedModels.some(d => d.id === name && d.context_window != null && d.context_window > 0) ||
@@ -726,11 +800,10 @@ export function ModelsPage({
     )
 
   const startCtxEdit = (name: string) => {
-    if (editingCtxRef.current !== null) return // 已有输入框打开，先关闭旧的再开新的（由失焦提交）
+    if (editingCtxRef.current !== null) return
     const cur = rowCtx(name)
     editingCtxRef.current = name
     setEditingCtxModel(name)
-    // 输入单位 = K（千 tokens）：预填 tokens/1000，用户只填数字（如 128 = 128K）
     setEditingCtxValue(cur !== undefined && cur > 0 ? String(cur / 1000) : '')
   }
 
@@ -742,21 +815,20 @@ export function ModelsPage({
   }
 
   const commitCtxEdit = async (name: string, rawValue: string) => {
-    if (editingCtxRef.current !== name) return // 已取消/已提交/另一行编辑中 → 忽略（防双触发）
+    if (editingCtxRef.current !== name) return
     editingCtxRef.current = null
     setEditingCtxModel(null)
     const raw = String(rawValue ?? '').trim()
-    if (raw === '') return // 取消语义：清空输入即不保存
+    if (raw === '') return
     const k = Number(raw)
     if (!Number.isFinite(k) || k <= 0) {
-      setFeedback({ ok: false, msg: t('models.ctxInvalid') })
+      setFeedback({ ok: false, msg: '上下文窗口需为大于 0 的数字（单位 K）' })
       setTimeout(() => setFeedback(null), 2500)
       return
     }
-    // K 单位 → tokens（吸收浮点误差）
     const v = Math.round(k * 1000)
     if (v < 1 || v > 10000000) {
-      setFeedback({ ok: false, msg: t('models.ctxInvalid') })
+      setFeedback({ ok: false, msg: '上下文窗口需在 1 ~ 10,000,000K 之间' })
       setTimeout(() => setFeedback(null), 2500)
       return
     }
@@ -764,786 +836,906 @@ export function ModelsPage({
     if (!p) return
     try {
       await setModelContextWindow(provider, name, v)
-      // 立即刷新行内 badge（list_models 往返之前 UI 不回跳）
       setCtxOverrides(prev => ({ ...prev, [name]: v }))
-      setFeedback({ ok: true, msg: t('models.ctxSaved', formatContextWindow(v)) })
-      // 后端已落盘，重新拉取让 badges / 其它消费方数据源同步到权威值
+      setFeedback({ ok: true, msg: `上下文窗口已保存（${formatContextWindow(v)}）` })
       listModels()
         .then(list => {
           if (Array.isArray(list)) setAllModels(list)
         })
         .catch(() => {})
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || t('models.ctxSaveFail') })
+      setFeedback({ ok: false, msg: e?.message || '保存失败' })
     }
     setTimeout(() => setFeedback(null), 2500)
   }
 
   const switchModel = async (name: string) => {
     if (providersLoading || providers.length === 0) {
-      setFeedback({ ok: false, msg: t('models.listLoading') })
+      setFeedback({ ok: false, msg: '服务商列表尚未加载完成' })
       setTimeout(() => setFeedback(null), 2500)
       return
     }
     const p = providers.find(x => x.id === provider)
     if (!p) {
-      setFeedback({ ok: false, msg: t('models.switchFail') })
+      setFeedback({ ok: false, msg: '切换失败：未找到服务商' })
       setTimeout(() => setFeedback(null), 2500)
       return
     }
     setFeedback(null)
     const resolvedBaseUrl = baseUrl || p.base_url
-    // local 防覆盖：已有 per-model 显式窗口 → 传 undefined（后端保留该模型值）；
-    // 否则用全局默认值（新模型/未设置模型按用户全局输入应用一次）
-    const ctxArg =
-      isLocal && localCtxWindow != null && !hasExplicitCtx(name) ? localCtxWindow : undefined
+    const ctxArg = isLocal && localCtxWindow != null && !hasExplicitCtx(name) ? localCtxWindow : undefined
     try {
-      // provider-driven: switch_model 从 config.toml 读取 API key，前端不传 key
-      // mode='default'：模型页主切换写入默认模型（聊天界面按当前 mode 写对应 agent）
       await switchModelCmd(name, provider, resolvedBaseUrl, ctxArg, 'default')
       setCurrentModel(name)
       persistCurrentProvider(name)
       onModelChanged?.()
-      setFeedback({ ok: true, msg: t('models.switchTo', name) })
+      setFeedback({ ok: true, msg: `已切换到 ${name}` })
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || t('models.switchFail') })
+      setFeedback({ ok: false, msg: e?.message || '切换失败' })
     }
     setTimeout(() => setFeedback(null), 2500)
   }
 
+  // ── 页面渲染 ──
+  const loadingView = providersLoading ? (
+    <div className="models-page-loading">正在加载服务商列表…</div>
+  ) : null
+
   return (
-    <div className="page">
-      <div className="page-tabs">
-        <button
-          className={`page-tab ${activeTab === 'basic' ? 'active' : ''}`}
-          onClick={() => setActiveTab('basic')}
-        >
-          {t('models.tabBasic') || '基础配置'}
-        </button>
-        <button
-          className={`page-tab ${activeTab === 'custom' ? 'active' : ''}`}
-          onClick={() => setActiveTab('custom')}
-        >
-          {t('models.tabCustom') || '自定义配置'}
-        </button>
-      </div>
-
-      {activeTab === 'basic' && (
-        <>
-          <Section title={t('models.provider')}>
-            <FormRow
-              stacked
-              label={t('models.providerSelect')}
-              control={
-                <ProviderSelect
-                  value={provider}
-                  options={providers}
-                  onChange={handleProviderChange}
-                />
-              }
-            />
-            {!isLocal && (
-              <FormRow
-                stacked
-                label={
-                  <>
-                    {t('models.apiKey')}
-                    {hasKey && <span className="badge badge-accent label-badge">已配置</span>}
-                  </>
-                }
-                control={
-                  <div className="compact-input-row">
-                    <input
-                      className="compact-input"
-                      type={showKey ? 'text' : 'password'}
-                      value={apiKey}
-                      onChange={e => {
-                        setApiKey(e.target.value)
-                        setDetectError(null)
-                      }}
-                      placeholder={
-                        hasKey
-                          ? '输入新密钥覆盖现有配置'
-                          : t('models.inputApiKey', curProvider?.name || '')
-                      }
-                    />
-                    <button className="input-suffix-btn" onClick={() => setShowKey(!showKey)}>
-                      {showKey ? t('common.hide') : t('common.show')}
-                    </button>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={detectModels}
-                      disabled={detecting || !apiKey.trim()}
-                    >
-                      {detecting ? '连接中...' : '连接'}
-                    </Button>
-                    {hasKey && (
-                      <button
-                        type="button"
-                        className="icon-btn-ghost icon-btn-clear"
-                        onClick={handleClearKey}
-                        disabled={clearingKey}
-                        title={t('models.clearKey')}
-                        aria-label={t('models.clearKey')}
-                      >
-                        <IconBrushCleaning size={14} />
-                      </button>
-                    )}
-                  </div>
-                }
-              />
-            )}
-
-            {/* ── 模型筛选(可选) -- 上提到 API Key 块下方, 大王需求 ③ ── */}
-            <FormRow
-              stacked
-              control={
-                <input
-                  className="compact-input"
-                  value={filterInput}
-                  onChange={e => setFilterInput(e.target.value)}
-                  placeholder={t('models.filterModels')}
-                />
-              }
-              label=""
-            />
-            {(isCustom || isLocal) && (
-              <FormRow
-                stacked
-                label={t('models.baseUrl')}
-                control={
-                  <input
-                    className="compact-input"
-                    value={baseUrl}
-                    onChange={e => setBaseUrl(e.target.value)}
-                    placeholder={
-                      isLocal ? 'http://localhost:11434/v1' : t('models.baseUrlPlaceholder')
-                    }
-                  />
-                }
-              />
-            )}
-          </Section>
-
-          <Section
-            title={t('models.modelList')}
-            description={currentModel ? t('models.currentModel', currentModel) : undefined}
-            actions={
-              <button
-                className="models-refresh-btn"
-                onClick={refreshModels}
-                disabled={refreshing}
-                title="获取该服务商最新模型列表"
-              >
-                <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
-                {refreshing ? '刷新中...' : '刷新'}
-              </button>
-            }
-          >
-            {refreshError && (
-              <div className="text-caption" style={{ color: 'var(--error)', marginBottom: 8 }}>
-                ⚠ {refreshError}
-              </div>
-            )}
-            {/* ── 可用模型列表（后端已配置 + 本地检测结果并集，实时筛选）+ radio 选择 (大王需求 ②+⑤) ── */}
-            {(() => {
-              const configured = allModels.filter(m => m.provider === provider).map(m => m.id)
-              const display = Array.from(new Set([...detectedModels.map(d => d.id), ...configured]))
-              const q = filterInput.trim().toLowerCase()
-              const filtered = q ? display.filter(m => m.toLowerCase().includes(q)) : display
-              if (filtered.length === 0) {
-                return (
-                  <div className="detect-status">
-                    {q ? `筛选「${filterInput}」无匹配模型` : '未检测到可用模型，请先连接'}
-                  </div>
-                )
-              }
-              // 能力数据：检测结果（ProviderModelBrief）优先，list_models（ModelInfo）兜底
-              const briefById = new Map<string, ProviderModelBrief>(
-                detectedModels.map(d => [d.id, d]),
-              )
-              const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
-              return (
-                <div>
-                  <div className="detect-status">
-                    {display.length} 个可用模型，点击即配置
-                    {configured.length > 0 && `（含 ${configured.length} 个已配置）`}
-                  </div>
-                  <div className="model-list">
-                    {filtered.map(name => {
-                      const isActive = currentModel === name
-                      const brief = briefById.get(name)
-                      const info = infoById.get(name)
-                      // 行内已保存覆盖优先（list_models 往返前 UI 即时刷新）
-                      const ctx =
-                        ctxOverrides[name] ?? brief?.context_window ?? info?.context_window
-                      const caps = {
-                        vision: brief?.supports_vision || info?.supports_vision || false,
-                        audio: brief?.supports_audio || info?.supports_audio || false,
-                        image:
-                          brief?.supports_image_generation ||
-                          info?.supports_image_generation ||
-                          false,
-                      }
-                      const rowCtxArg =
-                        isLocal && localCtxWindow != null && !hasExplicitCtx(name)
-                          ? localCtxWindow
-                          : undefined
-                      return (
-                        <div
-                          key={name}
-                          className={'model-list-item' + (isActive ? ' active' : '')}
-                          onClick={async () => {
-                            // 行内 ctx 编辑打开时禁止行点击触发切换
-                            if (editingCtxModel === name) return
-                            const p = providers.find(x => x.id === provider)
-                            if (!p) return
-                            try {
-                              const effectiveKey = apiKey.trim()
-                              const resolvedBaseUrl = baseUrl || p.base_url
-                              if (effectiveKey) {
-                                await configureLlm(effectiveKey, name, provider, resolvedBaseUrl)
-                              } else {
-                                await switchModelCmd(
-                                  name,
-                                  provider,
-                                  resolvedBaseUrl,
-                                  rowCtxArg,
-                                  'default',
-                                )
-                              }
-                              setCurrentModel(name)
-                              persistCurrentProvider(name)
-                              onModelChanged?.()
-                              listModels()
-                                .then(list => {
-                                  if (Array.isArray(list)) setAllModels(list)
-                                })
-                                .catch(() => {})
-                              setFeedback({ ok: true, msg: t('models.switchTo', name) })
-                            } catch (e: any) {
-                              setFeedback({ ok: false, msg: e?.message || t('models.switchFail') })
-                            }
-                            setTimeout(() => setFeedback(null), 2500)
-                          }}
-                        >
-                          <div className={'model-radio' + (isActive ? ' selected' : '')} />
-                          <div className="model-list-name">{name}</div>
-                          <div className="model-list-badges">
-                            {caps.vision && (
-                              <span className="model-badge" title={t('models.capVision')}>
-                                <IconEye size={12} />
-                              </span>
-                            )}
-                            {caps.audio && (
-                              <span className="model-badge" title={t('models.capAudio')}>
-                                <IconMic size={12} />
-                              </span>
-                            )}
-                            {caps.image && (
-                              <span className="model-badge" title={t('models.capImageGen')}>
-                                <IconImage size={12} />
-                              </span>
-                            )}
-                            <RowCtxEditor
-                              ctx={ctx}
-                              isEditing={editingCtxModel === name}
-                              value={editingCtxValue}
-                              onValueChange={setEditingCtxValue}
-                              onStart={() => startCtxEdit(name)}
-                              onCommit={(raw: string) => commitCtxEdit(name, raw)}
-                              onCancel={cancelCtxEdit}
-                              t={t}
-                            />
-                          </div>
-                          {isActive && <IconCheck size={12} className="icon-accent" />}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })()}
-
-            {/* ── 基础 section 的手动输入已移除(大王需求 ⑤);
-            models state+列表仍保留,因为 local models section(L538+)要复用 ── */}
-            {provider === 'local' && models.length > 0 && (
-              <div className="model-list model-list--spaced">
-                {models.map(m => {
-                  const isActive = currentModel === m
-                  const mctx = ctxOverrides[m] ?? rowCtx(m)
+    <div className="models-page-layout">
+      {/* ── 左侧：两模块分组导航（模型提供商 / 自定义设置） ── */}
+      <aside className="models-rail">
+        <div className="models-rail-scroll">
+          <div className="models-rail-group">
+            <div className="models-rail-group-title">模型提供商</div>
+            {providersLoading ? (
+              <div className="models-rail-note">正在加载服务商…</div>
+            ) : (
+              <div className="models-rail-list">
+                {module1Providers.map(p => {
+                  const isActive = activeView === 'provider' && p.id === provider
+                  const isConfigured = configuredProviders.includes(p.id)
                   return (
-                    <div
-                      key={m}
-                      className={'model-list-item' + (isActive ? ' active' : '')}
-                      onClick={() => {
-                        if (editingCtxModel === m) return // 编辑中禁止切换
-                        void switchModel(m)
-                      }}
+                    <button
+                      type="button"
+                      key={p.id}
+                      className={['models-rail-item', isActive ? 'active' : '', isConfigured ? 'configured' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => openProviderView(p.id)}
+                      title={isConfigured ? `${p.name}（已配置密钥）` : `${p.name}（未配置密钥）`}
                     >
-                      <div className="model-list-name">{m}</div>
-                      <div className="model-list-badges">
-                        <RowCtxEditor
-                          ctx={mctx}
-                          isEditing={editingCtxModel === m}
-                          value={editingCtxValue}
-                          onValueChange={setEditingCtxValue}
-                          onStart={() => startCtxEdit(m)}
-                          onCommit={(raw: string) => commitCtxEdit(m, raw)}
-                          onCancel={cancelCtxEdit}
-                          t={t}
-                        />
-                      </div>
-                      {isActive && <IconCheck size={12} className="icon-accent" />}
-                      <button
-                        className="icon-btn-ghost"
-                        onClick={e => {
-                          e.stopPropagation()
-                          removeModel(m)
-                        }}
-                        title={t('models.removeTitle')}
-                      >
-                        <IconTrash2 size={11} />
-                      </button>
-                    </div>
+                      <span
+                        className={['models-rail-dot', isConfigured ? 'on' : 'off', isActive ? 'active' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                      />
+                      <span className="models-rail-name">{p.name}</span>
+                      {isConfigured && <span className="model-badge models-rail-badge">已配置</span>}
+                    </button>
                   )
                 })}
               </div>
             )}
-
-            {/* 检测失败时显示错误信息 */}
-            {detectError && <div className="detect-error">{detectError}</div>}
-          </Section>
-
-          {/* ── 高级设置：ExecAgent ── */}
-          <Section
-            title="高级设置"
-            description="ExecAgent（子Agent）由 leader 模式下派发，执行任务所使用的模型。"
-          >
-            <VisionModelSelect
-              value={agentModels.exec}
-              models={allModels}
-              onChange={m => void saveAgentModel('exec', m)}
-              t={t}
-              placeholder="跟随 Leader"
-            />
-            <div className="form-hint agent-models-feedback">
-              {agentFeedback ? `${agentFeedback.ok ? '✓' : '⚠'} ${agentFeedback.msg}` : ''}
+          </div>
+          <div className="models-rail-group">
+            <div className="models-rail-group-title">自定义设置</div>
+            <div className="models-rail-list">
+              {CUSTOM_NAV_ITEMS.map(item => (
+                <button
+                  type="button"
+                  key={item.key}
+                  className={['models-rail-item', 'models-rail-item--sub', isCustomNavActive(item.key) ? 'active' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => {
+                    if (item.key === 'capabilities' || item.key === 'agents') {
+                      setActiveView(item.key)
+                    } else {
+                      openProviderView(item.key)
+                    }
+                  }}
+                >
+                  <span className="models-rail-name">{item.label}</span>
+                </button>
+              ))}
             </div>
-          </Section>
+          </div>
+        </div>
+        <div className="models-rail-foot">绿点 = 已配置密钥 · 点击条目切换</div>
+      </aside>
 
-          {/* ── Local models (only when provider=local) ── */}
-          {isLocal && (
-            <Section title={t('models.localModels')} description={t('models.localModelsDesc')}>
-              <div className="segmented segmented-wrap">
-                {[
-                  { id: 'ollama', label: t('models.ollama'), url: 'http://localhost:11434/v1' },
-                  { id: 'lmstudio', label: t('models.lmstudio'), url: 'http://localhost:1234/v1' },
-                  { id: 'llamacpp', label: t('models.llamacpp'), url: 'http://localhost:8080/v1' },
-                ].map(local => (
-                  <button
-                    key={local.id}
-                    className={`segmented-item ${baseUrl === local.url ? 'active' : ''}`}
-                    onClick={() => {
-                      setBaseUrl(local.url)
-                      setFeedback(null)
-                    }}
-                  >
-                    {local.label}
-                  </button>
-                ))}
-              </div>
-              <FormRow
-                stacked
-                label="Context Window (tokens)"
-                control={
-                  <input
-                    className="compact-input input-num"
-                    type="number"
-                    value={localCtxWindow ?? ''}
-                    onChange={e => {
-                      const raw = e.target.value.trim()
-                      if (raw === '') {
-                        // 清空 = 不再自动写入任何 local 模型（保留 per-model 已设置值）
-                        setLocalCtxWindow(null)
-                        localStorage.removeItem('nuphus_local_context_window')
-                        return
-                      }
-                      const v = parseInt(raw, 10)
-                      if (!Number.isInteger(v) || v <= 0) return // 非法输入不写、不回填 128K
-                      setLocalCtxWindow(v)
-                      localStorage.setItem('nuphus_local_context_window', String(v))
-                    }}
-                    min={1024}
-                    max={10000000}
-                    step={1024}
-                    placeholder={t('models.localCtxPlaceholder')}
-                  />
-                }
-              />
-              <div className="compact-input-row input-row-spaced">
-                <input
-                  className="compact-input input-flex"
-                  value={inputVal}
-                  onChange={e => setInputVal(e.target.value)}
-                  placeholder={t('models.localModelPlaceholder')}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') addModel()
-                  }}
-                />
-                <Button variant="primary" size="sm" onClick={addModel} disabled={!inputVal.trim()}>
-                  {t('models.addModel')}
-                </Button>
-              </div>
-              <div className="text-caption hint-text">{t('models.localModelsHint')}</div>
-            </Section>
-          )}
-        </>
-      )}
-
-      {activeTab === 'custom' && (
+      {/* ── 右侧：按左侧所选显示对应内容页 ── */}
+      <div className="models-main">
+      {loadingView}
+      {!providersLoading && (
         <>
-          {/* ── Vision model ── */}
-          <Section title={t('models.visionModel')} description={t('models.visionModelDesc')}>
-            <FormRow
-              stacked
-              label={t('models.visionModelLabel')}
-              control={
-                <VisionModelSelect
-                  value={visionModel}
-                  models={allModels}
-                  filterCapability="vision"
-                  onChange={async modelId => {
-                    setVisionSaving(true)
-                    setVisionFeedback(null)
-                    try {
-                      await setCapability('vision', modelId)
-                      setVisionModel(modelId)
-                      setVisionFeedback({ ok: true, msg: t('models.visionSaved') })
-                      setTimeout(() => setVisionFeedback(null), 2000)
-                    } catch (e: any) {
-                      setVisionFeedback({
-                        ok: false,
-                        msg: e?.message || t('models.visionSaveFail'),
-                      })
-                    } finally {
-                      setVisionSaving(false)
-                    }
-                  }}
-                  t={t}
-                />
-              }
-            />
-          </Section>
-
-          {/* ── 本地视觉模型（OCR / YOLO icon_detect）── 全自动下载：安装后
-               首启自动补齐，非技术用户零操作。仅呈现需处理的状态：下载中 /
-               失败重试 / 缺文件；就绪时简洁说明。YOLO 缺失不影响 OCR。 ── */}
-          <Section
-            title="本地视觉模型"
-            description="屏幕理解所需的 OCR 文字识别与 UI 元素检测模型，随应用自动下载，无需手动操作。"
-          >
-            {visionDl.status && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span
-                  className={`badge ${visionDl.status.ocrReady ? 'badge-accent' : 'badge-neutral'}`}
-                >
-                  {visionDl.status.ocrReady ? 'OCR 已就绪' : 'OCR 未就绪'}
-                </span>
-                <span
-                  className={`badge ${visionDl.status.yoloReady ? 'badge-accent' : 'badge-neutral'}`}
-                >
-                  {visionDl.status.yoloReady ? 'UI 检测已就绪' : 'UI 检测未启用'}
-                </span>
-              </div>
-            )}
-            {visionDl.status?.dir && (
-              <div className="text-caption hint-text" style={{ marginTop: 6 }}>
-                模型目录：{visionDl.status.dir}
-              </div>
-            )}
-
-            {visionDl.downloading || visionDl.progress || visionDl.status?.downloading ? (
-              <>
-                {visionDl.progress && (
-                  <>
-                    <div className="stt-dl-progress">
-                      {modelsDownloadProgressPct(visionDl.progress) !== null && (
-                        <div
-                          className="stt-dl-progress-fill"
-                          style={{ width: `${modelsDownloadProgressPct(visionDl.progress)}%` }}
-                        />
-                      )}
-                    </div>
-                    <div className="stt-dl-progress-text">
-                      {modelsDownloadProgressText(visionDl.progress)}
-                    </div>
-                  </>
-                )}
-                <div className="text-caption hint-text" style={{ marginTop: 4 }}>
-                  正在后台自动下载，可继续使用应用…
-                </div>
-              </>
-            ) : visionDl.error ? (
-              <>
-                <div className="text-caption" style={{ color: 'var(--error)', marginTop: 8 }}>
-                  下载失败：{visionDl.error}
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  style={{ marginTop: 8 }}
-                  onClick={visionDl.retry}
-                >
-                  重试下载
-                </Button>
-              </>
-            ) : visionDl.status === null ? (
-              <div className="text-caption hint-text" style={{ marginTop: 6 }}>
-                检测中…
-              </div>
-            ) : visionDl.status.missing.length > 0 ? (
-              <>
-                <div className="text-caption hint-text" style={{ marginTop: 6 }}>
-                  {visionDl.status.ocrReady
-                    ? `缺少 ${visionDl.status.missing.join('、')}（可选，仅影响 UI 元素检测）`
-                    : `缺少 ${visionDl.status.missing.length} 个模型文件，下载后即可使用屏幕理解`}
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  style={{ marginTop: 8 }}
-                  onClick={visionDl.retry}
-                >
-                  立即下载
-                </Button>
-              </>
-            ) : (
-              <div className="text-caption hint-text" style={{ marginTop: 6 }}>
-                屏幕理解（OCR + UI 元素检测）已就绪
-              </div>
-            )}
-          </Section>
-
-          {/* ── 语音输入（STT）── 云端优先路由：配置云端识别模型后走
-               /audio/transcriptions，本地 sherpa-onnx 是未配置云端时的默认路径。
-               就绪态静默（无信息增量不渲染）；仅呈现需用户处理的状态：无麦克风 /
-               缺模型可下载 / 云端已配置时本地缺失一行次要提示 ── */}
-          <Section
-            title="语音输入"
-            description="在输入框用语音转文字。配置云端识别模型后优先使用云端识别；未配置则使用本地离线识别（中文优化，无需联网）。"
-          >
-            <FormRow
-              stacked
-              label="云端识别模型"
-              hint="配置后优先使用云端识别，清除则回退本地离线识别"
-              control={
-                <VisionModelSelect
-                  value={sttModel}
-                  models={allModels}
-                  filterCapability="audio"
-                  placeholder="未配置（使用本地识别）"
-                  showVisionIcons={false}
-                  onChange={async modelId => {
-                    setSttSaving(true)
-                    setSttFeedback(null)
-                    try {
-                      await setCapability('stt', modelId)
-                      setSttModel(modelId)
-                      setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
-                      setTimeout(() => setSttFeedback(null), 2000)
-                      // 引擎路由已变化，刷新状态（engine / available / reason）
-                      probeStt()
-                    } catch (e: any) {
-                      setSttFeedback({ ok: false, msg: e?.message || '保存失败' })
-                    } finally {
-                      setSttSaving(false)
-                    }
-                  }}
-                  t={t}
-                />
-              }
-            />
-            {sttFeedback && (
-              <div
-                className="text-caption"
-                style={{ color: sttFeedback.ok ? 'var(--success)' : 'var(--error)', marginTop: 4 }}
+          <div className="models-main-scroll">
+          {/* ═══════════ 模型服务商 + 可用模型（模块一 / Custom / Opencode GO / 本地模型共用） ═══════════ */}
+          {activeView === 'provider' && (
+            <>
+              {/* ── 服务商与连接：选择入口在左侧导航列 ── */}
+              <Section
+                title="模型服务商"
+                description="在左侧导航中选择服务商后配置；以下为该服务商访问密钥与可用模型。"
               >
-                {sttFeedback.msg}
-              </div>
-            )}
-            {sttLocalStatus &&
-              (sttLocalStatus.cloud_configured ? (
-                <>
-                  {!sttLocalStatus.available && (
-                    <div className="text-caption hint-text" style={{ marginTop: 0 }}>
-                      <span
-                        style={{
-                          color: 'var(--warning)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                        }}
-                      >
-                        <IconAlertTriangle size={12} /> 未检测到麦克风，连接麦克风后即可使用语音输入
-                      </span>
-                    </div>
-                  )}
-                  {/* 本地模型状态降级为次要信息：云端已可用，本地仅离线回退需要 */}
-                  {!sttLocalStatus.model_dir && (
-                    <div className="text-caption hint-text" style={{ marginTop: 4 }}>
-                      本地模型未下载（云端识别已可用，仅离线识别时需要）
-                    </div>
-                  )}
-                </>
-              ) : sttLocalStatus.reason === 'no_microphone' ? (
-                <div className="text-caption hint-text" style={{ marginTop: 0 }}>
+                <div className="models-provider-current">
                   <span
-                    style={{
-                      color: 'var(--warning)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    <IconAlertTriangle size={12} /> 未检测到麦克风，连接麦克风后即可使用语音输入
+                    className={`models-rail-dot ${hasKey ? 'on' : 'off'} ${
+                      curProvider && curProvider.id === provider ? 'active' : ''
+                    }`}
+                  />
+                  <span className="models-provider-current-name">
+                    {curProvider?.name || provider}
                   </span>
+                  <span className="models-provider-current-id">{provider}</span>
+                  {hasKey ? (
+                    <span className="model-badge label-badge">已配置</span>
+                  ) : (
+                    <span className="models-provider-current-hint">尚未配置密钥</span>
+                  )}
                 </div>
-              ) : sttLocalStatus.reason?.startsWith('model_missing') ? (
-                <div>
-                  <div className="text-caption hint-text" style={{ marginTop: 0 }}>
-                    下载语音模型（约 250 MB）即可开始语音输入
-                  </div>
-                  {sttDl.progress && (
-                    <>
-                      <div className="stt-dl-progress">
-                        {sttDownloadProgressPct(sttDl.progress) !== null && (
-                          <div
-                            className="stt-dl-progress-fill"
-                            style={{ width: `${sttDownloadProgressPct(sttDl.progress)}%` }}
+
+                {!isLocal && (
+                  <FormRow
+                    stacked
+                    label={
+                      <span className="models-field-label">
+                        <IconPlug size={12} className="icon-prefix" />
+                        {TXT.apiKeyLabel}
+                        {hasKey && <span className="model-badge label-badge">已配置</span>}
+                      </span>
+                    }
+                    hint={TXT.keyHelp}
+                    control={
+                      <div className="models-key-row">
+                        <div className="models-key-field">
+                          <input
+                            className="compact-input"
+                            type={showKey ? 'text' : 'password'}
+                            value={apiKey}
+                            onChange={e => {
+                              setApiKey(e.target.value)
+                              setDetectError(null)
+                            }}
+                            placeholder={
+                              hasKey ? TXT.keyOverwritePlaceholder : TXT.keyInputPlaceholder(curProvider?.name || provider)
+                            }
                           />
+                          <button
+                            type="button"
+                            className="models-key-eye"
+                            onClick={() => setShowKey(v => !v)}
+                            tabIndex={-1}
+                            title={showKey ? TXT.keyHide : TXT.keyShow}
+                            aria-label={showKey ? TXT.keyHide : TXT.keyShow}
+                          >
+                            {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          </button>
+                        </div>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={detectModels}
+                          disabled={detecting || !apiKey.trim()}
+                          title={TXT.connectTitle}
+                        >
+                          {detecting ? TXT.connecting : TXT.connectBtn}
+                        </Button>
+                        {hasKey && (
+                          <button
+                            type="button"
+                            className="models-key-clear"
+                            onClick={handleClearKey}
+                            disabled={clearingKey}
+                            title={TXT.clearKeyTitle}
+                            aria-label={TXT.clearKeyTitle}
+                          >
+                            <IconBrushCleaning size={13} />
+                          </button>
                         )}
                       </div>
-                      <div className="stt-dl-progress-text">
-                        {sttDownloadProgressText(sttDl.progress)}
-                      </div>
-                    </>
-                  )}
-                  {sttDl.error && (
-                    <div className="text-caption" style={{ color: 'var(--error)', marginTop: 8 }}>
-                      下载失败：{sttDl.error}
-                    </div>
-                  )}
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    style={{ marginTop: 8 }}
-                    loading={sttDl.downloading}
-                    onClick={sttDl.start}
+                    }
+                  />
+                )}
+
+                {detectError && <div className="detect-error">{detectError}</div>}
+
+                {(isCustom || isLocal) && (
+                  <FormRow
+                    stacked
+                    label="接口地址"
+                    hint={TXT.baseUrlHelp}
+                    control={
+                      <input
+                        className="compact-input"
+                        value={baseUrl}
+                        onChange={e => setBaseUrl(e.target.value)}
+                        placeholder={isLocal ? 'http://localhost:11434/v1' : TXT.baseUrlPlaceholder}
+                      />
+                    }
+                  />
+                )}
+
+                {isLocal && (
+                  <div className="models-local-presets">
+                    {[
+                      { id: 'ollama', label: 'Ollama', url: 'http://localhost:11434/v1' },
+                      { id: 'lmstudio', label: 'LM Studio', url: 'http://localhost:1234/v1' },
+                      { id: 'llamacpp', label: 'llama.cpp', url: 'http://localhost:8080/v1' },
+                    ].map(local => (
+                      <button
+                        key={local.id}
+                        type="button"
+                        className={`models-preset-btn ${baseUrl === local.url ? 'active' : ''}`}
+                        onClick={() => {
+                          setBaseUrl(local.url)
+                          setFeedback(null)
+                        }}
+                      >
+                        {local.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              {/* ── 可用模型列表（后端已配置 + 本地检测结果并集）── */}
+              <Section
+                title={TXT.modelListTitle}
+                description={currentModel ? TXT.currentModelOf(currentModel) : '选择一个模型作为默认使用（点击行即可切换）。'}
+                actions={
+                  <button
+                    type="button"
+                    className="models-refresh-btn"
+                    onClick={refreshModels}
+                    disabled={refreshing}
+                    title={TXT.refreshTitle}
                   >
-                    {sttDl.error ? '重试下载' : '下载'}
-                  </Button>
-                </div>
-              ) : null)}
-          </Section>
-
-          {/* ── TTS（文字转语音） ── */}
-          <Section
-            title="文字转语音（TTS）"
-            description="配置文字转语音（TTS）模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS API。"
-          >
-            <FormRow
-              stacked
-              label="TTS 模型"
-              control={
-                <VisionModelSelect
-                  value={ttsModel}
-                  models={allModels}
-                  placeholder="请选择 TTS 模型"
-                  showVisionIcons={false}
-                  onChange={async modelId => {
-                    setTtsSaving(true)
-                    setTtsFeedback(null)
-                    try {
-                      await setCapability('tts', modelId)
-                      setTtsModel(modelId)
-                      setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
-                      setTimeout(() => setTtsFeedback(null), 2000)
-                    } catch (e: any) {
-                      setTtsFeedback({ ok: false, msg: e?.message || '保存失败' })
-                    } finally {
-                      setTtsSaving(false)
-                    }
-                  }}
-                  t={t}
-                />
-              }
-            />
-          </Section>
-
-          {/* ── 语音克隆 ── 走云端克隆 API：配置语音克隆模型后，工具页「语音克隆」能力可用 ── */}
-          <Section
-            title="语音克隆"
-            description="配置语音克隆模型，用于克隆音色合成语音（工具页「语音克隆」能力）。走云端 API，需先在基础配置中配置对应提供商的 API Key。"
-          >
-            <FormRow
-              stacked
-              label="语音克隆模型"
-              hint="配置后可在工具页使用语音克隆；清除则禁用该能力"
-              control={
-                <VisionModelSelect
-                  value={voiceModel}
-                  models={allModels}
-                  placeholder="请选择语音克隆模型"
-                  showVisionIcons={false}
-                  onChange={async modelId => {
-                    setVoiceSaving(true)
-                    setVoiceFeedback(null)
-                    try {
-                      await setCapability('voice', modelId)
-                      setVoiceModel(modelId)
-                      setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
-                      setTimeout(() => setVoiceFeedback(null), 2000)
-                    } catch (e: any) {
-                      setVoiceFeedback({ ok: false, msg: e?.message || '保存失败' })
-                    } finally {
-                      setVoiceSaving(false)
-                    }
-                  }}
-                  t={t}
-                />
-              }
-            />
-            {voiceFeedback && (
-              <div
-                className="text-caption"
-                style={{
-                  color: voiceFeedback.ok ? 'var(--success)' : 'var(--error)',
-                  marginTop: 4,
-                }}
+                    <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
+                    {refreshing ? TXT.refreshing : TXT.refreshBtn}
+                  </button>
+                }
               >
-                {voiceFeedback.msg}
-              </div>
-            )}
-          </Section>
+                <input
+                  className="compact-input models-filter"
+                  value={filterInput}
+                  onChange={e => setFilterInput(e.target.value)}
+                  placeholder={TXT.filterPlaceholder}
+                />
+                {refreshError && <div className="detect-error">{refreshError}</div>}
+
+                {(() => {
+                  const configured = allModels.filter(m => m.provider === provider).map(m => m.id)
+                  const display = Array.from(
+                    new Set([...detectedModels.map(d => d.id), ...configured]),
+                  )
+                  const q = filterInput.trim().toLowerCase()
+                  const filtered = q ? display.filter(m => m.toLowerCase().includes(q)) : display
+                  if (detectedModels.length === 0 && configured.length === 0 && !detecting) {
+                    return (
+                      <div className="models-empty">
+                        <div className="models-empty-title">
+                          {q ? TXT.emptyFiltered(filterInput) : TXT.emptyNeedConnect}
+                        </div>
+                        <div className="models-empty-hint">
+                          {hasKey
+                            ? '已保存密钥可直接点击右上角「刷新」同步模型。'
+                            : '密钥仅保存在本机；配置后点击「连接」探测可用模型。'}
+                        </div>
+                      </div>
+                    )
+                  }
+                  if (detecting) {
+                    return <div className="models-empty">正在连接并获取模型列表…</div>
+                  }
+                  if (filtered.length === 0) {
+                    return <div className="models-empty">{q ? TXT.emptyFiltered(filterInput) : TXT.emptyNeedDetect}</div>
+                  }
+                  const briefById = new Map<string, ProviderModelBrief>(
+                    detectedModels.map(d => [d.id, d]),
+                  )
+                  const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
+                  return (
+                    <div className="models-list-wrap">
+                      <div className="detect-status">
+                        {TXT.modelsCount(display.length)}
+                        {configured.length > 0 && TXT.configuredCount(configured.length)}
+                        <span className="detect-status-hint">· 点击行切换为默认模型</span>
+                      </div>
+                      <div className="model-list">
+                        {filtered.map(name => {
+                          const isActive = currentModel === name
+                          const brief = briefById.get(name)
+                          const info = infoById.get(name)
+                          const ctx =
+                            ctxOverrides[name] ?? brief?.context_window ?? info?.context_window
+                          const caps = {
+                            vision: brief?.supports_vision || info?.supports_vision || false,
+                            audio: brief?.supports_audio || info?.supports_audio || false,
+                            image:
+                              brief?.supports_image_generation ||
+                              info?.supports_image_generation ||
+                              false,
+                          }
+                          const rowCtxArg =
+                            isLocal && localCtxWindow != null && !hasExplicitCtx(name)
+                              ? localCtxWindow
+                              : undefined
+                          return (
+                            <div
+                              key={name}
+                              className={'model-list-item' + (isActive ? ' active' : '')}
+                              role="button"
+                              tabIndex={0}
+                              onClick={async () => {
+                                if (editingCtxModel === name) return
+                                const p = providers.find(x => x.id === provider)
+                                if (!p) return
+                                try {
+                                  const effectiveKey = apiKey.trim()
+                                  const resolvedBaseUrl = baseUrl || p.base_url
+                                  if (effectiveKey) {
+                                    await configureLlm(
+                                      effectiveKey,
+                                      name,
+                                      provider,
+                                      resolvedBaseUrl,
+                                    )
+                                  } else {
+                                    await switchModelCmd(
+                                      name,
+                                      provider,
+                                      resolvedBaseUrl,
+                                      rowCtxArg,
+                                      'default',
+                                    )
+                                  }
+                                  setCurrentModel(name)
+                                  persistCurrentProvider(name)
+                                  onModelChanged?.()
+                                  listModels()
+                                    .then(list => {
+                                      if (Array.isArray(list)) setAllModels(list)
+                                    })
+                                    .catch(() => {})
+                                  setFeedback({ ok: true, msg: `已切换到 ${name}` })
+                                } catch (e: any) {
+                                  setFeedback({
+                                    ok: false,
+                                    msg: e?.message || '切换失败',
+                                  })
+                                }
+                                setTimeout(() => setFeedback(null), 2500)
+                              }}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  ;(e.currentTarget as HTMLElement).click()
+                                }
+                              }}
+                            >
+                              <div className={'model-radio' + (isActive ? ' selected' : '')} />
+                              <div className="model-list-name">
+                                {name}
+                                {provider === 'opencode-go' && (
+                                  <span className="model-go-badge" title="OpenCode Go 网关">
+                                    GO
+                                  </span>
+                                )}
+                              </div>
+                              <div className="model-list-badges">
+                                {caps.vision && (
+                                  <span className="model-badge" title="支持图像理解">
+                                    <IconEye size={12} />
+                                  </span>
+                                )}
+                                {caps.audio && (
+                                  <span className="model-badge" title="支持语音">
+                                    <IconMic size={12} />
+                                  </span>
+                                )}
+                                {caps.image && (
+                                  <span className="model-badge" title="支持图像生成">
+                                    <IconImage size={12} />
+                                  </span>
+                                )}
+                                <RowCtxEditor
+                                  ctx={ctx}
+                                  isEditing={editingCtxModel === name}
+                                  value={editingCtxValue}
+                                  onValueChange={setEditingCtxValue}
+                                  onStart={() => startCtxEdit(name)}
+                                  onCommit={(raw: string) => commitCtxEdit(name, raw)}
+                                  onCancel={cancelCtxEdit}
+                                  t={t}
+                                />
+                              </div>
+                              {isActive && <IconCheck size={13} className="model-list-check" />}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* local：手动模型列表与默认上下文 */}
+                {provider === 'local' && models.length > 0 && (
+                  <div className="model-list model-list--spaced">
+                    {models.map(m => {
+                      const isActive = currentModel === m
+                      const mctx = ctxOverrides[m] ?? rowCtx(m)
+                      return (
+                        <div
+                          key={m}
+                          className={'model-list-item' + (isActive ? ' active' : '')}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            if (editingCtxModel === m) return
+                            void switchModel(m)
+                          }}
+                        >
+                          <div className="model-list-name">{m}</div>
+                          <div className="model-list-badges">
+                            <RowCtxEditor
+                              ctx={mctx}
+                              isEditing={editingCtxModel === m}
+                              value={editingCtxValue}
+                              onValueChange={setEditingCtxValue}
+                              onStart={() => startCtxEdit(m)}
+                              onCommit={(raw: string) => commitCtxEdit(m, raw)}
+                              onCancel={cancelCtxEdit}
+                              t={t}
+                            />
+                          </div>
+                          {isActive && <IconCheck size={13} className="model-list-check" />}
+                          <button
+                            type="button"
+                            className="icon-btn-ghost icon-btn-clear"
+                            onClick={e => {
+                              e.stopPropagation()
+                              removeModel(m)
+                            }}
+                            title="从本地列表移除"
+                            aria-label="从本地列表移除"
+                          >
+                            <IconTrash2 size={12} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {provider === 'local' && (
+                  <div className="models-local-ctx">
+                    <FormRow
+                      stacked
+                      label="本地模型默认上下文（K tokens）"
+                      hint="为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。"
+                      control={
+                        <input
+                          className="compact-input input-num"
+                          type="number"
+                          value={localCtxWindow ?? ''}
+                          onChange={e => {
+                            const raw = e.target.value.trim()
+                            if (raw === '') {
+                              setLocalCtxWindow(null)
+                              localStorage.removeItem('nuphus_local_context_window')
+                              return
+                            }
+                            const v = parseInt(raw, 10)
+                            if (!Number.isInteger(v) || v <= 0) return
+                            setLocalCtxWindow(v)
+                            localStorage.setItem('nuphus_local_context_window', String(v))
+                          }}
+                          min={1024}
+                          max={10000000}
+                          step={1024}
+                          placeholder="例如 128"
+                        />
+                      }
+                    />
+                  </div>
+                )}
+              </Section>
+
+              {/* ── 高级：ExecAgent 子模型 已迁移至左侧「自定义设置 → 子智能体模型」页 ── */}
+            </>
+          )}
+
+          {/* local：添加自定义模型（手动录入，用于本地网关模型列表外补充） */}
+          {activeView === 'provider' && provider === 'local' && (
+            <div className="models-local-add">
+              <FormRow
+                stacked
+                label="添加本地模型"
+                hint="手动输入模型名称并回车，随后会在上方列表出现（可设置上下文并切换）。"
+                control={
+                  <div className="compact-input-row input-row-spaced">
+                    <input
+                      className="compact-input input-flex"
+                      value={inputVal}
+                      onChange={e => setInputVal(e.target.value)}
+                      placeholder="例如 qwen2.5:7b"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') addModel()
+                      }}
+                    />
+                    <Button variant="primary" size="sm" onClick={addModel} disabled={!inputVal.trim()}>
+                      添加
+                    </Button>
+                  </div>
+                }
+              />
+            </div>
+          )}
+
+          {/* ═══════════ 图像音频模型：视觉 / 语音 / 朗读（原「自定义能力」tab 内容） ═══════════ */}
+          {activeView === 'capabilities' && (
+            <>
+              {/* ── 云端图像理解模型 ── */}
+              <Section
+                title="图像理解"
+                description="配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型。"
+              >
+                <FormRow
+                  stacked
+                  className="models-form-row--dedup"
+                  label="图像理解模型"
+                  hint="需模型本身支持视觉输入（列表中会以图标标注）。"
+                  control={
+                    <VisionModelSelect
+                      value={visionModel}
+                      models={allModels}
+                      filterCapability="vision"
+                      placeholder="未配置（使用默认模型）"
+                      onChange={async modelId => {
+                        setVisionSaving(true)
+                        setVisionFeedback(null)
+                        try {
+                          await setCapability('vision', modelId)
+                          setVisionModel(modelId)
+                          setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
+                          setTimeout(() => setVisionFeedback(null), 2000)
+                        } catch (e: any) {
+                          setVisionFeedback({
+                            ok: false,
+                            msg: e?.message || '保存失败',
+                          })
+                        } finally {
+                          setVisionSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                  }
+                />
+                {visionFeedback && (
+                  <div
+                    className={`text-caption${visionFeedback.ok ? ' text-success' : ' text-danger'}`}
+                  >
+                    {visionFeedback.msg}
+                  </div>
+                )}
+              </Section>
+
+              {/* ── 本地视觉模型（OCR / UI 元素检测）：随应用自动下载 ── */}
+              <Section
+                title="本地视觉模型（OCR / UI 检测）"
+                description="屏幕理解所需的本地 OCR 与界面元素检测模型。随应用自动下载，无需手动操作；仅当缺少文件时需要处理。"
+              >
+                {visionDl.status && (
+                  <div className="models-dl-badges">
+                    <span className={`model-badge ${visionDl.status.ocrReady ? 'model-badge--ok' : ''}`}>
+                      {visionDl.status.ocrReady ? 'OCR 已就绪' : 'OCR 未就绪'}
+                    </span>
+                    <span className={`model-badge ${visionDl.status.yoloReady ? 'model-badge--ok' : ''}`}>
+                      {visionDl.status.yoloReady ? 'UI 检测已就绪' : 'UI 检测未启用'}
+                    </span>
+                  </div>
+                )}
+                {visionDl.status?.dir && (
+                  <div className="text-caption hint-text">模型目录：{visionDl.status.dir}</div>
+                )}
+
+                {visionDl.downloading || visionDl.progress || visionDl.status?.downloading ? (
+                  <>
+                    {visionDl.progress && (
+                      <>
+                        <div className="stt-dl-progress">
+                          {modelsDownloadProgressPct(visionDl.progress) !== null && (
+                            <div
+                              className="stt-dl-progress-fill"
+                              style={{ width: `${modelsDownloadProgressPct(visionDl.progress)}%` }}
+                            />
+                          )}
+                        </div>
+                        <div className="stt-dl-progress-text">
+                          {modelsDownloadProgressText(visionDl.progress)}
+                        </div>
+                      </>
+                    )}
+                    <div className="text-caption hint-text">
+                      正在后台自动下载，下载完成即可使用屏幕理解…
+                    </div>
+                  </>
+                ) : visionDl.error ? (
+                  <>
+                    <div className="detect-error">下载失败：{visionDl.error}</div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      style={{ marginTop: 8 }}
+                      onClick={visionDl.retry}
+                    >
+                      重试下载
+                    </Button>
+                  </>
+                ) : visionDl.status === null ? (
+                  <div className="text-caption hint-text">检测中…</div>
+                ) : visionDl.status.missing.length > 0 ? (
+                  <>
+                    <div className="text-caption hint-text">
+                      {visionDl.status.ocrReady
+                        ? `缺少 ${visionDl.status.missing.join('、')}（可选，仅影响 UI 元素检测）`
+                        : `缺少 ${visionDl.status.missing.length} 个模型文件，下载后即可使用屏幕理解`}
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      style={{ marginTop: 8 }}
+                      onClick={visionDl.retry}
+                    >
+                      立即下载
+                    </Button>
+                  </>
+                ) : (
+                  <div className="text-caption hint-text">屏幕理解（OCR + UI 元素检测）已就绪</div>
+                )}
+              </Section>
+
+              {/* ── 语音输入（STT）：云端优先，本地 sherpa-onnx 兜底 ── */}
+              <Section
+                title="语音输入"
+                description="在输入框用语音转文字。配置云端识别模型后优先使用云端识别；未配置则使用本地离线识别（中文优化，无需联网）。"
+              >
+                <FormRow
+                  stacked
+                  label="云端识别模型"
+                  hint="配置后优先使用云端识别，清除则回退本地离线识别。"
+                  control={
+                    <VisionModelSelect
+                      value={sttModel}
+                      models={allModels}
+                      filterCapability="audio"
+                      placeholder="未配置（使用本地识别）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async modelId => {
+                        setSttSaving(true)
+                        setSttFeedback(null)
+                        try {
+                          await setCapability('stt', modelId)
+                          setSttModel(modelId)
+                          setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
+                          setTimeout(() => setSttFeedback(null), 2000)
+                          probeStt()
+                        } catch (e: any) {
+                          setSttFeedback({ ok: false, msg: e?.message || '保存失败' })
+                        } finally {
+                          setSttSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                  }
+                />
+                {sttFeedback && (
+                  <div className={`text-caption${sttFeedback.ok ? ' text-success' : ' text-danger'}`}>
+                    {sttFeedback.msg}
+                  </div>
+                )}
+                {sttLocalStatus &&
+                  (sttLocalStatus.cloud_configured ? (
+                    <>
+                      {!sttLocalStatus.available && (
+                        <div className="text-caption hint-text models-warn">
+                          <IconAlertTriangle size={12} className="icon-prefix" />
+                          未检测到麦克风，连接麦克风后即可使用语音输入
+                        </div>
+                      )}
+                      {!sttLocalStatus.model_dir && (
+                        <div className="text-caption hint-text">
+                          本地模型未下载（云端识别已可用，仅离线识别时需要）
+                        </div>
+                      )}
+                    </>
+                  ) : sttLocalStatus.reason === 'no_microphone' ? (
+                    <div className="text-caption hint-text models-warn">
+                      <IconAlertTriangle size={12} className="icon-prefix" />
+                      未检测到麦克风，连接麦克风后即可使用语音输入
+                    </div>
+                  ) : sttLocalStatus.reason?.startsWith('model_missing') ? (
+                    <div>
+                      <div className="text-caption hint-text">
+                        下载语音模型（约 250 MB）即可开始本地语音输入
+                      </div>
+                      {sttDl.progress && (
+                        <>
+                          <div className="stt-dl-progress">
+                            {sttDownloadProgressPct(sttDl.progress) !== null && (
+                              <div
+                                className="stt-dl-progress-fill"
+                                style={{ width: `${sttDownloadProgressPct(sttDl.progress)}%` }}
+                              />
+                            )}
+                          </div>
+                          <div className="stt-dl-progress-text">
+                            {sttDownloadProgressText(sttDl.progress)}
+                          </div>
+                        </>
+                      )}
+                      {sttDl.error && <div className="detect-error">下载失败：{sttDl.error}</div>}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        style={{ marginTop: 8 }}
+                        loading={sttDl.downloading}
+                        onClick={sttDl.start}
+                      >
+                        {sttDl.error ? '重试下载' : '下载语音模型'}
+                      </Button>
+                    </div>
+                  ) : null)}
+              </Section>
+
+              {/* ── 文字转语音（TTS） ── */}
+              <Section
+                title="文字转语音（TTS）"
+                description="配置文字转语音模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS 服务。"
+              >
+                <FormRow
+                  stacked
+                  label="TTS 模型"
+                  hint="留空表示不使用朗读功能。"
+                  control={
+                    <VisionModelSelect
+                      value={ttsModel}
+                      models={allModels}
+                      placeholder="未配置（不使用朗读）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async modelId => {
+                        setTtsSaving(true)
+                        setTtsFeedback(null)
+                        try {
+                          await setCapability('tts', modelId)
+                          setTtsModel(modelId)
+                          setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
+                          setTimeout(() => setTtsFeedback(null), 2000)
+                        } catch (e: any) {
+                          setTtsFeedback({ ok: false, msg: e?.message || '保存失败' })
+                        } finally {
+                          setTtsSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                  }
+                />
+                {ttsFeedback && (
+                  <div className={`text-caption${ttsFeedback.ok ? ' text-success' : ' text-danger'}`}>
+                    {ttsFeedback.msg}
+                  </div>
+                )}
+              </Section>
+
+              {/* ── 语音克隆 ── */}
+              <Section
+                title="语音克隆"
+                description="配置语音克隆模型（云端克隆 API），配置后语音克隆工具可用。"
+              >
+                <FormRow
+                  stacked
+                  label="语音克隆模型"
+                  hint="留空表示不使用语音克隆。"
+                  control={
+                    <VisionModelSelect
+                      value={voiceModel}
+                      models={allModels}
+                      placeholder="未配置（不使用）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async modelId => {
+                        setVoiceSaving(true)
+                        setVoiceFeedback(null)
+                        try {
+                          await setCapability('voice', modelId)
+                          setVoiceModel(modelId)
+                          setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
+                          setTimeout(() => setVoiceFeedback(null), 2000)
+                        } catch (e: any) {
+                          setVoiceFeedback({ ok: false, msg: e?.message || '保存失败' })
+                        } finally {
+                          setVoiceSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                  }
+                />
+                {voiceFeedback && (
+                  <div
+                    className={`text-caption${voiceFeedback.ok ? ' text-success' : ' text-danger'}`}
+                  >
+                    {voiceFeedback.msg}
+                  </div>
+                )}
+              </Section>
+            </>
+          )}
+
+          {/* ═══════════ 子智能体模型：ExecAgent 子任务模型（原详情区 Exec 配置块迁移至此） ═══════════ */}
+          {activeView === 'agents' && (
+            <>
+              <Section
+                title="子任务执行模型（Exec）"
+                description="ExecAgent 由 Leader 模式下派发、执行子任务时使用的模型。留空则跟随全局默认模型。"
+              >
+                <FormRow
+                  stacked
+                  className="models-form-row--dedup"
+                  label="Exec 模型"
+                  hint="留空表示跟随全局默认模型。"
+                  control={
+                    <VisionModelSelect
+                      value={agentModels.exec}
+                      models={allModels}
+                      onChange={m => void saveAgentModel('exec', m)}
+                      t={t}
+                      placeholder="跟随默认模型"
+                    />
+                  }
+                />
+                {agentFeedback && (
+                  <div
+                    className={`text-caption${agentFeedback.ok ? ' text-success' : ' text-danger'}`}
+                  >
+                    {agentFeedback.msg}
+                  </div>
+                )}
+              </Section>
+            </>
+          )}
+          </div>
         </>
       )}
 
-      {/* ── Floating toast ── */}
-      {(feedback || visionFeedback || ttsFeedback) &&
+      {/* ── 全局反馈 Toast ── */}
+      {(feedback || visionFeedback || sttFeedback || ttsFeedback || voiceFeedback || agentFeedback) &&
         createPortal(
           <div
             className={`feedback-toast ${
-              feedback?.ok || visionFeedback?.ok || ttsFeedback?.ok
+              feedback?.ok || visionFeedback?.ok || sttFeedback?.ok || ttsFeedback?.ok || voiceFeedback?.ok || agentFeedback?.ok
                 ? 'feedback-toast--ok'
                 : 'feedback-toast--error'
             }`}
           >
-            {feedback?.msg || visionFeedback?.msg || ttsFeedback?.msg || ''}
+            {feedback?.msg ||
+              visionFeedback?.msg ||
+              sttFeedback?.msg ||
+              ttsFeedback?.msg ||
+              voiceFeedback?.msg ||
+              agentFeedback?.msg ||
+              ''}
           </div>,
           document.body,
         )}
+      </div>
     </div>
   )
 }

@@ -5,17 +5,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// API 协议类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Protocol {
-    /// OpenAI Chat Completions 兼容协议 (/chat/completions, Bearer Token)
-    OpenAIChatCompletions,
-}
-
 /// Canonical Provider type — re-exported from `api::ProviderKind` for config-layer consumers.
 pub use crate::api::ProviderKind;
-/// Backward-compatibility alias for [`ProviderKind`].
-pub use ProviderKind as ProviderType;
 pub use ProviderKind as KnownProvider;
 
 /// Model entry
@@ -62,7 +53,7 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
-    pub provider_type: ProviderType,
+    pub provider_type: ProviderKind,
     pub api_key: String,
     #[serde(default)]
     pub base_url: String,
@@ -373,26 +364,87 @@ impl ModelRegistry {
         Ok(registry)
     }
 
-    /// Find model configuration
+    /// Find model configuration (legacy first-match semantics).
+    ///
+    /// Returns the first segment-order hit (status quo). When the same model id
+    /// exists in more than one provider the ambiguity is logged as a warning
+    /// instead of silently preferring the first — config/UI layers must use
+    /// [`Self::find_model_candidates`] to disambiguate (see §4.6 of the
+    /// model-routing refactor design). Callers keep their existing behaviour.
     pub fn find_model(&self, model_id: &str) -> Option<(&ProviderConfig, &ModelEntry)> {
-        // Check alias first
+        // Check alias first (alias map is de-duplicated: last insert wins).
         if let Some((provider_name, real_id)) = self.alias_map.get(model_id) {
             let provider = self.providers.iter().find(|p| &p.name == provider_name)?;
             let model = provider.models.iter().find(|m| &m.id == real_id)?;
             return Some((provider, model));
         }
-        // Then check direct match
+        // Then check direct match across all providers — collect every hit so
+        // ambiguity can be surfaced, but keep returning the segment-order first
+        // (compatible with existing behaviour).
+        let mut first: Option<(&ProviderConfig, &ModelEntry)> = None;
+        let mut matched: Vec<(&ProviderConfig, &ModelEntry)> = Vec::new();
         for provider in &self.providers {
             if let Some(model) = provider.models.iter().find(|m| m.id == model_id) {
-                return Some((provider, model));
+                if first.is_none() {
+                    first = Some((provider, model));
+                }
+                matched.push((provider, model));
             }
         }
-        None
+        if matched.len() > 1 {
+            tracing::warn!(
+                "[config] model '{}' 存在跨 provider 重名（{} 个候选：{}），按段序返回首个（{}）；\
+                 配置写入/UI 选择请用 find_model_candidates 消歧",
+                model_id,
+                matched.len(),
+                matched
+                    .iter()
+                    .map(|(p, _)| p.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                first.map(|(p, _)| p.name.as_str()).unwrap_or(""),
+            );
+        }
+        first
     }
 
-    /// Get default model
-    pub fn default_model_config(&self) -> Option<(&ProviderConfig, &ModelEntry)> {
-        self.find_model(&self.model)
+    /// Find a model by its complete provider name and model id.
+    pub fn find_model_for_provider(
+        &self,
+        provider_name: &str,
+        model_id: &str,
+    ) -> Option<(&ProviderConfig, &ModelEntry)> {
+        let provider = self.providers.iter().find(|p| p.name == provider_name)?;
+        let model = provider.models.iter().find(|m| m.id == model_id)?;
+        Some((provider, model))
+    }
+
+    /// Find every provider+model pair matching `model_id` (alias-aware).
+    ///
+    /// - Alias hit: expands to the canonical model id, then returns every
+    ///   provider that publishes that id (the alias owner plus any same-id
+    ///   duplicates across segments).
+    /// - Otherwise returns all providers whose model list contains the id.
+    ///
+    /// Returns an empty vec when nothing matches. UI model pickers / config
+    /// probes use this to present provider-tagged candidates instead of an
+    /// implicit first hit (zhipu vs opencode-go same-name case).
+    pub fn find_model_candidates(&self, model_id: &str) -> Vec<(&ProviderConfig, &ModelEntry)> {
+        // Alias expansion: alias_map stores (provider_name, canonical model id).
+        let lookup_id: &str = match self.alias_map.get(model_id) {
+            Some((_provider_name, real_id)) => real_id.as_str(),
+            None => model_id,
+        };
+        self.providers
+            .iter()
+            .filter_map(|provider| {
+                provider
+                    .models
+                    .iter()
+                    .find(|m| m.id == lookup_id)
+                    .map(|model| (provider, model))
+            })
+            .collect()
     }
 
     /// List all available models
@@ -404,28 +456,6 @@ impl ModelRegistry {
             }
         }
         result
-    }
-
-    /// 获取指定能力的模型（不配则回退到 model）
-    pub fn get_capability(&self, capability: &str) -> String {
-        let model_id = match capability {
-            "vision" if !self.capabilities.vision.is_empty() => &self.capabilities.vision,
-            "stt" if !self.capabilities.stt.is_empty() => &self.capabilities.stt,
-            "tts" if !self.capabilities.tts.is_empty() => &self.capabilities.tts,
-            _ => &self.model,
-        };
-        model_id.to_string()
-    }
-
-    /// Check whether the configured vision capability model exists and supports vision.
-    pub fn vision_available(&self) -> bool {
-        let vm = &self.capabilities.vision;
-        if vm.is_empty() {
-            return false;
-        }
-        self.find_model(vm)
-            .map(|(_, m)| m.supports_vision)
-            .unwrap_or(false)
     }
 
     fn build_alias_map(&mut self) {
@@ -481,26 +511,6 @@ impl ModelRegistry {
         };
         registry.build_alias_map();
         registry
-    }
-
-    /// Get context window size for a model.
-    /// Prefers explicitly configured context_window, then tries the metadata
-    /// table in `ProviderRegistry::builtin()`, and finally falls back to a
-    /// reasonable default (128K).
-    pub fn get_context_window(&self, model_id: &str) -> usize {
-        // 1. Check registry for explicitly configured context_window
-        if let Some((_, model)) = self.find_model(model_id) {
-            if let Some(window) = model.context_window {
-                return window;
-            }
-        }
-        // 2. Try built-in ProviderRegistry metadata
-        let registry = crate::config::registry::ProviderRegistry::builtin();
-        if let Some((_, meta)) = registry.find_model(model_id) {
-            return meta.context_window as usize;
-        }
-        // 3. Fallback
-        128_000
     }
 
     /// Resolve the effective max output token budget for a model.
@@ -617,5 +627,122 @@ supports_streaming = true
         // Alias lookup
         let (_provider, model) = registry.find_model("kimi").unwrap();
         assert_eq!(model.id, "kimi-for-coding");
+    }
+
+    /// Minimal ProviderConfig helper for candidate-lookup tests.
+    fn test_provider(
+        name: &str,
+        kind: KnownProvider,
+        models: &[(&str, &[&str])],
+    ) -> ProviderConfig {
+        ProviderConfig {
+            name: name.to_string(),
+            provider_type: kind,
+            api_key: "test-key".to_string(),
+            base_url: String::new(),
+            auth_header: String::new(),
+            auth_prefix: String::new(),
+            timeout_secs: 300,
+            models: models
+                .iter()
+                .map(|(id, aliases)| ModelEntry {
+                    id: id.to_string(),
+                    alias: aliases.iter().map(|s| s.to_string()).collect(),
+                    max_tokens: None,
+                    context_window: None,
+                    supports_streaming: true,
+                    supports_vision: false,
+                    supports_audio: false,
+                    supports_image_generation: false,
+                    reasoning_efforts: Vec::new(),
+                    default_effort: None,
+                    cost_per_million_in: None,
+                    cost_per_million_out: None,
+                })
+                .collect(),
+            reasoning_effort: None,
+        }
+    }
+
+    fn registry_with(providers: Vec<ProviderConfig>) -> ModelRegistry {
+        let model = providers
+            .first()
+            .and_then(|p| p.models.first())
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        let mut registry = ModelRegistry {
+            model,
+            providers,
+            capabilities: Capabilities::default(),
+            alias_map: Default::default(),
+        };
+        registry.build_alias_map();
+        registry
+    }
+
+    /// find_model_candidates resolves an alias to its canonical id and returns
+    /// every segment publishing that id.
+    #[test]
+    fn test_find_model_candidates_alias_hit() {
+        let registry = registry_with(vec![test_provider(
+            "deepseek",
+            KnownProvider::DeepSeek,
+            &[("deepseek-v4-flash", &["deepseek", "default"])],
+        )]);
+
+        let candidates = registry.find_model_candidates("deepseek");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.name, "deepseek");
+        assert_eq!(candidates[0].1.id, "deepseek-v4-flash");
+
+        // find_model on the alias is unchanged.
+        let (provider, model) = registry.find_model("deepseek").unwrap();
+        assert_eq!(provider.name, "deepseek");
+        assert_eq!(model.id, "deepseek-v4-flash");
+    }
+
+    /// Cross-segment duplicate: candidates lists both, find_model keeps the
+    /// segment-order first and only warns.
+    #[test]
+    fn test_find_model_candidates_cross_segment_duplicate() {
+        let registry = registry_with(vec![
+            test_provider("zhipu", KnownProvider::Zhipu, &[("glm-4.7", &["glm"])]),
+            test_provider(
+                "opencode-go",
+                KnownProvider::OpenCodeGo,
+                &[("glm-4.7", &[]), ("gpt-5.6-luna", &[])],
+            ),
+        ]);
+
+        // Direct id match → both segments.
+        let candidates = registry.find_model_candidates("glm-4.7");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].0.name, "zhipu");
+        assert_eq!(candidates[1].0.name, "opencode-go");
+
+        // Alias hit expands to canonical id → same full candidate set.
+        let via_alias = registry.find_model_candidates("glm");
+        assert_eq!(via_alias.len(), 2);
+        assert_eq!(via_alias[0].0.name, "zhipu");
+        assert_eq!(via_alias[1].0.name, "opencode-go");
+
+        // Legacy find_model still returns segment-order first (compat) — the
+        // ambiguity only emits a warning.
+        let (provider, model) = registry.find_model("glm-4.7").unwrap();
+        assert_eq!(provider.name, "zhipu");
+        assert_eq!(model.id, "glm-4.7");
+    }
+
+    /// No match → empty vec (never falls back to the default model).
+    #[test]
+    fn test_find_model_candidates_no_match() {
+        let registry = registry_with(vec![test_provider(
+            "zhipu",
+            KnownProvider::Zhipu,
+            &[("glm-4.7", &[])],
+        )]);
+
+        assert!(registry.find_model_candidates("no-such-model").is_empty());
+        assert_eq!(registry.find_model_candidates("glm-4.7").len(), 1);
     }
 }

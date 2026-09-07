@@ -78,6 +78,8 @@ fn main() {
     let app = preview_protocol::register(tauri::Builder::default())
         .manage(state::AppState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -124,6 +126,7 @@ fn main() {
             commands::set_relation,
             commands::get_agent_models,
             commands::get_effective_model,
+            commands::get_provider_context,
             commands::set_agent_model,
             commands::send_message_cmd,
             commands::preload_model,
@@ -168,6 +171,8 @@ fn main() {
             commands::set_mode,
             commands::get_current_mode,
             commands::is_busy,
+            commands::get_append_queue,
+            commands::remove_append_queue_item,
             commands::list_custom_agents,
             commands::save_custom_agent,
             commands::delete_custom_agent,
