@@ -936,7 +936,7 @@ const zh: Record<string, string> = {
   'apiHealth.offline': '当前不可用',
   'apiHealth.stable': '连接稳定',
   'apiHealth.stableFor': '已稳定',
-'apiHealth.currentTurn': '当前轮次',
+  'apiHealth.currentTurn': '当前轮次',
   'apiHealth.noRecords': '暂无异常记录',
   'apiHealth.markRead': '标记已读',
   'apiHealth.tab.all': '全部',
