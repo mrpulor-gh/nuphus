@@ -166,12 +166,80 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
+          overwrite: true
           files: |
             target/release/bundle/nsis/nuphus-win32-x64-*-setup.exe
+            target/release/bundle/nsis/*.exe.sig
             target/release/bundle/deb/*.deb
+            target/release/bundle/deb/*.deb.sig
             target/release/bundle/appimage/*.AppImage
+            target/release/bundle/appimage/*.AppImage.sig
+            target/release/bundle/macos/Nuphus.app.tar.gz
+            target/release/bundle/macos/Nuphus.app.tar.gz.sig
             nuphus-osx-arm64-*.dmg
             nuphus-linux-x64-*.tar.gz
             nuphus-win32-x64-*.zip
             nuphus-osx-arm64-*.zip
           generate_release_notes: true
+  metadata:
+    name: Generate updater metadata (latest.json)
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: List release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          echo "VER=$VER"
+          gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name' || true
+      - name: Generate latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          BASE="https://github.com/mrpulor-gh/nuphus/releases/download/${GITHUB_REF_NAME}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # 每个平台的签名：download URL 必须指向「签名对象」——即 updater 下载后会被
+          # latest.json signature 校验的同一文件。Windows 用 setup.exe（.sig 按内容校验，
+          # 文件名不参与验签，重命名安全）；macOS 用 Nuphus.app.tar.gz；Linux 用 AppImage。
+          fetch_sig() { curl -fsSL "$BASE/$1" | tr -d '\n\r'; }
+
+          WIN_SIG=$(fetch_sig "Nuphus_${VER}_x64-setup.exe.sig")
+          MAC_SIG=$(fetch_sig "Nuphus.app.tar.gz.sig")
+          LIN_SIG=$(fetch_sig "Nuphus_${VER}_amd64.AppImage.sig")
+
+          cat > latest.json <<EOF
+          {
+            "version": "$VER",
+            "notes": "Nuphus $VER",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$WIN_SIG",
+                "url": "$BASE/nuphus-win32-x64-$VER-setup.exe"
+              },
+              "darwin-aarch64": {
+                "signature": "$MAC_SIG",
+                "url": "$BASE/Nuphus.app.tar.gz"
+              },
+              "linux-x86_64": {
+                "signature": "$LIN_SIG",
+                "url": "$BASE/Nuphus_${VER}_amd64.AppImage"
+              }
+            }
+          }
+          EOF
+          echo "latest.json generated ($(wc -c < latest.json) bytes)"
+      - name: Upload latest.json to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber
+          echo "latest.json uploaded to $GITHUB_REF_NAME"
