@@ -11,6 +11,8 @@ import {
   listModels,
   listProviderModels,
   refreshProviderModels,
+  addProviderModel,
+  clearProviderModels,
   getAgentModels,
   getProviderContext,
   setAgentModel,
@@ -50,6 +52,7 @@ import {
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
+import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
@@ -81,6 +84,22 @@ const TXT = {
   refreshBtn: '刷新',
   refreshing: '刷新中…',
   refreshTitle: '用已保存密钥重新拉取最新模型列表',
+  addModelBtn: '+ 手动添加',
+  addModelTitle: '手动添加模型代号（/v1/models 未返回的灰度或临时模型，如 deepseek-v4.1-flash-expires-on-0910）',
+  addModelPlaceholder: '输入模型代号，如 deepseek-v4.1-flash-expires-on-0910',
+  addModelConfirm: '添加',
+  addModelCancel: '取消',
+  addModelRequired: '请输入模型代号',
+  addModelSuccess: (id: string) => `已添加模型「${id}」，可在下方点击切换`,
+  addModelFail: '添加失败，请确认该服务商已配置密钥',
+  baseUrlChangedWarn:
+    '接口地址已变更：旧模型列表可能在新地址下不可用（模型代号不存在，或同名模型能力不同）。建议清理后重新拉取。',
+  clearModelsBtn: '清理旧模型',
+  clearModelsConfirm:
+    '确定清理该服务商的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请点「刷新」拉取新地址的模型。',
+  clearModelsSuccess: (n: number) => `已清理 ${n} 个旧模型`,
+  clearModelsNone: '没有可清理的旧模型',
+  clearModelsFail: '清理失败',
   emptyFiltered: (q: string) => `没有匹配「${q}」的模型`,
   emptyNeedConnect:
     '尚未检测到模型。填写密钥后点击「连接」，或展开列表用「刷新」同步已保存密钥下的模型。',
@@ -113,8 +132,8 @@ type CustomNavKey = 'custom' | 'opencode-go' | 'local' | 'capabilities' | 'agent
 
 /** 模块二「自定义设置」固定导航项：provider 项（custom/opencode-go/local）路由到对应服务商页 */
 const CUSTOM_NAV_ITEMS: { key: CustomNavKey; label: string }[] = [
-  { key: 'custom', label: 'Custom' },
-  { key: 'opencode-go', label: 'Opencode GO' },
+  { key: 'custom', label: 'Custom（自定义/中转站）' },
+  { key: 'opencode-go', label: 'Opencode GO 套餐' },
   { key: 'local', label: '本地模型' },
   { key: 'capabilities', label: '图像音频模型' },
   { key: 'agents', label: '子智能体模型' },
@@ -431,6 +450,13 @@ export function ModelsPage({
   const [detectError, setDetectError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addInput, setAddInput] = useState('')
+  const [addSaving, setAddSaving] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
+  /** 后端已保存的接口地址（用于检测用户是否改动了 base_url → 提示旧模型可能失效） */
+  const [loadedBaseUrl, setLoadedBaseUrl] = useState('')
+  const [clearingModels, setClearingModels] = useState(false)
 
   // 本地 STT 探测（一次性，不轮询；调用失败静默降级）
   const probeStt = useCallback(() => {
@@ -453,6 +479,7 @@ export function ModelsPage({
   // Load specified provider state (baseUrl + model list only, key kept on backend)
   const loadProviderState = (id: string) => {
     setBaseUrl('')
+    setLoadedBaseUrl('')
     setModels(loadModels(id))
   }
 
@@ -475,6 +502,7 @@ export function ModelsPage({
           setApiKey('')
           setHasKey(!!cfg.has_key)
           setBaseUrl(cfg.base_url || '')
+          setLoadedBaseUrl(cfg.base_url || '')
           if (cfg.configured_providers) setConfiguredProviders(cfg.configured_providers)
         }
         const prov = pctx?.provider || cfg?.provider || 'deepseek'
@@ -515,6 +543,7 @@ export function ModelsPage({
     setModels(loadModels(provider))
     setDetectedModels(loadDetectedModels(provider))
     setBaseUrl('')
+    setLoadedBaseUrl('')
     setFilterInput('')
     setCtxOverrides({})
     setEditingCtxModel(null)
@@ -665,6 +694,59 @@ export function ModelsPage({
     }
   }
 
+  /** 手动添加模型代号到服务商配置（灰度/临时模型；不依赖 /v1/models 返回） */
+  const handleAddModel = async () => {
+    const id = addInput.trim()
+    if (!id) {
+      setAddError(TXT.addModelRequired)
+      return
+    }
+    setAddSaving(true)
+    setAddError(null)
+    try {
+      await addProviderModel(provider, id)
+      setAddOpen(false)
+      setAddInput('')
+      setFeedback({ ok: true, msg: TXT.addModelSuccess(id) })
+      setTimeout(() => setFeedback(null), 2500)
+      // 后端已并入 config.toml → list_models 重新读取即含新条目（configured 并集）
+      listModels()
+        .then(list => {
+          if (Array.isArray(list)) setAllModels(list)
+        })
+        .catch(() => {})
+    } catch (e: any) {
+      setAddError(e?.message || TXT.addModelFail)
+    } finally {
+      setAddSaving(false)
+    }
+  }
+
+  /** 清理该服务商旧模型列表（接口地址变更后调用；清空 config.toml models + 本地检测缓存） */
+  const handleClearModels = async () => {
+    if (!window.confirm(TXT.clearModelsConfirm)) return
+    setClearingModels(true)
+    try {
+      const n = (await clearProviderModels(provider)) ?? 0
+      // 本地检测缓存同清，避免并集里残留旧地址模型
+      setDetectedModels([])
+      saveDetectedModels(provider, [])
+      listModels()
+        .then(list => {
+          if (Array.isArray(list)) setAllModels(list)
+        })
+        .catch(() => {})
+      setFeedback({ ok: true, msg: n > 0 ? TXT.clearModelsSuccess(n) : TXT.clearModelsNone })
+      // 清理后自动尝试拉取新地址的模型列表（key 有效时一步到位，失败由刷新区提示）
+      refreshModels()
+    } catch (e: any) {
+      setFeedback({ ok: false, msg: e?.message || TXT.clearModelsFail })
+    } finally {
+      setClearingModels(false)
+    }
+    setTimeout(() => setFeedback(null), 2500)
+  }
+
   /** 清除当前 provider 已存储的 API Key（仅清 key，保留 provider/model 配置） */
   const handleClearKey = async () => {
     if (!window.confirm(TXT.clearKeyConfirm)) return
@@ -675,6 +757,7 @@ export function ModelsPage({
       if (cfg) {
         setApiKey('')
         setBaseUrl(cfg.base_url || '')
+        setLoadedBaseUrl(cfg.base_url || '')
         if (cfg.configured_providers) {
           setConfiguredProviders(cfg.configured_providers)
           setHasKey(cfg.configured_providers.includes(provider))
@@ -909,15 +992,12 @@ export function ModelsPage({
                       onClick={() => openProviderView(p.id)}
                       title={isConfigured ? `${p.name}（已配置密钥）` : `${p.name}（未配置密钥）`}
                     >
-                      <span
-                        className={[
-                          'models-rail-dot',
-                          isConfigured ? 'on' : 'off',
-                          isActive ? 'active' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      />
+                      {hasProviderIcon(p.id) ? (
+                        <ProviderIcon provider={p.id} size={16} />
+                      ) : (
+                        /* 无图标 provider（custom / local）保留等宽占位，保证各行图标位对齐 */
+                        <span className="provider-icon" style={{ width: 16, height: 16 }} />
+                      )}
                       <span className="models-rail-name">{p.name}</span>
                       {isConfigured && (
                         <span className="model-badge models-rail-badge">已配置</span>
@@ -956,7 +1036,6 @@ export function ModelsPage({
             </div>
           </div>
         </div>
-        <div className="models-rail-foot">绿点 = 已配置密钥 · 点击条目切换</div>
       </aside>
 
       {/* ── 右侧：按左侧所选显示对应内容页 ── */}
@@ -974,11 +1053,7 @@ export function ModelsPage({
                     description="在左侧导航中选择服务商后配置；以下为该服务商访问密钥与可用模型。"
                   >
                     <div className="models-provider-current">
-                      <span
-                        className={`models-rail-dot ${hasKey ? 'on' : 'off'} ${
-                          curProvider && curProvider.id === provider ? 'active' : ''
-                        }`}
-                      />
+                      {hasProviderIcon(provider) && <ProviderIcon provider={provider} size={18} />}
                       <span className="models-provider-current-name">
                         {curProvider?.name || provider}
                       </span>
@@ -1075,6 +1150,20 @@ export function ModelsPage({
                       />
                     )}
 
+                    {(isCustom || isLocal) && baseUrl.trim() !== loadedBaseUrl.trim() && (
+                      <div className="models-baseurl-warn" role="alert">
+                        <span className="models-baseurl-warn-text">{TXT.baseUrlChangedWarn}</span>
+                        <button
+                          type="button"
+                          className="models-add-submit"
+                          onClick={handleClearModels}
+                          disabled={clearingModels}
+                        >
+                          {clearingModels ? `${TXT.clearModelsBtn}…` : TXT.clearModelsBtn}
+                        </button>
+                      </div>
+                    )}
+
                     {isLocal && (
                       <div className="models-local-presets">
                         {[
@@ -1107,16 +1196,29 @@ export function ModelsPage({
                         : '选择一个模型作为默认使用（点击行即可切换）。'
                     }
                     actions={
-                      <button
-                        type="button"
-                        className="models-refresh-btn"
-                        onClick={refreshModels}
-                        disabled={refreshing}
-                        title={TXT.refreshTitle}
-                      >
-                        <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
-                        {refreshing ? TXT.refreshing : TXT.refreshBtn}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="models-refresh-btn"
+                          onClick={() => {
+                            setAddOpen(v => !v)
+                            setAddError(null)
+                          }}
+                          title={TXT.addModelTitle}
+                        >
+                          {TXT.addModelBtn}
+                        </button>
+                        <button
+                          type="button"
+                          className="models-refresh-btn"
+                          onClick={refreshModels}
+                          disabled={refreshing}
+                          title={TXT.refreshTitle}
+                        >
+                          <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
+                          {refreshing ? TXT.refreshing : TXT.refreshBtn}
+                        </button>
+                      </>
                     }
                   >
                     <input
@@ -1125,6 +1227,44 @@ export function ModelsPage({
                       onChange={e => setFilterInput(e.target.value)}
                       placeholder={TXT.filterPlaceholder}
                     />
+                    {addOpen && (
+                      <div className="models-add-row">
+                        <input
+                          className="compact-input models-add-input"
+                          autoFocus
+                          value={addInput}
+                          onChange={e => setAddInput(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleAddModel()
+                            if (e.key === 'Escape') {
+                              setAddOpen(false)
+                              setAddError(null)
+                            }
+                          }}
+                          placeholder={TXT.addModelPlaceholder}
+                          aria-label={TXT.addModelPlaceholder}
+                        />
+                        <button
+                          type="button"
+                          className="models-add-submit"
+                          onClick={handleAddModel}
+                          disabled={addSaving}
+                        >
+                          {addSaving ? `${TXT.addModelConfirm}…` : TXT.addModelConfirm}
+                        </button>
+                        <button
+                          type="button"
+                          className="models-add-cancel"
+                          onClick={() => {
+                            setAddOpen(false)
+                            setAddError(null)
+                          }}
+                        >
+                          {TXT.addModelCancel}
+                        </button>
+                      </div>
+                    )}
+                    {addError && <div className="detect-error">{addError}</div>}
                     {refreshError && <div className="detect-error">{refreshError}</div>}
 
                     {(() => {

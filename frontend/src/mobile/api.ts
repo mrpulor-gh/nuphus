@@ -771,6 +771,11 @@ export function stopExecution(token: string): Promise<ControlResult> {
   return postControl(token, './stop')
 }
 
+/** 强制中断（POST /interrupt → 复用桌面 interrupt：cancel_flag 立即中断，输出可能丢失） */
+export function interruptExecution(token: string): Promise<ControlResult> {
+  return postControl(token, './interrupt')
+}
+
 /**
  * 工作流遥控（POST /workflow-pause | /workflow-resume | /workflow-stop）：
  * 复用 WorkflowEngine 控制命令（pause_workflow / resume_workflow / cancel_workflow），

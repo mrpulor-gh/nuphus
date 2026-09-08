@@ -5,7 +5,7 @@
 //! 配对由构造保证，不经过任何「重建/转换」路径（规避上下文正确性风险）。
 //!
 //! 切换守卫：1) !busy（执行中 agent 被 take 出 RuntimeContext）
-//!           2) !mobile_append::has_pending()（追加队列在轮次边界消费，非空切走会丢）
+//!           2) SignalState::append_queue 为空（追加队列在轮次边界消费，非空切走会丢）
 //!           3) 同 backing mode（v1 不触碰 set_mode 联动语义）
 //!
 //! 持久化时机：归档（切换/新建让位）、任务完成回填、退出钩子。
@@ -319,7 +319,10 @@ pub(crate) fn guard_switch(state: &AppState) -> Result<(), &'static str> {
     if state.busy.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("busy");
     }
-    if nuphus::mobile_append::has_pending() {
+    if !nuphus::state::SignalState::read(&state.signals)
+        .append_queue
+        .is_empty()
+    {
         return Err("append_pending");
     }
     Ok(())

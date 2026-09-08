@@ -212,6 +212,10 @@ pub fn process_events(
             AssistantEvent::ConnectionStatus(_) => {
                 // Status-only event, no content to accumulate
             }
+            AssistantEvent::StreamTruncated { .. } => {
+                // 传输截断信号：仅作状态提示（react_loop 转发 HUD / api-health），
+                // 不产生任何会话内容（不落 session、不持久化）。
+            }
             AssistantEvent::ImageAttachment { .. } => {
                 // Image URL event — handled by the streaming emitter in react_loop,
                 // no text content to accumulate here.

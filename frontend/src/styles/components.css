@@ -746,6 +746,16 @@
   color: var(--spark-secondary);
   font-family: var(--font-mono);
 }
+/* 提供商图标：内联 SVG 填满 32px 容器，颜色继承 .cmd-modal-provider-icon 的 color */
+.provider-icon {
+  display: block;
+  flex-shrink: 0;
+}
+.provider-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 .cmd-modal-card-name {
   font-size: var(--fz-md);
   font-weight: 600;

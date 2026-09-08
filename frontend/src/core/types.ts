@@ -59,6 +59,42 @@ export interface PendingImage {
   name: string
 }
 
+export type ApiHealthStatus = 'unknown' | 'connecting' | 'degraded' | 'offline' | 'stable'
+
+export type ApiHealthEventKind = 'retry' | 'timeout' | 'disconnect' | 'truncated' | 'provider' | 'recovered'
+
+/**
+ * 健康事件聚合条目：同 kind 合并为一条（分类说明 + 累计次数 + 首末时间）。
+ * 不按 turn 组织——turn 是「用户消息轮次」，跨轮后无对应意义；
+ * 时间线以 lastAt 为排序键（最近发生的在前）。
+ */
+export interface ApiHealthIncident {
+  kind: ApiHealthEventKind
+  /** 累计发生次数（重复异常合并计数，不产生重复行） */
+  count: number
+  /** 首次发生时间戳 */
+  firstAt: number
+  /** 最近发生时间戳（时间线排序键） */
+  lastAt: number
+  /** 最近一次的说明文案 */
+  lastSummary: string
+  impact: 'none' | 'partial' | 'failed'
+}
+
+export interface ApiHealthState {
+  status: ApiHealthStatus
+  stableSince: number | null
+  lastTransitionAt: number
+  currentTurnId: number
+  consecutiveFailures: number
+  retryCount: number
+  /** 事件聚合时间线（按 kind 合并，lastAt 倒序展示） */
+  incidents: ApiHealthIncident[]
+  unreadCount: number
+  /** 瞬时事件脉冲（传输截断 / 单次重试）：一次性动效，不改变 status；到期自动清除 */
+  pulse: { kind: ApiHealthEventKind; at: number } | null
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'refine'

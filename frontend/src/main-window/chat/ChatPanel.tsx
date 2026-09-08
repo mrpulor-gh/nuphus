@@ -40,12 +40,14 @@ import type { ProviderInfo, ModelInfo } from '../lib/api'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
+import type { ApiHealthState } from '../../core/types'
 import { PauseOverlay } from './PauseOverlay'
 import { ChatInputBar } from './ChatInputBar'
 import { VideoProgressBadge } from './VideoProgressBadge'
 import ExternalAgentsStatusBar from './ExternalAgentsStatusBar'
 import SessionRail from './SessionRail'
 import { loadRelation } from '../lib/relation'
+import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import {
   IconCopy,
   IconCheck,
@@ -122,6 +124,8 @@ interface ChatPanelProps {
   totalDurationMs?: number
   totalCalls?: number
   contextLimit?: number
+  apiHealth?: ApiHealthState
+  onApiHealthRead?: () => void
   onModelChanged?: () => void
   refineState?: { usagePercent: number; totalLimit: number } | null
   pendingRefine: { usagePercent: number; totalLimit: number; skippedTurns: number } | null
@@ -195,6 +199,8 @@ export function ChatPanel({
   totalDurationMs,
   totalCalls,
   contextLimit,
+  apiHealth,
+  onApiHealthRead,
   onModelChanged,
   refineState,
   pendingRefine,
@@ -1892,6 +1898,8 @@ export function ChatPanel({
           totalCalls={totalCalls}
           mood={mood || 'idle'}
           contextLimit={contextLimit}
+          apiHealth={apiHealth}
+          onApiHealthRead={onApiHealthRead}
           security={security ?? null}
           onApproveSecurity={onApproveSecurity}
           onRejectSecurity={onRejectSecurity}
@@ -2123,12 +2131,18 @@ export function ChatPanel({
                               onBlur={closeProviderModelsSoon}
                             >
                               <span className="cmd-modal-provider-icon" aria-hidden="true">
-                                {(cfg.label || cfg.provider).charAt(0).toUpperCase()}
+                                {hasProviderIcon(cfg.provider) ? (
+                                  <ProviderIcon provider={cfg.provider} size={18} />
+                                ) : (
+                                  (cfg.label || cfg.provider).charAt(0).toUpperCase()
+                                )}
                               </span>
                               <span className="model-provider-option-body">
                                 <span className="cmd-modal-card-name">{cfg.label}</span>
                                 <span className="cmd-modal-card-meta">
-                                  {isActive ? cfg.model : t('models.noModels')}
+                                  {/* 显示该 provider 最近使用的模型（localStorage 持久化）；
+                                      仅当前生效项由右侧 ✓ 标识，不再用"暂无模型"掩盖其他项 */}
+                                  {cfg.model || t('models.noModels')}
                                 </span>
                               </span>
                               {isActive && (

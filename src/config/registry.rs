@@ -6,8 +6,8 @@
 //! replaces the scattered `default_base_url()` / `context_window_heuristic()`
 //! switches in `config/model.rs`.
 //!
-//! All 13 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
-//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local, OpenCode Go)
+//! All 14 built-in Providers (DeepSeek, Kimi, OpenAI, MiniMax, OpenRouter,
+//! Google, Qwen, Zhipu, ByteDance, Anthropic, Custom, Local, OpenCode Go, xAI)
 //! are registered in `builtin()`.
 
 use serde::{Deserialize, Serialize};
@@ -106,7 +106,7 @@ impl ProviderRegistry {
         use super::providers::{
             AnthropicProvider, ByteDanceProvider, CustomProvider, DeepSeekProvider, GoogleProvider,
             KimiProvider, LocalProvider, MiniMaxProvider, OpenAIProvider, OpenCodeGoProvider,
-            OpenRouterProvider, QwenProvider, ZhipuProvider,
+            OpenRouterProvider, QwenProvider, XaiProvider, ZhipuProvider,
         };
         r.register(Arc::new(DeepSeekProvider));
         r.register(Arc::new(KimiProvider));
@@ -121,6 +121,7 @@ impl ProviderRegistry {
         r.register(Arc::new(CustomProvider));
         r.register(Arc::new(LocalProvider));
         r.register(Arc::new(OpenCodeGoProvider));
+        r.register(Arc::new(XaiProvider));
         r
     }
 }

@@ -184,6 +184,13 @@ pub enum AssistantEvent {
     Cancelled,
     /// Connection status update (Transport layer retry feedback)
     ConnectionStatus(String),
+    /// Stream truncated by transport layer (salvage kept partial content).
+    /// Transient signal — MUST NOT be persisted into session content;
+    /// react_loop forwards it as a HUD / api-health notice.
+    StreamTruncated {
+        text_chars: usize,
+        tools_salvaged: usize,
+    },
 }
 
 impl AssistantEvent {

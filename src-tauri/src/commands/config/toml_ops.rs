@@ -410,6 +410,61 @@ pub fn upsert_provider_models(
     Ok(())
 }
 
+/// Clear a provider's model list in config.toml (`[[providers]].models` → []).
+///
+/// 场景：base_url 变更后，旧模型条目可能在新地址失效（模型代号不存在，
+/// 或同名模型能力/价格不同）。仅清空 models 数组，保留 name / provider_type /
+/// base_url / api_key 等字段。返回清除的条目数；provider 不存在或列表已空
+/// 时返回 0（幂等，不报错）。
+pub fn clear_provider_models_in_config_toml(
+    config_path: &std::path::Path,
+    provider_name: &str,
+) -> Result<usize, String> {
+    // If file doesn't exist yet, nothing to clear — silently skip
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(0),
+    };
+    let mut doc: toml::Value = match content.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(0),
+    };
+
+    let providers = match doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+        Some(p) => p,
+        None => return Ok(0),
+    };
+
+    for provider in providers.iter_mut() {
+        if provider.get("name").and_then(|n| n.as_str()) != Some(provider_name) {
+            continue;
+        }
+        let removed = provider
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        if removed == 0 {
+            return Ok(0);
+        }
+        if let Some(map) = provider.as_table_mut() {
+            map.insert("models".to_string(), toml::Value::Array(Vec::new()));
+        }
+        nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+        let new_content = toml::to_string_pretty(&doc)
+            .map_err(|e| format!("serialize config.toml failed: {}", e))?;
+        std::fs::write(config_path, new_content)
+            .map_err(|e| format!("write config.toml failed: {}", e))?;
+        tracing::info!(
+            "clear_provider_models: cleared {} models for provider={}",
+            removed,
+            provider_name
+        );
+        return Ok(removed);
+    }
+    Ok(0)
+}
+
 /// Update `reasoning_effort` on a `[[providers]]` entry in config.toml.
 /// `None`/empty removes the field so the provider returns to its default
 /// (transport sends no `reasoning_effort` parameter).

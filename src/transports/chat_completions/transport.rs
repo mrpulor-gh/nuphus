@@ -693,6 +693,7 @@ impl ChatCompletionsTransport {
                         dropped_tools,
                         last_error
                     );
+                    let tools_salvaged = salvageable_tools.len();
                     for (id, name, args) in salvageable_tools {
                         let final_args = if args.is_empty() {
                             "{}".to_string()
@@ -705,9 +706,10 @@ impl ChatCompletionsTransport {
                             input: final_args,
                         });
                     }
-                    emitter(AssistantEvent::TextDelta(
-                        "\n\n[⚠ 响应因传输中断被截断，以上内容可能不完整]".to_string(),
-                    ));
+                    emitter(AssistantEvent::StreamTruncated {
+                        text_chars: text_len,
+                        tools_salvaged,
+                    });
                     if let Some(StreamEvent::Usage {
                         input_tokens,
                         output_tokens,
@@ -1602,9 +1604,15 @@ mod salvage_tests {
             full_text
         );
         assert!(
-            full_text.contains("传输中断被截断"),
-            "应追加截断标记: {}",
+            !full_text.contains("传输中断被截断"),
+            "截断标记不得嵌入文本内容: {}",
             full_text
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::StreamTruncated { .. })),
+            "应以 StreamTruncated 信号标记截断（不落文本）"
         );
         assert!(
             events

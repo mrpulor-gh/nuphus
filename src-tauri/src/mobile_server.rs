@@ -715,6 +715,32 @@ async fn post_stop<R: tauri::Runtime>(
     }
 }
 
+/// POST /interrupt：强制中断（复用桌面 interrupt——置 cancel_flag 立即中断，
+/// 进行中的输出可能丢失）。与桌面终止弹窗「强制终止」同源；
+/// 手机端此前缺此通道，导致弹窗只能落到 /stop（优雅），语义错配。
+async fn post_interrupt<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::process::lifecycle::interrupt(state) {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "terminated" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
 // ── 工作流遥控（WorkflowEngine 控制命令，等价桌面 wf_pause / wf_resume / wf_stop）──
 
 /// POST /workflow-* 请求体：目标工作流 id
@@ -1225,7 +1251,7 @@ async fn post_message<R: tauri::Runtime>(
                 .into_response();
         }
         if !dup_vs_last {
-            nuphus::mobile_append::push(payload.message.clone());
+            nuphus::mobile_append::enqueue(&state.signals, payload.message.clone());
         } else {
             tracing::info!(
                 "[Mobile] busy append dedup（30s 内已受理）: {}",
@@ -1294,7 +1320,7 @@ async fn post_message<R: tauri::Runtime>(
                             .into_response();
                     } else {
                         let fb = message_fallback.clone();
-                        nuphus::mobile_append::push(message_fallback);
+                        nuphus::mobile_append::enqueue(&state.signals, message_fallback);
                         return (
                             StatusCode::OK,
                             Json(serde_json::json!({
@@ -2149,6 +2175,7 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/resume", post(post_resume))
         .route("/terminate", post(post_terminate))
         .route("/stop", post(post_stop))
+        .route("/interrupt", post(post_interrupt))
         .route("/workflow-pause", post(post_workflow_pause))
         .route("/workflow-resume", post(post_workflow_resume))
         .route("/workflow-stop", post(post_workflow_stop))
@@ -2862,9 +2889,16 @@ mod tests {
             assert_eq!(r.status(), 200, "busy 时应转追加指令而非 409");
             let body: serde_json::Value = r.json().await.unwrap();
             assert_eq!(body["status"], "append", "应标记为追加指令，实际: {body}");
-            assert!(nuphus::mobile_append::has_pending(), "消息应进入追加队列");
+            assert!(
+                !nuphus::state::SignalState::read(&state.signals)
+                    .append_queue
+                    .is_empty(),
+                "消息应进入追加队列"
+            );
             // 清理追加队列，避免滞留影响并行测试
-            let _ = nuphus::mobile_append::drain_for_injection();
+            nuphus::state::SignalState::write(&state.signals)
+                .append_queue
+                .clear();
 
             // 空消息 → 400（共享入口的空消息校验层）
             state.busy.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -3318,7 +3352,9 @@ mod tests {
             let body: serde_json::Value = r.json().await.unwrap();
             assert_eq!(body["status"], "append", "POST3 应标记为追加，实际: {body}");
             // 清理追加队列，避免滞留影响并行测试
-            let _ = nuphus::mobile_append::drain_for_injection();
+            nuphus::state::SignalState::write(&state.signals)
+                .append_queue
+                .clear();
         });
     }
 

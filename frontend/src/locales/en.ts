@@ -1,6 +1,6 @@
-const en: Record<string, string> = {
+﻿const en: Record<string, string> = {
   'app.name': 'Nuphus',
-  'app.subtitle': 'Smart Partner · Always Ready',
+  'app.subtitle': 'Smart Partner → Always Ready',
 
   'common.save': 'Save',
   'common.cancel': 'Cancel',
@@ -27,7 +27,7 @@ const en: Record<string, string> = {
   'common.saved': 'Saved',
   'common.fail': 'Failed',
   'common.unknown': 'Unknown',
-  'common.hint.upDown': '↑↓ select',
+  'common.hint.upDown': '鈫戔啌 select',
   'common.hint.enter': 'Enter confirm',
   'common.hint.esc': 'Esc cancel',
   'common.notSet': 'Not set',
@@ -35,13 +35,13 @@ const en: Record<string, string> = {
 
   'welcome.subtitle': 'Your intelligent collaboration partner, always ready!',
   'welcome.capability.projectAnalysis': 'Project Analysis',
-  'welcome.capability.projectAnalysisDesc': 'Architecture · Code Review · Dependency',
+  'welcome.capability.projectAnalysisDesc': 'Architecture → Code Review → Dependency',
   'welcome.capability.codeGen': 'Code Generation',
-  'welcome.capability.codeGenDesc': 'Multi-language · Refactor · Debug',
+  'welcome.capability.codeGenDesc': 'Multi-language → Refactor → Debug',
   'welcome.capability.desktopControl': 'Desktop Control',
-  'welcome.capability.desktopControlDesc': 'Mouse · Keyboard · Window · OCR',
+  'welcome.capability.desktopControlDesc': 'Mouse → Keyboard → Window → OCR',
   'welcome.capability.fileOps': 'File Operations',
-  'welcome.capability.fileOpsDesc': 'Read · Write · Search · Batch',
+  'welcome.capability.fileOpsDesc': 'Read → Write → Search → Batch',
   'welcome.stat.tools': 'tools',
   'welcome.stat.memories': 'memories',
   'welcome.stat.sessions': 'sessions',
@@ -51,12 +51,12 @@ const en: Record<string, string> = {
   'welcome.shortcut.wfPause': 'Pause/Resume',
   'welcome.shortcut.wfStop': 'Stop Workflow',
 
-  'input.placeholder': 'Type a message · Press / for commands',
-  'input.hint.shortcuts': 'Enter send · Shift+Enter newline',
+  'input.placeholder': 'Type a message → Press / for commands',
+  'input.hint.shortcuts': 'Enter send → Shift+Enter newline',
   'input.hint.commandsQueue':
-    'Press / for commands; while running · send directly to append to the message queue',
+    'Press / for commands; while running → send directly to append to the message queue',
   'input.hint.modes': 'Mode: use LEADER for coding tasks, WORKFLOW for automation tasks',
-  'input.hint.desktop': 'I can control desktop apps and browser — just describe what you need',
+  'input.hint.desktop': 'I can control desktop apps and browser ...just describe what you need',
   'input.send': 'Send',
   'input.interrupt': 'Interrupt',
   'input.interruptTitle': 'Force interrupt current execution',
@@ -77,9 +77,9 @@ const en: Record<string, string> = {
   'input.projectDir': 'Project',
   'input.tools': 'Add content',
   'input.voiceStart': 'Voice input',
-  'input.voiceActivating': 'Preparing…',
-  'input.voiceListening': 'Listening · click to stop',
-  'input.voiceFinishing': 'Finishing…',
+  'input.voiceActivating': 'Preparing...',
+  'input.voiceListening': 'Listening → click to stop',
+  'input.voiceFinishing': 'Finishing...',
   'input.voiceFailed': 'Voice recognition failed',
   'input.voiceAutoStop': 'Max recording time reached, stopped automatically',
   'input.voiceNeedModel': 'Download the voice model to enable',
@@ -92,22 +92,22 @@ const en: Record<string, string> = {
   'input.voiceDlFailed': 'Download failed',
   'input.thinking': 'Thinking...',
   'input.placeholder.refine': 'Please handle context refinement first...',
-  'input.placeholder.executing': 'Executing · type & send to append instruction to current task',
+  'input.placeholder.executing': 'Executing → type & send to append instruction to current task',
   'input.mode.leader': 'Leader',
   'input.mode.workflow': 'Workflow',
   'input.mode.custom': 'Custom',
   'input.mode.leader.desc': 'Understand, plan, dispatch',
   'input.mode.workflow.desc': 'Parse templates into executable workflows',
   'input.mode.custom.desc': 'My own agent',
-  'input.mode.custom.manage': 'Manage agents…',
+  'input.mode.custom.manage': 'Manage agents...',
   'input.mode.custom.create': 'Create my own agent',
 
-  // ── External Agents status bar (handoff) ──
+  // 鈹€鈹€ External Agents status bar (handoff) 鈹€鈹€
   'extAgents.title': 'Agents',
   'extAgents.titleHint': 'External agent runtime status (synced from handoff doorbell events)',
   'extAgents.empty': 'No external agents yet',
   'extAgents.state.idle': 'Idle',
-  'extAgents.state.dispatched': 'Dispatched · awaiting ringer',
+  'extAgents.state.dispatched': 'Dispatched → awaiting ringer',
   'extAgents.state.inProgress': 'Running',
   'extAgents.state.ready': 'Ready',
   'extAgents.state.done': 'Standby',
@@ -118,9 +118,9 @@ const en: Record<string, string> = {
   'extAgents.hide': 'Remove from status bar',
   'extAgents.hiddenCount': '{0} hidden',
   'extAgents.restore': 'Show again',
-  'extAgents.deliver.title': 'External agent · {0}',
+  'extAgents.deliver.title': 'External agent → {0}',
   'extAgents.deliver.empty': 'No deliverables yet',
-  'extAgents.deliver.loading': 'Loading…',
+  'extAgents.deliver.loading': 'Loading...',
   'extAgents.deliver.reports': 'Reports',
   'extAgents.deliver.artifacts': 'Artifacts',
   'extAgents.deliver.preview': 'Click to preview',
@@ -130,19 +130,19 @@ const en: Record<string, string> = {
   'extAgents.deliver.cancelBtn': 'Cancel',
   'extAgents.deliver.deleteFail': 'Delete failed',
 
-  // ── Session Rail (session shelf) ──
+  // 鈹€鈹€ Session Rail (session shelf) 鈹€鈹€
   'sessionRail.title': 'Session rail',
   'sessionRail.guideTitle': 'Session workbench',
   'sessionRail.newChat': 'New chat',
   'sessionRail.newChatLabel': 'New',
-  'sessionRail.busyHint': 'Locked while executing — append an instruction or wait',
+  'sessionRail.busyHint': 'Locked while executing ...append an instruction or wait',
   'sessionRail.rename': 'Rename session title',
   'sessionRail.save': 'Save',
   'sessionRail.untitled': 'Untitled session',
   'sessionRail.switchFailBusy':
-    'This session is executing — please wait for it to finish before switching',
-  'sessionRail.switchFailAppend': 'Instruction queue still processing — switchable shortly',
-  'sessionRail.switchFailMode': 'That session belongs to another run mode — switch modes first',
+    'This session is executing ...please wait for it to finish before switching',
+  'sessionRail.switchFailAppend': 'Instruction queue still processing ...switchable shortly',
+  'sessionRail.switchFailMode': 'That session belongs to another run mode ...switch modes first',
   'sessionRail.switchFailGeneric': 'Switch did not take effect, please retry',
   'sessionRail.archive': 'Archive',
   'sessionRail.archiveConfirmTitle': 'Archive this session?',
@@ -150,15 +150,15 @@ const en: Record<string, string> = {
     'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
 
-  // ── Welcome ──
+  // 鈹€鈹€ Welcome 鈹€鈹€
   'welcome.resume': 'Resume',
 
-  // ── External Agents config center (team.toml CRUD) ──
+  // 鈹€鈹€ External Agents config center (team.toml CRUD) 鈹€鈹€
   'extAgents.cfg.title': 'External Agents',
   'extAgents.cfg.add': 'Configure external agents',
   'extAgents.cfg.new': 'New config',
   'extAgents.cfg.newTitle': 'New external agent',
-  'extAgents.cfg.empty': 'No external agents yet — click "+ New config" to start',
+  'extAgents.cfg.empty': 'No external agents yet ...click "+ New config" to start',
   'extAgents.cfg.key': 'Key',
   'extAgents.cfg.keyHint': 'Unique id: letters/numbers/-/_ only, immutable after save',
   'extAgents.cfg.keyRequired': 'Key is required',
@@ -186,7 +186,7 @@ const en: Record<string, string> = {
   'extAgents.cfg.description': 'Work description',
   'extAgents.cfg.descriptionHint':
     'Main responsibility, used for routing; written into read.md for new agents',
-  'extAgents.cfg.descriptionPlaceholder': 'Local code analysis, auto Git commit & refactor…',
+  'extAgents.cfg.descriptionPlaceholder': 'Local code analysis, auto Git commit & refactor...',
   'extAgents.cfg.cancel': 'Cancel',
   'extAgents.cfg.save': 'Save & apply',
   'extAgents.cfg.saved': 'Saved',
@@ -196,10 +196,10 @@ const en: Record<string, string> = {
   'extAgents.cfg.loadFail': 'Failed to load',
   'extAgents.cfg.deleteConfirm':
     'Delete this external agent config? (handoff workspace will not be deleted)',
-  // ── v8 advanced group: interaction hardening ──
+  // 鈹€鈹€ v8 advanced group: interaction hardening 鈹€鈹€
   'extAgents.cfg.advanced': 'Interaction hardening (optional, recommended for terminal agents)',
   'extAgents.cfg.advancedHint':
-    'Once configured, Leader calls agent_dispatch once to auto capture window → position → deliver → await confirmation',
+    'Once configured, Leader calls agent_dispatch once to auto capture window 鈫?position 鈫?deliver 鈫?await confirmation',
   'extAgents.cfg.launch': 'Cold-start command (launch)',
   'extAgents.cfg.launchHint':
     'Command to spawn when the window is not found (e.g. wt.exe -p PowerShell opencode)',
@@ -213,7 +213,7 @@ const en: Record<string, string> = {
     'Tools: desktop_window_activate / desktop_window_resize / desktop_window_move / desktop_mouse_click / desktop_input / desktop_clipboard_write / desktop_clipboard_clean / desktop_windows_list / desktop_screenshot / __sleep (builtin, ms sleep)',
   'extAgents.cfg.dispatchStepsPlaceholders':
     'Placeholders (auto-replaced): {hwnd}=captured handle {task_id} {brief_path}=brief absolute path {message}=rendered task instruction',
-  'extAgents.cfg.dispatchStepsPlaceholder': `Example only — no built-in template (Leader writes for your actual machine):
+  'extAgents.cfg.dispatchStepsPlaceholder': `Example only ...no built-in template (Leader writes for your actual machine):
 [
   { "tool": "desktop_window_activate", "with": { "hwnd": "{hwnd}" } },
   { "tool": "desktop_clipboard_write", "with": { "text": "{message}" } },
@@ -246,7 +246,7 @@ const en: Record<string, string> = {
   'cmd.externalAgents': 'External Agents',
   'cmd.externalAgentsDesc': 'Link other agents on this computer for collaboration',
   'custom.page.invert': 'Invert',
-  'custom.page.invertHint': 'Invert this group (checked ↔ unchecked)',
+  'custom.page.invertHint': 'Invert this group (checked 鈫?unchecked)',
 
   'custom.page.title': 'Custom Agents',
   'custom.page.new': 'New agent',
@@ -255,14 +255,14 @@ const en: Record<string, string> = {
   'custom.page.active': 'Active',
   'custom.page.setActive': 'Set active',
   'custom.page.placeholder': 'Select an agent on the left to edit, or create a new one',
-  'custom.page.loading': 'Loading…',
+  'custom.page.loading': 'Loading...',
   'custom.page.lockedNote':
     'L0 core safety constraints and L1 system protocol are always locked. What you define here is the L2 persona layer.',
   'custom.page.name': 'Name',
   'custom.page.namePlaceholder': 'e.g. My writing assistant',
   'custom.page.l2': 'Behavior definition (L2 persona)',
   'custom.page.l2Placeholder':
-    'Define who it is, how it speaks, its code of conduct and prohibitions… this is the full behavior definition of your agent (replaces L2)',
+    'Define who it is, how it speaks, its code of conduct and prohibitions...this is the full behavior definition of your agent (replaces L2)',
   'custom.page.greeting': 'Greeting',
   'custom.page.greetingPlaceholder': 'The first message the agent says when activated',
   'custom.page.knowledge': 'Knowledge paths',
@@ -276,7 +276,7 @@ const en: Record<string, string> = {
   'custom.page.group.other': 'Basic',
   'custom.page.deleteConfirm': 'Delete this agent? This cannot be undone',
   'input.effort.default': 'Default',
-  'input.effort.tooltip': 'Reasoning effort · click to switch',
+  'input.effort.tooltip': 'Reasoning effort → click to switch',
   'input.effort.locked': 'Reasoning effort locked while running',
   'input.attachFileFail': 'File selection failed',
   'input.attachPrefix': '[Attachment: {0}]',
@@ -291,7 +291,7 @@ const en: Record<string, string> = {
   'update.current': 'Current version',
   'update.hint': 'Check the latest official release',
   'update.check': 'Check for updates',
-  'update.checking': 'Checking official releases…',
+  'update.checking': 'Checking official releases...',
   'update.latest': 'You are up to date',
   'update.available': 'New version v{0} is available',
   'update.downloadInstall': 'Download and install',
@@ -423,12 +423,12 @@ const en: Record<string, string> = {
   'tools.resultArea': 'Result',
   'tools.dropTitle': 'Drop your files here',
   'tools.dropSub': 'or click to browse',
-  'tools.dropHint': 'Only supported file types accepted — no file limit',
+  'tools.dropHint': 'Only supported file types accepted ...no file limit',
   'tools.selectFiles': 'Select Files',
   'tools.addFiles': 'Add Files',
   'tools.save': 'Save',
   'tools.tabPdf': 'PDF',
-  'tools.running': 'Running…',
+  'tools.running': 'Running...',
   'tools.extractMaxPages': 'Max pages',
   'tools.ability.pdfMerge': 'Merge PDFs',
   'tools.ability.pdfMergeDesc': 'Combine multiple PDFs into one, rebuilding bookmarks and outline',
@@ -462,11 +462,11 @@ const en: Record<string, string> = {
   'tools.ability.pdfExtractPagesDesc': 'Extract selected pages into a new PDF',
   'tools.pagesList': 'Pages (comma-separated, e.g. 1,3,5)',
   'tools.ability.pdfRotate': 'Rotate Pages',
-  'tools.ability.pdfRotateDesc': 'Rotate all pages by 90° / 180° / 270°',
+  'tools.ability.pdfRotateDesc': 'Rotate all pages by 90掳 / 180掳 / 270掳',
   'tools.rotateDegrees': 'Angle',
-  'tools.rotate90': '90° clockwise',
-  'tools.rotate180': '180°',
-  'tools.rotate270': '90° counter-clockwise (270°)',
+  'tools.rotate90': '90掳 clockwise',
+  'tools.rotate180': '180掳',
+  'tools.rotate270': '90掳 counter-clockwise (270掳)',
   'tools.ability.imageCompress': 'Compress Image',
   'tools.ability.imageCompressDesc':
     'Scale to max size and lower quality: JPEG via quality, PNG via optimal compression',
@@ -527,14 +527,14 @@ const en: Record<string, string> = {
 
   'mcp.serversTitle': 'MCP Servers',
   'mcp.serversDesc': 'Configured MCP servers (read-only; edit plugin/mcp/servers.yaml to change)',
-  'mcp.loading': 'Loading…',
+  'mcp.loading': 'Loading...',
   'mcp.loadError': 'Failed to load MCP servers',
   'mcp.empty.title': 'No MCP server configured',
   'mcp.empty.desc': 'Edit plugin/mcp/servers.yaml to add servers, then reopen',
   'mcp.autoStart': 'Auto start',
   'mcp.onDemand': 'On demand',
   'mcp.timeout': 'Timeout',
-  'mcp.loadingTools': 'Querying tools…',
+  'mcp.loadingTools': 'Querying tools...',
   'mcp.noTools': 'No tools returned by this server',
   'mcp.loadToolsError': 'Failed to query tools',
   'mcp.retry': 'Retry',
@@ -543,7 +543,7 @@ const en: Record<string, string> = {
   'plugins.listDesc': 'Plugins are apps: discover, install and manage your Nuphus mini-apps',
   'plugins.comingSoonP1': 'A paid plugin marketplace is in the works.',
   'plugins.comingSoonP2':
-    'Here, creators with professional skills can turn their abilities into plugin products — early joiners will earn the first wave of value.',
+    'Here, creators with professional skills can turn their abilities into plugin products ...early joiners will earn the first wave of value.',
   'plugins.comingSoonP3':
     'Nuphus looks forward to having you on board to build a high-quality AI ecosystem together!',
   'plugins.comingSoonCard1Title': 'Creator opportunity',
@@ -576,7 +576,7 @@ const en: Record<string, string> = {
   'plugins.enabled': 'Enabled',
   'plugins.disabled': 'Disabled',
   'plugins.enableFail': 'Failed to toggle enabled state',
-  'plugins.serverUnavailable': 'Plugin server unavailable — enable the mobile service first',
+  'plugins.serverUnavailable': 'Plugin server unavailable ...enable the mobile service first',
   'plugins.serverStartFail': 'Failed to start plugin server',
   'plugins.notFound': 'Plugin does not exist or was uninstalled',
   'plugins.errNotReady': 'Bridge is not ready yet',
@@ -609,7 +609,7 @@ const en: Record<string, string> = {
   'plugins.devContractTitle': 'Developer contract (one-pager)',
   'plugins.devContractFormatTitle': '1. Package format',
   'plugins.devContractFormatDesc':
-    'A plugin is a .nuph file (ZIP): manifest.json and the entry page live at the zip root — no subdirectory wrapping.',
+    'A plugin is a .nuph file (ZIP): manifest.json and the entry page live at the zip root ...no subdirectory wrapping.',
   'plugins.devContractManifestTitle': '2. manifest.json fields',
   'plugins.devContractManifestDesc':
     'The manifest declares identity, entry and permissions; each is validated on install.',
@@ -630,7 +630,7 @@ const en: Record<string, string> = {
   'plugins.devApiThemeGet': 'Read current theme (read-only, no permission)',
   'plugins.devApiThemeChanged': 'Theme-change event (one-way push)',
   'plugins.devApiAgentChat':
-    'Call Nuphus AI and get the final reply. Note: agent.chat may use every tool you have granted globally (files / commands / desktop actions) — the plugin can act on your behalf (requires agent.chat)',
+    'Call Nuphus AI and get the final reply. Note: agent.chat may use every tool you have granted globally (files / commands / desktop actions) ...the plugin can act on your behalf (requires agent.chat)',
   'plugins.devApiWorkflowList': 'List user workflows (requires workflow.run)',
   'plugins.devApiWorkflowRun':
     'Run a workflow and wait for the terminal state (requires workflow.run; execution events still go to the main window)',
@@ -639,21 +639,21 @@ const en: Record<string, string> = {
     'Include the four shared assets and colors follow the main-window theme automatically:',
   'plugins.devContractHandshakeTitle': '5. Handshake',
   'plugins.devContractHandshakeDesc':
-    'Including bridge.js completes the ready → init handshake automatically; the bridge checks permissions per call.',
+    'Including bridge.js completes the ready 鈫?init handshake automatically; the bridge checks permissions per call.',
   'plugins.devSamplesTitle': 'Export a sample project',
   'plugins.devSampleHelloName': 'Hello Nuphus',
   'plugins.devSampleHelloDesc':
-    'Theme swatches / KV storage / toast / theme events — the four most common plugin capabilities',
+    'Theme swatches / KV storage / toast / theme events ...the four most common plugin capabilities',
   'plugins.devSampleAgentName': 'Agent Chat',
   'plugins.devSampleAgentDesc':
-    'Plugin-powered Agent chat — how to call Nuphus AI through the Bridge',
-  'plugins.devSampleExport': 'Export to…',
+    'Plugin-powered Agent chat ...how to call Nuphus AI through the Bridge',
+  'plugins.devSampleExport': 'Export to...',
   'plugins.devSampleSuccess': 'Sample project exported to',
   'plugins.devSampleFail': 'Failed to export sample project',
   'plugins.devCenterTitle': 'Developer Center',
   'plugins.devBackToPlugins': 'Back to Plugins',
   'plugins.devCenterDesc':
-    'No coding required — follow the five-step wizard and let AI build your plugin',
+    'No coding required ...follow the five-step wizard and let AI build your plugin',
   'plugins.devStep1': 'What plugins are',
   'plugins.devStep2': 'Export a sample',
   'plugins.devStep3': 'Remake it with AI',
@@ -663,7 +663,7 @@ const en: Record<string, string> = {
   'plugins.devNext': 'Next',
   'plugins.devIntroWhatTitle': 'What is a plugin?',
   'plugins.devIntroWhatDesc':
-    'A plugin is a small app with its own UI that runs inside Nuphus. It can call Nuphus AI chat, automation workflows and system notifications — you bring the expertise, Nuphus brings the AI.',
+    'A plugin is a small app with its own UI that runs inside Nuphus. It can call Nuphus AI chat, automation workflows and system notifications ...you bring the expertise, Nuphus brings the AI.',
   'plugins.devIntroExamplesTitle': 'What can you build?',
   'plugins.devIntroEx1Name': 'Industry Q&A assistant',
   'plugins.devIntroEx1Desc':
@@ -675,51 +675,51 @@ const en: Record<string, string> = {
     'Hook into Nuphus AI to batch-generate copy, reports or plans in your domain',
   'plugins.devIntroVisionTitle': 'Our vision',
   'plugins.devIntroVisionDesc':
-    'We want to build a high-quality, sustainable paid-plugin community together with developers — not chasing quantity, but rewarding well-crafted work. Package your plugin into a single .nuph file to send to clients, or list it on the marketplace when it launches (covered in the last step).',
+    'We want to build a high-quality, sustainable paid-plugin community together with developers ...not chasing quantity, but rewarding well-crafted work. Package your plugin into a single .nuph file to send to clients, or list it on the marketplace when it launches (covered in the last step).',
   'plugins.devExportLead':
-    'The two official samples below are complete plugins. Export one and change it — that IS making your own plugin.',
+    'The two official samples below are complete plugins. Export one and change it ...that IS making your own plugin.',
   'plugins.devAiLead':
-    'Hand the whole exported folder to any AI coding assistant — Cursor, Claude Code, or the Agent right inside Nuphus. You describe what you want; the AI writes the code.',
+    'Hand the whole exported folder to any AI coding assistant ...Cursor, Claude Code, or the Agent right inside Nuphus. You describe what you want; the AI writes the code.',
   'plugins.devAiPromptsTitle': 'Copy a prompt and send it to your AI',
   'plugins.devAiPrompt1':
     'Read manifest.json and index.html in this folder to understand the structure of this Nuphus plugin. Then turn the UI into a tool for your industry that does what you want, keeping the manifest permissions and Bridge calls unchanged.',
   'plugins.devAiPrompt2':
     'Add a feature to this Nuphus plugin: (describe the feature in one sentence). Use the Bridge agent.chat for AI calls and kv storage for persistence. Tell me how to test it when done.',
   'plugins.devAiPrompt3':
-    'Keep the features unchanged, but rewrite the UI of this plugin to be more polished and professional. Use the design variables from /plugins-shared/tokens.css — restrained and modern.',
+    'Keep the features unchanged, but rewrite the UI of this plugin to be more polished and professional. Use the design variables from /plugins-shared/tokens.css ...restrained and modern.',
   'plugins.devAiCopy': 'Copy',
-  'plugins.devAiCopied': 'Copied — paste it to your AI assistant',
-  'plugins.devAiCopyFail': 'Copy failed — please select and copy the text manually',
+  'plugins.devAiCopied': 'Copied ...paste it to your AI assistant',
+  'plugins.devAiCopyFail': 'Copy failed ...please select and copy the text manually',
   'plugins.devAiTip':
     'Tip: after every AI revision, reinstall it in step 4 to see the result; not happy? Describe the problem to the AI and iterate.',
   'plugins.devInstallLead':
-    'Done editing? Install it back into Nuphus right here — no need to leave this page.',
+    'Done editing? Install it back into Nuphus right here ...no need to leave this page.',
   'plugins.devInstallStep1':
-    'Zip the CONTENTS of the plugin folder (compress the files directly — no wrapping folder)',
+    'Zip the CONTENTS of the plugin folder (compress the files directly ...no wrapping folder)',
   'plugins.devInstallStep2':
     'Click the button below to pick a zip / .nuph file and install it locally right away',
   'plugins.devInstallStep3':
     'Click "Open Plugins page", then "Open" on the plugin card to see the result; not happy? Ask the AI to revise, then repeat this step',
-  'plugins.devInstallButton': 'Install .nuph / zip…',
+  'plugins.devInstallButton': 'Install .nuph / zip...',
   'plugins.devInstallNote':
-    'For development debugging only — for distribution, publish to the marketplace in the next step',
+    'For development debugging only ...for distribution, publish to the marketplace in the next step',
   'plugins.devInstallOpen': 'Open Plugins page',
   'plugins.devPubLead':
     'Happy with it? Publish it to the marketplace so every Nuphus user can discover it.',
   'plugins.devPubStep1':
     'Open the Plugins page, click your plugin to enter its detail page, and click "Pack & Export" to produce a .nuph file',
   'plugins.devPubStep2':
-    'Open a PR against the nuphus-market repo with the .nuph and its manifest — picking one category is required (Agents/Tools/Productivity/Integrations/Games/Other)',
+    'Open a PR against the nuphus-market repo with the .nuph and its manifest ...picking one category is required (Agents/Tools/Productivity/Integrations/Games/Other)',
   'plugins.devPubStep3':
     'Once reviewed and merged into the marketplace index.json, every user can discover and one-click install it',
   'plugins.devPubIconNote':
-    'Icon requirement: every app must ship an SVG icon (e.g. icon.svg). Apps without an SVG icon cannot be installed or listed — a baseline marketplace requirement.',
+    'Icon requirement: every app must ship an SVG icon (e.g. icon.svg). Apps without an SVG icon cannot be installed or listed ...a baseline marketplace requirement.',
   'plugins.devMarketTitle': 'Publish to nuphus-market',
   'plugins.devMarketDesc':
-    'Open-source and closed-source submission tracks (design doc §8). Build now and claim your niche — ship on day one when the marketplace goes live.',
+    'Open-source and closed-source submission tracks (design doc 搂8). Build now and claim your niche ...ship on day one when the marketplace goes live.',
   'plugins.devRefLead':
-    'For those who want to go deeper: the one-page plugin contract. You do NOT need to understand it to build plugins — the AI handles these details for you.',
-  'plugins.searchPlaceholder': 'Search plugins…',
+    'For those who want to go deeper: the one-page plugin contract. You do NOT need to understand it to build plugins ...the AI handles these details for you.',
+  'plugins.searchPlaceholder': 'Search plugins...',
   'plugins.noMatch': 'No matching plugins',
 
   'slash.workflow': 'Workflow management',
@@ -793,7 +793,7 @@ const en: Record<string, string> = {
   'models.capContextUnknown': 'Context window unknown',
   'models.editContext': 'Edit context window',
   'models.ctxInvalid':
-    'Enter a valid context size (unit K, e.g. 128 = 128K tokens, range 0.001–10000)',
+    'Enter a valid context size (unit K, e.g. 128 = 128K tokens, range 0.001...0000)',
   'models.ctxSaved': 'Context window set to {0}',
   'models.ctxSaveFail': 'Failed to save context window',
   'models.clearKeyConfirm': "Clear this provider's API Key? This cannot be undone.",
@@ -816,7 +816,7 @@ const en: Record<string, string> = {
   'themes.applied': 'Applied',
   'themes.custom': 'Custom Theme',
   'themes.customDesc':
-    'Layered custom colors on a built-in base — live preview while editing; persists only after saving',
+    'Layered custom colors on a built-in base ...live preview while editing; persists only after saving',
   'themes.customBaseFollow': 'Base (follows current theme)',
   'themes.customName': 'Theme Name',
   'themes.customDefaultName': 'My Theme',
@@ -846,7 +846,7 @@ const en: Record<string, string> = {
   'themes.customBadge': 'Custom',
   'themes.customSaved': 'Custom theme saved',
   'themes.customResetDone':
-    'Custom theme deactivated — back to built-in (your themes stay in the list)',
+    'Custom theme deactivated ...back to built-in (your themes stay in the list)',
   'themes.customImported': 'Custom theme imported',
   'themes.customImportErrJson': 'Import failed: not valid JSON',
   'themes.customImportErrStructure':
@@ -857,8 +857,8 @@ const en: Record<string, string> = {
   'theme.light': 'White',
   'theme.lightDesc': 'Light theme',
   'theme.tech': 'Void Light',
-  'theme.techDesc': 'Deep black · high contrast',
-  'lang.zh': '中文',
+  'theme.techDesc': 'Deep black → high contrast',
+  'lang.zh': '涓枃',
   'lang.en': 'English',
 
   'splash.memory': 'Memory',
@@ -917,7 +917,7 @@ const en: Record<string, string> = {
   'thinking.retrying': 'Retrying',
   'thinking.steps': '{0} steps',
   'thinking.toolCall': 'Calling {0}',
-  'thinking.completed': 'Reply done — click to review',
+  'thinking.completed': 'Reply done ...click to review',
   'thinking.inProgress': 'Thinking...',
   'thinking.viewDetails': 'View details',
   'thinking.close': 'Close',
@@ -954,7 +954,7 @@ const en: Record<string, string> = {
   'toast.ratingSaved': 'Rating saved',
   'toast.ratingSaveFailed': 'Failed to save rating',
   'toast.executing': 'Executing',
-  'toast.executingHint': 'Click ■ Stop or ▣ Kill',
+  'toast.executingHint': 'Click 鈻?Stop or 鈻?Kill',
 
   'init.tools': 'Tools',
   'init.session': 'Session',
@@ -969,11 +969,26 @@ const en: Record<string, string> = {
   'chat.gracefulStop':
     'LLM request failed: {0}\nExecuted {1} step(s), results preserved; not retrying this round. Check model quota/connection and resend.',
 
+  'apiHealth.title': 'Model connection',
+  'apiHealth.unknown': 'Not connected yet',
+  'apiHealth.connecting': 'Connecting',
+  'apiHealth.degraded': 'Connection unstable',
+  'apiHealth.offline': 'Currently unavailable',
+  'apiHealth.stable': 'Connection stable',
+  'apiHealth.stableFor': 'Stable for',
+  'apiHealth.currentTurn': 'Current turn',
+  'apiHealth.noRecords': 'No incident records',
+  'apiHealth.markRead': 'Mark as read',
+  'apiHealth.tab.all': 'All',
+  'apiHealth.tab.connection': 'Connection',
+  'apiHealth.tab.response': 'Response',
+  'apiHealth.tab.impact': 'Impact',
+
   'sessionDivider.refined': 'Session refined',
   'sessionDivider.messages': '{0} messages',
 
   'taskBubble.idle': 'Idle',
-  'taskBubble.failed': ' · {0} failed',
+  'taskBubble.failed': ' → {0} failed',
 
   'security.low': 'Low Risk',
   'security.medium': 'Medium Risk',
@@ -986,16 +1001,16 @@ const en: Record<string, string> = {
   'security.deny': 'Deny',
   'security.denyDesc': 'Block this operation',
 
-  'mobile.runningHint': 'On · your phone can connect anytime',
-  'mobile.stoppedHint': 'Off · your phone cannot connect',
+  'mobile.runningHint': 'On → your phone can connect anytime',
+  'mobile.stoppedHint': 'Off → your phone cannot connect',
   'mobile.title': 'Network Control Center',
   'mobile.desc':
-    'Four network paths between phone and computer — the fastest one is picked automatically, even when you are away',
-  'mobile.topologyStatusOff': 'Off · enable to let your phone connect',
-  'mobile.topologyStatusLan': 'LAN direct · fastest on the same Wi-Fi',
-  'mobile.topologyStatusRelay': 'Official relay · reachable away from home',
-  'mobile.topologyStatusRetrying': 'Relay reconnecting · hang on',
-  'mobile.topologyStatusFault': 'Relay fault · check your network',
+    'Four network paths between phone and computer ...the fastest one is picked automatically, even when you are away',
+  'mobile.topologyStatusOff': 'Off → enable to let your phone connect',
+  'mobile.topologyStatusLan': 'LAN direct → fastest on the same Wi-Fi',
+  'mobile.topologyStatusRelay': 'Official relay → reachable away from home',
+  'mobile.topologyStatusRetrying': 'Relay reconnecting → hang on',
+  'mobile.topologyStatusFault': 'Relay fault → check your network',
   'mobile.topoDeskLabel': 'Desktop',
   'mobile.topoMidLabelLan': 'LAN',
   'mobile.topoMidLabelP2P': 'P2P',
@@ -1009,15 +1024,15 @@ const en: Record<string, string> = {
     'Four paths with automatic fallback; auto paths need no action, optional paths are your choice',
   'mobile.routeLanTitle': 'LAN direct',
   'mobile.routeLanDesc':
-    'Used automatically when phone and computer share a Wi-Fi — fastest, no mobile data',
+    'Used automatically when phone and computer share a Wi-Fi ...fastest, no mobile data',
   'mobile.routeLanBadge': 'Preferred',
   'mobile.routeP2PTitle': 'P2P direct',
   'mobile.routeP2PDesc':
-    'Direct connection across networks without the official relay — self-host with a mature mesh solution (Tailscale)',
+    'Direct connection across networks without the official relay ...self-host with a mature mesh solution (Tailscale)',
   'mobile.routeP2PBadge': 'Planned',
   'mobile.routeRelayTitle': 'Official relay (fallback)',
   'mobile.routeRelayDesc':
-    'Used automatically when direct paths fail — reach this computer from anywhere',
+    'Used automatically when direct paths fail ...reach this computer from anywhere',
   'mobile.routeRelayBadge': 'Fallback',
   'mobile.routeVpsTitle': 'Self-hosted VPS node',
   'mobile.routeVpsDesc':
@@ -1033,7 +1048,7 @@ const en: Record<string, string> = {
   'mobile.nodeUrlLabel': 'Relay address (ws://ip:port)',
   'mobile.nodeTokenLabel': 'Device token',
   'mobile.nodeSave': 'Save & test connection',
-  'mobile.nodeSaving': 'Saving…',
+  'mobile.nodeSaving': 'Saving...',
   'mobile.nodeSaved': 'Relay node updated',
   'mobile.nodeUrlEmpty': 'Relay address is required',
   'mobile.nodePublicUrlLabel': 'Public entry URL (optional)',
@@ -1073,32 +1088,32 @@ const en: Record<string, string> = {
   'mobile.relayEnableBtn': 'Enable remote access',
   'mobile.backupInline': 'Same Wi-Fi backup',
   'mobile.relayHost': 'Relay address',
-  'mobile.relayWaveNote': 'The relay server is hosted overseas — network may fluctuate',
+  'mobile.relayWaveNote': 'The relay server is hosted overseas ...network may fluctuate',
   'mobile.qrStep1': 'First connection: set a pairing password to generate your private QR code',
   'mobile.qrStep2':
     'The QR code is the single entry: relay by default, switch to LAN direct manually when needed',
-  'mobile.qrStep3': 'LAN direct syncs in milliseconds — lower latency, more stable (recommended)',
-  'mobile.qrConnecting': 'Relay connecting — the QR code will appear shortly…',
+  'mobile.qrStep3': 'LAN direct syncs in milliseconds ...lower latency, more stable (recommended)',
+  'mobile.qrConnecting': 'Relay connecting ...the QR code will appear shortly...',
   'mobile.copyUrl': 'Click to copy link',
   'mobile.copyAddress': 'Copy address',
   'mobile.copyRemoteLink': 'Copy link',
   'mobile.lanFallbackTitle': 'LAN direct (fallback)',
   'mobile.lanFallbackDesc': 'Same Wi-Fi only:',
   'mobile.lanFallbackNote':
-    'Away from home? Use the relay QR code above — the LAN address only works on the same network',
+    'Away from home? Use the relay QR code above ...the LAN address only works on the same network',
   'mobile.pairPassword': 'Pairing password',
   'mobile.pairPasswordUnsetHint': 'Not set; phones pair with this password once set',
   'mobile.pairPasswordSetHint': 'Set; paired phones must re-enter the password after a change',
   'mobile.pairPasswordPlaceholder': 'Set a 6+ char password with letters and digits',
   'mobile.pairPasswordPlaceholderSet': 'Enter a new password (6+ chars, letters and digits)',
   'mobile.pairPasswordSave': 'Save',
-  'mobile.pairPasswordSaving': 'Saving…',
+  'mobile.pairPasswordSaving': 'Saving...',
   'mobile.resetPairing': 'Reset pairing',
   'mobile.resetPairingHint': 'All paired phones must re-enter the password after reset',
   'mobile.resetPairingBtn': 'Reset pairing',
   'mobile.relayRotate': 'Regenerate caller credential',
   'mobile.relayRotateHint':
-    'External access credential; rotate here if leaked — old one expires immediately',
+    'External access credential; rotate here if leaked ...old one expires immediately',
   'mobile.relayRotateConfirm':
     'After regeneration, paired phones lose external access immediately and must rescan the QR code. Continue?',
   'mobile.statusRunning': 'Running',
@@ -1106,7 +1121,7 @@ const en: Record<string, string> = {
   'mobile.stopFailed': 'Failed to stop, please retry',
   'mobile.newChatStarted': 'New chat started',
   'mobile.newChatFailed': 'Failed to start new chat, please retry',
-  'mobile.newChatBusy': 'Busy — cannot start a new chat while running',
+  'mobile.newChatBusy': 'Busy ...cannot start a new chat while running',
   'mobile.newChat': 'New chat',
   'mobile.newChatPickMode': 'Pick a mode to start',
   'mobile.newChatStart': 'Start',
@@ -1132,7 +1147,7 @@ const en: Record<string, string> = {
   'mobile.paired': 'Ready',
   'mobile.unpaired': 'Not started',
   'security.title': 'Permission Request',
-  'security.hintUpDown': '↑↓ select',
+  'security.hintUpDown': '鈫戔啌 select',
   'security.hintEnter': 'Enter confirm',
   'security.hintEsc': 'Esc deny',
 
@@ -1147,13 +1162,13 @@ const en: Record<string, string> = {
   'approval.count': '{0} tenets / 20 max',
   'approval.reject': 'Reject',
   'approval.approve': 'Approve & Save',
-  'approval.hintApprove': '↵ Approve',
+  'approval.hintApprove': '鈫?Approve',
   'approval.hintReject': 'Esc Reject',
 
   'planner.title': 'Plan Details',
   'planner.project': 'Project',
-  'planner.active': '● Active',
-  'planner.archived': '○ Archived',
+  'planner.active': '鈼?Active',
+  'planner.archived': '鈼?Archived',
   'planner.goal': 'Goal & Success Criteria',
   'planner.context': 'Current Understanding',
   'planner.tasks': 'Tasks ({0})',
@@ -1210,11 +1225,11 @@ const en: Record<string, string> = {
   'refine.processingAction': 'Extracting key info, optimizing context',
   'refine.skip': 'Skip',
   'refine.skipDesc': 'Skip, continue current session',
-  'refine.hintSelect': '↑↓ select',
-  'refine.hintConfirm': 'Enter confirm · Esc skip',
-  'refine.usage': 'Context usage {0}%（{1} / {2} Token）',
+  'refine.hintSelect': '鈫戔啌 select',
+  'refine.hintConfirm': 'Enter confirm → Esc skip',
+  'refine.usage': 'Context usage {0}% ({1} / {2} Token)',
   'refine.pendingBtn': 'Refine available',
-  'refine.pendingDesc': 'Context usage {0}% — refine now?',
+  'refine.pendingDesc': 'Context usage {0}% ...refine now?',
   'refine.dismissHint':
     'Refine continues in the background; the session will update when it finishes',
 
@@ -1287,7 +1302,7 @@ const en: Record<string, string> = {
     'No tenets yet. Nuphus learns principles from conversations, or you can add them through the approval flow.',
   'memory.noPatterns': 'No reusable experience yet (sources: user reviews / system distills).',
   'memory.annotation.guide':
-    'Record project relationships here so Nuphus instantly understands context when different keywords are mentioned. Add annotations with keywords — the system will auto-inject relevant hints when those keywords appear in conversation.',
+    'Record project relationships here so Nuphus instantly understands context when different keywords are mentioned. Add annotations with keywords ...the system will auto-inject relevant hints when those keywords appear in conversation.',
   'memory.annotation.edit': 'Edit Annotation',
   'memory.annotation.add': 'Add Annotation',
   'memory.annotation.keyword': 'Keyword *',
@@ -1343,10 +1358,10 @@ const en: Record<string, string> = {
   'browser.use': 'Use',
   'browser.picked': 'Connected and saved: {0}. Effective immediately',
   'browser.managedActive': 'Switched back to the built-in browser',
-  'browser.statusProbing': 'Checking connection…',
+  'browser.statusProbing': 'Checking connection...',
   'browser.statusConnected': 'Connected: {0}',
   'browser.statusUnreachable':
-    'Unreachable — the window may be closed; it will reconnect automatically once reopened',
+    'Unreachable ...the window may be closed; it will reconnect automatically once reopened',
 
   'project.selectDir': 'Select Project Directory',
   'project.currentDir': 'Current Project Directory',
@@ -1378,7 +1393,7 @@ const en: Record<string, string> = {
   'workflow.runCount': 'Run {0} times',
   'workflow.run': 'Run',
   'workflow.canvas': 'Canvas',
-  // 输入栏 workflow 模式扳手菜单（工作流画布 / 工作流列表 / 工具箱）
+  // 杈撳叆鏍?workflow 妯″紡鎵虫墜鑿滃崟锛堝伐浣滄祦鐢诲竷 / 宸ヤ綔娴佸垪琛?/ 宸ュ叿绠憋級
   'wfMenu.title': 'Workflow tools',
   'wfMenu.canvas': 'Workflow canvas',
   'wfMenu.list': 'Workflow list',
@@ -1444,16 +1459,16 @@ const en: Record<string, string> = {
     'Workflow mode. Executes predefined steps with no LLM calls. Best for repeatable operations and automation.',
   'help.tips': 'Tips',
   'help.tips.stuck':
-    'Use /reset when the task gets stuck — resets backend state without losing conversation history.',
+    'Use /reset when the task gets stuck ...resets backend state without losing conversation history.',
   'help.tips.memory': 'Use /memories anytime to review past sessions and key decisions.',
   'help.tips.project':
     'Set a working directory with /project so AI can locate project files precisely.',
   'help.tips.skills':
     'Install skill packages via /skills to extend AI capabilities (e.g. UI design specs, desktop automation strategies).',
   'help.tips.models':
-    'Switch LLM models with /models — each provider can be configured independently.',
+    'Switch LLM models with /models ...each provider can be configured independently.',
 
-  // ── Mobile PWA (src/mobile) ── shares this dictionary; language follows nuphus_language
+  // 鈹€鈹€ Mobile PWA (src/mobile) 鈹€鈹€ shares this dictionary; language follows nuphus_language
   'mobile.connecting': 'Connecting',
   'mobile.connected': 'Connected',
   'mobile.disconnected': 'Disconnected',
@@ -1473,7 +1488,7 @@ const en: Record<string, string> = {
   'mobile.noImagePicked': 'No image picked, please try again',
   'mobile.maxImages': 'Up to',
   'mobile.modeSwitchFailed': 'Mode switch failed, please retry',
-  'mobile.voiceKeyboardHint': 'Keyboard opened — tap the mic icon to start speaking',
+  'mobile.voiceKeyboardHint': 'Keyboard opened ...tap the mic icon to start speaking',
   'mobile.closeExtMenu': 'Close extended menu',
   'mobile.openExtMenu': 'Open extended menu',
   'mobile.messageInput': 'Message input',
@@ -1504,12 +1519,12 @@ const en: Record<string, string> = {
   'mobile.unnamedTask': 'Unnamed task',
   'mobile.taskName': 'Task name',
   'mobile.stars': 'star(s)',
-  'mobile.ratingCommentPlaceholder': 'How did this execution go? Any suggestions…',
+  'mobile.ratingCommentPlaceholder': 'How did this execution go? Any suggestions...',
   'mobile.cancel': 'Cancel',
   'mobile.saveAsStrategy': 'Save as strategy',
   'mobile.submitRating': 'Submit rating',
   'mobile.toolsCount': 'tools',
-  'mobile.thinking': 'Thinking…',
+  'mobile.thinking': 'Thinking...',
   'mobile.execDone': 'Execution finished',
   'mobile.showAgentText': 'Show Agent text',
   'mobile.showToolAction': 'Show tool actions',
@@ -1522,20 +1537,20 @@ const en: Record<string, string> = {
   'mobile.me': 'Me',
   'mobile.system': 'System',
   'mobile.submit': 'Submit',
-  'mobile.inputPlaceholder': 'Type something…',
-  'mobile.inputPlaceholderSensitive': 'Type…',
+  'mobile.inputPlaceholder': 'Type something...',
+  'mobile.inputPlaceholderSensitive': 'Type...',
   'mobile.inputTypeDesktopHint': 'This input type must be completed on desktop',
-  'mobile.refining': 'Refining…',
+  'mobile.refining': 'Refining...',
   'mobile.refine': 'Refine',
   'mobile.skip': 'Skip',
   'mobile.a2hsTitle': 'Add to Home Screen (works at home & away)',
   'mobile.a2hsIosStep':
-    'Tap Share at the bottom → “Add to Home Screen”. One icon connects via LAN at home and via relay when away',
+    'Tap Share at the bottom \u2192 "Add to Home Screen" \u2014 one icon connects via LAN at home and via relay when away',
   'mobile.a2hsAndroidStep':
-    'Tap the “⋮” menu → “Add to Home Screen”. One icon connects via LAN at home and via relay when away',
+    'Tap the "\u22EE" menu \u2192 "Add to Home Screen" \u2014 one icon connects via LAN at home and via relay when away',
   'mobile.a2hsLanTitle': 'Direct connection works at home',
   'mobile.a2hsLanNote':
-    'No home-screen icon needed here: scan the QR code or open the LAN address to connect at home. If you also use Nuphus away from home, add the relay HTTPS link to your home screen — one icon works both at home and away',
+    'No home-screen icon needed here: scan the QR code or open the LAN address to connect at home. If you also use Nuphus away from home, add the relay HTTPS link to your home screen ...one icon works both at home and away',
   'mobile.closeHint': 'Dismiss',
   'mobile.pairTitle': 'Connect to desktop Nuphus',
   'mobile.pairInvalid':
@@ -1562,27 +1577,25 @@ const en: Record<string, string> = {
   'mobile.historyReloaded': 'History refreshed',
   'mobile.historyReloadFailed': 'History refresh failed, check network',
   'mobile.lanDisconnectedSwitchWan': 'LAN disconnected, switched to relay channel',
-  'mobile.lanDisconnectedSwitchWanRetry': 'LAN disconnected, switched to relay channel — resend',
+  'mobile.lanDisconnectedSwitchWanRetry': 'LAN disconnected, switched to relay channel ...resend',
   'mobile.bootTimeoutTitle': 'Connection timed out',
-  'mobile.bootStarting': 'Starting…',
-  'mobile.bootConnecting': 'Connecting to your computer…',
+  'mobile.bootStarting': 'Starting...',
+  'mobile.bootConnecting': 'Connecting to your computer...',
   'mobile.bootTimeoutDesc':
     'Could not reach your computer. The tunnel may still be establishing or the network is unstable. Retry, or clear pairing info and scan the QR code again.',
   'mobile.repair': 'Repair pairing',
   'mobile.switchedBackLan': 'Switched back to LAN direct connection',
   'mobile.lanSwitchNoUrl':
-    'LAN address not available yet — make sure your phone and computer are on the same network',
+    'LAN address not available yet ...make sure your phone and computer are on the same network',
   'mobile.lanSwitchFailed': 'Could not fetch LAN address, check network and retry',
-  // 中继通道手动「切换到本地网络」（NavBar 网络弹窗入口）
-  'mobile.networkSwitchLan': 'Switch to local network',
+  // 涓户閫氶亾鎵嬪姩銆屽垏鎹㈠埌鏈湴缃戠粶銆嶏紙NavBar 缃戠粶寮圭獥鍏ュ彛锛?  'mobile.networkSwitchLan': 'Switch to local network',
   'mobile.networkSwitchLanGo': 'Switch',
-  'mobile.networkSwitchLanBusy': 'Resolving…',
-  // 手动切本地网络确认弹窗（header wifi 图标入口）
-  'mobile.lanSwitchDialogTitle': 'Switch to local network',
+  'mobile.networkSwitchLanBusy': 'Resolving...',
+  // 鎵嬪姩鍒囨湰鍦扮綉缁滅‘璁ゅ脊绐楋紙header wifi 鍥炬爣鍏ュ彛锛?  'mobile.lanSwitchDialogTitle': 'Switch to local network',
   'mobile.lanSwitchDialogDesc': 'Switch to your local Wi-Fi network? Lower latency, more stable',
   'mobile.lanSwitchDialogDirect': 'Direct: ',
   'mobile.lanSwitchDialogError':
-    'Could not get the direct address — make sure your phone and computer are on the same Wi-Fi, then retry',
+    'Could not get the direct address ...make sure your phone and computer are on the same Wi-Fi, then retry',
   'mobile.lanSwitchJumpFailed': 'Page did not switch, please retry',
   'mobile.lanSwitchCancel': 'Cancel',
   'mobile.lanSwitchOk': 'OK',
@@ -1605,7 +1618,7 @@ const en: Record<string, string> = {
   'mobile.wfPaused': 'Paused',
   'mobile.wfActive': 'Active',
   'mobile.wfCompleted': 'Completed',
-  'mobile.wfWaitingSteps': 'Waiting for steps…',
+  'mobile.wfWaitingSteps': 'Waiting for steps...',
   'mobile.wfPause': 'Pause',
   'mobile.wfResume': 'Resume',
   'mobile.wfTerminate': 'Terminate',

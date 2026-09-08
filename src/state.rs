@@ -10,7 +10,6 @@
 //!
 //! ## 不纳入 SignalState 的全局 static（保持独立的理由）
 //!
-//! - PENDING_APPEND (Mutex<Vec<String>>) — 跨 session 追加指令队列
 //! - WORKFLOW_USER_CANCELLED (AtomicBool) — Tauri 命令层 → Core 单向信号
 //! - 所有 OnceLock 基础设施（EMBEDDER_LOCK, JIEBA, DB_PATH, POOL 等）
 

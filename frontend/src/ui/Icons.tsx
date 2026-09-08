@@ -16,6 +16,7 @@ export {
   Sprout as IconSprout,
   Search as IconSearch,
   ArrowLeft as IconArrowLeft,
+  Activity as IconActivity,
   Grid as IconGrid,
   Monitor as IconMonitor,
   FileText as IconFile,

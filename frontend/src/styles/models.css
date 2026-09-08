@@ -311,6 +311,74 @@
   }
 }
 
+/* ── 手动添加模型行（灰度/临时模型，不依赖 /v1/models 返回）── */
+.models-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.models-add-input {
+  flex: 1;
+  min-width: 0;
+}
+.models-add-submit,
+.models-add-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-add-submit:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+  border-color: var(--line-3);
+}
+.models-add-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.models-add-submit:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── 接口地址变更提示条（旧模型可能在新地址失效）── */
+.models-baseurl-warn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--warning-line, var(--line-2));
+  border-radius: 8px;
+  background: var(--warning-soft, var(--surface-2));
+}
+.models-baseurl-warn-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.models-baseurl-warn .models-add-submit {
+  flex-shrink: 0;
+}
+
 /* ── Ctrl+K ModelsPage：整页布局与左侧导航 ── */
 .models-page-host {
   position: fixed;
@@ -413,19 +481,6 @@
   background: var(--accent-dim);
   color: var(--fg-1);
 }
-.models-rail-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: 50%;
-  background: var(--fg-5);
-}
-.models-rail-dot.on {
-  background: var(--success);
-}
-.models-rail-dot.active {
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
-}
 .models-rail-name {
   min-width: 0;
   flex: 1;
@@ -440,14 +495,6 @@
   padding: var(--space-2);
   color: var(--fg-4);
   font-size: var(--fz-sm);
-}
-.models-rail-foot {
-  flex-shrink: 0;
-  padding: var(--space-3);
-  border-top: 1px solid var(--line-1);
-  color: var(--fg-4);
-  font-size: var(--fz-xs);
-  line-height: var(--leading-normal);
 }
 .models-main {
   min-width: 0;

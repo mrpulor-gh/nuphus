@@ -170,6 +170,7 @@ export interface SessionAPI {
   totalDurationMs: number
   totalCalls: number
   contextLimit: number
+  apiHealth: import('../core/types').ApiHealthState
   currentTaskDesc: string
 
   // ── Setters (for useEvents) ──
@@ -194,6 +195,7 @@ export interface SessionAPI {
   setUserInputRequest: (v: import('../core/types').UserInputRequest | null) => void
   setPauseState: React.Dispatch<React.SetStateAction<{ actionId: string } | null>>
   setAppendQueue: React.Dispatch<React.SetStateAction<string[]>>
+  setApiHealth: React.Dispatch<React.SetStateAction<import('../core/types').ApiHealthState>>
   setTimeline: (v: TimelineEntry[] | ((prev: TimelineEntry[]) => TimelineEntry[])) => void
   setGoalType: React.Dispatch<
     React.SetStateAction<{ type: string; label: string; confidence: number } | null>
@@ -1004,6 +1006,7 @@ export function useSession(): SessionAPI {
     pauseState: execUI.pauseState,
     completed: execUI.completed,
     timeline: execUI.timeline,
+    apiHealth: execUI.apiHealth,
     goalType: execUI.goalType,
 
     // Workflow run
@@ -1046,6 +1049,7 @@ export function useSession(): SessionAPI {
     setUserInputRequest: execUI.setUserInputRequest,
     setPauseState: execUI.setPauseState,
     setAppendQueue: execUI.setAppendQueue,
+    setApiHealth: execUI.setApiHealth,
     setTimeline: execUI.setTimeline,
     setGoalType: execUI.setGoalType,
     setMainTokenUsage: execUI.setMainTokenUsage,

@@ -15,6 +15,7 @@ import type {
 import type { MutableRefObject } from 'react'
 import type { MoodState } from '../ui/MoodFace'
 import { playUiSound } from '../ui/sound'
+import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
 
 type RegionPickerMode = 'picker' | 'capture' | 'ocr' | null
 type TokenUsageState = { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
@@ -72,6 +73,8 @@ export interface EventHandlers {
   >
   setPauseState: React.Dispatch<React.SetStateAction<{ actionId: string } | null>>
   setAppendQueue: React.Dispatch<React.SetStateAction<string[]>>
+  apiHealth: ApiHealthState
+  setApiHealth: React.Dispatch<React.SetStateAction<ApiHealthState>>
   setMainTokenUsage: React.Dispatch<
     React.SetStateAction<{
       inputTokens: number
@@ -190,6 +193,100 @@ export function useEvents(h: EventHandlers) {
   // ── nuphus-event listener ──
   useEffect(() => {
     let cancelled = false
+    /** 连续重试计数：单次 → 瞬时脉冲；≥2 次 → 常驻 degraded（持续性问题才占位） */
+    let retryStreak = 0
+    /** 事件聚合：同 kind 合并计数（分类说明 + ×N + 首末时间），不产生重复行 */
+    const upsertIncident = (
+      prev: ApiHealthState,
+      kind: ApiHealthEventKind,
+      summary: string,
+      impact: 'none' | 'partial' | 'failed',
+      now: number,
+    ): ApiHealthIncident[] => {
+      // ?? [] 兼容 HMR 旧 state（records → incidents 迁移期间内存中的旧对象无该字段）
+      const list = prev.incidents ?? []
+      const idx = list.findIndex(i => i.kind === kind)
+      if (idx < 0) {
+        return [...list, { kind, count: 1, firstAt: now, lastAt: now, lastSummary: summary, impact }]
+      }
+      const next = [...list]
+      const cur = next[idx]
+      next[idx] = { ...cur, count: cur.count + 1, lastAt: now, lastSummary: summary, impact }
+      // 分类种类天然有界（≤6），仍按最近发生保留 8 条兜底
+      return next.sort((a, b) => a.lastAt - b.lastAt).slice(-8)
+    }
+    const setHealth = (
+      status: ApiHealthState['status'],
+      summary?: string,
+      kind?: ApiHealthEventKind,
+      impact?: 'none' | 'partial' | 'failed',
+    ) => {
+      h.setApiHealth(prev => {
+        const now = Date.now()
+        const nextStableSince = status === 'stable' ? (prev.stableSince ?? now) : null
+        // 语义保持兼容：未显式指定时按 status 推导（offline=disconnect/failed，其余=retry/partial）
+        const effKind: ApiHealthEventKind = kind ?? (status === 'offline' ? 'disconnect' : 'retry')
+        const effImpact = impact ?? (status === 'offline' ? 'failed' : 'partial')
+        const incidents = summary
+          ? upsertIncident(prev, effKind, summary, effImpact, now)
+          : (prev.incidents ?? [])
+        return {
+          ...prev,
+          status,
+          stableSince: nextStableSince,
+          lastTransitionAt: now,
+          consecutiveFailures:
+            status === 'offline'
+              ? prev.consecutiveFailures + 1
+              : status === 'stable'
+                ? 0
+                : prev.consecutiveFailures,
+          incidents,
+          unreadCount: summary ? prev.unreadCount + 1 : prev.unreadCount,
+        }
+      })
+    }
+
+    /** 瞬时事件脉冲（传输截断 / 单次重试）：一次性动效 + 聚合记录，不改变常驻 status */
+    const setPulse = (kind: ApiHealthEventKind, summary?: string) => {
+      const at = Date.now()
+      h.setApiHealth(prev => ({
+        ...prev,
+        pulse: { kind, at },
+        incidents: summary ? upsertIncident(prev, kind, summary, 'partial', at) : (prev.incidents ?? []),
+        unreadCount: summary ? prev.unreadCount + 1 : prev.unreadCount,
+      }))
+      // 1.6s 后清除脉冲（仅清同一次，避免误清新到达的事件）
+      setTimeout(() => {
+        if (cancelled) return
+        h.setApiHealth(prev => (prev.pulse?.at === at ? { ...prev, pulse: null } : prev))
+      }, 1600)
+    }
+
+    /**
+     * 收到真实 LLM 活动（text delta / tool call / 执行完成）= 连接已被证明可用 → 直接稳定。
+     * 原实现每次活动都重置 10s 观察计时器，执行中高频活动使计时器永不到期，
+     * 导致全程显示「正在连接」（2026-09-08 修正：取消观察窗续期）。
+     */
+    const observeStable = () => {
+      retryStreak = 0
+      h.setApiHealth(prev => {
+        if (prev.status === 'stable') return prev
+        const now = Date.now()
+        // 异常 → 恢复：记一条 recovered（时间线闭环：异常与恢复成对出现）
+        const wasUnhealthy = prev.status === 'degraded' || prev.status === 'offline'
+        return {
+          ...prev,
+          status: 'stable',
+          stableSince: prev.stableSince ?? now,
+          consecutiveFailures: 0,
+          lastTransitionAt: now,
+          incidents: wasUnhealthy
+            ? upsertIncident(prev, 'recovered', '连接已恢复', 'none', now)
+            : (prev.incidents ?? []),
+        }
+      })
+    }
 
     listen<{ seq: number; event: NuphusEvent }>('nuphus-event', ({ seq, event }) => {
       if (cancelled) return
@@ -203,7 +300,23 @@ export function useEvents(h: EventHandlers) {
       lastEventTime.current = Date.now()
       eventCountRef.current++
 
-      const sid = () => h.refs.streamingMsgId.current || h.refs.lastStreamingMsgId.current
+if (event.type === 'execution_started') h.setApiHealth(prev => ({ ...prev, currentTurnId: prev.currentTurnId + 1, status: prev.status === 'offline' || prev.status === 'unknown' ? 'connecting' : prev.status, lastTransitionAt: Date.now() }))
+        if (event.type === 'tool_call_start') observeStable()
+        if (event.type === 'llm_text_delta') observeStable()
+        if (event.type === 'execution_completed') { observeStable(); h.setApiHealth(prev => ({ ...prev, unreadCount: 0 })) }
+        if (event.type === 'warning' && (event.code === 'llm_retry' || event.code === 'llm_network_retry')) {
+          // 单次重试 = 瞬时脉冲（一闪而过）；连续 ≥2 次 = 常驻 degraded（持续性问题才占位）
+          retryStreak += 1
+          if (retryStreak >= 2) setHealth('degraded', '模型连接持续波动，系统正在恢复', 'retry', 'partial')
+          else setPulse('retry', '模型连接出现波动，系统正在恢复')
+        }
+        if (event.type === 'warning' && event.code === 'stream_truncated') {
+          // 传输截断 = 瞬时事件（一闪而过）+ 记录进 rail；不常驻 degraded
+          setPulse('truncated', event.message || '响应传输中断，已保留部分内容')
+        }
+        if (event.type === 'error' && !event.from_subtask) setHealth('offline', '模型请求未能完成')
+
+       const sid = () => h.refs.streamingMsgId.current || h.refs.lastStreamingMsgId.current
 
       // ── Shared helpers (extracted duplicated patterns) ──
       const addSystemMsg = (content: string) =>

@@ -44,14 +44,10 @@ impl super::Runtime {
             // 0.5b 新任务开始时清空上一任务残留的追加指令队列：
             // 追加指令语义 =「发送时正在执行的任务内生效」，任务结束后残留若不清空，
             // 会在本任务首轮 drain 时被注入——跨任务泄漏（刷新/重连后重复指令的根因之一）。
-            // 双队列都清：mobile_append::PENDING（手机端入口）+ SignalState::append_queue
-            // （桌面端 send/append_instruction 入口）。react_loop 每迭代 drain 后，任务收口时
-            // 若仍有追加滞留（agent 已停止），也应在此清掉而非拖到下一个任务。
-            crate::mobile_append::clear();
-            {
-                let mut signals = crate::state::SignalState::write(self.agent.tools.signals());
-                signals.append_queue.clear();
-            }
+            // 清空上一任务残留，避免追加指令跨任务泄漏；当前任务的新消息在此之后入队。
+            crate::state::SignalState::write(self.agent.tools.signals())
+                .append_queue
+                .clear();
         }
 
         // 0.6 Reset this round's safety check counter
@@ -74,9 +70,6 @@ impl super::Runtime {
                 });
             }
         }
-        // Consume legacy pause append leftovers without allowing them to leak into a new turn.
-        let _ = crate::agent::pause::drain_pending_append();
-
         if cancel_flag.load(Ordering::SeqCst) {
             tracing::info!("[INTERRUPT] Cancelled after context retrieval");
             self.agent.emit_exec("// interrupted");
@@ -356,15 +349,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                                 "[PAUSE] User appended instruction: {}",
                                 instr.chars().take(80).collect::<String>()
                             );
-                            // 统一走 format_mobile_append_section：带 [APPEND] 标记，
-                            // chat_history 过滤（追加消息不显示在历史）；同时 push_pending_append
-                            // 供后续轮次注入语义一致。
-                            self.agent.session.push_user_internal(
-                                crate::mobile_append::format_mobile_append_section(
-                                    std::slice::from_ref(&instr),
-                                ),
-                            );
-                            crate::agent::pause::push_pending_append(instr);
+                            // 暂停追加也写入唯一共享队列；由本轮后续统一 drain 注入。
+                            crate::mobile_append::enqueue(self.agent.tools.signals(), instr);
                         }
                         crate::agent::pause::PauseDecision::Terminate => {
                             tracing::info!("[PAUSE] User chose to terminate — graceful stop");
@@ -395,15 +381,6 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                 self.agent
                     .session
                     .push_user_internal(crate::handoff::format_doorbell_section(&handoff_events));
-            }
-
-            // 手机追加指令：与门铃同一注入位——执行中手机发送的消息
-            // （busy 锁占用时入队）在轮次边界被动 drain，插入下一迭代。
-            let mobile_appends = crate::mobile_append::drain_for_injection();
-            if !mobile_appends.is_empty() {
-                self.agent.session.push_user_internal(
-                    crate::mobile_append::format_mobile_append_section(&mobile_appends),
-                );
             }
 
             let request = self.agent.build_request(&merged_system);
@@ -465,6 +442,23 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                             emitter.emit(NuphusEvent::Warning {
                                 code: "connection_status".to_string(),
                                 message: msg.clone(),
+                            });
+                        }
+                    }
+                    if let crate::api::AssistantEvent::StreamTruncated {
+                        text_chars,
+                        tools_salvaged,
+                    } = &event
+                    {
+                        // 传输截断（salvage 后）→ 及时性提示：HUD + api-health 短暂 degraded。
+                        // 不落 session（common.rs process_events 忽略该变体）。
+                        if let Some(ref emitter) = exec_emitter {
+                            emitter.emit(NuphusEvent::Warning {
+                                code: "stream_truncated".to_string(),
+                                message: format!(
+                                    "响应传输中断，已保留 {} 字符内容与 {} 条工具调用",
+                                    text_chars, tools_salvaged
+                                ),
                             });
                         }
                     }

@@ -377,7 +377,9 @@ impl WorkflowAgent {
         self.tools_used_this_turn.clear();
         self.execution_steps.clear();
         // 新任务开始时清空上一任务残留的追加指令队列（防跨任务泄漏，与 react_loop 入口一致）
-        crate::mobile_append::clear();
+        crate::state::SignalState::write(self.tools.signals())
+            .append_queue
+            .clear();
         // 首轮注入 workflow 记忆 tail（session 为空时生效，同会话仅一次）
         self.inject_memory_snapshot();
         // Advance turn counter for memory tracking (consistent with Leader)
@@ -510,15 +512,15 @@ impl WorkflowAgent {
 
             self.session.strip_incomplete_tools();
 
-            // ── 追加指令注入：与 react_loop 同一注入位——执行中用户发送的追加
-            // 指令（busy 锁占用时入队 mobile_append）在迭代边界 drain，插入下一轮。
-            // 电脑端/手机端追加指令在 workflow 执行中同样生效（与 Leader 模式一致）。
-            let mobile_appends = crate::mobile_append::drain_for_injection();
-            if !mobile_appends.is_empty() {
-                self.session
-                    .push_user(crate::mobile_append::format_mobile_append_section(
-                        &mobile_appends,
-                    ));
+            // 统一共享追加队列：每轮只从 SignalState::append_queue 取一次。
+            let active_appends = {
+                let mut signals = crate::state::SignalState::write(self.tools.signals());
+                std::mem::take(&mut signals.append_queue)
+            };
+            if !active_appends.is_empty() {
+                self.session.push_user_internal(
+                    crate::mobile_append::format_mobile_append_section(&active_appends),
+                );
             }
 
             // ── Context watermark warning (WorkflowAgent 无压缩机制) ──

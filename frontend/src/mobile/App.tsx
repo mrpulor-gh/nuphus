@@ -20,6 +20,7 @@ import {
   wfResume,
   wfStop,
   stopExecution,
+  interruptExecution,
   setApiBase,
   getApiBase,
   AuthError,
@@ -35,6 +36,7 @@ import {
   type ChatMessage,
 } from './store'
 import ChatScreen from './components/ChatScreen'
+import { StopChoiceDialog } from '../ui/StopChoiceDialog'
 import MobileErrorBoundary from './components/MobileErrorBoundary'
 import RatingSheet from './components/RatingSheet'
 import PairingGuide from './components/PairingGuide'
@@ -113,6 +115,12 @@ export default function App() {
   /** boot 超时兜底：连接模式判定卡住（隧道半死/慢）时不再无限白屏——
    *  超时后显示错误界面（重试/重新配对），给用户可见出口（2026-08-25 白屏根治）。 */
   const [bootTimeout, setBootTimeout] = useState(false)
+  /** 终止方式弹窗（与桌面端同源 StopChoiceDialog：继续/优雅终止/强制终止） */
+  const [stopChoiceOpen, setStopChoiceOpen] = useState(false)
+  // 执行结束（含远端收敛）自动关闭终止弹窗——避免「任务执行中」文案滞留误导
+  useEffect(() => {
+    if (!state.activity.running) setStopChoiceOpen(false)
+  }, [state.activity.running])
   /** 启动失败页上的 WLAN 回退反馈；该页早于 ChatScreen 渲染，不能依赖 NavBar/toast。 */
   const [bootLanError, setBootLanError] = useState<string | null>(null)
   /** 历史拉取失败自动重试：timer + 退避计数（指数退避 3s→30s 上限，中继慢/半死时自愈） */
@@ -1146,16 +1154,9 @@ export default function App() {
           }
           onWorkflowDismiss={() => dispatch({ type: 'workflow_clear' })}
           onStopExecution={() => {
-            // 加确认弹窗：避免手机端误触终止（执行中发送按钮常与终止相邻）
-            if (!window.confirm(t('input.forceStopConfirm'))) return
-            // 直接终止（POST /stop）：紧急操作，无需暂停 action_id
-            void stopExecution(token ?? '')
-              .then(res => {
-                if (res.status === 'stopping' || res.status === 'terminated') {
-                  showToast(t('mobile.statusStopped'))
-                }
-              })
-              .catch(() => showToast(t('mobile.stopFailed')))
+            // 与桌面端同源弹窗（StopChoiceDialog）：继续 / 优雅终止 / 强制终止。
+            // 不再用 window.confirm（默认样式 + 语义错配：确认后走的是优雅终止）。
+            setStopChoiceOpen(true)
           }}
           onNewChat={() => {
             // 新建对话 = 双端纯视图回 welcome，后端零会话创建（与桌面 handleNewChat
@@ -1242,6 +1243,27 @@ export default function App() {
             }}
           />
         )}
+        <StopChoiceDialog
+          open={stopChoiceOpen}
+          variant="mobile"
+          onClose={() => setStopChoiceOpen(false)}
+          onGraceful={() => {
+            // 优雅终止：POST /stop → 桌面 graceful_stop（预置 Terminate 决策，整理输出后结束）
+            void stopExecution(token ?? '')
+              .then(res => {
+                if (res.status === 'stopping' || res.status === 'terminated') {
+                  showToast(t('mobile.statusStopped'))
+                }
+              })
+              .catch(() => showToast(t('mobile.stopFailed')))
+          }}
+          onForce={() => {
+            // 强制终止：POST /interrupt → 桌面 interrupt（cancel_flag 立即中断，输出可能丢失）
+            void interruptExecution(token ?? '')
+              .then(() => showToast(t('mobile.statusStopped')))
+              .catch(() => showToast(t('mobile.stopFailed')))
+          }}
+        />
       </MobileErrorBoundary>
       {renderLanSwitchDialog()}
     </>

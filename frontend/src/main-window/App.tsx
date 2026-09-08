@@ -304,6 +304,7 @@ export default function App() {
               totalDurationMs={s.totalDurationMs}
               totalCalls={s.liveCalls}
               contextLimit={s.contextLimit}
+              apiHealth={s.apiHealth}
               onModelChanged={s.refreshModelInfo}
               mode={s.mode}
               onSetMode={s.handleSetMode}

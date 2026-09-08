@@ -6,7 +6,6 @@
 //! ## 状态存储
 //!
 //! - PAUSE_DECISIONS / PAUSE_ACTION_ID → `crate::state::SignalState`（SharedSignals 显式注入）
-//! - PENDING_APPEND — 跨 session 追加指令队列（保留独立 static）
 //!
 //! ## 注意
 //!
@@ -92,34 +91,6 @@ pub fn get_pause_action_id(signals: &crate::state::SharedSignals) -> Option<Stri
 /// Clear pause action_id (called by continue/append/terminate)
 pub fn clear_pause_action_id(signals: &crate::state::SharedSignals) {
     crate::state::SignalState::write(signals).pause_action_id = None;
-}
-
-// ════════════════════════════════════════════════════════════════
-// PENDING_APPEND — 跨 session 追加指令队列（保留全局 static）
-// ════════════════════════════════════════════════════════════════
-
-use std::sync::Mutex;
-
-/// Global append instruction queue — persistent across sessions and runs.
-/// Pause handler pushes here, after run()/dispatch returns, drain and merge into target session.
-static PENDING_APPEND: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// Push append instruction into global queue
-pub fn push_pending_append(instr: String) {
-    let mut guard = PENDING_APPEND.lock().unwrap_or_else(|e| e.into_inner());
-    guard.push(instr);
-}
-
-/// Drain all append instructions from global queue (clears queue)
-pub fn drain_pending_append() -> Vec<String> {
-    let mut guard = PENDING_APPEND.lock().unwrap_or_else(|e| e.into_inner());
-    std::mem::take(&mut *guard)
-}
-
-/// Check if global queue is empty
-pub fn has_pending_append() -> bool {
-    let guard = PENDING_APPEND.lock().unwrap_or_else(|e| e.into_inner());
-    !guard.is_empty()
 }
 
 // ════════════════════════════════════════════════════════════════

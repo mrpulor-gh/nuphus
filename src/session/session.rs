@@ -236,7 +236,7 @@ impl Session {
     }
 
     /// 检查最后一条消息是否为 user 且文本内容匹配
-    /// 用于 drain_pending_append 避免同一条指令重复注入
+    /// 用于避免同一条追加指令重复注入
     pub fn last_message_is_user_with(&self, content: &str) -> bool {
         if let Some(last) = self.messages.last() {
             if last.role != MessageRole::User {

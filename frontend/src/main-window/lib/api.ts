@@ -612,6 +612,16 @@ export function refreshProviderModels(provider: string, baseUrl?: string) {
   return invoke<ProviderModelBrief[]>('refresh_provider_models', { provider, baseUrl })
 }
 
+/** 手动添加单模型到服务商配置（config.toml models 列表）——灰度/临时模型（/v1/models 未返回）使用 */
+export function addProviderModel(provider: string, modelId: string) {
+  return invoke<void>('add_provider_model', { provider, modelId })
+}
+
+/** 清空服务商模型列表（接口地址变更后旧模型可能失效，前端提示条调用；返回清除条目数） */
+export function clearProviderModels(provider: string) {
+  return invoke<number>('clear_provider_models', { provider })
+}
+
 export interface ProviderInfo {
   id: string
   name: string

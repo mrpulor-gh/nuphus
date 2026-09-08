@@ -202,6 +202,8 @@ fn main() {
             commands::test_llm_connection,
             commands::list_provider_models,
             commands::refresh_provider_models,
+            commands::add_provider_model,
+            commands::clear_provider_models,
             commands::get_supported_providers,
             commands::get_capabilities,
             commands::set_capability,

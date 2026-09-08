@@ -929,6 +929,21 @@ const zh: Record<string, string> = {
   'chat.gracefulStop':
     'LLM请求失败：{0}\n已执行 {1} 步，执行结果已保留；本次不重试，请检查模型额度/连接后重新发送',
 
+  'apiHealth.title': '模型连接状态',
+  'apiHealth.unknown': '尚未连接',
+  'apiHealth.connecting': '正在连接',
+  'apiHealth.degraded': '连接有波动',
+  'apiHealth.offline': '当前不可用',
+  'apiHealth.stable': '连接稳定',
+  'apiHealth.stableFor': '已稳定',
+'apiHealth.currentTurn': '当前轮次',
+  'apiHealth.noRecords': '暂无异常记录',
+  'apiHealth.markRead': '标记已读',
+  'apiHealth.tab.all': '全部',
+  'apiHealth.tab.connection': '连接',
+  'apiHealth.tab.response': '响应',
+  'apiHealth.tab.impact': '影响',
+
   'sessionDivider.refined': '会话已提炼',
   'sessionDivider.messages': '{0}条消息',
 

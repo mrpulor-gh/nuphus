@@ -10,9 +10,11 @@ import type {
   TaskStatus,
   TaskPriority,
   WorkflowRunStep,
+  ApiHealthState,
 } from '../core/types'
 import { executeSessionRefine, refineSkip } from '../main-window/lib/api'
 import type { Toast } from './useInit'
+import { initialApiHealthState } from '../main-window/chat/ApiHealthBadge'
 
 export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) => void) {
   // ── Execution trace visibility ──
@@ -35,6 +37,7 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   const [appendQueue, setAppendQueue] = useState<string[]>([])
   const [completed, setCompleted] = useState(false)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
+  const [apiHealth, setApiHealth] = useState<ApiHealthState>(initialApiHealthState)
 
   const [goalType, setGoalType] = useState<{
     type: string
@@ -274,6 +277,8 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
     setCompleted,
     timeline,
     setTimeline,
+    apiHealth,
+    setApiHealth,
     goalType,
     setGoalType,
 

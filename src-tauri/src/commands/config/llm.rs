@@ -5,8 +5,8 @@
 //! (context-window probing, vision probing, etc.).
 
 use super::toml_ops::{
-    clear_provider_api_key_in_config_toml, get_config_path, list_configured_providers,
-    read_model_context_window, read_provider_api_key_from_config_toml,
+    clear_provider_api_key_in_config_toml, clear_provider_models_in_config_toml, get_config_path,
+    list_configured_providers, read_model_context_window, read_provider_api_key_from_config_toml,
     read_provider_reasoning_effort_from_config_toml, update_config_toml,
     update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
     update_reasoning_effort, upsert_provider_models,
@@ -1197,6 +1197,45 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
     }
 
     Ok(models)
+}
+
+/// 手动添加单模型到服务商配置（config.toml `[[providers]].models`）。
+///
+/// 用途：`/v1/models` 未返回的灰度/临时模型（如带过期后缀的
+/// `deepseek-v4.1-flash-expires-on-0910`）——base_url 与 API key 不变，
+/// 仅把 model id 并入该服务商 models 列表，`list_models` 与模型列表页立即可见。
+/// 新条目写入最小配置（supports_streaming 默认 true）；能力元数据缺失时
+/// ctx 显示未知（?），可经 RowCtxEditor 手动补充或首次调用时探测。
+#[tauri::command]
+pub fn add_provider_model(provider: String, model_id: String) -> Result<(), String> {
+    let model_id = model_id.trim().to_string();
+    if model_id.is_empty() {
+        return Err("模型代号不能为空".to_string());
+    }
+    // 只允许已登记的服务商（无 provider 段时 upsert 会静默跳过，需提前拦下给明确反馈）
+    let configured = list_configured_providers();
+    if !configured.iter().any(|p| p == &provider) {
+        return Err(format!(
+            "服务商 {} 尚未登记，请先在上方连接并保存 API Key",
+            provider
+        ));
+    }
+    let config_path =
+        get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
+    upsert_provider_models(&config_path, &provider, &[model_id])
+}
+
+/// 清空某服务商的模型列表（config.toml `[[providers]].models` → []）。
+///
+/// 场景：接口地址（base_url）变更后，旧模型条目可能在新地址失效——
+/// 模型代号不存在（调用报 model not found）或同名模型能力不同（ctx/视觉
+/// 元数据不匹配）。前端「接口地址已变更」提示条调用；仅清 models，
+/// 保留 name / provider_type / base_url / api_key。返回清除条目数（幂等）。
+#[tauri::command]
+pub fn clear_provider_models(provider: String) -> Result<usize, String> {
+    let config_path =
+        get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
+    clear_provider_models_in_config_toml(&config_path, &provider)
 }
 
 #[tauri::command]

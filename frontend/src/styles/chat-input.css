@@ -29,12 +29,16 @@
 }
 /* dock 内的输入框卡片回到文档流，原 fixed 几何由 dock 承担（无 dock 时旧规则仍生效）。
    position: relative + left/bottom:auto：absolute 子级（rail）锚定输入壳本体；
-   同时消除基础规则 left:50% / bottom:20px 在 relative 下造成的右移半宽、上移 20px。 */
+   同时消除基础规则 left:50% / bottom:20px 在 relative 下造成的右移半宽、上移 20px。
+   ⚠️ z-index: auto 必加：基础规则 z-index:50 + position:relative 会创建 stacking context，
+   把 mode menu(z:200) 困在 chat-input-area SC 内，dock SC 内与 external-agents-bar(z:51)
+   比较时整个 chat-input-area(z:50) 低于 bar，导致 menu 被 bar 玻璃态盖住。 */
 .chat-input-dock .chat-input-area {
   position: relative;
   left: auto;
   bottom: auto;
   transform: none;
+  z-index: auto;
   width: auto;
   min-width: 0;
   max-width: none;
@@ -464,6 +468,13 @@
 }
 .input-bar-left {
   display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 模型运行态组：ctx 用量（数字/颜色通道）+ 连接健康圆点（形状/动效通道）
+   —— 同组但不同视觉通道，细竖线分隔，避免「同色系不同义」混淆 */
+.input-bar-model-status {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
 }
