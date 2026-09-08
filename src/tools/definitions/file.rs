@@ -512,11 +512,39 @@ impl ToolRegistry {
 
                 // Apply replacements in reverse order to preserve positions
                 let new_lines: Vec<&str> = new_str.lines().collect();
-                let mut result_lines: Vec<&str> = content_lines.clone();
+                // result_lines 用 owned String：缩进对齐后的 synced_lines 是局部 String，
+                // 必需移入而非借用（&str 借用生命周期无法跨 splice 存活）。
+                let mut result_lines: Vec<String> =
+                    content_lines.iter().map(|s| s.to_string()).collect();
 
-                for &(start, _) in match_positions.iter().rev() {
+                for &(start, level) in match_positions.iter().rev() {
                     let end = start + old_lines.len();
-                    result_lines.splice(start..end, new_lines.iter().cloned());
+                    // 缩进对齐（修复：模糊匹配命中时防止误删原行缩进）
+                    // 当匹配级别 > 1（Pass 2/3/4 容忍空白差异）时，new_string 可能未携带
+                    // 原文件行的缩进前缀。若直接原样 splice，会导致带缩进行（YAML/JSON/
+                    // Python 等缩进敏感结构）被替换后缩进丢失。此处以原块首行的实际缩进
+                    // 为准，将 new_string 整体对齐到相同缩进（保留 new_string 内部相对缩进）。
+                    let synced_lines: Vec<String> = if level > 1 && !new_lines.is_empty() {
+                        let orig_indent: usize = content_lines[start]
+                            .len()
+                            .saturating_sub(content_lines[start].trim_start().len());
+                        let new_indent: usize = new_lines[0]
+                            .len()
+                            .saturating_sub(new_lines[0].trim_start().len());
+                        let delta = orig_indent as i64 - new_indent as i64;
+                        new_lines.iter().map(|ln| {
+                            if ln.trim().is_empty() {
+                                (*ln).to_string()
+                            } else {
+                                let own: usize = ln.len().saturating_sub(ln.trim_start().len());
+                                let adjusted = (own as i64 + delta).max(0) as usize;
+                                format!("{}{}", " ".repeat(adjusted), ln.trim_start())
+                            }
+                        }).collect()
+                    } else {
+                        new_lines.iter().map(|s| s.to_string()).collect()
+                    };
+                    result_lines.splice(start..end, synced_lines);
                 }
 
                 let new_content = result_lines.join("\n");
@@ -1094,5 +1122,41 @@ mod edit_contract_tests {
         let out = r.output.unwrap();
         assert!(out.contains("L2"), "should list line 2: {out}");
         assert!(out.contains("L6"), "should list line 6: {out}");
+    }
+
+    #[test]
+    fn fuzzy_match_preserves_original_indentation() {
+        // 回归保护（2026-09-08 反复踩坑）：模糊匹配（old_string 无缩进、文件行带缩进）
+        // 替换后必须保留文件原缩进，否则 YAML/JSON 结构被打坏。
+        let path = setup_file(
+            "t7-indent.txt",
+            "{\n  \"version\": \"0.2.7\",\n  \"build\": {}\n}\n",
+        );
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "\"version\": \"0.2.7\",", "new_string": "\"version\": \"0.2.8\","
+        }));
+        assert!(r.success, "fuzzy edit failed: {:?}", r.error);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content, "{\n  \"version\": \"0.2.8\",\n  \"build\": {}\n}",
+            "original indent must survive fuzzy replacement"
+        );
+    }
+
+    #[test]
+    fn fuzzy_match_preserves_inner_relative_indent_for_multiline() {
+        // 多行替换：首行缩进对齐文件原缩进，new_string 内部相对缩进不丢失。
+        let path = setup_file("t8-multiline.txt", "a:\n  b: 1\n  c: 2\nd: 3\n");
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "b: 1\n  c: 2",
+            "new_string": "b: 10\n  c: 20\n  d: 30"
+        }));
+        assert!(r.success, "multiline fuzzy edit failed: {:?}", r.error);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content, "a:\n  b: 10\n    c: 20\n    d: 30\nd: 3",
+            "first line aligned to block indent, relative indent preserved"
+        );
     }
 }
