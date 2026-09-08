@@ -8,13 +8,21 @@
 ## [0.2.9] - 2026-09-09
 
 ### Added
+- 模型连接状态指示器（api-health）：对话页展示 provider 连通状态、稳定时长与异常记录，支持全部 / 连接 / 响应 / 影响分类查看与标记已读。
+- 终止方式选择弹窗（StopChoiceDialog）：执行中提供「继续执行 / 优雅终止 / 强制终止」三选一，桌面与手机端共用同一数据源；手机端替换原 window.confirm 误触确认。
+- 模型管理页补齐 12 个 Provider 官方图标（anthropic / bytedance / deepseek / google / minimax / moonshotai / openai / opencode-go / openrouter / qwen / xai / zhipuai）。
+- 发布流水线上传 updater 签名（.sig）并生成 latest.json 元数据，应用内检查更新链路闭环。
 - Edit 工具支持可选行号范围，限制搜索作用域并返回实际匹配位置。
 
 ### Changed
+- 追加消息队列统一到 shared signals：主执行循环与 ExecAgent 共用同一队列状态，跨组件行为一致。
+- 移动端补齐 interrupt 接线与终止文案，与桌面端终止语义对齐。
 - Edit 指定范围内发现多个候选时拒绝静默选择，避免重复片段误改。
 - 保持模糊匹配下的缩进、Tab 与混合缩进策略，并明确单次替换与全量替换边界。
 
 ### Fixed
+- 恢复移动端网络相关 locale 键，修复移动端网络设置文案缺失。
+- 无效 API Key 变体（invalid_api_key / incorrect api key / api_key 等）纳入可重试判定，避免单次误判即中断会话。
 - 修复 Edit 仅行尾空白差异时错误重写替换文本缩进的问题。
 
 ## [0.2.8] - 2026-09-08
