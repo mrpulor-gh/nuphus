@@ -1,4 +1,4 @@
-﻿const en: Record<string, string> = {
+const en: Record<string, string> = {
   'app.name': 'Nuphus',
   'app.subtitle': 'Smart Partner → Always Ready',
 
@@ -1588,10 +1588,12 @@
   'mobile.lanSwitchNoUrl':
     'LAN address not available yet ...make sure your phone and computer are on the same network',
   'mobile.lanSwitchFailed': 'Could not fetch LAN address, check network and retry',
-  // 涓户閫氶亾鎵嬪姩銆屽垏鎹㈠埌鏈湴缃戠粶銆嶏紙NavBar 缃戠粶寮圭獥鍏ュ彛锛?  'mobile.networkSwitchLan': 'Switch to local network',
+  // Relay channel manual "switch to local network" (NavBar network dialog entry)
+  'mobile.networkSwitchLan': 'Switch to local network',
   'mobile.networkSwitchLanGo': 'Switch',
   'mobile.networkSwitchLanBusy': 'Resolving...',
-  // 鎵嬪姩鍒囨湰鍦扮綉缁滅‘璁ゅ脊绐楋紙header wifi 鍥炬爣鍏ュ彛锛?  'mobile.lanSwitchDialogTitle': 'Switch to local network',
+  // Manual local-network confirmation dialog (header Wi-Fi icon entry)
+  'mobile.lanSwitchDialogTitle': 'Switch to local network',
   'mobile.lanSwitchDialogDesc': 'Switch to your local Wi-Fi network? Lower latency, more stable',
   'mobile.lanSwitchDialogDirect': 'Direct: ',
   'mobile.lanSwitchDialogError':
