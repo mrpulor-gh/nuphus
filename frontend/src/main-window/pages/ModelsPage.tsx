@@ -85,7 +85,8 @@ const TXT = {
   refreshing: '刷新中…',
   refreshTitle: '用已保存密钥重新拉取最新模型列表',
   addModelBtn: '+ 手动添加',
-  addModelTitle: '手动添加模型代号（/v1/models 未返回的灰度或临时模型，如 deepseek-v4.1-flash-expires-on-0910）',
+  addModelTitle:
+    '手动添加模型代号（/v1/models 未返回的灰度或临时模型，如 deepseek-v4.1-flash-expires-on-0910）',
   addModelPlaceholder: '输入模型代号，如 deepseek-v4.1-flash-expires-on-0910',
   addModelConfirm: '添加',
   addModelCancel: '取消',

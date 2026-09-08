@@ -1070,10 +1070,10 @@ export function ChatInputBar({
           <div className="input-bar-left">
             {/* ── mode 切换：始终显示；执行时叠加状态点 + 背景呼吸，禁用切换 ── */}
             <div
-            className="input-bar-mode-wrap"
-            ref={modeMenuRef}
-            onMouseEnter={openModeMenu}
-            onMouseLeave={closeModeMenu}
+              className="input-bar-mode-wrap"
+              ref={modeMenuRef}
+              onMouseEnter={openModeMenu}
+              onMouseLeave={closeModeMenu}
             >
               <span
                 className={`input-bar-chip mode-${mode === 'workflow' ? 'workflow' : mode === 'custom' ? 'custom' : 'leader'}${executing ? ' is-processing' : ''}`}
@@ -1102,70 +1102,70 @@ export function ChatInputBar({
                 )}
               </span>
               {!executing && modeMenuOpen && (
-                  <div className="input-bar-mode-menu">
-                    <div
-                      className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
-                      onClick={() => selectMode('leader')}
-                    >
-                      <span className="input-bar-mode-option-name mode-leader">Leader</span>
-                      <span className="input-bar-mode-option-desc">
-                        {t('input.mode.leader.desc')}
-                      </span>
-                    </div>
-                    <div
-                      className={`input-bar-mode-option ${mode === 'workflow' ? 'active' : ''}`}
-                      onClick={() => selectMode('workflow')}
-                    >
-                      <span className="input-bar-mode-option-name mode-workflow">Workflow</span>
-                      <span className="input-bar-mode-option-desc">
-                        {t('input.mode.workflow.desc')}
-                      </span>
-                    </div>
-                    {/* ── Custom 档：列出卡片（点击激活+切换）；无卡片引导创建 ── */}
-                    {customAgents.length > 0 ? (
-                      <>
-                        {customAgents.map(agent => (
-                          <div
-                            key={agent.id}
-                            className={`input-bar-mode-option ${mode === 'custom' && agent.id === activeCustomId ? 'active' : ''}`}
-                            onClick={() => selectCustomAgent(agent.id)}
-                          >
-                            <span className="input-bar-mode-option-name mode-custom">
-                              {agent.name}
-                            </span>
-                            <span className="input-bar-mode-option-desc">
-                              {t('input.mode.custom.desc')}
-                            </span>
-                          </div>
-                        ))}
-                        {onManageCustomAgents && (
-                          <div
-                            className="input-bar-mode-manage"
-                            onClick={() => {
-                              setModeMenuOpen(false)
-                              onManageCustomAgents()
-                            }}
-                          >
-                            {t('input.mode.custom.manage')}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div
-                        className="input-bar-mode-option"
-                        onClick={() => {
-                          setModeMenuOpen(false)
-                          onManageCustomAgents?.()
-                        }}
-                      >
-                        <span className="input-bar-mode-option-name mode-custom">Custom</span>
-                        <span className="input-bar-mode-option-desc">
-                          {t('input.mode.custom.create')}
-                        </span>
-                      </div>
-                    )}
+                <div className="input-bar-mode-menu">
+                  <div
+                    className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
+                    onClick={() => selectMode('leader')}
+                  >
+                    <span className="input-bar-mode-option-name mode-leader">Leader</span>
+                    <span className="input-bar-mode-option-desc">
+                      {t('input.mode.leader.desc')}
+                    </span>
                   </div>
-                )}
+                  <div
+                    className={`input-bar-mode-option ${mode === 'workflow' ? 'active' : ''}`}
+                    onClick={() => selectMode('workflow')}
+                  >
+                    <span className="input-bar-mode-option-name mode-workflow">Workflow</span>
+                    <span className="input-bar-mode-option-desc">
+                      {t('input.mode.workflow.desc')}
+                    </span>
+                  </div>
+                  {/* ── Custom 档：列出卡片（点击激活+切换）；无卡片引导创建 ── */}
+                  {customAgents.length > 0 ? (
+                    <>
+                      {customAgents.map(agent => (
+                        <div
+                          key={agent.id}
+                          className={`input-bar-mode-option ${mode === 'custom' && agent.id === activeCustomId ? 'active' : ''}`}
+                          onClick={() => selectCustomAgent(agent.id)}
+                        >
+                          <span className="input-bar-mode-option-name mode-custom">
+                            {agent.name}
+                          </span>
+                          <span className="input-bar-mode-option-desc">
+                            {t('input.mode.custom.desc')}
+                          </span>
+                        </div>
+                      ))}
+                      {onManageCustomAgents && (
+                        <div
+                          className="input-bar-mode-manage"
+                          onClick={() => {
+                            setModeMenuOpen(false)
+                            onManageCustomAgents()
+                          }}
+                        >
+                          {t('input.mode.custom.manage')}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div
+                      className="input-bar-mode-option"
+                      onClick={() => {
+                        setModeMenuOpen(false)
+                        onManageCustomAgents?.()
+                      }}
+                    >
+                      <span className="input-bar-mode-option-name mode-custom">Custom</span>
+                      <span className="input-bar-mode-option-desc">
+                        {t('input.mode.custom.create')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {/* ── workflow 工具菜单按钮（扳手，图标不变）：仅 workflow 模式显示。
                  hover/点击展开三项：工作流画布（直达续编/新建）/ 工作流列表（Ctrl+K 直达）
@@ -1288,59 +1288,63 @@ export function ChatInputBar({
                 语义同族（同一模型的容量与可用性），细竖线分隔避免「同色系不同义」混淆；
                 圆点平时弱化、异常时展开文字标签，hover 弹层各自独立（ctx 详情 / 连接记录）。 */}
             <span className="input-bar-model-status">
-            <span className="input-bar-ctx" onMouseEnter={openCtx} onMouseLeave={closeCtx}>
-              <span className="input-bar-ctx-label">ctx</span>
-              <span className="input-bar-ctx-value" style={{ color: ctxColor }}>
-                {/* used 用状态色（红/黄/绿）暗示进度；sep + cap 中性不抢戏 */}
-                {ctxUsed > 0 ? fmt(ctxUsed) : '--'}
-                {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
-                {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
-              </span>
-              {ctxHover && (
-                <span className="input-bar-ctx-detail">
-                  {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
-                      cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
-                  {cacheRate >= 0 && (
-                    <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">cache</span>
-                      <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
-                    </span>
-                  )}
-                  <span className="input-bar-ctx-row">
-                    <span className="input-bar-ctx-detail-label">tok</span>
-                    <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
-                  </span>
-                  {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
-                  <span className="input-bar-ctx-row">
-                    <span className="input-bar-ctx-detail-label">cap</span>
-                    <span className="input-bar-ctx-value">
-                      {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
-                    </span>
-                  </span>
-                  <span className="input-bar-ctx-row">
-                    <span className="input-bar-ctx-detail-label">step</span>
-                    <span className="input-bar-ctx-value">{totalCalls || 0}</span>
-                  </span>
-                  <span className="input-bar-ctx-row">
-                    <span className="input-bar-ctx-detail-label">time</span>
-                    <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
-                  </span>
-                  {/* 连接状态摘要：与健康圆点同源（hover ctx 即可确认连接，不必另点圆点） */}
-                  {apiHealth && (
-                    <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">link</span>
-                      <span className="input-bar-ctx-value">{t(`apiHealth.${apiHealth.status}`)}</span>
-                    </span>
-                  )}
+              <span className="input-bar-ctx" onMouseEnter={openCtx} onMouseLeave={closeCtx}>
+                <span className="input-bar-ctx-label">ctx</span>
+                <span className="input-bar-ctx-value" style={{ color: ctxColor }}>
+                  {/* used 用状态色（红/黄/绿）暗示进度；sep + cap 中性不抢戏 */}
+                  {ctxUsed > 0 ? fmt(ctxUsed) : '--'}
+                  {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
+                  {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
                 </span>
+                {ctxHover && (
+                  <span className="input-bar-ctx-detail">
+                    {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
+                      cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
+                    {cacheRate >= 0 && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">cache</span>
+                        <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
+                      </span>
+                    )}
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">tok</span>
+                      <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
+                    </span>
+                    {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">cap</span>
+                      <span className="input-bar-ctx-value">
+                        {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
+                      </span>
+                    </span>
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">step</span>
+                      <span className="input-bar-ctx-value">{totalCalls || 0}</span>
+                    </span>
+                    <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-detail-label">time</span>
+                      <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
+                    </span>
+                    {/* 连接状态摘要：与健康圆点同源（hover ctx 即可确认连接，不必另点圆点） */}
+                    {apiHealth && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">link</span>
+                        <span className="input-bar-ctx-value">
+                          {t(`apiHealth.${apiHealth.status}`)}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+                )}
+              </span>
+              {apiHealth && (
+                <>
+                  <span className="input-bar-status-sep" aria-hidden="true" />
+                  <div className="input-api-health-rail">
+                    <ApiHealthBadge state={apiHealth} compact onRead={onApiHealthRead} />
+                  </div>
+                </>
               )}
-            </span>
-            {apiHealth && (
-              <>
-                <span className="input-bar-status-sep" aria-hidden="true" />
-                <div className="input-api-health-rail"><ApiHealthBadge state={apiHealth} compact onRead={onApiHealthRead} /></div>
-              </>
-            )}
             </span>
           </div>
         </div>

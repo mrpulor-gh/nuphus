@@ -61,7 +61,8 @@ export interface PendingImage {
 
 export type ApiHealthStatus = 'unknown' | 'connecting' | 'degraded' | 'offline' | 'stable'
 
-export type ApiHealthEventKind = 'retry' | 'timeout' | 'disconnect' | 'truncated' | 'provider' | 'recovered'
+export type ApiHealthEventKind =
+  'retry' | 'timeout' | 'disconnect' | 'truncated' | 'provider' | 'recovered'
 
 /**
  * 健康事件聚合条目：同 kind 合并为一条（分类说明 + 累计次数 + 首末时间）。

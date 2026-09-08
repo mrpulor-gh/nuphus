@@ -207,7 +207,10 @@ export function useEvents(h: EventHandlers) {
       const list = prev.incidents ?? []
       const idx = list.findIndex(i => i.kind === kind)
       if (idx < 0) {
-        return [...list, { kind, count: 1, firstAt: now, lastAt: now, lastSummary: summary, impact }]
+        return [
+          ...list,
+          { kind, count: 1, firstAt: now, lastAt: now, lastSummary: summary, impact },
+        ]
       }
       const next = [...list]
       const cur = next[idx]
@@ -253,7 +256,9 @@ export function useEvents(h: EventHandlers) {
       h.setApiHealth(prev => ({
         ...prev,
         pulse: { kind, at },
-        incidents: summary ? upsertIncident(prev, kind, summary, 'partial', at) : (prev.incidents ?? []),
+        incidents: summary
+          ? upsertIncident(prev, kind, summary, 'partial', at)
+          : (prev.incidents ?? []),
         unreadCount: summary ? prev.unreadCount + 1 : prev.unreadCount,
       }))
       // 1.6s 后清除脉冲（仅清同一次，避免误清新到达的事件）
@@ -300,23 +305,37 @@ export function useEvents(h: EventHandlers) {
       lastEventTime.current = Date.now()
       eventCountRef.current++
 
-if (event.type === 'execution_started') h.setApiHealth(prev => ({ ...prev, currentTurnId: prev.currentTurnId + 1, status: prev.status === 'offline' || prev.status === 'unknown' ? 'connecting' : prev.status, lastTransitionAt: Date.now() }))
-        if (event.type === 'tool_call_start') observeStable()
-        if (event.type === 'llm_text_delta') observeStable()
-        if (event.type === 'execution_completed') { observeStable(); h.setApiHealth(prev => ({ ...prev, unreadCount: 0 })) }
-        if (event.type === 'warning' && (event.code === 'llm_retry' || event.code === 'llm_network_retry')) {
-          // 单次重试 = 瞬时脉冲（一闪而过）；连续 ≥2 次 = 常驻 degraded（持续性问题才占位）
-          retryStreak += 1
-          if (retryStreak >= 2) setHealth('degraded', '模型连接持续波动，系统正在恢复', 'retry', 'partial')
-          else setPulse('retry', '模型连接出现波动，系统正在恢复')
-        }
-        if (event.type === 'warning' && event.code === 'stream_truncated') {
-          // 传输截断 = 瞬时事件（一闪而过）+ 记录进 rail；不常驻 degraded
-          setPulse('truncated', event.message || '响应传输中断，已保留部分内容')
-        }
-        if (event.type === 'error' && !event.from_subtask) setHealth('offline', '模型请求未能完成')
+      if (event.type === 'execution_started')
+        h.setApiHealth(prev => ({
+          ...prev,
+          currentTurnId: prev.currentTurnId + 1,
+          status:
+            prev.status === 'offline' || prev.status === 'unknown' ? 'connecting' : prev.status,
+          lastTransitionAt: Date.now(),
+        }))
+      if (event.type === 'tool_call_start') observeStable()
+      if (event.type === 'llm_text_delta') observeStable()
+      if (event.type === 'execution_completed') {
+        observeStable()
+        h.setApiHealth(prev => ({ ...prev, unreadCount: 0 }))
+      }
+      if (
+        event.type === 'warning' &&
+        (event.code === 'llm_retry' || event.code === 'llm_network_retry')
+      ) {
+        // 单次重试 = 瞬时脉冲（一闪而过）；连续 ≥2 次 = 常驻 degraded（持续性问题才占位）
+        retryStreak += 1
+        if (retryStreak >= 2)
+          setHealth('degraded', '模型连接持续波动，系统正在恢复', 'retry', 'partial')
+        else setPulse('retry', '模型连接出现波动，系统正在恢复')
+      }
+      if (event.type === 'warning' && event.code === 'stream_truncated') {
+        // 传输截断 = 瞬时事件（一闪而过）+ 记录进 rail；不常驻 degraded
+        setPulse('truncated', event.message || '响应传输中断，已保留部分内容')
+      }
+      if (event.type === 'error' && !event.from_subtask) setHealth('offline', '模型请求未能完成')
 
-       const sid = () => h.refs.streamingMsgId.current || h.refs.lastStreamingMsgId.current
+      const sid = () => h.refs.streamingMsgId.current || h.refs.lastStreamingMsgId.current
 
       // ── Shared helpers (extracted duplicated patterns) ──
       const addSystemMsg = (content: string) =>
