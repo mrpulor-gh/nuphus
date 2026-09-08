@@ -319,7 +319,9 @@ impl ToolRegistry {
                     "new_string": { "type": "string", "description": "Replacement text" },
                     "replace_all": { "type": "boolean", "description": "Replace all occurrences (default: only first). Exact matches only unless fuzzy=true" },
                     "fuzzy": { "type": "boolean", "description": "With replace_all: also replace whitespace-tolerant matches (leading/trailing whitespace ignored). Default false — fuzzy candidates are reported but skipped" },
-                    "expected_count": { "type": "integer", "description": "Expected number of replacements. If actual hits differ, the edit aborts atomically (nothing written). Grep first to get the count" }
+                    "expected_count": { "type": "integer", "description": "Expected number of replacements. If actual hits differ, the edit aborts atomically (nothing written). Grep first to get the count" },
+                    "start_line": { "type": "integer", "minimum": 1, "description": "Optional inclusive 1-based first line of the search range" },
+                    "end_line": { "type": "integer", "minimum": 1, "description": "Optional inclusive 1-based last line of the search range" }
                 },
                 "required": ["path", "old_string", "new_string"]
             }),
@@ -334,6 +336,19 @@ impl ToolRegistry {
                 let allow_fuzzy = params.get("fuzzy").and_then(|v| v.as_bool()).unwrap_or(false);
                 // 命中数契约：不符则整体失败、零写入
                 let expected_count = params.get("expected_count").and_then(|v| v.as_u64());
+                let start_line = params.get("start_line").and_then(|v| v.as_u64());
+                let end_line = params.get("end_line").and_then(|v| v.as_u64());
+
+                if let (Some(start), Some(end)) = (start_line, end_line) {
+                    if start == 0 || end == 0 || start > end {
+                        return Ok(ToolResult::failure(format!(
+                            "行号范围无效: start_line={}、end_line={}，要求为 1-based 且 start_line <= end_line",
+                            start, end
+                        )));
+                    }
+                } else if start_line == Some(0) || end_line == Some(0) {
+                    return Ok(ToolResult::failure("行号范围无效: start_line/end_line 必须从 1 开始"));
+                }
 
                 if old_str.is_empty() {
                     return Ok(ToolResult::failure("old_string cannot be empty"));
@@ -341,6 +356,11 @@ impl ToolRegistry {
 
                 // .xlsx → 走结构化编辑：读为 CSV → 文本替换 → 写回 xlsx
                 if path.to_lowercase().ends_with(".xlsx") {
+                    if start_line.is_some() || end_line.is_some() {
+                        return Ok(ToolResult::failure(
+                            "start_line/end_line 仅支持文本文件，.xlsx 编辑不支持行号范围",
+                        ));
+                    }
                     if let Err(e) = Self::backup_file(path) {
                         tracing::warn!("[file] backup failed for {}: {}", path, e);
                     }
@@ -425,7 +445,27 @@ impl ToolRegistry {
                     )));
                 }
 
-                for start in 0..=content_lines.len() - old_lines.len() {
+                // 行号范围按候选块的首行裁剪；范围缺省时保持原有全文件扫描。
+                // 超出文件尾部的范围安全裁剪，不扩大搜索范围。
+                let range_start = start_line.map(|line| (line as usize).saturating_sub(1)).unwrap_or(0);
+                let range_end = end_line
+                    .map(|line| (line as usize).min(content_lines.len()))
+                    .unwrap_or(content_lines.len());
+                let last_start = content_lines.len() - old_lines.len();
+                let first_start = range_start.min(content_lines.len());
+                let last_start = last_start.min(range_end.saturating_sub(old_lines.len()));
+
+                if first_start > last_start {
+                    return Ok(ToolResult::failure(format!(
+                        "old_string not found in {}\n  搜索范围为 lines {}-{}，无法容纳 {} 行 old_string",
+                        path,
+                        start_line.unwrap_or(1),
+                        end_line.unwrap_or(content_lines.len() as u64),
+                        old_lines.len()
+                    )));
+                }
+
+                for start in first_start..=last_start {
                     let mut matched = false;
                     let mut level: u8 = 0;
 
@@ -462,7 +502,9 @@ impl ToolRegistry {
                             continue;
                         }
                         match_positions.push((start, level));
-                        if !replace_all {
+                        // 保持缺省调用的历史“首个命中”兼容语义；指定范围时扫描完整范围，
+                        // 以便拒绝重复候选而不是静默选择可能错误的位置。
+                        if !replace_all && start_line.is_none() && end_line.is_none() {
                             break;
                         }
                     }
@@ -483,6 +525,22 @@ impl ToolRegistry {
                             expected, actual, skipped_note
                         )));
                     }
+                }
+
+                // 显式行号范围意味着调用方正在消歧；单次替换范围内仍有多个候选时拒绝写入。
+                // expected_count 只验证命中数量，不改变 replace_all=false 的单次替换语义。
+                if (start_line.is_some() || end_line.is_some())
+                    && !replace_all
+                    && match_positions.len() > 1
+                {
+                    let positions: Vec<String> = match_positions
+                        .iter()
+                        .map(|(start, level)| format!("L{}({})", start + 1, Self::match_level_name(*level)))
+                        .collect();
+                    return Ok(ToolResult::failure(format!(
+                        "行号范围内发现 {} 个候选，拒绝选择以避免歧义（候选: {}）。请缩小范围或使用 replace_all=true 明确执行全量替换，未做任何修改",
+                        match_positions.len(), positions.join(", ")
+                    )));
                 }
 
                 if match_positions.is_empty() {
@@ -519,26 +577,35 @@ impl ToolRegistry {
 
                 for &(start, level) in match_positions.iter().rev() {
                     let end = start + old_lines.len();
-                    // 缩进对齐（修复：模糊匹配命中时防止误删原行缩进）
-                    // 当匹配级别 > 1（Pass 2/3/4 容忍空白差异）时，new_string 可能未携带
-                    // 原文件行的缩进前缀。若直接原样 splice，会导致带缩进行（YAML/JSON/
-                    // Python 等缩进敏感结构）被替换后缩进丢失。此处以原块首行的实际缩进
-                    // 为准，将 new_string 整体对齐到相同缩进（保留 new_string 内部相对缩进）。
-                    let synced_lines: Vec<String> = if level > 1 && !new_lines.is_empty() {
-                        let orig_indent: usize = content_lines[start]
-                            .len()
-                            .saturating_sub(content_lines[start].trim_start().len());
-                        let new_indent: usize = new_lines[0]
-                            .len()
-                            .saturating_sub(new_lines[0].trim_start().len());
-                        let delta = orig_indent as i64 - new_indent as i64;
+                    // 只有 level 3/4 忽略了行首空白，才同步替换块的基准缩进。
+                    // level 2 只忽略行尾空白；它不是缩进模糊匹配，必须保留调用方给出的
+                    // new_string 行首空白。同步时保留原缩进前缀及 new_string 的相对前缀，
+                    // 避免把 Tab 或混合缩进重建成空格。
+                    let synced_lines: Vec<String> = if level >= 3 && !new_lines.is_empty() {
+                        let original_prefix: String = content_lines[start]
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .collect();
+                        let new_prefix: String = new_lines[0]
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .collect();
                         new_lines.iter().map(|ln| {
                             if ln.trim().is_empty() {
                                 (*ln).to_string()
                             } else {
-                                let own: usize = ln.len().saturating_sub(ln.trim_start().len());
-                                let adjusted = (own as i64 + delta).max(0) as usize;
-                                format!("{}{}", " ".repeat(adjusted), ln.trim_start())
+                                let own_prefix: String = ln
+                                    .chars()
+                                    .take_while(|c| c.is_whitespace())
+                                    .collect();
+                                let relative_prefix = if own_prefix.starts_with(&new_prefix) {
+                                    &own_prefix[new_prefix.len()..]
+                                } else if own_prefix.chars().count() < new_prefix.chars().count() {
+                                    ""
+                                } else {
+                                    own_prefix.as_str()
+                                };
+                                format!("{}{}{}", original_prefix, relative_prefix, ln.trim_start())
                             }
                         }).collect()
                     } else {
@@ -1144,6 +1211,35 @@ mod edit_contract_tests {
     }
 
     #[test]
+    fn trailing_whitespace_match_does_not_rewrite_explicit_replacement_indent() {
+        // level 2 仅忽略行尾空白；new_string 的显式行首缩进必须原样保留。
+        let path = setup_file("t9-trailing-whitespace.txt", "  key: old;  \n");
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "  key: old;",
+            "new_string": "    key: new;"
+        }));
+        assert!(r.success, "trailing-whitespace edit failed: {:?}", r.error);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "    key: new;");
+    }
+
+    #[test]
+    fn indentation_fuzzy_match_preserves_tabs_and_multiline_relative_indent() {
+        // level 3：块首行的 Tab 应被保留，且多行相对缩进不应被重建为空格基准。
+        let path = setup_file("t10-tab-multiline.txt", "root:\n\titem: old\nend\n");
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "item: old",
+            "new_string": "item: new\n  child: value"
+        }));
+        assert!(r.success, "tab multiline edit failed: {:?}", r.error);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "root:\n\titem: new\n\t  child: value\nend"
+        );
+    }
+
+    #[test]
     fn fuzzy_match_preserves_inner_relative_indent_for_multiline() {
         // 多行替换：首行缩进对齐文件原缩进，new_string 内部相对缩进不丢失。
         let path = setup_file("t8-multiline.txt", "a:\n  b: 1\n  c: 2\nd: 3\n");
@@ -1158,5 +1254,60 @@ mod edit_contract_tests {
             content, "a:\n  b: 10\n    c: 20\n    d: 30\nd: 3",
             "first line aligned to block indent, relative indent preserved"
         );
+    }
+
+    #[test]
+    fn line_range_targets_repeated_candidate_and_reports_position() {
+        let path = setup_file("t10-range.txt", "a\nneedle\nb\nneedle\nc\n");
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "needle", "new_string": "changed",
+            "start_line": 4, "end_line": 4
+        }));
+        assert!(r.success, "range edit failed: {:?}", r.error);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "a\nneedle\nb\nchanged\nc");
+        assert!(r.output.unwrap().contains("L4"));
+    }
+
+    #[test]
+    fn line_range_rejects_ambiguous_candidates_without_writing() {
+        let original = "a\nneedle\nneedle\nc\n";
+        let path = setup_file("t11-range-ambiguous.txt", original);
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "needle", "new_string": "changed",
+            "start_line": 2, "end_line": 3
+        }));
+        assert!(!r.success, "ambiguous range must fail");
+        assert!(r.error.unwrap().contains("L2"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn line_range_expected_count_does_not_promote_single_replace_to_replace_all() {
+        let original = "a\nneedle\nneedle\nc\n";
+        let path = setup_file("t13-range-expected-count.txt", original);
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "needle",
+            "new_string": "changed",
+            "start_line": 2,
+            "end_line": 3,
+            "expected_count": 2
+        }));
+        assert!(!r.success, "single replace must reject multiple candidates");
+        assert!(r.error.unwrap().contains("replace_all"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn line_range_out_of_bounds_does_not_expand_search() {
+        let original = "a\nneedle\nb\n";
+        let path = setup_file("t12-range-boundary.txt", original);
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "needle", "new_string": "changed",
+            "start_line": 4, "end_line": 99
+        }));
+        assert!(!r.success, "out-of-bounds range must not find earlier line");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 }
