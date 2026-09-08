@@ -566,6 +566,20 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                     iteration
                 );
                 self.agent.emit_exec("// interrupted");
+                // 中断必须发收敛事件：前端依赖 execution_error 复位
+                // isProcessing/completed/mood（与 L73 / L296 中断路径一致；
+                // 仅 emit_exec 是纯日志，桌面端会永久停在执行中态）。
+                if let Some(ref emitter) = self.agent.exec_emitter {
+                    emitter.emit(NuphusEvent::HudUpdate {
+                        text: "已中断".into(),
+                        phase: "done".into(),
+                        step_kind: None,
+                    });
+                    emitter.emit(NuphusEvent::ExecutionError {
+                        step_index: 0,
+                        error: "任务已被用户中断".into(),
+                    });
+                }
                 return Ok(crate::AgentOutput {
                     success: false,
                     message: "任务已被用户中断".to_string(),
@@ -1306,6 +1320,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
                     tracing::info!(
                         "[INTERRUPT] Agent cancelled during tool execution, skipping session push"
                     );
+                    // assistant 消息（含本批次全部 tool_use）已在工具循环前落库
+                    // （L822 push_assistant），此处跳过 tool_result 会留下悬挂工具对
+                    // → 与 L294 / L489 / L504 中断路径一致地清理，避免下次 LLM
+                    // 调用因 tool_use/tool_result 不配对而失败。
+                    self.agent.session.strip_incomplete_tools();
                     self.agent.emit_exec("// interrupted");
                     if let Some(ref emitter) = self.agent.exec_emitter {
                         emitter.emit(NuphusEvent::ExecutionError {
