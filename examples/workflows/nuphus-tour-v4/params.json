@@ -1,0 +1,57 @@
+{
+  "workflow_id": "nuphus-tour-v4",
+  "window": {
+    "process_name": "nuphus.exe",
+    "title_pattern": "Nuphus - 智慧协作伙伴",
+    "width": 1096,
+    "height": 728,
+    "note": "窗口位置/尺寸运行时由 desktop_windows_list 动态获取，此处为设计验证时的基线值（屏幕 1920x1080）"
+  },
+  "search_terms": {
+    "自动化工作流": {
+      "display_name": "工作流（列表）",
+      "reason": "命令面板搜索「工作流」命中 2 条（画布 / 工作流列表），默认高亮「画布」，Enter 会误入画布编辑器；改用「自动化工作流」唯一命中工作流列表",
+      "evidence": "实测搜索「自动化工作流」仅 1 条结果且高亮，Enter 打开工作流列表弹窗"
+    }
+  },
+  "close_points": {
+    "popup_mask": {
+      "x_formula": "win.x + 50",
+      "y_formula": "win.y + win.height - 76",
+      "applies_to": "弹窗类面板（除模型外的 10 个，含工作流列表）",
+      "evidence": "主题与语言 / 记忆 / 知识库 / 工作流列表 实测点击后弹窗关闭成功"
+    },
+    "model_fullscreen": {
+      "x_formula": "win.x + 34",
+      "y_formula": "win.y + 37",
+      "applies_to": "模型界面（全屏铺满窗口，关闭按钮在窗口左上角 ×）",
+      "evidence": "模型界面左上角 × 中心，实测点击关闭成功 2 次（窗口 1096x728 @ 420,160 下为屏幕 454,197）"
+    }
+  },
+  "panels": [
+    "项目配置", "模型", "主题与语言", "权限与安全", "浏览器", "记忆",
+    "自动化工作流", "技能", "知识库", "灵魂", "贪吃蛇"
+  ],
+  "timing_secs": {
+    "panel_load_wait": 0.6,
+    "close_wait": 0.3
+  },
+  "exceptions": [
+    {
+      "condition": "模型界面改为全屏铺满窗口，原左下角遮罩点失效",
+      "fallback": "改用窗口左上角 ×（win.x+34, win.y+37）"
+    },
+    {
+      "condition": "命令面板搜索「工作流」命中画布，误入画布编辑器",
+      "fallback": "搜索词改为「自动化工作流」，唯一命中工作流列表"
+    },
+    {
+      "condition": "Esc 键无法关闭设置面板",
+      "fallback": "不使用 Esc，按界面形态选择关闭点"
+    },
+    {
+      "condition": "画布（工作流编辑器/UI 原型/工具合并页）为常驻页面，无遮罩关闭逻辑",
+      "fallback": "巡览不进入画布，改开工作流列表弹窗"
+    }
+  ]
+}

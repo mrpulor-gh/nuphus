@@ -1,0 +1,150 @@
+{
+  "id": "nuphus-tour-v4",
+  "name": "nuphus-tour-v4",
+  "status": "Ready",
+  "steps": [
+    {
+      "id": "init",
+      "name": "初始化",
+      "description": "获取窗口+预计算遮罩关闭坐标",
+      "on_error": "abort",
+      "do": {
+        "seq": [
+          {
+            "id": "init_wins",
+            "name": "获取窗口列表",
+            "description": "",
+            "on_error": "abort",
+            "capture": "wins",
+            "do": {
+              "tool": "desktop_windows_list",
+              "with": {}
+            }
+          },
+          {
+            "id": "init_compute",
+            "name": "计算参数",
+            "description": "",
+            "on_error": "abort",
+            "capture": "panels",
+            "do": {
+              "script": {
+                "runtime": "python",
+                "code": "import json,re\nraw=r'''{{wins}}'''\nm=re.search(r'\\[.*\\]',raw,re.DOTALL)\nif not m:\n    print('[]')\n    exit(0)\nws=json.loads(m.group())\nw=next((w for w in ws if w.get('process_name')=='nuphus.exe' and 'Nuphus' in w.get('title','')),None)\nif not w:\n    print('[]')\n    exit(0)\nwx=w['x'];wy=w['y'];wh=w['height'];hwnd=w['hwnd']\nmask_x=wx+50;mask_y=wy+wh-76\nmodel_x=wx+34;model_y=wy+37\nnames=['项目配置','模型','主题与语言','权限与安全','浏览器','记忆','自动化工作流','技能','知识库','灵魂','贪吃蛇']\npanels=[]\nfor n in names:\n    panels.append({'name':n,'h':hwnd,'close_x':mask_x,'close_y':mask_y})\npanels[1]['close_x']=model_x;panels[1]['close_y']=model_y\nprint(json.dumps(panels))"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tour",
+      "name": "面板巡览",
+      "description": "搜索定位方式遍历10个面板",
+      "on_error": "abort",
+      "do": {
+        "loop": {
+          "for_each": {
+            "items": {
+              "var": "panels"
+            },
+            "as": "p"
+          },
+          "max": 100,
+          "do": [
+            {
+              "id": "activate",
+              "name": "激活窗口",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "tool": "desktop_window_activate",
+                "with": {
+                  "hwnd": "{{p | get \"h\"}}"
+                }
+              }
+            },
+            {
+              "id": "open_cmd",
+              "name": "Ctrl+K 打开面板",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "tool": "desktop_input",
+                "with": {
+                  "mode": "hotkey",
+                  "hwnd": "{{p | get \"h\"}}",
+                  "keys": [
+                    "ctrl",
+                    "k"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "sleep_open",
+              "name": "等待面板打开",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "sleep": 0.4
+              }
+            },
+            {
+              "id": "search_type",
+              "name": "输入面板名称",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "tool": "desktop_input",
+                "with": {
+                  "mode": "type",
+                  "hwnd": "{{p | get \"h\"}}",
+                  "text": "{{p | get \"name\"}}",
+                  "send": "enter"
+                }
+              }
+            },
+            {
+              "id": "sleep_view",
+              "name": "等待面板加载",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "sleep": 0.6
+              }
+            },
+            {
+              "id": "close_mask",
+              "name": "点击遮罩关闭",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "tool": "desktop_mouse",
+                "with": {
+                  "action": "click",
+                  "hwnd": "{{p | get \"h\"}}",
+                  "x": "{{p | get \"close_x\"}}",
+                  "y": "{{p | get \"close_y\"}}"
+                }
+              }
+            },
+            {
+              "id": "sleep_close",
+              "name": "等待遮罩消失",
+              "description": "",
+              "on_error": "abort",
+              "do": {
+                "sleep": 0.3
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "doc": null,
+  "schedule": null,
+  "run_history": [],
+  "dry_run": false
+}
