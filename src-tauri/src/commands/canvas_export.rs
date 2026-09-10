@@ -58,6 +58,7 @@ fn export_dir() -> PathBuf {
 ///   5. `%USERPROFILE%\Pictures`
 ///   6. `%USERPROFILE%\Desktop`
 ///   7. 系统临时目录（最后兜底）
+///
 /// 必须逐个探测而不能直接采纳 `dirs::download_dir()`：下载目录被重定向到不存在的盘符时
 /// 它仍可能返回该路径，直接写入只会失败或把文件静默丢到 Temp（用户找不到）。
 fn base_dir_candidates() -> Vec<PathBuf> {
