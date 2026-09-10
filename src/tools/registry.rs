@@ -925,6 +925,46 @@ impl ToolRegistry {
 mod tests {
     use super::*;
 
+    /// 角色工具集分离回归：Exec 必须是 Leader 的子集且严格更小。
+    ///
+    /// 钉住两件事：
+    ///   1. `ToolRegistry::exec()` 只注册 base tools，不夹带 shared / workflow-only；
+    ///   2. Exec 的工具集不允许膨胀到与 Leader 等同——一旦有人把
+    ///      `register_shared_tools()` 加进 `exec()`，Exec 就凭空多出
+    ///      task_dispatch / planner_* / memory_* 等编排类工具（越权 + token 浪费）。
+    #[test]
+    fn test_exec_toolset_is_strict_subset_of_leader() {
+        let leader: std::collections::HashSet<String> = ToolRegistry::builtin()
+            .get_schemas()
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect();
+        let exec: std::collections::HashSet<String> = ToolRegistry::exec()
+            .get_schemas()
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect();
+
+        let leaked: Vec<&String> = exec.difference(&leader).collect();
+        assert!(
+            leaked.is_empty(),
+            "Exec 含 Leader 之外的工具（角色边界泄漏）: {leaked:?}"
+        );
+        assert!(
+            exec.len() < leader.len(),
+            "Exec 工具集({}) 应严格小于 Leader({})",
+            exec.len(),
+            leader.len()
+        );
+        // 编排类工具不得进入 Exec——它们是 Leader 的职责
+        for forbidden in ["task_dispatch", "planner_create", "agent_dispatch"] {
+            assert!(
+                !exec.contains(forbidden),
+                "编排类工具 '{forbidden}' 不应出现在 Exec 工具集中"
+            );
+        }
+    }
+
     /// wf_tools 过滤谓词回归：agent 编排/记忆/工作流管理类被排除，wf_call 与普通工具保留
     #[test]
     fn test_workflow_step_tool_filter() {
