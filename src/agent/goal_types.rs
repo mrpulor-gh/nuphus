@@ -185,31 +185,78 @@ impl fmt::Display for GoalType {
 /// Model context window mapping
 /// Prefers explicit context_window from config.toml (set after API query),
 /// falls back to built-in ProviderRegistry metadata, then a reasonable default.
+///
+/// ⚠️ **Provider-blind compatibility entry — new code must use
+/// [`get_context_window_for`] / [`get_context_window_of`] instead.**
+/// A same-name model published by two providers.toml segments (official
+/// `deepseek` vs a gateway/custom segment) is disambiguated here only by
+/// candidate scan, which can return the sibling segment's window; the `*_for` /
+/// `*_of` variants pin the routing segment and are the only correct choice when
+/// the caller holds a binding. Kept `pub` for external consumers only.
 pub fn get_context_window(model_name: &str) -> usize {
     try_get_context_window(model_name).unwrap_or(128_000)
 }
 
 /// Context window lookup WITHOUT the 128K guess: explicit config → builtin
 /// metadata → None (unknown). Runtime sizing (refine budget etc.) may still
-/// want the fallback via `get_context_window`; callers that surface the value
-/// to the UI (startup load / is_llm_configured) must use this variant so an
+/// want the fallback via [`get_context_window_for`]; callers that surface the
+/// value to the UI (startup load / is_llm_configured) must use this variant so an
 /// unknown model (e.g. a new model listed by the provider UI but not yet in
 /// our metadata) shows as 0/“--” instead of a fabricated 128K.
+///
+/// ⚠️ **Provider-blind compatibility entry — same restriction as
+/// [`get_context_window`]: new code must use [`try_get_context_window_for`]**
+/// (pass the routing binding's `provider`), otherwise a same-name model under
+/// another segment can supply the wrong window. Kept `pub` for external
+/// consumers only.
 pub fn try_get_context_window(model_name: &str) -> Option<usize> {
+    try_get_context_window_for(model_name, None)
+}
+
+/// Provider-aware variant of [`get_context_window`].
+///
+/// Callers that hold the routing binding (`LlamaConfig::provider` /
+/// `AgentConfig::provider`) must use this so a same-name model under another
+/// provider cannot supply the wrong window; `None` = provider unknown, the
+/// lookup then falls back to scanning every same-name candidate.
+pub fn get_context_window_for(model_name: &str, provider: Option<&str>) -> usize {
+    try_get_context_window_for(model_name, provider).unwrap_or(128_000)
+}
+
+/// Provider-exact context window for a live client.
+///
+/// Convenience wrapper over [`get_context_window_for`] for callers that hold an
+/// [`crate::api::ApiClient`]: the client already carries both the model id and
+/// the providers.toml segment name. An empty segment name (client built without
+/// a segment binding) degrades to the candidate scan, exactly like `None`.
+pub fn get_context_window_of(client: &dyn crate::api::ApiClient) -> usize {
+    get_context_window_for(client.model_name(), Some(client.provider_name()))
+}
+
+/// Provider-aware variant of [`try_get_context_window`].
+///
+/// Resolution order:
+///   1. providers.toml registry — the provider-exact value when `provider` is
+///      known; otherwise (or when that provider declares no value) the first
+///      same-name candidate carrying a value. A candidate without a value must
+///      never mask its same-name siblings, which is why the lookup scans
+///      candidates instead of trusting the segment-order first hit.
+///   2. builtin ProviderRegistry metadata table — same order (provider-exact,
+///      then alias-aware first match).
+///   3. `None` = unknown; the caller decides (0/"--" for UI, 128K for runtime).
+pub fn try_get_context_window_for(model_name: &str, provider: Option<&str>) -> Option<usize> {
     if let Ok(registry) = crate::config::load_registry() {
-        if let Some((_, model)) = registry.find_model(model_name) {
-            if let Some(window) = model.context_window {
-                return Some(window);
-            }
+        if let Some(window) = registry.resolve_context_window(provider, model_name) {
+            return Some(window);
         }
     }
     // Fall back to ProviderRegistry metadata table
-    if let Some((_, meta)) =
-        crate::config::registry::ProviderRegistry::builtin().find_model(model_name)
-    {
-        return Some(meta.context_window as usize);
-    }
-    None
+    let builtin = crate::config::registry::ProviderRegistry::builtin();
+    provider
+        .filter(|p| !p.is_empty())
+        .and_then(|p| builtin.find_model_for_provider(p, model_name))
+        .or_else(|| builtin.find_model(model_name).map(|(_, meta)| meta))
+        .map(|meta| meta.context_window as usize)
 }
 
 // Warmup reminders — compile-time embedded from goal_warmups.toml
@@ -253,6 +300,8 @@ mod tests {
         for gt in GoalType::all() {
             let prompt = crate::agent::prompt::build_exec_prompt(
                 "test-model",
+                None,
+                None,
                 schemas,
                 *gt,
                 "",
@@ -274,6 +323,8 @@ mod tests {
         let schemas = r#"{"tools": [{"name": "Read"}]}"#;
         let prompt = crate::agent::prompt::build_exec_prompt(
             "m",
+            None,
+            None,
             schemas,
             GoalType::CodeGeneration,
             "",
@@ -357,5 +408,63 @@ mod tests {
             description: "test".into(),
         };
         assert_eq!(item.goal_type, GoalType::ScriptingExec);
+    }
+
+    /// 最小 ApiClient 桩：只暴露 (model, provider) 对，用于验证便捷封装的取值来源。
+    struct StubClient {
+        model: &'static str,
+        provider: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::api::ApiClient for StubClient {
+        async fn stream(
+            &self,
+            _request: crate::api::MessageRequest,
+        ) -> crate::Result<Vec<crate::api::AssistantEvent>> {
+            Ok(vec![])
+        }
+        fn model_name(&self) -> &str {
+            self.model
+        }
+        fn provider_kind(&self) -> crate::api::ProviderKind {
+            crate::api::ProviderKind::Custom
+        }
+        fn provider_name(&self) -> &str {
+            self.provider
+        }
+    }
+
+    /// `get_context_window_of` 从 client 取 (model, provider) 后委托给
+    /// `get_context_window_for`：未绑定段名（""）退化为候选遍历，与
+    /// `provider = None` 同一条路径且不 panic。
+    ///
+    /// 注：取值本身经进程级 registry（`load_registry`）解析，单测无法注入
+    /// fixture，故此处只断言「委托语义」；provider 精确取值由
+    /// `ModelRegistry::resolve_context_window` 与 `ClientFactory` 的单测保证。
+    #[test]
+    fn test_get_context_window_of_delegates_client_binding() {
+        let missing = "no-such-model-in-any-registry-xyz";
+        let unbound = StubClient {
+            model: missing,
+            provider: "",
+        };
+        assert_eq!(
+            get_context_window_of(&unbound),
+            get_context_window_for(unbound.model, Some(""))
+        );
+        // 未知模型（且 provider 未知）→ 128K 兜底，与 provider-blind 版本一致。
+        assert_eq!(get_context_window_of(&unbound), get_context_window(missing));
+        assert_eq!(get_context_window_of(&unbound), 128_000);
+
+        // 绑定段名后走 provider 精确分支，取值不得偏离显式 provider 版本。
+        let bound = StubClient {
+            model: missing,
+            provider: "seg-x",
+        };
+        assert_eq!(
+            get_context_window_of(&bound),
+            get_context_window_for(bound.model, Some(bound.provider))
+        );
     }
 }

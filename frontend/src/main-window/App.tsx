@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { invoke, listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
 import { wfStop, wfPause, wfResume, getToolPermissions } from './lib/api'
+import { scheduleIdle } from './lib/idle'
 import { TenetsDialog } from './dialogs/TenetsDialog'
 import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
@@ -144,6 +145,14 @@ export default function App() {
     }
   }, [])
 
+  // ── 画布外壳 chunk 空闲预取：只在浏览器空闲时发起请求，绝不在启动同步路径上加载；
+  //    首次点开画布时外壳代码已就绪，配合可见 fallback 消除"点了没反应" ──
+  useEffect(() => {
+    scheduleIdle(() => {
+      void import('./workflow/CanvasWorkbenchPage')
+    })
+  }, [])
+
   // ── Voice button navigates to /models ──
   useEffect(() => {
     const handler = () => s.setShowModels(true)
@@ -273,8 +282,8 @@ export default function App() {
             <ChatPanel
               messages={s.messages}
               isProcessing={s.isProcessing}
-              onSend={(input, images, references) =>
-                s.handleSend(input, images, undefined, references)
+              onSend={(input, images, references, sendId) =>
+                s.handleSend(input, images, undefined, references, sendId)
               }
               startupStats={s.startupStats}
               onGracefulStop={s.handleGracefulStop}
@@ -815,7 +824,13 @@ export default function App() {
             </Suspense>
           </CompactModal>
           {s.showCanvas && (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <div className="canvas-workbench-host">
+                  <div className="page-loading">{t('common.loading')}</div>
+                </div>
+              }
+            >
               <div className="canvas-workbench-host">
                 <CanvasWorkbenchPage onClose={() => s.setShowCanvas(false)} />
               </div>

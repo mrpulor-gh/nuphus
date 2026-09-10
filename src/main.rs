@@ -55,8 +55,12 @@ async fn run_single(args: Vec<String>) {
     let tool_schemas = tools.render_tools_for_prompt();
 
     // 5. 构建纯静态 system prompt
+    // 解析用真 model id（llm.model_name() + provider_name()），展示沿用 "cli" 标签，
+    // 显示串与拆分前逐字符一致（`当前模型: cli (上下文 …)`）。
     let system_prompt = prompt::build_exec_prompt(
-        "cli",
+        llm.model_name(),
+        Some(llm.provider_name()),
+        Some("cli"),
         &tool_schemas,
         nuphus::agent::goal_types::GoalType::ScriptingExec,
         "", None,
@@ -71,7 +75,9 @@ async fn run_single(args: Vec<String>) {
         task.clone(),
     );
     agent.session.push_user(task.clone());
-    agent.set_context_window(nuphus::agent::goal_types::get_context_window(llm.model_name()));
+    agent.set_context_window(nuphus::agent::goal_types::get_context_window_of(
+        llm.as_ref(),
+    ));
 
     println!("\n执行中...\n");
 

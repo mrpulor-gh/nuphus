@@ -79,7 +79,7 @@ export function WorkflowWorkbenchPage({
         )}
         {workType === 'prototype' && (
           <div className="workflow-workbench-prototype">
-            <UiPrototypeCanvas />
+            <UiPrototypeCanvas onSent={onClose} />
           </div>
         )}
         {workType === 'tools' && <ToolsPage onClose={onClose} embedded />}

@@ -447,6 +447,40 @@ impl ModelRegistry {
             .collect()
     }
 
+    /// Resolve a model's context window from the registry (provider-aware).
+    ///
+    /// Same-id models can live under several providers (official segment vs
+    /// gateway/custom segment) and only some of them declare `context_window`.
+    /// A first-match lookup therefore returns `None` whenever the segment-order
+    /// first hit happens to omit the value, masking a sibling that declares it
+    /// (root cause of `deepseek-v4.1-flash-expires-on-0910` falling through to
+    /// the builtin table and then to the 128K guess).
+    ///
+    /// Rules:
+    /// 1. `provider_name` given and that provider publishes `model_id` with a
+    ///    value → the provider-exact value wins. Callers that know the routing
+    ///    binding must pass it (see §4.6, `provider` of `LlamaConfig`/`AgentConfig`).
+    /// 2. Otherwise every same-id candidate is scanned in segment order
+    ///    ([`Self::find_model_candidates`]) and the first one carrying a value
+    ///    is returned — a candidate without a value never masks its siblings.
+    /// 3. No candidate carries a value → `None` (caller decides the fallback).
+    pub fn resolve_context_window(
+        &self,
+        provider_name: Option<&str>,
+        model_id: &str,
+    ) -> Option<usize> {
+        if let Some(provider_name) = provider_name.filter(|p| !p.is_empty()) {
+            if let Some((_, model)) = self.find_model_for_provider(provider_name, model_id) {
+                if let Some(window) = model.context_window {
+                    return Some(window);
+                }
+            }
+        }
+        self.find_model_candidates(model_id)
+            .into_iter()
+            .find_map(|(_, model)| model.context_window)
+    }
+
     /// List all available models
     pub fn list_models(&self) -> Vec<(String, String)> {
         let mut result = Vec::new();
@@ -664,6 +698,35 @@ supports_streaming = true
         }
     }
 
+    /// `test_provider` variant with explicit per-model context windows
+    /// (`None` = the segment declares no window for that model) — context-window
+    /// resolution fixtures need to control which same-id candidate carries a value.
+    fn provider_with_windows(
+        name: &str,
+        kind: KnownProvider,
+        models: &[(&str, Option<usize>)],
+    ) -> ProviderConfig {
+        let mut provider = test_provider(name, kind, &[]);
+        provider.models = models
+            .iter()
+            .map(|(id, window)| ModelEntry {
+                id: id.to_string(),
+                alias: Vec::new(),
+                max_tokens: None,
+                context_window: *window,
+                supports_streaming: true,
+                supports_vision: false,
+                supports_audio: false,
+                supports_image_generation: false,
+                reasoning_efforts: Vec::new(),
+                default_effort: None,
+                cost_per_million_in: None,
+                cost_per_million_out: None,
+            })
+            .collect();
+        provider
+    }
+
     fn registry_with(providers: Vec<ProviderConfig>) -> ModelRegistry {
         let model = providers
             .first()
@@ -744,5 +807,80 @@ supports_streaming = true
 
         assert!(registry.find_model_candidates("no-such-model").is_empty());
         assert_eq!(registry.find_model_candidates("glm-4.7").len(), 1);
+    }
+
+    /// Same id across segments where the segment-order first hit declares no
+    /// window: the lookup must keep scanning siblings instead of returning None
+    /// (a valueless hit must never mask a sibling — P0-a root cause).
+    #[test]
+    fn test_resolve_context_window_skips_valueless_candidate() {
+        let registry = registry_with(vec![
+            provider_with_windows("custom", KnownProvider::Custom, &[("m", None)]),
+            provider_with_windows("deepseek", KnownProvider::DeepSeek, &[("m", Some(64_000))]),
+        ]);
+
+        // Legacy first-match stops at the "custom" hit and would fall through.
+        assert_eq!(registry.find_model("m").unwrap().1.context_window, None);
+        assert_eq!(registry.resolve_context_window(None, "m"), Some(64_000));
+    }
+
+    /// Provider-exact value wins; an unknown provider (or one that publishes the
+    /// model without a value) falls back to the same-id candidate scan; nothing
+    /// declares a value → None.
+    #[test]
+    fn test_resolve_context_window_provider_exact_then_fallback() {
+        let registry = registry_with(vec![
+            provider_with_windows("deepseek", KnownProvider::DeepSeek, &[("m", Some(64_000))]),
+            provider_with_windows("custom", KnownProvider::Custom, &[("m", Some(131_072))]),
+        ]);
+
+        // Provider-exact beats the segment-order first hit.
+        assert_eq!(
+            registry.resolve_context_window(Some("custom"), "m"),
+            Some(131_072)
+        );
+        // Empty provider = "no hint" (same as None).
+        assert_eq!(registry.resolve_context_window(Some(""), "m"), Some(64_000));
+        // Provider not in the registry → candidate scan (segment order).
+        assert_eq!(
+            registry.resolve_context_window(Some("gone-provider"), "m"),
+            Some(64_000)
+        );
+
+        // Provider-exact hit WITHOUT a value must not short-circuit the scan.
+        let valueless = registry_with(vec![
+            provider_with_windows("custom", KnownProvider::Custom, &[("m", None)]),
+            provider_with_windows("deepseek", KnownProvider::DeepSeek, &[("m", Some(64_000))]),
+        ]);
+        assert_eq!(
+            valueless.resolve_context_window(Some("custom"), "m"),
+            Some(64_000)
+        );
+
+        let unknown = registry_with(vec![provider_with_windows(
+            "custom",
+            KnownProvider::Custom,
+            &[("m", None)],
+        )]);
+        assert_eq!(unknown.resolve_context_window(None, "m"), None);
+        assert_eq!(unknown.resolve_context_window(None, "no-such-model"), None);
+    }
+
+    /// Alias lookups keep the same candidate-scan semantics (alias hit expands
+    /// to the canonical id before the window is picked up).
+    #[test]
+    fn test_resolve_context_window_alias_candidate() {
+        let mut aliased =
+            provider_with_windows("deepseek", KnownProvider::DeepSeek, &[("m", None)]);
+        aliased.models[0].alias = vec!["m-alias".to_string()];
+        let registry = registry_with(vec![
+            aliased,
+            provider_with_windows("custom", KnownProvider::Custom, &[("m", Some(32_000))]),
+        ]);
+
+        assert_eq!(
+            registry.resolve_context_window(None, "m-alias"),
+            Some(32_000)
+        );
     }
 }

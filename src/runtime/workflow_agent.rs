@@ -346,6 +346,7 @@ impl WorkflowAgent {
                 .unwrap_or(false);
             self.cached_prompt = Some(crate::agent::prompt::build_workagent_prompt(
                 &self.model_label,
+                Some(self.llm.provider_name()),
                 main_supports_vision,
                 &tool_schemas,
                 &self.user_label,
@@ -631,7 +632,7 @@ impl WorkflowAgent {
                     total_calls: self.tool_call_count,
                 });
                 // ── Session distillation before user stop exit ──
-                let ctx_window = crate::agent::goal_types::get_context_window(&self.model_label);
+                let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
                 distill::maybe_refine_session(
                     &mut self.session,
                     ctx_window,
@@ -1049,7 +1050,7 @@ impl WorkflowAgent {
             error: "达到最大迭代次数".to_string(),
         });
         // ── Session distillation before max iterations exit ──
-        let ctx_window = crate::agent::goal_types::get_context_window(&self.model_label);
+        let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
         distill::maybe_refine_session(
             &mut self.session,
             ctx_window,
@@ -1318,7 +1319,7 @@ impl WorkflowAgent {
         const WARN_FORBID: f64 = 0.95;
 
         let usage = self.session.estimate_token_usage();
-        let ctx_window = crate::agent::goal_types::get_context_window(&self.model_label);
+        let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
         let ratio = usage as f64 / ctx_window as f64;
 
         let level = if ratio >= WARN_FORBID {

@@ -3,11 +3,15 @@ import { createPortal } from 'react-dom'
 import type {
   ChatMessage,
   ChatReference,
+  NuphusEvent,
   PendingImage,
   PendingFile,
+  SendOutcome,
   TimelineEntry,
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
+import { listen } from '../../core/bridge'
+import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 /// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
@@ -90,7 +94,15 @@ function formatTokens(n: number): string {
 interface ChatPanelProps {
   messages: ChatMessage[]
   isProcessing: boolean
-  onSend: (input: string, images?: string[], references?: ChatReference[]) => void
+  /** 返回发送的真实结果；画布等外部入口据此回执（见 nuphus:send-result）。
+   *  sendId 为调用方（画布 requestId）指定的发送标识：后端受理事件按它精确对齐，
+   *  缺省时由 useSession 生成（老调用方行为不变）。 */
+  onSend: (
+    input: string,
+    images?: string[],
+    references?: ChatReference[],
+    sendId?: string,
+  ) => Promise<SendOutcome>
   startupStats: { tools: number; memories: number }
   onGracefulStop?: () => void
   onInterrupt?: () => void
@@ -863,6 +875,35 @@ export function ChatPanel({
   // 带 mode 的发送（如「发送 Leader」）需先切模式再发；用 ref 防闭包拿旧 onSetMode
   const onSetModeRef = useRef(onSetMode)
   onSetModeRef.current = onSetMode
+  /* 发送回执单一出口（见 lib/sendReceipt）：同一 sendId 的事件回执与 onSend 结果回执
+     先到先得，保证 nuphus:send-result 只发一次。 */
+  const receiptHubRef = useRef<SendReceiptHub | null>(null)
+  if (!receiptHubRef.current) receiptHubRef.current = createSendReceiptHub()
+
+  /* 受理回执通道：后端「消息已受理」事件（真实发送成功）→ 画布立即收起发送遮罩
+     回主对话，不必等整轮执行结束（send_message_cmd 返回）。监听失败静默降级：
+     仅由 onSend 结果回执，发送本身不受影响。 */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    listen<{ seq: number; event: NuphusEvent }>('nuphus-event', ({ event }) => {
+      if (disposed) return
+      receiptHubRef.current?.handleEvent(event)
+    })
+      .then(fn => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
+      .catch((err: unknown) => {
+        console.warn('[nuphus:send-message] accept-event listen unavailable', err)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+      receiptHubRef.current?.clear()
+    }
+  }, [])
+
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
@@ -870,7 +911,43 @@ export function ChatPanel({
       if (!text) return
       const images = Array.isArray(detail?.images) ? (detail.images as string[]) : undefined
       const mode = detail?.mode
-      const send = () => onSendRef.current(text, images)
+      const requestId = typeof detail?.requestId === 'string' ? detail.requestId : ''
+      /* 回执：发起方（画布）按 requestId 匹配后显示真实结果，不再无条件报成功。
+         没有 requestId 的老调用方不受影响（不回发）。 */
+      const rawReply = (ok: boolean, message?: string) => {
+        if (!requestId) return
+        window.dispatchEvent(
+          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message } }),
+        )
+      }
+      /* 先登记再发送：受理事件（后端真实收下）可能早于 onSend promise 返回，
+         先登记才不会丢；回执幂等——受理先到 → 立刻收起（不等整轮执行），
+         onSend 结果先到（受理前失败）→ 立即报失败且不被迟到事件改写。 */
+      const reply = receiptHubRef.current
+        ? receiptHubRef.current.begin(requestId, rawReply)
+        : rawReply
+      const send = () => {
+        let pending: Promise<SendOutcome>
+        try {
+          // requestId 同时作为后端 send_id：受理事件按它精确对齐（camelCase → sendId）
+          pending = Promise.resolve(
+            onSendRef.current(text, images, undefined, requestId || undefined),
+          )
+        } catch (err: unknown) {
+          // onSend 理论上不会同步抛出；兜住异常，保证一定回执、不静默
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[nuphus:send-message] send threw synchronously', err)
+          reply(false, message)
+          return
+        }
+        pending
+          .then(outcome => reply(outcome?.ok !== false, outcome?.message))
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err)
+            console.error('[nuphus:send-message] send failed', err)
+            reply(false, message)
+          })
+      }
       const setMode = onSetModeRef.current
       if (typeof mode === 'string' && mode && setMode) {
         // 先切到事件要求的模式（leader）再发送，避免被 workflow 等当前模式劫持；
@@ -879,6 +956,7 @@ export function ChatPanel({
           .then(send)
           .catch(err => {
             console.error('[nuphus:send-message] mode switch failed, send skipped', err)
+            reply(false)
           })
       } else {
         send()

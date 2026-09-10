@@ -82,7 +82,11 @@ pub(crate) async fn handle_task_dispatch(
     })?;
 
     // Build execution prompt using goal_type specified at dispatch
-    let model_label = format!("{} ({})", agent.config.model, agent.config.provider);
+    // model_label = 展示标签（`模型 (provider)`）。解析用真 model id 另行传入，
+    // 二者不可混用：标签含 " (provider)" 后缀，喂给解析必然 miss → 恒回落 128K。
+    // 二者均取 exec_llm：本 prompt 描述的是本次执行实际使用的模型，取 Leader 绑定
+    // 会显示/解析成另一个模型（exec 绑定与 leader 绑定可以不同）。
+    let model_label = format!("{} ({})", exec_llm.model_name(), exec_llm.provider_name());
     let tool_schemas = exec_tools.render_tools_for_prompt();
 
     // Assemble execution context block
@@ -158,7 +162,9 @@ pub(crate) async fn handle_task_dispatch(
     }
 
     let system_prompt = prompt::build_exec_prompt(
-        &model_label,
+        exec_llm.model_name(),
+        Some(exec_llm.provider_name()),
+        Some(&model_label),
         &tool_schemas,
         goal_type,
         &agent.leader_ctx.soul,
@@ -221,7 +227,7 @@ pub(crate) async fn handle_task_dispatch(
             description.to_string(),
         );
         new_agent.session.push_user(dynamic_msg);
-        new_agent.set_context_window(goal_types::get_context_window(exec_llm.model_name()));
+        new_agent.set_context_window(goal_types::get_context_window_of(exec_llm.as_ref()));
         new_agent.set_goal_type(goal_type);
         // Inject goal-type warmup reminders (subtask quality guardrails)
         let warmups = goal_types::get_warmup_reminders(goal_type);
@@ -300,7 +306,7 @@ pub(crate) async fn handle_task_dispatch(
 
     // ── 收集同 turn 回复 + 上下文压缩检查 ──
     exec_agent.turn_replies.push(summary.clone());
-    let cw = goal_types::get_context_window(exec_llm.model_name());
+    let cw = goal_types::get_context_window_of(exec_llm.as_ref());
     let usage = exec_agent.session.estimate_token_usage();
     let compress_threshold = (cw as f64 * 0.50) as usize;
     if usage >= compress_threshold && usage >= 300_000 {

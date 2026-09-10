@@ -160,9 +160,13 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         guard.llm_config = Some(cfg.clone());
         // 启动加载：未知模型（如 provider UI 新列出的模型、元数据未收录）不得
         // 把 128K 猜测固化进 model_context_window → UI 显示错误上限。用无 fallback
-        // 变体：显式配置 → builtin → 0（未知，前端显示 "--"），后台校准可后续修正。
-        guard.model_context_window =
-            nuphus::agent::goal_types::try_get_context_window(&model_id).unwrap_or(0);
+        // 变体：显式配置（provider 精确优先，其余同名候选兜底）→ builtin → 0
+        //（未知，前端显示 "--"），后台校准可后续修正。
+        guard.model_context_window = nuphus::agent::goal_types::try_get_context_window_for(
+            &model_id,
+            Some(provider_name.as_str()),
+        )
+        .unwrap_or(0);
     }
 
     tracing::info!(
@@ -227,6 +231,18 @@ impl AgentModels {
             "exec" => &self.exec_provider,
             "custom" => &self.custom_provider,
             _ => "",
+        }
+    }
+
+    /// 该 agent 的绑定 model（空串 = 未设置）。未知 agent 与 `effective_model_binding`
+    /// 一致地按 leader 处理（区别于语义为「无 provider」的 `provider()`）。
+    pub fn model(&self, agent: &str) -> &str {
+        match agent {
+            "leader" => &self.leader,
+            "workflow" => &self.workflow,
+            "exec" => &self.exec,
+            "custom" => &self.custom,
+            _ => &self.leader,
         }
     }
 }
@@ -295,8 +311,78 @@ fn save_agent_model(
     Ok(())
 }
 
+/// 决定 `[agent_models]` 落盘的 provider（防半绑定核心，纯函数可单测）。
+///
+/// `set_agent_model` 旧实现在此传 `None` → `save_agent_model` 删掉
+/// `{agent}_provider` 键，写出「有 model 无 provider」的半绑定：解析时静默
+/// 回落 leader（B 类事故）。本函数保证写盘要么是完整 (provider, model)，要么
+/// 显式报错：
+///   - 显式 provider 非空 → 必须真正发布该 model（`find_model_for_provider`
+///     命中，与解析链同口径），否则 `Err`；
+///   - provider 缺失 → 候选唯一时**自动补全**该唯一段（安全推断，无需用户指定）；
+///     0 个候选（模型不存在）或多个同名候选（无法消歧）一律 `Err`，不猜。
+fn resolve_agent_binding_provider(
+    registry: &nuphus::config::ModelRegistry,
+    agent: &str,
+    model: &str,
+    provider: Option<&str>,
+) -> Result<String, String> {
+    if !AgentModels::AGENTS.contains(&agent) {
+        return Err(format!("未知 agent: {agent}"));
+    }
+    if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+        return if registry.find_model_for_provider(provider, model).is_some() {
+            Ok(provider.to_string())
+        } else if registry.providers.iter().any(|p| p.name == provider) {
+            Err(format!("提供商 {provider} 未提供模型 {model}，请重新选择"))
+        } else {
+            Err(format!("提供商 {provider} 不存在，请重新选择"))
+        };
+    }
+    let candidates = binding_candidates(registry, model);
+    match candidates.len() {
+        1 => Ok(candidates[0].clone()),
+        0 => Err(format!("模型 {model} 不存在，请重新选择")),
+        n => Err(format!(
+            "模型 {model} 在 {n} 个提供商中同名（{}），请指定提供商",
+            candidates.join("、")
+        )),
+    }
+}
+
 // `[last_model]` 记录读写与 provider 归属解析核心在根库 nuphus::config::last_model
 // （与 ModelRegistry 同居配置层，纯函数可脱离 tauri 单测）；此处仅薄调用。
+
+/// 解析单个 agent 的自身绑定（不含 leader 回落）：provider 精确命中优先 →
+/// `[last_model]` 磁盘记录 → 唯一候选段兜底；三者皆不成立 → `None`。
+///
+/// `None` 有两种互不相同的成因，由调用方按各自语义处理：
+///   A. 该 agent 绑定为空（用户**未设置**）；
+///   B. 绑定非空但 (provider, model) 全链解析失败（用户**设置了却没生效**）。
+/// `effective_model_binding` 对二者一视同仁地回落 leader；
+/// `diagnose_agent_binding` 负责把 B 区分出来并给出人话原因。
+fn resolve_configured_binding(
+    am: &AgentModels,
+    providers_path: &std::path::Path,
+    registry: &nuphus::config::ModelRegistry,
+    name: &str,
+) -> Option<(String, String)> {
+    let model = am.model(name);
+    if model.is_empty() {
+        return None;
+    }
+    let provider = am.provider(name);
+    if !provider.is_empty() && registry.find_model_for_provider(provider, model).is_some() {
+        return Some((provider.to_string(), model.to_string()));
+    }
+    nuphus::config::load_last_model_provider(providers_path, model)
+        .filter(|p| registry.find_model_for_provider(p, model).is_some())
+        .map(|p| (p, model.to_string()))
+        .or_else(|| {
+            let candidates = registry.find_model_candidates(model);
+            (candidates.len() == 1).then(|| (candidates[0].0.name.clone(), model.to_string()))
+        })
+}
 
 /// 单一模型解析入口：计算某 agent 的生效模型（唯一解析点，process/retry 共用）。
 ///
@@ -319,31 +405,12 @@ pub fn effective_model_binding(
     // A mode binding is atomic: when a mode is unset (or its pair is unavailable),
     // fall back to the complete leader pair. Never combine the mode's provider with
     // the leader's model (or vice versa), otherwise same-named models can cross-route.
-    let configured = |name: &str| -> Option<(String, String)> {
-        let model = match name {
-            "leader" => &am.leader,
-            "workflow" => &am.workflow,
-            "exec" => &am.exec,
-            "custom" => &am.custom,
-            _ => &am.leader,
-        };
-        if model.is_empty() {
-            return None;
-        }
-        let provider = am.provider(name);
-        if !provider.is_empty() && registry.find_model_for_provider(provider, model).is_some() {
-            return Some((provider.to_string(), model.to_string()));
-        }
-        nuphus::config::load_last_model_provider(providers_path, model)
-            .filter(|p| registry.find_model_for_provider(p, model).is_some())
-            .map(|p| (p, model.to_string()))
-            .or_else(|| {
-                let candidates = registry.find_model_candidates(model);
-                (candidates.len() == 1).then(|| (candidates[0].0.name.clone(), model.to_string()))
-            })
-    };
-    configured(agent)
-        .or_else(|| (agent != "leader").then(|| configured("leader")).flatten())
+    resolve_configured_binding(&am, providers_path, registry, agent)
+        .or_else(|| {
+            (agent != "leader")
+                .then(|| resolve_configured_binding(&am, providers_path, registry, "leader"))
+                .flatten()
+        })
         .ok_or_else(|| {
             let model = match agent {
                 "workflow" => &am.workflow,
@@ -369,6 +436,116 @@ pub fn effective_model(
     effective_model_binding(providers_path, registry, mode)
         .map(|(_, model)| model)
         .unwrap_or_default()
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 绑定健康诊断（B 类静默降级 → HUD 提示）
+//
+// `effective_model_binding` 把「未设置」（A 类，用户意图）与「设置了但解析
+// 失败」（B 类，配置事故）都回落 leader——后者静默，用户无感。诊断旁路
+// 负责把 B 区分出来给出原因，经 HUD 提示（`hud::show`，不产生 NuphusEvent、
+// 不写 agent 消息 / 对话流 / system prompt）。
+// ════════════════════════════════════════════════════════════════════
+
+/// 真正能解析出某 model 的 provider 段名。口径与 `resolve_configured_binding`
+/// 的「唯一候选」严格一致：必须 `find_model_for_provider` 命中（别名 id 不算——
+/// 绑定解析链不认别名，写进去同样不生效）。
+fn binding_candidates(registry: &nuphus::config::ModelRegistry, model: &str) -> Vec<String> {
+    registry
+        .find_model_candidates(model)
+        .iter()
+        .map(|(p, _)| p.name.clone())
+        .filter(|name| registry.find_model_for_provider(name, model).is_some())
+        .collect()
+}
+
+/// 诊断某 agent 的显式绑定是否「已设置却未生效」（B 类静默降级）。
+///
+/// 返回 `Some(人话原因)` 仅当 `[agent_models]` 中该 agent 的 model 非空、且
+/// (provider, model) 沿解析链全部失败——此时 `effective_model_binding` 会静默
+/// 回落 leader，用户无感。以下情形一律 `None`：
+///   - A 类：model 为空（未设置 → 跟随 leader 本就是正确语义）；
+///   - 绑定可解析（含「provider 为空但 `[last_model]` / 唯一候选兜底成功」）。
+///
+/// 纯函数（不依赖 tauri），单测直接喂 providers.toml + ModelRegistry。
+pub fn diagnose_agent_binding(
+    providers_path: &std::path::Path,
+    registry: &nuphus::config::ModelRegistry,
+    agent: &str,
+) -> Option<String> {
+    if !AgentModels::AGENTS.contains(&agent) {
+        return None;
+    }
+    let am = load_agent_models(providers_path);
+    if am.model(agent).is_empty() {
+        return None;
+    }
+    if resolve_configured_binding(&am, providers_path, registry, agent).is_some() {
+        return None;
+    }
+    Some(binding_failure_reason(&am, registry, agent))
+}
+
+/// 解析失败的具体成因（HUD 文案的「为什么没生效」部分）。判定顺序与
+/// `resolve_configured_binding` 的回落链一致：先看显式 provider，再看候选消歧。
+fn binding_failure_reason(
+    am: &AgentModels,
+    registry: &nuphus::config::ModelRegistry,
+    agent: &str,
+) -> String {
+    let provider = am.provider(agent);
+    if !provider.is_empty() {
+        // 段在不在决定措辞：段被删 vs 段在但不发布该模型
+        return if registry.providers.iter().any(|p| p.name == provider) {
+            format!("提供商 {provider} 无此模型")
+        } else {
+            format!("提供商 {provider} 不存在")
+        };
+    }
+    match binding_candidates(registry, am.model(agent)).len() {
+        0 => format!("模型 {} 不存在", am.model(agent)),
+        n => format!("未指定提供商，{n} 个同名候选"),
+    }
+}
+
+/// HUD 提示文案（≤ 40 字符量级，HUD 窗口 300×58px）：
+/// agent + 为什么没生效 + 当前实际跟随谁。leader 自身是回落锚点，无「跟随
+/// leader」可回落（其解析失败会由 `effective_model_binding` 直接 Err 上报）。
+pub fn binding_warning_message(agent: &str, reason: &str) -> String {
+    if agent == "leader" {
+        format!("{agent} 模型未生效：{reason}")
+    } else {
+        format!("{agent} 模型未生效：{reason}，已跟随 leader")
+    }
+}
+
+/// 写盘后调用一次：诊断 `[agent_models]` 全量绑定，命中 B 类即 HUD 告警。
+///
+/// 只走 HUD——不产生 `NuphusEvent`、不进会话时间线。
+/// 幂等：不做全局去重（重复调用只是重复显示同一提示）；HUD 是单行覆盖显示，
+/// 连续 `show` 会互相覆盖，故一次只提示 `AGENTS` 顺序的首个命中项。
+fn notify_binding_issues<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    providers_path: &std::path::Path,
+) {
+    let Some(path_str) = providers_path.to_str() else {
+        tracing::warn!("[agent_models] 绑定诊断跳过：配置路径非 UTF-8");
+        return;
+    };
+    let registry = match nuphus::config::ModelRegistry::from_toml(path_str) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("[agent_models] 绑定诊断跳过（registry 加载失败）: {e}");
+            return;
+        }
+    };
+    let hit = AgentModels::AGENTS.iter().find_map(|agent| {
+        diagnose_agent_binding(providers_path, &registry, agent).map(|reason| (*agent, reason))
+    });
+    if let Some((agent, reason)) = hit {
+        tracing::warn!("[agent_models] {agent} 绑定未生效：{reason}");
+        crate::commands::hud::show(app, &binding_warning_message(agent, &reason), "warning");
+    }
 }
 
 /// Get current agent-level model configuration (advanced settings).
@@ -402,13 +579,32 @@ pub fn get_provider_context(
 }
 
 /// Set one agent's model. `model` empty string = clear (follow default fallback).
+///
+/// `provider` 与 model 成对落盘（`{agent}_provider`）：旧实现固定传 `None`，会
+/// 删掉 provider 键写出「有 model 无 provider」的半绑定 → 解析时静默回落 leader。
+/// provider 缺省时由 `resolve_agent_binding_provider` 消歧：唯一候选自动补全，
+/// 多候选/无候选显式报错（不静默写半绑定）。
 #[tauri::command]
 pub fn set_agent_model(
     state: State<'_, AppState>,
     agent: String,
     model: String,
+    provider: Option<String>,
 ) -> Result<String, String> {
-    save_agent_model(&state.llm_config_path, &agent, &model, None)?;
+    if model.is_empty() {
+        // 清除绑定 → 跟随 leader：无 provider 维度，不适用消歧校验
+        save_agent_model(&state.llm_config_path, &agent, &model, None)?;
+    } else {
+        let path_str = state
+            .llm_config_path
+            .to_str()
+            .ok_or_else(|| "配置路径非 UTF-8".to_string())?;
+        let registry = nuphus::config::ModelRegistry::from_toml(path_str)
+            .map_err(|e| format!("加载模型配置失败: {e}"))?;
+        let resolved =
+            resolve_agent_binding_provider(&registry, &agent, &model, provider.as_deref())?;
+        save_agent_model(&state.llm_config_path, &agent, &model, Some(&resolved))?;
+    }
     Ok(format!(
         "{agent} 模型已设置为 {}",
         if model.is_empty() {
@@ -508,6 +704,10 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         &resolved_model,
         &resolved_provider,
     );
+
+    // 写盘后诊断一次绑定健康（含旧版半绑定遗留）：命中 B 类静默降级 → HUD 提示。
+    // 只在用户主动切换模型这一自然时机做，不引入定时器/轮询。
+    notify_binding_issues(&app, &state.llm_config_path);
 
     // Push notification if model or provider changed
     if let Some((prev_provider, prev_model)) = prev_binding {
@@ -1060,8 +1260,9 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                             reasoning_effort: None,
                                         });
                                         guard.model_context_window =
-                                            nuphus::agent::goal_types::try_get_context_window(
+                                            nuphus::agent::goal_types::try_get_context_window_for(
                                                 model_id,
+                                                Some(provider_type),
                                             )
                                             .unwrap_or(0);
                                         tracing::info!("[is_llm_configured] Loaded from providers.toml: provider={}, model={}, context_window={}",
@@ -2230,5 +2431,198 @@ mod tests {
         assert_eq!(effective_model(&am_path, &registry, "leader"), "");
         assert_eq!(effective_model(&am_path, &registry, "workflow"), "");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── 绑定诊断 / 防半绑定 fixture ──
+
+    /// 三 provider 段：official 与 opencode-go 同名发布 "same"；plain 只有 "other"；
+    /// "solo" 独属 official。覆盖「同名无法消歧」「段在但无此模型」「唯一候选」三态。
+    const MULTI_PROVIDER_REGISTRY: &str = "[[providers]]\nname = \"official\"\nprovider_type = \"openai\"\napi_key = \"sk-a\"\n[[providers.models]]\nid = \"same\"\n[[providers.models]]\nid = \"solo\"\n\n[[providers]]\nname = \"opencode-go\"\nprovider_type = \"opencode-go\"\napi_key = \"sk-b\"\n[[providers.models]]\nid = \"same\"\n\n[[providers]]\nname = \"plain\"\nprovider_type = \"deepseek\"\napi_key = \"sk-c\"\n[[providers.models]]\nid = \"other\"\n";
+
+    /// 绑定/diagnose fixture：providers.toml（agent_models、last_model）+ config.toml
+    /// （[[providers]] 注册表）。返回 (临时目录, providers_path, registry)。
+    fn binding_fixture(
+        providers_toml: &str,
+        registry_toml: &str,
+    ) -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        nuphus::config::ModelRegistry,
+    ) {
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-binding-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let am_path = dir.join("providers.toml");
+        std::fs::write(&am_path, providers_toml).unwrap();
+        let cfg_path = dir.join("config.toml");
+        std::fs::write(&cfg_path, registry_toml).unwrap();
+        let registry =
+            nuphus::config::ModelRegistry::from_toml(cfg_path.to_str().unwrap()).unwrap();
+        (dir, am_path, registry)
+    }
+
+    /// A 类（未设置）与可解析绑定（含唯一候选 / [last_model] 兜底）一律不告警。
+    #[test]
+    fn diagnose_silent_for_unset_and_healthy_bindings() {
+        let am = "[agent_models]\nleader = \"same\"\nleader_provider = \"official\"\nworkflow = \"\"\nexec = \"solo\"\n";
+        let (dir, am_path, registry) = binding_fixture(am, MULTI_PROVIDER_REGISTRY);
+
+        // A 类：未设置 → 跟随 leader 是正确语义，不告警
+        assert_eq!(
+            diagnose_agent_binding(&am_path, &registry, "workflow"),
+            None
+        );
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "custom"), None);
+        // 正常绑定
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "leader"), None);
+        // provider 缺失但候选唯一 → 兜底解析成功，不算事故
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "exec"), None);
+        // 未知 agent
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "nope"), None);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// B 形态 1：provider 键为空（旧版 set_agent_model 造成的形态）+ 同名多段 → 告警。
+    #[test]
+    fn diagnose_half_binding_without_provider() {
+        let am = "[agent_models]\nexec = \"same\"\n";
+        let (dir, am_path, registry) = binding_fixture(am, MULTI_PROVIDER_REGISTRY);
+
+        let reason = diagnose_agent_binding(&am_path, &registry, "exec").unwrap();
+        assert_eq!(reason, "未指定提供商，2 个同名候选");
+        assert_eq!(
+            binding_warning_message("exec", &reason),
+            "exec 模型未生效：未指定提供商，2 个同名候选，已跟随 leader"
+        );
+        // 同一场景下 effective_model_binding 确实静默回落（leader 空 → 无生效模型）
+        assert_eq!(effective_model(&am_path, &registry, "exec"), "");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// [last_model] 记录有效 → 不告警；记录指向不含该 model 的段 → 仍告警。
+    #[test]
+    fn diagnose_respects_last_model_record() {
+        let ok = "[agent_models]\nexec = \"same\"\n\n[last_model]\nsame = \"official\"\n";
+        let (dir, am_path, registry) = binding_fixture(ok, MULTI_PROVIDER_REGISTRY);
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "exec"), None);
+        std::fs::remove_dir_all(dir).ok();
+
+        let stale = "[agent_models]\nexec = \"same\"\n\n[last_model]\nsame = \"plain\"\n";
+        let (dir, am_path, registry) = binding_fixture(stale, MULTI_PROVIDER_REGISTRY);
+        assert_eq!(
+            diagnose_agent_binding(&am_path, &registry, "exec").unwrap(),
+            "未指定提供商，2 个同名候选"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// B 形态 2/3：provider 段不存在 / 段在但不发布该 model。
+    #[test]
+    fn diagnose_provider_side_failures() {
+        let ghost = "[agent_models]\nworkflow = \"same\"\nworkflow_provider = \"ghost\"\n";
+        let (dir, am_path, registry) = binding_fixture(ghost, MULTI_PROVIDER_REGISTRY);
+        let reason = diagnose_agent_binding(&am_path, &registry, "workflow").unwrap();
+        assert_eq!(reason, "提供商 ghost 不存在");
+        assert_eq!(
+            binding_warning_message("workflow", &reason),
+            "workflow 模型未生效：提供商 ghost 不存在，已跟随 leader"
+        );
+        std::fs::remove_dir_all(dir).ok();
+
+        // plain 段存在但不发布 "same"，且该 model 无 [last_model] 记录、多段同名 → 全链失败
+        let wrong_seg = "[agent_models]\nexec = \"same\"\nexec_provider = \"plain\"\n";
+        let (dir, am_path, registry) = binding_fixture(wrong_seg, MULTI_PROVIDER_REGISTRY);
+        assert_eq!(
+            diagnose_agent_binding(&am_path, &registry, "exec").unwrap(),
+            "提供商 plain 无此模型"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// B 形态 4：模型在注册表中根本不存在。
+    #[test]
+    fn diagnose_unknown_model() {
+        let am = "[agent_models]\nexec = \"nope\"\n";
+        let (dir, am_path, registry) = binding_fixture(am, MULTI_PROVIDER_REGISTRY);
+        let reason = diagnose_agent_binding(&am_path, &registry, "exec").unwrap();
+        assert_eq!(reason, "模型 nope 不存在");
+        assert_eq!(
+            binding_warning_message("exec", &reason),
+            "exec 模型未生效：模型 nope 不存在，已跟随 leader"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 文案契约：含 agent + 原因 + 实际回落（leader 自身无回落，不撒谎）。
+    #[test]
+    fn binding_warning_message_is_short_and_actionable() {
+        let msg = binding_warning_message("workflow", "提供商 custom 不存在");
+        assert_eq!(
+            msg,
+            "workflow 模型未生效：提供商 custom 不存在，已跟随 leader"
+        );
+        // HUD 窗口 300×58px：控制在 40 字符量级
+        assert!(msg.chars().count() <= 44, "文案过长: {msg}");
+
+        let msg = binding_warning_message("leader", "模型 ghost 不存在");
+        assert_eq!(msg, "leader 模型未生效：模型 ghost 不存在");
+        assert!(!msg.contains("已跟随"));
+    }
+
+    /// 显式 provider 原样采用；provider 缺失时唯一候选自动补全（空串等同缺失）。
+    #[test]
+    fn binding_provider_explicit_or_autofilled() {
+        let (dir, _am_path, registry) =
+            binding_fixture("[agent_models]\n", MULTI_PROVIDER_REGISTRY);
+        assert_eq!(
+            resolve_agent_binding_provider(&registry, "exec", "same", Some("official")).unwrap(),
+            "official"
+        );
+        assert_eq!(
+            resolve_agent_binding_provider(&registry, "exec", "solo", None).unwrap(),
+            "official"
+        );
+        assert_eq!(
+            resolve_agent_binding_provider(&registry, "exec", "solo", Some("")).unwrap(),
+            "official"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 防半绑定：多候选 / 无候选 / provider 不匹配一律显式报错，不静默写半绑定。
+    #[test]
+    fn binding_provider_rejects_half_binding() {
+        let (dir, _am_path, registry) =
+            binding_fixture("[agent_models]\n", MULTI_PROVIDER_REGISTRY);
+
+        let e = resolve_agent_binding_provider(&registry, "exec", "same", None).unwrap_err();
+        assert!(e.contains("2 个提供商中同名"), "{e}");
+        let e = resolve_agent_binding_provider(&registry, "exec", "nope", None).unwrap_err();
+        assert!(e.contains("不存在"), "{e}");
+        let e =
+            resolve_agent_binding_provider(&registry, "exec", "same", Some("plain")).unwrap_err();
+        assert!(e.contains("未提供模型"), "{e}");
+        let e =
+            resolve_agent_binding_provider(&registry, "exec", "same", Some("ghost")).unwrap_err();
+        assert!(e.contains("不存在"), "{e}");
+        let e = resolve_agent_binding_provider(&registry, "nope", "same", None).unwrap_err();
+        assert!(e.contains("未知 agent"), "{e}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 自动补全 → 落盘 → 诊断健康：写入的绑定必是完整 (provider, model) 对。
+    #[test]
+    fn autofilled_binding_round_trips_healthy() {
+        let (dir, am_path, registry) = binding_fixture("[agent_models]\n", MULTI_PROVIDER_REGISTRY);
+        let provider = resolve_agent_binding_provider(&registry, "exec", "solo", None).unwrap();
+        save_agent_model(&am_path, "exec", "solo", Some(&provider)).unwrap();
+
+        let am = load_agent_models(&am_path);
+        assert_eq!(am.exec, "solo");
+        assert_eq!(am.provider("exec"), "official");
+        assert_eq!(diagnose_agent_binding(&am_path, &registry, "exec"), None);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

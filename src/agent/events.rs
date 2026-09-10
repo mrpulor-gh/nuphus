@@ -216,6 +216,16 @@ pub enum NuphusEvent {
         timestamp: u64,
     },
 
+    /// 用户消息已被后端受理（开启新执行 或 进入追加队列）——「真实发送成功」的权威时点。
+    /// 与整轮执行完成（ProcessInputResponse 返回）严格区分：画布类入口据此立即收起发送遮罩回对话。
+    MessageAccepted {
+        /// 调用方传入的 send_id（桌面画布用 requestId 作为 send_id 精确对齐）
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        send_id: Option<String>,
+        /// "desktop" | "mobile"
+        source: String,
+    },
+
     /// 运行模式切换（空闲态 set_mode 时广播，手机端同步「当前模式」）
     ModeChanged { mode: String },
 
@@ -381,6 +391,29 @@ mod tests {
         );
         let parsed: RiskLevel = serde_json::from_str(r#""critical""#).unwrap();
         assert_eq!(parsed, RiskLevel::Critical);
+    }
+
+    /// message_accepted：受理事件只带 send_id + source（不带消息正文）。
+    /// send_id 缺省时字段整个省略——前端按 `typeof send_id === 'string'` 判定是否精确对齐。
+    #[test]
+    fn test_message_accepted_serialization() {
+        let with_id = serde_json::to_value(NuphusEvent::MessageAccepted {
+            send_id: Some("req-1".to_string()),
+            source: "desktop".to_string(),
+        })
+        .unwrap();
+        assert_eq!(with_id["type"], "message_accepted");
+        assert_eq!(with_id["send_id"], "req-1");
+        assert_eq!(with_id["source"], "desktop");
+
+        let without_id = serde_json::to_value(NuphusEvent::MessageAccepted {
+            send_id: None,
+            source: "mobile".to_string(),
+        })
+        .unwrap();
+        assert_eq!(without_id["type"], "message_accepted");
+        assert!(without_id.get("send_id").is_none());
+        assert_eq!(without_id["source"], "mobile");
     }
 
     #[test]

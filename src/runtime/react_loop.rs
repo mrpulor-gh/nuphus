@@ -223,7 +223,7 @@ impl super::Runtime {
                         tracing::debug!("[CROSS_SESSION] Injected cross-session context ({} chars)", md.len());
                     }
                 }
-l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config.supports_vision, self.agent.config.vision_model.as_deref(), prompt::EnvAudience::Leader));
+l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.config.provider.as_str()), None, self.agent.config.supports_vision, self.agent.config.vision_model.as_deref(), prompt::EnvAudience::Leader));
                 let skill_reg = prompt::skill_registry_section();
                 if !skill_reg.is_empty() {
                     l1_buf.push(skill_reg);
@@ -1380,7 +1380,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, self.agent.config
             }
 
             // -- Context hints (large-window models only, > 200K context) --
-            let ctx_window = crate::agent::goal_types::get_context_window(&self.agent.config.model);
+            let ctx_window = crate::agent::goal_types::get_context_window_for(
+                &self.agent.config.model,
+                Some(self.agent.config.provider.as_str()),
+            );
             if ctx_window > 200_000 {
                 let ctx_tokens = self.agent.session.api_input_tokens;
 

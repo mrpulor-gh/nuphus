@@ -2227,6 +2227,9 @@ mod tests {
         fn provider_kind(&self) -> nuphus::api::ProviderKind {
             nuphus::api::ProviderKind::MiniMax
         }
+        fn provider_name(&self) -> &str {
+            ""
+        }
     }
 
     fn mock_llm(text: &str) -> Arc<dyn nuphus::api::ApiClient> {

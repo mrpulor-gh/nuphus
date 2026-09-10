@@ -355,6 +355,8 @@ fn main() {
             commands::read_file_base64,
             commands::open_path,
             commands::reveal_path,
+            // -- 画布导出落盘（UI 原型图：明确告知绝对路径，替代静默下载）--
+            commands::save_prototype_png,
             // -- 内置工具命令（PDF/图片/视频；内部机制，非 agent 工具调用项） --
             commands::tools::pdf::pdf_merge,
             commands::tools::pdf::pdf_compress,

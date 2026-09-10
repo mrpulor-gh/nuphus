@@ -581,6 +581,9 @@ mod tests {
         fn provider_kind(&self) -> nuphus::api::ProviderKind {
             nuphus::api::ProviderKind::MiniMax
         }
+        fn provider_name(&self) -> &str {
+            ""
+        }
     }
 
     /// 构造带受控 timestamp 的 Session（JSON 往返覆写）：

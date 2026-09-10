@@ -995,6 +995,10 @@
   flex-direction: column;
   background: var(--surface-0);
 }
+/* 外壳 chunk 加载中的占位：复用全局 .page-loading，撑满宿主高度以居中显示 */
+.canvas-workbench-host > .page-loading {
+  flex: 1 1 auto;
+}
 .canvas-workbench-host .workflow-workbench {
   width: 100%;
   height: 100%;

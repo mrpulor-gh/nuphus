@@ -298,8 +298,17 @@ pub enum EnvAudience {
 /// Full environment section for Leader (injected into L1 cache)
 /// `vision_model` must be determined ONCE at session start (from `AgentConfig.vision_model`)
 /// and remain stable — never call resolve_vision_strategy() here, as it reads config from disk.
+/// `provider` is the providers.toml segment name (None/"" = unknown) — required so a
+/// same-name model under another segment cannot supply the wrong context window.
+///
+/// `model` is the **real model id, used for resolution only**; `model_display` is the
+/// label rendered in `当前模型:` (None → falls back to `model`). They are separate
+/// parameters because the Exec path displays `model (provider)` — feeding that label
+/// to the resolver always misses and silently degrades to the 128K guess.
 pub fn env_info_section(
     model: &str,
+    provider: Option<&str>,
+    model_display: Option<&str>,
     supports_vision: bool,
     vision_model: Option<&str>,
     audience: EnvAudience,
@@ -315,7 +324,7 @@ pub fn env_info_section(
     };
     let root = workspace_root();
     let root_str = root.display().to_string();
-    let ctx = crate::agent::goal_types::get_context_window(model);
+    let ctx = crate::agent::goal_types::get_context_window_for(model, provider);
     let ctx_str = if ctx >= 1_000_000 {
         format!("{}M", ctx / 1_000_000)
     } else {
@@ -384,7 +393,7 @@ pub fn env_info_section(
           工作流目录: {}/plugin/workflows",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model,
+        model_display.unwrap_or(model),
         ctx_str,
         supports_vision,
         img_status,
@@ -812,8 +821,14 @@ fn build_l2_exec(goal_type: GoalType) -> String {
 ///
 /// Identity + L0 framework + tools + environment + L2 exec architecture + delivery.
 /// Kept cacheable: dynamic content (task description, rules) injected as user messages.
+/// `model` + `provider` are the real routing binding (used for provider-exact
+/// context-window resolution); `model_display` is the label shown in `当前模型:`
+/// (None → `model`). The Exec path passes `"<model> (<provider>)"` as the label
+/// while resolving against the real model id — never merge the two.
 pub fn build_exec_prompt(
     model: &str,
+    provider: Option<&str>,
+    model_display: Option<&str>,
     tool_schemas: &str,
     goal_type: GoalType,
     soul: &str,
@@ -873,6 +888,8 @@ pub fn build_exec_prompt(
     // 与 Leader 共享同一份环境信息（子 Agent 受众：不含门铃令牌），确保 ExecAgent 知道项目结构
     parts.push(env_info_section(
         model,
+        provider,
+        model_display,
         supports_vision,
         vision_model,
         EnvAudience::SubAgent,
@@ -1197,8 +1214,13 @@ Phase 3 提交前逐项勾选：
 /// Build WorkflowAgent system prompt
 ///
 /// L0 (WORKAGENT_L0) + L1 (tools + env + tenets) + L2 (methodology).
+/// `provider` = providers.toml segment backing `model` (None/"" = unknown); it is
+/// forwarded to `env_info_section` for provider-exact context-window resolution.
+/// `model` here is the real model id and doubles as the display label — this path
+/// has no separate label, so `env_info_section` gets `model_display = None`.
 pub fn build_workagent_prompt(
-    _model: &str,
+    model: &str,
+    provider: Option<&str>,
     supports_vision: bool,
     tool_schemas: &str,
     user_label: &str,
@@ -1232,7 +1254,9 @@ pub fn build_workagent_prompt(
     );
     let _language = crate::config::UserPreferences::load().language;
     parts.push(env_info_section(
-        _model,
+        model,
+        provider,
+        None,
         supports_vision,
         vision_model,
         EnvAudience::SubAgent,
@@ -1295,4 +1319,80 @@ pub fn mcp_tools_section() -> String {
         names.len(),
         names.join(" / ")
     )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 解析用 model id 与展示用标签必须分流（Exec 路径回归钉子）。
+    ///
+    /// Exec 路径的展示标签形如 `"<model> (<provider>)"`；把它喂给
+    /// `get_context_window_for` 必然 miss → 恒回落 128K。本用例断言：
+    ///   1. `当前模型:` 显示标签本身（展示契约逐字符不变）；
+    ///   2. 上下文窗口来自**真 model id** 的解析结果（把标签当 id 用会得到 128K）。
+    #[test]
+    fn test_build_exec_prompt_keeps_display_label_out_of_resolution() {
+        // 真 id 取自 builtin ProviderRegistry（gemini-2.5-pro → 2M），
+        // 标签形式 "id (provider)" 在任何 registry 中都解析不到。
+        let real = "gemini-2.5-pro";
+        let label = format!("{real} (gw)");
+        let prompt = build_exec_prompt(
+            real,
+            Some("gw"),
+            Some(&label),
+            "schema",
+            GoalType::ScriptingExec,
+            "",
+            None,
+            false,
+            None,
+        );
+
+        let expected = crate::agent::goal_types::get_context_window_for(real, Some("gw"));
+        let expected_str = if expected >= 1_000_000 {
+            format!("{}M", expected / 1_000_000)
+        } else {
+            format!("{}K", expected / 1_000)
+        };
+        // 证据行（--nocapture 可见）：展示标签 + 真 id 解析出的窗口。
+        println!(
+            "[evidence] {}",
+            prompt
+                .lines()
+                .find(|l| l.contains("当前模型:"))
+                .unwrap_or("<no 当前模型 line>")
+        );
+        assert!(
+            prompt.contains(&format!(
+                "当前模型: {label} (上下文 {expected_str}，supports_vision: false"
+            )),
+            "display label must stay verbatim while the window resolves from the real id; \
+             prompt={prompt}"
+        );
+
+        // fixture 自检：标签必解析到 128K 兜底，与真 id 取值不同——否则本用例
+        // 无法区分「用标签解析」这一回归（退化即失败，不静默放过）。
+        assert_ne!(
+            crate::agent::goal_types::get_context_window_for(&label, Some("gw")),
+            expected,
+            "fixture degenerate: the label resolves like the real model id"
+        );
+    }
+
+    /// `model_display = None` → 展示回落 `model`（Leader / WorkAgent / CLI 路径）。
+    #[test]
+    fn test_env_info_section_display_falls_back_to_model() {
+        let section = env_info_section(
+            "no-such-model-xyz",
+            None,
+            None,
+            false,
+            None,
+            EnvAudience::SubAgent,
+        );
+        assert!(
+            section.contains("当前模型: no-such-model-xyz (上下文 "),
+            "None display must fall back to the model id; section={section}"
+        );
+    }
 }

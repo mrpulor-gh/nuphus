@@ -78,6 +78,23 @@ impl ProviderRegistry {
         self.providers.get(id).map(Arc::clone)
     }
 
+    /// Look up `query` inside one built-in Provider (`provider_id`): exact id
+    /// first, then aliases. The provider-aware counterpart of
+    /// [`Self::find_model`] — a same-name model published by another Provider's
+    /// table must not shadow the requested one. `None` when the Provider id is
+    /// unknown or it does not publish the model.
+    pub fn find_model_for_provider(
+        &self,
+        provider_id: &str,
+        query: &str,
+    ) -> Option<&'static ModelDef> {
+        let provider = self.get(provider_id)?;
+        provider
+            .models()
+            .iter()
+            .find(|m| m.id == query || m.aliases.contains(&query))
+    }
+
     /// Frontend-facing Provider list — sorted by display name (stable A-Z order)
     /// so the UI never depends on HashMap iteration order.
     pub fn list_info(&self) -> Vec<FrontendProviderInfo> {

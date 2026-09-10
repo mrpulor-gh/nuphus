@@ -1301,7 +1301,7 @@ export function ChatInputBar({
                     {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
                       cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
                     {cacheRate >= 0 && (
-                      <span className="input-bar-ctx-row">
+                      <span className="input-bar-ctx-row is-strong">
                         <span className="input-bar-ctx-detail-label">cache</span>
                         <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
                       </span>
@@ -1325,15 +1325,6 @@ export function ChatInputBar({
                       <span className="input-bar-ctx-detail-label">time</span>
                       <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
                     </span>
-                    {/* 连接状态摘要：与健康圆点同源（hover ctx 即可确认连接，不必另点圆点） */}
-                    {apiHealth && (
-                      <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">link</span>
-                        <span className="input-bar-ctx-value">
-                          {t(`apiHealth.${apiHealth.status}`)}
-                        </span>
-                      </span>
-                    )}
                   </span>
                 )}
               </span>

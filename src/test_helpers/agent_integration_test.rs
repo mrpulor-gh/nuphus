@@ -58,6 +58,10 @@ impl ApiClient for MockApiClient {
     fn provider_kind(&self) -> ProviderKind {
         self.provider_kind
     }
+
+    fn provider_name(&self) -> &str {
+        ""
+    }
 }
 
 /// 创建最小化 Agent 实例。

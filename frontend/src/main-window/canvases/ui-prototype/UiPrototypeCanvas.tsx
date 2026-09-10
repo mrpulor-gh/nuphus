@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion, useSpring } from 'motion/react'
-import { toPng } from 'html-to-image'
+import { getFontEmbedCSS, toPng } from 'html-to-image'
 import { buildPrompt, effectivePrompt } from './lib/prompt'
 import {
   Action,
@@ -79,6 +79,8 @@ import { GitHubLink, Mode, Toolbar } from './components/Toolbar'
 import { LangMenu } from './components/Menus'
 import { AiActionKey, AiPanel, aiErrorText } from './components/AiPanel'
 import { useWorkflowGate } from '../../lib/useWorkflowGate'
+import { useSendLock } from '../../lib/useSendLock'
+import { SendMask } from './components/SendMask'
 import { TidyState } from './components/ui'
 import {
   AiSettings,
@@ -148,6 +150,99 @@ const RAIL_W = 52
 const MIN_Z = 0.25
 const MAX_Z = 3
 const HISTORY_MAX = 100
+/** 截图最长边（首帧）：大画布（如 1920 宽）按 2 倍克隆整棵 DOM 会长时间阻塞主线程 */
+const CAPTURE_MAX_EDGE = 1600
+/** 「发送 Leader」进对话的缩略图最长边：完整 2x 原图只落盘，绝不进对话 */
+const SEND_IMAGE_MAX_EDGE = 720
+/** 缩略图二次降级最长边：720 档仍超字符预算时再降一档，仍超则只发文本 */
+const SEND_IMAGE_FALLBACK_MAX_EDGE = 480
+/** 进对话的缩略图字符预算：超过则降级（大图留在磁盘，用 desktop_vision 查看） */
+const SEND_IMAGE_DATA_URL_MAX = 400_000
+/** 「发送 Leader」回执超时：超时视为状态未知（不谎报成功） */
+const SEND_RESULT_TIMEOUT = 8000
+/** 导出前的字体等待上限（document.fonts.ready 长时间不 settle 时不再干等） */
+const FONT_READY_TIMEOUT = 3000
+
+/** Re-encodes a PNG data URL down to `maxEdge` on its longest side (canvas only
+ *  shrinks, never enlarges). Resolves null when the source cannot be decoded or
+ *  the canvas yields nothing usable, so the caller can fall back to text only. */
+const downscalePngDataUrl = (url: string, maxEdge: number): Promise<string | null> =>
+  new Promise(resolve => {
+    // 所有失败路径都必须 resolve：抛出会让 await 永远挂住（发送链随之静默卡死）
+    const fail = (err?: unknown) => {
+      if (err) console.error('PNG downscale failed', err)
+      resolve(null)
+    }
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
+        if (scale >= 1) {
+          resolve(url)
+          return
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(img.width * scale))
+        canvas.height = Math.max(1, Math.round(img.height * scale))
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          fail()
+          return
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/png'))
+      } catch (err) {
+        fail(err)
+      }
+    }
+    img.onerror = () => fail()
+    img.src = url
+  })
+
+/** write-through result of saving a PNG through the desktop backend */
+type SavePngResult =
+  { kind: 'saved'; path: string } | { kind: 'fallback' } | { kind: 'failed'; message: string }
+
+/** A command that cannot be reached at all (not registered in an older build, or a
+ *  plain browser without Tauri) falls back to the WebView download; any other
+ *  rejection is a real write error and must be reported as a failure. */
+const UNAVAILABLE_CMD = /not found|unknown command|not allowed|not defined|__TAURI/i
+
+/** Hands the PNG to the desktop backend (`save_prototype_png`) and resolves with
+ *  the absolute path it wrote the file to. */
+const savePngToDisk = async (dataUrl: string, fileName: string): Promise<SavePngResult> => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    // Tauri v2 前端参数名 camelCase，后端 save_prototype_png(data_url, file_name)
+    const path = await invoke<string>('save_prototype_png', { dataUrl, fileName })
+    return typeof path === 'string' && path.trim() ? { kind: 'saved', path } : { kind: 'fallback' }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('save_prototype_png rejected:', message)
+    return UNAVAILABLE_CMD.test(message) ? { kind: 'fallback' } : { kind: 'failed', message }
+  }
+}
+
+/** Resolves after the browser has painted the pending update: two frames so the
+ *  toast from the click handler is on screen before the capture blocks the main
+ *  thread (single rAF can still run before the style/layout flush lands). */
+const nextPaint = (): Promise<void> =>
+  new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+
+/** Font-embed CSS cache. html-to-image re-parses every document.styleSheet and
+ *  fetches + base64-inlines each matching font file on every capture - by far the
+ *  heaviest part of an export. The key is "design font + language + number of
+ *  registered font faces": the first two decide which @font-face rules apply, and
+ *  the face count covers a webfont that only registers after the first capture
+ *  (font.ready timed out, the <link> landed later) - its arrival changes the key
+ *  and drops the possibly glyph-less CSS instead of reusing it silently. */
+let fontEmbedCache: { key: string; css: string } | null = null
+
+/** 消息正文里的原图路径标记：缩略图随消息进对话，高清原图留在磁盘上供 Leader
+ *  用 desktop_vision 查看。固定中文，与后端注入的图片路径提示风格保持一致。 */
+const savedImageMarker = (path: string): string =>
+  `[原型图已保存：${path}（可用 desktop_vision 查看原图）]`
+
 /* v2：默认主题升级为 Nuphus 暗色商务（brand seed）。旧 v1 文档（light/purple）不再
    自动加载——保留旧键数据不删，用户可经 Open project 导入旧稿；新进入即全新默认。 */
 const DOC_KEY = 'nuphus.ui_proto.doc.v2'
@@ -388,7 +483,11 @@ const LEFT_TABS: {
   { key: 'ai', icon: 'auto_awesome', title: 'ai' },
 ]
 
-export function UiPrototypeCanvas() {
+/**
+ * @param onSent 发送给 Leader 成功后收起画布（全屏画布不关，用户看不到对话里的消息，
+ *   会以为没发出去而反复点击）。不传则退化为画布内的提示。
+ */
+export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
   /* ---------- document ---------- */
   /** 画布根 ref：原实现的 document.body/html 样式副作用一律收敛到画布根，
    *  卸载随 DOM 移除自动清除，避免污染 Nuphus 主窗 */
@@ -434,6 +533,8 @@ export function UiPrototypeCanvas() {
   /** frame being rendered offscreen for the PNG export */
   const [exportFrame, setExportFrame] = useState<Frame | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  /** 发送 / 导出重活期间的遮罩文案（与 sending 同批更新，见 useSendLock） */
+  const [sendingText, setSendingText] = useState('')
   const [title, setTitle] = useState('')
   const [brief, setBrief] = useState('')
   const [promptEdit, setPromptEdit] = useState<string | undefined>(undefined)
@@ -2462,6 +2563,17 @@ export function UiPrototypeCanvas() {
   }
 
   const toastTimer = useRef<number | null>(null)
+  /** 「发送 Leader」的待回执：requestId + 超时句柄（见 nuphus:send-result 监听） */
+  const pendingSendRef = useRef<{ id: string; timer: number } | null>(null)
+  /** 整轮发送（捕获 → 落盘 → 回执）占用标记：遮罩之外的第二道防线，期间重复点击
+   *  不再排第二次捕获/发送。标记与遮罩状态同源维护（见 useSendLock），不会错配。 */
+  const { sending, busyRef: sendBusyRef, begin: armSendLock, cancel: releaseSend } = useSendLock()
+  /** 回执监听只注册一次；语言用镜像 ref 读取，避免把它塞进 effect 依赖 */
+  const langRef = useRef<Lang>(lang)
+  langRef.current = lang
+  /** 发送成功后的收尾（上层挂载点用来收起全屏画布）：同样只读最新值 */
+  const onSentRef = useRef(onSent)
+  onSentRef.current = onSent
   /** the desktop's message pill beside the tidy button; the phone keeps its centered toast */
   const showAiNote = (text: string, icon = 'check', ms = 2200) => {
     setAiNote({ text, icon })
@@ -2477,6 +2589,19 @@ export function UiPrototypeCanvas() {
     setToast(msg)
     if (toastTimer.current) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), ms)
+  }
+
+  /** 上锁并起总时长兜底：发送与导出共用这一把锁（都是主线程重活）。
+   *  兜底到点无条件解锁并提示「状态未知」——捕获本身无法中断，只能靠计时兜底。 */
+  const beginSend = (op: 'send' | 'export') => {
+    setSendingText(t(op === 'send' ? 'sendingToLeader' : 'capturingImage', langRef.current))
+    armSendLock(() => {
+      if (pendingSendRef.current) {
+        window.clearTimeout(pendingSendRef.current.timer)
+        pendingSendRef.current = null
+      }
+      showToast(t('sendStatusUnknown', langRef.current), 3000, 'info')
+    })
   }
 
   const updateAiSettings = (s: AiSettings) => {
@@ -2590,9 +2715,49 @@ export function UiPrototypeCanvas() {
       aiAbortRef.current?.abort()
       if (aiNoteTimer.current) window.clearTimeout(aiNoteTimer.current)
       if (toastTimer.current) window.clearTimeout(toastTimer.current)
+      if (pendingSendRef.current) window.clearTimeout(pendingSendRef.current.timer)
+      pendingSendRef.current = null
+      sendBusyRef.current = false
     },
     [],
   )
+
+  /* 「发送给 Leader」的真实回执：ChatPanel 发完后按 requestId 回发 nuphus:send-result，
+   * 这里据此显示成功或失败原因（旧的无条件绿提示会假绿）。监听方没挂载 / 发送没
+   * 启动时收不到回执，由 sendPromptToLeader 的 8s 超时与 useSendLock 的总时长兜底。 */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const pending = pendingSendRef.current
+      if (!pending || detail?.requestId !== pending.id) return
+      window.clearTimeout(pending.timer)
+      pendingSendRef.current = null
+      /* 回执到达即解锁：成功与失败走同一出口，不会留下挡在对话前面的遮罩 */
+      releaseSend()
+      if (detail?.ok) {
+        /* 全屏画布由上层挂载点收起（onSent）：发送结果在对话里，用户看到的就是它；
+           没有挂载点（如独立使用画布）时退化为画布内的提示。 */
+        const close = onSentRef.current
+        if (close) close()
+        else showToast(t('sentToLeader', langRef.current), 2000, 'check')
+        return
+      }
+      const reason =
+        typeof detail?.message === 'string' && detail.message.trim()
+          ? detail.message
+          : t('sendFailedToLeader', langRef.current)
+      showToast(reason, 3000, 'error')
+    }
+    window.addEventListener('nuphus:send-result', handler)
+    return () => {
+      window.removeEventListener('nuphus:send-result', handler)
+      if (pendingSendRef.current) {
+        window.clearTimeout(pendingSendRef.current.timer)
+        pendingSendRef.current = null
+      }
+      sendBusyRef.current = false
+    }
+  }, [])
 
   /** a screen takes everything on it along, and links into it are dropped */
   const deleteFrame = useCallback(
@@ -2682,26 +2847,75 @@ export function UiPrototypeCanvas() {
    *  leak into the PNG. Shared by the PNG download and by "send to Leader". */
   const captureFramePng = async (f: Frame): Promise<string | null> => {
     setExportFrame(f)
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
+    await nextPaint()
     try {
-      await document.fonts?.ready
+      // 字体等待给上限：ready 长时间不 settle 时导出不能跟着悬挂（超时就用当前字体）
+      await Promise.race([
+        document.fonts?.ready ?? Promise.resolve(),
+        new Promise<void>(r => window.setTimeout(r, FONT_READY_TIMEOUT)),
+      ])
       const el = document.querySelector<HTMLElement>(`[data-export="${f.id}"]`)
       if (!el) return null
       const { w, h } = frameSizeOf(f)
-      return await toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h })
+      // 像素比按尺寸自适应：最长边不超过 CAPTURE_MAX_EDGE。toPng 会同步克隆整棵
+      // DOM，1920 宽的大画布按 2 倍（3840px）克隆时主线程会长时间无响应。
+      const pixelRatio = Math.min(2, Math.max(1, CAPTURE_MAX_EDGE / Math.max(w, h)))
+      /* 字体嵌入 CSS 复用（见 fontEmbedCache）：首次生成，之后同一字体/语言直接命中，
+         省掉每次重解析 styleSheets + 重新拉取并内联字体文件的重复开销。
+         不再传 cacheBust：画布内没有需要强制刷新的远程资源，时间戳只会让每次捕获
+         都重新拉一遍文档里的资源。 */
+      const fontKey = `${fontFamilyOf(theme.font, lang)}|${lang}|${document.fonts?.size ?? 0}`
+      const cachedCss = fontEmbedCache && fontEmbedCache.key === fontKey ? fontEmbedCache.css : null
+      const fontEmbedCSS = cachedCss ?? (await getFontEmbedCSS(el))
+      if (cachedCss === null) fontEmbedCache = { key: fontKey, css: fontEmbedCSS }
+      return await toPng(el, { pixelRatio, width: w, height: h, fontEmbedCSS })
     } finally {
       setExportFrame(null)
     }
   }
 
-  /** Downloads one screen as a PNG. */
+  /** Saves one screen as a PNG. The desktop backend writes the file and answers
+   *  with its absolute path, which the toast spells out; only a build without the
+   *  command falls back to the WebView download, and that says where it went too.
+   *  Never silent: a failed write reports the failure instead of nothing.
+   *  与「发送 Leader」共用同一把界面锁：导出同样是克隆整棵 DOM 的主线程重活，
+   *  期间同样要挡住连点（遮挡文案见 beginSend('export')）。 */
   const saveFrameImage = async (f: Frame) => {
-    const url = await captureFramePng(f)
-    if (!url) return
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${f.name || 'screen'}.png`
-    a.click()
+    /* 捕获要克隆整棵 DOM 且在此帧内无法中断：先上遮罩并等它真正绘制出来（双帧）
+       再开工，否则点击后的第一帧就被重活占住，界面看起来是冻死的。 */
+    beginSend('export')
+    await nextPaint()
+    try {
+      let url: string | null = null
+      try {
+        url = await captureFramePng(f)
+      } catch (err) {
+        console.error('PNG export failed', err)
+      }
+      if (!url) {
+        showToast(t('exportFailed', lang), 3000, 'error')
+        return
+      }
+      const fileName = `${f.name || 'screen'}.png`
+      const saved = await savePngToDisk(url, fileName)
+      if (saved.kind === 'saved') {
+        showToast(`${t('imageSavedTo', lang)} ${saved.path}`, 4000, 'check')
+        return
+      }
+      if (saved.kind === 'failed') {
+        console.error('save_prototype_png failed:', saved.message)
+        showToast(t('exportFailed', lang), 3000, 'error')
+        return
+      }
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      a.click()
+      showToast(t('imageSavedToBrowser', lang), 4000, 'info')
+    } finally {
+      /* 每一条分支（含未预期异常）都从这里解锁，绝不留永久遮罩 */
+      releaseSend()
+    }
   }
 
   /** The screen the prompt panel's toolbar acts on: the selected screen, else the
@@ -2725,34 +2939,99 @@ export function UiPrototypeCanvas() {
   }
 
   /** Prompt panel "send to Leader": puts the prompt text into the chat and starts
-   *  the Leader on it. The current screen PNG travels along as an image when the
-   *  offscreen capture succeeds; a failed image never blocks the text. */
+   *  the Leader on it. The full-size capture is written to disk, only a small
+   *  thumbnail travels inside the message, and the absolute path of the original
+   *  is appended to the text so the Leader can open the hi-res image on demand.
+   *  Every degraded step is announced (text always goes out, an image never
+   *  blocks it). The toast reports the real outcome, which ChatPanel returns as
+   *  a nuphus:send-result. A successful send also closes the full-screen canvas
+   *  (onSent) so the message in the chat is what the user sees next.
+   *  整轮（捕获 → 落盘 → 等回执）套界面遮罩：期间指针被挡、画布键盘短路，
+   *  连点不会叠第二次捕获。 */
   const sendPromptToLeader = async (text: string) => {
+    /* 一轮发送（捕获 → 落盘 → 等回执）结束前，重复点击直接忽略：捕获返回后按钮会
+       重新可点，再点只会排第二次捕获/发送，把等待时间翻倍并可能重复发消息。
+       遮罩已挡住指针，这里是键盘/程序化调用的第二道防线（不叠加任何提示）。 */
+    if (sendBusyRef.current) return
     if (gateLocked) {
       showToast(gateLockText, 2200, 'info')
       return
     }
-    if (!text.trim()) {
-      showToast(t('sendEmptyPrompt', lang))
-      return
-    }
-    let images: string[] | undefined
-    const f = exportTargetFrame()
-    if (f) {
-      try {
-        const url = await captureFramePng(f)
-        if (url) images = [url]
-      } catch (err) {
-        console.error('PNG capture for Leader failed', err)
+    /* 先上锁再干活：捕获跑在主线程上且无法中断，只有先挡住输入才能避免重复投递 */
+    beginSend('send')
+    try {
+      /* 点击前二次校验闸门：1.2s 轮询窗口内可能刚进入执行态，只看缓存值会漏 */
+      const gateNow = await gate.refresh()
+      if (gateNow.locked) {
+        releaseSend()
+        showToast(gateLockText, 2200, 'info')
+        return
       }
+      if (!text.trim()) {
+        releaseSend()
+        showToast(t('sendEmptyPrompt', lang))
+        return
+      }
+      // 捕获要克隆整棵 DOM：遮罩先绘制出来（双帧）再开工，否则第一帧就被重活占住
+      await nextPaint()
+      let images: string[] | undefined
+      let savedPath: string | null = null
+      const f = exportTargetFrame()
+      if (f) {
+        let full: string | null = null
+        try {
+          full = await captureFramePng(f)
+        } catch (err) {
+          console.error('PNG capture for Leader failed', err)
+        }
+        if (full) {
+          /* 完整 2x 原图只落盘：把它塞进对话会让之后每轮请求重发，主线程随之卡死 */
+          const saved = await savePngToDisk(full, `${f.name || 'screen'}.png`)
+          if (saved.kind === 'saved') {
+            savedPath = saved.path
+          } else if (saved.kind === 'failed') {
+            console.error('save_prototype_png failed:', saved.message)
+          } else {
+            console.warn('save_prototype_png unavailable, sending without the original path')
+          }
+          /* 缩略图两级降级：720 档 → 480 档 → 不带图（每一档失败都明确告知） */
+          const thumb = await downscalePngDataUrl(full, SEND_IMAGE_MAX_EDGE)
+          if (thumb && thumb.length <= SEND_IMAGE_DATA_URL_MAX) {
+            images = [thumb]
+          } else {
+            const smaller = await downscalePngDataUrl(full, SEND_IMAGE_FALLBACK_MAX_EDGE)
+            if (smaller && smaller.length <= SEND_IMAGE_DATA_URL_MAX) images = [smaller]
+            else showToast(t('imageTooLargeTextOnly', lang), 3000, 'info')
+          }
+        }
+      }
+      /* 路径标记只要原图落盘成功就追加（缩略图超限不带图时，路径是 Leader 唯一的
+         看图入口）；追加前先收掉正文末尾空白。 */
+      const sendText = savedPath ? `${text.trimEnd()}\n\n${savedImageMarker(savedPath)}` : text
+      const requestId = crypto.randomUUID()
+      if (pendingSendRef.current) window.clearTimeout(pendingSendRef.current.timer)
+      pendingSendRef.current = {
+        id: requestId,
+        timer: window.setTimeout(() => {
+          pendingSendRef.current = null
+          /* 回执没到：解锁并明确告知「状态未知」，既不谎报成功也不留锁 */
+          releaseSend()
+          showToast(t('sendStatusUnknown', lang), 3000, 'info')
+        }, SEND_RESULT_TIMEOUT),
+      }
+      window.dispatchEvent(
+        new CustomEvent('nuphus:send-message', {
+          // mode:'leader'：ChatPanel 先切 leader 再发送，不被 workflow 等当前模式劫持
+          detail: { text: sendText, images, mode: 'leader', requestId },
+        }),
+      )
+    } catch (err) {
+      /* 捕获/落盘异常：解锁并明确报错（不静默失败），错误再交回面板收尾 */
+      releaseSend()
+      console.error('send to Leader failed', err)
+      showToast(t('exportFailed', lang), 3000, 'error')
+      throw err
     }
-    window.dispatchEvent(
-      new CustomEvent('nuphus:send-message', {
-        // mode:'leader'：ChatPanel 先切 leader 再发送，不被 workflow 等当前模式劫持
-        detail: { text, images, mode: 'leader' },
-      }),
-    )
-    showToast(t('sentToLeader', lang), 2000, 'check')
   }
 
   /** the runs of one screen drawn with plain divs: the export layer */
@@ -2894,6 +3173,9 @@ export function UiPrototypeCanvas() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (editAccess !== 'editable') return
+      /* 发送/导出遮罩期间画布不接管键盘：遮罩挡不住 keydown，Delete 之类破坏性
+         快捷键必须在这里短路（画布根同时也置了 inert，输入框不再可聚焦）。 */
+      if (sending) return
       const t = e.target as HTMLElement
       const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
       if (typing) return
@@ -3001,6 +3283,7 @@ export function UiPrototypeCanvas() {
     pendingImport,
     shareOpen,
     previewId,
+    sending,
     editAccess,
   ])
   const openPreviewRef = useRef(openPreview)
@@ -3378,10 +3661,15 @@ export function UiPrototypeCanvas() {
         <div
           ref={rootRef}
           className={revealing ? 'app-root nuphus-reveal' : 'app-root'}
-          {...({
-            inert: editAccess !== 'editable',
-          } as unknown as React.HTMLAttributes<HTMLDivElement>)}
-          aria-hidden={editAccess !== 'editable'}
+          {...(editAccess !== 'editable' || sending
+            ? ({
+                /* 发送/导出遮罩期间整块画布 inert：指针与焦点都进不来（遮罩之外的第二层保险）。
+                   只在需要时挂载该属性——React 18 对 inert={false} 的渲染不可靠，
+                   一旦渲染出 inert="false" 仍会激活（该属性只看存在与否），画布将永久不可交互。 */
+                inert: '',
+              } as unknown as React.HTMLAttributes<HTMLDivElement>)
+            : {})}
+          aria-hidden={editAccess !== 'editable' || sending}
           style={{
             display: 'flex',
             overflow: 'hidden',
@@ -4155,6 +4443,10 @@ export function UiPrototypeCanvas() {
                   fontWeight: 600,
                   zIndex: 47,
                   pointerEvents: 'none',
+                  /* 长文案（如导出后告知的绝对路径）换行，不溢出屏幕 */
+                  maxWidth: '78%',
+                  textAlign: 'center',
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {toast}
@@ -4431,6 +4723,10 @@ export function UiPrototypeCanvas() {
             </div>
           </div>
         )}
+
+        {/* 发送 / 导出重活期间的全屏遮罩：portal 到 body，压住画布与工作台；
+            渲染条件就是锁本身，解锁（任何路径）即消失 */}
+        {sending && <SendMask p={p} text={sendingText} />}
       </ThemeContext.Provider>
     </LangContext.Provider>
   )

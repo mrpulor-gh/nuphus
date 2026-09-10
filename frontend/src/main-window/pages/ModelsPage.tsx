@@ -175,7 +175,8 @@ function VisionModelSelect({
 }: {
   value: string
   models: ModelInfo[]
-  onChange: (id: string) => void
+  /** provider 与被选 model 同源（同 id 跨服务商时不可只用 id 消歧） */
+  onChange: (id: string, provider: string) => void
   t: (key: string, ...args: string[]) => string
   placeholder?: string
   showVisionIcons?: boolean
@@ -243,7 +244,7 @@ function VisionModelSelect({
           <div
             className={`compact-select-option ${value === '' ? 'active' : ''}`}
             onClick={() => {
-              onChange('')
+              onChange('', '')
               close()
             }}
           >
@@ -259,7 +260,7 @@ function VisionModelSelect({
               aria-selected={value === m.id}
               className={`compact-select-option ${value === m.id ? 'active' : ''}`}
               onClick={() => {
-                onChange(m.id)
+                onChange(m.id, m.provider)
                 close()
               }}
             >
@@ -435,9 +436,13 @@ export function ModelsPage({
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
   const [agentModels, setAgentModels] = useState<AgentModels>({
     leader: '',
+    leader_provider: '',
     workflow: '',
+    workflow_provider: '',
     exec: '',
+    exec_provider: '',
     custom: '',
+    custom_provider: '',
   })
   const [agentSaving, setAgentSaving] = useState(false)
   const [agentFeedback, setAgentFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -833,12 +838,17 @@ export function ModelsPage({
   }
 
   // Agent 级模型保存（高级设置）：空串 = 清除（跟随默认模型）
-  const saveAgentModel = async (agent: string, model: string) => {
+  // provider 与 model 同源传入（后端成对落盘；只给 model 时多候选会报错拒绝）
+  const saveAgentModel = async (agent: string, model: string, provider?: string) => {
     setAgentSaving(true)
     setAgentFeedback(null)
     try {
-      await setAgentModel(agent, model)
-      setAgentModels(prev => ({ ...prev, [agent]: model }))
+      await setAgentModel(agent, model, provider)
+      setAgentModels(prev => ({
+        ...prev,
+        [agent]: model,
+        [`${agent}_provider`]: provider ?? '',
+      }))
       setAgentFeedback({ ok: true, msg: `${agent} 模型已保存${model ? '' : '（跟随默认模型）'}` })
     } catch (e: any) {
       setAgentFeedback({ ok: false, msg: e?.message || '保存失败' })
@@ -1885,7 +1895,7 @@ export function ModelsPage({
                         <VisionModelSelect
                           value={agentModels.exec}
                           models={allModels}
-                          onChange={m => void saveAgentModel('exec', m)}
+                          onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
                           t={t}
                           placeholder="跟随默认模型"
                         />

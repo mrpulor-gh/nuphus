@@ -542,9 +542,13 @@ export function switchModel(
 
 export interface AgentModels {
   leader: string
+  leader_provider: string
   workflow: string
+  workflow_provider: string
   exec: string
+  exec_provider: string
   custom: string
+  custom_provider: string
 }
 
 /** 读取高级设置：各 agent 的模型（空串 = 跟随 global / 系统默认） */
@@ -557,9 +561,13 @@ export function getEffectiveModel(mode: string) {
   return invoke<string>('get_effective_model', { mode })
 }
 
-/** 设置某个 agent 的模型；model 空串 = 清除（跟随全局 fallback） */
-export function setAgentModel(agent: string, model: string) {
-  return invoke<string>('set_agent_model', { agent, model })
+/**
+ * 设置某个 agent 的模型；model 空串 = 清除（跟随全局 fallback）。
+ * provider 必须与被选 model 同源（ModelInfo.provider）：后端按 (provider, model)
+ * 成对落盘，只给 model 时由后端消歧（唯一候选自动补全 / 多候选报错）。
+ */
+export function setAgentModel(agent: string, model: string, provider?: string) {
+  return invoke<string>('set_agent_model', { agent, model, provider })
 }
 
 /** 生效模型的 provider 归属（mode 感知，后端权威解析）：弹窗勾选/effort 上下文数据源 */

@@ -7,6 +7,7 @@ import { invoke } from '../core/bridge'
 import type {
   ChatMessage,
   ChatReference,
+  SendOutcome,
   ToolSchema,
   TimelineEntry,
   PlanData,
@@ -301,12 +302,16 @@ export interface SessionAPI {
   liveCalls: number
 
   // ── Handlers ──
+  /** 返回发送的真实结果（画布等外部入口据此回执，见 nuphus:send-result）。
+   *  sendId 由调用方指定（画布 requestId）时替代内部生成的 uuid —— 后端受理事件
+   *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。 */
   handleSend: (
     input: string,
     images?: string[],
     forceMode?: string,
     refs?: import('../core/types').ChatReference[],
-  ) => Promise<void>
+    sendId?: string,
+  ) => Promise<SendOutcome>
   handleNewChat: () => void
   reloadChatFromBackend: () => Promise<void>
   resumeLastSession: () => Promise<void>
@@ -446,8 +451,16 @@ export function useSession(): SessionAPI {
 
   // ── handleSend (kept in useSession due to tight coupling with messages) ──
   const handleSend = useCallback(
-    async (input: string, images?: string[], forceMode?: string, refs?: ChatReference[]) => {
-      if (!(await agentControl.checkBackendReady())) return
+    async (
+      input: string,
+      images?: string[],
+      forceMode?: string,
+      refs?: ChatReference[],
+      sendId?: string,
+    ): Promise<SendOutcome> => {
+      if (!(await agentControl.checkBackendReady())) {
+        return { ok: false, message: t('toast.connectionLost') }
+      }
 
       // 后端 busy 是追加判定的权威（不依赖前端 isProcessing）：execution_completed 事件
       // 早于后端收尾 guard drop——存在"前端已空闲、后端仍 busy"窗口期，此时发送后端会
@@ -468,7 +481,7 @@ export function useSession(): SessionAPI {
       const configured = await isLlmConfigured()
       if (!configured) {
         invoke('hud_update', { text: 'Please configure API Key first', phase: 'error' })
-        return
+        return { ok: false, message: t('toast.configureApiKey') }
       }
 
       // 执行中（后端 busy）发送 = 追加指令：不创建独立 user 气泡。
@@ -503,12 +516,14 @@ export function useSession(): SessionAPI {
         execUI.setPlanData(null)
         execUI.setGoal(input.slice(0, 120))
       }
-      const sendId = crypto.randomUUID()
+      // 调用方指定的 sendId（画布 requestId）优先：后端受理事件按它精确对齐；
+      // 未指定（输入框发送等）沿用内部 uuid，行为不变。
+      const effectiveSendId = sendId || crypto.randomUUID()
       // ⚠️ 追加指令（执行中发送）绝不覆盖 streamingMsgId：它指向正在流式的
       // agent 气泡，覆盖后 llm_text_delta / execution_completed 找不到目标，
       // agent 最终回复会凭空消失（气泡被"划开"）。仅新执行才重置。
       if (!isAppendAttempt) {
-        streamingMsgId.current = sendId
+        streamingMsgId.current = effectiveSendId
       }
       let isAppend = false
       try {
@@ -523,7 +538,7 @@ export function useSession(): SessionAPI {
           input,
           history,
           relation,
-          sendId,
+          effectiveSendId,
           forceMode || mode,
           images,
           refs,
@@ -534,7 +549,7 @@ export function useSession(): SessionAPI {
             text: 'Connection lost - please try again',
             phase: 'error',
           })
-          return
+          return { ok: false, message: t('toast.connectionLost') }
         }
         if (result.appended) {
           // 执行中发送被接受为追加指令：不开启新执行、不清除执行态。
@@ -543,7 +558,7 @@ export function useSession(): SessionAPI {
           isAppend = true
           setMessages(prev => prev.filter(m => m.id !== msg.id))
           showToast(result.message || input, 'info')
-          return
+          return { ok: true }
         }
         // 图片降级警告：主模型与视觉模型都不支持视觉，图片已降级发送但 AI 无法查看。
         // 弹窗提示，不阻塞消息流（后端已正常处理）。
@@ -587,10 +602,11 @@ export function useSession(): SessionAPI {
               },
             ]
           })
-          return
+          return { ok: false, message: errorText }
         }
       } catch (e: any) {
         invoke('hud_update', { text: 'Request failed: ' + (e.message || e), phase: 'error' })
+        return { ok: false, message: e?.message || String(e) }
       } finally {
         // 追加指令不改变执行态（仍在执行中）；只有真正开启新执行才清理
         if (!isAppend) {
@@ -599,6 +615,7 @@ export function useSession(): SessionAPI {
           executionActiveRef.current = false
         }
       }
+      return { ok: true }
     },
     [mode, isProcessing, agentControl.checkBackendReady],
   )

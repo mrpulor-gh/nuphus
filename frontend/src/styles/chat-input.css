@@ -444,6 +444,20 @@
   letter-spacing: 0.04em;
   text-transform: lowercase;
 }
+/* cache 命中率：整行提亮形成视觉焦点。
+   为何不用字重：Consolas 的 Bold 仅比 Regular 多 ~18% 墨水（.NET 基线 1.18~1.22，
+   WebView2 实测 1.15），10.5px 小字号下肉眼不可辨——强调必须走「亮度」信道。
+   为何不染语义色：ctx 值已独占颜色通道（红/黄/绿=容量压力，高=危险），
+   cache 方向相反（高=好），再染一色会让同弹窗内颜色语义互相抵消。
+   label 由 --fg-3@0.65 提到 --fg-2@1.0，与值的 --fg-1 形成「次亮/亮」两级递进。 */
+.input-bar-ctx-row.is-strong .input-bar-ctx-detail-label {
+  font-weight: 700;
+  color: var(--fg-2);
+  opacity: 1;
+}
+.input-bar-ctx-row.is-strong .input-bar-ctx-value {
+  font-weight: 700;
+}
 
 /* ═══════════════════════════════════════
    统一底栏 — Flat 控件栏，无状态信息

@@ -36,6 +36,15 @@ export interface InlineChatAgentEntry {
   }
 }
 
+/**
+ * 一次发送的真实结果（handleSend 返回值）。
+ * 供画布等「非输入框发起」的调用方回执使用：ok=false 时 message 为失败原因。
+ */
+export interface SendOutcome {
+  ok: boolean
+  message?: string
+}
+
 export interface ChatReference {
   type: 'skill' | 'knowledge' | 'workflow' | 'capture'
   id: string // skill name / knowledge rel_path / workflow id / capture file path
@@ -592,6 +601,10 @@ export type NuphusEvent =
       confidence: number
     }
   | { type: 'session_info'; session_id: string; model: string; timestamp: number }
+  /** 后端已受理用户消息（开启新执行 或 进入追加队列）：真实发送成功时点，
+   *  与整轮执行完成（send_message_cmd 返回）区分——画布据此立即收起遮罩回对话。
+   *  send_id 缺省 = 老调用方（无精确对齐需求）。 */
+  | { type: 'message_accepted'; send_id?: string | null; source: string }
   | { type: 'mode_changed'; mode: string }
   | {
       type: 'token_usage'

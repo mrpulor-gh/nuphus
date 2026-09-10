@@ -427,6 +427,9 @@ mod tests {
         fn provider_kind(&self) -> ProviderKind {
             ProviderKind::MiniMax
         }
+        fn provider_name(&self) -> &str {
+            ""
+        }
     }
 
     #[test]

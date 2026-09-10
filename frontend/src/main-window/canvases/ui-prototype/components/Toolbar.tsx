@@ -235,8 +235,10 @@ export function Toolbar({
                 exit={{ opacity: 0, x: 8, scale: 0.96 }}
                 transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
                 style={{
-                  height: 40,
-                  padding: '0 16px',
+                  /* 长文案（如导出后告知的绝对路径）换行显示，短文案外观不变 */
+                  minHeight: 40,
+                  maxWidth: 'min(560px, 70vw)',
+                  padding: '8px 16px',
                   borderRadius: 20,
                   background: p.inverseSurface,
                   color: p.inverseOnSurface,
@@ -245,7 +247,8 @@ export function Toolbar({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 8,
-                  whiteSpace: 'nowrap',
+                  whiteSpace: 'normal',
+                  overflowWrap: 'anywhere',
                   boxShadow: '0 2px 10px rgba(0,0,0,0.10)',
                   pointerEvents: 'none',
                 }}

@@ -26,6 +26,12 @@ pub struct LlmClient {
     endpoint: String,
     model: String,
     provider_kind: ProviderKind,
+    /// providers.toml segment name backing this client (e.g. "deepseek",
+    /// "custom"). Empty when unknown — the Transport cannot supply it: its
+    /// `provider_name()` reports the provider *type* id, under which every
+    /// custom segment collapses to "custom". Only the factory, which resolves
+    /// the segment from the registry, knows the real segment name.
+    provider_name: String,
 }
 
 impl LlmClient {
@@ -45,6 +51,9 @@ impl LlmClient {
             endpoint,
             model,
             provider_kind,
+            // ChatCompletionsConfig.name is the provider *type* id, not the
+            // providers.toml segment name — leave unknown rather than guessing.
+            provider_name: String::new(),
         })
     }
 
@@ -59,6 +68,7 @@ impl LlmClient {
             endpoint: String::new(),
             model,
             provider_kind,
+            provider_name: String::new(),
         }
     }
 
@@ -72,7 +82,17 @@ impl LlmClient {
             endpoint: String::new(),
             model,
             provider_kind,
+            provider_name: String::new(),
         }
+    }
+
+    /// Bind the providers.toml segment name (builder form).
+    ///
+    /// The factory resolves the segment from the registry and calls this; other
+    /// constructors leave the name empty (see the field docs).
+    pub fn with_provider_name(mut self, provider_name: impl Into<String>) -> Self {
+        self.provider_name = provider_name.into();
+        self
     }
 
     /// Use custom endpoint
@@ -146,6 +166,10 @@ impl ApiClient for LlmClient {
     fn provider_kind(&self) -> ProviderKind {
         self.provider_kind
     }
+
+    fn provider_name(&self) -> &str {
+        &self.provider_name
+    }
 }
 
 #[cfg(test)]
@@ -170,5 +194,13 @@ mod tests {
         let client = LlmClient::with_transport(transport);
         assert_eq!(client.model, "deepseek-v4-flash");
         assert_eq!(client.provider_kind, ProviderKind::MiniMax);
+        // Transport 只能提供 provider *类型* id → 段名未知即空串，调用方据此
+        // 回落到同名候选遍历（绝不把 provider_kind 当段名用）。
+        assert_eq!(client.provider_name(), "");
+        // 工厂路径显式绑定 providers.toml 段名后不再折叠。
+        let bound = client.clone().with_provider_name("seg-b");
+        assert_eq!(bound.provider_name(), "seg-b");
+        assert_eq!(bound.model_name(), "deepseek-v4-flash");
+        assert_eq!(bound.provider_kind(), ProviderKind::MiniMax);
     }
 }

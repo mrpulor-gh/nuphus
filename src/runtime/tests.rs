@@ -61,6 +61,10 @@ impl ApiClient for MockApiClient {
     fn provider_kind(&self) -> ProviderKind {
         self.provider_kind
     }
+
+    fn provider_name(&self) -> &str {
+        ""
+    }
 }
 
 /// Recording mock EventEmitter capturing all emitted events.

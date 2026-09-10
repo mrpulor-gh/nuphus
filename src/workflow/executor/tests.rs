@@ -896,6 +896,10 @@ impl crate::api::ApiClient for MockChatClient {
     fn provider_kind(&self) -> crate::api::ProviderKind {
         crate::api::ProviderKind::Custom
     }
+
+    fn provider_name(&self) -> &str {
+        ""
+    }
 }
 
 fn make_chat_step(name: &str, message: &str, model: Option<&str>) -> Step {

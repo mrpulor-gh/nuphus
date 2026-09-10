@@ -278,6 +278,15 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 nuphus::state::SignalState::write(&state.signals)
                     .append_queue
                     .push(message.clone());
+                // 受理事件：消息已真实入队，本分支此后直接 return Ok（不会再以 Err 退出）。
+                // 画布类入口据此立即收起发送遮罩回主对话，不等整轮执行结束。
+                // 此处 emitter 尚未构造，按主路径同款就地构造（桌面 Tauri + 手机 WS 双推）。
+                crate::emitter::CompoundEmitter::new(app.clone(), state).emit(
+                    NuphusEvent::MessageAccepted {
+                        send_id: send_id.clone(),
+                        source: source.clone(),
+                    },
+                );
             }
         }
         return Ok(ProcessInputResponse {
@@ -604,6 +613,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     let existing_workflow_agent2 = existing_workflow_agent;
     let is_workflow2 = is_workflow;
     let source2 = source.clone();
+    let send_id2 = send_id.clone();
 
     let join_handle = tokio::spawn(async move {
         let state = app_handle.state::<AppState>();
@@ -665,6 +675,16 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         let workflow_llm = resolve_llm(&workflow_binding)?;
         let exec_llm = resolve_llm(&exec_binding)?;
         let custom_llm = resolve_llm(&custom_binding)?;
+
+        // 受理事件（主路径）：运行前置全部就绪（registry/LLM client/workflow agent 均已解析，
+        // 上方 ? 是本路径最后一批「受理前」Err 出口）→ 此处起进入 ReAct 循环，消息必被处理。
+        // 与整轮执行完成（ProcessInputResponse 返回）严格区分：画布据此立即收起遮罩回对话，
+        // 后续执行耗时再长/中途失败都与遮罩无关。置于 ? 之后，杜绝「已回执成功但 invoke 报错」。
+        emitter.emit(NuphusEvent::MessageAccepted {
+            send_id: send_id2.clone(),
+            source: source2.clone(),
+        });
+
         let leader_model = leader_binding.1.clone();
         let workflow_model = workflow_binding.1.clone();
         let custom_model = custom_binding.1.clone();
@@ -1070,7 +1090,14 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     output_tokens: 0,
                     cache_hit_tokens: u32::MAX,
                 });
-                let cw = nuphus::agent::goal_types::get_context_window(&leader_config.model);
+                // refine 预算必须按「绑定对」取：同 id 跨 provider 时仅凭 model
+                // 名会拿到别的段（或 builtin 无此模型 → 128K 猜测）。
+                // workflow 分支必须用 workflow_binding：leader_config 是当前 mode 的
+                // 活动模型，workflow 绑定与它可能不同（同 id 跨 provider 段）。
+                let cw = nuphus::agent::goal_types::get_context_window_for(
+                    &workflow_binding.1,
+                    Some(workflow_binding.0.as_str()),
+                );
                 wa.maybe_refine_session(cw, refine_threshold2, Some(&emitter))
                     .await;
                 let mut guard = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
@@ -1091,7 +1118,10 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     cache_hit_tokens: u32::MAX,
                 });
 
-                let cw = nuphus::agent::goal_types::get_context_window(&rt.config().model);
+                let cw = nuphus::agent::goal_types::get_context_window_for(
+                    &rt.config().model,
+                    Some(rt.config().provider.as_str()),
+                );
                 let refine_threshold = rt.config().refine_threshold;
                 rt.maybe_refine_session(&cancel_flag2, cw, refine_threshold)
                     .await;

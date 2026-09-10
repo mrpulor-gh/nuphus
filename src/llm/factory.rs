@@ -39,7 +39,8 @@ impl ClientFactory {
             .ok_or_else(|| crate::NuphusError::llm(format!("model '{}' not found", model_id)))?;
 
         let transport = self.build_transport(provider, &model.id)?;
-        let client = super::client::LlmClient::with_transport_arc(transport);
+        let client = super::client::LlmClient::with_transport_arc(transport)
+            .with_provider_name(provider.name.clone());
         Ok(Arc::new(client))
     }
 
@@ -59,9 +60,10 @@ impl ClientFactory {
                 ))
             })?;
         let transport = self.build_transport(provider, &model.id)?;
-        Ok(Arc::new(super::client::LlmClient::with_transport_arc(
-            transport,
-        )))
+        Ok(Arc::new(
+            super::client::LlmClient::with_transport_arc(transport)
+                .with_provider_name(provider.name.clone()),
+        ))
     }
 
     /// Create Client for the main model (all text tasks)
@@ -162,5 +164,95 @@ impl ClientFactory {
                 Ok(pmeta.transport(provider, model_id))
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::ProviderKind;
+
+    /// 同 id 双段 fixture，且两段都是 `provider_type = "custom"` —— builtin
+    /// 枚举把二者一并折叠成 `ProviderKind::Custom`，只有 providers.toml 段名
+    /// 能区分；窗口值也不同，便于断言「段名 → provider 精确取值」。
+    ///
+    /// 返回 (temp dir, registry)：调用方负责 `remove_dir_all`。
+    fn dual_segment_registry() -> (std::path::PathBuf, ModelRegistry) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-factory-test-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            seq
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg_path = dir.join("providers.toml");
+        let cfg = "model = \"probe-model\"\n\n\
+             [[providers]]\n\
+             name = \"seg-a\"\n\
+             provider_type = \"custom\"\n\
+             api_key = \"sk-a\"\n\
+             base_url = \"https://a.example.com/v1\"\n\n\
+             [[providers.models]]\n\
+             id = \"probe-model\"\n\
+             context_window = 200000\n\n\
+             [[providers]]\n\
+             name = \"seg-b\"\n\
+             provider_type = \"custom\"\n\
+             api_key = \"sk-b\"\n\
+             base_url = \"https://b.example.com/v1\"\n\n\
+             [[providers.models]]\n\
+             id = \"probe-model\"\n\
+             context_window = 64000\n";
+        std::fs::write(&cfg_path, cfg).unwrap();
+        let registry = ModelRegistry::from_toml(cfg_path.to_str().unwrap()).unwrap();
+        (dir, registry)
+    }
+
+    /// 工厂创建的 client 必须携带 providers.toml **段名**：这是同 id 跨段
+    /// 场景下唯一能区分路由的标识（provider_kind 折叠成 Custom）。
+    #[test]
+    fn test_create_client_carries_segment_name() {
+        let (dir, registry) = dual_segment_registry();
+        let factory = ClientFactory::new(registry);
+
+        let a = factory.create_client_for("seg-a", "probe-model").unwrap();
+        let b = factory.create_client_for("seg-b", "probe-model").unwrap();
+        assert_eq!(a.provider_name(), "seg-a");
+        assert_eq!(b.provider_name(), "seg-b");
+
+        // provider_kind 折叠：两者不可区分 —— provider_name 存在的理由。
+        assert_eq!(a.provider_kind(), ProviderKind::Custom);
+        assert_eq!(a.provider_kind(), b.provider_kind());
+
+        // 段名直接驱动 provider 精确窗口解析（同 id 两段取值不同）。
+        assert_eq!(
+            factory
+                .registry()
+                .resolve_context_window(Some(a.provider_name()), "probe-model"),
+            Some(200_000)
+        );
+        assert_eq!(
+            factory
+                .registry()
+                .resolve_context_window(Some(b.provider_name()), "probe-model"),
+            Some(64_000)
+        );
+        // provider 未知（None / ""）→ 回落候选遍历，取首个带值的候选。
+        assert_eq!(
+            factory
+                .registry()
+                .resolve_context_window(None, "probe-model"),
+            Some(200_000)
+        );
+
+        // create_client（find_model 段序首匹配）→ 段序首段，语义不变。
+        let first = factory.create_client("probe-model").unwrap();
+        assert_eq!(first.provider_name(), "seg-a");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

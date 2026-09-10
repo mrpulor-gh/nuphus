@@ -117,6 +117,23 @@ pub trait ApiClient: Send + Sync {
 
     /// Get provider type
     fn provider_kind(&self) -> ProviderKind;
+
+    /// Get the providers.toml **segment name** this client was built from.
+    ///
+    /// NOT interchangeable with [`Self::provider_kind`]: the latter folds every
+    /// non-builtin segment into `ProviderKind::Custom`, so two same-name models
+    /// published by different custom segments are indistinguishable there.
+    /// Callers needing provider-exact resolution (context window, capability
+    /// lookup) must use this segment name.
+    ///
+    /// Returns `""` when the segment name is unknown (direct construction, test
+    /// doubles). Callers treat `""` as "provider unknown" and fall back to the
+    /// same-name candidate scan — never as a segment literally named `""`.
+    ///
+    /// No default implementation on purpose: every implementor must state its
+    /// segment name, otherwise a forgotten one would silently keep the
+    /// provider-blind behaviour this method exists to remove.
+    fn provider_name(&self) -> &str;
 }
 
 #[cfg(test)]
