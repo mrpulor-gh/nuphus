@@ -63,11 +63,15 @@ docs/*
 # 个人工作流数据（不公开）
 plugin/workflows/a1b2c3d4*/
 plugin/workflows/wechat*/
+# 本机媒体应用播放工作流（含本机 exe 绝对路径、屏幕分辨率与操作截图）
+plugin/workflows/qqmusic-play-song*/
 
 # 工作流运行快照（保留 workflow.json / params.json / guide.md）
 plugin/workflows/*/workflow.2*.json
 plugin/ui-maps/im/
 plugin/ui-maps/terminal/
+# 本机媒体应用 UI 地图（坐标系绑定本机分辨率）
+plugin/ui-maps/media/
 
 # 个人 ChatAgent 配置（不公开）
 plugin/chat-agents/
