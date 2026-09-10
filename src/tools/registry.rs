@@ -439,6 +439,36 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// 工具总览单行摘要。
+    ///
+    /// 完整参数说明由 API `tools` 字段承载（`Agent::build_request` 无条件
+    /// `.with_tools(schemas)` 下发），本函数产物仅用于 system prompt 的
+    /// 「有哪些工具」总览——模型据此知道能力边界、避免臆造工具名。
+    ///
+    /// 原实现把 `t.description` 全量复制进 prompt，与 tools 字段逐字重复，
+    /// 实测 67 个工具占 12,339 字节（约 4.5K token）纯冗余。此处只取首句
+    /// 并限长：既保住「这个工具是干什么的」的最小判别信息，又不再挤占预算。
+    fn summarize_for_overview(desc: &str) -> String {
+        const MAX_CHARS: usize = 48;
+        // 首句边界：中文句号或换行（换行常用于「一句标题 + 详述」的写法）
+        let head = match desc.find(['。', '\n']) {
+            Some(i) => {
+                let ch = desc[i..].chars().next();
+                let end = i + ch.map(|c| c.len_utf8()).unwrap_or(0);
+                &desc[..end]
+            }
+            None => desc,
+        };
+        // 按字符（非字节）截断，避免切坏 UTF-8
+        if head.chars().count() <= MAX_CHARS {
+            head.to_string()
+        } else {
+            let mut s: String = head.chars().take(MAX_CHARS).collect();
+            s.push('…');
+            s
+        }
+    }
+
     /// Render tool schemas as JSON string, embedded in system prompt's <tools> tag
     ///
     /// Result is cached (lazy-built), automatically cleared when register adds/updates tools.
@@ -459,7 +489,11 @@ impl ToolRegistry {
                 // Tool names in prompt must match API schemas (:: → _)
                 let normalized_name = s.function.name.replace("::", "_");
                 let desc = s.function.description.as_deref().unwrap_or("");
-                format!("- {}: {}", normalized_name, desc)
+                format!(
+                    "- {}: {}",
+                    normalized_name,
+                    Self::summarize_for_overview(desc)
+                )
             })
             .collect();
         let result = simplified.join("\n");
@@ -482,7 +516,11 @@ impl ToolRegistry {
             .map(|s| {
                 let normalized_name = s.function.name.replace("::", "_");
                 let desc = s.function.description.as_deref().unwrap_or("");
-                format!("- {}: {}", normalized_name, desc)
+                format!(
+                    "- {}: {}",
+                    normalized_name,
+                    Self::summarize_for_overview(desc)
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -989,6 +1027,34 @@ mod tests {
             rendered.contains("system_shell"),
             "system_shell missing from prompt"
         );
+    }
+
+    /// 工具总览摘要：首句截取 + 限长 + UTF-8 边界安全。
+    ///
+    /// 钉子：覆盖「全量复制 description」的旧行为回归——一旦有人把
+    /// `render_tools_for_prompt` 改回 `desc`，限长断言会立刻失败。
+    #[test]
+    fn test_summarize_for_overview() {
+        // 中文句号截断
+        assert_eq!(
+            ToolRegistry::summarize_for_overview("读文件。后面还有很长很长的详情"),
+            "读文件。"
+        );
+        // 换行截断（「标题 + 详述」写法）
+        assert_eq!(
+            ToolRegistry::summarize_for_overview("标题行\n详述内容"),
+            "标题行\n"
+        );
+        // 无分隔符且不超限 → 原样返回
+        assert_eq!(ToolRegistry::summarize_for_overview("短描述"), "短描述");
+        // 超长无分隔符 → 48 字符 + 省略号
+        let long = "很长的描述".repeat(20);
+        let out = ToolRegistry::summarize_for_overview(&long);
+        assert_eq!(out.chars().count(), 49, "应为 48 字符 + 省略号");
+        assert!(out.ends_with('…'));
+        assert!(out.len() < long.len(), "摘要必须短于原文");
+        // 多字节边界：每个字符完整，未切坏 UTF-8
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
     }
 
     #[test]
