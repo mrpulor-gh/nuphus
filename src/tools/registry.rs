@@ -50,6 +50,12 @@ pub struct ToolRegistry {
     /// passed to tool executors via ToolCtx at the execute() choke point.
     /// Clone shares the same Arc (same pattern as desktop_client).
     signals: crate::state::SharedSignals,
+    /// 自动化工具（`desktop_*` / `browser_*`）开关。
+    ///
+    /// false = 既不暴露 schema，也拒绝执行。ExecAgent 走此隔离：
+    /// 约束是「Exec 执行自动化操作属黑盒」，故必须双端阻断——仅在 schema 层
+    /// 隐藏不够，模型仍可能凭上下文或历史消息臆造工具名直接调用。
+    pub(super) automation_tools_enabled: bool,
 }
 
 impl Default for ToolRegistry {
@@ -61,6 +67,7 @@ impl Default for ToolRegistry {
             prompt_cache: Arc::new(RwLock::new(None)),
             canonical_map: HashMap::new(),
             signals: crate::state::new_shared_signals(),
+            automation_tools_enabled: true,
         }
     }
 }
@@ -74,6 +81,7 @@ impl Clone for ToolRegistry {
             prompt_cache: self.prompt_cache.clone(),
             canonical_map: self.canonical_map.clone(),
             signals: self.signals.clone(),
+            automation_tools_enabled: self.automation_tools_enabled,
         }
     }
 }
@@ -141,7 +149,9 @@ impl ToolRegistry {
 
     /// Check if tool exists (flat name + internal name dual resolution + desktop tools + browser tools)
     pub fn has_tool(&self, name: &str) -> bool {
-        self.get(name).is_some() || Self::is_desktop_tool(name) || Self::is_browser_tool(name)
+        self.get(name).is_some()
+            || (self.automation_tools_enabled
+                && (Self::is_desktop_tool(name) || Self::is_browser_tool(name)))
     }
 
     /// Check if tool dependencies are satisfied
@@ -220,6 +230,17 @@ impl ToolRegistry {
         tool_name: &str,
         params: &serde_json::Value,
     ) -> std::result::Result<ToolResult, String> {
+        // 自动化工具开关（ExecAgent 关闭）——执行侧终点。
+        // schema 层已不暴露，此处兜住「凭历史上下文臆造工具名直接调用」的路径。
+        if !self.automation_tools_enabled
+            && (Self::is_browser_tool(tool_name) || Self::is_desktop_tool(tool_name))
+        {
+            return Ok(ToolResult::failure(format!(
+                "Tool '{}' is unavailable for this agent role (automation tools disabled).",
+                tool_name
+            )));
+        }
+
         // 检查是否是浏览器工具
         if tool_name.starts_with("browser_") {
             // 浏览器工具需要异步执行，这里返回提示
@@ -898,6 +919,10 @@ impl ToolRegistry {
     pub fn exec() -> Self {
         let mut registry = Self::new();
         registry.register_base_tools();
+        // 约束：Exec 执行自动化操作属黑盒 → 关闭 desktop_*/browser_* 的暴露与执行。
+        // 单靠 register_base_tools 挡不住 browser：它在 get_desktop_schemas 里是无条件
+        // 附加的，故必须在 registry 层显式收口（见 automation_tools_enabled 文档）。
+        registry.automation_tools_enabled = false;
         registry.load_depends_from_file("config/tool_deps.toml");
         tracing::info!("Registered {} exec tools", registry.len());
         registry
@@ -963,6 +988,45 @@ mod tests {
                 "编排类工具 '{forbidden}' 不应出现在 Exec 工具集中"
             );
         }
+        // 约束：Exec 执行自动化操作属黑盒 → desktop_*/browser_* 必须完全缺席。
+        // 这是安全边界而非 token 优化：browser 工具在 get_desktop_schemas 里是无条件
+        // 附加的，靠 register_base_tools 挡不住，必须由 automation_tools_enabled 收口。
+        for prefix in ["desktop_", "browser_"] {
+            let leaked: Vec<&String> = exec.iter().filter(|n| n.starts_with(prefix)).collect();
+            assert!(
+                leaked.is_empty(),
+                "自动化工具不得进入 Exec 工具集（{prefix}）: {leaked:?}"
+            );
+        }
+    }
+
+    /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。
+    ///
+    /// schema 层不暴露只是第一道防线：`has_tool` 一旦返回 true，react_loop 的
+    /// 「未知工具」守卫就不会触发，模型凭历史上下文臆造的工具名会被一路放行到执行层。
+    #[test]
+    fn test_exec_automation_gate_is_two_sided() {
+        let exec = ToolRegistry::exec();
+        assert!(
+            !exec.has_tool("browser_navigate"),
+            "Exec 不得持有 browser 工具"
+        );
+        assert!(
+            !exec.has_tool("desktop_mouse"),
+            "Exec 不得持有 desktop 工具"
+        );
+        assert!(exec.has_tool("Read"), "Exec 必须保留文件工具");
+
+        // Leader 侧不受影响
+        let leader = ToolRegistry::builtin();
+        assert!(
+            leader.has_tool("browser_navigate"),
+            "Leader 应保留 browser 工具"
+        );
+        assert!(
+            leader.has_tool("desktop_mouse"),
+            "Leader 应保留 desktop 工具"
+        );
     }
 
     /// wf_tools 过滤谓词回归：agent 编排/记忆/工作流管理类被排除，wf_call 与普通工具保留

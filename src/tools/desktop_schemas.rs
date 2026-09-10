@@ -25,6 +25,11 @@ macro_rules! json_props {
 
 impl ToolRegistry {
     pub(super) fn get_desktop_schemas(&self) -> Vec<crate::api::ToolDefinition> {
+        // 自动化开关关闭（ExecAgent）→ desktop_* 与 browser_* 一个都不暴露。
+        // 注意 browser 在下方是无条件附加的，此处必须在最前面拦下。
+        if !self.automation_tools_enabled {
+            return Vec::new();
+        }
         let mut schemas = Vec::new();
 
         // Desktop 工具仅在 desktop_client 已连接时暴露

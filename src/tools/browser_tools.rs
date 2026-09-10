@@ -162,6 +162,14 @@ impl ToolRegistry {
         tool_name: &str,
         params: &serde_json::Value,
     ) -> std::result::Result<ToolResult, String> {
+        // 自动化开关（ExecAgent 关闭）——必须置于 MCP 双通道之前：
+        // route_tool 会把调用转发给 nuphus-mcp 进程执行，拦在后面等于没拦。
+        if !self.automation_tools_enabled {
+            return Ok(ToolResult::failure(format!(
+                "Tool '{}' is unavailable for this agent role (automation tools disabled).",
+                tool_name
+            )));
+        }
         register_cookie_source();
 
         // 双通道（dogfooding）：MCP 优先，失败回退直连
