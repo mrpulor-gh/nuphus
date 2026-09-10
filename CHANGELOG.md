@@ -5,6 +5,23 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.10] - 2026-09-11
+
+### Added
+- 发送受理回执（message_accepted）：消息真实入队 / 进入执行循环时立即广播受理事件并携带调用方 send_id，画布类入口据此即时收起遮罩回到对话，不再等整轮执行结束。
+- 画布导出落盘（canvas_export）：导出改为写盘并回传绝对路径，取代静默下载；Downloads 目录经 User Shell Folders 解析。
+- 面板巡览工作流示例（examples/workflows/nuphus-tour-v4）：含工作流、参数与图文指引。
+
+### Changed
+- 模型绑定与上下文窗口按 provider 段精确解析：客户端暴露 providers.toml 段名，上下文窗口改用 (provider, model) 取值，同名模型跨 provider 段不再错配；原 provider-blind 入口降级为兼容保留。
+- 绑定解析新增诊断：区分「未设置」与「已设置却未生效」，避免静默回落 leader 且用户无感。
+- 发布说明改从 CHANGELOG 当前版本段落提取，Release 页面展示真实改动内容。
+
+### Fixed
+- 发送 / 导出重活期间的界面锁：遮罩拦截指针与键盘、总时长兜底、幂等解锁；遮罩期间重复点击直接忽略，消除界面冻结观感与重复投递。
+- 强制终止补齐会话清理与中断收敛事件。
+- Exec 路径不再把展示标签 `model (provider)` 当作模型 id 喂给解析器（该误用会使上下文窗口恒回落 128K）。
+
 ## [0.2.9] - 2026-09-09
 
 ### Added
