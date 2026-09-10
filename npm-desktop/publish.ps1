@@ -101,7 +101,7 @@ function Resolve-Version {
 function Test-NpmAuth {
     Write-Step 'Checking npm authentication (npm whoami)'
     if ($DryRun) {
-        $who = & npm whoami --registry $Registry 2>$null
+        $who = & npm.cmd whoami --registry $Registry 2>$null
         if ($LASTEXITCODE -ne 0 -or -not $who) {
             Write-WarnMsg 'npm whoami failed (dry-run: continue, but real publish will need auth)'
         } else {
@@ -109,7 +109,7 @@ function Test-NpmAuth {
         }
         return
     }
-    $who = & npm whoami --registry $Registry 2>$null
+    $who = & npm.cmd whoami --registry $Registry 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $who) {
         throw 'npm not authenticated. Run `npm login` or set NPM_TOKEN first (must have publish rights on @nuphus scope).'
     }
@@ -117,7 +117,7 @@ function Test-NpmAuth {
 }
 
 function Get-PublishedVersion($pkgName) {
-    $v = & npm view $pkgName version --registry $Registry 2>$null
+    $v = & npm.cmd view $pkgName version --registry $Registry 2>$null
     if ($LASTEXITCODE -ne 0) { return $null }
     return $v
 }
@@ -248,7 +248,7 @@ function Publish-Package($pkgName, $version) {
         return
     }
     Write-Step "npm publish $pkgName@$version"
-    & npm publish $dir --registry $Registry
+    & npm.cmd publish $dir --registry $Registry
     if ($LASTEXITCODE -ne 0) { throw "npm publish failed for $pkgName" }
     Write-Ok "$pkgName@$version published"
 }
@@ -263,8 +263,8 @@ function Verify-Install($version) {
     try {
         Push-Location $testDir
         try {
-            & npm init -y 2>$null | Out-Null
-            & npm install "@nuphus/nuphus-desktop@$version" --registry $Registry 2>$null
+            & npm.cmd init -y 2>$null | Out-Null
+            & npm.cmd install "@nuphus/nuphus-desktop@$version" --registry $Registry 2>$null
             if ($LASTEXITCODE -ne 0) { throw 'npm install verification failed' }
             $bin = Join-Path $testDir 'node_modules\.bin\nuphus.cmd'
             if (-not (Test-Path $bin)) { throw "launcher not found after install: $bin" }
@@ -330,11 +330,14 @@ if ($DryRun) {
 } else {
     foreach ($n in @($MetaName) + @($Platforms | ForEach-Object { $_.Name })) {
         $v = $null
-        for ($attempt = 1; $attempt -le 4; $attempt++) {
+        # 大包（linux tarball 99MB / 解包 232MB）npm 侧异步处理可达数分钟，
+        # 实测 4×5s 会在包已成功发布时误判失败并抛出，故放宽到 12×15s。
+        $maxAttempts = 12
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             $v = Get-PublishedVersion "@nuphus/$n"
             if ($v -eq $version) { break }
-            Write-Ok "[retry $attempt/4] @nuphus/$n not yet $version (got '$v'), waiting for registry propagation..."
-            Start-Sleep -Seconds 5
+            Write-Ok "[retry $attempt/$maxAttempts] @nuphus/$n not yet $version (got '$v'), waiting for registry propagation..."
+            Start-Sleep -Seconds 15
         }
         if ($v -ne $version) { throw "registry verification failed: @nuphus/$n expected $version got $v" }
         Write-Ok "@nuphus/$n@$v confirmed on registry"
