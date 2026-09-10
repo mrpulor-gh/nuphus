@@ -177,7 +177,13 @@ mod tests {
             reasoning_effort: None,
         };
         let transport = ChatCompletionsTransport::new(config);
-        let request = crate::api::MessageRequest::new("deepseek-v4-flash", vec![]);
+        // ⚠️ 模型名必须是「任何 providers.toml 都不会配置」的占位符。
+        // 本测试的语义是「用户未配置模型级 max_tokens → 字段省略」，而
+        // build_request_body 经 resolve_max_output_tokens 读**全局** providers.toml：
+        // 用真实模型名时，开发机一旦配过该模型的 max_tokens（实测 32768），
+        // 断言立刻翻转成失败，CI 无此配置又变绿 —— 红绿取决于开发机配置，
+        // 属测试隔离性缺陷。被测行为（省略 vs 遵循显式值）与模型名无关。
+        let request = crate::api::MessageRequest::new("nuphus-test-model-unconfigured", vec![]);
         let body = transport.build_request_body(&request);
         assert!(
             body.get("max_tokens").is_none(),

@@ -1029,6 +1029,36 @@ mod tests {
         );
     }
 
+    /// 真实执行路径验证：Exec 的自动化工具必须在「通用执行入口」上被拒。
+    ///
+    /// 前面的断言都停在元数据层（has_tool / get_schemas）。本用例走
+    /// `execute_tool_only` —— 所有 Agent 共用的真实分发点（browser 走
+    /// execute_browser_tool、其余走 execute），确保闸门挡在实际调用上：
+    /// 即使参数为空、即使模型臆造了工具名，也不允许触达 DesktopClient 或 MCP 通道。
+    #[test]
+    fn test_exec_automation_blocked_at_real_execution_entry() {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(async {
+            let exec = ToolRegistry::exec();
+            for tool in ["browser_navigate", "desktop_mouse"] {
+                let result = crate::agent::exec_tool::execute_tool_only(
+                    &exec,
+                    tool,
+                    &serde_json::json!({}),
+                    None,
+                    None,
+                )
+                .await;
+                assert!(!result.success, "Exec 调用 {tool} 必须被拒，实际却成功了");
+                let msg = result.error.unwrap_or_default();
+                assert!(
+                    msg.contains("automation tools disabled"),
+                    "{tool} 的拒绝原因应指向自动化开关，实际: {msg}"
+                );
+            }
+        });
+    }
+
     /// wf_tools 过滤谓词回归：agent 编排/记忆/工作流管理类被排除，wf_call 与普通工具保留
     #[test]
     fn test_workflow_step_tool_filter() {
