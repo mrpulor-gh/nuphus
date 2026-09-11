@@ -40,12 +40,13 @@ pub struct ChatReference {
     pub label: String,
 }
 
-/// 获取工作区根目录（CARGO_MANIFEST_DIR 的父目录）
+/// 获取应用根目录（plugin/ 的父目录）
+///
+/// 委托给 `nuphus::utils::workspace_root()` 的运行时解析，不再本地重算
+/// `env!("CARGO_MANIFEST_DIR")`——那份重复实现会绕过运行时覆盖，且把 CI 构建机
+/// 路径（D:\a\nuphus\nuphus）烧进发布版二进制。
 pub(crate) fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+    nuphus::utils::workspace_root()
 }
 
 /// 解析 references，读取对应资源内容，返回注入到 Leader 上下文的文本

@@ -1,6 +1,7 @@
 //! Utils module
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 pub mod automation_lock;
 pub mod office;
@@ -731,17 +732,250 @@ pub fn nuphus_data_dir() -> PathBuf {
     resolve_project_root().join(".nuphus")
 }
 
-/// Returns the workspace root directory (cross-platform: Linux/macOS/Windows).
+/// 构建这个二进制的源码树根目录——**仅供判断"是否跑在源码检出里"**。
 ///
-/// Nuphus layout: `workspace_root/src/` (lib crate), `workspace_root/src-tauri/` (app).
-/// `CARGO_MANIFEST_DIR` for the lib crate is .../src/, so `.parent()` is the workspace root.
-/// Uses `Path::parent()` and `Path::join()` — no string concatenation, natively cross-platform.
-pub fn workspace_root() -> PathBuf {
+/// ⚠️ 不要拿它做运行时路径：发布版里它是 CI runner 的检出目录
+/// （`D:\a\nuphus\nuphus`），用户机上根本不存在。只作为 `plugin_root()` 的
+/// "这是开发机"提示，且必须配合 `Cargo.toml` 存在性检查使用。
+///
+/// 全仓唯一的 `env!("CARGO_MANIFEST_DIR")` 字面量，便于审计。
+fn compile_time_workspace_root() -> PathBuf {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| manifest.to_path_buf())
+}
+
+/// `plugin/` 运行时根目录——工作流、技能、MCP 配置、知识库、ui-maps 等的唯一来源。
+///
+/// 按优先级取**第一个存在（或可创建）且可写**的候选：
+///
+/// 1. `NUPHUS_PLUGIN_DIR`（直接给 plugin 目录）/ `NUPHUS_WORKSPACE`（给其父目录）
+/// 2. 源码检出：`compile_time_workspace_root()/plugin`——仅当该根下确有 `Cargo.toml`
+///    （真的在源码树里跑）。开发/测试行为与改造前**完全一致**
+/// 3. 便携包布局：`<exe 所在目录>/plugin`（不主动创建，只在随包分发时命中）
+/// 4. 用户数据目录：`nuphus_data_dir()/plugin`——发布版兜底，始终可写
+///
+/// 为什么不能继续直接返回编译期路径：CI 的 Windows runner 把仓库检出到
+/// `D:\a\nuphus\nuphus`，`env!("CARGO_MANIFEST_DIR")` 会把构建机路径烧进二进制。
+/// 用户机上该路径不存在（os error 3）；D 盘是只读介质时更是 ACCESS_DENIED
+/// （os error 5），导致 WorkflowEngine 初始化与 wf_save 全挂。
+pub fn plugin_root() -> PathBuf {
+    static CACHE: OnceLock<PathBuf> = OnceLock::new();
+    CACHE.get_or_init(resolve_plugin_root).clone()
+}
+
+/// 候选目录 + 是否允许创建。
+struct PluginRootCandidate {
+    path: PathBuf,
+    source: &'static str,
+    create: bool,
+}
+
+fn resolve_plugin_root() -> PathBuf {
+    let mut candidates: Vec<PluginRootCandidate> = Vec::new();
+
+    // 1. 显式覆盖（用户明确指定 → 允许创建，避免"配了却被静默忽略"）
+    if let Ok(dir) = std::env::var("NUPHUS_PLUGIN_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            candidates.push(PluginRootCandidate {
+                path: PathBuf::from(dir),
+                source: "NUPHUS_PLUGIN_DIR",
+                create: true,
+            });
+        }
+    }
+    if let Ok(dir) = std::env::var("NUPHUS_WORKSPACE") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            candidates.push(PluginRootCandidate {
+                path: PathBuf::from(dir).join("plugin"),
+                source: "NUPHUS_WORKSPACE",
+                create: true,
+            });
+        }
+    }
+
+    // 2. 源码检出（开发/测试）——有 Cargo.toml 才算源码树，不创建
+    let dev_root = compile_time_workspace_root();
+    if dev_root.join("Cargo.toml").exists() {
+        candidates.push(PluginRootCandidate {
+            path: dev_root.join("plugin"),
+            source: "dev-checkout",
+            create: false,
+        });
+    }
+
+    // 3. 便携包：plugin/ 与 exe 同级。不创建——否则 dev 下会在 target/debug 里
+    //    凭空造一个 plugin/ 并改变解析结果
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(PluginRootCandidate {
+                path: dir.join("plugin"),
+                source: "exe-relative",
+                create: false,
+            });
+        }
+    }
+
+    // 4. 用户数据目录兜底（自己的根，创建是正确的）
+    let data_dir = nuphus_data_dir().join("plugin");
+    candidates.push(PluginRootCandidate {
+        path: data_dir.clone(),
+        source: "data-dir",
+        create: true,
+    });
+
+    for c in &candidates {
+        if candidate_usable(c) {
+            tracing::debug!("[utils] plugin root = {} ({})", c.path.display(), c.source);
+            return c.path.clone();
+        }
+    }
+
+    // 理论上到不了这里（data-dir 允许创建且 NUPHUS_DATA_DIR 兜底可写）。全部失败时
+    // 返回兜底路径并打明确 ERROR，让上层报错能看到目标目录，而不是一个 os error。
+    tracing::error!(
+        "[utils] 无可写的 plugin 根目录，候选: {:?}；回退 {}",
+        candidates
+            .iter()
+            .map(|c| (c.path.display().to_string(), c.source))
+            .collect::<Vec<_>>(),
+        data_dir.display()
+    );
+    data_dir
+}
+
+/// 候选是否可用：存在（或允许创建）**且**真正可写。
+///
+/// 只读介质上的目录 `create_dir_all` 会假成功（目录已存在），只有真的写文件才
+/// 暴露 ACCESS_DENIED —— 所以必须做写探测，不能只看目录是否存在。
+fn candidate_usable(c: &PluginRootCandidate) -> bool {
+    if c.create {
+        if std::fs::create_dir_all(&c.path).is_err() {
+            return false;
+        }
+    } else if !c.path.is_dir() {
+        return false;
+    }
+    let probe = c.path.join(".nuphus-write-probe");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 随包只读 plugin 资产表（`src/build.rs` 编译期生成，`plugin/` 相对路径 → 内容）。
+mod bundled_assets {
+    include!(concat!(env!("OUT_DIR"), "/plugin_assets.rs"));
+}
+
+/// 随包只读资产（内置技能 / ui-maps 示例 / mcp 示例配置 / 经验样例）。
+pub fn bundled_plugin_assets() -> &'static [(&'static str, &'static [u8])] {
+    bundled_assets::BUNDLED_PLUGIN_ASSETS
+}
+
+/// 落盘结果统计。
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SeedReport {
+    /// 新写入的文件数
+    pub copied: usize,
+    /// 因版本变化覆盖的文件数
+    pub refreshed: usize,
+    /// 已存在且无需改动而跳过的文件数
+    pub skipped: usize,
+    /// 写入失败的文件数
+    pub failed: usize,
+}
+
+impl SeedReport {
+    /// 是否需要向用户/日志交代（有写入或失败）
+    pub fn is_notable(&self) -> bool {
+        self.copied > 0 || self.refreshed > 0 || self.failed > 0
+    }
+}
+
+/// 把内嵌的只读资产落盘到当前 plugin 根，使其成为磁盘上真实、可查看的文件。
+///
+/// 语义（`plugin/.assets-version` 记录上次落盘的应用版本）：
+/// - 文件不存在 → 写入（**copied**）
+/// - 已存在且版本未变 → 跳过（**skipped**）——绝不碰用户在数据目录里的改动
+/// - 已存在但应用版本变了 → 覆盖（**refreshed**）——只覆盖资产清单内的路径，
+///   升级时能拿到修好的内置技能；用户自己造的 workflows/community 等不在清单内，永远不动
+///
+/// 开发检出内直接跳过：仓库里资产本来就在位，落盘只会往 git 工作区塞 `.assets-version`。
+pub fn seed_plugin_assets(app_version: &str) -> SeedReport {
+    let target = plugin_root();
+    // dev 检出：资产已随 git 到位，不落盘（避免污染工作区）
+    if target == compile_time_workspace_root().join("plugin") {
+        return SeedReport::default();
+    }
+    seed_plugin_assets_into(&target, app_version)
+}
+
+/// `seed_plugin_assets` 的显式目标版本，便于测试。
+pub fn seed_plugin_assets_into(target: &std::path::Path, app_version: &str) -> SeedReport {
+    let mut report = SeedReport::default();
+    let version_file = target.join(".assets-version");
+    let seeded_version = std::fs::read_to_string(&version_file)
+        .ok()
+        .map(|s| s.trim().to_string());
+    // 版本没变就不覆盖已有文件；变了才刷新清单内路径
+    let refresh = seeded_version.as_deref() != Some(app_version);
+
+    for (rel, bytes) in bundled_plugin_assets() {
+        let dest = target.join(rel);
+        let exists = dest.is_file();
+        if exists && !refresh {
+            report.skipped += 1;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!("[plugin] 创建目录失败 {}: {e}", parent.display());
+                report.failed += 1;
+                continue;
+            }
+        }
+        match std::fs::write(&dest, bytes) {
+            Ok(()) => {
+                if exists {
+                    report.refreshed += 1;
+                } else {
+                    report.copied += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[plugin] 写入资产失败 {}: {e}", dest.display());
+                report.failed += 1;
+            }
+        }
+    }
+
+    // 全部成功才记版本：有失败则下次启动重试，不会因为一次半途而废就永久跳过
+    if report.failed == 0 {
+        if let Err(e) = std::fs::write(&version_file, app_version) {
+            tracing::warn!("[plugin] 写入 .assets-version 失败: {e}");
+        }
+    }
+    report
+}
+
+/// 应用根目录（`plugin/` 的父目录），cross-platform: Linux/macOS/Windows。
+///
+/// Nuphus layout: `workspace_root/src/` (lib crate), `workspace_root/src-tauri/` (app)。
+/// 开发机上是源码检出根，发布版上是用户数据目录（见 `plugin_root()`）——
+/// 因此所有 `workspace_root().join("plugin")` 的调用点自动获得运行时解析。
+pub fn workspace_root() -> PathBuf {
+    let root = plugin_root();
+    root.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| root.clone())
 }
 
 /// Safe Writer — wraps stderr + file, silently discards on write failure
@@ -1252,5 +1486,223 @@ mod tests {
         assert_eq!(reasoning.unwrap(), "思考");
         assert_eq!(text_out, "前 后");
         assert_eq!(depth.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    // ── plugin_root / workspace_root 运行时解析 ─────────────────────
+
+    /// 允许创建时，候选应被创建并通过写探测（探测文件不得残留）。
+    #[test]
+    fn plugin_candidate_creates_when_allowed() {
+        let dir = std::env::temp_dir().join(format!("nuphus_pr_create_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let c = PluginRootCandidate {
+            path: dir.clone(),
+            source: "test",
+            create: true,
+        };
+        assert!(candidate_usable(&c), "create=true 且路径可写时应通过");
+        assert!(dir.is_dir(), "目录应被创建");
+        assert!(
+            !dir.join(".nuphus-write-probe").exists(),
+            "写探测文件应被清理，不能留在目录里"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// create=false 时，不存在的目录必须被拒绝且不得被创建
+    /// （这条守的是"便携包候选不能凭空造目录"——否则 dev 下会在 target/debug 里
+    /// 造出 plugin/ 并抢走解析结果）。
+    #[test]
+    fn plugin_candidate_rejects_missing_dir_when_create_false() {
+        let dir = std::env::temp_dir().join(format!("nuphus_pr_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let c = PluginRootCandidate {
+            path: dir.clone(),
+            source: "test",
+            create: false,
+        };
+        assert!(
+            !candidate_usable(&c),
+            "不存在的目录在 create=false 时必须被拒绝"
+        );
+        assert!(!dir.exists(), "create=false 不得创建目录");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归护栏：在源码检出内运行时，plugin 根必须仍是仓库的 plugin/。
+    /// 若这条挂了，说明开发/测试环境的共享状态被改到了用户数据目录——
+    /// 那是破坏性变更，必须先修这里再发版。
+    #[test]
+    fn plugin_root_stays_repo_plugin_in_dev_checkout() {
+        let dev_root = compile_time_workspace_root();
+        assert!(
+            dev_root.join("Cargo.toml").exists(),
+            "测试应跑在源码检出内（{} 下应有 Cargo.toml）",
+            dev_root.display()
+        );
+        assert_eq!(
+            plugin_root(),
+            dev_root.join("plugin"),
+            "源码检出内 plugin 根应仍指向仓库 plugin/"
+        );
+        assert_eq!(
+            workspace_root(),
+            dev_root,
+            "源码检出内 workspace_root 应仍是仓库根"
+        );
+    }
+
+    // ── 随包只读资产内嵌 / 落盘 ─────────────────────────────────────
+
+    fn seed_test_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("nuphus_seed_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// 内嵌表的结构性护栏——这条挂了说明发布版会带上开发机的用户数据。
+    #[test]
+    fn bundled_assets_exclude_user_state() {
+        let assets = bundled_plugin_assets();
+        assert!(
+            !assets.is_empty(),
+            "只读资产表不应为空（build.rs 没收到资产？）"
+        );
+
+        // 绝不能出现在表里的前缀：这些是用户/运行时生成的状态，git 也是忽略的
+        const FORBIDDEN: &[&str] = &[
+            "workflows/",
+            "skills/community/",
+            "chat-agents/",
+            "custom-agents/",
+            "apps/",
+            "ui-maps/im/",
+            "ui-maps/media/",
+            "ui-maps/terminal/",
+            "knowledge/nuphus-self/",
+        ];
+        for (rel, bytes) in assets {
+            for bad in FORBIDDEN {
+                assert!(
+                    !rel.starts_with(bad),
+                    "用户状态混进了内嵌资产表: {rel}（前缀 {bad}）——\
+                     发布版会把开发机数据烤进二进制，必须修 build.rs 的 allowlist"
+                );
+            }
+            assert!(
+                !rel.starts_with('/'),
+                "资产键应为 plugin/ 下的相对路径: {rel}"
+            );
+            assert!(!rel.contains(".."), "资产键不应含 ..: {rel}");
+            assert!(!rel.contains('\\'), "资产键应统一用正斜杠: {rel}");
+            assert!(!bytes.is_empty(), "资产内容不应为空: {rel}");
+        }
+
+        // 内置技能必须在内（安装版"一个内置技能都看不到"正是本次要修的缺口）
+        assert!(
+            assets.iter().any(|(r, _)| r.starts_with("skills/builtin/")),
+            "内置技能必须在只读资产表内"
+        );
+    }
+
+    /// 空目录首启：资产全部落盘，并记录版本。
+    #[test]
+    fn seed_copies_all_assets_into_empty_root() {
+        let dir = seed_test_dir("empty");
+        let report = seed_plugin_assets_into(&dir, "1.0.0");
+        let total = bundled_plugin_assets().len();
+
+        assert_eq!(report.copied, total, "空目录应写入全部资产");
+        assert_eq!(report.skipped, 0);
+        assert_eq!(report.failed, 0);
+        assert!(report.is_notable());
+
+        // 内容与内嵌表逐字节一致
+        for (rel, bytes) in bundled_plugin_assets() {
+            let on_disk =
+                std::fs::read(dir.join(rel)).unwrap_or_else(|e| panic!("资产未落盘 {rel}: {e}"));
+            assert_eq!(&on_disk, bytes, "落盘内容与内嵌不一致: {rel}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".assets-version"))
+                .unwrap()
+                .trim(),
+            "1.0.0"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同版本重启：不重写，且不动用户自己造的文件。
+    #[test]
+    fn seed_is_idempotent_and_preserves_user_state() {
+        let dir = seed_test_dir("idem");
+        let total = bundled_plugin_assets().len();
+        seed_plugin_assets_into(&dir, "1.0.0");
+
+        // 模拟用户数据：资产清单之外的路径
+        let user_file = dir.join("workflows").join("mine.json");
+        std::fs::create_dir_all(user_file.parent().unwrap()).unwrap();
+        std::fs::write(&user_file, b"{\"user\":true}").unwrap();
+
+        let report = seed_plugin_assets_into(&dir, "1.0.0");
+        assert_eq!(report.copied, 0, "同版本不应重复写入");
+        assert_eq!(report.refreshed, 0, "同版本不应覆盖");
+        assert_eq!(report.skipped, total, "同版本应全部跳过");
+        assert!(!report.is_notable(), "无变化时不应打日志");
+        assert_eq!(
+            std::fs::read(&user_file).unwrap(),
+            b"{\"user\":true}",
+            "用户文件必须原样保留"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 版本升级：刷新清单内资产（拿到修好的内置技能），但仍不碰用户状态。
+    #[test]
+    fn seed_refreshes_on_version_change_without_touching_user_state() {
+        let dir = seed_test_dir("bump");
+        let total = bundled_plugin_assets().len();
+        seed_plugin_assets_into(&dir, "1.0.0");
+
+        let user_file = dir
+            .join("skills")
+            .join("community")
+            .join("mine")
+            .join("SKILL.md");
+        std::fs::create_dir_all(user_file.parent().unwrap()).unwrap();
+        std::fs::write(&user_file, b"user skill").unwrap();
+
+        // 改掉一个资产文件，模拟"被改坏了/版本旧了"
+        let victim = bundled_plugin_assets()[0].0;
+        std::fs::write(dir.join(victim), b"stale").unwrap();
+
+        let report = seed_plugin_assets_into(&dir, "2.0.0");
+        assert_eq!(report.refreshed, total, "版本变化应覆盖全部清单内资产");
+        assert_eq!(report.copied, 0);
+        assert_eq!(report.failed, 0);
+        assert_eq!(
+            std::fs::read(dir.join(victim)).unwrap(),
+            bundled_plugin_assets()[0].1,
+            "版本升级后资产应被刷新"
+        );
+        assert_eq!(
+            std::fs::read(&user_file).unwrap(),
+            b"user skill",
+            "版本升级也不得动用户状态"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".assets-version"))
+                .unwrap()
+                .trim(),
+            "2.0.0"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -41,12 +41,13 @@ impl WorkflowStore {
         }
     }
 
-    /// 默认根目录：项目根/plugin/workflows/
-    /// CARGO_MANIFEST_DIR 指向 src/（nuphus lib crate），上溯一级到项目根
+    /// 默认根目录：plugin/workflows/
+    ///
+    /// 走 `utils::plugin_root()` 运行时解析（开发机=源码检出，发布版=用户数据目录），
+    /// 不再用 `env!("CARGO_MANIFEST_DIR")`——那会把 CI 构建机路径烧进二进制，
+    /// 用户机上 create_dir_all 直接 ACCESS_DENIED，WorkflowEngine 初始化必失败。
     fn default_root() -> PathBuf {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let project_root = manifest.parent().unwrap_or(manifest);
-        project_root.join("plugin").join("workflows")
+        crate::utils::plugin_root().join("workflows")
     }
 
     /// 指定根目录创建（用于测试）

@@ -431,19 +431,51 @@ fn main() {
                 tracing::info!("Global shortcuts: Ctrl+Q(pause/resume) Ctrl+Shift+Q(stop)");
             }
 
+            // ── 随包只读资产落盘 ──
+            // 内置技能 / ui-maps 示例 / mcp 示例配置 / 经验样例在编译期内嵌，此处落盘到
+            // 可写的 plugin 根。必须在 WorkflowEngine init 与技能加载之前——否则首启
+            // 会看到"内置技能一个都没有"（安装包版的历史缺口，见 issue #8）。
+            {
+                let report = nuphus::utils::seed_plugin_assets(env!("CARGO_PKG_VERSION"));
+                if report.is_notable() {
+                    tracing::info!(
+                        "plugin assets: 新增 {} 覆盖 {} 跳过 {} 失败 {} (plugin root: {})",
+                        report.copied,
+                        report.refreshed,
+                        report.skipped,
+                        report.failed,
+                        nuphus::utils::plugin_root().display()
+                    );
+                }
+            }
+
             // Load workflows at startup
             let wf_event_rx = {
                 let state = app.state::<crate::state::AppState>();
                 tauri::async_runtime::block_on(async {
                     let engine = state.workflow_engine.write().await;
-                    if let Err(e) = engine.init().await {
-                        tracing::error!("WorkflowEngine init 失败: {}", e);
+                    match engine.init().await {
+                        Ok(()) => {
+                            // 成功日志必须在 Ok 分支内：此前它无条件打印，init 失败
+                            // 也照样输出 "initialized"，是排障时的主要误导源。
+                            tracing::info!(
+                                "WorkflowEngine initialized at startup (plugin root: {})",
+                                nuphus::utils::plugin_root().display()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "WorkflowEngine init 失败: {} (plugin root: {} — 可用 NUPHUS_WORKSPACE / \
+                                 NUPHUS_PLUGIN_DIR 覆盖)",
+                                e,
+                                nuphus::utils::plugin_root().display()
+                            );
+                        }
                     }
                     // Get event receiver (for forwarding to frontend)
                     engine.event_bus().subscribe()
                 })
             };
-            tracing::info!("WorkflowEngine initialized at startup");
             // Update splash status (事件推送；旧 eval+内联 setStatus 被 CSP 拦从未生效)
             crate::splash::emit_splash_progress(app.handle(), None, "正在启动引擎…");
 

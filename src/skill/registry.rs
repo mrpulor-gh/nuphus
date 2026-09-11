@@ -3,14 +3,11 @@ use std::path::{Path, PathBuf};
 
 /// 项目内置技能根目录（plugin/skills/）
 ///
-/// nuphus crate 的 Cargo.toml 在 {workspace_root}/src/ 下，
-/// CARGO_MANIFEST_DIR 的父目录 = 工作区根。
+/// 走 `utils::plugin_root()` 运行时解析：开发机上是源码检出的 plugin/skills，
+/// 发布版上是用户数据目录（原 `env!("CARGO_MANIFEST_DIR")` 版本会把 CI 构建机
+/// 路径烧进二进制，用户机上指向不存在的目录）。
 pub fn plugin_skills_dir() -> PathBuf {
-    let src_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    src_dir
-        .parent()
-        .map(|p| p.join("plugin").join("skills"))
-        .unwrap_or_else(|| src_dir.join("plugin").join("skills"))
+    crate::utils::plugin_root().join("skills")
 }
 
 /// Skill 注册表 — 统一数据源：plugin/skills/

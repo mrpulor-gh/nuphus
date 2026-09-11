@@ -79,6 +79,10 @@ plugin/chat-agents/
 # 第三方安装的 skill（不提交）
 plugin/skills/community/
 
+# 运行时攒出来的经验条目（工作流执行过程中自动落盘，非人手写；随包只读资产只有
+# plugin/experiences/desktop/，见 src/build.rs 的 allowlist）
+plugin/experiences/workflow/
+
 # 内部开发计划（含个人路径，不公开）
 # TEMPLATE.plan.md 是公开模板，给开源贡献者引导用；具体实例本地化
 src-tauri/tasks/nuphus/
@@ -171,6 +175,8 @@ mobile-link-diagnosis.md
 CLAUDE.md
 # 独立 target 目录（cargo 检查/试验性构建产物，不入库）
 target-check/
+# dev 实例运行中无法写 target/debug（sherpa DLL 被占用），clippy/check 用这个目录绕开
+target-clippy/
 
 tsc-out.txt
 
