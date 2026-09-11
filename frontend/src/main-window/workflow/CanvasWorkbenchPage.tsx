@@ -22,14 +22,28 @@ const UiPrototypeCanvas = lazy(() =>
 
 type CanvasType = 'workflow-editor' | 'prototype' | 'tools'
 
-export function CanvasWorkbenchPage({ onClose }: { onClose: () => void }) {
+export function CanvasWorkbenchPage({
+  onClose,
+  workflowId: initialWorkflowId = null,
+}: {
+  onClose: () => void
+  /** 由列表入口带过来的目标工作流；为 null 时由本页自行挑选最近更新的草稿 */
+  workflowId?: string | null
+}) {
   const { t } = useLanguage()
   const [canvasType, setCanvasType] = useState<CanvasType>('workflow-editor')
-  const [workflowId, setWorkflowId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [workflowId, setWorkflowId] = useState<string | null>(initialWorkflowId)
+  const [loading, setLoading] = useState(!initialWorkflowId)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    // 指定了目标工作流 → 直接编辑它，跳过「自选草稿」逻辑
+    if (initialWorkflowId) {
+      setWorkflowId(initialWorkflowId)
+      setError('')
+      setLoading(false)
+      return
+    }
     let cancelled = false
     const openWorkflowEditor = async () => {
       try {
@@ -64,7 +78,7 @@ export function CanvasWorkbenchPage({ onClose }: { onClose: () => void }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [initialWorkflowId])
 
   // ── 空闲预取默认 tab 的 chunk ──
   // 壳挂载后等浏览器空闲再发请求，不阻塞首屏；其余 tab 不预取，

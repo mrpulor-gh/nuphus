@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasWorkbenchPage } from './CanvasWorkbenchPage'
 
 // 三个 tab 页面均改为 lazy 拆包：测试中用轻量桩替换真实模块，
@@ -9,7 +9,10 @@ vi.mock('../lib/api', () => ({
   wfSave: vi.fn(async () => ({ saved: true })),
 }))
 vi.mock('../workflow-canvas/CanvasPage', () => ({
-  CanvasPage: () => <div data-testid="canvas-page" />,
+  // 透出 workflowId：用于断言「列表选中哪个，画布就打开哪个」
+  CanvasPage: ({ workflowId }: { workflowId: string }) => (
+    <div data-testid="canvas-page">{workflowId}</div>
+  ),
 }))
 vi.mock('../tools/ToolsPage', () => ({
   ToolsPage: () => <div data-testid="tools-page" />,
@@ -19,6 +22,10 @@ vi.mock('../canvases/ui-prototype/UiPrototypeCanvas', () => ({
 }))
 
 describe('CanvasWorkbenchPage 首帧反馈与 tab 拆包', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('外壳与加载态在首帧同步可见，不等待 IPC / 子页面 chunk', async () => {
     render(<CanvasWorkbenchPage onClose={() => {}} />)
 
@@ -48,5 +55,25 @@ describe('CanvasWorkbenchPage 首帧反馈与 tab 拆包', () => {
     fireEvent.click(screen.getByRole('button', { name: '工具' }))
     await waitFor(() => expect(screen.getByTestId('tools-page')).toBeInTheDocument())
     expect(screen.queryByTestId('prototype-canvas')).not.toBeInTheDocument()
+  })
+
+  it('传入 workflowId 时直接编辑该工作流，跳过自选草稿', async () => {
+    render(<CanvasWorkbenchPage workflowId="wf-explicit" onClose={() => {}} />)
+
+    // 指定了目标：不应出现自选阶段的加载态
+    expect(screen.queryByText('加载中...')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('canvas-page')).toBeInTheDocument())
+    expect(screen.getByTestId('canvas-page').textContent).toBe('wf-explicit')
+
+    // 也不应再去查询草稿列表
+    const { listWorkflows } = await import('../lib/api')
+    expect(listWorkflows).not.toHaveBeenCalled()
+  })
+
+  it('未传 workflowId 时回退为自选最近更新的草稿', async () => {
+    render(<CanvasWorkbenchPage onClose={() => {}} />)
+
+    await waitFor(() => expect(screen.getByTestId('canvas-page')).toBeInTheDocument())
+    expect(screen.getByTestId('canvas-page').textContent).toBe('wf-1')
   })
 })

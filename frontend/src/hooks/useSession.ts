@@ -122,6 +122,10 @@ export interface SessionAPI {
   setShowUpdate: (v: boolean) => void
   showCanvas: boolean
   setShowCanvas: (v: boolean) => void
+  /** 画布工作台的目标工作流 id；null = 由工作台自行挑选 */
+  canvasWorkflowId: string | null
+  openCanvas: (id?: string | null) => void
+  closeCanvas: () => void
 
   // ── Execution ──
   showExecTrace: boolean
@@ -765,7 +769,9 @@ export function useSession(): SessionAPI {
         category: t('cmd.category.browse'),
         action: () => {
           setCmdPaletteOpen(false)
-          modals.setShowCanvas(true)
+          // 命令面板的「画布」不带指定工作流：显式传空 → 由工作台自选，
+          // 避免沿用上次从列表点选的目标工作流
+          modals.openCanvas()
         },
       },
       {

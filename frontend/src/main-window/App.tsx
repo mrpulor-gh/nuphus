@@ -819,7 +819,7 @@ export default function App() {
               <WorkflowPage
                 onClose={() => s.setShowWorkflow(false)}
                 onRunClick={wf => setRunWorkflow(wf)}
-                onCanvasClick={() => s.setShowCanvas(true)}
+                onCanvasClick={wf => s.openCanvas(wf.id)}
               />
             </Suspense>
           </CompactModal>
@@ -832,7 +832,10 @@ export default function App() {
               }
             >
               <div className="canvas-workbench-host">
-                <CanvasWorkbenchPage onClose={() => s.setShowCanvas(false)} />
+                <CanvasWorkbenchPage
+                  workflowId={s.canvasWorkflowId}
+                  onClose={() => s.closeCanvas()}
+                />
               </div>
             </Suspense>
           )}
