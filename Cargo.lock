@@ -4743,7 +4743,7 @@ dependencies = [
 
 [[package]]
 name = "nuphus-desktop"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "async-trait",
  "axum",

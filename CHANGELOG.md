@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.11] - 2026-09-12
+
+### Fixed
+- 工作流 / 技能 / MCP 配置在发布版全挂：`workspace_root()` 用编译期宏 `env!("CARGO_MANIFEST_DIR")`，CI 在 GitHub Actions 的 Windows runner 上把仓库检出到 `D:\a\nuphus\nuphus`，这个构建机路径被写死进安装包；用户机上该路径不存在（`os error 3`），D 盘为只读介质时更是 `拒绝访问 (os error 5)`，于是 `WorkflowEngine init 失败`、工作流编辑器保存报红、MCP 配置与整个 plugin 目录失效。现改为运行时解析（`NUPHUS_PLUGIN_DIR` / `NUPHUS_WORKSPACE` → 源码检出 → exe 同级 → 用户数据目录），每个候选做真实写探测，只读位置自动降级到可写目录。
+- 顺带修掉三处**绕过**该解析器的重复实现（`src/workflow/store.rs`、`src/skill/registry.rs`、`src-tauri/src/commands/process.rs`）——它们各自又写了一遍 `env!("CARGO_MANIFEST_DIR")`，只修 `workspace_root()` 救不了工作流保存。
+- 启动日志误导：`WorkflowEngine initialized at startup` 在初始化失败时也照样打印。现成功才打印；失败日志带解析到的 plugin 根路径与覆盖方法，便于定位。
+
+### Added
+- 随包只读资产内嵌 + 首启落盘：内置技能、UI 地图示例、MCP 示例配置、经验样例此前**根本没随安装包分发**（`bundle.resources` 为空），安装版里一个内置技能都看不到。现按显式 allowlist 编译期内嵌（21 个文件 / 139 KB），启动时落盘到可写的 plugin 根；`plugin/.assets-version` 记录版本，升级刷新清单内资产、同版本不重复覆盖，用户自建的 workflows / community 等状态永不触碰。
+- 画布工作台可指定目标工作流：工作流列表入口带上 id 直接进入编辑，命令面板「画布」不带目标时由工作台自选，关闭时清空目标，避免沿用上次选中项。
+
+### Changed
+- `agent-orchestration` 技能去具体化：正文与示例不再写死具体 Agent 名，改为 `{key}` 占位；字段全集以 `AgentFields`（`src-tauri/src/commands/config/team.rs`）为准，实况一律以 `plugin/team.toml` 当次读取为准，避免文档随平台演进失真。
+
 ## [0.2.10] - 2026-09-11
 
 ### Added
