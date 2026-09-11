@@ -174,9 +174,15 @@ function Build-PlatformPackage($p, $version, $assetFile) {
     New-Item -ItemType Directory -Path $pkgDir | Out-Null
 
     # Extract asset into package dir (tar.exe handles both .zip and .tar.gz on Win10+)
+    # 显式走系统 bsdtar：$assetFile 是 C:\... 绝对路径，而裸名 `tar` 会走 PATH——若 PATH 上
+    # 恰好有 GNU tar 抢先（从 git-bash 里跑本脚本时 /usr/bin/tar 就在前面），它会把 "C:" 当
+    # 远程主机规格，报 "Cannot connect to C: resolve failed" 而整个发布失败。
+    # System32\tar.exe 是 Win10+ 自带 bsdtar，认 Windows 绝对路径；缺失时才回退裸名。
+    $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path $tarExe)) { $tarExe = 'tar' }
     Push-Location $pkgDir
     try {
-        & tar -xf $assetFile
+        & $tarExe -xf $assetFile
         if ($LASTEXITCODE -ne 0) { throw "tar extraction failed for $assetFile" }
     } finally {
         Pop-Location
