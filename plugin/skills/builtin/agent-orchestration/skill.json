@@ -1,7 +1,7 @@
 {
   "name": "agent-orchestration",
   "displayName": "Agent 平台编排",
-  "description": "外部 Agent 平台（Claude Code/opencode/Hermes 等）的登记（team.toml）、启动、交互与并行调度策略",
+  "description": "外部 Agent 平台（独立终端 TUI / 桌面 App / Web 等）的登记（team.toml）、启动、交互与并行调度策略",
   "version": "1.0.0",
   "author": "Nuphus",
   "keywords": ["agent", "Claude Code", "opencode", "Hermes", "外部Agent", "并行", "编排"],

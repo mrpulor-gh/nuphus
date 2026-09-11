@@ -7,7 +7,7 @@ tags: [agent, 外部Agent, 并行, 编排]
 
 # Agent 平台编排
 
-> 外部 Agent（Claude Code / OpenCode / Hermes 等独立平台）协作指南。系统提示词已覆盖的（工具描述/annotation/Constitution）不重复，本技能只写外部 Agent 特有流程。
+> 外部 Agent（独立终端 TUI / 桌面 App / Web 等平台）协作指南。系统提示词已覆盖的（工具描述/annotation/Constitution）不重复，本技能只写外部 Agent 特有流程。
 
 ---
 
@@ -16,12 +16,15 @@ tags: [agent, 外部Agent, 并行, 编排]
 渐进登记：每用一个外部 Agent，在 `plugin/team.toml` 追加一段。只记稳定事实（mode/launch/process/window_hint/dispatch_steps/note），禁止记 PID/窗口句柄/坐标（坐标走 ui-maps；PID/hwnd 每次启动必变，hwnd 编号还会被 OS 复用给无关窗口——任何把易变事实固化进配置或缓存当派发依据的做法都是错的，进程管理职责归 Leader 当次实况）。
 
 ```toml
-[opencode]
-mode = "embedded"        # background | embedded | standalone | web —— 决定交互协议（§2）
-launch = "powershell -NoExit -Command opencode"   # Leader 手动启动命令（见 §2 启动 SOP）
-window_hint = "OpenCode" # 窗口标题特征（windows_list 匹配用）
-process = "opencode.exe" # 进程名特征（process_list 识别依赖此字段）
+[{key}]
+mode = "embedded"          # background | embedded | standalone | web —— 决定交互协议（§2）
+launch = "<启动命令>"      # Leader 手动启动命令（见 §2 启动 SOP）
+window_hint = "<窗口特征>" # 窗口标题特征（windows_list 匹配用）
+process = "<进程名>"       # 进程名特征（process_list 识别依赖此字段）
 ```
+
+> 本段只示**格式**（键名与注释）；字段值一律占位，不代表任何已登记 agent 的实况。
+> 任何具体 agent 的字段值，一律以 `plugin/team.toml` 当次读取为准。
 
 **双登记路径（实测均有效）**：
 - **手改 team.toml**：直接编辑保存即可被运行中系统即时读取（无需重启），适合快速实验与本轮临时接入；
@@ -43,35 +46,37 @@ process = "opencode.exe" # 进程名特征（process_list 识别依赖此字段�
    - `cooldown_secs` / `await_timeout_secs` / `timeout_action` / `confirm_keywords`：启动冷却/超时动作/确认词表（缺省有默认值）
    - `description`：职责一句话（路由提示；新 agent 自动同步为其 `.nuphus/handoff/{key}/read.md` 的职责段）
    - `note`：Leader 专属实测备忘（如某热键不生效、某交互必须换路径等一手观察），随配置读取并在派发结果中回显；UI 禁止编辑
+   > **字段全集以代码为准**：`AgentFields`（`src-tauri/src/commands/config/team.rs`）——上面只列 Leader 步骤必须用到的字段，其余（type/open/args/dir/timeout_script/auto_approve 等）以该结构体定义为准，本文档不重复维护。
 2. **落盘核对**：`plugin/team.toml` 出现该段且原有段未被破坏（写回是段级增量）；新 key 联动生成 handoff 工作目录。
-3. 完整段示例（实测可用样本）：
+3. 完整段示例（**全量字段的格式示例**；值一律占位，实况以 `plugin/team.toml` 为准）：
 
 ```toml
-[opencode]
+[{key}]
 mode = "embedded"        # background | embedded | standalone | web
-display_name = "OpenCode"
+display_name = "<显示名>"
 icon = "terminal"
-launch = "powershell -NoExit -Command opencode"
-window_hint = "OpenCode"
+launch = "<启动命令>"
+window_hint = "<窗口特征>"
+process = "<进程名>"
 cooldown_secs = 20
 await_timeout_secs = 90
 timeout_action = "screenshot_alive"
 confirm_keywords = ["allow", "confirm", "proceed", "yes/no", "approve"]
-# note = "实测备忘：…（Leader 专属，UI 不可编辑）
+note = "<Leader 实测备忘>（Leader 专属，UI 不可编辑）"
 
-[[opencode.dispatch_steps]]
+[[{key}.dispatch_steps]]
 tool = "desktop_window_activate"
 with = { hwnd = "{hwnd}" }
 
-[[opencode.dispatch_steps]]
+[[{key}.dispatch_steps]]
 tool = "__sleep"
 with = { ms = 500 }
 
-[[opencode.dispatch_steps]]
+[[{key}.dispatch_steps]]
 tool = "desktop_input"
 with = { hwnd = "{hwnd}", mode = "type", text = "{message}", send = "none" }
 
-[[opencode.dispatch_steps]]
+[[{key}.dispatch_steps]]
 tool = "desktop_input"
 with = { hwnd = "{hwnd}", mode = "hotkey", keys = ["enter"] }
 ```
@@ -130,10 +135,10 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 ```
 1. process_list 找 Agent 进程（按 team.toml process 字段）→ 记 PID
 2. 查父进程（Get-CimInstance Win32_Process）→ 父进程 MainWindowHandle → windows_list 定位
-3. 截图 + OCR 确认是 Agent（提示符/任务输出）——运行时标题常被覆写（如 OpenCode 显示「OC | 任务名」），不能靠标题
+3. 截图 + OCR 确认是 Agent（提示符/任务输出）——运行时标题常被覆写（TUI 类常见「前缀 | 任务名」形态），不能靠标题
 ```
 
-**宿主归属注意（实测）**：TUI 进程自身（如 opencode.exe / powershell.exe）的 MainWindowHandle 可能为 0——顶层窗口可能宿主在 Windows Terminal 或 conhost 名下，也可能正在启动中尚未建窗。判定顺序：先 windows_list 全表扫 window_hint/标题特征；无果再等 5–10s 重查一次（冷启动 TUI 渲染需要时间）；仍无果按 §5 回退用 Start-Process `-WindowStyle Normal` 重新拉起。**禁止凭进程存在就认定「窗口存在」，也禁止把任何缓存句柄当激活目标——每次以当次枚举实况为准。**
+**宿主归属注意（实测）**：TUI 进程自身（如 TUI 可执行文件 / 其宿主 shell）的 MainWindowHandle 可能为 0——顶层窗口可能宿主在 Windows Terminal 或 conhost 名下，也可能正在启动中尚未建窗。判定顺序：先 windows_list 全表扫 window_hint/标题特征；无果再等 5–10s 重查一次（冷启动 TUI 渲染需要时间）；仍无果按 §5 回退用 Start-Process `-WindowStyle Normal` 重新拉起。**禁止凭进程存在就认定「窗口存在」，也禁止把任何缓存句柄当激活目标——每次以当次枚举实况为准。**
 
 有 `plugin/ui-maps/{应用名}.json` 缓存 → 按缓存的 locate/default_pos 直接定位，校验窗口状态后使用（见 §6）。
 
@@ -294,7 +299,7 @@ Body:   {"id":"{agent}::{task_id}","status":"done|progress|blocked","summary":".
 GET /handoff/health → 免令牌自检
 ```
 
-**id 格式（关键）**：完整事件 id 必须 `{agent}::{task_id}`（如 `opencode::0824-02`）。`task_id` 本身可用 `MMDD-序号` 风格——错误用法是把 `MMDD-序号` 单独当事件 id（缺 agent 前缀）。门铃按 `::` 前缀归组更新 status.json：不带前缀的事件不报错但**静默不归组**（状态栏永远不动，难以察觉）。
+**id 格式（关键）**：完整事件 id 必须 `{agent}::{task_id}`（如 `{key}::0824-02`）。`task_id` 本身可用 `MMDD-序号` 风格——错误用法是把 `MMDD-序号` 单独当事件 id（缺 agent 前缀）。门铃按 `::` 前缀归组更新 status.json：不带前缀的事件不报错但**静默不归组**（状态栏永远不动，难以察觉）。
 
 **错误码自诊断**（agent 与 Leader 排查共用）：
 
