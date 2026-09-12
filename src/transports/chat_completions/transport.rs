@@ -1673,3 +1673,65 @@ mod salvage_tests {
         );
     }
 }
+
+/// issue #9 RC1 的**最终报文**护栏。
+///
+/// llama.cpp 的 Jinja 模板硬检查 `System message must be at the beginning`——只要发出去的
+/// 报文里存在 **index ≥ 1 的 system 消息**就必然确定性 HTTP 500（云端各家模板会静默合并多条
+/// system，所以只在本地后端暴露）。
+///
+/// 这里直接断言真实构造出的请求体，**不需要部署任何本地模型**：该判定是报文形状属性，
+/// 与模型行为无关。提炼后会话内会留一条 System（摘要），叠加传输层前置的系统提示词，
+/// 修复前本报文是 [system(主提示), system(摘要), user…] → 本测试会失败。
+#[cfg(test)]
+mod wire_shape_tests {
+    use super::*;
+
+    fn config() -> ChatCompletionsConfig {
+        ChatCompletionsConfig {
+            name: "wire-shape".into(),
+            api_key: "sk-test".into(),
+            base_url: "http://127.0.0.1:1".into(),
+            model: "test-model".into(),
+            timeout_secs: 30,
+            auth_header: "authorization".into(),
+            auth_prefix: "Bearer ".into(),
+            provider_kind: None,
+            quirks: crate::config::provider::ProviderQuirks::default(),
+            reasoning_effort: None,
+        }
+    }
+
+    #[test]
+    fn request_body_keeps_system_only_at_index_zero() {
+        let transport = ChatCompletionsTransport::new(config());
+
+        // 复刻 issue #9 的会话状态：提炼后仅剩摘要，随后跟一条真实用户消息
+        let mut session = crate::session::Session::new();
+        session.push_user("earlier question".to_string());
+        session.replace_with_distill("DISTILLED-SUMMARY-TEXT");
+        session.push_user("next question".to_string());
+
+        let request = crate::api::MessageRequest::new("test-model", session.to_api_messages(false))
+            .with_merged_system("MERGED-SYSTEM-PROMPT");
+
+        let body = transport.build_request_body(&request);
+        let msgs = body["messages"].as_array().expect("messages 应为数组");
+
+        // 真系统提示词在首位（传输层前置）
+        assert_eq!(msgs[0]["role"], "system", "系统提示词应在 index 0");
+        // llama.cpp 的前置条件：其后不得再出现 system
+        for (i, m) in msgs.iter().enumerate().skip(1) {
+            assert_ne!(
+                m["role"], "system",
+                "index {i} 出现 system 消息 → llama.cpp 模板必报 500（issue #9 RC1 回归）"
+            );
+        }
+        // 摘要内容必须真的送达（Anthropic 适配器曾把它替换成占位串）
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(
+            serialized.contains("DISTILLED-SUMMARY-TEXT"),
+            "摘要内容必须在报文里，而不是被占位串替换"
+        );
+    }
+}
