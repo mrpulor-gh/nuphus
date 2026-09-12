@@ -1734,4 +1734,38 @@ mod wire_shape_tests {
             "摘要内容必须在报文里，而不是被占位串替换"
         );
     }
+
+    /// 旧分支（Exec / Workflow agent 走 `with_system`，没有 merged_system）同样必须满足
+    /// 「system 只在 index 0」。这两条链路是 issue #9 场景的另一半：强制 refine 也可能发生
+    /// 在 workflow agent 上，且安全警告 / 分裂锚点是另一类会话内 System 注入源。
+    #[test]
+    fn request_body_legacy_system_path_keeps_system_only_at_index_zero() {
+        let transport = ChatCompletionsTransport::new(config());
+
+        let mut session = crate::session::Session::new();
+        session.push_system("SAFETY-NOTE-TEXT".to_string());
+        session.push_user("question".to_string());
+
+        let request = crate::api::MessageRequest::new("test-model", session.to_api_messages(false))
+            .with_system("BASE-SYSTEM-PROMPT");
+
+        let body = transport.build_request_body(&request);
+        let msgs = body["messages"].as_array().expect("messages 应为数组");
+
+        assert_eq!(
+            msgs[0]["content"], "BASE-SYSTEM-PROMPT",
+            "系统提示词应在 index 0"
+        );
+        for (i, m) in msgs.iter().enumerate().skip(1) {
+            assert_ne!(
+                m["role"], "system",
+                "index {i} 出现 system 消息 → llama.cpp 模板必报 500"
+            );
+        }
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(
+            serialized.contains("SAFETY-NOTE-TEXT"),
+            "会话内安全警告内容必须送达（不得被丢弃）"
+        );
+    }
 }
