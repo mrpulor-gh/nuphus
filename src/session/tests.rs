@@ -54,6 +54,62 @@ mod tests {
         assert_eq!(api_msgs[1]["role"], "assistant");
     }
 
+    /// issue #9 RC1：会话内 System（提炼摘要、安全警告、分裂锚点、ExecPool 压缩）是注进
+    /// 上下文的**内容**，必须以 user 角色下发。原样发 system 会让报文成为
+    /// [system(主提示), system(摘要), user…]，llama.cpp 的 Jinja 模板硬拒 → 确定性 HTTP 500
+    /// （云端模板静默合并所以只在本地后端暴露）；Anthropic 适配器还会把这段内容换成占位串。
+    #[test]
+    fn test_to_api_messages_serializes_internal_system_as_user() {
+        let mut session = Session::new();
+        session.push_user("earlier question".to_string());
+        session.replace_with_distill("SUMMARY-OF-EARLIER-TURNS");
+
+        let api_msgs = session.to_api_messages(true);
+        assert_eq!(api_msgs.len(), 1, "提炼后会话仅剩摘要一条");
+        assert_eq!(
+            api_msgs[0]["role"], "user",
+            "会话内 System 必须以 user 下发，否则报文里会出现 index≥1 的 system"
+        );
+        // 内容必须完整保留（形状无关断言：Anthropic 侧不再被占位串替换掉）
+        let serialized = serde_json::to_string(&api_msgs[0]).unwrap();
+        assert!(
+            serialized.contains("SUMMARY-OF-EARLIER-TURNS"),
+            "摘要内容必须完整下发: {serialized}"
+        );
+
+        // push_system 安全警告走同一条路径，同样不得以 system 下发
+        session.push_system("SAFETY-NOTE".to_string());
+        let api_msgs = session.to_api_messages(true);
+        assert!(
+            api_msgs.iter().all(|m| m["role"] != "system"),
+            "任何会话内消息都不得以 system 角色出现在 messages 数组里"
+        );
+    }
+
+    /// issue #9「附带发现」：提炼后必须清零 api_input_tokens。触发判据
+    /// （`agent/distill.rs`）在 api_input_tokens > 0 时直接取它，不清零则旧峰值
+    /// （如 112498）会让 force refine 每轮都再次触发——即使请求能发出去也是内存态死循环。
+    #[test]
+    fn test_distill_resets_api_input_tokens() {
+        let mut session = Session::new();
+        session.push_user("x".repeat(4000));
+        session.update_api_input_tokens(112_498);
+        assert_eq!(session.api_input_tokens, 112_498);
+
+        session.replace_with_distill("short summary");
+        assert_eq!(session.api_input_tokens, 0, "replace_with_distill 必须清零");
+        assert!(
+            session.estimate_token_usage() < 102_400,
+            "清零后不得再越过 force_limit，否则下一轮必然重炼"
+        );
+
+        // 累积路径（同一 session 二次提炼）同样必须清零
+        session.update_api_input_tokens(200_000);
+        session.accumulate_distill("second summary");
+        assert_eq!(session.api_input_tokens, 0, "accumulate_distill 必须清零");
+        assert!(session.estimate_token_usage() < 102_400);
+    }
+
     #[test]
     fn test_to_api_messages_preserves_reasoning_content() {
         let mut session = Session::new();

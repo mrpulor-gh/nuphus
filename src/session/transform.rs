@@ -78,11 +78,21 @@ impl Session {
         self.messages
             .iter()
             .map(|msg| {
+                // 会话内的 System 消息（提炼摘要 / push_system 安全警告 / insert_refine_marker
+                // 分裂锚点 / ExecPool 压缩）是**注进上下文的内容**，不是系统指令——真正的系统
+                // 提示词由传输层单独下发（chat_completions 前置为 messages[0]、Anthropic 用顶层
+                // `system` 字段）。若这里原样下发 system，报文会变成
+                // [system(主提示), system(摘要), user…]：llama.cpp 的 Jinja 模板硬检查
+                // 「System message must be at the beginning」→ 确定性 HTTP 500（云端模板静默合并，
+                // 所以只在本地后端暴露）；Anthropic 适配器还会把这段内容替换成占位串而丢失摘要。
+                // 以 user 角色下发对任何后端都合法，模型看到的也是内容本身。
+                // 注意：仅改**序列化层**——存储仍保留 MessageRole::System + internal 标记，
+                // 依赖该标记的内部逻辑（extract_history 过滤、shelf 快照等）不受影响。
                 let role = match msg.role {
                     MessageRole::User => "user",
                     MessageRole::Assistant => "assistant",
                     MessageRole::Tool => "tool",
-                    MessageRole::System => "system",
+                    MessageRole::System => "user",
                 };
 
                 // 分离文本块和工具调用块

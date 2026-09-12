@@ -485,6 +485,9 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     }
                     Err(e) => {
                         let err_str = e.to_string();
+                        // 错误详情：LLMError::ApiError 的 Display 是 "API error {status}: {body}"，
+                        // 含状态码与错误体。截断防刷屏（服务端可能回整页 HTML）。
+                        let err_detail = crate::utils::truncate_output(&err_str, 400);
                         if cancel_flag.load(Ordering::SeqCst) {
                             self.agent.session.strip_incomplete_tools();
                             let session_json =
@@ -525,8 +528,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                 serde_json::to_string(&self.agent.session).unwrap_or_default();
                             return Ok(crate::AgentOutput {
                                 message: format!(
-                                    "LLM请求失败（已自动重试{}次）\n点击下方按钮重新连接",
-                                    max_llm_retries
+                                    "LLM请求失败（已自动重试{}次）：{}",
+                                    max_llm_retries, err_detail
                                 ),
                                 success: false,
                                 steps: self.agent.steps.clone(),
@@ -540,18 +543,27 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             .as_millis() as u64
                             % 1000;
                         let wait_ms = base_wait * 1000 + jitter;
+                        // 必须带状态码与错误体：此前只说「请求失败，X 后重试」，确定性的 4xx/5xx
+                        // （如 llama.cpp 模板异常返回 500）在日志与界面上完全不可见，是排障时
+                        // 最大的盲点（issue #9 RC3）。
                         self.agent.emit_exec(&format!(
-                            "// LLM 请求失败，{:.1}s 后重试 ({}/{})",
+                            "// LLM 请求失败，{:.1}s 后重试 ({}/{}): {}",
                             wait_ms as f64 / 1000.0,
                             llm_retry,
-                            max_llm_retries
+                            max_llm_retries,
+                            err_detail
                         ));
                         if let Some(ref emitter) = self.agent.exec_emitter {
                             emitter.emit(NuphusEvent::Warning {
                                 code: "llm_retry".to_string(),
+                                // 原先这里写死 "Network connection timeout"——无论真实原因是什么
+                                // 都报超时，会把人往网络方向带偏。改为透传真实错误。
                                 message: format!(
-                                    "Network connection timeout, retrying ({}/{})",
-                                    llm_retry, max_llm_retries
+                                    "LLM 请求失败，{:.1}s 后重试 ({}/{}): {}",
+                                    wait_ms as f64 / 1000.0,
+                                    llm_retry,
+                                    max_llm_retries,
+                                    err_detail
                                 ),
                             });
                         }

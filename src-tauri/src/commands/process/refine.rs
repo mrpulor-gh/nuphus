@@ -162,6 +162,9 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         return Err("提炼失败：未产出有效摘要。".to_string());
     }
 
+    // 快照保护名单先于 runtime 锁收集（protected_snapshot_ids 内部会取同一把
+    // std Mutex，持锁时调用会死锁）
+    let protected = crate::commands::process::shelf::protected_snapshot_ids(state.inner());
     {
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         let leader = guard
@@ -175,6 +178,10 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
             leader.session_mut().replace_with_distill(&distill);
         }
         leader.agent_mut().refine_count += 1;
+        // 提炼结果必须立刻落盘。否则 SQLite 快照/断点仍是提炼前的全量——任何非干净退出
+        // （崩溃/强杀）都会把它恢复回来，重启后再次越过 force_limit →
+        // 「提炼 → 丢失 → 重提炼」死循环（issue #9 RC2）。
+        crate::commands::process::shelf::persist_and_mirror("leader", leader.session(), &protected);
     }
 
     emitter.emit(NuphusEvent::SessionRefined {
@@ -260,6 +267,7 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
         return Err("提炼失败：未产出有效摘要。".to_string());
     }
 
+    let protected = crate::commands::process::shelf::protected_snapshot_ids(state.inner());
     {
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         let wa = guard
@@ -279,6 +287,8 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
             wa.session_mut().replace_with_distill(&distill);
         }
         wa.inc_refine_count();
+        // 同 leader 路径：提炼结果立即落盘，避免重启恢复全量后重炼（issue #9 RC2）
+        crate::commands::process::shelf::persist_and_mirror("workflow", wa.session(), &protected);
     }
 
     emitter.emit(NuphusEvent::SessionRefined {

@@ -269,6 +269,10 @@ impl Session {
     /// 保留 session ID、depth 不变，清空 messages，插入引导消息
     pub fn replace_with_distill(&mut self, distill_content: &str) {
         self.refined = true;
+        // 必须清零：force refine 判据（agent/distill.rs）在 api_input_tokens > 0 时直接取它，
+        // 留旧峰值会让下一轮必然再次越过 force_limit（issue #9 附带发现）。清零后
+        // estimate_token_usage 回落到提炼后小会话的字符估算，不会误触发。
+        self.api_input_tokens = 0;
         let _ = std::mem::take(&mut self.messages);
         self.messages.push(Message {
             role: MessageRole::System,
@@ -285,6 +289,8 @@ impl Session {
     /// 用于同一 session 多次 refine —— 先前摘要不动，前缀缓存不失效
     pub fn accumulate_distill(&mut self, distill_content: &str) {
         self.refined = true;
+        // 同 replace_with_distill：不清零则旧峰值残留，下一轮 force refine 必复发
+        self.api_input_tokens = 0;
         self.messages.retain(|m| m.role == MessageRole::System);
         self.messages.push(Message {
             role: MessageRole::System,
