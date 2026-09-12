@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.12] - 2026-09-12
+
+### Fixed
+- 本地模型后端（llama.cpp / llama-server 等）在上下文提炼后请求全挂：会话内 System 消息（提炼摘要、`push_system` 安全警告、`insert_refine_marker` 分裂锚点、ExecPool 压缩）经 `to_api_messages` 原样以 `system` 角色下发，叠加传输层前置的系统提示词，报文成为 `[system(主提示), system(摘要), user…]`；llama.cpp 的 Jinja 模板硬检查 `System message must be at the beginning` → 确定性 HTTP 500（每次 <50ms 即时失败）。云端各家的模板会静默合并多条 system，所以这个客户端 bug 长期只在本地后端暴露。现改为在序列化层以 `user` 角色下发——会话内 System 是**内容**而非指令，这也正是仓库既有的做法（提炼提示词早就以 internal user 注入）。单点覆盖全部注入路径，不依赖逐个调用点。
+- 顺带修掉 Anthropic 侧的一处静默内容丢失：适配器把会话内 system 消息的内容替换成占位串 `[system prompt — see top-level system field]`，导致提炼摘要根本没送到模型（不报错，但上下文实际断裂）。
+- 提炼结果未落盘导致的「提炼 → 非干净退出 → 恢复全量 → 再次强制提炼」死循环：提炼成功后只写记忆、不写快照（仅退出钩子/归档时落盘）。现 leader 与 workflow 两条路径提炼后立即持久化元数据行与镜像。
+- 提炼后未清零 `api_input_tokens`：强制提炼判据（上下文窗口 80% 阈值）直接读取该字段，旧峰值残留使下一轮必然再次越过阈值——即使请求能发出去也会反复空烧。现两个提炼入口（替换式 / 累积式）均清零。
+- LLM 重试日志缺少关键详情：重试分支只输出「请求失败，X 后重试」，不含 HTTP 状态码与错误体（`LLMError::ApiError` 本就携带 `API error {status}: {body}`），确定性的参数/模板错误在日志与界面上完全不可见；且提示文案写死 `Network connection timeout`，真实原因是模板异常也会被报成超时、把人往网络方向带偏。现重试日志、警告事件与失败时的用户可见提示均带上截断后的真实错误。
+
 ## [0.2.11] - 2026-09-12
 
 ### Fixed
