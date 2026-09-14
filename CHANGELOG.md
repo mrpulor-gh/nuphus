@@ -5,6 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+- 状态栏展示解码速度与首 token 延迟：`TokenUsage` 事件新增可选字段 `gen_tps` / `ttft_ms`（`serde(default, skip_serializing_if)`，字段缺失与旧端反序列化均兼容）。速度按「输出 tokens ÷ 首 token→结束耗时」计算，把网络、排队与 prefill 从解码速度中剥离，与 llama.cpp 报告的 decode 速度同口径；TTFT 单独展示。目前仅 Leader 的流式调用（`react_loop`）产出数据，sub-agent 与 workflow 路径固定为 `None`（后续按需接入）。
+
 ## [0.2.12] - 2026-09-12
 
 ### Fixed
