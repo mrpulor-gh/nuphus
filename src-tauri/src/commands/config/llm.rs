@@ -1641,23 +1641,32 @@ async fn fetch_provider_models(
 ) -> Result<Vec<ProviderModelBrief>, String> {
     use std::time::Duration;
 
-    if api_key.is_empty() {
-        return Err("API Key 不能为空".to_string());
-    }
-
     let registry = ProviderRegistry::builtin();
     let pmeta = registry
         .get(provider)
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
+
+    // 空 key 仅放行两类端点：① 未声明内置鉴权方案的 Provider（local 等，
+    // Ollama / llama.cpp 默认无鉴权）② 用户自建的 custom 端点（地址自己填，
+    // 可能本就不需要鉴权）。官方远程服务商仍强制要求 key——防止空鉴权头串台。
+    //
+    // 判据取自 Provider 元数据而非硬编码 id 列表：新增「无内置鉴权」的 Provider
+    // 时自动生效，不会因为漏改这里而被迫瞎填 key。
+    let allows_no_key = pmeta.auth_header().is_empty() || provider == "custom";
+    if api_key.is_empty() && !allows_no_key {
+        return Err("API Key 不能为空".to_string());
+    }
 
     let resolved_base_url = base_url
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| pmeta.default_base_url());
 
     let url = format!("{}/models", resolved_base_url.trim_end_matches('/'));
-    let auth_header = pmeta.auth_header();
-    let auth_prefix = pmeta.auth_prefix();
-    let auth_value = format!("{}{}", auth_prefix, api_key);
+    // 未声明鉴权方案（auth_header 为空串）的 Provider，用户显式填了 key 就按
+    // OpenAI 兼容约定补 `Authorization: Bearer <key>`（空串当头名会让 reqwest
+    // 只报 builder error，详见 resolve_auth 文档）。
+    let auth =
+        nuphus::config::provider::resolve_auth(pmeta.auth_header(), pmeta.auth_prefix(), api_key);
 
     tracing::info!(
         "[list-provider-models] GET {} for provider={}",
@@ -1671,10 +1680,14 @@ async fn fetch_provider_models(
         .build()
         .map_err(|e| format!("Create HTTP client failed: {}", e))?;
 
-    let response = client
-        .get(&url)
-        .header(auth_header, &auth_value)
-        .header("User-Agent", "Nuphus/1.0")
+    let request = client.get(&url).header("User-Agent", "Nuphus/1.0");
+    // 无 key（auth=None）完全不携带鉴权头，避免空 Bearer 被严格网关
+    //（如 llama-swap）判为 401。
+    let request = match &auth {
+        Some((h, v)) => request.header(h.as_str(), v.as_str()),
+        None => request,
+    };
+    let response = request
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
@@ -1801,8 +1814,20 @@ pub async fn refresh_provider_models(
     provider: String,
     base_url: Option<String>,
 ) -> Result<Vec<ProviderModelBrief>, String> {
-    let api_key = read_provider_api_key_from_config_toml(&provider)
-        .ok_or_else(|| "该服务商尚未配置 API Key，请先在连接区域输入并保存".to_string())?;
+    // 与 fetch_provider_models 同一判据：未声明内置鉴权方案的 Provider（local 等）
+    // 与用户自建的 custom 端点，允许无 key 刷新（Ollama / llama.cpp 默认无鉴权）。
+    let allows_no_key = ProviderRegistry::builtin()
+        .get(&provider)
+        .map(|p| p.auth_header().is_empty())
+        .unwrap_or(false)
+        || provider == "custom";
+    let api_key = match read_provider_api_key_from_config_toml(&provider) {
+        Some(k) => k,
+        None if allows_no_key => String::new(),
+        None => {
+            return Err("该服务商尚未配置 API Key，请先在连接区域输入并保存".to_string());
+        }
+    };
     let models = fetch_provider_models(&api_key, &provider, base_url.as_deref()).await?;
 
     // 持久化：把 API 返回的最新模型 ID 合并进 config.toml，使 list_models
@@ -1934,7 +1959,9 @@ fn query_model_metadata_from_api(
     auth_prefix: &str,
 ) -> Option<ModelApiMetadata> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let auth_value = format!("{}{}", auth_prefix, api_key);
+    // 空 auth_header（local 等未声明鉴权方案的 Provider）会被 http crate 判为非法
+    // 头名 → reqwest 只报一句 builder error；统一走 resolve_auth 解析。
+    let auth = nuphus::config::provider::resolve_auth(auth_header, auth_prefix, api_key);
     tracing::info!("[model-meta] GET {} for model={}", url, model);
 
     let client = match reqwest::blocking::Client::builder()
@@ -1949,12 +1976,11 @@ fn query_model_metadata_from_api(
         }
     };
 
-    let response = match client
-        .get(&url)
-        .header(auth_header, &auth_value)
-        .header("User-Agent", "Nuphus/1.0")
-        .send()
-    {
+    let mut req = client.get(&url).header("User-Agent", "Nuphus/1.0");
+    if let Some((h, v)) = &auth {
+        req = req.header(h.as_str(), v.as_str());
+    }
+    let response = match req.send() {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(
@@ -2075,7 +2101,8 @@ fn probe_vision(
     auth_prefix: &str,
 ) -> Option<bool> {
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let auth_value = format!("{}{}", auth_prefix, api_key);
+    // 空 auth_header（local 等）需补 OpenAI 兼容约定，否则 reqwest 只报 builder error。
+    let auth = nuphus::config::provider::resolve_auth(auth_header, auth_prefix, api_key);
 
     // 1x1 blue pixel PNG, ~67 bytes → ~90 chars base64
     let tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -2106,13 +2133,11 @@ fn probe_vision(
         }
     };
 
-    let response = match client
-        .post(&url)
-        .header(auth_header, &auth_value)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-    {
+    let mut req = client.post(&url).header("Content-Type", "application/json");
+    if let Some((h, v)) = &auth {
+        req = req.header(h.as_str(), v.as_str());
+    }
+    let response = match req.json(&body).send() {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("[vision-probe] POST failed: {}", e);

@@ -140,16 +140,15 @@ pub fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<Strin
     } else {
         format!("{base}/chat/completions")
     };
-    let auth_value = if auth_prefix.is_empty() {
-        provider_config.api_key.clone()
-    } else {
-        format!("{}{}", auth_prefix, provider_config.api_key)
-    };
+    // 空 auth_header（local 等未声明鉴权方案的 Provider）会被 http crate 判为
+    // 非法头名 → reqwest 只报一句难以定位的 builder error；统一走 resolve_auth。
+    let auth =
+        crate::config::provider::resolve_auth(auth_header, auth_prefix, &provider_config.api_key);
 
-    let mut request = client
-        .post(&url)
-        .header(auth_header, &auth_value)
-        .header("Content-Type", "application/json");
+    let mut request = client.post(&url).header("Content-Type", "application/json");
+    if let Some((h, v)) = &auth {
+        request = request.header(h.as_str(), v.as_str());
+    }
     if is_anthropic {
         request = request.header("anthropic-version", "2023-06-01");
     }

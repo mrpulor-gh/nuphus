@@ -261,14 +261,17 @@ impl ResponsesTransport {
             };
 
             // 鉴权头：配置 header/prefix（Codex 变体可配 authorization/额外头）。
+            // 统一走 resolve_auth：空 auth_header（local 等未声明鉴权方案）会补上
+            // OpenAI 兼容的 `Authorization: Bearer <key>`，避免把头名传成空串
+            // 让 reqwest 只报 `builder error`；空 key 则完全不发鉴权头。
             let mut req = client.post(&url).header("content-type", "application/json");
-            let auth_header = if self.config.auth_header.is_empty() {
-                "authorization"
-            } else {
-                self.config.auth_header.as_str()
-            };
-            let auth_value = format!("{}{}", self.config.auth_prefix, self.config.api_key);
-            req = req.header(auth_header, auth_value);
+            if let Some((h, v)) = crate::config::provider::resolve_auth(
+                &self.config.auth_header,
+                &self.config.auth_prefix,
+                &self.config.api_key,
+            ) {
+                req = req.header(h.as_str(), v.as_str());
+            }
             for (k, v) in &self.config.quirks.extra_headers {
                 req = req.header(k, v);
             }

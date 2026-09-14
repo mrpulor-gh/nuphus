@@ -20,6 +20,40 @@ use crate::transports::Transport;
 /// provider files gets both the trait and the config struct.
 pub use super::model::ProviderConfig;
 
+/// 计算实际要下发的鉴权头 `(name, value)`；返回 `None` 表示不携带鉴权头。
+///
+/// 背景：`local`（以及任何声明「无内置鉴权」的 Provider）把 `auth_header()` /
+/// `auth_prefix()` 覆写成空串。空串一旦直接喂给 `reqwest::RequestBuilder::header`，
+/// http crate 会判为**非法头名**，最终只抛一句极难定位的 `builder error`
+/// （用户侧表现：`IPC invoke list_provider_models failed: 请求失败: builder error`）。
+///
+/// 语义：用户既然显式填了 key，就说明该端点确实要求鉴权。本地网关
+/// （llama-swap / vLLM / LiteLLM / 带鉴权的 Ollama 反代）统一是 OpenAI 兼容的
+/// `Authorization: Bearer <key>`——实测 llama-swap **只认带 `Bearer ` 前缀**的形式，
+/// 裸 key 与空 Bearer 都返回 401。因此这里在「未声明鉴权方案」时补上该约定。
+///
+/// 已声明 header 的 Provider 完全不受影响（含 `x-api-key` + 空前缀这类 scheme）。
+pub fn resolve_auth(
+    declared_header: &str,
+    declared_prefix: &str,
+    api_key: &str,
+) -> Option<(String, String)> {
+    // 头值里混入首尾空白/换行会直接让 header 非法（粘贴 key 的常见副作用）。
+    let key = api_key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    if declared_header.is_empty() {
+        // 头名与其它 Provider 声明的写法保持一致（全小写）。HTTP 头名大小写不敏感，
+        // 纯粹为了仓内一致性。
+        return Some(("authorization".to_string(), format!("Bearer {}", key)));
+    }
+    Some((
+        declared_header.to_string(),
+        format!("{}{}", declared_prefix, key),
+    ))
+}
+
 /// Single model definition owned by a Provider.
 ///
 /// Fields mirror the provider-driven metadata approach: each Provider publishes the
@@ -325,5 +359,69 @@ mod tests {
                 p.id()
             );
         }
+    }
+
+    // ── resolve_auth：未声明鉴权方案时补 OpenAI 兼容约定 ──
+
+    /// 空 key（含只有空白）一律不发鉴权头。
+    ///
+    /// llama-swap 等严格网关把「空 Bearer」判为 401，所以「没填 key」必须表现为
+    /// 「完全不带该头」，而不是带一个空值。
+    #[test]
+    fn resolve_auth_empty_key_sends_nothing() {
+        assert_eq!(resolve_auth("authorization", "Bearer ", ""), None);
+        assert_eq!(resolve_auth("authorization", "Bearer ", "   "), None);
+        // 粘贴 key 时常见的首尾换行/制表符
+        assert_eq!(resolve_auth("x-api-key", "", "\n\t "), None);
+        // 未声明方案 + 空 key 同样不发头
+        assert_eq!(resolve_auth("", "", ""), None);
+    }
+
+    /// 未声明鉴权方案（`auth_header()` 为空串，如 local）→ 补 Authorization: Bearer。
+    ///
+    /// 这是本次修复的核心分支：原实现把空串当头名交给 reqwest，只抛 builder error。
+    #[test]
+    fn resolve_auth_undeclared_scheme_falls_back_to_bearer() {
+        assert_eq!(
+            resolve_auth("", "", "sk-local"),
+            Some(("authorization".to_string(), "Bearer sk-local".to_string()))
+        );
+        // 空 header 但 prefix 非空属异常配置，仍按「未声明方案」处理，不让空头名漏出去
+        assert_eq!(
+            resolve_auth("", "Bearer ", "sk-local"),
+            Some(("authorization".to_string(), "Bearer sk-local".to_string()))
+        );
+    }
+
+    /// 已声明 header 的 Provider 行为必须与改造前逐字一致（零回归）。
+    #[test]
+    fn resolve_auth_declared_scheme_is_untouched() {
+        // 主流 OpenAI 兼容：authorization + "Bearer "
+        assert_eq!(
+            resolve_auth("authorization", "Bearer ", "sk-x"),
+            Some(("authorization".to_string(), "Bearer sk-x".to_string()))
+        );
+        // 无前缀 scheme：kimi 的 x-api-key / google 的 x-goog-api-key 保持裸值
+        assert_eq!(
+            resolve_auth("x-api-key", "", "sk-x"),
+            Some(("x-api-key".to_string(), "sk-x".to_string()))
+        );
+        assert_eq!(
+            resolve_auth("x-goog-api-key", "", "sk-x"),
+            Some(("x-goog-api-key".to_string(), "sk-x".to_string()))
+        );
+    }
+
+    /// key 首尾空白必须被裁掉：头值含空白同样会让 header 非法（builder error 复现路径）。
+    #[test]
+    fn resolve_auth_trims_key_whitespace() {
+        assert_eq!(
+            resolve_auth("authorization", "Bearer ", "  sk-x \n"),
+            Some(("authorization".to_string(), "Bearer sk-x".to_string()))
+        );
+        assert_eq!(
+            resolve_auth("", "", " sk-x "),
+            Some(("authorization".to_string(), "Bearer sk-x".to_string()))
+        );
     }
 }
