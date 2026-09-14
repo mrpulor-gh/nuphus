@@ -915,6 +915,8 @@ impl super::SubTaskRunner {
                 output_tokens: *output,
                 cache_hit_tokens: result.cache_hit_tokens,
                 source: "exec".to_string(),
+                gen_tps: None,
+                ttft_ms: None,
             });
         }
         result.blocks

@@ -132,7 +132,13 @@ interface ChatPanelProps {
   mood?: MoodState
   modelName?: string
   mainTokenUsage?: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
-  execTokenUsage?: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
+  execTokenUsage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheHitTokens: number
+    genTps?: number
+    ttftMs?: number
+  } | null
   totalDurationMs?: number
   totalCalls?: number
   contextLimit?: number

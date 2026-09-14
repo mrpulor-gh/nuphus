@@ -612,6 +612,10 @@ export type NuphusEvent =
       output_tokens: number
       cache_hit_tokens: number
       source: string
+      /** 解码速度（output tokens / 首 token→结束秒），仅 exec 源携带；缺省 = 无数据 */
+      gen_tps?: number
+      /** 首 token 延迟（毫秒）：请求发出 → 首个内容 chunk；仅 exec 源携带 */
+      ttft_ms?: number
     }
   | {
       type: 'refine_prompt'

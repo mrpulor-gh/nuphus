@@ -1090,6 +1090,8 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     input_tokens: wa.session().estimate_token_usage() as u32,
                     output_tokens: 0,
                     cache_hit_tokens: u32::MAX,
+                    gen_tps: None,
+                    ttft_ms: None,
                 });
                 // refine 预算必须按「绑定对」取：同 id 跨 provider 时仅凭 model
                 // 名会拿到别的段（或 builtin 无此模型 → 128K 猜测）。
@@ -1117,6 +1119,8 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     input_tokens: session_usage,
                     output_tokens: 0,
                     cache_hit_tokens: u32::MAX,
+                    gen_tps: None,
+                    ttft_ms: None,
                 });
 
                 let cw = nuphus::agent::goal_types::get_context_window_for(

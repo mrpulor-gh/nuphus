@@ -867,6 +867,9 @@ const zh: Record<string, string> = {
   'status.contextFallback': '上下文窗口占用: {0}',
   'status.cacheTooltip': '瞬时缓存命中: {0} / {1} ({2}%)',
   'status.tokenTooltip': '执行消耗: {0} (输入 {1} + 输出 {2})',
+  'status.speedTooltip':
+    '解码速度: {0} tokens/秒（单次调用输出 tokens ÷ 首 token→结束耗时，不含首 token 等待）',
+  'status.ttftTooltip': '首 token 延迟 {0}：请求发出 → 首个内容返回（含网络、排队与 prefill）',
   'status.remaining': '剩余 {0}',
   'status.steps': '{0} 步',
 

@@ -907,6 +907,9 @@ const en: Record<string, string> = {
   'status.contextFallback': 'Context window: {0}',
   'status.cacheTooltip': 'Cache hit: {0} / {1} ({2}%)',
   'status.tokenTooltip': 'Tokens: {0} (input {1} + output {2})',
+  'status.speedTooltip':
+    'Decode speed: {0} tokens/s (output tokens ÷ first-token→end duration, per call)',
+  'status.ttftTooltip': 'TTFT {0}: request dispatch → first token (network + queue + prefill)',
   'status.remaining': '{0} remaining',
   'status.steps': '{0} steps',
 

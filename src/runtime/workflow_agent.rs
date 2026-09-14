@@ -1298,6 +1298,8 @@ impl WorkflowAgent {
                 output_tokens: *output,
                 cache_hit_tokens: result.cache_hit_tokens,
                 source: "workflow".to_string(),
+                gen_tps: None,
+                ttft_ms: None,
             });
             // Cumulative session usage for context bar (like Leader's "main" source)
             self.emit(NuphusEvent::TokenUsage {
@@ -1305,6 +1307,8 @@ impl WorkflowAgent {
                 output_tokens: 0,
                 cache_hit_tokens: result.cache_hit_tokens,
                 source: "main".to_string(),
+                gen_tps: None,
+                ttft_ms: None,
             });
         }
         result.blocks

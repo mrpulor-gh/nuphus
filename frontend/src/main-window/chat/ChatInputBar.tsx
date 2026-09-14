@@ -33,6 +33,10 @@ interface TokenUsageInfo {
   inputTokens: number
   outputTokens: number
   cacheHitTokens: number
+  /** 解码速度 tok/s（exec 源事件携带；无数据时不显示） */
+  genTps?: number
+  /** 首 token 延迟 ms（exec 源事件携带；无数据时不显示） */
+  ttftMs?: number
 }
 
 interface ChatInputBarProps {
@@ -717,6 +721,19 @@ export function ChatInputBar({
   const cacheTotal = usage?.inputTokens || 0
   const cacheRate = cacheTotal > 0 ? (cacheHit / cacheTotal) * 100 : -1
   const execTokens = (execTokenUsage?.inputTokens || 0) + (execTokenUsage?.outputTokens || 0)
+  // 生成速度/首 token 延迟：dsh turn-metrics 同口径（解码段 tok/s + 独立 TTFT）
+  const genTps = execTokenUsage?.genTps
+  const ttftMs = execTokenUsage?.ttftMs
+  const tpsDisplay =
+    genTps && Number.isFinite(genTps)
+      ? genTps >= 100
+        ? genTps.toFixed(0)
+        : genTps >= 10
+          ? genTps.toFixed(1)
+          : genTps.toFixed(2)
+      : null
+  const ttftDisplay =
+    ttftMs && Number.isFinite(ttftMs) && ttftMs > 0 ? fmtDur(Math.round(ttftMs)) : null
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -1310,6 +1327,19 @@ export function ChatInputBar({
                       <span className="input-bar-ctx-detail-label">tok</span>
                       <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
                     </span>
+                    {/* 生成速度与首 token 延迟：与常驻 speed 胶囊同源的绝对值细节 */}
+                    {ttftDisplay && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">TTFT</span>
+                        <span className="input-bar-ctx-value">{ttftDisplay}</span>
+                      </span>
+                    )}
+                    {tpsDisplay && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">speed</span>
+                        <span className="input-bar-ctx-value">{tpsDisplay} tok/s</span>
+                      </span>
+                    )}
                     {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">cap</span>
@@ -1328,6 +1358,21 @@ export function ChatInputBar({
                   </span>
                 )}
               </span>
+              {tpsDisplay && (
+                <>
+                  <span className="input-bar-status-sep" aria-hidden="true" />
+                  <span
+                    style={{ color: '#06b6d4', fontVariantNumeric: 'tabular-nums' }}
+                    title={
+                      ttftDisplay
+                        ? `${t('status.speedTooltip', tpsDisplay)} · ${t('status.ttftTooltip', ttftDisplay)}`
+                        : t('status.speedTooltip', tpsDisplay)
+                    }
+                  >
+                    {tpsDisplay} tok/s
+                  </span>
+                </>
+              )}
               {apiHealth && (
                 <>
                   <span className="input-bar-status-sep" aria-hidden="true" />

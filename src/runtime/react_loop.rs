@@ -402,6 +402,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             // Streaming call (with cancel flag + smart retry), TextDelta emitted to frontend in real-time
             let max_llm_retries: u32 = 10;
             let mut llm_retry: u32 = 0;
+            // 成功 attempt 的流式耗时（生成速度 = 输出 tokens / 该耗时）
+            // 仅在下方循环 Ok 分支（break 前）初始化；失败 attempt 一律
+            // return/continue，不会读到未初始化值。
+            let gen_elapsed: Option<std::time::Duration>;
+            // 成功 attempt 的首 token 延迟（请求发出 → 首个内容 chunk）
+            let ttft_duration: Option<std::time::Duration>;
+            let first_token_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
             let events: Vec<crate::api::AssistantEvent> = loop {
                 // State tracking for <think> block depth across streaming chunks.
                 // AtomicU32 tracks nesting depth to prevent premature close when
@@ -411,7 +419,20 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 let exec_emitter = self.agent.exec_emitter.clone();
                 let collected_clone = collected.clone();
                 let think_state = in_think.clone();
+                let first_token_clone = first_token_at.clone();
                 let emitter = Box::new(move |event: crate::api::AssistantEvent| {
+                    // 首 token 时间戳：首个内容/推理 chunk 到达即记录（dsh turn-metrics
+                    // 的 firstTokenTime 等价物）。TTFT = 该戳 - gen_attempt_start。
+                    if matches!(
+                        event,
+                        crate::api::AssistantEvent::TextDelta(_)
+                            | crate::api::AssistantEvent::Reasoning(_)
+                    ) {
+                        let mut slot = first_token_clone.lock().unwrap_or_else(|e| e.into_inner());
+                        if slot.is_none() {
+                            *slot = Some(std::time::Instant::now());
+                        }
+                    }
                     if let crate::api::AssistantEvent::TextDelta(text) = &event {
                         // Single routing entry: process_text_delta (think split +
                         // tool-XML strip with the provider tag set), then emit
@@ -472,6 +493,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         .unwrap_or_else(|e| e.into_inner())
                         .push(event);
                 });
+                // 生成速度计时：从本次流式调用发起到结束（仅成功 attempt 计入，
+                // 失败的 attempt 在下方 Err 分支 return/continue，不会污染读数）。
+                let gen_attempt_start = std::time::Instant::now();
+                // 每次 attempt 重置首 token 记录，避免沿用上一次的残留时间戳
+                *first_token_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 match self
                     .agent
                     .llm
@@ -479,9 +505,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     .await
                 {
                     Ok(()) => {
+                        gen_elapsed = Some(gen_attempt_start.elapsed());
+                        ttft_duration = first_token_at
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .map(|t| t.saturating_duration_since(gen_attempt_start));
                         break std::mem::take(
                             &mut *collected.lock().unwrap_or_else(|e| e.into_inner()),
-                        )
+                        );
                     }
                     Err(e) => {
                         let err_str = e.to_string();
@@ -606,6 +637,38 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             if let Some((input, output)) = &processed.usage {
                 self.agent.session.update_api_input_tokens(*input as u64);
                 tracing::info!(tokens_in = input, tokens_out = output, "LLM call completed");
+                // dsh turn-metrics 口径：tok/s 只算「首 token→结束」的解码段，
+                // TTFT（请求发出→首 token）单独输出。云端 API 的网络/排队时间
+                // 因此不会污染速度读数，与 llama.cpp 报告的 decode 速度同口径。
+                // 无首 token 时间戳（个别 provider 首个 chunk 即收尾）时退化为整体耗时。
+                let gen_tps = match (gen_elapsed, ttft_duration) {
+                    (Some(total), Some(ttft)) => {
+                        let decode = total.saturating_sub(ttft);
+                        let secs = decode.as_secs_f64();
+                        if secs > f64::EPSILON {
+                            Some(*output as f64 / secs)
+                        } else {
+                            None
+                        }
+                    }
+                    (Some(total), None) => {
+                        let secs = total.as_secs_f64();
+                        if secs > f64::EPSILON {
+                            Some(*output as f64 / secs)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let ttft_ms = ttft_duration.map(|d| d.as_secs_f64() * 1000.0);
+                if let Some(tps) = gen_tps {
+                    tracing::info!(
+                        tps = format!("{tps:.1}"),
+                        ttft_ms = format!("{:.0}", ttft_ms.unwrap_or(0.0)),
+                        "LLM generation speed"
+                    );
+                }
                 if let Some(ref emitter) = self.agent.exec_emitter {
                     // exec source: single call consumption (frontend accumulates incrementally)
                     emitter.emit(NuphusEvent::TokenUsage {
@@ -613,6 +676,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         output_tokens: *output,
                         cache_hit_tokens: processed.cache_hit_tokens,
                         source: "exec".to_string(),
+                        gen_tps,
+                        ttft_ms,
                     });
                     // main source: Leader accumulated context usage (continuously updates progress bar)
                     let leader_ctx = self.agent.session.api_input_tokens as u32;
@@ -621,6 +686,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         output_tokens: 0,
                         cache_hit_tokens: processed.cache_hit_tokens,
                         source: "main".to_string(),
+                        gen_tps: None,
+                        ttft_ms: None,
                     });
                 }
             }

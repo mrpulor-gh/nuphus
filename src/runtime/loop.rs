@@ -70,6 +70,10 @@ pub enum RuntimeEvent {
         input_tokens: u32,
         output_tokens: u32,
         cache_hit_tokens: u32,
+        /// 生成速度（output tokens / 流式耗时秒）；None = 无耗时数据
+        gen_tps: Option<f64>,
+        /// 首 token 延迟（毫秒）；None = 无数据
+        ttft_ms: Option<f64>,
     },
     /// System message
     SystemMessage { message: String },
@@ -169,11 +173,15 @@ impl RuntimeEvent {
                 input_tokens,
                 output_tokens,
                 cache_hit_tokens,
+                gen_tps,
+                ttft_ms,
             } => NuphusEvent::TokenUsage {
                 input_tokens,
                 output_tokens,
                 cache_hit_tokens,
                 source: "main".to_string(),
+                gen_tps,
+                ttft_ms,
             },
             RuntimeEvent::SystemMessage { message } => NuphusEvent::DirectResponse { message },
             RuntimeEvent::SecurityCheck {

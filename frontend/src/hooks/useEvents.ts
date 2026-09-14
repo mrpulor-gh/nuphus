@@ -18,7 +18,15 @@ import { playUiSound } from '../ui/sound'
 import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
 
 type RegionPickerMode = 'picker' | 'capture' | 'ocr' | null
-type TokenUsageState = { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
+type TokenUsageState = {
+  inputTokens: number
+  outputTokens: number
+  cacheHitTokens: number
+  /** 解码速度 tok/s（exec 源事件携带；无数据时为 undefined） */
+  genTps?: number
+  /** 首 token 延迟毫秒（exec 源事件携带；无数据时为 undefined） */
+  ttftMs?: number
+} | null
 
 // ════════════════════════════════════════════════════════════
 // toolToMood mapping table
@@ -920,6 +928,8 @@ export function useEvents(h: EventHandlers) {
                   inputTokens: event.input_tokens,
                   outputTokens: event.output_tokens,
                   cacheHitTokens: cacheHit,
+                  genTps: event.gen_tps ?? prev?.genTps,
+                  ttftMs: event.ttft_ms ?? prev?.ttftMs,
                 }
               })
             if (event.source === 'main') update(h.setMainTokenUsage)

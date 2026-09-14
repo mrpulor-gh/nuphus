@@ -236,6 +236,16 @@ pub enum NuphusEvent {
         output_tokens: u32,
         cache_hit_tokens: u32,
         source: String,
+        /// 解码速度（output tokens / 首 token→结束秒数），仅 exec 源（单次调用消费）携带。
+        /// provider 无关的通用指标；本地 llama.cpp 与云端 API 均适用。
+        /// 无首 token 时间戳时退化为「整体耗时（含 TTFT）」速度。
+        /// serde(default) 保证旧端反序列化兼容（字段缺失 = 无速度数据）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gen_tps: Option<f64>,
+        /// 首 token 延迟（毫秒）：请求发出 → 首个内容 chunk。
+        /// 云端 API 场景把网络/排队时间从解码速度中剥离，单独展示。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ttft_ms: Option<f64>,
     },
 
     // ── Context refinement events ──
