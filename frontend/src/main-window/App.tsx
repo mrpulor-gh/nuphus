@@ -643,6 +643,9 @@ export default function App() {
                     <IconX size={14} />
                   </IconButton>
                   <span className="models-page-title">{t('app.models')}</span>
+                  {/* 拖动条：模型页是全屏覆盖层，会盖住 TitleBar 的 data-tauri-drag-region，
+                      导致停留在该页面时窗口无法拖动。这里补一条占满剩余空白的拖动区。 */}
+                  <span className="models-page-drag" data-tauri-drag-region />
                 </div>
                 <div className="models-page-body">
                   <ModelsPage

@@ -1997,7 +1997,15 @@ export function ChatPanel({
           supportedEfforts={currentModelEfforts}
           defaultEffort={currentModelDefaultEffort}
           onEffortChange={handleEffortChange}
-          onModelSwitch={() => setModelOpen(true)}
+          onModelSwitch={() => {
+            setModelOpen(true)
+            // 打开「模型管理」时强制拉取最新模型/配置：后端可能刚被「模型设置」页改过
+            //（保存密钥、切 provider），而本组件只在 mode/modelName 变化时才重载——
+            // 「同 id 换 provider」（如 custom→local 都是 qwen38-27b-q8）两边都不变，
+            // 卡片就会显示旧快照（曾表现为 Local 卡片显示 0 个模型）。
+            void loadEffortContext()
+            loadSavedConfigs().then(setSavedConfigs)
+          }}
           onSend={handleSubmit}
           onInterrupt={onInterrupt}
           onGracefulStop={onGracefulStop}
@@ -2254,7 +2262,7 @@ export function ChatPanel({
                                   </div>
                                   {providerModels.length === 0 ? (
                                     <div className="model-provider-empty">
-                                      {t('modelManager.noModels')}
+                                      {t('models.noModels')}
                                     </div>
                                   ) : (
                                     providerModels.map(model => {

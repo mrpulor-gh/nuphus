@@ -7,8 +7,20 @@
 
 ## [Unreleased]
 
+### Fixed
+- 本地服务商（`local`）配置 API Key 后所有请求报 `builder error`：`local.rs` 把 `auth_header()` / `auth_prefix()` 声明为空串（语义是「无内置鉴权」），而注入点直接 `format!("{}{}", prefix, key)` 后交给 `reqwest::RequestBuilder::header`，http crate 把空串判为**非法头名**，最终只抛一句 `builder error`（用户侧表现：`IPC invoke list_provider_models failed: 请求失败: builder error`，极易被误判成网络问题）。现统一走新增的 `config::provider::resolve_auth()`：空 key → 完全不携带鉴权头；未声明鉴权方案 → 按 OpenAI 兼容约定补 `authorization: Bearer <key>`；已声明 header 的 Provider（`x-api-key`、`x-goog-api-key` 等无前缀 scheme）逐字不变。覆盖全部 7 个注入点（list-provider-models / model-meta / vision-probe / chat-completions ×2 / responses / vision_ocr）——其中 `chat_completions` 原先**无条件**注入，本地端点带 key 时聊天同样会挂。
+  - 语义依据：实测 llama-swap 只认带 `Bearer ` 前缀的形式（裸 key、空 Bearer、无头均 401）；`voice.rs` / `speech/cloud.rs` 早已用 `("authorization", "Bearer ")` 兜底，「未声明鉴权方案 = 走 OpenAI 兼容约定」是本仓库既有语义，不是新约定。
+- 本地/自定义端点在无鉴权时无法检测与刷新模型：`fetch_provider_models` / `refresh_provider_models` 一律要求非空 key，Ollama / llama.cpp 这类默认无鉴权的端点必须瞎填一个 key 才能连接。现按 Provider 元数据放行空 key（判据为 `auth_header()` 为空串，另加用户自建的 `custom` 端点），且仍不携带任何鉴权头。
+- 模型管理弹窗显示陈旧数据：`ChatPanel` 的 `allModels` 只在 `mode` / `modelName` 变化时重载，打开弹窗并不触发刷新；「同 id 换 provider」（如 custom → local 使用同一个模型 id）时两个依赖都没变，卡片便读旧快照（表现为 Local 卡片显示 0 个模型，实际后端数据正常）。现打开弹窗时强制重拉模型与配置。
+- 模型管理弹窗空态把 i18n key 当文案渲染：`ChatPanel.tsx` 引用了并不存在的 `modelManager.noModels`，界面直接显示原始 key 字面量。改用已存在的 `models.noModels`。
+- 模型页无法拖动窗口：模型页是全屏覆盖层，盖住了 `TitleBar` 的 `data-tauri-drag-region`，而页头自身没挂拖动区，停留在该页面时窗口拖不动。现于页头补一条占满剩余空白的拖动区。
+
 ### Added
+- 模型页密钥栏对本地服务商开放：可留空直接连接；服务启用鉴权时（llama-swap、带 key 的网关或反向代理）在此填写后再连接。
+- 模型页新增「仅保存密钥」按钮：key 此前只在「点击可用模型」那一步经 `configureLlm` 落盘，服务端鉴权失败、可用模型列表为空时，用户填了 key 却找不到任何保存入口。现以该服务商当前模型（否则已配置的首个模型）作为落盘目标，不依赖「连接」是否成功。
 - 状态栏展示解码速度与首 token 延迟：`TokenUsage` 事件新增可选字段 `gen_tps` / `ttft_ms`（`serde(default, skip_serializing_if)`，字段缺失与旧端反序列化均兼容）。速度按「输出 tokens ÷ 首 token→结束耗时」计算，把网络、排队与 prefill 从解码速度中剥离，与 llama.cpp 报告的 decode 速度同口径；TTFT 单独展示。目前仅 Leader 的流式调用（`react_loop`）产出数据，sub-agent 与 workflow 路径固定为 `None`（后续按需接入）。
+
+ (docs(changelog): 记录速度 / TTFT 指标)
 
 ## [0.2.12] - 2026-09-12
 

@@ -137,16 +137,23 @@ impl ChatCompletionsTransport {
                 }
             };
 
-            let auth_value = format!("{}{}", self.config.auth_prefix, self.config.api_key);
+            // 空 auth_header（local 等未声明鉴权方案的 Provider）会被 http crate
+            // 判为非法头名，reqwest 只会抛一句难定位的 builder error；统一走
+            // resolve_auth 解析（详见其文档）。
+            let auth = crate::config::provider::resolve_auth(
+                &self.config.auth_header,
+                &self.config.auth_prefix,
+                &self.config.api_key,
+            );
             tracing::debug!(
                 "[REQ] Auth: header={}, key_len={}",
                 self.config.auth_header,
                 self.config.api_key.len()
             );
-            let mut req = client
-                .post(&url)
-                .header(&self.config.auth_header, &auth_value)
-                .header("Content-Type", "application/json");
+            let mut req = client.post(&url).header("Content-Type", "application/json");
+            if let Some((h, v)) = &auth {
+                req = req.header(h.as_str(), v.as_str());
+            }
             // quirks.extra_headers 静态请求头（如 opencode-go 网关要求的
             // x-opencode-session）。其他 provider extra_headers 为空 → 循环零生效。
             for (k, v) in &self.config.quirks.extra_headers {
@@ -380,11 +387,15 @@ impl ChatCompletionsTransport {
                 }
             };
 
-            let auth_value = format!("{}{}", self.config.auth_prefix, self.config.api_key);
-            let mut req = client
-                .post(&url)
-                .header(&self.config.auth_header, &auth_value)
-                .header("Content-Type", "application/json");
+            let auth = crate::config::provider::resolve_auth(
+                &self.config.auth_header,
+                &self.config.auth_prefix,
+                &self.config.api_key,
+            );
+            let mut req = client.post(&url).header("Content-Type", "application/json");
+            if let Some((h, v)) = &auth {
+                req = req.header(h.as_str(), v.as_str());
+            }
             // quirks.extra_headers 静态请求头（如 opencode-go 网关要求的
             // x-opencode-session）。其他 provider extra_headers 为空 → 循环零生效。
             for (k, v) in &self.config.quirks.extra_headers {

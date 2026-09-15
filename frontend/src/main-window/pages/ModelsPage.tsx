@@ -75,6 +75,16 @@ const TXT = {
   clearKeyConfirm:
     '确定要清除该服务商的 API 密钥吗？\n模型与其它配置会保留，清除后需重新输入才能使用云端服务。',
   keyHelp: '密钥仅保存在本机配置中，用于向服务商发起请求；页面不展示已存密钥原文。',
+  keyHelpLocal:
+    '本地服务通常无需密钥，可留空直接连接；若服务启用了鉴权（如 llama-swap、带 key 的网关/反向代理），在此填写后再连接。',
+  keyPlaceholderLocal: '可选：本地服务启用鉴权时填写密钥',
+  saveKeyBtn: '保存',
+  savingKey: '保存中…',
+  saveKeyTitle: '仅保存密钥（不检测模型）',
+  saveKeyNoModel:
+    '该服务商下还没有可用模型：请先点「连接」检测，或用下方「添加本地模型」手动添加一个模型后再保存。',
+  saveKeySuccess: (m: string) => `密钥已保存（目标模型：${m}）`,
+  saveKeyFail: '保存密钥失败',
   filterPlaceholder: '筛选模型…',
   baseUrlLabel: '接口地址',
   baseUrlPlaceholder: '自定义接口地址（可选）',
@@ -451,6 +461,7 @@ export function ModelsPage({
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
   const [detecting, setDetecting] = useState(false)
   const [clearingKey, setClearingKey] = useState(false)
+  const [savingKey, setSavingKey] = useState(false)
   const [detectedModels, setDetectedModels] = useState<ProviderModelBrief[]>([])
   const [filterInput, setFilterInput] = useState('')
   const [detectError, setDetectError] = useState<string | null>(null)
@@ -654,10 +665,10 @@ export function ModelsPage({
     return activeView === 'provider' && provider === key
   }
 
-  /** 通过 /v1/models 检测 API key 并列出可用模型 */
+  /** 通过 /v1/models 检测 API key 并列出可用模型；本地服务允许空 key 直连（无鉴权场景） */
   const detectModels = async () => {
     const key = apiKey.trim()
-    if (!key) {
+    if (!key && !isLocal) {
       setDetectError(TXT.apiKeyRequired)
       return
     }
@@ -774,6 +785,50 @@ export function ModelsPage({
       setFeedback({ ok: false, msg: e?.message || TXT.clearKeyFail })
     } finally {
       setClearingKey(false)
+    }
+    setTimeout(() => setFeedback(null), 2500)
+  }
+
+  /**
+   * 仅保存密钥：不依赖「连接」是否成功，也不依赖可用模型列表里已有目标模型。
+   *
+   * 背景：key 原本只在「点击可用模型」那一步经 configureLlm 落盘（或走「添加本地模型」），
+   * 于是服务端鉴权失败、可用模型列表为空时，用户「填了 key 却找不到保存入口」。
+   * 这里补一个显式入口：以该服务商当前模型（否则已配置的首个模型）作为落盘目标。
+   */
+  const saveKey = async () => {
+    const key = apiKey.trim()
+    if (!key) {
+      setDetectError(TXT.apiKeyRequired)
+      return
+    }
+    const own = allModels.filter(m => m.provider === provider).map(m => m.id)
+    const target = (own.includes(currentModel) ? currentModel : '') || own[0] || ''
+    if (!target) {
+      setDetectError(TXT.saveKeyNoModel)
+      return
+    }
+    setSavingKey(true)
+    setDetectError(null)
+    try {
+      const p = providers.find(x => x.id === provider)
+      await configureLlm(key, target, provider, baseUrl || p?.base_url || '')
+      const cfg = await getCurrentConfig()
+      if (cfg) {
+        setBaseUrl(cfg.base_url || '')
+        setLoadedBaseUrl(cfg.base_url || '')
+        if (cfg.configured_providers) {
+          setConfiguredProviders(cfg.configured_providers)
+          setHasKey(cfg.configured_providers.includes(provider))
+        }
+      }
+      setApiKey('')
+      setFeedback({ ok: true, msg: TXT.saveKeySuccess(target) })
+      onModelChanged?.()
+    } catch (e: any) {
+      setDetectError(e?.message || TXT.saveKeyFail)
+    } finally {
+      setSavingKey(false)
     }
     setTimeout(() => setFeedback(null), 2500)
   }
@@ -1076,7 +1131,8 @@ export function ModelsPage({
                       )}
                     </div>
 
-                    {!isLocal && (
+                    {/* 密钥栏：远程服务商必填；本地服务可选（llama-swap 等启用鉴权时需要） */}
+                    {
                       <FormRow
                         stacked
                         label={
@@ -1086,7 +1142,7 @@ export function ModelsPage({
                             {hasKey && <span className="model-badge label-badge">已配置</span>}
                           </span>
                         }
-                        hint={TXT.keyHelp}
+                        hint={isLocal ? TXT.keyHelpLocal : TXT.keyHelp}
                         control={
                           <div className="models-key-row">
                             <div className="models-key-field">
@@ -1101,7 +1157,9 @@ export function ModelsPage({
                                 placeholder={
                                   hasKey
                                     ? TXT.keyOverwritePlaceholder
-                                    : TXT.keyInputPlaceholder(curProvider?.name || provider)
+                                    : isLocal
+                                      ? TXT.keyPlaceholderLocal
+                                      : TXT.keyInputPlaceholder(curProvider?.name || provider)
                                 }
                               />
                               <button
@@ -1119,10 +1177,21 @@ export function ModelsPage({
                               variant="primary"
                               size="sm"
                               onClick={detectModels}
-                              disabled={detecting || !apiKey.trim()}
+                              disabled={detecting || (!isLocal && !apiKey.trim())}
                               title={TXT.connectTitle}
                             >
                               {detecting ? TXT.connecting : TXT.connectBtn}
+                            </Button>
+                            {/* 显式保存入口：key 原本只在「点击可用模型」时才落盘，
+                                鉴权失败（可用模型列表为空）时用户找不到任何保存按钮 */}
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={saveKey}
+                              disabled={savingKey || !apiKey.trim()}
+                              title={TXT.saveKeyTitle}
+                            >
+                              {savingKey ? TXT.savingKey : TXT.saveKeyBtn}
                             </Button>
                             {hasKey && (
                               <button
@@ -1139,7 +1208,7 @@ export function ModelsPage({
                           </div>
                         }
                       />
-                    )}
+                    }
 
                     {detectError && <div className="detect-error">{detectError}</div>}
 

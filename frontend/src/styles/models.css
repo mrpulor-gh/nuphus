@@ -402,6 +402,12 @@
 .models-page-close {
   flex-shrink: 0;
 }
+/* 模型页页头的窗口拖动区：模型页是全屏覆盖层，会盖掉 TitleBar 的
+   data-tauri-drag-region，导致停留在该页面时窗口拖不动。 */
+.models-page-drag {
+  flex: 1;
+  align-self: stretch;
+}
 .models-page-title {
   font-size: var(--fz-xl);
   font-weight: 600;

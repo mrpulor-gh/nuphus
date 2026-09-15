@@ -1,6 +1,6 @@
 //! Utils module
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub mod automation_lock;
@@ -774,65 +774,18 @@ struct PluginRootCandidate {
 }
 
 fn resolve_plugin_root() -> PathBuf {
-    let mut candidates: Vec<PluginRootCandidate> = Vec::new();
+    let exe = std::env::current_exe().ok();
+    let data_plugin_dir = nuphus_data_dir().join("plugin");
+    let candidates = plugin_root_candidates(
+        std::env::var("NUPHUS_PLUGIN_DIR").ok(),
+        std::env::var("NUPHUS_WORKSPACE").ok(),
+        dev_checkout_root().as_deref(),
+        exe.as_deref().and_then(Path::parent),
+        &data_plugin_dir,
+    );
 
-    // 1. 显式覆盖（用户明确指定 → 允许创建，避免"配了却被静默忽略"）
-    if let Ok(dir) = std::env::var("NUPHUS_PLUGIN_DIR") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            candidates.push(PluginRootCandidate {
-                path: PathBuf::from(dir),
-                source: "NUPHUS_PLUGIN_DIR",
-                create: true,
-            });
-        }
-    }
-    if let Ok(dir) = std::env::var("NUPHUS_WORKSPACE") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            candidates.push(PluginRootCandidate {
-                path: PathBuf::from(dir).join("plugin"),
-                source: "NUPHUS_WORKSPACE",
-                create: true,
-            });
-        }
-    }
-
-    // 2. 源码检出（开发/测试）——有 Cargo.toml 才算源码树，不创建
-    let dev_root = compile_time_workspace_root();
-    if dev_root.join("Cargo.toml").exists() {
-        candidates.push(PluginRootCandidate {
-            path: dev_root.join("plugin"),
-            source: "dev-checkout",
-            create: false,
-        });
-    }
-
-    // 3. 便携包：plugin/ 与 exe 同级。不创建——否则 dev 下会在 target/debug 里
-    //    凭空造一个 plugin/ 并改变解析结果
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(PluginRootCandidate {
-                path: dir.join("plugin"),
-                source: "exe-relative",
-                create: false,
-            });
-        }
-    }
-
-    // 4. 用户数据目录兜底（自己的根，创建是正确的）
-    let data_dir = nuphus_data_dir().join("plugin");
-    candidates.push(PluginRootCandidate {
-        path: data_dir.clone(),
-        source: "data-dir",
-        create: true,
-    });
-
-    for c in &candidates {
-        if candidate_usable(c) {
-            tracing::debug!("[utils] plugin root = {} ({})", c.path.display(), c.source);
-            return c.path.clone();
-        }
+    if let Some(root) = pick_usable_root(&candidates) {
+        return root;
     }
 
     // 理论上到不了这里（data-dir 允许创建且 NUPHUS_DATA_DIR 兜底可写）。全部失败时
@@ -843,9 +796,88 @@ fn resolve_plugin_root() -> PathBuf {
             .iter()
             .map(|c| (c.path.display().to_string(), c.source))
             .collect::<Vec<_>>(),
-        data_dir.display()
+        data_plugin_dir.display()
     );
-    data_dir
+    data_plugin_dir
+}
+
+/// 编译期源码树根——**仅当该根下确有 `Cargo.toml`**（真的在源码树里跑）才返回。
+///
+/// 与候选构造分开是为了让两条分支各自可断言：发布版里
+/// `compile_time_workspace_root()` 是 CI 构建机的路径（`D:\a\nuphus\nuphus`），
+/// 用户机上不存在，必须整体跳过而不是当成一个不可写的候选。
+fn dev_checkout_root() -> Option<PathBuf> {
+    let root = compile_time_workspace_root();
+    root.join("Cargo.toml").exists().then_some(root)
+}
+
+/// 按优先级构造候选列表。
+///
+/// 纯构造、不碰文件系统 —— 「优先级顺序」这条不变量因此可以直接单测，
+/// 不必依赖开发机的真实环境（见下方 `plugin_root_stays_repo_plugin_in_dev_checkout`
+/// 的注释：原实现直接断言 `plugin_root()`，开发机上设了 `NUPHUS_PLUGIN_DIR` 就会红）。
+fn plugin_root_candidates(
+    explicit_plugin_dir: Option<String>,
+    explicit_workspace: Option<String>,
+    dev_root: Option<&Path>,
+    exe_dir: Option<&Path>,
+    data_plugin_dir: &Path,
+) -> Vec<PluginRootCandidate> {
+    let mut candidates: Vec<PluginRootCandidate> = Vec::new();
+
+    // 1. 显式覆盖（用户明确指定 → 允许创建，避免"配了却被静默忽略"）。
+    //    空串/纯空白视为没配，否则会退化成「当前目录/plugin」这种荒唐结果。
+    let trimmed = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(dir) = trimmed(explicit_plugin_dir) {
+        candidates.push(PluginRootCandidate {
+            path: PathBuf::from(dir),
+            source: "NUPHUS_PLUGIN_DIR",
+            create: true,
+        });
+    }
+    if let Some(dir) = trimmed(explicit_workspace) {
+        candidates.push(PluginRootCandidate {
+            path: PathBuf::from(dir).join("plugin"),
+            source: "NUPHUS_WORKSPACE",
+            create: true,
+        });
+    }
+
+    // 2. 源码检出（开发/测试）——有 Cargo.toml 才算源码树，不创建
+    if let Some(root) = dev_root {
+        candidates.push(PluginRootCandidate {
+            path: root.join("plugin"),
+            source: "dev-checkout",
+            create: false,
+        });
+    }
+
+    // 3. 便携包：plugin/ 与 exe 同级。不创建——否则 dev 下会在 target/debug 里
+    //    凭空造一个 plugin/ 并改变解析结果
+    if let Some(dir) = exe_dir {
+        candidates.push(PluginRootCandidate {
+            path: dir.join("plugin"),
+            source: "exe-relative",
+            create: false,
+        });
+    }
+
+    // 4. 用户数据目录兜底（自己的根，创建是正确的）
+    candidates.push(PluginRootCandidate {
+        path: data_plugin_dir.to_path_buf(),
+        source: "data-dir",
+        create: true,
+    });
+
+    candidates
+}
+
+/// 取第一个可用候选；`None` = 全部不可用（由调用方回退到兜底路径并报错）。
+fn pick_usable_root(candidates: &[PluginRootCandidate]) -> Option<PathBuf> {
+    candidates.iter().find(|c| candidate_usable(c)).map(|c| {
+        tracing::debug!("[utils] plugin root = {} ({})", c.path.display(), c.source);
+        c.path.clone()
+    })
 }
 
 /// 候选是否可用：存在（或允许创建）**且**真正可写。
@@ -1536,24 +1568,126 @@ mod tests {
     /// 回归护栏：在源码检出内运行时，plugin 根必须仍是仓库的 plugin/。
     /// 若这条挂了，说明开发/测试环境的共享状态被改到了用户数据目录——
     /// 那是破坏性变更，必须先修这里再发版。
+    ///
+    /// 护栏只断言**决策函数在「无显式覆盖」下**的结果，不读开发机的真实环境：
+    /// `NUPHUS_PLUGIN_DIR` / `NUPHUS_WORKSPACE` 是既定的最高优先级覆盖
+    /// （见 `plugin_root_explicit_override_wins`），开发机上为安装版设过它之后，
+    /// 直接断言 `plugin_root()` 就会红 —— 那是把「开发机配置」当成了「代码行为」，
+    /// 属隔离性缺陷而非行为 bug。
     #[test]
     fn plugin_root_stays_repo_plugin_in_dev_checkout() {
-        let dev_root = compile_time_workspace_root();
-        assert!(
-            dev_root.join("Cargo.toml").exists(),
-            "测试应跑在源码检出内（{} 下应有 Cargo.toml）",
-            dev_root.display()
+        let dev_root =
+            dev_checkout_root().expect("测试应跑在源码检出内（编译期工作区根下应有 Cargo.toml）");
+
+        // 无显式覆盖：源码检出优先于 exe 同级与用户数据目录
+        let candidates = plugin_root_candidates(
+            None,
+            None,
+            Some(&dev_root),
+            Some(Path::new("C:/nonexistent/exe-dir")),
+            Path::new("C:/nonexistent/data-dir/plugin"),
         );
         assert_eq!(
-            plugin_root(),
+            candidates.first().map(|c| c.source),
+            Some("dev-checkout"),
+            "无显式覆盖时，源码检出必须是第一优先级"
+        );
+
+        let picked = pick_usable_root(&candidates).expect("源码检出内应解析出可写的 plugin 根");
+        assert_eq!(
+            picked,
             dev_root.join("plugin"),
-            "源码检出内 plugin 根应仍指向仓库 plugin/"
+            "plugin 根应指向仓库 plugin/"
+        );
+        // workspace_root() 即 plugin 根的父目录；这里对解析结果断言同一关系，
+        // 避免依赖 OnceLock 缓存与真实环境变量。
+        assert_eq!(
+            picked.parent(),
+            Some(dev_root.as_path()),
+            "workspace_root 应仍是仓库根"
+        );
+    }
+
+    /// 显式覆盖是最高优先级（用户明确指定 → 优先，且允许创建）。
+    ///
+    /// 这条正是开发机上原护栏会红的根源：设了 `NUPHUS_PLUGIN_DIR` 之后源码检出
+    /// 不再胜出 —— 这是既定语义，不是 bug。
+    #[test]
+    fn plugin_root_explicit_override_wins() {
+        let dev_root = Path::new("C:/dev/nuphus");
+        let data_dir = Path::new("C:/data/nuphus/plugin");
+
+        let cs = plugin_root_candidates(
+            Some("D:/custom/plugin".to_string()),
+            None,
+            Some(dev_root),
+            None,
+            data_dir,
+        );
+        assert_eq!(cs[0].source, "NUPHUS_PLUGIN_DIR");
+        assert_eq!(cs[0].path, PathBuf::from("D:/custom/plugin"));
+        assert!(
+            cs[0].create,
+            "显式覆盖必须允许创建，否则「配了却被静默忽略」"
+        );
+
+        // NUPHUS_WORKSPACE 给的是父目录，plugin 子目录由解析器补上；首尾空白裁掉
+        let cs = plugin_root_candidates(
+            None,
+            Some("  D:/ws  ".to_string()),
+            Some(dev_root),
+            None,
+            data_dir,
+        );
+        assert_eq!(cs[0].source, "NUPHUS_WORKSPACE");
+        assert_eq!(cs[0].path, PathBuf::from("D:/ws").join("plugin"));
+
+        // 空串 / 纯空白等于没配（否则会退化成「当前目录/plugin」）
+        let cs = plugin_root_candidates(
+            Some("   ".to_string()),
+            Some(String::new()),
+            Some(dev_root),
+            None,
+            data_dir,
+        );
+        assert_eq!(cs[0].source, "dev-checkout");
+    }
+
+    /// 发布版（不在源码树内）的兜底顺序：exe 同级优先于用户数据目录，且都不主动创建。
+    #[test]
+    fn plugin_root_release_fallback_order_is_exe_then_data_dir() {
+        let cs = plugin_root_candidates(
+            None,
+            None,
+            None,
+            Some(Path::new("C:/app")),
+            Path::new("C:/data/nuphus/plugin"),
         );
         assert_eq!(
-            workspace_root(),
-            dev_root,
-            "源码检出内 workspace_root 应仍是仓库根"
+            cs.iter().map(|c| c.source).collect::<Vec<_>>(),
+            vec!["exe-relative", "data-dir"]
         );
+        assert!(!cs[0].create, "便携包布局只探测存在性，不得凭空创建");
+        assert!(cs[1].create, "用户数据目录是兜底，允许创建");
+    }
+
+    /// 源码检出不可用时降级到可写的用户数据目录（真实目录，覆盖 create 分支）。
+    #[test]
+    fn plugin_root_falls_back_to_writable_data_dir() {
+        let dir = std::env::temp_dir().join(format!("nuphus_pr_fallback_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let data_plugin = dir.join("plugin");
+
+        let cs = plugin_root_candidates(
+            None,
+            None,
+            Some(Path::new("C:/definitely/not/a/checkout")),
+            Some(Path::new("C:/definitely/not/an/exe/dir")),
+            &data_plugin,
+        );
+        assert_eq!(pick_usable_root(&cs), Some(data_plugin.clone()));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── 随包只读资产内嵌 / 落盘 ─────────────────────────────────────
