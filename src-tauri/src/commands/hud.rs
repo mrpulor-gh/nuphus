@@ -151,23 +151,67 @@ fn move_programmatically<R: tauri::Runtime>(
 /// 判据是坐标比对而非"正在定位"标志位：定位标志会在 set_position 返回后立刻清零，
 /// 而 Moved 事件是稍后才到的，标志位方案必然漏判。
 pub fn observe_user_drag<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
-    window.on_window_event(|event| {
-        let tauri::WindowEvent::Moved(pos) = event else {
-            return;
-        };
-        let programmatic = HUD_LAST_SET_POS
-            .lock()
-            .ok()
-            .and_then(|last| *last)
-            .map(|last| last == *pos)
-            .unwrap_or(false);
-        // x <= HUD_OFFSCREEN 是 hide() 的屏幕外哨兵，永远不算用户位置
-        if programmatic || pos.x <= HUD_OFFSCREEN {
-            return;
-        }
-        HUD_USER_MOVED.store(true, Ordering::Relaxed);
-        if let Ok(mut user) = HUD_USER_POS.lock() {
-            *user = Some(*pos);
+    // 捕获 AppHandle 而不是 window 本身：这个闭包会被该窗口持有，捕获窗口会形成
+    // 引用环（window → handler → window）。AppHandle 是刻意的可克隆句柄。
+    let app = window.app_handle().clone();
+    window.on_window_event(move |event| {
+        match event {
+            tauri::WindowEvent::Moved(pos) => {
+                let programmatic = HUD_LAST_SET_POS
+                    .lock()
+                    .ok()
+                    .and_then(|last| *last)
+                    .map(|last| last == *pos)
+                    .unwrap_or(false);
+                // x <= HUD_OFFSCREEN 是 hide() 的屏幕外哨兵，永远不算用户位置
+                if programmatic || pos.x <= HUD_OFFSCREEN {
+                    return;
+                }
+                HUD_USER_MOVED.store(true, Ordering::Relaxed);
+                if let Ok(mut user) = HUD_USER_POS.lock() {
+                    *user = Some(*pos);
+                }
+            }
+            // 显示模式 / 缩放切换（4K↔1080p、HiDPI、外接屏）。
+            //
+            // 实测事故（2026-09-15）：显示器从 3840×2160「looks like 1920×1080」(scale=2)
+            // 切回 1920×1080(scale=1) 后，HUD 停在按 2x 算出的物理坐标 (3200,1832) 上——
+            // 在 1x 体系里就是屏幕外：既看不见、也点不到（暂停/终止/关闭全丢），
+            // 连 `screencapture -l <winid>` 都抓不到屏幕外窗口。
+            //
+            // 窗口的物理坐标不随缩放自动重算，所以这里必须自己重贴一次；用户手动拖过
+            // 就尊重其位置（hud_bottom_right 里的 clamp 保证它至少不会留在屏幕外）。
+            tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                let Some(w) = app.get_webview_window(HUD_LABEL) else {
+                    return;
+                };
+                if !HUD_USER_MOVED.load(Ordering::Relaxed) {
+                    tracing::info!("[HUD] 缩放变化为 {}，重新贴回工作区右下角", scale_factor);
+                    position_bottom_right(&w);
+                    return;
+                }
+                // 用户手动摆过 → 不擅自搬走；但显示体系变了，必须保证它还留在可见区内，
+                // 否则会变成"看不见也点不到"的死物（实测过一次）。
+                let user_pos = HUD_USER_POS.lock().ok().and_then(|p| *p);
+                if let (Some(pos), Ok(Some(monitor))) = (user_pos, w.primary_monitor()) {
+                    let size = hud_physical_size(*scale_factor);
+                    let fixed = clamp_into_area(pos, monitor.work_area(), size);
+                    if fixed != pos {
+                        tracing::info!(
+                            "[HUD] 缩放变化后用户位置越界 ({}x{} → {}x{})，夹回工作区",
+                            pos.x,
+                            pos.y,
+                            fixed.x,
+                            fixed.y
+                        );
+                        if let Ok(mut user) = HUD_USER_POS.lock() {
+                            *user = Some(fixed);
+                        }
+                        move_programmatically(&w, fixed);
+                    }
+                }
+            }
+            _ => {}
         }
     });
 }
@@ -207,7 +251,28 @@ fn hud_bottom_right(
     let x = area.position.x + area.size.width as i32 - size.width as i32 - margin_right;
     let y = area.position.y + area.size.height as i32 - size.height as i32 - margin_bottom;
 
-    (size, tauri::PhysicalPosition::new(x, y))
+    (
+        size,
+        clamp_into_area(tauri::PhysicalPosition::new(x, y), area, size),
+    )
+}
+
+/// 把一个窗口位置夹进工作区，保证窗口**完整落在可见范围内**。
+///
+/// 为什么需要：显示模式/缩放切换后，窗口的物理坐标不会自动重算，而调用点可能拿到
+/// 过期或退化的工作区（实测：显示器从 2x 切回 1x 后 HUD 停在 (3080,1828)——
+/// 屏幕外，既看不见也点不到，连 `screencapture -l <winid>` 都抓不到屏幕外窗口）。
+/// 工作区比窗口还小这种退化情形下，贴到左上角也好过消失。
+fn clamp_into_area(
+    pos: tauri::PhysicalPosition<i32>,
+    area: &tauri::PhysicalRect<i32, u32>,
+    size: tauri::PhysicalSize<u32>,
+) -> tauri::PhysicalPosition<i32> {
+    let min_x = area.position.x;
+    let min_y = area.position.y;
+    let max_x = (area.position.x + area.size.width as i32 - size.width as i32).max(min_x);
+    let max_y = (area.position.y + area.size.height as i32 - size.height as i32).max(min_y);
+    tauri::PhysicalPosition::new(pos.x.clamp(min_x, max_x), pos.y.clamp(min_y, max_y))
 }
 
 #[cfg(test)]
@@ -264,6 +329,43 @@ mod tests {
 
         assert_eq!(size, tauri::PhysicalSize::new(300, 58));
         assert_eq!(pos, tauri::PhysicalPosition::new(3520, 916));
+    }
+
+    /// **实测事故的回归**：显示器从 3840×2160「looks like 1920×1080」(scale=2) 切回
+    /// 1920×1080(scale=1) 后，HUD 停在按 2x 算出的物理坐标 (3080,1828) 上——在 1x 的
+    /// 1920×1080 工作区里完全在屏幕外：看不见、点不到，连截图工具都抓不到。
+    /// clamp_into_area 必须把它拉回可见范围。
+    #[test]
+    fn clamp_pulls_offscreen_hud_back_into_work_area() {
+        let area = rect(0, 30, 1920, 960); // 1x 屏：菜单栏 30 + Dock 90
+        let size = tauri::PhysicalSize::new(300, 58);
+        let fixed = clamp_into_area(tauri::PhysicalPosition::new(3080, 1828), &area, size);
+
+        // 右下角贴边：x = 1920-300 = 1620，y = 30+960-58 = 932
+        assert_eq!(fixed, tauri::PhysicalPosition::new(1620, 932));
+        assert!(fixed.x + size.width as i32 <= area.position.x + area.size.width as i32);
+        assert!(fixed.y + size.height as i32 <= area.position.y + area.size.height as i32);
+    }
+
+    /// 已经在工作区内的位置不能被 clamp 改动（否则用户拖过的位置会被悄悄挪走）。
+    #[test]
+    fn clamp_keeps_in_bounds_position_untouched() {
+        let area = rect(0, 30, 1920, 960);
+        let size = tauri::PhysicalSize::new(300, 58);
+        for pos in [(1600, 916), (0, 30), (1620, 932), (100, 500)] {
+            let p = tauri::PhysicalPosition::new(pos.0, pos.1);
+            assert_eq!(clamp_into_area(p, &area, size), p, "不应改动 {pos:?}");
+        }
+    }
+
+    /// 退化情形：工作区比窗口还小。贴到左上角好过整个消失（拿不到屏幕外窗口）。
+    #[test]
+    fn clamp_degrades_to_area_origin_when_area_smaller_than_window() {
+        let area = rect(10, 20, 100, 20);
+        let size = tauri::PhysicalSize::new(300, 58);
+        let fixed = clamp_into_area(tauri::PhysicalPosition::new(9999, 9999), &area, size);
+
+        assert_eq!(fixed, tauri::PhysicalPosition::new(10, 20));
     }
 }
 
