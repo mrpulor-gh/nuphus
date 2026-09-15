@@ -7,6 +7,11 @@ OK Build ? (1 ?) OK Added ? (1 ?) # Changelog
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-09-15
+
+### Fixed
+- **显示模式 / 缩放切换后 HUD 跑到屏幕外**（#19，macOS）：窗口的物理坐标不随缩放自动重算，而 HUD 的位置是在旧缩放体系下算好的——实测从 3840×2160「looks like 1920×1080」(scale=2) 切回 1920×1080(scale=1) 后，HUD 停在 2x 算出的物理坐标上，在 1x 工作区里完全在屏幕外；后果不只是看不见：连 `screencapture -l <winid>` 都抓不到屏幕外窗口，暂停 / 终止 / 关闭全部失联，只能重启应用找回。现监听 `WindowEvent::ScaleFactorChanged`：未手动拖过就按当前工作区重新贴右下角；拖过则不擅自搬走，但用 `clamp_into_area` 保证仍完整落在可见区内并回写用户位置。顺带抽出 `clamp_into_area` 与 `hud_bottom_right` 共用（工作区比窗口小的退化情形贴左上角，而不是整个消失）。
+
 ## [0.2.13] - 2026-09-15
 
 ### Fixed
