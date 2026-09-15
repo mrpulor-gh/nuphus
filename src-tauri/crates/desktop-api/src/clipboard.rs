@@ -52,7 +52,7 @@ pub fn read_file_paths() -> Result<Vec<String>> {
 
 #[cfg(not(windows))]
 pub fn read_file_paths() -> Result<Vec<String>> {
-    Err(DesktopError::PlatformNotSupported.into())
+    Err(DesktopError::PlatformNotSupported)
 }
 
 /// 读取剪贴板文本
