@@ -124,7 +124,31 @@ impl ModelRegistry {
     pub fn from_toml(path: &str) -> crate::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| crate::NuphusError::Config(format!("read config failed: {e}")))?;
-        let mut registry: Self = toml::from_str(&content)
+        let mut doc: toml::Value = content
+            .parse()
+            .map_err(|e| crate::NuphusError::Config(format!("parse config failed: {e}")))?;
+        // 归一化：provider_type 是协议维度（custom/local/官方 id），实例身份只由 name 承载。
+        // 早期写入路径曾把实例名（custom-xxx）写进 provider_type，而 ProviderKind 无该变体，
+        // 会让整份 providers.toml 反序列化失败（配置全丢）。此处就地折回 custom，保证
+        // 老配置仍可加载；实例名仍完整保留在 name 上，路由不受影响。
+        if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+            for provider in providers.iter_mut() {
+                let needs_fold = provider
+                    .get("provider_type")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.starts_with("custom-"))
+                    .unwrap_or(false);
+                if needs_fold {
+                    if let Some(map) = provider.as_table_mut() {
+                        map.insert(
+                            "provider_type".to_string(),
+                            toml::Value::String("custom".to_string()),
+                        );
+                    }
+                }
+            }
+        }
+        let mut registry: Self = serde::Deserialize::deserialize(doc.clone())
             .map_err(|e| crate::NuphusError::Config(format!("parse config failed: {e}")))?;
         // API key 透明解密：落盘为 `enc:v1:`（DPAPI）时还原明文；旧明文配置原样兼容。
         // 旧版 `enc:`（无版本号）密文一并迁移解密；密文但解密失败视为未配置（触发重新导入）。
@@ -147,20 +171,18 @@ impl ModelRegistry {
         // providers.toml 顶层 model 字段已退役：不构成覆盖层。leader 可用时以 leader
         // 为准（覆盖 serde 读入的顶层旧值）；leader 空（旧文件未迁移绑定）→ 保留顶层
         // 历史值作一次性兼容兜底，不写回、不参与任何优先级比较。
-        if let Ok(doc) = content.parse::<toml::Value>() {
-            if let Some(leader) = doc
-                .get("agent_models")
-                .and_then(|a| a.get("leader"))
-                .and_then(|v| v.as_str())
-            {
-                let avail = !leader.is_empty()
-                    && registry
-                        .providers
-                        .iter()
-                        .any(|p| p.models.iter().any(|m| m.id == leader));
-                if avail {
-                    registry.model = leader.to_string();
-                }
+        if let Some(leader) = doc
+            .get("agent_models")
+            .and_then(|a| a.get("leader"))
+            .and_then(|v| v.as_str())
+        {
+            let avail = !leader.is_empty()
+                && registry
+                    .providers
+                    .iter()
+                    .any(|p| p.models.iter().any(|m| m.id == leader));
+            if avail {
+                registry.model = leader.to_string();
             }
         }
         registry.build_alias_map();
@@ -571,6 +593,54 @@ impl ModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 兼容：早期写入路径可能把实例名写进 provider_type（应为协议类型 custom）。
+    /// 该值无对应 ProviderKind 变体，若不归一化整份 providers.toml 会反序列化失败。
+    #[test]
+    fn from_toml_folds_custom_instance_provider_type_back_to_custom() {
+        let path = std::env::temp_dir().join(format!(
+            "nuphus_registry_custom_inst_{}.toml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            r#"
+[[providers]]
+name = "custom-team-a"
+provider_type = "custom-team-a"
+api_key = ""
+base_url = "https://gw.example/v1"
+
+[[providers.models]]
+id = "gpt-4o"
+"#,
+        )
+        .unwrap();
+
+        let registry = ModelRegistry::from_toml(path.to_str().unwrap()).unwrap();
+        let custom = registry
+            .providers
+            .iter()
+            .find(|p| p.name == "custom-team-a")
+            .expect("instance segment must survive loading");
+        assert_eq!(
+            custom.provider_type,
+            KnownProvider::Custom,
+            "provider_type 必须折回协议类型 custom"
+        );
+        assert_eq!(custom.name, "custom-team-a", "实例名由 name 承载，不得丢失");
+        assert!(
+            registry
+                .find_model_for_provider("custom-team-a", "gpt-4o")
+                .is_some(),
+            "折回后仍可按实例名精确解析模型"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
 
     #[test]
     fn test_known_provider_from_id() {

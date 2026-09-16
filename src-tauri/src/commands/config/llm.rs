@@ -640,7 +640,20 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
 
     // Resolve base_url from provider metadata
     let registry = ProviderRegistry::builtin();
-    let pmeta = registry.get(&provider);
+    let provider_type = nuphus::config::load_registry().ok().and_then(|r| {
+        r.providers
+            .iter()
+            .find(|p| p.name == provider)
+            .map(|p| p.provider_type)
+    });
+    let pmeta = registry.get(
+        provider_type
+            .unwrap_or_else(|| {
+                nuphus::api::ProviderKind::from_id(&provider)
+                    .unwrap_or(nuphus::api::ProviderKind::Custom)
+            })
+            .as_str(),
+    );
     let resolved_base_url = resolve_effective_base_url(
         base_url.as_deref(),
         &provider,
@@ -806,7 +819,7 @@ pub async fn configure_llm(
         .and_then(|g| g.llm_config.as_ref().map(|c| c.model.clone()));
 
     let registry = ProviderRegistry::builtin();
-    let provider = registry.get(&resolved_provider);
+    let provider = registry.get(provider_kind_for_segment(&resolved_provider).as_str());
     let default_model = provider
         .as_ref()
         .map(|p| p.default_model())
@@ -1523,7 +1536,7 @@ pub async fn test_llm_connection(
 
     // 1. Get provider metadata and defaults from ProviderRegistry
     let registry = ProviderRegistry::builtin();
-    let provider_meta = registry.get(&provider);
+    let provider_meta = registry.get(provider_kind_for_segment(&provider).as_str());
     let resolved_base_url = resolve_effective_base_url(
         Some(base_url.as_str()),
         &provider,
@@ -1642,6 +1655,23 @@ pub struct ProviderModelBrief {
     pub context_window: Option<u64>,
 }
 
+/// Resolve a configured segment name to its protocol type.
+/// Custom instances keep `provider_type = "custom"` while their `name` is
+/// unique (for example `custom-team-a`). Official provider IDs keep their
+/// existing resolution path unchanged.
+fn provider_kind_for_segment(provider: &str) -> nuphus::api::ProviderKind {
+    nuphus::config::load_registry()
+        .ok()
+        .and_then(|r| {
+            r.providers
+                .iter()
+                .find(|p| p.name == provider)
+                .map(|p| p.provider_type)
+        })
+        .or_else(|| nuphus::api::ProviderKind::from_id(provider))
+        .unwrap_or(nuphus::api::ProviderKind::Custom)
+}
+
 /// 自定义端点内置默认地址是文档示例：解析结果命中即视为「尚未配置」。
 fn is_placeholder_base_url(url: &str) -> bool {
     url.trim()
@@ -1683,7 +1713,7 @@ async fn fetch_provider_models(
 
     let registry = ProviderRegistry::builtin();
     let pmeta = registry
-        .get(provider)
+        .get(provider_kind_for_segment(provider).as_str())
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     // 空 key 仅放行两类端点：① 未声明内置鉴权方案的 Provider（local 等，
@@ -1692,7 +1722,8 @@ async fn fetch_provider_models(
     //
     // 判据取自 Provider 元数据而非硬编码 id 列表：新增「无内置鉴权」的 Provider
     // 时自动生效，不会因为漏改这里而被迫瞎填 key。
-    let allows_no_key = pmeta.auth_header().is_empty() || provider == "custom";
+    let allows_no_key =
+        pmeta.auth_header().is_empty() || provider == "custom" || provider.starts_with("custom-");
     if api_key.is_empty() && !allows_no_key {
         return Err("API Key 不能为空".to_string());
     }
@@ -1893,6 +1924,7 @@ pub fn get_provider_base_url(provider: String) -> Option<String> {
 pub struct ProviderInfo {
     pub id: String,
     pub name: String,
+    pub provider_type: String,
     pub base_url: String,
     pub default_model: String,
     pub auth_header: String,
@@ -1901,18 +1933,59 @@ pub struct ProviderInfo {
 
 #[tauri::command]
 pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
-    let providers = ProviderRegistry::builtin()
+    let mut providers = ProviderRegistry::builtin()
         .list_info()
         .iter()
         .map(|p| ProviderInfo {
             id: p.id.to_string(),
             name: p.name.to_string(),
+            provider_type: p.id.to_string(),
             base_url: p.base_url.to_string(),
             default_model: p.default_model.to_string(),
             auth_header: p.auth_header.to_string(),
             auth_prefix: p.auth_prefix.to_string(),
         })
         .collect::<Vec<_>>();
+
+    // Custom instances are configuration segments, not new protocol types.
+    // Keep built-in provider behavior unchanged and expose configured custom
+    // segments by their stable unique name for precise model routing.
+    if let Some(path) = get_config_path() {
+        if let Ok(registry) =
+            nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap_or("providers.toml"))
+        {
+            for custom in registry
+                .providers
+                .iter()
+                .filter(|p| p.provider_type == nuphus::api::ProviderKind::Custom)
+            {
+                if providers.iter().any(|p| p.id == custom.name) {
+                    continue;
+                }
+                providers.push(ProviderInfo {
+                    id: custom.name.clone(),
+                    name: custom.name.clone(),
+                    provider_type: "custom".to_string(),
+                    base_url: custom.base_url.clone(),
+                    default_model: custom
+                        .models
+                        .first()
+                        .map(|m| m.id.clone())
+                        .unwrap_or_default(),
+                    auth_header: if custom.auth_header.is_empty() {
+                        "Authorization".to_string()
+                    } else {
+                        custom.auth_header.clone()
+                    },
+                    auth_prefix: if custom.auth_prefix.is_empty() {
+                        "Bearer ".to_string()
+                    } else {
+                        custom.auth_prefix.clone()
+                    },
+                });
+            }
+        }
+    }
 
     tracing::info!(
         "get_supported_providers: returning {} providers",

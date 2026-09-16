@@ -54,6 +54,11 @@ import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
+import {
+  LEGACY_CUSTOM_PROVIDER_ID,
+  isCustomProviderId,
+  isValidCustomInstanceId,
+} from '../lib/customProvider'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
@@ -153,7 +158,7 @@ const CUSTOM_NAV_ITEMS: { key: CustomNavKey; label: string }[] = [
 
 /** 归入模块二「自定义设置」的服务商 id（不出现在模块一「模型提供商」分组） */
 function isModule2Provider(id: string): boolean {
-  return id === 'custom' || id === 'opencode-go' || id === 'local'
+  return isCustomProviderId(id) || id === 'opencode-go' || id === 'local'
 }
 
 /**
@@ -432,6 +437,9 @@ export function ModelsPage({
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [providersLoading, setProvidersLoading] = useState(true)
   const [provider, setProvider] = useState('')
+  /** 新建自定义中转站实例名输入（custom-xxx）；提交后进入该实例的配置页 */
+  const [newInstanceId, setNewInstanceId] = useState('')
+  const [newInstanceError, setNewInstanceError] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [inputVal, setInputVal] = useState('')
@@ -608,7 +616,10 @@ export function ModelsPage({
   }, [provider])
   useEffect(() => {
     if (activeView !== 'provider') return
-    if (!provider || provider === 'local' || provider === 'custom') return
+    if (!provider || provider === 'local') return
+    // 自定义中转站不自动拉取（与既有 custom 行为一致）：网关模型目录往往远大于
+    // 实际可用集合，自动 upsert 会污染模型列表；用户在页内手动「刷新」即可。
+    if (isCustomProviderId(provider)) return
     if (!configuredProviders.includes(provider)) return
     if (autoSyncedRef.current.has(provider)) return
     autoSyncedRef.current.add(provider)
@@ -647,8 +658,16 @@ export function ModelsPage({
   const editingCtxRef = useRef<string | null>(null)
 
   const curProvider = providers.find(p => p.id === provider)
-  const isCustom = provider === 'custom'
+  const currentProviderInfo = providers.find(p => p.id === provider)
+  const isCustom = currentProviderInfo?.provider_type === 'custom' || isCustomProviderId(provider)
   const isLocal = provider === 'local'
+  /**
+   * 已配置的自定义中转站实例（provider_type=custom 且非旧版 `custom` 段）。
+   * 每个实例是独立配置段：同名模型靠实例名精确路由，官方 Provider 不参与。
+   */
+  const customInstances = providers.filter(
+    p => p.provider_type === 'custom' && p.id !== LEGACY_CUSTOM_PROVIDER_ID,
+  )
   /** 模块一「模型提供商」= 官方远程服务商（排除归入模块二的 custom / opencode-go / local） */
   const module1Providers = providers.filter(p => !isModule2Provider(p.id))
 
@@ -679,6 +698,26 @@ export function ModelsPage({
   const openProviderView = (id: string) => {
     setActiveView('provider')
     handleProviderChange(id)
+  }
+
+  /**
+   * 新建自定义中转站实例：只做本地校验并进入该实例配置页；
+   * 真正的配置段落盘由 configureLlm（后端 update_config_toml）完成，
+   * 保证 name=custom-xxx / provider_type=custom 的写法由后端唯一决定。
+   */
+  const openNewCustomInstance = () => {
+    const id = newInstanceId.trim()
+    if (!isValidCustomInstanceId(id)) {
+      setNewInstanceError('名称需为 custom-xxx（小写英文/数字/连字符）')
+      return
+    }
+    if (providers.some(p => p.id === id)) {
+      setNewInstanceError('该名称已存在')
+      return
+    }
+    setNewInstanceError('')
+    setNewInstanceId('')
+    openProviderView(id)
   }
 
   /** 模块二「自定义设置」选中态：custom/opencode-go/local 跟随对应服务商页 */
@@ -1134,6 +1173,50 @@ export function ModelsPage({
                   <span className="models-rail-name">{item.label}</span>
                 </button>
               ))}
+              {/* 已配置的自定义中转站实例：每个实例是独立配置段，可分别配置
+                  地址/密钥/模型；同名模型靠实例名精确路由，互不串台。 */}
+              {customInstances.map(p => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className={[
+                    'models-rail-item',
+                    'models-rail-item--sub',
+                    activeView === 'provider' && provider === p.id ? 'active' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => openProviderView(p.id)}
+                  title={p.base_url || p.id}
+                >
+                  <span className="models-rail-name">{p.id}</span>
+                </button>
+              ))}
+              {/* 新建实例入口：只登记实例名，地址/密钥在该实例页填写 */}
+              <div className="models-rail-new">
+                <input
+                  className="compact-input models-rail-new-input"
+                  value={newInstanceId}
+                  onChange={e => {
+                    setNewInstanceId(e.target.value)
+                    setNewInstanceError('')
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') openNewCustomInstance()
+                  }}
+                  placeholder="custom-xxx"
+                  aria-label="新建自定义中转站名称"
+                />
+                <button
+                  type="button"
+                  className="models-rail-new-btn"
+                  onClick={openNewCustomInstance}
+                  title="新建自定义中转站"
+                >
+                  +
+                </button>
+              </div>
+              {newInstanceError && <div className="models-rail-new-error">{newInstanceError}</div>}
             </div>
           </div>
         </div>

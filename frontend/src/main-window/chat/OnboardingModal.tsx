@@ -29,7 +29,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
   const handleSelect = (p: ProviderInfo) => {
     setSelected(p)
     setModel(p.default_model || '')
-    setBaseUrl(p.id === 'custom' ? '' : p.base_url)
+    setBaseUrl(p.provider_type === 'custom' ? '' : p.base_url)
     setApiKey('')
     setError('')
     setStep('configure')
@@ -50,8 +50,8 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
       return
     }
     if (!selected) return
-    const resolvedBaseUrl = selected.id === 'custom' ? baseUrl.trim() : selected.base_url
-    if (selected.id === 'custom') {
+    const resolvedBaseUrl = selected.provider_type === 'custom' ? baseUrl.trim() : selected.base_url
+    if (selected.provider_type === 'custom') {
       if (!resolvedBaseUrl) {
         setError('请输入 API 接入点')
         return
@@ -127,7 +127,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
               <h2>{selected?.name}</h2>
             </div>
             <div className="onboarding-form">
-              {selected?.id === 'custom' && (
+              {selected?.provider_type === 'custom' && (
                 <label className="onboarding-label">
                   API 接入点
                   <input

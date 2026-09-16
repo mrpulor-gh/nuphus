@@ -494,6 +494,55 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 新建自定义中转站实例入口（custom-xxx）：与 rail item 同一行高与圆角语言 */
+.models-rail-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-1);
+}
+.models-rail-new-input {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--fz-sm);
+}
+.models-rail-new-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-md);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-rail-new-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-rail-new-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.models-rail-new-error {
+  padding: var(--space-1) var(--space-2) 0;
+  color: var(--danger, #ef4444);
+  font-size: var(--fz-xs);
+  line-height: 1.4;
+}
 .models-rail-badge {
   flex-shrink: 0;
 }

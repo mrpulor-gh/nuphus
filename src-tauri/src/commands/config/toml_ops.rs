@@ -9,6 +9,28 @@
 // context_window & supports_vision model fields
 // ============================================================================
 
+/// Validate a Custom provider instance name. The legacy `custom` segment remains valid;
+/// new instances must use a stable ASCII `custom-xxx` identity.
+fn validate_custom_provider_name(name: &str) -> Result<(), String> {
+    if name == "custom" {
+        return Ok(());
+    }
+    let suffix = name.strip_prefix("custom-").unwrap_or("");
+    let valid = name.len() <= 64
+        && !suffix.is_empty()
+        && !suffix.ends_with('-')
+        && name.starts_with("custom-")
+        && suffix
+            .chars()
+            .enumerate()
+            .all(|(i, c)| c.is_ascii_lowercase() || c.is_ascii_digit() || (c == '-' && i > 0));
+    if valid {
+        Ok(())
+    } else {
+        Err("自定义服务商名称必须符合 custom-xxx（小写英文、数字和连字符，且不可重复）".to_string())
+    }
+}
+
 /// Update model context_window in config.toml model entry
 pub fn update_model_context_window(
     config_path: &std::path::Path,
@@ -582,6 +604,27 @@ pub fn update_config_toml(
         toml::Value::Table(table)
     });
 
+    if provider_name == "custom" || provider_name.starts_with("custom-") {
+        validate_custom_provider_name(provider_name)?;
+        let duplicate = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .map(|providers| {
+                providers
+                    .iter()
+                    .filter(|p| {
+                        p.get("name").and_then(|n| n.as_str()) == Some(provider_name)
+                            && p.get("provider_type").and_then(|t| t.as_str()) == Some("custom")
+                    })
+                    .count()
+                    > 1
+            })
+            .unwrap_or(false);
+        if duplicate {
+            return Err(format!("自定义服务商名称已重复: {provider_name}"));
+        }
+    }
+
     // Ensure providers array exists (file may be valid TOML created by an
     // older path that didn't include the providers key)
     if let Some(table) = doc.as_table_mut() {
@@ -636,7 +679,13 @@ pub fn update_config_toml(
         );
         new_provider.insert(
             "provider_type".to_string(),
-            toml::Value::String(provider_name.to_string()),
+            toml::Value::String(
+                if provider_name == "custom" || provider_name.starts_with("custom-") {
+                    "custom".to_string()
+                } else {
+                    provider_name.to_string()
+                },
+            ),
         );
         new_provider.insert(
             "api_key".to_string(),
@@ -1069,6 +1118,87 @@ api_key = "sk-test"
             "file must not change when provider is not found"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// Custom 实例身份契约：`custom-xxx` 段必须写 name=实例名 / provider_type="custom"，
+    /// 否则下游（provider_kind_for_segment、find_model_for_provider）无法把实例名解析回
+    /// 自定义协议，同名模型就会串台。
+    #[test]
+    fn custom_instance_segment_keeps_provider_type_custom() {
+        let path = write_temp_config("");
+        update_config_toml(
+            &path,
+            "custom-team-a",
+            "sk-test",
+            "gpt-4o",
+            Some("https://gw.example/v1"),
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let providers = doc.get("providers").and_then(|p| p.as_array()).unwrap();
+        let entry = providers
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("custom-team-a"))
+            .expect("custom instance segment must be created");
+        assert_eq!(
+            entry.get("provider_type").and_then(|t| t.as_str()),
+            Some("custom"),
+            "provider_type 必须是协议类型 custom，而不是实例名"
+        );
+        assert_eq!(
+            entry.get("base_url").and_then(|t| t.as_str()),
+            Some("https://gw.example/v1")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn legacy_custom_segment_is_still_accepted() {
+        let path = write_temp_config("");
+        assert!(update_config_toml(&path, "custom", "sk-test", "m", Some("https://gw/v1")).is_ok());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn invalid_custom_instance_names_are_rejected() {
+        let path = write_temp_config("");
+        for bad in [
+            "custom-",
+            "custom-Bad",
+            "custom-team_A",
+            "custom--a",
+            "custom-a-",
+        ] {
+            assert!(
+                update_config_toml(&path, bad, "sk-test", "m", Some("https://gw/v1")).is_err(),
+                "{bad} 不应通过命名校验"
+            );
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn validate_custom_provider_name_accepts_expected_forms() {
+        for ok in ["custom", "custom-a", "custom-team-a", "custom-gw2"] {
+            assert!(
+                validate_custom_provider_name(ok).is_ok(),
+                "{ok} 应通过命名校验"
+            );
+        }
+        for bad in [
+            "",
+            "Custom",
+            "custom-",
+            "custom-a-",
+            "deepseek-a",
+            "custom-中",
+        ] {
+            assert!(
+                validate_custom_provider_name(bad).is_err(),
+                "{bad} 不应通过命名校验"
+            );
+        }
     }
 
     #[test]

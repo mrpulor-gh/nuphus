@@ -11,6 +11,7 @@ vi.mock('../lib/api', () => ({
 const customProvider = {
   id: 'custom',
   name: '自定义',
+  provider_type: 'custom',
   base_url: '',
   default_model: '',
   auth_header: 'Authorization',
@@ -20,6 +21,7 @@ const customProvider = {
 const builtinProvider = {
   id: 'deepseek',
   name: 'DeepSeek',
+  provider_type: 'deepseek',
   base_url: 'https://api.deepseek.com/v1',
   default_model: 'deepseek-chat',
   auth_header: 'Authorization',

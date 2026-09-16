@@ -638,6 +638,8 @@ export function clearProviderModels(provider: string) {
 export interface ProviderInfo {
   id: string
   name: string
+  /** Protocol type; custom instances keep this as "custom" while id is custom-xxx. */
+  provider_type: string
   base_url: string
   default_model: string
   auth_header: string
