@@ -1942,6 +1942,7 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
     let result = serde_json::json!({
         "model": registry.model,
         "vision": caps.vision,
+        "vision_provider": caps.vision_provider,
         "stt": caps.stt,
         "tts": caps.tts,
         "voice": caps.voice,
