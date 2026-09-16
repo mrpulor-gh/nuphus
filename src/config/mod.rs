@@ -158,3 +158,17 @@ pub fn resolve_vision_strategy() -> VisionStrategy {
 
     VisionStrategy::None
 }
+
+/// 返回显式配置的视觉模型 provider。旧配置没有该字段时返回 None，
+/// 由调用方使用 legacy 的 model-id 查找逻辑兼容处理。
+pub fn resolve_vision_provider() -> Option<String> {
+    load_registry().ok().and_then(|registry| {
+        if registry.capabilities.vision.is_empty()
+            || registry.capabilities.vision_provider.is_empty()
+        {
+            None
+        } else {
+            Some(registry.capabilities.vision_provider)
+        }
+    })
+}

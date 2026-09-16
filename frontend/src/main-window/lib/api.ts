@@ -653,6 +653,7 @@ export function getSupportedProviders() {
 export interface Capabilities {
   model: string
   vision: string
+  vision_provider?: string
   stt: string
   tts: string
   voice: string

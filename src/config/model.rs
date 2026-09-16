@@ -82,6 +82,9 @@ pub struct Capabilities {
     /// 图像理解模型
     #[serde(default)]
     pub vision: String,
+    /// 图像理解模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub vision_provider: String,
     /// 语音转文字模型（空 = 使用本地 SenseVoice ONNX）
     #[serde(default)]
     pub stt: String,
@@ -661,6 +664,45 @@ supports_streaming = true
         // Alias lookup
         let (_provider, model) = registry.find_model("kimi").unwrap();
         assert_eq!(model.id, "kimi-for-coding");
+    }
+
+    #[test]
+    fn vision_provider_is_optional_for_legacy_configs() {
+        let legacy: ModelRegistry = toml::from_str(
+            r#"
+[[providers]]
+name = "custom"
+provider_type = "custom"
+api_key = ""
+
+[[providers.models]]
+id = "m"
+
+[capabilities]
+vision = "m"
+"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.capabilities.vision, "m");
+        assert!(legacy.capabilities.vision_provider.is_empty());
+
+        let current: ModelRegistry = toml::from_str(
+            r#"
+[[providers]]
+name = "custom"
+provider_type = "custom"
+api_key = ""
+
+[[providers.models]]
+id = "m"
+
+[capabilities]
+vision = "m"
+vision_provider = "custom"
+"#,
+        )
+        .unwrap();
+        assert_eq!(current.capabilities.vision_provider, "custom");
     }
 
     /// Minimal ProviderConfig helper for candidate-lookup tests.

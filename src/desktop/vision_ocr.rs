@@ -14,7 +14,23 @@
 //! Errors are wrapped into NuphusError::Tool by the caller (client::ocr).
 
 use crate::api::ProviderKind;
-use crate::config::{self, resolve_vision_strategy, VisionStrategy};
+use crate::config::{self, resolve_vision_provider, resolve_vision_strategy, VisionStrategy};
+
+fn resolve_vision_model<'a>(
+    registry: &'a config::ModelRegistry,
+    model_id: &str,
+    provider: Option<&str>,
+) -> Result<(&'a config::ProviderConfig, &'a config::ModelEntry), String> {
+    if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+        registry
+            .find_model_for_provider(provider, model_id)
+            .ok_or_else(|| format!("未找到视觉模型: {provider}/{model_id}"))
+    } else {
+        registry
+            .find_model(model_id)
+            .ok_or_else(|| format!("未找到视觉模型: {model_id}"))
+    }
+}
 
 /// OCR via vision model (Chat Completions API with image_url)
 ///
@@ -54,9 +70,9 @@ pub fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<Strin
     let registry = config::load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
 
     // 3. Resolve model alias to find provider config
-    let (provider_config, model_entry) = registry
-        .find_model(&vision_model_id)
-        .ok_or_else(|| format!("未找到视觉模型: {vision_model_id}"))?;
+    let vision_provider = resolve_vision_provider();
+    let (provider_config, model_entry) =
+        resolve_vision_model(&registry, &vision_model_id, vision_provider.as_deref())?;
 
     // 4. 从内置 ProviderRegistry 获取正确的 auth_header/auth_prefix
     //    TOML ProviderConfig 默认为空，应使用 Provider trait 定义的认证方式
@@ -225,4 +241,50 @@ fn split_data_url(data_url: &str) -> Result<(String, String), String> {
 fn base64_encode(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn duplicate_model_registry() -> config::ModelRegistry {
+        toml::from_str(
+            r#"
+[[providers]]
+name = "first"
+provider_type = "custom"
+api_key = "first-key"
+base_url = "https://first.example/v1"
+
+[[providers.models]]
+id = "shared-model"
+
+[[providers]]
+name = "selected"
+provider_type = "custom"
+api_key = "selected-key"
+base_url = "https://selected.example/v1"
+
+[[providers.models]]
+id = "shared-model"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn vision_model_uses_configured_provider_for_duplicate_ids() {
+        let registry = duplicate_model_registry();
+        let (provider, model) =
+            resolve_vision_model(&registry, "shared-model", Some("selected")).unwrap();
+        assert_eq!(provider.name, "selected");
+        assert_eq!(model.id, "shared-model");
+    }
+
+    #[test]
+    fn vision_model_keeps_legacy_first_match_without_provider() {
+        let registry = duplicate_model_registry();
+        let (provider, _) = resolve_vision_model(&registry, "shared-model", None).unwrap();
+        assert_eq!(provider.name, "first");
+    }
 }

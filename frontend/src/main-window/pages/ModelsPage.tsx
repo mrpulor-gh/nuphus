@@ -176,6 +176,7 @@ function sortProvidersStable(list: ProviderInfo[]): ProviderInfo[] {
 // ════════════════════════════════════════════════════════════════
 function VisionModelSelect({
   value,
+  provider,
   models,
   onChange,
   t,
@@ -185,6 +186,7 @@ function VisionModelSelect({
   menuUp = false,
 }: {
   value: string
+  provider?: string
   models: ModelInfo[]
   /** provider 与被选 model 同源（同 id 跨服务商时不可只用 id 消歧） */
   onChange: (id: string, provider: string) => void
@@ -212,9 +214,10 @@ function VisionModelSelect({
   const filtered = Array.isArray(models)
     ? (() => {
         let list = [...models]
-        if (filterCapability === 'vision') {
-          list = list.filter(m => m.supports_vision)
-        } else if (filterCapability === 'audio') {
+        // Vision capability detection is best-effort and frequently unavailable
+        // for custom gateways. Keep all configured models selectable; the badge
+        // still communicates whether the capability was confirmed.
+        if (filterCapability === 'audio') {
           list = list.filter(m => m.supports_audio)
         }
         if (filterCapability === 'audio') {
@@ -225,7 +228,7 @@ function VisionModelSelect({
         return list
       })()
     : []
-  const selected = filtered.find(m => m.id === value)
+  const selected = filtered.find(m => m.id === value && (!provider || m.provider === provider))
   const emptyText = placeholder || TXT.visionNone
 
   return (
@@ -266,10 +269,10 @@ function VisionModelSelect({
           )}
           {filtered.map(m => (
             <div
-              key={m.id}
+              key={`${m.provider}:${m.id}`}
               role="option"
-              aria-selected={value === m.id}
-              className={`compact-select-option ${value === m.id ? 'active' : ''}`}
+              aria-selected={selected === m}
+              className={`compact-select-option ${selected === m ? 'active' : ''}`}
               onClick={() => {
                 onChange(m.id, m.provider)
                 close()
@@ -283,6 +286,11 @@ function VisionModelSelect({
               )}
               <span className="select-option-name">{m.id}</span>
               <span className="select-option-provider">({m.provider})</span>
+              {filterCapability === 'vision' && !m.supports_vision && (
+                <span className="select-option-provider" title="尚未确认该模型支持图片输入">
+                  （未确认视觉能力）
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -431,6 +439,7 @@ export function ModelsPage({
   const [baseUrl, setBaseUrl] = useState('')
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [visionModel, setVisionModel] = useState('')
+  const [visionProvider, setVisionProvider] = useState('')
   const [visionSaving, setVisionSaving] = useState(false)
   const [visionFeedback, setVisionFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测）
@@ -538,6 +547,7 @@ export function ModelsPage({
       .then(m => {
         if (m) {
           setVisionModel(m.vision)
+          setVisionProvider(m.vision_provider || '')
           setTtsModel(m.tts)
           setSttModel(m.stt)
           setVoiceModel(m.voice)
@@ -1666,19 +1676,22 @@ export function ModelsPage({
                       stacked
                       className="models-form-row--dedup"
                       label="图像理解模型"
-                      hint="需模型本身支持视觉输入（列表中会以图标标注）。"
+                      hint="已确认支持视觉输入的模型会显示图标；自定义/中转模型即使未探测到能力，也可以手动选择。"
                       control={
                         <VisionModelSelect
                           value={visionModel}
+                          provider={visionProvider}
                           models={allModels}
                           filterCapability="vision"
                           placeholder="未配置（使用默认模型）"
-                          onChange={async modelId => {
+                          onChange={async (modelId, selectedProvider) => {
                             setVisionSaving(true)
                             setVisionFeedback(null)
                             try {
                               await setCapability('vision', modelId)
+                              await setCapability('vision_provider', selectedProvider)
                               setVisionModel(modelId)
+                              setVisionProvider(selectedProvider)
                               setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
                               setTimeout(() => setVisionFeedback(null), 2000)
                             } catch (e: any) {
