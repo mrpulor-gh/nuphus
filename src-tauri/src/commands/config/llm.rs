@@ -640,20 +640,7 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
 
     // Resolve base_url from provider metadata
     let registry = ProviderRegistry::builtin();
-    let provider_type = nuphus::config::load_registry().ok().and_then(|r| {
-        r.providers
-            .iter()
-            .find(|p| p.name == provider)
-            .map(|p| p.provider_type)
-    });
-    let pmeta = registry.get(
-        provider_type
-            .unwrap_or_else(|| {
-                nuphus::api::ProviderKind::from_id(&provider)
-                    .unwrap_or(nuphus::api::ProviderKind::Custom)
-            })
-            .as_str(),
-    );
+    let pmeta = registry.get(provider_kind_for_segment(&provider).as_str());
     let resolved_base_url = resolve_effective_base_url(
         base_url.as_deref(),
         &provider,
@@ -1012,8 +999,10 @@ async fn post_configure(
     resolved_base_url: &str,
     context_window: Option<usize>,
 ) {
+    // 鉴权方案按**协议类型**解析：自定义中转站实例名（custom-xxx）不是内置 id，
+    // 直接 get(实例名) 会查不到；统一走 provider_kind_for_segment 折回 custom。
     let (auth_header, auth_prefix) = ProviderRegistry::builtin()
-        .get(resolved_provider)
+        .get(provider_kind_for_segment(resolved_provider).as_str())
         .map(|p| (p.auth_header(), p.auth_prefix()))
         .unwrap_or(("authorization", "Bearer "));
 
@@ -1712,18 +1701,20 @@ async fn fetch_provider_models(
     use std::time::Duration;
 
     let registry = ProviderRegistry::builtin();
+    let provider_kind = provider_kind_for_segment(provider);
     let pmeta = registry
-        .get(provider_kind_for_segment(provider).as_str())
+        .get(provider_kind.as_str())
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     // 空 key 仅放行两类端点：① 未声明内置鉴权方案的 Provider（local 等，
-    // Ollama / llama.cpp 默认无鉴权）② 用户自建的 custom 端点（地址自己填，
-    // 可能本就不需要鉴权）。官方远程服务商仍强制要求 key——防止空鉴权头串台。
+    // Ollama / llama.cpp 默认无鉴权）② 用户自建的自定义中转站（地址自己填，
+    // 可能本就不需要鉴权；含 custom-xxx 实例段）。官方远程服务商仍强制要求
+    // key——防止空鉴权头串台。
     //
-    // 判据取自 Provider 元数据而非硬编码 id 列表：新增「无内置鉴权」的 Provider
-    // 时自动生效，不会因为漏改这里而被迫瞎填 key。
+    // 判据取自 Provider 元数据 + 协议类型，而非硬编码 id 列表：新增「无内置鉴权」
+    // 的 Provider 时自动生效，不会因为漏改这里而被迫瞎填 key。
     let allows_no_key =
-        pmeta.auth_header().is_empty() || provider == "custom" || provider.starts_with("custom-");
+        pmeta.auth_header().is_empty() || provider_kind == nuphus::api::ProviderKind::Custom;
     if api_key.is_empty() && !allows_no_key {
         return Err("API Key 不能为空".to_string());
     }
@@ -1886,12 +1877,14 @@ pub async fn refresh_provider_models(
     base_url: Option<String>,
 ) -> Result<Vec<ProviderModelBrief>, String> {
     // 与 fetch_provider_models 同一判据：未声明内置鉴权方案的 Provider（local 等）
-    // 与用户自建的 custom 端点，允许无 key 刷新（Ollama / llama.cpp 默认无鉴权）。
+    // 与用户自建的自定义中转站（含 custom-xxx 实例），允许无 key 刷新
+    // （Ollama / llama.cpp / 无鉴权中转默认无鉴权）。
+    let provider_kind = provider_kind_for_segment(&provider);
     let allows_no_key = ProviderRegistry::builtin()
-        .get(&provider)
+        .get(provider_kind.as_str())
         .map(|p| p.auth_header().is_empty())
         .unwrap_or(false)
-        || provider == "custom";
+        || provider_kind == nuphus::api::ProviderKind::Custom;
     let api_key = match read_provider_api_key_from_config_toml(&provider) {
         Some(k) => k,
         None if allows_no_key => String::new(),
