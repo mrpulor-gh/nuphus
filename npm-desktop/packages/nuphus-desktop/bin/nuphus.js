@@ -21,6 +21,7 @@ const PLATFORM_MAP = {
   'darwin-arm64': {
     pkg: 'nuphus-desktop-osx-arm64',
     app: 'Nuphus.app',
+    binary: 'nuphus', // app bundle 内的可执行名（Contents/MacOS/nuphus）
   },
   'linux-x64': {
     pkg: 'nuphus-desktop-linux-x64',
@@ -53,17 +54,66 @@ function resolveVendorDir() {
   return { vendor, spec };
 }
 
+/**
+ * 补齐可执行位（幂等：已有 x 位的文件不写盘）。
+ *
+ * 背景：npm 包的发布流程跑在 Windows 上（`npm-desktop/publish.ps1` 的
+ * `Build-PlatformPackage` 用 `System32\tar.exe` 解压 Release 资产），而 NTFS 不表达
+ * Unix 可执行位 —— npm 从文件系统读到的 mode 一律是 644，于是发布包里所有文件
+ * （含 app bundle 的主二进制）都缺 x 位。macOS 上 `launchd` 会直接拒绝 spawn：
+ *
+ *     open -a Nuphus.app  ->  Launch failed / Launchd job spawn failed
+ *     直接执行二进制       ->  permission denied (126)
+ *
+ * Linux 的裸二进制同理。发布侧无法修复（Windows 设置不了 Unix mode），故在此兜底。
+ */
+function ensureExecutable(files) {
+  for (const file of files) {
+    try {
+      fs.accessSync(file, fs.constants.X_OK);
+      continue; // 已具备可执行位
+    } catch (_) {
+      // 落到下面补权限
+    }
+    try {
+      fs.chmodSync(file, 0o755);
+      console.error(`[nuphus] 已补齐可执行权限: ${file}`);
+    } catch (err) {
+      console.error(`[nuphus] 设置可执行权限失败: ${file} (${err.message})`);
+    }
+  }
+}
+
+/** macOS: app bundle 的主二进制 + Frameworks 下的动态库 */
+function macExecutables(vendor, spec) {
+  const appDir = path.join(vendor, spec.app);
+  const files = [path.join(appDir, 'Contents', 'MacOS', spec.binary)];
+  const frameworks = path.join(appDir, 'Contents', 'Frameworks');
+  if (fs.existsSync(frameworks)) {
+    for (const name of fs.readdirSync(frameworks)) {
+      if (name.endsWith('.dylib')) {
+        files.push(path.join(frameworks, name));
+      }
+    }
+  }
+  return files;
+}
+
 function main() {
   const { vendor, spec } = resolveVendorDir();
 
   let cmd;
   let args = [];
   if (process.platform === 'darwin') {
-    // macOS: open -a Nuphus.app（正确的应用启动方式）
+    // macOS: 先补齐可执行位，再 open -a Nuphus.app（正确的应用启动方式）
+    ensureExecutable(macExecutables(vendor, spec));
     cmd = 'open';
     args = ['-a', path.join(vendor, spec.app)];
   } else {
     cmd = path.join(vendor, spec.binary);
+    if (process.platform !== 'win32') {
+      ensureExecutable([cmd]);
+    }
   }
 
   const child = spawn(cmd, args, {
