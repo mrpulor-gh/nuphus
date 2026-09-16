@@ -200,12 +200,18 @@ pub fn update_model_reasoning_efforts(
     Ok(())
 }
 
-/// Update model supports_vision in config.toml model entry
+/// Update model supports_vision in config.toml model entry.
+///
+/// `source` 记录该值的来源：`Some("user")` = 用户在模型行内手动设定，
+/// 探测链路（post_configure 的 metadata/HTTP probe）必须让位于用户意图，
+/// 否则用户今天勾上的视觉能力会在下次连接时被探测结果覆盖掉。
+/// `None` = 自动探测结果，不改动已有的来源标记。
 pub fn update_model_supports_vision(
     config_path: &std::path::Path,
     provider_name: &str,
     model_id: &str,
     supports_vision: bool,
+    source: Option<&str>,
 ) -> Result<(), String> {
     // If file doesn't exist yet, silently skip
     let content = match std::fs::read_to_string(config_path) {
@@ -235,6 +241,12 @@ pub fn update_model_supports_vision(
                                             "supports_vision".to_string(),
                                             toml::Value::Boolean(supports_vision),
                                         );
+                                        if let Some(src) = source {
+                                            map.insert(
+                                                VISION_SOURCE_KEY.to_string(),
+                                                toml::Value::String(src.to_string()),
+                                            );
+                                        }
                                         nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
                                         let new_content =
                                             toml::to_string_pretty(&doc).map_err(|e| {
@@ -259,6 +271,111 @@ pub fn update_model_supports_vision(
             }
         }
     }
+    Ok(())
+}
+
+/// `supports_vision` 的来源标记键：值 `user` = 用户手动设定，探测链路不得覆盖。
+pub const VISION_SOURCE_KEY: &str = "supports_vision_source";
+
+/// 读取模型条目里的来源标记（仅认 `user`；其它/缺失 = 非用户设定）。
+pub fn read_model_vision_source(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+) -> Option<String> {
+    read_model_field(config_path, provider_name, model_id, VISION_SOURCE_KEY)
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+}
+
+/// 该模型是否由用户显式设定视觉能力（探测链路据此让位）。
+pub fn model_has_user_vision_override(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+) -> bool {
+    read_model_vision_source(config_path, provider_name, model_id).as_deref() == Some("user")
+}
+
+/// 读取模型条目的 `supports_vision`（用于写入后回读校验）。
+pub fn read_model_supports_vision(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+) -> Option<bool> {
+    read_model_field(config_path, provider_name, model_id, "supports_vision")
+        .and_then(|v| v.as_bool())
+}
+
+/// 读取 `providers[provider].models[id]` 下的单个字段。
+fn read_model_field(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+    key: &str,
+) -> Option<toml::Value> {
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    doc.get("providers")?
+        .as_array()?
+        .iter()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(provider_name))?
+        .get("models")?
+        .as_array()?
+        .iter()
+        .find(|m| m.get("id").and_then(|i| i.as_str()) == Some(model_id))?
+        .get(key)
+        .cloned()
+}
+
+/// 原子写入视觉模型绑定：`capabilities.vision` 与 `capabilities.vision_provider`
+/// 必须在**同一次读写**内落盘。
+///
+/// 分两次写会出现「新 model + 旧 provider」的中间态：后端按 provider+model 精确
+/// 解析时找不到该组合，视觉请求直接失败（用户看到的是「保存成功但用不了」）。
+pub fn set_vision_capability_in_config_toml(
+    config_path: &std::path::Path,
+    model_id: &str,
+    provider_name: &str,
+) -> Result<(), String> {
+    let content = std::fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config.toml: {}", e))?;
+    let mut doc: toml::Value = content
+        .parse()
+        .map_err(|e| format!("parse config.toml failed: {}", e))?;
+
+    if doc.get("capabilities").is_none() {
+        let table = doc
+            .as_table_mut()
+            .ok_or_else(|| "config.toml root is not a table".to_string())?;
+        table.insert(
+            "capabilities".to_string(),
+            toml::Value::Table(toml::value::Table::new()),
+        );
+    }
+    let caps = doc
+        .get_mut("capabilities")
+        .and_then(|v| v.as_table_mut())
+        .ok_or_else(|| "Cannot create [capabilities] table".to_string())?;
+
+    caps.insert(
+        "vision".to_string(),
+        toml::Value::String(model_id.to_string()),
+    );
+    // 空 provider（清除视觉模型）时一并清掉归属，避免留下悬空引用。
+    if provider_name.is_empty() {
+        caps.remove("vision_provider");
+    } else {
+        caps.insert(
+            "vision_provider".to_string(),
+            toml::Value::String(provider_name.to_string()),
+        );
+    }
+
+    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+    let new_content =
+        toml::to_string_pretty(&doc).map_err(|e| format!("Failed to serialize config: {}", e))?;
+    std::fs::write(config_path, new_content)
+        .map_err(|e| format!("Failed to write config.toml: {}", e))?;
     Ok(())
 }
 
@@ -1157,6 +1274,114 @@ api_key = "sk-test"
     fn legacy_custom_segment_is_still_accepted() {
         let path = write_temp_config("");
         assert!(update_config_toml(&path, "custom", "sk-test", "m", Some("https://gw/v1")).is_ok());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 视觉模型绑定必须一次写入两个字段：`vision` 与 `vision_provider`。
+    /// 分两次写会留下「新 model + 旧 provider」的中间态 —— 后端按 provider+model
+    /// 精确解析时找不到该组合，视觉请求直接失败，而 UI 已提示保存成功。
+    #[test]
+    fn set_vision_capability_writes_model_and_provider_together() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom-a"
+provider_type = "custom"
+api_key = "sk-a"
+
+[[providers.models]]
+id = "gpt-4o"
+
+[[providers]]
+name = "custom-b"
+provider_type = "custom"
+api_key = "sk-b"
+
+[[providers.models]]
+id = "gpt-4o"
+
+[capabilities]
+vision = "gpt-4o"
+vision_provider = "custom-a"
+"#,
+        );
+
+        set_vision_capability_in_config_toml(&path, "gpt-4o", "custom-b").unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let caps = doc.get("capabilities").unwrap();
+        assert_eq!(caps.get("vision").and_then(|v| v.as_str()), Some("gpt-4o"));
+        assert_eq!(
+            caps.get("vision_provider").and_then(|v| v.as_str()),
+            Some("custom-b"),
+            "model 与 provider 必须同时指向新实例，杜绝半绑定"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 清除视觉模型时一并清掉 provider 归属，不留悬空引用。
+    #[test]
+    fn set_vision_capability_clears_provider_with_empty_model() {
+        let path = write_temp_config(
+            r#"
+[capabilities]
+vision = "gpt-4o"
+vision_provider = "custom-a"
+"#,
+        );
+
+        set_vision_capability_in_config_toml(&path, "", "").unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let caps = doc.get("capabilities").unwrap();
+        assert_eq!(caps.get("vision").and_then(|v| v.as_str()), Some(""));
+        assert!(
+            caps.get("vision_provider").is_none(),
+            "provider 为空时必须清除 vision_provider，避免指向已删除的实例"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 用户手动设定视觉能力必须留痕：否则自动探测会在下次「连接/刷新」时把它
+    /// 覆盖回去（用户视角：今天勾上能用，明天又选不到了）。
+    #[test]
+    fn user_vision_setting_records_source_and_survives_auto_probe() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom-team-a"
+provider_type = "custom"
+api_key = "sk"
+
+[[providers.models]]
+id = "gpt-4o"
+"#,
+        );
+
+        update_model_supports_vision(&path, "custom-team-a", "gpt-4o", true, Some("user")).unwrap();
+        assert_eq!(
+            read_model_supports_vision(&path, "custom-team-a", "gpt-4o"),
+            Some(true)
+        );
+        assert!(model_has_user_vision_override(
+            &path,
+            "custom-team-a",
+            "gpt-4o"
+        ));
+
+        // 自动探测写入（source = None）不得清除 user 标记
+        update_model_supports_vision(&path, "custom-team-a", "gpt-4o", true, None).unwrap();
+        assert!(
+            model_has_user_vision_override(&path, "custom-team-a", "gpt-4o"),
+            "自动探测不得清除 user 标记"
+        );
+
+        // 未手动设定过的模型不带标记
+        assert!(!model_has_user_vision_override(
+            &path,
+            "custom-team-a",
+            "other-model"
+        ));
         std::fs::remove_file(&path).ok();
     }
 

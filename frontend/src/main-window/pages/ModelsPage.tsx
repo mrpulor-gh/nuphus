@@ -18,6 +18,8 @@ import {
   getProviderContext,
   setAgentModel,
   setModelContextWindow,
+  setModelSupportsVision,
+  setVisionCapability,
   sttStatus,
 } from '../lib/api'
 import type {
@@ -59,6 +61,7 @@ import {
   isCustomProviderId,
   isValidCustomInstanceId,
 } from '../lib/customProvider'
+import { selectableModels } from '../lib/modelCapability'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
@@ -215,25 +218,15 @@ function VisionModelSelect({
     return () => document.removeEventListener('mousedown', handler)
   }, [open, close])
 
-  // Sort: matching capability first
-  const filtered = Array.isArray(models)
-    ? (() => {
-        let list = [...models]
-        // Vision capability detection is best-effort and frequently unavailable
-        // for custom gateways. Keep all configured models selectable; the badge
-        // still communicates whether the capability was confirmed.
-        if (filterCapability === 'audio') {
-          list = list.filter(m => m.supports_audio)
-        }
-        if (filterCapability === 'audio') {
-          list.sort((a, b) => (b.supports_audio ? 1 : 0) - (a.supports_audio ? 1 : 0))
-        } else {
-          list.sort((a, b) => (b.supports_vision ? 1 : 0) - (a.supports_vision ? 1 : 0))
-        }
-        return list
-      })()
-    : []
-  const selected = filtered.find(m => m.id === value && (!provider || m.provider === provider))
+  // 能力即过滤条件（见 lib/modelCapability.ts 的取舍说明）：视觉列表只列
+  // supports_vision=true 的模型，能力由用户在模型行内显式声明。
+  const filtered = selectableModels(models, filterCapability)
+  // 触发器上的已保存值必须**脱离候选集**解析：若该模型的视觉开关当前是关的，
+  // 它已不在候选集里，但用户实际配置就是它——显示成「未配置」会误导。
+  const selected = Array.isArray(models)
+    ? models.find(m => m.id === value && (!provider || m.provider === provider))
+    : undefined
+  const selectedMissing = !!value && !!selected && !filtered.includes(selected)
   const emptyText = placeholder || TXT.visionNone
 
   return (
@@ -270,7 +263,16 @@ function VisionModelSelect({
             <span className="select-option-name">{emptyText}</span>
           </div>
           {filtered.length === 0 && (
-            <div className="compact-select-empty">暂无可选模型（先在上方连接并选择服务商）</div>
+            <div className="compact-select-empty">
+              {filterCapability === 'vision'
+                ? '暂无支持视觉的模型：在左侧服务商的模型列表里，为可输入图片的模型打开「视觉输入」'
+                : '暂无可选模型（先在上方连接并选择服务商）'}
+            </div>
+          )}
+          {selectedMissing && (
+            <div className="compact-select-empty" role="status">
+              {`当前配置的 ${value} 未开启视觉能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「视觉输入」。`}
+            </div>
           )}
           {filtered.map(m => (
             <div
@@ -291,11 +293,6 @@ function VisionModelSelect({
               )}
               <span className="select-option-name">{m.id}</span>
               <span className="select-option-provider">({m.provider})</span>
-              {filterCapability === 'vision' && !m.supports_vision && (
-                <span className="select-option-provider" title="尚未确认该模型支持图片输入">
-                  （未确认视觉能力）
-                </span>
-              )}
             </div>
           ))}
         </div>
@@ -653,6 +650,8 @@ export function ModelsPage({
     }
   })
   const [ctxOverrides, setCtxOverrides] = useState<Record<string, number>>({})
+  /** 正在保存视觉能力开关的模型名（行内 loading 态，避免重复点击） */
+  const [visionToggling, setVisionToggling] = useState('')
   const [editingCtxModel, setEditingCtxModel] = useState<string | null>(null)
   const [editingCtxValue, setEditingCtxValue] = useState('')
   const editingCtxRef = useRef<string | null>(null)
@@ -1008,6 +1007,13 @@ export function ModelsPage({
     return info?.context_window
   }
 
+  /** 模型当前生效的视觉能力（list_models 已按 provider+id 同源解析） */
+  const rowVision = (name: string): boolean => {
+    const brief = detectedModels.find(d => d.id === name)
+    if (brief) return brief.supports_vision
+    return allModels.find(m => m.provider === provider && m.id === name)?.supports_vision ?? false
+  }
+
   /** 该模型是否已有 per-model 显式 context_window */
   const hasExplicitCtx = (name: string): boolean =>
     ctxOverrides[name] !== undefined ||
@@ -1066,6 +1072,30 @@ export function ModelsPage({
         .catch(() => {})
     } catch (e: any) {
       setFeedback({ ok: false, msg: e?.message || '保存失败' })
+    }
+    setTimeout(() => setFeedback(null), 2500)
+  }
+
+  /**
+   * 行内切换模型的视觉（多模态）能力 —— 与「上下文窗口」同构的第二类模型元数据编辑。
+   *
+   * 这个开关是图像理解模型列表的来源：只有打开它的模型才会出现在视觉模型候选里。
+   * 落盘时会标记来源为 user，此后自动探测不再覆盖（否则今天开、下次连接又被关掉）。
+   */
+  const toggleModelVision = async (name: string, next: boolean) => {
+    setVisionToggling(name)
+    try {
+      await setModelSupportsVision(provider, name, next)
+      setFeedback({
+        ok: true,
+        msg: next ? `${name} 已标记为支持视觉输入` : `${name} 已标记为不支持视觉输入`,
+      })
+      const list = await listModels().catch(() => null)
+      if (Array.isArray(list)) setAllModels(list)
+    } catch (e: any) {
+      setFeedback({ ok: false, msg: e?.message || '保存失败' })
+    } finally {
+      setVisionToggling('')
     }
     setTimeout(() => setFeedback(null), 2500)
   }
@@ -1593,11 +1623,26 @@ export function ModelsPage({
                                     )}
                                   </div>
                                   <div className="model-list-badges">
-                                    {caps.vision && (
-                                      <span className="model-badge" title="支持图像理解">
-                                        <IconEye size={12} />
-                                      </span>
-                                    )}
+                                    {/* 视觉能力开关：与「上下文窗口」同为行内模型元数据编辑，
+                                        开关本身即状态（关闭态 = 该模型不进图像理解候选列表）。 */}
+                                    <button
+                                      type="button"
+                                      className={`model-vision-toggle${caps.vision ? ' is-on' : ''}`}
+                                      aria-pressed={caps.vision}
+                                      aria-label={`视觉输入能力：${caps.vision ? '已开启' : '未开启'}`}
+                                      title={
+                                        caps.vision
+                                          ? '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）'
+                                          : '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）'
+                                      }
+                                      disabled={visionToggling === name}
+                                      onClick={e => {
+                                        e.stopPropagation()
+                                        void toggleModelVision(name, !caps.vision)
+                                      }}
+                                    >
+                                      <IconEye size={12} />
+                                    </button>
                                     {caps.audio && (
                                       <span className="model-badge" title="支持语音">
                                         <IconMic size={12} />
@@ -1647,6 +1692,26 @@ export function ModelsPage({
                             >
                               <div className="model-list-name">{m}</div>
                               <div className="model-list-badges">
+                                {/* 本地端点也可能是多模态（本地视觉模型）：同样可标记，
+                                    否则「图像理解模型」列表对本地服务永久为空。 */}
+                                <button
+                                  type="button"
+                                  className={`model-vision-toggle${rowVision(m) ? ' is-on' : ''}`}
+                                  aria-pressed={rowVision(m)}
+                                  aria-label={`视觉输入能力：${rowVision(m) ? '已开启' : '未开启'}`}
+                                  title={
+                                    rowVision(m)
+                                      ? '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）'
+                                      : '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）'
+                                  }
+                                  disabled={visionToggling === m}
+                                  onClick={e => {
+                                    e.stopPropagation()
+                                    void toggleModelVision(m, !rowVision(m))
+                                  }}
+                                >
+                                  <IconEye size={12} />
+                                </button>
                                 <RowCtxEditor
                                   ctx={mctx}
                                   isEditing={editingCtxModel === m}
@@ -1771,8 +1836,9 @@ export function ModelsPage({
                             setVisionSaving(true)
                             setVisionFeedback(null)
                             try {
-                              await setCapability('vision', modelId)
-                              await setCapability('vision_provider', selectedProvider)
+                              // 原子写入：model 与 provider 一起落盘，杜绝
+                              // 「新 model + 旧 provider」的半绑定中间态。
+                              await setVisionCapability(modelId, selectedProvider)
                               setVisionModel(modelId)
                               setVisionProvider(selectedProvider)
                               setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })

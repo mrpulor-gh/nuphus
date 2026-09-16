@@ -204,6 +204,49 @@
   opacity: 0.9;
   line-height: 1;
 }
+/* 视觉能力开关：关闭态低调（未开启），开启态用主题强调色表达「该模型会进入
+   图像理解候选列表」。与 .model-badge--ctx 同一行内区域，尺寸对齐。 */
+.model-vision-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.model-vision-toggle:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--fg-1);
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+.model-vision-toggle:focus-visible {
+  outline: none;
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.model-vision-toggle.is-on {
+  opacity: 1;
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+}
+.model-vision-toggle:disabled {
+  cursor: progress;
+  opacity: 0.4;
+}
 .model-badge--ctx {
   font-family: var(--font-mono);
   font-size: 10px;

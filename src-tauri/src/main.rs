@@ -221,6 +221,8 @@ fn main() {
             commands::get_supported_providers,
             commands::get_capabilities,
             commands::set_capability,
+            commands::set_vision_capability,
+            commands::set_model_supports_vision,
             commands::get_context_limit,
             commands::get_reasoning_effort,
             commands::set_reasoning_effort,

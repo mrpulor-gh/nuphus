@@ -6,7 +6,8 @@
 
 use super::toml_ops::{
     clear_provider_api_key_in_config_toml, clear_provider_models_in_config_toml, get_config_path,
-    list_configured_providers, read_model_context_window, read_provider_api_key_from_config_toml,
+    list_configured_providers, model_has_user_vision_override, read_model_context_window,
+    read_model_supports_vision, read_provider_api_key_from_config_toml,
     read_provider_base_url_from_config_toml, read_provider_reasoning_effort_from_config_toml,
     update_config_toml, update_model_context_window, update_model_reasoning_efforts,
     update_model_supports_vision, update_reasoning_effort, upsert_provider_models,
@@ -990,6 +991,63 @@ pub fn set_model_context_window(
     ))
 }
 
+/// 手动设置某 provider 下某模型的视觉（多模态）能力 —— 模型行内开关。
+///
+/// 设计要点（与 Context Window 行内编辑同构，但多一层来源优先级）：
+/// - 落盘 providers.toml 对应模型条目，并把来源标记为 `user`；
+///   此后自动探测（内置 metadata / HTTP vision probe）一律让位，不再覆盖——
+///   否则用户在自定义中转站上手动开启的视觉能力，会在下次「连接/刷新」时被抹掉。
+/// - 回读校验：写盘原语对「找不到条目」是静默 Ok，这里把「没写进去」暴露给 UI，
+///   禁止假装保存成功。
+/// - 只改模型元数据，不动当前主模型 / 视觉模型绑定。
+#[tauri::command]
+pub fn set_model_supports_vision(
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+    supports_vision: bool,
+) -> Result<String, String> {
+    if provider.trim().is_empty() || model.trim().is_empty() {
+        return Err("provider 与 model 不能为空".to_string());
+    }
+
+    let toml_config_path =
+        get_config_path().unwrap_or_else(|| state.llm_config_path.with_file_name("providers.toml"));
+
+    update_model_supports_vision(
+        &toml_config_path,
+        &provider,
+        &model,
+        supports_vision,
+        Some("user"),
+    )?;
+
+    if read_model_supports_vision(&toml_config_path, &provider, &model) != Some(supports_vision) {
+        return Err(format!(
+            "未在配置中找到 {}/{} 模型条目，未写入（请先连接/配置该模型）",
+            provider, model
+        ));
+    }
+
+    tracing::info!(
+        "[set_model_supports_vision] {}/{} -> {} (source=user)",
+        provider,
+        model,
+        supports_vision
+    );
+
+    Ok(format!(
+        "{}/{} 视觉能力已设为{}",
+        provider,
+        model,
+        if supports_vision {
+            "支持"
+        } else {
+            "不支持"
+        }
+    ))
+}
+
 /// Post-config steps: query context window from API + probe vision support.
 async fn post_configure(
     state: &State<'_, AppState>,
@@ -1111,6 +1169,18 @@ async fn post_configure(
         .and_then(|p| p.models().iter().find(|m| m.id == resolved_model))
         .map(|m| m.supports_vision);
 
+    // 用户手动设定优先：探测结果不得覆盖用户意图。否则用户在模型行内勾上的
+    // 视觉能力，会在下次「连接/刷新」时被探测结果抹掉（表现为「今天能用，明天
+    // 又选不到了」）。
+    if model_has_user_vision_override(&toml_config_path, resolved_provider, resolved_model) {
+        tracing::info!(
+            "[vision-probe] skip: {}/{} 的视觉能力由用户手动设定，不覆盖",
+            resolved_provider,
+            resolved_model
+        );
+        return;
+    }
+
     match metadata_vision {
         Some(true) => {
             tracing::info!(
@@ -1122,6 +1192,7 @@ async fn post_configure(
                 resolved_provider,
                 resolved_model,
                 true,
+                None,
             );
         }
         Some(false) => {
@@ -1134,6 +1205,7 @@ async fn post_configure(
                 resolved_provider,
                 resolved_model,
                 false,
+                None,
             );
         }
         None if resolved_provider != "local" => {
@@ -1153,6 +1225,7 @@ async fn post_configure(
                     resolved_provider,
                     resolved_model,
                     supports_vision,
+                    None,
                 );
             }
         }

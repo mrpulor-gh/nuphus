@@ -65,6 +65,37 @@ pub fn set_capability(
     Ok(())
 }
 
+/// 原子设置视觉模型绑定：`vision` 与 `vision_provider` 必须一起落盘。
+///
+/// 前端原先分两次调用 `set_capability('vision', …)` / `set_capability('vision_provider', …)`；
+/// 第二次失败就会留下「新 model + 旧 provider」的中间态 —— 后端按
+/// provider + model 精确解析时找不到该组合，视觉请求直接失败，而 UI 已经提示成功。
+/// 这里收敛为一次读写：要么两个字段都更新，要么都不动。
+#[tauri::command]
+pub fn set_vision_capability(
+    model: String,
+    provider: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config_path = {
+        let providers_path = state.llm_config_path.with_file_name("providers.toml");
+        if providers_path.exists() {
+            providers_path
+        } else {
+            get_config_path().ok_or_else(|| "Unable to locate config file".to_string())?
+        }
+    };
+
+    super::toml_ops::set_vision_capability_in_config_toml(&config_path, &model, &provider)?;
+
+    tracing::info!(
+        "[set_vision_capability] vision={} provider={}",
+        model,
+        provider
+    );
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_session_refine_config(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let threshold = state.runtime.lock().map_err(|e| e.to_string())?;
