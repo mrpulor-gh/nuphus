@@ -14,6 +14,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
   const [selected, setSelected] = useState<ProviderInfo | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -28,6 +29,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
   const handleSelect = (p: ProviderInfo) => {
     setSelected(p)
     setModel(p.default_model || '')
+    setBaseUrl(p.id === 'custom' ? '' : p.base_url)
     setApiKey('')
     setError('')
     setStep('configure')
@@ -48,10 +50,26 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
       return
     }
     if (!selected) return
+    const resolvedBaseUrl = selected.id === 'custom' ? baseUrl.trim() : selected.base_url
+    if (selected.id === 'custom') {
+      if (!resolvedBaseUrl) {
+        setError('请输入 API 接入点')
+        return
+      }
+      try {
+        const url = new URL(resolvedBaseUrl)
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          throw new Error('invalid protocol')
+        }
+      } catch {
+        setError('请输入有效的 HTTP 或 HTTPS API 接入点')
+        return
+      }
+    }
     setLoading(true)
     setError('')
     try {
-      await configureLlm(apiKey.trim(), model.trim(), selected.id)
+      await configureLlm(apiKey.trim(), model.trim(), selected.id, resolvedBaseUrl)
       localStorage.setItem('nuphus_onboarding_done', 'true')
       // 同步当前 provider 的 model 到 localStorage，供快捷切换弹窗读取
       try {
@@ -109,6 +127,19 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
               <h2>{selected?.name}</h2>
             </div>
             <div className="onboarding-form">
+              {selected?.id === 'custom' && (
+                <label className="onboarding-label">
+                  API 接入点
+                  <input
+                    className="onboarding-input"
+                    type="url"
+                    value={baseUrl}
+                    onChange={e => setBaseUrl(e.target.value)}
+                    placeholder="如 https://api.example.com/v1"
+                    autoComplete="url"
+                  />
+                </label>
+              )}
               <label className="onboarding-label">
                 API Key
                 <input
