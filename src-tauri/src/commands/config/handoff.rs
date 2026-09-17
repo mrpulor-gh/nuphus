@@ -354,6 +354,25 @@ fn status_at(root: &Path, agent: &str) -> serde_json::Value {
     read_status_at(root, agent).unwrap_or_else(|| serde_json::json!({ "state": "uninitialized" }))
 }
 
+/// 用户把外部 Agent 从列表栏移出 → 往「下一条提示」注入位写一句，
+/// 由下一个轮次边界带进 agent 上下文（只进上下文、界面不显示）。
+///
+/// 目的：让 agent 知道「这个外部 Agent 已被用户暂时移出，后续需用户显式指定才可调用」，
+/// 避免它继续自动派发/重试。显示层操作，不动配置与 team.toml。
+#[tauri::command]
+pub fn notify_ext_agent_removed(
+    agent: String,
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<(), String> {
+    let agent = agent.trim().to_string();
+    validate_agent(&agent)?;
+    nuphus::state::SignalState::push_notice(
+        &state.signals,
+        format!("[外部 Agent 列表栏] 用户已把外部 Agent「{agent}」移出：后续需用户显式指定才可调用，不要自动派发或重试它。"),
+    );
+    Ok(())
+}
+
 /// 列出某 agent 的交付物：briefs/ 下的任务报告（`{task_id}-report.md` 约定）
 /// + projects/ 下递归扫描的产物文件。每项含绝对路径 / 文件名 / 相对路径 /
 /// kind（report|artifact）/ 字节大小 / 修改时间（rfc3339），按修改时间降序（最新在前）。

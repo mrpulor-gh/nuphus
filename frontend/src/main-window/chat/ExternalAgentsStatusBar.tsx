@@ -6,6 +6,7 @@ import {
   listAgentDeliverables,
   deleteAgentDeliverable,
   listExternalAgents,
+  notifyExtAgentRemoved,
   type ExternalAgentStatus,
   type ExternalAgentConfig,
   type AgentDeliverable,
@@ -16,12 +17,11 @@ import '../../styles/external-agents.css'
 
 const POLL_INTERVAL_MS = 3000
 
-/** 单独关闭的 agent 列表持久化 key（仅隐藏状态栏显示，不影响 handoff 目录与门铃） */
-const HIDDEN_KEY = 'nuphus.extAgents.hiddenAgents'
-/** 用户在配置中心添加过的 agent：应用生命周期内常驻显示。
- *  ⚠️ 仅内存态（随应用启动清零）——跨重启的持久化由后端启动清零 +
- *  门铃真实上报接管，避免历史 pin 让 idle agent 永远占位 */
-const PINNED_KEY = 'nuphus.extAgents.pinned'
+/** 旧版本遗留的持久化 key（历史「隐藏为数字」/ pin 语义）：新语义下
+ *  「从列表栏移除」与 pin 均为内存态，启动时清理，避免历史隐藏记录被误当成
+ *  「本轮已移出」而让 agent 复活成幽灵条目 */
+const LEGACY_HIDDEN_KEY = 'nuphus.extAgents.hiddenAgents'
+const LEGACY_PINNED_KEY = 'nuphus.extAgents.pinned'
 /** 配置中心保存成功后广播的事件名 */
 export const EXT_AGENT_PINNED_EVENT = 'nuphus:ext-agent-pinned'
 
@@ -30,22 +30,10 @@ function loadPinnedAgents(): string[] {
   return []
 }
 
-function loadHiddenAgents(): string[] {
-  try {
-    const raw = localStorage.getItem(HIDDEN_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-function saveHiddenAgents(list: string[]) {
-  try {
-    localStorage.setItem(HIDDEN_KEY, JSON.stringify(list))
-  } catch {
-    /* 存储不可用：仅本次会话生效 */
-  }
+/** 门铃上报时刻（RFC3339）→ epoch ms；缺失/非法返回 0（视为「无活动」） */
+function updatedAtMs(a?: ExternalAgentStatus): number {
+  const t = a?.updated_at ? Date.parse(a.updated_at) : NaN
+  return Number.isNaN(t) ? 0 : t
 }
 
 /** 后端 state 原值 → 展示样式 class（未知状态统一 is-unknown，不拦截新状态） */
@@ -96,34 +84,44 @@ interface ExternalAgentsStatusBarProps {
   visible?: boolean
   /** "+" 按钮：打开外部 Agent 配置中心 */
   onOpenConfig?: () => void
+  /** 移出时的用户面反馈（父组件注入 HUD 轻提示：`showToast` → `hud_update`）。
+   *  ⛔ 绝不可用会话消息（addMessage）承载：执行期 messages 末尾是「正在流式的 agent
+   *  气泡」，插入任何消息都会把回答隔断（详见 App.tsx chat-area 处的说明） */
+  onNotice?: (text: string) => void
 }
 
 /**
  * 外部 Agent 运行时态面板：输入框外层右上角的悬浮胶囊。
  * - 数据源：listAgentStatuses()，轻量轮询（≈3s），仅组件挂载且页面可见时拉取；
  *   切后台自动暂停，回前台立即刷新（门铃事件由后端落 status.json，轮询兜底覆盖）。
- * - 每个已初始化 agent 渲染为圆形头像按钮：点击弹出该 agent 的交付物列表弹窗，
+ * - 每个处于「被调用」状态的 agent 渲染为圆形头像按钮：点击弹出该 agent 的交付物列表弹窗，
  *   条目点击走 PreviewOverlay 内联预览；hover 出 tooltip 看详情。
- * - 移除入口收敛在弹窗底部「从状态栏移除」文字按钮（localStorage 持久化，
- *   不删除配置/目录；被移除的 agent 收进「已隐藏」入口可随时恢复）。
+ * - 「从列表栏移除」= 把该 agent 的头像从 DOM 真移除（本轮会话内存态，不落盘、
+ *   不动后端配置与 team.toml），并以 HUD 轻提示反馈一句（`onNotice` → showToast，
+ *   **不进会话消息数组**）；该 agent 再次被调用（门铃有新上报）或用户在配置中心
+ *   重新保存时，自动回到列表栏。
  * - 末尾固定一个 "+" 配置入口，点击打开外部 Agent 配置中心（空列表时入口仍可见）。
  * - 状态值来自 status.json 原样映射，前端只加显示层。
  *
- * ── 可见性引擎（按需浮现，活跃恒显）──
+ * ── 可见性引擎（被调用即常驻，空闲按需浮现）──
  * - 后端启动清零 status.json：跨生命周期的陈旧 agent 不复存在；
  *   本轮内只有真实启动并经门铃上报验证的 agent 才有非 idle 状态。
- * - 恒显 = 状态栏有可见 agent（非 hidden 且（非 idle 或用户 pin 过））——
- *   一旦调用了外部 agent（执行中/待命/阻塞/错误）整条胶囊常驻，不随 hover 隐藏；
- *   完全没有 agent 时才默认隐藏，鼠标悬停感应区临时浮现 "+" 配置入口。
- * - 其余（无 agent）场景：鼠标悬停在胶囊附近 → 展开；移开 10s 后 0.6s 渐隐收起。
+ * - 列表栏内容 =（本轮被调用过的 agent：非 idle）∪（用户在本轮配置中心保存过的 agent：pin）
+ *   −（用户已从列表栏移出的 agent）。有内容 → 整条胶囊常驻，不随 hover 隐藏；
+ *   无内容 → 默认隐藏，鼠标悬停感应区临时浮现 "+" 配置入口。
+ * - 配置中心是唯一配置源：本面板的移除只影响显示，删除配置一律由配置中心发起
+ *   （写 team.toml），二者互不越权。
  */
 export default function ExternalAgentsStatusBar({
   visible = true,
   onOpenConfig,
+  onNotice,
 }: ExternalAgentsStatusBarProps) {
   const { t } = useLanguage()
   const [agents, setAgents] = useState<ExternalAgentStatus[]>([])
-  const [hidden, setHidden] = useState<string[]>(loadHiddenAgents)
+  /** 用户已从列表栏移出的 agent（agent → 移出时刻 ms）。仅本轮会话内存态：
+   *  不落盘、不影响后端配置/team.toml；该 agent 有新门铃活动即自动回归 */
+  const [removed, setRemoved] = useState<Record<string, number>>({})
   const [pins, setPins] = useState<string[]>(loadPinnedAgents)
   /** hover 展开：额外（非常驻）agent 可见 */
   const [revealed, setRevealed] = useState(false)
@@ -136,7 +134,6 @@ export default function ExternalAgentsStatusBar({
   const [openAgent, setOpenAgent] = useState<ExternalAgentStatus | null>(null)
   const [deliverables, setDeliverables] = useState<AgentDeliverable[] | null>(null)
   const [loadingDeliv, setLoadingDeliv] = useState(false)
-  const [showHiddenPanel, setShowHiddenPanel] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   /** 处于「确认删除」态的交付物路径（同时最多一行，行内二次确认防误删） */
   const [confirmDelPath, setConfirmDelPath] = useState<string | null>(null)
@@ -155,7 +152,25 @@ export default function ExternalAgentsStatusBar({
     const poll = async () => {
       try {
         const list = await listAgentStatuses()
-        if (!stoppedRef.current) setAgents(list || [])
+        if (!stoppedRef.current) {
+          setAgents(list || [])
+          // 移出后又有新的门铃上报（= 被再次调用）→ 该 agent 自动回到列表栏
+          setRemoved(prev => {
+            const keys = Object.keys(prev)
+            if (keys.length === 0) return prev
+            const next: Record<string, number> = {}
+            let changed = false
+            for (const k of keys) {
+              const ts = updatedAtMs((list || []).find(a => a.agent === k))
+              if (ts > prev[k]) {
+                changed = true // 新活动 → 撤销移出
+              } else {
+                next[k] = prev[k]
+              }
+            }
+            return changed ? next : prev
+          })
+        }
       } catch {
         /* 后端不可达：保留当前数据，下轮重试 */
       }
@@ -197,11 +212,19 @@ export default function ExternalAgentsStatusBar({
         })
     }
     refreshCfg()
-    // 清理历史版本遗留的持久化 pin（现语义为内存态）
-    localStorage.removeItem(PINNED_KEY)
+    // 清理历史版本遗留的持久化状态（现语义均为内存态：启动即空）
+    localStorage.removeItem(LEGACY_PINNED_KEY)
+    localStorage.removeItem(LEGACY_HIDDEN_KEY)
     const onPinned = (e: Event) => {
       const key = (e as CustomEvent<string>).detail
       if (!key) return
+      // 配置中心显式保存 = 用户主动纳入 → 撤销该 agent 的「已移出」标记
+      setRemoved(prev => {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
       setPins(prev => (prev.includes(key) ? prev : [...prev, key]))
       refreshCfg()
     }
@@ -252,7 +275,6 @@ export default function ExternalAgentsStatusBar({
     openAgentRef.current = a.agent
     setOpenAgent(a)
     setDeliverables(null)
-    setShowHiddenPanel(false)
     setConfirmDelPath(null)
     setDelError(null)
     setLoadingDeliv(true)
@@ -300,32 +322,32 @@ export default function ExternalAgentsStatusBar({
       })
   }, [])
 
-  /** 单独关闭一个 agent 的状态栏显示（不删配置；可从「已隐藏」恢复） */
-  const hideAgent = useCallback((name: string) => {
-    setHidden(prev => {
-      const next = prev.includes(name) ? prev : [...prev, name]
-      saveHiddenAgents(next)
-      return next
-    })
-    if (openAgentRef.current === name) {
-      openAgentRef.current = null
-      setOpenAgent(null)
-    }
-    setShowHiddenPanel(false)
-  }, [])
-
-  const restoreAgent = useCallback((name: string) => {
-    setHidden(prev => {
-      const next = prev.filter(n => n !== name)
-      saveHiddenAgents(next)
-      return next
-    })
-  }, [])
+  /** 从列表栏移除该 agent：本轮会话内不再渲染其头像（内存态，不落盘），
+   *  不动后端配置与 team.toml。该 agent 再次被调用（门铃新上报）或在配置中心
+   *  重新保存时自动回归。
+   *
+   *  用户面反馈走 `onNotice`（HUD 轻提示）——⛔ 绝不可用 addMessage 写会话消息：
+   *  执行期 messages 末尾是正在流式的 agent 气泡，插入消息会隔断输出。 */
+  const removeAgent = useCallback(
+    (name: string) => {
+      setRemoved(prev => ({ ...prev, [name]: Date.now() }))
+      if (openAgentRef.current === name) {
+        openAgentRef.current = null
+        setOpenAgent(null)
+      }
+      setConfirmDelPath(null)
+      setDelError(null)
+      onNotice?.(t('extAgents.removedNotice', name))
+      // 通知 agent：该外部 Agent 已被移出，后续需用户显式指定才可调用
+      // （后端写一句提示，下一轮带进上下文；失败不阻断 UI）
+      notifyExtAgentRemoved(name).catch(() => {})
+    },
+    [onNotice, t],
+  )
 
   const closePopover = useCallback(() => {
     openAgentRef.current = null
     setOpenAgent(null)
-    setShowHiddenPanel(false)
     setConfirmDelPath(null)
     setDelError(null)
   }, [])
@@ -334,20 +356,19 @@ export default function ExternalAgentsStatusBar({
 
   const known = agents.filter(
     a =>
-      !hidden.includes(a.agent) &&
+      !(a.agent in removed) &&
       // idle 且未 pin = 本轮未经门铃验证的历史残留（启动清零只重置为 idle 骨架，
-      // 目录仍在），不渲染——状态栏只出现真实启动过的 agent 或用户 pin 的配置
+      // 目录仍在），不渲染——列表栏只出现被调用过的 agent 或用户 pin 的配置
       ((a.state && a.state !== 'idle') || pins.includes(a.agent)),
   )
-  /** 恒显条件：状态栏有可见 agent 即常驻（调用了外部 agent 就一直在，不随 hover 隐藏；
-   *  无 agent 时默认隐藏，hover 感应区临时浮现）。pins（配置中心添加过）同样触发常驻。 */
-  const forced = known.length > 0 || pins.length > 0
+  /** 恒显条件：列表栏有内容即常驻（被调用的外部 agent 就一直在，不随 hover 隐藏）；
+   *  内容为空（全部已移出 / 本轮无调用）则默认隐藏，hover 感应区临时浮现 "+"。 */
+  const forced = known.length > 0
   forcedRef.current = forced
-  const hiddenKnown = hidden.filter(name => agents.some(a => a.agent === name))
   const reports = (deliverables || []).filter(d => d.kind === 'report')
   const artifacts = (deliverables || []).filter(d => d.kind === 'artifact')
   /** 胶囊整体可见：强制常驻 ∪ hover 展开 ∪ 渐隐中 ∪ 有弹窗 */
-  const shown = forced || revealed || fading || openAgent !== null || showHiddenPanel
+  const shown = forced || revealed || fading || openAgent !== null
 
   /** 单个 agent 头像 */
   const renderAvatar = (a: ExternalAgentStatus) => {
@@ -393,7 +414,7 @@ export default function ExternalAgentsStatusBar({
   return (
     <>
       {/* 遮罩在胶囊外层：bar 有 backdrop-filter，fixed 子元素会被其改变定位基准 */}
-      {(openAgent || showHiddenPanel) && (
+      {openAgent !== null && (
         <div className="ext-agent-popover-backdrop" onClick={closePopover} aria-hidden />
       )}
       {/* 感应区：与胶囊同高同右缘，向左延伸 200px；胶囊隐身时由它唤醒。
@@ -418,20 +439,6 @@ export default function ExternalAgentsStatusBar({
         onMouseLeave={handleZoneLeave}
       >
         {known.map(renderAvatar)}
-        {hiddenKnown.length > 0 && (
-          <button
-            type="button"
-            className={`hidden-agents-entry${showHiddenPanel ? ' active' : ''}`}
-            onClick={() => {
-              setOpenAgent(null)
-              setShowHiddenPanel(v => !v)
-            }}
-            title={t('extAgents.hiddenCount', String(hiddenKnown.length))}
-            aria-label={t('extAgents.hiddenCount', String(hiddenKnown.length))}
-          >
-            {hiddenKnown.length}
-          </button>
-        )}
         <button
           type="button"
           className="add-agent-entry"
@@ -533,45 +540,11 @@ export default function ExternalAgentsStatusBar({
               <button
                 type="button"
                 className="ext-agent-hide-row"
-                onClick={() => hideAgent(openAgent.agent)}
-                title={t('extAgents.hide')}
+                onClick={() => removeAgent(openAgent.agent)}
+                title={t('extAgents.removeFromBar')}
               >
-                {t('extAgents.hide')}
+                {t('extAgents.removeFromBar')}
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── 已隐藏 agent 恢复面板 ── */}
-        {showHiddenPanel && hiddenKnown.length > 0 && (
-          <div className="ext-agent-popover" role="dialog" aria-label={t('extAgents.restore')}>
-            <div className="ext-agent-popover-head">
-              <span className="ext-agent-popover-title">
-                {t('extAgents.hiddenCount', String(hiddenKnown.length))}
-              </span>
-              <button
-                type="button"
-                className="ext-agent-popover-close"
-                onClick={closePopover}
-                title={t('common.close')}
-                aria-label={t('common.close')}
-              >
-                <IconX size={13} />
-              </button>
-            </div>
-            <div className="ext-agent-popover-body">
-              {hiddenKnown.map(name => (
-                <div key={name} className="ext-agent-hidden-row">
-                  <span className="ext-agent-hidden-name">{name}</span>
-                  <button
-                    type="button"
-                    className="ext-agent-restore-btn"
-                    onClick={() => restoreAgent(name)}
-                  >
-                    {t('extAgents.restore')}
-                  </button>
-                </div>
-              ))}
             </div>
           </div>
         )}

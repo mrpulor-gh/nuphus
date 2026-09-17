@@ -329,6 +329,12 @@ export function deleteAgentDeliverable(agent: string, relPath: string) {
   return invoke<void>('delete_agent_deliverable', { agent, relPath })
 }
 
+/** 外部 Agent 被移出列表栏 → 后端写一句提示，下一轮带进 agent 上下文
+ *  （只进上下文、界面不显示）。让 agent 知道后续需用户显式指定才可调用。 */
+export function notifyExtAgentRemoved(agent: string) {
+  return invoke<void>('notify_ext_agent_removed', { agent })
+}
+
 // ── Session Shelf（浅层会话展示台）──
 
 export interface ShelfSessionItem {

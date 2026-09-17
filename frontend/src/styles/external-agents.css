@@ -482,9 +482,9 @@
 }
 
 /* ═══════════════════════════════════════════
-   状态栏交互扩展：头像点击弹窗 / 单 agent 关闭 / 隐藏恢复
+   状态栏交互扩展：头像点击弹窗 / 单 agent 从列表栏移除
    （头像内部改为 button.agent-avatar-main 承载图标+状态点，
-     div.agent-avatar-btn 仅作定位容器 + tooltip/hide-btn 锚点）
+     div.agent-avatar-btn 仅作定位容器 + tooltip 锚点）
    ═══════════════════════════════════════════ */
 
 /* ── 头像内层按钮：填满容器，保持圆形 ── */
@@ -509,32 +509,6 @@
 /* 状态点改锚在内层按钮上（覆盖旧规则的位置基准） */
 .agent-avatar-btn .agent-avatar-main .ext-agent-dot {
   z-index: 1;
-}
-
-/* ── 「已隐藏」恢复入口：数字小胶囊 ── */
-.hidden-agents-entry {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: transparent;
-  border: 1px dashed var(--line-3);
-  color: var(--fg-4);
-  font-size: var(--fz-xs);
-  cursor: pointer;
-  transition:
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-.hidden-agents-entry:hover,
-.hidden-agents-entry.active {
-  color: var(--fg-2);
-  border-color: var(--line-2);
-  background: var(--surface-2);
 }
 
 /* ── 弹窗遮罩：透明全屏捕获外部点击 ── */
@@ -714,42 +688,6 @@
   background: rgba(var(--error-rgb), 0.08);
 }
 
-/* ── 已隐藏列表行 ── */
-.ext-agent-hidden-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-}
-.ext-agent-hidden-name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fz-sm);
-  color: var(--fg-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ext-agent-restore-btn {
-  flex-shrink: 0;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: transparent;
-  border: 1px solid var(--line-2);
-  color: var(--fg-3);
-  font-size: var(--fz-xs);
-  cursor: pointer;
-  transition:
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-.ext-agent-restore-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
 /* ── 可见性引擎：左侧感应区唤醒 Agent 胶囊，内容从左向右展开 ── */
 .ext-agents-hover-zone {
   position: absolute;

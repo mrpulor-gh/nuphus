@@ -198,6 +198,7 @@ fn main() {
             commands::list_agent_statuses,
             commands::list_agent_deliverables,
             commands::delete_agent_deliverable,
+            commands::notify_ext_agent_removed,
             commands::list_shelf_sessions,
             commands::switch_session,
             commands::new_chat_session_cmd,

@@ -288,6 +288,15 @@ export default function App() {
           <TitleBar onNewChat={s.handleNewChat} agentState={s.isProcessing ? 'working' : 'idle'} />
           <MacosPermissionNotice mode={s.mode} onOpenSettings={() => s.setShowSecurity(true)} />
           <div className="chat-area">
+            {/*
+              ⛔ 禁止把「外部 Agent 列表栏」等 UI 反馈写进 s.messages（addMessage）：
+              执行期「messages 最后一条 = 正在流式的 agent 气泡」是强约定
+              （useEvents execution_started 追加 live 气泡 → 后续 delta 按 id 写它；
+              ChatPanel `isCurrentAgent = idx === messages.length - 1`；
+              useSession 的 last 判定）。中途插入任何消息都会把回答拦腰截断、
+              令流式光标与 last 判定失真——实测会让用户看到 agent 输出被隔断。
+              反馈一律走 HUD 轻提示（s.showToast → hud_update），与「已保存」「已中断」同通道。
+            */}
             <ChatPanel
               messages={s.messages}
               isProcessing={s.isProcessing}
@@ -328,6 +337,7 @@ export default function App() {
               onSetMode={s.handleSetMode}
               onManageCustomAgents={() => s.setShowCustomAgents(true)}
               onManageExternalAgents={() => s.setShowExternalAgents(true)}
+              onExternalAgentNotice={text => s.showToast(text, 'info')}
               onToggleWorkAgentMode={s.toggleWorkAgentMode}
               refineState={s.refineState}
               pendingRefine={s.pendingRefine}

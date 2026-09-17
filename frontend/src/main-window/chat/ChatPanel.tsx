@@ -172,6 +172,9 @@ interface ChatPanelProps {
   onSetMode?: (mode: string) => void
   onManageCustomAgents?: () => void
   onManageExternalAgents?: () => void
+  /** 外部 Agent 从列表栏移出时的用户面反馈（App 注入 `showToast` → HUD 轻提示）。
+   *  ⛔ 不得走会话消息：见 App.tsx chat-area 处的时序约定说明 */
+  onExternalAgentNotice?: (text: string) => void
   onToggleWorkAgentMode?: () => Promise<void>
   onRate?: (
     name: string,
@@ -288,6 +291,7 @@ export function ChatPanel({
   onSetMode,
   onManageCustomAgents,
   onManageExternalAgents,
+  onExternalAgentNotice,
   onToggleWorkAgentMode,
   startupStats,
   isWorkflowRunning,
@@ -2063,7 +2067,10 @@ export function ChatPanel({
       <div className="chat-input-dock">
         <VideoProgressBadge />
         {/* 外部 Agent 悬浮胶囊：输入框外层右上角（absolute 定位，不占文档流） */}
-        <ExternalAgentsStatusBar onOpenConfig={onManageExternalAgents} />
+        <ExternalAgentsStatusBar
+          onOpenConfig={onManageExternalAgents}
+          onNotice={onExternalAgentNotice}
+        />
         <ChatInputBar
           input={input}
           onInputChange={handleInputChange}
