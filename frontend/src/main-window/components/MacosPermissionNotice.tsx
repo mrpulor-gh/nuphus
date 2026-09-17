@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { IconShield, IconX } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 import {
@@ -18,8 +18,7 @@ export function MacosPermissionNotice({ mode, onOpenSettings }: MacosPermissionN
   const [report, setReport] = useState<MacosPermissionReport | null>(null)
   const [dismissed, setDismissed] = useState(false)
 
-  useEffect(() => {
-    if (mode !== 'workflow') return
+  const refresh = useCallback(() => {
     let active = true
     void getMacosPermissionStatus()
       .then(next => {
@@ -31,7 +30,26 @@ export function MacosPermissionNotice({ mode, onOpenSettings }: MacosPermissionN
     return () => {
       active = false
     }
-  }, [mode])
+  }, [])
+
+  useEffect(() => {
+    if (mode !== 'workflow') return
+    let cancelRequest = refresh()
+    const handleFocus = () => {
+      cancelRequest()
+      cancelRequest = refresh()
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') handleFocus()
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      cancelRequest()
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [mode, refresh])
 
   const missing = useMemo(
     () =>

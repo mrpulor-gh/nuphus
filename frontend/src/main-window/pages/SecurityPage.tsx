@@ -72,6 +72,19 @@ export function SecurityPage({ onClose }: { onClose: () => void }) {
     void refreshMacosPermissions()
   }, [])
 
+  useEffect(() => {
+    const handleFocus = () => void refreshMacosPermissions()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') handleFocus()
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
+
   const authorizeMacosPermission = async (permission: MacosPermissionItem) => {
     setMacosAction(permission.id)
     try {

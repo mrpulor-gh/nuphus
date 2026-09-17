@@ -43,8 +43,9 @@ import {
   getProjectBookmarks,
   setProjectDir as setProjectDirCmd,
   setProjectBookmarks as setProjectBookmarksCmd,
+  TOOL_PERMISSIONS_CHANGED_EVENT,
 } from '../lib/api'
-import type { ProviderInfo, ModelInfo, ProjectBookmark } from '../lib/api'
+import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
 import { CompactModal } from '../layout/CompactModal'
 import { ProjectCenter } from '../pages/ProjectPage'
@@ -325,26 +326,45 @@ export function ChatPanel({
   const [pendingReferences, setPendingReferences] = useState<ChatReference[]>([])
 
   // Load tool permissions for WORKFLOW mode check
-  const [toolPermissions, setToolPermissions] = useState<
-    { file_access: boolean; web_search: boolean; system_automation: boolean } | undefined
-  >()
+  const [toolPermissions, setToolPermissions] = useState<ToolPermissions | undefined>()
   useEffect(() => {
-    getToolPermissions()
-      .then(r => {
-        if (r && typeof r === 'string') {
-          try {
-            const data = JSON.parse(r)
-            setToolPermissions({
-              file_access: data.file_access ?? data.fileAccess ?? true,
-              web_search: data.web_search ?? data.webSearch ?? true,
-              system_automation: data.system_automation ?? data.systemAutomation ?? false,
-            })
-          } catch {
-            /* ignore */
+    let active = true
+    const refresh = () => {
+      void getToolPermissions()
+        .then(r => {
+          if (active && r && typeof r === 'string') {
+            try {
+              const data = JSON.parse(r)
+              setToolPermissions({
+                file_access: data.file_access ?? data.fileAccess ?? true,
+                web_search: data.web_search ?? data.webSearch ?? true,
+                system_automation: data.system_automation ?? data.systemAutomation ?? false,
+              })
+            } catch {
+              /* ignore */
+            }
           }
-        }
-      })
-      .catch(() => {})
+        })
+        .catch(() => {})
+    }
+    const handleChanged = (event: Event) => {
+      const permissions = (event as CustomEvent<ToolPermissions>).detail
+      if (permissions) setToolPermissions(permissions)
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+
+    refresh()
+    window.addEventListener(TOOL_PERMISSIONS_CHANGED_EVENT, handleChanged)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      active = false
+      window.removeEventListener(TOOL_PERMISSIONS_CHANGED_EVENT, handleChanged)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [])
 
   const handlePauseChoice = useCallback(
