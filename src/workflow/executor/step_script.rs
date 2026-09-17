@@ -1,6 +1,9 @@
 //! 脚本步骤执行
 use super::*;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 impl Executor {
     /// 执行脚本步骤（内联代码写入临时文件，调用对应 runtime 执行，带超时保护）
     pub(super) async fn execute_script_step(
@@ -46,6 +49,11 @@ impl Executor {
         std::thread::spawn(move || {
             let mut cmd = Command::new(&interpreter);
             cmd.arg(&tmp_path_clone);
+            #[cfg(windows)]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
             if let Some(ref dir) = cwd {
                 cmd.current_dir(dir);
             }
