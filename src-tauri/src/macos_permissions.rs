@@ -25,14 +25,19 @@ pub struct MacosPermissionItem {
     pub settings_url: Option<&'static str>,
 }
 
+#[cfg(target_os = "macos")]
 const SCREEN_RECORDING_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+#[cfg(target_os = "macos")]
 const ACCESSIBILITY_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+#[cfg(target_os = "macos")]
 const MICROPHONE_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+#[cfg(target_os = "macos")]
 const FILES_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders";
+#[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation";
 
