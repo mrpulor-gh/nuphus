@@ -2,8 +2,10 @@
 //!
 //! TCC does not expose one universal "all files" or "all automation" check.
 //! Those capabilities are therefore reported as on-demand and are never used
-//! to block workflow mode. Screen recording, Accessibility, and microphone
-//! access have concrete probes and are treated as required workflow permissions.
+//! to block workflow mode. Screen recording and Accessibility have concrete
+//! probes and are treated as required workflow permissions. Microphone also has
+//! a concrete probe but only serves chat-side voice input, so it never gates
+//! workflow mode.
 
 use serde::Serialize;
 
@@ -98,7 +100,10 @@ fn report() -> MacosPermissionReport {
             MacosPermissionItem {
                 id: "microphone".to_string(),
                 status: if microphone { "granted" } else { "missing" },
-                required_for_workflow: true,
+                // 麦克风只服务聊天侧语音输入，不属于工作流执行的前置条件：
+                // src/workflow/** 无 speech/stt 引用，src/tools/** 也无语音类工具。
+                // 标为必需会让未使用语音的用户每次进入 workflow 都收到权限提示。
+                required_for_workflow: false,
                 title: "麦克风",
                 description: "语音输入和语音转文字需要此权限。",
                 settings_url: Some(MICROPHONE_SETTINGS),
