@@ -1,0 +1,192 @@
+.macos-permission-notice {
+  position: fixed;
+  top: calc(var(--titlebar-h) + 12px);
+  left: 14px;
+  z-index: 90;
+  display: flex;
+  align-items: stretch;
+  width: min(340px, calc(100vw - 28px));
+  min-height: 58px;
+  overflow: hidden;
+  color: var(--spark-primary);
+  background: color-mix(in srgb, var(--void-primary) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--glass-3));
+  border-radius: 16px;
+  box-shadow: var(--shadow-elevated);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.macos-permission-notice-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 38px 11px 13px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.macos-permission-notice-main > svg {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
+.macos-permission-notice-main span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.macos-permission-notice-main strong {
+  font-size: var(--fz-md);
+  font-weight: 600;
+}
+
+.macos-permission-notice-main small {
+  overflow: hidden;
+  color: var(--spark-muted);
+  font-size: var(--fz-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-permission-notice-main:hover {
+  background: var(--glass-1);
+}
+
+.macos-permission-notice-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  place-items: center;
+  color: var(--spark-muted);
+  background: var(--void-hover);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.macos-permission-notice:hover .macos-permission-notice-close,
+.macos-permission-notice-close:focus-visible {
+  opacity: 1;
+}
+
+.macos-permission-notice-close:hover {
+  color: var(--spark-primary);
+}
+
+.macos-permission-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--spark-muted);
+  font-size: var(--fz-sm);
+}
+
+.macos-permission-refresh,
+.macos-permission-action {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--glass-3);
+  border-radius: 6px;
+  color: var(--spark-primary);
+  background: var(--glass-1);
+  font: inherit;
+  cursor: pointer;
+}
+
+.macos-permission-refresh:hover,
+.macos-permission-action:hover {
+  background: var(--void-hover);
+}
+
+.macos-permission-refresh:disabled,
+.macos-permission-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.macos-permission-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.macos-permission-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--glass-2);
+}
+
+.macos-permission-row:last-child {
+  border-bottom: 0;
+}
+
+.macos-permission-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.macos-permission-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--spark-primary);
+  font-size: var(--fz-md);
+  font-weight: 500;
+}
+
+.macos-permission-description {
+  margin-top: 4px;
+  color: var(--spark-muted);
+  font-size: var(--fz-sm);
+  line-height: 1.45;
+}
+
+.macos-permission-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--fz-xs);
+  font-weight: 500;
+}
+
+.macos-permission-status.is-granted {
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.12);
+}
+
+.macos-permission-status.is-missing {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.12);
+}
+
+.macos-permission-status.is-on_demand,
+.macos-permission-status.is-unsupported {
+  color: var(--spark-muted);
+  background: var(--glass-1);
+}
+
+@media (max-width: 800px) {
+  .macos-permission-notice {
+    display: none;
+  }
+}

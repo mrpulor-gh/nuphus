@@ -459,6 +459,35 @@ export function getToolPermissions() {
   return invoke<string>('get_tool_permissions')
 }
 
+export type MacosPermissionId =
+  'screen_recording' | 'accessibility' | 'microphone' | 'files_and_folders' | 'automation'
+
+export interface MacosPermissionItem {
+  id: MacosPermissionId
+  status: 'granted' | 'missing' | 'on_demand' | 'unsupported'
+  requiredForWorkflow: boolean
+  title: string
+  description: string
+  settingsUrl?: string | null
+}
+
+export interface MacosPermissionReport {
+  platformSupported: boolean
+  permissions: MacosPermissionItem[]
+}
+
+export function getMacosPermissionStatus() {
+  return invoke<MacosPermissionReport>('get_macos_permission_status')
+}
+
+export function requestMacosPermission(id: MacosPermissionId) {
+  return invoke<MacosPermissionReport>('request_macos_permission', { id })
+}
+
+export function openMacosPermissionSettings(id: MacosPermissionId) {
+  return invoke<void>('open_macos_permission_settings', { id })
+}
+
 /** Identity of a picked external (fingerprint) browser — persisted alongside
  * the CDP URL so a reopened window (new random debug port) can be re-resolved. */
 export interface BrowserIdentity {
