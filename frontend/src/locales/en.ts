@@ -1347,6 +1347,33 @@ const en: Record<string, string> = {
   'security.tool.systemAutomation': 'System Commands & Desktop',
   'security.tool.systemAutomationDesc': 'Allow executing commands, mouse/keyboard and screenshots',
 
+  'macosPermission.sectionTitle': 'macOS System Permissions',
+  'macosPermission.sectionHint':
+    'System permissions are separate from tool permissions. Recheck after granting access.',
+  'macosPermission.noticeTitle': 'Workflow needs system permissions',
+  'macosPermission.noticeMissing': '{0} not granted. Click to review.',
+  'macosPermission.dismiss': 'Dismiss permission notice',
+  'macosPermission.refresh': 'Recheck',
+  'macosPermission.authorize': 'Grant access',
+  'macosPermission.openSettings': 'Open System Settings',
+  'macosPermission.status.granted': 'Granted',
+  'macosPermission.status.missing': 'Missing',
+  'macosPermission.status.on_demand': 'On demand',
+  'macosPermission.status.unsupported': 'Unsupported',
+  'macosPermission.screen_recording': 'Screen Recording',
+  'macosPermission.screen_recordingDesc':
+    'Used for desktop capture, visual recognition, and workflow recording.',
+  'macosPermission.accessibility': 'Accessibility',
+  'macosPermission.accessibilityDesc':
+    'Used to control the pointer, keyboard, windows, and desktop apps.',
+  'macosPermission.microphone': 'Microphone',
+  'macosPermission.microphoneDesc': 'Used for voice input and speech-to-text.',
+  'macosPermission.files_and_folders': 'Files and Folders',
+  'macosPermission.files_and_foldersDesc':
+    'macOS grants access per folder when Desktop, Documents, or Downloads is used.',
+  'macosPermission.automation': 'Automation',
+  'macosPermission.automationDesc': 'macOS grants access separately for each app being controlled.',
+
   'browser.envTitle': 'Browser Execution Environment',
   'browser.envDesc': 'Choose which browser the Agent drives for browser operations',
   'browser.mode': 'Execution mode',

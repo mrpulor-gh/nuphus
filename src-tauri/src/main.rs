@@ -10,6 +10,7 @@ mod commands;
 mod emitter;
 mod ext_agent;
 mod handoff_server;
+mod macos_permissions;
 mod mobile_server;
 mod models;
 mod plugin_apps;
@@ -220,6 +221,9 @@ fn main() {
             commands::clear_provider_models,
             commands::get_supported_providers,
             commands::get_capabilities,
+            macos_permissions::get_macos_permission_status,
+            macos_permissions::request_macos_permission,
+            macos_permissions::open_macos_permission_settings,
             commands::set_capability,
             commands::set_vision_capability,
             commands::set_model_supports_vision,

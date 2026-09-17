@@ -50,6 +50,7 @@ import { UserInputPrompt } from './layout/UserInputPrompt'
 import { RegionPicker } from './tools/RegionPicker'
 import { ScreenCaptureTool } from './tools/ScreenCaptureTool'
 import { DesktopToolbar } from './tools/DesktopToolbar'
+import { MacosPermissionNotice } from './components/MacosPermissionNotice'
 import { useSession } from '../hooks/useSession'
 import { useEvents } from '../hooks/useEvents'
 import { playPopupSound, ensureAudioCtx } from '../ui/sound'
@@ -285,6 +286,7 @@ export default function App() {
       {s.appState === 'ready' && (
         <ErrorBoundary>
           <TitleBar onNewChat={s.handleNewChat} agentState={s.isProcessing ? 'working' : 'idle'} />
+          <MacosPermissionNotice mode={s.mode} onOpenSettings={() => s.setShowSecurity(true)} />
           <div className="chat-area">
             <ChatPanel
               messages={s.messages}

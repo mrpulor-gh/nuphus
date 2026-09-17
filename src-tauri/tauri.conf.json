@@ -96,6 +96,7 @@
       "icons/icon.png"
     ],
     "macOS": {
+      "infoPlist": "Info.plist",
       "files": {
         "Frameworks/libsherpa-onnx-c-api.dylib": "desktop/sherpa/libsherpa-onnx-c-api.dylib",
         "Frameworks/libonnxruntime.dylib": "desktop/sherpa/libonnxruntime.dylib"

@@ -1,7 +1,16 @@
 import { useState, useEffect } from 'react'
-import { getToolPermissions, setToolPermissions } from '../lib/api'
+import {
+  getMacosPermissionStatus,
+  getToolPermissions,
+  openMacosPermissionSettings,
+  requestMacosPermission,
+  setToolPermissions,
+  type MacosPermissionItem,
+  type MacosPermissionReport,
+} from '../lib/api'
 import { useLanguage } from '../../locales'
 import { Section, FormRow } from '../../ui/PageLayout'
+import '../../styles/macos-permissions.css'
 
 const TOOLS = [
   {
@@ -25,6 +34,20 @@ export function SecurityPage({ onClose }: { onClose: () => void }) {
     system_automation: false,
   })
   const [loading, setLoading] = useState(true)
+  const [macosReport, setMacosReport] = useState<MacosPermissionReport | null>(null)
+  const [macosLoading, setMacosLoading] = useState(true)
+  const [macosAction, setMacosAction] = useState<string | null>(null)
+
+  const refreshMacosPermissions = async () => {
+    setMacosLoading(true)
+    try {
+      setMacosReport(await getMacosPermissionStatus())
+    } catch {
+      setMacosReport(null)
+    } finally {
+      setMacosLoading(false)
+    }
+  }
 
   useEffect(() => {
     getToolPermissions()
@@ -46,7 +69,36 @@ export function SecurityPage({ onClose }: { onClose: () => void }) {
         setLoading(false)
       })
       .catch(() => setLoading(false))
+    void refreshMacosPermissions()
   }, [])
+
+  useEffect(() => {
+    const handleFocus = () => void refreshMacosPermissions()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') handleFocus()
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
+
+  const authorizeMacosPermission = async (permission: MacosPermissionItem) => {
+    setMacosAction(permission.id)
+    try {
+      if (permission.status === 'on_demand') {
+        await openMacosPermissionSettings(permission.id)
+      } else {
+        await requestMacosPermission(permission.id)
+      }
+    } catch (e) {
+      console.error('打开 macOS 权限设置失败:', e)
+    } finally {
+      setMacosAction(null)
+    }
+  }
 
   const toggle = async (id: string) => {
     const prev = { ...perm }
@@ -86,6 +138,50 @@ export function SecurityPage({ onClose }: { onClose: () => void }) {
           />
         ))}
       </Section>
+      {macosReport?.platformSupported && (
+        <Section title={t('macosPermission.sectionTitle')}>
+          <div className="macos-permission-summary">
+            <span>{t('macosPermission.sectionHint')}</span>
+            <button
+              type="button"
+              className="macos-permission-refresh"
+              onClick={() => void refreshMacosPermissions()}
+              disabled={macosLoading}
+            >
+              {macosLoading ? t('common.loading') : t('macosPermission.refresh')}
+            </button>
+          </div>
+          <div className="macos-permission-list">
+            {macosReport.permissions.map(permission => (
+              <div className="macos-permission-row" key={permission.id}>
+                <div className="macos-permission-copy">
+                  <div className="macos-permission-name">
+                    {t(`macosPermission.${permission.id}`)}
+                    <span className={`macos-permission-status is-${permission.status}`}>
+                      {t(`macosPermission.status.${permission.status}`)}
+                    </span>
+                  </div>
+                  <div className="macos-permission-description">
+                    {t(`macosPermission.${permission.id}Desc`)}
+                  </div>
+                </div>
+                {permission.status !== 'granted' && (
+                  <button
+                    type="button"
+                    className="macos-permission-action"
+                    disabled={macosAction === permission.id}
+                    onClick={() => void authorizeMacosPermission(permission)}
+                  >
+                    {permission.status === 'on_demand'
+                      ? t('macosPermission.openSettings')
+                      : t('macosPermission.authorize')}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   )
 }
