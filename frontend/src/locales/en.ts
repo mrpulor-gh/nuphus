@@ -143,6 +143,9 @@ const en: Record<string, string> = {
   'sessionRail.rename': 'Rename session title',
   'sessionRail.save': 'Save',
   'sessionRail.untitled': 'Untitled session',
+  'sessionRail.current': 'Current',
+  'common.copyPath': 'Copy path',
+  'common.revealInFolder': 'Show in folder',
   'sessionRail.switchFailBusy':
     'This session is executing ...please wait for it to finish before switching',
   'sessionRail.switchFailAppend': 'Instruction queue still processing ...switchable shortly',
@@ -1465,7 +1468,7 @@ const en: Record<string, string> = {
   'help.action': 'Action',
   'help.shortcut.send': 'Send message',
   'help.shortcut.newline': 'New line',
-  'help.shortcut.palette': 'Open command palette',
+  'help.shortcut.palette': 'Open command palette; in Workflow mode, open workflows',
   'help.shortcut.altSend': 'Send (alternate)',
   'help.shortcut.esc': 'Close modal / Cancel',
   'help.arch': 'Architecture',

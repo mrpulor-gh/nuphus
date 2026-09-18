@@ -1,6 +1,7 @@
 import { useLanguage } from '../../locales'
 import { Section } from '../../ui/PageLayout'
 import '../../styles/help.css'
+import { formatPrimaryShortcut } from '../../ui/platformShortcut'
 
 const slashCommands = [
   { cmd: '/new', key: 'slash.new' },
@@ -18,14 +19,6 @@ const slashCommands = [
   { cmd: '/help', key: 'slash.help' },
 ] as const
 
-const shortcuts = [
-  { keys: 'Enter', key: 'help.shortcut.send' },
-  { keys: 'Shift+Enter', key: 'help.shortcut.newline' },
-  { keys: 'Ctrl+K', key: 'help.shortcut.palette' },
-  { keys: 'Ctrl+Enter', key: 'help.shortcut.altSend' },
-  { keys: 'Esc', key: 'help.shortcut.esc' },
-] as const
-
 const modes = [
   { name: 'Leader', key: 'help.mode.leader' },
   { name: 'Workflow', key: 'help.mode.workflow' },
@@ -40,6 +33,13 @@ const archItems = [
 
 export function HelpPage() {
   const { t } = useLanguage()
+  const shortcuts = [
+    { keys: 'Enter', key: 'help.shortcut.send' },
+    { keys: 'Shift+Enter', key: 'help.shortcut.newline' },
+    { keys: formatPrimaryShortcut('K'), key: 'help.shortcut.palette' },
+    { keys: formatPrimaryShortcut('Enter'), key: 'help.shortcut.altSend' },
+    { keys: 'Esc', key: 'help.shortcut.esc' },
+  ] as const
 
   return (
     <div className="help-page">

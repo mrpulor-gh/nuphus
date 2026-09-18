@@ -13,7 +13,9 @@
   color: var(--fg-2, #d6dbe1);
 }
 .ctx-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 6px 10px;
   border: none;

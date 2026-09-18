@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '../locales'
+import { invoke } from '../core/bridge'
+import { IconCopy, IconFolder } from './Icons'
 import '../styles/context-menu.css'
 
 /**
@@ -17,7 +19,12 @@ import '../styles/context-menu.css'
  */
 export default function AppContextMenu() {
   const { t } = useLanguage()
-  const [menu, setMenu] = useState<{ x: number; y: number; text: string } | null>(null)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    text: string
+    filePath?: string
+  } | null>(null)
   const [copied, setCopied] = useState(false)
 
   const close = useCallback(() => {
@@ -33,6 +40,15 @@ export default function AppContextMenu() {
         return
       }
       e.preventDefault() // 其余区域一律拦截浏览器原生菜单
+
+      const fileItem = el?.closest<HTMLElement>('[data-file-path]')
+      const filePath = fileItem?.dataset.filePath
+      if (filePath) {
+        const x = Math.min(e.clientX, window.innerWidth - 190)
+        const y = Math.min(e.clientY, window.innerHeight - 132)
+        setMenu({ x: Math.max(4, x), y: Math.max(4, y), text: filePath, filePath })
+        return
+      }
 
       // 1) 有选区 → 复制选中文字
       const sel = window.getSelection()
@@ -105,6 +121,12 @@ export default function AppContextMenu() {
     close()
   }
 
+  const doReveal = () => {
+    if (!menu?.filePath) return
+    void invoke('reveal_path', { path: menu.filePath })
+    close()
+  }
+
   if (!menu) return null
   return createPortal(
     <div
@@ -116,12 +138,26 @@ export default function AppContextMenu() {
       }}
     >
       <button type="button" className="ctx-menu-item" onClick={doCopy} autoFocus>
-        {copied ? t('common.copied') : t('common.copy')}
+        {menu.filePath && <IconCopy size={13} />}
+        {copied ? t('common.copied') : menu.filePath ? t('common.copyPath') : t('common.copy')}
       </button>
       <div className="ctx-menu-divider" />
-      <button type="button" className="ctx-menu-item" onClick={doAskNuphus}>
-        {t('common.askNuphus')}
-      </button>
+      {menu.filePath ? (
+        <>
+          <button type="button" className="ctx-menu-item" onClick={doReveal}>
+            <IconFolder size={13} />
+            {t('common.revealInFolder')}
+          </button>
+          <div className="ctx-menu-divider" />
+          <button type="button" className="ctx-menu-item" onClick={doAskNuphus}>
+            {t('common.askNuphus')}
+          </button>
+        </>
+      ) : (
+        <button type="button" className="ctx-menu-item" onClick={doAskNuphus}>
+          {t('common.askNuphus')}
+        </button>
+      )}
       <div className="ctx-menu-preview">
         {menu.text.slice(0, 60)}
         {menu.text.length > 60 ? '…' : ''}

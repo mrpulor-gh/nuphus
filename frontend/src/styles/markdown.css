@@ -88,26 +88,53 @@
 
 /* ── 可点击文件路径（AI 回复中的绝对路径） ── */
 .markdown-file-path {
-  color: var(--accent);
-  text-decoration: none;
-  border-bottom: 1px dashed var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(100%, 320px);
+  margin: 0 2px;
+  padding: 2px 6px 2px 3px;
+  color: var(--fg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
   cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  white-space: break-spaces;
-  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.35;
+  vertical-align: -0.25em;
   transition: all var(--transition-fast);
 }
 .markdown-file-path:hover {
-  color: var(--accent-hover);
-  border-bottom-color: var(--accent-hover);
-  background: rgba(var(--accent-rgb), 0.08);
-  border-radius: 3px;
+  color: var(--fg-1);
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: var(--accent-dim);
 }
 .markdown-file-path:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
-  border-radius: 3px;
+}
+.markdown-file-ext {
+  flex: none;
+  min-width: 28px;
+  padding: 1px 4px;
+  border-radius: var(--radius-1);
+  color: var(--on-accent);
+  background: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  user-select: none;
+}
+.markdown-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 无序/有序列表 ── */

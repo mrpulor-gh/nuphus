@@ -254,7 +254,14 @@
 }
 /* 当前会话：整行圆角高亮块（不再用左缘 accent 竖条，对齐参考会话栏） */
 .sr-item.active {
-  background: var(--surface-3);
+  background: var(--accent-dim);
+  box-shadow: inset 3px 0 0 var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  padding-left: 9px;
+  padding-right: 9px;
+}
+.sr-item.active:hover {
+  background: rgba(var(--accent-rgb), 0.18);
 }
 
 /* ── 标题行（仅编辑态使用；列表态标题/时间/操作直接是行内 flex 子项）── */
@@ -319,6 +326,17 @@
 }
 .sr-title-btn.active {
   font-weight: 600;
+  color: var(--accent-hover);
+}
+.sr-current-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--radius-1);
+  color: var(--on-accent);
+  background: var(--accent);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  line-height: 1.5;
 }
 /* focus-visible 也去 accent：换 fg-2 中性 */
 .sr-title-btn:focus-visible {

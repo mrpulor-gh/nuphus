@@ -5,7 +5,11 @@ interface MarkdownContentProps {
   content: string
   /** 可选：点击裸文件路径（绝对路径 + 白名单扩展名）时回调 */
   onFileClick?: (path: string) => void
+  /** 可选：相对文件引用的项目基准路径；未提供时仅识别绝对路径。 */
+  projectBasePath?: string
 }
+
+const FilePathContext = React.createContext<{ projectBasePath?: string }>({})
 
 /**
  * Complete lightweight Markdown renderer (zero dependencies)
@@ -17,6 +21,7 @@ interface MarkdownContentProps {
 const MarkdownContent = React.memo(function MarkdownContent({
   content,
   onFileClick,
+  projectBasePath,
 }: MarkdownContentProps) {
   // Normalize line endings: \r\n / \r → \n, prevent Windows line endings from breaking split(/\n\n+/)
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -50,7 +55,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
   }
 
   return (
-    <>
+    <FilePathContext.Provider value={{ projectBasePath }}>
       {parts.map((part, i) => {
         const isDiff = part.type === 'code' && isDiffContent(part.code, part.lang)
         return part.type === 'code' ? (
@@ -67,7 +72,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
           <MarkdownText key={i} text={part.text} onFileClick={onFileClick} />
         )
       })}
-    </>
+    </FilePathContext.Provider>
   )
 })
 
@@ -388,35 +393,89 @@ function TableRenderer({
 //   3. Italic *text*                — fixed: removed faulty lookbehind that caused match failures
 //   4. Strikethrough ~~text~~
 //   5. Link [text](url)
-//   6. Bare Windows absolute file path (only when onFileClick provided)
+//   6. Local file path with a known extension (only when onFileClick provided)
 
 /** 白名单扩展名：扩展名后不得紧跟字母/数字/下划线（避免 .md5 之类误判）。
  *  覆盖常见下载产物类型——浏览器下载的 zip/exe/office/音视频此前不可点击，
  *  是「下载完成但打不开」的前端放大因素之一 */
 const FILE_EXT_WHITELIST =
-  /\.(?:md|html?|rs|tsx?|jsx?|py|json|toml|css|ya?ml|sh|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_])/i
-/** 绝对路径候选：Windows 盘符开头 + macOS/Linux 用户目录（/Users、/home）。
- *  盘符路径 `:` 在排除集中，天然在第二个冒号处截断（分隔相邻路径） */
-const PATH_CANDIDATE_RE = /(?:[A-Za-z]:[\\/]|\/(?:Users|home)\/)[^\r\n<>:"|?*]*/g
+  /\.(?:md|mdx|html?|rs|tsx?|jsx?|py|json|toml|css|scss|less|ya?ml|sh|bash|zsh|ps1|bat|cmd|c|cc|cpp|h|hpp|go|java|kt|swift|sql|vue|svelte|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_.-])/i
+const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n<>:"|?*]*/g
+const RELATIVE_PATH_RE = /(?:\.\.?[\\/]|(?:[A-Za-z0-9_.-]+[\\/])+)[^\s\r\n<>:"'|?*]*/g
+const BARE_DOMAIN_RE = /^(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})[\\/]/
 
-/** 在文本中提取所有「盘符开头 + 白名单扩展名」的路径区间 */
-function extractFilePaths(text: string): Array<{ start: number; end: number }> {
+export interface FilePathRange {
+  start: number
+  end: number
+}
+
+/** Extract conservative local path ranges. URLs and prose without a path separator are excluded. */
+export function extractFilePaths(text: string, allowRelative = false): FilePathRange[] {
   const out: Array<{ start: number; end: number }> = []
-  const re = new RegExp(PATH_CANDIDATE_RE.source, 'g')
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    // 前导字符紧贴字母/数字/下划线/斜杠时不视为路径开头（防误伤变量名等）
-    if (m.index > 0 && /[A-Za-z0-9_\\/]/.test(text[m.index - 1])) continue
-    const candidate = m[0]
-    const ext = FILE_EXT_WHITELIST.exec(candidate)
-    if (ext && ext.index !== undefined) {
+  const patterns = allowRelative ? [ABSOLUTE_PATH_RE, RELATIVE_PATH_RE] : [ABSOLUTE_PATH_RE]
+  for (const pattern of patterns) {
+    const re = new RegExp(pattern.source, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      const candidate = m[0]
+      const schemeWindow = text.slice(Math.max(0, m.index - 40), m.index)
+      if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/$/.test(schemeWindow)) continue
+      if (m.index > 0 && /[A-Za-z0-9_:\\/]/.test(text[m.index - 1])) {
+        // A broad slash candidate may contain a later Windows path. Resume one
+        // character after its start so the drive letter remains discoverable.
+        re.lastIndex = m.index + 1
+        continue
+      }
+      if (BARE_DOMAIN_RE.test(candidate)) continue
+      const ext = FILE_EXT_WHITELIST.exec(candidate)
+      if (!ext || ext.index === undefined) continue
       const end = m.index + ext.index + ext[0].length
       out.push({ start: m.index, end })
-      // 候选内扩展名后可能还跟着下一个路径（如 "C:\a.md C:\b.md"），从截断处继续扫描
       re.lastIndex = end
     }
   }
   return out
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+    .filter((range, index, ranges) => index === 0 || range.start >= ranges[index - 1].end)
+}
+
+export function resolveProjectFilePath(path: string, projectBasePath?: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path) || path.startsWith('/')) return path
+  if (!projectBasePath) return path
+  const separator = projectBasePath.includes('\\') ? '\\' : '/'
+  const root = projectBasePath.replace(/[\\/]+$/, '')
+  const parts = `${root}${separator}${path}`.split(/[\\/]+/)
+  const prefix = /^[A-Za-z]:$/.test(parts[0]) ? parts.shift() : ''
+  const normalized: string[] = []
+  for (const part of parts) {
+    if (!part || part === '.') continue
+    if (part === '..') normalized.pop()
+    else normalized.push(part)
+  }
+  return `${prefix ? `${prefix}${separator}` : projectBasePath.startsWith('/') ? '/' : ''}${normalized.join(separator)}`
+}
+
+function FileReference({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
+  const name = path.split(/[\\/]/).pop() || path
+  const extension = name.includes('.') ? name.split('.').pop()!.toUpperCase() : 'FILE'
+  return (
+    <button
+      type="button"
+      className="markdown-file-path"
+      title={path}
+      data-file-path={path}
+      onClick={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        onOpen(path)
+      }}
+    >
+      <span className="markdown-file-ext" aria-hidden="true">
+        {extension}
+      </span>
+      <span className="markdown-file-name">{name}</span>
+    </button>
+  )
 }
 
 /**
@@ -427,31 +486,21 @@ function applyFilePaths(
   nodes: React.ReactNode[],
   onFileClick: ((path: string) => void) | undefined,
   prefix: string,
+  projectBasePath?: string,
 ): React.ReactNode[] {
   if (!onFileClick) return nodes
   return nodes.flatMap((n, idx) => {
     if (typeof n !== 'string') return [n]
-    const ranges = extractFilePaths(n)
+    const ranges = extractFilePaths(n, Boolean(projectBasePath))
     if (ranges.length === 0) return [n]
     const parts: React.ReactNode[] = []
     let cursor = 0
     ranges.forEach((r, ri) => {
       if (r.start > cursor) parts.push(n.slice(cursor, r.start))
       const path = n.slice(r.start, r.end)
+      const resolvedPath = resolveProjectFilePath(path, projectBasePath)
       parts.push(
-        <a
-          key={`p-${prefix}-${idx}-${ri}`}
-          href="#"
-          className="markdown-file-path"
-          title={path}
-          onClick={e => {
-            e.preventDefault()
-            e.stopPropagation()
-            onFileClick(path)
-          }}
-        >
-          {path}
-        </a>,
+        <FileReference key={`p-${prefix}-${idx}-${ri}`} path={resolvedPath} onOpen={onFileClick} />,
       )
       cursor = r.end
     })
@@ -467,6 +516,7 @@ function MarkdownInline({
   text: string
   onFileClick?: (path: string) => void
 }) {
+  const { projectBasePath } = React.useContext(FilePathContext)
   const boldRegex = /\*\*(.+?)\*\*/g
   const italicRegex = /(?<!\w)\*(?!\*)(.+?)\*(?!\*)/g
   const delRegex = /~~(.+?)~~/g
@@ -497,24 +547,13 @@ function MarkdownInline({
         // 行内代码若整体就是一条白名单绝对路径（Agent 习惯用反引号包文件路径），
         // 同样接入点击预览链路，不再作为纯代码不可点
         if (onFileClick) {
-          const ranges = extractFilePaths(seg.v)
+          const ranges = extractFilePaths(seg.v, Boolean(projectBasePath))
           const whole =
             ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === seg.v.length
           if (whole) {
+            const resolvedPath = resolveProjectFilePath(seg.v, projectBasePath)
             nodes.push(
-              <a
-                key={`c-${i}-${seg.v}`}
-                href="#"
-                className="markdown-file-path inline-code"
-                title={seg.v}
-                onClick={e => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onFileClick(seg.v)
-                }}
-              >
-                {seg.v}
-              </a>,
+              <FileReference key={`c-${i}-${seg.v}`} path={resolvedPath} onOpen={onFileClick} />,
             )
             continue
           }
@@ -588,7 +627,7 @@ function MarkdownInline({
       )
 
       // 裸文件路径识别（link 之后；onFileClick 缺省时零回归）
-      layer = applyFilePaths(layer, onFileClick, `f-${i}`)
+      layer = applyFilePaths(layer, onFileClick, `f-${i}`, projectBasePath)
 
       nodes.push(...layer)
     }
