@@ -3,9 +3,9 @@
 //! TCC does not expose one universal "all files" or "all automation" check.
 //! Those capabilities are therefore reported as on-demand and are never used
 //! to block workflow mode. Screen recording and Accessibility have concrete
-//! probes and are treated as required workflow permissions. Microphone also has
-//! a concrete probe but only serves chat-side voice input, so it never gates
-//! workflow mode.
+//! probes and are treated as required workflow permissions. Microphone status
+//! is read passively through AVFoundation and only serves chat-side voice input,
+//! so it never gates workflow mode.
 
 use serde::Serialize;
 
@@ -57,22 +57,29 @@ extern "C" {
 }
 
 #[cfg(target_os = "macos")]
-fn microphone_probe() -> bool {
-    use crate::speech::mic::MicCapture;
-    use std::sync::mpsc;
+fn microphone_status_granted(status: objc2_av_foundation::AVAuthorizationStatus) -> bool {
+    status == objc2_av_foundation::AVAuthorizationStatus::Authorized
+}
 
-    // Opening and immediately dropping a stream is the same permission gate
-    // used by speech-to-text. It also triggers Apple's microphone prompt when
-    // the user has not answered it yet.
-    let (tx, _rx) = mpsc::channel();
-    MicCapture::start(tx).is_ok()
+#[cfg(target_os = "macos")]
+fn microphone_permission_granted() -> bool {
+    use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
+
+    // This only reads TCC's current status. It does not open an input device,
+    // create a cpal stream, or trigger microphone activity in the menu bar.
+    let Some(media_type) = (unsafe { AVMediaTypeAudio }) else {
+        tracing::warn!("AVMediaTypeAudio is unavailable");
+        return false;
+    };
+    let status = unsafe { AVCaptureDevice::authorizationStatusForMediaType(media_type) };
+    microphone_status_granted(status)
 }
 
 #[cfg(target_os = "macos")]
 fn report() -> MacosPermissionReport {
     let screen_recording = unsafe { CGPreflightScreenCaptureAccess() };
     let accessibility = unsafe { AXIsProcessTrusted() };
-    let microphone = microphone_probe();
+    let microphone = microphone_permission_granted();
 
     MacosPermissionReport {
         platform_supported: true,
@@ -136,15 +143,23 @@ fn report() -> MacosPermissionReport {
     }
 }
 
-/// Return the current macOS privacy permission state.
+/// Return the current macOS privacy permission state without touching devices.
 #[tauri::command]
-pub fn get_macos_permission_status() -> MacosPermissionReport {
-    report()
+pub async fn get_macos_permission_status() -> Result<MacosPermissionReport, String> {
+    tauri::async_runtime::spawn_blocking(report)
+        .await
+        .map_err(|error| format!("macOS permission status task failed: {error}"))
 }
 
 /// Request a concrete permission where macOS exposes a request API.
 #[tauri::command]
-pub fn request_macos_permission(id: String) -> Result<MacosPermissionReport, String> {
+pub async fn request_macos_permission(id: String) -> Result<MacosPermissionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || request_macos_permission_blocking(id))
+        .await
+        .map_err(|error| format!("macOS permission request task failed: {error}"))?
+}
+
+fn request_macos_permission_blocking(id: String) -> Result<MacosPermissionReport, String> {
     #[cfg(target_os = "macos")]
     {
         match id.as_str() {
@@ -155,13 +170,13 @@ pub fn request_macos_permission(id: String) -> Result<MacosPermissionReport, Str
                 // Accessibility has no reliable Rust-level request dialog. The
                 // settings page opened below is the supported user flow.
             }
-            "microphone" => {
-                let _ = microphone_probe();
-            }
+            // A permission status check must not start an audio stream. The
+            // settings page is the explicit user flow for microphone access.
+            "microphone" => {}
             "files_and_folders" | "automation" => {}
             _ => return Err(format!("未知的 macOS 权限: {id}")),
         }
-        open_macos_permission_settings(id)?;
+        open_macos_permission_settings_blocking(&id)?;
         return Ok(report());
     }
 
@@ -174,10 +189,16 @@ pub fn request_macos_permission(id: String) -> Result<MacosPermissionReport, Str
 
 /// Open the relevant macOS Privacy & Security pane.
 #[tauri::command]
-pub fn open_macos_permission_settings(id: String) -> Result<(), String> {
+pub async fn open_macos_permission_settings(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_macos_permission_settings_blocking(&id))
+        .await
+        .map_err(|error| format!("打开 macOS 系统设置任务失败: {error}"))?
+}
+
+fn open_macos_permission_settings_blocking(id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let url = match id.as_str() {
+        let url = match id {
             "screen_recording" => SCREEN_RECORDING_SETTINGS,
             "accessibility" => ACCESSIBILITY_SETTINGS,
             "microphone" => MICROPHONE_SETTINGS,
@@ -222,5 +243,32 @@ mod tests {
         for permission in value.permissions {
             assert!(ids.insert(permission.id));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn microphone_does_not_gate_workflow_mode() {
+        let value = report();
+        let microphone = value
+            .permissions
+            .iter()
+            .find(|permission| permission.id == "microphone")
+            .expect("microphone permission must be present");
+        assert!(!microphone.required_for_workflow);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_authorized_microphone_status_is_granted() {
+        use objc2_av_foundation::AVAuthorizationStatus;
+
+        assert!(microphone_status_granted(AVAuthorizationStatus::Authorized));
+        assert!(!microphone_status_granted(
+            AVAuthorizationStatus::NotDetermined
+        ));
+        assert!(!microphone_status_granted(AVAuthorizationStatus::Denied));
+        assert!(!microphone_status_granted(
+            AVAuthorizationStatus::Restricted
+        ));
     }
 }

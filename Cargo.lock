@@ -4759,6 +4759,7 @@ dependencies = [
  "lopdf",
  "nuphus",
  "nuphus-index",
+ "objc2-av-foundation",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

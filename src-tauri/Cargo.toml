@@ -124,6 +124,10 @@ windows-sys = { version = "0.59", features = [
 # 避免 tauri-build 的 "remove the macos-private-api feature" 报错）。
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
+    "AVCaptureDevice",
+    "AVMediaFormat",
+] }
 
 [dev-dependencies]
 tokio-test = "0.4"
