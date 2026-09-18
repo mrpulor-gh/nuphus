@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useLanguage } from '../locales'
 import { playUiSound } from './sound'
+import { formatPrimaryShortcut } from './platformShortcut'
+import { useWheelSelection } from './wheelSelection'
 import '../styles/cmd-palette.css'
 
 interface CommandItem {
@@ -106,6 +108,10 @@ export function CommandPalette({
     }
   }, [filtered, selectedIdx, onClose])
 
+  const handleWheel = useWheelSelection(steps => {
+    moveSelection(Math.max(0, Math.min(selectedIdxRef.current + steps, filtered.length - 1)))
+  })
+
   useEffect(() => {
     if (!open || placement !== 'bottom') return
     const handler = (e: KeyboardEvent) => {
@@ -165,7 +171,7 @@ export function CommandPalette({
       <div className="cmd-palette" onClick={e => e.stopPropagation()}>
         {placement === 'center' && (
           <div className="cmd-palette-input-wrap">
-            <span className="cmd-palette-prefix">⌘</span>
+            <span className="cmd-palette-prefix">{formatPrimaryShortcut('K')}</span>
             <input
               ref={inputRef}
               className="cmd-palette-input"
@@ -196,14 +202,7 @@ export function CommandPalette({
           role="listbox"
           aria-label={t('cmd.searchPlaceholder')}
           onMouseOver={handleResultsMouseOver}
-          onWheel={e => {
-            e.preventDefault()
-            if (e.deltaY > 0) {
-              setSelectedIdx(i => Math.min(i + 1, filtered.length - 1))
-            } else {
-              setSelectedIdx(i => Math.max(i - 1, 0))
-            }
-          }}
+          onWheel={handleWheel}
         >
           {filtered.length === 0 ? (
             <div className="cmd-palette-empty">{t('cmd.noResults')}</div>

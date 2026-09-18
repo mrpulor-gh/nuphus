@@ -70,7 +70,14 @@ pub fn open_path(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("系统打开失败：{}", e))?;
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("系统打开失败：{}", e))?;
+    }
+    #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
             .arg(&path)
@@ -96,7 +103,15 @@ pub fn reveal_path(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("在文件夹中显示失败：{}", e))?;
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("在文件夹中显示失败：{}", e))?;
+    }
+    #[cfg(target_os = "linux")]
     {
         if let Some(dir) = Path::new(&path).parent() {
             std::process::Command::new("xdg-open")

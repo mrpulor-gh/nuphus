@@ -22,6 +22,8 @@ pub struct SessionRow {
     pub message_count: i32,
     pub token_count: i32,
     pub summary: String,
+    /// `derived` / `refined` / `manual`; NULL is a legacy title with unknown provenance.
+    pub title_source: Option<String>,
 }
 
 /// 插入或更新一条 session 记录（真 UPSERT）。
@@ -33,15 +35,28 @@ pub fn upsert_session(session: &SessionRow) -> crate::Result<()> {
 
     guard.execute(
         "INSERT INTO sessions
-         (id, parent_id, depth, created_at, updated_at, message_count, token_count, summary)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         (id, parent_id, depth, created_at, updated_at, message_count, token_count, summary, title_source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(id) DO UPDATE SET
             parent_id     = excluded.parent_id,
             depth         = excluded.depth,
             updated_at    = excluded.updated_at,
             message_count = excluded.message_count,
             token_count   = excluded.token_count,
-            summary       = excluded.summary",
+            summary       = CASE
+                WHEN excluded.title_source = 'manual' THEN excluded.summary
+                WHEN excluded.summary = '' THEN sessions.summary
+                WHEN sessions.summary = '' OR sessions.title_source = 'derived'
+                    THEN excluded.summary
+                ELSE sessions.summary
+            END,
+            title_source  = CASE
+                WHEN excluded.title_source = 'manual' THEN excluded.title_source
+                WHEN excluded.summary = '' THEN sessions.title_source
+                WHEN sessions.summary = '' OR sessions.title_source = 'derived'
+                    THEN excluded.title_source
+                ELSE sessions.title_source
+            END",
         params![
             session.id,
             session.parent_id,
@@ -51,10 +66,27 @@ pub fn upsert_session(session: &SessionRow) -> crate::Result<()> {
             session.message_count,
             session.token_count,
             session.summary,
+            session.title_source,
         ],
     )?;
 
     Ok(())
+}
+
+/// Promote an automatically derived title to a refined title exactly once.
+///
+/// The predicate is evaluated by SQLite in the same statement as the write so a
+/// concurrent manual rename cannot be overwritten between a read and an update.
+pub fn set_refined_title_if_allowed(session_id: &str, title: &str) -> crate::Result<bool> {
+    let guard = crate::store::db::acquire()?;
+    let updated = guard.execute(
+        "UPDATE sessions
+         SET summary = ?2, title_source = 'refined', updated_at = ?3
+         WHERE id = ?1
+           AND (summary = '' OR title_source = 'derived')",
+        params![session_id, title, chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(updated == 1)
 }
 
 /// 按 ID 读取一条 session 记录
@@ -63,7 +95,7 @@ pub fn get_session(session_id: &str) -> crate::Result<Option<SessionRow>> {
 
     let mut stmt = guard.prepare(
         "SELECT id, parent_id, depth, created_at, updated_at,
-                message_count, token_count, summary
+                message_count, token_count, summary, title_source
          FROM sessions WHERE id = ?1",
     )?;
 
@@ -77,6 +109,7 @@ pub fn get_session(session_id: &str) -> crate::Result<Option<SessionRow>> {
             message_count: row.get(5)?,
             token_count: row.get(6)?,
             summary: row.get(7)?,
+            title_source: row.get(8)?,
         })
     })?;
 
@@ -92,7 +125,7 @@ pub fn list_sessions(limit: usize, offset: usize) -> crate::Result<Vec<SessionRo
 
     let mut stmt = guard.prepare(
         "SELECT id, parent_id, depth, created_at, updated_at,
-                message_count, token_count, summary
+                message_count, token_count, summary, title_source
          FROM sessions
          ORDER BY updated_at DESC
          LIMIT ?1 OFFSET ?2",
@@ -109,6 +142,7 @@ pub fn list_sessions(limit: usize, offset: usize) -> crate::Result<Vec<SessionRo
                 message_count: row.get(5)?,
                 token_count: row.get(6)?,
                 summary: row.get(7)?,
+                title_source: row.get(8)?,
             })
         })?
         .filter_map(|r| r.ok())
@@ -293,6 +327,7 @@ mod tests {
             message_count: 0,
             token_count: 0,
             summary: summary.to_string(),
+            title_source: Some("derived".to_string()),
         }
     }
 
@@ -313,6 +348,27 @@ mod tests {
 
         delete_session(&id).unwrap();
         assert!(get_session(&id).unwrap().is_none());
+    }
+
+    #[serial]
+    #[test]
+    fn automatic_upsert_never_overwrites_stronger_title_source() {
+        let id = random_id();
+        let mut manual = row_with(&id, "用户手动标题");
+        manual.title_source = Some("manual".to_string());
+        upsert_session(&manual).unwrap();
+
+        let derived = row_with(&id, "自动派生标题");
+        upsert_session(&derived).unwrap();
+        let mut refined = row_with(&id, "提炼生成标题");
+        refined.title_source = Some("refined".to_string());
+        upsert_session(&refined).unwrap();
+
+        let stored = get_session(&id).unwrap().unwrap();
+        assert_eq!(stored.summary, "用户手动标题");
+        assert_eq!(stored.title_source.as_deref(), Some("manual"));
+
+        delete_session(&id).unwrap();
     }
 
     /// 快照写入不得覆盖用户可见元数据（summary / created_at / message_count）

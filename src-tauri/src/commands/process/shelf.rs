@@ -236,6 +236,35 @@ fn truncate_chars(s: &str, max: usize) -> String {
     format!("{}…", s.chars().take(max).collect::<String>())
 }
 
+/// Extract a stable 10-30 character title from the first non-empty line of a refine result.
+/// Markdown heading/list markers and common "title/summary" labels are presentation noise.
+pub(crate) fn derive_refined_title(summary: &str) -> Option<String> {
+    let first = summary.lines().find(|line| !line.trim().is_empty())?.trim();
+    let mut clean = first
+        .trim_start_matches(['#', '-', '*', '>', '`', ' '])
+        .trim();
+    for prefix in ["标题：", "标题:", "摘要：", "摘要:", "Title:", "Summary:"] {
+        if let Some(rest) = clean.strip_prefix(prefix) {
+            clean = rest.trim();
+            break;
+        }
+    }
+    let clean = clean
+        .trim_matches(|c: char| matches!(c, '*' | '_' | '`' | '#' | ' '))
+        .trim_end_matches(['。', '！', '？', '.', '!', '?'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let count = clean.chars().count();
+    if count < 10 {
+        return None;
+    }
+    if count <= 30 {
+        return Some(clean);
+    }
+    Some(format!("{}…", clean.chars().take(29).collect::<String>()))
+}
+
 /// 归属模式归一化：workflow → workflow；custom → custom（custom 会话走 leader 主循环，
 /// 但 mode 标签须保留 custom，保证展示台/镜像/切换不丢失身份）；其余（leader/free/plan 残留）→ leader
 pub(crate) fn normalize_mode(current_mode: &str) -> &'static str {
@@ -514,6 +543,15 @@ pub(crate) fn upsert_meta_row(session: &Session, title: &str) {
     let existing = nuphus::store::session::get_session(&session.id)
         .ok()
         .flatten();
+    let candidate = title.trim();
+    let (summary, title_source) = match existing.as_ref() {
+        Some(row) if candidate.is_empty() => (row.summary.clone(), row.title_source.clone()),
+        // Unknown legacy, refined, and manual titles are all conservative locks.
+        Some(row) if !row.summary.is_empty() && row.title_source.as_deref() != Some("derived") => {
+            (row.summary.clone(), row.title_source.clone())
+        }
+        _ => (candidate.to_string(), Some("derived".to_string())),
+    };
     let row = nuphus::store::session::SessionRow {
         id: session.id.clone(),
         parent_id: existing.as_ref().and_then(|r| r.parent_id.clone()),
@@ -528,16 +566,30 @@ pub(crate) fn upsert_meta_row(session: &Session, title: &str) {
         updated_at: chrono::Utc::now().to_rfc3339(),
         message_count: session.messages().len() as i32,
         token_count: session.api_input_tokens as i32,
-        summary: if title.is_empty() {
-            existing
-                .as_ref()
-                .map(|r| r.summary.clone())
-                .unwrap_or_default()
-        } else {
-            title.to_string()
-        },
+        summary,
+        title_source,
     };
     let _ = nuphus::store::session::upsert_session(&row);
+}
+
+/// Promote the first refine title into the list while respecting stronger title sources.
+pub(crate) fn apply_refined_title(state: &AppState, session_id: &str, distill: &str) {
+    let Some(title) = derive_refined_title(distill) else {
+        return;
+    };
+    // Keep the shelf lock across the conditional database update. Manual rename takes
+    // the same lock before writing SQLite, so both paths stay ordered and memory agrees
+    // with whichever title source won in SQLite.
+    let Ok(mut shelf) = state.shelf.lock() else {
+        return;
+    };
+    if !nuphus::store::session::set_refined_title_if_allowed(session_id, &title).unwrap_or(false) {
+        return;
+    }
+    shelf.titles.insert(session_id.to_string(), title.clone());
+    if let Some(entry) = shelf.entries.get_mut(session_id) {
+        entry.title = title;
+    }
 }
 
 /// 元数据行 + 镜像一并落盘（退出钩子等调用方使用）。
@@ -954,6 +1006,7 @@ pub fn rename_session_cmd(
             .map(|r| r.created_at.clone())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
         summary: title,
+        title_source: Some("manual".to_string()),
         ..existing.unwrap_or(nuphus::store::session::SessionRow {
             id: id.clone(),
             parent_id: None,
@@ -963,6 +1016,7 @@ pub fn rename_session_cmd(
             message_count: 0,
             token_count: 0,
             summary: String::new(),
+            title_source: None,
         })
     };
     nuphus::store::session::upsert_session(&row).map_err(|e| e.to_string())?;
@@ -1155,6 +1209,85 @@ mod tests {
         let t = derive_title(&session_with_user(&[long]));
         assert!(t.chars().count() <= 31);
         assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn refined_title_cleans_markdown_and_enforces_length() {
+        assert_eq!(
+            derive_refined_title("## 标题：修复工作流快捷键与文件路径交互\n后续正文"),
+            Some("修复工作流快捷键与文件路径交互".to_string())
+        );
+        assert_eq!(derive_refined_title("短标题\n正文"), None);
+        let title = derive_refined_title(
+            "这是一个明显超过三十个字符的提炼标题用于验证最终输出会被安全截断并保留省略号",
+        )
+        .unwrap();
+        assert_eq!(title.chars().count(), 30);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn refined_title_replaces_derived_once_but_protects_manual_and_refined() {
+        let state = AppState::default();
+        let now = chrono::Utc::now().to_rfc3339();
+        let make_row =
+            |id: &str, summary: &str, source: Option<&str>| nuphus::store::session::SessionRow {
+                id: id.to_string(),
+                parent_id: None,
+                depth: 0,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                message_count: 1,
+                token_count: 0,
+                summary: summary.to_string(),
+                title_source: source.map(str::to_string),
+            };
+        let derived_id = uuid::Uuid::new_v4().to_string();
+        let manual_id = uuid::Uuid::new_v4().to_string();
+        let legacy_id = uuid::Uuid::new_v4().to_string();
+        nuphus::store::session::upsert_session(&make_row(
+            &derived_id,
+            "自动派生标题",
+            Some("derived"),
+        ))
+        .unwrap();
+        nuphus::store::session::upsert_session(&make_row(
+            &manual_id,
+            "用户手动命名",
+            Some("manual"),
+        ))
+        .unwrap();
+        nuphus::store::session::upsert_session(&make_row(&legacy_id, "历史未知标题", None))
+            .unwrap();
+
+        apply_refined_title(&state, &derived_id, "首次提炼生成的稳定会话标题");
+        apply_refined_title(&state, &derived_id, "二次提炼不应覆盖首次生成标题");
+        apply_refined_title(&state, &manual_id, "这条提炼不能覆盖用户手动标题");
+        apply_refined_title(&state, &legacy_id, "这条提炼不能覆盖历史未知标题");
+
+        let derived = nuphus::store::session::get_session(&derived_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(derived.summary, "首次提炼生成的稳定会话标题");
+        assert_eq!(derived.title_source.as_deref(), Some("refined"));
+        assert_eq!(
+            nuphus::store::session::get_session(&manual_id)
+                .unwrap()
+                .unwrap()
+                .summary,
+            "用户手动命名"
+        );
+        assert_eq!(
+            nuphus::store::session::get_session(&legacy_id)
+                .unwrap()
+                .unwrap()
+                .summary,
+            "历史未知标题"
+        );
+
+        for id in [&derived_id, &manual_id, &legacy_id] {
+            nuphus::store::session::delete_session(id).unwrap();
+        }
     }
 
     #[test]

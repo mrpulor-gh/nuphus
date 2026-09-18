@@ -279,6 +279,7 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
             message_count   INTEGER NOT NULL DEFAULT 0,
             token_count     INTEGER NOT NULL DEFAULT 0,
             summary         TEXT DEFAULT '',
+            title_source    TEXT,
             mode            TEXT NOT NULL DEFAULT 'leader',
             snapshot        TEXT
         );
@@ -299,6 +300,9 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
     // CREATE TABLE IF NOT EXISTS 不会给已存在的旧表加列，需显式 ALTER。
     ensure_column(conn, "sessions", "mode", "TEXT NOT NULL DEFAULT 'leader'")?;
     ensure_column(conn, "sessions", "snapshot", "TEXT")?;
+    // NULL intentionally means "unknown legacy source". Existing non-empty titles are
+    // therefore preserved until the user explicitly renames them.
+    ensure_column(conn, "sessions", "title_source", "TEXT")?;
 
     // session_meta：session → 项目 tag 归属（记忆检索的项目过滤依据）。
     // 由 insert_entry 惰性登记（首次记忆写入时），无 meta 的历史 session 不参与过滤。
@@ -319,4 +323,42 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
 pub fn db_size() -> u64 {
     let path = db_path();
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sessions_title_source_migration_is_idempotent_and_preserves_legacy_title() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                depth INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                summary TEXT DEFAULT ''
+            );
+            INSERT INTO sessions (id, created_at, updated_at, summary)
+            VALUES ('legacy', 'now', 'now', '旧标题');",
+        )
+        .unwrap();
+
+        init_tables(&conn).unwrap();
+        init_tables(&conn).unwrap();
+
+        let (summary, source): (String, Option<String>) = conn
+            .query_row(
+                "SELECT summary, title_source FROM sessions WHERE id = 'legacy'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(summary, "旧标题");
+        assert_eq!(source, None, "旧标题来源必须保持未知，避免被自动覆盖");
+    }
 }

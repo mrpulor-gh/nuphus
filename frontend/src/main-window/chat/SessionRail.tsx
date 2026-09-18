@@ -584,6 +584,11 @@ export default function SessionRail({
                     >
                       {it.title || t('sessionRail.untitled')}
                     </button>
+                    {it.is_active && (
+                      <span className="sr-current-badge" aria-hidden="true">
+                        {t('sessionRail.current')}
+                      </span>
+                    )}
                     {/* 行尾相对时间：hover 时淡出让位给操作按钮，避免按钮挤动布局 */}
                     <span className="sr-time">{relativeTime(it.updated_at, t)}</span>
                     <span className="sr-actions">

@@ -38,6 +38,7 @@ import {
   IconRefresh,
 } from '../ui/Icons'
 import { CommandPalette } from '../ui/CommandPalette'
+import { routePrimaryK } from './shortcutRouting'
 import { useLanguage } from '../locales'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { Button, IconButton } from '../ui/Button'
@@ -199,7 +200,19 @@ export default function App() {
     'check-update': <IconRefresh size={14} />,
   }
   useKeyboard([
-    { key: 'k', ctrl: true, handler: () => s.setCmdPaletteOpen((p: boolean) => !p) },
+    {
+      key: 'k',
+      ctrl: true,
+      handler: () =>
+        routePrimaryK(
+          s.mode,
+          () => {
+            s.setCmdPaletteOpen(false)
+            s.setShowWorkflow(true)
+          },
+          () => s.setCmdPaletteOpen((p: boolean) => !p),
+        ),
+    },
     { key: 'l', ctrl: true, handler: () => s.setFocusSignal((p: number) => p + 1) },
     { key: 'n', ctrl: true, handler: () => s.handleNewChat() },
     {

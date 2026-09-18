@@ -11,6 +11,7 @@ import {
 } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
+import { formatPrimaryShortcut } from '../../ui/platformShortcut'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { StopChoiceDialog } from '../../ui/StopChoiceDialog'
@@ -1327,7 +1328,9 @@ export function ChatInputBar({
                         }}
                       >
                         <span>{t('wfMenu.list')}</span>
-                        <kbd className="input-bar-toolbox-item-key">Ctrl+K</kbd>
+                        <kbd className="input-bar-toolbox-item-key">
+                          {formatPrimaryShortcut('K')}
+                        </kbd>
                       </button>
                       <button
                         type="button"
@@ -1339,7 +1342,9 @@ export function ChatInputBar({
                         }}
                       >
                         <span>{t('wfMenu.toolbox')}</span>
-                        <kbd className="input-bar-toolbox-item-key">Ctrl+U</kbd>
+                        <kbd className="input-bar-toolbox-item-key">
+                          {formatPrimaryShortcut('U')}
+                        </kbd>
                       </button>
                     </div>
                   ))}

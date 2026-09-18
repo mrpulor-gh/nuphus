@@ -245,6 +245,7 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         // 「提炼 → 丢失 → 重提炼」死循环（issue #9 RC2）。
         crate::commands::process::shelf::persist_and_mirror("leader", leader.session(), &protected);
     }
+    crate::commands::process::shelf::apply_refined_title(state.inner(), &session_id, &distill);
 
     emitter.emit(NuphusEvent::SessionRefined {
         summary: distill.clone(),
@@ -353,6 +354,7 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
         // 同 leader 路径：提炼结果立即落盘，避免重启恢复全量后重炼（issue #9 RC2）
         crate::commands::process::shelf::persist_and_mirror("workflow", wa.session(), &protected);
     }
+    crate::commands::process::shelf::apply_refined_title(state.inner(), &session_id, &distill);
 
     emitter.emit(NuphusEvent::SessionRefined {
         summary: distill,

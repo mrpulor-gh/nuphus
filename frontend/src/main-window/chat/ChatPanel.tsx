@@ -86,6 +86,7 @@ import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
 import { NuphusLogo } from '../../ui/NuphusLogo'
 import { playUiSound } from '../../ui/sound'
+import { useWheelSelection } from '../../ui/wheelSelection'
 import type { MoodState } from '../../ui/MoodFace'
 import '../../styles/chat.css'
 import { StatusBar } from '../layout/StatusBar'
@@ -607,6 +608,12 @@ export function ChatPanel({
         : SLASH_ITEMS,
     [cmdQuery, SLASH_ITEMS],
   )
+  const handleCommandWheel = useWheelSelection(steps => {
+    setCmdIdx(i => Math.max(0, Math.min(i + steps, filteredSlash.length - 1)))
+  })
+  const handleResourceWheel = useWheelSelection(steps => {
+    setResIdx(i => Math.max(0, Math.min(i + steps, resItems.length - 1)))
+  })
   const cmdItemRefs = useRef<(HTMLDivElement | null)[]>([])
   useEffect(() => {
     const el = cmdItemRefs.current[cmdIdx]
@@ -1675,6 +1682,7 @@ export function ChatPanel({
                                         <MarkdownContent
                                           content={msg.content}
                                           onFileClick={setPreviewPath}
+                                          projectBasePath={projectDir}
                                         />
                                         <span className="message-thinking-cursor" />
                                       </>
@@ -1689,6 +1697,7 @@ export function ChatPanel({
                                     <MarkdownContent
                                       content={msg.content}
                                       onFileClick={setPreviewPath}
+                                      projectBasePath={projectDir}
                                     />
                                   )
                                 })()
@@ -2415,14 +2424,7 @@ export function ChatPanel({
             <div
               className="cmd-palette"
               onClick={e => e.stopPropagation()}
-              onWheel={e => {
-                e.preventDefault()
-                if (e.deltaY > 0) {
-                  setCmdIdx(i => Math.min(i + 1, filteredSlash.length - 1))
-                } else {
-                  setCmdIdx(i => Math.max(i - 1, 0))
-                }
-              }}
+              onWheel={handleCommandWheel}
             >
               {filteredSlash.map((item, i) => (
                 <div
@@ -2452,14 +2454,7 @@ export function ChatPanel({
             <div
               className="cmd-palette"
               onClick={e => e.stopPropagation()}
-              onWheel={e => {
-                e.preventDefault()
-                if (e.deltaY > 0) {
-                  setResIdx(i => Math.min(i + 1, resItems.length - 1))
-                } else {
-                  setResIdx(i => Math.max(i - 1, 0))
-                }
-              }}
+              onWheel={handleResourceWheel}
             >
               <div className="cmd-palette-header">
                 <span className="cmd-palette-title">
