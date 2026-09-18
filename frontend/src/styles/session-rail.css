@@ -260,6 +260,9 @@
   padding-left: 9px;
   padding-right: 9px;
 }
+.sr-item.active:hover {
+  background: rgba(var(--accent-rgb), 0.18);
+}
 
 /* ── 标题行（仅编辑态使用；列表态标题/时间/操作直接是行内 flex 子项）── */
 .sr-head {

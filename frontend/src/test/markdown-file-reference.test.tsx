@@ -45,9 +45,25 @@ describe('MarkdownContent 文件引用', () => {
     )
   })
 
+  it('同行混排不会让相对路径候选吞掉后续绝对路径', () => {
+    const mixed = String.raw`改了 docs/a.md 和 C:\repo\c.rs`
+    const windowsOnly = extractFilePaths(mixed).map(range => mixed.slice(range.start, range.end))
+    const withRelative = extractFilePaths(mixed, true).map(range =>
+      mixed.slice(range.start, range.end),
+    )
+    expect(windowsOnly).toEqual([String.raw`C:\repo\c.rs`])
+    expect(withRelative).toEqual(['docs/a.md', String.raw`C:\repo\c.rs`])
+
+    const absoluteMixed = String.raw`/opt/a/b.md + C:\out\c.rs + \\server\share\d.pdf`
+    expect(
+      extractFilePaths(absoluteMixed).map(range => absoluteMixed.slice(range.start, range.end)),
+    ).toEqual(['/opt/a/b.md', String.raw`C:\out\c.rs`, String.raw`\\server\share\d.pdf`])
+  })
+
   it('不识别 URL、代码块、普通句子和未知扩展名', () => {
     const content = [
       'https://example.com/files/report.pdf',
+      'github.com/mrpulor-gh/nuphus/blob/main/README.md',
       '这是 release notes.md 的普通句子',
       'local/path.unknown',
       'local/report.json.bak',
@@ -60,5 +76,6 @@ describe('MarkdownContent 文件引用', () => {
     )
     expect(html).not.toContain('data-file-path')
     expect(extractFilePaths('https://example.com/a.pdf', true)).toEqual([])
+    expect(extractFilePaths('github.com/org/repo/README.md', true)).toEqual([])
   })
 })

@@ -54,7 +54,10 @@
   border-bottom: var(--border-divider);
 }
 .cmd-palette-prefix {
-  font-size: var(--fz-xl);
+  min-width: 42px;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  font-weight: 600;
   color: var(--spark-muted);
   flex-shrink: 0;
 }

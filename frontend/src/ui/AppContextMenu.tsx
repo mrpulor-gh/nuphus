@@ -45,7 +45,7 @@ export default function AppContextMenu() {
       const filePath = fileItem?.dataset.filePath
       if (filePath) {
         const x = Math.min(e.clientX, window.innerWidth - 190)
-        const y = Math.min(e.clientY, window.innerHeight - 92)
+        const y = Math.min(e.clientY, window.innerHeight - 132)
         setMenu({ x: Math.max(4, x), y: Math.max(4, y), text: filePath, filePath })
         return
       }
@@ -143,10 +143,16 @@ export default function AppContextMenu() {
       </button>
       <div className="ctx-menu-divider" />
       {menu.filePath ? (
-        <button type="button" className="ctx-menu-item" onClick={doReveal}>
-          <IconFolder size={13} />
-          {t('common.revealInFolder')}
-        </button>
+        <>
+          <button type="button" className="ctx-menu-item" onClick={doReveal}>
+            <IconFolder size={13} />
+            {t('common.revealInFolder')}
+          </button>
+          <div className="ctx-menu-divider" />
+          <button type="button" className="ctx-menu-item" onClick={doAskNuphus}>
+            {t('common.askNuphus')}
+          </button>
+        </>
       ) : (
         <button type="button" className="ctx-menu-item" onClick={doAskNuphus}>
           {t('common.askNuphus')}

@@ -84,6 +84,10 @@ pub fn open_path(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("系统打开失败：{}", e))?;
     }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        return Err("当前平台不支持系统打开".to_string());
+    }
     Ok(())
 }
 
@@ -119,6 +123,10 @@ pub fn reveal_path(path: String) -> Result<(), String> {
                 .spawn()
                 .map_err(|e| format!("在文件夹中显示失败：{}", e))?;
         }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        return Err("当前平台不支持在文件夹中显示".to_string());
     }
     Ok(())
 }

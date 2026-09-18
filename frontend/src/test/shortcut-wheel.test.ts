@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { routePrimaryK } from '../main-window/shortcutRouting'
+import { modelSetupHint, routePrimaryK } from '../main-window/shortcutRouting'
 import { formatPrimaryShortcut } from '../ui/platformShortcut'
 import { createWheelSelectionAccumulator } from '../ui/wheelSelection'
 
@@ -19,6 +19,11 @@ describe('主快捷键路由', () => {
     expect(togglePalette).toHaveBeenCalledOnce()
     expect(formatPrimaryShortcut('K', 'MacIntel')).toBe('Cmd+K')
     expect(formatPrimaryShortcut('K', 'Win32')).toBe('Ctrl+K')
+  })
+
+  it('未配置模型提示不会在 Workflow 模式误导用户使用主快捷键', () => {
+    expect(modelSetupHint('workflow', 'Cmd+K')).toBe('⚠ 尚未配置模型，请前往模型设置')
+    expect(modelSetupHint('leader', 'Cmd+K')).toContain('Cmd+K → 模型设置')
   })
 })
 

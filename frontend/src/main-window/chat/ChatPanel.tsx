@@ -87,6 +87,8 @@ import { useLanguage } from '../../locales'
 import { NuphusLogo } from '../../ui/NuphusLogo'
 import { playUiSound } from '../../ui/sound'
 import { useWheelSelection } from '../../ui/wheelSelection'
+import { formatPrimaryShortcut } from '../../ui/platformShortcut'
+import { modelSetupHint } from '../shortcutRouting'
 import type { MoodState } from '../../ui/MoodFace'
 import '../../styles/chat.css'
 import { StatusBar } from '../layout/StatusBar'
@@ -2067,7 +2069,7 @@ export function ChatPanel({
           }}
           onSkip={() => {
             setShowOnboarding(false)
-            hudUpdate('⚠ 尚未配置模型，Ctrl+K → 模型设置', 'warning')
+            hudUpdate(modelSetupHint(mode ?? '', formatPrimaryShortcut('K')), 'warning')
           }}
         />
       )}

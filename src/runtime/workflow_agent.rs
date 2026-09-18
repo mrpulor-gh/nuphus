@@ -1139,14 +1139,6 @@ impl WorkflowAgent {
             let existing = crate::store::session::get_session(&entry.session_id)
                 .ok()
                 .flatten();
-            let derived_summary = if !result_msg.is_empty() {
-                crate::memory::entry::truncate(result_msg, 200)
-            } else {
-                crate::memory::entry::truncate(input, 200)
-            };
-            let preserve_title = existing.as_ref().is_some_and(|row| {
-                !row.summary.is_empty() && row.title_source.as_deref() != Some("derived")
-            });
             let row = crate::store::session::SessionRow {
                 id: entry.session_id.clone(),
                 parent_id: existing.as_ref().and_then(|r| r.parent_id.clone()),
@@ -1158,15 +1150,10 @@ impl WorkflowAgent {
                 updated_at: now,
                 message_count: existing.as_ref().map(|r| r.message_count + 1).unwrap_or(1),
                 token_count: 0,
-                summary: if preserve_title {
-                    existing.as_ref().unwrap().summary.clone()
+                summary: if !result_msg.is_empty() {
+                    crate::memory::entry::truncate(result_msg, 200)
                 } else {
-                    derived_summary
-                },
-                title_source: if preserve_title {
-                    existing.as_ref().and_then(|r| r.title_source.clone())
-                } else {
-                    Some("derived".to_string())
+                    crate::memory::entry::truncate(input, 200)
                 },
             };
             let _ = crate::store::session::upsert_session(&row);

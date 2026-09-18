@@ -16,7 +16,7 @@ describe('文件条目右键菜单', () => {
     })
   })
 
-  it('文件条目显示复制路径与在文件夹中显示', async () => {
+  it('文件条目显示复制路径、在文件夹中显示与询问入口', async () => {
     const filePath = String.raw`C:\repo\src\main.rs`
     render(
       <>
@@ -26,6 +26,7 @@ describe('文件条目右键菜单', () => {
     )
     fireEvent.contextMenu(screen.getByText('main.rs'), { clientX: 20, clientY: 20 })
     expect(screen.getByRole('button', { name: '复制路径' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '问问 Nuphus' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '在文件夹中显示' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('reveal_path', { path: filePath }))
   })
