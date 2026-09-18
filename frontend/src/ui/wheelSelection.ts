@@ -27,8 +27,6 @@ export function createWheelSelectionAccumulator(): WheelSelectionAccumulator {
 
       if (Math.abs(pixels) >= DISCRETE_WHEEL_PX) {
         accumulated = 0
-        if (now - lastStepAt < STEP_THROTTLE_MS) return 0
-        lastStepAt = now
         return nextDirection
       }
 

@@ -78,4 +78,16 @@ describe('MarkdownContent 文件引用', () => {
     expect(extractFilePaths('https://example.com/a.pdf', true)).toEqual([])
     expect(extractFilePaths('github.com/org/repo/README.md', true)).toEqual([])
   })
+
+  it('排除嵌入 URL 和 IPv4 地址，但保留含数字点段的项目路径', () => {
+    const embeddedUrl = String.raw`见https://x.com/a.md结束，另有 C:\out\c.rs`
+    expect(
+      extractFilePaths(embeddedUrl, true).map(range => embeddedUrl.slice(range.start, range.end)),
+    ).toEqual([String.raw`C:\out\c.rs`])
+    expect(extractFilePaths('192.168.1.1/api.md', true)).toEqual([])
+
+    for (const path of ['docs.v2/notes.md', 'v1.2.3/notes.md']) {
+      expect(extractFilePaths(path, true)).toEqual([{ start: 0, end: path.length }])
+    }
+  })
 })

@@ -35,10 +35,10 @@ describe('命令面板滚轮累计', () => {
     expect(moved).toBe(2)
   })
 
-  it('单个滚轮刻度只推进一项，快速重复事件受节流', () => {
+  it('离散鼠标滚轮保持一事件一格，不受触控板节流影响', () => {
     const accumulator = createWheelSelectionAccumulator()
     expect(accumulator.push(100, 0, 0)).toBe(1)
-    expect(accumulator.push(100, 0, 10)).toBe(0)
+    expect(accumulator.push(100, 0, 10)).toBe(1)
     expect(accumulator.push(100, 0, 60)).toBe(1)
   })
 

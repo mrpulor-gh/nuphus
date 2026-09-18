@@ -402,7 +402,7 @@ const FILE_EXT_WHITELIST =
   /\.(?:md|mdx|html?|rs|tsx?|jsx?|py|json|toml|css|scss|less|ya?ml|sh|bash|zsh|ps1|bat|cmd|c|cc|cpp|h|hpp|go|java|kt|swift|sql|vue|svelte|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_.-])/i
 const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n<>:"|?*]*/g
 const RELATIVE_PATH_RE = /(?:\.\.?[\\/]|(?:[A-Za-z0-9_.-]+[\\/])+)[^\s\r\n<>:"'|?*]*/g
-const BARE_DOMAIN_RE = /^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}[\\/]/
+const BARE_DOMAIN_RE = /^(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})[\\/]/
 
 export interface FilePathRange {
   start: number
@@ -418,7 +418,8 @@ export function extractFilePaths(text: string, allowRelative = false): FilePathR
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
       const candidate = m[0]
-      if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/$/.test(text.slice(0, m.index))) continue
+      const schemeWindow = text.slice(Math.max(0, m.index - 40), m.index)
+      if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/$/.test(schemeWindow)) continue
       if (m.index > 0 && /[A-Za-z0-9_:\\/]/.test(text[m.index - 1])) {
         // A broad slash candidate may contain a later Windows path. Resume one
         // character after its start so the drive letter remains discoverable.
