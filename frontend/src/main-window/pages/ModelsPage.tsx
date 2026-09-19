@@ -28,6 +28,7 @@ import type {
   ProviderModelBrief,
   SttStatus,
   AgentModels,
+  SyncReport,
 } from '../lib/api'
 import {
   useSttModelDownload,
@@ -51,6 +52,7 @@ import {
   IconBrushCleaning,
   IconEdit3,
   IconPlug,
+  IconX,
 } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
@@ -143,6 +145,15 @@ const TXT = {
   visionNone: '未配置（使用默认）',
   downloadReady: '已就绪',
   downloadPaused: '下载已暂停',
+  /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被移除的 id） */
+  syncSummary: (r: SyncReport) =>
+    `已与官方模型清单同步：新增 ${r.added} · 更新 ${r.updated} · 移除 ${r.removed}`,
+  syncSummaryRemoved: (ids: string[]) => `移除：${ids.join('、')}`,
+  syncSummaryKeptManual: (n: number) => `保留手动添加 ${n} 条`,
+  syncSummaryDismiss: '关闭同步摘要',
+  /** 手动添加条目（不在官方 /v1/models 清单内）的行内标注 */
+  manualBadge: '官方清单外',
+  manualBadgeTitle: '手动添加的模型：不在官方 /v1/models 清单内，刷新时不会被移除',
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -489,6 +500,8 @@ export function ModelsPage({
   /** 后端已保存的接口地址（用于检测用户是否改动了 base_url → 提示旧模型可能失效） */
   const [loadedBaseUrl, setLoadedBaseUrl] = useState('')
   const [clearingModels, setClearingModels] = useState(false)
+  /** 显式「刷新」后的落盘同步摘要（新增/更新/移除）；null = 不展示 */
+  const [syncSummary, setSyncSummary] = useState<SyncReport | null>(null)
 
   // 本地 STT 探测（一次性，不轮询；调用失败静默降级）
   const probeStt = useCallback(() => {
@@ -589,6 +602,7 @@ export function ModelsPage({
       })
       .catch(() => {})
     setFilterInput('')
+    setSyncSummary(null)
     setCtxOverrides({})
     setEditingCtxModel(null)
     editingCtxRef.current = null
@@ -602,9 +616,10 @@ export function ModelsPage({
   }, [provider])
 
   // ── 进入远程服务商页自动同步网关模型列表（每次挂载每 provider 一次，静默）──
-  // 后端 refresh_provider_models = 拉 /v1/models + upsert_provider_models 持久化进
-  // providers.toml 段：使网关实际在售的新模型（如 opencode-go 的 deepseek 系列）
-  // 无需手动点「刷新」即出现在本页列表与弹窗 hover（list_models 数据源）。
+  // 后端 refresh_provider_models(sync=false) = 拉 /v1/models + 增量同步进
+  // providers.toml 段（只新增 + 覆写能力，**绝不删除**条目）：使网关实际在售的
+  // 新模型（如 opencode-go 的 deepseek 系列）无需手动点「刷新」即出现在本页列表
+  // 与弹窗 hover（list_models 数据源）。删除仅由页内显式「刷新」触发。
   // 网络失败静默降级（保留 localStorage 检测缓存 + 磁盘段）；本地段跳过（无远程）。
   const autoSyncedRef = useRef<Set<string>>(new Set())
   const providerRef = useRef(provider)
@@ -623,9 +638,12 @@ export function ModelsPage({
     const target = provider
     // 不传内置默认地址：自建/中转端点须用 config.toml 已存真实地址，内置默认
     // （自定义端点为文档占位示例）由后端在缺省时自行回落。
-    refreshProviderModels(target)
-      .then(models => {
-        if (providerRef.current !== target || !Array.isArray(models)) return
+    // sync=false：静默模式不删除任何条目，也不展示摘要。
+    refreshProviderModels(target, undefined, false)
+      .then(res => {
+        if (providerRef.current !== target) return
+        const models = res?.models
+        if (!Array.isArray(models)) return
         setDetectedModels(models)
         saveDetectedModels(target, models)
         return listModels()
@@ -749,16 +767,22 @@ export function ModelsPage({
     }
   }
 
-  /** 刷新当前服务商最新模型列表：复用 config.toml 已存 key（不暴露 key 本身） */
+  /**
+   * 显式「刷新」：复用 config.toml 已存 key（不暴露 key 本身），把该服务商段
+   * **同步为官方 /v1/models 集合**——移除官方清单外的 auto 条目、覆写能力元数据，
+   * 并展示同步摘要（含被移除的 id，供用户知情与重加）。
+   */
   const refreshModels = async () => {
     if (refreshing) return
     setRefreshing(true)
     setRefreshError(null)
     try {
-      // 同上：不下发内置默认地址，空值交给后端解析已存配置
-      const models = await refreshProviderModels(provider, baseUrl.trim() || undefined)
+      // sync=true 显式刷新；同上不下发内置默认地址，空值交给后端解析已存配置
+      const res = await refreshProviderModels(provider, baseUrl.trim() || undefined, true)
+      const models = res?.models
       setDetectedModels(models ?? [])
       saveDetectedModels(provider, models ?? [])
+      setSyncSummary(res?.report ?? null)
       listModels()
         .then(list => {
           if (Array.isArray(list)) setAllModels(list)
@@ -1492,6 +1516,35 @@ export function ModelsPage({
                     )}
                     {addError && <div className="detect-error">{addError}</div>}
                     {refreshError && <div className="detect-error">{refreshError}</div>}
+                    {/* 显式刷新的落盘摘要：新增/更新/移除 + 被移除的 id（供重加） */}
+                    {syncSummary && (
+                      <div className="models-sync-summary" role="status">
+                        <span className="models-sync-summary-text">
+                          {TXT.syncSummary(syncSummary)}
+                          {syncSummary.removed_ids.length > 0 && (
+                            <>
+                              <br />
+                              {TXT.syncSummaryRemoved(syncSummary.removed_ids)}
+                            </>
+                          )}
+                          {syncSummary.kept_manual > 0 && (
+                            <>
+                              {' · '}
+                              {TXT.syncSummaryKeptManual(syncSummary.kept_manual)}
+                            </>
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          className="icon-btn-ghost"
+                          onClick={() => setSyncSummary(null)}
+                          title={TXT.syncSummaryDismiss}
+                          aria-label={TXT.syncSummaryDismiss}
+                        >
+                          <IconX size={12} />
+                        </button>
+                      </div>
+                    )}
 
                     {(() => {
                       const configured = allModels
@@ -1619,6 +1672,15 @@ export function ModelsPage({
                                     {provider === 'opencode-go' && (
                                       <span className="model-go-badge" title="OpenCode Go 网关">
                                         GO
+                                      </span>
+                                    )}
+                                    {/* 官方清单外：手动添加的模型，刷新时不会被移除 */}
+                                    {info?.source === 'manual' && (
+                                      <span
+                                        className="model-manual-badge"
+                                        title={TXT.manualBadgeTitle}
+                                      >
+                                        {TXT.manualBadge}
                                       </span>
                                     )}
                                   </div>

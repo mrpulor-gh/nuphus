@@ -829,3 +829,45 @@
   vertical-align: middle;
   user-select: none;
 }
+
+/* ── 显式「刷新」同步摘要（新增 / 更新 / 移除 + 被移除的 id）── */
+.models-sync-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.models-sync-summary-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-2);
+  word-break: break-word;
+}
+.models-sync-summary .icon-btn-ghost {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* 手动添加徽标（官方 /v1/models 清单外）：与 GO 徽标同一视觉语言 */
+.model-manual-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--fg-4);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  user-select: none;
+}

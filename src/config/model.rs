@@ -9,6 +9,31 @@ use std::collections::HashMap;
 pub use crate::api::ProviderKind;
 pub use ProviderKind as KnownProvider;
 
+/// Provenance of one model entry inside its provider segment.
+///
+/// `Auto` — written by the provider `/v1/models` sync flow. Legacy entries
+/// without a `source` key deserialize to `Auto` (serde default), so pre-existing
+/// configs keep their old "may be reconciled away" semantics.
+/// `Manual` — the user added the id through the「添加模型」entry point; an
+/// explicit refresh never removes it (it may live outside the official catalog).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelSource {
+    #[default]
+    Auto,
+    Manual,
+}
+
+impl ModelSource {
+    /// Stable wire/TOML representation (`"auto"` / `"manual"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelSource::Auto => "auto",
+            ModelSource::Manual => "manual",
+        }
+    }
+}
+
 /// Model entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
@@ -43,6 +68,10 @@ pub struct ModelEntry {
     /// Explicit per-million completion cost (USD). None = 未手写。
     #[serde(default)]
     pub cost_per_million_out: Option<f64>,
+    /// Entry provenance — see [`ModelSource`]. `#[serde(default)]` keeps configs
+    /// written before this field existed deserializing as `auto`.
+    #[serde(default)]
+    pub source: ModelSource,
 }
 
 fn default_true() -> bool {
@@ -218,6 +247,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -248,6 +278,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -278,6 +309,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -308,6 +340,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -337,6 +370,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -367,6 +401,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             });
@@ -562,6 +597,7 @@ impl ModelRegistry {
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort,
             }],
@@ -679,6 +715,7 @@ id = "gpt-4o"
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
             }],
@@ -804,6 +841,7 @@ vision_provider = "custom"
                     default_effort: None,
                     cost_per_million_in: None,
                     cost_per_million_out: None,
+                    source: ModelSource::Auto,
                 })
                 .collect(),
             reasoning_effort: None,
@@ -834,6 +872,7 @@ vision_provider = "custom"
                 default_effort: None,
                 cost_per_million_in: None,
                 cost_per_million_out: None,
+                source: ModelSource::Auto,
             })
             .collect();
         provider

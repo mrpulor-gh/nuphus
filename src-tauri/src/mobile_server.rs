@@ -1873,6 +1873,7 @@ async fn get_model_config<R: tauri::Runtime>(
                         default_effort,
                         cost_per_million_in: model.cost_per_million_in,
                         cost_per_million_out: model.cost_per_million_out,
+                        source: model.source.as_str().to_string(),
                     });
                 }
             }

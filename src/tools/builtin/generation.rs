@@ -639,7 +639,7 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::model::{ModelEntry, ProviderConfig};
+    use crate::config::model::{ModelEntry, ModelSource, ProviderConfig};
 
     fn minimax_provider(name: &str, api_key: &str) -> ProviderConfig {
         ProviderConfig {
@@ -663,6 +663,7 @@ mod tests {
                 default_effort: None,
                 cost_per_million_in: None,
                 cost_per_million_out: None,
+                source: ModelSource::Auto,
             }],
             reasoning_effort: None,
         }

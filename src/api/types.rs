@@ -114,6 +114,9 @@ pub struct ModelInfo {
     /// Cost in USD per 1M completion tokens (same sources as above). `None` = unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_per_million_out: Option<f64>,
+    /// Entry provenance: `"auto"` = reconciled from the provider's `/v1/models`
+    /// catalog, `"manual"` = added by the user and kept across refreshes.
+    pub source: String,
 }
 
 /// Model switch request

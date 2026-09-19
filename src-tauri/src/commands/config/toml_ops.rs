@@ -383,170 +383,396 @@ pub fn set_vision_capability_in_config_toml(
 // Provider config + model registration
 // ============================================================================
 
-/// Upsert fetched model IDs into config.toml `[[providers]].models`.
+// ============================================================================
+// Model sync engine — reconcile a provider segment with the /v1/models catalog
+// ============================================================================
+
+/// `[[providers]].models.source` key (mirrors [`nuphus::config::ModelSource`]).
+const MODEL_SOURCE_KEY: &str = "source";
+
+/// Authoritative capability metadata for one model, resolved by the caller
+/// (see [`CapabilitySource`]).
 ///
-/// 「刷新模型列表」时调用：把 API /v1/models 返回的最新模型 ID 合并进配置，
-/// 已存在的模型保留其元数据（context_window / supports_vision / reasoning_efforts 等），
-/// 新增的模型写入最小条目（supports_streaming 默认 true，与 ModelEntry serde 一致）。
-/// 这样 list_models（图像理解/STT/TTS 选择器数据源）能立刻看到刷新发现的新模型。
-pub fn upsert_provider_models(
+/// Every field is optional and `None` means "the authority has no declared value
+/// for this field" — the sync then never writes a guess: a fresh entry stays
+/// empty and an existing value is left untouched. Ambiguity is resolved in the
+/// caller (builtin table / OpenRouter aggregate), not by string heuristics here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CapabilityOverride {
+    pub context_window: Option<usize>,
+    pub supports_vision: Option<bool>,
+    pub supports_audio: Option<bool>,
+    pub supports_image_generation: Option<bool>,
+    /// Authoritative effort list (only set when non-empty; `None` = unknown).
+    pub reasoning_efforts: Option<Vec<String>>,
+    /// Provider-declared default effort (`None` = unknown).
+    pub default_effort: Option<String>,
+}
+
+/// Capability resolver injected into [`sync_provider_models`].
+///
+/// Keeping the resolver behind a trait leaves this TOML layer synchronous and
+/// network-free: the command layer supplies a builtin + OpenRouter implementation
+/// while unit tests supply a fake. `None` = the authority does not know the model
+/// at all → every capability field is left untouched.
+pub trait CapabilitySource {
+    fn resolve(&self, model_id: &str) -> Option<CapabilityOverride>;
+}
+
+/// Provider-scoped builtin `ModelDef` → [`CapabilityOverride`].
+///
+/// Uses the provider-qualified lookup (never the unqualified `find_model`): a
+/// same-name model published by a different segment must not leak its metadata
+/// into the segment being synced.
+pub fn builtin_capability(provider_type: &str, model_id: &str) -> Option<CapabilityOverride> {
+    let registry = nuphus::config::registry::ProviderRegistry::builtin();
+    let def = registry.find_model_for_provider(provider_type, model_id)?;
+    Some(CapabilityOverride {
+        context_window: Some(def.context_window as usize),
+        supports_vision: Some(def.supports_vision),
+        supports_audio: Some(def.supports_audio),
+        supports_image_generation: Some(def.supports_image_generation),
+        reasoning_efforts: (!def.reasoning_efforts.is_empty()).then(|| {
+            def.reasoning_efforts
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        }),
+        default_effort: def.default_effort.map(|s| s.to_string()),
+    })
+}
+
+/// Builtin-only [`CapabilitySource`] — used by the manual-add path and tests.
+pub struct BuiltinCapabilitySource<'a> {
+    pub provider_type: &'a str,
+}
+
+impl CapabilitySource for BuiltinCapabilitySource<'_> {
+    fn resolve(&self, model_id: &str) -> Option<CapabilityOverride> {
+        builtin_capability(self.provider_type, model_id)
+    }
+}
+
+/// Outcome of one [`sync_provider_models`] run — surfaced as the refresh summary
+/// (新增 / 更新 / 移除，以及被移除的 id 供用户重加).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct SyncReport {
+    /// Official ids appended to the segment.
+    pub added: usize,
+    /// Existing entries whose capability fields changed under the authority.
+    pub updated: usize,
+    /// Non-manual entries dropped because the official list no longer carries them.
+    pub removed: usize,
+    /// Ids of the removed entries.
+    pub removed_ids: Vec<String>,
+    /// Manual entries kept although the official list does not carry them.
+    pub kept_manual: usize,
+}
+
+/// Reconcile a provider segment's `models` array with the official `/v1/models`
+/// catalog.
+///
+/// For every id in `incoming_ids`:
+/// * already on disk → capability fields (`context_window` / `supports_*` /
+///   `reasoning_efforts` / `default_effort`) are **overwritten** from `caps`;
+///   `alias` / `max_tokens` / `cost_per_million_in|out` are user-authored and
+///   preserved. A user vision toggle (`supports_vision_source = "user"`) is
+///   never overwritten — explicit user intent outranks the authority chain.
+/// * absent → appended with authoritative capabilities and `source = auto`.
+///
+/// For ids **not** in `incoming_ids`:
+/// * `remove_missing == true` and `source != manual` → removed (official names
+///   the provider dropped);
+/// * `source == manual` → kept (user-added, may live outside the catalog);
+/// * `remove_missing == false` → everything kept: the silent auto-sync path
+///   never deletes anything.
+///
+/// An empty `incoming_ids` is a no-op — a hiccupping endpoint must not wipe the
+/// segment's model list.
+pub fn sync_provider_models(
     config_path: &std::path::Path,
     provider_name: &str,
-    model_ids: &[String],
-) -> Result<(), String> {
-    if model_ids.is_empty() {
-        return Ok(());
+    incoming_ids: &[String],
+    caps: &dyn CapabilitySource,
+    remove_missing: bool,
+) -> Result<SyncReport, String> {
+    sync_provider_models_inner(
+        config_path,
+        provider_name,
+        incoming_ids,
+        caps,
+        remove_missing,
+        false,
+    )
+}
+
+/// Add (or re-mark) one user-supplied model id as `source = manual`, so an
+/// explicit refresh keeps it even when `/v1/models` does not return it. Used by
+/// the「添加模型」entry point for grey/temporary models. Capabilities come from
+/// the provider-scoped builtin table only (this path has no async context).
+pub fn add_provider_model_entry(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    provider_type: &str,
+    model_id: &str,
+) -> Result<SyncReport, String> {
+    let incoming = [model_id.to_string()];
+    let caps = BuiltinCapabilitySource { provider_type };
+    sync_provider_models_inner(config_path, provider_name, &incoming, &caps, false, true)
+}
+
+/// Shared implementation for the sync + manual-add paths. `mark_manual` marks
+/// every incoming id as `source = manual` instead of `auto`.
+fn sync_provider_models_inner(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    incoming_ids: &[String],
+    caps: &dyn CapabilitySource,
+    remove_missing: bool,
+    mark_manual: bool,
+) -> Result<SyncReport, String> {
+    let mut report = SyncReport::default();
+    // 空清单 = 异常（接口抖动/解析失败）：不删不清，避免整段模型列表被抹掉。
+    if incoming_ids.is_empty() {
+        return Ok(report);
     }
     // If file doesn't exist yet, silently skip — creating it is update_config_toml's job
     let content = match std::fs::read_to_string(config_path) {
         Ok(c) => c,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(report),
     };
     let mut doc: toml::Value = match content.parse() {
         Ok(d) => d,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(report),
     };
 
-    let providers = match doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    for provider in providers.iter_mut() {
-        if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
-            if name != provider_name {
+    let mut mutated = false;
+    if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+        for provider in providers.iter_mut() {
+            if provider.get("name").and_then(|n| n.as_str()) != Some(provider_name) {
                 continue;
             }
-            if let Some(map) = provider.as_table_mut() {
-                // Collect existing model ids
-                let mut existing: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                if let Some(models) = map.get("models").and_then(|m| m.as_array()) {
-                    for model in models {
-                        if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
-                            existing.insert(id.to_string());
-                        }
-                    }
-                }
-                // Append missing models
-                // 补全 builtin 已知元数据：刷新发现的新模型立即具备正确的
-                // context_window / supports_vision 等，而非 fallback 128K /
-                // 图像理解选择器不可见（根因：/models 接口只返回 id）。
-                let builtin = nuphus::config::registry::ProviderRegistry::builtin();
-                let mut changed = false;
-                let mut added = 0usize;
-                for id in model_ids {
-                    let builtin_meta = builtin.find_model(id);
-                    // 已有模型：补全缺失字段（不覆盖用户已有值），使旧配置刷新后也能修复
-                    if existing.contains(id) {
-                        if let Some(models) = map.get_mut("models").and_then(|m| m.as_array_mut()) {
-                            for model in models.iter_mut() {
-                                if model.get("id").and_then(|i| i.as_str()) != Some(id.as_str()) {
-                                    continue;
-                                }
-                                if let Some(mt) = model.as_table_mut() {
-                                    if let Some((_, m)) = builtin_meta {
-                                        let mut patched = false;
-                                        if !mt.contains_key("context_window") {
-                                            mt.insert(
-                                                "context_window".to_string(),
-                                                toml::Value::Integer(m.context_window as i64),
-                                            );
-                                            patched = true;
-                                        }
-                                        if !mt.contains_key("supports_vision") {
-                                            mt.insert(
-                                                "supports_vision".to_string(),
-                                                toml::Value::Boolean(m.supports_vision),
-                                            );
-                                            patched = true;
-                                        }
-                                        if !mt.contains_key("supports_audio") {
-                                            mt.insert(
-                                                "supports_audio".to_string(),
-                                                toml::Value::Boolean(m.supports_audio),
-                                            );
-                                            patched = true;
-                                        }
-                                        if !mt.contains_key("supports_image_generation") {
-                                            mt.insert(
-                                                "supports_image_generation".to_string(),
-                                                toml::Value::Boolean(m.supports_image_generation),
-                                            );
-                                            patched = true;
-                                        }
-                                        changed = changed || patched;
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    let mut entry = toml::map::Map::new();
-                    entry.insert("id".to_string(), toml::Value::String(id.clone()));
-                    // 与 ModelEntry 的 serde 默认一致：supports_streaming 默认 true
-                    entry.insert("supports_streaming".to_string(), toml::Value::Boolean(true));
-                    if let Some((_, m)) = builtin_meta {
-                        entry.insert(
-                            "context_window".to_string(),
-                            toml::Value::Integer(m.context_window as i64),
-                        );
-                        entry.insert(
-                            "supports_vision".to_string(),
-                            toml::Value::Boolean(m.supports_vision),
-                        );
-                        entry.insert(
-                            "supports_audio".to_string(),
-                            toml::Value::Boolean(m.supports_audio),
-                        );
-                        entry.insert(
-                            "supports_image_generation".to_string(),
-                            toml::Value::Boolean(m.supports_image_generation),
-                        );
-                        if !m.reasoning_efforts.is_empty() {
-                            entry.insert(
-                                "reasoning_efforts".to_string(),
-                                toml::Value::Array(
-                                    m.reasoning_efforts
-                                        .iter()
-                                        .map(|s| toml::Value::String(s.to_string()))
-                                        .collect(),
-                                ),
-                            );
-                        }
-                        if let Some(ef) = m.default_effort {
-                            entry.insert(
-                                "default_effort".to_string(),
-                                toml::Value::String(ef.to_string()),
-                            );
-                        }
-                    }
-                    map.entry("models".to_string())
-                        .or_insert_with(|| toml::Value::Array(vec![]));
-                    if let Some(models_arr) = map.get_mut("models").and_then(|m| m.as_array_mut()) {
-                        models_arr.push(toml::Value::Table(entry));
-                        existing.insert(id.clone());
-                        added += 1;
-                        changed = true;
-                    }
-                }
-                if changed {
-                    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
-                    let new_content = toml::to_string_pretty(&doc)
-                        .map_err(|e| format!("serialize config.toml failed: {}", e))?;
-                    std::fs::write(config_path, new_content)
-                        .map_err(|e| format!("write config.toml failed: {}", e))?;
-                    tracing::info!(
-                        "upsert_provider_models: added {} new models, patched metadata for provider={}",
-                        added,
-                        provider_name
-                    );
-                }
-            }
-            return Ok(());
+            let map = match provider.as_table_mut() {
+                Some(m) => m,
+                None => break,
+            };
+            let (r, m) = reconcile_segment(
+                map,
+                provider_name,
+                incoming_ids,
+                caps,
+                remove_missing,
+                mark_manual,
+            );
+            report = r;
+            mutated = m;
+            break;
         }
     }
-    Ok(())
+
+    if mutated {
+        nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+        let new_content = toml::to_string_pretty(&doc)
+            .map_err(|e| format!("serialize config.toml failed: {}", e))?;
+        std::fs::write(config_path, new_content)
+            .map_err(|e| format!("write config.toml failed: {}", e))?;
+        tracing::info!(
+            "sync_provider_models: provider={} added={} updated={} removed={} kept_manual={}",
+            provider_name,
+            report.added,
+            report.updated,
+            report.removed,
+            report.kept_manual
+        );
+    }
+    Ok(report)
+}
+
+/// Rewrite one provider table's `models` array. Returns `(report, mutated)`;
+/// `mutated = false` means the array is byte-identical and must not be written.
+fn reconcile_segment(
+    map: &mut toml::map::Map<String, toml::Value>,
+    provider_name: &str,
+    incoming_ids: &[String],
+    caps: &dyn CapabilitySource,
+    remove_missing: bool,
+    mark_manual: bool,
+) -> (SyncReport, bool) {
+    let mut report = SyncReport::default();
+    let incoming: std::collections::HashSet<&str> =
+        incoming_ids.iter().map(|s| s.as_str()).collect();
+    let existing: Vec<toml::Value> = map
+        .get("models")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out: Vec<toml::Value> = Vec::with_capacity(existing.len() + incoming_ids.len());
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut mutated = false;
+
+    // Pass 1 — reconcile the entries already on disk (disk order preserved).
+    for model in existing {
+        let mut table = match model {
+            toml::Value::Table(t) => t,
+            other => {
+                out.push(other);
+                continue;
+            }
+        };
+        let id = match table.get("id").and_then(|i| i.as_str()) {
+            Some(i) => i.to_string(),
+            None => {
+                // 无 id 的条目不是本引擎产物：原样保留，不猜不改。
+                out.push(toml::Value::Table(table));
+                continue;
+            }
+        };
+        let is_manual = table.get(MODEL_SOURCE_KEY).and_then(|v| v.as_str())
+            == Some(nuphus::config::ModelSource::Manual.as_str());
+
+        if incoming.contains(id.as_str()) {
+            seen.insert(id.clone());
+            if mark_manual {
+                mutated |= set_str(
+                    &mut table,
+                    MODEL_SOURCE_KEY,
+                    nuphus::config::ModelSource::Manual.as_str(),
+                );
+            }
+            if apply_capabilities(&mut table, caps.resolve(&id)) {
+                report.updated += 1;
+                mutated = true;
+            }
+            out.push(toml::Value::Table(table));
+        } else if remove_missing && !is_manual {
+            report.removed += 1;
+            report.removed_ids.push(id);
+            mutated = true;
+        } else {
+            if is_manual && remove_missing {
+                report.kept_manual += 1;
+            }
+            out.push(toml::Value::Table(table));
+        }
+    }
+
+    // Pass 2 — append official ids that are not on disk yet (official order).
+    for id in incoming_ids {
+        if seen.contains(id) {
+            continue;
+        }
+        seen.insert(id.clone());
+        let mut entry = toml::map::Map::new();
+        entry.insert("id".to_string(), toml::Value::String(id.clone()));
+        // 与 ModelEntry 的 serde 默认一致：supports_streaming 默认 true
+        entry.insert("supports_streaming".to_string(), toml::Value::Boolean(true));
+        apply_capabilities(&mut entry, caps.resolve(id));
+        let source = if mark_manual {
+            nuphus::config::ModelSource::Manual.as_str()
+        } else {
+            nuphus::config::ModelSource::Auto.as_str()
+        };
+        entry.insert(
+            MODEL_SOURCE_KEY.to_string(),
+            toml::Value::String(source.to_string()),
+        );
+        out.push(toml::Value::Table(entry));
+        report.added += 1;
+        mutated = true;
+    }
+
+    if !mutated {
+        return (report, false);
+    }
+    tracing::debug!(
+        "reconcile_segment: provider={} models_out={}",
+        provider_name,
+        out.len()
+    );
+    map.insert("models".to_string(), toml::Value::Array(out));
+    (report, true)
+}
+
+/// Overwrite the authoritative capability fields of one model entry.
+///
+/// * `None` override → the model is unknown to the authority: nothing is written.
+/// * a `None` field inside an override → that field is unknown: left untouched
+///   (never guessed).
+/// * `supports_vision_source = "user"` shields `supports_vision` — a manual
+///   toggle outranks the authority chain (same contract as the probe path).
+///
+/// `alias` / `max_tokens` / `cost_per_million_in|out` are user-authored and are
+/// never touched here. Returns whether any field changed.
+fn apply_capabilities(
+    entry: &mut toml::map::Map<String, toml::Value>,
+    cap: Option<CapabilityOverride>,
+) -> bool {
+    let cap = match cap {
+        Some(c) => c,
+        None => return false,
+    };
+    let mut changed = false;
+    if entry.get(VISION_SOURCE_KEY).and_then(|v| v.as_str()) != Some("user") {
+        if let Some(v) = cap.supports_vision {
+            changed |= set_bool(entry, "supports_vision", v);
+        }
+    }
+    if let Some(v) = cap.supports_audio {
+        changed |= set_bool(entry, "supports_audio", v);
+    }
+    if let Some(v) = cap.supports_image_generation {
+        changed |= set_bool(entry, "supports_image_generation", v);
+    }
+    if let Some(v) = cap.context_window {
+        changed |= set_int(entry, "context_window", v as i64);
+    }
+    if let Some(efforts) = cap.reasoning_efforts {
+        let value = toml::Value::Array(
+            efforts
+                .iter()
+                .map(|s| toml::Value::String(s.clone()))
+                .collect(),
+        );
+        if entry.get("reasoning_efforts") != Some(&value) {
+            entry.insert("reasoning_efforts".to_string(), value);
+            changed = true;
+        }
+    }
+    if let Some(effort) = cap.default_effort {
+        changed |= set_str(entry, "default_effort", &effort);
+    }
+    changed
+}
+
+/// Insert `key = value` when it differs from the stored value.
+fn set_bool(entry: &mut toml::map::Map<String, toml::Value>, key: &str, value: bool) -> bool {
+    let v = toml::Value::Boolean(value);
+    if entry.get(key) == Some(&v) {
+        return false;
+    }
+    entry.insert(key.to_string(), v);
+    true
+}
+
+/// Insert `key = value` when it differs from the stored value.
+fn set_int(entry: &mut toml::map::Map<String, toml::Value>, key: &str, value: i64) -> bool {
+    let v = toml::Value::Integer(value);
+    if entry.get(key) == Some(&v) {
+        return false;
+    }
+    entry.insert(key.to_string(), v);
+    true
+}
+
+/// Insert `key = value` when it differs from the stored value.
+fn set_str(entry: &mut toml::map::Map<String, toml::Value>, key: &str, value: &str) -> bool {
+    let v = toml::Value::String(value.to_string());
+    if entry.get(key) == Some(&v) {
+        return false;
+    }
+    entry.insert(key.to_string(), v);
+    true
 }
 
 /// Clear a provider's model list in config.toml (`[[providers]].models` → []).
@@ -1012,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_appends_new_models_and_keeps_existing() {
+    fn sync_appends_new_models_and_keeps_user_authored_fields() {
         let path = write_temp_config(
             r#"
 [[providers]]
@@ -1023,6 +1249,7 @@ base_url = "https://api.deepseek.com"
 
 [[providers.models]]
 id = "deepseek-v4-flash"
+max_tokens = 32768
 supports_streaming = true
 supports_vision = true
 "#,
@@ -1033,7 +1260,17 @@ supports_vision = true
             "deepseek-v4-multimodal".to_string(), // 新模型 → 追加
             "deepseek-v4-pro".to_string(),        // 新模型 → 追加
         ];
-        upsert_provider_models(&path, "deepseek", &new_ids).unwrap();
+        // remove_missing = false（静默同步语义）：不删任何条目。
+        sync_provider_models(
+            &path,
+            "deepseek",
+            &new_ids,
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            false,
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let doc: toml::Value = content.parse().unwrap();
@@ -1059,18 +1296,23 @@ supports_vision = true
         assert!(ids.contains(&"deepseek-v4-multimodal"));
         assert!(ids.contains(&"deepseek-v4-pro"));
 
-        // 已有模型的元数据必须保留
+        // 用户手写字段（max_tokens）不得被覆写
         let existing = models
             .iter()
             .find(|m| m.get("id").and_then(|i| i.as_str()) == Some("deepseek-v4-flash"))
             .unwrap();
         assert_eq!(
+            existing.get("max_tokens").and_then(|v| v.as_integer()),
+            Some(32768),
+            "user-authored max_tokens must be preserved"
+        );
+        // 能力字段由权威链覆写：builtin deepseek 的该 id（alias 命中）支持视觉。
+        assert_eq!(
             existing.get("supports_vision").and_then(|v| v.as_bool()),
-            Some(true),
-            "existing model metadata must be preserved"
+            Some(true)
         );
 
-        // 新模型带 supports_streaming=true 默认
+        // 新模型带 supports_streaming=true 默认 + source=auto
         let new_m = models
             .iter()
             .find(|m| m.get("id").and_then(|i| i.as_str()) == Some("deepseek-v4-multimodal"))
@@ -1079,12 +1321,17 @@ supports_vision = true
             new_m.get("supports_streaming").and_then(|v| v.as_bool()),
             Some(true)
         );
+        assert_eq!(
+            new_m.get("source").and_then(|v| v.as_str()),
+            Some("auto"),
+            "synced new entries are marked auto"
+        );
 
         std::fs::remove_file(&path).ok();
     }
 
     #[test]
-    fn upsert_does_not_touch_other_providers() {
+    fn sync_does_not_touch_other_providers() {
         let path = write_temp_config(
             r#"
 [[providers]]
@@ -1105,7 +1352,16 @@ supports_streaming = true
 "#,
         );
 
-        upsert_provider_models(&path, "deepseek", &["deepseek-new".to_string()]).unwrap();
+        sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-new".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            false,
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let doc: toml::Value = content.parse().unwrap();
@@ -1137,7 +1393,7 @@ supports_streaming = true
     }
 
     #[test]
-    fn upsert_empty_ids_is_noop() {
+    fn sync_empty_ids_is_noop_even_when_removing() {
         let path = write_temp_config(
             r#"
 [[providers]]
@@ -1149,7 +1405,20 @@ api_key = "sk-test"
 id = "deepseek-v4-flash"
 "#,
         );
-        upsert_provider_models(&path, "deepseek", &[]).unwrap();
+        // 空清单 + remove_missing=true 仍必须是 no-op：接口抖动不得清空段内模型。
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &[],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.added, 0);
+        assert_eq!(report.updated, 0);
+        assert_eq!(report.removed, 0);
         let content = std::fs::read_to_string(&path).unwrap();
         let doc: toml::Value = content.parse().unwrap();
         let models = doc.get("providers").unwrap().as_array().unwrap()[0]
@@ -1159,6 +1428,416 @@ id = "deepseek-v4-flash"
             .unwrap();
         assert_eq!(models.len(), 1);
         std::fs::remove_file(&path).ok();
+    }
+
+    /// 端到端：与本机同形的 deepseek 段（5 条，`deepseek-flash.supports_vision`
+    /// 为 false）显式刷新后，集合 = 官方返回集（2 条），存量错值被覆写，官方外
+    /// 的旧名被移除。
+    #[test]
+    fn sync_end_to_end_deepseek_matches_official_catalog() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+base_url = "https://api.deepseek.com"
+reasoning_effort = "max"
+
+[[providers.models]]
+context_window = 1000000
+id = "deepseek-v4-pro"
+max_tokens = 32768
+supports_audio = false
+supports_image_generation = false
+supports_streaming = true
+supports_vision = false
+
+[[providers.models]]
+context_window = 1000000
+id = "deepseek-v4-flash"
+max_tokens = 32768
+supports_audio = false
+supports_image_generation = false
+supports_streaming = true
+supports_vision = false
+
+[[providers.models]]
+context_window = 1000000
+id = "deepseek-v4-flash-vision-exp"
+max_tokens = 32768
+supports_audio = false
+supports_image_generation = false
+supports_streaming = true
+supports_vision = true
+
+[[providers.models]]
+context_window = 1000000
+id = "deepseek-v4.1-flash-expires-on-0910"
+supports_streaming = true
+supports_vision = true
+
+[[providers.models]]
+context_window = 1000000
+id = "deepseek-flash"
+supports_streaming = true
+supports_vision = false
+"#,
+        );
+
+        // 官方 /v1/models 实测返回集。
+        let official = vec!["deepseek-flash".to_string(), "deepseek-v4-pro".to_string()];
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &official,
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(report.added, 0);
+        // deepseek-flash（vision 修正）+ deepseek-v4-pro（efforts 补全）
+        assert_eq!(report.updated, 2);
+        assert_eq!(report.removed, 3);
+        assert_eq!(report.kept_manual, 0);
+        assert_eq!(
+            report.removed_ids,
+            vec![
+                "deepseek-v4-flash".to_string(),
+                "deepseek-v4-flash-vision-exp".to_string(),
+                "deepseek-v4.1-flash-expires-on-0910".to_string(),
+            ],
+            "官方清单外的 auto 条目（含旧名）必须被移除"
+        );
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let deepseek = doc.get("providers").unwrap().as_array().unwrap()[0].clone();
+        let models = deepseek.get("models").unwrap().as_array().unwrap();
+        assert_eq!(models.len(), 2, "同步后集合 = 官方返回集");
+
+        let flash = models
+            .iter()
+            .find(|m| m.get("id").and_then(|i| i.as_str()) == Some("deepseek-flash"))
+            .unwrap();
+        assert_eq!(
+            flash.get("supports_vision").and_then(|v| v.as_bool()),
+            Some(true),
+            "存量错值 supports_vision=false 必须被权威值覆写为 true"
+        );
+
+        let pro = models
+            .iter()
+            .find(|m| m.get("id").and_then(|i| i.as_str()) == Some("deepseek-v4-pro"))
+            .unwrap();
+        assert_eq!(
+            pro.get("max_tokens").and_then(|v| v.as_integer()),
+            Some(32768),
+            "用户手写 max_tokens 保留"
+        );
+        assert_eq!(
+            pro.get("reasoning_efforts")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2,
+            "权威链声明的 reasoning_efforts 覆写落盘"
+        );
+
+        // 证据输出：`cargo test … -- --nocapture` 直接看到同步后的段内容。
+        println!(
+            "[e2e] deepseek segment after explicit sync:\n{}",
+            toml::to_string_pretty(&deepseek).unwrap()
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 官方清单外的 `source = manual` 条目（用户手动添加的灰度模型）必须保留。
+    #[test]
+    fn sync_keeps_manual_entries_and_reports_them() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-flash"
+supports_streaming = true
+supports_vision = false
+
+[[providers.models]]
+id = "deepseek-v4.1-flash-expires-on-0910"
+source = "manual"
+supports_streaming = true
+supports_vision = true
+"#,
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.kept_manual, 1);
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let ids: Vec<&str> = doc.get("providers").unwrap().as_array().unwrap()[0]
+            .get("models")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["deepseek-flash", "deepseek-v4.1-flash-expires-on-0910"]
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 静默自动同步（remove_missing=false）：官方清单内的条目照常覆写能力，
+    /// 官方清单外的条目一律保留（只增 + 覆写，绝不删除）。
+    #[test]
+    fn sync_silent_mode_never_removes_but_overwrites_capabilities() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-flash"
+supports_streaming = true
+supports_vision = false
+
+[[providers.models]]
+id = "deepseek-v4.1-flash-expires-on-0910"
+supports_streaming = true
+supports_vision = true
+"#,
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.removed, 0, "静默同步不得删除条目");
+        assert_eq!(report.added, 0);
+        assert_eq!(report.updated, 1, "deepseek-flash 的 vision 被覆写");
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let models = doc.get("providers").unwrap().as_array().unwrap()[0]
+            .get("models")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(models.len(), 2, "官方外条目在静默模式下保留");
+        let flash = models
+            .iter()
+            .find(|m| m.get("id").and_then(|i| i.as_str()) == Some("deepseek-flash"))
+            .unwrap();
+        assert_eq!(
+            flash.get("supports_vision").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 旧配置（无 `source` 字段）必须可反序列化，并按 auto 处理（显式刷新可移除）。
+    #[test]
+    fn legacy_config_without_source_loads_as_auto_and_is_removable() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-v4-flash"
+supports_streaming = true
+supports_vision = true
+"#,
+        );
+
+        let registry = nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            registry.providers[0].models[0].source,
+            nuphus::config::ModelSource::Auto,
+            "缺省 source 必须反序列化为 auto"
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.removed, 1);
+        assert_eq!(report.removed_ids, vec!["deepseek-v4-flash".to_string()]);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 行内视觉开关（`supports_vision_source = "user"`）让位于用户意图：
+    /// 权威链不得把它覆写回去。
+    #[test]
+    fn sync_respects_user_vision_override() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-flash"
+context_window = 1000000
+reasoning_efforts = ["high", "max"]
+default_effort = "high"
+supports_streaming = true
+supports_audio = false
+supports_image_generation = false
+supports_vision = false
+supports_vision_source = "user"
+"#,
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.updated, 0, "用户显式设定不得被覆写");
+        assert_eq!(report.removed, 0);
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc.get("providers").unwrap().as_array().unwrap()[0]
+            .get("models")
+            .unwrap()
+            .as_array()
+            .unwrap()[0]
+            .clone();
+        assert_eq!(
+            entry.get("supports_vision").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            entry.get("supports_vision_source").and_then(|v| v.as_str()),
+            Some("user")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// `add_provider_model_entry` 写入 `source = manual`，显式刷新也不删。
+    #[test]
+    fn add_provider_model_entry_marks_manual_and_survives_sync() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-flash"
+source = "auto"
+supports_streaming = true
+"#,
+        );
+
+        add_provider_model_entry(
+            &path,
+            "deepseek",
+            "deepseek",
+            "deepseek-v4.1-flash-expires-on-0910",
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let added = doc.get("providers").unwrap().as_array().unwrap()[0]
+            .get("models")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| {
+                m.get("id").and_then(|i| i.as_str()) == Some("deepseek-v4.1-flash-expires-on-0910")
+            })
+            .unwrap()
+            .clone();
+        assert_eq!(
+            added.get("source").and_then(|v| v.as_str()),
+            Some("manual"),
+            "手动添加必须标记 manual"
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.kept_manual, 1);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// builtin 能力查找必须 provider 限定：同名模型跨段不得串味。
+    #[test]
+    fn builtin_capability_is_provider_scoped() {
+        let ds = builtin_capability("deepseek", "deepseek-v4-flash").unwrap();
+        assert_eq!(ds.supports_vision, Some(true));
+        assert_eq!(ds.context_window, Some(1_000_000));
+
+        let go = builtin_capability("opencode-go", "deepseek-v4-flash").unwrap();
+        assert_eq!(
+            go.supports_vision,
+            Some(false),
+            "opencode-go 段的同名模型能力必须来自本段元数据"
+        );
+
+        // 真正不在表中的 id：未知留空，不猜。
+        assert!(builtin_capability("deepseek", "no-such-model").is_none());
     }
 
     #[test]

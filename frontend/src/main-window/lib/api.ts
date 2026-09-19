@@ -562,6 +562,8 @@ export interface ModelInfo {
   cost_per_million_in?: number
   /** 成本（USD / 百万输出 tokens）；undefined = 未知 */
   cost_per_million_out?: number
+  /** 条目来源：auto = 官方 /v1/models 同步写入；manual = 用户手动添加，刷新不移除 */
+  source?: 'auto' | 'manual'
 }
 
 export function listModels() {
@@ -658,9 +660,30 @@ export function listProviderModels(apiKey: string, provider: string, baseUrl?: s
   return invoke<ProviderModelBrief[]>('list_provider_models', { apiKey, provider, baseUrl })
 }
 
-/** 刷新服务商最新模型列表：用 config.toml 已存 API key（不暴露 key），模型列表页刷新按钮使用 */
-export function refreshProviderModels(provider: string, baseUrl?: string) {
-  return invoke<ProviderModelBrief[]>('refresh_provider_models', { provider, baseUrl })
+/** 刷新同步摘要：新增 / 更新 / 移除，以及被移除的 id（供用户知情与重加） */
+export interface SyncReport {
+  added: number
+  updated: number
+  removed: number
+  removed_ids: string[]
+  /** 官方清单外但按 source=manual 保留下来的条目数 */
+  kept_manual: number
+}
+
+/** 刷新结果：当次拉取的模型 brief（列表显示）+ 落盘同步摘要 */
+export interface RefreshModelsResult {
+  models: ProviderModelBrief[]
+  report: SyncReport
+}
+
+/**
+ * 刷新服务商最新模型列表：用 config.toml 已存 API key（不暴露 key）。
+ * sync=true（用户点「刷新」）→ 该 provider 段同步为官方 /v1/models 集合（移除清单外
+ * auto 条目 + 覆写能力）；sync 省略/false（进入页面的静默自动同步）→ 只新增 + 覆写，
+ * 绝不删除任何条目。
+ */
+export function refreshProviderModels(provider: string, baseUrl?: string, sync?: boolean) {
+  return invoke<RefreshModelsResult>('refresh_provider_models', { provider, baseUrl, sync })
 }
 
 /** 读取某服务商已保存的接口地址（界面回填用）；未配置返回 null */

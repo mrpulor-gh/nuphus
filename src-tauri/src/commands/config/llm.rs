@@ -5,12 +5,13 @@
 //! (context-window probing, vision probing, etc.).
 
 use super::toml_ops::{
-    clear_provider_api_key_in_config_toml, clear_provider_models_in_config_toml, get_config_path,
-    list_configured_providers, model_has_user_vision_override, read_model_context_window,
-    read_model_supports_vision, read_provider_api_key_from_config_toml,
-    read_provider_base_url_from_config_toml, read_provider_reasoning_effort_from_config_toml,
-    update_config_toml, update_model_context_window, update_model_reasoning_efforts,
-    update_model_supports_vision, update_reasoning_effort, upsert_provider_models,
+    add_provider_model_entry, builtin_capability, clear_provider_api_key_in_config_toml,
+    clear_provider_models_in_config_toml, get_config_path, list_configured_providers,
+    model_has_user_vision_override, read_model_context_window, read_model_supports_vision,
+    read_provider_api_key_from_config_toml, read_provider_base_url_from_config_toml,
+    read_provider_reasoning_effort_from_config_toml, sync_provider_models, update_config_toml,
+    update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
+    update_reasoning_effort, CapabilityOverride, CapabilitySource, SyncReport,
 };
 use crate::emitter::CompoundEmitter;
 use crate::models::aggregator as or_agg;
@@ -1484,6 +1485,7 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                 default_effort,
                 cost_per_million_in: cost_in,
                 cost_per_million_out: cost_out,
+                source: model.source.as_str().to_string(),
             });
         }
     }
@@ -1496,8 +1498,10 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
 /// 用途：`/v1/models` 未返回的灰度/临时模型（如带过期后缀的
 /// `deepseek-v4.1-flash-expires-on-0910`）——base_url 与 API key 不变，
 /// 仅把 model id 并入该服务商 models 列表，`list_models` 与模型列表页立即可见。
-/// 新条目写入最小配置（supports_streaming 默认 true）；能力元数据缺失时
-/// ctx 显示未知（?），可经 RowCtxEditor 手动补充或首次调用时探测。
+/// 新条目写入最小配置（supports_streaming 默认 true）并标记 `source = manual`
+/// —— 「刷新」按官方 /v1/models 同步时会移除清单外的 auto 条目，manual 条目必须
+/// 存活；能力元数据缺失时 ctx 显示未知（?），可经 RowCtxEditor 手动补充或首次
+/// 调用时探测。
 #[tauri::command]
 pub fn add_provider_model(provider: String, model_id: String) -> Result<(), String> {
     let model_id = model_id.trim().to_string();
@@ -1514,7 +1518,8 @@ pub fn add_provider_model(provider: String, model_id: String) -> Result<(), Stri
     }
     let config_path =
         get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
-    upsert_provider_models(&config_path, &provider, &[model_id])
+    let provider_type = provider_kind_for_segment(&provider);
+    add_provider_model_entry(&config_path, &provider, provider_type.as_str(), &model_id).map(|_| ())
 }
 
 /// 清空某服务商的模型列表（config.toml `[[providers]].models` → []）。
@@ -1947,13 +1952,19 @@ pub async fn list_provider_models(
     fetch_provider_models(&api_key, &provider, base_url.as_deref()).await
 }
 
-/// 刷新某服务商最新模型列表：读取 config.toml 已存 API key（不暴露 key 本身），
-/// 拉取 /v1/models 返回并集排序后的模型 ID。未配置 key 时报错引导先连接。
+/// 显式刷新某服务商模型列表：读取 config.toml 已存 API key（不暴露 key 本身），
+/// 拉取 /v1/models，并把该 provider 段的模型集合**同步**为官方返回集（含能力元数据
+/// 覆写、官方清单外 auto 条目的移除），同时返回当次前端显示用的 brief 与同步摘要。
+/// 未配置 key 时报错引导先连接。
+///
+/// `sync = Some(true)`（前端「刷新」按钮）→ `remove_missing = true`；
+/// `sync = None/Some(false)`（进入页面的静默自动同步）→ 只增 + 覆写，绝不删除。
 #[tauri::command]
 pub async fn refresh_provider_models(
     provider: String,
     base_url: Option<String>,
-) -> Result<Vec<ProviderModelBrief>, String> {
+    sync: Option<bool>,
+) -> Result<RefreshModelsResult, String> {
     // 与 fetch_provider_models 同一判据：未声明内置鉴权方案的 Provider（local 等）
     // 与用户自建的自定义中转站（含 custom-xxx 实例），允许无 key 刷新
     // （Ollama / llama.cpp / 无鉴权中转默认无鉴权）。
@@ -1972,14 +1983,69 @@ pub async fn refresh_provider_models(
     };
     let models = fetch_provider_models(&api_key, &provider, base_url.as_deref()).await?;
 
-    // 持久化：把 API 返回的最新模型 ID 合并进 config.toml，使 list_models
-    // （图像理解 / STT / TTS 选择器数据源）能看到刷新发现的新模型。
+    // 持久化：把 API 返回集合同步进 config.toml，使 list_models（图像理解 / STT /
+    // TTS 选择器数据源）与官方 /v1/models 一致，且能力元数据取自权威链。
+    let mut report = SyncReport::default();
     if let Some(config_path) = get_config_path() {
         let ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
-        let _ = upsert_provider_models(&config_path, &provider, &ids);
+        // OpenRouter 聚合库：仅同步路径联网（ensure_cache），toml_ops 层只消费条目。
+        let agg = if or_agg::has_vendor(&provider) {
+            or_agg::ensure_cache(&openrouter_cache_path()).await
+        } else {
+            Vec::new()
+        };
+        let caps = ProviderCapabilitySource {
+            provider_type: provider_kind.as_str(),
+            provider_name: &provider,
+            agg: &agg,
+        };
+        report = sync_provider_models(&config_path, &provider, &ids, &caps, sync.unwrap_or(false))?;
     }
 
-    Ok(models)
+    Ok(RefreshModelsResult { models, report })
+}
+
+/// 「刷新模型列表」返回：当次拉取的 brief（前端列表显示）+ 落盘同步摘要
+/// （新增 / 更新 / 移除，供前端展示与列明被移除的 id）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RefreshModelsResult {
+    pub models: Vec<ProviderModelBrief>,
+    pub report: SyncReport,
+}
+
+/// `/v1/models` 同步路径的权威能力解析：① provider 限定内置 ModelDef，
+/// ② OpenRouter 聚合库条目。两层都用 provider 限定输入——同名模型由别的
+/// provider 段发布时不得串味（如官方 deepseek 与 opencode-go 都有 deepseek-v4-flash）。
+struct ProviderCapabilitySource<'a> {
+    /// 协议类型（builtin `find_model_for_provider` 的键）。
+    provider_type: &'a str,
+    /// 段名（OpenRouter vendor 映射的键，与 `fetch_provider_models` 一致）。
+    provider_name: &'a str,
+    /// 已 `ensure_cache` 的 OpenRouter 条目（本层不做网络）。
+    agg: &'a [or_agg::OpenRouterEntry],
+}
+
+impl CapabilitySource for ProviderCapabilitySource<'_> {
+    fn resolve(&self, model_id: &str) -> Option<CapabilityOverride> {
+        if let Some(cap) = builtin_capability(self.provider_type, model_id) {
+            return Some(cap);
+        }
+        let entry = or_agg::lookup(self.agg, self.provider_name, model_id)?;
+        // 只写权威明确声明的字段：模态/efforts 为空 = 该源无此信息（未知留空，
+        // 不做字符串启发式猜测）。
+        Some(CapabilityOverride {
+            context_window: entry.context_length.map(|c| c as usize),
+            supports_vision: (!entry.input_modalities.is_empty())
+                .then(|| entry.input_modalities.iter().any(|m| m == "image")),
+            supports_audio: (!entry.input_modalities.is_empty())
+                .then(|| entry.input_modalities.iter().any(|m| m == "audio")),
+            supports_image_generation: (!entry.output_modalities.is_empty())
+                .then(|| entry.output_modalities.iter().any(|m| m == "image")),
+            reasoning_efforts: (!entry.supported_efforts.is_empty())
+                .then(|| entry.supported_efforts.clone()),
+            default_effort: entry.default_effort.clone(),
+        })
+    }
 }
 
 /// 读取某服务商已保存的接口地址（界面回填用）：未配置返回 null。
