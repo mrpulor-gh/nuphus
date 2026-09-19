@@ -454,13 +454,15 @@ impl CapabilitySource for BuiltinCapabilitySource<'_> {
 }
 
 /// Outcome of one [`sync_provider_models`] run — surfaced as the refresh summary
-/// (新增 / 更新 / 移除，以及被移除的 id 供用户重加).
+/// (新增 / 更新 / 移除，以及被更新与被移除的 id 供用户知情)。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct SyncReport {
     /// Official ids appended to the segment.
     pub added: usize,
     /// Existing entries whose capability fields changed under the authority.
     pub updated: usize,
+    /// Ids of the updated entries（磁盘顺序），与 `updated` 计数一一对应。
+    pub updated_ids: Vec<String>,
     /// Non-manual entries dropped because the official list no longer carries them.
     pub removed: usize,
     /// Ids of the removed entries.
@@ -642,6 +644,7 @@ fn reconcile_segment(
             }
             if apply_capabilities(&mut table, caps.resolve(&id)) {
                 report.updated += 1;
+                report.updated_ids.push(id.clone());
                 mutated = true;
             }
             out.push(toml::Value::Table(table));
@@ -1419,6 +1422,10 @@ id = "deepseek-v4-flash"
         assert_eq!(report.added, 0);
         assert_eq!(report.updated, 0);
         assert_eq!(report.removed, 0);
+        assert!(
+            report.updated_ids.is_empty(),
+            "空清单 no-op 不得记录任何被覆写的 id"
+        );
         let content = std::fs::read_to_string(&path).unwrap();
         let doc: toml::Value = content.parse().unwrap();
         let models = doc.get("providers").unwrap().as_array().unwrap()[0]
@@ -1511,6 +1518,11 @@ supports_vision = false
                 "deepseek-v4.1-flash-expires-on-0910".to_string(),
             ],
             "官方清单外的 auto 条目（含旧名）必须被移除"
+        );
+        assert_eq!(
+            report.updated_ids,
+            vec!["deepseek-v4-pro".to_string(), "deepseek-flash".to_string()],
+            "被覆写能力的条目按磁盘顺序记录（pro 补全 efforts、flash 修正 vision）"
         );
 
         let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();

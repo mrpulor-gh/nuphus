@@ -660,10 +660,12 @@ export function listProviderModels(apiKey: string, provider: string, baseUrl?: s
   return invoke<ProviderModelBrief[]>('list_provider_models', { apiKey, provider, baseUrl })
 }
 
-/** 刷新同步摘要：新增 / 更新 / 移除，以及被移除的 id（供用户知情与重加） */
+/** 刷新同步摘要：新增 / 更新 / 移除，以及被更新与被移除的 id（供用户知情与重加） */
 export interface SyncReport {
   added: number
   updated: number
+  /** 能力被覆写的模型代号（磁盘顺序） */
+  updated_ids: string[]
   removed: number
   removed_ids: string[]
   /** 官方清单外但按 source=manual 保留下来的条目数 */

@@ -537,55 +537,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 新建自定义中转站实例入口（custom-xxx）：与 rail item 同一行高与圆角语言 */
-.models-rail-new {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  padding: 0 var(--space-1);
-}
-.models-rail-new-input {
-  min-width: 0;
-  flex: 1;
-  font-size: var(--fz-sm);
-}
-.models-rail-new-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  color: var(--fg-3);
-  font: inherit;
-  font-size: var(--fz-md);
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.models-rail-new-btn:hover {
-  border-color: rgba(var(--accent-rgb), 0.34);
-  background: var(--accent-dim);
-  color: var(--fg-1);
-}
-.models-rail-new-btn:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-.models-rail-new-error {
-  padding: var(--space-1) var(--space-2) 0;
-  color: var(--danger, #ef4444);
-  font-size: var(--fz-xs);
-  line-height: 1.4;
-}
 .models-rail-badge {
   flex-shrink: 0;
 }
@@ -605,6 +556,137 @@
   margin: 0 auto;
   overflow-y: auto;
   padding: var(--space-6) clamp(var(--space-5), 5vw, 72px) var(--space-8);
+}
+
+/* ── 自定义中转站切换 tab 栏（内容页顶部，仅 custom 模块渲染）──
+   视觉语言与 .models-rail-item 一致：透明底 + 选中态 accent 描边/淡底。 */
+.models-instance-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.models-instance-tablist {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+.models-instance-tab {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-instance-tab:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.models-instance-tab:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.models-instance-tab.active {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-instance-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 新建入口（收起态按钮）：与 tab 同一行高，描边区分「动作」而非「切换」 */
+.models-instance-new-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-instance-new-trigger:hover {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-instance-new-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+/* 新建入口（展开态）：输入实例名 → 创建并跳转该实例页 */
+.models-instance-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+.models-instance-new-input {
+  width: 150px;
+  font-size: var(--fz-sm);
+}
+.models-instance-new-btn {
+  flex: none;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-instance-new-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-instance-new-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.models-instance-new-error {
+  width: 100%;
+  color: var(--error);
+  font-size: var(--fz-xs);
+  line-height: 1.4;
 }
 .models-page-loading {
   display: grid;

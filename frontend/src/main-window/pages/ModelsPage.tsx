@@ -53,6 +53,7 @@ import {
   IconEdit3,
   IconPlug,
   IconX,
+  IconPlus,
 } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
@@ -145,9 +146,10 @@ const TXT = {
   visionNone: '未配置（使用默认）',
   downloadReady: '已就绪',
   downloadPaused: '下载已暂停',
-  /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被移除的 id） */
+  /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被覆写与被移除的 id） */
   syncSummary: (r: SyncReport) =>
     `已与官方模型清单同步：新增 ${r.added} · 更新 ${r.updated} · 移除 ${r.removed}`,
+  syncSummaryUpdated: (ids: string[]) => `能力已更新：${ids.join('、')}`,
   syncSummaryRemoved: (ids: string[]) => `移除：${ids.join('、')}`,
   syncSummaryKeptManual: (n: number) => `保留手动添加 ${n} 条`,
   syncSummaryDismiss: '关闭同步摘要',
@@ -448,6 +450,8 @@ export function ModelsPage({
   /** 新建自定义中转站实例名输入（custom-xxx）；提交后进入该实例的配置页 */
   const [newInstanceId, setNewInstanceId] = useState('')
   const [newInstanceError, setNewInstanceError] = useState('')
+  /** 内容页 tab 栏的「新建」是否展开为行内输入框（默认收起，避免长期占位） */
+  const [newInstanceOpen, setNewInstanceOpen] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [inputVal, setInputVal] = useState('')
@@ -734,6 +738,18 @@ export function ModelsPage({
     }
     setNewInstanceError('')
     setNewInstanceId('')
+    // 创建成功后收起行内输入：新实例已出现在 tab 栏，输入框不再需要占位
+    setNewInstanceOpen(false)
+    openProviderView(id)
+  }
+
+  /**
+   * 切换自定义中转站（tab 栏）：复用 openProviderView 的既有切换 + 状态重置逻辑，
+   * 同时收起「新建」行内输入——切换意图与新建互斥，残留的输入与错误提示会误导。
+   */
+  const selectCustomInstance = (id: string) => {
+    setNewInstanceOpen(false)
+    setNewInstanceError('')
     openProviderView(id)
   }
 
@@ -1227,50 +1243,8 @@ export function ModelsPage({
                   <span className="models-rail-name">{item.label}</span>
                 </button>
               ))}
-              {/* 已配置的自定义中转站实例：每个实例是独立配置段，可分别配置
-                  地址/密钥/模型；同名模型靠实例名精确路由，互不串台。 */}
-              {customInstances.map(p => (
-                <button
-                  type="button"
-                  key={p.id}
-                  className={[
-                    'models-rail-item',
-                    'models-rail-item--sub',
-                    activeView === 'provider' && provider === p.id ? 'active' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => openProviderView(p.id)}
-                  title={p.base_url || p.id}
-                >
-                  <span className="models-rail-name">{p.id}</span>
-                </button>
-              ))}
-              {/* 新建实例入口：只登记实例名，地址/密钥在该实例页填写 */}
-              <div className="models-rail-new">
-                <input
-                  className="compact-input models-rail-new-input"
-                  value={newInstanceId}
-                  onChange={e => {
-                    setNewInstanceId(e.target.value)
-                    setNewInstanceError('')
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') openNewCustomInstance()
-                  }}
-                  placeholder="custom-xxx"
-                  aria-label="新建自定义中转站名称"
-                />
-                <button
-                  type="button"
-                  className="models-rail-new-btn"
-                  onClick={openNewCustomInstance}
-                  title="新建自定义中转站"
-                >
-                  +
-                </button>
-              </div>
-              {newInstanceError && <div className="models-rail-new-error">{newInstanceError}</div>}
+              {/* 中转站实例列表与新建入口已移到内容页 tab 栏（同名模型靠实例名精确
+                  路由，切换与新建都在该模块的内容页内完成，左侧栏只保留模块入口）。 */}
             </div>
           </div>
         </div>
@@ -1285,10 +1259,104 @@ export function ModelsPage({
               {/* ═══════════ 模型服务商 + 可用模型（模块一 / Custom / Opencode GO / 本地模型共用） ═══════════ */}
               {activeView === 'provider' && (
                 <>
+                  {/* ── 自定义中转站切换 tab：仅出现在 custom 模块（默认 custom 段 +
+                       各 custom-xxx 实例）；官方服务商页（deepseek/kimi/opencode-go/
+                       local 等）不渲染，布局与现状一致。 ── */}
+                  {isCustomProviderId(provider) && (
+                    <div className="models-instance-tabs">
+                      <div
+                        className="models-instance-tablist"
+                        role="tablist"
+                        aria-label="自定义中转站"
+                      >
+                        {[
+                          {
+                            id: LEGACY_CUSTOM_PROVIDER_ID,
+                            label: 'Custom',
+                            title: 'Custom（自定义/中转站默认配置段）',
+                          },
+                          ...customInstances.map(p => ({
+                            id: p.id,
+                            label: p.id,
+                            title: p.base_url || p.id,
+                          })),
+                        ].map(tab => (
+                          <button
+                            type="button"
+                            role="tab"
+                            key={tab.id}
+                            aria-selected={provider === tab.id}
+                            className={[
+                              'models-instance-tab',
+                              provider === tab.id ? 'active' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                            onClick={() => selectCustomInstance(tab.id)}
+                            title={tab.title}
+                          >
+                            <span className="models-instance-tab-name">{tab.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {/* 新建实例：默认收起为按钮，点开后行内输入实例名（custom-xxx）；
+                          地址/密钥仍在该实例的内容页填写。 */}
+                      {newInstanceOpen ? (
+                        <div className="models-instance-new">
+                          <input
+                            className="compact-input models-instance-new-input"
+                            autoFocus
+                            value={newInstanceId}
+                            onChange={e => {
+                              setNewInstanceId(e.target.value)
+                              setNewInstanceError('')
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') openNewCustomInstance()
+                              if (e.key === 'Escape') {
+                                setNewInstanceOpen(false)
+                                setNewInstanceError('')
+                              }
+                            }}
+                            placeholder="custom-xxx"
+                            aria-label="新建自定义中转站名称"
+                          />
+                          <button
+                            type="button"
+                            className="models-instance-new-btn"
+                            onClick={openNewCustomInstance}
+                          >
+                            新建
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="models-instance-new-trigger"
+                          onClick={() => {
+                            setNewInstanceOpen(true)
+                            setNewInstanceError('')
+                          }}
+                          title="新建自定义中转站"
+                          aria-label="新建自定义中转站"
+                        >
+                          <IconPlus size={12} />
+                          新建
+                        </button>
+                      )}
+                      {newInstanceError && (
+                        <div className="models-instance-new-error">{newInstanceError}</div>
+                      )}
+                    </div>
+                  )}
                   {/* ── 服务商与连接：选择入口在左侧导航列 ── */}
                   <Section
                     title="模型服务商"
-                    description="在左侧导航中选择服务商后配置；以下为该服务商访问密钥与可用模型。"
+                    description={
+                      isCustomProviderId(provider)
+                        ? '在左侧导航选择模块、在上方 tab 中切换中转站（custom-xxx）后配置；以下为当前中转站的访问密钥与可用模型。'
+                        : '在左侧导航中选择服务商后配置；以下为该服务商访问密钥与可用模型。'
+                    }
                   >
                     <div className="models-provider-current">
                       {hasProviderIcon(provider) && <ProviderIcon provider={provider} size={18} />}
@@ -1516,11 +1584,17 @@ export function ModelsPage({
                     )}
                     {addError && <div className="detect-error">{addError}</div>}
                     {refreshError && <div className="detect-error">{refreshError}</div>}
-                    {/* 显式刷新的落盘摘要：新增/更新/移除 + 被移除的 id（供重加） */}
+                    {/* 显式刷新的落盘摘要：新增/更新/移除 + 被覆写/被移除的 id（供追溯与重加） */}
                     {syncSummary && (
                       <div className="models-sync-summary" role="status">
                         <span className="models-sync-summary-text">
                           {TXT.syncSummary(syncSummary)}
+                          {syncSummary.updated_ids.length > 0 && (
+                            <>
+                              <br />
+                              {TXT.syncSummaryUpdated(syncSummary.updated_ids)}
+                            </>
+                          )}
                           {syncSummary.removed_ids.length > 0 && (
                             <>
                               <br />
