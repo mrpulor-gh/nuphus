@@ -745,15 +745,10 @@ export function useSession(): SessionAPI {
   }, [refreshModelInfoFinal])
 
   // ── Command palette items ──
+  // 注：命令面板不再提供「新建会话」——入口已收敛到 Ctrl+N / TitleBar / 会话栏 + /
+  // 输入栏 `/new` 斜杠命令（ChatPanel 自有 slash 清单，不经此处）
   const cmdItems = useMemo(
     () => [
-      {
-        id: 'new-chat',
-        label: t('cmd.newChat'),
-        desc: t('cmd.newChatDesc'),
-        category: t('cmd.category.actions'),
-        action: handleNewChat,
-      },
       {
         id: 'memories',
         label: t('cmd.memories'),
@@ -926,7 +921,7 @@ export function useSession(): SessionAPI {
         },
       },
     ],
-    [t, handleNewChat, agentControl.forceReset],
+    [t, agentControl.forceReset],
   )
 
   // ── Derived / computed ──

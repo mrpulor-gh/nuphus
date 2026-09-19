@@ -759,6 +759,33 @@
     padding: var(--space-4);
   }
 }
+/* 窄容器降级（设置中心内嵌场景）。
+   模型页原本为全屏设计，嵌进设置中心后可用宽度 = 视口 − 236px 左导航 ——
+   视口明明很宽，上面那条 720px 断点（按视口判定）却判不出来，双栏会被硬塞成
+   「固定 236px rail + 极窄内容」，卡片内文字退化成竖排。
+   SettingsCenter 用 ResizeObserver 实测内容区宽度并打上 .is-narrow（阈值 780px），
+   这里只认这个标记，不再依赖视口宽度。
+
+   不用 @container：容器需 contain:layout，会让子页内 position:fixed 的弹层
+   改以容器为包含块，定位全错。 */
+.settings-center-main.is-narrow .models-page-layout {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.settings-center-main.is-narrow .models-rail {
+  max-height: 220px;
+  border-right: 0;
+  border-bottom: 1px solid var(--line-1);
+}
+.settings-center-main.is-narrow .models-rail-scroll {
+  padding: var(--space-3);
+}
+.settings-center-main.is-narrow .models-rail-group + .models-rail-group {
+  margin-top: var(--space-3);
+}
+.settings-center-main.is-narrow .models-main-scroll {
+  padding: var(--space-4);
+}
 @media (prefers-reduced-motion: reduce) {
   .models-rail-item,
   .model-list-item {
