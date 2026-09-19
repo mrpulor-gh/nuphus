@@ -1,4 +1,4 @@
-OK Build ? (1 ?) OK Added ? (1 ?) # Changelog
+# Changelog
 
 所有值得注意的变更记录在此文件。
 
