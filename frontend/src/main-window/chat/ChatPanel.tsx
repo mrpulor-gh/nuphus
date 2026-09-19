@@ -198,6 +198,8 @@ interface ChatPanelProps {
   onOpenWorkflowCanvas?: () => void
   /** workflow 扳手菜单「工作流列表」：打开 WorkflowPage（等同 Ctrl+K → 工作流） */
   onOpenWorkflowList?: () => void
+  /** 输入栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
+  onOpenSettings?: () => void
 }
 
 /**
@@ -302,6 +304,7 @@ export function ChatPanel({
   onToggleDesktopToolbar,
   onOpenWorkflowCanvas,
   onOpenWorkflowList,
+  onOpenSettings,
   onRate,
   onShowExecTrace,
 }: ChatPanelProps) {
@@ -2131,6 +2134,7 @@ export function ChatPanel({
           onToggleDesktopToolbar={onToggleDesktopToolbar}
           onOpenWorkflowCanvas={onOpenWorkflowCanvas}
           onOpenWorkflowList={onOpenWorkflowList}
+          onOpenSettings={onOpenSettings}
           toolPermissions={toolPermissions}
           onFileSelect={handleFileSelect}
           onImageAttach={handleImageAttach}

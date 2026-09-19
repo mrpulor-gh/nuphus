@@ -33,7 +33,6 @@ import {
   IconX,
   IconKeyboard,
   IconGrid,
-  IconMessageCircle,
   IconCpu,
   IconRefresh,
 } from '../ui/Icons'
@@ -117,6 +116,9 @@ const SnakeGamePage = lazy(() =>
   import('./pages/SnakeGame/SnakeGame').then(m => ({ default: m.default })),
 )
 const UpdatePage = lazy(() => import('./pages/UpdatePage').then(m => ({ default: m.UpdatePage })))
+const SettingsCenter = lazy(() =>
+  import('./pages/SettingsCenter').then(m => ({ default: m.SettingsCenter })),
+)
 
 export default function App() {
   // ── Hooks ──
@@ -178,6 +180,8 @@ export default function App() {
   const [pluginMinimized, setPluginMinimized] = useState(false)
   // ── Desktop toolbar (Ctrl+U) ──
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
+  // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
+  const [showSettingsCenter, setShowSettingsCenter] = useState(false)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
     canvas: <IconPalette size={14} />,
@@ -193,7 +197,6 @@ export default function App() {
     browser: <IconBrowser size={14} />,
     soul: <IconSparkles size={14} />,
     'snake-game': <IconGrid size={14} />,
-    'new-chat': <IconMessageCircle size={14} />,
     'force-reset': <IconX size={14} />,
     help: <IconKeyboard size={14} />,
     'external-agents': <IconCpu size={14} />,
@@ -203,7 +206,10 @@ export default function App() {
     {
       key: 'k',
       ctrl: true,
-      handler: () =>
+      handler: () => {
+        // 设置中心是全屏宿主（z-index 2500），会盖住 Ctrl+K 两条分支的目标弹层
+        //（命令面板 300 / 工作流列表 150）→ 先退出设置中心，保证面板可见可用
+        setShowSettingsCenter(false)
         routePrimaryK(
           s.mode,
           () => {
@@ -211,7 +217,8 @@ export default function App() {
             s.setShowWorkflow(true)
           },
           () => s.setCmdPaletteOpen((p: boolean) => !p),
-        ),
+        )
+      },
     },
     { key: 'l', ctrl: true, handler: () => s.setFocusSignal((p: number) => p + 1) },
     { key: 'n', ctrl: true, handler: () => s.handleNewChat() },
@@ -369,6 +376,7 @@ export default function App() {
               onToggleDesktopToolbar={() => setShowDesktopToolbar(o => !o)}
               onOpenWorkflowCanvas={() => void handleWorkflowCanvasDirect()}
               onOpenWorkflowList={handleOpenWorkflowList}
+              onOpenSettings={() => setShowSettingsCenter(true)}
               onRate={s.handleRate}
               onShowExecTrace={trace => {
                 s.setExecTraceOverride(trace)
@@ -882,6 +890,22 @@ export default function App() {
                   onClose={() => s.closeCanvas()}
                 />
               </div>
+            </Suspense>
+          )}
+          {/* ── 设置中心：全屏覆盖层（左导航 + 右内容；子页一律复用 pages/* 现有实现）── */}
+          {showSettingsCenter && (
+            <Suspense fallback={null}>
+              <SettingsCenter
+                onClose={() => setShowSettingsCenter(false)}
+                showToast={s.showToast}
+                onModelChanged={() => s.refreshModelInfo()}
+                onRunWorkflow={wf => {
+                  // 运行确认弹窗（wcf-wrapper z-index 100）低于设置中心宿主（2500）→
+                  // 先退出设置中心再弹，与「Ctrl+K → 工作流 → 运行」原链路表现一致
+                  setShowSettingsCenter(false)
+                  setRunWorkflow(wf)
+                }}
+              />
             </Suspense>
           )}
           {/* ── 应用插件宿主：全屏覆盖层（App Plugin 体系 §4.2）── */}

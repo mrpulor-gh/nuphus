@@ -8,6 +8,7 @@ import {
   IconSparkles,
   IconWrench,
   IconFolder,
+  IconSettings,
 } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
@@ -94,6 +95,8 @@ interface ChatInputBarProps {
   onOpenWorkflowCanvas?: () => void
   /** 扳手菜单「工作流列表」：打开 WorkflowPage 弹窗（等同 Ctrl+K → 工作流） */
   onOpenWorkflowList?: () => void
+  /** 底栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
+  onOpenSettings?: () => void
   onModelSwitch: () => void
   /** 权限状态（用于 WORKFLOW 模式权限检查） */
   toolPermissions?: { file_access: boolean; web_search: boolean; system_automation: boolean }
@@ -167,6 +170,7 @@ export function ChatInputBar({
   onToggleDesktopToolbar,
   onOpenWorkflowCanvas,
   onOpenWorkflowList,
+  onOpenSettings,
   modelLabel,
   modelName,
   effort,
@@ -1178,6 +1182,16 @@ export function ChatInputBar({
         {/* ── 统一底栏：全部 flat 文字 + flat 图标，同一视觉语言 ── */}
         <div className="input-bar">
           <div className="input-bar-left">
+            {/* ── 设置中心入口（底栏最左端，先于 mode chip）：打开全屏覆盖层 ── */}
+            <IconButton
+              type="button"
+              variant="raw"
+              className="input-bar-settings-btn"
+              label={t('app.settings')}
+              onClick={() => onOpenSettings?.()}
+            >
+              <IconSettings size={13} />
+            </IconButton>
             {/* ── mode 切换：始终显示；执行时叠加状态点 + 背景呼吸，禁用切换 ── */}
             <div
               className="input-bar-mode-wrap"

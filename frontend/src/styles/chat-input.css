@@ -565,6 +565,36 @@
 .input-bar-chip svg {
   flex-shrink: 0;
 }
+/* 设置中心入口（底栏最左端）：与相邻 chip 同一视觉语言（24px 高 / 6px 圆角 / 透明底 / hover 提亮）。
+   ⚠️ 必须配合 variant="raw" 使用——variant="ghost" 会附加 compact-btn ghost-btn，
+   .compact-btn.ghost-btn 特异性更高会把背景压成 transparent 导致按钮隐形 */
+.input-bar-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--fg-2);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.input-bar-settings-btn:hover {
+  color: var(--fg-1);
+  background: var(--surface-hover);
+}
+.input-bar-settings-btn:active {
+  background: var(--surface-active);
+}
+.input-bar-settings-btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--line-3);
+}
+
 /* workflow 桌面工具箱按钮（Ctrl+U）：与 mode chip 同视觉语言（6px 圆角 + 灰透），active 态 inset 浅边。
    ⚠️ 必须配合 variant="raw" 使用——variant="ghost" 会附加 compact-btn ghost-btn，
    .compact-btn.ghost-btn 特异性更高会把背景压成 transparent 导致按钮隐形 */

@@ -66,6 +66,7 @@ export {
   HardDrive as IconHardDrive,
   AppWindow as IconAppWindow,
   Radio as IconRadio,
+  Settings as IconSettings,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

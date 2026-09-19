@@ -1,0 +1,165 @@
+/* ═══════════════════════════════════════════
+   settings-center.css — 设置中心全屏覆盖层（左导航 + 右内容）
+
+   宿主模式与 models-page-host 对齐：fixed / inset:0 / z-index 2500，
+   顶栏 48px（同 models-page-bar），左导航视觉与 models-rail 同族
+   （分组标题 fz-xs 大写弱化、选中态 accent-dim + 1px 浅边）。
+
+   仅引用 tokens.css 语义层变量（--surface-* / --fg-* / --line-* /
+   --accent* / --space-* / --fz-* / --radius-* / --dur-*），禁止硬编码颜色。
+   tokens.css 由 ink.css 全局引入，此处不重复 @import。
+   ═══════════════════════════════════════════ */
+
+/* ── 全屏宿主 ── */
+.settings-center-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+  color: var(--fg-1);
+}
+
+/* ── 顶部 bar ── */
+.settings-center-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--line-1);
+  background: var(--surface-1);
+  flex-shrink: 0;
+}
+.settings-center-bar-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-3);
+}
+.settings-center-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+/* 全屏覆盖层会盖住 TitleBar 的拖动区，这里补一条占满剩余空白的拖动区 */
+.settings-center-drag {
+  flex: 1;
+  align-self: stretch;
+}
+.settings-center-close {
+  flex-shrink: 0;
+}
+
+/* ── 主体：左导航 + 右内容 ── */
+.settings-center-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+/* 左导航 */
+.settings-center-nav {
+  display: flex;
+  min-height: 0;
+  width: 236px;
+  flex-direction: column;
+  border-right: 1px solid var(--line-1);
+  background: var(--surface-1);
+}
+.settings-center-nav-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+}
+.settings-center-nav-group + .settings-center-nav-group {
+  margin-top: var(--space-5);
+}
+.settings-center-nav-group-title {
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.settings-center-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-center-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.settings-center-nav-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.settings-center-nav-item:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.settings-center-nav-item.active {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.settings-center-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.settings-center-nav-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 右侧内容区：head（分区标题）固定，body 承担滚动 */
+.settings-center-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.settings-center-main-head {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-5) 0;
+}
+.settings-center-main-title {
+  font-size: var(--fz-xl);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg-1);
+}
+.settings-center-main-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-5) var(--space-5);
+}
