@@ -206,7 +206,7 @@ impl ModelRegistry {
                 timeout_secs: 300,
                 models: vec![ModelEntry {
                     id: std::env::var("DEEPSEEK_MODEL")
-                        .unwrap_or_else(|_| "deepseek-v4-flash".to_string()),
+                        .unwrap_or_else(|_| "deepseek-flash".to_string()),
                     alias: vec!["deepseek".to_string()],
                     max_tokens: None,
                     context_window: None,

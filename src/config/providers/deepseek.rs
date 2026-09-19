@@ -22,18 +22,30 @@ impl Provider for DeepSeekProvider {
         "Bearer "
     }
     fn default_model(&self) -> &'static str {
-        "deepseek-v4-flash"
+        "deepseek-flash"
     }
 
     fn models(&self) -> &'static [ModelDef] {
         &[
             ModelDef {
-                id: "deepseek-v4-flash",
-                aliases: &["deepseek", "default"],
+                id: "deepseek-flash",
+                // 官方已把 deepseek-v4-flash 正名为 deepseek-flash；vision-exp
+                // 是同一模型的实验名（服务端对旧名静默映射到 deepseek-flash）。
+                // 旧名保留在 aliases，已落盘旧名的配置仍能命中能力元数据。
+                aliases: &[
+                    "deepseek",
+                    "default",
+                    "deepseek-v4-flash",
+                    "deepseek-v4-flash-vision-exp",
+                    "deepseek-vision",
+                    "flash-vision",
+                ],
                 context_window: 1_000_000,
                 max_output_tokens: 8_192,
                 supports_streaming: true,
-                supports_vision: false,
+                // 视觉实测可读图（image_url + data:image/png;base64），与旧条目
+                // 标注的 false 不符——同一模型此前的 vision-exp 条目标注才是对的。
+                supports_vision: true,
                 supports_reasoning: true,
                 supports_audio: false,
                 supports_image_generation: false,
@@ -55,22 +67,6 @@ impl Provider for DeepSeekProvider {
                 supports_image_generation: false,
                 cost_per_million_in: 0.27,
                 cost_per_million_out: 1.10,
-                reasoning_field: "reasoning_content",
-                reasoning_efforts: &["high", "max"],
-                default_effort: Some("high"),
-            },
-            ModelDef {
-                id: "deepseek-v4-flash-vision-exp",
-                aliases: &["deepseek-vision", "flash-vision"],
-                context_window: 1_000_000,
-                max_output_tokens: 8_192,
-                supports_streaming: true,
-                supports_vision: true,
-                supports_reasoning: true,
-                supports_audio: false,
-                supports_image_generation: false,
-                cost_per_million_in: 0.07,
-                cost_per_million_out: 0.28,
                 reasoning_field: "reasoning_content",
                 reasoning_efforts: &["high", "max"],
                 default_effort: Some("high"),

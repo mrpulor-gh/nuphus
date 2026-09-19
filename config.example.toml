@@ -38,25 +38,22 @@ provider_type = "deepseek"
 api_key = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 base_url = "https://api.deepseek.com"
 # 推理深度（可选）：模型支持的 effort 级别之一。
-#   deepseek-v4-flash : "low" | "high" | "max"（默认 high）
-#   deepseek-v4-pro   : "high" | "max"
+#   deepseek-flash  : "high" | "max"（默认 high）
+#   deepseek-v4-pro : "high" | "max"
 # 不配置 = 不发送 reasoning_effort 参数，使用提供商默认行为（thinking 开启、effort=high）。
 # 注意：thinking 模式下 temperature/top_p 等参数被 API 忽略（不报错）。
 # reasoning_effort = "high"
 
 [[providers.models]]
-id = "deepseek-v4-flash"
+id = "deepseek-flash"
 alias = ["deepseek", "default"]
+context_window = 1000000
 supports_streaming = true
-
-[[providers.models]]
-id = "deepseek-v4"
-alias = ["deepseek-pro"]
-supports_streaming = true
+supports_vision = true
 
 [[providers.models]]
 id = "deepseek-v4-pro"
-alias = []
+alias = ["deepseek-pro"]
 context_window = 1000000
 supports_streaming = true
 
