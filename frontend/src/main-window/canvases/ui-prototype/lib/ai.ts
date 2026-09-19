@@ -49,7 +49,7 @@ export const PROVIDERS: {
     key: 'deepseek',
     label: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     keysUrl: 'https://platform.deepseek.com/api_keys',
   },
 ]

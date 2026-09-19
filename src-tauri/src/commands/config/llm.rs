@@ -1409,11 +1409,17 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                     or_agg::lookup_generic_cached(&config_dir, &provider.name, &model.id)
                 });
 
+            // builtin 元数据解析：provider 限定优先。同名模型可能同时由官方段与
+            // 网关段发布（官方 deepseek 与 opencode-go 都列 deepseek-v4-flash），
+            // 无限定的 find_model 会因 HashMap 迭代顺序命中另一段的元数据。
             // Reasoning-effort options: prefer per-model metadata persisted at
             // configure time (discovered from the provider's /models response,
             // e.g. Kimi think_efforts); fall back to the built-in ModelDef
-            // (e.g. deepseek-v4-flash = [high, max]); final fallback —
+            // (e.g. deepseek-flash = [high, max]); final fallback —
             // OpenRouter supported_efforts. Unknown models → no effort knob.
+            let builtin_meta = builtin
+                .find_model_for_provider(provider.provider_type.as_str(), &model.id)
+                .or_else(|| builtin.find_model(&model.id).map(|(_, m)| m));
             let (mut reasoning_efforts, mut default_effort) = if !model.reasoning_efforts.is_empty()
             {
                 (
@@ -1421,8 +1427,8 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                     model.default_effort.clone(),
                 )
             } else {
-                match builtin.find_model(&model.id) {
-                    Some((_, m)) => (
+                match builtin_meta {
+                    Some(m) => (
                         m.reasoning_efforts.iter().map(|s| s.to_string()).collect(),
                         m.default_effort.map(|s| s.to_string()),
                     ),
@@ -1468,13 +1474,12 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                 supports_audio: model.supports_audio,
                 supports_image_generation: model.supports_image_generation,
                 // Context window: per-model metadata persisted at configure time
-                // wins; fall back to the built-in ModelDef (e.g. deepseek-v4-flash
+                // wins; fall back to the built-in ModelDef (e.g. deepseek-flash
                 // = 1M) so models configured before the field existed still show.
-                context_window: model.context_window.map(|c| c as u64).or_else(|| {
-                    builtin
-                        .find_model(&model.id)
-                        .map(|(_, m)| m.context_window as u64)
-                }),
+                context_window: model
+                    .context_window
+                    .map(|c| c as u64)
+                    .or_else(|| builtin_meta.map(|m| m.context_window as u64)),
                 reasoning_efforts,
                 default_effort,
                 cost_per_million_in: cost_in,
