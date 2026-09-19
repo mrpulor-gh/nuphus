@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.15 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.16 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -274,6 +274,19 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 - GitHub Discussions：使用问题、经验分享、插件推荐
 
 ---
+
+## 致谢
+
+### v0.2.16 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@yuansui486](https://github.com/yuansui486) | [#23](https://github.com/mrpulor-gh/nuphus/pull/23) | macOS 系统权限检查与引导、Windows 脚本窗口修复 |
+| [@yuansui486](https://github.com/yuansui486) | [#26](https://github.com/mrpulor-gh/nuphus/pull/26) | macOS 麦克风权限被动查询 |
+| [@yuansui486](https://github.com/yuansui486) | [#28](https://github.com/mrpulor-gh/nuphus/pull/28) | 会话交互、文件路径识别与滚轮行为优化 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#31](https://github.com/mrpulor-gh/nuphus/pull/31) | DeepSeek 内置模型清单对齐官方 API |
 
 ## 许可
 

@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.15 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.16 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -269,6 +269,19 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 - GitHub Discussions: usage questions, experience sharing, plugin recommendations
 
 ---
+
+## Acknowledgements
+
+### v0.2.16 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@yuansui486](https://github.com/yuansui486) | [#23](https://github.com/mrpulor-gh/nuphus/pull/23) | macOS permission checks & Windows script window fix |
+| [@yuansui486](https://github.com/yuansui486) | [#26](https://github.com/mrpulor-gh/nuphus/pull/26) | Passive microphone permission query on macOS |
+| [@yuansui486](https://github.com/yuansui486) | [#28](https://github.com/mrpulor-gh/nuphus/pull/28) | Session interaction, file path detection & wheel behavior |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#31](https://github.com/mrpulor-gh/nuphus/pull/31) | DeepSeek built-in model catalog aligned with official API |
 
 ## License
 
