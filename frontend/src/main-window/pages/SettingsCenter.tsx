@@ -1,9 +1,10 @@
 /**
- * SettingsCenter.tsx — 设置中心全屏覆盖层（左导航 + 右内容）
+ * SettingsCenter.tsx — 设置中心弹窗（左导航 + 右内容）
  *
- * 定位：区别于 CompactModal（窄模态），设置中心是**全屏宿主**，沿用
- * `.models-page-host` 的既有模式（fixed / inset:0 + 顶部 bar + data-tauri-drag-region 拖动区），
- * 因为要同时容纳「导航 + 整页级子页」。
+ * 定位：介于 CompactModal（窄模态）与整页宿主之间 —— 居中大弹窗
+ * （`min(1080×760, 视口 − 64px)`，fixed + margin:auto 居中，遮罩由 CSS ::before 铺满视口），
+ * 既容纳「导航 + 整页级子页」，又不铺满窗口（四周保留聊天界面可见）。
+ * 右侧内容区宽度随面板收缩，窄面板下子页走 `.is-narrow` 降级（见 models.css）。
  *
  * 复用原则：右侧内容一律复用现有页面组件，本文件只做「导航 → 分区切换」，
  * 不复制任何子页实现；子页的 lazy 说明符与 App.tsx 各入口保持一致，
@@ -244,65 +245,76 @@ export function SettingsCenter({
   }
 
   return (
-    <div className="settings-center-host">
-      {/* ── 顶部 bar：与 models-page-bar 同规格（48px / surface-1 / line-1）── */}
-      <div className="settings-center-bar">
-        <span className="settings-center-bar-icon">
-          <IconSettings size={16} />
-        </span>
-        <span className="settings-center-title">{t('app.settings')}</span>
-        {/* 全屏覆盖层会盖住 TitleBar 的 data-tauri-drag-region，补一条拖动区保证窗口仍可拖动 */}
-        <span className="settings-center-drag" data-tauri-drag-region />
-        <IconButton
-          type="button"
-          variant="modal-close"
-          className="settings-center-close"
-          label={t('common.close')}
-          onClick={onClose}
-        >
-          <IconX size={14} />
-        </IconButton>
-      </div>
+    /* 宿主 = 遮罩层：点空白处（mousedown 命中自身）关闭；面板拦截在下一层 */
+    <div
+      className="settings-center-host"
+      data-testid="settings-center-scrim"
+      onMouseDown={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="settings-center-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('app.settings')}
+      >
+        {/* ── 顶部 bar：与 models-page-bar 同规格（48px / surface-1 / line-1）── */}
+        <div className="settings-center-bar">
+          <span className="settings-center-bar-icon">
+            <IconSettings size={16} />
+          </span>
+          <span className="settings-center-title">{t('app.settings')}</span>
+          {/* 全屏覆盖层会盖住 TitleBar 的 data-tauri-drag-region，补一条拖动区保证窗口仍可拖动 */}
+          <span className="settings-center-drag" data-tauri-drag-region />
+          <IconButton
+            type="button"
+            variant="modal-close"
+            className="settings-center-close"
+            label={t('common.close')}
+            onClick={onClose}
+          >
+            <IconX size={14} />
+          </IconButton>
+        </div>
 
-      <div className="settings-center-body">
-        {/* ── 左侧导航：分组列表（视觉与 models-rail 同族）── */}
-        <nav className="settings-center-nav" aria-label={t('app.settings')}>
-          <div className="settings-center-nav-scroll">
-            {NAV_GROUPS.map(group => (
-              <div key={group.titleKey} className="settings-center-nav-group">
-                <div className="settings-center-nav-group-title">{t(group.titleKey)}</div>
-                <div className="settings-center-nav-list">
-                  {group.items.map(item => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      className={`settings-center-nav-item${item.id === section ? ' active' : ''}`}
-                      aria-current={item.id === section ? 'page' : undefined}
-                      onClick={() => setSection(item.id)}
-                    >
-                      <span className="settings-center-nav-icon">{item.icon}</span>
-                      <span className="settings-center-nav-label">{t(item.labelKey)}</span>
-                    </button>
-                  ))}
+        <div className="settings-center-body">
+          {/* ── 左侧导航：分组列表（视觉与 models-rail 同族）── */}
+          <nav className="settings-center-nav" aria-label={t('app.settings')}>
+            <div className="settings-center-nav-scroll">
+              {NAV_GROUPS.map(group => (
+                <div key={group.titleKey} className="settings-center-nav-group">
+                  <div className="settings-center-nav-group-title">{t(group.titleKey)}</div>
+                  <div className="settings-center-nav-list">
+                    {group.items.map(item => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`settings-center-nav-item${item.id === section ? ' active' : ''}`}
+                        aria-current={item.id === section ? 'page' : undefined}
+                        onClick={() => setSection(item.id)}
+                      >
+                        <span className="settings-center-nav-icon">{item.icon}</span>
+                        <span className="settings-center-nav-label">{t(item.labelKey)}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </nav>
+              ))}
+            </div>
+          </nav>
 
-        {/* ── 右侧内容区：切换分区不卸载外壳（面板保持打开）── */}
-        <div
-          className={`settings-center-main${narrowPane ? ' is-narrow' : ''}`}
-          ref={mainRef}
-        >
-          <div className="settings-center-main-head">
-            <span className="settings-center-main-title">{t(activeItem.labelKey)}</span>
-          </div>
-          {/* key=section：切换分区时重置内容区滚动位置 */}
-          <div className="settings-center-main-body" key={section}>
-            <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
-              {renderSection()}
-            </Suspense>
+          {/* ── 右侧内容区：切换分区不卸载外壳（面板保持打开）── */}
+          <div className={`settings-center-main${narrowPane ? ' is-narrow' : ''}`} ref={mainRef}>
+            <div className="settings-center-main-head">
+              <span className="settings-center-main-title">{t(activeItem.labelKey)}</span>
+            </div>
+            {/* key=section：切换分区时重置内容区滚动位置 */}
+            <div className="settings-center-main-body" key={section}>
+              <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
+                {renderSection()}
+              </Suspense>
+            </div>
           </div>
         </div>
       </div>

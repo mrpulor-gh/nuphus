@@ -382,7 +382,6 @@ export default function App() {
                 s.setExecTraceOverride(trace)
                 s.setShowExecTrace(true)
               }}
-              onOpenPalette={() => s.setCmdPaletteOpen(true)}
               onCommand={id => {
                 switch (id) {
                   case 'workflows':

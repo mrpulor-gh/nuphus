@@ -1,7 +1,8 @@
 /* ═══════════════════════════════════════════
-   settings-center.css — 设置中心全屏覆盖层（左导航 + 右内容）
+   settings-center.css — 设置中心（居中弹窗：左导航 + 右内容）
 
-   宿主模式与 models-page-host 对齐：fixed / inset:0 / z-index 2500，
+   宿主：fixed + inset:0 + margin:auto 居中，尺寸 min(1080×760, 视口 − 64px)，
+   z-index 2500，遮罩由 ::before 铺满视口 —— 非全屏，四周仍可见聊天界面。
    顶栏 48px（同 models-page-bar），左导航视觉与 models-rail 同族
    （分组标题 fz-xs 大写弱化、选中态 accent-dim + 1px 浅边）。
 
@@ -10,14 +11,32 @@
    tokens.css 由 ink.css 全局引入，此处不重复 @import。
    ═══════════════════════════════════════════ */
 
-/* ── 全屏宿主 ── */
+/* ── 宿主 = 遮罩层：铺满视口 + 居中承载面板（非全屏弹窗）──────
+   面板四周留 32px；点空白处（mousedown target 命中自身）关闭，与命令面板同一手感。
+   面板宽随窗口收缩 → 右侧内容区同步收窄，.is-narrow 降级照常生效。── */
 .settings-center-host {
   position: fixed;
   inset: 0;
   z-index: 2500;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  background: var(--overlay-bg);
+}
+
+/* ── 面板本体：左导航 + 右内容的外壳 ── */
+.settings-center-panel {
+  display: flex;
+  min-height: 0;
   flex-direction: column;
+  width: min(1080px, 100%);
+  height: min(760px, 100%);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-4);
   background: var(--surface-0);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
   color: var(--fg-1);
 }
 
@@ -42,7 +61,7 @@
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-/* 全屏覆盖层会盖住 TitleBar 的拖动区，这里补一条占满剩余空白的拖动区 */
+/* 面板顶栏承接拖动（弹窗态不与 TitleBar 重叠，拖动区仅便于移动窗口） */
 .settings-center-drag {
   flex: 1;
   align-self: stretch;
