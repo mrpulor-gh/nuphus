@@ -1286,10 +1286,7 @@ export function ModelsPage({
                             role="tab"
                             key={tab.id}
                             aria-selected={provider === tab.id}
-                            className={[
-                              'models-instance-tab',
-                              provider === tab.id ? 'active' : '',
-                            ]
+                            className={['models-instance-tab', provider === tab.id ? 'active' : '']
                               .filter(Boolean)
                               .join(' ')}
                             onClick={() => selectCustomInstance(tab.id)}
