@@ -20,7 +20,7 @@
  * 其中仅「外部 Agent」表单底部的「取消」按钮会用到 onClose → 统一接设置中心关闭
  * （= 退出该页返回聊天），与它在弹窗里的原语义一致。
  */
-import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { WorkflowItem } from '../../core/types'
 import { IconButton } from '../../ui/Button'
 import {
@@ -163,6 +163,29 @@ export function SettingsCenter({
   const [section, setSection] = useState<SettingsSectionId>('memories')
   /** 画布分区目标工作流：由工作流列表的行内「画布」按钮带入；null = 工作台自选最近草稿 */
   const [canvasWorkflowId, setCanvasWorkflowId] = useState<string | null>(null)
+  /**
+   * 右侧内容区实测宽度 → 窄容器降级标记。
+   *
+   * 模型页等子页原本是为「全屏」设计的双栏布局，嵌入设置中心后可用宽度只剩
+   * 视口 − 左导航（236px），而它们的降级规则写的是按**视口**判定的媒体查询 ——
+   * 视口明明很宽却判不出来，双栏被硬塞成「固定 rail + 极窄内容」，卡片内文字
+   * 退化成竖排。这里按容器实测宽度打标，CSS 据此落到紧凑/单栏布局。
+   *
+   * 不用 @container：容器需 contain:layout，会让子页内 position:fixed 的弹层
+   * 改以容器为包含块，定位全错。
+   */
+  const mainRef = useRef<HTMLDivElement>(null)
+  const [narrowPane, setNarrowPane] = useState(false)
+  useEffect(() => {
+    const el = mainRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? el.clientWidth
+      setNarrowPane(w < 780)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const activeItem = NAV_ITEMS.find(item => item.id === section) ?? NAV_ITEMS[0]
 
@@ -268,7 +291,10 @@ export function SettingsCenter({
         </nav>
 
         {/* ── 右侧内容区：切换分区不卸载外壳（面板保持打开）── */}
-        <div className="settings-center-main">
+        <div
+          className={`settings-center-main${narrowPane ? ' is-narrow' : ''}`}
+          ref={mainRef}
+        >
           <div className="settings-center-main-head">
             <span className="settings-center-main-title">{t(activeItem.labelKey)}</span>
           </div>
