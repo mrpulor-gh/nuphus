@@ -273,6 +273,103 @@ pub fn prune_snapshots(protected: &[String]) -> crate::Result<usize> {
     Ok(n)
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 项目归属（session_meta）：会话 → 项目文件夹
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 语义：归属在**会话诞生时快照**——首次登记即定稿，此后切换工作目录 / 恢复会话 /
+// 切换会话一律不改写（INSERT OR IGNORE 保证「只记首次」）。历史会话（无 session_meta
+// 行，或旧惰性登记留下的无路径行）保持无归属，查询返回 None：不猜测、不按当前目录
+// 回填，由前端归入「未分组」。
+// project_tag 仍是记忆检索的项目过滤依据（语义未变）；project_path 为展示用原始路径
+// （tag 含路径哈希，不可逆，无法从 tag 还原目录）。
+
+/// 唯一写入语句：登记会话归属（幂等，已登记不覆盖）。
+///
+/// `created_at` 仅作审计留存，不参与任何查询判定。
+fn register_session_meta(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    project_tag: &str,
+    project_path: &str,
+    created_at: &str,
+) -> rusqlite::Result<bool> {
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO session_meta (session_id, project_tag, project_path, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![session_id, project_tag, project_path, created_at],
+    )?;
+    Ok(inserted > 0)
+}
+
+/// 会话诞生点归属登记（**唯一公开入口**）。返回是否本次写入
+/// （false = 已登记过，或当前未配置项目目录）。
+///
+/// 未配置项目目录（`preferences.project_dir` 为空）→ 不登记：宁可缺失，不可错记。
+pub fn register_session_project(session_id: &str) -> crate::Result<bool> {
+    let guard = crate::store::db::acquire()?;
+    register_session_project_with_conn(&guard, session_id)
+}
+
+/// 同上，复用调用方**已持有**的池连接（记忆写入路径已持一连接，再 acquire 会额外
+/// 占用连接池，池满时互相等待 30s 超时）。
+pub fn register_session_project_with_conn(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> crate::Result<bool> {
+    let Some((tag, dir)) = crate::utils::active_project() else {
+        return Ok(false);
+    };
+    let created_at = chrono::Utc::now().to_rfc3339();
+    Ok(register_session_meta(
+        conn,
+        session_id,
+        &tag,
+        &dir,
+        &created_at,
+    )?)
+}
+
+/// 读取单个会话的归属路径：无归属行、或旧惰性登记留下的无路径行 → None。
+pub fn session_project_path(session_id: &str) -> crate::Result<Option<String>> {
+    let guard = crate::store::db::acquire()?;
+    let mut stmt = guard.prepare(
+        "SELECT project_path FROM session_meta
+         WHERE session_id = ?1 AND project_path IS NOT NULL AND project_path != ''",
+    )?;
+    let mut rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+    match rows.next() {
+        Some(Ok(path)) => Ok(Some(path)),
+        _ => Ok(None),
+    }
+}
+
+/// 批量读取归属路径（session_id → 路径）。无归属 / 无路径的会话不出现在结果中，
+/// 调用方据此把它们归入「未分组」。
+pub fn session_project_paths(ids: &[String]) -> crate::Result<HashMap<String, String>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let guard = crate::store::db::acquire()?;
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT session_id, project_path FROM session_meta
+         WHERE project_path IS NOT NULL AND project_path != ''
+           AND session_id IN ({placeholders})"
+    );
+    let mut stmt = guard.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map = HashMap::new();
+    for r in rows.flatten() {
+        map.insert(r.0, r.1);
+    }
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +377,146 @@ mod tests {
 
     fn random_id() -> String {
         uuid::Uuid::new_v4().to_string()
+    }
+
+    /// 与生产表结构一致的内存 session_meta（db.rs DDL）——归属登记语义测试
+    /// 不必污染真实 DB。
+    fn setup_meta_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_meta (
+                session_id      TEXT PRIMARY KEY,
+                project_tag     TEXT NOT NULL,
+                project_path    TEXT,
+                created_at      TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// 归属 = 创建时快照：同一会话二次登记（不同目录）不得覆盖首次归属。
+    #[test]
+    fn register_session_meta_keeps_first_attribution() {
+        let conn = setup_meta_conn();
+        let id = random_id();
+
+        assert!(
+            register_session_meta(&conn, &id, "A-1a2b3c4d", "E:\\work\\A", "t1").unwrap(),
+            "首次登记应写入"
+        );
+        assert!(
+            !register_session_meta(&conn, &id, "B-5e6f7a8b", "E:\\work\\B", "t2").unwrap(),
+            "二次登记（切目录后）应被忽略并返回 false"
+        );
+
+        let (tag, path): (String, String) = conn
+            .query_row(
+                "SELECT project_tag, project_path FROM session_meta WHERE session_id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(tag, "A-1a2b3c4d", "既有归属 tag 不得被改写");
+        assert_eq!(path, "E:\\work\\A", "既有归属路径不得被改写");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_meta WHERE session_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "同一会话只允许一行归属");
+    }
+
+    /// 无归属会话（历史会话）→ None / 空：不猜测、不伪造。
+    #[serial]
+    #[test]
+    fn session_project_path_none_for_unregistered_session() {
+        let id = random_id();
+        assert_eq!(
+            session_project_path(&id).unwrap(),
+            None,
+            "未登记会话必须返回 None（前端归入未分组）"
+        );
+        assert!(
+            session_project_paths(std::slice::from_ref(&id))
+                .unwrap()
+                .is_empty(),
+            "未登记会话不得出现在批量归属结果中"
+        );
+        assert!(
+            session_project_paths(&[]).unwrap().is_empty(),
+            "空名单必须短路返回空"
+        );
+    }
+
+    /// 旧惰性登记行（无 project_path）同样不得被当作归属：
+    /// tag 不可逆，无法还原目录 → 与「无归属」同等处理。
+    #[serial]
+    #[test]
+    fn legacy_meta_row_without_path_is_not_attribution() {
+        let id = random_id();
+        {
+            let conn = crate::store::db::acquire().unwrap();
+            conn.execute(
+                "INSERT INTO session_meta (session_id, project_tag, project_path, created_at)
+                 VALUES (?1, 'legacy-1a2b3c4d', NULL, 't')",
+                params![id],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(session_project_path(&id).unwrap(), None);
+        assert!(session_project_paths(std::slice::from_ref(&id))
+            .unwrap()
+            .is_empty());
+
+        let conn = crate::store::db::acquire().unwrap();
+        conn.execute(
+            "DELETE FROM session_meta WHERE session_id = ?1",
+            params![id],
+        )
+        .unwrap();
+    }
+
+    /// 池连接入口与记忆检索同源：登记的 (tag, path) 必须等于当前 active_project()；
+    /// 未配置项目目录 → 不登记（宁可缺失，不可错记）。
+    #[serial]
+    #[test]
+    fn register_session_project_matches_active_project() {
+        let id = random_id();
+        let registered = register_session_project(&id).unwrap();
+
+        match crate::utils::active_project() {
+            Some((tag, dir)) => {
+                assert!(registered, "配置了项目目录时应写入归属");
+                let (stored_tag, stored_path): (String, String) = {
+                    let conn = crate::store::db::acquire().unwrap();
+                    conn.query_row(
+                        "SELECT project_tag, project_path FROM session_meta WHERE session_id = ?1",
+                        params![id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap()
+                };
+                assert_eq!(stored_tag, tag, "归属 tag 必须与记忆检索用的 tag 同值");
+                assert_eq!(stored_path, dir, "归属路径必须与当前项目目录同值");
+                assert_eq!(
+                    session_project_path(&id).unwrap().as_deref(),
+                    Some(dir.as_str())
+                );
+                // 再登记（模拟切目录后重入）仍返回 false 且不覆盖
+                assert!(!register_session_project(&id).unwrap());
+                let conn = crate::store::db::acquire().unwrap();
+                conn.execute(
+                    "DELETE FROM session_meta WHERE session_id = ?1",
+                    params![id],
+                )
+                .unwrap();
+            }
+            None => assert!(!registered, "未配置项目目录时不得登记任何归属"),
+        }
     }
 
     fn row_with(id: &str, summary: &str) -> SessionRow {

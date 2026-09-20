@@ -52,6 +52,22 @@ pub struct ShelfEntry {
     pub updated_at: u64,
 }
 
+/// 项目文件夹分组条目（会话工作台「项目文件夹」数据源）。
+///
+/// `path` 是分组键：与 `items[].project_path` 精确对应；无归属会话（path 为 null）
+/// 由前端归入「未分组」——后端不猜测、不伪造归属。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectEntry {
+    /// 归属目录（与 items[].project_path 同值）
+    pub path: String,
+    /// 展示名：书签自定义名优先，自动组取目录末段
+    pub name: String,
+    /// 当前工作目录（前端仅高亮，不上浮；排序仍按书签顺序）
+    pub is_current: bool,
+    /// true = 未收藏但有会话的自动组（只读组，不写入书签）
+    pub auto: bool,
+}
+
 /// 内存展示台。active 会话不在此处（活在 agent 里），命令层动态拼装。
 #[derive(Default)]
 pub struct ShelfState {
@@ -573,6 +589,95 @@ fn build_entry(
     }
 }
 
+// ── 项目文件夹分组（会话工作台）──
+
+/// 路径相等判定：忽略首尾空白与结尾分隔符；Windows 下忽略大小写。
+/// 分组键比较用（书签路径由用户挑选、归属路径由配置快照，两者大小写/尾斜杠可能不同）。
+fn same_project_path(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().trim_end_matches(['\\', '/']).to_string();
+    let (a, b) = (norm(a), norm(b));
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(&b)
+    } else {
+        a == b
+    }
+}
+
+fn project_entry(path: &str, name: &str, current_dir: &str, auto: bool) -> ProjectEntry {
+    ProjectEntry {
+        path: path.trim().trim_end_matches(['\\', '/']).to_string(),
+        name: if name.trim().is_empty() {
+            nuphus::utils::dir_display_name(path)
+        } else {
+            name.trim().to_string()
+        },
+        is_current: same_project_path(path, current_dir),
+        auto,
+    }
+}
+
+/// 组装项目文件夹组：返回 `(可见组, 已归档组)`。
+///
+/// - 可见组 = 未归档书签（**按书签表顺序**，不退化成最近使用序）+ 未收藏但有会话的
+///   自动组（按会话出现顺序，排在全部书签组之后，只读不落库）；
+/// - 归属路径与书签路径重合时以书签为准（名字 / 顺序），不重复成组；
+/// - 已归档书签不出现在可见组（归档 = 隐藏），单独返回供「已归档文件夹」恢复入口；
+/// - 未出现在 `session_paths` 里的会话（含无归属会话）不产生任何组：不猜测。
+pub(crate) fn build_project_groups(
+    bookmarks: &[nuphus::config::ProjectBookmark],
+    current_dir: &str,
+    session_paths: &[String],
+) -> (Vec<ProjectEntry>, Vec<ProjectEntry>) {
+    let mut visible: Vec<ProjectEntry> = Vec::new();
+    let mut archived: Vec<ProjectEntry> = Vec::new();
+
+    for bm in bookmarks {
+        if bm.path.trim().is_empty() {
+            // 手改配置可能留空条目：跳过，避免生出无名幽灵组
+            continue;
+        }
+        let entry = project_entry(&bm.path, &bm.name, current_dir, false);
+        if bm.archived {
+            archived.push(entry);
+        } else {
+            visible.push(entry);
+        }
+    }
+
+    for path in session_paths {
+        if path.trim().is_empty() {
+            continue;
+        }
+        // 已收藏（含已归档）目录由书签组代表，不再生成自动组
+        if bookmarks.iter().any(|b| same_project_path(&b.path, path)) {
+            continue;
+        }
+        if visible.iter().any(|e| same_project_path(&e.path, path)) {
+            continue; // 同目录多会话 → 只一个自动组
+        }
+        visible.push(project_entry(path, "", current_dir, true));
+    }
+
+    (visible, archived)
+}
+
+/// 会话诞生点归属登记：转发到 store 的唯一写入入口（创建时快照，幂等）。
+///
+/// 失败仅告警不阻断对话——归属缺失只影响分组展示（归入「未分组」），
+/// 不得让登记失败影响会话本身。
+pub(crate) fn register_session_origin(session_id: &str) {
+    match nuphus::store::session::register_session_project(session_id) {
+        Ok(true) => tracing::info!("[Shelf] 会话归属登记: {session_id}"),
+        Ok(false) => {
+            tracing::debug!("[Shelf] 会话 {session_id} 未登记归属（已登记过或未配置项目目录）")
+        }
+        Err(e) => tracing::warn!("[Shelf] 会话归属登记失败 {session_id}: {e}"),
+    }
+}
+
 /// 归档 active 到展示台 + 镜像 + 元数据行。空会话跳过（不占槽）。
 /// 注意：调用方持有 runtime 锁期间传入 ctx——保护名单经
 /// protected_snapshot_ids_with_ctx 从 ctx 直取，绝不嵌套加锁。
@@ -699,9 +804,39 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
         tb.cmp(&ta).then_with(|| a.0.cmp(&b.0))
     });
 
+    // ── 分组数据（Phase 1）：条目补归属路径；projects[] / archived_projects[] /
+    // collapsed_limit 供前端直接建组，无需二次拼装。
+    // 无归属会话（历史遗留、未配置项目目录时创建）project_path = null → 前端归入
+    // 「未分组」；后端不做任何按当前目录的推断。
+    let prefs = nuphus::config::UserPreferences::load();
+    let ids: Vec<String> = candidates.iter().map(|c| c.0.clone()).collect();
+    let project_paths = nuphus::store::session::session_project_paths(&ids).unwrap_or_default();
+    let session_paths: Vec<String> = candidates
+        .iter()
+        .filter_map(|c| project_paths.get(&c.0).cloned())
+        .collect();
+    let (projects, archived_projects) =
+        build_project_groups(&prefs.project_bookmarks, &prefs.project_dir, &session_paths);
+    let collapsed_limit = prefs.session_group_limit();
+
     Ok(serde_json::json!({
         "can_switch": can_switch,
-        "items": candidates.into_iter().map(|(_, v, _)| v).collect::<Vec<_>>(),
+        "items": candidates
+            .into_iter()
+            .map(|(id, mut v, _)| {
+                if let Some(obj) = v.as_object_mut() {
+                    let path = match project_paths.get(&id) {
+                        Some(p) => serde_json::Value::String(p.clone()),
+                        None => serde_json::Value::Null,
+                    };
+                    obj.insert("project_path".to_string(), path);
+                }
+                v
+            })
+            .collect::<Vec<_>>(),
+        "projects": projects,
+        "archived_projects": archived_projects,
+        "collapsed_limit": collapsed_limit,
     }))
 }
 
@@ -1293,6 +1428,207 @@ mod tests {
         assert_eq!(normalize_mode("workflow"), "workflow");
         assert_eq!(normalize_mode("leader"), "leader");
         assert_eq!(normalize_mode("custom-agent-x"), "leader");
+    }
+
+    // ── 项目文件夹分组 ──
+
+    fn project_bookmark(name: &str, path: &str, archived: bool) -> nuphus::config::ProjectBookmark {
+        nuphus::config::ProjectBookmark {
+            name: name.to_string(),
+            path: path.to_string(),
+            archived,
+        }
+    }
+
+    /// projects[] 组装：书签保序 + 当前目录标记 + 未收藏自动组排书签之后 + 归档过滤。
+    #[test]
+    fn build_project_groups_orders_bookmarks_then_autos() {
+        let bookmarks = vec![
+            project_bookmark("A", "E:\\work\\A", false),
+            project_bookmark("已归档目录", "E:\\work\\Old", true),
+        ];
+        let session_paths = vec![
+            "E:\\work\\B".to_string(),
+            "E:\\work\\A".to_string(),
+            "E:\\work\\B".to_string(),
+        ];
+
+        let (visible, archived) = build_project_groups(&bookmarks, "E:\\work\\B", &session_paths);
+
+        let paths: Vec<&str> = visible.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["E:\\work\\A", "E:\\work\\B"],
+            "书签在前，自动组在后"
+        );
+        assert_eq!(visible[0].name, "A", "书签自定义名优先");
+        assert!(!visible[0].auto && !visible[0].is_current);
+        assert!(visible[1].auto, "未收藏但有会话的目录 → 只读自动组");
+        assert!(visible[1].is_current, "当前工作目录标记（仅高亮）");
+        assert_eq!(visible[1].name, "B", "自动组展示名取目录末段");
+
+        // 归档书签：可见组里被过滤（隐藏），单独返回供「已归档文件夹」恢复入口
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].path, "E:\\work\\Old");
+        assert!(archived.iter().all(|e| !e.auto));
+        assert!(visible.iter().all(|e| e.path != "E:\\work\\Old"));
+    }
+
+    /// 同目录多会话 → 只生成一个组；归属路径与书签重合 → 由书签组代表（不重复）。
+    /// 尾斜杠差异与平台无关（归一化时去掉尾部分隔符），故三平台共用同一断言。
+    #[test]
+    fn build_project_groups_dedups_paths_and_prefers_bookmarks() {
+        let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
+        let session_paths = vec!["E:\\work\\A".to_string(), "E:\\work\\A".to_string()];
+
+        let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
+        assert_eq!(visible.len(), 1, "尾斜杠/重复路径不得裂成两个组");
+        assert_eq!(visible[0].path, "E:\\work\\A", "以书签为准则保序保名");
+        assert!(!visible[0].auto);
+    }
+
+    /// 大小写差异是否算同一目录，由 `same_project_path` 里的 `cfg!(windows)` 决定：
+    /// Windows 忽略大小写，非 Windows 大小写敏感（`/work/A` 与 `/work/a` 是两个目录）。
+    /// 因此该断言只在 Windows 成立；非 Windows 的分支由
+    /// `build_project_groups_treats_case_as_distinct_on_unix` 覆盖。
+    #[cfg(windows)]
+    #[test]
+    fn build_project_groups_ignores_case_on_windows() {
+        let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
+        let session_paths = vec!["E:\\work\\a".to_string(), "e:\\work\\a".to_string()];
+
+        let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
+        assert_eq!(
+            visible.len(),
+            1,
+            "Windows 下尾斜杠/大小写差异不得裂成两个组"
+        );
+        assert_eq!(visible[0].path, "E:\\work\\A", "以书签为准则保序保名");
+        assert!(!visible[0].auto);
+    }
+
+    /// 非 Windows（Linux/macOS）大小写敏感：`E:\work\A` 与 `E:\work\a` 是两个目录，
+    /// 归属路径不得被书签吞并，两条大小写不同的会话路径也各自成组 → 共 3 组。
+    #[cfg(not(windows))]
+    #[test]
+    fn build_project_groups_treats_case_as_distinct_on_unix() {
+        let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
+        let session_paths = vec!["E:\\work\\a".to_string(), "e:\\work\\a".to_string()];
+
+        let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
+        assert_eq!(
+            visible.len(),
+            3,
+            "非 Windows 大小写敏感：大小写不同的目录不得合并成一组"
+        );
+    }
+
+    /// 无归属会话（未出现在 session_paths）不产生任何组：不猜测、不伪造。
+    #[test]
+    fn build_project_groups_skips_ungrouped_sessions() {
+        let (visible, archived) = build_project_groups(&[], "", &[]);
+        assert!(visible.is_empty(), "无归属会话不得凭空生成组");
+        assert!(archived.is_empty());
+    }
+
+    /// 会话台返回体形状：条目带 project_path（无归属 = null），顶层带
+    /// projects / archived_projects / collapsed_limit，前端可直接分组。
+    #[test]
+    fn list_shelf_sessions_carries_grouping_payload() {
+        let state = AppState::default();
+        let sess = session_with_user(&["历史会话（无归属）"]);
+        let id = sess.id.clone();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            let entry = build_entry(id.clone(), "leader", &sess, Some("历史会话（无归属）"));
+            shelf.put(entry, sess);
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let items = payload["items"].as_array().expect("items 必须是数组");
+        let item = items
+            .iter()
+            .find(|i| i["id"] == serde_json::json!(id))
+            .expect("返回体应含驻留会话");
+        assert!(
+            item.get("project_path").is_some(),
+            "条目必须带 project_path 键（无归属为 null）"
+        );
+        assert_eq!(
+            item["project_path"],
+            serde_json::Value::Null,
+            "无归属会话不得用当前目录回填"
+        );
+        assert!(payload["projects"].is_array(), "projects 必须是数组");
+        assert!(
+            payload["archived_projects"].is_array(),
+            "archived_projects 必须是数组"
+        );
+        let limit = payload["collapsed_limit"]
+            .as_u64()
+            .expect("collapsed_limit 必须是数字");
+        assert!(limit >= 1, "折叠上限必须为正数");
+        assert!(
+            payload["can_switch"].as_bool().is_some(),
+            "既有字段不得丢失"
+        );
+    }
+
+    /// 已登记归属的会话：条目带真实路径，且该路径作为自动组（未收藏）出现在
+    /// projects[] 末尾；is_current 与该路径是否为当前项目目录一致。
+    /// 归属行写真实 DB 后自清理（store 测试同款约定）。
+    #[test]
+    fn list_shelf_sessions_groups_owned_session_into_auto_project() {
+        let state = AppState::default();
+        let sess = session_with_user(&["有归属会话"]);
+        let id = sess.id.clone();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(
+                build_entry(id.clone(), "leader", &sess, Some("有归属会话")),
+                sess,
+            );
+        }
+        let owned_dir = "E:\\__nuphus_test_proj__\\group";
+        {
+            let conn = nuphus::store::db::acquire().unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO session_meta (session_id, project_tag, project_path, created_at)
+                 VALUES (?1, 'group-00000000', ?2, 't')",
+                rusqlite::params![id, owned_dir],
+            )
+            .unwrap();
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let item = payload["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == serde_json::json!(id))
+            .expect("返回体应含驻留会话");
+        assert_eq!(item["project_path"], serde_json::json!(owned_dir));
+
+        let projects = payload["projects"].as_array().unwrap();
+        let group = projects
+            .iter()
+            .find(|p| p["path"] == serde_json::json!(owned_dir))
+            .expect("归属路径应生成自动组");
+        assert_eq!(group["auto"], serde_json::json!(true));
+        assert_eq!(group["name"], serde_json::json!("group"));
+        let current = nuphus::config::UserPreferences::load().project_dir;
+        assert_eq!(
+            group["is_current"],
+            serde_json::json!(same_project_path(owned_dir, &current)),
+            "is_current 必须与当前项目目录一致"
+        );
+
+        let conn = nuphus::store::db::acquire().unwrap();
+        conn.execute(
+            "DELETE FROM session_meta WHERE session_id = ?1",
+            rusqlite::params![id],
+        )
+        .unwrap();
     }
 
     /// 回归（任务链 87f4fc7a）：保护名单必须包含 shelf.order 全量驻留成员——

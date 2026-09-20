@@ -238,6 +238,8 @@ fn main() {
             commands::set_project_dir,
             commands::get_project_bookmarks,
             commands::set_project_bookmarks,
+            commands::set_project_folder_archived,
+            commands::set_session_group_collapsed_limit,
             commands::execute_session_refine,
             commands::refine_skip,
             // -- 移动端局域网 server（默认关闭，设置页开关）--

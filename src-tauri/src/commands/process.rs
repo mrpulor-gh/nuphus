@@ -797,6 +797,14 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     refine_threshold2,
                 );
                 new_wa.set_workflow_engine(state.workflow_engine.clone());
+                // ── 会话诞生点（workflow）：无留存 agent → WorkflowAgent::new 铸造全新 Session。
+                // 仅在 force_new（欢迎页直发 / 切 mode 新建 / 空态判据）时登记归属。
+                // force_new=false 且槽空 = 重启后 session_backup 中转续聊：workflow 分支
+                // 没有 session 恢复路径，新 id 与旧会话的归属无法对应 → 不登记，
+                // 宁可缺失不可错记（该新会话在列表中归入「未分组」）。
+                if force_new {
+                    crate::commands::process::shelf::register_session_origin(&new_wa.session().id);
+                }
                 new_wa
             };
 

@@ -2817,6 +2817,71 @@ mod tests {
         });
     }
 
+    /// Phase 1 项目文件夹分组：移动端 /sessions 与 /boot.sessions 与桌面
+    /// list_shelf_sessions_inner 同源，分组字段（条目 project_path + projects[] +
+    /// collapsed_limit）必须原样出现在响应里——手机「会话」抽屉据此建组，
+    /// 无需另写适配层。
+    #[test]
+    fn test_sessions_carry_project_grouping_fields() {
+        use crate::commands::process::shelf::ShelfEntry;
+        tokio_test::block_on(async {
+            let (base, token, app) = spawn_test_server().await;
+            let state = app.state::<AppState>();
+            // 预置一个驻留会话，使 items 非空、字段有实义
+            {
+                let mut session = nuphus::session::Session::new();
+                session.push_user("分组字段校验".to_string());
+                let id = session.id.clone();
+                let entry = ShelfEntry {
+                    id: id.clone(),
+                    mode: "leader".to_string(),
+                    title: "分组字段校验".to_string(),
+                    preview: String::new(),
+                    message_count: 1,
+                    updated_at: 1_700_000_000_000,
+                };
+                state.shelf.lock().unwrap().put(entry, session);
+            }
+
+            let resp = np_get(&format!("{base}/sessions?token={token}"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert!(body["items"].is_array(), "items 必须是数组");
+            assert!(
+                body["items"][0].get("project_path").is_some(),
+                "条目必须带 project_path 键，实际: {}",
+                body["items"][0]
+            );
+            assert!(body["projects"].is_array(), "projects 必须透传到手机端");
+            assert!(
+                body["archived_projects"].is_array(),
+                "archived_projects 必须透传到手机端"
+            );
+            assert!(
+                body["collapsed_limit"].as_u64().is_some_and(|n| n >= 1),
+                "collapsed_limit 必须是正数，实际: {}",
+                body["collapsed_limit"]
+            );
+
+            let resp = np_get(&format!("{base}/boot?token={token}")).await.unwrap();
+            assert_eq!(resp.status(), 200);
+            let boot: serde_json::Value = resp.json().await.unwrap();
+            let sessions = &boot["sessions"];
+            assert!(
+                sessions["items"].is_array(),
+                "/boot.sessions 必须与 /sessions 同源"
+            );
+            assert!(sessions["projects"].is_array());
+            assert!(sessions["collapsed_limit"].as_u64().is_some());
+
+            // 清理驻留条目，避免影响并行测试（内存态，无落盘）
+            state.shelf.lock().unwrap().order.clear();
+            state.shelf.lock().unwrap().entries.clear();
+        });
+    }
+
     #[test]
     fn test_auth_required() {
         tokio_test::block_on(async {
