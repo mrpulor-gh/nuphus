@@ -1677,3 +1677,13 @@ export interface DocExtractTextResult {
 export async function getChangelog() {
   return (await invoke<string>('get_changelog')) ?? ''
 }
+
+// ── 外链 ──
+
+/**
+ * 用系统默认浏览器打开外链（桌面端 WebView 不处理 `target="_blank"`）。
+ * 后端只放行 http/https；失败时返回可读原因，调用方通常只记录不打断。
+ */
+export function openExternal(url: string) {
+  return invoke<void>('open_external', { url })
+}

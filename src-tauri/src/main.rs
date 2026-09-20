@@ -407,6 +407,8 @@ fn main() {
             commands::tools::video::audio_convert,
             commands::tools::doc::doc_extract_text,
             commands::tools::voice::voice_clone,
+            // -- 外链：桌面端 WebView 不处理 target="_blank"，交系统浏览器 --
+            commands::open_external,
             // -- Document render service (pdf.js in main webview) --
             render::commands::pdf_render_done,
             render::commands::pdf_render_error,

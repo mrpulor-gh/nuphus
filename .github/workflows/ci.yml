@@ -1,10 +1,13 @@
 name: CI
 
 on:
+  # 日常提交（push 到 main）不触发 CI：界面/文案类改动靠本地 tsc/vitest/cargo check 把关，
+  # 发布时集中跑一次（打 v* tag 由 release 流程触发），需要时也可手动 dispatch。
   push:
-    branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
