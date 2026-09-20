@@ -8,17 +8,147 @@
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::js_protocol::runtime::RemoteObjectId;
 use chromiumoxide::handler::viewport::Viewport;
+use chromiumoxide::handler::{HandlerConfig, RuntimeExecutionMode};
 use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::{Command, Method, Page};
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::chrome_finder::{ensure_profile_dir, find_chrome};
 use super::ChromeError;
+
+fn runtime_safe_handler_config() -> HandlerConfig {
+    HandlerConfig {
+        runtime_execution_mode: RuntimeExecutionMode::OnDemand,
+        ..HandlerConfig::default()
+    }
+}
+
+const CHROME_STDERR_MAX_LINES: usize = 16;
+const CHROME_STDERR_MAX_LINE_CHARS: usize = 512;
+const CHROME_SANDBOX_ERROR_MARKERS: &[&str] = &[
+    "running as root without --no-sandbox",
+    "no usable sandbox",
+    "suid sandbox helper binary was found",
+    "failed to move to new namespace",
+    "failed to unshare",
+    "sandbox initialization failed",
+    "failed to initialize sandbox",
+];
+const CHROME_POLICY_ERROR_MARKERS: &[&str] = &[
+    "remote debugging is disabled by policy",
+    "remote debugging has been disabled by the system administrator",
+    "devtools remote debugging is disallowed",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChromeLaunchFailureKind {
+    SandboxUnavailable,
+    RemoteDebuggingBlocked,
+    Other,
+}
+
+fn push_chrome_stderr(tail: &mut VecDeque<String>, line: &str) {
+    let clean: String = line
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .take(CHROME_STDERR_MAX_LINE_CHARS)
+        .collect();
+    if clean.is_empty() {
+        return;
+    }
+    if tail.len() == CHROME_STDERR_MAX_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(clean);
+}
+
+fn classify_chrome_launch_failure(tail: &VecDeque<String>) -> ChromeLaunchFailureKind {
+    let stderr = tail
+        .iter()
+        .map(|line| line.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if CHROME_SANDBOX_ERROR_MARKERS
+        .iter()
+        .any(|marker| stderr.contains(marker))
+        || (stderr.contains("sandbox") && stderr.contains("operation not permitted"))
+    {
+        return ChromeLaunchFailureKind::SandboxUnavailable;
+    }
+
+    if CHROME_POLICY_ERROR_MARKERS
+        .iter()
+        .any(|marker| stderr.contains(marker))
+        || (stderr.contains("remote-debugging") && stderr.contains("policy"))
+    {
+        return ChromeLaunchFailureKind::RemoteDebuggingBlocked;
+    }
+
+    ChromeLaunchFailureKind::Other
+}
+
+fn relevant_chrome_stderr(tail: &VecDeque<String>, kind: ChromeLaunchFailureKind) -> Option<&str> {
+    tail.iter()
+        .rev()
+        .find(|line| {
+            let line = line.to_ascii_lowercase();
+            match kind {
+                ChromeLaunchFailureKind::SandboxUnavailable => {
+                    CHROME_SANDBOX_ERROR_MARKERS
+                        .iter()
+                        .any(|marker| line.contains(marker))
+                        || line.contains("sandbox")
+                        || line.contains("operation not permitted")
+                }
+                ChromeLaunchFailureKind::RemoteDebuggingBlocked => {
+                    CHROME_POLICY_ERROR_MARKERS
+                        .iter()
+                        .any(|marker| line.contains(marker))
+                        || (line.contains("remote-debugging") && line.contains("policy"))
+                }
+                ChromeLaunchFailureKind::Other => true,
+            }
+        })
+        .map(String::as_str)
+        .or_else(|| tail.back().map(String::as_str))
+}
+
+fn chrome_launch_error(reason: &str, tail: &VecDeque<String>) -> BrowserError {
+    if !tail.is_empty() {
+        tracing::warn!(
+            reason,
+            stderr_tail = %tail.iter().cloned().collect::<Vec<_>>().join(" | "),
+            "Chrome launch failed before exposing a DevTools endpoint"
+        );
+    }
+
+    let kind = classify_chrome_launch_failure(tail);
+    let detail = relevant_chrome_stderr(tail, kind)
+        .map(|line| format!(" Chrome stderr: {line}"))
+        .unwrap_or_default();
+    let message = match kind {
+        ChromeLaunchFailureKind::SandboxUnavailable => format!(
+            "{reason}. Chrome sandbox initialization failed. Visible browser sessions keep the \
+             sandbox enabled and will not retry with --no-sandbox. Run Nuphus in a supported \
+             desktop session or fix the container/enterprise sandbox policy.{detail}"
+        ),
+        ChromeLaunchFailureKind::RemoteDebuggingBlocked => format!(
+            "{reason}. Chrome remote debugging was blocked by a system or enterprise policy. \
+             Allow remote debugging for the selected browser, then retry.{detail}"
+        ),
+        ChromeLaunchFailureKind::Other if !detail.is_empty() => format!("{reason}.{detail}"),
+        ChromeLaunchFailureKind::Other => reason.to_string(),
+    };
+    BrowserError::Launch(message)
+}
 
 // ═══════════════════════════════════════════════════
 // Custom CDP Command types for domains not covered by chromiumoxide_cdp
@@ -932,35 +1062,29 @@ impl BrowserClient {
         let mut config_builder = BrowserConfig::builder()
             .chrome_executable(self.chrome_path.clone())
             .user_data_dir(self.profile_dir.clone())
-            // no_sandbox: required for Chrome headless mode in certain environments
-            // (e.g. containerized/CI runners or restrictive kernel configs).
-            // Risk mitigation: Nuphus enforces CSP restrictions and only navigates
-            // to user-specified URLs; arbitrary web browsing is not exposed.
-            .no_sandbox()
             .viewport(viewport);
 
         if headless {
-            config_builder = config_builder.new_headless_mode();
+            // Some containerized headless environments cannot provide a Chrome sandbox.
+            config_builder = config_builder.new_headless_mode().no_sandbox();
         } else {
-            config_builder = config_builder.with_head();
+            // A visible browser inherits Chrome's normal defaults so framework-specific launch
+            // settings do not alter capabilities that pages can observe.
+            config_builder = config_builder.with_head().disable_default_args();
         }
 
         // ── Launch arguments ──
         // Common flags, present in both modes. `--disable-blink-features=AutomationControlled`
-        // stops Chrome from exposing the CDP automation state (`navigator.webdriver`), which a
-        // real user's browser never sets — the single most flaggable signature of automation.
+        // prevents the control channel alone from setting `navigator.webdriver` for the user's
+        // visible browser session.
         config_builder = config_builder
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-blink-features=AutomationControlled")
-            .arg("--disable-popup-blocking") // keep `window.open` flows from being lost mid-workflow
-            .arg("--metrics-recording-only")
-            .arg("--safebrowsing-disable-auto-update");
+            .arg("--disable-popup-blocking"); // keep `window.open` flows from being lost mid-workflow
 
-        // Headed mode is a real, user-visible Chrome: keep its fingerprint indistinguishable from
-        // a normal install (real GPU/WebGL, extensions present, background features on). The
-        // flags below are headless-only stability/perf optimizations that leak automation
-        // signals when carried into headed mode.
+        // Headed mode is user-visible, so retain Chrome's normal GPU, extension, and background
+        // behavior. The flags below remain headless-only stability/performance optimizations.
         if headless {
             config_builder = config_builder
                 .arg("--disable-default-apps")
@@ -972,6 +1096,8 @@ impl BrowserClient {
                 .arg("--disable-background-timer-throttling")
                 .arg("--disable-backgrounding-occluded-windows")
                 .arg("--disable-renderer-backgrounding")
+                .arg("--metrics-recording-only")
+                .arg("--safebrowsing-disable-auto-update")
                 .arg("--disable-features=TranslateUI");
         }
 
@@ -997,6 +1123,7 @@ impl BrowserClient {
         let inner_stderr = stderr.into_inner(); // tokio::process::ChildStderr
         let mut reader = tokio::io::BufReader::new(inner_stderr);
         let mut line = String::new();
+        let mut stderr_tail = VecDeque::with_capacity(CHROME_STDERR_MAX_LINES);
         // Read stderr line-by-line with 20s timeout to find DevTools URL
         let timeout = tokio::time::sleep(std::time::Duration::from_secs(20));
         tokio::pin!(timeout);
@@ -1005,25 +1132,34 @@ impl BrowserClient {
             tokio::select! {
                 _ = &mut timeout => {
                     let _ = child.kill().await;
-                    return Err(BrowserError::Launch("timeout waiting for DevTools URL".into()));
+                    return Err(chrome_launch_error(
+                        "timeout waiting for DevTools URL",
+                        &stderr_tail,
+                    ));
                 }
                 result = reader.read_line(&mut line) => {
                     match result {
                         Ok(0) => {
-                            return Err(BrowserError::Launch(
-                                "Chrome stderr closed before DevTools URL appeared".into()
-                            ));
+                            let reason = match child.try_wait() {
+                                Ok(Some(status)) => format!(
+                                    "Chrome exited with {status} before DevTools URL appeared"
+                                ),
+                                _ => "Chrome stderr closed before DevTools URL appeared".into(),
+                            };
+                            return Err(chrome_launch_error(&reason, &stderr_tail));
                         }
                         Ok(_) => {
                             if let Some(url) = line.trim().strip_prefix("DevTools listening on ") {
                                 break url.to_string();
                             }
+                            push_chrome_stderr(&mut stderr_tail, &line);
                             line.clear();
                         }
                         Err(e) => {
                             let _ = child.kill().await;
-                            return Err(BrowserError::Launch(
-                                format!("stderr read error: {e}")
+                            return Err(chrome_launch_error(
+                                &format!("stderr read error: {e}"),
+                                &stderr_tail,
                             ));
                         }
                     }
@@ -1032,9 +1168,10 @@ impl BrowserClient {
         };
 
         // Connect to Chrome via the extracted WebSocket URL
-        let (browser, mut handler) = Browser::connect(&ws_url)
-            .await
-            .map_err(|e| BrowserError::Launch(format!("CDP connect failed: {e}")))?;
+        let (browser, mut handler) =
+            Browser::connect_with_config(&ws_url, runtime_safe_handler_config())
+                .await
+                .map_err(|e| BrowserError::Launch(format!("CDP connect failed: {e}")))?;
 
         // Start handler running in background
         tokio::spawn(async move { while handler.next().await.is_some() {} });
@@ -1068,11 +1205,13 @@ impl BrowserClient {
             .ok_or_else(|| BrowserError::Launch("DevToolsActivePort: missing ws path".into()))?;
         let ws_url = format!("ws://127.0.0.1:{port}{ws_path}");
 
-        let (browser, mut handler) =
-            tokio::time::timeout(std::time::Duration::from_secs(3), Browser::connect(&ws_url))
-                .await
-                .map_err(|_| BrowserError::Launch("attach timed out".into()))?
-                .map_err(|e| BrowserError::Launch(format!("attach connect failed: {e}")))?;
+        let (browser, mut handler) = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            Browser::connect_with_config(&ws_url, runtime_safe_handler_config()),
+        )
+        .await
+        .map_err(|_| BrowserError::Launch("attach timed out".into()))?
+        .map_err(|e| BrowserError::Launch(format!("attach connect failed: {e}")))?;
 
         // Start handler running in background (same lifetime as the launch path)
         tokio::spawn(async move { while handler.next().await.is_some() {} });
@@ -1244,15 +1383,15 @@ impl BrowserClient {
             })?
             .to_string();
 
-        let (browser, mut handler) =
-            tokio::time::timeout(std::time::Duration::from_secs(5), Browser::connect(&ws_url))
-                .await
-                .map_err(|_| {
-                    BrowserError::Launch(format!("external browser ws connect timed out: {ws_url}"))
-                })?
-                .map_err(|e| {
-                    BrowserError::Launch(format!("external browser ws connect failed: {e}"))
-                })?;
+        let (browser, mut handler) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            Browser::connect_with_config(&ws_url, runtime_safe_handler_config()),
+        )
+        .await
+        .map_err(|_| {
+            BrowserError::Launch(format!("external browser ws connect timed out: {ws_url}"))
+        })?
+        .map_err(|e| BrowserError::Launch(format!("external browser ws connect failed: {e}")))?;
 
         // Start handler running in background (same lifetime as the launch path)
         tokio::spawn(async move { while handler.next().await.is_some() {} });
@@ -3500,6 +3639,64 @@ mod tests {
     // ── Unit tests (no browser) ──
 
     #[test]
+    fn chrome_launch_diagnostics_classify_sandbox_failures() {
+        for stderr in [
+            "Running as root without --no-sandbox is not supported.",
+            "No usable sandbox! Update your kernel.",
+            "The SUID sandbox helper binary was found, but is not configured correctly.",
+            "Failed to move to new namespace: Operation not permitted",
+        ] {
+            let mut tail = VecDeque::new();
+            push_chrome_stderr(&mut tail, stderr);
+            push_chrome_stderr(&mut tail, "Chrome shutdown completed");
+            assert_eq!(
+                classify_chrome_launch_failure(&tail),
+                ChromeLaunchFailureKind::SandboxUnavailable
+            );
+            let message = chrome_launch_error("Chrome exited", &tail).to_string();
+            assert!(message.contains("sandbox initialization failed"));
+            assert!(message.contains("will not retry with --no-sandbox"));
+            assert!(message.contains(stderr));
+        }
+    }
+
+    #[test]
+    fn chrome_launch_diagnostics_classify_enterprise_policy() {
+        let mut tail = VecDeque::new();
+        push_chrome_stderr(&mut tail, "Remote debugging is disabled by policy");
+        assert_eq!(
+            classify_chrome_launch_failure(&tail),
+            ChromeLaunchFailureKind::RemoteDebuggingBlocked
+        );
+        let message = chrome_launch_error("Chrome exited", &tail).to_string();
+        assert!(message.contains("system or enterprise policy"));
+        assert!(message.contains("Allow remote debugging"));
+    }
+
+    #[test]
+    fn chrome_launch_diagnostics_keep_other_failures_generic_and_bounded() {
+        let mut tail = VecDeque::new();
+        for index in 0..(CHROME_STDERR_MAX_LINES + 3) {
+            push_chrome_stderr(
+                &mut tail,
+                &format!("ordinary failure {index} {}", "x".repeat(800)),
+            );
+        }
+        assert_eq!(tail.len(), CHROME_STDERR_MAX_LINES);
+        assert!(tail.front().is_some_and(|line| line.contains("failure 3")));
+        assert!(tail
+            .iter()
+            .all(|line| line.chars().count() <= CHROME_STDERR_MAX_LINE_CHARS));
+        assert_eq!(
+            classify_chrome_launch_failure(&tail),
+            ChromeLaunchFailureKind::Other
+        );
+        let message = chrome_launch_error("Chrome exited", &tail).to_string();
+        assert!(message.contains("ordinary failure"));
+        assert!(!message.contains("sandbox initialization failed"));
+    }
+
+    #[test]
     fn actionability_script_escapes_selector_and_embeds_constants() {
         let js = BrowserClient::actionability_script("a.b'c\\d", "el.click(); return 'clicked';");
         // Selector escaping: backslash doubled, single quote escaped
@@ -3830,6 +4027,163 @@ mod tests {
             Some("hidden".to_string()),
             "navigator.webdriver should be hidden after anti-detection injection, got: {value}"
         );
+    }
+
+    const CDP_RUNTIME_PROBE_PAGE: &str = r#"<!doctype html><html><head><script>
+window.__nuphusCdpDetected = false;
+const originalPrepareStackTrace = Error.prepareStackTrace;
+Error.prepareStackTrace = function() {
+    window.__nuphusCdpDetected = true;
+    return originalPrepareStackTrace;
+};
+console.log(new Error('nuphus-cdp-probe'));
+document.addEventListener('DOMContentLoaded', function() {
+    window.__nuphusCdpDetectedAtDOMContentLoaded = window.__nuphusCdpDetected;
+    Error.prepareStackTrace = originalPrepareStackTrace;
+}, { once: true });
+</script></head><body><h1 id="ready">ready</h1></body></html>"#;
+
+    async fn assert_runtime_probe(headless: bool, profile_name: &str) {
+        let mut client = isolated_client(profile_name);
+        client.launch(headless).await.expect("launch Chrome");
+        assert_runtime_probe_on_client(&mut client, profile_name).await;
+
+        client.close().await.expect("close Chrome");
+        cleanup_profile(profile_name);
+    }
+
+    async fn assert_runtime_probe_on_client(client: &mut BrowserClient, fixture_name: &str) {
+        client
+            .navigate(&fixture_url(fixture_name, CDP_RUNTIME_PROBE_PAGE))
+            .await
+            .expect("navigate to runtime probe");
+
+        let detected = client
+            .evaluate("window.__nuphusCdpDetectedAtDOMContentLoaded === true")
+            .await
+            .expect("read early runtime probe");
+        assert_eq!(detected, serde_json::Value::Bool(false));
+
+        let page = client.page.as_ref().expect("page exists").clone();
+        let title = {
+            let page = page.lock().await;
+            page.evaluate_function("() => document.querySelector('#ready').textContent")
+                .await
+                .expect("function evaluation uses an on-demand context")
+                .into_value::<String>()
+                .expect("string result")
+        };
+        assert_eq!(title, "ready");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn runtime_probe_does_not_detect_cdp_headless() {
+        assert_runtime_probe(true, "runtime_probe_headless").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "launches a visible Chrome window; requires a desktop session"]
+    async fn runtime_probe_does_not_detect_cdp_headed() {
+        assert_runtime_probe(false, "runtime_probe_headed").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "launches real Chrome and attaches a second CDP client"]
+    async fn runtime_probe_does_not_detect_external_attachment() {
+        let owner_profile = "runtime_probe_external_owner";
+        let mut owner = isolated_client(owner_profile);
+        owner.launch(true).await.expect("launch owner Chrome");
+
+        let port_file = owner.profile_dir.join("DevToolsActivePort");
+        let port = std::fs::read_to_string(&port_file)
+            .expect("read owner DevToolsActivePort")
+            .lines()
+            .next()
+            .expect("debug port line")
+            .parse::<u16>()
+            .expect("numeric debug port");
+
+        let attached_profile = "runtime_probe_external_attached";
+        let mut attached = isolated_client(attached_profile);
+        attached.external_cdp_url = Some(format!("http://127.0.0.1:{port}"));
+        attached
+            .launch(false)
+            .await
+            .expect("attach external client");
+        assert_runtime_probe_on_client(&mut attached, attached_profile).await;
+
+        attached.close().await.expect("close attached client");
+        owner.close().await.expect("close owner Chrome");
+        cleanup_profile(attached_profile);
+        cleanup_profile(owner_profile);
+    }
+
+    #[tokio::test]
+    #[ignore = "network acceptance test; launches a visible Chrome window"]
+    async fn device_and_browser_info_does_not_detect_managed_browser() {
+        let profile_name = "device_and_browser_info";
+        let mut client = isolated_client(profile_name);
+        client.launch(false).await.expect("launch headed Chrome");
+        client
+            .navigate("https://deviceandbrowserinfo.com/are_you_a_bot")
+            .await
+            .expect("navigate to bot detection page");
+
+        let report = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                let value = client
+                    .evaluate(
+                        r#"(() => {
+                            const sources = [...document.querySelectorAll('pre, code')]
+                                .map(node => node.textContent || '');
+                            sources.push(document.body?.innerText || '');
+                            for (const source of sources) {
+                                const marker = source.indexOf('"isBot"');
+                                if (marker < 0) continue;
+                                const start = source.lastIndexOf('{', marker);
+                                if (start < 0) continue;
+                                let depth = 0, quoted = false, escaped = false;
+                                for (let i = start; i < source.length; i++) {
+                                    const char = source[i];
+                                    if (quoted) {
+                                        if (escaped) escaped = false;
+                                        else if (char === '\\') escaped = true;
+                                        else if (char === '"') quoted = false;
+                                    } else if (char === '"') quoted = true;
+                                    else if (char === '{') depth++;
+                                    else if (char === '}' && --depth === 0) {
+                                        try { return JSON.parse(source.slice(start, i + 1)); }
+                                        catch (_) { break; }
+                                    }
+                                }
+                            }
+                            return null;
+                        })()"#,
+                    )
+                    .await
+                    .expect("read bot detection report");
+                if !value.is_null() {
+                    break value;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .expect("bot detection report timed out");
+
+        assert_eq!(report["isBot"], false, "full report: {report}");
+        assert_eq!(
+            report["details"]["isAutomatedWithCDP"], false,
+            "full report: {report}"
+        );
+        assert_eq!(
+            report["details"]["hasInconsistentTimingResolution"], false,
+            "full report: {report}"
+        );
+
+        client.close().await.expect("close Chrome");
+        cleanup_profile(profile_name);
     }
 
     /// Connection-level self-healing: after the Chrome child process is killed (an externally
