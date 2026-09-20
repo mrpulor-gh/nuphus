@@ -349,13 +349,9 @@ pub fn set_language(lang: String) -> Result<String, String> {
 }
 
 /// 项目目录展示名（路径末段）：兼容正反斜杠与结尾分隔符；空路径 → 空串。
+/// 展示名规则唯一实现在 utils（书签 / 会话归属自动组共用同一规则）。
 fn project_dir_display_name(dir: &str) -> String {
-    dir.trim()
-        .trim_end_matches(['\\', '/'])
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or("")
-        .to_string()
+    nuphus::utils::dir_display_name(dir)
 }
 
 /// 项目记忆标签（`memory/{tag}.md` 的文件名）；空目录 → "default"。
@@ -434,10 +430,15 @@ pub fn get_project_bookmarks() -> Result<Vec<nuphus::config::ProjectBookmark>, S
 }
 
 /// 写入项目书签：整表替换（前端增删后提交），去空、按路径去重、名称兜底取目录名。
+///
+/// `archived` 不由本命令清除：同路径书签沿用已落盘的归档标记（前端提交 `true` 时亦
+/// 沿用）——归档状态只经 [`set_project_folder_archived`] 增删，避免整表替换静默
+/// 取消归档。
 #[tauri::command]
 pub fn set_project_bookmarks(
     bookmarks: Vec<nuphus::config::ProjectBookmark>,
 ) -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
+    let existing = nuphus::config::UserPreferences::load().project_bookmarks;
     let mut normalized: Vec<nuphus::config::ProjectBookmark> = Vec::new();
     for bm in bookmarks {
         let path = bm.path.trim().to_string();
@@ -449,7 +450,17 @@ pub fn set_project_bookmarks(
         } else {
             bm.name.trim().to_string()
         };
-        normalized.push(nuphus::config::ProjectBookmark { name, path });
+        let candidate = nuphus::config::ProjectBookmark {
+            name,
+            path,
+            archived: bm.archived,
+        };
+        let archived = keep_archived(&existing, &candidate);
+        normalized.push(nuphus::config::ProjectBookmark {
+            name: candidate.name,
+            path: candidate.path,
+            archived,
+        });
     }
 
     let mut prefs = nuphus::config::UserPreferences::load();
@@ -459,9 +470,144 @@ pub fn set_project_bookmarks(
     Ok(normalized)
 }
 
+/// 归档 / 恢复项目文件夹（归档 = 在会话工作台隐藏，可恢复）。
+///
+/// - 已有书签 → 只改归档标记，名称与顺序不变；
+/// - 未收藏但有会话的自动组 → 补一条 `archived=true` 的书签记录（否则无锚点可恢复）；
+/// - 恢复不存在的记录 → 幂等无操作；
+/// - 归档只影响会话台分组展示，**不触碰 `project_dir`**，记忆检索的项目过滤不受影响。
+#[tauri::command]
+pub fn set_project_folder_archived(
+    path: String,
+    archived: bool,
+) -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err("empty_path".to_string());
+    }
+    let mut prefs = nuphus::config::UserPreferences::load();
+    prefs.project_bookmarks = apply_folder_archived(prefs.project_bookmarks, &path, archived);
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Project folder archived={archived}: {path}");
+    Ok(prefs.project_bookmarks)
+}
+
+/// 整表替换时的归档保留判定（纯函数，便于测试）：同路径书签沿用已落盘的归档标记，
+/// 归档状态只能经 [`set_project_folder_archived`] 变更。
+fn keep_archived(
+    existing: &[nuphus::config::ProjectBookmark],
+    incoming: &nuphus::config::ProjectBookmark,
+) -> bool {
+    incoming.archived
+        || existing
+            .iter()
+            .any(|x| x.path == incoming.path && x.archived)
+}
+
+/// 归档状态应用（纯函数，便于测试）：在既有书签表上设置某目录的归档标记。
+fn apply_folder_archived(
+    bookmarks: Vec<nuphus::config::ProjectBookmark>,
+    path: &str,
+    archived: bool,
+) -> Vec<nuphus::config::ProjectBookmark> {
+    let mut out = bookmarks;
+    match out.iter_mut().find(|b| b.path.trim() == path) {
+        Some(bm) => bm.archived = archived,
+        // 自动组（未收藏）归档：补一条归档记录，作为恢复入口的锚点
+        None if archived => out.push(nuphus::config::ProjectBookmark {
+            name: project_dir_display_name(path),
+            path: path.to_string(),
+            archived: true,
+        }),
+        // 无记录可恢复：幂等无操作
+        None => {}
+    }
+    out
+}
+
+/// 设置会话分组折叠上限（全局单值，设置中心入口）。
+///
+/// 0 无意义（会把每个分组都折叠成空列表）→ 显式拒绝，避免配置静默失效。
+#[tauri::command]
+pub fn set_session_group_collapsed_limit(limit: u32) -> Result<u32, String> {
+    if limit == 0 {
+        return Err("invalid_limit".to_string());
+    }
+    let mut prefs = nuphus::config::UserPreferences::load();
+    prefs.session_group_collapsed_limit = limit;
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Session group collapsed limit set to: {limit}");
+    Ok(prefs.session_group_limit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 与生产书签结构一致（name/path/archived）。
+    fn bookmark(name: &str, path: &str, archived: bool) -> nuphus::config::ProjectBookmark {
+        nuphus::config::ProjectBookmark {
+            name: name.to_string(),
+            path: path.to_string(),
+            archived,
+        }
+    }
+
+    /// 归档 / 恢复往返：书签上的标记可逆，名称与顺序不变。
+    #[test]
+    fn folder_archive_restore_roundtrip() {
+        let initial = vec![
+            bookmark("A", "E:\\work\\A", false),
+            bookmark("B", "E:\\work\\B", false),
+        ];
+
+        let archived = apply_folder_archived(initial, "E:\\work\\A", true);
+        assert_eq!(archived.len(), 2, "归档不得增删书签");
+        assert!(archived[0].archived, "目标书签应被标记归档");
+        assert_eq!(archived[0].name, "A");
+        assert!(!archived[1].archived, "其它书签不受影响");
+
+        let restored = apply_folder_archived(archived, "E:\\work\\A", false);
+        assert_eq!(restored.len(), 2);
+        assert!(!restored[0].archived, "恢复后归档标记应被清除");
+        assert_eq!(restored[0].path, "E:\\work\\A");
+    }
+
+    /// 未收藏的自动组也能归档（补一条 archived=true 记录作为恢复锚点）；
+    /// 恢复不存在的记录是幂等无操作。
+    #[test]
+    fn archive_auto_group_creates_anchor_record() {
+        let archived = apply_folder_archived(Vec::new(), "E:\\work\\Auto", true);
+        assert_eq!(archived.len(), 1, "自动组归档应补一条记录");
+        assert!(archived[0].archived);
+        assert_eq!(archived[0].name, "Auto", "名称兜底取目录末段");
+        assert_eq!(archived[0].path, "E:\\work\\Auto");
+
+        // 无记录时恢复：不新增、不报错
+        assert!(apply_folder_archived(Vec::new(), "E:\\work\\Auto", false).is_empty());
+    }
+
+    /// 归档标记不被整表替换清除：同路径书签沿用已落盘的 archived（回归保护）。
+    #[test]
+    fn bookmarks_replacement_preserves_archived_flag() {
+        let existing = vec![
+            bookmark("A", "E:\\work\\A", true),
+            bookmark("B", "E:\\work\\B", false),
+        ];
+        // 旧前端整表替换时不提交 archived 字段（serde default → false）
+        assert!(
+            keep_archived(&existing, &bookmark("A", "E:\\work\\A", false)),
+            "已归档书签在整表替换后必须保持归档"
+        );
+        assert!(
+            !keep_archived(&existing, &bookmark("B", "E:\\work\\B", false)),
+            "未归档书签不得被误标归档"
+        );
+        assert!(
+            keep_archived(&existing, &bookmark("C", "E:\\work\\C", true)),
+            "显式提交归档标记应被接受"
+        );
+    }
 
     fn cmd(args: &[&str]) -> Vec<std::ffi::OsString> {
         args.iter().map(std::ffi::OsString::from).collect()
