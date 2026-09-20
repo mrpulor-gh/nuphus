@@ -647,14 +647,14 @@ export function ChatPanel({
     return () => clearInterval(t)
   }, [HINTS.length])
 
-  // ── 项目中心（唯一入口：输入框 chip / `/project` 斜杠命令）──
+  // ── 项目中心（入口：会话栏「项目」行右端 📁+ → setDirOpen(true)）──
   // 界面复用 ProjectCenter（原「Ctrl+K → 项目配置」版式）；数据源为后端配置
-  // （preferences 是当前目录与书签的单一事实源）。此处持有 chip 展示与快捷菜单数据。
+  // （preferences 是当前目录与书签的单一事实源）。此处只持有输入框 chip 的展示目录。
   const [projectDir, setProjectDir] = useState('')
-  const [projectBookmarks, setProjectBookmarks] = useState<ProjectBookmark[]>([])
 
-  // 启动加载项目状态（chip 需在未打开弹窗前即可显示当前项目名）
-  // + 一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）
+  // 启动加载当前项目目录（输入框 chip 需在未打开弹窗前即可显示归属文件夹名）
+  // + 一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）。
+  // 书签本组件不再持有：输入框 chip 已改为纯展示，书签的唯一消费方是项目中心弹窗。
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -663,7 +663,6 @@ export function ChatPanel({
         if (cancelled) return
         setProjectDir(state.path)
         const merged = migrateLegacyProjectBookmarks(bookmarks)
-        setProjectBookmarks(merged ?? bookmarks)
         if (merged) await setProjectBookmarksCmd(merged)
       } catch {
         /* 启动读取失败：保持空态，不影响会话 */
@@ -674,7 +673,7 @@ export function ChatPanel({
     }
   }, [])
 
-  /** chip 快捷菜单选中书签 → 切换项目（落盘 + 后端通知活跃会话 + HUD 反馈）。
+  /** 切换工作目录（落盘 + 后端向活跃会话注入变更提醒 + HUD 反馈）。
    *  返回 true = 已切到目标目录；会话工作台「组内新建对话 / 点击组内会话」据此判定
    *  是否需要继续（失败已由 HUD 反馈，不重复报错）。 */
   const switchProject = useCallback(async (path: string): Promise<boolean> => {
@@ -2129,9 +2128,6 @@ export function ChatPanel({
           onImageAttach={handleImageAttach}
           onFileAttach={handleFileAttach}
           projectDir={projectDir}
-          projectBookmarks={projectBookmarks}
-          onSwitchProject={switchProject}
-          onOpenProjectDir={() => setDirOpen(true)}
           onOpenPrinciples={onOpenPrinciples}
           onOpenAnnotations={onOpenAnnotations}
           hints={HINTS}
@@ -2147,7 +2143,7 @@ export function ChatPanel({
         />
       </div>
 
-      {/* ── 项目中心（唯一入口：输入框项目 / `/project`）：沿用原项目配置版式 ── */}
+      {/* ── 项目中心（入口：会话栏「项目」行 📁+）：沿用原项目配置版式 ── */}
       <CompactModal
         open={dirOpen}
         onClose={() => setDirOpen(false)}
@@ -2160,10 +2156,6 @@ export function ChatPanel({
             setProjectDir(state.path)
             setDirOpen(false)
             hudUpdate(`项目已切换：${state.name}`, 'info')
-            // 弹窗内可能增删过书签 → 同步 chip 快捷菜单数据
-            getProjectBookmarks()
-              .then(setProjectBookmarks)
-              .catch(() => {})
           }}
         />
       </CompactModal>

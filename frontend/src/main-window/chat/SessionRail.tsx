@@ -69,8 +69,8 @@ interface SessionRailProps {
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
   /**
-   * 打开项目中心弹窗（复用输入框项目 chip 的同一入口：ChatPanel `setDirOpen(true)`）。
-   * 「项目」行右端 📁+ 走这条既有流程：选目录 → 命名 → 加入书签。
+   * 打开项目中心弹窗（ChatPanel 唯一入口：`setDirOpen(true)`）。
+   * 「项目」行右端 📁+ 走这条链路：选目录 → 命名 → 加入书签。
    */
   onOpenProjectDir?: () => void
   /**

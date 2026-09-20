@@ -112,17 +112,8 @@ interface ChatInputBarProps {
   onImageAttach: (file: { name: string; dataUrl: string }) => void
   /** 点击引用栏文档 chip 预览（父级 PreviewOverlay） */
   onPreviewFile?: (path: string) => void
-  /** 项目目录 */
+  /** 项目目录（chip 只展示归属，不含切换 / 管理入口） */
   projectDir: string
-  onOpenProjectDir: () => void
-  /**
-   * 项目书签（chip 快捷切换菜单的数据源）。
-   * `archived: true` = 已归档（语义「隐藏」）→ 本组件过滤后才渲染菜单；
-   * 数据源本身保持全量（项目中心仍需展示「已归档文件夹」区）。
-   */
-  projectBookmarks?: { name: string; path: string; archived?: boolean }[]
-  /** 菜单里选中书签 → 切换项目（父级执行落盘 + 反馈） */
-  onSwitchProject?: (path: string) => void
   /** 打开教导原则弹窗（Session Shelf 配套：原则/标注自记忆页迁入） */
   onOpenPrinciples?: () => void
   /** 打开关系标注弹窗 */
@@ -186,9 +177,6 @@ export function ChatInputBar({
   onFileSelect,
   onImageAttach,
   projectDir,
-  onOpenProjectDir,
-  projectBookmarks = [],
-  onSwitchProject,
   onOpenPrinciples,
   onOpenAnnotations,
   hints,
@@ -214,9 +202,8 @@ export function ChatInputBar({
   const gateLocked = gate.locked
   const gateLockNotice =
     gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
-  // ── 工具弹窗（附件/图片/项目目录 合并入口）──
+  // ── 工具弹窗（附件/图片/原则/标注 合并入口）──
   const [toolMenuOpen, setToolMenuOpen] = useState(false)
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   /** workflow 扳手菜单（hover/click 展开）：工作流画布 / 工作流列表 / 工具箱（Ctrl+U） */
   const [wfMenuOpen, setWfMenuOpen] = useState(false)
   const wfMenuRef = useRef<HTMLDivElement>(null)
@@ -266,18 +253,6 @@ export function ChatInputBar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [toolMenuOpen])
-  // ── 项目快捷切换菜单：点 chip 直接列出书签（一次点击即切换，不必先进管理弹窗）──
-  const projectMenuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!projectMenuOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
-        setProjectMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [projectMenuOpen])
   // ── ctx 详情弹窗（hover 显示 cache/tok/step/ms，带悬停桥接防间隙丢失）──
   const [ctxHover, setCtxHover] = useState(false)
   const ctxTimer = useRef<number | null>(null)
@@ -759,17 +734,13 @@ export function ChatInputBar({
       : null
   const ttftDisplay =
     ttftMs && Number.isFinite(ttftMs) && ttftMs > 0 ? fmtDur(Math.round(ttftMs)) : null
-  // 项目目录书签名：取路径末段（兼容 Windows 反斜杠与结尾分隔符），未设置回退空串
+  // 项目目录显示名：取路径末段（兼容 Windows 反斜杠与结尾分隔符），未设置回退空串
   const projectDirName = projectDir
     ? projectDir
         .replace(/[\\/]+$/, '')
         .split(/[\\/]/)
         .pop() || projectDir
     : ''
-  // 项目 chip 下拉数据源：归档 = 隐藏（与项目中心「已归档文件夹」区同一口径）。
-  // 过滤放在消费端：ChatPanel 的 state 保持全量（项目中心仍要列出归档项供恢复）。
-  // chip 是否开菜单与菜单项都走这一处口径，杜绝「有书签但菜单空」的矛盾态。
-  const visibleBookmarks = projectBookmarks.filter(b => !b.archived)
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -923,60 +894,17 @@ export function ChatInputBar({
         </div>
         {/* ── 右下角操作组：+ 工具 / 语音 / 发送 固定在整个输入框右下角 ── */}
         <div className="input-actions">
-          {/* ── 项目目录（自「+」菜单移出）：文件夹图标 + 当前目录名。
-              点击＝直接列出书签一键切换（快捷路径）；无可见书签时直接进管理弹窗
-              （已归档书签不计入「可见」，语义同项目中心「已归档文件夹」）── */}
-          <div className="input-project-wrap" ref={projectMenuRef}>
-            <button
-              type="button"
-              className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
-              title={projectDir || t('input.projectDir')}
-              onClick={() =>
-                visibleBookmarks.length > 0 ? setProjectMenuOpen(o => !o) : onOpenProjectDir()
-              }
-            >
-              <IconFolder size={14} />
-              <span className="input-project-chip-name">
-                {projectDirName || t('input.projectDir')}
-              </span>
-            </button>
-            {projectMenuOpen && (
-              <div className="input-tool-menu input-project-menu" role="menu">
-                {visibleBookmarks.map(b => (
-                  <button
-                    key={b.path}
-                    type="button"
-                    className="input-tool-menu-item"
-                    role="menuitem"
-                    title={b.path}
-                    onClick={() => {
-                      setProjectMenuOpen(false)
-                      onSwitchProject?.(b.path)
-                    }}
-                  >
-                    <IconFolder size={14} />
-                    <span className="input-tool-menu-label">{b.name}</span>
-                    {b.path === projectDir && (
-                      <span className="input-project-menu-current">当前</span>
-                    )}
-                  </button>
-                ))}
-                <div className="input-tool-menu-divider" />
-                <button
-                  type="button"
-                  className="input-tool-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setProjectMenuOpen(false)
-                    onOpenProjectDir()
-                  }}
-                >
-                  <IconWrench size={14} />
-                  <span className="input-tool-menu-label">管理项目…</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* ── 项目目录：纯展示当前对话归属的项目文件夹（不可点击、无菜单）。
+              管理 / 切换入口在会话栏「项目」行右端 📁+，本组件不持有任何项目入口 ── */}
+          <span
+            className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
+            title={projectDir || t('input.projectDir')}
+          >
+            <IconFolder size={14} />
+            <span className="input-project-chip-name">
+              {projectDirName || t('input.projectDir')}
+            </span>
+          </span>
           {/* ── 工具入口「+」：附件/图片合并弹窗 ── */}
           <div className="input-tool-plus-wrap" ref={toolMenuRef}>
             <IconButton
