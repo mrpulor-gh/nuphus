@@ -10,13 +10,14 @@
 //! - Call：workflow_id 非空；目标存在性 + 循环调用链见 validate_calls（异步）
 //! - Script：code 非空、runtime 白名单
 //! - {{var}} 前向引用检查（warning 级：变量可能由运行时 inputs/params.json 注入）
+//! - inputs 声明 ↔ 引用一致性：引用 {{inputs.x}} 未声明 → error；声明但未被引用 → warning
 //!
 //! 编译产出：ValidationReport（errors 阻断执行，warnings 仅提示）
 
 use crate::workflow::store::WorkflowStore;
 use crate::workflow::types::{Action, Condition, Step, Workflow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// 编译报告（仅验证，不修改数据）
 /// Serialize：供 wf_validate / wf_save 命令回传前端（画布 ProblemsPanel 消费）
@@ -44,6 +45,12 @@ struct Ctx<'a> {
     models: Option<&'a crate::config::ModelRegistry>,
     /// 是否在 loop 内部（用于 break/continue 检查）
     in_loop: bool,
+    /// 声明的外部输入名（workflow.inputs，声明顺序）
+    declared_inputs: Vec<String>,
+    /// 步骤模板/条件中实际引用到的输入名（用于「声明未被引用」warning）
+    referenced_inputs: BTreeSet<String>,
+    /// 已出现的未声明输入引用（按名字去重，finalize 时统一报 error）
+    missing_inputs: BTreeSet<String>,
 }
 
 impl Ctx<'_> {
@@ -56,6 +63,55 @@ impl Ctx<'_> {
         }
         if !self.seen_ids.insert(id.clone()) {
             self.errors.push(format!("重复的步骤 ID: '{}'", id));
+        }
+    }
+
+    /// 登记一处 `inputs.<name>` 引用（步骤模板与条件 VarRef 均经此路径）。
+    /// 未声明的引用先收集去重，遍历结束后由 finalize_inputs 统一报 error。
+    fn note_input_ref(&mut self, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        if self.declared_inputs.iter().any(|d| d == name) {
+            self.referenced_inputs.insert(name.to_string());
+        } else {
+            self.missing_inputs.insert(name.to_string());
+        }
+    }
+
+    /// 汇总 inputs 校验：未声明引用 → error；声明但全程未被引用 → warning
+    fn finalize_inputs(&mut self) {
+        for name in &self.missing_inputs {
+            self.errors.push(format!(
+                "未声明的输入引用 {{{{inputs.{}}}}}（请在 workflow.inputs 声明）",
+                name
+            ));
+        }
+        for name in &self.declared_inputs {
+            if !self.referenced_inputs.contains(name) {
+                self.warnings
+                    .push(format!("输入 {} 已声明但未被任何步骤引用", name));
+            }
+        }
+    }
+
+    /// 检查 VarRef 中的变量引用。
+    /// `inputs.<name>` → 登记声明一致性（未声明由 finalize_inputs 报 error）；
+    /// 其余变量沿用前向引用 warning 语义。
+    fn check_var_ref(&mut self, r: &crate::workflow::types::VarRef, owner: &str) {
+        if let crate::workflow::types::VarRef::Var { var } = r {
+            if let Some(name) = var.strip_prefix("inputs.") {
+                if let Some(first) = name.split('.').next() {
+                    self.note_input_ref(first);
+                }
+                return;
+            }
+            if !self.captured.contains(var) && var != "_index" && !var.starts_with("ENV:") {
+                self.warnings.push(format!(
+                    "条件步骤 '{}': 变量 '{}' 尚未被先前步骤捕获，求值将为 false（运行时可能由 inputs 注入）",
+                    owner, var
+                ));
+            }
         }
     }
 
@@ -74,15 +130,15 @@ impl Ctx<'_> {
                 }
                 // 检查 VarRef 中的变量引用
                 for r in regex {
-                    check_var_ref(r, &self.captured, owner, &mut self.warnings);
+                    self.check_var_ref(r, owner);
                 }
             }
             Condition::NotEmpty { not_empty } => {
-                check_var_ref(not_empty, &self.captured, owner, &mut self.warnings);
+                self.check_var_ref(not_empty, owner);
                 // NotEmpty: checks that var is non-empty — always valid at compile time
             }
             Condition::Empty { empty } => {
-                check_var_ref(empty, &self.captured, owner, &mut self.warnings);
+                self.check_var_ref(empty, owner);
                 // Empty: checks that var is empty — always valid at compile time
             }
             _ => {
@@ -101,7 +157,7 @@ impl Ctx<'_> {
                 };
                 if let Some(refs) = refs {
                     for r in refs {
-                        check_var_ref(r, &self.captured, owner, &mut self.warnings);
+                        self.check_var_ref(r, owner);
                     }
                 }
             }
@@ -124,8 +180,11 @@ impl Ctx<'_> {
                     .captures_iter(s)
                     .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
                     .filter(|name| {
+                        // params / inputs 为运行时注入的命名空间，前向引用 warning 不适用
+                        // （inputs 的声明一致性由 finalize_inputs 单独校验）
                         !self.captured.contains(name)
                             && name != "params"
+                            && name != "inputs"
                             && !name.starts_with("ENV:")
                     })
                     .collect();
@@ -151,20 +210,49 @@ impl Ctx<'_> {
     }
 }
 
-/// 检查 VarRef 中的变量引用是否已被捕获
-fn check_var_ref(
-    r: &crate::workflow::types::VarRef,
-    captured: &HashSet<String>,
-    owner: &str,
-    warnings: &mut Vec<String>,
-) {
-    if let crate::workflow::types::VarRef::Var { var } = r {
-        if !captured.contains(var) && var != "_index" && !var.starts_with("ENV:") {
-            warnings.push(format!(
-                "条件步骤 '{}': 变量 '{}' 尚未被先前步骤捕获，求值将为 false（运行时可能由 inputs 注入）",
-                owner, var
-            ));
+/// 收集步骤模板中引用的输入名：扫描 `{{inputs.<name>}}`（含管道写法 `{{inputs.x | ...}}`）。
+///
+/// 覆盖整棵步骤树：`seq / loop.do / if.then / if.else / wait.auto` 等嵌套子步骤随 Step
+/// 序列化一并在内，无需再手写逐变体遍历（新步骤类型/字段自动纳入）。
+fn collect_template_input_refs(steps: &[Step], out: &mut BTreeSet<String>) {
+    static INPUT_REF_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = INPUT_REF_RE.get_or_init(|| {
+        regex::Regex::new(r"\{\{\s*inputs\.([A-Za-z_][A-Za-z0-9_]*)")
+            .expect("input ref regex is statically valid")
+    });
+    for step in steps {
+        // 步骤为纯数据类型，序列化不会失败；万一失败则跳过（不阻断校验）
+        if let Ok(v) = serde_json::to_value(step) {
+            collect_input_refs_in_value(&v, re, out);
         }
+    }
+}
+
+/// 递归扫描 JSON 字符串中的 `{{inputs.<name>}}` 引用
+fn collect_input_refs_in_value(
+    v: &serde_json::Value,
+    re: &regex::Regex,
+    out: &mut BTreeSet<String>,
+) {
+    match v {
+        serde_json::Value::String(s) => {
+            for cap in re.captures_iter(s) {
+                if let Some(m) = cap.get(1) {
+                    out.insert(m.as_str().to_string());
+                }
+            }
+        }
+        serde_json::Value::Object(m) => {
+            for val in m.values() {
+                collect_input_refs_in_value(val, re, out);
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for val in a {
+                collect_input_refs_in_value(val, re, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -200,10 +288,21 @@ impl Compiler {
             tools: if tools.is_empty() { None } else { Some(tools) },
             models: registry.as_ref(),
             in_loop: false,
+            declared_inputs: workflow.inputs.iter().map(|i| i.name.clone()).collect(),
+            referenced_inputs: BTreeSet::new(),
+            missing_inputs: BTreeSet::new(),
         };
+
+        // inputs 声明一致性：先扫步骤模板，条件 VarRef 在遍历中就地登记
+        let mut template_refs = BTreeSet::new();
+        collect_template_input_refs(&workflow.steps, &mut template_refs);
+        for name in template_refs {
+            ctx.note_input_ref(&name);
+        }
 
         if workflow.steps.is_empty() {
             ctx.warnings.push("工作流没有任何步骤".to_string());
+            ctx.finalize_inputs();
             return ValidationReport {
                 passed: true,
                 warnings: ctx.warnings,
@@ -214,6 +313,7 @@ impl Compiler {
         for step in &workflow.steps {
             Self::validate_step(step, &mut ctx);
         }
+        ctx.finalize_inputs();
 
         ValidationReport {
             passed: ctx.errors.is_empty(),
@@ -311,7 +411,7 @@ impl Compiler {
                             step.name
                         ));
                     }
-                    check_var_ref(&fe.items, &ctx.captured, &step.name, &mut ctx.warnings);
+                    ctx.check_var_ref(&fe.items, &step.name);
                 }
                 if let Some(ref until) = def.until {
                     ctx.validate_condition(until, &step.name);

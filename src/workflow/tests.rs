@@ -220,8 +220,19 @@ mod store_tests {
 mod compiler_tests {
     use crate::workflow::compiler::Compiler;
     use crate::workflow::types::{
-        Action, Condition, ForEachDef, IfDef, LoopDef, Step, VarRef, Workflow,
+        Action, Condition, ForEachDef, IfDef, InputKind, InputSpec, LoopDef, Step, VarRef, Workflow,
     };
+
+    fn make_input(name: &str, required: bool, default: Option<serde_json::Value>) -> InputSpec {
+        InputSpec {
+            name: name.into(),
+            kind: InputKind::String,
+            required,
+            default,
+            description: None,
+            sensitive: false,
+        }
+    }
 
     fn make_tool(id: &str, name: &str, tool: &str, params: serde_json::Value) -> Step {
         Step {
@@ -682,12 +693,243 @@ mod compiler_tests {
             );
         }
     }
+
+    // ── 外部输入声明 ↔ 引用一致性 ──
+
+    /// 引用 {{inputs.x}} 但未声明 → error（阻断执行）
+    #[test]
+    fn validate_undeclared_input_ref_fails() {
+        let mut wf = Workflow::new("未声明输入");
+        wf.steps = vec![make_tool(
+            "s1",
+            "写文件",
+            "Write",
+            serde_json::json!({"path": "{{inputs.missing}}"}),
+        )];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(!report.passed, "未声明引用应报 error");
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e == "未声明的输入引用 {{inputs.missing}}（请在 workflow.inputs 声明）"),
+            "errors: {:?}",
+            report.errors
+        );
+    }
+
+    /// 声明后引用 → 通过，且不产生「未被引用」warning
+    #[test]
+    fn validate_declared_input_ref_passes() {
+        let mut wf = Workflow::new("声明输入");
+        wf.inputs = vec![make_input("topic", true, None)];
+        wf.steps = vec![make_tool(
+            "s1",
+            "写文件",
+            "Write",
+            serde_json::json!({"path": "{{inputs.topic}}"}),
+        )];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "errors: {:?}", report.errors);
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("已声明但未被任何步骤引用")),
+            "warnings: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 声明但全流程未被引用 → warning（不阻断执行）
+    #[test]
+    fn validate_declared_input_unused_warns() {
+        let mut wf = Workflow::new("声明未用");
+        wf.inputs = vec![make_input(
+            "unused_one",
+            false,
+            Some(serde_json::json!("x")),
+        )];
+        wf.steps = vec![make_tool(
+            "s1",
+            "读文件",
+            "Read",
+            serde_json::json!({"path": "test.txt"}),
+        )];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "errors: {:?}", report.errors);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w == "输入 unused_one 已声明但未被任何步骤引用"),
+            "warnings: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 嵌套子步骤（seq → loop.do → if.then → wait.auto）与管道写法的引用均被识别
+    #[test]
+    fn validate_nested_and_pipe_input_refs() {
+        let nested = Step {
+            id: "w1".into(),
+            name: "等待".into(),
+            action: Action::Wait {
+                wait: "等待 {{inputs.c}}".into(),
+                auto: vec![make_tool(
+                    "w1c1",
+                    "子工具",
+                    "Read",
+                    serde_json::json!({"path": "{{inputs.d}}"}),
+                )],
+            },
+            ..Default::default()
+        };
+        let if_step = Step {
+            id: "i1".into(),
+            name: "条件".into(),
+            action: Action::If {
+                def: IfDef {
+                    condition: Condition::Always { always: true },
+                    then: vec![nested],
+                    else_branch: vec![],
+                },
+            },
+            ..Default::default()
+        };
+        let loop_step = Step {
+            id: "l1".into(),
+            name: "循环".into(),
+            action: Action::Loop {
+                def: LoopDef {
+                    for_each: None,
+                    repeat: Some(1),
+                    until: None,
+                    max: 3,
+                    steps: vec![if_step],
+                },
+            },
+            ..Default::default()
+        };
+        let mut wf = Workflow::new("嵌套引用");
+        wf.inputs = vec![
+            make_input("a", false, None),
+            make_input("b", false, None),
+            make_input("c", false, None),
+            make_input("d", false, None),
+        ];
+        wf.steps = vec![
+            Step {
+                id: "s1".into(),
+                name: "顺序".into(),
+                action: Action::Seq {
+                    seq: vec![loop_step],
+                },
+                ..Default::default()
+            },
+            make_tool(
+                "t1",
+                "工具",
+                "Read",
+                serde_json::json!({"path": "a/{{inputs.a}}/{{inputs.b | default \"x\"}}"}),
+            ),
+        ];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "errors: {:?}", report.errors);
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("已声明但未被任何步骤引用")),
+            "嵌套/管道引用应计入「已引用」: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 条件 VarRef 引用输入：未声明 → error；声明 → 通过且计入「已引用」
+    #[test]
+    fn validate_condition_input_ref() {
+        let mut wf = Workflow::new("条件输入");
+        wf.steps = vec![Step {
+            id: "i1".into(),
+            name: "条件".into(),
+            action: Action::If {
+                def: IfDef {
+                    condition: Condition::NotEmpty {
+                        not_empty: VarRef::Var {
+                            var: "inputs.flag".into(),
+                        },
+                    },
+                    then: vec![],
+                    else_branch: vec![],
+                },
+            },
+            ..Default::default()
+        }];
+
+        let report = Compiler::validate_workflow(&wf);
+        assert!(!report.passed);
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("未声明的输入引用 {{inputs.flag}}")),
+            "errors: {:?}",
+            report.errors
+        );
+
+        wf.inputs = vec![make_input("flag", false, None)];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "errors: {:?}", report.errors);
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("已声明但未被任何步骤引用")),
+            "warnings: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 既有校验规则不回归：新增 inputs 规则不覆盖/不干扰其它 error 判定
+    #[test]
+    fn validate_existing_rules_unaffected_by_inputs() {
+        let mut wf = Workflow::new("回归");
+        wf.inputs = vec![make_input("topic", false, None)];
+        wf.steps = vec![
+            make_tool(
+                "s1",
+                "工具",
+                "Read",
+                serde_json::json!({"path": "{{inputs.topic}}"}),
+            ),
+            Step {
+                id: String::new(),
+                name: "无ID".into(),
+                action: Action::Break { _break: true },
+                ..Default::default()
+            },
+        ];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(!report.passed);
+        assert!(report.errors.iter().any(|e| e.contains("id 为空")));
+        assert!(report
+            .errors
+            .iter()
+            .any(|e| e.contains("break/continue 只能在 loop 内部使用")));
+        assert!(
+            !report.errors.iter().any(|e| e.contains("未声明的输入引用")),
+            "errors: {:?}",
+            report.errors
+        );
+    }
 }
 
 #[cfg(test)]
 mod serialization_tests {
     use crate::workflow::types::{
-        Action, ChatOpts, Condition, IfDef, LoopDef, OnError, Step, VarRef, Workflow,
+        Action, ChatOpts, Condition, IfDef, InputKind, InputSpec, LoopDef, OnError, Step, VarRef,
+        Workflow,
     };
 
     fn make_tool(id: &str, name: &str, tool: &str, params: serde_json::Value) -> Step {
@@ -901,5 +1143,68 @@ mod serialization_tests {
             OnError::Abort => {}
             _ => panic!("expected Abort on_error (default)"),
         }
+    }
+
+    // ── 外部输入声明（workflow.inputs）──
+
+    /// 旧 JSON（无 inputs 字段）反序列化兼容：inputs 缺省为空 vec
+    #[test]
+    fn workflow_without_inputs_field_deserializes_empty() {
+        let json = serde_json::json!({
+            "id": "w1",
+            "name": "旧工作流",
+            "status": "Draft",
+            "steps": [],
+            "doc": null,
+            "schedule": null
+        });
+        let wf: Workflow = serde_json::from_value(json).expect("旧 JSON 反序列化失败");
+        assert_eq!(wf.name, "旧工作流");
+        assert!(wf.inputs.is_empty(), "缺省应为空 vec: {:?}", wf.inputs);
+    }
+
+    /// 空 inputs 不序列化：旧文件形状保持不变（不新增字段噪声）
+    #[test]
+    fn workflow_empty_inputs_not_serialized() {
+        let wf = Workflow::new("无输入");
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(
+            !json.contains("\"inputs\""),
+            "空 inputs 不应被序列化: {json}"
+        );
+    }
+
+    /// InputSpec 往返：`type` 为 serde 别名（Rust 侧字段名 kind）
+    #[test]
+    fn input_spec_serde_round_trip() {
+        let spec = InputSpec {
+            name: "token".into(),
+            kind: InputKind::Path,
+            required: true,
+            default: Some(serde_json::json!("D:/tmp")),
+            description: Some("输入目录".into()),
+            sensitive: true,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains(r#""type":"path""#), "type 别名未生效: {json}");
+
+        let round: InputSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(round.name, "token");
+        assert_eq!(round.kind, InputKind::Path);
+        assert!(round.required);
+        assert_eq!(round.default, Some(serde_json::json!("D:/tmp")));
+        assert_eq!(round.description.as_deref(), Some("输入目录"));
+        assert!(round.sensitive);
+    }
+
+    /// 声明项省略可选字段时取默认：type=string / required=false / sensitive=false
+    #[test]
+    fn input_spec_defaults() {
+        let spec: InputSpec = serde_json::from_str(r#"{"name":"topic"}"#).unwrap();
+        assert_eq!(spec.kind, InputKind::String);
+        assert!(!spec.required);
+        assert!(spec.default.is_none());
+        assert!(spec.description.is_none());
+        assert!(!spec.sensitive);
     }
 }

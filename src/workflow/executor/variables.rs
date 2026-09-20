@@ -52,7 +52,7 @@ impl Executor {
                         let val = if let Some(env_name) = var_name.strip_prefix("ENV:") {
                             std::env::var(env_name).ok().map(serde_json::Value::String)
                         } else {
-                            vars.get(&var_name.to_string()).cloned()
+                            Self::lookup_value(var_name, vars)
                         };
                         return Self::apply_pipe(val, pipe_expr);
                     }
@@ -72,6 +72,10 @@ impl Executor {
                                 return serde_json::Value::String(val);
                             }
                         }
+                    }
+                    // 命名空间引用：{{inputs.x}} → variables["inputs"]["x"]（返回原始类型）
+                    if let Some(val) = Self::lookup_inputs_ref(inner, vars) {
+                        return val;
                     }
                 }
                 // {params.xxx} 整串引用：返回原始类型（数字/布尔/嵌套对象不字符串化）
@@ -101,6 +105,8 @@ impl Executor {
                 }
                 // 部分替换：文本中含 {params.xxx}（params.json 固化参数）
                 let result = Self::replace_params_refs(&result, vars);
+                // 部分替换：文本中含 {{inputs.x}}（声明式外部输入命名空间）
+                let result = Self::replace_inputs_refs(&result, vars);
                 serde_json::Value::String(result)
             }
             serde_json::Value::Object(map) => {
@@ -160,6 +166,64 @@ impl Executor {
                         None => out.push_str(&after[..=end]), // 未解析保留原文
                     }
                     rest = &after[end + 1..];
+                }
+                None => {
+                    out.push_str(after);
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// 命名空间取值：`inputs.x` / `inputs.x.y` → variables["inputs"] 逐层下钻。
+    /// 非 `inputs.` 前缀或路径非法 → None（顶层名字由既有分支处理，既有语义不变）。
+    fn lookup_inputs_ref(
+        name: &str,
+        vars: &HashMap<String, serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        let path = name.strip_prefix("inputs.")?;
+        let valid = !path.is_empty()
+            && path
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+        if !valid {
+            return None;
+        }
+        vars.get("inputs")
+            .and_then(|root| Self::resolve_path(root, path))
+    }
+
+    /// 变量取值：`inputs.x` 命名空间优先，其次顶层变量名（兼容既有 {{var}} 管道取值）
+    fn lookup_value(
+        name: &str,
+        vars: &HashMap<String, serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        Self::lookup_inputs_ref(name, vars).or_else(|| vars.get(name).cloned())
+    }
+
+    /// 文本内嵌 {{inputs.xxx}} 替换（未解析的保留原文，由编译期校验发现）
+    pub(super) fn replace_inputs_refs(
+        s: &str,
+        vars: &HashMap<String, serde_json::Value>,
+    ) -> String {
+        if !s.contains("{{inputs.") {
+            return s.to_string();
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        while let Some(start) = rest.find("{{inputs.") {
+            out.push_str(&rest[..start]);
+            let after = &rest[start..];
+            match after.find("}}") {
+                Some(end) => {
+                    match Self::lookup_inputs_ref(&after[9..end], vars) {
+                        Some(serde_json::Value::String(sv)) => out.push_str(&sv),
+                        Some(other) => out.push_str(&other.to_string()),
+                        None => out.push_str(&after[..end + 2]), // 未解析保留原文
+                    }
+                    rest = &after[end + 2..];
                 }
                 None => {
                     out.push_str(after);
@@ -252,7 +316,7 @@ pub(super) fn resolve_vars_str(s: &str, vars: &HashMap<String, serde_json::Value
                 let mut parts = inner.splitn(2, '|');
                 let var_name = parts.next().unwrap_or("").trim();
                 let pipe_expr = parts.next().unwrap_or("").trim();
-                let val = vars.get(var_name).cloned();
+                let val = Executor::lookup_value(var_name, vars);
                 let resolved = Executor::apply_pipe(val, pipe_expr);
                 return match resolved {
                     serde_json::Value::String(s) => s,
@@ -269,6 +333,14 @@ pub(super) fn resolve_vars_str(s: &str, vars: &HashMap<String, serde_json::Value
                         other => other.to_string(),
                     };
                 }
+            }
+            // 命名空间引用：{{inputs.x}} → variables["inputs"]["x"]
+            if let Some(val) = Executor::lookup_inputs_ref(inner, vars) {
+                return match val {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Null => String::new(),
+                    other => other.to_string(),
+                };
             }
             String::new()
         })

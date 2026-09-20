@@ -1,8 +1,11 @@
+use super::execute::resolve_declared_inputs;
 use super::*;
 use crate::workflow::events::EventBus;
 use crate::workflow::store::WorkflowStore;
 use crate::workflow::types::Workflow;
-use crate::workflow::types::{Action, ForEachDef, LoopDef, RunStatus, Step, StepRunStatus, VarRef};
+use crate::workflow::types::{
+    Action, ForEachDef, InputKind, InputSpec, LoopDef, RunStatus, Step, StepRunStatus, VarRef,
+};
 use std::result::Result as StdResult;
 
 fn make_tool_step(name: &str, tool: &str, params: serde_json::Value) -> Step {
@@ -1175,5 +1178,133 @@ async fn wait_prompt_is_variable_substituted() {
     assert!(
         !reasons.iter().any(|r| r.contains("{{")),
         "wait 提示语不应残留模板占位符，实际: {reasons:?}"
+    );
+}
+
+// ── 声明式外部输入（workflow.inputs）──
+
+fn input_spec(
+    name: &str,
+    required: bool,
+    default: Option<serde_json::Value>,
+    sensitive: bool,
+) -> InputSpec {
+    InputSpec {
+        name: name.to_string(),
+        kind: InputKind::String,
+        required,
+        default,
+        description: None,
+        sensitive,
+    }
+}
+
+/// 未提供且非必填但有 default → 注入 default；显式提供 → 覆盖 default；非必填缺省 → 不注入
+#[test]
+fn resolve_declared_inputs_default_override_and_absent() {
+    let specs = vec![
+        input_spec("with_default", false, Some(serde_json::json!("d")), false),
+        input_spec("optional_absent", false, None, false),
+        input_spec("overridden", false, Some(serde_json::json!("d")), false),
+    ];
+    let mut provided = HashMap::new();
+    provided.insert("overridden".to_string(), serde_json::json!("explicit"));
+
+    let resolved = resolve_declared_inputs(&specs, &provided).expect("非必填缺省不应报错");
+    assert_eq!(resolved.get("with_default"), Some(&serde_json::json!("d")));
+    assert_eq!(
+        resolved.get("overridden"),
+        Some(&serde_json::json!("explicit"))
+    );
+    assert!(
+        !resolved.contains_key("optional_absent"),
+        "非必填且无 default 的输入不应注入该键: {resolved:?}"
+    );
+}
+
+/// required 且无 default 且未提供 → 执行前报错，原因可读（含输入名）
+#[test]
+fn resolve_declared_inputs_required_missing_errors() {
+    let specs = vec![input_spec("token", true, None, false)];
+    let err = resolve_declared_inputs(&specs, &HashMap::new()).expect_err("缺必填输入应报错");
+    let msg = err.to_string();
+    assert!(msg.contains("缺少必填输入：token"), "错误原因应可读: {msg}");
+}
+
+/// required 但有 default → 用 default；显式提供优先于 required 判定
+#[test]
+fn resolve_declared_inputs_required_with_default() {
+    let specs = vec![input_spec(
+        "mode",
+        true,
+        Some(serde_json::json!("fast")),
+        false,
+    )];
+    let resolved = resolve_declared_inputs(&specs, &HashMap::new()).expect("有 default 不应报错");
+    assert_eq!(resolved.get("mode"), Some(&serde_json::json!("fast")));
+
+    let mut provided = HashMap::new();
+    provided.insert("mode".to_string(), serde_json::json!("slow"));
+    let resolved = resolve_declared_inputs(&specs, &provided).unwrap();
+    assert_eq!(resolved.get("mode"), Some(&serde_json::json!("slow")));
+}
+
+/// 未声明的显式输入不进入声明结果（是否散注入顶层由注入层决定）；空声明 → 空结果（旧工作流语义）
+#[test]
+fn resolve_declared_inputs_ignores_undeclared_and_empty_specs() {
+    let specs: Vec<InputSpec> = Vec::new();
+    let mut provided = HashMap::new();
+    provided.insert("legacy".to_string(), serde_json::json!("v"));
+    let resolved = resolve_declared_inputs(&specs, &provided).unwrap();
+    assert!(resolved.is_empty(), "空声明应返回空结果: {resolved:?}");
+
+    let specs = vec![input_spec("declared", false, None, false)];
+    let resolved = resolve_declared_inputs(&specs, &provided).unwrap();
+    assert!(
+        !resolved.contains_key("legacy"),
+        "未声明的运行时输入不应被提升为声明项: {resolved:?}"
+    );
+}
+
+/// 声明项双写取值：{{inputs.x}} 与 {{x}} 均可取到；支持管道与文本内嵌
+#[test]
+fn variables_input_namespace_and_top_level() {
+    let mut vars: HashMap<String, serde_json::Value> = HashMap::new();
+    vars.insert(
+        "inputs".to_string(),
+        serde_json::json!({"name": "Nuphus", "flag": true}),
+    );
+    vars.insert("name".to_string(), serde_json::json!("Nuphus"));
+
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{inputs.name}}"), &vars),
+        serde_json::json!("Nuphus")
+    );
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{name}}"), &vars),
+        serde_json::json!("Nuphus")
+    );
+    // 类型不字符串化（布尔/数字保持原始类型）
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{inputs.flag}}"), &vars),
+        serde_json::json!(true)
+    );
+    // 允许 {{ inputs.x }} 带空格；文本内嵌与管道写法均支持
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{ inputs.name }}"), &vars),
+        serde_json::json!("Nuphus")
+    );
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("dir-{{inputs.name}}/x"), &vars),
+        serde_json::json!("dir-Nuphus/x")
+    );
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{inputs.name | default \"d\"}}"), &vars),
+        serde_json::json!("Nuphus")
+    );
+    // 字符串模板路径（wait 提示语 / chat message / script code 同源）
+    assert_eq!(
+        super::variables::resolve_vars_str("hi {{inputs.name}}", &vars),
+        "hi Nuphus"
     );
 }

@@ -200,13 +200,30 @@ pub fn inject_workflow_runtime(state: &AppState, engine: &mut nuphus::workflow::
 /// 异步 spawn：立即返回，进度经 workflow-event 事件流推送。
 /// fresh=true：上次运行失败后画布「运行」从头执行（force_fresh，跳过逻辑失效）；
 /// 缺省/续跑（fresh=false）保留断点续连语义。
+/// inputs：启动表单收集的外部输入（JSON 对象；缺省 None）；声明解析/必填校验在 execute 层。
 #[tauri::command]
 pub async fn wf_run(
     state: State<'_, AppState>,
     id: String,
     fresh: Option<bool>,
+    inputs: Option<serde_json::Value>,
 ) -> Result<String, String> {
     let force_fresh = fresh.unwrap_or(false);
+    // 契约：inputs 为 JSON 对象或 None（非对象直接拒绝，避免类型错误静默丢失）
+    let inputs: std::collections::HashMap<String, serde_json::Value> = match inputs {
+        None => std::collections::HashMap::new(),
+        Some(serde_json::Value::Object(map)) => map.into_iter().collect(),
+        Some(_) => return Err("inputs 必须是 JSON 对象".to_string()),
+    };
+    // 只记键名（不记值）：声明项的敏感度与必填校验由 execute 层依据 IR 判定
+    for key in inputs.keys() {
+        tracing::debug!("[wf_run] 收到输入键: {}", key);
+    }
+    let inputs = if inputs.is_empty() {
+        None
+    } else {
+        Some(inputs)
+    };
     // 注入 LLM client + ToolRegistry（ChatAgent 步骤依赖），与 plugin_workflow_run 共用公共函数
     {
         let mut engine = state.workflow_engine.write().await;
@@ -249,7 +266,7 @@ pub async fn wf_run(
                 tool_exec,
                 tool_schemas,
                 None,
-                None,
+                inputs,
                 force_fresh,
                 nuphus::workflow::WorkflowRunSource::Ui,
             )

@@ -6,6 +6,39 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// ── Declarative external inputs ──
+
+/// 外部输入类型声明：供启动交互与校验提示使用，执行层不做强制类型转换
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InputKind {
+    #[default]
+    String,
+    Number,
+    Boolean,
+    Path,
+    Json,
+}
+
+/// 工作流外部输入声明（workflow.inputs[]）
+///
+/// 变量池语义：声明项在启动时解析（显式提供 > default > 非必填缺省则不注入），
+/// 同时写入 `variables["inputs"]`（支持 `{{inputs.x}}`）与变量池顶层（支持 `{{x}}`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputSpec {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub kind: InputKind,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub sensitive: bool,
+}
+
 // ── Workflow definition ──
 
 /// Complete workflow definition
@@ -29,6 +62,9 @@ pub struct Workflow {
     /// 工作流级超时（秒），None 无限制。超时后工作流整体失败
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// 外部输入声明（旧数据无该字段 → 空 vec；空 vec 不序列化，保持旧文件形状）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputSpec>,
     /// dry-run：仅编译校验，不执行步骤
     #[serde(default)]
     pub dry_run: bool,
@@ -47,6 +83,7 @@ impl Workflow {
             schedule: None,
             run_history: Vec::new(),
             timeout_secs: None,
+            inputs: Vec::new(),
             dry_run: false,
         }
     }
