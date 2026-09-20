@@ -1,0 +1,55 @@
+name: Main Guard
+
+# 为什么单独开一个工作流：
+# `ci.yml` 是**故意**不在 push 到 main 时跑的（界面/文案类改动用本地 tsc/vitest/cargo check
+# 把关，发布时集中跑一次）。这个取舍本身没问题，但它漏掉了三类**全仓扫描**的检查：
+# `cargo fmt --all -- --check`、`tsc --noEmit`、`prettier --check`。
+# 它们与运行环境无关、不需要编译、不需要系统依赖，却会被 PR 侧原样再跑一遍。
+# 于是「一个人本地少跑一次格式化」的代价被转嫁给了**之后每一个 PR**：
+# 带病提交落进 main 后，所有 PR 的 Check & Lint / Frontend Check 都会红，
+# 而贡献者无法在自己的 PR 里干净地修好它（去改别人的文件只会让 review 更乱）。
+#
+# 真实案例：main 上的 `src-tauri/src/commands/external.rs`、`src-tauri/src/commands/mod.rs`
+# 及 `main.rs` 带着 3 处 rustfmt 偏差（前两处由 1bc6186 引入），直到下一个 PR
+# （本仓库 #35）才被发现——那个 PR 的 Check & Lint 直接红在 `cargo fmt --all -- --check`。
+#
+# 本工作流只补这三类检查：秒级到十几秒、不需要编译，保持「main 上不做重活」的既有取舍；
+# 全量测试 / 编译 / macOS 冒烟仍然只在 PR、tag、手动 dispatch 时跑。
+#
+# 生效后 main 的期望状态：绿。当前 main 上它会红一次（就是上面那 3 处 rustfmt 偏差），
+# 这正是它要守住的东西。
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Format & Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: TypeScript check
+        working-directory: frontend
+        run: npx tsc --noEmit
+      - name: Prettier format check
+        working-directory: frontend
+        run: npx prettier --check "src/**/*.{ts,tsx,css}"
