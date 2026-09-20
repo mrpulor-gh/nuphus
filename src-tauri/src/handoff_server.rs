@@ -46,6 +46,10 @@ struct DispatchPayload {
     /// agent 初始化描述（可选）：agent 目录未初始化时写入 read.md；缺省用默认描述。
     #[serde(default)]
     description: Option<String>,
+    /// 目标工作区（可选，绝对路径）：外部 Agent 本轮被授权改动的仓库/目录。
+    /// 给了且是 git 仓库时记录派发基线 HEAD，完工（done/blocked）时比对是否有未派发提交。
+    #[serde(default)]
+    workspace: Option<String>,
 }
 
 /// 完工/进度上报入口。令牌错误 → 403，响应体不含任何提示正确令牌的信息。
@@ -69,7 +73,8 @@ async fn post_handoff(headers: HeaderMap, Json(payload): Json<HandoffPayload>) -
         Ok(()) => {
             // 阶段 0：门铃事件归组 → 按 id 前缀匹配已初始化的 agent 目录并更新其
             // status.json（未命中/无目录静默跳过，绝不破坏既有门铃流程）。
-            crate::commands::update_agent_status_from_doorbell(
+            // 返回值：完工审计结论（done/blocked 且派发时声明过 workspace 时才有）。
+            let audit = crate::commands::update_agent_status_from_doorbell(
                 &payload.id,
                 &payload.status,
                 &payload.summary,
@@ -85,10 +90,27 @@ async fn post_handoff(headers: HeaderMap, Json(payload): Json<HandoffPayload>) -
                         "受阻"
                     };
                     let report = report_path.as_deref().unwrap_or("（未提供）");
-                    let message = format!(
+                    let mut message = format!(
                         "外部任务 {} {}，summary: {}，验收产物 report_path: {}",
                         payload.id, verb, payload.summary, report
                     );
+                    if let Some(a) = audit.as_ref().filter(|a| a.changed) {
+                        tracing::warn!(
+                            "[Handoff] {} 工作区 {} HEAD 从 {} 变为 {}（{}）",
+                            payload.id,
+                            a.workspace,
+                            a.base_head,
+                            a.head,
+                            a.branch
+                        );
+                        message.push_str(&format!(
+                            "；⚠ 审计：工作区 {} 在派发后 HEAD 变了（{} → {}，分支 {}）——本轮出现了不是你派发的提交，验收前请先复核这些提交该不该存在",
+                            a.workspace,
+                            crate::commands::config::handoff::short_sha(&a.base_head),
+                            crate::commands::config::handoff::short_sha(&a.head),
+                            a.branch
+                        ));
+                    }
                     crate::commands::process::try_spawn_leader_round(app.clone(), message);
                 }
             }
@@ -166,7 +188,13 @@ fn dispatch_at_root(root: &Path, payload: &DispatchPayload) -> Result<String, St
         std::fs::create_dir_all(&project_dir).map_err(|e| format!("创建产物子目录失败: {e}"))?;
     }
 
-    handoff::ensure_handoff_at(root, &payload.agent, &payload.task_id, &payload.brief)
+    handoff::ensure_handoff_at(
+        root,
+        &payload.agent,
+        &payload.task_id,
+        &payload.brief,
+        payload.workspace.as_deref(),
+    )
 }
 
 /// 连通性自检，无需令牌
@@ -413,6 +441,7 @@ mod tests {
             brief: "任务：重构登录页".to_string(),
             project: Some("web-redesign".to_string()),
             description: Some("负责前端编码".to_string()),
+            workspace: None,
         };
         let contract = dispatch_at_root(&root, &payload).unwrap();
         let dir = root.join("claude-code");

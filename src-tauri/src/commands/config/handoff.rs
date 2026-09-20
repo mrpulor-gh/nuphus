@@ -241,18 +241,96 @@ pub(crate) fn init_agent_at(
 /// 派发任务：写 brief + 更新 status.json 为 in_progress，返回回传契约字符串。
 /// 契约含门铃 URL / token / done POST 示例 / 产物路径 / report_path 约定。
 #[tauri::command]
-pub fn handoff_ensure(agent: String, task_id: String, brief: String) -> Result<String, String> {
-    ensure_handoff_at(&handoff_root(), &agent, &task_id, &brief)
+pub fn handoff_ensure(
+    agent: String,
+    task_id: String,
+    brief: String,
+    workspace: Option<String>,
+) -> Result<String, String> {
+    ensure_handoff_at(
+        &handoff_root(),
+        &agent,
+        &task_id,
+        &brief,
+        workspace.as_deref(),
+    )
+}
+
+// ── 派发审计：目标工作区的 git HEAD 基线 ──────────────────────────────────────
+
+/// 完工审计结论：派发基线 HEAD 与完工时 HEAD 不一致，说明本轮工作区里出现了提交
+/// （外部 Agent 自己提交，或另有写手动了同一个 worktree）。
+/// `changed` 为真时由门铃路径提示 Leader 先复核再验收。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadAudit {
+    pub workspace: String,
+    pub base_head: String,
+    pub head: String,
+    pub branch: String,
+    pub changed: bool,
+}
+
+/// 在 `dir` 上执行一条 git 查询（直接 spawn，不经 shell）。
+/// 非 git 仓库 / git 未安装 / 命令失败 / 空输出 → None，调用方一律按「无基线」降级。
+fn git_query(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// 工作区当前 HEAD（sha, 分支名）。非 git 仓库 / git 不可用 → None。
+fn git_head(dir: &Path) -> Option<(String, String)> {
+    let head = git_query(dir, &["rev-parse", "HEAD"])?;
+    let branch =
+        git_query(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "-".to_string());
+    Some((head, branch))
+}
+
+/// 由 status.json 算完工审计结论：`workspace` 与 `base_head` 必须同时存在且可解析，
+/// 且该工作区当前仍是可读的 git 仓库。任一不满足 → None（无基线，不做审计）。
+fn head_audit(status: &serde_json::Value) -> Option<HeadAudit> {
+    let workspace = status.get("workspace")?.as_str()?.to_string();
+    let base_head = status.get("base_head")?.as_str()?.to_string();
+    let (head, branch) = git_head(Path::new(&workspace))?;
+    Some(HeadAudit {
+        changed: head != base_head,
+        workspace,
+        base_head,
+        head,
+        branch,
+    })
+}
+
+/// 短 sha（前 8 位），人读提示用。
+pub(crate) fn short_sha(sha: &str) -> String {
+    sha.chars().take(8).collect()
 }
 
 /// 派发任务（root 注入）：写 brief + status.json 置 in_progress + task_id + dispatched_at，
 /// 返回回传契约字符串。幂等：agent 目录未初始化也补建 briefs/projects。
 /// pub(crate)：handoff_server 的 /handoff/dispatch 端点复用。
+/// `workspace`：可选。外部 Agent 被授权改动的目标工作区（绝对路径）。给出时在 status.json
+/// 记下 `workspace` 与派发时刻的 git HEAD（`base_head`/`base_branch`），供完工时比对。
+/// 「外部 Agent 擅自提交」无法从应用侧强制阻止（它是独立进程、git 凭据不受本应用约束），
+/// 但可以把「事后翻 git log 才发现」变成「完工即知」。
 pub(crate) fn ensure_handoff_at(
     root: &Path,
     agent: &str,
     task_id: &str,
     brief: &str,
+    workspace: Option<&str>,
 ) -> Result<String, String> {
     validate_agent(agent)?;
     validate_task_id(task_id)?;
@@ -305,6 +383,26 @@ pub(crate) fn ensure_handoff_at(
             "updated_at".to_string(),
             serde_json::json!(chrono::Local::now().to_rfc3339()),
         );
+        // 派发基线：目标工作区 + 当下 HEAD。非 git 目录 / git 不可用 / 未声明 workspace
+        // → 不记（宁可缺失，不可错记）；新一轮派发清掉上一轮的审计结论。
+        match workspace.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(ws) => {
+                let (head, branch) = match git_head(Path::new(ws)) {
+                    Some((h, b)) => (serde_json::json!(h), serde_json::json!(b)),
+                    None => (serde_json::Value::Null, serde_json::Value::Null),
+                };
+                obj.insert("workspace".to_string(), serde_json::json!(ws));
+                obj.insert("base_head".to_string(), head);
+                obj.insert("base_branch".to_string(), branch);
+                obj.remove("head_check");
+            }
+            None => {
+                obj.remove("workspace");
+                obj.remove("base_head");
+                obj.remove("base_branch");
+                obj.remove("head_check");
+            }
+        }
     }
     write_status_at(root, agent, &doc)?;
 
@@ -607,8 +705,8 @@ pub fn update_agent_status_from_doorbell(
     status: &str,
     summary: &str,
     report_path: Option<&str>,
-) {
-    update_agent_status_from_doorbell_at(&handoff_root(), id, status, summary, report_path);
+) -> Option<HeadAudit> {
+    update_agent_status_from_doorbell_at(&handoff_root(), id, status, summary, report_path)
 }
 
 fn update_agent_status_from_doorbell_at(
@@ -617,25 +715,25 @@ fn update_agent_status_from_doorbell_at(
     status: &str,
     summary: &str,
     report_path: Option<&str>,
-) {
-    let Some(agent) = agent_id_prefix(id) else {
-        return;
-    };
+) -> Option<HeadAudit> {
+    let agent = agent_id_prefix(id)?;
     let state = match status {
         // ready/progress 都是外部 Agent 的「开始确认」拉铃 → 才是真正的执行中
         "ready" | "progress" => "in_progress",
         "done" => "done",
         "blocked" => "blocked",
-        _ => return, // 未知状态：不落盘（与 push_event 校验语义一致）
+        _ => return None, // 未知状态：不落盘（与 push_event 校验语义一致）
     };
-    let mut doc = match read_status_at(root, agent) {
-        Some(d) => d,
-        None => return, // 未初始化 / 无 status.json → 静默跳过
+    // 未初始化 / 无 status.json / 不是对象 → 静默跳过，不覆盖
+    let mut doc = read_status_at(root, agent)?;
+    doc.as_object()?;
+    // 完工审计：只在 done/blocked 上做（progress 只是开工确认，此时工作区还没动）。
+    let audit = if matches!(status, "done" | "blocked") {
+        head_audit(&doc)
+    } else {
+        None
     };
-    let obj = match doc.as_object_mut() {
-        Some(o) => o,
-        None => return, // status.json 不是对象 → 静默跳过，不覆盖
-    };
+    let obj = doc.as_object_mut()?;
     obj.insert("state".to_string(), serde_json::json!(state));
     obj.insert(
         "last_event".to_string(),
@@ -646,6 +744,19 @@ fn update_agent_status_from_doorbell_at(
             "ts": chrono::Local::now().to_rfc3339(),
         }),
     );
+    if let Some(a) = &audit {
+        obj.insert(
+            "head_check".to_string(),
+            serde_json::json!({
+                "changed": a.changed,
+                "workspace": a.workspace,
+                "base_head": a.base_head,
+                "head": a.head,
+                "branch": a.branch,
+                "ts": chrono::Local::now().to_rfc3339(),
+            }),
+        );
+    }
     obj.insert(
         "updated_at".to_string(),
         serde_json::json!(chrono::Local::now().to_rfc3339()),
@@ -653,6 +764,7 @@ fn update_agent_status_from_doorbell_at(
     if let Err(e) = write_status_at(root, agent, &doc) {
         tracing::warn!("[Handoff] 更新 agent[{agent}] status.json 失败（不影响门铃流程）: {e}");
     }
+    audit
 }
 
 #[cfg(test)]
@@ -665,6 +777,150 @@ mod tests {
         let dir = base.join(format!("{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// 跑一条 git 命令；成功返回 trim 后的 stdout。环境无 git / 命令失败 → None。
+    fn git_run(dir: &Path, args: &[&str]) -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// 建一个临时 git 仓库并提交一次；返回 (工作区绝对路径, 首个 commit sha)。
+    /// 环境没有 git → None（调用方跳过该用例并在输出里说明，不伪造通过）。
+    fn tmp_git_workspace(name: &str) -> Option<(String, String)> {
+        let repo = tmp_root(name);
+        std::fs::create_dir_all(&repo).ok()?;
+        git_run(&repo, &["init", "-q"])?;
+        git_run(&repo, &["config", "user.email", "t@example.com"])?;
+        git_run(&repo, &["config", "user.name", "t"])?;
+        git_run(&repo, &["commit", "-q", "--allow-empty", "-m", "init"])?;
+        let head = git_run(&repo, &["rev-parse", "HEAD"])?;
+        Some((repo.to_string_lossy().to_string(), head))
+    }
+
+    fn status_json(root: &Path, agent: &str) -> serde_json::Value {
+        let p = root.join(agent).join("status.json");
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    /// 派发声明 workspace → status.json 记基线；完工时 HEAD 变了 → 审计命中。
+    #[test]
+    fn test_dispatch_baseline_detects_undelegated_commit() {
+        let root = tmp_root("audit");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+        let Some((ws, base)) = tmp_git_workspace("audit-repo") else {
+            eprintln!("跳过：环境无 git");
+            return;
+        };
+
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务", Some(&ws)).unwrap();
+        let status = status_json(&root, "web_agent");
+        assert_eq!(status["workspace"], serde_json::json!(ws));
+        assert_eq!(status["base_head"], serde_json::json!(base));
+        assert!(status["base_branch"].as_str().is_some());
+
+        // 开工确认不是完工：progress 不做审计
+        assert!(update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-001",
+            "progress",
+            "开工",
+            None
+        )
+        .is_none());
+
+        // 模拟「外部 Agent 自己提交了一个 commit」
+        assert!(git_run(
+            Path::new(&ws),
+            &["commit", "-q", "--allow-empty", "-m", "agent self commit"]
+        )
+        .is_some());
+        let audit = update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-001",
+            "done",
+            "完成",
+            None,
+        )
+        .expect("声明过 workspace 的完工必须产出审计结论");
+        assert!(audit.changed, "HEAD 变了必须报 changed");
+        assert_ne!(audit.head, audit.base_head);
+        assert_eq!(audit.workspace, ws);
+
+        let status = status_json(&root, "web_agent");
+        assert_eq!(status["head_check"]["changed"], serde_json::json!(true));
+        assert_eq!(status["head_check"]["base_head"], serde_json::json!(base));
+    }
+
+    /// 未声明 workspace / 非 git 目录 → 不审计（宁缺勿错），不产生 head_check。
+    #[test]
+    fn test_dispatch_audit_degrades_without_baseline() {
+        let root = tmp_root("audit-degrade");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+
+        // ① 未声明 workspace
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务", None).unwrap();
+        let status = status_json(&root, "web_agent");
+        assert!(status.get("workspace").is_none());
+        assert!(update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-001",
+            "done",
+            "完成",
+            None
+        )
+        .is_none());
+        assert!(status_json(&root, "web_agent").get("head_check").is_none());
+
+        // ② 声明了 workspace，但目标不是 git 仓库 → 记路径、不记基线、不审计
+        let plain = tmp_root("audit-plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let ws = plain.to_string_lossy().to_string();
+        ensure_handoff_at(&root, "web_agent", "task-002", "任务", Some(&ws)).unwrap();
+        let status = status_json(&root, "web_agent");
+        assert_eq!(status["workspace"], serde_json::json!(ws));
+        assert_eq!(status["base_head"], serde_json::Value::Null);
+        assert!(update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-002",
+            "done",
+            "完成",
+            None
+        )
+        .is_none());
+    }
+
+    /// 新一轮派发清掉上一轮的审计结论，避免旧结论误导验收。
+    #[test]
+    fn test_redispatch_clears_previous_audit() {
+        let root = tmp_root("audit-redispatch");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+        let Some((ws, _)) = tmp_git_workspace("audit-repo2") else {
+            eprintln!("跳过：环境无 git");
+            return;
+        };
+
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务", Some(&ws)).unwrap();
+        update_agent_status_from_doorbell_at(&root, "web_agent::task-001", "done", "完成", None);
+        assert!(status_json(&root, "web_agent").get("head_check").is_some());
+
+        ensure_handoff_at(&root, "web_agent", "task-002", "任务", None).unwrap();
+        let status = status_json(&root, "web_agent");
+        assert!(
+            status.get("head_check").is_none(),
+            "新派发必须清掉旧审计结论"
+        );
+        assert!(status.get("workspace").is_none());
+        assert!(status.get("base_head").is_none());
+        assert_eq!(status["state"], serde_json::json!("dispatched"));
     }
 
     #[test]
@@ -722,7 +978,8 @@ mod tests {
     fn test_handoff_ensure_writes_brief_and_status() {
         let root = tmp_root("ensure");
         init_agent_at(&root, "web_agent", "desc").unwrap();
-        let contract = ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面").unwrap();
+        let contract =
+            ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面", None).unwrap();
         let dir = root.join("web_agent");
         assert!(dir.join("briefs").join("task-001-brief.md").is_file());
         assert_eq!(
@@ -765,7 +1022,7 @@ mod tests {
         init_agent_at(&root, "web_agent", "网页任务").unwrap();
         init_agent_at(&root, "claude-code", "编码任务").unwrap();
         // 派发任务 → task_id + dispatched 落盘（验证列表读到的是 status.json 实际内容）
-        ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面").unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务：重构页面", None).unwrap();
 
         let statuses = list_agent_statuses_at(&root);
         assert_eq!(statuses.len(), 2);
@@ -859,7 +1116,7 @@ mod tests {
     fn test_list_agent_deliverables_scans_reports_and_projects() {
         let root = tmp_root("deliver");
         init_agent_at(&root, "web_agent", "desc").unwrap();
-        ensure_handoff_at(&root, "web_agent", "task-001", "任务").unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务", None).unwrap();
         let dir = root.join("web_agent");
         // 报告 + 嵌套产物 + 平铺产物；brief 是任务书不算交付物
         std::fs::write(dir.join("briefs").join("task-001-report.md"), "# 报告").unwrap();
@@ -903,7 +1160,7 @@ mod tests {
     fn test_delete_agent_deliverable_security() {
         let root = tmp_root("deliver-del");
         init_agent_at(&root, "web_agent", "desc").unwrap();
-        ensure_handoff_at(&root, "web_agent", "task-001", "任务").unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-001", "任务", None).unwrap();
         let dir = root.join("web_agent");
         std::fs::write(dir.join("briefs").join("task-001-report.md"), "# 报告").unwrap();
         std::fs::create_dir_all(dir.join("projects").join("sub")).unwrap();

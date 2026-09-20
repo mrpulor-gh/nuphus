@@ -39,6 +39,10 @@ impl ToolRegistry {
                         "type": "string",
                         "description": "可选：产物子目录名（对齐 read.md 约定「产物写 projects/{project}/」）"
                     },
+                    "workspace": {
+                        "type": "string",
+                        "description": "可选但推荐：外部 Agent 本轮被授权改动的目标工作区绝对路径（仓库或 worktree）。提供时记录该目录的 git HEAD 作为基线，完工（门铃 done/blocked）时比对，若 HEAD 变化会在唤醒消息里提示「出现未派发提交」。非 git 目录/未提供则不审计（不猜测）"
+                    },
                     "message": {
                         "type": "string",
                         "description": "可选：覆盖模板 —— 实际投递给外部 Agent 的指令文本；缺省用 brief 渲染后的任务指令（占位符 {task_id}/{brief_path} 已替换）"
