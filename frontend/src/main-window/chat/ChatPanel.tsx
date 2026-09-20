@@ -80,6 +80,7 @@ import {
   IconMic,
   IconImage,
   IconRadio,
+  IconSettings,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -169,7 +170,6 @@ interface ChatPanelProps {
   /** 手动关闭「提炼中」弹窗/遮罩：复位提炼 UI + 追踪 refs（后台提炼不中断，
    *  完成后 session_refined / refine_failed 照常落地）。缺省退化为仅收起遮罩 */
   onDismissRefine?: () => void
-  onOpenPalette?: () => void
   onCommand?: (id: string) => void
   mode?: string
   onSetMode?: (mode: string) => void
@@ -198,6 +198,8 @@ interface ChatPanelProps {
   onOpenWorkflowCanvas?: () => void
   /** workflow 扳手菜单「工作流列表」：打开 WorkflowPage（等同 Ctrl+K → 工作流） */
   onOpenWorkflowList?: () => void
+  /** 输入栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
+  onOpenSettings?: () => void
 }
 
 /**
@@ -288,7 +290,6 @@ export function ChatPanel({
   refining,
   setRefining,
   onDismissRefine,
-  onOpenPalette,
   onCommand,
   mode,
   onSetMode,
@@ -302,6 +303,7 @@ export function ChatPanel({
   onToggleDesktopToolbar,
   onOpenWorkflowCanvas,
   onOpenWorkflowList,
+  onOpenSettings,
   onRate,
   onShowExecTrace,
 }: ChatPanelProps) {
@@ -1441,7 +1443,7 @@ export function ChatPanel({
           mood={mood}
         />
       )}
-      {/* ── Chat Header (command palette entry) ── */}
+      {/* ── Chat Header：右上角设置入口（全应用唯一设置入口，打开设置中心弹窗）── */}
       <div className="chat-header">
         <div className="chat-header-left" />
         <div className="chat-header-right">
@@ -1449,23 +1451,9 @@ export function ChatPanel({
             className="chat-header-settings-btn"
             aria-label={t('app.settings')}
             title={t('app.settings')}
-            onClick={() => onOpenPalette?.()}
+            onClick={() => onOpenSettings?.()}
           >
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="7" height="7" rx="1" />
-            </svg>
+            <IconSettings size={15} />
           </button>
         </div>
       </div>

@@ -33,7 +33,6 @@ import {
   IconX,
   IconKeyboard,
   IconGrid,
-  IconMessageCircle,
   IconCpu,
   IconRefresh,
 } from '../ui/Icons'
@@ -117,6 +116,9 @@ const SnakeGamePage = lazy(() =>
   import('./pages/SnakeGame/SnakeGame').then(m => ({ default: m.default })),
 )
 const UpdatePage = lazy(() => import('./pages/UpdatePage').then(m => ({ default: m.UpdatePage })))
+const SettingsCenter = lazy(() =>
+  import('./pages/SettingsCenter').then(m => ({ default: m.SettingsCenter })),
+)
 
 export default function App() {
   // ── Hooks ──
@@ -178,6 +180,8 @@ export default function App() {
   const [pluginMinimized, setPluginMinimized] = useState(false)
   // ── Desktop toolbar (Ctrl+U) ──
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
+  // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
+  const [showSettingsCenter, setShowSettingsCenter] = useState(false)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
     canvas: <IconPalette size={14} />,
@@ -193,17 +197,27 @@ export default function App() {
     browser: <IconBrowser size={14} />,
     soul: <IconSparkles size={14} />,
     'snake-game': <IconGrid size={14} />,
-    'new-chat': <IconMessageCircle size={14} />,
     'force-reset': <IconX size={14} />,
     help: <IconKeyboard size={14} />,
     'external-agents': <IconCpu size={14} />,
     'check-update': <IconRefresh size={14} />,
   }
+  /**
+   * 聊天界面快捷键的可用性闸门：设置中心面板打开时不响应。
+   * 这些快捷键作用于面板「背后」的聊天界面（Ctrl+N 新建会话 / Ctrl+U 桌面工具栏 /
+   * Ctrl+L 聚焦输入框 / Ctrl+Shift+W 工作流面板），焦点此时已被焦点陷阱收进面板，
+   * 继续生效会让用户在弹窗里的操作意外改动背后会话。Ctrl+K 例外 —— 它的语义是
+   * 「先退出面板，再执行原分支」，见下。
+   */
+  const chatShortcutEnabled = () => !showSettingsCenter
   useKeyboard([
     {
       key: 'k',
       ctrl: true,
-      handler: () =>
+      handler: () => {
+        // 设置中心宿主（z-index 2500）会盖住 Ctrl+K 两条分支的目标弹层
+        //（命令面板 300 / 工作流列表 150）→ 先退出设置中心，保证面板可见可用
+        setShowSettingsCenter(false)
         routePrimaryK(
           s.mode,
           () => {
@@ -211,24 +225,37 @@ export default function App() {
             s.setShowWorkflow(true)
           },
           () => s.setCmdPaletteOpen((p: boolean) => !p),
-        ),
+        )
+      },
     },
-    { key: 'l', ctrl: true, handler: () => s.setFocusSignal((p: number) => p + 1) },
-    { key: 'n', ctrl: true, handler: () => s.handleNewChat() },
+    {
+      key: 'l',
+      ctrl: true,
+      enabled: chatShortcutEnabled,
+      handler: () => s.setFocusSignal((p: number) => p + 1),
+    },
+    { key: 'n', ctrl: true, enabled: chatShortcutEnabled, handler: () => s.handleNewChat() },
     {
       key: 'o',
       ctrl: true,
+      enabled: chatShortcutEnabled,
       handler: () => {
         /* TODO: 插件搜索 */
       },
     },
-    { key: 'u', ctrl: true, handler: () => setShowDesktopToolbar((p: boolean) => !p) },
+    {
+      key: 'u',
+      ctrl: true,
+      enabled: chatShortcutEnabled,
+      handler: () => setShowDesktopToolbar((p: boolean) => !p),
+    },
     {
       // 工作流步骤面板：收起 / 展开。
       // 面板可见性 ≡ workflowRunSteps 非空 且 未被用户收起，所以这里只在有运行数据时响应。
       key: 'w',
       ctrl: true,
       shift: true,
+      enabled: chatShortcutEnabled,
       handler: () => {
         if (s.workflowRunSteps.length === 0) return
         if (s.workflowPanelDismissed) s.showWorkflowPanel()
@@ -369,12 +396,12 @@ export default function App() {
               onToggleDesktopToolbar={() => setShowDesktopToolbar(o => !o)}
               onOpenWorkflowCanvas={() => void handleWorkflowCanvasDirect()}
               onOpenWorkflowList={handleOpenWorkflowList}
+              onOpenSettings={() => setShowSettingsCenter(true)}
               onRate={s.handleRate}
               onShowExecTrace={trace => {
                 s.setExecTraceOverride(trace)
                 s.setShowExecTrace(true)
               }}
-              onOpenPalette={() => s.setCmdPaletteOpen(true)}
               onCommand={id => {
                 switch (id) {
                   case 'workflows':
@@ -882,6 +909,31 @@ export default function App() {
                   onClose={() => s.closeCanvas()}
                 />
               </div>
+            </Suspense>
+          )}
+          {/* ── 设置中心：居中弹窗（左导航 + 右内容；子页一律复用 pages/* 现有实现）── */}
+          {showSettingsCenter && (
+            <Suspense fallback={null}>
+              <SettingsCenter
+                onClose={() => setShowSettingsCenter(false)}
+                showToast={s.showToast}
+                onRunWorkflow={wf => {
+                  // 运行确认弹窗（wcf-wrapper z-index 100）低于设置中心宿主（2500）→
+                  // 先退出设置中心再弹，与「Ctrl+K → 工作流 → 运行」原链路表现一致
+                  setShowSettingsCenter(false)
+                  setRunWorkflow(wf)
+                }}
+                /* 宿主分流：画布 / 模型两类分区在弹窗内容区（上限 844px）内结构性不可用，
+                   点击后关闭面板，改走各自既有全屏宿主链路（与 Ctrl+K 入口同一实现）。 */
+                onOpenCanvas={workflowId => {
+                  setShowSettingsCenter(false)
+                  s.openCanvas(workflowId ?? null)
+                }}
+                onOpenModels={() => {
+                  setShowSettingsCenter(false)
+                  s.setShowModels(true)
+                }}
+              />
             </Suspense>
           )}
           {/* ── 应用插件宿主：全屏覆盖层（App Plugin 体系 §4.2）── */}
