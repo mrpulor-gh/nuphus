@@ -332,6 +332,7 @@ pub fn db_size() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
         conn.query_row(
@@ -402,6 +403,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored, "E:\\work\\A");
+    }
+
+    /// 真实库（用户既有 nuphus.db）经 acquire() 启动迁移后必有 project_path 列：
+    /// 老库无该列时此处会报 no such column / 断言失败，是「老库平滑升级」的
+    /// 现场可复现证据（只读检查，不写数据）。
+    #[serial]
+    #[test]
+    fn default_db_has_project_path_column_after_migration() {
+        let conn = crate::store::db::acquire().unwrap();
+        assert!(
+            has_column(&conn, "session_meta", "project_path"),
+            "启动迁移必须给既有库补出 project_path 列"
+        );
+        assert!(has_column(&conn, "session_meta", "project_tag"));
+        assert!(has_column(&conn, "sessions", "snapshot"));
     }
 
     /// init_tables 可重复执行：全新库路径下二次调用不报错（启动幂等基线）。
