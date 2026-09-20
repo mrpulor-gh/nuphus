@@ -11,6 +11,8 @@ import type {
   ProcessInputResponse,
   ToolExecuteResult,
   WorkflowItem,
+  WorkflowInputKind,
+  WorkflowInputSpec,
   WorkflowStep,
   Action,
   OnError,
@@ -907,6 +909,29 @@ function normalizeStep(raw: Record<string, unknown>): WorkflowStep {
   }
 }
 
+/**
+ * 后端 InputSpec[] → 前端 WorkflowInputSpec[]
+ * 空数组/缺失/非法形状 → undefined（旧工作流不带 inputs 字段，保持语义一致）
+ */
+function normalizeInputs(raw: unknown): WorkflowInputSpec[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const specs = raw
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map(x => {
+      const kind = typeof x.type === 'string' ? (x.type as WorkflowInputKind) : undefined
+      return {
+        name: String(x.name ?? ''),
+        type: kind,
+        required: Boolean(x.required),
+        default: x.default,
+        description: typeof x.description === 'string' ? x.description : undefined,
+        sensitive: Boolean(x.sensitive),
+      } satisfies WorkflowInputSpec
+    })
+    .filter(s => s.name.length > 0)
+  return specs.length > 0 ? specs : undefined
+}
+
 /** Backend Workflow → frontend WorkflowItem (字段名/格式/状态枚举转换) */
 function normalizeWorkflow(raw: Record<string, unknown>): WorkflowItem {
   const statusMap: Record<string, 'draft' | 'active' | 'archived'> = {
@@ -947,6 +972,7 @@ function normalizeWorkflow(raw: Record<string, unknown>): WorkflowItem {
     timeout_secs,
     dry_run: Boolean(raw.dry_run),
     doc: rawDoc ?? null,
+    inputs: normalizeInputs(raw.inputs),
   }
 }
 
@@ -1004,9 +1030,10 @@ export function wfSave(workflow: unknown) {
  * 画布确定性触发执行；进度经 workflow-event 推送。
  * fresh=true：失败后从头完整执行（force_fresh，跳过上次断点）；
  * fresh=false / 缺省：断点续连（Paused 续跑自动跳过已完成步骤）。
+ * inputs：启动表单收集的声明式输入对象（只含已声明字段；无声明/未填一律省略）。
  */
-export function wfRun(id: string, fresh?: boolean) {
-  return invoke<string>('wf_run', { id, fresh })
+export function wfRun(id: string, fresh?: boolean, inputs?: Record<string, unknown>) {
+  return invoke<string>('wf_run', { id, fresh, inputs })
 }
 
 export interface WfGateStatus {

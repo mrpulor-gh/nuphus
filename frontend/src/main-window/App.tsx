@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke, listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
-import { wfStop, wfPause, wfResume, getToolPermissions } from './lib/api'
+import { wfStop, wfPause, wfResume, wfRun, getToolPermissions } from './lib/api'
 import { scheduleIdle } from './lib/idle'
 import { TenetsDialog } from './dialogs/TenetsDialog'
 import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
@@ -283,7 +283,8 @@ export default function App() {
   }, [])
 
   // ── 实际启动工作流（权限与模式均已确认后调用） ──
-  const executeWorkflowRun = async (id: string) => {
+  // inputs：运行确认弹窗收集的声明式外部输入；工作流未声明 inputs 时保持 undefined（既有链路不变）
+  const executeWorkflowRun = async (id: string, inputs?: Record<string, unknown>) => {
     const needSwitch = s.mode !== 'workflow'
     invoke('hud_update', {
       text: needSwitch ? '切换到 Workflow 模式执行工作流' : '启动工作流',
@@ -294,6 +295,17 @@ export default function App() {
 
     if (needSwitch) {
       await s.handleSetMode('workflow')
+    }
+
+    // 声明了外部输入 → 走确定性 wf_run（与画布同一执行入口），值直接透传后端；
+    // Agent 的 workflow_run 工具链不接受结构化输入，且敏感值不应进入会话文本。
+    if (inputs !== undefined) {
+      try {
+        await wfRun(id, false, inputs)
+      } catch (e) {
+        invoke('hud_update', { text: `启动失败：${String(e)}`, phase: 'error' })
+      }
+      return
     }
 
     // 发送用户消息给 WorkflowAgent，由其调用 workflow_run 工具启动工作流
@@ -966,7 +978,7 @@ export default function App() {
             open={runWorkflow !== null}
             workflow={runWorkflow}
             running={wfRunning}
-            onRun={async id => {
+            onRun={async (id, inputs) => {
               // 检查安全权限
               try {
                 const perms = await getToolPermissions()
@@ -997,7 +1009,7 @@ export default function App() {
               }
 
               // 非 Workflow 模式 → 直接切换并执行（双槽位架构，不丢 Leader 上下文）
-              await executeWorkflowRun(id)
+              await executeWorkflowRun(id, inputs)
             }}
             onCancel={() => setRunWorkflow(null)}
           />

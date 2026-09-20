@@ -251,3 +251,105 @@
   align-items: center;
   gap: 8px;
 }
+
+/* ═══════════════════════════════════════
+   外部输入表单（wcf-inputs-*）
+   运行确认弹窗与画布输入收集弹层共用（WorkflowInputsForm）
+   ═══════════════════════════════════════ */
+
+.wcf-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--glass-0);
+  border: 1px solid var(--glass-1);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.wcf-inputs-title {
+  font-size: var(--fz-xs);
+  color: var(--spark-muted);
+  letter-spacing: 0.2px;
+}
+
+.wcf-input-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wcf-input-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fz-sm);
+  color: var(--spark-secondary);
+}
+
+.wcf-input-name {
+  font-family: var(--font-mono);
+  color: var(--spark-primary);
+}
+
+.wcf-input-tag {
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 4px;
+  color: var(--spark-muted);
+  border: 1px solid var(--glass-2);
+  border-radius: 4px;
+}
+
+.wcf-input-tag--required {
+  color: var(--error);
+  border-color: rgba(var(--error-rgb), 0.35);
+}
+
+.wcf-input-hint {
+  font-size: var(--fz-xs);
+  color: var(--spark-muted);
+}
+
+.wcf-input-control {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--glass-2);
+  border-radius: 6px;
+  font-size: var(--fz-md);
+  font-family: inherit;
+  color: var(--spark-primary);
+  background: var(--void-input);
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.wcf-input-control:focus {
+  border-color: rgba(var(--accent-rgb), 0.45);
+}
+
+.wcf-input-control::placeholder {
+  color: var(--spark-dim);
+}
+
+.wcf-input-textarea {
+  min-height: 60px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.wcf-input-check {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: rgb(var(--accent-rgb));
+}
+
+.wcf-input-error {
+  font-size: var(--fz-xs);
+  color: var(--error);
+}

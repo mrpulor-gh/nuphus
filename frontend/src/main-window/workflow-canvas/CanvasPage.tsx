@@ -89,6 +89,7 @@ import { OutlinePanel } from './OutlinePanel'
 import { IntentFormPanel } from './IntentFormPanel'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
+import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -195,6 +196,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [ir, setIr] = useState<WorkflowIR | null>(null)
   const [steps, setSteps] = useState<WorkflowStep[] | null>(null)
   const [dirty, setDirty] = useState(false)
+  /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
+  const [inputsOpen, setInputsOpen] = useState(false)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
   const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
@@ -212,6 +215,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     lastRun.status !== null &&
     'Error' in lastRun.status
   const lastRunPaused = !!lastRun && !snapshot.running && lastRun.status === 'Paused'
+  /** 声明式外部输入（IR 唯一真源；未声明 → 稳定空数组，运行路径与旧行为一致） */
+  const declaredInputs = ir?.inputs?.length ? ir.inputs : NO_INPUT_SPECS
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   /** 新建 tool 节点后待聚焦的工具输入框（Inspector 消费一次） */
@@ -765,6 +770,11 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       )
       return
     }
+    // 声明了外部输入 → 必须先收集（与运行确认弹窗共用同一表单实现，不得绕过必填校验）
+    if (declaredInputs.length > 0) {
+      setInputsOpen(true)
+      return
+    }
     try {
       // Error → fresh 从头完整执行（不再续连，避免失败死循环）；
       // Paused / 无历史 → fresh=false 断点续连（completed_ids 为空时从头等价）。
@@ -772,7 +782,26 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     } catch (e) {
       setNotice(`启动失败：${String(e)}`)
     }
-  }, [workflowId, dirty, snapshot.running, gateRefresh, lastRunError])
+  }, [workflowId, dirty, snapshot.running, gateRefresh, lastRunError, declaredInputs])
+
+  /** 输入收集完成 → 确定性启动（fresh 语义与直接运行一致） */
+  const runWithInputs = useCallback(
+    async (inputs: Record<string, unknown>) => {
+      setInputsOpen(false)
+      // 填表期间闸门可能被其它 run 占用 → 启动前复核（与画布「运行」同源）
+      const cur = await gateRefresh()
+      if (cur.locked) {
+        setNotice(gateLockNotice)
+        return
+      }
+      try {
+        await wfRun(workflowId, lastRunError, inputs)
+      } catch (e) {
+        setNotice(`启动失败：${String(e)}`)
+      }
+    },
+    [workflowId, lastRunError, gateRefresh, gateLockNotice],
+  )
 
   // ── sidecar 持久化（防抖）──
   const persistSidecar = useCallback(
@@ -1238,6 +1267,14 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         }
         return
       }
+      // 输入收集弹层打开时同样隔离画布快捷键（避免 R/Delete 误触），仅 Escape 关闭
+      if (inputsOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setInputsOpen(false)
+        }
+        return
+      }
       const tag = (e.target as HTMLElement)?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -1295,6 +1332,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     inspectorOpen,
     closeInspector,
     intentFormOpen,
+    inputsOpen,
     layer,
     switchLayer,
   ])
@@ -1762,6 +1800,17 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           onClose={() => setIntentFormOpen(false)}
         />
       )}
+
+      {/* ── 外部输入收集弹层（声明了 inputs 时运行前必填收集；表单实现与运行确认弹窗同源） ── */}
+      <WorkflowInputsDialog
+        open={inputsOpen}
+        specs={declaredInputs}
+        resetToken={workflowId}
+        title={ir ? `启动工作流 · ${ir.name}` : '启动工作流 · 外部输入'}
+        running={snapshot.running}
+        onConfirm={inputs => void runWithInputs(inputs)}
+        onCancel={() => setInputsOpen(false)}
+      />
 
       {/* ── 确认弹窗 ── */}
       {confirm && (

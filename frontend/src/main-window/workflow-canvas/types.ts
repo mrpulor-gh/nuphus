@@ -7,7 +7,13 @@
  * - IR 是唯一真源；画布只持有「当前层视图状态 + 未保存编辑缓冲」
  */
 
-import type { WorkflowStep, Action, RunRecord, ScheduleConfig } from '../../core/types'
+import type {
+  WorkflowStep,
+  Action,
+  RunRecord,
+  ScheduleConfig,
+  WorkflowInputSpec,
+} from '../../core/types'
 
 // ── 后端 Workflow IR（wf_list 原始形状，不经过 WorkflowItem 归一化）──
 
@@ -23,6 +29,8 @@ export interface WorkflowIR {
   run_history?: RunRecord[]
   timeout_secs?: number | null
   dry_run?: boolean
+  /** 外部输入声明（后端空数组不下发 → undefined；运行前必须先收集） */
+  inputs?: WorkflowInputSpec[]
 }
 
 // ── 步骤 kind（对齐 types.rs kind_str；custom 为画布特化：Action::Custom 旧格式）──

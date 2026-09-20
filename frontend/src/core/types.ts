@@ -385,6 +385,25 @@ export interface ScheduleConfig {
   label?: string
 }
 
+// ── WorkflowInputSpec（后端 InputSpec 镜像：workflow.inputs[]）──
+
+/** 输入类型（后端 InputKind，JSON 字段名 type） */
+export type WorkflowInputKind = 'string' | 'number' | 'boolean' | 'path' | 'json'
+
+/** 工作流外部输入声明（运行前由 UI 收集，注入变量池 inputs.x / 顶层 x） */
+export interface WorkflowInputSpec {
+  name: string
+  /** 控件类型，缺省 string */
+  type?: WorkflowInputKind
+  /** 必填：无 default 且未填 → 运行前阻断 */
+  required?: boolean
+  /** 默认值（未填时后端兜底注入；UI 预填） */
+  default?: unknown
+  description?: string
+  /** 敏感值：密码控件、不回显、不落任何持久化 */
+  sensitive?: boolean
+}
+
 // ── WorkflowItem (V2) ──
 
 export interface WorkflowItem {
@@ -403,6 +422,8 @@ export interface WorkflowItem {
   timeout_secs?: number | null
   dry_run?: boolean
   doc?: string | null
+  /** 外部输入声明（后端空数组不下发 → undefined） */
+  inputs?: WorkflowInputSpec[]
 }
 
 // ── Knowledge ──

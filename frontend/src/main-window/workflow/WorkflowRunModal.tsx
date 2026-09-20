@@ -3,12 +3,14 @@ import { IconWorkflow, IconChevronDown, IconChevronRight } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 import { CompactModal } from '../layout/CompactModal'
 import type { WorkflowItem, WorkflowStep, Action } from '../../core/types'
+import { NO_INPUT_SPECS, WorkflowInputsForm, useWorkflowInputs } from './WorkflowInputsForm'
 import '../../styles/workflow-modal.css'
 
 interface WorkflowRunModalProps {
   open: boolean
   workflow: WorkflowItem | null
-  onRun: (id: string) => void
+  /** inputs：仅当工作流声明了 inputs 时传入（未声明 → undefined，保持既有调用链语义） */
+  onRun: (id: string, inputs?: Record<string, unknown>) => void
   onCancel: () => void
   running?: boolean
 }
@@ -63,6 +65,13 @@ export function WorkflowRunModal({
   running,
 }: WorkflowRunModalProps) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+  // 外部输入表单（hooks 必须先于早退调用）：声明为空时表单区整体不渲染
+  const inputSpecs = workflow?.inputs ?? NO_INPUT_SPECS
+  const hasInputs = inputSpecs.length > 0
+  const inputState = useWorkflowInputs(
+    workflow?.inputs,
+    `${workflow?.id ?? ''}|${open ? 'open' : 'closed'}`,
+  )
 
   if (!open || !workflow) return null
 
@@ -85,7 +94,8 @@ export function WorkflowRunModal({
               variant="primary"
               size="sm"
               loading={running}
-              onClick={() => onRun(workflow.id)}
+              disabled={hasInputs && !inputState.canSubmit}
+              onClick={() => onRun(workflow.id, hasInputs ? inputState.payload : undefined)}
             >
               启动
             </Button>
@@ -93,6 +103,9 @@ export function WorkflowRunModal({
         </>
       }
     >
+      {/* ── 外部输入表单（仅在声明了 inputs 时出现；未声明 → 与既有弹窗完全一致）── */}
+      {hasInputs && <WorkflowInputsForm specs={inputSpecs} state={inputState} />}
+
       {/* 步骤列表 — 保留原有的 step card 结构 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {workflow.steps.map((step, i) => {
