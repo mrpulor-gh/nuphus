@@ -166,6 +166,32 @@ const en: Record<string, string> = {
     'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
 
+  // ── Session rail: project folder grouping (Phase 2) ──
+  'sessionRail.projectsTitle': 'Projects',
+  'sessionRail.folderMenu': 'Project folders',
+  'sessionRail.ungrouped': 'Ungrouped',
+  'sessionRail.groupEmpty': 'No sessions in this folder yet',
+  'sessionRail.emptySessions': 'No sessions yet',
+  'sessionRail.newChatInFolder': 'New chat in this folder',
+  'sessionRail.renameFolder': 'Rename folder',
+  'sessionRail.archiveFolder': 'Archive folder',
+  'sessionRail.archiveFolderConfirmTitle': 'Archive this folder?',
+  'sessionRail.archiveFolderConfirmDesc':
+    'This hides "{0}" and all of its sessions from the project list; restore it anytime from Archived folders.',
+  'sessionRail.newProjectFolder': 'New project folder...',
+  'sessionRail.archivedFolders': 'Archived folders',
+  'sessionRail.archivedEmpty': 'No archived folders',
+  'sessionRail.restoreFolder': 'Restore',
+  'sessionRail.autoTag': 'not bookmarked',
+  'sessionRail.autoGroupHint': 'Folder with sessions but not bookmarked (read-only)',
+  'app.sessionGroups': 'Session workbench',
+  'settings.sessionGroups.limit': 'Sessions shown per group',
+  'settings.sessionGroups.limitHint':
+    'Each project folder shows its {0} most recent sessions; the rest collapse into "Show N more sessions". Applies globally, minimum 1.',
+  'settings.sessionGroups.limitInvalid': 'Enter a whole number of 1 or more',
+  'settings.sessionGroups.loadFail': 'Failed to load the setting',
+  'settings.sessionGroups.saveFail': 'Save failed',
+
   // 鈹€鈹€ Welcome 鈹€鈹€
   'welcome.resume': 'Resume',
 

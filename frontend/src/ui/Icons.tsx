@@ -67,6 +67,8 @@ export {
   AppWindow as IconAppWindow,
   Radio as IconRadio,
   Settings as IconSettings,
+  MoreHorizontal as IconMoreHorizontal,
+  ArchiveRestore as IconRestore,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

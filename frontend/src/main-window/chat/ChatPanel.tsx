@@ -674,14 +674,18 @@ export function ChatPanel({
     }
   }, [])
 
-  /** chip 快捷菜单选中书签 → 切换项目（落盘 + 后端通知活跃会话 + HUD 反馈） */
-  const switchProject = useCallback(async (path: string) => {
+  /** chip 快捷菜单选中书签 → 切换项目（落盘 + 后端通知活跃会话 + HUD 反馈）。
+   *  返回 true = 已切到目标目录；会话工作台「组内新建对话 / 点击组内会话」据此判定
+   *  是否需要继续（失败已由 HUD 反馈，不重复报错）。 */
+  const switchProject = useCallback(async (path: string): Promise<boolean> => {
     try {
       const state = await setProjectDirCmd(path)
       setProjectDir(state.path)
       hudUpdate(`项目已切换：${state.name}`, 'info')
+      return true
     } catch (e) {
       hudUpdate(friendlyIpcError(e, '切换项目失败'), 'warning')
+      return false
     }
   }, [])
 
@@ -1438,6 +1442,7 @@ export function ChatPanel({
           onSessionChanged={onChatReplaced}
           onNewChat={onNewChat}
           onOpenProjectDir={() => setDirOpen(true)}
+          onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}
           mood={mood}

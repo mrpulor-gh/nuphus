@@ -162,6 +162,32 @@ const zh: Record<string, string> = {
   'sessionRail.archiveConfirmDesc': '归档后将从会话台移除，对话记录保留在记忆页可查看',
   'sessionRail.archiveFailGeneric': '归档失败',
 
+  // ── 会话工作台：项目文件夹分组（Phase 2）──
+  'sessionRail.projectsTitle': '项目',
+  'sessionRail.folderMenu': '项目文件夹',
+  'sessionRail.ungrouped': '未分组',
+  'sessionRail.groupEmpty': '该文件夹暂无会话',
+  'sessionRail.emptySessions': '暂无会话记录',
+  'sessionRail.newChatInFolder': '在该文件夹新建对话',
+  'sessionRail.renameFolder': '重命名文件夹',
+  'sessionRail.archiveFolder': '归档文件夹',
+  'sessionRail.archiveFolderConfirmTitle': '归档该文件夹？',
+  'sessionRail.archiveFolderConfirmDesc':
+    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时从「已归档文件夹」恢复',
+  'sessionRail.newProjectFolder': '新建项目文件夹…',
+  'sessionRail.archivedFolders': '已归档文件夹',
+  'sessionRail.archivedEmpty': '暂无已归档文件夹',
+  'sessionRail.restoreFolder': '恢复',
+  'sessionRail.autoTag': '未收藏',
+  'sessionRail.autoGroupHint': '未收藏但有会话的文件夹，仅展示（不可重命名/归档）',
+  'app.sessionGroups': '会话工作台',
+  'settings.sessionGroups.limit': '每组显示会话数',
+  'settings.sessionGroups.limitHint':
+    '每个项目文件夹默认显示最近 {0} 个会话，超出部分折叠为「展开其余 N 个会话」；全局生效，最小 1',
+  'settings.sessionGroups.limitInvalid': '请输入 1 以上的整数',
+  'settings.sessionGroups.loadFail': '读取设置失败',
+  'settings.sessionGroups.saveFail': '保存失败',
+
   // ── 欢迎页 ──
   'welcome.resume': '继续对话',
 
