@@ -55,6 +55,8 @@ const READ_TEMPLATE: &str = r#"# {agent_name} 对接协议
 ## 禁止事项
 - 禁止改动 status.json、read.md、briefs/ 目录内任何文件（brief 是 Leader 的只读输入）。
 - 禁止触碰你 handoff 目录之外的文件，除非 brief 明确授权了目标路径。
+- 禁止擅自改动目标仓库的 git 历史：commit / push / tag / reset / checkout / switch / rebase / stash 一律不做；
+  代码改动留在工作区，由 Leader 审核后统一提交（仅当本轮 brief 显式授权提交、并写明目标分支时才可提交）。
 - 禁止不写 report 直接报 done；禁止报告四段缺项。
 - 禁止凭记忆复用上一轮的门铃令牌、URL 或事件 id——一切以本轮契约原文为准。
 - 禁止长时间静默空转：受阻立即 blocked 并说明原因。
@@ -585,6 +587,9 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
         "  - 上报只用本契约给出的 CLI（{cli_cmd}）；Nuphus 桌面主程序 nuphus.exe 不是上报 CLI——运行它会拉起新的桌面实例；禁止自行搜索或启动任何 Nuphus 可执行文件。\n",
         cli_cmd = cli_cmd,
     ));
+    s.push_str(
+        "  - 禁止擅自改动目标仓库的 git 历史（commit / push / tag / reset / checkout / switch / rebase / stash）：改动留在工作区，由 Leader 审核后统一提交。仅当本 brief 显式授权提交、并写明目标分支时才可执行。\n",
+    );
     if !info.available {
         s.push_str("[4a] 降级说明: 门铃不可用时，将结果写入 report 文件并在回复末尾输出 handoff 标记，待 Leader 提取。\n");
     }
@@ -676,6 +681,8 @@ mod tests {
         assert!(read.contains("progress"));
         assert!(!read.contains("status:\"done\""));
         assert!(!read.contains("status:\"ready\""));
+        // 红线：不得擅自改动目标仓库的 git 历史（代码改动留工作区，Leader 审核后统一提交）
+        assert!(read.contains("禁止擅自改动目标仓库的 git 历史"));
         let memory = std::fs::read_to_string(dir.join("memory.md")).unwrap();
         assert!(memory.starts_with("# web_agent 跨任务记忆"));
         let status: serde_json::Value =
@@ -739,6 +746,8 @@ mod tests {
         assert!(!contract.contains("curl"), "契约不得再宣传 curl 上报");
         assert!(!contract.contains("\"status\":\"done\""));
         assert!(contract.contains("web_agent::task-001"));
+        // 红线：外部 Agent 不得擅自改动 git 历史（改动留工作区，Leader 审核后统一提交）
+        assert!(contract.contains("禁止擅自改动目标仓库的 git 历史"));
         let status_str = std::fs::read_to_string(dir.join("status.json")).unwrap();
         assert!(!status_str.contains("token"), "token 不得落 status.json");
     }
