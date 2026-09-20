@@ -138,7 +138,6 @@ const zh: Record<string, string> = {
 
   // ── Session Rail（会话工作台：左缘色块 + 滑动抽屉）──
   'sessionRail.title': '会话工作台',
-  'sessionRail.collapse': '收起',
   'sessionRail.newChat': '新建对话',
   'sessionRail.projectDir': '项目目录',
   'sessionRail.expandMore': '展开其余 {0} 个会话',
@@ -161,11 +160,9 @@ const zh: Record<string, string> = {
   'sessionRail.archiveConfirmTitle': '归档该会话？',
   'sessionRail.archiveConfirmDesc': '归档后将从会话台移除，对话记录保留在记忆页可查看',
   'sessionRail.archiveFailGeneric': '归档失败',
-  'sessionRail.restoreFailGeneric': '恢复失败',
 
   // ── 会话工作台：项目文件夹分组（Phase 2）──
   'sessionRail.projectsTitle': '项目',
-  'sessionRail.folderMenu': '项目文件夹',
   'sessionRail.ungrouped': '未分组',
   'sessionRail.groupEmpty': '该文件夹暂无会话',
   'sessionRail.emptySessions': '暂无会话记录',
@@ -174,11 +171,7 @@ const zh: Record<string, string> = {
   'sessionRail.archiveFolder': '归档文件夹',
   'sessionRail.archiveFolderConfirmTitle': '归档该文件夹？',
   'sessionRail.archiveFolderConfirmDesc':
-    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时从「已归档文件夹」恢复',
-  'sessionRail.newProjectFolder': '新建项目文件夹…',
-  'sessionRail.archivedFolders': '已归档文件夹',
-  'sessionRail.archivedEmpty': '暂无已归档文件夹',
-  'sessionRail.restoreFolder': '恢复',
+    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时在项目中心「已归档文件夹」恢复',
   'sessionRail.autoTag': '未收藏',
   'sessionRail.autoGroupHint': '未收藏但有会话的文件夹，仅展示（不可重命名/归档）',
   'app.sessionGroups': '会话工作台',
@@ -1395,6 +1388,11 @@ const zh: Record<string, string> = {
   'project.deleteBookmark': '删除书签',
   'project.bookmarkNamePlaceholder': '书签名称（可选）',
   'project.addBookmark': '将当前目录加入书签',
+  'project.archivedFolders': '已归档文件夹',
+  'project.archivedEmpty': '暂无已归档文件夹',
+  'project.archivedHint': '归档的文件夹不在会话工作台显示，恢复后回到上方项目书签',
+  'project.restoreFolder': '恢复',
+  'project.restoreFail': '恢复失败',
 
   'soul.aiLabel': 'AI 名称',
   'soul.userLabel': '用户称呼',

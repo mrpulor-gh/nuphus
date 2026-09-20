@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { IconTrash2, IconFolder } from '../../ui/Icons'
+import { IconRestore, IconTrash2, IconFolder } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 import { Section } from '../../ui/PageLayout'
 import { useLanguage } from '../../locales'
-import { getProjectBookmarks, getProjectDir, setProjectBookmarks, setProjectDir } from '../lib/api'
+import {
+  getProjectBookmarks,
+  getProjectDir,
+  setProjectBookmarks,
+  setProjectDir,
+  setProjectFolderArchived,
+} from '../lib/api'
 import type { ProjectBookmark, ProjectDirState } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
 import '../../styles/project.css'
@@ -31,6 +37,10 @@ function nameFromPath(p: string): string {
  * 2. 点击书签 = **真正切换项目**（落盘 + 后端向活跃会话注入 user 内部消息），
  *    旧版只是把路径回填输入框、未应用；
  * 3. 失败显式提示（旧版把后端错误静默吞掉）。
+ *
+ * 文件夹归档的**恢复入口收敛到这里**（会话工作台只归档不恢复，决策 6 修订）：
+ * 「项目书签」区只列未归档书签，「已归档文件夹」区列出归档项并逐项恢复
+ * （`set_project_folder_archived(path, false)`）——恢复只改归档标记，**不切换工作目录**。
  */
 export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirState) => void }) {
   const { t } = useLanguage()
@@ -43,6 +53,10 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
   const [error, setError] = useState<string | null>(null)
   /** 选中的书签（点书签行仅选中，由「设为当前」应用 → 避免误点即切换） */
   const [selectedPath, setSelectedPath] = useState('')
+
+  /** 书签分区：归档标记只影响分区归属，不影响书签表本身（书签表保留全部条目） */
+  const activeBookmarks = bookmarks.filter(b => !b.archived)
+  const archivedBookmarks = bookmarks.filter(b => b.archived)
 
   useEffect(() => {
     let cancelled = false
@@ -134,6 +148,21 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
     }
   }
 
+  /**
+   * 恢复已归档文件夹：归档标记置回 false（返回的最新书签表直接回填 → 该文件夹回到书签区）。
+   *
+   * **恢复 ≠ 切换**：只改归档标记，不触碰当前工作目录（不调用 setProjectDir）。
+   * 这是「归档」的唯一反向路径——会话工作台侧只归档不恢复。
+   */
+  const handleRestoreArchived = async (path: string) => {
+    setError(null)
+    try {
+      setBookmarks(await setProjectFolderArchived(path, false))
+    } catch (e) {
+      setError(friendlyIpcError(e, t('project.restoreFail')))
+    }
+  }
+
   return (
     <div>
       {/* ── 当前项目目录 ── */}
@@ -187,16 +216,16 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         )}
       </Section>
 
-      {/* ── 项目书签 ── */}
+      {/* ── 项目书签（只列未归档书签；归档项见下方「已归档文件夹」区）── */}
       <Section title={t('project.bookmarks')}>
-        {bookmarks.length === 0 ? (
+        {activeBookmarks.length === 0 ? (
           <div className="page-empty">
             <div>{t('project.noBookmarks')}</div>
             <div className="page-empty-hint">{t('project.bookmarkHint')}</div>
           </div>
         ) : (
           <div className="page-list">
-            {bookmarks.map(b => (
+            {activeBookmarks.map(b => (
               <div
                 key={b.path}
                 className={`page-list-item${selectedPath === b.path ? ' active' : ''}`}
@@ -251,6 +280,36 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
             {t('project.setCurrent')}
           </Button>
         </div>
+      </Section>
+
+      {/* ── 已归档文件夹：会话工作台整组隐藏的文件夹在此恢复（恢复 ≠ 切换工作目录）── */}
+      <Section title={t('project.archivedFolders')}>
+        {archivedBookmarks.length === 0 ? (
+          <div className="page-empty">
+            <div>{t('project.archivedEmpty')}</div>
+            <div className="page-empty-hint">{t('project.archivedHint')}</div>
+          </div>
+        ) : (
+          <div className="page-list">
+            {archivedBookmarks.map(b => (
+              <div key={b.path} className="page-list-item is-static" title={b.path}>
+                <div className="bookmark-info">
+                  <div className="bookmark-name">{b.name}</div>
+                  <div className="bookmark-path">{b.path}</div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleRestoreArchived(b.path)}
+                  title={t('project.restoreFolder')}
+                  icon={<IconRestore size={11} />}
+                >
+                  {t('project.restoreFolder')}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
     </div>
   )

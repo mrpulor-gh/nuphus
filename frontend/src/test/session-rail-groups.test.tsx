@@ -99,7 +99,6 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     <SessionRail
       onSessionChanged={onSessionChanged}
       onNewChat={onNewChat}
-      onOpenProjectDir={vi.fn()}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}
@@ -122,6 +121,61 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     archiveSession.mockReset().mockResolvedValue(undefined)
     setProjectBookmarks.mockReset().mockResolvedValue([])
     setProjectFolderArchived.mockReset().mockResolvedValue([])
+  })
+
+  it('抽屉头部只有标题、零按钮（文件夹管理入口已全部迁至项目中心）', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    const head = document.querySelector('.sr-drawer-head') as HTMLElement
+    expect(within(head).getByText('会话工作台')).toBeInTheDocument()
+    expect(head.querySelectorAll('button')).toHaveLength(0)
+    // 「项目」不再是头部标题，已下移为下方列表的分组标题
+    expect(within(head).queryByText('项目')).not.toBeInTheDocument()
+  })
+
+  it('「项目」标签位于「新建对话」按钮之后、首个分组之前（DOM 顺序）', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    const newChat = document.querySelector('.sr-new-chat-btn') as HTMLElement
+    const label = document.querySelector('.sr-list-label') as HTMLElement
+    const firstGroup = document.querySelector('.sr-group') as HTMLElement
+    expect(newChat).not.toBeNull()
+    expect(label.textContent).toBe('项目')
+    expect(firstGroup).not.toBeNull()
+
+    // compareDocumentPosition(other) 含 DOCUMENT_POSITION_FOLLOWING ⇒ other 在自身之后
+    const following = Node.DOCUMENT_POSITION_FOLLOWING
+    expect(newChat.compareDocumentPosition(label) & following).toBeTruthy()
+    expect(label.compareDocumentPosition(firstGroup) & following).toBeTruthy()
+  })
+
+  it('抽屉三种关闭路径：Esc / 点击面板外 / 再点色块（删掉 ✕ 后无回归）', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    const chip = document.querySelector('.session-rail-chip') as HTMLElement
+    const isOpen = () =>
+      (document.querySelector('.session-rail-drawer') as HTMLElement).classList.contains('is-open')
+
+    // ① 色块展开 → Esc 收起
+    fireEvent.click(chip)
+    expect(isOpen()).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(isOpen()).toBe(false)
+
+    // ② 色块展开 → 点击面板与色块之外收起
+    fireEvent.click(chip)
+    expect(isOpen()).toBe(true)
+    fireEvent.mouseDown(document.body)
+    expect(isOpen()).toBe(false)
+
+    // ③ 色块展开 → 再点色块收起（色块是唯一常驻开合入口）
+    fireEvent.click(chip)
+    expect(isOpen()).toBe(true)
+    fireEvent.click(chip)
+    expect(isOpen()).toBe(false)
   })
 
   it('组头按 projects[] 顺序渲染，未分组末位，归档文件夹整组隐藏', async () => {
@@ -284,40 +338,6 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const dialog = screen.getByRole('dialog', { name: '归档该文件夹？' })
     fireEvent.click(within(dialog).getByRole('button', { name: '归档' }))
     await waitFor(() => expect(setProjectFolderArchived).toHaveBeenCalledWith('E:\\NUS\\1', true))
-  })
-
-  it('已归档文件夹：头部菜单列出并支持恢复（set_project_folder_archived(path, false)）', async () => {
-    renderRail()
-    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByLabelText('项目文件夹'))
-    expect(screen.getByText('已归档文件夹')).toBeInTheDocument()
-    expect(screen.getByText('已归档目录')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('恢复'))
-    await waitFor(() =>
-      expect(setProjectFolderArchived).toHaveBeenCalledWith('E:\\work\\Old', false),
-    )
-  })
-
-  it('归档列表为空时不显示恢复项，给出空态文案', async () => {
-    listShelfSessions.mockImplementation(async () => shelfResponse({ archived_projects: [] }))
-    renderRail()
-    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByLabelText('项目文件夹'))
-    expect(screen.getByText('暂无已归档文件夹')).toBeInTheDocument()
-    expect(screen.queryByText('恢复')).not.toBeInTheDocument()
-  })
-
-  it('恢复失败走独立提示（恢复失败），不与归档失败混淆', async () => {
-    setProjectFolderArchived.mockRejectedValue('boom')
-    renderRail()
-    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByLabelText('项目文件夹'))
-    fireEvent.click(screen.getByText('恢复'))
-    await waitFor(() => expect(screen.getByText('恢复失败')).toBeInTheDocument())
   })
 
   it('切换失败映射稳定错误码文案（busy → 业务等待提示）', async () => {

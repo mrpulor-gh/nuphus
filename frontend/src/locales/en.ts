@@ -140,7 +140,6 @@ const en: Record<string, string> = {
 
   // ── Session Rail (session workbench: edge chip + slide-out drawer) ──
   'sessionRail.title': 'Session workbench',
-  'sessionRail.collapse': 'Collapse',
   'sessionRail.newChat': 'New chat',
   'sessionRail.projectDir': 'Project dir',
   'sessionRail.expandMore': 'Show {0} more',
@@ -165,11 +164,9 @@ const en: Record<string, string> = {
   'sessionRail.archiveConfirmDesc':
     'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
-  'sessionRail.restoreFailGeneric': 'Restore failed',
 
   // ── Session rail: project folder grouping (Phase 2) ──
   'sessionRail.projectsTitle': 'Projects',
-  'sessionRail.folderMenu': 'Project folders',
   'sessionRail.ungrouped': 'Ungrouped',
   'sessionRail.groupEmpty': 'No sessions in this folder yet',
   'sessionRail.emptySessions': 'No sessions yet',
@@ -178,11 +175,7 @@ const en: Record<string, string> = {
   'sessionRail.archiveFolder': 'Archive folder',
   'sessionRail.archiveFolderConfirmTitle': 'Archive this folder?',
   'sessionRail.archiveFolderConfirmDesc':
-    'This hides "{0}" and all of its sessions from the project list; restore it anytime from Archived folders.',
-  'sessionRail.newProjectFolder': 'New project folder...',
-  'sessionRail.archivedFolders': 'Archived folders',
-  'sessionRail.archivedEmpty': 'No archived folders',
-  'sessionRail.restoreFolder': 'Restore',
+    'This hides "{0}" and all of its sessions from the project list; restore it anytime from Archived folders in Project Center.',
   'sessionRail.autoTag': 'not bookmarked',
   'sessionRail.autoGroupHint': 'Folder with sessions but not bookmarked (read-only)',
   'app.sessionGroups': 'Session workbench',
@@ -1456,6 +1449,12 @@ const en: Record<string, string> = {
   'project.deleteBookmark': 'Delete bookmark',
   'project.bookmarkNamePlaceholder': 'Bookmark name (optional)',
   'project.addBookmark': 'Add current directory to bookmarks',
+  'project.archivedFolders': 'Archived folders',
+  'project.archivedEmpty': 'No archived folders',
+  'project.archivedHint':
+    'Archived folders are hidden from the session workbench; restore to bring them back to bookmarks',
+  'project.restoreFolder': 'Restore',
+  'project.restoreFail': 'Restore failed',
 
   'soul.aiLabel': 'AI Name',
   'soul.userLabel': 'User Label',

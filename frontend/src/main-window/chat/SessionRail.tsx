@@ -5,10 +5,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconEdit3,
-  IconFolder,
-  IconMoreHorizontal,
   IconPlus,
-  IconRestore,
   IconTrash2,
   IconX,
 } from '../../ui/Icons'
@@ -64,8 +61,6 @@ interface SessionRailProps {
   onSessionChanged: () => void
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
-  /** 打开项目中心弹窗（复用输入框项目 chip 的同一入口：ChatPanel setDirOpen(true)） */
-  onOpenProjectDir?: () => void
   /**
    * 切换工作目录（**复用** ChatPanel.switchProject 单一实现：落盘 + 后端向活跃槽注入
    * 变更提醒 + HUD 反馈）；返回 true = 已切到目标目录。
@@ -90,7 +85,6 @@ function codeToI18n(code: string): string {
   if (code === 'append_pending') return 'sessionRail.switchFailAppend'
   if (code === 'mode_mismatch') return 'sessionRail.switchFailMode'
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
-  if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
   return 'sessionRail.switchFailGeneric'
 }
 
@@ -149,6 +143,8 @@ type ArchiveTarget =
  *   展开/折叠 + 组内新建/重命名/归档，组内会话沿用小胶囊行样式）。
  * - 开合入口只有三个：色块点击、面板外点击、Esc；**不做 hover 感应唤出，
  *   执行完成也不自动弹出**（2026-09-15 大王反馈：隐藏式选择看不到会话标题）。
+ * - 抽屉头部只有「会话工作台」标题（无任何按钮）：新建项目文件夹 / 已归档文件夹恢复
+ *   两个入口**全部收敛到项目中心**（ProjectCenter），会话栏从此零文件夹管理入口。
  * - 数据源与切换逻辑完全沿用：list_shelf_sessions（5s 轮询 + 可见性刷新），
  *   分组完全来自返回体的 items/projects/archived_projects/collapsed_limit
  *   （**不推断归属**：project_path=null 者进「未分组」兜底组；归档文件夹整组隐藏）。
@@ -157,7 +153,6 @@ type ArchiveTarget =
 export default function SessionRail({
   onSessionChanged,
   onNewChat,
-  onOpenProjectDir,
   onSwitchProjectDir,
   onModeSwitched,
   locked = false,
@@ -167,7 +162,7 @@ export default function SessionRail({
   const [items, setItems] = useState<ShelfSessionItem[]>([])
   /** 可见项目文件夹（组顺序 = 此数组顺序：书签序 → auto） */
   const [projects, setProjects] = useState<ShelfProjectEntry[]>([])
-  /** 已归档项目文件夹（整组隐藏；菜单内提供恢复入口） */
+  /** 已归档项目文件夹（整组隐藏；恢复入口在项目中心「已归档文件夹」区） */
   const [archivedProjects, setArchivedProjects] = useState<ShelfProjectEntry[]>([])
   /** 全局组内折叠上限（后端 collapsed_limit；设置中心可改，事件即时生效） */
   const [groupLimit, setGroupLimit] = useState(DEFAULT_GROUP_LIMIT)
@@ -187,9 +182,6 @@ export default function SessionRail({
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   /** 组内「展开其余 N 个会话」态（key → true=全显）：默认按全局上限折叠 */
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
-  /** 项目文件夹菜单（新建文件夹 / 已归档文件夹恢复）开合 */
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   /** 执行中点色块的轻提示（色块旁浮出，数秒后自动消失） */
   const [chipHint, setChipHint] = useState(false)
   const chipHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -220,7 +212,6 @@ export default function SessionRail({
       setOpen(false)
       setEditingId(null)
       setEditingProjectKey(null)
-      setMenuOpen(false)
     } else if (was) {
       // 执行完成：只播完成音效，不再自动弹出工作台（大王 2026-09-15：完成也不自动弹出）。
       // 错误结束（mood='error'）不播完成音——execution_error 已播错误音效，避免重叠
@@ -248,10 +239,6 @@ export default function SessionRail({
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (menuOpen) {
-        setMenuOpen(false)
-        return
-      }
       if (editingProjectKey) {
         setEditingProjectKey(null)
         return
@@ -265,8 +252,6 @@ export default function SessionRail({
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node | null
       if (!target) return
-      // 菜单开合优先级高于抽屉：点菜单外先收菜单，不连带收起抽屉
-      if (menuOpen && !menuRef.current?.contains(target)) setMenuOpen(false)
       if (panelRef.current?.contains(target)) return
       if (chipRef.current?.contains(target)) return
       setOpen(false)
@@ -277,7 +262,7 @@ export default function SessionRail({
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('mousedown', onDown)
     }
-  }, [open, editingId, editingProjectKey, menuOpen])
+  }, [open, editingId, editingProjectKey])
 
   useEffect(
     () => () => {
@@ -508,20 +493,6 @@ export default function SessionRail({
     [refresh, flashNotice],
   )
 
-  /** 恢复已归档项目文件夹（书签归档标记置回 false → 重新出现在组列表） */
-  const handleRestoreProject = useCallback(
-    async (path: string) => {
-      setMenuOpen(false)
-      try {
-        await setProjectFolderArchived(path, false)
-        void refresh()
-      } catch {
-        flashNotice('restoreFailGeneric')
-      }
-    },
-    [refresh, flashNotice],
-  )
-
   /** 归档确认弹窗「确认」：按目标类型分派 */
   const confirmArchive = useCallback(() => {
     if (!archiveTarget) return
@@ -580,14 +551,6 @@ export default function SessionRail({
     setOpen(false)
     onNewChat?.()
   }, [onNewChat])
-
-  /** 项目中心：复用输入框项目 chip 的同一入口（ChatPanel 的 setDirOpen(true)），
-   *  打开前先收起抽屉，避免抽屉叠在弹窗后面 */
-  const handleOpenProjectDir = useCallback(() => {
-    setOpen(false)
-    setMenuOpen(false)
-    onOpenProjectDir?.()
-  }, [onOpenProjectDir])
 
   const saveRename = useCallback(
     async (id: string) => {
@@ -791,68 +754,8 @@ export default function SessionRail({
         aria-hidden={open ? undefined : true}
       >
         <div className="sr-drawer-head">
-          <span className="sr-drawer-title">{t('sessionRail.projectsTitle')}</span>
-          {/* 项目文件夹菜单：新建文件夹（项目中心）+ 已归档文件夹恢复入口 */}
-          <div className="sr-menu-wrap" ref={menuRef}>
-            <button
-              type="button"
-              className="sr-head-btn"
-              onClick={() => setMenuOpen(o => !o)}
-              title={t('sessionRail.folderMenu')}
-              aria-label={t('sessionRail.folderMenu')}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              <IconMoreHorizontal size={14} />
-            </button>
-            {menuOpen && (
-              <div className="sr-menu" role="menu">
-                {onOpenProjectDir && (
-                  <button
-                    type="button"
-                    className="sr-menu-item"
-                    role="menuitem"
-                    onClick={handleOpenProjectDir}
-                  >
-                    <IconFolder size={13} />
-                    <span>{t('sessionRail.newProjectFolder')}</span>
-                  </button>
-                )}
-                <div className="sr-menu-divider" />
-                <div className="sr-menu-label">{t('sessionRail.archivedFolders')}</div>
-                {archivedProjects.length === 0 ? (
-                  <div className="sr-menu-empty">{t('sessionRail.archivedEmpty')}</div>
-                ) : (
-                  archivedProjects.map(p => (
-                    <div key={p.path} className="sr-menu-row">
-                      <span className="sr-menu-row-name" title={p.path}>
-                        {p.name}
-                      </span>
-                      <button
-                        type="button"
-                        className="sr-menu-restore"
-                        onClick={() => void handleRestoreProject(p.path)}
-                        title={t('sessionRail.restoreFolder')}
-                        aria-label={t('sessionRail.restoreFolder')}
-                      >
-                        <IconRestore size={12} />
-                        <span>{t('sessionRail.restoreFolder')}</span>
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            className="sr-head-btn"
-            onClick={closeDrawer}
-            title={t('sessionRail.collapse')}
-            aria-label={t('sessionRail.collapse')}
-          >
-            <IconX size={14} />
-          </button>
+          {/* 头部只有标题：文件夹管理入口已全部迁至项目中心，收起走 Esc / 面板外点击 / 再点色块 */}
+          <span className="sr-drawer-title">{t('sessionRail.title')}</span>
         </div>
         {/* 新会话：整行浅色实心按钮（与 Ctrl+N / TitleBar 同一逻辑源），落在当前工作目录下 */}
         {onNewChat && (
@@ -869,6 +772,8 @@ export default function SessionRail({
             </button>
           </div>
         )}
+        {/* 列表分组标题：弱于上方主操作按钮、区别于组头（次级字号 / 弱色 / 左对齐） */}
+        <div className="sr-list-label">{t('sessionRail.projectsTitle')}</div>
         <div className="sr-list">
           {groups.length === 0 && (
             <div className="sr-group-empty sr-group-empty--top">
