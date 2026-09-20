@@ -1415,42 +1415,43 @@ export function ChatInputBar({
                   <span className="input-bar-ctx-detail">
                     {/* 七行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
                       cache 命中详情 + step 步数 + time 时长 + ttft 首 token 延迟 + speed 解码速度
-                      ——hover 提供主显示缺失的「绝对值与执行细节」 */}
+                      ——hover 提供主显示缺失的「绝对值与执行细节」。
+                      标签走 i18n（input.ctx.*）：中文统一 2 字，避免中英混排字数参差 */}
                     {cacheRate >= 0 && (
                       <span className="input-bar-ctx-row is-strong">
-                        <span className="input-bar-ctx-detail-label">cache</span>
+                        <span className="input-bar-ctx-detail-label">{t('input.ctx.cache')}</span>
                         <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
                       </span>
                     )}
                     <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">tok</span>
+                      <span className="input-bar-ctx-detail-label">{t('input.ctx.tokens')}</span>
                       <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
                     </span>
                     {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                     <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">cap</span>
+                      <span className="input-bar-ctx-detail-label">{t('input.ctx.capacity')}</span>
                       <span className="input-bar-ctx-value">
                         {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
                       </span>
                     </span>
                     <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">step</span>
+                      <span className="input-bar-ctx-detail-label">{t('input.ctx.steps')}</span>
                       <span className="input-bar-ctx-value">{totalCalls || 0}</span>
                     </span>
                     <span className="input-bar-ctx-row">
-                      <span className="input-bar-ctx-detail-label">time</span>
+                      <span className="input-bar-ctx-detail-label">{t('input.ctx.time')}</span>
                       <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
                     </span>
                     {/* 生成速度与首 token 延迟：放在总耗时下方，便于按时间维度阅读 */}
                     {ttftDisplay && (
                       <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">ttft</span>
+                        <span className="input-bar-ctx-detail-label">{t('input.ctx.ttft')}</span>
                         <span className="input-bar-ctx-value">{ttftDisplay}</span>
                       </span>
                     )}
                     {tpsDisplay && (
                       <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">speed</span>
+                        <span className="input-bar-ctx-detail-label">{t('input.ctx.speed')}</span>
                         <span className="input-bar-ctx-value">{tpsDisplay} tok/s</span>
                       </span>
                     )}

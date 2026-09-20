@@ -100,6 +100,15 @@ const zh: Record<string, string> = {
   'input.mode.custom.manage': '管理 Agent…',
   'input.mode.custom.create': '创建我的专属 Agent',
 
+  // ── 输入栏 ctx 详情弹窗标签（统一 2 字，保证行内字数规整）──
+  'input.ctx.cache': '缓存',
+  'input.ctx.tokens': '令牌',
+  'input.ctx.capacity': '容量',
+  'input.ctx.steps': '步数',
+  'input.ctx.time': '耗时',
+  'input.ctx.ttft': '首字',
+  'input.ctx.speed': '速度',
+
   // ── 外部 Agent 运行时态面板（handoff）──
   'extAgents.title': '外部 Agent',
   'extAgents.titleHint': '外部 Agent 运行时态（handoff 门铃事件实时同步）',

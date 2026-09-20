@@ -102,6 +102,15 @@ const en: Record<string, string> = {
   'input.mode.custom.manage': 'Manage agents...',
   'input.mode.custom.create': 'Create my own agent',
 
+  // ── Input bar ctx detail popup labels ──
+  'input.ctx.cache': 'cache',
+  'input.ctx.tokens': 'tok',
+  'input.ctx.capacity': 'cap',
+  'input.ctx.steps': 'step',
+  'input.ctx.time': 'time',
+  'input.ctx.ttft': 'ttft',
+  'input.ctx.speed': 'speed',
+
   // 鈹€鈹€ External Agents status bar (handoff) 鈹€鈹€
   'extAgents.title': 'Agents',
   'extAgents.titleHint': 'External agent runtime status (synced from handoff doorbell events)',
