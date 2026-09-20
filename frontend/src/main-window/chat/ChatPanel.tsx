@@ -120,7 +120,7 @@ interface ChatPanelProps {
   onInterrupt?: () => void
   onRetry?: (input: string, messageId?: string) => void
   focusSignal?: number
-  onNewChat?: () => void
+  onNewChat?: (title?: string) => Promise<boolean>
   /** Session Rail 切换/新建成功后：重拉 get_chat_history 替换气泡 */
   onChatReplaced?: () => void
   /** Session Rail 跨 mode 切换成功后：同步前端 mode state（mode chip 一致性） */

@@ -174,6 +174,14 @@ const zh: Record<string, string> = {
     '归档后「{0}」及其全部会话将从项目列表隐藏，可随时在会话工作台「⋯ → 恢复隐藏项目」恢复',
   'sessionRail.autoTag': '未收藏',
   'sessionRail.autoGroupHint': '未收藏但有会话的文件夹，仅展示（不可重命名/归档）',
+  // ── 会话工作台：新建对话弹窗（列表首位动作行 → 会话标题 + 归属项目）──
+  'sessionRail.newChatCreate': '创建对话',
+  'sessionRail.newChatTitleLabel': '会话标题',
+  'sessionRail.newChatTitlePlaceholder': '例如：接口联调复盘',
+  'sessionRail.newChatProjectLabel': '归属项目',
+  'sessionRail.newChatBrowse': '浏览本地目录…',
+  'sessionRail.newChatSwitchFail': '切换项目失败，未创建对话',
+  'sessionRail.newChatBrowseFail': '未能打开目录选择器',
   // ── 会话工作台：「项目」行 ⋯ 菜单（整理 / 排序 / 恢复隐藏项目）+ 📁+ ──
   'sessionRail.projectsMenu': '项目菜单',
   'sessionRail.newProjectFolder': '新建项目文件夹',

@@ -4,7 +4,7 @@
 //! run_runtime_with_config: Runtime entry point
 //! execute_fallback_chain: When primary model fails, iterate other models in config.toml for fallback
 
-use crate::state::HistoryMessage;
+use crate::state::{AppState, HistoryMessage};
 use nuphus::agent::events::EventEmitter;
 use nuphus::agent::goal_types::RelationConfig;
 use nuphus::agent::AgentConfig;
@@ -90,6 +90,10 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     // 新建会话必须从「空 session」开始第一轮——跳过 AppState 备份 / from_history /
     // SQLite latest_session 摘要 的一切旧上下文注入，杜绝新对话被恢复成旧对话。
     fresh: bool,
+    // 诞生点登记需要的全局状态（归属快照 + 弹窗记录的标题落库，见
+    // shelf::register_session_birth）。只在 fresh && 空 session 时被使用；
+    // 恢复 / 续聊路径不碰，行为与接入前一致。
+    state: &AppState,
 ) -> std::result::Result<(nuphus::AgentOutput, Runtime), String> {
     // ── Capture session from existing runtime before it's consumed ──
     // When config changes and a new Runtime is built, this backup preserves
@@ -215,12 +219,14 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
 
     // ── 会话诞生点（leader）：fresh = 欢迎页直发 / 切 mode 新建 / 空态判据，
     // 这条路径上 existing_runtime=None → build_runtime → Session::new() 铸造全新 uuid，
-    // 归属在此**一次性快照**（首个 user 消息入 session 之前）。
+    // 归属在此**一次性快照**（首个 user 消息入 session 之前），「新建对话」弹窗记录的
+    // 标题也在此落到该会话上（展示台覆盖表 + sessions.summary）——记录只消费一次，
+    // 无记录（Ctrl+N / 未填标题）时不做任何写。
     // 恢复 / 续聊路径（!fresh：AppState backup、session_backup_json、from_history）
     // 一律不登记：那是既有会话，归属不得改写；历史无归属也不按当前目录回填。
     // 额外要求 session 为空——fresh 语义若被误用（携带旧 session），宁可缺失不可错记。
     if fresh && runtime.session().is_empty() {
-        crate::commands::process::shelf::register_session_origin(&runtime.session().id);
+        crate::commands::process::shelf::register_session_birth(state, runtime.session());
     }
 
     // ── Apply message source marker before execution (every round: the same

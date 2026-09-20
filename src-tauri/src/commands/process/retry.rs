@@ -139,8 +139,9 @@ pub async fn retry_agent(
         refine_threshold,
         None, // mode（复用 Runtime 原 mode；新建则默认 Free）
         state.workflow_engine.clone(),
-        true,  // resume：断点续跑
-        false, // fresh：retry 是续跑既有会话，不按新建处理
+        true,   // resume：断点续跑
+        false,  // fresh：retry 是续跑既有会话，不按新建处理
+        &state, // 诞生点登记（归属 + 弹窗记录标题）用的全局状态（本路径 fresh=false，不消费）
     )
     .await;
 

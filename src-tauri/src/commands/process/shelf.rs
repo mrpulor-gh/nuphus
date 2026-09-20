@@ -678,6 +678,58 @@ pub(crate) fn register_session_origin(session_id: &str) {
     }
 }
 
+/// 会话诞生点一次性登记：归属快照（既有语义，见 [`register_session_origin`]）+
+/// 「新建对话」弹窗记录的标题（见 [`apply_recorded_title`]）。
+///
+/// 调用点只有两处（leader 与 workflow 各自的诞生分支），二者都要求「全新 uuid + 空
+/// session」；恢复 / 续聊路径不经过这里，因此归属与标题都不会改写既有会话。
+pub(crate) fn register_session_birth(state: &AppState, session: &Session) {
+    register_session_origin(&session.id);
+    apply_recorded_title(state, session);
+}
+
+/// 标题规范化：空白 → None（视为未填：不记录、不报错，会话走既有派生标题语义）；
+/// 超长 → 稳定错误码（与 rename_session_cmd 同一 60 字上限；弹窗内已按 40 字截断，
+/// 正常路径到不了这里）。
+fn normalize_new_chat_title(raw: Option<String>) -> Result<Option<String>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let title = raw.trim().to_string();
+    if title.is_empty() {
+        return Ok(None);
+    }
+    if title.chars().count() > 60 {
+        return Err("invalid_title".to_string());
+    }
+    Ok(Some(title))
+}
+
+/// 把「新建对话」弹窗确认时记录的标题落到刚诞生的会话上。
+///
+/// **只在此处消费，且只消费一次**——记录取走即清空，不会泄漏给之后的会话。
+/// 记录为空（Ctrl+N / TitleBar / 手机遥控 / 未填标题）时不做任何写。
+fn apply_recorded_title(state: &AppState, session: &Session) {
+    let title = match state
+        .session
+        .lock()
+        .ok()
+        .and_then(|mut sb| sb.pending_new_chat_title.take())
+    {
+        Some(t) => t,
+        None => return,
+    };
+    // ① 展示台覆盖表：rail 显示、归档入台、完成回填都以它为准（与 rename_session_cmd
+    //    同一优先级语义）——只写 sessions.summary 不够，派生标题仍会在 rail 上盖过它
+    // ② 元数据行：记忆页 / 重启后按快照回读都取 sessions.summary（warm_from_disk 还会
+    //    用它回填覆盖表，重启后自定义标题不丢）
+    if let Ok(mut shelf) = state.shelf.lock() {
+        shelf.titles.insert(session.id.clone(), title.clone());
+    }
+    upsert_meta_row(session, &title);
+    tracing::info!("[Shelf] 会话诞生点应用记录标题 {}: {title}", session.id);
+}
+
 /// 归档 active 到展示台 + 镜像 + 元数据行。空会话跳过（不占槽）。
 /// 注意：调用方持有 runtime 锁期间传入 ctx——保护名单经
 /// protected_snapshot_ids_with_ctx 从 ctx 直取，绝不嵌套加锁。
@@ -1036,23 +1088,34 @@ pub(crate) fn switch_session_inner_mode(
 
 /// 新建对话 = 后端真转场（单一权威状态）：归档当前（有内容才占槽）→ 当前 mode 槽置
 /// None（**不创建任何空会话**——「新建对话」只回到无会话的欢迎页，新会话仅在欢迎页
-/// 直发消息时由 process.rs 空态判据创建）→ 清 session_backup/去重键/重试现场。
+/// 直发消息时由 process.rs 空态判据创建）→ 记录弹窗标题（`title`，诞生点消费）→
+/// 清 session_backup/去重键/重试现场。
+///
+/// `title` = 弹窗里填的会话标题：**确认只记录，不创建会话**——记录进
+/// `SessionState.pending_new_chat_title`，由 [`register_session_birth`] 在会话诞生点
+/// 取出写成该会话的标题（展示台覆盖表 + sessions.summary）。None（Ctrl+N / TitleBar /
+/// 手机遥控）同时承担「清掉上一次残留记录」的语义。
+///
 /// 广播：CompoundEmitter 双推（桌面 Tauri IPC + 手机 WS）——手机「新建对话」遥控桌面
 /// 走同一入口，变更经 SessionChanged 事件回传，双端跟随显示（单一路径，手机跟随）。
 #[tauri::command]
 pub fn new_chat_session_cmd(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    title: Option<String>,
 ) -> Result<String, String> {
-    new_chat_session_with_event(&app, state.inner())
+    new_chat_session_with_event(&app, state.inner(), title)
 }
 
 /// 内部实现（&AppState 直取）：mobile_server 的 /new-chat 端点复用（避免构造 tauri State）
 pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     state: &AppState,
+    title: Option<String>,
 ) -> Result<String, String> {
     guard_switch(state).map_err(|c| c.to_string())?;
+    // 标题校验先于任何状态变更：非法标题直接拒绝，不留「已归档但没记录标题」的半截状态
+    let title = normalize_new_chat_title(title)?;
 
     let current_mode = state
         .current_mode
@@ -1081,11 +1144,16 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
         sb.last_message.clear();
         sb.last_send_id = None;
         sb.last_message_images.clear();
+        // 记录本次弹窗标题（None = 清空旧记录）：与清 backup 同一把锁同一次边界动作，
+        // 避免两次加锁之间被其它会话边界动作插进来
+        sb.pending_new_chat_title = title;
     }
     if let Ok(mut ex) = state.execution.lock() {
         ex.pending_retry = None;
     }
-    tracing::info!("[Shelf] 新建对话：归档并清空当前 {kind} 槽（回到欢迎页）");
+    tracing::info!(
+        "[Shelf] 新建对话：归档并清空当前 {kind} 槽（回到欢迎页，标题已记录于诞生点消费）"
+    );
     crate::emitter::CompoundEmitter::new(app.clone(), state).emit(
         nuphus::agent::events::NuphusEvent::SessionChanged {
             session_id: new_id.clone(),
@@ -1847,5 +1915,126 @@ mod tests {
         // 目标放回展示台，rail 不丢条目
         let shelf = state.shelf.lock().unwrap();
         assert!(shelf.contains(&target_id), "目标应放回展示台");
+    }
+
+    // ── 「新建对话」弹窗：确认只记录标题，会话仍在发消息时诞生 ──
+
+    /// 标题规范化：空白 → 未填（None，不报错）；超长按稳定错误码拒绝
+    /// （与 rename_session_cmd 同一 60 字上限）。
+    #[test]
+    fn normalize_new_chat_title_trims_and_validates() {
+        assert_eq!(normalize_new_chat_title(None).unwrap(), None);
+        assert_eq!(
+            normalize_new_chat_title(Some("   ".into())).unwrap(),
+            None,
+            "纯空白 = 未填：不记录，也不阻断新建"
+        );
+        assert_eq!(
+            normalize_new_chat_title(Some("  接口联调复盘 ".into())).unwrap(),
+            Some("接口联调复盘".to_string()),
+            "首尾空白应裁掉（与 rename_session_cmd 同一规范化）"
+        );
+        assert_eq!(
+            normalize_new_chat_title(Some("标".repeat(60))).unwrap(),
+            Some("标".repeat(60)),
+            "60 字为上限本身，应放行"
+        );
+        assert_eq!(
+            normalize_new_chat_title(Some("标".repeat(61))).unwrap_err(),
+            "invalid_title"
+        );
+    }
+
+    /// 诞生点消费记录标题：写展示台覆盖表 + sessions.summary，且**只消费一次**——
+    /// 下一个诞生（无记录）不得继承上一次弹窗的标题。
+    #[test]
+    fn recorded_new_chat_title_applies_once_at_birth() {
+        let state = AppState::default();
+        let first = Session::new(); // 诞生点状态：新 uuid + 空 session
+        {
+            let mut sb = state.session.lock().unwrap();
+            sb.pending_new_chat_title = Some("接口联调复盘".to_string());
+        }
+
+        register_session_birth(&state, &first);
+
+        assert_eq!(
+            state.shelf.lock().unwrap().titles.get(&first.id).cloned(),
+            Some("接口联调复盘".to_string()),
+            "覆盖表必须记下弹窗标题（rail 显示 / 归档入台 / 完成回填都以它为准）"
+        );
+        let row = nuphus::store::session::get_session(&first.id)
+            .unwrap()
+            .expect("诞生点应落 sessions 行");
+        assert_eq!(row.summary, "接口联调复盘", "sessions.summary = 弹窗标题");
+        assert!(
+            state
+                .session
+                .lock()
+                .unwrap()
+                .pending_new_chat_title
+                .is_none(),
+            "记录取走即清空（不会泄漏给之后的会话）"
+        );
+
+        // 第二个诞生（无记录）：不得继承上一次的标题
+        let second = Session::new();
+        register_session_birth(&state, &second);
+        assert!(
+            !state.shelf.lock().unwrap().titles.contains_key(&second.id),
+            "无记录会话不得拿到上一次弹窗的标题"
+        );
+        assert!(
+            nuphus::store::session::get_session(&second.id)
+                .unwrap()
+                .is_none(),
+            "无记录时诞生点不写元数据行（保持既有派生标题语义）"
+        );
+
+        // 自清理（store 测试同款约定）：sessions 行 + 本测试经 register_session_origin
+        // 顺带写下的 session_meta 行
+        let conn = nuphus::store::db::acquire().unwrap();
+        for id in [&first.id, &second.id] {
+            let _ = nuphus::store::session::delete_session(id);
+            conn.execute(
+                "DELETE FROM session_meta WHERE session_id = ?1",
+                rusqlite::params![id],
+            )
+            .unwrap();
+        }
+    }
+
+    /// 记录标题一旦落库，后续「空标题」元数据回填（每轮完成/归档都写一次空串）
+    /// 必须保住它——这是「标题打回派生默认」那类回归的守卫。
+    #[test]
+    fn recorded_title_survives_empty_title_meta_refresh() {
+        let state = AppState::default();
+        let born = Session::new();
+        {
+            let mut sb = state.session.lock().unwrap();
+            sb.pending_new_chat_title = Some("接口联调复盘".to_string());
+        }
+        register_session_birth(&state, &born);
+
+        // 首条消息进入后（会话不再为空）按既有回填语义写一次空标题
+        let mut after_turn = born.clone();
+        after_turn.push_user("帮我看下这个接口".to_string());
+        upsert_meta_row(&after_turn, "");
+
+        let row = nuphus::store::session::get_session(&born.id)
+            .unwrap()
+            .expect("回填后行仍在");
+        assert_eq!(
+            row.summary, "接口联调复盘",
+            "空标题回填必须保留既有 summary，不得打回派生标题"
+        );
+
+        let conn = nuphus::store::db::acquire().unwrap();
+        let _ = nuphus::store::session::delete_session(&born.id);
+        conn.execute(
+            "DELETE FROM session_meta WHERE session_id = ?1",
+            rusqlite::params![born.id],
+        )
+        .unwrap();
     }
 }

@@ -115,6 +115,16 @@ pub struct SessionState {
     /// 走 session_backup 回退路径时，append_last_turn_user 用它补回当前轮带图消息。
     pub last_message_images: Vec<String>,
     pub session_backup: Option<String>,
+    /// 「新建对话」弹窗确认时填写的标题——**只记录，不创建会话**。
+    ///
+    /// 与 session_backup 同类：会话边界的一次性意图，活在内存里。会话仍只在欢迎页
+    /// 直发首条消息时诞生（既有语义不变），诞生点取出本记录写成该会话的自定义标题
+    /// （展示台覆盖表 + sessions.summary），取走即清空，不会泄漏给之后的会话。
+    /// 内存态是刻意的：新建意图不跨进程重启（重启后用户重新走一次弹窗），
+    /// 与 session_backup / last_message 同属「当前进程内的会话边界状态」。
+    /// 写入方 [`crate::commands::process::shelf::new_chat_session_with_event`]，
+    /// 消费方 [`crate::commands::process::shelf::register_session_birth`]。
+    pub pending_new_chat_title: Option<String>,
 }
 
 #[derive(Default)]

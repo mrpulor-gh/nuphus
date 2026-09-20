@@ -96,7 +96,10 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     calls.push(`dir:${path}`)
     return true
   })
-  const onNewChat = vi.fn(() => calls.push('newChat'))
+  const onNewChat = vi.fn(async () => {
+    calls.push('newChat')
+    return true
+  })
   const onOpenProjectDir = vi.fn(() => calls.push('openProjectDir'))
   const onSessionChanged = vi.fn()
   const utils = render(

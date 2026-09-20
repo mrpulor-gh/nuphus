@@ -798,12 +798,16 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 );
                 new_wa.set_workflow_engine(state.workflow_engine.clone());
                 // ── 会话诞生点（workflow）：无留存 agent → WorkflowAgent::new 铸造全新 Session。
-                // 仅在 force_new（欢迎页直发 / 切 mode 新建 / 空态判据）时登记归属。
+                // 仅在 force_new（欢迎页直发 / 切 mode 新建 / 空态判据）时登记归属 +
+                // 应用「新建对话」弹窗记录的标题（只消费一次，无记录则不写）。
                 // force_new=false 且槽空 = 重启后 session_backup 中转续聊：workflow 分支
                 // 没有 session 恢复路径，新 id 与旧会话的归属无法对应 → 不登记，
                 // 宁可缺失不可错记（该新会话在列表中归入「未分组」）。
                 if force_new {
-                    crate::commands::process::shelf::register_session_origin(&new_wa.session().id);
+                    crate::commands::process::shelf::register_session_birth(
+                        state.inner(),
+                        new_wa.session(),
+                    );
                 }
                 new_wa
             };
@@ -873,6 +877,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 state.workflow_engine.clone(),
                 false,
                 force_new, // fresh：welcome/rule2/空态判据 新建 → 空 session 第一轮，不注入旧上下文
+                state.inner(), // 诞生点登记（归属 + 弹窗记录标题）用的全局状态
             )
             .await
             {
@@ -988,6 +993,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                                 state.workflow_engine.clone(),
                                 false,
                                 force_new, // fresh：与主路径一致，新建失败重建也不注入旧上下文
+                                state.inner(), // 诞生点登记（归属 + 弹窗记录标题）用的全局状态
                             )
                             .await
                         };

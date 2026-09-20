@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+// `open` 是系统目录选择器；别名避免与抽屉开合态 `open` 同名遮蔽
+import { open as openDirDialog } from '@tauri-apps/plugin-dialog'
 import {
   IconCheck,
   IconChevronDown,
@@ -14,6 +16,7 @@ import {
 } from '../../ui/Icons'
 import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
+import { NewChatModal, type NewChatProjectOption } from './NewChatModal'
 import { useLanguage } from '../../locales'
 import {
   listShelfSessions,
@@ -63,11 +66,25 @@ function modeToLetter(mode: string): string {
   return '·'
 }
 
+/** 路径末段名（新建书签的默认名，规则与项目中心 ProjectPage.nameFromPath 一致） */
+function projectNameFromPath(p: string): string {
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() || p
+  )
+}
+
 interface SessionRailProps {
   /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
   onSessionChanged: () => void
-  /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
-  onNewChat?: () => void
+  /**
+   * 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用）。
+   * 可带弹窗填写的标题——后端只记录（会话仍在首条消息那一刻诞生）；
+   * 返回 false = 后端拒绝，调用方据此保持弹窗打开。
+   */
+  onNewChat?: (title?: string) => Promise<boolean>
   /**
    * 打开项目中心弹窗（ChatPanel 唯一入口：`setDirOpen(true)`）。
    * 「项目」行右端 📁+ 走这条链路：选目录 → 命名 → 加入书签。
@@ -99,6 +116,8 @@ function codeToI18n(code: string): string {
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
   if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
   if (code === 'sortPrefsFailGeneric') return 'sessionRail.sortPrefsFailGeneric'
+  if (code === 'newChatSwitchFail') return 'sessionRail.newChatSwitchFail'
+  if (code === 'browseDirFail') return 'sessionRail.newChatBrowseFail'
   return 'sessionRail.switchFailGeneric'
 }
 
@@ -508,6 +527,8 @@ export default function SessionRail({
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 归档确认弹窗目标（会话 / 项目文件夹；null = 关闭） */
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null)
+  /** 新建对话弹窗开合（入口 = 列表首位动作行；会话标题 + 归属项目确认后创建） */
+  const [newChatOpen, setNewChatOpen] = useState(false)
   /** 抽屉开合态：默认收起（只露色块），点击色块才伸出 */
   const [open, setOpen] = useState(false)
   /** 组头折叠态（key → true=收起整组）：默认全部展开，运行时状态不持久化 */
@@ -519,6 +540,8 @@ export default function SessionRail({
   const chipHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const chipRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
+  /** 新建对话入口动作行：弹窗关窗后焦点回到这里 */
+  const newChatRowRef = useRef<HTMLButtonElement>(null)
   const stoppedRef = useRef(false)
   /** 外部会话变化检测基准：上轮轮询的 active 会话 id（null=无 active；首轮回填不触发） */
   const lastActiveIdRef = useRef<string | null>(null)
@@ -586,6 +609,9 @@ export default function SessionRail({
       if (!target) return
       if (panelRef.current?.contains(target)) return
       if (chipRef.current?.contains(target)) return
+      // 弹窗（CompactModal portal 到 body）是**独立层级**：点弹窗内部不算「点抽屉外」。
+      // 否则在新建对话弹窗里选项目会顺手收起抽屉，关窗后入口行与焦点都不在场。
+      if (target instanceof Element && target.closest('.compact-overlay')) return
       setOpen(false)
     }
     document.addEventListener('keydown', onKey)
@@ -923,7 +949,8 @@ export default function SessionRail({
     [projectDraft, projects, archivedProjects, refresh, flashNotice],
   )
 
-  /** 组头「+」：先切到该文件夹，再走与 Ctrl+N 同一新建入口（新会话归属即该文件夹） */
+  /** 组头「+」：先切到该文件夹，再走与 Ctrl+N 同一新建入口（新会话归属即该文件夹）。
+   *  无标题：该入口不经弹窗，会话仍按既有派生标题语义命名。 */
   const handleNewChatInGroup = useCallback(
     async (path: string) => {
       setOpen(false)
@@ -931,15 +958,103 @@ export default function SessionRail({
       // 切目录失败 → 不新建：否则新会话会快照到旧目录，落在别的组
       const ok = await onSwitchProjectDir(path)
       if (!ok) return
-      onNewChat()
+      void onNewChat()
     },
     [onNewChat, onSwitchProjectDir],
   )
 
-  const handleNewChat = useCallback(() => {
-    setOpen(false)
-    onNewChat?.()
-  }, [onNewChat])
+  /** 入口动作行「新建对话」：打开弹窗（列表首位 —— 创建路径显式存在，但不把创建混进项目目录） */
+  const openNewChatModal = useCallback(() => setNewChatOpen(true), [])
+
+  /**
+   * 关窗（取消 / Esc / 点遮罩三条路径统一入口）：焦点还给入口动作行。
+   * 抽屉保持展开——关窗后用户还要继续在列表里操作，入口行本身也在抽屉里。
+   */
+  const closeNewChatModal = useCallback(() => {
+    setNewChatOpen(false)
+    newChatRowRef.current?.focus()
+  }, [])
+
+  /**
+   * 「浏览本地目录…」：系统目录选择器 → 取回的目录不在 projects[] 时**先追加书签**
+   * （即新建一个项目分组，落盘后由 refresh 读回），再按该目录归属。
+   *
+   * 书签表是整表替换：提交时必须带回已归档书签（否则归档记录被抹掉、恢复入口丢失），
+   * auto 只读组不写回书签表——与文件夹重命名同一规则。
+   */
+  const handleBrowseNewChatDir = useCallback(async (): Promise<NewChatProjectOption | null> => {
+    let picked: string | null = null
+    try {
+      const dir = await openDirDialog({
+        directory: true,
+        multiple: false,
+        title: t('sessionRail.newChatProjectLabel'),
+      })
+      picked = typeof dir === 'string' && dir ? dir : null
+    } catch {
+      // 选择器不可用（无桌面环境 / 权限）→ 明确提示，不静默失败
+      flashNotice('browseDirFail')
+      return null
+    }
+    if (!picked) return null // 用户取消：不是错误，不提示
+    const known = projects.find(p => normalizePathKey(p.path) === normalizePathKey(picked))
+    if (known) return { name: known.name, path: known.path }
+    try {
+      const saved = await setProjectBookmarks([
+        // 书签组（auto=false，顺序即书签顺序）；auto 只读组不写回书签表
+        ...projects.filter(p => !p.auto).map(p => ({ name: p.name, path: p.path })),
+        { name: projectNameFromPath(picked), path: picked },
+        // 归档书签原样回填（否则整表替换会丢掉归档记录）
+        ...archivedProjects.map(p => ({ name: p.name, path: p.path, archived: true })),
+      ])
+      void refresh()
+      // 名称以落库返回值为准（后端有去空/去重/名称兜底规则）
+      const entry = saved.find(b => normalizePathKey(b.path) === normalizePathKey(picked))
+      return entry
+        ? { name: entry.name, path: entry.path }
+        : { name: projectNameFromPath(picked), path: picked }
+    } catch (e) {
+      flashNotice(typeof e === 'string' ? e : String(e))
+      return null
+    }
+  }, [projects, archivedProjects, refresh, flashNotice, t])
+
+  /**
+   * 弹窗「创建对话」。顺序不可乱：
+   * ① 先切目录——复用 ChatPanel.switchProject 单一实现（落盘 + 状态同步 + HUD 反馈）；
+   *    失败即中止并提示，**不新建**：新会话的归属在诞生时快照当前目录，先建后切会落错组；
+   * ② 再走与 Ctrl+N / TitleBar / 组头「+」同一新建入口（后端 `new_chat_session_cmd`），
+   *    把弹窗标题一并交给它；
+   * ③ 刷新列表（当前目录 chip / is_current 高亮同步）。
+   *
+   * ⚠️ 会话**不在此时创建**（这是刻意的产品语义）：`new_chat_session_cmd` 只把当前槽置回
+   * 欢迎页 + **记录标题**，真实会话仍在欢迎页直发首条消息那一刻诞生；后端在诞生点把记录的
+   * 标题写成该会话的标题（展示台覆盖表 + sessions.summary），于是首条消息发完，会话卡带着
+   * 这个标题落到所选项目分组首位。此前「确认即出卡」需要后端凭空造一条空会话并占槽，
+   * 牵动 archive_active 跳过空会话等既有语义——不做。
+   *
+   * 失败处理：① 失败 → 弹窗保持打开（用户可改选项目重试）；② 失败（执行中/追加队列非空）
+   * → 同样保持打开，后端已由 HUD 给出原因，不另起一套提示。
+   */
+  const handleCreateNewChat = useCallback(
+    async (title: string, project: NewChatProjectOption): Promise<boolean> => {
+      if (!onNewChat || !onSwitchProjectDir) return false
+      const ok = await onSwitchProjectDir(project.path)
+      if (!ok) {
+        // 切目录失败已由 HUD 反馈；工作台内再给一条提示，避免用户以为会话已创建。
+        // 弹窗**保持打开**（返回 false）：用户可改选项目后重试，不必重新填标题。
+        flashNotice('newChatSwitchFail')
+        return false
+      }
+      const accepted = await onNewChat(title)
+      if (!accepted) return false
+      setNewChatOpen(false)
+      setOpen(false)
+      void refresh()
+      return true
+    },
+    [onNewChat, onSwitchProjectDir, refresh, flashNotice],
+  )
 
   const saveRename = useCallback(
     async (id: string) => {
@@ -1146,18 +1261,24 @@ export default function SessionRail({
           {/* 头部只有标题：文件夹管理入口已全部迁至项目中心，收起走 Esc / 面板外点击 / 再点色块 */}
           <span className="sr-drawer-title">{t('sessionRail.title')}</span>
         </div>
-        {/* 新会话：整行浅色实心按钮（与 Ctrl+N / TitleBar 同一逻辑源），落在当前工作目录下 */}
-        {onNewChat && (
+        {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐、
+            右端 + 号），虚线描边 + 弱文字把「动作」与上方「数据」区分开。
+            不放面板右上角 —— 那里已定稿为「每模块唯一关闭按钮」，不新增按钮。 */}
+        {onNewChat && onSwitchProjectDir && (
           <div className="sr-new-chat-wrap">
             <button
+              ref={newChatRowRef}
               type="button"
               className="sr-new-chat-btn"
-              onClick={handleNewChat}
+              onClick={openNewChatModal}
               disabled={hardLocked}
+              aria-haspopup="dialog"
               title={t('sessionRail.newChat')}
             >
-              <IconPlus size={15} />
-              <span>{t('sessionRail.newChat')}</span>
+              <span className="sr-new-chat-label">{t('sessionRail.newChat')}</span>
+              <span className="sr-new-chat-plus" aria-hidden="true">
+                <IconPlus size={14} />
+              </span>
             </button>
           </div>
         )}
@@ -1373,6 +1494,17 @@ export default function SessionRail({
           </CompactModal>,
           document.body,
         )}
+
+      {/* 新建对话弹窗：会话标题 + 归属项目（常驻列表，末位「浏览本地目录…」）。
+          确认后由 handleCreateNewChat 按「切目录 → 记录标题并回欢迎页 → 刷新」执行：
+          会话本身在欢迎页直发首条消息时诞生，标题随之落成 */}
+      <NewChatModal
+        open={newChatOpen}
+        projects={projects}
+        onClose={closeNewChatModal}
+        onBrowseDir={handleBrowseNewChatDir}
+        onCreate={handleCreateNewChat}
+      />
     </>
   )
 }

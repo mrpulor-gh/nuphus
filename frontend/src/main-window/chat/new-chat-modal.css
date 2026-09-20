@@ -1,0 +1,165 @@
+/* new-chat-modal.css — 新建对话弹窗（.nc-* 前缀）
+ *
+ * 遮罩与卡片材质**复用**既有 CompactModal（.compact-overlay / .compact-modal），
+ * 本文件只覆盖宽度与内部版式：入口动作行 → 弹窗（会话标题 + 归属项目）→ 确认后落库。
+ * 归属项目用**常驻列表**而不是下拉浮层：项目 = 目录，常驻让「有哪些项目」一眼可见、
+ * 少一次点击，且 460 宽的卡片里展开浮层会压住底部按钮。
+ */
+
+/* 宽度 460（CompactModal 现有 sm=380 / md=480 都不合适）。
+   选择器写成两段类名，避免与 .compact-modal--sm 的 width 声明按样式表加载顺序互有胜负 */
+.compact-modal.nc-modal {
+  width: 460px;
+  max-width: 92vw;
+}
+
+.nc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 字段：标签 + 控件（两段：会话标题 / 归属项目）── */
+.nc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nc-lb {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+.nc-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--line-1);
+  font-family: inherit;
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.nc-input::placeholder {
+  color: var(--fg-4);
+}
+.nc-input:focus {
+  border-color: var(--fg-4);
+}
+
+/* ── 归属项目：常驻选项列表（每项 = 项目名 + 目录路径）── */
+.nc-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  padding: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--line-1);
+  overflow-y: auto;
+}
+
+.nc-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.nc-opt:hover {
+  background: var(--line-1);
+  color: var(--fg-1);
+}
+/* 选中态：唯一带色的行（与 .sr-item.active 同款弱蓝底，不新增强调色配额） */
+.nc-opt[aria-selected='true'] {
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+
+.nc-opt-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--fg-4);
+}
+.nc-opt[aria-selected='true'] .nc-opt-ic {
+  color: var(--accent-hover);
+}
+
+/* 选项单行：名称在左（可截断），路径靠右弱化 */
+.nc-opt-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.nc-opt-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nc-opt-path {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「浏览本地目录…」与上方项目项之间的分线（动作 vs 数据的分档） */
+.nc-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--line-2);
+}
+
+/* ── 底部：hint 占左侧（显示所选目录完整路径），两个按钮靠右 ── */
+.nc-hint {
+  flex: 1;
+  min-width: 0;
+  margin-right: auto;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 主按钮：弱蓝底 + 描边（不用 .btn-primary 的实心强调色，弹窗内不抢焦点） */
+.nc-btn-primary {
+  padding: 6px 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  border-radius: var(--radius-3);
+  background: var(--accent-dim);
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+}
+.nc-btn-primary:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.2);
+}
+.nc-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

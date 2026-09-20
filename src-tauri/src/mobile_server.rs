@@ -1789,7 +1789,10 @@ async fn post_new_chat<R: tauri::Runtime>(
     // 同一后端转场（与桌面 new_chat_session_cmd 同源）：内部 guard_switch 拒绝执行中/
     // 追加待处理；空闲时归档当前会话 → 当前槽置 None → 清 backup/去重/重试 → 双推
     // SessionChanged。busy/append_pending → 409，其余 → 400。
-    let res = crate::commands::process::shelf::new_chat_session_with_event(&ctx.app, state.inner());
+    // 标题传 None：手机端没有「新建对话」弹窗（无标题可记录），同时承担「清掉上一次
+    // 残留记录」的语义，避免桌面弹窗记录的标题泄漏到手机遥控的新建。
+    let res =
+        crate::commands::process::shelf::new_chat_session_with_event(&ctx.app, state.inner(), None);
     if let Err(e) = res {
         let status = if e == "busy" || e == "append_pending" {
             StatusCode::CONFLICT

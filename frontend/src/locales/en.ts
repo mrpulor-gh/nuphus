@@ -178,6 +178,14 @@ const en: Record<string, string> = {
     'This hides "{0}" and all of its sessions from the project list; restore it anytime from the session rail menu "⋯ → Restore hidden projects".',
   'sessionRail.autoTag': 'not bookmarked',
   'sessionRail.autoGroupHint': 'Folder with sessions but not bookmarked (read-only)',
+  // ── Session rail: new chat modal (action row → title + owning project) ──
+  'sessionRail.newChatCreate': 'Create chat',
+  'sessionRail.newChatTitleLabel': 'Chat title',
+  'sessionRail.newChatTitlePlaceholder': 'e.g. API integration review',
+  'sessionRail.newChatProjectLabel': 'Project',
+  'sessionRail.newChatBrowse': 'Browse local folder…',
+  'sessionRail.newChatSwitchFail': 'Project switch failed ...chat not created',
+  'sessionRail.newChatBrowseFail': 'Could not open the folder picker',
   // ── Session rail: "Projects" row menu (tidy / sort / restore hidden) + 📁+ ──
   'sessionRail.projectsMenu': 'Project menu',
   'sessionRail.newProjectFolder': 'New project folder',

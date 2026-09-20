@@ -410,9 +410,13 @@ export function switchSession(id: string, mode?: string) {
   return invoke<void>('switch_session', { id, mode: mode ?? null })
 }
 
-/** 新建对话：归档当前 → 安装空白会话，返回新会话 id */
-export function newChatSessionCmd() {
-  return invoke<string>('new_chat_session_cmd')
+/** 新建对话：归档当前 → 当前 mode 槽置 None → **回到无会话的欢迎页**，同时记录
+ * 弹窗填写的 `title`（只记录，不创建会话）——真实会话在欢迎页直发首条消息那一刻
+ * 诞生，后端在诞生点把记录的标题写成该会话的标题（rail + sessions.summary）。
+ * 返回值是 SessionChanged 事件 token，**不是会话 id**（此刻还没有会话）。
+ * 无标题调用（Ctrl+N 等）同时清掉上一次的残留记录。失败 reject 稳定错误码。 */
+export function newChatSessionCmd(title?: string) {
+  return invoke<string>('new_chat_session_cmd', { title: title ?? null })
 }
 
 /** 重命名会话（落 sessions.summary 元数据行） */

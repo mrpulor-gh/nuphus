@@ -318,7 +318,9 @@ export interface SessionAPI {
     refs?: import('../core/types').ChatReference[],
     sendId?: string,
   ) => Promise<SendOutcome>
-  handleNewChat: () => void
+  /** 新建对话（后端真转场，回欢迎页）——可带弹窗填写的标题（只记录，会话在首条
+   *  消息时诞生）；返回 false = 后端拒绝，调用方据此保持弹窗打开。 */
+  handleNewChat: (title?: string) => Promise<boolean>
   reloadChatFromBackend: () => Promise<void>
   resumeLastSession: () => Promise<void>
   handleRetryAgent: (input: string, messageId?: string) => Promise<void>
@@ -648,23 +650,30 @@ export function useSession(): SessionAPI {
     lastStreamingMsgId.current = null
   }, [])
 
-  const handleNewChat = useCallback(async () => {
-    // 新建对话 = 后端真转场 + 本地回 welcome。new_chat_session_cmd 由后端权威完成：
-    // guard_switch（拒绝 busy/append_pending）→ 归档当前会话 → 当前 mode 槽置 None →
-    // 清 backup/去重/重试 → 双推 SessionChanged。槽 None = 后端欢迎页（无会话），不创建
-    // 任何空会话；新会话只在 welcome 直发消息时由后端空态判据创建。
-    // 执行中禁止新建判定以后端为权威（前端 isProcessing 可能与 execution_completed 后的
-    // 收尾窗口不一致）：guard 拒绝时不重置界面，避免消息/执行状态被清空而 agent 仍在
-    // 后台跑 → 界面与真实状态撕裂（实测）。所有入口（Ctrl+N / TitleBar / SessionRail+ /
-    // 命令面板 / ChatPanel）统一走这里。
-    try {
-      await newChatSessionCmd()
-    } catch {
-      invoke('hud_update', { text: '任务正在执行中，无法新建对话', phase: 'error' })
-      return
-    }
-    resetTransientUI()
-  }, [resetTransientUI])
+  const handleNewChat = useCallback(
+    async (title?: string): Promise<boolean> => {
+      // 新建对话 = 后端真转场 + 本地回 welcome。new_chat_session_cmd 由后端权威完成：
+      // guard_switch（拒绝 busy/append_pending）→ 归档当前会话 → 当前 mode 槽置 None →
+      // 记录弹窗标题（title）→ 清 backup/去重/重试 → 双推 SessionChanged。
+      // 槽 None = 后端欢迎页（无会话），**不创建任何空会话**；新会话只在 welcome 直发
+      // 消息时由后端空态判据创建，记录下来的标题在那一刻落成该会话的标题。
+      // 执行中禁止新建判定以后端为权威（前端 isProcessing 可能与 execution_completed 后的
+      // 收尾窗口不一致）：guard 拒绝时不重置界面，避免消息/执行状态被清空而 agent 仍在
+      // 后台跑 → 界面与真实状态撕裂（实测）。所有入口（Ctrl+N / TitleBar / SessionRail+ /
+      // 命令面板 / ChatPanel）统一走这里。
+      // 返回 false = 后端拒绝（调用方据此保持弹窗打开；弹窗标题 ≤40 字且非空，
+      // 故 HUD 文案只覆盖 busy / append_pending 这两个真实失败）。
+      try {
+        await newChatSessionCmd(title)
+      } catch {
+        invoke('hud_update', { text: '任务正在执行中，无法新建对话', phase: 'error' })
+        return false
+      }
+      resetTransientUI()
+      return true
+    },
+    [resetTransientUI],
+  )
 
   /**
    * Session Shelf 切换/新建后：从后端重拉当前会话历史并整体替换气泡。
