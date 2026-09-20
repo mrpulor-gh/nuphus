@@ -1,0 +1,32 @@
+{
+  "app": "剪映专业版",
+  "version": "2026-09-20 / 剪映 11.3.0.14362",
+  "window": {
+    "process": "JianyingPro.exe",
+    "locate": "process_list 按 JianyingPro.exe 匹配（多进程，只有主进程有 MainWindowHandle）；hwnd 每次变化，必须当次 windows_list 枚举",
+    "title_note": "首页与编辑器标题都叫『剪映专业版』但 hwnd 不同；导出对话框标题为『导出-<日期>』",
+    "states": {
+      "home": "首页草稿列表 1168x780（有用户历史草稿，严禁触碰）",
+      "editor": "编辑界面，全屏 1936x1056",
+      "export_dialog": "导出对话框 640x720"
+    }
+  },
+  "interact": {
+    "description": "从首页到导出成片的完整路径。2026-09-20 实测通过：导入一张图片 → 拖入时间线 → 导出 5 秒 1080P 视频，全程仅用桌面工具链（截图 / OCR+YOLO 定位 / 键鼠），未使用剪映任何接口。",
+    "steps": [
+      { "step": 1, "action": "launch", "detail": "启动 JianyingPro.exe（路径 %LOCALAPPDATA%\\JianyingPro\\Apps\\JianyingPro.exe）；注意带 -et 参数会启动失败" },
+      { "step": 2, "action": "dismiss_popups", "detail": "点『开始创作』后依次弹两个弹窗：推送通知（点『暂不』1001,599）、会员推广（点『放弃福利』1039,685）。严禁点『立即购买』" },
+      { "step": 3, "action": "relocate_window", "detail": "进入编辑器后窗口变为全屏 1936x1056，hwnd 与首页不同 → 必须重新 windows_list" },
+      { "step": 4, "action": "import", "detail": "点『+导入』（屏幕 378,135）→ 『请选择媒体资源』原生对话框 → 文件名输入框输入完整路径 + 回车" },
+      { "step": 5, "action": "drag_to_timeline", "detail": "从素材缩略图（窗口相对 174,194）拖拽到时间线区（500,800）。双击缩略图无效，必须拖拽；成功后时间线出现片段、原『将素材拖拽到这里』提示消失" },
+      { "step": 6, "action": "export", "detail": "点右上角『导出』（屏幕 1786,18）。该按钮用 region 截图 (1400,0,540,70) + perceive 才能定位" },
+      { "step": 7, "action": "confirm_export", "detail": "导出对话框：左侧按钮才是『导出』（屏幕 1148,853），右侧是『取消』（1228,854）—— 与常规布局相反，勿凭直觉点右侧。导出路径取对话框『导出至』字段的值" },
+      { "step": 8, "action": "verify", "detail": "界面出现『导出成功，让更多人看到你的作品吧！』+ 读文件系统核对产物（ffprobe 校验时长/分辨率/编码），不要只信 UI" }
+    ],
+    "verified_response": "C:\\备份下载\\OBS\\9月20日.mp4，489KB，H.264 2284x1080 30fps，时长 5.015 秒"
+  },
+  "verify_anchor": {
+    "desc": "导出成功判据：导出对话框出现『导出成功』文案 + 目标路径出现新 mp4 且时长与时间线一致",
+    "note": "两个反直觉点：① 导出对话框左侧按钮是『导出』；② 打开编辑器后 hwnd 会换，缓存必错。剪映全程会弹推广弹窗，需逐个处理"
+  }
+}

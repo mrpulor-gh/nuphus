@@ -1,0 +1,27 @@
+{
+  "app": "Visual Studio Code",
+  "version": "2026-09-20",
+  "window": {
+    "process": "Code.exe",
+    "locate": "process_list 按 Code.exe 匹配 → MainWindowHandle（进程名是 Code.exe，注意大小写）",
+    "default_size": { "w": 1920, "h": 1040 },
+    "title_note": "标题形如『<文件名> - Visual Studio Code [管理员]』，随当前文件变化；未保存文件前缀 ●。不要用标题做窗口匹配依据。"
+  },
+  "interact": {
+    "description": "在 VS Code 中新建文件、写入内容并另存为指定路径 —— 2026-09-20 实测通过，全程仅用桌面工具链（截图/视觉确认/键鼠），未使用编辑器 CLI",
+    "steps": [
+      { "step": 1, "action": "activate", "detail": "desktop_window_activate(hwnd)；hwnd 当次从 desktop_windows_list 取" },
+      { "step": 2, "action": "hotkey", "detail": "desktop_input mode=hotkey keys=[ctrl,n] 新建 Untitled → 必须截图 + vision 确认新标签页出现，禁止未确认就输入（否则可能写入用户已打开的文件）" },
+      { "step": 3, "action": "type", "detail": "desktop_input mode=type 输入文本：实测多行文本的换行会被压平成一行；需保留换行时改用 desktop_clipboard_write(多行) + ctrl+a + ctrl+v 粘贴，随后 desktop_clipboard_clean" },
+      { "step": 4, "action": "hotkey", "detail": "desktop_input mode=hotkey keys=[ctrl,s] → 首次保存弹出原生『另存为』对话框（独立顶层 hwnd，属同一 Code.exe 进程）" },
+      { "step": 5, "action": "locate_dialog", "detail": "desktop_windows_list 找 title=『另存为』的 hwnd —— 每次弹窗都不同，禁止缓存复用" },
+      { "step": 6, "action": "type", "detail": "对对话框 hwnd：先 ctrl+a 全选文件名框 → desktop_input mode=type 输入**完整绝对路径（含扩展名）**，send=enter → 直接落盘到该路径" },
+      { "step": 7, "action": "verify", "detail": "读文件系统校验产物（存在性 + 大小 + 内容），不要只凭 UI 变化判定成功" }
+    ],
+    "verified_response": "桌面生成 nuphus-auto-created.md（231 bytes，6 行 markdown，UTF-8 无乱码）；保存后『另存为』对话框消失、前台回到主窗口"
+  },
+  "verify_anchor": {
+    "desc": "保存成功判据：对话框窗口消失 + 目标路径文件出现且内容一致",
+    "note": "两个坑：① ctrl+a 在『另存为』对话框里若焦点在文件列表会变成全选文件 —— 输入路径前建议截图确认焦点在文件名框；② 对话框 hwnd 每次都变，必须当次枚举"
+  }
+}
