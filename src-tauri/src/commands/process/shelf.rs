@@ -726,6 +726,8 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     // 收集候选 (id, item_json, is_active)；active 与会话台条目统一参与稳定排序
     let mut candidates: Vec<(String, serde_json::Value, bool)> = Vec::new();
     let mut active_id: Option<String> = None;
+    // 创建时间的兜底表（仅「尚无 SQLite 行」的会话）：id → Unix 毫秒
+    let mut created_fallback: HashMap<String, u64> = HashMap::new();
 
     // active（runtime）：backup 中转残留路径下同一 id 可能同时在 runtime 与 shelf，
     // 以 active 为准展示，shelf 循环跳过同 id 去重。
@@ -752,6 +754,17 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
                 .unwrap_or_default();
             let e = build_entry(sess.id.clone(), &stored_mode, sess, Some(&title));
             active_id = Some(e.id.clone());
+            // active 会话频繁「刚创建、首条消息才产生」：此时 sessions 表还没有行，
+            // created_at 读不到 → 用**该会话首条消息时间戳**（≈ 创建时刻，Session::new
+            // 后首条 push 即打点）兜底；消息也没有（空会话）则退化为 updated_at。
+            // 两者都是会话自身的真实时间，不造值。
+            created_fallback.insert(
+                e.id.clone(),
+                sess.messages()
+                    .first()
+                    .and_then(|m| m.timestamp)
+                    .unwrap_or(e.updated_at),
+            );
             candidates.push((
                 e.id.clone(),
                 serde_json::json!({
@@ -830,6 +843,18 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
                         None => serde_json::Value::Null,
                     };
                     obj.insert("project_path".to_string(), path);
+                    // created_at（Unix 毫秒）：会话创建时刻，供「按时间顺序 → 创建时间」组内排序。
+                    // 来源优先级：① SQLite sessions.created_at（rfc3339 → ms，upsert_meta_row /
+                    // upsert_snapshot 维护，覆盖全部已落盘会话）；② 兜底表（尚无行的 active
+                    // 会话：首条消息时间戳，空会话退化为 updated_at）；③ 最后退化为 updated_at。
+                    // 三级都是会话自身的真实时间，不造值。
+                    let updated = obj.get("updated_at").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let created = created_at_map
+                        .get(&id)
+                        .and_then(|s| rfc3339_to_millis(s))
+                        .or_else(|| created_fallback.get(&id).copied())
+                        .unwrap_or(updated);
+                    obj.insert("created_at".to_string(), serde_json::json!(created));
                 }
                 v
             })
@@ -837,6 +862,12 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
         "projects": projects,
         "archived_projects": archived_projects,
         "collapsed_limit": collapsed_limit,
+        // 排序偏好（组序维度 + 组内排序键）：桌面 SessionRail 与移动端 NavBar 共用读数，
+        // 已归一（非法配置值不会漏到前端）。
+        "sort_prefs": {
+            "group_order": prefs.session_group_order(),
+            "sort_key": prefs.session_sort_key(),
+        },
     }))
 }
 
@@ -1572,6 +1603,75 @@ mod tests {
             payload["can_switch"].as_bool().is_some(),
             "既有字段不得丢失"
         );
+        // 排序偏好 + 创建时间（排序 UI 的两个新数据源）
+        let created = item["created_at"]
+            .as_u64()
+            .expect("条目必须带 created_at（Unix 毫秒）");
+        assert!(created > 0, "created_at 必须是真实时间戳");
+        assert_eq!(
+            created,
+            item["updated_at"].as_u64().unwrap(),
+            "无 SQLite 行时 created_at 退化为 updated_at（本用例只 put 内存、未落元数据行）"
+        );
+        let group_order = payload["sort_prefs"]["group_order"]
+            .as_str()
+            .expect("sort_prefs.group_order 必须是字符串");
+        let sort_key = payload["sort_prefs"]["sort_key"]
+            .as_str()
+            .expect("sort_prefs.sort_key 必须是字符串");
+        assert!(
+            ["bookmark", "recent"].contains(&group_order),
+            "组序维度必须是归一后的合法值，实际: {group_order}"
+        );
+        assert!(
+            ["updated", "created"].contains(&sort_key),
+            "组内键必须是归一后的合法值，实际: {sort_key}"
+        );
+    }
+
+    /// created_at 数据来源：已落盘会话取 SQLite `sessions.created_at`（rfc3339 → ms），
+    /// 而不是列表排序用的 updated_at ——「按时间顺序 → 创建时间」组内序唯一权威。
+    #[test]
+    fn list_shelf_sessions_created_at_comes_from_sessions_row() {
+        let state = AppState::default();
+        let sess = session_with_user(&["创建时间来源校验"]);
+        let id = sess.id.clone();
+        // ShelfState::put 只动内存（与生产一致：元数据行由调用方落盘，见 archive_active）
+        upsert_meta_row(&sess, "创建时间来源校验");
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(
+                build_entry(id.clone(), "leader", &sess, Some("创建时间来源校验")),
+                sess,
+            );
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let item = payload["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == serde_json::json!(id))
+            .expect("返回体应含驻留会话")
+            .clone();
+        let created_ms = item["created_at"]
+            .as_u64()
+            .expect("created_at 必须是毫秒数");
+
+        let row_created = nuphus::store::session::get_session(&id)
+            .unwrap()
+            .expect("put 必须落元数据行")
+            .created_at;
+        assert_eq!(
+            created_ms,
+            rfc3339_to_millis(&row_created).expect("sessions.created_at 应为 rfc3339"),
+            "created_at 必须等于 sessions 行的 created_at（不造值）"
+        );
+
+        // 自清理（store 测试同款约定）
+        let conn = nuphus::store::db::acquire().unwrap();
+        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])
+            .unwrap();
     }
 
     /// 已登记归属的会话：条目带真实路径，且该路径作为自动组（未收藏）出现在

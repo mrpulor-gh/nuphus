@@ -540,6 +540,44 @@ pub fn set_session_group_collapsed_limit(limit: u32) -> Result<u32, String> {
     Ok(prefs.session_group_limit())
 }
 
+/// 设置会话工作台排序偏好（组序维度 + 组内排序键，两个维度互相独立）。
+///
+/// 非法取值**不报错而是归一**（手改配置 / 旧前端残留不应致命），并把归一后的结果
+/// 回给前端——前端据此校准本地状态，避免「界面显示 A、落盘 B」。
+///
+/// 生效路径：`list_shelf_sessions` 每次返回 `sort_prefs` → 会话工作台 5s 轮询即读到
+/// 新值（桌面 SessionRail / 移动端 NavBar 共用同一返回体）。
+#[tauri::command]
+pub fn set_session_sort_prefs(
+    group_order: String,
+    sort_key: String,
+) -> Result<serde_json::Value, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    let (group_order, sort_key) = apply_session_sort_prefs(&mut prefs, &group_order, &sort_key);
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Session sort prefs set: group_order={group_order} sort_key={sort_key}");
+    Ok(serde_json::json!({
+        "group_order": group_order,
+        "sort_key": sort_key,
+    }))
+}
+
+/// 排序偏好归一 + 写回（纯逻辑，便于测试）：返回即落盘值。
+///
+/// 归一实现收敛在 `nuphus::config::normalize_session_*`（与 `list_shelf_sessions`
+/// 下发读数同源），此处只负责写回，不再自造第二套判定。
+fn apply_session_sort_prefs(
+    prefs: &mut nuphus::config::UserPreferences,
+    group_order: &str,
+    sort_key: &str,
+) -> (String, String) {
+    let group_order = nuphus::config::normalize_session_group_order(group_order).to_string();
+    let sort_key = nuphus::config::normalize_session_sort_key(sort_key).to_string();
+    prefs.session_group_order = group_order.clone();
+    prefs.session_sort_key = sort_key.clone();
+    (group_order, sort_key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +645,42 @@ mod tests {
             keep_archived(&existing, &bookmark("C", "E:\\work\\C", true)),
             "显式提交归档标记应被接受"
         );
+    }
+
+    /// 排序偏好往返：写 → 读回一致；反向写回默认值同样成立。
+    /// 只测纯逻辑 `apply_session_sort_prefs`（不 load/save 真实 prefs 文件，
+    /// 避免测试污染开发者本机配置）。
+    #[test]
+    fn set_session_sort_prefs_roundtrip() {
+        let mut prefs = nuphus::config::UserPreferences::default();
+
+        let applied = apply_session_sort_prefs(&mut prefs, "recent", "created");
+        assert_eq!(applied, ("recent".to_string(), "created".to_string()));
+        assert_eq!(prefs.session_group_order(), "recent", "组序维度应写回");
+        assert_eq!(prefs.session_sort_key(), "created", "组内键应写回");
+        assert_eq!(prefs.session_group_order, "recent", "落盘值不得被归一改写");
+        assert_eq!(prefs.session_sort_key, "created");
+
+        let applied = apply_session_sort_prefs(&mut prefs, "bookmark", "updated");
+        assert_eq!(applied, ("bookmark".to_string(), "updated".to_string()));
+        assert_eq!(prefs.session_group_order(), "bookmark");
+        assert_eq!(prefs.session_sort_key(), "updated");
+    }
+
+    /// 非法取值归一（不拒绝、不落非法值）：返回的即落盘值，前端据此校准本地状态。
+    #[test]
+    fn set_session_sort_prefs_normalizes_illegal_values() {
+        let mut prefs = nuphus::config::UserPreferences::default();
+
+        let applied = apply_session_sort_prefs(&mut prefs, " RECENT ", "whatever");
+        assert_eq!(applied, ("recent".to_string(), "updated".to_string()));
+        assert_eq!(prefs.session_group_order, "recent");
+        assert_eq!(prefs.session_sort_key, "updated");
+
+        let applied = apply_session_sort_prefs(&mut prefs, "", "");
+        assert_eq!(applied, ("bookmark".to_string(), "updated".to_string()));
+        assert_eq!(prefs.session_group_order, "bookmark");
+        assert_eq!(prefs.session_sort_key, "updated");
     }
 
     fn cmd(args: &[&str]) -> Vec<std::ffi::OsString> {

@@ -53,6 +53,15 @@ pub struct UserPreferences {
     /// 项目书签列表（项目中心维护）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub project_bookmarks: Vec<ProjectBookmark>,
+    /// 会话工作台排序 · 组序维度（"bookmark" = 书签顺序，默认；"recent" = 按组内最近会话倒序）。
+    ///
+    /// `serde(default)` 保证老配置平滑升级；手改配置写入的非法值由
+    /// [`UserPreferences::session_group_order`] 归一为默认值，不影响启动。
+    #[serde(default = "default_session_group_order")]
+    pub session_group_order: String,
+    /// 会话工作台排序 · 组内排序键（"updated" = 更新时间倒序，默认；"created" = 创建时间，早的在上）。
+    #[serde(default = "default_session_sort_key")]
+    pub session_sort_key: String,
     /// 会话分组折叠上限（全局单值，会话工作台「项目文件夹」每组默认折叠的会话数）。
     ///
     /// `serde(default)` 保证老配置平滑升级：缺字段即 6。0 视为未设置 → 读数回落默认值
@@ -80,12 +89,56 @@ fn default_session_group_collapsed_limit() -> u32 {
     DEFAULT_SESSION_GROUP_COLLAPSED_LIMIT
 }
 
+/// 会话工作台排序 · 组序维度：按书签顺序（默认，= 分组引入前的行为）。
+pub const SESSION_GROUP_ORDER_BOOKMARK: &str = "bookmark";
+
+/// 会话工作台排序 · 组序维度：按组内最近一次会话时间倒序。
+pub const SESSION_GROUP_ORDER_RECENT: &str = "recent";
+
+/// 会话工作台排序 · 组内键：按更新时间倒序（默认，= 分组引入前的行为）。
+pub const SESSION_SORT_KEY_UPDATED: &str = "updated";
+
+/// 会话工作台排序 · 组内键：按创建时间升序（早的在上）。
+pub const SESSION_SORT_KEY_CREATED: &str = "created";
+
+/// serde 缺省函数：老配置无组序维度字段时回落「按项目」。
+fn default_session_group_order() -> String {
+    SESSION_GROUP_ORDER_BOOKMARK.to_string()
+}
+
+/// serde 缺省函数：老配置无组内键字段时回落「更新时间」。
+fn default_session_sort_key() -> String {
+    SESSION_SORT_KEY_UPDATED.to_string()
+}
+
+/// 组序维度归一：只认 `"recent"`（去空白 + 忽略大小写），其余一律回落默认「按项目」。
+///
+/// 归一收敛在此，`list_shelf_sessions` / 排序命令 / 前端三处读数语义一致。
+pub fn normalize_session_group_order(raw: &str) -> &'static str {
+    if raw.trim().eq_ignore_ascii_case(SESSION_GROUP_ORDER_RECENT) {
+        SESSION_GROUP_ORDER_RECENT
+    } else {
+        SESSION_GROUP_ORDER_BOOKMARK
+    }
+}
+
+/// 组内排序键归一：只认 `"created"`（去空白 + 忽略大小写），其余一律回落默认「更新时间」。
+pub fn normalize_session_sort_key(raw: &str) -> &'static str {
+    if raw.trim().eq_ignore_ascii_case(SESSION_SORT_KEY_CREATED) {
+        SESSION_SORT_KEY_CREATED
+    } else {
+        SESSION_SORT_KEY_UPDATED
+    }
+}
+
 impl Default for UserPreferences {
     fn default() -> Self {
         Self {
             language: "zh-CN".to_string(),
             project_dir: String::new(),
             project_bookmarks: Vec::new(),
+            session_group_order: default_session_group_order(),
+            session_sort_key: default_session_sort_key(),
             session_group_collapsed_limit: DEFAULT_SESSION_GROUP_COLLAPSED_LIMIT,
             browser_cdp_url: None,
             browser_identity: None,
@@ -103,6 +156,16 @@ impl UserPreferences {
         } else {
             self.session_group_collapsed_limit
         }
+    }
+
+    /// 组序维度读数（归一后）：手改配置的非法值一律回落「按项目」。
+    pub fn session_group_order(&self) -> &'static str {
+        normalize_session_group_order(&self.session_group_order)
+    }
+
+    /// 组内排序键读数（归一后）：手改配置的非法值一律回落「更新时间」。
+    pub fn session_sort_key(&self) -> &'static str {
+        normalize_session_sort_key(&self.session_sort_key)
     }
 
     pub fn load() -> Self {
@@ -167,6 +230,72 @@ mod tests {
         assert_eq!(prefs.project_dir, "E:\\work\\A");
         assert!(!prefs.project_bookmarks[0].archived, "老书签默认未归档");
         assert_eq!(prefs.project_bookmarks[0].name, "A");
+        assert_eq!(prefs.session_group_order(), SESSION_GROUP_ORDER_BOOKMARK);
+        assert_eq!(prefs.session_sort_key(), SESSION_SORT_KEY_UPDATED);
+    }
+
+    /// 排序偏好落盘往返：合法值序列化保留、反序列化还原（重启后排序不丢）。
+    #[test]
+    fn sort_prefs_roundtrip_through_json() {
+        let prefs = UserPreferences {
+            session_group_order: SESSION_GROUP_ORDER_RECENT.to_string(),
+            session_sort_key: SESSION_SORT_KEY_CREATED.to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert!(json.contains("\"session_group_order\":\"recent\""));
+        assert!(json.contains("\"session_sort_key\":\"created\""));
+
+        let back: UserPreferences = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_group_order(), SESSION_GROUP_ORDER_RECENT);
+        assert_eq!(back.session_sort_key(), SESSION_SORT_KEY_CREATED);
+    }
+
+    /// 非法取值归一：手改配置写进的怪值 / 空串 / 大小写变体 / 带空白，
+    /// 读数一律回落默认，且**不**把非法原值当作有效偏好。
+    #[test]
+    fn illegal_sort_prefs_fall_back_to_defaults() {
+        // 大小写 / 首尾空白容错（手改配置常见形态）
+        assert_eq!(
+            normalize_session_group_order(" Recent "),
+            SESSION_GROUP_ORDER_RECENT
+        );
+        assert_eq!(
+            normalize_session_sort_key("Created"),
+            SESSION_SORT_KEY_CREATED
+        );
+        // 合法值原样通过
+        assert_eq!(
+            normalize_session_group_order("bookmark"),
+            SESSION_GROUP_ORDER_BOOKMARK
+        );
+        assert_eq!(
+            normalize_session_sort_key("updated"),
+            SESSION_SORT_KEY_UPDATED
+        );
+        // 非法值 / 空串 → 默认（不把非法原值当有效偏好）
+        for raw in ["", "  ", "newest", "recentt", "时间"] {
+            assert_eq!(
+                normalize_session_group_order(raw),
+                SESSION_GROUP_ORDER_BOOKMARK,
+                "组序维度归一错误: {raw:?}"
+            );
+        }
+        for raw in ["", "  ", "create", "oldest", "updated_at"] {
+            assert_eq!(
+                normalize_session_sort_key(raw),
+                SESSION_SORT_KEY_UPDATED,
+                "组内键归一错误: {raw:?}"
+            );
+        }
+
+        let prefs = UserPreferences {
+            session_group_order: "newest".to_string(),
+            session_sort_key: String::new(),
+            ..Default::default()
+        };
+        assert_eq!(prefs.session_group_order(), SESSION_GROUP_ORDER_BOOKMARK);
+        assert_eq!(prefs.session_sort_key(), SESSION_SORT_KEY_UPDATED);
     }
 
     /// 0 = 未设置（手改配置/异常值）→ 读数回落默认值，不把每个组折叠成空列表。
