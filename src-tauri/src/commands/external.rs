@@ -73,7 +73,9 @@ mod tests {
 
     #[test]
     fn allows_http_and_https() {
-        assert!(is_allowed_external_url("https://github.com/mrpulor-gh/nuphus"));
+        assert!(is_allowed_external_url(
+            "https://github.com/mrpulor-gh/nuphus"
+        ));
         assert!(is_allowed_external_url("http://example.com/a?b=1#c"));
         assert!(is_allowed_external_url("HTTPS://Example.com"));
     }
