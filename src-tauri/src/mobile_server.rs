@@ -2864,6 +2864,26 @@ mod tests {
                 "collapsed_limit 必须是正数，实际: {}",
                 body["collapsed_limit"]
             );
+            // 排序偏好 + 创建时间：移动端 NavBar 与桌面 SessionRail 共用同一读数
+            assert!(
+                ["bookmark", "recent"]
+                    .contains(&body["sort_prefs"]["group_order"].as_str().unwrap_or("")),
+                "sort_prefs.group_order 必须透传且为合法归一值，实际: {}",
+                body["sort_prefs"]
+            );
+            assert!(
+                ["updated", "created"]
+                    .contains(&body["sort_prefs"]["sort_key"].as_str().unwrap_or("")),
+                "sort_prefs.sort_key 必须透传且为合法归一值，实际: {}",
+                body["sort_prefs"]
+            );
+            assert!(
+                body["items"][0]["created_at"]
+                    .as_u64()
+                    .is_some_and(|v| v > 0),
+                "条目必须带真实 created_at（毫秒），实际: {}",
+                body["items"][0]
+            );
 
             let resp = np_get(&format!("{base}/boot?token={token}")).await.unwrap();
             assert_eq!(resp.status(), 200);

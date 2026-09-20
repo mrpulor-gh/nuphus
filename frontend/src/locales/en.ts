@@ -140,7 +140,6 @@ const en: Record<string, string> = {
 
   // ── Session Rail (session workbench: edge chip + slide-out drawer) ──
   'sessionRail.title': 'Session workbench',
-  'sessionRail.collapse': 'Collapse',
   'sessionRail.newChat': 'New chat',
   'sessionRail.projectDir': 'Project dir',
   'sessionRail.expandMore': 'Show {0} more',
@@ -165,6 +164,42 @@ const en: Record<string, string> = {
   'sessionRail.archiveConfirmDesc':
     'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
+
+  // ── Session rail: project folder grouping (Phase 2) ──
+  'sessionRail.projectsTitle': 'Projects',
+  'sessionRail.ungrouped': 'Ungrouped',
+  'sessionRail.groupEmpty': 'No sessions in this folder yet',
+  'sessionRail.emptySessions': 'No sessions yet',
+  'sessionRail.newChatInFolder': 'New chat in this folder',
+  'sessionRail.renameFolder': 'Rename folder',
+  'sessionRail.archiveFolder': 'Archive folder',
+  'sessionRail.archiveFolderConfirmTitle': 'Archive this folder?',
+  'sessionRail.archiveFolderConfirmDesc':
+    'This hides "{0}" and all of its sessions from the project list; restore it anytime from the session rail menu "⋯ → Restore hidden projects".',
+  'sessionRail.autoTag': 'not bookmarked',
+  'sessionRail.autoGroupHint': 'Folder with sessions but not bookmarked (read-only)',
+  // ── Session rail: "Projects" row menu (tidy / sort / restore hidden) + 📁+ ──
+  'sessionRail.projectsMenu': 'Project menu',
+  'sessionRail.newProjectFolder': 'New project folder',
+  'sessionRail.menuArrange': 'Tidy sidebar',
+  'sessionRail.menuExpandAll': 'Expand all',
+  'sessionRail.menuCollapseAll': 'Collapse all',
+  'sessionRail.menuSort': 'Sort by',
+  'sessionRail.menuSortByProject': 'By project',
+  'sessionRail.menuSortByRecent': 'Recent projects',
+  'sessionRail.menuSortByTime': 'By time',
+  'sessionRail.menuSortByCreated': 'Created',
+  'sessionRail.menuSortByUpdated': 'Updated',
+  'sessionRail.menuRestore': 'Restore hidden projects ({0})',
+  'sessionRail.restoreFailGeneric': 'Restore failed',
+  'sessionRail.sortPrefsFailGeneric': 'Sort setting not saved, please retry',
+  'app.sessionGroups': 'Session workbench',
+  'settings.sessionGroups.limit': 'Sessions shown per group',
+  'settings.sessionGroups.limitHint':
+    'Each project folder shows its {0} most recent sessions; the rest collapse into "Show N more sessions". Applies globally, minimum 1.',
+  'settings.sessionGroups.limitInvalid': 'Enter a whole number of 1 or more',
+  'settings.sessionGroups.loadFail': 'Failed to load the setting',
+  'settings.sessionGroups.saveFail': 'Save failed',
 
   // 鈹€鈹€ Welcome 鈹€鈹€
   'welcome.resume': 'Resume',

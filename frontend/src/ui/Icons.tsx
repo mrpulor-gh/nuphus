@@ -6,6 +6,7 @@ export {
   Copy as IconCopy,
   Check as IconCheck,
   Folder as IconFolder,
+  FolderPlus as IconFolderPlus,
   Plug as IconPlug,
   Send as IconSend,
   Square as IconSquare,
@@ -67,6 +68,8 @@ export {
   AppWindow as IconAppWindow,
   Radio as IconRadio,
   Settings as IconSettings,
+  MoreHorizontal as IconMoreHorizontal,
+  ArchiveRestore as IconRestore,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

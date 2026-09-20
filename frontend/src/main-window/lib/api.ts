@@ -348,12 +348,54 @@ export interface ShelfSessionItem {
   message_count: number
   updated_at: number
   is_active: boolean
+  /**
+   * 会话归属目录（诞生时快照，Phase 1 新增）；`null` = 无归属（历史遗留/未配置项目目录）。
+   * ⚠️ 无归属会话**不得**用当前工作目录回填——前端只据此归入「未分组」。
+   */
+  project_path?: string | null
+  /**
+   * 会话创建时刻（Unix 毫秒）——「按时间顺序 → 创建时间」组内排序的**唯一**依据。
+   * 来源 sessions.created_at（尚无落盘行的 active 会话取首条消息时间戳）。
+   * 可选：老后端 / mock 缺失时前端退化为 updated_at（见 sessionGroups.createdMillis）。
+   */
+  created_at?: number
+}
+
+/**
+ * 会话工作台排序偏好（后端 `sort_prefs` 原样透传）。
+ * 字段是**线上取值**（后端已归一，非法值会在前端二次归一为默认）。
+ */
+export interface ShelfSortPrefs {
+  /** `bookmark` = 按项目（书签顺序，默认）/ `recent` = 近期项目（组内最近会话倒序） */
+  group_order: string
+  /** `updated` = 更新时间（默认）/ `created` = 创建时间 */
+  sort_key: string
+}
+
+/** 项目文件夹（会话工作台分组数据源，对齐后端 ProjectEntry） */
+export interface ShelfProjectEntry {
+  /** 分组键：与 items[].project_path 精确对应 */
+  path: string
+  /** 展示名：书签自定义名优先，自动组取目录末段 */
+  name: string
+  /** 当前工作目录所在组（仅高亮，不上浮） */
+  is_current: boolean
+  /** true = 未收藏但有会话的自动组（只读：不可重命名/归档） */
+  auto: boolean
 }
 
 export interface ShelfListResponse {
   /** false = busy 或追加队列非空，切换被后端拒绝 */
   can_switch: boolean
   items: ShelfSessionItem[]
+  /** 可见项目文件夹（书签顺序 → auto），顺序即组顺序 */
+  projects: ShelfProjectEntry[]
+  /** 已归档项目文件夹（整组隐藏；「已归档文件夹」恢复入口的数据源） */
+  archived_projects: ShelfProjectEntry[]
+  /** 全局组内折叠上限（后端已把 0 收敛为默认值） */
+  collapsed_limit: number
+  /** 排序偏好（组序维度 + 组内键）：桌面与移动端共用同一读数 */
+  sort_prefs: ShelfSortPrefs
 }
 
 /** 展示台列表：active 置顶 + newest-first */
@@ -769,7 +811,16 @@ export function setLanguage(lang: string) {
 
 // ── Project ──
 
-export type ProjectBookmark = { name: string; path: string }
+export type ProjectBookmark = {
+  name: string
+  path: string
+  /**
+   * 归档标记：true = 该文件夹在会话工作台隐藏（可从「已归档文件夹」恢复）。
+   * 由 `set_project_folder_archived` 增删，整表替换（`set_project_bookmarks`）会
+   * 自动沿用已落盘标记——归档状态不因重命名/增删书签而丢失。
+   */
+  archived?: boolean
+}
 /** 项目目录状态（后端 prefs 为唯一事实源） */
 export type ProjectDirState = { path: string; name: string; tag: string }
 
@@ -790,11 +841,60 @@ export async function getProjectBookmarks(): Promise<ProjectBookmark[]> {
   return (await invoke<ProjectBookmark[]>('get_project_bookmarks')) ?? []
 }
 
-/** 写入项目书签（整表替换；后端去空/去重/名称兜底） */
+/** 写入项目书签（整表替换；后端去空/去重/名称兜底，同路径自动沿用归档标记） */
 export async function setProjectBookmarks(
   bookmarks: ProjectBookmark[],
 ): Promise<ProjectBookmark[]> {
   return (await invoke<ProjectBookmark[]>('set_project_bookmarks', { bookmarks })) ?? bookmarks
+}
+
+/** 归档 / 恢复项目文件夹（归档 = 会话工作台整组隐藏，可恢复）；返回最新书签表 */
+export async function setProjectFolderArchived(
+  path: string,
+  archived: boolean,
+): Promise<ProjectBookmark[]> {
+  return (await invoke<ProjectBookmark[]>('set_project_folder_archived', { path, archived })) ?? []
+}
+
+// ── 会话工作台分组设置 ──
+
+/** 组内折叠上限变更事件（设置中心写盘后广播，会话工作台立即生效而非等 5s 轮询） */
+export const SESSION_GROUP_LIMIT_CHANGED_EVENT = 'nuphus:session-group-limit-changed'
+
+/**
+ * 设置会话分组折叠上限（全局单值）。
+ * 后端拒绝 0（会让每个分组折叠成空列表）→ 返回稳定错误码 `invalid_limit`；
+ * 调用方（设置中心）已在前端做 >=1 校验，此处不再兜底。
+ */
+export async function setSessionGroupCollapsedLimit(limit: number): Promise<number> {
+  const applied = await invoke<number>('set_session_group_collapsed_limit', { limit })
+  // bridge 的 invoke 在无 Tauri 通道（浏览器回退链路）时返回 null → 回落到请求值，
+  // 不用 0 之类的假值污染调用方读数（后端失败会 throw，不走这里）
+  const value = typeof applied === 'number' && applied >= 1 ? applied : limit
+  window.dispatchEvent(
+    new CustomEvent<number>(SESSION_GROUP_LIMIT_CHANGED_EVENT, { detail: value }),
+  )
+  return value
+}
+
+/**
+ * 设置会话工作台排序偏好（组序维度 + 组内排序键，两维独立）。
+ *
+ * 后端把非法取值归一为默认值并**返回归一后的结果**，调用方据此校准本地状态
+ * （避免「界面显示 A、落盘 B」）。生效无需额外广播：会话工作台 5s 轮询
+ * `list_shelf_sessions` 即读到新值，移动端同源返回体一并跟随。
+ */
+export async function setSessionSortPrefs(
+  groupOrder: string,
+  sortKey: string,
+): Promise<ShelfSortPrefs> {
+  const applied = await invoke<ShelfSortPrefs>('set_session_sort_prefs', { groupOrder, sortKey })
+  // bridge 无 Tauri 通道（浏览器回退链路）时返回 null → 回落到请求值；
+  // 后端拒绝会 throw，不走这里
+  return {
+    group_order: applied?.group_order ?? groupOrder,
+    sort_key: applied?.sort_key ?? sortKey,
+  }
 }
 
 // ── Session Refine ──

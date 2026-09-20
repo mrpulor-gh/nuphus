@@ -31,6 +31,9 @@ function nameFromPath(p: string): string {
  * 2. 点击书签 = **真正切换项目**（落盘 + 后端向活跃会话注入 user 内部消息），
  *    旧版只是把路径回填输入框、未应用；
  * 3. 失败显式提示（旧版把后端错误静默吞掉）。
+ *
+ * 归档文件夹**不出现在项目中心**（书签区只列未归档书签，也**没有**「已归档文件夹」区）：
+ * 归档的恢复入口唯一收敛到会话工作台「项目」行 ⋯ 菜单 →「恢复隐藏项目 (N)」。
  */
 export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirState) => void }) {
   const { t } = useLanguage()
@@ -43,6 +46,13 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
   const [error, setError] = useState<string | null>(null)
   /** 选中的书签（点书签行仅选中，由「设为当前」应用 → 避免误点即切换） */
   const [selectedPath, setSelectedPath] = useState('')
+
+  /**
+   * 书签区只列**未归档**书签（归档文件夹在项目中心不可见；恢复入口在会话工作台 ⋯ 菜单）。
+   * 书签表本身仍是全量：新增/删除时整表提交，归档项原样带上（`set_project_bookmarks`
+   * 会沿用已落盘归档标记），归档记录不因这里不显示而被抹掉。
+   */
+  const activeBookmarks = bookmarks.filter(b => !b.archived)
 
   useEffect(() => {
     let cancelled = false
@@ -187,16 +197,16 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         )}
       </Section>
 
-      {/* ── 项目书签 ── */}
+      {/* ── 项目书签（只列未归档书签：归档文件夹在项目中心不显示）── */}
       <Section title={t('project.bookmarks')}>
-        {bookmarks.length === 0 ? (
+        {activeBookmarks.length === 0 ? (
           <div className="page-empty">
             <div>{t('project.noBookmarks')}</div>
             <div className="page-empty-hint">{t('project.bookmarkHint')}</div>
           </div>
         ) : (
           <div className="page-list">
-            {bookmarks.map(b => (
+            {activeBookmarks.map(b => (
               <div
                 key={b.path}
                 className={`page-list-item${selectedPath === b.path ? ' active' : ''}`}

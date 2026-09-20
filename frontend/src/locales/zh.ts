@@ -138,7 +138,6 @@ const zh: Record<string, string> = {
 
   // ── Session Rail（会话工作台：左缘色块 + 滑动抽屉）──
   'sessionRail.title': '会话工作台',
-  'sessionRail.collapse': '收起',
   'sessionRail.newChat': '新建对话',
   'sessionRail.projectDir': '项目目录',
   'sessionRail.expandMore': '展开其余 {0} 个会话',
@@ -161,6 +160,42 @@ const zh: Record<string, string> = {
   'sessionRail.archiveConfirmTitle': '归档该会话？',
   'sessionRail.archiveConfirmDesc': '归档后将从会话台移除，对话记录保留在记忆页可查看',
   'sessionRail.archiveFailGeneric': '归档失败',
+
+  // ── 会话工作台：项目文件夹分组（Phase 2）──
+  'sessionRail.projectsTitle': '项目',
+  'sessionRail.ungrouped': '未分组',
+  'sessionRail.groupEmpty': '该文件夹暂无会话',
+  'sessionRail.emptySessions': '暂无会话记录',
+  'sessionRail.newChatInFolder': '在该文件夹新建对话',
+  'sessionRail.renameFolder': '重命名文件夹',
+  'sessionRail.archiveFolder': '归档文件夹',
+  'sessionRail.archiveFolderConfirmTitle': '归档该文件夹？',
+  'sessionRail.archiveFolderConfirmDesc':
+    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时在会话工作台「⋯ → 恢复隐藏项目」恢复',
+  'sessionRail.autoTag': '未收藏',
+  'sessionRail.autoGroupHint': '未收藏但有会话的文件夹，仅展示（不可重命名/归档）',
+  // ── 会话工作台：「项目」行 ⋯ 菜单（整理 / 排序 / 恢复隐藏项目）+ 📁+ ──
+  'sessionRail.projectsMenu': '项目菜单',
+  'sessionRail.newProjectFolder': '新建项目文件夹',
+  'sessionRail.menuArrange': '整理侧边栏',
+  'sessionRail.menuExpandAll': '全部展开',
+  'sessionRail.menuCollapseAll': '全部关闭',
+  'sessionRail.menuSort': '排序条件',
+  'sessionRail.menuSortByProject': '按项目',
+  'sessionRail.menuSortByRecent': '近期项目',
+  'sessionRail.menuSortByTime': '按时间顺序',
+  'sessionRail.menuSortByCreated': '创建时间',
+  'sessionRail.menuSortByUpdated': '更新时间',
+  'sessionRail.menuRestore': '恢复隐藏项目 ({0})',
+  'sessionRail.restoreFailGeneric': '恢复失败',
+  'sessionRail.sortPrefsFailGeneric': '排序设置未保存，请重试',
+  'app.sessionGroups': '会话工作台',
+  'settings.sessionGroups.limit': '每组显示会话数',
+  'settings.sessionGroups.limitHint':
+    '每个项目文件夹默认显示最近 {0} 个会话，超出部分折叠为「展开其余 N 个会话」；全局生效，最小 1',
+  'settings.sessionGroups.limitInvalid': '请输入 1 以上的整数',
+  'settings.sessionGroups.loadFail': '读取设置失败',
+  'settings.sessionGroups.saveFail': '保存失败',
 
   // ── 欢迎页 ──
   'welcome.resume': '继续对话',

@@ -3142,6 +3142,97 @@ body {
   opacity: 0.75;
 }
 
+/* ── 会话按项目文件夹分组（Phase 2，与桌面 rail 同一返回体 + 同一纯函数）──
+   组头 = 文件夹名 + 当前徽标 + 会话数 + 展开箭头（点击收起/展开整组）；
+   组内会话沿用 .mobile-sess-item 行样式，折叠上限与桌面同源 collapsed_limit。 */
+.mobile-sess-group {
+  margin-bottom: 12px;
+}
+
+.mobile-sess-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg-secondary);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-sess-group-head:active {
+  background: var(--m-fill);
+}
+
+.mobile-sess-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 当前工作目录所在组：仅高亮不上浮；未分组组弱化 */
+.mobile-sess-group-name.is-current {
+  color: var(--m-fg);
+}
+
+.mobile-sess-group-name.is-ungrouped {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.mobile-sess-group-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--m-fill);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--m-fg);
+}
+
+.mobile-sess-group-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--m-fg-secondary);
+  opacity: 0.75;
+}
+
+/* 组内列表：组头与条目间距收窄（组内成块，组间 12px 已足够分区） */
+.mobile-sess-group .mobile-sess-list {
+  margin-top: 6px;
+}
+
+/* 组内折叠行：展开其余 N 个会话（与桌面 .sr-more-btn 同语义） */
+.mobile-sess-more {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--m-fg-secondary);
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-sess-more:active {
+  background: var(--m-fill);
+}
+
 /* 设置/会话抽屉：右侧整面滑出（点击 logo → 设置 打开；跟随主题毛玻璃）
    高于底部输入栏(210)：右侧全高抽屉不受输入栏遮挡，内容可纵向舒展
    同级 z-index 时 DOM 靠后的 Composer 会压住弹窗底部（重置按钮不可见） */

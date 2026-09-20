@@ -14,18 +14,18 @@
  *     高度不足是裁切而非滚动 → 走 `.canvas-workbench-host` 全屏宿主（openCanvas 链路）。
  *   - 模型：双栏后主区仅 566px，需在 844px 内重排信息（服务商列表 / 密钥表单 / 模型表格），
  *     样式层解决不了宿主上限 → 走 `.models-page-host` 全屏整页（Ctrl+K → 模型 链路）。
- *   其余 13 项在 844px 下信息完整、导航切换的价值正在这一档，保持弹窗内嵌。
+ *   其余 14 项在 844px 下信息完整、导航切换的价值正在这一档，保持弹窗内嵌。
  *
  * 复用原则：右侧内容一律复用现有页面组件，本文件只做「导航 → 分区切换」，
  * 不复制任何子页实现；子页的 lazy 说明符与 App.tsx 各入口保持一致，
  * 命中同一 chunk（不产生重复打包）。
  *
- * 分区 ↔ 子页映射（共 15 项，见 NAV_GROUPS）：
+ * 分区 ↔ 子页映射（共 16 项，见 NAV_GROUPS）：
  *   快捷入口：**模型 → 全屏宿主** / **画布 → 全屏宿主**
  *   浏览：记忆 MemoriesPage / 工作流 WorkflowPage / 技能 SkillsPage /
  *         知识库 KnowledgePage / MCP McpPage
  *   设置：灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
- *         主题与语言 ThemesPage / 外部 Agent ExternalAgentsPage
+ *         主题与语言 ThemesPage / 会话工作台 SessionGroupsPage / 外部 Agent ExternalAgentsPage
  *   管理：权限与安全 SecurityPage / GitHub GithubPage / 版本与更新 UpdatePage
  *
  * 子页 onClose 语义：子页自身没有「页壳」（外壳由 CompactModal / 本组件提供），
@@ -41,6 +41,7 @@ import {
   IconCpu,
   IconExternalLink,
   IconFile,
+  IconFolder,
   IconHistory,
   IconPalette,
   IconPlug,
@@ -81,6 +82,9 @@ const ExternalAgentsPage = lazy(() =>
 )
 const SecurityPage = lazy(() => import('./SecurityPage').then(m => ({ default: m.SecurityPage })))
 const UpdatePage = lazy(() => import('./UpdatePage').then(m => ({ default: m.UpdatePage })))
+const SessionGroupsPage = lazy(() =>
+  import('./SessionGroupsPage').then(m => ({ default: m.SessionGroupsPage })),
+)
 
 export type SettingsSectionId =
   | 'memories'
@@ -95,6 +99,7 @@ export type SettingsSectionId =
   | 'mobile'
   | 'browser'
   | 'themes'
+  | 'session-groups'
   | 'external-agents'
   | 'security'
   | 'update'
@@ -149,6 +154,7 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
       { id: 'mobile', labelKey: 'app.mobile', icon: <IconSmartphone size={14} /> },
       { id: 'browser', labelKey: 'app.browser', icon: <IconBrowser size={14} /> },
       { id: 'themes', labelKey: 'app.themes', icon: <IconPalette size={14} /> },
+      { id: 'session-groups', labelKey: 'app.sessionGroups', icon: <IconFolder size={14} /> },
       {
         id: 'external-agents',
         labelKey: 'cmd.externalAgents',
@@ -292,6 +298,8 @@ export function SettingsCenter({
         return <BrowserPage onClose={onClose} />
       case 'themes':
         return <ThemesPage onClose={onClose} showToast={showToast} />
+      case 'session-groups':
+        return <SessionGroupsPage />
       case 'external-agents':
         return <ExternalAgentsPage onClose={onClose} />
       case 'security':
