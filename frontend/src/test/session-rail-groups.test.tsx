@@ -310,6 +310,16 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     expect(screen.queryByText('恢复')).not.toBeInTheDocument()
   })
 
+  it('恢复失败走独立提示（恢复失败），不与归档失败混淆', async () => {
+    setProjectFolderArchived.mockRejectedValue('boom')
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('项目文件夹'))
+    fireEvent.click(screen.getByText('恢复'))
+    await waitFor(() => expect(screen.getByText('恢复失败')).toBeInTheDocument())
+  })
+
   it('切换失败映射稳定错误码文案（busy → 业务等待提示）', async () => {
     switchSession.mockRejectedValue('busy')
     renderRail()

@@ -165,6 +165,7 @@ const en: Record<string, string> = {
   'sessionRail.archiveConfirmDesc':
     'It will be removed from the session rail; conversation records stay viewable in the memory page.',
   'sessionRail.archiveFailGeneric': 'Archive failed',
+  'sessionRail.restoreFailGeneric': 'Restore failed',
 
   // ── Session rail: project folder grouping (Phase 2) ──
   'sessionRail.projectsTitle': 'Projects',

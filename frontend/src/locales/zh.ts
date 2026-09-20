@@ -161,6 +161,7 @@ const zh: Record<string, string> = {
   'sessionRail.archiveConfirmTitle': '归档该会话？',
   'sessionRail.archiveConfirmDesc': '归档后将从会话台移除，对话记录保留在记忆页可查看',
   'sessionRail.archiveFailGeneric': '归档失败',
+  'sessionRail.restoreFailGeneric': '恢复失败',
 
   // ── 会话工作台：项目文件夹分组（Phase 2）──
   'sessionRail.projectsTitle': '项目',

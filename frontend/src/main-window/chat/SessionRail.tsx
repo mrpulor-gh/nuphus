@@ -90,6 +90,7 @@ function codeToI18n(code: string): string {
   if (code === 'append_pending') return 'sessionRail.switchFailAppend'
   if (code === 'mode_mismatch') return 'sessionRail.switchFailMode'
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
+  if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
   return 'sessionRail.switchFailGeneric'
 }
 
@@ -515,7 +516,7 @@ export default function SessionRail({
         await setProjectFolderArchived(path, false)
         void refresh()
       } catch {
-        flashNotice('archiveFailGeneric')
+        flashNotice('restoreFailGeneric')
       }
     },
     [refresh, flashNotice],
