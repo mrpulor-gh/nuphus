@@ -85,18 +85,18 @@ const navGroupLabels = (title: string) => {
 }
 
 describe('SettingsCenter 设置中心外壳', () => {
-  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 15 项，默认落在「记忆」', async () => {
+  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 16 项，默认落在「记忆」', async () => {
     renderCenter()
 
     const items = within(nav()).getAllByRole('button')
-    expect(items).toHaveLength(15)
+    expect(items).toHaveLength(16)
 
     // 分组顺序：快捷入口（最上）→ 浏览 → 设置 → 管理
     expect(navGroupTitles()).toEqual(['快捷入口', '浏览', '设置', '管理'])
-    // 2 + 5 + 5 + 3 = 15（GitHub 由「浏览」移入「管理」）
+    // 2 + 5 + 6 + 3 = 16（GitHub 由「浏览」移入「管理」；「设置」含本分支新增的会话工作台）
     expect(navGroupLabels('快捷入口')).toHaveLength(2)
     expect(navGroupLabels('浏览')).toHaveLength(5)
-    expect(navGroupLabels('设置')).toHaveLength(5)
+    expect(navGroupLabels('设置')).toHaveLength(6)
     expect(navGroupLabels('管理')).toHaveLength(3)
 
     // 默认分区仍是「记忆」，右内容不变
@@ -113,11 +113,27 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(navGroupLabels('快捷入口')).toEqual(['模型', '画布'])
   })
 
-  it('其余 13 项分组归属与内部顺序零变化（GitHub 由「浏览」移入「管理」）', async () => {
+  it('会话工作台分区：点击导航切换右侧内容（项目文件夹折叠上限设置页）', async () => {
+    renderCenter()
+    await screen.findByTestId('page-memories')
+
+    fireEvent.click(navItem('会话工作台'))
+    expect(await screen.findByTestId('page-session-groups')).toBeInTheDocument()
+    expect(navItem('会话工作台')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('其余 14 项分组归属与内部顺序零变化（GitHub 由「浏览」移入「管理」）', async () => {
     const props = renderCenter()
 
     expect(navGroupLabels('浏览')).toEqual(['记忆', '工作流', '技能', '知识库', 'MCP'])
-    expect(navGroupLabels('设置')).toEqual(['灵魂', '移动端', '浏览器', '主题与语言', '外部 Agent'])
+    expect(navGroupLabels('设置')).toEqual([
+      '灵魂',
+      '移动端',
+      '浏览器',
+      '主题与语言',
+      '会话工作台',
+      '外部 Agent',
+    ])
     // 管理组：GitHub 与「版本与更新」相邻（权限与安全 → GitHub → 版本与更新）
     expect(navGroupLabels('管理')).toEqual(['权限与安全', 'GitHub', '版本与更新'])
 

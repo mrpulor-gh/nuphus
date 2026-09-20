@@ -62,7 +62,7 @@ export function SessionGroupsPage() {
   }, [draft, t])
 
   return (
-    <div>
+    <div data-testid="page-session-groups">
       <Section
         title={t('app.sessionGroups')}
         description={t('settings.sessionGroups.limitHint', String(DEFAULT_GROUP_LIMIT))}
