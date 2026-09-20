@@ -432,13 +432,31 @@ export interface ShelfSessionItem {
   mode: string
   title: string
   message_count: number
-  updated_at?: string
+  /** Unix 毫秒（后端 ShelfEntry.updated_at 原样透传） */
+  updated_at?: number
   is_active: boolean
+  /** 会话归属目录（诞生时快照）；null/缺失 = 无归属 → 归入「未分组」 */
+  project_path?: string | null
+}
+
+/** 项目文件夹分组条目（对齐桌面端 ShelfProjectEntry，同一返回体） */
+export interface ShelfProjectEntry {
+  path: string
+  name: string
+  is_current: boolean
+  /** true = 未收藏但有会话的自动组（只读） */
+  auto: boolean
 }
 
 export interface ShelfSessions {
   can_switch: boolean
   items: ShelfSessionItem[]
+  /** 可见项目文件夹（顺序即组顺序：书签序 → auto） */
+  projects: ShelfProjectEntry[]
+  /** 已归档项目文件夹（整组隐藏，随组隐藏其会话） */
+  archived_projects: ShelfProjectEntry[]
+  /** 全局组内折叠上限（与桌面同一读数） */
+  collapsed_limit: number
 }
 
 /** GET /sessions —— 会话清单镜像（失败返回 null，调用方降级隐藏入口） */

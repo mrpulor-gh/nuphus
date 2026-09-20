@@ -8,12 +8,13 @@
  * iOS HIG：44pt 高度、17px/600 标题、hairline 下沿分隔、安全区上沿适配
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ALargeSmall,
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Moon,
   Plus,
   RefreshCw,
@@ -36,6 +37,12 @@ import {
 } from '../api'
 import type { ActivityState } from '../store'
 import type { WsStatus } from '../ws'
+import {
+  DEFAULT_GROUP_LIMIT,
+  buildSessionGroups,
+  normalizeGroupLimit,
+  visibleGroupSessions,
+} from '../../main-window/chat/sessionGroups'
 import { t } from '../i18n'
 
 interface Props {
@@ -267,6 +274,10 @@ export default function NavBar({
   // main（mode 手风琴卡 + 模型卡 + 会话列表）/ model（子视图）/ network（header 弹窗）
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsView, setSettingsView] = useState<SettingsView>('main')
+  /** 会话分组：组头折叠态（默认全展开，运行时状态不持久化） */
+  const [sessCollapsed, setSessCollapsed] = useState<Record<string, boolean>>({})
+  /** 会话分组：组内「展开其余 N 个」态 */
+  const [sessExpanded, setSessExpanded] = useState<Record<string, boolean>>({})
   const logoWrapRef = useRef<HTMLDivElement>(null)
   const settingsSheetRef = useRef<HTMLDivElement>(null)
 
@@ -464,6 +475,19 @@ export default function NavBar({
   const elapsedBase = activity.pausedAt ?? now
   const execDuration = activity.startedAt ? elapsedBase - activity.startedAt : 0
 
+  // ── 会话分组（与桌面同一纯函数 + 同一返回体）──
+  // 组顺序 = projects[] 顺序；「未分组」固定末位；归档文件夹整组隐藏（其会话不落未分组）。
+  const sessGroups = useMemo(
+    () =>
+      buildSessionGroups(
+        sessions?.items ?? [],
+        sessions?.projects ?? [],
+        sessions?.archived_projects ?? [],
+      ),
+    [sessions],
+  )
+  const sessLimit = normalizeGroupLimit(sessions?.collapsed_limit ?? DEFAULT_GROUP_LIMIT)
+
   const renderSettings = () =>
     settingsOpen ? (
       <div
@@ -659,43 +683,103 @@ export default function NavBar({
                   </button>
                 </div>
               </div>
-              {/* 会话列表：主视图直接展示（不再子视图）——点选即切换电脑端视图，
-                与桌面 rail 同语义；执行中/后端守卫锁定时禁用 */}
+              {/* 会话列表：主视图直接展示（不再子视图）——**按项目文件夹分组**渲染，
+                与桌面 rail 同一返回体 + 同一分组纯函数；点选即切换电脑端视图。
+                执行中/后端守卫锁定时禁用。 */}
               <div className="mobile-sess-section">
-                <div className="mobile-settings-group">会话</div>
-                {sessions && sessions.items.length > 0 ? (
-                  <div className="mobile-sess-list">
-                    {sessions.items.map(item => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={['mobile-sess-item', item.is_active ? 'is-active' : '']
-                          .filter(Boolean)
-                          .join(' ')}
-                        disabled={sessLocked}
-                        onClick={() => onSwitchSession?.(item.id, item.mode)}
-                      >
-                        <span className="mobile-sess-title">
-                          {item.mode && (
-                            <span
-                              className={`mobile-sess-mode mode-${item.mode}`}
-                              aria-hidden="true"
-                            >
-                              {item.mode.toUpperCase()}
+                <div className="mobile-settings-group">{t('sessionRail.projectsTitle')}</div>
+                {sessGroups.length > 0 ? (
+                  sessGroups.map(group => {
+                    const collapsed = !!sessCollapsed[group.key]
+                    const slice = visibleGroupSessions(group, sessLimit, !!sessExpanded[group.key])
+                    return (
+                      <div className="mobile-sess-group" key={group.key || '__ungrouped__'}>
+                        {/* 组头：文件夹名 + 当前徽标 + 会话数；点击收起/展开整组 */}
+                        <button
+                          type="button"
+                          className="mobile-sess-group-head"
+                          onClick={() =>
+                            setSessCollapsed(m => ({ ...m, [group.key]: !m[group.key] }))
+                          }
+                          aria-expanded={!collapsed}
+                        >
+                          <span
+                            className={`mobile-sess-group-name${
+                              group.isCurrent ? ' is-current' : ''
+                            }${group.path === null ? ' is-ungrouped' : ''}`}
+                          >
+                            {group.name || t('sessionRail.ungrouped')}
+                          </span>
+                          {group.isCurrent && (
+                            <span className="mobile-sess-group-badge">
+                              {t('sessionRail.current')}
                             </span>
                           )}
-                          {item.title || item.id}
-                        </span>
-                        <span className="mobile-sess-meta">
-                          {item.is_active ? '当前 · ' : ''}
-                          {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
-                          {item.message_count} 条
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                          <span className="mobile-sess-group-count">{group.sessions.length}</span>
+                          {collapsed ? (
+                            <ChevronRight size={14} aria-hidden="true" />
+                          ) : (
+                            <ChevronDown size={14} aria-hidden="true" />
+                          )}
+                        </button>
+                        {!collapsed &&
+                          (group.sessions.length > 0 ? (
+                            <>
+                              <div className="mobile-sess-list">
+                                {slice.sessions.map(item => (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    className={[
+                                      'mobile-sess-item',
+                                      item.is_active ? 'is-active' : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ')}
+                                    disabled={sessLocked}
+                                    onClick={() => onSwitchSession?.(item.id, item.mode)}
+                                  >
+                                    <span className="mobile-sess-title">
+                                      {item.mode && (
+                                        <span
+                                          className={`mobile-sess-mode mode-${item.mode}`}
+                                          aria-hidden="true"
+                                        >
+                                          {item.mode.toUpperCase()}
+                                        </span>
+                                      )}
+                                      {item.title || item.id}
+                                    </span>
+                                    <span className="mobile-sess-meta">
+                                      {item.is_active ? '当前 · ' : ''}
+                                      {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
+                                      {item.message_count} 条
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                              {/* 折叠行：与桌面同一上限语义（全局 collapsed_limit） */}
+                              {slice.hiddenCount > 0 && (
+                                <button
+                                  type="button"
+                                  className="mobile-sess-more"
+                                  onClick={() =>
+                                    setSessExpanded(m => ({ ...m, [group.key]: true }))
+                                  }
+                                >
+                                  {t('sessionRail.expandMore', String(slice.hiddenCount))}
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            // 空文件夹（书签存在但无会话）：弱提示，组仍显示
+                            <div className="mobile-sess-empty">{t('sessionRail.groupEmpty')}</div>
+                          ))}
+                      </div>
+                    )
+                  })
                 ) : (
-                  <div className="mobile-sess-empty">暂无会话记录</div>
+                  <div className="mobile-sess-empty">{t('sessionRail.emptySessions')}</div>
                 )}
                 <div className="mobile-settings-reset-hint">
                   切换的是电脑端正在显示的对话，两端同步
