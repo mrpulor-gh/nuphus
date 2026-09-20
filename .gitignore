@@ -1,7 +1,9 @@
 target/
 *.log
 *.pdb
-config.toml
+# 仅限根目录：无前缀写法会连 relay-server/.cargo/config.toml 一起吞掉
+# （那是 musl 交叉编译的链接器配置，必须入库）
+/config.toml
 config/team.toml
 debug_*
 .nuphus/
@@ -12,15 +14,9 @@ scripts/__pycache__/
 __pycache__/
 temp/
 frontend/dist/
-compare_preprocess/
 *.bmp
 # 根目录临时 Python 脚本（AI 会话产物，不入库）；scripts/ 正式脚本（generate_icons.py 等）不受影响
 /*.py
-py_ocr_results.txt
-ocr_report.txt
-test_ocr_page.html
-test_ocr_content.txt
-test_rec_input.png
 src-tauri/desktop/models/*.onnx
 src-tauri/desktop/models/*.txt
 src-tauri/desktop/models/*.pt
@@ -92,10 +88,6 @@ src-tauri/tasks/*/plans/
 plugin/knowledge/nuphus-self/
 src-tauri/tasks/*/archive/
 !src-tauri/tasks/TEMPLATE.plan.md
-
-# 构建日志
-build_restart.log
-candle_build.log
 
 # 系统元数据
 Thumbs.db

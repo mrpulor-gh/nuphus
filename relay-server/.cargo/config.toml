@@ -1,0 +1,3 @@
+# Windows 本机交叉编译 musl：无 cc/mingw，用 Rust 自带 lld 链接（relay-server 依赖纯 Rust）
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
