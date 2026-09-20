@@ -95,7 +95,26 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
     let agent_dir = root.join(&agent);
     let contract = crate::commands::config::handoff::build_contract(&agent, &task_id, &agent_dir);
     let full_brief = format!("{brief}\n\n---\n{contract}\n");
-    crate::commands::config::handoff::ensure_handoff_at(&root, &agent, &task_id, &full_brief)?;
+    // 可选目标工作区（审计基线）：声明后该目录的 HEAD 会被记入 status.json，完工时比对
+    // 是否出现未派发提交。给了就必须是已存在目录 —— 基线记错比不记更糟（会给出错误的
+    // 「无未派发提交」结论），所以宁可当场报错，也不静默忽略。
+    let workspace = params
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(ws) = workspace {
+        if !std::path::Path::new(ws).is_dir() {
+            return Err(format!("workspace 不是已存在的目录: {ws}"));
+        }
+    }
+    crate::commands::config::handoff::ensure_handoff_at(
+        &root,
+        &agent,
+        &task_id,
+        &full_brief,
+        workspace,
+    )?;
     // 可选产物子目录（对齐 read.md「产物写 projects/{project}/」）
     if let Some(project) = params
         .get("project")
@@ -210,6 +229,7 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
                 "ok": true,
                 "submitted": true,
                 "brief_path": brief_path_str,
+                "workspace": workspace,
                 "window": {
                     "pid": vars.get("pid"),
                     "hwnd": vars.get("hwnd"),
