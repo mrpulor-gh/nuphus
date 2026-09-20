@@ -1,8 +1,8 @@
 {
   "name": "workflow-design",
   "displayName": "工作流设计规范",
-  "description": "工作流编排核心能力：V2 步骤 schema（13 种 Action：tool/seq/loop/if/call/wait/chat/script/assert/mcp/sleep/break/continue）、变量模板与条件表达式、params.json 固化规范、设计模式库、验证闭环方法论、ui-maps 经验闭环与常见陷阱。",
-  "version": "1.2.0",
+  "description": "工作流编排核心能力：V2 步骤 schema（13 种 Action：tool/seq/loop/if/call/wait/chat/script/assert/mcp/sleep/break/continue）、变量模板与条件表达式、params.json 固化规范、外部输入（inputs 声明）、设计模式库、验证闭环方法论、ui-maps 经验闭环与常见陷阱。",
+  "version": "1.3.0",
   "author": "Nuphus",
   "keywords": ["workflow", "工作流", "设计", "模式", "步骤", "编译", "验证"],
   "triggers": {

@@ -40,4 +40,4 @@ plugin/skills/
 |---------|------|------|------|
 | `agent-orchestration` | Agent 平台编排 | 外部 Agent 平台的登记（team.toml）、启动、交互与并行调度策略 | `agent-orchestration/` |
 | `ui-design` | UI 设计系统 | Nuphus UI 设计规范与组件模式 | `ui-design/` |
-| `workflow-design` | 工作流设计规范 | 工作流设计模式与步骤编排指南 | `workflow-design/` |
+| `workflow-design` | 工作流设计规范 | 工作流设计模式、外部输入声明与步骤编排指南 | `workflow-design/` |
