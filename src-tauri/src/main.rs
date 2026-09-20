@@ -422,6 +422,12 @@ fn main() {
             // 这里创建后立即隐藏，保持 splash→main 启动流程不变
             // （见 tauri issue #14643 / wry issue #1639）。
             if let Some(main) = app.get_webview_window("main") {
+                // Windows 会为无装饰、可缩放窗口默认保留左/右/下非客户区，
+                // 浅色主题下表现为黑边。关闭阴影后 Tao 仍保留四边/四角缩放命中。
+                #[cfg(target_os = "windows")]
+                if let Err(error) = main.set_shadow(false) {
+                    tracing::warn!("Failed to disable main window shadow: {error}");
+                }
                 let _ = main.hide();
             }
 
