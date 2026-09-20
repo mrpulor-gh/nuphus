@@ -184,6 +184,17 @@ impl Executor {
         vars: &HashMap<String, serde_json::Value>,
     ) -> Option<serde_json::Value> {
         let path = name.strip_prefix("inputs.")?;
+        Self::lookup_inputs_path(path, vars)
+    }
+
+    /// 已去 `inputs.` 前缀的路径取值（`x` / `x.y`）。
+    ///
+    /// 文本内嵌替换（`replace_inputs_refs`）拿到的就是去前缀后的后缀，
+    /// 必须走同一入口——否则会二次剥离前缀导致恒为 None、静默不替换。
+    fn lookup_inputs_path(
+        path: &str,
+        vars: &HashMap<String, serde_json::Value>,
+    ) -> Option<serde_json::Value> {
         let valid = !path.is_empty()
             && path
                 .chars()
@@ -218,7 +229,8 @@ impl Executor {
             let after = &rest[start..];
             match after.find("}}") {
                 Some(end) => {
-                    match Self::lookup_inputs_ref(&after[9..end], vars) {
+                    // 后缀已去掉 `inputs.` 前缀 → 走 path 入口（勿再走 ref 入口二次剥离）
+                    match Self::lookup_inputs_path(&after[9..end], vars) {
                         Some(serde_json::Value::String(sv)) => out.push_str(&sv),
                         Some(other) => out.push_str(&other.to_string()),
                         None => out.push_str(&after[..end + 2]), // 未解析保留原文
