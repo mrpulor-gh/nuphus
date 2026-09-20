@@ -26,8 +26,3 @@
   background: var(--glass-1);
   border-color: var(--accent);
 }
-
-/* 已归档文件夹行：整行不可点（唯一动作是行内「恢复」按钮）→ 去掉手型光标 */
-.page-list-item.is-static {
-  cursor: default;
-}

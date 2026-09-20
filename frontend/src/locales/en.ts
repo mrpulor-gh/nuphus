@@ -175,7 +175,7 @@ const en: Record<string, string> = {
   'sessionRail.archiveFolder': 'Archive folder',
   'sessionRail.archiveFolderConfirmTitle': 'Archive this folder?',
   'sessionRail.archiveFolderConfirmDesc':
-    'This hides "{0}" and all of its sessions from the project list; restore it anytime from Archived folders in Project Center.',
+    'This hides "{0}" and all of its sessions from the project list; restore it anytime from the session rail menu "⋯ → Restore hidden projects".',
   'sessionRail.autoTag': 'not bookmarked',
   'sessionRail.autoGroupHint': 'Folder with sessions but not bookmarked (read-only)',
   // ── Session rail: "Projects" row menu (tidy / sort / restore hidden) + 📁+ ──
@@ -1464,12 +1464,6 @@ const en: Record<string, string> = {
   'project.deleteBookmark': 'Delete bookmark',
   'project.bookmarkNamePlaceholder': 'Bookmark name (optional)',
   'project.addBookmark': 'Add current directory to bookmarks',
-  'project.archivedFolders': 'Archived folders',
-  'project.archivedEmpty': 'No archived folders',
-  'project.archivedHint':
-    'Archived folders are hidden from the session workbench; restore to bring them back to bookmarks',
-  'project.restoreFolder': 'Restore',
-  'project.restoreFail': 'Restore failed',
 
   'soul.aiLabel': 'AI Name',
   'soul.userLabel': 'User Label',

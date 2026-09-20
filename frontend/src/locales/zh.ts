@@ -171,7 +171,7 @@ const zh: Record<string, string> = {
   'sessionRail.archiveFolder': '归档文件夹',
   'sessionRail.archiveFolderConfirmTitle': '归档该文件夹？',
   'sessionRail.archiveFolderConfirmDesc':
-    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时在项目中心「已归档文件夹」恢复',
+    '归档后「{0}」及其全部会话将从项目列表隐藏，可随时在会话工作台「⋯ → 恢复隐藏项目」恢复',
   'sessionRail.autoTag': '未收藏',
   'sessionRail.autoGroupHint': '未收藏但有会话的文件夹，仅展示（不可重命名/归档）',
   // ── 会话工作台：「项目」行 ⋯ 菜单（整理 / 排序 / 恢复隐藏项目）+ 📁+ ──
@@ -1403,11 +1403,6 @@ const zh: Record<string, string> = {
   'project.deleteBookmark': '删除书签',
   'project.bookmarkNamePlaceholder': '书签名称（可选）',
   'project.addBookmark': '将当前目录加入书签',
-  'project.archivedFolders': '已归档文件夹',
-  'project.archivedEmpty': '暂无已归档文件夹',
-  'project.archivedHint': '归档的文件夹不在会话工作台显示，恢复后回到上方项目书签',
-  'project.restoreFolder': '恢复',
-  'project.restoreFail': '恢复失败',
 
   'soul.aiLabel': 'AI 名称',
   'soul.userLabel': '用户称呼',
