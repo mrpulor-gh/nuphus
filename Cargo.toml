@@ -7,6 +7,10 @@ members = [
     "crates/nuphus-index",
     "crates/nuphus-browser",
 ]
+exclude = ["third_party/chromiumoxide"]
+
+[patch.crates-io]
+chromiumoxide = { path = "third_party/chromiumoxide" }
 
 [workspace.package]
 license = "Apache-2.0"
