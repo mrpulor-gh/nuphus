@@ -115,8 +115,12 @@ interface ChatInputBarProps {
   /** 项目目录 */
   projectDir: string
   onOpenProjectDir: () => void
-  /** 项目书签（chip 快捷切换菜单的数据源） */
-  projectBookmarks?: { name: string; path: string }[]
+  /**
+   * 项目书签（chip 快捷切换菜单的数据源）。
+   * `archived: true` = 已归档（语义「隐藏」）→ 本组件过滤后才渲染菜单；
+   * 数据源本身保持全量（项目中心仍需展示「已归档文件夹」区）。
+   */
+  projectBookmarks?: { name: string; path: string; archived?: boolean }[]
   /** 菜单里选中书签 → 切换项目（父级执行落盘 + 反馈） */
   onSwitchProject?: (path: string) => void
   /** 打开教导原则弹窗（Session Shelf 配套：原则/标注自记忆页迁入） */
@@ -762,6 +766,10 @@ export function ChatInputBar({
         .split(/[\\/]/)
         .pop() || projectDir
     : ''
+  // 项目 chip 下拉数据源：归档 = 隐藏（与项目中心「已归档文件夹」区同一口径）。
+  // 过滤放在消费端：ChatPanel 的 state 保持全量（项目中心仍要列出归档项供恢复）。
+  // chip 是否开菜单与菜单项都走这一处口径，杜绝「有书签但菜单空」的矛盾态。
+  const visibleBookmarks = projectBookmarks.filter(b => !b.archived)
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -916,14 +924,15 @@ export function ChatInputBar({
         {/* ── 右下角操作组：+ 工具 / 语音 / 发送 固定在整个输入框右下角 ── */}
         <div className="input-actions">
           {/* ── 项目目录（自「+」菜单移出）：文件夹图标 + 当前目录名。
-              点击＝直接列出书签一键切换（快捷路径）；无书签时直接进管理弹窗 ── */}
+              点击＝直接列出书签一键切换（快捷路径）；无可见书签时直接进管理弹窗
+              （已归档书签不计入「可见」，语义同项目中心「已归档文件夹」）── */}
           <div className="input-project-wrap" ref={projectMenuRef}>
             <button
               type="button"
               className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
               title={projectDir || t('input.projectDir')}
               onClick={() =>
-                projectBookmarks.length > 0 ? setProjectMenuOpen(o => !o) : onOpenProjectDir()
+                visibleBookmarks.length > 0 ? setProjectMenuOpen(o => !o) : onOpenProjectDir()
               }
             >
               <IconFolder size={14} />
@@ -933,7 +942,7 @@ export function ChatInputBar({
             </button>
             {projectMenuOpen && (
               <div className="input-tool-menu input-project-menu" role="menu">
-                {projectBookmarks.map(b => (
+                {visibleBookmarks.map(b => (
                   <button
                     key={b.path}
                     type="button"
