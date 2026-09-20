@@ -213,6 +213,16 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
         tracing::info!("[MODE] Mode applied before run: {:?}", m);
     }
 
+    // ── 会话诞生点（leader）：fresh = 欢迎页直发 / 切 mode 新建 / 空态判据，
+    // 这条路径上 existing_runtime=None → build_runtime → Session::new() 铸造全新 uuid，
+    // 归属在此**一次性快照**（首个 user 消息入 session 之前）。
+    // 恢复 / 续聊路径（!fresh：AppState backup、session_backup_json、from_history）
+    // 一律不登记：那是既有会话，归属不得改写；历史无归属也不按当前目录回填。
+    // 额外要求 session 为空——fresh 语义若被误用（携带旧 session），宁可缺失不可错记。
+    if fresh && runtime.session().is_empty() {
+        crate::commands::process::shelf::register_session_origin(&runtime.session().id);
+    }
+
     // ── Apply message source marker before execution (every round: the same
     // Runtime may alternate between desktop and mobile entries) ──
     runtime.set_source(source);
