@@ -1,0 +1,195 @@
+/* github-contributors.css — 社区贡献者页（设置中心 · 管理组 / Ctrl+K「GitHub」） */
+/* 视觉结构：页头（标题 + 说明）→ 轮次（版本 + 状态 + PR 数 → 贡献者卡片）→ 页脚（仓库入口 + 数据来源） */
+
+.github-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  color: var(--fg-2);
+}
+
+/* ── 页头 ── */
+.github-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.github-page-title {
+  color: var(--fg-1);
+  font-size: var(--fz-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.github-page-subtitle {
+  margin: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ── 轮次 ── */
+.github-rounds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.github-round {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.github-round-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.github-round-version {
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+}
+
+.github-round-meta {
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+}
+
+/* ── 贡献者卡片 ── */
+.github-contributors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.github-contributor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+}
+
+.github-contributor-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  border-radius: var(--radius-2);
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.github-contributor-head:hover {
+  color: var(--accent);
+}
+
+.github-contributor-head:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.github-contributor-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: var(--radius-2);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.github-contributor-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.github-contributor-item {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  line-height: var(--leading-normal);
+}
+
+.github-pr-link {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.github-pr-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.github-pr-link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.github-contributor-summary {
+  min-width: 0;
+}
+
+/* ── 页脚：仓库入口 + 数据来源 ── */
+.github-page-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-1);
+}
+
+.github-repo-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  text-decoration: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.github-repo-entry:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.github-repo-entry:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.github-data-note {
+  margin: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  line-height: var(--leading-normal);
+}

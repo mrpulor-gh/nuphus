@@ -1,6 +1,7 @@
 pub mod annotations;
 pub mod approval;
 pub mod canvas_export;
+pub mod changelog;
 pub mod chat_agent;
 pub mod config;
 pub mod custom_agent;
@@ -27,6 +28,7 @@ pub mod workflow;
 pub use self::annotations::*;
 pub use self::approval::*;
 pub use self::canvas_export::*;
+pub use self::changelog::*;
 pub use self::chat_agent::*;
 pub use self::config::*;
 pub use self::custom_agent::*;

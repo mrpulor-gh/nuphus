@@ -1665,3 +1665,15 @@ export interface DocExtractTextResult {
   chars: number
   text: string
 }
+
+// ── CHANGELOG ──
+
+/**
+ * 仓库 CHANGELOG 全文（Markdown 原文）。
+ * 后端以 `include_str!` 编译期内嵌，无网络、无磁盘依赖 → 离线可读。
+ * `invoke` 在通道异常时会回 null（命令本身不可能失败）→ 兜底空串，
+ * 调用方据此走「暂无本版变更记录」空态，而非抛错。
+ */
+export async function getChangelog() {
+  return (await invoke<string>('get_changelog')) ?? ''
+}

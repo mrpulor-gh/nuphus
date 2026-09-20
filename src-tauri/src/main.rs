@@ -410,6 +410,8 @@ fn main() {
             // -- Document render service (pdf.js in main webview) --
             render::commands::pdf_render_done,
             render::commands::pdf_render_error,
+            // -- CHANGELOG（编译期嵌入，离线可读；版本与更新页展示本版改动）--
+            commands::get_changelog,
         ])
         .setup(|app| {
             // ── 便携模式桌面快捷方式自建 ──

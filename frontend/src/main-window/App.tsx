@@ -98,7 +98,7 @@ const WorkflowPage = lazy(() =>
 const CanvasWorkbenchPage = lazy(() =>
   import('./workflow/CanvasWorkbenchPage').then(m => ({ default: m.CanvasWorkbenchPage })),
 )
-// ── 插件市场体系不开源阶段：入口仅展示筹备提示（PluginComingSoon）。
+// ── 插件市场体系不开源阶段：入口改为 GitHub 贡献者页（GithubPage，原筹备页已下线）。
 //    市场 ready 后恢复下面两个 lazy 声明与挂载块即可（可逆）。
 // const PluginAppsPage = lazy(() =>
 //   import('./pages/PluginAppsPage').then(m => ({ default: m.PluginAppsPage })),
@@ -106,9 +106,7 @@ const CanvasWorkbenchPage = lazy(() =>
 // const PluginDevPage = lazy(() =>
 //   import('./pages/PluginDevPage').then(m => ({ default: m.PluginDevPage })),
 // )
-const PluginComingSoon = lazy(() =>
-  import('./pages/PluginComingSoon').then(m => ({ default: m.PluginComingSoon })),
-)
+const GithubPage = lazy(() => import('./pages/GithubPage').then(m => ({ default: m.GithubPage })))
 const AppShellPage = lazy(() =>
   import('./pages/AppShellPage').then(m => ({ default: m.AppShellPage })),
 )
@@ -857,16 +855,16 @@ export default function App() {
               <McpPage onClose={() => s.setShowMcp(false)} />
             </Suspense>
           </CompactModal>
-          {/* ── 插件市场：筹备提示弹窗（市场体系不开源阶段；市场 ready 后恢复 PluginAppsPage 全屏面板）── */}
+          {/* ── GitHub：社区贡献者页（原付费插件市场筹备页；市场 ready 后恢复 PluginAppsPage 全屏面板）── */}
           <CompactModal
             open={s.showPlugins}
             onClose={() => s.setShowPlugins(false)}
-            title={t('plugins.listTitle')}
+            title={t('app.github')}
             icon={<IconPuzzle size={14} />}
             size="md"
           >
             <Suspense fallback={null}>
-              <PluginComingSoon />
+              <GithubPage />
             </Suspense>
           </CompactModal>
           {/* ── 开发者中心挂载已随市场体系一并注释（App.tsx lazy 区可逆说明）── */}

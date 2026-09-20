@@ -41,3 +41,58 @@
   width: 100%;
   accent-color: var(--accent);
 }
+
+/* ── 本版更新内容（CHANGELOG 当前版本段落，离线可读）── */
+.update-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.update-changes-title {
+  color: var(--fg-1);
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+}
+
+.update-changes-empty {
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+
+.update-changes-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.update-changes-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.update-changes-group-title {
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.update-changes-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  line-height: var(--leading-normal);
+}

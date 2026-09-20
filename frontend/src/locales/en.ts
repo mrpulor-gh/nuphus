@@ -305,6 +305,9 @@ const en: Record<string, string> = {
   'update.downloading': 'Downloading update ({0})',
   'update.failed': '{0}',
   'update.retry': 'Retry',
+  'update.changesTitle': 'Changes in this version',
+  'update.changesEmpty': 'No changelog entries for this version',
+  'update.changesUnavailable': 'Changelog unavailable',
   'cmd.memories': 'Memories',
   'cmd.memoriesDesc': 'Browse conversation history',
   'cmd.workflows': 'Workflows',
@@ -315,8 +318,8 @@ const en: Record<string, string> = {
   'cmd.knowledgeDesc': 'Browse knowledge documents',
   'cmd.mcp': 'MCP',
   'cmd.mcpDesc': 'Manage MCP servers & tools',
-  'cmd.plugins': 'Plugins',
-  'cmd.pluginsDesc': 'Learn about the plugin marketplace',
+  'cmd.plugins': 'GitHub',
+  'cmd.pluginsDesc': 'Community contributors and repository',
   'cmd.models': 'Models',
   'cmd.modelsDesc': 'Choose a configured provider model',
   'cmd.themes': 'Themes & Language',
@@ -547,16 +550,18 @@ const en: Record<string, string> = {
   'mcp.loadToolsError': 'Failed to query tools',
   'mcp.retry': 'Retry',
 
+  // ── GitHub contributors page (Settings · Management group; data in pages/githubContributors.ts) ──
+  'github.title': 'Contributors',
+  'github.subtitle':
+    'Community pull requests merged into this repository, grouped by release round',
+  'github.roundInProgress': 'In progress',
+  'github.prCount': '{0} PRs',
+  'github.repoEntry': 'Open the repository mrpulor-gh/nuphus',
+  'github.dataNote':
+    'Data comes from this repository CHANGELOG and merged PR records; only publicly verifiable GitHub accounts are listed.',
+
   'plugins.listTitle': 'Plugin Marketplace',
   'plugins.listDesc': 'Plugins are apps: discover, install and manage your Nuphus mini-apps',
-  'plugins.comingSoonP1': 'A paid plugin marketplace is in the works.',
-  'plugins.comingSoonP2':
-    'Here, creators with professional skills can turn their abilities into plugin products ...early joiners will earn the first wave of value.',
-  'plugins.comingSoonP3':
-    'Nuphus looks forward to having you on board to build a high-quality AI ecosystem together!',
-  'plugins.comingSoonCard1Title': 'Creator opportunity',
-  'plugins.comingSoonCard2Title': 'Ecosystem building',
-  'plugins.comingSoonGithub': 'Official GitHub: mrpulor-gh/nuphus',
   'plugins.install': 'Install',
   'plugins.selectPackage': 'Select plugin package (.nuph)',
   'plugins.installSuccess': 'Plugin installed',
@@ -934,6 +939,7 @@ const en: Record<string, string> = {
      SettingsCenter panel title / nav aria — keep the three wordings in sync */
   'app.settings': 'Control Panel',
   'app.openInFullPage': 'Open in full page',
+  'app.github': 'GitHub',
   'app.memories': 'Memories',
   'app.knowledge': 'Knowledge',
   'app.skills': 'Skills',

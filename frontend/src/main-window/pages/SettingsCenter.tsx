@@ -23,10 +23,10 @@
  * 分区 ↔ 子页映射（共 15 项，见 NAV_GROUPS）：
  *   快捷入口：**模型 → 全屏宿主** / **画布 → 全屏宿主**
  *   浏览：记忆 MemoriesPage / 工作流 WorkflowPage / 技能 SkillsPage /
- *         知识库 KnowledgePage / MCP McpPage / 插件 PluginComingSoon
+ *         知识库 KnowledgePage / MCP McpPage
  *   设置：灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
  *         主题与语言 ThemesPage / 外部 Agent ExternalAgentsPage
- *   管理：权限与安全 SecurityPage / 版本与更新 UpdatePage
+ *   管理：权限与安全 SecurityPage / GitHub GithubPage / 版本与更新 UpdatePage
  *
  * 子页 onClose 语义：子页自身没有「页壳」（外壳由 CompactModal / 本组件提供），
  * 其中仅「外部 Agent」表单底部的「取消」按钮会用到 onClose → 统一接设置中心关闭
@@ -71,9 +71,7 @@ const KnowledgePage = lazy(() =>
 )
 const SkillsPage = lazy(() => import('./SkillsPage').then(m => ({ default: m.SkillsPage })))
 const McpPage = lazy(() => import('./McpPage').then(m => ({ default: m.McpPage })))
-const PluginComingSoon = lazy(() =>
-  import('./PluginComingSoon').then(m => ({ default: m.PluginComingSoon })),
-)
+const GithubPage = lazy(() => import('./GithubPage').then(m => ({ default: m.GithubPage })))
 const SoulPage = lazy(() => import('./SoulPage').then(m => ({ default: m.SoulPage })))
 const MobilePage = lazy(() => import('./MobilePage').then(m => ({ default: m.MobilePage })))
 const BrowserPage = lazy(() => import('./BrowserPage').then(m => ({ default: m.BrowserPage })))
@@ -142,7 +140,6 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
       { id: 'skills', labelKey: 'app.skills', icon: <IconWrench size={14} /> },
       { id: 'knowledge', labelKey: 'app.knowledge', icon: <IconFile size={14} /> },
       { id: 'mcp', labelKey: 'cmd.mcp', icon: <IconPlug size={14} /> },
-      { id: 'plugins', labelKey: 'cmd.plugins', icon: <IconPuzzle size={14} /> },
     ],
   },
   {
@@ -163,6 +160,9 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
     titleKey: 'cmd.category.management',
     items: [
       { id: 'security', labelKey: 'app.security', icon: <IconShield size={14} /> },
+      /* 原「插件」（付费市场筹备页）改造为 GitHub 贡献者页，随之下移到管理组：
+         内部 id 保持 'plugins'（renderSection / 命令面板 / App.showPlugins 链路不受影响） */
+      { id: 'plugins', labelKey: 'app.github', icon: <IconPuzzle size={14} /> },
       { id: 'update', labelKey: 'app.update', icon: <IconRefresh size={14} /> },
     ],
   },
@@ -283,7 +283,7 @@ export function SettingsCenter({
       case 'mcp':
         return <McpPage onClose={onClose} />
       case 'plugins':
-        return <PluginComingSoon />
+        return <GithubPage />
       case 'soul':
         return <SoulPage onClose={onClose} />
       case 'mobile':

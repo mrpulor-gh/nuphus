@@ -36,8 +36,8 @@ vi.mock('../knowledge/KnowledgePage', () => ({
 }))
 vi.mock('./SkillsPage', () => ({ SkillsPage: () => <div data-testid="page-skills" /> }))
 vi.mock('./McpPage', () => ({ McpPage: () => <div data-testid="page-mcp" /> }))
-vi.mock('./PluginComingSoon', () => ({
-  PluginComingSoon: () => <div data-testid="page-plugins" />,
+vi.mock('./GithubPage', () => ({
+  GithubPage: () => <div data-testid="page-github" />,
 }))
 vi.mock('./SoulPage', () => ({ SoulPage: () => <div data-testid="page-soul" /> }))
 vi.mock('./MobilePage', () => ({ MobilePage: () => <div data-testid="page-mobile" /> }))
@@ -93,11 +93,11 @@ describe('SettingsCenter 设置中心外壳', () => {
 
     // 分组顺序：快捷入口（最上）→ 浏览 → 设置 → 管理
     expect(navGroupTitles()).toEqual(['快捷入口', '浏览', '设置', '管理'])
-    // 2 + 6 + 5 + 2 = 15
+    // 2 + 5 + 5 + 3 = 15（GitHub 由「浏览」移入「管理」）
     expect(navGroupLabels('快捷入口')).toHaveLength(2)
-    expect(navGroupLabels('浏览')).toHaveLength(6)
+    expect(navGroupLabels('浏览')).toHaveLength(5)
     expect(navGroupLabels('设置')).toHaveLength(5)
-    expect(navGroupLabels('管理')).toHaveLength(2)
+    expect(navGroupLabels('管理')).toHaveLength(3)
 
     // 默认分区仍是「记忆」，右内容不变
     expect(navItem('记忆')).toHaveAttribute('aria-current', 'page')
@@ -113,12 +113,20 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(navGroupLabels('快捷入口')).toEqual(['模型', '画布'])
   })
 
-  it('其余 13 项分组归属与内部顺序零变化', () => {
-    renderCenter()
+  it('其余 13 项分组归属与内部顺序零变化（GitHub 由「浏览」移入「管理」）', async () => {
+    const props = renderCenter()
 
-    expect(navGroupLabels('浏览')).toEqual(['记忆', '工作流', '技能', '知识库', 'MCP', '插件'])
+    expect(navGroupLabels('浏览')).toEqual(['记忆', '工作流', '技能', '知识库', 'MCP'])
     expect(navGroupLabels('设置')).toEqual(['灵魂', '移动端', '浏览器', '主题与语言', '外部 Agent'])
-    expect(navGroupLabels('管理')).toEqual(['权限与安全', '版本与更新'])
+    // 管理组：GitHub 与「版本与更新」相邻（权限与安全 → GitHub → 版本与更新）
+    expect(navGroupLabels('管理')).toEqual(['权限与安全', 'GitHub', '版本与更新'])
+
+    // 旧名「插件」不再出现在导航里；点击 GitHub 仍落在原 'plugins' 分区（渲染新页面）
+    expect(within(nav()).queryByRole('button', { name: '插件' })).toBeNull()
+    fireEvent.click(navItem('GitHub'))
+    expect(await screen.findByTestId('page-github')).toBeInTheDocument()
+    expect(navItem('GitHub')).toHaveAttribute('aria-current', 'page')
+    expect(props.onClose).not.toHaveBeenCalled()
   })
 
   it('「模型」「画布」带外链标识与「在整页打开」提示，其余项无', () => {
