@@ -202,18 +202,24 @@ fn capture_primary_monitor() -> Result<(Vec<u8>, u32, u32), String> {
     Ok((full.into_raw(), pw, ph))
 }
 
-/// Encode RGBA pixels as a JPEG `data:image/jpeg;base64,...` URL (overlay frozen background).
-/// JPEG 比 PNG 编码快且体积小（背景仅视觉展示，不用无损）。
+/// Encode RGBA pixels as a PNG `data:image/png;base64,...` URL (overlay frozen background).
+///
+/// 用无损 PNG 而非 JPEG：这张背景是用户框选的唯一视觉依据，「看到的」必须与「截到的」一致；
+/// 有损编码会让冻结帧发糊，也会让放大镜/选框对照失真 —— 这正是被诟病的观感来源之一。
+/// 走 CompressionType::Fast + FilterType::Adaptive：1080p 全屏编码约几十毫秒，呼出延迟可接受。
 fn encode_bg_data_url(pixels: &[u8], w: u32, h: u32) -> Result<String, String> {
     use base64::Engine;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+
     let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, pixels.to_vec())
         .ok_or_else(|| "创建全屏图像失败".to_string())?;
-    let mut jpg_buf = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::from(img_buf)
-        .write_to(&mut jpg_buf, image::ImageFormat::Jpeg)
-        .map_err(|e| format!("JPEG 编码失败: {e}"))?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(jpg_buf.into_inner());
-    Ok(format!("data:image/jpeg;base64,{}", b64))
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    PngEncoder::new_with_quality(&mut png_buf, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(img_buf.as_raw(), w, h, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_buf.into_inner());
+    Ok(format!("data:image/png;base64,{}", b64))
 }
 
 /// Ensure capture_overlay window exists (created once, hidden, reused)
@@ -283,7 +289,8 @@ pub async fn overlay_magnifier_region(x: i32, y: i32, size: u32) -> Result<Strin
 
 /// User confirms selection → crop selection and return PNG base64
 ///
-/// * mode = "screenshot" (default): hide overlay → live screenshot (with dynamic content) → restore overlay
+/// * mode = "screenshot" (default) / "ocr" / "picker": crop from PRE_SCREENSHOT 冻结帧
+///   （全部模式统一走冻结帧裁剪：产物必须与用户眼里那张图一致）
 /// * mode = "ocr" / "picker": crop directly from PRE_SCREENSHOT (clean, no overlay mask interference)
 /// * mode = "rec_region" / "rec_template": crop directly from PRE_SCREENSHOT（录制铁律：ROI 证据与
 ///   find_image 模板一律走预截图裁剪，禁止 live capture——透明竞态根因），PNG 保存到当前录制会话
@@ -291,7 +298,7 @@ pub async fn overlay_magnifier_region(x: i32, y: i32, size: u32) -> Result<Strin
 /// Overlay is closed by overlay_capture_done (confirm) or overlay_capture_cancel (cancel).
 #[tauri::command]
 pub async fn overlay_capture_confirm(
-    app: AppHandle,
+    _app: AppHandle,
     x: i32,
     y: i32,
     width: u32,
@@ -300,33 +307,22 @@ pub async fn overlay_capture_confirm(
 ) -> Result<serde_json::Value, String> {
     use base64::Engine;
 
-    let is_screenshot = mode.as_deref() == Some("screenshot");
-    // 录制框选（ROI 证据 / find_image 模板）：走 PRE_SCREENSHOT 裁剪分支（is_screenshot=false 即命中），
-    // 保存目录/文件名前缀按 mode 区分，其余行为与 ocr/picker 完全一致。
+    // 录制框选（ROI 证据 / find_image 模板）：仅保存目录/文件名前缀按 mode 区分，
+    // 其余行为与其它模式完全一致（都走同一份冻结帧裁剪）。
     let rec_prefix = match mode.as_deref() {
         Some("rec_region") => Some("rec_region"),
         Some("rec_template") => Some("rec_template"),
         _ => None,
     };
 
-    let (pw, ph, pixels) = if is_screenshot {
-        // ── Screenshot mode: hide overlay → live capture (dynamic content) ─
-        if let Some(overlay) = app.get_webview_window("capture_overlay") {
-            let _ = overlay.hide();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-
-        let (pixels, pw, ph) = capture_primary_monitor()?;
-
-        // Restore overlay (for preview thumbnail display)
-        if let Some(overlay) = app.get_webview_window("capture_overlay") {
-            let _ = overlay.show();
-            let _ = overlay.set_focus();
-        }
-
-        (pw, ph, pixels)
-    } else {
-        // ── OCR/selection mode: crop directly from PRE_SCREENSHOT (no mask interference) ─
+    // 一律从 PRE_SCREENSHOT 冻结帧裁剪 —— 行业标准做法：overlay 显示的就是冻结帧，
+    // 用户照着它选框，产物必须取自同一张图，否则「看到的」与「截到的」不一致。
+    // 参考实现：Flameshot（CaptureWidget 持 m_context.screenshot，选区坐标 x
+    // screenshot.devicePixelRatio() 后从冻结图裁剪）；ShareX（AvaloniaRegionCaptureRequest
+    // 的 Frozen screenshot + Physical-pixel desktop bounds）。
+    // 历史实现在 screenshot 模式下 hide overlay -> sleep(120ms) -> 重新抓屏：那会让正在
+    // 移除的 overlay（冻结帧 + 遮罩 + 选区描边）与真实桌面一起入图 —— 糊、重影、框线三症。
+    let (pw, ph, pixels) = {
         let cache = PRE_SCREENSHOT
             .lock()
             .expect("read pre-screenshot for confirm");

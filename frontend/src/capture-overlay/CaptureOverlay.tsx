@@ -23,7 +23,10 @@ let _pendingBg: string | null = null
 }
 
 // 坐标换算：Rust 端 PRE_SCREENSHOT 是物理像素，webview 内是 CSS 像素 → 发给 Rust 前 × devicePixelRatio
-const DPR = window.devicePixelRatio || 1
+// 每次调用时读取而非模块级常量：窗口跨显示器（混合 DPI）后 devicePixelRatio 会变，
+// 常量会静默失真。对齐 ShareX（RegionCaptureWindow 动态读 RenderScaling）与
+// Flameshot（逐处取 screenshot.devicePixelRatio()）的做法。
+const dpr = () => window.devicePixelRatio || 1
 
 export function CaptureOverlay() {
   // Dynamic mode: initial from URL, then updated by Rust on each show
@@ -287,8 +290,8 @@ export function CaptureOverlay() {
       if (!pos) return
       try {
         const b64 = await invoke<string | null>('overlay_magnifier_region', {
-          x: Math.round(pos.x * DPR),
-          y: Math.round(pos.y * DPR),
+          x: Math.round(pos.x * dpr()),
+          y: Math.round(pos.y * dpr()),
           size: CAPTURE_SIZE,
         })
         const img = magnifierElRef.current
@@ -386,8 +389,8 @@ export function CaptureOverlay() {
       if (!cur) return
       try {
         await invoke('overlay_pick_color', {
-          x: Math.round(cur.x * DPR),
-          y: Math.round(cur.y * DPR),
+          x: Math.round(cur.x * dpr()),
+          y: Math.round(cur.y * dpr()),
         })
       } catch (e) {
         console.error('取色失败:', e)
@@ -406,8 +409,8 @@ export function CaptureOverlay() {
       try {
         await invoke('overlay_capture_done', {
           path: '',
-          x: Math.round(cx * DPR),
-          y: Math.round(cy * DPR),
+          x: Math.round(cx * dpr()),
+          y: Math.round(cy * dpr()),
           width: 1,
           height: 1,
         })
@@ -421,10 +424,10 @@ export function CaptureOverlay() {
     if (!finalRegion || finalRegion.w < 5 || finalRegion.h < 5) return
     try {
       const result = await invoke<any>('overlay_capture_confirm', {
-        x: Math.round(finalRegion.x * DPR),
-        y: Math.round(finalRegion.y * DPR),
-        width: Math.round(finalRegion.w * DPR),
-        height: Math.round(finalRegion.h * DPR),
+        x: Math.round(finalRegion.x * dpr()),
+        y: Math.round(finalRegion.y * dpr()),
+        width: Math.round(finalRegion.w * dpr()),
+        height: Math.round(finalRegion.h * dpr()),
         mode: overlayMode,
       })
       const cr = {
