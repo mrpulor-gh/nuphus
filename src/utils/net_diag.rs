@@ -424,9 +424,19 @@ mod tests {
     #[test]
     fn test_split_families_groups_and_preserves_order() {
         let addrs = vec![
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x2406, 1, 0, 0, 0, 0, 0, 1), 0, 0, 0)),
+            SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(0x2406, 1, 0, 0, 0, 0, 0, 1),
+                0,
+                0,
+                0,
+            )),
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 0)),
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x2406, 1, 0, 0, 0, 0, 0, 2), 0, 0, 0)),
+            SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(0x2406, 1, 0, 0, 0, 0, 0, 2),
+                0,
+                0,
+                0,
+            )),
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(2, 2, 2, 2), 0)),
         ];
         let (v4_addrs, v6_addrs) = split_families(&addrs);
@@ -461,9 +471,18 @@ mod tests {
 
     #[test]
     fn test_error_chain_limits_levels_and_compacts_to_single_line() {
-        let chain = chain_of(&["error sending request", "tcp connect error", "os error 10061", "m4", "m5-cut"]);
+        let chain = chain_of(&[
+            "error sending request",
+            "tcp connect error",
+            "os error 10061",
+            "m4",
+            "m5-cut",
+        ]);
         let s = error_chain(&chain);
-        assert_eq!(s, "error sending request: tcp connect error: os error 10061: m4");
+        assert_eq!(
+            s,
+            "error sending request: tcp connect error: os error 10061: m4"
+        );
 
         let multiline = chain_of(&["first line\nsecond line"]);
         assert_eq!(error_chain(&multiline), "first line second line");
@@ -480,7 +499,11 @@ mod tests {
 
     #[test]
     fn test_format_diag_shape_single_family() {
-        let r = rec(vec![], vec![IpAddr::V6(Ipv6Addr::new(0x2406, 0xd440, 0, 0, 0, 0, 0, 1))], None);
+        let r = rec(
+            vec![],
+            vec![IpAddr::V6(Ipv6Addr::new(0x2406, 0xd440, 0, 0, 0, 0, 0, 1))],
+            None,
+        );
         let line = format_diag(
             "api.example.com",
             Some(&r),
@@ -500,14 +523,25 @@ mod tests {
             line.contains("chain=\"error sending request for url (https://api.example.com/v1): tcp connect error\""),
             "line={line}"
         );
-        assert!(line.ends_with("hint=仅解析到 IPv6（无 A 记录）"), "line={line}");
+        assert!(
+            line.ends_with("hint=仅解析到 IPv6（无 A 记录）"),
+            "line={line}"
+        );
         assert!(!line.contains('\n'));
     }
 
     #[test]
     fn test_format_diag_dual_stack_has_no_hint() {
         let r = rec(vec![v4(1), v4(2), v4(3)], vec![v6(1)], None);
-        let line = format_diag("api.example.com", Some(&r), "timeout", "timed out", 60_001, 1, 4);
+        let line = format_diag(
+            "api.example.com",
+            Some(&r),
+            "timeout",
+            "timed out",
+            60_001,
+            1,
+            4,
+        );
         assert!(line.contains("v6=1["), "line={line}");
         // 最多打印 2 个样例
         assert!(line.contains("v4=3[10.0.0.1,10.0.0.2]"), "line={line}");
@@ -516,8 +550,20 @@ mod tests {
 
     #[test]
     fn test_format_diag_dns_failure_and_no_resolution() {
-        let failed = rec(vec![], vec![], Some("No such host is known. (os error 11001)"));
-        let line = format_diag("api.example.com", Some(&failed), "connect", "dns error: No such host", 5, 1, 2);
+        let failed = rec(
+            vec![],
+            vec![],
+            Some("No such host is known. (os error 11001)"),
+        );
+        let line = format_diag(
+            "api.example.com",
+            Some(&failed),
+            "connect",
+            "dns error: No such host",
+            5,
+            1,
+            2,
+        );
         assert!(line.contains("dns=12ms v6=0 v4=0"), "line={line}");
         assert!(line.ends_with("hint=DNS 解析失败"), "line={line}");
 
@@ -533,7 +579,15 @@ mod tests {
 
         // 双栈 + 超长 host + 超长链
         let dual = rec(vec![v4(1), v4(2)], vec![v6(1), v6(2)], None);
-        let line = format_diag(&long_host, Some(&dual), "connect", &long_chain, 12_345_678, 4, 4);
+        let line = format_diag(
+            &long_host,
+            Some(&dual),
+            "connect",
+            &long_chain,
+            12_345_678,
+            4,
+            4,
+        );
         assert!(clen(&line) <= 300, "len={} line={line}", clen(&line));
         // 链让位后样例 IP 被丢弃，但计数保留
         assert!(line.contains("v6=2 v4=2"), "line={line}");
@@ -541,18 +595,40 @@ mod tests {
 
         // 仅 IPv6 + 超长链：hint 必须保下来
         let only_v6 = rec(vec![], vec![v6(1), v6(2)], None);
-        let line = format_diag(&long_host, Some(&only_v6), "connect", &long_chain, 999_999, 4, 4);
+        let line = format_diag(
+            &long_host,
+            Some(&only_v6),
+            "connect",
+            &long_chain,
+            999_999,
+            4,
+            4,
+        );
         assert!(clen(&line) <= 300, "len={} line={line}", clen(&line));
-        assert!(line.ends_with("hint=仅解析到 IPv6（无 A 记录）"), "line={line}");
+        assert!(
+            line.ends_with("hint=仅解析到 IPv6（无 A 记录）"),
+            "line={line}"
+        );
     }
 
     #[test]
     fn test_format_diag_truncates_overlong_chain_arg() {
         // 即使调用方传了超过 240 字符的链，输出仍守 300 上限
         let r = rec(vec![v4(1)], vec![], None);
-        let line = format_diag("api.example.com", Some(&r), "body", &"z".repeat(1000), 1, 1, 1);
+        let line = format_diag(
+            "api.example.com",
+            Some(&r),
+            "body",
+            &"z".repeat(1000),
+            1,
+            1,
+            1,
+        );
         assert!(clen(&line) <= 300, "len={} line={line}", clen(&line));
-        assert!(line.ends_with("hint=仅解析到 IPv4（无 AAAA 记录）"), "line={line}");
+        assert!(
+            line.ends_with("hint=仅解析到 IPv4（无 AAAA 记录）"),
+            "line={line}"
+        );
     }
 
     #[test]
@@ -565,7 +641,10 @@ mod tests {
             line.contains("host=api.example.com dns=12ms@127.0.0.1 "),
             "line={line}"
         );
-        assert!(line.ends_with("hint=仅解析到 IPv4（无 AAAA 记录）"), "line={line}");
+        assert!(
+            line.ends_with("hint=仅解析到 IPv4（无 AAAA 记录）"),
+            "line={line}"
+        );
 
         // 大小写差异不算不一致（DNS 名大小写不敏感）
         let mut same = rec(vec![], vec![v6(1)], None);
@@ -576,7 +655,10 @@ mod tests {
 
     #[test]
     fn test_host_of() {
-        assert_eq!(host_of("https://api.example.com/v1/chat"), "api.example.com");
+        assert_eq!(
+            host_of("https://api.example.com/v1/chat"),
+            "api.example.com"
+        );
         assert_eq!(host_of("http://127.0.0.1:8000/v1"), "127.0.0.1");
         assert_eq!(host_of("not a url"), "unknown");
     }
