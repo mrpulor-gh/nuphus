@@ -1475,15 +1475,52 @@ mod tests {
     }
 
     /// 同目录多会话 → 只生成一个组；归属路径与书签重合 → 由书签组代表（不重复）。
+    /// 尾斜杠差异与平台无关（归一化时去掉尾部分隔符），故三平台共用同一断言。
     #[test]
     fn build_project_groups_dedups_paths_and_prefers_bookmarks() {
+        let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
+        let session_paths = vec!["E:\\work\\A".to_string(), "E:\\work\\A".to_string()];
+
+        let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
+        assert_eq!(visible.len(), 1, "尾斜杠/重复路径不得裂成两个组");
+        assert_eq!(visible[0].path, "E:\\work\\A", "以书签为准则保序保名");
+        assert!(!visible[0].auto);
+    }
+
+    /// 大小写差异是否算同一目录，由 `same_project_path` 里的 `cfg!(windows)` 决定：
+    /// Windows 忽略大小写，非 Windows 大小写敏感（`/work/A` 与 `/work/a` 是两个目录）。
+    /// 因此该断言只在 Windows 成立；非 Windows 的分支由
+    /// `build_project_groups_treats_case_as_distinct_on_unix` 覆盖。
+    #[cfg(windows)]
+    #[test]
+    fn build_project_groups_ignores_case_on_windows() {
         let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
         let session_paths = vec!["E:\\work\\a".to_string(), "e:\\work\\a".to_string()];
 
         let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
-        assert_eq!(visible.len(), 1, "尾斜杠/大小写差异不得裂成两个组");
+        assert_eq!(
+            visible.len(),
+            1,
+            "Windows 下尾斜杠/大小写差异不得裂成两个组"
+        );
         assert_eq!(visible[0].path, "E:\\work\\A", "以书签为准则保序保名");
         assert!(!visible[0].auto);
+    }
+
+    /// 非 Windows（Linux/macOS）大小写敏感：`E:\work\A` 与 `E:\work\a` 是两个目录，
+    /// 归属路径不得被书签吞并，两条大小写不同的会话路径也各自成组 → 共 3 组。
+    #[cfg(not(windows))]
+    #[test]
+    fn build_project_groups_treats_case_as_distinct_on_unix() {
+        let bookmarks = vec![project_bookmark("A", "E:\\work\\A\\", false)];
+        let session_paths = vec!["E:\\work\\a".to_string(), "e:\\work\\a".to_string()];
+
+        let (visible, _) = build_project_groups(&bookmarks, "", &session_paths);
+        assert_eq!(
+            visible.len(),
+            3,
+            "非 Windows 大小写敏感：大小写不同的目录不得合并成一组"
+        );
     }
 
     /// 无归属会话（未出现在 session_paths）不产生任何组：不猜测、不伪造。
