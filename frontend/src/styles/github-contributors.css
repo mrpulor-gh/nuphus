@@ -28,6 +28,14 @@
   line-height: var(--leading-normal);
 }
 
+/* 说明栏正文（标题下）：与副标题同层级，颜色提一档以示「行动号召」 */
+.github-page-intro {
+  margin: 0;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  line-height: var(--leading-normal);
+}
+
 /* ── 轮次 ── */
 .github-rounds {
   display: flex;

@@ -554,6 +554,8 @@ const en: Record<string, string> = {
   'github.title': 'Contributors',
   'github.subtitle':
     'Community pull requests merged into this repository, grouped by release round',
+  'github.intro':
+    'Issues and pull requests based on real-world use are welcome — we encourage the step from user to co-developer',
   'github.roundInProgress': 'In progress',
   'github.prCount': '{0} PRs',
   'github.repoEntry': 'Open the repository mrpulor-gh/nuphus',

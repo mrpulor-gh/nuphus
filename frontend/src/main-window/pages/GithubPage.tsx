@@ -2,7 +2,7 @@
  * GithubPage.tsx — 社区贡献者页（设置中心 · 管理组 + Ctrl+K「GitHub」）
  *
  * 定位：替代原「付费插件市场筹备页」。按**发布轮次**展示本仓库已合并的社区 PR：
- * 贡献者 → 贡献内容 → GitHub 主页（可点击），并保留仓库入口。
+ * 贡献者 → 贡献内容 → GitHub 主页（可点击）；说明栏内保留仓库入口。
  *
  * 数据：全部来自仓库真实记录，集中于 `./githubContributors`（溯源注释见该文件）；
  * 本文件不内联数据、不联网、不引用外链图片——头像用用户名首字母色块，离线可用。
@@ -21,6 +21,11 @@ export function GithubPage() {
       <div className="github-page-head">
         <div className="github-page-title">{t('github.title')}</div>
         <p className="github-page-subtitle">{t('github.subtitle')}</p>
+        <p className="github-page-intro">{t('github.intro')}</p>
+        <a className="github-repo-entry" href={REPO_URL} target="_blank" rel="noreferrer">
+          <IconExternalLink size={13} />
+          <span>{t('github.repoEntry')}</span>
+        </a>
       </div>
 
       <div className="github-rounds">
@@ -80,10 +85,6 @@ export function GithubPage() {
       </div>
 
       <div className="github-page-foot">
-        <a className="github-repo-entry" href={REPO_URL} target="_blank" rel="noreferrer">
-          <IconExternalLink size={13} />
-          <span>{t('github.repoEntry')}</span>
-        </a>
         <p className="github-data-note">{t('github.dataNote')}</p>
       </div>
     </div>

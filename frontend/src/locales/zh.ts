@@ -532,6 +532,7 @@ const zh: Record<string, string> = {
   // ── GitHub 贡献者页（设置中心 · 管理组；数据见 pages/githubContributors.ts）──
   'github.title': '贡献者名单',
   'github.subtitle': '按发布轮次收录本仓库合并的社区 Pull Request',
+  'github.intro': '欢迎大家根据实际使用情况提交问题和 PR，我们鼓励由使用者到共同开发者的转变',
   'github.roundInProgress': '开发中',
   'github.prCount': '{0} 个 PR',
   'github.repoEntry': '打开仓库 mrpulor-gh/nuphus',

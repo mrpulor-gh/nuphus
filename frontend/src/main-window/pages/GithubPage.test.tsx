@@ -90,6 +90,19 @@ describe('GithubPage 贡献者页', () => {
     expect(screen.getByText(/数据来自本仓库 CHANGELOG/)).toBeInTheDocument()
   })
 
+  it('标题下说明栏：欢迎提交 issue/PR 的号召文案，且仓库入口位于说明栏内', () => {
+    const { container } = render(<GithubPage />)
+
+    const intro = screen.getByText(/我们鼓励由使用者到共同开发者的转变/)
+    expect(intro).toHaveClass('github-page-intro')
+    // 位置约束：说明文案与仓库入口同属页头说明栏（.github-page-head），不再挂在页脚
+    const head = container.querySelector('.github-page-head')
+    expect(head).not.toBeNull()
+    expect(head?.contains(intro)).toBe(true)
+    expect(head?.contains(screen.getByRole('link', { name: /打开仓库/ }))).toBe(true)
+    expect(container.querySelector('.github-page-foot .github-repo-entry')).toBeNull()
+  })
+
   it('头像为首字母色块：不引用外链图片，首字母大写，且不污染可访问名', () => {
     const { container } = render(<GithubPage />)
 
