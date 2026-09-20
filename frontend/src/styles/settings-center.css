@@ -156,6 +156,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 「快捷入口」两项（模型 / 画布）点击后关闭面板、由整页宿主承载：
+   图标降一档层级 + 常显外链标识，与面板内直接打开的项做区分（不引入新色值） */
+.settings-center-nav-item-hosted .settings-center-nav-icon {
+  color: var(--fg-4);
+}
+.settings-center-nav-item-hosted:hover .settings-center-nav-icon,
+.settings-center-nav-item-hosted:focus-visible .settings-center-nav-icon {
+  color: var(--fg-2);
+}
+.settings-center-nav-external {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--fg-4);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.settings-center-nav-item:hover .settings-center-nav-external {
+  color: var(--fg-2);
+}
 
 /* 右侧内容区：head（分区标题）固定，body 承担滚动 */
 .settings-center-main {

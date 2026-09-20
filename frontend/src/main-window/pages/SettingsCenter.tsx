@@ -7,6 +7,8 @@
  *
  * 宿主分流：两类分区**不在弹窗内渲染**，点击导航项即关闭面板、交给 App 层全屏宿主
  * （面板内容区上限 = 1080 − 导航 236 = 844px，这两类页面在 844px 内结构性不可用）：
+ *   这两项收在导航最上方的「快捷入口」组，并在导航项右侧带外链标识（.settings-center-nav-item-hosted）
+ *   与其他「面板内直接打开」的项区分：
  *   - 画布：UI 原型 / 工具 / 工作流编辑器是「左右 320 固定 + 中自适应」的工作台布局，
  *     主画布 = 容器宽 − 640 → 802px 内容区只剩 162px；叠加 `overflow:hidden`，
  *     高度不足是裁切而非滚动 → 走 `.canvas-workbench-host` 全屏宿主（openCanvas 链路）。
@@ -19,9 +21,10 @@
  * 命中同一 chunk（不产生重复打包）。
  *
  * 分区 ↔ 子页映射（共 15 项，见 NAV_GROUPS）：
- *   浏览：记忆 MemoriesPage / **画布 → 全屏宿主** / 工作流 WorkflowPage /
- *         技能 SkillsPage / 知识库 KnowledgePage / MCP McpPage / 插件 PluginComingSoon
- *   设置：**模型 → 全屏宿主** / 灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
+ *   快捷入口：**模型 → 全屏宿主** / **画布 → 全屏宿主**
+ *   浏览：记忆 MemoriesPage / 工作流 WorkflowPage / 技能 SkillsPage /
+ *         知识库 KnowledgePage / MCP McpPage / 插件 PluginComingSoon
+ *   设置：灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
  *         主题与语言 ThemesPage / 外部 Agent ExternalAgentsPage
  *   管理：权限与安全 SecurityPage / 版本与更新 UpdatePage
  *
@@ -36,6 +39,7 @@ import {
   IconBrowser,
   IconBrain,
   IconCpu,
+  IconExternalLink,
   IconFile,
   IconHistory,
   IconPalette,
@@ -102,6 +106,13 @@ type HostedSectionId = 'canvas' | 'models'
 /** 可在弹窗内容区内嵌渲染的分区 */
 type EmbeddedSectionId = Exclude<SettingsSectionId, HostedSectionId>
 
+/**
+ * 宿主分流判定：与下方 openSection() 的两条早返回一一对应。
+ * 导航项据此加「在整页打开」提示与外链标识（不重复罗列分区名）。
+ */
+const isHostedSection = (id: SettingsSectionId): id is HostedSectionId =>
+  id === 'canvas' || id === 'models'
+
 interface SettingsNavItem {
   id: SettingsSectionId
   /** i18n key：复用既有键（与子页自身标题、Ctrl+K 命令名保持同一措辞） */
@@ -109,13 +120,24 @@ interface SettingsNavItem {
   icon: ReactNode
 }
 
-/** 左侧导航分组：分组名复用 Ctrl+K 命令面板的三档 category 键，措辞天然一致 */
+/**
+ * 左侧导航分组：原三档分组名复用 Ctrl+K 命令面板的 category 键（措辞天然一致）；
+ * 最上方的「快捷入口」是本面板独有分组（不来自命令面板），只收走整页宿主的两项
+ * —— 它们点击后面板关闭、由 App 层全屏承载，与其余「面板内直接打开」的项性质不同，
+ * 故置于最前并带外链标识（见下方渲染处的 .settings-center-nav-item-hosted）。
+ */
 const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
+  {
+    titleKey: 'cmd.category.shortcuts',
+    items: [
+      { id: 'models', labelKey: 'app.models', icon: <IconBrain size={14} /> },
+      { id: 'canvas', labelKey: 'cmd.canvas', icon: <IconPalette size={14} /> },
+    ],
+  },
   {
     titleKey: 'cmd.category.browse',
     items: [
       { id: 'memories', labelKey: 'app.memories', icon: <IconHistory size={14} /> },
-      { id: 'canvas', labelKey: 'cmd.canvas', icon: <IconPalette size={14} /> },
       { id: 'workflows', labelKey: 'app.workflows', icon: <IconWorkflow size={14} /> },
       { id: 'skills', labelKey: 'app.skills', icon: <IconWrench size={14} /> },
       { id: 'knowledge', labelKey: 'app.knowledge', icon: <IconFile size={14} /> },
@@ -126,7 +148,6 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
   {
     titleKey: 'cmd.category.settings',
     items: [
-      { id: 'models', labelKey: 'app.models', icon: <IconBrain size={14} /> },
       { id: 'soul', labelKey: 'app.soul', icon: <IconSparkles size={14} /> },
       { id: 'mobile', labelKey: 'app.mobile', icon: <IconSmartphone size={14} /> },
       { id: 'browser', labelKey: 'app.browser', icon: <IconBrowser size={14} /> },
@@ -324,19 +345,30 @@ export function SettingsCenter({
                 <div key={group.titleKey} className="settings-center-nav-group">
                   <div className="settings-center-nav-group-title">{t(group.titleKey)}</div>
                   <div className="settings-center-nav-list">
-                    {group.items.map(item => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        className={`settings-center-nav-item${item.id === section ? ' active' : ''}`}
-                        aria-current={item.id === section ? 'page' : undefined}
-                        /* 画布 / 模型两项由 openSection 分流到 App 层全屏宿主（本面板随即关闭） */
-                        onClick={() => openSection(item.id)}
-                      >
-                        <span className="settings-center-nav-icon">{item.icon}</span>
-                        <span className="settings-center-nav-label">{t(item.labelKey)}</span>
-                      </button>
-                    ))}
+                    {group.items.map(item => {
+                      /* 画布 / 模型：openSection 分流到 App 层全屏宿主（面板随即关闭）。
+                         加外链标识 + 「在整页打开」提示，与面板内打开的项区分。 */
+                      const hosted = isHostedSection(item.id)
+                      return (
+                        <button
+                          type="button"
+                          key={item.id}
+                          className={`settings-center-nav-item${hosted ? ' settings-center-nav-item-hosted' : ''}${item.id === section ? ' active' : ''}`}
+                          aria-current={item.id === section ? 'page' : undefined}
+                          title={hosted ? t('app.openInFullPage') : undefined}
+                          onClick={() => openSection(item.id)}
+                        >
+                          <span className="settings-center-nav-icon">{item.icon}</span>
+                          <span className="settings-center-nav-label">{t(item.labelKey)}</span>
+                          {hosted && (
+                            /* 装饰性标识：语义由按钮 title 承担 → aria-hidden 不污染可访问名 */
+                            <span className="settings-center-nav-external" aria-hidden="true">
+                              <IconExternalLink size={12} />
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               ))}

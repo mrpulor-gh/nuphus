@@ -341,6 +341,7 @@ const en: Record<string, string> = {
   'cmd.category.settings': 'Settings',
   'cmd.category.help': 'Help',
   'cmd.category.fun': 'Fun',
+  'cmd.category.shortcuts': 'Shortcuts',
   'cmd.searchPlaceholder': 'Search commands...',
   'cmd.noResults': 'No results',
 
@@ -929,7 +930,10 @@ const en: Record<string, string> = {
   'thinking.viewDetails': 'View details',
   'thinking.close': 'Close',
 
-  'app.settings': 'Settings',
+  /* Shared by the chat-header gear (the app's single settings entry) and the
+     SettingsCenter panel title / nav aria — keep the three wordings in sync */
+  'app.settings': 'Control Panel',
+  'app.openInFullPage': 'Open in full page',
   'app.memories': 'Memories',
   'app.knowledge': 'Knowledge',
   'app.skills': 'Skills',

@@ -329,6 +329,7 @@ const zh: Record<string, string> = {
   'cmd.category.settings': '设置',
   'cmd.category.help': '帮助',
   'cmd.category.fun': '娱乐',
+  'cmd.category.shortcuts': '快捷入口',
   'cmd.searchPlaceholder': '输入命令或搜索...',
   'cmd.noResults': '没有匹配的结果',
 
@@ -889,7 +890,10 @@ const zh: Record<string, string> = {
   'thinking.viewDetails': '查看执行详情',
   'thinking.close': '关闭',
 
-  'app.settings': '设置',
+  /* 全应用唯一设置入口（聊天头部齿轮）+ 设置中心面板标题 / 导航 aria 共用此 key：
+     措辞统一为「控制面板」，三者必须一起变 */
+  'app.settings': '控制面板',
+  'app.openInFullPage': '在整页打开',
   'app.memories': '记忆',
   'app.knowledge': '知识库',
   'app.skills': '技能',
