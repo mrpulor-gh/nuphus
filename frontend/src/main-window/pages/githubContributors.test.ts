@@ -16,11 +16,15 @@ describe('githubContributors 数据契约', () => {
     expect(new Set(versions).size).toBe(versions.length)
   })
 
-  it('轮次倒序：未发布轮次在最前，已发布轮次按日期倒序', () => {
-    expect(rounds[0].date).toBeNull()
-    const dates = rounds.slice(1).map(r => r.date)
-    expect(dates.every(d => typeof d === 'string' && d.length > 0)).toBe(true)
-    const sorted = [...(dates as string[])].sort((a, b) => b.localeCompare(a))
+  it('轮次倒序：未发布轮次（若有）在最前，已发布轮次按日期倒序', () => {
+    // 未发布轮次最多一个，且只能出现在最前
+    expect(rounds.filter(r => r.date === null).length).toBeLessThanOrEqual(1)
+    const unreleasedAt = rounds.findIndex(r => r.date === null)
+    if (unreleasedAt >= 0) expect(unreleasedAt).toBe(0)
+
+    const dates = rounds.filter(r => r.date !== null).map(r => r.date as string)
+    expect(dates.every(d => d.length > 0)).toBe(true)
+    const sorted = [...dates].sort((a, b) => b.localeCompare(a))
     expect(dates).toEqual(sorted)
   })
 

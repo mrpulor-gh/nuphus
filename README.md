@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.16 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.17 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -277,16 +277,22 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 ## 致谢
 
-### v0.2.16 贡献者
+### v0.2.17 贡献者
 
 感谢本版本提交 Pull Request 的社区贡献者：
 
 | 贡献者 | PR | 内容 |
 |--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#23](https://github.com/mrpulor-gh/nuphus/pull/23) | macOS 系统权限检查与引导、Windows 脚本窗口修复 |
-| [@yuansui486](https://github.com/yuansui486) | [#26](https://github.com/mrpulor-gh/nuphus/pull/26) | macOS 麦克风权限被动查询 |
-| [@yuansui486](https://github.com/yuansui486) | [#28](https://github.com/mrpulor-gh/nuphus/pull/28) | 会话交互、文件路径识别与滚轮行为优化 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#31](https://github.com/mrpulor-gh/nuphus/pull/31) | DeepSeek 内置模型清单对齐官方 API |
+| [@yuansui486](https://github.com/yuansui486) | [#33](https://github.com/mrpulor-gh/nuphus/pull/33) | 内置浏览器：规避运行期自动化特征检测、改进启动诊断 |
+| [@yuansui486](https://github.com/yuansui486) | [#34](https://github.com/mrpulor-gh/nuphus/pull/34) | 修复 Windows 浅色主题下主窗口黑边 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#32](https://github.com/mrpulor-gh/nuphus/pull/32) | 设置中心改版：左导航 + 右内容 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#35](https://github.com/mrpulor-gh/nuphus/pull/35) | 会话归属项目文件夹（后端） |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#36](https://github.com/mrpulor-gh/nuphus/pull/36) | main 守卫工作流（fmt / tsc / prettier） |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#37](https://github.com/mrpulor-gh/nuphus/pull/37) | 外部 Agent 契约补红线：不得擅自改动 git 历史 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#38](https://github.com/mrpulor-gh/nuphus/pull/38) | 会话工作台按项目文件夹分组（前端） |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#39](https://github.com/mrpulor-gh/nuphus/pull/39) | 派发基线审计：完工比对未派发提交 |
+
+更早版本的贡献者记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可
 

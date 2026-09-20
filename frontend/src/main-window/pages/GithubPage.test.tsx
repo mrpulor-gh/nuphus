@@ -19,7 +19,8 @@ describe('GithubPage 贡献者页', () => {
     // 轮次顺序与数据一致（最新在前）；未发布轮次显示「开发中」
     const versions = rounds.map(r => r.querySelector('.github-round-version')?.textContent)
     expect(versions).toEqual(CONTRIBUTOR_ROUNDS.map(r => (r.date ? `v${r.version}` : r.version)))
-    expect(rounds[0].textContent).toContain('开发中')
+    const unreleasedIdx = CONTRIBUTOR_ROUNDS.findIndex(r => r.date === null)
+    if (unreleasedIdx >= 0) expect(rounds[unreleasedIdx].textContent).toContain('开发中')
 
     // 每个轮次的 PR 计数 = 该轮贡献条目数
     rounds.forEach((node, index) => {

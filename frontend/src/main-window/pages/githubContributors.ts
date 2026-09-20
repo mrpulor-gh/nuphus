@@ -49,8 +49,8 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
-    version: 'Unreleased',
-    date: null,
+    version: '0.2.17',
+    date: '2026-09-21',
     contributors: [
       {
         user: 'zhoupeiyu515-ui',
@@ -59,6 +59,14 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
             pr: 32,
             summary: '设置中心（左导航 + 右内容）：居中弹窗、宿主分流、焦点陷阱与快捷键守卫',
           },
+          { pr: 35, summary: '会话归属项目文件夹（后端）：归属落库、分组建模与偏好下发' },
+          { pr: 36, summary: 'main 守卫工作流：push main 时检查 fmt / tsc / prettier' },
+          { pr: 37, summary: '外部 Agent 契约补红线：不得擅自改动目标仓库的 git 历史' },
+          {
+            pr: 38,
+            summary: '会话工作台按项目文件夹分组（前端）：分组渲染、整理/排序/恢复菜单、移动端同步',
+          },
+          { pr: 39, summary: '派发基线审计：记录工作区 HEAD，完工比对未派发提交' },
         ],
       },
       {

@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.16 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.17 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -272,16 +272,22 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 
 ## Acknowledgements
 
-### v0.2.16 Contributors
+### v0.2.17 Contributors
 
 Thanks to the community contributors who submitted pull requests in this release:
 
 | Contributor | PR | Summary |
 |-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#23](https://github.com/mrpulor-gh/nuphus/pull/23) | macOS permission checks & Windows script window fix |
-| [@yuansui486](https://github.com/yuansui486) | [#26](https://github.com/mrpulor-gh/nuphus/pull/26) | Passive microphone permission query on macOS |
-| [@yuansui486](https://github.com/yuansui486) | [#28](https://github.com/mrpulor-gh/nuphus/pull/28) | Session interaction, file path detection & wheel behavior |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#31](https://github.com/mrpulor-gh/nuphus/pull/31) | DeepSeek built-in model catalog aligned with official API |
+| [@yuansui486](https://github.com/yuansui486) | [#33](https://github.com/mrpulor-gh/nuphus/pull/33) | Built-in browser: avoid runtime automation-feature detection, better launch diagnostics |
+| [@yuansui486](https://github.com/yuansui486) | [#34](https://github.com/mrpulor-gh/nuphus/pull/34) | Fix dark edges of the main window under the Windows light theme |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#32](https://github.com/mrpulor-gh/nuphus/pull/32) | Settings center rework: left navigation + right content |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#35](https://github.com/mrpulor-gh/nuphus/pull/35) | Session-to-project-folder ownership (backend) |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#36](https://github.com/mrpulor-gh/nuphus/pull/36) | Main-branch guard workflow (fmt / tsc / prettier) |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#37](https://github.com/mrpulor-gh/nuphus/pull/37) | Handoff contract: external agents must not rewrite git history |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#38](https://github.com/mrpulor-gh/nuphus/pull/38) | Session rail grouped by project folder (frontend) |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#39](https://github.com/mrpulor-gh/nuphus/pull/39) | Dispatch baseline audit: detect undispatched commits on completion |
+
+Contributors of earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
