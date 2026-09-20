@@ -75,6 +75,8 @@ function sessionsFixture(overrides: Partial<ShelfSessions> = {}): ShelfSessions 
       { path: 'E:\\work\\Old', name: '已归档目录', is_current: false, auto: false },
     ],
     collapsed_limit: 1,
+    // 桌面 ⋯ 菜单设置的排序偏好（同一返回体下发，移动端只读跟随）
+    sort_prefs: { group_order: 'bookmark', sort_key: 'updated' },
     ...overrides,
   }
 }
@@ -135,6 +137,67 @@ describe('移动端会话列表分组', () => {
 
     fireEvent.click(within(group).getByText('一号会话'))
     expect(onSwitchSession).toHaveBeenCalledWith('bm1', 'leader')
+  })
+
+  it('排序偏好跟随桌面（同一返回体 sort_prefs：组序维度 + 组内键）', async () => {
+    renderNav(
+      sessionsFixture({
+        collapsed_limit: 6,
+        items: [
+          {
+            id: 'bm1',
+            mode: 'leader',
+            title: '一号会话',
+            message_count: 3,
+            updated_at: 2_000,
+            created_at: 9_000,
+            is_active: false,
+            project_path: 'E:\\NUS\\1',
+          },
+          {
+            id: 'bm1-b',
+            mode: 'workflow',
+            title: '一号次会话',
+            message_count: 1,
+            updated_at: 1_000,
+            created_at: 8_000,
+            is_active: false,
+            project_path: 'E:\\NUS\\1',
+          },
+          {
+            id: 'np',
+            mode: 'leader',
+            title: 'Nuphus会话',
+            message_count: 1,
+            updated_at: 5_000,
+            created_at: 1_000,
+            is_active: true,
+            project_path: 'E:\\NUS\\Nuphus',
+          },
+        ],
+        // 桌面选了「近期项目 + 创建时间」
+        sort_prefs: { group_order: 'recent', sort_key: 'created' },
+      }),
+    )
+    const sheet = screen.getByRole('dialog', { name: '设置' })
+    await waitFor(() => expect(within(sheet).getByText('一号')).toBeInTheDocument())
+
+    // 组序维度：Nuphus 最近会话 5000 > 一号 2000（书签序本是一号在前）
+    const heads = Array.from(sheet.querySelectorAll('.mobile-sess-group-name')).map(
+      e => e.textContent,
+    )
+    expect(heads).toEqual(['Nuphus', '一号'])
+    // 组内键：创建时间升序（一号次 8000 在 一号 9000 之前）
+    const group = within(sheet).getByText('一号').closest('.mobile-sess-group') as HTMLElement
+    // 标题文本取 .mobile-sess-title 的直接文本节点（mode 徽标是 aria-hidden 的子元素）
+    const titles = Array.from(group.querySelectorAll('.mobile-sess-title')).map(e =>
+      Array.from(e.childNodes)
+        .filter(n => n.nodeType === Node.TEXT_NODE)
+        .map(n => n.textContent ?? '')
+        .join('')
+        .trim(),
+    )
+    expect(titles).toEqual(['一号次会话', '一号会话'])
   })
 
   it('组头可整组收起/展开', async () => {

@@ -17,6 +17,7 @@ const renameSession = vi.fn()
 const archiveSession = vi.fn()
 const setProjectBookmarks = vi.fn()
 const setProjectFolderArchived = vi.fn()
+const setSessionSortPrefs = vi.fn()
 
 vi.mock('../main-window/lib/api', () => ({
   listShelfSessions: () => listShelfSessions(),
@@ -25,6 +26,7 @@ vi.mock('../main-window/lib/api', () => ({
   archiveSession: (...args: unknown[]) => archiveSession(...args),
   setProjectBookmarks: (...args: unknown[]) => setProjectBookmarks(...args),
   setProjectFolderArchived: (...args: unknown[]) => setProjectFolderArchived(...args),
+  setSessionSortPrefs: (...args: unknown[]) => setSessionSortPrefs(...args),
   SESSION_GROUP_LIMIT_CHANGED_EVENT: 'nuphus:session-group-limit-changed',
 }))
 
@@ -84,6 +86,7 @@ function shelfResponse(overrides: Record<string, unknown> = {}) {
       { path: 'E:\\work\\Old', name: '已归档目录', is_current: false, auto: false },
     ],
     collapsed_limit: 6,
+    sort_prefs: { group_order: 'bookmark', sort_key: 'updated' },
     ...overrides,
   }
 }
@@ -94,17 +97,19 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     return true
   })
   const onNewChat = vi.fn(() => calls.push('newChat'))
+  const onOpenProjectDir = vi.fn(() => calls.push('openProjectDir'))
   const onSessionChanged = vi.fn()
   const utils = render(
     <SessionRail
       onSessionChanged={onSessionChanged}
       onNewChat={onNewChat}
+      onOpenProjectDir={onOpenProjectDir}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}
     />,
   )
-  return { ...utils, onSwitchProjectDir, onNewChat, onSessionChanged }
+  return { ...utils, onSwitchProjectDir, onNewChat, onOpenProjectDir, onSessionChanged }
 }
 
 describe('SessionRail 项目文件夹分组渲染', () => {
@@ -121,6 +126,12 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     archiveSession.mockReset().mockResolvedValue(undefined)
     setProjectBookmarks.mockReset().mockResolvedValue([])
     setProjectFolderArchived.mockReset().mockResolvedValue([])
+    setSessionSortPrefs
+      .mockReset()
+      .mockImplementation(async (groupOrder: string, sortKey: string) => ({
+        group_order: groupOrder,
+        sort_key: sortKey,
+      }))
   })
 
   it('抽屉头部只有标题、零按钮（文件夹管理入口已全部迁至项目中心）', async () => {
@@ -135,7 +146,7 @@ describe('SessionRail 项目文件夹分组渲染', () => {
   })
 
   it('「项目」标签位于「新建对话」按钮之后、首个分组之前（DOM 顺序）', async () => {
-    renderRail()
+    const { onOpenProjectDir } = renderRail()
     await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
 
     const newChat = document.querySelector('.sr-new-chat-btn') as HTMLElement
@@ -149,6 +160,14 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const following = Node.DOCUMENT_POSITION_FOLLOWING
     expect(newChat.compareDocumentPosition(label) & following).toBeTruthy()
     expect(label.compareDocumentPosition(firstGroup) & following).toBeTruthy()
+
+    // 标签行右端两个图标：⋯（菜单）在前、📁+（新建项目文件夹）在后
+    const menuBtn = within(label).getByLabelText('项目菜单')
+    const newFolderBtn = within(label).getByLabelText('新建项目文件夹')
+    expect(menuBtn.compareDocumentPosition(newFolderBtn) & following).toBeTruthy()
+    // 📁+ 沿用既有流程：打开项目中心（选目录 + 命名 + 加入书签）
+    fireEvent.click(newFolderBtn)
+    expect(onOpenProjectDir).toHaveBeenCalledTimes(1)
   })
 
   it('抽屉三种关闭路径：Esc / 点击面板外 / 再点色块（删掉 ✕ 后无回归）', async () => {

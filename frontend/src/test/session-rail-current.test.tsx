@@ -22,6 +22,7 @@ vi.mock('../main-window/lib/api', () => ({
       projects: [],
       archived_projects: [],
       collapsed_limit: 6,
+      sort_prefs: { group_order: 'bookmark', sort_key: 'updated' },
     }),
   ),
   switchSession: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('../main-window/lib/api', () => ({
   archiveSession: vi.fn(),
   setProjectBookmarks: vi.fn(),
   setProjectFolderArchived: vi.fn(),
+  setSessionSortPrefs: vi.fn(),
   SESSION_GROUP_LIMIT_CHANGED_EVENT: 'nuphus:session-group-limit-changed',
 }))
 
