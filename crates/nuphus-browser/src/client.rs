@@ -14,6 +14,7 @@ use chromiumoxide::{Command, Method, Page};
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -26,6 +27,127 @@ fn runtime_safe_handler_config() -> HandlerConfig {
         runtime_execution_mode: RuntimeExecutionMode::OnDemand,
         ..HandlerConfig::default()
     }
+}
+
+const CHROME_STDERR_MAX_LINES: usize = 16;
+const CHROME_STDERR_MAX_LINE_CHARS: usize = 512;
+const CHROME_SANDBOX_ERROR_MARKERS: &[&str] = &[
+    "running as root without --no-sandbox",
+    "no usable sandbox",
+    "suid sandbox helper binary was found",
+    "failed to move to new namespace",
+    "failed to unshare",
+    "sandbox initialization failed",
+    "failed to initialize sandbox",
+];
+const CHROME_POLICY_ERROR_MARKERS: &[&str] = &[
+    "remote debugging is disabled by policy",
+    "remote debugging has been disabled by the system administrator",
+    "devtools remote debugging is disallowed",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChromeLaunchFailureKind {
+    SandboxUnavailable,
+    RemoteDebuggingBlocked,
+    Other,
+}
+
+fn push_chrome_stderr(tail: &mut VecDeque<String>, line: &str) {
+    let clean: String = line
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .take(CHROME_STDERR_MAX_LINE_CHARS)
+        .collect();
+    if clean.is_empty() {
+        return;
+    }
+    if tail.len() == CHROME_STDERR_MAX_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(clean);
+}
+
+fn classify_chrome_launch_failure(tail: &VecDeque<String>) -> ChromeLaunchFailureKind {
+    let stderr = tail
+        .iter()
+        .map(|line| line.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if CHROME_SANDBOX_ERROR_MARKERS
+        .iter()
+        .any(|marker| stderr.contains(marker))
+        || (stderr.contains("sandbox") && stderr.contains("operation not permitted"))
+    {
+        return ChromeLaunchFailureKind::SandboxUnavailable;
+    }
+
+    if CHROME_POLICY_ERROR_MARKERS
+        .iter()
+        .any(|marker| stderr.contains(marker))
+        || (stderr.contains("remote-debugging") && stderr.contains("policy"))
+    {
+        return ChromeLaunchFailureKind::RemoteDebuggingBlocked;
+    }
+
+    ChromeLaunchFailureKind::Other
+}
+
+fn relevant_chrome_stderr(tail: &VecDeque<String>, kind: ChromeLaunchFailureKind) -> Option<&str> {
+    tail.iter()
+        .rev()
+        .find(|line| {
+            let line = line.to_ascii_lowercase();
+            match kind {
+                ChromeLaunchFailureKind::SandboxUnavailable => {
+                    CHROME_SANDBOX_ERROR_MARKERS
+                        .iter()
+                        .any(|marker| line.contains(marker))
+                        || line.contains("sandbox")
+                        || line.contains("operation not permitted")
+                }
+                ChromeLaunchFailureKind::RemoteDebuggingBlocked => {
+                    CHROME_POLICY_ERROR_MARKERS
+                        .iter()
+                        .any(|marker| line.contains(marker))
+                        || (line.contains("remote-debugging") && line.contains("policy"))
+                }
+                ChromeLaunchFailureKind::Other => true,
+            }
+        })
+        .map(String::as_str)
+        .or_else(|| tail.back().map(String::as_str))
+}
+
+fn chrome_launch_error(reason: &str, tail: &VecDeque<String>) -> BrowserError {
+    if !tail.is_empty() {
+        tracing::warn!(
+            reason,
+            stderr_tail = %tail.iter().cloned().collect::<Vec<_>>().join(" | "),
+            "Chrome launch failed before exposing a DevTools endpoint"
+        );
+    }
+
+    let kind = classify_chrome_launch_failure(tail);
+    let detail = relevant_chrome_stderr(tail, kind)
+        .map(|line| format!(" Chrome stderr: {line}"))
+        .unwrap_or_default();
+    let message = match kind {
+        ChromeLaunchFailureKind::SandboxUnavailable => format!(
+            "{reason}. Chrome sandbox initialization failed. Visible browser sessions keep the \
+             sandbox enabled and will not retry with --no-sandbox. Run Nuphus in a supported \
+             desktop session or fix the container/enterprise sandbox policy.{detail}"
+        ),
+        ChromeLaunchFailureKind::RemoteDebuggingBlocked => format!(
+            "{reason}. Chrome remote debugging was blocked by a system or enterprise policy. \
+             Allow remote debugging for the selected browser, then retry.{detail}"
+        ),
+        ChromeLaunchFailureKind::Other if !detail.is_empty() => format!("{reason}.{detail}"),
+        ChromeLaunchFailureKind::Other => reason.to_string(),
+    };
+    BrowserError::Launch(message)
 }
 
 // ═══════════════════════════════════════════════════
@@ -946,25 +1068,23 @@ impl BrowserClient {
             // Some containerized headless environments cannot provide a Chrome sandbox.
             config_builder = config_builder.new_headless_mode().no_sandbox();
         } else {
-            // A visible browser should inherit Chrome's normal defaults. Chromiumoxide's
-            // Puppeteer-oriented defaults expose automation through launch-time behavior.
+            // A visible browser inherits Chrome's normal defaults so framework-specific launch
+            // settings do not alter capabilities that pages can observe.
             config_builder = config_builder.with_head().disable_default_args();
         }
 
         // ── Launch arguments ──
         // Common flags, present in both modes. `--disable-blink-features=AutomationControlled`
-        // stops Chrome from exposing the CDP automation state (`navigator.webdriver`), which a
-        // real user's browser never sets — the single most flaggable signature of automation.
+        // prevents the control channel alone from setting `navigator.webdriver` for the user's
+        // visible browser session.
         config_builder = config_builder
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--disable-popup-blocking"); // keep `window.open` flows from being lost mid-workflow
 
-        // Headed mode is a real, user-visible Chrome: keep its fingerprint indistinguishable from
-        // a normal install (real GPU/WebGL, extensions present, background features on). The
-        // flags below are headless-only stability/perf optimizations that leak automation
-        // signals when carried into headed mode.
+        // Headed mode is user-visible, so retain Chrome's normal GPU, extension, and background
+        // behavior. The flags below remain headless-only stability/performance optimizations.
         if headless {
             config_builder = config_builder
                 .arg("--disable-default-apps")
@@ -1003,6 +1123,7 @@ impl BrowserClient {
         let inner_stderr = stderr.into_inner(); // tokio::process::ChildStderr
         let mut reader = tokio::io::BufReader::new(inner_stderr);
         let mut line = String::new();
+        let mut stderr_tail = VecDeque::with_capacity(CHROME_STDERR_MAX_LINES);
         // Read stderr line-by-line with 20s timeout to find DevTools URL
         let timeout = tokio::time::sleep(std::time::Duration::from_secs(20));
         tokio::pin!(timeout);
@@ -1011,25 +1132,34 @@ impl BrowserClient {
             tokio::select! {
                 _ = &mut timeout => {
                     let _ = child.kill().await;
-                    return Err(BrowserError::Launch("timeout waiting for DevTools URL".into()));
+                    return Err(chrome_launch_error(
+                        "timeout waiting for DevTools URL",
+                        &stderr_tail,
+                    ));
                 }
                 result = reader.read_line(&mut line) => {
                     match result {
                         Ok(0) => {
-                            return Err(BrowserError::Launch(
-                                "Chrome stderr closed before DevTools URL appeared".into()
-                            ));
+                            let reason = match child.try_wait() {
+                                Ok(Some(status)) => format!(
+                                    "Chrome exited with {status} before DevTools URL appeared"
+                                ),
+                                _ => "Chrome stderr closed before DevTools URL appeared".into(),
+                            };
+                            return Err(chrome_launch_error(&reason, &stderr_tail));
                         }
                         Ok(_) => {
                             if let Some(url) = line.trim().strip_prefix("DevTools listening on ") {
                                 break url.to_string();
                             }
+                            push_chrome_stderr(&mut stderr_tail, &line);
                             line.clear();
                         }
                         Err(e) => {
                             let _ = child.kill().await;
-                            return Err(BrowserError::Launch(
-                                format!("stderr read error: {e}")
+                            return Err(chrome_launch_error(
+                                &format!("stderr read error: {e}"),
+                                &stderr_tail,
                             ));
                         }
                     }
@@ -3507,6 +3637,64 @@ mod tests {
     use super::*;
 
     // ── Unit tests (no browser) ──
+
+    #[test]
+    fn chrome_launch_diagnostics_classify_sandbox_failures() {
+        for stderr in [
+            "Running as root without --no-sandbox is not supported.",
+            "No usable sandbox! Update your kernel.",
+            "The SUID sandbox helper binary was found, but is not configured correctly.",
+            "Failed to move to new namespace: Operation not permitted",
+        ] {
+            let mut tail = VecDeque::new();
+            push_chrome_stderr(&mut tail, stderr);
+            push_chrome_stderr(&mut tail, "Chrome shutdown completed");
+            assert_eq!(
+                classify_chrome_launch_failure(&tail),
+                ChromeLaunchFailureKind::SandboxUnavailable
+            );
+            let message = chrome_launch_error("Chrome exited", &tail).to_string();
+            assert!(message.contains("sandbox initialization failed"));
+            assert!(message.contains("will not retry with --no-sandbox"));
+            assert!(message.contains(stderr));
+        }
+    }
+
+    #[test]
+    fn chrome_launch_diagnostics_classify_enterprise_policy() {
+        let mut tail = VecDeque::new();
+        push_chrome_stderr(&mut tail, "Remote debugging is disabled by policy");
+        assert_eq!(
+            classify_chrome_launch_failure(&tail),
+            ChromeLaunchFailureKind::RemoteDebuggingBlocked
+        );
+        let message = chrome_launch_error("Chrome exited", &tail).to_string();
+        assert!(message.contains("system or enterprise policy"));
+        assert!(message.contains("Allow remote debugging"));
+    }
+
+    #[test]
+    fn chrome_launch_diagnostics_keep_other_failures_generic_and_bounded() {
+        let mut tail = VecDeque::new();
+        for index in 0..(CHROME_STDERR_MAX_LINES + 3) {
+            push_chrome_stderr(
+                &mut tail,
+                &format!("ordinary failure {index} {}", "x".repeat(800)),
+            );
+        }
+        assert_eq!(tail.len(), CHROME_STDERR_MAX_LINES);
+        assert!(tail.front().is_some_and(|line| line.contains("failure 3")));
+        assert!(tail
+            .iter()
+            .all(|line| line.chars().count() <= CHROME_STDERR_MAX_LINE_CHARS));
+        assert_eq!(
+            classify_chrome_launch_failure(&tail),
+            ChromeLaunchFailureKind::Other
+        );
+        let message = chrome_launch_error("Chrome exited", &tail).to_string();
+        assert!(message.contains("ordinary failure"));
+        assert!(!message.contains("sandbox initialization failed"));
+    }
 
     #[test]
     fn actionability_script_escapes_selector_and_embeds_constants() {

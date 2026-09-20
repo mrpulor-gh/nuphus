@@ -23,6 +23,8 @@ headless, same-profile reconnect, and external CDP attachment paths.
   execution mode from `HandlerConfig` to each target and page.
 - `src/handler/frame.rs` omits `Runtime.enable` in on-demand mode and clears
   cached context identifiers after document navigation.
+- `src/handler/domworld.rs` adds an ID-only context setter for contexts found
+  on demand without an accompanying unique context identifier.
 - `src/handler/page.rs` obtains isolated-world identifiers directly from
   `Page.createIsolatedWorld`. Main-world identifiers are obtained with a
   randomized temporary `Runtime.addBinding` handshake, bounded retries, and
