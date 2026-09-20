@@ -2,18 +2,26 @@
  * SettingsCenter.tsx — 设置中心弹窗（左导航 + 右内容）
  *
  * 定位：介于 CompactModal（窄模态）与整页宿主之间 —— 居中大弹窗
- * （`min(1080×760, 视口 − 64px)`，fixed + margin:auto 居中，遮罩由 CSS ::before 铺满视口），
+ * （宿主 = 遮罩层 fixed/inset:0 + --overlay-bg，内层面板 `min(1080×760, 视口 − 64px)` 居中），
  * 既容纳「导航 + 整页级子页」，又不铺满窗口（四周保留聊天界面可见）。
- * 右侧内容区宽度随面板收缩，窄面板下子页走 `.is-narrow` 降级（见 models.css）。
+ *
+ * 宿主分流：两类分区**不在弹窗内渲染**，点击导航项即关闭面板、交给 App 层全屏宿主
+ * （面板内容区上限 = 1080 − 导航 236 = 844px，这两类页面在 844px 内结构性不可用）：
+ *   - 画布：UI 原型 / 工具 / 工作流编辑器是「左右 320 固定 + 中自适应」的工作台布局，
+ *     主画布 = 容器宽 − 640 → 802px 内容区只剩 162px；叠加 `overflow:hidden`，
+ *     高度不足是裁切而非滚动 → 走 `.canvas-workbench-host` 全屏宿主（openCanvas 链路）。
+ *   - 模型：双栏后主区仅 566px，需在 844px 内重排信息（服务商列表 / 密钥表单 / 模型表格），
+ *     样式层解决不了宿主上限 → 走 `.models-page-host` 全屏整页（Ctrl+K → 模型 链路）。
+ *   其余 13 项在 844px 下信息完整、导航切换的价值正在这一档，保持弹窗内嵌。
  *
  * 复用原则：右侧内容一律复用现有页面组件，本文件只做「导航 → 分区切换」，
  * 不复制任何子页实现；子页的 lazy 说明符与 App.tsx 各入口保持一致，
  * 命中同一 chunk（不产生重复打包）。
  *
  * 分区 ↔ 子页映射（共 15 项，见 NAV_GROUPS）：
- *   浏览：记忆 MemoriesPage / 画布 CanvasWorkbenchPage / 工作流 WorkflowPage /
+ *   浏览：记忆 MemoriesPage / **画布 → 全屏宿主** / 工作流 WorkflowPage /
  *         技能 SkillsPage / 知识库 KnowledgePage / MCP McpPage / 插件 PluginComingSoon
- *   设置：模型 ModelsPage / 灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
+ *   设置：**模型 → 全屏宿主** / 灵魂 SoulPage / 移动端 MobilePage / 浏览器 BrowserPage /
  *         主题与语言 ThemesPage / 外部 Agent ExternalAgentsPage
  *   管理：权限与安全 SecurityPage / 版本与更新 UpdatePage
  *
@@ -49,9 +57,8 @@ import '../../styles/settings-center.css'
 const MemoriesPage = lazy(() =>
   import('../memories/MemoriesPage').then(m => ({ default: m.MemoriesPage })),
 )
-const CanvasWorkbenchPage = lazy(() =>
-  import('../workflow/CanvasWorkbenchPage').then(m => ({ default: m.CanvasWorkbenchPage })),
-)
+// ⚠️ 画布 / 模型两个分区**不在此 lazy 加载**：它们走 App 层全屏宿主（见文件头「宿主分流」），
+// 由 App.tsx 各自入口统一加载，避免在弹窗链路里多挂一份 chunk 引用。
 const WorkflowPage = lazy(() =>
   import('../workflow/WorkflowPage').then(m => ({ default: m.WorkflowPage })),
 )
@@ -63,7 +70,6 @@ const McpPage = lazy(() => import('./McpPage').then(m => ({ default: m.McpPage }
 const PluginComingSoon = lazy(() =>
   import('./PluginComingSoon').then(m => ({ default: m.PluginComingSoon })),
 )
-const ModelsPage = lazy(() => import('./ModelsPage').then(m => ({ default: m.ModelsPage })))
 const SoulPage = lazy(() => import('./SoulPage').then(m => ({ default: m.SoulPage })))
 const MobilePage = lazy(() => import('./MobilePage').then(m => ({ default: m.MobilePage })))
 const BrowserPage = lazy(() => import('./BrowserPage').then(m => ({ default: m.BrowserPage })))
@@ -90,6 +96,11 @@ export type SettingsSectionId =
   | 'external-agents'
   | 'security'
   | 'update'
+
+/** 走 App 层全屏宿主的分区：导航里可见、点击即关闭面板（不在弹窗内渲染） */
+type HostedSectionId = 'canvas' | 'models'
+/** 可在弹窗内容区内嵌渲染的分区 */
+type EmbeddedSectionId = Exclude<SettingsSectionId, HostedSectionId>
 
 interface SettingsNavItem {
   id: SettingsSectionId
@@ -150,42 +161,83 @@ export interface SettingsCenterProps {
    * 必须由 App 先关面板再弹，否则确认框会被盖住。
    */
   onRunWorkflow: (workflow: WorkflowItem) => void
-  /** 模型切换 / 密钥保存后刷新输入栏模型信息 */
-  onModelChanged?: () => void
+  /**
+   * 画布分区（UI 原型 / 工具 / 工作流编辑器）：关闭面板 → 走 App 层
+   * `.canvas-workbench-host` 全屏宿主（openCanvas 链路）。
+   * workflowId 由工作流列表的行内「画布」带入，null = 工作台自选最近草稿。
+   */
+  onOpenCanvas: (workflowId?: string | null) => void
+  /** 模型分区：关闭面板 → 走 App 层 `.models-page-host` 全屏整页 */
+  onOpenModels: () => void
 }
 
 export function SettingsCenter({
   onClose,
   showToast,
   onRunWorkflow,
-  onModelChanged,
+  onOpenCanvas,
+  onOpenModels,
 }: SettingsCenterProps) {
   const { t } = useLanguage()
-  const [section, setSection] = useState<SettingsSectionId>('memories')
-  /** 画布分区目标工作流：由工作流列表的行内「画布」按钮带入；null = 工作台自选最近草稿 */
-  const [canvasWorkflowId, setCanvasWorkflowId] = useState<string | null>(null)
+  const [section, setSection] = useState<EmbeddedSectionId>('memories')
+
   /**
-   * 右侧内容区实测宽度 → 窄容器降级标记。
-   *
-   * 模型页等子页原本是为「全屏」设计的双栏布局，嵌入设置中心后可用宽度只剩
-   * 视口 − 左导航（236px），而它们的降级规则写的是按**视口**判定的媒体查询 ——
-   * 视口明明很宽却判不出来，双栏被硬塞成「固定 rail + 极窄内容」，卡片内文字
-   * 退化成竖排。这里按容器实测宽度打标，CSS 据此落到紧凑/单栏布局。
-   *
-   * 不用 @container：容器需 contain:layout，会让子页内 position:fixed 的弹层
-   * 改以容器为包含块，定位全错。
+   * 分区切换入口：宿主分流的两项交给 App 层全屏宿主，其余落在弹窗内容区。
+   * TS 在两条早返回之后把 id 收窄为 EmbeddedSectionId（无需断言）。
    */
-  const mainRef = useRef<HTMLDivElement>(null)
-  const [narrowPane, setNarrowPane] = useState(false)
+  const openSection = (id: SettingsSectionId) => {
+    if (id === 'canvas') return onOpenCanvas(null)
+    if (id === 'models') return onOpenModels()
+    setSection(id)
+  }
+
+  /**
+   * 焦点陷阱：面板声明了 aria-modal，但焦点仍可能 Tab 到背后聊天界面。
+   * 打开时把焦点收进面板本体（tabIndex=-1），Tab / Shift+Tab 在面板内循环，
+   * 关闭时把焦点还给触发按钮。全应用只保留一个设置入口，故触发元素稳定。
+   */
+  const panelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const el = mainRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(entries => {
-      const w = entries[0]?.contentRect.width ?? el.clientWidth
-      setNarrowPane(w < 780)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
+    const el = panelRef.current
+    if (!el) return
+    const restoreTo = document.activeElement as HTMLElement | null
+    /** 面板内可聚焦元素（按 DOM 顺序）。不用 offsetParent 过滤：jsdom 恒为 null。 */
+    const focusables = (): HTMLElement[] =>
+      Array.from(
+        el.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(node => !node.hasAttribute('hidden') && node.getAttribute('aria-hidden') !== 'true')
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const nodes = focusables()
+      if (nodes.length === 0) {
+        e.preventDefault()
+        return
+      }
+      const active = document.activeElement as HTMLElement | null
+      const idx = active ? nodes.indexOf(active) : -1
+      // 焦点在面板本体（初始态）或面板外 → 强制拉回边界项
+      if (idx === -1) {
+        e.preventDefault()
+        ;(e.shiftKey ? nodes[nodes.length - 1] : nodes[0]).focus()
+        return
+      }
+      if (e.shiftKey && idx === 0) {
+        e.preventDefault()
+        nodes[nodes.length - 1].focus()
+      } else if (!e.shiftKey && idx === nodes.length - 1) {
+        e.preventDefault()
+        nodes[0].focus()
+      }
+    }
+    el.focus()
+    el.addEventListener('keydown', onKeyDown)
+    return () => {
+      el.removeEventListener('keydown', onKeyDown)
+      // 触发按钮可能已随面板卸载（画布/模型分流会整页切换）→ 先确认仍在文档中
+      if (restoreTo && document.contains(restoreTo)) restoreTo.focus()
+    }
   }, [])
 
   const activeItem = NAV_ITEMS.find(item => item.id === section) ?? NAV_ITEMS[0]
@@ -194,27 +246,13 @@ export function SettingsCenter({
     switch (section) {
       case 'memories':
         return <MemoriesPage />
-      case 'canvas':
-        return (
-          /* 复用 .canvas-workbench-host 的既有子元素规则（header/body 高度链），
-             仅由 `.canvas-workbench-host--embedded` 把 fixed 全屏宿主改为撑满内容区 */
-          <div className="canvas-workbench-host canvas-workbench-host--embedded">
-            <CanvasWorkbenchPage
-              workflowId={canvasWorkflowId}
-              /* 内嵌画布的 ✕ = 回到工作流列表（整个设置中心由右上角关闭） */
-              onClose={() => setSection('workflows')}
-            />
-          </div>
-        )
       case 'workflows':
         return (
           <WorkflowPage
             onClose={onClose}
             onRunClick={onRunWorkflow}
-            onCanvasClick={wf => {
-              setCanvasWorkflowId(wf.id)
-              setSection('canvas')
-            }}
+            /* 行内「画布」= 关闭面板 → 由 App 层打开全屏画布工作台 */
+            onCanvasClick={wf => onOpenCanvas(wf.id)}
           />
         )
       case 'skills':
@@ -225,8 +263,6 @@ export function SettingsCenter({
         return <McpPage onClose={onClose} />
       case 'plugins':
         return <PluginComingSoon />
-      case 'models':
-        return <ModelsPage onClose={onClose} onModelChanged={onModelChanged} />
       case 'soul':
         return <SoulPage onClose={onClose} />
       case 'mobile':
@@ -258,6 +294,8 @@ export function SettingsCenter({
         role="dialog"
         aria-modal="true"
         aria-label={t('app.settings')}
+        ref={panelRef}
+        tabIndex={-1}
       >
         {/* ── 顶部 bar：与 models-page-bar 同规格（48px / surface-1 / line-1）── */}
         <div className="settings-center-bar">
@@ -292,7 +330,8 @@ export function SettingsCenter({
                         key={item.id}
                         className={`settings-center-nav-item${item.id === section ? ' active' : ''}`}
                         aria-current={item.id === section ? 'page' : undefined}
-                        onClick={() => setSection(item.id)}
+                        /* 画布 / 模型两项由 openSection 分流到 App 层全屏宿主（本面板随即关闭） */
+                        onClick={() => openSection(item.id)}
                       >
                         <span className="settings-center-nav-icon">{item.icon}</span>
                         <span className="settings-center-nav-label">{t(item.labelKey)}</span>
@@ -305,7 +344,7 @@ export function SettingsCenter({
           </nav>
 
           {/* ── 右侧内容区：切换分区不卸载外壳（面板保持打开）── */}
-          <div className={`settings-center-main${narrowPane ? ' is-narrow' : ''}`} ref={mainRef}>
+          <div className="settings-center-main">
             <div className="settings-center-main-head">
               <span className="settings-center-main-title">{t(activeItem.labelKey)}</span>
             </div>

@@ -3,17 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { SettingsCenter } from './SettingsCenter'
 import type { WorkflowItem } from '../../core/types'
 
-// 15 个真实子页全部替换为轻量桩：
+// 真实子页全部替换为轻量桩：
 // ① 本测试只验证「设置中心外壳」——导航分组、分区切换、面板不被关闭、回调透传；
 // ② 真实子页会把 IPC / @xyflow/react / motion 等依赖拖进 jsdom。
+// 注：画布 / 模型两个分区不在此渲染（宿主分流到 App 层全屏宿主），故无对应桩。
 vi.mock('../memories/MemoriesPage', () => ({
   MemoriesPage: () => <div data-testid="page-memories" />,
-}))
-vi.mock('../workflow/CanvasWorkbenchPage', () => ({
-  // 透出 workflowId：用于断言「工作流列表带过来的目标工作流交给了内嵌工作台」
-  CanvasWorkbenchPage: ({ workflowId }: { workflowId?: string | null }) => (
-    <div data-testid="page-canvas">{workflowId ?? ''}</div>
-  ),
 }))
 vi.mock('../workflow/WorkflowPage', () => ({
   WorkflowPage: ({
@@ -41,7 +36,6 @@ vi.mock('./McpPage', () => ({ McpPage: () => <div data-testid="page-mcp" /> }))
 vi.mock('./PluginComingSoon', () => ({
   PluginComingSoon: () => <div data-testid="page-plugins" />,
 }))
-vi.mock('./ModelsPage', () => ({ ModelsPage: () => <div data-testid="page-models" /> }))
 vi.mock('./SoulPage', () => ({ SoulPage: () => <div data-testid="page-soul" /> }))
 vi.mock('./MobilePage', () => ({ MobilePage: () => <div data-testid="page-mobile" /> }))
 vi.mock('./BrowserPage', () => ({ BrowserPage: () => <div data-testid="page-browser" /> }))
@@ -63,7 +57,8 @@ function renderCenter() {
     onClose: vi.fn(),
     showToast: vi.fn(),
     onRunWorkflow: vi.fn(),
-    onModelChanged: vi.fn(),
+    onOpenCanvas: vi.fn(),
+    onOpenModels: vi.fn(),
   }
   render(<SettingsCenter {...props} />)
   return props
@@ -91,15 +86,15 @@ describe('SettingsCenter 设置中心外壳', () => {
     const props = renderCenter()
     await screen.findByTestId('page-memories')
 
-    fireEvent.click(navItem('模型'))
+    fireEvent.click(navItem('灵魂'))
 
-    expect(await screen.findByTestId('page-models')).toBeInTheDocument()
+    expect(await screen.findByTestId('page-soul')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByTestId('page-memories')).not.toBeInTheDocument())
     // 外壳未被关闭：导航 + 右上角关闭按钮仍在，关闭回调未被触发
     expect(nav()).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument()
     expect(props.onClose).not.toHaveBeenCalled()
-    expect(navItem('模型')).toHaveAttribute('aria-current', 'page')
+    expect(navItem('灵魂')).toHaveAttribute('aria-current', 'page')
     expect(navItem('记忆')).not.toHaveAttribute('aria-current')
   })
 
@@ -120,15 +115,60 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(props.onRunWorkflow).toHaveBeenCalledWith({ id: 'wf-1' })
   })
 
-  it('工作流分区：行内「画布」切到画布分区，并带上目标工作流', async () => {
-    renderCenter()
+  it('工作流分区：行内「画布」委托宿主全屏打开，并带上目标工作流', async () => {
+    const props = renderCenter()
     fireEvent.click(navItem('工作流'))
     fireEvent.click(
       await within(await screen.findByTestId('page-workflows')).findByText('stub-canvas'),
     )
 
-    expect(await screen.findByTestId('page-canvas')).toHaveTextContent('wf-canvas')
-    expect(navItem('画布')).toHaveAttribute('aria-current', 'page')
+    expect(props.onOpenCanvas).toHaveBeenCalledWith('wf-canvas')
+    // 弹窗内不渲染画布，分区也不切换（关闭面板与打开全屏宿主由宿主决定）
+    expect(screen.queryByTestId('page-canvas')).toBeNull()
+    expect(navItem('工作流')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('宿主分流：点「画布」「模型」交给 App 层全屏宿主，弹窗内容区不动', async () => {
+    const props = renderCenter()
+    await screen.findByTestId('page-memories')
+
+    fireEvent.click(navItem('画布'))
+    expect(props.onOpenCanvas).toHaveBeenCalledWith(null)
+    expect(props.onOpenModels).not.toHaveBeenCalled()
+
+    fireEvent.click(navItem('模型'))
+    expect(props.onOpenModels).toHaveBeenCalledTimes(1)
+
+    // 两项均不落在弹窗内容区：既不渲染对应子页，也不改变当前分区与外壳
+    expect(screen.queryByTestId('page-canvas')).toBeNull()
+    expect(screen.queryByTestId('page-models')).toBeNull()
+    expect(navItem('记忆')).toHaveAttribute('aria-current', 'page')
+    expect(props.onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('焦点陷阱：打开后焦点在面板内，Tab / Shift+Tab 在面板内循环', async () => {
+    renderCenter()
+    const panel = screen.getByRole('dialog')
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true))
+
+    const close = screen.getByRole('button', { name: '关闭' })
+    const buttons = within(panel).getAllByRole('button')
+    const last = buttons[buttons.length - 1]
+
+    // 焦点在面板本体（初始态）→ Tab 落到首个可聚焦元素
+    fireEvent.keyDown(panel, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    // 末项 Tab → 回绕到首项
+    last.focus()
+    fireEvent.keyDown(panel, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    // 首项 Shift+Tab → 回绕到末项
+    close.focus()
+    fireEvent.keyDown(panel, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
   })
 
   it('主题分区：showToast 通道透传给子页', async () => {

@@ -1050,14 +1050,3 @@
   z-index: 0;
   overflow: hidden;
 }
-
-/* 内嵌变体（设置中心「画布」分区）：宿主改为撑满内容区，其余子元素规则照旧复用。
-   必须写在基础规则之后——单类选择器同特异性，靠源码顺序覆盖 position/inset/z-index。
-   仍保留 position: relative：canvas 编辑层（.wfc-page）以 48px 偏移相对宿主绝对定位。 */
-.canvas-workbench-host--embedded {
-  position: relative;
-  inset: auto;
-  z-index: auto;
-  height: 100%;
-  min-height: 0;
-}
