@@ -112,7 +112,9 @@ describe('SettingsCenter 设置中心外壳', () => {
   it('工作流分区：行内「运行」委托给宿主 onRunWorkflow（弹窗与退出由宿主决定）', async () => {
     const props = renderCenter()
     fireEvent.click(navItem('工作流'))
-    fireEvent.click(await within(await screen.findByTestId('page-workflows')).findByText('stub-run'))
+    fireEvent.click(
+      await within(await screen.findByTestId('page-workflows')).findByText('stub-run'),
+    )
 
     expect(props.onRunWorkflow).toHaveBeenCalledTimes(1)
     expect(props.onRunWorkflow).toHaveBeenCalledWith({ id: 'wf-1' })
