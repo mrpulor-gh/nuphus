@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub mod automation_lock;
+pub mod net_diag;
 pub mod office;
 pub mod proxy;
 pub mod xlsx;

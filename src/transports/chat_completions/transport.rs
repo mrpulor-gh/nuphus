@@ -40,6 +40,10 @@ fn request_timeout(config: &ChatCompletionsConfig) -> Duration {
 /// 提示文案「（第 n/N 次）」与该值同源，改这里两处一起生效。
 const MAX_STREAM_ATTEMPTS: usize = 4;
 
+/// 非流式请求的最大尝试次数（含首次），与 `send_chat_request` 的循环上界同源——
+/// 诊断行的 `attempt=n/N` 取同一常量，改这里不会与循环脱节。
+const MAX_REQUEST_ATTEMPTS: usize = 4;
+
 /// 上游静默（无响应头 / 无新 chunk）导致重试时的前端提示文案。
 ///
 /// `attempt` 为 0-based 轮次，展示用 `attempt + 1`（1-based），
@@ -121,6 +125,8 @@ impl ChatCompletionsTransport {
         cancel_flag: Option<&AtomicBool>,
     ) -> Result<String> {
         let url = self.config.endpoint();
+        // 诊断用主机名（解析事实按 host 归属；URL 非法时回落 "unknown"）
+        let host = crate::utils::net_diag::host_of(&url);
         let mut last_error = String::new();
         let proxy_url = crate::utils::proxy::detect_proxy_url();
         let mut use_proxy = false;
@@ -142,7 +148,7 @@ impl ChatCompletionsTransport {
             );
         }
 
-        for attempt in 0..4 {
+        for attempt in 0..MAX_REQUEST_ATTEMPTS {
             if let Some(flag) = cancel_flag {
                 if flag.load(Ordering::SeqCst) {
                     return Err(crate::NuphusError::LLM(crate::LLMError::Cancelled));
@@ -160,10 +166,14 @@ impl ChatCompletionsTransport {
                 tokio::time::sleep(Duration::from_secs(delay)).await;
             }
 
+            // 网络诊断（只观测，不改连接行为）：本轮解析事实挂在 resolver 上，
+            // 失败时由下方错误分支取回。挂载不改变解析源与顺序（同源 getaddrinfo）。
+            let diag = crate::utils::net_diag::DiagResolver::new_arc();
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(request_timeout(&self.config))
-                .pool_max_idle_per_host(0);
+                .pool_max_idle_per_host(0)
+                .dns_resolver(diag.clone());
 
             // 先直连，连不上再 fallback 到代理
             if use_proxy {
@@ -216,12 +226,25 @@ impl ChatCompletionsTransport {
                     req = req.header(k, v);
                 }
             }
+            // 本轮耗时取样点：与请求发出同点，失败诊断里的 elapsed 由此起算
+            let started = std::time::Instant::now();
             let response = match req.json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     let is_connect_err = Self::is_connection_error(&e);
                     last_error_is_connection = is_connect_err;
-                    last_error = format!("Request failed: {}", e);
+                    // 诊断只观测：原有前缀 `Request failed: ` 保持不变，摘要作为 `; ` 后缀追加
+                    let line = crate::utils::net_diag::format_diag(
+                        &host,
+                        diag.last().as_ref(),
+                        crate::utils::net_diag::classify(&e),
+                        &crate::utils::net_diag::error_chain(&e),
+                        started.elapsed().as_millis(),
+                        attempt + 1,
+                        MAX_REQUEST_ATTEMPTS,
+                    );
+                    tracing::warn!(target: "nuphus::net", "{}", line);
+                    last_error = format!("Request failed: {e}; {line}");
                     if e.is_timeout() {
                         tracing::warn!(
                             timeout_s = self.config.timeout_secs,
@@ -381,6 +404,8 @@ impl ChatCompletionsTransport {
         emitter: Box<dyn Fn(AssistantEvent) + Send>,
     ) -> Result<()> {
         let url = self.config.endpoint();
+        // 诊断用主机名（与代理块的 `url` 遮蔽无关：此处已解出主机名）
+        let host = crate::utils::net_diag::host_of(&url);
         let mut last_error = String::new();
         let proxy_url = crate::utils::proxy::detect_proxy_url();
         let mut use_proxy = false;
@@ -426,9 +451,12 @@ impl ChatCompletionsTransport {
             // 「开始连接 → 响应体读完」的**总超时**，会误杀合法的长流式回答
             // （慢上游 3 tok/s 生成 1000 tokens 需 ~337s，必然撞上 300s 被杀 → 重试 → 用户看到「卡住后重来」）。
             // 有界性改由两个「无数据」超时保证：FIRST_CHUNK_TIMEOUT（响应头）+ CHUNK_TIMEOUT（chunk 间隔）。
+            // 网络诊断（只观测，不改连接行为）：与 URL 上的 host 同源，解析事实按轮次记录
+            let diag = crate::utils::net_diag::DiagResolver::new_arc();
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .pool_max_idle_per_host(0);
+                .pool_max_idle_per_host(0)
+                .dns_resolver(diag.clone());
 
             // 先直连，连不上再 fallback 到代理
             if use_proxy {
@@ -473,6 +501,8 @@ impl ChatCompletionsTransport {
                     req = req.header(k, v);
                 }
             }
+            // 本轮耗时取样点：与请求发出同点，失败诊断里的 elapsed 由此起算
+            let started = std::time::Instant::now();
             let response = match tokio::time::timeout(
                 self.first_chunk_timeout(),
                 req.json(&body).send(),
@@ -483,7 +513,18 @@ impl ChatCompletionsTransport {
                 Ok(Err(e)) => {
                     let is_connect_err = Self::is_connection_error(&e);
                     last_error_is_connection = is_connect_err;
-                    last_error = format!("Request failed: {}", e);
+                    // 诊断只观测：原有前缀 `Request failed: ` 保持不变，摘要作为 `; ` 后缀追加
+                    let line = crate::utils::net_diag::format_diag(
+                        &host,
+                        diag.last().as_ref(),
+                        crate::utils::net_diag::classify(&e),
+                        &crate::utils::net_diag::error_chain(&e),
+                        started.elapsed().as_millis(),
+                        attempt + 1,
+                        MAX_STREAM_ATTEMPTS,
+                    );
+                    tracing::warn!(target: "nuphus::net", "{}", line);
+                    last_error = format!("Request failed: {e}; {line}");
                     if e.is_timeout() {
                         tracing::warn!(
                             timeout_s = self.first_chunk_timeout().as_secs(),
@@ -510,8 +551,22 @@ impl ChatCompletionsTransport {
                     continue;
                 }
                 Err(_) => {
+                    // 首字节超时是 wrapper `timeout`（不带 reqwest 错误，故无 error chain）：
+                    // 「TCP 已建连但上游无数据」的形态正是 IPv6 半通/链路黑洞的典型信号，
+                    // 与 class=connect（连不上）是两类根因 → 有解析事实就一并回显。
+                    // 只观测：不改超时数值、不改重试与退避。
+                    let line = crate::utils::net_diag::format_diag(
+                        &host,
+                        diag.last().as_ref(),
+                        "first-chunk-timeout",
+                        "",
+                        started.elapsed().as_millis(),
+                        attempt + 1,
+                        MAX_STREAM_ATTEMPTS,
+                    );
+                    tracing::warn!(target: "nuphus::net", "{}", line);
                     last_error = format!(
-                        "First response timeout after {}s",
+                        "First response timeout after {}s; {line}",
                         self.first_chunk_timeout().as_secs()
                     );
                     tracing::error!(

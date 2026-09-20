@@ -17,6 +17,10 @@ use crate::api::{MessageRequest, ToolDefinition};
 use crate::transports::{StreamEvent, Transport};
 use crate::{LLMError, NuphusError, Result};
 
+/// 发送失败的最大尝试次数（含首次），与 `send_sse` 的循环上界同源——
+/// 诊断行的 `attempt=n/N` 取同一常量，改这里不会与循环脱节。
+const MAX_SEND_ATTEMPTS: u32 = 2;
+
 /// OpenAI Responses Transport implementation
 #[derive(Debug, Clone)]
 pub(crate) struct ResponsesTransport {
@@ -220,6 +224,8 @@ impl ResponsesTransport {
     /// - 取消标志在读取前/读取间隙检查 → LLMError::Cancelled。
     async fn send_sse(&self, body: &Value, cancel_flag: Option<&AtomicBool>) -> Result<String> {
         let url = self.config.endpoint();
+        // 诊断用主机名（解析事实按 host 归属；URL 非法时回落 "unknown"）
+        let host = crate::utils::net_diag::host_of(&url);
         let mut last_error: Option<String> = None;
         // 代理回落策略与 chat_completions 通道一致：先直连，连接层失败才切代理。
         // 系统代理可能是陈旧残留（代理软件已退出、注册表仍启用），无条件套用会把请求
@@ -227,7 +233,7 @@ impl ResponsesTransport {
         let proxy_url = crate::utils::proxy::detect_proxy_url();
         let mut use_proxy = false;
 
-        for attempt in 0..2u32 {
+        for attempt in 0..MAX_SEND_ATTEMPTS {
             if let Some(flag) = cancel_flag {
                 if flag.load(Ordering::SeqCst) {
                     return Err(NuphusError::LLM(LLMError::Cancelled));
@@ -245,9 +251,12 @@ impl ResponsesTransport {
                 tokio::time::sleep(Duration::from_secs(u64::from(attempt))).await;
             }
 
+            // 网络诊断（只观测，不改连接行为）：解析事实挂在 resolver 上，发送失败时取回
+            let diag = crate::utils::net_diag::DiagResolver::new_arc();
             let mut builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(self.config.timeout_secs));
+                .timeout(Duration::from_secs(self.config.timeout_secs))
+                .dns_resolver(diag.clone());
             if use_proxy {
                 if let Some(ref proxy) = proxy_url {
                     builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| {
@@ -283,6 +292,8 @@ impl ResponsesTransport {
             }
             let req = req.body(body.to_string());
 
+            // 本轮耗时取样点：与请求发出同点，失败诊断里的 elapsed 由此起算
+            let started = std::time::Instant::now();
             let response = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -291,7 +302,18 @@ impl ResponsesTransport {
                         tracing::info!("[responses] 直连失败，回落代理重试");
                         use_proxy = true;
                     }
-                    last_error = Some(format!("responses request failed: {e}"));
+                    // 诊断只观测：原有前缀 `responses request failed: ` 保持不变，摘要作为 `; ` 后缀追加
+                    let line = crate::utils::net_diag::format_diag(
+                        &host,
+                        diag.last().as_ref(),
+                        crate::utils::net_diag::classify(&e),
+                        &crate::utils::net_diag::error_chain(&e),
+                        started.elapsed().as_millis(),
+                        attempt as usize + 1,
+                        MAX_SEND_ATTEMPTS as usize,
+                    );
+                    tracing::warn!(target: "nuphus::net", "{}", line);
+                    last_error = Some(format!("responses request failed: {e}; {line}"));
                     continue;
                 }
             };

@@ -242,6 +242,8 @@ impl Transport for AnthropicTransport {
     ) -> Result<Vec<StreamEvent>> {
         let body = self.build_request_body(&request);
         let endpoint = self.config.endpoint();
+        // 诊断用主机名（解析事实按 host 归属；URL 非法时回落 "unknown"）
+        let host = crate::utils::net_diag::host_of(&endpoint);
 
         tracing::debug!(
             "Anthropic request: model={}, stream={}, messages={}",
@@ -251,8 +253,11 @@ impl Transport for AnthropicTransport {
         );
 
         // Build HTTP client
+        // 网络诊断（只观测，不改连接行为）：解析事实挂在 resolver 上，发送失败时取回
+        let diag = crate::utils::net_diag::DiagResolver::new_arc();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(self.config.timeout_secs))
+            .dns_resolver(diag.clone())
             .build()
             .map_err(|e| {
                 crate::NuphusError::LLM(crate::LLMError::HttpBuildFailed {
@@ -273,9 +278,21 @@ impl Transport for AnthropicTransport {
             return Ok(vec![StreamEvent::Cancelled]);
         }
 
+        // 本轮耗时取样点：与请求发出同点（该路径无重试，attempt 恒为 1/1）
+        let started = std::time::Instant::now();
         let response = http_req.send().await.map_err(|e| {
+            let line = crate::utils::net_diag::format_diag(
+                &host,
+                diag.last().as_ref(),
+                crate::utils::net_diag::classify(&e),
+                &crate::utils::net_diag::error_chain(&e),
+                started.elapsed().as_millis(),
+                1,
+                1,
+            );
+            tracing::warn!(target: "nuphus::net", "{}", line);
             crate::NuphusError::LLM(crate::LLMError::RequestFailed {
-                error: format!("{e}"),
+                error: format!("{e}; {line}"),
             })
         })?;
 
