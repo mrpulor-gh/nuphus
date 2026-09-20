@@ -24,6 +24,11 @@ static PRE_SCREENSHOT: Mutex<Option<(Vec<u8>, u32, u32)>> = Mutex::new(None);
 /// Written by overlay_capture_done/cancel, consumed and cleared by take_capture_result
 static CAPTURE_RESULT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 
+/// 前端是否已完成启动（`finish_startup` 被调用过，或用户点了「后台下载」）。
+/// 启动看门狗据此判断前端到底起没起来 —— 见 `crate::startup_guard`。
+pub static STARTUP_FINISHED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // ── Main window control ──
 
 #[tauri::command]
@@ -41,14 +46,31 @@ pub async fn toggle_main_window_topmost(app: AppHandle) -> Result<bool, String> 
 /// Closes the splash window and shows the main window.
 #[tauri::command]
 pub async fn finish_startup(app: AppHandle) -> Result<(), String> {
+    // 先置位再看门狗：日志里「finish_startup」出现过就说明前端确实起来了
+    // （此前这条路径完全没日志，splash 卡死时无法从日志判断前端到底跑没跑）
+    STARTUP_FINISHED.store(true, std::sync::atomic::Ordering::SeqCst);
+    tracing::info!("[Startup] finish_startup：关闭 splash、显示主窗");
+
     // Close splash window
-    if let Some(splash) = app.get_webview_window("splash") {
-        let _ = splash.close();
+    match app.get_webview_window("splash") {
+        Some(splash) => {
+            if let Err(e) = splash.close() {
+                tracing::warn!("[Startup] 关闭 splash 失败: {e}");
+            }
+        }
+        // 正常态：dev 的 StrictMode 会把 useInit 的 effect 跑两遍 → finish_startup
+        // 被调用两次，第二次 splash 早已关闭。不是异常，别进 WARN。
+        None => tracing::debug!("[Startup] finish_startup 重复调用（splash 已关闭）"),
     }
     // Show main window
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
+    match app.get_webview_window("main") {
+        Some(main) => {
+            if let Err(e) = main.show() {
+                tracing::warn!("[Startup] 显示主窗失败: {e}");
+            }
+            let _ = main.set_focus();
+        }
+        None => tracing::error!("[Startup] finish_startup 时 main 窗口缺失"),
     }
     Ok(())
 }
@@ -70,6 +92,8 @@ pub async fn splash_status_update(app: AppHandle, text: String) -> Result<(), St
 #[tauri::command]
 pub async fn splash_skip_download(app: AppHandle) -> Result<(), String> {
     tracing::info!("[Splash] user chose background download — closing splash early");
+    // 用户主动跳过：splash 不再需要，看门狗无需再兜底（否则会多一次 reload 主窗）
+    STARTUP_FINISHED.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(splash) = app.get_webview_window("splash") {
         let _ = splash.close();
     }

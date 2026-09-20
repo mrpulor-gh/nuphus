@@ -20,6 +20,7 @@ mod render;
 mod shortcut;
 mod speech;
 mod splash;
+mod startup_guard;
 mod state;
 mod utils;
 mod video;
@@ -853,6 +854,13 @@ fn main() {
                     }
                 })
                 .build(app)?;
+
+            // ── 启动看门狗：前端初始化卡死时的兜底出口 ──
+            // 必须在 setup 末尾：前面各阶段的 splash:progress 都已推完，起算点
+            // 从这里算。前端一直没动静（页面没起来/死在半途）满 N 秒 → 重载并
+            // 强行显示主窗 + 关 splash，用户永远不会被锁在 splash 上。
+            crate::startup_guard::spawn(app.handle().clone());
+
             Ok(())
         })
         .build(tauri::generate_context!())
