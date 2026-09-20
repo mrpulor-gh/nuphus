@@ -194,9 +194,14 @@ export function FilePreviewContent({ path }: { path: string }) {
   const isPdf = ext === 'pdf'
   const isVideo = VIDEO_EXTS.has(ext)
   const isAudio = AUDIO_EXTS.has(ext)
-  // HTML 经 preview:// 协议在沙箱 iframe 中运行（脚本可执行、同目录资源可引用），
-  // 不走文本读取——src 直连协议 URL
   const isText = MD_EXTS.has(ext) || CODE_EXTS.has(ext)
+  // HTML 经 preview:// 协议在沙箱 iframe 中运行（脚本可执行、同目录资源可引用），
+  // 不走文本读取——src 直连协议 URL。
+  // ⚠️ isHtml 必须与 isText 一起参与下方「非文本类型 → 系统默认程序打开」的判定：
+  // 漏掉它，html/htm 会在这里被甩给系统默认程序，文件末尾的 iframe 分支成死代码
+  // （2026-09-20 修：该分支自 preview:// 底座上线起就不可达，html 永远落到
+  // 「已请求系统默认程序打开」占位）。
+  const isHtml = HTML_EXTS.has(ext)
   const [content, setContent] = useState<string | null>(null)
   const [imageData, setImageData] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -207,6 +212,10 @@ export function FilePreviewContent({ path }: { path: string }) {
   // 读取内容
   useEffect(() => {
     setOpenErr(null)
+    // HTML 由 preview:// iframe 直渲染：不读内容、不进 loading 态，也不许落到下方
+    // 「非文本 → 系统默认程序打开」或「文本读取」任一分支（2026-09-20 修——漏掉这道
+    // 早退，html 会撞进文本读取分支卡在「读取中…」）。
+    if (isHtml) return
     if (isImage) {
       let cancelled = false
       setLoading(true)
@@ -226,7 +235,7 @@ export function FilePreviewContent({ path }: { path: string }) {
         cancelled = true
       }
     }
-    if (!isText && !isPdf && !isVideo && !isAudio) {
+    if (!isText && !isHtml && !isPdf && !isVideo && !isAudio) {
       // 其余非文本类型（docx/xlsx 等）：不读内容，直接系统默认程序打开；失败必须可见
       let cancelled = false
       openPath(path).catch(err => {
@@ -253,7 +262,7 @@ export function FilePreviewContent({ path }: { path: string }) {
     return () => {
       cancelled = true
     }
-  }, [path, isText])
+  }, [path, isText, isHtml])
 
   const handleReveal = () => {
     setOpenErr(null)
@@ -297,7 +306,7 @@ export function FilePreviewContent({ path }: { path: string }) {
         <div className="pv-media">
           <audio className="pv-audio" src={convertFileSrc(path, 'preview')} controls autoPlay />
         </div>
-      ) : !isText ? (
+      ) : !isText && !isHtml ? (
         openErr ? (
           <div className="pv-error">
             <div className="pv-error-title">无法打开此文件</div>
