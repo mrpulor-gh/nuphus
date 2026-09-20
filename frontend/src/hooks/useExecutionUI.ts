@@ -146,6 +146,10 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
         // 释放会让弹窗/入口在真实提炼执行中重新可触发（大王实测）。
         unlock = false
       } else {
+        // 其余拒绝都是「本次未发射任何事件」的前置失败：refine_active 抢占失败（另一端
+        // 已在提炼）或 busy 抢占失败（主流程仍在收尾，refine.rs 文案「当前轮次仍在收尾」）。
+        // 复位 refining 并提示原因——手动路径不重试，用户需要立刻知道「现在不能提炼」，
+        // 而不是静默等待（静默并发执行是本 bug 的根因，必须显式拒绝）。
         showToast('Refine failed: ' + msg, 'error')
         // Reset refine state so modal doesn't stay stuck in loading
         setRefineState(null)

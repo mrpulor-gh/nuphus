@@ -972,17 +972,36 @@ export function useEvents(h: EventHandlers) {
             h.setIsProcessing(true)
             h.setRefineState({ usagePercent: 0, totalLimit: 0 })
             import('../main-window/lib/api').then(({ executeSessionRefine }) => {
-              executeSessionRefine().catch((err: unknown) => {
-                // 后端防重拒绝（提炼进行中）说明另一端/本端已真实在提炼：
-                // 不 reset（否则 refineActiveRef=false + refining=false 会破坏真实
-                // 提炼的 UI 锁，弹窗/入口提前重新可触发）——等 RefineExecuting /
-                // session_refined / refine_failed 事件权威收敛。
-                const msg = err instanceof Error ? err.message : String(err ?? '')
-                if (msg.includes('提炼进行中')) return
-                // RefineFailed 事件是主复位路径；此处兜底 invoke 层失败（事件
-                // 丢失/旧后端）——静默吞掉会导致 forced 弹窗永久 spinner
-                resetRefineUI()
-              })
+              // forced 自动提炼是「主流程自己广播、前端代跑」的机器触发路径：
+              // maybe_refine_session 在轮次收尾期（busy 仍被主流程持有）才发
+              // RefinePrompt{forced:true}，前端 invoke 可能先于主流程释放 busy 抵达 →
+              // 后端 busy CAS 抢占失败，以「当前轮次仍在收尾」拒绝（refine.rs）。
+              // 机器触发路径不能静默丢弃（丢弃后本轮不再提炼，直到下次上下文再次超限），
+              // 故对「收尾」拒绝做有界重试（收尾窗口毫秒~秒级，2s 上限覆盖）。
+              // 用户手动路径（useExecutionUI.handleRefine）不重试：直接给明确错误提示。
+              const RETRY_DELAY_MS = 400
+              const RETRY_MAX = 5
+              const attempt = (n: number) => {
+                executeSessionRefine().catch((err: unknown) => {
+                  // 已被其它出口复位（refine_failed / 超时 guard / 手动关闭）：放弃重试
+                  if (!refineActiveRef.current) return
+                  const msg = err instanceof Error ? err.message : String(err ?? '')
+                  // 后端防重拒绝（提炼进行中）说明另一端/本端已真实在提炼：
+                  // 不 reset（否则 refineActiveRef=false + refining=false 会破坏真实
+                  // 提炼的 UI 锁，弹窗/入口提前重新可触发）——等 RefineExecuting /
+                  // session_refined / refine_failed 事件权威收敛。
+                  if (msg.includes('提炼进行中')) return
+                  // 主流程收尾尚未结束（'收尾' 命中 refine.rs busy 抢占拒绝文案）：稍候重试
+                  if (msg.includes('收尾') && n < RETRY_MAX) {
+                    window.setTimeout(() => attempt(n + 1), RETRY_DELAY_MS)
+                    return
+                  }
+                  // RefineFailed 事件是主复位路径；此处兜底 invoke 层失败（事件
+                  // 丢失/旧后端）——静默吞掉会导致 forced 弹窗永久 spinner
+                  resetRefineUI()
+                })
+              }
+              attempt(0)
             })
             break
           }

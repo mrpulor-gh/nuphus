@@ -1215,9 +1215,11 @@ export default function App() {
                 // 不置 refining=false（否则会破坏真实提炼的 UI 锁，弹窗/入口
                 // 提前重新可触发），等 RefineExecuting/session_refined 事件权威收敛。
                 if (msg.includes('提炼进行中')) return
-                // 请求层失败（网络/后端不可用）：释放锁，避免 UI 永久锁死
+                // 其余拒绝（网络/后端不可用；或后端 busy 抢占失败「当前轮次仍在收尾」）：
+                // 释放锁避免 UI 永久锁死，并透出后端原因——「请稍候再试」比笼统的
+                // 「提炼失败」可操作（与 App.tsx:506 透出 res.error 的既有风格一致）。
                 dispatch({ type: 'refine_state', refining: false })
-                showToast(t('mobile.refineFailed'))
+                showToast(msg || t('mobile.refineFailed'))
               })
               .finally(() => {
                 refineTriggerLockRef.current = false

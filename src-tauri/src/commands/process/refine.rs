@@ -76,27 +76,50 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     }
 
     let emitter = CompoundEmitter::new(app.clone(), &state);
-    // ── busy 置位（强刷���因修复）── refine 期间 leader/workflow agent 被 take 移出
-    // runtime，若不声明 busy：① guard_switch 放行 → can_switch=true，SessionRail 轮询
-    // 看到 activeId 突变（active 条目消失）误判外部切换 → 前端整列重拉旧历史（实测
-    // 「提炼前后对话窗口强制刷新」回归）；② refine 期间可切换会话，与 take/put 并发
-    // 竞态。swap 记录旧值，Drop 恢复——forced 路径（主循环内 busy 本为 true）嵌套安全。
-    let prev_busy = state.busy.swap(true, Ordering::SeqCst);
+    // ── busy 原子抢占 ── refine 期间 leader/workflow agent 被 take 移出 runtime，
+    // 若不声明 busy：① guard_switch 放行 → can_switch=true，SessionRail 轮询看到
+    // activeId 突变（active 条目消失）误判外部切换 → 前端整列重拉旧历史（实测
+    // 「提炼前后对话窗口强制刷新」回归）；② refine 期间可切换会话，与 take/put 并发竞态。
+    //
+    // ⚠️ 必须是「原子抢占 + 无条件释放」，禁止记录/恢复旧值（busy 永久卡 true 的根因）：
+    // compare_exchange(false→true) 只在不忙时成功 ⇒ refine 与主轮次严格互斥；释放侧
+    // 无条件 store(false) 才与其它占用者同语义（process.rs TaskBusyGuard / retry.rs
+    // BusyGuard 同样无条件释放，因为占用侧同样是原子 swap/CAS）。
+    // 旧写法 `swap(true, …)` + Drop 里 `store(prev_busy, …)`：单个 bool 记账两个并发
+    // 执行体——refine 若在主流程收尾窗口启动（prev_busy 读到 true），主流程先结束并
+    // store(false)，refine 结束时又把 true 恢复 → busy 永久 true（实测症状：前一轮对话
+    // 无法收尾、之后发消息只得到 "Task is already running"、界面无反应）；反向顺序
+    // （refine 先结束）则会误清主流程的 busy。两个方向都说明旧记账模型不成立。
+    // 另：这里不存在「主循环内 nested refine（busy 本为 true）」可防御——主循环走
+    // maybe_refine_session（process.rs:1104 / 1131），**不调用** execute_session_refine
+    // （后者全仓仅三处引用：main.rs 命令注册、mobile_server.rs POST /refine、
+    // process.rs thin wrapper）。故恢复旧值没有正确场景，只会制造上述 bug。
+    if state
+        .busy
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        // 被拒：主轮次仍持有 busy（收尾中的记忆写入 / 自动提炼）。此处尚未发射任何
+        // 事件（RefineExecuting 在下方），双端 UI 不会进入 spinner 后等不到结束事件。
+        // 必须回滚上面刚抢占的 refine_active，否则后续 refine 永久被判「提炼进行中」。
+        refine_active.store(false, Ordering::SeqCst);
+        return Err("当前轮次仍在收尾（记忆写入 / 自动提炼），请稍候再试。".to_string());
+    }
     struct RefineGuard {
         flag: Arc<AtomicBool>,
         busy: Arc<AtomicBool>,
-        prev_busy: bool,
     }
     impl Drop for RefineGuard {
         fn drop(&mut self) {
+            // 无条件释放：busy 由上方 CAS 独占获得，占用期间其它执行体进不来
+            // （submit_user_message / retry 同样以 swap 抢占），故不存在「误清他人 busy」。
             self.flag.store(false, Ordering::SeqCst);
-            self.busy.store(self.prev_busy, Ordering::SeqCst);
+            self.busy.store(false, Ordering::SeqCst);
         }
     }
     let _refine_guard = RefineGuard {
         flag: refine_active,
         busy: state.busy.clone(),
-        prev_busy,
     };
 
     let refine_prompt = nuphus::agent::distill::REFINE_PROMPT;
