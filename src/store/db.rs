@@ -300,17 +300,25 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_column(conn, "sessions", "mode", "TEXT NOT NULL DEFAULT 'leader'")?;
     ensure_column(conn, "sessions", "snapshot", "TEXT")?;
 
-    // session_meta：session → 项目 tag 归属（记忆检索的项目过滤依据）。
-    // 由 insert_entry 惰性登记（首次记忆写入时），无 meta 的历史 session 不参与过滤。
+    // session_meta：session → 项目归属（记忆检索的项目过滤依据 + 会话台「项目文件夹」分组）。
+    // 写入入口统一在 store::session::register_session_project（会话诞生时快照，INSERT OR IGNORE
+    // 只记首次）；无 meta 的历史 session 保持无归属，查询返回空（不猜测、不按当前目录回填）。
+    // project_tag 供记忆检索过滤（语义未变）；project_path 供分组展示——tag 含 8 位路径哈希
+    // 不可逆，展示必须另存原始路径。
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS session_meta (
             session_id      TEXT PRIMARY KEY,
             project_tag     TEXT NOT NULL,
+            project_path    TEXT,
             created_at      TEXT NOT NULL
         );
     ",
     )?;
+
+    // ── 幂等列迁移：session_meta.project_path（会话台项目文件夹分组）──
+    // CREATE TABLE IF NOT EXISTS 不会给已存在的旧表加列，需显式 ALTER。
+    ensure_column(conn, "session_meta", "project_path", "TEXT")?;
 
     Ok(())
 }
@@ -319,4 +327,90 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
 pub fn db_size() -> u64 {
     let path = db_path();
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+        conn.query_row(
+            &format!(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('{}') WHERE name = '{}'",
+                table, column
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false)
+    }
+
+    /// 老库平滑升级：旧 session_meta（无 project_path 列）经 init_tables 幂等补列，
+    /// 既有数据保留（历史归属路径为 NULL = 不猜测），重复启动不报错。
+    #[test]
+    fn init_tables_migrates_legacy_session_meta_idempotently() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 旧版表结构 + 存量行（模拟升级前的 ~/.nuphus/nuphus.db）
+        conn.execute_batch(
+            "CREATE TABLE session_meta (
+                session_id      TEXT PRIMARY KEY,
+                project_tag     TEXT NOT NULL,
+                created_at      TEXT NOT NULL
+            );
+            INSERT INTO session_meta (session_id, project_tag, created_at)
+            VALUES ('legacy-session', 'old-tag', '2026-01-01T00:00:00Z');",
+        )
+        .unwrap();
+        assert!(!has_column(&conn, "session_meta", "project_path"));
+
+        init_tables(&conn).expect("老库升级不得报错");
+        assert!(
+            has_column(&conn, "session_meta", "project_path"),
+            "启动必须补出 project_path 列"
+        );
+
+        // 存量行保留，且历史归属路径为空（不按当前目录回填）
+        let (tag, path): (String, Option<String>) = conn
+            .query_row(
+                "SELECT project_tag, project_path FROM session_meta WHERE session_id = 'legacy-session'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(tag, "old-tag", "既有归属 tag 语义不得改动");
+        assert!(path.is_none(), "历史行不得被伪造出路径");
+
+        // 二次启动 = 重复迁移：幂等无错、行数不变
+        init_tables(&conn).expect("重复启动不得报错");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "重复迁移不得增删既有行");
+
+        // 补列后新登记（含路径）可正常写入
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_tag, project_path, created_at)
+             VALUES ('new-session', 'tag-x', 'E:\\work\\A', 'now')",
+            [],
+        )
+        .unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT project_path FROM session_meta WHERE session_id = 'new-session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "E:\\work\\A");
+    }
+
+    /// init_tables 可重复执行：全新库路径下二次调用不报错（启动幂等基线）。
+    #[test]
+    fn init_tables_is_repeatable_on_fresh_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        init_tables(&conn).unwrap();
+        assert!(has_column(&conn, "session_meta", "project_path"));
+        assert!(has_column(&conn, "sessions", "mode"));
+    }
 }

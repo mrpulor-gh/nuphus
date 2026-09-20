@@ -57,15 +57,13 @@ pub fn insert_entry(entry: &MemoryEntry) -> crate::Result<()> {
     let children_ids_str = entry.children_ids.join(",");
     let exec_steps_str = serde_json::to_string(&entry.execution_steps).unwrap_or_default();
 
-    // ── 项目归属登记（惰性）：session → 项目 tag，供记忆检索默认项目过滤。
-    // 失败仅告警，不阻断主写入。
-    if let Some(tag) = crate::utils::active_project_tag() {
-        if let Err(e) = guard.execute(
-            "INSERT OR IGNORE INTO session_meta (session_id, project_tag, created_at) VALUES (?1, ?2, ?3)",
-            params![entry.session_id, tag, entry.created_at],
-        ) {
-            tracing::warn!("[memory] session_meta register failed: {e}");
-        }
+    // ── 项目归属登记（惰性兜底）：走会话归属的单一写入入口（同时补 project_path，
+    // 供会话台分组展示）。诞生点已登记的会话在此幂等无操作；只经由恢复链进入、
+    // 未经过诞生点的旧会话在此首记。失败仅告警，不阻断主写入。
+    if let Err(e) =
+        crate::store::session::register_session_project_with_conn(&guard, &entry.session_id)
+    {
+        tracing::warn!("[memory] session_meta register failed: {e}");
     }
 
     let tx = guard.transaction()?;

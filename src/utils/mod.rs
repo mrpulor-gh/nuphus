@@ -1091,6 +1091,18 @@ pub fn active_project_tag() -> Option<String> {
     derive_project_tag_from_dir(&dir)
 }
 
+/// 当前生效的项目归属：`(派生标签, 配置的完整目录)`，未配置目录 → None。
+///
+/// 与 [`active_project_tag`] 同源同值（同一派生函数、同一输入），额外返回目录本身：
+/// 标签含 8 位路径哈希**不可逆**，会话台「项目文件夹」分组展示必须另存原始路径。
+pub fn active_project() -> Option<(String, String)> {
+    let dir = crate::config::UserPreferences::load().project_dir;
+    if dir.trim().is_empty() {
+        return None;
+    }
+    Some((derive_project_tag_from_dir(&dir)?, dir))
+}
+
 /// 标签清洗：保留字母/数字/下划线/连字符/CJK，空格折叠 '-'，空结果回退 default。
 pub fn sanitize_memory_tag(raw: &str) -> String {
     let mut out = String::new();
@@ -1139,6 +1151,18 @@ pub fn derive_project_tag_from_dir(dir: &str) -> Option<String> {
         name.chars().take(24).collect::<String>(),
         hasher.finish() as u32
     ))
+}
+
+/// 目录展示名（路径末段）：兼容正反斜杠与结尾分隔符；空路径 → 空串。
+///
+/// 项目目录 / 书签 / 会话归属路径共用的展示名规则（唯一实现，避免各处各写一套）。
+pub fn dir_display_name(dir: &str) -> String {
+    dir.trim()
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 /// 旧版单文件迁移：memory.md 内容拷为 default 标签（原文件保留）。幂等。
