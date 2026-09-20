@@ -5,6 +5,9 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconEdit3,
+  IconFolder,
+  IconFolderPlus,
+  IconMoreHorizontal,
   IconPlus,
   IconTrash2,
   IconX,
@@ -19,6 +22,7 @@ import {
   archiveSession,
   setProjectBookmarks,
   setProjectFolderArchived,
+  setSessionSortPrefs,
   SESSION_GROUP_LIMIT_CHANGED_EVENT,
   type ProjectBookmark,
   type ShelfProjectEntry,
@@ -26,11 +30,14 @@ import {
 } from '../lib/api'
 import {
   DEFAULT_GROUP_LIMIT,
+  DEFAULT_SESSION_SORT_PREFS,
   buildSessionGroups,
   normalizeGroupLimit,
   normalizePathKey,
+  normalizeSessionSortPrefs,
   visibleGroupSessions,
   type SessionGroup,
+  type SessionSortPrefs,
 } from './sessionGroups'
 import '../../styles/session-rail.css'
 
@@ -62,6 +69,11 @@ interface SessionRailProps {
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
   /**
+   * 打开项目中心弹窗（复用输入框项目 chip 的同一入口：ChatPanel `setDirOpen(true)`）。
+   * 「项目」行右端 📁+ 走这条既有流程：选目录 → 命名 → 加入书签。
+   */
+  onOpenProjectDir?: () => void
+  /**
    * 切换工作目录（**复用** ChatPanel.switchProject 单一实现：落盘 + 后端向活跃槽注入
    * 变更提醒 + HUD 反馈）；返回 true = 已切到目标目录。
    * 组内「新建对话」/ 点击组内会话依赖此入口，不另起一套切目录逻辑。
@@ -85,6 +97,8 @@ function codeToI18n(code: string): string {
   if (code === 'append_pending') return 'sessionRail.switchFailAppend'
   if (code === 'mode_mismatch') return 'sessionRail.switchFailMode'
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
+  if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
+  if (code === 'sortPrefsFailGeneric') return 'sessionRail.sortPrefsFailGeneric'
   return 'sessionRail.switchFailGeneric'
 }
 
@@ -136,6 +150,316 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
 type ArchiveTarget =
   { kind: 'session'; id: string } | { kind: 'project'; path: string; name: string }
 
+/** 「项目」行 ⋯ 菜单当前展开的子菜单（排序条件里再套一级 `time`） */
+type ProjectMenuPane = 'arrange' | 'sort' | 'time' | 'restore'
+
+interface ProjectLabelRowProps {
+  /** 当前排序偏好（✓ 选中态依据；读数来自后端 `sort_prefs`） */
+  prefs: SessionSortPrefs
+  /** 已归档文件夹：`恢复隐藏项目 (N)` 的子菜单数据源 */
+  archivedProjects: readonly ShelfProjectEntry[]
+  /** 整理侧边栏 · 全部展开（清空整组折叠表） */
+  onExpandAll: () => void
+  /** 整理侧边栏 · 全部关闭（把当前每个可见组标记为收起） */
+  onCollapseAll: () => void
+  /** 选择排序偏好（宿主负责立即重排 + 落盘 + 失败回滚） */
+  onSelectSort: (prefs: SessionSortPrefs) => void
+  /** 恢复某个已归档文件夹（归档标记置回 false） */
+  onRestore: (path: string) => void
+  /** 打开项目中心（📁+）：选目录 + 命名 + 加入书签 */
+  onOpenProjectDir?: () => void
+}
+
+/**
+ * 「项目」标签行 + 右端两个图标：`⋯`（菜单）在前、`📁+`（新建项目文件夹）在后。
+ *
+ * ⋯ 菜单三项（ZPY 终审设计）：
+ * 1. 整理侧边栏 › ：全部展开 / 全部关闭（操作所有分组的折叠态；运行时状态，不持久化）；
+ * 2. 排序条件 › ：按项目 / 近期项目 / 按时间顺序 ›（创建时间 / 更新时间）。
+ *    **两个维度独立**（组序维度 & 组内键），当前项前有 ✓（`menuitemradio` + `aria-checked`）；
+ * 3. 恢复隐藏项目 (N) › ：子菜单直接列出可恢复的归档文件夹，逐项恢复——保持菜单打开
+ *    以便连续恢复（N = 已归档文件夹数量；N = 0 时该项禁用，不再给空子菜单）。
+ *
+ * 交互契约：Esc 关闭（先收子菜单，`stopPropagation` 拦下抽屉的 document 级 Esc，
+ * 不连带收起抽屉）、点击外部关闭、打开时焦点落到首个菜单项（键盘可达：Tab 遍历 +
+ * Enter/Space 触发；子菜单项随父项展开后进入 Tab 序）。
+ */
+function ProjectLabelRow({
+  prefs,
+  archivedProjects,
+  onExpandAll,
+  onCollapseAll,
+  onSelectSort,
+  onRestore,
+  onOpenProjectDir,
+}: ProjectLabelRowProps) {
+  const { t } = useLanguage()
+  const [open, setOpen] = useState(false)
+  const [pane, setPane] = useState<ProjectMenuPane | null>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const firstItemRef = useRef<HTMLButtonElement>(null)
+
+  const close = useCallback(() => {
+    setOpen(false)
+    setPane(null)
+  }, [])
+
+  // 打开后焦点落到首个菜单项：键盘用户不必先 Tab 穿过整个会话列表
+  useEffect(() => {
+    if (open) firstItemRef.current?.focus()
+  }, [open])
+
+  // 点击外部关闭：菜单在抽屉内，抽屉自己的「面板外点击」不覆盖「菜单外点击」
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null
+      if (!target) return
+      if (rowRef.current?.contains(target)) return
+      close()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open, close])
+
+  /**
+   * Esc：逐层收（按时间顺序 → 排序条件 → 主菜单），最后交还焦点。
+   * `stopPropagation` 拦下抽屉的 document 级 Esc —— 收菜单不连带收起抽屉。
+   */
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Escape') return
+    e.stopPropagation()
+    if (pane === 'time') {
+      setPane('sort')
+      return
+    }
+    if (pane) {
+      setPane(null)
+      return
+    }
+    close()
+    triggerRef.current?.focus()
+  }
+
+  /**
+   * 子菜单开关：hover 进入即展开；点同一项再点一次收起。
+   * 收起「按时间顺序」只退到父级「排序条件」（不是一把收掉整个菜单）。
+   */
+  const openPane = useCallback((next: ProjectMenuPane) => {
+    setPane(prev => (prev === next ? (next === 'time' ? 'sort' : null) : next))
+  }, [])
+
+  /** 单选菜单项（排序两个维度的共同形态）：✓ 槽常驻占位，避免选中态左右跳动 */
+  const radioItem = (checked: boolean, label: string, onPick: () => void) => (
+    <button
+      type="button"
+      className="sr-menu-item"
+      role="menuitemradio"
+      aria-checked={checked}
+      onClick={onPick}
+    >
+      <span className="sr-menu-check" aria-hidden="true">
+        {checked ? <IconCheck size={12} /> : null}
+      </span>
+      <span className="sr-menu-text">{label}</span>
+    </button>
+  )
+
+  /**
+   * 各子菜单展开态：在 JSX 收窄之外算好（同一表达式写在收窄作用域里会被 TS 判为
+   * 「不可能的比较」，如 `sort` 分支内再比 `time`）。
+   *
+   * ⚠️ `sort` 取「自身或其后代子菜单打开」：第三层「按时间顺序」是嵌套在「排序条件」
+   * 卡片里的，若父级卡片不渲染，子菜单也会随之消失。
+   */
+  const expandedPanes = {
+    arrange: pane === 'arrange',
+    sort: pane === 'sort' || pane === 'time',
+    time: pane === 'time',
+    restore: pane === 'restore',
+  }
+
+  /** 带子菜单的菜单项（aria-haspopup / aria-expanded 表达层级） */
+  const submenuItem = (
+    target: ProjectMenuPane,
+    label: string,
+    opts: { first?: boolean; disabled?: boolean } = {},
+  ) => (
+    <button
+      type="button"
+      ref={opts.first ? firstItemRef : undefined}
+      className="sr-menu-item"
+      role="menuitem"
+      aria-haspopup="menu"
+      aria-expanded={expandedPanes[target]}
+      disabled={opts.disabled}
+      onClick={() => openPane(target)}
+      onMouseEnter={() => setPane(target)}
+    >
+      <span className="sr-menu-text">{label}</span>
+      <IconChevronRight size={12} className="sr-menu-arrow" />
+    </button>
+  )
+
+  return (
+    <div className="sr-list-label" ref={rowRef} onKeyDown={onKeyDown}>
+      <span className="sr-list-label-text">{t('sessionRail.projectsTitle')}</span>
+      <span className="sr-list-actions">
+        <button
+          ref={triggerRef}
+          type="button"
+          className="sr-icon-btn"
+          aria-label={t('sessionRail.projectsMenu')}
+          title={t('sessionRail.projectsMenu')}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => (open ? close() : setOpen(true))}
+        >
+          <IconMoreHorizontal size={14} />
+        </button>
+        {onOpenProjectDir && (
+          <button
+            type="button"
+            className="sr-icon-btn"
+            aria-label={t('sessionRail.newProjectFolder')}
+            title={t('sessionRail.newProjectFolder')}
+            onClick={() => {
+              close()
+              onOpenProjectDir()
+            }}
+          >
+            <IconFolderPlus size={14} />
+          </button>
+        )}
+
+        {open && (
+          <div className="sr-menu" role="menu" aria-label={t('sessionRail.projectsMenu')}>
+            <div className="sr-menu-group">
+              {submenuItem('arrange', t('sessionRail.menuArrange'), { first: true })}
+              {expandedPanes.arrange && (
+                <div
+                  className="sr-menu sr-submenu"
+                  role="menu"
+                  aria-label={t('sessionRail.menuArrange')}
+                >
+                  <button
+                    type="button"
+                    className="sr-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onExpandAll()
+                      close()
+                    }}
+                  >
+                    <span className="sr-menu-text">{t('sessionRail.menuExpandAll')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sr-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onCollapseAll()
+                      close()
+                    }}
+                  >
+                    <span className="sr-menu-text">{t('sessionRail.menuCollapseAll')}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="sr-menu-group">
+              {submenuItem('sort', t('sessionRail.menuSort'))}
+              {expandedPanes.sort && (
+                <div
+                  className="sr-menu sr-submenu"
+                  role="menu"
+                  aria-label={t('sessionRail.menuSort')}
+                >
+                  {radioItem(
+                    prefs.groupOrder === 'bookmark',
+                    t('sessionRail.menuSortByProject'),
+                    () => {
+                      onSelectSort({ ...prefs, groupOrder: 'bookmark' })
+                      close()
+                    },
+                  )}
+                  {radioItem(
+                    prefs.groupOrder === 'recent',
+                    t('sessionRail.menuSortByRecent'),
+                    () => {
+                      onSelectSort({ ...prefs, groupOrder: 'recent' })
+                      close()
+                    },
+                  )}
+                  {/* 按时间顺序：只管组内顺序，不影响组序（独立维度的第三层子菜单） */}
+                  <div className="sr-menu-group">
+                    {submenuItem('time', t('sessionRail.menuSortByTime'))}
+                    {expandedPanes.time && (
+                      <div
+                        className="sr-menu sr-submenu"
+                        role="menu"
+                        aria-label={t('sessionRail.menuSortByTime')}
+                      >
+                        {radioItem(
+                          prefs.sortKey === 'created',
+                          t('sessionRail.menuSortByCreated'),
+                          () => {
+                            onSelectSort({ ...prefs, sortKey: 'created' })
+                            close()
+                          },
+                        )}
+                        {radioItem(
+                          prefs.sortKey === 'updated',
+                          t('sessionRail.menuSortByUpdated'),
+                          () => {
+                            onSelectSort({ ...prefs, sortKey: 'updated' })
+                            close()
+                          },
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="sr-menu-group">
+              {submenuItem(
+                'restore',
+                t('sessionRail.menuRestore', String(archivedProjects.length)),
+                { disabled: archivedProjects.length === 0 },
+              )}
+              {expandedPanes.restore && archivedProjects.length > 0 && (
+                <div
+                  className="sr-menu sr-submenu"
+                  role="menu"
+                  aria-label={t('sessionRail.menuRestore', String(archivedProjects.length))}
+                >
+                  {archivedProjects.map(p => (
+                    <button
+                      key={p.path}
+                      type="button"
+                      className="sr-menu-item"
+                      role="menuitem"
+                      title={p.path}
+                      onClick={() => onRestore(p.path)}
+                    >
+                      <IconFolder size={12} className="sr-menu-icon" />
+                      <span className="sr-menu-text">{p.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </span>
+    </div>
+  )
+}
+
 /**
  * 会话工作台（Session Rail）：聊天面板左缘的滑动抽屉。
  * - 收起态：左缘常驻一枚色块（会话图标 + 当前会话 mode 首字母），是唯一可见元素。
@@ -143,16 +467,18 @@ type ArchiveTarget =
  *   展开/折叠 + 组内新建/重命名/归档，组内会话沿用小胶囊行样式）。
  * - 开合入口只有三个：色块点击、面板外点击、Esc；**不做 hover 感应唤出，
  *   执行完成也不自动弹出**（2026-09-15 大王反馈：隐藏式选择看不到会话标题）。
- * - 抽屉头部只有「会话工作台」标题（无任何按钮）：新建项目文件夹 / 已归档文件夹恢复
- *   两个入口**全部收敛到项目中心**（ProjectCenter），会话栏从此零文件夹管理入口。
+ * - 抽屉头部只有「会话工作台」标题（无任何按钮）；文件夹管理入口收敛到「项目」标签行右端
+ *   的两个图标：`⋯`（整理侧边栏 / 排序条件 / 恢复隐藏项目）与 `📁+`（新建项目文件夹，
+ *   打开项目中心的既有流程：选目录 → 命名 → 加入书签）。
  * - 数据源与切换逻辑完全沿用：list_shelf_sessions（5s 轮询 + 可见性刷新），
- *   分组完全来自返回体的 items/projects/archived_projects/collapsed_limit
+ *   分组完全来自返回体的 items/projects/archived_projects/collapsed_limit/sort_prefs
  *   （**不推断归属**：project_path=null 者进「未分组」兜底组；归档文件夹整组隐藏）。
  * - busy / 追加队列非空时后端拒绝 → 错误码映射文案在抽屉底部短暂浮现。
  */
 export default function SessionRail({
   onSessionChanged,
   onNewChat,
+  onOpenProjectDir,
   onSwitchProjectDir,
   onModeSwitched,
   locked = false,
@@ -162,10 +488,16 @@ export default function SessionRail({
   const [items, setItems] = useState<ShelfSessionItem[]>([])
   /** 可见项目文件夹（组顺序 = 此数组顺序：书签序 → auto） */
   const [projects, setProjects] = useState<ShelfProjectEntry[]>([])
-  /** 已归档项目文件夹（整组隐藏；恢复入口在项目中心「已归档文件夹」区） */
+  /** 已归档项目文件夹（整组隐藏；恢复入口 = 「项目」行 ⋯ → 恢复隐藏项目） */
   const [archivedProjects, setArchivedProjects] = useState<ShelfProjectEntry[]>([])
   /** 全局组内折叠上限（后端 collapsed_limit；设置中心可改，事件即时生效） */
   const [groupLimit, setGroupLimit] = useState(DEFAULT_GROUP_LIMIT)
+  /**
+   * 排序偏好（组序维度 + 组内键）：**唯一权威是后端 `sort_prefs`**（落 preferences，
+   * 重启保持）；本地只在选择瞬间乐观更新，成功后以后端返回的归一值为准。
+   * 用「值相等则复用旧对象」避免每次轮询都触发重绘。
+   */
+  const [sortPrefs, setSortPrefs] = useState<SessionSortPrefs>(DEFAULT_SESSION_SORT_PREFS)
   const [canSwitch, setCanSwitch] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
@@ -285,6 +617,13 @@ export default function SessionRail({
         const canSwitch = r.can_switch !== false
         // 折叠上限独立于列表签名：读数变化必须立即生效（不能等条目变化）
         setGroupLimit(normalizeGroupLimit(r.collapsed_limit))
+        // 排序偏好同款处理：后端是唯一权威，读数变化立即重排；值未变则复用旧对象不重绘
+        const nextPrefs = normalizeSessionSortPrefs(r.sort_prefs)
+        setSortPrefs(prev =>
+          prev.groupOrder === nextPrefs.groupOrder && prev.sortKey === nextPrefs.sortKey
+            ? prev
+            : nextPrefs,
+        )
         // 签名守卫：id+active+标题+分钟桶/分组/上限未变则不 setItems——提炼/追加等后台写入只改
         // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
         // 仍基于本轮新数据，不受影响。签名含顺序（数组序）与分组数据，新建/归档/改归属必然变化。
@@ -405,10 +744,60 @@ export default function SessionRail({
     [t],
   )
 
-  /** 分组视图：全部由返回体四字段派生（组顺序 / 归档隐藏 / 未分组末位 / 组内 updated_at 倒序） */
+  /**
+   * 分组视图：全部由返回体字段派生（组序维度 / 组内排序键 / 归档隐藏 / 未分组末位）。
+   * 排序语义**只在 sessionGroups 纯函数里**（移动端 NavBar 复用同一实现），组件不重算。
+   */
   const groups = useMemo(
-    () => buildSessionGroups(items, projects, archivedProjects),
-    [items, projects, archivedProjects],
+    () => buildSessionGroups(items, projects, archivedProjects, sortPrefs),
+    [items, projects, archivedProjects, sortPrefs],
+  )
+
+  /**
+   * 整理侧边栏 · 全部展开：清空整组折叠表。
+   * 只动「整组收起」这一层；组内「展开其余 N 个会话」按各自状态保留（不越权代管）。
+   */
+  const expandAllGroups = useCallback(() => setCollapsedGroups({}), [])
+
+  /** 整理侧边栏 · 全部关闭：把**当前可见的每个组**（含未分组兜底组）标记为收起 */
+  const collapseAllGroups = useCallback(() => {
+    setCollapsedGroups(Object.fromEntries(groups.map(g => [g.key, true])))
+  }, [groups])
+
+  /**
+   * 切换排序偏好：乐观更新（列表立即按新规则重排）→ 落盘 → 以后端返回的归一值为准。
+   * 失败回滚到切换前并给出可感知提示（沿用既有 flashNotice 通道）。
+   */
+  const handleSelectSort = useCallback(
+    async (next: SessionSortPrefs) => {
+      const prev = sortPrefs
+      setSortPrefs(next)
+      try {
+        const applied = await setSessionSortPrefs(next.groupOrder, next.sortKey)
+        setSortPrefs(normalizeSessionSortPrefs(applied))
+        void refresh()
+      } catch {
+        setSortPrefs(prev)
+        flashNotice('sortPrefsFailGeneric')
+      }
+    },
+    [sortPrefs, refresh, flashNotice],
+  )
+
+  /**
+   * 恢复已归档文件夹：「项目」行 ⋯ → 恢复隐藏项目 → 点某一项。
+   * 归档标记置回 false → 组重新出现在列表；菜单保持打开，可连续恢复多个。
+   */
+  const handleRestoreProject = useCallback(
+    async (path: string) => {
+      try {
+        await setProjectFolderArchived(path, false)
+        void refresh()
+      } catch {
+        flashNotice('restoreFailGeneric')
+      }
+    },
+    [refresh, flashNotice],
   )
 
   /**
@@ -772,8 +1161,17 @@ export default function SessionRail({
             </button>
           </div>
         )}
-        {/* 列表分组标题：弱于上方主操作按钮、区别于组头（次级字号 / 弱色 / 左对齐） */}
-        <div className="sr-list-label">{t('sessionRail.projectsTitle')}</div>
+        {/* 「项目」标签行：右端 ⋯ 菜单 + 📁+（新建项目文件夹 → 项目中心）；
+            视觉弱于上方主操作按钮、区别于组头（次级字号 / 弱色 / 左对齐） */}
+        <ProjectLabelRow
+          prefs={sortPrefs}
+          archivedProjects={archivedProjects}
+          onExpandAll={expandAllGroups}
+          onCollapseAll={collapseAllGroups}
+          onSelectSort={handleSelectSort}
+          onRestore={handleRestoreProject}
+          onOpenProjectDir={onOpenProjectDir}
+        />
         <div className="sr-list">
           {groups.length === 0 && (
             <div className="sr-group-empty sr-group-empty--top">

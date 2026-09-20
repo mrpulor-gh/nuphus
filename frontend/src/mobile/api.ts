@@ -437,6 +437,19 @@ export interface ShelfSessionItem {
   is_active: boolean
   /** 会话归属目录（诞生时快照）；null/缺失 = 无归属 → 归入「未分组」 */
   project_path?: string | null
+  /**
+   * 会话创建时刻（Unix 毫秒）：「按时间顺序 → 创建时间」组内排序读数。
+   * 可选：老后端 / 夹具缺失时前端退化为 updated_at（与桌面同一兜底）。
+   */
+  created_at?: number
+}
+
+/** 会话工作台排序偏好（与桌面 `sort_prefs` 同源；移动端只读跟随，不提供设置入口） */
+export interface ShelfSortPrefs {
+  /** `bookmark` = 按项目（默认）/ `recent` = 近期项目 */
+  group_order: string
+  /** `updated` = 更新时间（默认）/ `created` = 创建时间 */
+  sort_key: string
 }
 
 /** 项目文件夹分组条目（对齐桌面端 ShelfProjectEntry，同一返回体） */
@@ -457,6 +470,8 @@ export interface ShelfSessions {
   archived_projects: ShelfProjectEntry[]
   /** 全局组内折叠上限（与桌面同一读数） */
   collapsed_limit: number
+  /** 排序偏好（桌面 ⋯ 菜单设置的排序，移动端同一读数跟随） */
+  sort_prefs?: ShelfSortPrefs
 }
 
 /** GET /sessions —— 会话清单镜像（失败返回 null，调用方降级隐藏入口） */

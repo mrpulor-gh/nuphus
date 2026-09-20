@@ -41,6 +41,7 @@ import {
   DEFAULT_GROUP_LIMIT,
   buildSessionGroups,
   normalizeGroupLimit,
+  normalizeSessionSortPrefs,
   visibleGroupSessions,
 } from '../../main-window/chat/sessionGroups'
 import { t } from '../i18n'
@@ -476,13 +477,16 @@ export default function NavBar({
   const execDuration = activity.startedAt ? elapsedBase - activity.startedAt : 0
 
   // ── 会话分组（与桌面同一纯函数 + 同一返回体）──
-  // 组顺序 = projects[] 顺序；「未分组」固定末位；归档文件夹整组隐藏（其会话不落未分组）。
+  // 组序维度 / 组内键来自返回体 sort_prefs（桌面 ⋯ 菜单设置，落 preferences）；
+  // 「未分组」固定末位；归档文件夹整组隐藏（其会话不落未分组）。
+  // ⚠️ 移动端**只读跟随**，不提供排序设置入口（排序是低频偏好，收敛在桌面一处）。
   const sessGroups = useMemo(
     () =>
       buildSessionGroups(
         sessions?.items ?? [],
         sessions?.projects ?? [],
         sessions?.archived_projects ?? [],
+        normalizeSessionSortPrefs(sessions?.sort_prefs),
       ),
     [sessions],
   )

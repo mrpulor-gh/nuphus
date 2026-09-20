@@ -203,15 +203,143 @@
   background: var(--line-1);
 }
 
-/* ── 列表分组标题（「项目」）：位于新建对话按钮下方、第一个组之上。
-   视觉层级刻意弱于按钮与组头 —— 微标签字号 + 弱色 + 字距，左对齐到组名文字起点
-   （列表 padding 8px + 组头 padding 6px），只作分组说明，不与组头争夺扫读焦点。 ── */
+/* ── 「项目」标签行：位于新建对话按钮下方、第一个组之上。
+   左端 = 分组标题（微标签字号 + 弱色 + 字距，视觉层级刻意弱于按钮与组头），
+   右端 = 两个图标按钮（⋯ 菜单 / 📁+ 新建项目文件夹），不参与标题的扫读焦点竞争。 ── */
 .sr-list-label {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: 0 var(--space-2) var(--space-1) calc(var(--space-2) + 6px);
+}
+.sr-list-label-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fz-xs);
   font-weight: 500;
   letter-spacing: 0.08em;
+  color: var(--fg-4);
+}
+/* 图标按钮组：菜单浮层的定位锚点（.sr-menu 相对它右上角展开） */
+.sr-list-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.sr-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sr-icon-btn:hover {
+  color: var(--fg-1);
+  background: var(--line-1);
+}
+.sr-icon-btn:focus-visible {
+  color: var(--fg-1);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-dim, rgba(59, 130, 246, 0.35));
+}
+
+/* ── 「项目」行 ⋯ 菜单：整理侧边栏 / 排序条件 / 恢复隐藏项目（含两层子菜单）──
+   浮层 token 与输入栏菜单同族：8px 圆角 / line-1 描边 / 柔和阴影 / 轻淡入。
+   主菜单相对图标组右上角展开（不出抽屉），子菜单向右级联（父项右侧、垂直对齐）。 ── */
+.sr-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  animation: srNoticeIn 160ms var(--ease-out);
+}
+.sr-menu-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* 子菜单：父项右侧同高展开（父项 left:100%），不遮挡主菜单、可逐层阅读 */
+.sr-submenu {
+  top: -4px;
+  right: auto;
+  left: calc(100% + 2px);
+}
+.sr-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--fg-2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sr-menu-item:hover:not(:disabled) {
+  color: var(--fg-1);
+  background: var(--line-1);
+}
+.sr-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sr-menu-item:focus-visible {
+  color: var(--fg-1);
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+/* ✓ 槽常驻占位（未选中留白）：选中态切换时文字不左右跳动 */
+.sr-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  color: var(--accent);
+}
+.sr-menu-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sr-menu-arrow,
+.sr-menu-icon {
+  flex: none;
   color: var(--fg-4);
 }
 
@@ -611,7 +739,12 @@
   .sr-new-chat-btn,
   .sr-more-btn,
   .sr-group-head,
-  .sr-group-actions {
+  .sr-group-actions,
+  .sr-icon-btn,
+  .sr-menu-item {
     transition: none !important;
+  }
+  .sr-menu {
+    animation: none !important;
   }
 }

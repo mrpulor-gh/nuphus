@@ -1441,6 +1441,7 @@ export function ChatPanel({
         <SessionRail
           onSessionChanged={onChatReplaced}
           onNewChat={onNewChat}
+          onOpenProjectDir={() => setDirOpen(true)}
           onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}

@@ -353,6 +353,23 @@ export interface ShelfSessionItem {
    * ⚠️ 无归属会话**不得**用当前工作目录回填——前端只据此归入「未分组」。
    */
   project_path?: string | null
+  /**
+   * 会话创建时刻（Unix 毫秒）——「按时间顺序 → 创建时间」组内排序的**唯一**依据。
+   * 来源 sessions.created_at（尚无落盘行的 active 会话取首条消息时间戳）。
+   * 可选：老后端 / mock 缺失时前端退化为 updated_at（见 sessionGroups.createdMillis）。
+   */
+  created_at?: number
+}
+
+/**
+ * 会话工作台排序偏好（后端 `sort_prefs` 原样透传）。
+ * 字段是**线上取值**（后端已归一，非法值会在前端二次归一为默认）。
+ */
+export interface ShelfSortPrefs {
+  /** `bookmark` = 按项目（书签顺序，默认）/ `recent` = 近期项目（组内最近会话倒序） */
+  group_order: string
+  /** `updated` = 更新时间（默认）/ `created` = 创建时间 */
+  sort_key: string
 }
 
 /** 项目文件夹（会话工作台分组数据源，对齐后端 ProjectEntry） */
@@ -377,6 +394,8 @@ export interface ShelfListResponse {
   archived_projects: ShelfProjectEntry[]
   /** 全局组内折叠上限（后端已把 0 收敛为默认值） */
   collapsed_limit: number
+  /** 排序偏好（组序维度 + 组内键）：桌面与移动端共用同一读数 */
+  sort_prefs: ShelfSortPrefs
 }
 
 /** 展示台列表：active 置顶 + newest-first */
@@ -856,6 +875,26 @@ export async function setSessionGroupCollapsedLimit(limit: number): Promise<numb
     new CustomEvent<number>(SESSION_GROUP_LIMIT_CHANGED_EVENT, { detail: value }),
   )
   return value
+}
+
+/**
+ * 设置会话工作台排序偏好（组序维度 + 组内排序键，两维独立）。
+ *
+ * 后端把非法取值归一为默认值并**返回归一后的结果**，调用方据此校准本地状态
+ * （避免「界面显示 A、落盘 B」）。生效无需额外广播：会话工作台 5s 轮询
+ * `list_shelf_sessions` 即读到新值，移动端同源返回体一并跟随。
+ */
+export async function setSessionSortPrefs(
+  groupOrder: string,
+  sortKey: string,
+): Promise<ShelfSortPrefs> {
+  const applied = await invoke<ShelfSortPrefs>('set_session_sort_prefs', { groupOrder, sortKey })
+  // bridge 无 Tauri 通道（浏览器回退链路）时返回 null → 回落到请求值；
+  // 后端拒绝会 throw，不走这里
+  return {
+    group_order: applied?.group_order ?? groupOrder,
+    sort_key: applied?.sort_key ?? sortKey,
+  }
 }
 
 // ── Session Refine ──
