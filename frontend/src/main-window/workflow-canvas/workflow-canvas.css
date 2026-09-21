@@ -76,6 +76,15 @@
 .wfc-toolbar-spacer {
   flex: 1;
 }
+.wfc-schedule-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-5);
+}
+.wfc-schedule-dot.is-enabled {
+  background: var(--success);
+}
 
 .wfc-btn {
   display: inline-flex;

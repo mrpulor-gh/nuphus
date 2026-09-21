@@ -35,6 +35,7 @@ import {
   CornerUpLeft,
   ListChecks,
   Braces,
+  Clock3,
 } from 'lucide-react'
 
 import type { WorkflowStep, ToolSchema } from '../../core/types'
@@ -92,6 +93,7 @@ import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
 import { WorkflowInputsEditor } from './WorkflowInputsEditor'
+import { WorkflowScheduleDialog } from '../workflow/WorkflowScheduleDialog'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -202,6 +204,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [inputsOpen, setInputsOpen] = useState(false)
   const [inputsEditorOpen, setInputsEditorOpen] = useState(false)
   const [inputsEditorFocus, setInputsEditorFocus] = useState<string | null>(null)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
   const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
@@ -1300,6 +1303,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         }
         return
       }
+      if (scheduleOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setScheduleOpen(false)
+        }
+        return
+      }
       const tag = (e.target as HTMLElement)?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -1359,6 +1369,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     intentFormOpen,
     inputsOpen,
     inputsEditorOpen,
+    scheduleOpen,
     layer,
     switchLayer,
   ])
@@ -1549,6 +1560,18 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           title={readOnly ? '运行中 · 画布只读' : '编辑工作流外部输入声明'}
         >
           <Braces size={13} /> 外部输入
+        </button>
+
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => setScheduleOpen(true)}
+          title={ir.schedule?.enabled ? '定时运行已启用' : '设置定时运行'}
+        >
+          <Clock3 size={13} /> 定时
+          {ir.schedule && (
+            <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
+          )}
         </button>
 
         <button
@@ -1865,6 +1888,18 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           setInputsEditorOpen(false)
         }}
         onCancel={() => setInputsEditorOpen(false)}
+      />
+      <WorkflowScheduleDialog
+        open={scheduleOpen}
+        workflow={{
+          id: ir.id,
+          title: ir.name,
+          inputs: ir.inputs,
+          schedule: ir.schedule ?? null,
+        }}
+        readOnly={snapshot.running || gateLocked}
+        onClose={() => setScheduleOpen(false)}
+        onChanged={schedule => setIr(current => (current ? { ...current, schedule } : current))}
       />
 
       {/* ── 确认弹窗 ── */}

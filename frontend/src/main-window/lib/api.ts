@@ -1140,6 +1140,40 @@ export function wfRun(id: string, fresh?: boolean, inputs?: Record<string, unkno
   return invoke<string>('wf_run', { id, fresh, inputs })
 }
 
+export interface WfScheduleDetails {
+  config: ScheduleConfig | null
+  inputs: Record<string, unknown>
+  sensitive_inputs: string[]
+  eligible: boolean
+  ineligible_reason?: string | null
+}
+
+export function wfScheduleGet(id: string) {
+  return invoke<WfScheduleDetails>('wf_schedule_get', { id })
+}
+
+export function wfSchedulePreview(config: ScheduleConfig) {
+  return invoke<string[]>('wf_schedule_preview', { config })
+}
+
+export function wfScheduleSet(
+  id: string,
+  config: ScheduleConfig,
+  inputs: Record<string, unknown>,
+  preserveSensitive: string[],
+) {
+  return invoke<void>('wf_schedule_set', {
+    id,
+    config,
+    inputs,
+    preserveSensitive,
+  })
+}
+
+export function wfScheduleRemove(id: string) {
+  return invoke<void>('wf_schedule_remove', { id })
+}
+
 export interface WfGateStatus {
   /** true = 已锁定（有 active workflow run 或 Agent busy） */
   locked: boolean
