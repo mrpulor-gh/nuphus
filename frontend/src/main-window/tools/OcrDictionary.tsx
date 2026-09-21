@@ -1,6 +1,7 @@
 // OcrDictionary.tsx — Dictionary OCR
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button, IconButton } from '../../ui/Button'
+import { IconX } from '../../ui/Icons'
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core')
   return (await invoke(cmd, args)) as T
@@ -710,7 +711,7 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
               e.currentTarget.style.color = 'var(--spark-tertiary)'
             }}
           >
-            ✕
+            <IconX size={14} />
           </button>
         )}
       </div>
@@ -1509,10 +1510,17 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
               <div style={{ flex: 1 }} />
               <button
                 className="btn"
-                style={{ fontSize: 'var(--fs-micro)', padding: '3px 10px' }}
+                style={{
+                  fontSize: 'var(--fs-micro)',
+                  padding: '3px 10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
                 onClick={() => onDeleteDict(tab.slice(2))}
               >
-                ✕ 清空字库
+                <IconX size={12} />
+                清空字库
               </button>
             </div>
             {/* ── Existing chars list (with ❌ delete) ── */}
@@ -1596,7 +1604,7 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
                           }}
                           title={`删除「${ch}」`}
                         >
-                          ✕
+                          <IconX size={12} />
                         </button>
                       </div>
                     )

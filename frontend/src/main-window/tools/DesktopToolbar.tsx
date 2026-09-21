@@ -567,7 +567,7 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
                   e.currentTarget.style.color = 'var(--spark-tertiary)'
                 }}
               >
-                ✕
+                <IconX size={14} />
               </button>
             </div>
 

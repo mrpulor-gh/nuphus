@@ -73,6 +73,8 @@ export {
   Clock3 as IconClock3,
   LayoutDashboard as IconLayoutDashboard,
   Pencil as IconPencil,
+  CircleAlert as IconAlertCircle,
+  Info as IconInfo,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

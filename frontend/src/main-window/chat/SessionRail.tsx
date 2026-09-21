@@ -4,12 +4,15 @@ import { createPortal } from 'react-dom'
 // `open` 是系统目录选择器；别名避免与抽屉开合态 `open` 同名遮蔽
 import { open as openDirDialog } from '@tauri-apps/plugin-dialog'
 import {
+  IconAlertCircle,
+  IconAlertTriangle,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
   IconEdit3,
   IconFolder,
   IconFolderPlus,
+  IconInfo,
   IconMoreHorizontal,
   IconPlus,
   IconTrash2,
@@ -173,41 +176,14 @@ function codeToTone(code: string): NoticeTone {
   return 'error'
 }
 
-/** 通知浮层图标：按 tone 切换内嵌 SVG，避免引入额外 icon 包污染主图标库 */
+/**
+ * 通知浮层图标：按 tone 取共享图标（warning 三角警示 / error 圆叹号 / info 圆 i）。
+ * 走 ui/Icons.tsx 出口，不再在组件内手写 svg——尺寸与颜色交给 .sr-notice-icon。
+ */
 function NoticeIcon({ tone }: { tone: NoticeTone }) {
-  if (tone === 'warning') {
-    // 三角警示
-    return (
-      <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path
-          d="M8 2 L14.5 13.5 L1.5 13.5 Z"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinejoin="round"
-        />
-        <path d="M8 6 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
-      </svg>
-    )
-  }
-  if (tone === 'error') {
-    // 圆 + 叹号
-    return (
-      <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-        <path d="M8 5 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
-      </svg>
-    )
-  }
-  // 圆 + i（业务等待：正常拒绝而非崩溃）
-  return (
-    <svg className="sr-notice-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 7.2 V11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <circle cx="8" cy="4.9" r="0.9" fill="currentColor" />
-    </svg>
-  )
+  const Icon =
+    tone === 'warning' ? IconAlertTriangle : tone === 'error' ? IconAlertCircle : IconInfo
+  return <Icon size={12} className="sr-notice-icon" aria-hidden="true" />
 }
 
 /** 归档确认弹窗目标：会话（单条）或项目文件夹（整组隐藏） */
@@ -905,11 +881,11 @@ export default function SessionRail({
    *
    * **顺序：先装载会话（switch_session 原子切 mode），成功后再切工作目录。** 依据：
    * 1. `switch_session` 是唯一会**稳定失败**的一步（busy / append_pending / mode_mismatch，
-   *    见 src-tauri/src/commands/process/shelf.rs:907 guard_switch、:920-928 mode_mismatch），
+   *    见后端 shelf.rs 的 `guard_switch` 与 `switch_session` 的 mode_mismatch 分支），
    *    放在前面 → 失败时全局工作目录保持原样，不会出现「目录已切、会话没换」的脏状态；
    * 2. `set_project_dir` 只写 prefs + 把变更提醒推入全局待注入队列
-   *    （src-tauri/.../config/preferences.rs:402-424），提醒在**下一轮次边界**才被 drain
-   *    （src/runtime/react_loop.rs:377-387）。执行中 guard_switch 已禁止任何切换，
+   *    （见 preferences.rs 的 `set_project_dir`），提醒在**下一轮次边界**才被 drain
+   *    （见 react_loop.rs 的轮次边界处理）。执行中 guard_switch 已禁止任何切换，
    *    两次调用之间不存在轮次边界，故「提醒注入到即将归档的旧槽」不成立；装载完成后再
    *    切目录，保证该提醒必然由目标会话在下一轮消费。
    */

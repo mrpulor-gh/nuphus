@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { PlanTask, TaskStatus } from '../../core/types'
 import { useLanguage } from '../../locales'
+import { IconX } from '../../ui/Icons'
 import '../../styles/task-bubble.css'
 
 interface TaskBubbleProps {
@@ -43,7 +44,7 @@ export const TaskBubble: React.FC<TaskBubbleProps> = ({ visible, tasks, onClose 
           )}
         </div>
         <button className="task-track-close" onClick={onClose}>
-          ✕
+          <IconX size={12} />
         </button>
       </div>
 
