@@ -266,12 +266,19 @@ impl Transport for AnthropicTransport {
             })?;
 
         // Build and send request
-        let http_req = client
+        let mut http_req = client
             .post(&endpoint)
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body);
+            .header("content-type", "application/json");
+        // 段级自定义请求头（anthropic 兼容中转实例的网关标头等）。x-api-key 被
+        // 跳过：鉴权头被覆盖成双值会让网关随机取其一，直接拒配。
+        for (k, v) in &self.config.extra_headers {
+            if !k.eq_ignore_ascii_case("x-api-key") {
+                http_req = http_req.header(k.as_str(), v.as_str());
+            }
+        }
+        let http_req = http_req.json(&body);
 
         // Check cancellation before sending
         if cancel_flag.load(Ordering::SeqCst) {
@@ -377,6 +384,7 @@ mod tests {
             timeout_secs: 30,
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: effort.map(|s| s.to_string()),
+            extra_headers: Vec::new(),
         }
     }
 

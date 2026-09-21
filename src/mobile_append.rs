@@ -30,6 +30,21 @@ pub fn enqueue(signals: &crate::state::SharedSignals, instr: String) -> bool {
     true
 }
 
+/// 判定「执行中提交」是否与本轮主指令重复 —— **整轮有效，不设时间窗口**。
+///
+/// 旧实现用 30 秒窗口（`elapsed_since_process_start < 30`），在分钟级长任务中形同虚设：
+/// 实测出现过「正常发出的指令在执行中被重复提交（界面重载 / 前端热更新），随后以
+/// `[APPEND]` 段再次注入 Agent 上下文」。执行期间提交同一内容没有合法语义
+/// （要追加新内容，内容必然不同），故整轮无条件拒绝。
+///
+/// trim 后比较：前后空白差异不应绕过去重（与 [`enqueue`] 的队列内比较同口径）。
+/// 三条提交/入队路径（桌面 busy 分支、`append_instruction`、手机端 busy 与竞态兜底）
+/// 统一走本函数，避免各处自行维护时间窗口导致口径漂移。
+pub fn is_duplicate_of_last(last_message: &str, message: &str) -> bool {
+    let m = message.trim();
+    !m.is_empty() && last_message.trim() == m
+}
+
 /// 判断文本是否为追加指令段（chat_history 过滤用）。
 pub fn is_append_section(text: &str) -> bool {
     text.starts_with(APPEND_MARKER)
@@ -77,6 +92,18 @@ mod tests {
             crate::state::SignalState::read(&signals).append_queue,
             ["第一条"]
         );
+    }
+
+    #[test]
+    fn duplicate_of_last_has_no_time_window_and_ignores_padding() {
+        // 整轮有效：无时间参数，任何时刻同内容都判重（旧实现 30s 后放行 = 形同虚设）
+        assert!(is_duplicate_of_last("继续", "继续"));
+        assert!(is_duplicate_of_last(" 继续 ", "继续"));
+        assert!(is_duplicate_of_last("继续", " 继续"));
+        // 不同内容 → 放行（多条追加不合并）
+        assert!(!is_duplicate_of_last("继续", "换个话题"));
+        // 空提交 → 不判重（空消息由入口层校验拒绝，不由此处伪装成重复）
+        assert!(!is_duplicate_of_last("继续", "   "));
     }
 
     #[test]

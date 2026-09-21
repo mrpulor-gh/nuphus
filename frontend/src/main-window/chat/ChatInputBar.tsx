@@ -717,13 +717,22 @@ export function ChatInputBar({
   const ctxLimit = contextLimit || 0
   const ctxPct = ctxLimit > 0 ? Math.min(ctxUsed / ctxLimit, 1) : 0
   const ctxColor = ctxPct > 0.8 ? '#ef4444' : ctxPct > 0.6 ? '#f59e0b' : '#22c55e'
-  const cacheHit = usage?.cacheHitTokens || 0
-  const cacheTotal = usage?.inputTokens || 0
-  const cacheRate = cacheTotal > 0 ? (cacheHit / cacheTotal) * 100 : -1
-  const execTokens = (execTokenUsage?.inputTokens || 0) + (execTokenUsage?.outputTokens || 0)
-  // 生成速度/首 token 延迟：dsh turn-metrics 同口径（解码段 tok/s + 独立 TTFT）
-  const genTps = execTokenUsage?.genTps
-  const ttftMs = execTokenUsage?.ttftMs
+  // ── 弹窗「执行详情」数据源：按当前执行者**整组切换**，禁止混源 ──
+  // exec 源事件（dispatch / 子任务执行）带全套指标（tokens / cache / ttft / speed）；
+  // main 源是 Leader 自身调用与主上下文进度。
+  // 曾出现 tokens/ttft/speed 取 exec、cache 单独取 main 的混源——分子来自一次 exec
+  // 调用、分母来自 Leader 上下文，比出来的值是废数（表现为「dispatch 时 cache 丢了」）。
+  // 整组同源才有可读性：exec 有活动就整套用 exec，否则整套用 main。
+  const execActive =
+    !!execTokenUsage && (execTokenUsage.inputTokens > 0 || execTokenUsage.outputTokens > 0)
+  const detail = execActive ? execTokenUsage : usage
+  const detailTokens = (detail?.inputTokens || 0) + (detail?.outputTokens || 0)
+  const detailCacheHit = detail?.cacheHitTokens || 0
+  const detailCacheTotal = detail?.inputTokens || 0
+  const detailCacheRate = detailCacheTotal > 0 ? (detailCacheHit / detailCacheTotal) * 100 : -1
+  // 生成速度/首 token 延迟：与上面同一数据源（exec 事件携带；main 源为 undefined 时整行隐藏）
+  const genTps = detail?.genTps
+  const ttftMs = detail?.ttftMs
   const tpsDisplay =
     genTps && Number.isFinite(genTps)
       ? genTps >= 100
@@ -1354,15 +1363,15 @@ export function ChatInputBar({
                       cache 命中详情 + step 步数 + time 时长 + ttft 首 token 延迟 + speed 解码速度
                       ——hover 提供主显示缺失的「绝对值与执行细节」。
                       标签走 i18n（input.ctx.*）：中文统一 2 字，避免中英混排字数参差 */}
-                    {cacheRate >= 0 && (
+                    {detailCacheRate >= 0 && (
                       <span className="input-bar-ctx-row is-strong">
                         <span className="input-bar-ctx-detail-label">{t('input.ctx.cache')}</span>
-                        <span className="input-bar-ctx-value">{cacheRate.toFixed(0)}%</span>
+                        <span className="input-bar-ctx-value">{detailCacheRate.toFixed(0)}%</span>
                       </span>
                     )}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">{t('input.ctx.tokens')}</span>
-                      <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
+                      <span className="input-bar-ctx-value">{fmt(detailTokens)}</span>
                     </span>
                     {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                     <span className="input-bar-ctx-row">

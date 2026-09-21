@@ -705,11 +705,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         ttft_ms,
                     });
                     // main source: Leader accumulated context usage (continuously updates progress bar)
+                    // cache_hit_tokens 用「无数据」哨兵：本事件只承载上下文占用（进度条），
+                    // 不是一次 Leader 调用；把上面那次 exec 调用的 cache 塞进 main 源，
+                    // 会让前端拿到「分子=单次 exec 缓存、分母=Leader 总上下文」的废数。
+                    // u32::MAX → 前端保留前值（Leader 自身调用上报的真实命中数）。
                     let leader_ctx = self.agent.session.api_input_tokens as u32;
                     emitter.emit(NuphusEvent::TokenUsage {
                         input_tokens: leader_ctx,
                         output_tokens: 0,
-                        cache_hit_tokens: processed.cache_hit_tokens,
+                        cache_hit_tokens: u32::MAX,
                         source: "main".to_string(),
                         gen_tps: None,
                         ttft_ms: None,

@@ -17,7 +17,13 @@ const HUD_HEIGHT: f64 = 58.0;
 const HUD_MARGIN_RIGHT: f64 = 20.0;
 const HUD_MARGIN_BOTTOM: f64 = 16.0;
 /// `hide()` 把窗口挪到屏幕外的哨兵坐标（Windows WebView2 透明层残影规避）。
-const HUD_OFFSCREEN: i32 = -99999;
+///
+/// **必须落在 i16 范围内**：Windows 窗口坐标历史上是 16 位整数，传入 -99999 会被
+/// 截断成 -32768。于是 hide 之后 Moved 事件报告的坐标（-32768）与程序记账值
+/// （-99999）不再相等 → 被误判为「用户拖动」，屏幕外坐标被记成用户位置 →
+/// 之后每次 show() 都「尊重用户位置」把 HUD 移回屏幕外，**永久看不见**
+/// （2026-09-21 实机事故：窗口 visible=true 却停 (-32768,-32768)）。
+const HUD_OFFSCREEN: i32 = -32000;
 
 /// 用户是否手动拖动过 HUD。拖过之后 `show()` 不再自动贴右下角（仅本次会话，重启还原）。
 static HUD_USER_MOVED: AtomicBool = AtomicBool::new(false);
@@ -83,8 +89,12 @@ pub fn show<R: tauri::Runtime>(app: &AppHandle<R>, text: &str, phase: &str) {
 
     // 位置：用户拖过就尊重用户的位置（hide() 会把窗口挪到屏幕外，这里顺带还原回去），
     // 从没拖过才自动贴右下角。
+    //
+    // 额外要求「位置在屏幕内」：历史 bug 会把 hide 的屏幕外哨兵坐标记成用户位置，
+    // 一旦命中，HUD 每次 show 都被搬到看不见的地方。这条判据保证即使状态已被污染，
+    // 也能自动回落到右下角，不会把 HUD 永久钉在屏幕外。
     match HUD_USER_POS.lock().ok().and_then(|p| *p) {
-        Some(pos) if HUD_USER_MOVED.load(Ordering::Relaxed) => {
+        Some(pos) if HUD_USER_MOVED.load(Ordering::Relaxed) && is_on_screen(app, pos) => {
             move_programmatically(&window, pos);
         }
         _ => position_bottom_right(&window),
@@ -146,6 +156,29 @@ fn move_programmatically<R: tauri::Runtime>(
     let _ = window.set_position(tauri::Position::Physical(pos));
 }
 
+/// 坐标是否落在任一显示器的可见区域内。
+///
+/// 用于把「程序移到屏幕外（hide 哨兵 / 分辨率换算残留）」与「用户真的把窗口拖到某处」
+/// 区分开：屏幕外坐标不可能来自用户拖动，必须丢弃，否则会被记成"用户位置"，
+/// 让 HUD 永远贴在那个看不见的坐标上。
+fn is_on_screen<R: tauri::Runtime>(app: &AppHandle<R>, pos: tauri::PhysicalPosition<i32>) -> bool {
+    let Some(w) = app.get_webview_window(HUD_LABEL) else {
+        return false;
+    };
+    w.available_monitors()
+        .map(|monitors| {
+            monitors.iter().any(|m| {
+                let origin = m.position();
+                let size = m.size();
+                pos.x >= origin.x
+                    && pos.x < origin.x + size.width as i32
+                    && pos.y >= origin.y
+                    && pos.y < origin.y + size.height as i32
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// 监听窗口移动，把"用户拖动"与"程序移动"区分开并记住用户的位置。
 ///
 /// 判据是坐标比对而非"正在定位"标志位：定位标志会在 set_position 返回后立刻清零，
@@ -163,8 +196,10 @@ pub fn observe_user_drag<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
                     .and_then(|last| *last)
                     .map(|last| last == *pos)
                     .unwrap_or(false);
-                // x <= HUD_OFFSCREEN 是 hide() 的屏幕外哨兵，永远不算用户位置
-                if programmatic || pos.x <= HUD_OFFSCREEN {
+                // 屏幕外坐标一律不算用户位置：只比较哨兵值不够健壮（坐标系一旦被
+                // 截断/缩放换算，等值判断就会失效，见 HUD_OFFSCREEN 的事故注释），
+                // 这里按「是否落在任一显示器内」判定，对任何形态的越界坐标免疫。
+                if programmatic || !is_on_screen(&app, *pos) {
                     return;
                 }
                 HUD_USER_MOVED.store(true, Ordering::Relaxed);

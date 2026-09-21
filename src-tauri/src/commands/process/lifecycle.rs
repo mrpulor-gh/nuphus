@@ -88,6 +88,23 @@ pub fn append_instruction(
         return Err("追加消息不能为空".to_string());
     }
 
+    // 与本轮主指令同内容 = 重复提交（界面重载 / 前端热更新 / 重试是常见来源）：
+    // 整轮拒绝，不做二次注入——执行中提交同一内容没有合法语义（要追加新内容，内容必不同）。
+    // 判据唯一真源：`nuphus::mobile_append::is_duplicate_of_last`（不设时间窗口）。
+    let duplicate = state
+        .session
+        .lock()
+        .ok()
+        .map(|guard| nuphus::mobile_append::is_duplicate_of_last(&guard.last_message, &instruction))
+        .unwrap_or(false);
+    if duplicate {
+        tracing::info!(
+            "[APPEND] 丢弃与本轮主指令重复的追加: action_id={}",
+            action_id
+        );
+        return Ok("duplicate".to_string());
+    }
+
     // 暂停弹窗仍由 action_id 决策表消费；执行中追加则立即进入唯一真实队列，
     // 由当前 agent 的迭代边界消费，避免等待 Leader dispatch 完成。
     if state.pause_flag.load(Ordering::SeqCst) {
@@ -97,8 +114,14 @@ pub fn append_instruction(
             nuphus::agent::pause::PauseDecision::Append(instruction.clone()),
         );
     } else if state.busy.load(Ordering::SeqCst) {
-        let mut signals = nuphus::state::SignalState::write(&state.signals);
-        signals.append_queue.push(instruction.clone());
+        // 走共享 enqueue：队列内同内容不再重复入队（与整轮判据同源，两道防线）
+        if !nuphus::mobile_append::enqueue(&state.signals, instruction) {
+            tracing::info!(
+                "[APPEND] 丢弃重复追加（已在队列中）: action_id={}",
+                action_id
+            );
+            return Ok("duplicate".to_string());
+        }
     } else {
         return Err("当前没有正在执行的任务".to_string());
     }

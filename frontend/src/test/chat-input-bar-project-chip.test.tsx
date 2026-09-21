@@ -50,8 +50,11 @@ vi.mock('@tauri-apps/api/window', () => ({
 /** 当前工作目录（chip 的 title = 该路径；末段名 = "A"） */
 const ACTIVE_DIR = 'E:\\NUS\\A'
 
-/** ChatInputBar 必填 props 的最小夹具（projectDir 为唯一本用例关心的输入） */
-function renderInputBar(projectDir: string) {
+/** ChatInputBar 必填 props 的最小夹具（projectDir 为本文件用例关心的输入；extra 覆盖 token 数据） */
+function renderInputBar(
+  projectDir: string,
+  extra: Partial<Parameters<typeof ChatInputBar>[0]> = {},
+) {
   render(
     <ChatInputBar
       input=""
@@ -84,8 +87,16 @@ function renderInputBar(projectDir: string) {
       hints={['输入框提示']}
       hintIndex={0}
       hintFade={false}
+      {...extra}
     />,
   )
+}
+
+/** 展开 ctx 详情弹窗（hover 触发） */
+function openCtxDetail() {
+  const ctx = document.querySelector('.input-bar-ctx')
+  if (!ctx) throw new Error('未渲染 .input-bar-ctx')
+  fireEvent.mouseEnter(ctx)
 }
 
 /** 项目 chip（输入框内唯一持有该 class 的元素） */
@@ -126,5 +137,48 @@ describe('输入框项目 chip：纯展示当前项目文件夹', () => {
     expect(chip()).toHaveTextContent('项目目录')
     expect(chip()).toHaveAttribute('title', '项目目录')
     expect(chip()).not.toHaveClass('is-set')
+  })
+})
+
+/**
+ * ctx 弹窗「执行详情」数据源契约：**整组同源**。
+ *
+ * 回归背景（ZPY 实测报「dispatch 时 cache 数据丢失」）：弹窗曾把 tokens/ttft/speed 取自
+ * exec 源、cache 单独取自 main 源——分子是一次 exec 调用的 cache、分母是 Leader 上下文，
+ * 比出来的百分比是废数（甚至整行消失）。修复后：exec 有活动整套用 exec，否则整套用 main。
+ */
+describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', () => {
+  const MAIN_USAGE = { inputTokens: 100_000, outputTokens: 0, cacheHitTokens: 200 }
+  const EXEC_USAGE = {
+    inputTokens: 1_000,
+    outputTokens: 500,
+    cacheHitTokens: 800,
+    genTps: 42,
+    ttftMs: 300,
+  }
+
+  it('exec 在执行：cache 与 tokens 都取 exec（cache = 800/1000 = 80%，tokens = 1.5k）', () => {
+    renderInputBar(ACTIVE_DIR, {
+      mainTokenUsage: MAIN_USAGE,
+      execTokenUsage: EXEC_USAGE,
+      contextLimit: 128_000,
+      totalCalls: 7,
+    })
+    openCtxDetail()
+
+    expect(screen.getByText('80%')).toBeInTheDocument() // exec 命中率，不是 200/100000
+    expect(screen.getByText('1.5k')).toBeInTheDocument() // 1000 + 500
+    expect(screen.getByText('300ms')).toBeInTheDocument() // ttft 同源
+  })
+
+  it('exec 无活动：整套回落到主模型数据（cache = 200/100000 = 0%）', () => {
+    renderInputBar(ACTIVE_DIR, {
+      mainTokenUsage: MAIN_USAGE,
+      execTokenUsage: null,
+      contextLimit: 128_000,
+    })
+    openCtxDetail()
+
+    expect(screen.getByText('0%')).toBeInTheDocument()
   })
 })

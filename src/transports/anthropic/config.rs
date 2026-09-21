@@ -17,6 +17,10 @@ pub struct AnthropicConfig {
     /// (`"none" | "low" | "high" | "max"`). None = keep current behavior (no
     /// reasoning block sent).
     pub reasoning_effort: Option<String>,
+    /// 段级自定义请求头（anthropic 兼容中转实例的网关标头等）。官方段为空 →
+    /// 注入循环零生效，请求头与改造前逐字节一致。`x-api-key` 被跳过（鉴权头
+    /// 不可被覆盖成双值）。
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl AnthropicConfig {
@@ -45,6 +49,7 @@ mod tests {
             timeout_secs: 300,
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: None,
+            extra_headers: Vec::new(),
         }
     }
 

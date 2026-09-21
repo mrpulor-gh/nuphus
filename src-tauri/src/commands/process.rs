@@ -147,16 +147,6 @@ fn is_completion_duplicate(
     last_message == message && last_send_id == send_id && elapsed_since_completion_secs < 10
 }
 
-/// 判定是否重复追加（busy 追加路径）：同消息 + 受理不足 30s。
-/// 纯函数（可测）：busy 期间防刷新/重试导致追加指令重复注入。
-fn is_append_duplicate(
-    last_message: &str,
-    message: &str,
-    elapsed_since_process_start_secs: u64,
-) -> bool {
-    last_message == message && elapsed_since_process_start_secs < 30
-}
-
 /// 共享业务入口：发送消息的完整处理逻辑（桌面 / 移动端共用）。
 ///
 /// 当前由 [send_message_cmd]（Tauri 桌面入口）与 mobile_server 的
@@ -221,7 +211,10 @@ pub async fn submit_user_message<R: tauri::Runtime>(
 
     // 执行中（busy）：不拒绝、不丢弃——消息入队为追加指令（与移动端一致），
     // 由 react_loop 迭代边界 drain 注入；短时间多条合并不覆盖。
-    // 去重防线：与最近受理/已注入内容相同且在 30s 内 → 丢弃（防刷新/重试导致的重复提交）。
+    // 去重防线：与本轮主指令同内容 → 丢弃，**整轮有效**（防界面重载 / 前端热更新 /
+    // 重试导致的重复提交）。旧实现限「受理后 30s 内」，分钟级长任务中形同虚设——
+    // 实测同一条指令被执行中重复提交后再次注入上下文。
+    // 判据唯一真源：`nuphus::mobile_append::is_duplicate_of_last`。
     // 主指令受理时会写 guard.last_message（见下方非 busy 分支），此处直接复用该记录。
     if state.busy.load(Ordering::SeqCst) {
         // 规则3 兜底：执行中 mode 不应改变——若 current_mode 与当前执行 session
@@ -260,16 +253,12 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         if !message.trim().is_empty() {
             let duplicate = {
                 let guard = state.session.lock().map_err(|e| e.to_string())?;
-                is_append_duplicate(
-                    &guard.last_message,
-                    &message,
-                    state.elapsed_since_process_start(),
-                )
+                nuphus::mobile_append::is_duplicate_of_last(&guard.last_message, &message)
             };
             if duplicate {
                 // 不记消息内容（日志导出会携带对话敏感片段）——长度 + send_id 足够定位
                 tracing::info!(
-                    "[Dedup] 丢弃重复追加指令（30s 内已受理）: len={} send_id={:?}",
+                    "[Dedup] 丢弃重复追加指令（与本轮主指令相同）: len={} send_id={:?}",
                     message.chars().count(),
                     send_id
                 );
@@ -1406,16 +1395,5 @@ mod tests {
             &Some("s1".into()),
             1
         ));
-    }
-
-    #[test]
-    fn append_duplicate_blocks_same_message_within_30s() {
-        assert!(is_append_duplicate("继续", "继续", 5));
-        // 边界：刚好 30s → 放行（允许 30s 后的同文追加为有意重发）
-        assert!(!is_append_duplicate("继续", "继续", 30));
-        assert!(!is_append_duplicate("继续", "继续", 35));
-        // 不同消息 → 放行（多条追加不合并）
-        assert!(!is_append_duplicate("继续", "换个话题", 1));
-        assert!(!is_append_duplicate("继续", "", 1));
     }
 }

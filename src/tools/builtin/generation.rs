@@ -666,6 +666,8 @@ mod tests {
                 source: ModelSource::Auto,
             }],
             reasoning_effort: None,
+            extra_headers: std::collections::BTreeMap::new(),
+            oauth: None,
         }
     }
 

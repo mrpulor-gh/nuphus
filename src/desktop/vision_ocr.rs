@@ -217,9 +217,22 @@ fn resolve_vision_model_id() -> Result<String, String> {
             Ok(registry.model.clone())
         }
         VisionStrategy::Capability(m) => Ok(m),
-        VisionStrategy::None => Err(
-            "未配置图像理解模型。请在 Nuphus 设置 → 模型 → 自定义配置 中选择视觉模型。".to_string(),
-        ),
+        // 不可用时给**真实的、可执行**的说明：讲清原因（Leader 不支持视觉）+ 两条出路。
+        // 这段文本会随工具结果进入 Leader 上下文——是「当前能力确实不可用」的事实告知，
+        // 不是静默降级：Leader 看到后应如实告诉用户，而不是假装看到了图像内容。
+        VisionStrategy::None => {
+            let leader = config::load_registry().map(|r| r.model).unwrap_or_default();
+            let leader_part = if leader.is_empty() {
+                "当前 Leader 模型不支持视觉输入".to_string()
+            } else {
+                format!("当前 Leader 模型（{leader}）不支持视觉输入")
+            };
+            Err(format!(
+                "图像理解不可用：{leader_part}，且未配置图像理解模型。\n\
+                 请在 Nuphus 设置 → 模型 → 图像音频模型 中指定一个图像理解模型，或把 Leader 切换到支持视觉的模型。\n\
+                 在解决之前，涉及截图/图像识别的桌面操作无法完成——请如实告知用户，不要推测图像内容。"
+            ))
+        }
     }
 }
 

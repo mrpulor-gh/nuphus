@@ -1211,13 +1211,14 @@ async fn post_message<R: tauri::Runtime>(
         // 追加通道不携带图片（PauseDecision::Append / mobile_append 均为纯文本），
         // 显式告知前端图片被丢弃——避免用户以为带图发送成功（审计 P3-1）
         let images_dropped = payload.images.as_ref().is_some_and(|imgs| !imgs.is_empty());
-        // 去重防线：与最近受理内容相同且在 30s 内 → 丢弃（防刷新/重试导致的重复提交）
+        // 去重防线：与本轮主指令同内容 → 丢弃，**整轮有效**（防界面重载 / 热更新 /
+        // 重试导致的重复提交）。判据唯一真源：`nuphus::mobile_append::is_duplicate_of_last`。
         let dup_vs_last = state
             .session
             .lock()
             .ok()
             .map(|guard| {
-                guard.last_message == payload.message && state.elapsed_since_process_start() < 30
+                nuphus::mobile_append::is_duplicate_of_last(&guard.last_message, &payload.message)
             })
             .unwrap_or(false);
         let paused = state.pause_flag.load(std::sync::atomic::Ordering::SeqCst);
@@ -1227,7 +1228,7 @@ async fn post_message<R: tauri::Runtime>(
             let instr = payload.message.clone();
             if dup_vs_last {
                 tracing::info!(
-                    "[Mobile] PAUSED append dedup（30s 内已受理）: {}",
+                    "[Mobile] PAUSED append dedup（与本轮主指令相同）: {}",
                     payload.message.chars().take(60).collect::<String>()
                 );
             } else {
@@ -1256,7 +1257,7 @@ async fn post_message<R: tauri::Runtime>(
             nuphus::mobile_append::enqueue(&state.signals, payload.message.clone());
         } else {
             tracing::info!(
-                "[Mobile] busy append dedup（30s 内已受理）: {}",
+                "[Mobile] busy append dedup（与本轮主指令相同）: {}",
                 payload.message.chars().take(60).collect::<String>()
             );
         }
@@ -1303,13 +1304,15 @@ async fn post_message<R: tauri::Runtime>(
                         .lock()
                         .ok()
                         .map(|guard| {
-                            guard.last_message == message_fallback
-                                && state.elapsed_since_process_start() < 30
+                            nuphus::mobile_append::is_duplicate_of_last(
+                                &guard.last_message,
+                                &message_fallback,
+                            )
                         })
                         .unwrap_or(false);
                     if dup {
                         tracing::info!(
-                            "[Mobile] race append dedup（30s 内已受理）: {}",
+                            "[Mobile] race append dedup（与本轮主指令相同）: {}",
                             message_fallback.chars().take(60).collect::<String>()
                         );
                         return (

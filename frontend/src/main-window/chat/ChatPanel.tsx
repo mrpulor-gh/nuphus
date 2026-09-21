@@ -12,6 +12,7 @@ import type {
 import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
+import { isCustomProviderId } from '../lib/customProvider'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 /// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
@@ -715,23 +716,27 @@ export function ChatPanel({
     const seen = new Set<string>()
 
     providers.forEach(p => {
-      // 只显示：有 key 的 provider、custom、local
-      const hasApiKey = configuredProviders.includes(p.id) || p.id === 'custom' || p.id === 'local'
-      if (!hasApiKey) return
-      // 读取该 provider 持久化的当前 model,无则跳过
+      // 放行条件：官方/网关 provider 需已配 key；自定义实例（custom / custom-xxx）
+      // 与本地服务地址用户自填（可能本就无鉴权），不要求 key。
+      const isCustom = isCustomProviderId(p.id)
+      const allowed = configuredProviders.includes(p.id) || isCustom || p.id === 'local'
+      if (!allowed) return
+      // 读取该 provider 持久化的当前 model。自定义实例即使还没有 currentModel
+      // 也要出现在弹窗里（刚创建、尚未选模型的实例必须可见可选），model 空串即可。
       let currentModel = ''
       try {
         currentModel = localStorage.getItem(`nuphus_current_model_${p.id}`) || ''
       } catch {
         /* localStorage 读取失败按未配置处理 */
       }
-      if (!currentModel) return
+      if (!currentModel && !isCustom) return
       const key = `${p.id}::${currentModel}`
       if (seen.has(key)) return
       seen.add(key)
       configs.push({
         id: key,
-        label: p.name,
+        // 显示名跟随用户设置（display_name 优先），不再用段名
+        label: p.display_name || p.name,
         model: currentModel,
         provider: p.id,
         baseUrl: p.base_url,
