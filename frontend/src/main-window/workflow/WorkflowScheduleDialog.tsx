@@ -18,13 +18,7 @@ import {
 import './workflow-schedule.css'
 
 export type ScheduleMode =
-  | 'minutes'
-  | 'hourly'
-  | 'daily'
-  | 'weekdays'
-  | 'weekly'
-  | 'monthly'
-  | 'custom'
+  'minutes' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom'
 
 export interface SchedulePattern {
   mode: ScheduleMode
@@ -80,7 +74,8 @@ export function cronFromPattern(pattern: SchedulePattern): string {
 
 export function patternFromCron(cron: string): SchedulePattern {
   let match = cron.match(/^\*\/(5|10|15|30) \* \* \* \*$/)
-  if (match) return { ...DEFAULT_PATTERN, mode: 'minutes', interval: Number(match[1]), custom: cron }
+  if (match)
+    return { ...DEFAULT_PATTERN, mode: 'minutes', interval: Number(match[1]), custom: cron }
   match = cron.match(/^(\d{1,2}) \* \* \* \*$/)
   if (match) return { ...DEFAULT_PATTERN, mode: 'hourly', minute: Number(match[1]), custom: cron }
   match = cron.match(/^(\d{1,2}) (\d{1,2}) \* \* (\*|1-5|[0-6])$/)
@@ -131,7 +126,11 @@ export function resolveScheduleInputs(
   fixed: Record<string, boolean>,
   values: Record<string, string | boolean>,
   preserved: Set<string>,
-): { inputs: Record<string, unknown>; preserveSensitive: string[]; errors: Record<string, string> } {
+): {
+  inputs: Record<string, unknown>
+  preserveSensitive: string[]
+  errors: Record<string, string>
+} {
   const inputs: Record<string, unknown> = {}
   const preserveSensitive: string[] = []
   const errors: Record<string, string> = {}
@@ -150,7 +149,8 @@ export function resolveScheduleInputs(
       inputs[spec.name] = raw === true
     } else if (kind === 'number') {
       const number = Number(raw)
-      if (String(raw).trim() === '' || !Number.isFinite(number)) errors[spec.name] = '请输入有效数字'
+      if (String(raw).trim() === '' || !Number.isFinite(number))
+        errors[spec.name] = '请输入有效数字'
       else inputs[spec.name] = number
     } else if (kind === 'json') {
       try {
@@ -222,7 +222,8 @@ export function WorkflowScheduleDialog({
         for (const spec of specs) {
           const hasVisible = Object.prototype.hasOwnProperty.call(result.inputs, spec.name)
           const hasSensitive = savedSensitive.has(spec.name)
-          nextFixed[spec.name] = hasVisible || hasSensitive || (!!spec.required && spec.default === undefined)
+          nextFixed[spec.name] =
+            hasVisible || hasSensitive || (!!spec.required && spec.default === undefined)
           nextValues[spec.name] = hasVisible
             ? editValue(result.inputs[spec.name], inputKind(spec))
             : inputKind(spec) === 'boolean'
@@ -324,55 +325,314 @@ export function WorkflowScheduleDialog({
       footer={
         <>
           <div className="wcf-footer-left">
-            {details?.config && <Button variant="danger" size="sm" disabled={readOnly || saving} onClick={() => void remove()}><Trash2 size={12} /> 删除定时</Button>}
-            <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
+            {details?.config && (
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={readOnly || saving}
+                onClick={() => void remove()}
+              >
+                <Trash2 size={12} /> 删除定时
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              取消
+            </Button>
           </div>
           <div className="wcf-footer-right">
-            <Button variant="primary" size="sm" loading={saving} disabled={readOnly || loading || !details?.eligible || !!error || intervalError || Object.keys(resolvedInputs.errors).length > 0} onClick={() => void save()}>保存并应用</Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={saving}
+              disabled={
+                readOnly ||
+                loading ||
+                !details?.eligible ||
+                !!error ||
+                intervalError ||
+                Object.keys(resolvedInputs.errors).length > 0
+              }
+              onClick={() => void save()}
+            >
+              保存并应用
+            </Button>
           </div>
         </>
       }
     >
-      {loading ? <div className="wfs-empty">加载定时配置...</div> : (
+      {loading ? (
+        <div className="wfs-empty">加载定时配置...</div>
+      ) : (
         <div className="wfs-body">
           {readOnly && <div className="wfs-banner">工作流正在运行，当前只能查看定时设置。</div>}
-          {details && !details.eligible && <div className="wfs-banner wfs-banner--warning">{details.ineligible_reason}</div>}
+          {details && !details.eligible && (
+            <div className="wfs-banner wfs-banner--warning">{details.ineligible_reason}</div>
+          )}
           {error && <div className="wfs-banner wfs-banner--error">{error}</div>}
 
           <section className="wfs-section">
             <div className="wfs-section-title">触发规则</div>
             <div className="wfs-grid">
-              <label>频率<select value={pattern.mode} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, mode: event.target.value as ScheduleMode }))}>
-                <option value="minutes">每隔几分钟</option><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="custom">高级 Cron</option>
-              </select></label>
-              {pattern.mode === 'minutes' && <label>间隔（分钟）<input type="number" min={1} max={1440} step={1} value={Number.isFinite(pattern.interval) ? pattern.interval : ''} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, interval: event.target.value === '' ? Number.NaN : Number(event.target.value) }))} />{intervalError && <span className="wfs-field-error">请输入 1–1440 的整数分钟数</span>}</label>}
-              {pattern.mode === 'hourly' && <label>分钟<input type="number" min={0} max={59} value={pattern.minute} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, minute: Number(event.target.value) }))} /></label>}
-              {['daily', 'weekdays', 'weekly', 'monthly'].includes(pattern.mode) && <label>时间<input type="time" value={`${String(pattern.hour).padStart(2, '0')}:${String(pattern.minute).padStart(2, '0')}`} disabled={readOnly} onChange={event => { const [hour, minute] = event.target.value.split(':').map(Number); setPattern(current => ({ ...current, hour, minute })) }} /></label>}
-              {pattern.mode === 'weekly' && <label>星期<select value={pattern.weekday} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, weekday: Number(event.target.value) }))}><option value={1}>星期一</option><option value={2}>星期二</option><option value={3}>星期三</option><option value={4}>星期四</option><option value={5}>星期五</option><option value={6}>星期六</option><option value={0}>星期日</option></select></label>}
-              {pattern.mode === 'monthly' && <label>日期<input type="number" min={1} max={28} value={pattern.monthDay} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, monthDay: Number(event.target.value) }))} /></label>}
-              {pattern.mode === 'custom' && <label className="wfs-wide">Cron（分 时 日 月 周）<input className="wfs-mono" value={pattern.custom} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, custom: event.target.value }))} /></label>}
-              <label>时区<input list="wfs-timezones" value={timezone} disabled={readOnly} onChange={event => setTimezone(event.target.value)} /><datalist id="wfs-timezones">{Array.from(new Set([localTimezone(), ...TIMEZONES])).map(value => <option key={value} value={value} />)}</datalist></label>
-              <label>标签<input value={label} disabled={readOnly} placeholder="可选" onChange={event => setLabel(event.target.value)} /></label>
-              <label className="wfs-toggle"><input type="checkbox" checked={enabled} disabled={readOnly} onChange={event => setEnabled(event.target.checked)} />启用定时任务</label>
+              <label>
+                频率
+                <select
+                  value={pattern.mode}
+                  disabled={readOnly}
+                  onChange={event =>
+                    setPattern(current => ({
+                      ...current,
+                      mode: event.target.value as ScheduleMode,
+                    }))
+                  }
+                >
+                  <option value="minutes">每隔几分钟</option>
+                  <option value="hourly">每小时</option>
+                  <option value="daily">每天</option>
+                  <option value="weekdays">工作日</option>
+                  <option value="weekly">每周</option>
+                  <option value="monthly">每月</option>
+                  <option value="custom">高级 Cron</option>
+                </select>
+              </label>
+              {pattern.mode === 'minutes' && (
+                <label>
+                  间隔（分钟）
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    step={1}
+                    value={Number.isFinite(pattern.interval) ? pattern.interval : ''}
+                    disabled={readOnly}
+                    onChange={event =>
+                      setPattern(current => ({
+                        ...current,
+                        interval:
+                          event.target.value === '' ? Number.NaN : Number(event.target.value),
+                      }))
+                    }
+                  />
+                  {intervalError && (
+                    <span className="wfs-field-error">请输入 1–1440 的整数分钟数</span>
+                  )}
+                </label>
+              )}
+              {pattern.mode === 'hourly' && (
+                <label>
+                  分钟
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={pattern.minute}
+                    disabled={readOnly}
+                    onChange={event =>
+                      setPattern(current => ({ ...current, minute: Number(event.target.value) }))
+                    }
+                  />
+                </label>
+              )}
+              {['daily', 'weekdays', 'weekly', 'monthly'].includes(pattern.mode) && (
+                <label>
+                  时间
+                  <input
+                    type="time"
+                    value={`${String(pattern.hour).padStart(2, '0')}:${String(pattern.minute).padStart(2, '0')}`}
+                    disabled={readOnly}
+                    onChange={event => {
+                      const [hour, minute] = event.target.value.split(':').map(Number)
+                      setPattern(current => ({ ...current, hour, minute }))
+                    }}
+                  />
+                </label>
+              )}
+              {pattern.mode === 'weekly' && (
+                <label>
+                  星期
+                  <select
+                    value={pattern.weekday}
+                    disabled={readOnly}
+                    onChange={event =>
+                      setPattern(current => ({ ...current, weekday: Number(event.target.value) }))
+                    }
+                  >
+                    <option value={1}>星期一</option>
+                    <option value={2}>星期二</option>
+                    <option value={3}>星期三</option>
+                    <option value={4}>星期四</option>
+                    <option value={5}>星期五</option>
+                    <option value={6}>星期六</option>
+                    <option value={0}>星期日</option>
+                  </select>
+                </label>
+              )}
+              {pattern.mode === 'monthly' && (
+                <label>
+                  日期
+                  <input
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={pattern.monthDay}
+                    disabled={readOnly}
+                    onChange={event =>
+                      setPattern(current => ({ ...current, monthDay: Number(event.target.value) }))
+                    }
+                  />
+                </label>
+              )}
+              {pattern.mode === 'custom' && (
+                <label className="wfs-wide">
+                  Cron（分 时 日 月 周）
+                  <input
+                    className="wfs-mono"
+                    value={pattern.custom}
+                    disabled={readOnly}
+                    onChange={event =>
+                      setPattern(current => ({ ...current, custom: event.target.value }))
+                    }
+                  />
+                </label>
+              )}
+              <label>
+                时区
+                <input
+                  list="wfs-timezones"
+                  value={timezone}
+                  disabled={readOnly}
+                  onChange={event => setTimezone(event.target.value)}
+                />
+                <datalist id="wfs-timezones">
+                  {Array.from(new Set([localTimezone(), ...TIMEZONES])).map(value => (
+                    <option key={value} value={value} />
+                  ))}
+                </datalist>
+              </label>
+              <label>
+                标签
+                <input
+                  value={label}
+                  disabled={readOnly}
+                  placeholder="可选"
+                  onChange={event => setLabel(event.target.value)}
+                />
+              </label>
+              <label className="wfs-toggle">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  disabled={readOnly}
+                  onChange={event => setEnabled(event.target.checked)}
+                />
+                启用定时任务
+              </label>
             </div>
-            {nextRuns.length > 0 && <div className="wfs-next-runs"><span>接下来</span>{nextRuns.map(value => <time key={value}>{new Date(value).toLocaleString()}</time>)}</div>}
+            {nextRuns.length > 0 && (
+              <div className="wfs-next-runs">
+                <span>接下来</span>
+                {nextRuns.map(value => (
+                  <time key={value}>{new Date(value).toLocaleString()}</time>
+                ))}
+              </div>
+            )}
           </section>
 
-          {specs.length > 0 && <section className="wfs-section">
-            <div className="wfs-section-title">运行输入</div>
-            {specs.map(spec => {
-              const kind = inputKind(spec)
-              const isFixed = !!fixed[spec.name]
-              const isPreserved = spec.sensitive && preserved.has(spec.name)
-              return <div className="wfs-input-row" key={spec.name}>
-                <label className="wfs-input-fixed"><input type="checkbox" checked={isFixed} disabled={readOnly || (!!spec.required && spec.default === undefined)} onChange={event => { const checked = event.target.checked; setFixed(current => ({ ...current, [spec.name]: checked })); if (!checked) setPreserved(current => { const next = new Set(current); next.delete(spec.name); return next }) }} />固定此值</label>
-                <div className="wfs-input-main"><div className="wfs-input-label"><span>{spec.name}</span><span>{kind}</span>{spec.required && <span>必填</span>}{spec.sensitive && <span>敏感</span>}</div>{spec.description && <div className="wfs-input-hint">{spec.description}</div>}
-                  {!isFixed ? <div className="wfs-input-follow">触发时使用工作流当前默认值</div> : kind === 'boolean' ? <label className="wfs-toggle"><input type="checkbox" checked={values[spec.name] === true} disabled={readOnly} onChange={event => setValues(current => ({ ...current, [spec.name]: event.target.checked }))} />{values[spec.name] === true ? 'true' : 'false'}</label> : kind === 'json' ? <textarea rows={3} value={String(values[spec.name] ?? '')} disabled={readOnly} placeholder={isPreserved ? '已保存敏感值，留空保持' : 'JSON'} onChange={event => { setValues(current => ({ ...current, [spec.name]: event.target.value })); setPreserved(current => { const next = new Set(current); next.delete(spec.name); return next }) }} /> : <input type={spec.sensitive ? 'password' : kind === 'number' ? 'number' : 'text'} value={String(values[spec.name] ?? '')} disabled={readOnly} placeholder={isPreserved ? '已保存敏感值，留空保持' : ''} autoComplete="off" onChange={event => { setValues(current => ({ ...current, [spec.name]: event.target.value })); setPreserved(current => { const next = new Set(current); next.delete(spec.name); return next }) }} />}
-                  {isPreserved && values[spec.name] === '' && <div className="wfs-input-saved">已保存敏感值，保存时保持不变</div>}{resolvedInputs.errors[spec.name] && <div className="wfs-field-error">{resolvedInputs.errors[spec.name]}</div>}
-                </div>
-              </div>
-            })}
-          </section>}
+          {specs.length > 0 && (
+            <section className="wfs-section">
+              <div className="wfs-section-title">运行输入</div>
+              {specs.map(spec => {
+                const kind = inputKind(spec)
+                const isFixed = !!fixed[spec.name]
+                const isPreserved = spec.sensitive && preserved.has(spec.name)
+                return (
+                  <div className="wfs-input-row" key={spec.name}>
+                    <label className="wfs-input-fixed">
+                      <input
+                        type="checkbox"
+                        checked={isFixed}
+                        disabled={readOnly || (!!spec.required && spec.default === undefined)}
+                        onChange={event => {
+                          const checked = event.target.checked
+                          setFixed(current => ({ ...current, [spec.name]: checked }))
+                          if (!checked)
+                            setPreserved(current => {
+                              const next = new Set(current)
+                              next.delete(spec.name)
+                              return next
+                            })
+                        }}
+                      />
+                      固定此值
+                    </label>
+                    <div className="wfs-input-main">
+                      <div className="wfs-input-label">
+                        <span>{spec.name}</span>
+                        <span>{kind}</span>
+                        {spec.required && <span>必填</span>}
+                        {spec.sensitive && <span>敏感</span>}
+                      </div>
+                      {spec.description && <div className="wfs-input-hint">{spec.description}</div>}
+                      {!isFixed ? (
+                        <div className="wfs-input-follow">触发时使用工作流当前默认值</div>
+                      ) : kind === 'boolean' ? (
+                        <label className="wfs-toggle">
+                          <input
+                            type="checkbox"
+                            checked={values[spec.name] === true}
+                            disabled={readOnly}
+                            onChange={event =>
+                              setValues(current => ({
+                                ...current,
+                                [spec.name]: event.target.checked,
+                              }))
+                            }
+                          />
+                          {values[spec.name] === true ? 'true' : 'false'}
+                        </label>
+                      ) : kind === 'json' ? (
+                        <textarea
+                          rows={3}
+                          value={String(values[spec.name] ?? '')}
+                          disabled={readOnly}
+                          placeholder={isPreserved ? '已保存敏感值，留空保持' : 'JSON'}
+                          onChange={event => {
+                            setValues(current => ({ ...current, [spec.name]: event.target.value }))
+                            setPreserved(current => {
+                              const next = new Set(current)
+                              next.delete(spec.name)
+                              return next
+                            })
+                          }}
+                        />
+                      ) : (
+                        <input
+                          type={spec.sensitive ? 'password' : kind === 'number' ? 'number' : 'text'}
+                          value={String(values[spec.name] ?? '')}
+                          disabled={readOnly}
+                          placeholder={isPreserved ? '已保存敏感值，留空保持' : ''}
+                          autoComplete="off"
+                          onChange={event => {
+                            setValues(current => ({ ...current, [spec.name]: event.target.value }))
+                            setPreserved(current => {
+                              const next = new Set(current)
+                              next.delete(spec.name)
+                              return next
+                            })
+                          }}
+                        />
+                      )}
+                      {isPreserved && values[spec.name] === '' && (
+                        <div className="wfs-input-saved">已保存敏感值，保存时保持不变</div>
+                      )}
+                      {resolvedInputs.errors[spec.name] && (
+                        <div className="wfs-field-error">{resolvedInputs.errors[spec.name]}</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </section>
+          )}
         </div>
       )}
     </CompactModal>

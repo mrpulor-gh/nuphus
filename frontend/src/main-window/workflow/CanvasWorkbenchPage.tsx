@@ -142,7 +142,12 @@ export function CanvasWorkbenchPage({
             {!loading && error && <div className="error-banner">{error}</div>}
             {!loading && workflowId && (
               <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
-                <CanvasPage workflowId={workflowId} replayRunId={replayRunId} onExitReplay={onExitReplay} onClose={onClose} />
+                <CanvasPage
+                  workflowId={workflowId}
+                  replayRunId={replayRunId}
+                  onExitReplay={onExitReplay}
+                  onClose={onClose}
+                />
               </Suspense>
             )}
           </>

@@ -283,7 +283,10 @@ function aggregateTo(
   return null
 }
 
-export function projectWorkflow(ir: { steps: WorkflowStep[]; inputs?: WorkflowInputSpec[] }): Projection {
+export function projectWorkflow(ir: {
+  steps: WorkflowStep[]
+  inputs?: WorkflowInputSpec[]
+}): Projection {
   const tree = buildTreeProfile(ir.steps)
   const declaredInputs = new Set((ir.inputs ?? []).map(input => input.name))
   const shadowed = shadowedMap(tree)

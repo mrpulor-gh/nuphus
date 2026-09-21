@@ -18,9 +18,7 @@ describe('workflow input anchors', () => {
       steps: [],
       inputs: [{ name: 'topic', type: 'string' }],
     })
-    const anchor = projection.layers
-      .get('root')
-      ?.nodes.find(node => node.externalVar === 'topic')
+    const anchor = projection.layers.get('root')?.nodes.find(node => node.externalVar === 'topic')
     expect(anchor).toMatchObject({
       name: '外部 · topic',
       externalInput: true,
@@ -38,9 +36,7 @@ describe('workflow input anchors', () => {
         },
       ],
     })
-    const anchor = projection.layers
-      .get('root')
-      ?.nodes.find(node => node.externalVar === 'missing')
+    const anchor = projection.layers.get('root')?.nodes.find(node => node.externalVar === 'missing')
     expect(anchor).toMatchObject({ externalInput: true, externalInputDeclared: false })
   })
 })

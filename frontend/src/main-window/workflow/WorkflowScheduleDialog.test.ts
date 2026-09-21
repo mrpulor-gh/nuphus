@@ -118,12 +118,7 @@ describe('定时输入快照', () => {
       errors: {},
     })
 
-    const cleared = resolveScheduleInputs(
-      specs,
-      { token: false },
-      { token: '' },
-      new Set(),
-    )
+    const cleared = resolveScheduleInputs(specs, { token: false }, { token: '' }, new Set())
     expect(cleared).toEqual({ inputs: {}, preserveSensitive: [], errors: {} })
   })
 })

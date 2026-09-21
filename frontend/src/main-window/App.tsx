@@ -196,7 +196,10 @@ export default function App() {
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
   const [showSettingsCenter, setShowSettingsCenter] = useState(false)
-  const [scheduleReplay, setScheduleReplay] = useState<{ workflowId: string; runId: string } | null>(null)
+  const [scheduleReplay, setScheduleReplay] = useState<{
+    workflowId: string
+    runId: string
+  } | null>(null)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
     canvas: <IconPalette size={14} />,

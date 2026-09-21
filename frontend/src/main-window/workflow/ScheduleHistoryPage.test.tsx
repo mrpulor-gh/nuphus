@@ -14,17 +14,32 @@ describe('ScheduleHistoryPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listWorkflows).mockResolvedValue([
-      { id: 'wf-1', title: '日报', status: 'active', steps: [], tags: [], created_at: 0, updated_at: 0, run_count: 0 },
+      {
+        id: 'wf-1',
+        title: '日报',
+        status: 'active',
+        steps: [],
+        tags: [],
+        created_at: 0,
+        updated_at: 0,
+        run_count: 0,
+      },
     ])
     vi.mocked(api.wfScheduleHistoryList).mockResolvedValue({
       total: 1,
       page: 0,
       page_size: 50,
-      runs: [{
-        run_id: 'run-1', workflow_id: 'wf-1', workflow_title: '日报',
-        started_at: '2026-09-21T01:00:00Z', finished_at: '2026-09-21T01:00:02Z',
-        status: 'Success', steps: [],
-      }],
+      runs: [
+        {
+          run_id: 'run-1',
+          workflow_id: 'wf-1',
+          workflow_title: '日报',
+          started_at: '2026-09-21T01:00:00Z',
+          finished_at: '2026-09-21T01:00:02Z',
+          status: 'Success',
+          steps: [],
+        },
+      ],
     })
   })
 
@@ -43,6 +58,10 @@ describe('ScheduleHistoryPage', () => {
     await screen.findAllByText('日报')
     fireEvent.change(screen.getByLabelText('工作流'), { target: { value: 'wf-1' } })
     fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'error' } })
-    await waitFor(() => expect(api.wfScheduleHistoryList).toHaveBeenLastCalledWith(expect.objectContaining({ workflow_id: 'wf-1', status: 'error', page: 0 })))
+    await waitFor(() =>
+      expect(api.wfScheduleHistoryList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workflow_id: 'wf-1', status: 'error', page: 0 }),
+      ),
+    )
   })
 })

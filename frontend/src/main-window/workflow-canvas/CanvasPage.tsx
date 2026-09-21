@@ -1590,7 +1590,12 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
         </button>
 
         {replayRunId && onExitReplay && (
-          <button type="button" className="wfc-btn wfc-btn--primary" onClick={onExitReplay} title="返回当前工作流画布">
+          <button
+            type="button"
+            className="wfc-btn wfc-btn--primary"
+            onClick={onExitReplay}
+            title="返回当前工作流画布"
+          >
             返回当前画布
           </button>
         )}
@@ -1778,28 +1783,28 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
         <InputAnchorActionsContext.Provider value={inputAnchorActions}>
           <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
             <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
-            onNodeDrag={onNodeDrag}
-            onNodeDragStop={onNodeDragStop}
-            onNodeClick={onNodeClick}
-            onNodeDoubleClick={onNodeDoubleClick}
-            onPaneClick={() => {
-              setSelectedId(null)
-              setInspectorOpen(false)
-            }}
-            onDragOver={onToolDragOver}
-            onDrop={onToolDrop}
-            nodesConnectable={false}
-            edgesFocusable={false}
-            deleteKeyCode={null}
-            fitView
-            minZoom={0.2}
-            maxZoom={2}
-            proOptions={{ hideAttribution: false }}
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={onNodesChange}
+              onNodeDrag={onNodeDrag}
+              onNodeDragStop={onNodeDragStop}
+              onNodeClick={onNodeClick}
+              onNodeDoubleClick={onNodeDoubleClick}
+              onPaneClick={() => {
+                setSelectedId(null)
+                setInspectorOpen(false)
+              }}
+              onDragOver={onToolDragOver}
+              onDrop={onToolDrop}
+              nodesConnectable={false}
+              edgesFocusable={false}
+              deleteKeyCode={null}
+              fitView
+              minZoom={0.2}
+              maxZoom={2}
+              proOptions={{ hideAttribution: false }}
             >
               <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
               <Controls showInteractive={false} />
@@ -1902,11 +1907,13 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
                   variables_snapshot: {},
                 } as RunRecord,
               ]
-            : ir.run_history ?? []
+            : (ir.run_history ?? [])
         }
         replay={!!replayRunId}
         onLocate={locateNode}
-        nameOf={id => replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id}
+        nameOf={id =>
+          replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id
+        }
       />
 
       {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}

@@ -438,9 +438,7 @@ export function WorkflowPage({
           onClose={() => setScheduleEditing(null)}
           onChanged={schedule => {
             setItems(current =>
-              current.map(item =>
-                item.id === scheduleEditing.id ? { ...item, schedule } : item,
-              ),
+              current.map(item => (item.id === scheduleEditing.id ? { ...item, schedule } : item)),
             )
           }}
         />

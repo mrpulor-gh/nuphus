@@ -68,10 +68,7 @@ export function CompactModal({
   // 包含块（CSS 规范），导致弹窗按局部盒子定位而非视口——如 .chat-input-area 的
   // translate(-50%) 曾把终止确认弹窗错位到输入框区域内。与项目弹层 portal 惯例一致。
   return createPortal(
-    <div
-      className={overlayClassName}
-      onClick={requestClose}
-    >
+    <div className={overlayClassName} onClick={requestClose}>
       <div
         className={`compact-modal ${sizeClass}${className ? ` ${className}` : ''}`}
         role="dialog"
