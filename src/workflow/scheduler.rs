@@ -131,6 +131,7 @@ pub struct SchedulerEngine {
     tasks: RwLock<HashMap<String, ScheduledTask>>,
     persist_path: PathBuf,
     history_path: PathBuf,
+    history_guard: std::sync::Mutex<()>,
 }
 
 pub fn has_frontend_step(steps: &[Step]) -> bool {
@@ -212,10 +213,12 @@ impl SchedulerEngine {
             tasks: RwLock::new(HashMap::new()),
             persist_path,
             history_path: resolve_history_path(),
+            history_guard: std::sync::Mutex::new(()),
         }
     }
 
     pub async fn record_schedule_run(&self, record: ScheduleRunRecord) -> Result<()> {
+        let _guard = self.history_guard.lock().unwrap();
         let mut history = load_schedule_runs_from(&self.history_path);
         history.runs.retain(|item| item.run_id != record.run_id);
         history.runs.insert(0, record);
@@ -223,26 +226,45 @@ impl SchedulerEngine {
     }
 
     pub fn list_schedule_runs(&self) -> PersistedScheduleRuns {
+        let _guard = self.history_guard.lock().unwrap();
         load_schedule_runs_from(&self.history_path)
     }
 
     pub fn delete_schedule_runs(
         &self,
         workflow_id: Option<&str>,
-        before: Option<DateTime<Utc>>,
+        status: Option<&str>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
     ) -> Result<usize> {
+        let _guard = self.history_guard.lock().unwrap();
         let mut history = load_schedule_runs_from(&self.history_path);
         let old_len = history.runs.len();
         history.runs.retain(|item| {
             let workflow_match = workflow_id.map(|id| item.workflow_id == id).unwrap_or(true);
-            let date_match = before.map(|date| item.started_at < date).unwrap_or(true);
-            !(workflow_match && date_match)
+            let status_match = status
+                .map(|expected| Self::schedule_run_status_matches(&item.status, expected))
+                .unwrap_or(true);
+            let from_match = from.map(|date| item.started_at >= date).unwrap_or(true);
+            let to_match = to.map(|date| item.started_at <= date).unwrap_or(true);
+            !(workflow_match && status_match && from_match && to_match)
         });
         let removed = old_len - history.runs.len();
         if removed > 0 {
             write_schedule_runs(&self.history_path, &history)?;
         }
         Ok(removed)
+    }
+
+    pub fn schedule_run_status_matches(status: &RunStatus, expected: &str) -> bool {
+        matches!(
+            (expected, status),
+            ("running", RunStatus::Running)
+                | ("success", RunStatus::Success)
+                | ("cancelled", RunStatus::Cancelled)
+                | ("paused", RunStatus::Paused)
+                | ("error", RunStatus::Error(_))
+        )
     }
 
     pub async fn set_schedule<F, Fut>(
@@ -289,9 +311,20 @@ impl SchedulerEngine {
             parse_five_field_cron(&config.cron)?;
         }
         let timezone = parse_timezone(&config.timezone)?;
+        let retained_anchor = {
+            let tasks = self.tasks.read().await;
+            tasks.get(workflow_id).and_then(|task| {
+                (task.binding.config.enabled
+                    && config.enabled
+                    && task.binding.config.interval_minutes == config.interval_minutes
+                    && task.binding.config.timezone == config.timezone)
+                    .then_some(task.binding.anchor_at)
+                    .flatten()
+            })
+        };
         let binding_anchor = config
             .interval_minutes
-            .map(|_| anchor_at.unwrap_or_else(Utc::now));
+            .map(|_| anchor_at.or(retained_anchor).unwrap_or_else(Utc::now));
         let mut binding = ScheduleBinding::new(config.clone(), &workflow.inputs, &explicit_inputs)?;
         binding.anchor_at = binding_anchor;
 
@@ -598,6 +631,7 @@ mod tests {
             tasks: RwLock::new(HashMap::new()),
             persist_path: root.join("schedules.json"),
             history_path: root.join("schedule_runs.json"),
+            history_guard: std::sync::Mutex::new(()),
         };
         let now = Utc::now();
         let run = RunRecord {
@@ -614,7 +648,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(scheduler.list_schedule_runs().runs.len(), 1);
-        assert_eq!(scheduler.delete_schedule_runs(Some("wf"), None).unwrap(), 1);
+        assert_eq!(
+            scheduler
+                .delete_schedule_runs(Some("wf"), Some("success"), None, None)
+                .unwrap(),
+            1
+        );
         assert!(scheduler.list_schedule_runs().runs.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }

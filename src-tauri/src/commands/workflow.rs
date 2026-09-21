@@ -212,17 +212,6 @@ pub struct WfScheduleHistoryPage {
     pub runs: Vec<ScheduleRunRecord>,
 }
 
-fn schedule_status_matches(run: &ScheduleRunRecord, expected: &str) -> bool {
-    matches!(
-        (expected, &run.status),
-        ("running", nuphus::workflow::types::RunStatus::Running)
-            | ("success", nuphus::workflow::types::RunStatus::Success)
-            | ("cancelled", nuphus::workflow::types::RunStatus::Cancelled)
-            | ("paused", nuphus::workflow::types::RunStatus::Paused)
-            | ("error", nuphus::workflow::types::RunStatus::Error(_))
-    )
-}
-
 #[tauri::command]
 pub async fn wf_schedule_history_list(
     state: State<'_, AppState>,
@@ -255,7 +244,7 @@ pub async fn wf_schedule_history_list(
             filter
                 .status
                 .as_deref()
-                .map(|status| schedule_status_matches(run, status))
+                .map(|status| SchedulerEngine::schedule_run_status_matches(&run.status, status))
                 .unwrap_or(true)
         })
         .filter(|run| {
@@ -296,13 +285,25 @@ pub async fn wf_schedule_history_get(
 #[tauri::command]
 pub async fn wf_schedule_history_delete(
     state: State<'_, AppState>,
-    workflow_id: Option<String>,
-    before: Option<chrono::DateTime<chrono::Utc>>,
+    filter: Option<WfScheduleHistoryFilter>,
 ) -> Result<usize, String> {
+    let filter = filter.unwrap_or(WfScheduleHistoryFilter {
+        workflow_id: None,
+        status: None,
+        from: None,
+        to: None,
+        page: None,
+        page_size: None,
+    });
     let engine = state.workflow_engine.read().await;
     engine
         .scheduler
-        .delete_schedule_runs(workflow_id.as_deref(), before)
+        .delete_schedule_runs(
+            filter.workflow_id.as_deref(),
+            filter.status.as_deref(),
+            filter.from,
+            filter.to,
+        )
         .map_err(|error| error.to_string())
 }
 
