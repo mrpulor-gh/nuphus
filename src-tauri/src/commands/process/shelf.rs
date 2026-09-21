@@ -52,6 +52,26 @@ pub struct ShelfEntry {
     pub updated_at: u64,
 }
 
+/// 草稿对话（「新建项目文件夹」→ 立刻可开说、尚未诞生的一条空对话）。
+///
+/// 只活在内存（[`crate::state::SessionState::draft_session`]）：**不写** `sessions` 行 /
+/// `session_meta` 归属行 / mirror / snapshot，所以进程退出即消失、重启后不会出现。
+///
+/// `project_path` 是**创建时的归属快照**（与真实会话诞生点 [`register_session_origin`]
+/// 同源：`utils::active_project()` 读当前项目目录），展示台只用它回填 `project_path`——
+/// **不按当前工作目录推断**：归属缺失就归「未分组」，不猜。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftSession {
+    /// 草稿 id：仅供 rail 条目标识与「当前」判定（点击恒为 no-op）；真实会话诞生时另铸 uuid
+    pub id: String,
+    /// 诞生时的 mode（归一化后与展示台 kind 同域）：mode 不匹配时不得冒充 active
+    pub mode: String,
+    /// 诞生时的项目目录快照（创建时已保证非空——无项目目录直接拒绝创建草稿）
+    pub project_path: String,
+    /// 创建时刻（Unix 毫秒）：条目的 created_at / updated_at 都用它，轮询期间保持稳定
+    pub created_at: u64,
+}
+
 /// 项目文件夹分组条目（会话工作台「项目文件夹」数据源）。
 ///
 /// `path` 是分组键：与 `items[].project_path` 精确对应；无归属会话（path 为 null）
@@ -738,9 +758,104 @@ pub(crate) fn register_session_origin(session_id: &str) {
 ///
 /// 调用点只有两处（leader 与 workflow 各自的诞生分支），二者都要求「全新 uuid + 空
 /// session」；恢复 / 续聊路径不经过这里，因此归属与标题都不会改写既有会话。
+///
+/// 真实会话一诞生，草稿对话（[`DraftSession`]）的历史使命即结束：清掉它，
+/// 否则 rail 上会同时存在「已开说的真实会话」与「等待开说的草稿」两条当前对话。
 pub(crate) fn register_session_birth(state: &AppState, session: &Session) {
     register_session_origin(&session.id);
     apply_recorded_title(state, session);
+    clear_draft_session(state);
+}
+
+// ── 草稿对话（新建项目文件夹 → 立刻可开说的空对话，内存态）──
+
+/// 记录草稿对话。同一时刻最多一条（覆盖式写入：重新创建项目即换新草稿）。
+pub(crate) fn set_draft_session(state: &AppState, draft: DraftSession) {
+    if let Ok(mut sb) = state.session.lock() {
+        sb.draft_session = Some(draft);
+    }
+}
+
+/// 读草稿对话（展示台组装与测试用；不做任何 mode / 槽位有效性判定）。
+pub(crate) fn draft_session(state: &AppState) -> Option<DraftSession> {
+    state
+        .session
+        .lock()
+        .ok()
+        .and_then(|sb| sb.draft_session.clone())
+}
+
+/// 清掉草稿对话：任何把「当前对话」从草稿移开的操作都走这里——
+/// 切换会话（成功路径）/ 新建对话（回欢迎页）/「继续对话」装载最近会话 /
+/// 真实会话在诞生点落成。退出进程时内存态随进程消失，无需显式清理。
+pub(crate) fn clear_draft_session(state: &AppState) {
+    if let Ok(mut sb) = state.session.lock() {
+        if let Some(dropped) = sb.draft_session.take() {
+            tracing::debug!("[Shelf] 草稿对话 {} 结束（当前对话已移开）", dropped.id);
+        }
+    }
+}
+
+/// 草稿诞生核心（`path` = 已切好的当前项目目录；测试可直接注入）：
+/// 全新 uuid + 归属快照 + 当前 mode，登记进内存态。**不写任何持久化**。
+pub(crate) fn create_draft_session(
+    state: &AppState,
+    mode: &str,
+    path: &str,
+) -> Result<DraftSession, String> {
+    guard_switch(state).map_err(|c| c.to_string())?;
+    let path = path.trim();
+    if path.is_empty() {
+        // 与 register_session_project 同一原则：宁可缺失，不可错记
+        return Err("no_project_dir".to_string());
+    }
+    let draft = DraftSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        mode: normalize_mode(mode).to_string(),
+        project_path: path.to_string(),
+        created_at: now_millis(),
+    };
+    set_draft_session(state, draft.clone());
+    Ok(draft)
+}
+
+/// 「新建项目文件夹」第 ③ 步：在**当前项目目录**下立刻生成一条草稿对话并成为当前对话。
+///
+/// 调用方（创建项目弹窗）已按序完成 ① 写书签（`set_project_bookmarks`）② 切当前目录
+/// （`set_project_dir`），本命令只做「归属快照 + 草稿登记」：**不落库**（无 sessions 行 /
+/// session_meta / mirror / snapshot），因此用户未发消息就切换会话会消失、退出进程也不会
+/// 留下任何痕迹；发出首条消息时真实会话在诞生点登记归属，标题走既有派生规则。
+///
+/// 归属路径取 `utils::active_project()`（与真实会话诞生点同源）——未配置项目目录时
+/// 返回稳定错误码 `no_project_dir`，**不猜测路径**。失败码：busy / append_pending /
+/// no_project_dir。
+#[tauri::command]
+pub fn create_project_chat(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let current_mode = state
+        .current_mode
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "leader".to_string());
+    let Some((_tag, dir)) = nuphus::utils::active_project() else {
+        return Err("no_project_dir".to_string());
+    };
+    let draft = create_draft_session(state.inner(), &current_mode, &dir)?;
+    tracing::info!(
+        "[Shelf] 新建项目文件夹：草稿对话 {} @ {}（内存态，不落库）",
+        draft.id,
+        draft.project_path
+    );
+    // 展示台列表变化 → 双端同步（手机刷新会话清单；当前会话未变，不重拉历史）
+    crate::emitter::CompoundEmitter::new(app, state.inner())
+        .emit(nuphus::agent::events::NuphusEvent::ShelfUpdated);
+    Ok(serde_json::json!({
+        "id": draft.id,
+        "mode": draft.mode,
+        "project_path": draft.project_path,
+    }))
 }
 
 /// 标题规范化：空白 → None（视为未填：不记录、不报错，会话走既有派生标题语义）；
@@ -830,9 +945,15 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
         .unwrap_or_else(|_| "leader".to_string());
     let kind = normalize_mode(&current_mode);
 
+    // 草稿对话（新建项目文件夹 → 尚未开说的那一条）：先于 runtime 长锁读数（避免嵌套加锁）。
+    // 是否作为 active 展示由下方「槽里没有别的 active 会话」决定——当前对话只能有一个。
+    let draft = draft_session(state);
+
     // 收集候选 (id, item_json, is_active)；active 与会话台条目统一参与稳定排序
     let mut candidates: Vec<(String, serde_json::Value, bool)> = Vec::new();
     let mut active_id: Option<String> = None;
+    // 被展示的草稿对话 `(id, 归属路径)`：归属快照的唯一出口（无草稿/未展示时为 None）
+    let mut draft_origin: Option<(String, String)> = None;
     // 创建时间的兜底表（仅「尚无 SQLite 行」的会话）：id → Unix 毫秒
     let mut created_fallback: HashMap<String, u64> = HashMap::new();
 
@@ -857,6 +978,27 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
             &mut active_id,
             &mut created_fallback,
         );
+    } else if let Some(d) = draft.filter(|d| d.mode == kind) {
+        // 草稿对话：槽里没有别的 active 会话，且 mode 匹配（当前 mode 的当前对话）。
+        // 优先于 session_backup 回退——新建项目产生的草稿才是最新的「当前对话」，
+        // 此时 backup 里仍是切换前那一条。
+        // 归属路径用**创建时快照**回填（下方经 project_paths 覆盖表统一写入），
+        // 不读库、不按当前目录推断——它尚未落任何持久化。
+        active_id = Some(d.id.clone());
+        draft_origin = Some((d.id.clone(), d.project_path.clone()));
+        created_fallback.insert(d.id.clone(), d.created_at);
+        candidates.push((
+            d.id.clone(),
+            serde_json::json!({
+                "id": d.id, "mode": d.mode, "title": "",
+                "preview": "",
+                "message_count": 0, "updated_at": d.created_at,
+                "is_active": true,
+                // 前端据 draft 渲染「新建对话」并隐藏重命名/归档（改名会写 sessions 行）
+                "draft": true,
+            }),
+            true,
+        ));
     } else if let Some(sess) = read_backup_session(state) {
         // chat_history 在当前 mode 的 runtime 槽为空时也使用 session_backup；
         // 列表必须复用同一回退源，否则 Workflow 会话切换成功后看不到“当前”。
@@ -915,7 +1057,12 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     // 「未分组」；后端不做任何按当前目录的推断。
     let prefs = nuphus::config::UserPreferences::load();
     let ids: Vec<String> = candidates.iter().map(|c| c.0.clone()).collect();
-    let project_paths = nuphus::store::session::session_project_paths(&ids).unwrap_or_default();
+    let mut project_paths = nuphus::store::session::session_project_paths(&ids).unwrap_or_default();
+    // 草稿对话的归属来自**内存快照**（它没有、也不会有 session_meta 行）：覆盖表是唯一
+    // 回填点，item.project_path 与分组用的 session_paths 因此天然一致。
+    if let Some((draft_id, draft_path)) = &draft_origin {
+        project_paths.insert(draft_id.clone(), draft_path.clone());
+    }
     let session_paths: Vec<String> = candidates
         .iter()
         .filter_map(|c| project_paths.get(&c.0).cloned())
@@ -1113,6 +1260,8 @@ pub(crate) fn switch_session_inner_mode(
         tracing::info!(
             "[Shelf] 无 agent 槽，降级 backup 中转切换会话 {sid} ({current_kind} -> {target_kind})"
         );
+        // 切走了：草稿对话（若有）不再是当前对话
+        clear_draft_session(state);
         broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
@@ -1122,6 +1271,8 @@ pub(crate) fn switch_session_inner_mode(
         "[Shelf] 切换到会话 {} ({current_kind} -> {target_kind})",
         entry.id
     );
+    // 切走了：草稿对话（若有）不再是当前对话
+    clear_draft_session(state);
     broadcast_session_changed_mobile(state, &entry.id);
     Ok(())
 }
@@ -1187,6 +1338,9 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
         // 记录本次弹窗标题（None = 清空旧记录）：与清 backup 同一把锁同一次边界动作，
         // 避免两次加锁之间被其它会话边界动作插进来
         sb.pending_new_chat_title = title;
+        // 回到欢迎页 = 当前对话不再存在：草稿对话（若有）一并清掉，否则它会被当成
+        // 「当前对话」继续挂在 rail 上，与用户刚刚表达的「新建」意图冲突
+        sb.draft_session = None;
     }
     if let Ok(mut ex) = state.execution.lock() {
         ex.pending_retry = None;
@@ -1310,6 +1464,8 @@ pub fn resume_latest_session(
         sb.session_backup = Some(json);
         sb.last_message.clear();
         sb.last_message_images.clear();
+        // 当前对话变成刚恢复的这条：草稿对话（若有）不再是当前对话
+        sb.draft_session = None;
     }
     // 镜像 mode 同步为当前权威（跨 mode 恢复：workflow/custom 会话不再被强制归 leader）
     if let Ok(mut cm) = state.current_mode.write() {
@@ -2508,5 +2664,208 @@ mod tests {
             rusqlite::params![born.id],
         )
         .unwrap();
+    }
+
+    // ── 草稿对话（「新建项目文件夹」→ 尚未开说的空对话，内存态）──
+
+    /// 草稿对话**不落任何持久化**：无 sessions 行、无 session_meta 归属行、无 mirror、
+    /// 无 snapshot。这是「未发消息就退出 → 不留痕迹 / 重启不出现」的机制证据。
+    /// 无项目目录时拒绝创建（宁可缺失不可错记），且不留半截状态。
+    #[test]
+    fn draft_session_leaves_no_persistence_trace() {
+        let state = AppState::default();
+        let dir = "E:\\__nuphus_test_proj__\\draft";
+        let draft = create_draft_session(&state, "leader", dir).unwrap();
+
+        assert_eq!(
+            draft_session(&state).map(|d| d.id),
+            Some(draft.id.clone()),
+            "草稿登记在内存态（SessionState.draft_session）"
+        );
+        assert_eq!(draft.project_path, dir, "归属 = 创建时的项目目录快照");
+        assert!(
+            draft.created_at > 0,
+            "启动时刻是真实时间戳（条目排序用），不造值"
+        );
+
+        assert!(
+            nuphus::store::session::get_session(&draft.id)
+                .unwrap()
+                .is_none(),
+            "草稿不得落 sessions 行"
+        );
+        assert!(
+            nuphus::store::session::get_snapshot(&draft.id)
+                .unwrap()
+                .is_none(),
+            "草稿不得写 SQLite 快照（= 内存镜像落盘点）"
+        );
+        assert!(read_mirror(&draft.id).is_none(), "草稿不得写展示台镜像");
+        assert!(
+            nuphus::store::session::session_project_paths(std::slice::from_ref(&draft.id))
+                .unwrap()
+                .is_empty(),
+            "草稿不得登记 session_meta 归属行"
+        );
+
+        let blank = AppState::default();
+        assert_eq!(
+            create_draft_session(&blank, "leader", "   ").unwrap_err(),
+            "no_project_dir",
+            "未配置项目目录 → 拒绝，不猜路径"
+        );
+        assert!(draft_session(&blank).is_none(), "拒绝时不得留下半截草稿");
+    }
+
+    /// 草稿作为**当前对话**出现在 rail：`is_active` + `draft` 标记 + 归属路径来自内存
+    /// 快照；该路径同时进入分组数据源（它没有任何 session_meta 行，前端据此不会把它
+    /// 归入「未分组」）。
+    #[test]
+    fn list_shelf_shows_draft_as_active_in_its_project_group() {
+        let state = AppState::default();
+        let dir = "E:\\__nuphus_test_proj__\\draft-group";
+        let draft = create_draft_session(&state, "leader", dir).unwrap();
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let item = payload["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == serde_json::json!(draft.id))
+            .expect("rail 应含草稿条目");
+        assert_eq!(
+            item["is_active"],
+            serde_json::json!(true),
+            "草稿就是当前对话（带着色高亮）"
+        );
+        assert_eq!(
+            item["draft"],
+            serde_json::json!(true),
+            "前端据 draft 渲染「新建对话」并隐藏重命名/归档"
+        );
+        assert_eq!(
+            item["project_path"],
+            serde_json::json!(dir),
+            "归属取创建时快照，不读库、不按当前目录推断"
+        );
+        assert_eq!(item["message_count"], serde_json::json!(0));
+        assert_eq!(item["created_at"], serde_json::json!(draft.created_at));
+
+        assert!(
+            payload["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["path"] == serde_json::json!(dir)),
+            "快照路径必须生成分组条目，否则前端会把它归入「未分组」"
+        );
+    }
+
+    /// mode 不匹配的草稿不得冒充当前对话（切到 workflow 后 leader 草稿不再 active）。
+    #[test]
+    fn draft_session_only_active_in_its_own_mode() {
+        let state = AppState::default();
+        let draft =
+            create_draft_session(&state, "workflow", "E:\\__nuphus_test_proj__\\wf").unwrap();
+        {
+            let mut cm = state.current_mode.write().unwrap();
+            *cm = "leader".to_string();
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        assert!(
+            !payload["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["id"] == serde_json::json!(draft.id)),
+            "当前 mode 是 leader 时不得展示 workflow 草稿"
+        );
+    }
+
+    /// 未发消息就切走：切换到另一条会话（成功路径）后草稿被丢弃，且不再出现在列表里。
+    #[test]
+    fn draft_session_disappears_after_switching_to_another_session() {
+        let state = AppState::default();
+        let draft =
+            create_draft_session(&state, "leader", "E:\\__nuphus_test_proj__\\switch").unwrap();
+
+        let other = session_with_user(&["别的会话"]);
+        let other_id = other.id.clone();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(
+                build_entry(other_id.clone(), "leader", &other, Some("别的会话")),
+                other,
+            );
+        }
+
+        switch_session_inner_mode(&state, other_id, Some("leader".to_string())).unwrap();
+
+        assert!(draft_session(&state).is_none(), "切换成功即丢弃草稿");
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        assert!(
+            !payload["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["id"] == serde_json::json!(draft.id)),
+            "切换后草稿不得继续留在 rail 上"
+        );
+    }
+
+    /// 首条消息 → 真实会话在诞生点落成：草稿被清掉（归属/标题由诞生点既有逻辑负责），
+    /// 不会出现「真实会话 + 草稿」两条当前对话。
+    #[test]
+    fn draft_session_cleared_when_real_session_is_born() {
+        let state = AppState::default();
+        let draft =
+            create_draft_session(&state, "leader", "E:\\__nuphus_test_proj__\\birth").unwrap();
+
+        let born = Session::new(); // 诞生点状态：全新 uuid + 空 session
+        register_session_birth(&state, &born);
+
+        assert!(draft_session(&state).is_none(), "真实会话诞生 → 草稿结束");
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        assert!(
+            !payload["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["id"] == serde_json::json!(draft.id)),
+            "诞生后 rail 只应剩真实会话"
+        );
+
+        // 自清理（诞生点按真实 prefs.project_dir 登记了归属行；未配置则无行）
+        let conn = nuphus::store::db::acquire().unwrap();
+        conn.execute(
+            "DELETE FROM session_meta WHERE session_id = ?1",
+            rusqlite::params![born.id],
+        )
+        .unwrap();
+        let _ = nuphus::store::session::delete_session(&born.id);
+    }
+
+    /// 冷启动：草稿只活在 AppState 内存里——「新进程」（新 AppState）读不到它，
+    /// 且它没有任何持久化可读（见 draft_session_leaves_no_persistence_trace），
+    /// 因此重启后不会出现该空对话。
+    #[test]
+    fn draft_session_does_not_survive_cold_start() {
+        let old = AppState::default();
+        let draft =
+            create_draft_session(&old, "leader", "E:\\__nuphus_test_proj__\\restart").unwrap();
+        drop(old); // 等价于进程退出：内存态随实例消失
+
+        let restarted = AppState::default();
+        assert!(draft_session(&restarted).is_none(), "重启后不得恢复草稿");
+        let payload = list_shelf_sessions_inner(&restarted).unwrap();
+        assert!(
+            !payload["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["id"] == serde_json::json!(draft.id)),
+            "重启后的列表不得含草稿条目"
+        );
     }
 }

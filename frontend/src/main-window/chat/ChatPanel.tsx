@@ -47,8 +47,6 @@ import {
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
-import { CompactModal } from '../layout/CompactModal'
-import { ProjectCenter } from '../pages/ProjectPage'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -63,7 +61,6 @@ import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import {
   IconCopy,
   IconCheck,
-  IconFolder,
   IconX,
   IconWorkflow,
   IconHistory,
@@ -547,7 +544,6 @@ export function ChatPanel({
   const [modelLabel, setModelLabel] = useState('')
   const [relation, setRelation] = useState(loadRelation)
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
-  const [dirOpen, setDirOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
@@ -647,14 +643,14 @@ export function ChatPanel({
     return () => clearInterval(t)
   }, [HINTS.length])
 
-  // ── 项目中心（入口：会话栏「项目」行右端 📁+ → setDirOpen(true)）──
-  // 界面复用 ProjectCenter（原「Ctrl+K → 项目配置」版式）；数据源为后端配置
-  // （preferences 是当前目录与书签的单一事实源）。此处只持有输入框 chip 的展示目录。
+  // ── 当前工作目录（输入框 chip 的展示态）──
+  // 数据源为后端配置（preferences 是当前目录与书签的单一事实源）；本组件只持有
+  // chip 的展示目录，书签的消费方是会话工作台「项目」行与「创建项目」弹窗。
   const [projectDir, setProjectDir] = useState('')
 
-  // 启动加载当前项目目录（输入框 chip 需在未打开弹窗前即可显示归属文件夹名）
+  // 启动加载当前项目目录（输入框 chip 需在弹窗/切换前即可显示归属文件夹名）
   // + 一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）。
-  // 书签本组件不再持有：输入框 chip 已改为纯展示，书签的唯一消费方是项目中心弹窗。
+  // 书签本组件不持有：输入框 chip 已改为纯展示。
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -1462,7 +1458,6 @@ export function ChatPanel({
         <SessionRail
           onSessionChanged={onChatReplaced}
           onNewChat={onNewChat}
-          onOpenProjectDir={() => setDirOpen(true)}
           onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}
@@ -2164,23 +2159,6 @@ export function ChatPanel({
           onPreviewFile={setPreviewPath}
         />
       </div>
-
-      {/* ── 项目中心（入口：会话栏「项目」行 📁+）：沿用原项目配置版式 ── */}
-      <CompactModal
-        open={dirOpen}
-        onClose={() => setDirOpen(false)}
-        title={t('projectDir.title')}
-        icon={<IconFolder size={14} />}
-        size="auto"
-      >
-        <ProjectCenter
-          onApplied={state => {
-            setProjectDir(state.path)
-            setDirOpen(false)
-            hudUpdate(`项目已切换：${state.name}`, 'info')
-          }}
-        />
-      </CompactModal>
 
       {/* ── Skills Manager Modal ── */}
       {skillsOpen &&

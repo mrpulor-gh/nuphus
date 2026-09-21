@@ -89,7 +89,6 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     <SessionRail
       onSessionChanged={vi.fn()}
       onNewChat={onNewChat}
-      onOpenProjectDir={vi.fn()}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}

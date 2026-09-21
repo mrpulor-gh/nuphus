@@ -231,6 +231,7 @@ fn main() {
             commands::list_shelf_sessions,
             commands::switch_session,
             commands::new_chat_session_cmd,
+            commands::create_project_chat,
             commands::rename_session_cmd,
             commands::archive_session,
             commands::has_resume_candidate,

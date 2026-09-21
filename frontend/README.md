@@ -42,7 +42,6 @@ src/
 │   │   └── CompactModal.tsx           # 紧凑模态框
 │   ├── pages/            # 功能页面
 │   │   ├── ModelsPage.tsx    # 模型配置（Provider/模型/参数/AuxiliaryTask）
-│   │   ├── ProjectPage.tsx   # 项目目录管理
 │   │   ├── SecurityPage.tsx  # 安全设置（权限模式/审批策略）
 │   │   ├── SkillsPage.tsx    # 技能面板（安装/搜索/详情）
 │   │   ├── SoulPage.tsx      # 身份关系配置

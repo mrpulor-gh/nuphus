@@ -185,6 +185,14 @@ const zh: Record<string, string> = {
   // ── 会话工作台：「项目」行 ⋯ 菜单（整理 / 排序 / 恢复隐藏项目）+ 📁+ ──
   'sessionRail.projectsMenu': '项目菜单',
   'sessionRail.newProjectFolder': '新建项目文件夹',
+  // ── 会话工作台：「创建项目」弹窗（📁+ → 项目名称 + 源文件夹 → 书签 + 空对话）──
+  'sessionRail.createProjectTitle': '创建项目',
+  'sessionRail.createProjectName': '项目名称',
+  'sessionRail.createProjectNameHint': '最多 80 个字符',
+  'sessionRail.createProjectSource': '源文件夹',
+  'sessionRail.createProjectPick': '选择项目文件夹',
+  'sessionRail.createProjectSubmit': '创建项目',
+  'sessionRail.createProjectFail': '创建项目失败，请重试',
   'sessionRail.menuArrange': '整理侧边栏',
   'sessionRail.menuExpandAll': '全部展开',
   'sessionRail.menuCollapseAll': '全部关闭',
@@ -1210,13 +1218,6 @@ const zh: Record<string, string> = {
   'modelManager.contextUnit': '上下文 {0}',
   'modelManager.reasoning': '推理 {0}',
 
-  'projectDir.title': '项目目录',
-  'projectDir.current': '当前工作目录',
-  'projectDir.bookmarks': '项目书签',
-  'projectDir.customPath': '自定义路径',
-  'projectDir.pathPlaceholder': '输入完整路径...',
-  'projectDir.saveBookmark': '+ 保存到项目书签',
-
   'pause.title': '任务已暂停',
   'pause.desc': 'Nuphus 正在执行中，你想怎么处理？',
   'pause.continue': '继续',
@@ -1399,18 +1400,6 @@ const zh: Record<string, string> = {
   'browser.statusProbing': '正在检测连接…',
   'browser.statusConnected': '已连接：{0}',
   'browser.statusUnreachable': '无法连接——窗口可能已关闭，重新打开后将自动恢复',
-
-  'project.selectDir': '选择项目目录',
-  'project.currentDir': '当前项目目录',
-  'project.pathPlaceholder': '输入项目目录路径',
-  'project.browse': '浏览',
-  'project.setCurrent': '设为当前',
-  'project.bookmarks': '项目书签',
-  'project.noBookmarks': '暂无书签',
-  'project.bookmarkHint': '设置项目目录后可添加到书签',
-  'project.deleteBookmark': '删除书签',
-  'project.bookmarkNamePlaceholder': '书签名称（可选）',
-  'project.addBookmark': '将当前目录加入书签',
 
   'soul.aiLabel': 'AI 名称',
   'soul.userLabel': '用户称呼',
