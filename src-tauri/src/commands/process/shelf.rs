@@ -1306,6 +1306,16 @@ pub(crate) fn switch_session_inner_mode(
             None => return Err("not_found".to_string()),
         },
     };
+    let target_enhanced_mode = if target_kind == "workflow" {
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|modes| modes.get(&entry.id).copied())
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     // 跨 mode：先切换 current_mode（在归档/安装之前，确保此后 get_chat_history
     // 与后续命令按目标 mode 路由）
@@ -1346,10 +1356,21 @@ pub(crate) fn switch_session_inner_mode(
         );
         // 切走了：草稿对话（若有）不再是当前对话
         clear_draft_session(state);
+        state
+            .workflow_enhanced_mode
+            .store(target_enhanced_mode, std::sync::atomic::Ordering::SeqCst);
         broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
     *slot = target_session;
+    state
+        .workflow_enhanced_mode
+        .store(target_enhanced_mode, std::sync::atomic::Ordering::SeqCst);
+    if target_kind == "workflow" {
+        if let Some(agent) = ctx.workflow_agent.as_mut() {
+            agent.set_enhanced_mode(target_enhanced_mode);
+        }
+    }
 
     tracing::info!(
         "[Shelf] 切换到会话 {} ({current_kind} -> {target_kind})",
@@ -2728,6 +2749,46 @@ mod tests {
         // 目标放回展示台，rail 不丢条目
         let shelf = state.shelf.lock().unwrap();
         assert!(shelf.contains(&target_id), "目标应放回展示台");
+    }
+
+    #[test]
+    fn workflow_enhanced_mode_follows_the_selected_session() {
+        let state = AppState::default();
+        let first = session_with_user(&["增强会话"]);
+        let first_id = first.id.clone();
+        let second = session_with_user(&["普通会话"]);
+        let second_id = second.id.clone();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(
+                build_entry(first_id.clone(), "workflow", &first, Some("增强会话")),
+                first,
+            );
+            shelf.put(
+                build_entry(second_id.clone(), "workflow", &second, Some("普通会话")),
+                second,
+            );
+        }
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .unwrap()
+            .insert(first_id.clone(), true);
+
+        switch_session_inner_mode(&state, first_id.clone(), Some("workflow".into())).unwrap();
+        assert!(state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
+
+        switch_session_inner_mode(&state, second_id, Some("workflow".into())).unwrap();
+        assert!(!state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
+
+        switch_session_inner_mode(&state, first_id, Some("workflow".into())).unwrap();
+        assert!(state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
     }
 
     // ── 「新建对话」弹窗：确认只记录标题，会话仍在发消息时诞生 ──

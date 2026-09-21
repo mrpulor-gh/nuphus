@@ -19,11 +19,15 @@ mod platform {
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
-    use windows::core::{Interface, BSTR};
-    use windows::Win32::Foundation::{BOOL, HWND};
+    use windows::core::{Interface, BSTR, PWSTR};
+    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
@@ -39,6 +43,7 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId,
     };
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +94,7 @@ mod platform {
     struct InternalLocator {
         app_id: String,
         window_id: String,
+        window_title: String,
         target_opaque_id: String,
         role: UiRole,
         automation_id: Option<String>,
@@ -108,6 +114,9 @@ mod platform {
         window: WindowIdentity,
         nodes: Vec<NativeNode>,
         fingerprint: String,
+        // Keep COM initialized until every UIAutomation interface above has
+        // been released. This field must remain last so it drops last.
+        _com: ComApartment,
     }
 
     #[derive(Default)]
@@ -202,6 +211,7 @@ mod platform {
             Ok(InternalLocator {
                 app_id: observation.app.id.clone(),
                 window_id: observation.window.id.clone(),
+                window_title: observation.window.title.clone(),
                 target_opaque_id: node.opaque_id.clone(),
                 role: metadata.role.clone(),
                 automation_id: metadata.automation_id.clone(),
@@ -354,6 +364,153 @@ mod platform {
                 .locators_by_candidate = candidate_locators;
             Ok(candidates)
         }
+
+        fn semantic_locator(&self, candidate: &ActionCandidate) -> Option<SemanticLocator> {
+            let state = self.state.lock().ok()?;
+            let locator = state.locators_by_candidate.get(&candidate.id)?;
+            Some(SemanticLocator {
+                app_id: locator.app_id.clone(),
+                window_id: Some(locator.window_id.clone()),
+                window_title: Some(locator.window_title.clone()),
+                role: Some(locator.role.clone()),
+                automation_id: locator.automation_id.clone(),
+                accessible_name: locator.accessible_name.clone(),
+                supported_action: Some(locator.action.clone()),
+                ordinal_hint: u16::try_from(locator.ordinal).ok(),
+            })
+        }
+
+        fn rebuild_semantic_candidate(
+            &self,
+            locator: &SemanticLocator,
+            action: NativeAction,
+            observation: &Observation,
+        ) -> Result<ActionCandidate, AutomationError> {
+            if locator.app_id != observation.app.id {
+                return Err(AutomationError::Candidates(
+                    "foreground application does not match the saved semantic locator".into(),
+                ));
+            }
+            let wrong_window = locator
+                .window_id
+                .as_ref()
+                .map(|id| id != &observation.window.id)
+                .unwrap_or_else(|| {
+                    locator
+                        .window_title
+                        .as_ref()
+                        .is_some_and(|title| title != &observation.window.title)
+                });
+            if wrong_window {
+                return Err(AutomationError::Candidates(
+                    "foreground window does not match the saved semantic locator".into(),
+                ));
+            }
+            if locator
+                .supported_action
+                .as_ref()
+                .is_some_and(|saved| saved != &action)
+            {
+                return Err(AutomationError::Candidates(
+                    "saved semantic action does not match the locator capability".into(),
+                ));
+            }
+            if !matches!(
+                action,
+                NativeAction::Invoke
+                    | NativeAction::Toggle
+                    | NativeAction::Select
+                    | NativeAction::Expand
+                    | NativeAction::Collapse
+                    | NativeAction::Focus
+                    | NativeAction::SetValue
+            ) {
+                return Err(AutomationError::Candidates(format!(
+                    "Windows UIA persistent action {action:?} is unsupported"
+                )));
+            }
+
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| AutomationError::Candidates("UIA state lock was poisoned".into()))?;
+            let matches: Vec<_> = observation
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    let metadata = state.metadata_by_node.get(&node.opaque_id)?;
+                    let matches = locator
+                        .role
+                        .as_ref()
+                        .is_none_or(|role| role == &metadata.role)
+                        && locator
+                            .automation_id
+                            .as_ref()
+                            .is_none_or(|id| metadata.automation_id.as_ref() == Some(id))
+                        && locator
+                            .accessible_name
+                            .as_ref()
+                            .is_none_or(|name| metadata.name.as_ref() == Some(name))
+                        && metadata.supported_actions.contains(&action);
+                    matches.then_some((node, metadata))
+                })
+                .collect();
+            let ordinal = locator.ordinal_hint.map(usize::from);
+            let selected = if matches.len() == 1 {
+                matches.first().copied()
+            } else if let Some(ordinal) = ordinal {
+                matches.get(ordinal).copied()
+            } else {
+                None
+            };
+            let (node, metadata) = selected.ok_or_else(|| {
+                AutomationError::Candidates(
+                    if ordinal.is_none() && matches.len() > 1 {
+                        "saved semantic locator is ambiguous; add a stable identifier or ordinal hint"
+                    } else {
+                        "saved semantic locator did not resolve to an actionable UIA element"
+                    }
+                    .into(),
+                )
+            })?;
+            let ordinal = ordinal.unwrap_or(0);
+            let internal = InternalLocator {
+                app_id: observation.app.id.clone(),
+                window_id: observation.window.id.clone(),
+                window_title: observation.window.title.clone(),
+                target_opaque_id: node.opaque_id.clone(),
+                role: metadata.role.clone(),
+                automation_id: metadata.automation_id.clone(),
+                accessible_name: metadata.name.clone(),
+                action: action.clone(),
+                risk: classify_risk(&action, metadata.name.as_deref()),
+                ordinal,
+            };
+            let id = format!("uia:persisted:{}", Uuid::new_v4().simple());
+            let candidate = ActionCandidate {
+                id: id.clone(),
+                observation_revision: observation.revision,
+                target: Some(node.opaque_id.clone()),
+                kind: candidate_kind(&action),
+                public_description: describe_action(&action, node),
+                local_risk: internal.risk,
+                preconditions: vec![predicate(
+                    "semantic_element_exists",
+                    [("target", node.opaque_id.as_str())],
+                )],
+                expected_effects: vec![predicate(
+                    "ui_state_reobserved_after_action",
+                    std::iter::empty::<(&str, &str)>(),
+                )],
+            };
+            drop(state);
+            self.state
+                .lock()
+                .map_err(|_| AutomationError::Candidates("UIA state lock was poisoned".into()))?
+                .locators_by_candidate
+                .insert(id, internal);
+            Ok(candidate)
+        }
     }
 
     #[async_trait]
@@ -369,7 +526,7 @@ mod platform {
     }
 
     fn capture_native(max_elements: usize) -> Result<NativeSnapshot, AutomationError> {
-        let _com = ComApartment::initialize()?;
+        let com = ComApartment::initialize()?;
         let hwnd = unsafe { GetForegroundWindow() };
         if hwnd.0 == 0 {
             return Err(AutomationError::Observation(
@@ -397,10 +554,12 @@ mod platform {
             .or_else(|| nonempty(title.clone()))
             .or_else(|| nonempty(window_class.clone()))
             .unwrap_or_else(|| "Windows application".into());
+        let process_identity = process_image_path(hwnd).unwrap_or_default().to_lowercase();
         let app_seed = format!(
-            "{}|{}",
+            "{}|{}|{}",
             framework.as_deref().unwrap_or("win32"),
-            window_class.to_lowercase()
+            window_class.to_lowercase(),
+            process_identity,
         );
         let app = AppIdentity {
             id: format!("windows-app:{:016x}", stable_hash(&app_seed)),
@@ -455,6 +614,7 @@ mod platform {
             window,
             nodes,
             fingerprint,
+            _com: com,
         })
     }
 
@@ -900,6 +1060,31 @@ mod platform {
         truncate(&String::from_utf16_lossy(&buffer[..copied]), 128)
     }
 
+    /// The image path is consumed only as local hash input for AppIdentity.
+    /// Neither the path nor PID is exposed in Observation or sent to Jev.
+    fn process_image_path(hwnd: HWND) -> Option<String> {
+        let mut pid = 0_u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == 0 {
+            return None;
+        }
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+        let mut buffer = vec![0_u16; 1024];
+        let mut size = buffer.len() as u32;
+        let result = unsafe {
+            QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(buffer.as_mut_ptr()),
+                &mut size,
+            )
+        };
+        let _ = unsafe { CloseHandle(handle) };
+        result.ok()?;
+        let path = String::from_utf16_lossy(&buffer[..size as usize]);
+        (!path.is_empty()).then_some(path)
+    }
+
     fn stable_hash(value: &str) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         value.hash(&mut hasher);
@@ -1004,6 +1189,17 @@ mod platform {
                 "Windows UI Automation is unsupported on this platform".into(),
             ))
         }
+
+        fn rebuild_semantic_candidate(
+            &self,
+            _locator: &SemanticLocator,
+            _action: NativeAction,
+            _observation: &Observation,
+        ) -> Result<ActionCandidate, AutomationError> {
+            Err(AutomationError::Candidates(
+                "persistent Windows UI Automation actions are unsupported on this platform".into(),
+            ))
+        }
     }
 
     #[async_trait]
@@ -1022,3 +1218,29 @@ mod platform {
 }
 
 pub use platform::WindowsUiaAdapter;
+
+#[cfg(all(test, windows))]
+mod windows_smoke_tests {
+    use super::*;
+
+    /// Manual machine-level smoke test. It reads whichever application is in
+    /// the foreground, but deliberately does not dispatch an action.
+    #[tokio::test]
+    #[ignore = "requires an interactive Windows desktop with a foreground window"]
+    async fn reads_real_foreground_uia_tree_and_builds_bounded_candidates() {
+        let adapter = WindowsUiaAdapter::default();
+        let observation = adapter
+            .observe(&ObservationScope::default())
+            .await
+            .expect("foreground UIA observation should succeed");
+        let candidates = adapter
+            .build("inspect the foreground application", &observation)
+            .expect("candidate construction should succeed");
+
+        assert!(!observation.app.id.is_empty());
+        assert!(!observation.window.id.is_empty());
+        assert!(!observation.nodes.is_empty());
+        assert!(!candidates.is_empty());
+        assert!(candidates.len() <= 255);
+    }
+}

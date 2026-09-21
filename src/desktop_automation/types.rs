@@ -89,11 +89,21 @@ pub struct ObservationScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticLocator {
     pub app_id: String,
+    /// Stable, locally-derived window identity when the platform exposes one.
+    /// Older saved steps omit it and fall back to the optional title hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<UiRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accessible_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supported_action: Option<NativeAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ordinal_hint: Option<u16>,
 }
 

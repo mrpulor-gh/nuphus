@@ -7,7 +7,8 @@ use super::registry::ToolRegistry;
 use crate::desktop_automation::{
     ActionCandidate, ActionClass, CandidateBuilder, CandidateKind, ComputerExecutor,
     ComputerObserver, DecisionInput, DecisionProvider, ExecutionGrant, ExecutionInput, JevClient,
-    LocalPolicy, Observation, ObservationScope, Policy, PolicyDecision, RecentAction, Verification,
+    LocalPolicy, NativeAction, Observation, ObservationScope, Policy, PolicyDecision, RecentAction,
+    SemanticLocator, Verification,
 };
 use crate::ToolResult;
 use serde_json::json;
@@ -16,7 +17,6 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const ACTION_SPACE_TTL: Duration = Duration::from_secs(120);
-const AMBIGUITY_FLOOR: f64 = 0.20;
 const HARD_STEP_LIMIT: u32 = 100;
 const STALL_LIMIT: u32 = 3;
 
@@ -35,6 +35,7 @@ struct ActionSpace {
     created_at: Instant,
     observation: Observation,
     candidates: Vec<ActionCandidate>,
+    persistent_locators: std::collections::HashMap<String, SemanticLocator>,
 }
 
 #[derive(Clone, Default)]
@@ -70,11 +71,20 @@ impl SemanticDesktopBackend {
             .build(goal, &observation)
             .map_err(|error| error.to_string())?;
         validate_action_space(&observation, &candidates)?;
+        let persistent_locators = candidates
+            .iter()
+            .filter_map(|candidate| {
+                self.candidates
+                    .semantic_locator(candidate)
+                    .map(|locator| (candidate.id.clone(), locator))
+            })
+            .collect();
         let space = ActionSpace {
             token: format!("obs:{}", Uuid::new_v4().simple()),
             created_at: Instant::now(),
             observation,
             candidates,
+            persistent_locators,
         };
         *self.last_space.lock().await = Some(space.clone());
         Ok(space)
@@ -160,6 +170,26 @@ impl ToolRegistry {
                 let input = execution_input(params)?;
                 execute_cached_candidate(&backend, observation_token, candidate_id, input).await
             }
+            "desktop_semantic_action" => {
+                let locator = params
+                    .get("locator")
+                    .cloned()
+                    .ok_or_else(|| "locator 不能为空".to_string())
+                    .and_then(|value| {
+                        serde_json::from_value::<SemanticLocator>(value)
+                            .map_err(|error| format!("locator 格式无效: {error}"))
+                    })?;
+                let action = params
+                    .get("action")
+                    .cloned()
+                    .ok_or_else(|| "action 不能为空".to_string())
+                    .and_then(|value| {
+                        serde_json::from_value::<NativeAction>(value)
+                            .map_err(|error| format!("action 格式无效: {error}"))
+                    })?;
+                let input = execution_input(params)?;
+                execute_persistent_action(&backend, locator, action, input).await
+            }
             "desktop_agent_step" => {
                 if !self.enhanced_mode {
                     Err("Jev 增强模式未启用；请使用 desktop_semantic_observe/desktop_semantic_execute".into())
@@ -242,6 +272,7 @@ async fn execute_jev_step(
         return Err("Jev API Key 未配置".into());
     }
     let fallback_to_primary_model = config.fallback_to_primary_model;
+    let confidence_floor = config.confidence_floor.clamp(0.0, 1.0);
     config.enabled = true;
     let client = JevClient::from_config(config).map_err(|error| error.to_string())?;
     let decision_input = DecisionInput {
@@ -262,7 +293,7 @@ async fn execute_jev_step(
         }
         Err(error) => return Err(format!("Jev 决策失败: {error}")),
     };
-    if fallback_to_primary_model && decision.confidence.unwrap_or(1.0) < AMBIGUITY_FLOOR {
+    if fallback_to_primary_model && decision.confidence.unwrap_or(1.0) < confidence_floor {
         // Keep the exact observed action space alive so the primary model can
         // execute one of the returned ids with the included token. Re-running
         // observe here would invalidate the adapter's opaque locator map.
@@ -281,6 +312,21 @@ async fn execute_jev_step(
         .find(|candidate| candidate.id == decision.candidate_id)
         .cloned()
         .ok_or_else(|| "Jev 返回了候选集合之外的 ID".to_string())?;
+    if matches!(candidate.kind, CandidateKind::Done) {
+        backend.clear_space().await;
+        backend.finish_enhanced_goal().await;
+        return Ok(json!({
+            "status": "needs_primary_completion_check",
+            "reason": "Jev 只提出任务可能已完成；请由当前主模型结合业务目标确认是否结束，不会把 Jev 的 Done 直接当作本地完成事实",
+            "candidate_id": candidate.id,
+            "decision": {
+                "provider": "jev",
+                "model": decision.actual_model,
+                "confidence": decision.confidence,
+                "usage": decision.usage,
+            },
+        }));
+    }
     if matches!(
         candidate.kind,
         CandidateKind::SetValue { .. } | CandidateKind::SetSecret { .. }
@@ -319,8 +365,6 @@ async fn execute_jev_step(
         backend
             .record_enhanced_result(&candidate, verification)
             .await;
-    } else if matches!(candidate.kind, CandidateKind::Done) {
-        backend.finish_enhanced_goal().await;
     }
     Ok(result)
 }
@@ -346,7 +390,8 @@ async fn execute_candidate(
         CandidateKind::Done => {
             backend.clear_space().await;
             return Ok(json!({
-                "status": "completed",
+                "status": "needs_primary_completion_check",
+                "reason": "完成候选不是本地可验证的通用后置条件；请由当前主模型结合业务目标确认是否结束",
                 "candidate_id": candidate.id,
                 "decision": decision,
             }));
@@ -414,6 +459,51 @@ async fn execute_candidate(
         "after_window": after.window,
         "decision": decision,
     }))
+}
+
+async fn execute_persistent_action(
+    backend: &SemanticDesktopBackend,
+    locator: SemanticLocator,
+    action: NativeAction,
+    input: ExecutionInput,
+) -> Result<serde_json::Value, String> {
+    if locator.app_id.trim().is_empty() {
+        return Err("locator.app_id 不能为空".into());
+    }
+    if locator.role.is_none()
+        && locator.automation_id.as_deref().is_none_or(str::is_empty)
+        && locator.accessible_name.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("locator 至少需要 role、automation_id 或 accessible_name 之一".into());
+    }
+    let before = backend
+        .observer
+        .observe(&ObservationScope {
+            app_id: Some(locator.app_id.clone()),
+            window_id: locator.window_id.clone(),
+            subtree_id: None,
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    let requires_achieved = !matches!(action, NativeAction::Invoke);
+    let candidate = backend
+        .candidates
+        .rebuild_semantic_candidate(&locator, action, &before)
+        .map_err(|error| error.to_string())?;
+    let result = execute_candidate(backend, &before, &candidate, &input, None).await?;
+    let verification = result
+        .get("verification")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Verification>(value).ok())
+        .unwrap_or(Verification::Unknown);
+    let verified = verification == Verification::Achieved
+        || (!requires_achieved && verification == Verification::Progress);
+    if !verified {
+        return Err(format!(
+            "已保存的语义动作没有通过执行后验证: {verification:?}"
+        ));
+    }
+    Ok(result)
 }
 
 async fn verify_with_settle(
@@ -537,13 +627,25 @@ fn action_space_json(space: &ActionSpace) -> serde_json::Value {
             "element_count": space.observation.nodes.len(),
             "captured_at_ms": space.observation.captured_at_ms,
         },
-        "candidates": space.candidates.iter().map(|candidate| json!({
-            "id": candidate.id,
-            "kind": candidate.kind,
-            "description": candidate.public_description,
-            "risk": candidate.local_risk,
-            "target": candidate.target,
-        })).collect::<Vec<_>>(),
+        "candidates": space.candidates.iter().map(|candidate| {
+            let workflow_step = space.persistent_locators.get(&candidate.id).and_then(|locator| {
+                locator.supported_action.as_ref().map(|action| json!({
+                    "tool": "desktop_semantic_action",
+                    "params": {
+                        "locator": locator,
+                        "action": action,
+                    },
+                }))
+            });
+            json!({
+                "id": candidate.id,
+                "kind": candidate.kind,
+                "description": candidate.public_description,
+                "risk": candidate.local_risk,
+                "target": candidate.target,
+                "workflow_step": workflow_step,
+            })
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -590,7 +692,34 @@ mod tests {
             &self,
             _scope: &ObservationScope,
         ) -> Result<Observation, crate::desktop_automation::AutomationError> {
-            Ok(observation())
+            let mut current = observation();
+            let executed = self.executions.load(Ordering::SeqCst) > 0;
+            if executed {
+                current.fingerprint = "changed-ui".into();
+                current.revision = 2;
+            }
+            if matches!(self.candidate_kind, CandidateKind::SetValue { .. }) {
+                current.nodes.push(crate::desktop_automation::UiNode {
+                    opaque_id: "fake-target".into(),
+                    role: crate::desktop_automation::UiRole::TextField,
+                    name: Some("Fake input".into()),
+                    short_value: None,
+                    enabled: true,
+                    visible: true,
+                    focused: false,
+                    secure: false,
+                    toggled: None,
+                    selected: None,
+                    expanded: None,
+                    value_fingerprint: Some(if executed {
+                        "value:after".into()
+                    } else {
+                        "value:before".into()
+                    }),
+                    supported_actions: vec![NativeAction::SetValue],
+                });
+            }
+            Ok(current)
         }
     }
 
@@ -610,6 +739,50 @@ mod tests {
                 preconditions: vec![],
                 expected_effects: vec![],
             }])
+        }
+
+        fn semantic_locator(&self, candidate: &ActionCandidate) -> Option<SemanticLocator> {
+            Some(SemanticLocator {
+                app_id: "fake-app".into(),
+                window_id: Some("fake-window".into()),
+                window_title: Some("Fake Window".into()),
+                role: Some(crate::desktop_automation::UiRole::Button),
+                automation_id: Some("fake-button".into()),
+                accessible_name: Some("Fake Button".into()),
+                supported_action: Some(match candidate.kind {
+                    CandidateKind::SetValue { .. } => NativeAction::SetValue,
+                    _ => NativeAction::Invoke,
+                }),
+                ordinal_hint: Some(0),
+            })
+        }
+
+        fn rebuild_semantic_candidate(
+            &self,
+            locator: &SemanticLocator,
+            action: NativeAction,
+            observation: &Observation,
+        ) -> Result<ActionCandidate, crate::desktop_automation::AutomationError> {
+            if locator.app_id != observation.app.id {
+                return Err(crate::desktop_automation::AutomationError::Candidates(
+                    "wrong app".into(),
+                ));
+            }
+            Ok(ActionCandidate {
+                id: "rebuilt-candidate".into(),
+                observation_revision: observation.revision,
+                target: Some("fake-target".into()),
+                kind: match action {
+                    NativeAction::SetValue => CandidateKind::SetValue {
+                        slot_id: "value".into(),
+                    },
+                    _ => CandidateKind::Invoke,
+                },
+                public_description: "Rebuilt fake action".into(),
+                local_risk: crate::desktop_automation::RiskClass::Reversible,
+                preconditions: vec![],
+                expected_effects: vec![],
+            })
         }
     }
 
@@ -680,6 +853,172 @@ mod tests {
         assert_eq!(*adapter.received_value.lock().unwrap(), None);
     }
 
+    #[tokio::test]
+    async fn semantic_observe_exposes_replayable_workflow_step() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter);
+
+        let observed = registry
+            .execute_semantic_desktop_tool("desktop_semantic_observe", &json!({ "goal": "open" }))
+            .await
+            .unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(observed.output.as_deref().unwrap()).unwrap();
+        let step = &payload["candidates"][0]["workflow_step"];
+
+        assert_eq!(step["tool"], "desktop_semantic_action");
+        assert_eq!(step["params"]["locator"]["app_id"], "fake-app");
+        assert_eq!(step["params"]["action"], "invoke");
+        assert!(step.to_string().find("candidate_id").is_none());
+        assert!(step.to_string().find("observation_token").is_none());
+    }
+
+    #[tokio::test]
+    async fn persistent_semantic_action_rebuilds_without_observation_token() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let executed = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_action",
+                &json!({
+                    "locator": {
+                        "app_id": "fake-app",
+                        "window_title": "Fake Window",
+                        "role": "button",
+                        "automation_id": "fake-button",
+                        "accessible_name": "Fake Button",
+                        "supported_action": "invoke",
+                        "ordinal_hint": 0
+                    },
+                    "action": "invoke"
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(executed.success, "{:?}", executed.error);
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn persistent_set_value_passes_text_only_to_local_executor() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::SetValue {
+                slot_id: "value".into(),
+            },
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let executed = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_action",
+                &json!({
+                    "locator": {
+                        "app_id": "fake-app",
+                        "window_id": "fake-window",
+                        "role": "text_field",
+                        "automation_id": "search",
+                        "supported_action": "set_value"
+                    },
+                    "action": "set_value",
+                    "value": "  workflow value  "
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(executed.success, "{:?}", executed.error);
+        assert_eq!(
+            adapter.received_value.lock().unwrap().as_deref(),
+            Some("  workflow value  ")
+        );
+        assert!(!executed
+            .output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("workflow value"));
+    }
+
+    #[tokio::test]
+    async fn persistent_state_action_requires_target_specific_verification() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Toggle,
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let rejected = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_action",
+                &json!({
+                    "locator": {
+                        "app_id": "fake-app",
+                        "window_id": "fake-window",
+                        "role": "check_box",
+                        "accessible_name": "Fake checkbox",
+                        "supported_action": "toggle"
+                    },
+                    "action": "toggle"
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(!rejected.success);
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+        assert!(rejected
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("没有通过执行后验证"));
+    }
+
+    #[tokio::test]
+    async fn persistent_semantic_action_rejects_scope_mismatch() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let rejected = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_action",
+                &json!({
+                    "locator": {
+                        "app_id": "another-app",
+                        "role": "button",
+                        "accessible_name": "Fake Button",
+                        "supported_action": "invoke"
+                    },
+                    "action": "invoke"
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(!rejected.success);
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
+    }
+
     fn stateful_observation(fingerprint: &str, toggled: bool) -> Observation {
         let mut observation = observation();
         observation.fingerprint = fingerprint.into();
@@ -742,6 +1081,39 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("local text"));
+    }
+
+    #[tokio::test]
+    async fn done_candidate_requires_primary_model_completion_check() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Done,
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let observed = registry
+            .execute_semantic_desktop_tool("desktop_semantic_observe", &json!({ "goal": "done" }))
+            .await
+            .unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(observed.output.as_deref().unwrap()).unwrap();
+        let result = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_execute",
+                &json!({
+                    "observation_token": payload["observation_token"],
+                    "candidate_id": "fake-candidate"
+                }),
+            )
+            .await
+            .unwrap();
+        let output: serde_json::Value =
+            serde_json::from_str(result.output.as_deref().unwrap()).unwrap();
+
+        assert_eq!(output["status"], "needs_primary_completion_check");
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

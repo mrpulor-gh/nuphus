@@ -149,9 +149,24 @@ export function isLlmConfigured() {
 
 /** Jev 使用独立配置，不属于聊天模型 Provider。后端永不返回 API Key 原文。 */
 export interface JevConfig {
+  enabled: boolean
   base_url: string
   model: string
   has_key: boolean
+  timeout_ms: number
+  max_retries: number
+  fallback_to_primary_model: boolean
+  confidence_floor: number
+}
+
+export interface SaveJevConfigInput {
+  apiKey?: string
+  baseUrl: string
+  model: string
+  timeoutMs: number
+  maxRetries: number
+  fallbackToPrimaryModel: boolean
+  confidenceFloor: number
 }
 
 export interface JevConnectionStatus {
@@ -170,8 +185,8 @@ export function getJevConfig() {
   return invoke<JevConfig>('get_jev_config')
 }
 
-export function saveJevConfig(apiKey: string | undefined, baseUrl: string, model: string) {
-  return invoke<JevConfig>('save_jev_config', { apiKey, baseUrl, model })
+export function saveJevConfig(input: SaveJevConfigInput) {
+  return invoke<JevConfig>('save_jev_config', { ...input })
 }
 
 export function clearJevApiKey() {

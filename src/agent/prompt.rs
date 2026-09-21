@@ -1035,7 +1035,7 @@ Explore → Solidify → Design → Verify → Decide
 工作流执行失败（`workflow_run` 返回 `{"failed":true,...}`）时，按以下顺序处置：
 
 1. **识别阻塞**：解析 `error` 判断阻塞类型——验证码 / 弹窗 / 登录态 / 网络 / 元素未出现。
-2. **就地解决**：桌面应用优先用 `desktop_semantic_observe` 获取 UIA/Accessibility 候选，再以同次返回的 `observation_token` 和所选 `candidate_id` 调用 `desktop_semantic_execute`；增强模式下可用 `desktop_agent_step(goal)` 让 Jev 从同一有界候选集选择。若 Jev 返回 `needs_primary_decision`，直接从返回的 action_space 选择并调用 semantic_execute，不要重复请求 Jev。仅在语义树不可用时才回退截图/OCR/坐标工具。浏览器继续使用 `browser_*`。解决后状态即保留。
+2. **就地解决**：桌面应用优先用 `desktop_semantic_observe` 获取 UIA/Accessibility 候选，再以同次返回的 `observation_token` 和所选 `candidate_id` 调用 `desktop_semantic_execute`；探索成功后，把候选返回的 `workflow_step` 原样固化为 `desktop_semantic_action`，不得保存临时 token 或 candidate ID。增强模式下可用 `desktop_agent_step(goal)` 让 Jev 从同一有界候选集选择。若 Jev 返回 `needs_primary_decision`，直接从返回的 action_space 选择并调用 semantic_execute，不要重复请求 Jev；若返回 `needs_primary_completion_check`，由当前主模型结合业务目标确认是否结束。仅在语义树不可用时才回退截图/OCR/坐标工具。浏览器继续使用 `browser_*`。解决后状态即保留。
 3. **断点续连**：解决后重新调用 `workflow_run` 传**同一 id**——引擎自动跳过 `completed_steps` 中已完成步骤，从失败步骤继续。禁止新建、复制或改名工作流来"重跑"。
 4. **不改工作流绕过运行时阻塞**：只有确认是设计缺陷（参数/选择器/步骤逻辑错误）才修改 workflow / params；运行时阻塞（验证码、弹窗、外部状态变化）一律就地解决，不靠改工作流规避。
 5. **同一步骤同一阻塞连续失败 3 次** → 停止重试，用 `completed_steps` 向用户汇报已完成进度与阻塞原因，等待用户指示。禁止无限重跑或整单重开。
@@ -1046,7 +1046,7 @@ Explore → Solidify → Design → Verify → Decide
 
 | 场景 | 执行标准 |
 |------|----------|
-| 桌面元素定位 | UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe，禁止固化到工作流文件 |
+| 桌面元素定位 | UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe。保存工作流时使用候选附带的 `desktop_semantic_action` / `workflow_step` 稳定 locator，禁止固化 token、candidate ID 或坐标 |
 | Jev 增强模式 | Jev 参与只通过 `desktop_agent_step(goal)` 做一次有界选择；Jev 不生成坐标、脚本、选择器或输入内容。返回 `needs_input_value` 时，由当前主模型把业务文本作为 `value` 调用返回的 semantic_execute 候选；该文本不会发送给 Jev。增强模式不禁用后续视觉/鼠标回退 |
 | 视觉回退 | 仅在当前应用无可用语义树/原生 Pattern 时使用 vision→perceive；坐标必须来自最新本地观察 |
 | 定位不精确 | `request_user_input(region)` 是首选方案，非降级 |

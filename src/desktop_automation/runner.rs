@@ -15,6 +15,27 @@ pub trait CandidateBuilder: Send + Sync {
         goal: &str,
         observation: &Observation,
     ) -> Result<Vec<ActionCandidate>, AutomationError>;
+
+    /// Return a stable, serializable locator for an observation-bound
+    /// candidate. Adapters that cannot persist semantic actions may keep the
+    /// default `None` implementation.
+    fn semantic_locator(&self, _candidate: &ActionCandidate) -> Option<SemanticLocator> {
+        None
+    }
+
+    /// Rebuild one executable candidate from a locator stored in a Workflow
+    /// tool step. The returned candidate is bound to `observation`; persisted
+    /// workflows never reuse the original candidate id or native handle.
+    fn rebuild_semantic_candidate(
+        &self,
+        _locator: &SemanticLocator,
+        _action: NativeAction,
+        _observation: &Observation,
+    ) -> Result<ActionCandidate, AutomationError> {
+        Err(AutomationError::Candidates(
+            "persistent semantic actions are unsupported by this adapter".into(),
+        ))
+    }
 }
 
 #[async_trait]

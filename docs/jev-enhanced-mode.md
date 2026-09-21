@@ -1,25 +1,25 @@
 # 桌面自动化基础层与 Jev 增强模式设计
 
-> 状态：v1 实现中；Windows UIA 语义垂直切片、Jev 配置与 Workflow 增强开关已落地
+> 状态：v1 实现中；Windows UIA 语义执行、可重放 locator、Jev 配置与 Workflow 增强开关已落地
 >
-> 最后核对：2026-09-21
+> 最后核对：2026-09-22
 >
 > 适用范围：Nuphus 工作流开发 / RPA 探索链路
 >
 > 平台顺序：Windows 首发，随后 macOS，最后 Linux
 
-### 当前实现快照（2026-09-21）
+### 当前实现快照（2026-09-22）
 
 本轮实现选择了与现有 `ToolRegistry`/`WorkflowAgent` 更贴合的最小垂直切片；本文后续章节仍包含目标态和后续阶段，不应把未勾选能力理解为已经完成。
 
 - `src/desktop_automation/` 已提供平台无关协议、有界 runner、严格的 TypeSafe System One Choice 客户端，以及 Windows `WindowsUiaAdapter`。
-- Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
-- 普通模式新增 `desktop_semantic_observe(goal)` 与 `desktop_semantic_execute(observation_token, candidate_id)`；候选空间使用不可预测、短期有效的 observation token，执行前重新观察并重新解析语义目标。
+- Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus、普通 ValuePattern 文本写入，并读取 Toggle/Select/Expand 状态与非敏感值哈希用于动作专属验证；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
+- 普通模式提供 `desktop_semantic_observe(goal)` 与 `desktop_semantic_execute(observation_token, candidate_id)`；候选空间使用不可预测、短期有效的 observation token，执行前重新观察并重新解析语义目标。观察结果同时为可持久化动作返回 `workflow_step`，已保存工作流使用 `desktop_semantic_action(locator, action, value?)` 在运行时重新解析，不保存临时 ID 或坐标。
 - Workflow 增强模式才暴露 `desktop_agent_step(goal)`。每次只允许 Jev 从当前候选集中选择一个 ID，再由本地策略、执行器和重新观察完成动作与验证；低置信度只触发主模型回退，不作为权限判断。
 - 增强模式不会禁用既有鼠标、OCR/YOLO 等兼容工具，但 WorkflowAgent 必须优先使用 UIA/原生动作；只有语义树不完整、自绘控件等场景才显式回退。Jev 本身始终只能选择本地候选 ID，不能生成坐标。
-- `desktop_agent_step` 仅供 WorkflowAgent 探索，不进入可保存的工作流步骤；旧坐标/OCR/YOLO 工具继续兼容。
-- `[jev]` 使用独立配置和现有密钥加密；前端只读取 `has_key`。Jev 请求不发送完整 UI tree、截图、值、坐标、句柄或密钥。
-- 增强会话已具备 100 步硬上限、连续 3 次无界面变化停止和最近候选记录；完整的跨应用 grant、事件订阅等待、文本/SecretSlot 和确定性已保存语义工作流仍属于后续阶段。
+- `desktop_agent_step` 仅供 WorkflowAgent 探索，不进入可保存的工作流步骤；旧坐标/OCR/YOLO 工具继续兼容。Jev 选择 `Done` 时不会直接宣告任务完成，而是交回当前主模型做业务目标确认。
+- `[jev]` 使用独立配置和现有密钥加密；前端只读取 `has_key`，并可配置超时、有限重试、低置信回退和 confidence 下限。HTTP transport 对连接/超时、408、429、5xx 做有界退避，支持 `retry-after-ms` 与 `Retry-After`。Jev 请求不发送完整 UI tree、截图、值、坐标、句柄或密钥。
+- 增强开关已按 Workflow 会话隔离；新会话默认关闭，清除 Jev Key 会关闭所有会话的增强状态。增强会话具备 100 步硬上限、连续 3 次无界面变化停止和最近动作摘要；完整的跨应用 grant、事件订阅等待和 SecretSlot 仍属于后续阶段。
 
 ## 1. 背景与目标
 
@@ -99,12 +99,12 @@ Nuphus 已有两条与 RPA 相关的链路：
 
 ### 2.2 当前缺口
 
-- 原生桌面没有统一的 Windows UIA、macOS AX、Linux AT-SPI 树读取抽象。
+- Windows UIA 已接入共享抽象；macOS AX 与 Linux AT-SPI adapter 尚未实现。
 - 当前 `desktop_mouse` 等工具仍向模型暴露 `x/y`。
 - OCR/YOLO 返回视觉框，不等价于原生可操作控件、Pattern 和安全属性。
-- 普通桌面动作缺少统一的“观察版本 → 动作 → 新观察 → 后置条件”协议。
-- 普通模式和已保存工作流还没有共享的语义 locator、fresh revalidation、结构化执行回执和授权范围检查入口。
-- 保存后的普通工作流工具执行入口不提供动态桌面循环所需的逐动作静默策略检查与验证，因此任何新 runner 都不能绕到该入口裸执行。
+- Windows UIA 动作已具备“观察版本 → fresh revalidation → 执行 → settle/poll → 动作专属验证”的首版协议；跨平台一致实现、声明式业务后置条件和事件订阅等待尚未完成。
+- 普通模式和已保存工作流已通过 `SemanticLocator` / `desktop_semantic_action` 共享首版重新定位与本地策略入口；仍需补充父链/容器、虚拟列表和更细的结构定位信息。
+- 保存后的语义工具步骤已有本地策略与验证入口；完整工作流版本 grant、SecretSlot 和 `UnknownOutcome` 对账语义仍需继续接入。
 - `WorkflowAgent` 的最大迭代数面向通用 Agent，不适合作为桌面小步循环的边界。
 
 ### 2.3 接入原则
@@ -790,7 +790,7 @@ Idle
 - 默认 20 个动作或 180 秒作为软预算；达到后先触发重新观察、候选裁剪或决策器回退，不直接停止。
 - 默认 100 个动作或 15 分钟作为交互探索硬上限；工作流步骤可以根据已声明任务设置更合适的 deadline/budget。
 - 单次 Jev 请求超时 10 秒。
-- 429/529/暂时性 5xx 最多重试 2 次，指数退避并尊重合理的 `Retry-After`。
+- 连接失败、超时、408、429、529 和暂时性 5xx 默认最多重试 2 次；使用带有界抖动的指数退避，并优先尊重合理的 `retry-after-ms` 或 `Retry-After`。
 - 只有“相同状态指纹 + 相同动作 + 无相关进展”才累计停滞；先切换观察范围或决策器，再到硬停止。
 - 低 Jev confidence 触发重新观察、缩小候选或现有主模型回退，不单独累计为权限失败。
 - 事件等待期间只要应用仍在运行且有相关进度/属性事件，就不计作无变化动作；`Wait` 数量由步骤 deadline 管理，不设全局固定三次限制。
@@ -837,7 +837,7 @@ model = "jev-latest"
 timeout_ms = 10000
 max_retries = 2
 fallback_to_primary_model = true
-confidence_profile = "calibrated"
+confidence_floor = 0.20
 ```
 
 要求：
@@ -850,7 +850,7 @@ confidence_profile = "calibrated"
 - 本地测试通过环境变量或本机加密配置注入，禁止把测试 Key 写入仓库。
 - 联调可以复用 Nuphus 本机已经配置的现有主模型和 Jev 凭据，但测试代码只能读取后端安全配置，不得回显、复制到临时脚本或写入测试快照。
 - 请求日志默认只记录耗时、HTTP 状态、实际模型和 token usage；禁止记录 Authorization 和完整 request body。
-- confidence 阈值属于评测后的运行策略，不提供未经校准的固定产品默认值；高级配置只在存在对应模型版本评测结果时展示。
+- `confidence_floor` 是回退主模型的路由阈值，不是权限门。当前提供 `0.20` 的保守可配置默认值；生产使用固定模型版本后应依据对照评测继续校准。
 
 增强开关与 `[jev].enabled` 含义不同：配置层的 `enabled` 表示此能力可用，画布按钮表示当前 Workflow 会话是否使用它。
 

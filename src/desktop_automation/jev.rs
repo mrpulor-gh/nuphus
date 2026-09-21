@@ -5,9 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const NEXT_ACTION: &str = "next_action";
+const RETRY_BACKOFF_INITIAL_MS: u64 = 500;
+const RETRY_BACKOFF_MAX_MS: u64 = 5_000;
+const RETRY_AFTER_MAX_MS: u64 = 60_000;
+const RETRY_JITTER_FRACTION: f64 = 0.25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JevError {
@@ -118,19 +122,93 @@ impl ReqwestSystemOneTransport {
     }
 }
 
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 429 | 529) || status.is_server_error()
+}
+
+fn parse_retry_after_at(headers: &reqwest::header::HeaderMap, now: SystemTime) -> Option<Duration> {
+    if let Some(milliseconds) = headers
+        .get("retry-after-ms")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return Some(Duration::from_millis(milliseconds));
+    }
+
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)?;
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let target = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let unix_seconds = u64::try_from(target.timestamp()).ok()?;
+    let target_time = UNIX_EPOCH.checked_add(Duration::from_secs(unix_seconds))?;
+    Some(target_time.duration_since(now).unwrap_or_default())
+}
+
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    parse_retry_after_at(headers, SystemTime::now())
+}
+
+fn retry_backoff(attempt: u32, jitter_unit: f64) -> Duration {
+    let exponential = RETRY_BACKOFF_INITIAL_MS
+        .saturating_mul(2_u64.saturating_pow(attempt.min(16)))
+        .min(RETRY_BACKOFF_MAX_MS);
+    let bounded_jitter = jitter_unit.clamp(0.0, 1.0) * RETRY_JITTER_FRACTION;
+    Duration::from_millis((exponential as f64 * (1.0 - bounded_jitter)).round() as u64)
+}
+
+fn retry_delay(
+    headers: Option<&reqwest::header::HeaderMap>,
+    attempt: u32,
+    jitter_unit: f64,
+) -> Duration {
+    if let Some(server_delay) = headers.and_then(parse_retry_after) {
+        if server_delay <= Duration::from_millis(RETRY_AFTER_MAX_MS) {
+            return server_delay;
+        }
+    }
+    retry_backoff(attempt, jitter_unit)
+}
+
+fn retry_jitter(attempt: u32) -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let mixed = nanos
+        .wrapping_add(u64::from(attempt).wrapping_mul(0x9E37_79B9))
+        .wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    (mixed & 0xffff) as f64 / u16::MAX as f64
+}
+
 #[async_trait]
 impl SystemOneTransport for ReqwestSystemOneTransport {
     async fn send(&self, request: &SystemOneRequest) -> Result<SystemOneResponse, JevError> {
         let mut attempt = 0_u32;
         loop {
-            let response = self
+            let response = match self
                 .client
                 .post(&self.endpoint)
                 .bearer_auth(&self.api_key)
                 .json(request)
                 .send()
                 .await
-                .map_err(|error| JevError::Request(error.to_string()))?;
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let retryable = error.is_connect() || error.is_timeout();
+                    if !retryable || attempt >= self.max_retries {
+                        return Err(JevError::Request(error.to_string()));
+                    }
+                    let delay = retry_delay(None, attempt, retry_jitter(attempt));
+                    attempt += 1;
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+            };
             let status = response.status();
             if status.is_success() {
                 return response
@@ -138,20 +216,12 @@ impl SystemOneTransport for ReqwestSystemOneTransport {
                     .await
                     .map_err(|error| JevError::Protocol(error.to_string()));
             }
-            let retryable =
-                status.as_u16() == 429 || status.as_u16() == 529 || status.is_server_error();
-            if !retryable || attempt >= self.max_retries {
+            if !is_retryable_status(status) || attempt >= self.max_retries {
                 // Do not include the response body: it may contain reflected
                 // request data and must never become a credential leak path.
                 return Err(JevError::HttpStatus(status.as_u16()));
             }
-            let retry_after = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .map(|seconds| Duration::from_secs(seconds.min(30)))
-                .unwrap_or_else(|| Duration::from_millis(250 * 2_u64.pow(attempt.min(6))));
+            let retry_after = retry_delay(Some(response.headers()), attempt, retry_jitter(attempt));
             attempt += 1;
             tokio::time::sleep(retry_after).await;
         }
@@ -424,6 +494,87 @@ mod tests {
             api_key: "test-only-placeholder".into(),
             ..JevConfig::default()
         }
+    }
+
+    #[test]
+    fn transport_retries_only_transient_http_statuses() {
+        for status in [408, 429, 500, 503, 529, 599] {
+            assert!(is_retryable_status(
+                reqwest::StatusCode::from_u16(status).unwrap()
+            ));
+        }
+        for status in [400, 401, 403, 404, 422] {
+            assert!(!is_retryable_status(
+                reqwest::StatusCode::from_u16(status).unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn retry_after_ms_takes_precedence_over_retry_after_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("retry-after-ms", "750".parse().unwrap());
+        headers.insert(reqwest::header::RETRY_AFTER, "3".parse().unwrap());
+
+        assert_eq!(
+            parse_retry_after(&headers),
+            Some(Duration::from_millis(750))
+        );
+        assert_eq!(
+            retry_delay(Some(&headers), 0, 1.0),
+            Duration::from_millis(750)
+        );
+    }
+
+    #[test]
+    fn retry_after_supports_numeric_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "2".parse().unwrap());
+
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn retry_after_supports_http_date() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Sun, 06 Nov 1994 08:49:37 GMT".parse().unwrap(),
+        );
+        let target = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT").unwrap();
+        let target_time = UNIX_EPOCH + Duration::from_secs(target.timestamp() as u64);
+
+        assert_eq!(
+            parse_retry_after_at(&headers, target_time - Duration::from_secs(7)),
+            Some(Duration::from_secs(7))
+        );
+    }
+
+    #[test]
+    fn invalid_or_excessive_retry_after_uses_bounded_backoff() {
+        let mut invalid = reqwest::header::HeaderMap::new();
+        invalid.insert(reqwest::header::RETRY_AFTER, "later".parse().unwrap());
+        assert_eq!(
+            retry_delay(Some(&invalid), 0, 0.0),
+            Duration::from_millis(500)
+        );
+
+        let mut excessive = reqwest::header::HeaderMap::new();
+        excessive.insert("retry-after-ms", "60001".parse().unwrap());
+        assert_eq!(
+            retry_delay(Some(&excessive), 1, 0.0),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn exponential_backoff_has_bounded_subtractive_jitter_and_cap() {
+        assert_eq!(retry_backoff(0, 0.0), Duration::from_millis(500));
+        assert_eq!(retry_backoff(0, 1.0), Duration::from_millis(375));
+        assert_eq!(retry_backoff(3, 0.0), Duration::from_secs(4));
+        assert_eq!(retry_backoff(3, 1.0), Duration::from_secs(3));
+        assert_eq!(retry_backoff(20, 0.0), Duration::from_secs(5));
+        assert_eq!(retry_backoff(20, 1.0), Duration::from_millis(3_750));
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@ use nuphus::runtime::Runtime;
 use nuphus::runtime::WorkflowAgent;
 use nuphus_index::IndexEngine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64};
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +29,9 @@ pub struct AppState {
     /// 当前 Workflow 开发会话是否启用 Jev 增强判断。
     /// 只控制 Jev 决策层；UIA/语义桌面基础能力不依赖此开关。
     pub workflow_enhanced_mode: AtomicBool,
+    /// Workflow session id -> enhanced-mode preference. The atomic above is
+    /// only the active-session cache consumed by the runtime hot path.
+    pub workflow_enhanced_modes: Mutex<HashMap<String, bool>>,
     /// 执行中标志（终止按钮权威源 / guard_switch 守卫）。Arc 化：refine 编排需在
     /// state 被 move 进子编排前 clone 出恢复句柄（Drop guard 恢复原值，嵌套安全）。
     pub busy: Arc<AtomicBool>,
@@ -206,6 +210,7 @@ impl Default for AppState {
             pause_flag: Arc::new(AtomicBool::new(false)),
             current_mode: Arc::new(std::sync::RwLock::new("leader".to_string())),
             workflow_enhanced_mode: AtomicBool::new(false),
+            workflow_enhanced_modes: Mutex::new(HashMap::new()),
             busy: Arc::new(AtomicBool::new(false)),
             last_process_time: AtomicI64::new(0),
             last_completion_time: AtomicI64::new(0),

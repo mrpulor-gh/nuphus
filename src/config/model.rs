@@ -205,6 +205,10 @@ fn default_jev_fallback() -> bool {
     true
 }
 
+fn default_jev_confidence_floor() -> f64 {
+    0.20
+}
+
 /// TypeSafe System One configuration.
 ///
 /// Jev is a bounded decision layer, not an LLM provider, so it deliberately
@@ -227,6 +231,9 @@ pub struct JevConfig {
     pub max_retries: u32,
     #[serde(default = "default_jev_fallback")]
     pub fallback_to_primary_model: bool,
+    /// Routing threshold only; never used as an authorization decision.
+    #[serde(default = "default_jev_confidence_floor")]
+    pub confidence_floor: f64,
 }
 
 impl Default for JevConfig {
@@ -239,13 +246,14 @@ impl Default for JevConfig {
             timeout_ms: default_jev_timeout_ms(),
             max_retries: default_jev_max_retries(),
             fallback_to_primary_model: default_jev_fallback(),
+            confidence_floor: default_jev_confidence_floor(),
         }
     }
 }
 
 /// Safe projection for UI/application state. It intentionally cannot expose
 /// the API key, even if a caller serializes the whole value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct JevConfigStatus {
     pub enabled: bool,
     pub has_key: bool,
@@ -254,6 +262,7 @@ pub struct JevConfigStatus {
     pub timeout_ms: u64,
     pub max_retries: u32,
     pub fallback_to_primary_model: bool,
+    pub confidence_floor: f64,
 }
 
 impl JevConfig {
@@ -266,6 +275,7 @@ impl JevConfig {
             timeout_ms: self.timeout_ms,
             max_retries: self.max_retries,
             fallback_to_primary_model: self.fallback_to_primary_model,
+            confidence_floor: self.confidence_floor,
         }
     }
 }
@@ -846,6 +856,10 @@ id = "m"
         assert!(registry.jev.api_key.is_empty());
         assert_eq!(registry.jev.base_url, "https://api.typesafe.ai");
         assert_eq!(registry.jev.model, "jev-latest");
+        assert_eq!(registry.jev.timeout_ms, 10_000);
+        assert_eq!(registry.jev.max_retries, 2);
+        assert!(registry.jev.fallback_to_primary_model);
+        assert_eq!(registry.jev.confidence_floor, 0.20);
     }
 
     #[test]
@@ -856,6 +870,7 @@ id = "m"
         };
         let value = serde_json::to_value(config.status()).unwrap();
         assert_eq!(value["has_key"], true);
+        assert_eq!(value["confidence_floor"], 0.20);
         assert!(value.get("api_key").is_none());
         assert!(!value.to_string().contains("jev-test-placeholder"));
     }

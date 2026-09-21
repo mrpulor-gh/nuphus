@@ -678,7 +678,10 @@ impl ToolRegistry {
     pub fn is_semantic_desktop_tool(name: &str) -> bool {
         matches!(
             name,
-            "desktop_semantic_observe" | "desktop_semantic_execute" | "desktop_agent_step"
+            "desktop_semantic_observe"
+                | "desktop_semantic_execute"
+                | "desktop_semantic_action"
+                | "desktop_agent_step"
         )
     }
 
@@ -1102,6 +1105,7 @@ mod tests {
             .collect();
         assert!(names.contains("desktop_semantic_observe"));
         assert!(names.contains("desktop_semantic_execute"));
+        assert!(names.contains("desktop_semantic_action"));
         assert!(!names.contains("desktop_agent_step"));
     }
 
@@ -1128,6 +1132,7 @@ mod tests {
         );
         assert!(enhanced.contains("desktop_semantic_observe"));
         assert!(enhanced.contains("desktop_semantic_execute"));
+        assert!(enhanced.contains("desktop_semantic_action"));
         assert!(enhanced.contains("desktop_mouse"));
         assert!(enhanced.contains("desktop_mouse_drag"));
         assert!(enhanced.contains("desktop_vision"));
@@ -1226,6 +1231,7 @@ mod tests {
             "web_search",
             "image_generate",
             "video_generate",
+            "desktop_semantic_action",
         ] {
             assert!(
                 is_workflow_step_tool(kept),
