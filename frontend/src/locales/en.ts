@@ -1027,6 +1027,8 @@ const en: Record<string, string> = {
 
   'toast.configureApiKey': 'Please configure API Key first',
   'toast.connectionLost': 'Connection lost, retrying...',
+  // Finalizing window rejects appends: the text is returned to the input box, resend shortly
+  'toast.finalizingPleaseResend': 'Wrapping up — please resend shortly (text restored)',
   'toast.requestFailed': 'Request failed',
   'toast.retryNotImplemented': 'Retry not implemented',
   'toast.interrupted': 'Interrupted',

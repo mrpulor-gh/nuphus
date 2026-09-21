@@ -62,7 +62,8 @@ function makeProps(
     onInputKeyDown: vi.fn(),
     textareaRef: createRef<HTMLTextAreaElement>(),
     imageInputRef: createRef<HTMLInputElement>(),
-    isProcessing: false,
+    // 唯一执行态（后端 ExecutionStage）：'idle' = 空闲
+    executionStage: 'idle',
     pauseState: null,
     refineState: null,
     tokenUsage: null,

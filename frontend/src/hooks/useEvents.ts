@@ -14,6 +14,7 @@ import type {
   TaskStatus,
 } from '../core/types'
 import type { MutableRefObject } from 'react'
+import type { ExecutionStage } from './useExecutionState'
 import type { MoodState } from '../ui/MoodFace'
 import { playUiSound } from '../ui/sound'
 import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
@@ -66,7 +67,12 @@ export interface EventHandlers {
   // State setters
   messages: ChatMessage[]
   setMessages: (v: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void
-  setIsProcessing: (v: boolean) => void
+  /**
+   * 执行态置位（**唯一来源**，见 useExecutionState）。
+   * 事件语义 → 阶段：execution_started → 'running'；execution_completed / error /
+   * direct_response → 'finalizing'（本轮输出收敛，后端随后才结束收尾）；提炼复位 → 'idle'。
+   */
+  setExecutionStage: (stage: ExecutionStage) => void
   setCompleted: (v: boolean) => void
   setMood: (v: MoodState) => void
   setTimeline: React.Dispatch<React.SetStateAction<TimelineEntry[]>>
@@ -182,7 +188,9 @@ export function useEvents(h: EventHandlers) {
     h.setRefining(false)
     h.setRefineState(null)
     h.setPendingRefine(null)
-    h.setIsProcessing(false)
+    // 提炼结束（失败/超时/手动关闭）：RefineGuard 已/即将释放执行态 → 本端归零，
+    // 后端真值由执行态轮询复核（不一致会被下一轮轮询纠正）。
+    h.setExecutionStage('idle')
     h.refs.executionActiveRef.current = false
     h.refs.processingRef.current = false
     if (msgId) h.setMessages(prev => prev.filter(m => m.id !== msgId))
@@ -190,7 +198,7 @@ export function useEvents(h: EventHandlers) {
     h.setRefining,
     h.setRefineState,
     h.setPendingRefine,
-    h.setIsProcessing,
+    h.setExecutionStage,
     h.setMessages,
     h.refs.executionActiveRef,
     h.refs.processingRef,
@@ -375,7 +383,8 @@ export function useEvents(h: EventHandlers) {
         }
         h.refs.streamingMsgId.current = null
         h.refs.executionActiveRef.current = false
-        h.setIsProcessing(false)
+        // 本轮输出已收敛（direct_response）：后端仍可能在收尾 → Finalizing
+        h.setExecutionStage('finalizing')
         h.setPauseState(null)
         h.setAppendQueue([])
         h.setMood(mood)
@@ -400,7 +409,8 @@ export function useEvents(h: EventHandlers) {
           h.refs.streamingMsgId.current = null
           h.refs.executionActiveRef.current = false
           h.refs.interruptedRef.current = false
-          h.setIsProcessing(false)
+          // 执行失败/中断：本轮收敛，后端随后结束收尾（Finalizing → 轮询收敛 idle）
+          h.setExecutionStage('finalizing')
           h.setCompleted(true)
           h.setGoalType(null)
           h.setPauseState(null)
@@ -423,7 +433,7 @@ export function useEvents(h: EventHandlers) {
             // 主执行错误：播放错误音效（子任务错误不打断主执行，不提示）
             playUiSound('error')
             h.refs.executionActiveRef.current = false
-            h.setIsProcessing(false)
+            h.setExecutionStage('finalizing')
             h.setCompleted(true)
             h.setAppendQueue([])
             h.setGoalType(null)
@@ -478,7 +488,7 @@ export function useEvents(h: EventHandlers) {
           // Refine mode: set execution state but don't create a message bubble
           // Keep refineState intact — the modal should stay open until SessionRefined
           if (refineActiveRef.current) {
-            h.setIsProcessing(true)
+            h.setExecutionStage('running')
             h.refs.executionActiveRef.current = true
             h.refs.streamingMsgId.current = null
             h.setDismissThinking(false)
@@ -499,7 +509,7 @@ export function useEvents(h: EventHandlers) {
           }
           h.setDismissThinking(false)
           h.setRefineState(null)
-          h.setIsProcessing(true)
+          h.setExecutionStage('running')
           h.setExecutionCounter((c: number) => c + 1)
           h.setStepIndex(event.step_index)
           h.setGoal(event.goal)
@@ -811,7 +821,10 @@ export function useEvents(h: EventHandlers) {
           h.refs.toolCallCountRef.current = 0
           h.setCompleted(true)
           getCurrentWindow().setFocus()
-          h.setIsProcessing(false)
+          // 最终回复已到达，但后端随即进入收尾（记忆落盘 / 自动提炼）——
+          // 阶段为 Finalizing 而非 idle：收尾期提交必须被拒收退回输入框，
+          // 不能再把它当「空闲」受理（原缺陷：收尾期追加被静默入队且永不执行）。
+          h.setExecutionStage('finalizing')
           h.setPauseState(null)
           h.refs.processingRef.current = false
           h.setDismissThinking(false)
@@ -985,7 +998,7 @@ export function useEvents(h: EventHandlers) {
                 refineStatus: 'streaming' as const,
               },
             ])
-            h.setIsProcessing(true)
+            h.setExecutionStage('running')
             h.setRefineState({ usagePercent: 0, totalLimit: 0 })
             import('../main-window/lib/api').then(({ executeSessionRefine }) => {
               // forced 自动提炼是「主流程自己广播、前端代跑」的机器触发路径：
@@ -1078,7 +1091,7 @@ export function useEvents(h: EventHandlers) {
               refineStatus: 'streaming' as const,
             },
           ])
-          h.setIsProcessing(true)
+          h.setExecutionStage('running')
           // 后端确认开始提炼 → 全局提炼中状态（弹窗/按钮路径统一遮罩）
           h.setRefining(true)
           break
@@ -1097,7 +1110,8 @@ export function useEvents(h: EventHandlers) {
           h.refs.lastStreamingMsgId.current = null
           h.setRefineState(null)
           h.setPendingRefine(null)
-          h.setIsProcessing(false)
+          // 提炼完成：RefineGuard 释放执行态（后端归 Idle）→ 本端同步归零
+          h.setExecutionStage('idle')
           h.setCompleted(true)
           h.setPauseState(null)
           h.setDismissThinking(false)

@@ -23,11 +23,11 @@ import {
   listCustomAgents,
   getActiveCustomAgent,
   setActiveCustomAgent,
-  isBusy,
   getAppendQueue,
   removeAppendQueueItem,
   type CustomAgentConfig,
 } from '../lib/api'
+import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
 import { ApiHealthBadge, apiHealthRailLabel } from './ApiHealthBadge'
 
@@ -52,7 +52,13 @@ interface ChatInputBarProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** 图片上传 input 引用 */
   imageInputRef: RefObject<HTMLInputElement | null>
-  isProcessing: boolean
+  /**
+   * 后端权威执行态（唯一来源，见 useExecutionState）。本组件不再自行轮询
+   * `is_busy`，也不再与前端布尔做 OR：
+   *   running     → 终止按钮 / 「执行中发送 = 追加指令」提示 / 追加队列角标
+   *   !=='idle'   → mode chip 锁定（后端仍占用，切换会被守卫拒绝）
+   */
+  executionStage: ExecutionStage
   pauseState: { actionId: string } | null
   refineState: { usagePercent: number; totalLimit: number } | null
   /** token 用量 */
@@ -139,7 +145,7 @@ export function ChatInputBar({
   onInputKeyDown,
   textareaRef,
   imageInputRef,
-  isProcessing,
+  executionStage,
   pauseState,
   refineState,
   tokenUsage,
@@ -193,6 +199,11 @@ export function ChatInputBar({
   onPreviewFile,
 }: ChatInputBarProps) {
   const { t } = useLanguage()
+  // ── 执行态谓词（全部派生自唯一来源 executionStage，本组件不再订阅任何其它来源）──
+  // isProcessing：主循环在迭代中（追加提示 / 计时 / 终止按钮）
+  // executing   ：后端仍占用（Running ∨ Finalizing）→ mode chip 锁定
+  const isProcessing = executionStage === 'running'
+  const executing = executionStage !== 'idle'
   const [localTextareaRef, setLocalTextareaRef] = useState<HTMLTextAreaElement | null>(null)
   const modeSwitchLock = useRef(false)
   // ── 全局执行闸门（大王铁律：任意执行态禁用 workflow 快捷入口）──
@@ -306,23 +317,14 @@ export function ChatInputBar({
     setVoicePartial('')
   }, [])
 
-  // ── 后端任务执行状态（终止按钮唯一权威源）──
-  // 终止按钮只判断后端 is_busy（state.busy，执行开始/结束时由后端置位）：
-  // 与前端生命周期无关——界面刷新/重载不影响，查询即得真实状态。
-  // 同步：挂载即查 + busy 期间 1.5s 轮询（感知执行开始/结束）；空闲停止轮询。
-  // ⚠️ 完成感知必须事件驱动：仅靠 1.5s 轮询，执行完成后终止按钮会延迟 1.5~3s
-  // 才变回发送（后端 busy=false 在收尾 guard drop，晚于 execution_completed 事件）。
-  const [backendBusy, setBackendBusy] = useState(false)
+  // ── 追加指令队列角标 ──
+  // 执行态（是否显示、何时隐藏）由 executionStage 单源决定：
+  // 只有 Running 期间追加才可能被消费；收尾（Finalizing）与空闲一律隐藏——
+  // 不再需要「完成后置 finished 标志」这类与后端 busy 竞速的补丁（曾用
+  // appendExecutionFinished 对抗「后端 busy 晚于完成事件复位」的 1.5~3s 延迟）。
   const [appendQueueState, setAppendQueueState] = useState<string[]>([])
-  // 执行态合成：事件驱动（isProcessing，即时）∨ 后端权威（backendBusy，挂载即查、刷新/HMR 后可恢复）。
-  // 与后端执行强绑定的 UI 锁（mode 切换等）必须用它——纯事件 state 在界面刷新后丢失会导致锁失效。
-  const executing = isProcessing || backendBusy
-  // 追加队列只属于当前执行轮次。完成事件到达后即隐藏，即使后端 busy 标志
-  // 因收尾稍晚才变为 false，也不能让旧轮询快照把已消费消息重新显示出来。
-  const [appendExecutionFinished, setAppendExecutionFinished] = useState(false)
-  // 后端轮询/消费事件是唯一显示真源；不能回退到父级旧快照，否则删除或消费后
-  // 旧 prop 会把消息重新显示出来，造成「删除无效」的假象。
-  const visibleAppendQueue = !appendExecutionFinished && executing ? appendQueueState : []
+  const visibleAppendQueue =
+    executionStage === 'running' && appendQueueState.length > 0 ? appendQueueState : []
   const handleRemoveAppend = async (index: number) => {
     try {
       const remaining = await removeAppendQueueItem(index)
@@ -336,68 +338,21 @@ export function ChatInputBar({
   }
   // 终止确认弹窗：应用内模态（window.confirm 在 Tauri WebView 中被屏蔽不弹窗），防误触
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
+  // 追加队列快照轮询：**只在执行期**开启（执行态是唯一触发源，不再自行订阅 is_busy）。
+  // 队列内容仍由后端权威快照 + 消费事件决定，与执行态解耦。
   useEffect(() => {
+    if (executionStage === 'idle') return
     let cancelled = false
-    let timer: ReturnType<typeof setInterval> | null = null
-    let fastTimer: ReturnType<typeof setInterval> | null = null
-    const clearFast = () => {
-      if (fastTimer) {
-        clearInterval(fastTimer)
-        fastTimer = null
-      }
-    }
-    const check = async () => {
-      try {
-        const busy = await isBusy()
-        if (cancelled) return
-        setBackendBusy(busy === true)
-        if (busy && !timer) {
-          timer = setInterval(() => {
-            isBusy()
-              .then(b => {
-                if (!cancelled) setBackendBusy(b === true)
-              })
-              .catch(() => {})
-            getAppendQueue()
-              .then(messages => {
-                if (!cancelled) setAppendQueueState(messages ?? [])
-              })
-              .catch(() => {})
-          }, 1500)
-        } else if (!busy && timer) {
-          clearInterval(timer)
-          timer = null
-        }
-      } catch {
-        /* 后端不可达：保持当前状态，等待下次触发 */
-      }
-    }
     const refreshAppendQueue = () => {
       getAppendQueue()
-        .then(messages => setAppendQueueState(messages ?? []))
+        .then(messages => {
+          if (!cancelled) setAppendQueueState(messages ?? [])
+        })
         .catch(() => {})
     }
-    // 执行完成/失败事件 → 立即刷新 busy（消除 1.5s 轮询间隔延迟）；
-    // 若后端收尾未完成（busy 仍 true），300ms 快速轮询跟到 false。
-    const onExecFinished = () => {
-      void check()
-      if (fastTimer) return
-      fastTimer = setInterval(() => {
-        isBusy()
-          .then(b => {
-            if (cancelled) return
-            setBackendBusy(b === true)
-            if (!b) clearFast()
-          })
-          .catch(() => {})
-      }, 300)
-    }
     const unlisteners: (() => void)[] = []
-    // ⚠️ 开始事件必须也监听：挂载时后端空闲（busy=false）不启动轮询，若无开始事件驱动
-    // 重新查询，执行开始后 backendBusy 永远 false → 终止按钮永不显示（2026-08-26 实测）。
-    // ⚠️ 事件名修正（回归 2026-08-30）：后端只发单个 `nuphus-event`（FramedEvent 包装，
-    // event.type 区分 execution_started/completed/error），此前直接 listen('execution_*')
-    // 独立事件名永远收不到 → 桌面端 backendBusy 不更新 → 终止按钮消失（手机端轮询正常）。
+    // ⚠️ 事件名（回归 2026-08-30）：后端只发单个 `nuphus-event`（FramedEvent 包装，
+    // event.type 区分 execution_started/completed/error），独立事件名永远收不到。
     const onNuphusEvent = (payload: unknown) => {
       // ChatInputBar 直连 @tauri-apps/api/event：handler 收到 Event<T>，数据在 .payload
       // （useEvents 经 bridge 已解包，此处需要多剥一层）
@@ -405,30 +360,24 @@ export function ChatInputBar({
       const type = p?.payload?.event?.type
       const event = p?.payload?.event as { type?: string; messages?: string[] } | undefined
       if (type === 'execution_started') {
-        setAppendExecutionFinished(false)
-        void check()
         refreshAppendQueue()
       } else if (type === 'append_queue_updated') {
         // 消费端发出的空快照是权威的：已插入当前执行轮次的消息不再计入角标。
         setAppendQueueState(Array.isArray(event?.messages) ? event.messages : [])
-      } else if (type === 'execution_completed' || type === 'execution_error') {
-        setAppendExecutionFinished(true)
-        setAppendQueueState([])
-        onExecFinished()
       }
+      // 完成/失败不再需要额外处理：阶段转 Finalizing 后角标本身就隐藏（见 visibleAppendQueue）
     }
     void listen<unknown>('nuphus-event', onNuphusEvent).then(u => {
       if (!cancelled) unlisteners.push(u)
     })
-    void check()
     refreshAppendQueue()
+    const timer = window.setInterval(refreshAppendQueue, 1500)
     return () => {
       cancelled = true
       if (timer) clearInterval(timer)
-      clearFast()
       unlisteners.forEach(u => u())
     }
-  }, [])
+  }, [executionStage])
 
   // ── 发送=说完：录音/识别中点发送 → 先停止会话并等尾部 final 拼入输入框，
   // 再执行发送；杜绝「发了半句 + 麦克风悬挂 + 漂浮文本进下一条草稿」──
@@ -1057,14 +1006,13 @@ export function ChatInputBar({
             // 仅 workflow 权限锁定 / 暂停等待决策时禁用。
             disabled={workflowLocked || !!pauseState}
           />
-          {/* 发送 / 终止按钮三态：
-                  执行中（仅后端 is_busy 判断）且输入框无任何内容（含语音 partial）→ 终止按钮（可点，终止当前执行）；
-                  执行中 + 有内容 → 发送按钮（追加指令）；
-                  空闲 + 空内容 → 发送按钮灰显（待命）；
-                  空闲 + 有内容 → 发送按钮高亮；
-                  完成事件已到达（execution_completed/error）→ 即使后端收尾 busy 仍 true，
-                  终止按钮也立即隐藏——agent 主循环已结束，收尾阶段不可中断，避免按钮滞留 1~3s */}
-          {backendBusy && !appendExecutionFinished && !input.trim() && !voicePartial ? (
+          {/* 发送 / 终止按钮三态（判定全部来自唯一执行态 executionStage）：
+                  running 且输入框无内容（含语音 partial）→ 终止按钮（可点，终止当前执行）；
+                  running + 有内容 → 发送按钮（追加指令）；
+                  finalizing → 发送按钮：主循环已结束、收尾不可中断，故不显示终止；
+                              此时提交会被后端拒收并退回输入框（见 handleSubmit 回填）；
+                  idle + 空内容 → 发送按钮灰显（待命）；idle + 有内容 → 高亮 */}
+          {executionStage === 'running' && !input.trim() && !voicePartial ? (
             <IconButton
               variant="input-send"
               className="interrupt"
@@ -1105,7 +1053,10 @@ export function ChatInputBar({
                     ? input.trim() || voicePartial
                       ? '执行中发送 = 追加指令，立即纳入当前任务'
                       : '执行中请先输入内容，发送 = 追加指令'
-                    : t('input.send')
+                    : executionStage === 'finalizing'
+                      ? // 收尾期：主循环已退出，追加无消费方 → 后端会拒收并把原文退回输入框
+                        t('toast.finalizingPleaseResend')
+                      : t('input.send')
               }
             >
               <IconSend size={14} />

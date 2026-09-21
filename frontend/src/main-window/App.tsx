@@ -369,7 +369,9 @@ export default function App() {
             */}
             <ChatPanel
               messages={s.messages}
-              isProcessing={s.isProcessing}
+              // 唯一执行态（后端 ExecutionStage + 事件推送）：ChatPanel 内部派生
+              // 「主循环在迭代中」与「后端仍占用」两个谓词，不再各自订阅不同来源
+              executionStage={s.executionStage}
               onSend={(input, images, references, sendId) =>
                 s.handleSend(input, images, undefined, references, sendId)
               }
@@ -494,7 +496,8 @@ export default function App() {
             <ThinkingIndicator
               key={s.executionCounter}
               step={s.dismissThinking ? '' : s.thinkingStep}
-              isThinking={s.isProcessing}
+              // 思考条呼吸与执行态同源（running）；收尾/空闲不再显示「执行中」
+              isThinking={s.executionStage === 'running'}
               completed={s.completed}
               dismissed={s.dismissThinking}
               phase={s.execPhase}

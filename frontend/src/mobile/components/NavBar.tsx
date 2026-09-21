@@ -179,11 +179,13 @@ export default function NavBar({
   const [customAgents, setCustomAgents] = useState<CustomAgentBrief[]>([])
   const [activeCustomName, setActiveCustomName] = useState<string | null>(null)
   const currentMode = activity.mode || 'leader'
-  // 会话切换锁定：与桌面 rail hardLocked 同一逻辑（canSwitch || locked 双源镜像）——
-  // can_switch = 后端 guard_switch 权威守卫（busy/追加挂起，随 /sessions 下发）；
-  // activity.running = 执行态实时镜像（对应桌面 locked prop）。锁定时列表可看、
-  // 点选禁用（主视图会话列表点选即切换）；sessions 未加载时退回 running 单源，后端守卫仍兜底。
-  const sessLocked = activity.running || (sessions ? !sessions.can_switch : false)
+  // 会话切换锁定：单一来源 = 后端执行态 stage（/sessions 下发，与桌面 rail/输入栏同源）。
+  // 收敛前是 `activity.running || !can_switch`——把「WS 事件镜像」与「后端切换守卫结论」
+  // 两个不同来源 OR 起来（append_pending 残留会让列表永久锁死）。锁定时列表可看、点选禁用。
+  // sessions 未加载时退回事件通道的 activity.running：它是**同一后端执行态**的另一条推送
+  // 通道投影，不是第二个来源（can_switch 已不参与锁定）。
+  const sessStage = sessions?.stage ?? (activity.running ? 'running' : 'idle')
+  const sessLocked = sessStage !== 'idle'
   const modeLabel =
     currentMode === 'workflow'
       ? 'Workflow'

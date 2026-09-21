@@ -985,6 +985,8 @@ const zh: Record<string, string> = {
 
   'toast.configureApiKey': '请先配置 API Key',
   'toast.connectionLost': '连接断开，正在重试...',
+  // 收尾期（主循环已退出、正在写记忆/提炼）拒收追加：消息已退回输入框，可直接重发
+  'toast.finalizingPleaseResend': '正在收尾，请稍后重发（内容已退回输入框）',
   'toast.requestFailed': '请求失败',
   'toast.retryNotImplemented': '重试功能尚未实现',
   'toast.interrupted': '已中断',

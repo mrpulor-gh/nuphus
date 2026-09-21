@@ -131,7 +131,10 @@ interface SessionRailProps {
   /** 跨 mode 会话切换成功后同步前端 mode state（后端原子切换不单独广播 mode_changed，
    *  mode chip 依赖此回调保持一致） */
   onModeSwitched?: (mode: string) => void
-  /** 后端执行态实时镜像（App isProcessing）：执行中条目禁用（后端 guard 双保险） */
+  /**
+   * 后端执行态（**唯一来源**，App 层 executionStage !== 'idle' 派生）：
+   * 执行中 / 收尾中条目禁用（后端 guard 双保险）。
+   */
   locked?: boolean
   /** 当前情绪（App mood）：执行错误（'error'）时结束翻转不播完成音效，
    *  避免与 execution_error 的错误音效重叠 */
@@ -594,8 +597,12 @@ export default function SessionRail({
   /** 列表签名：上轮渲染数据指纹（id+active+标题+顺序/分组/上限），结构未变不重绘 */
   const listSigRef = useRef('')
 
-  // ── 执行态锁定：canSwitch（轮询后端权威）或 locked（实时镜像）任一执行中 → 条目禁用 ──
-  const hardLocked = !canSwitch || locked
+  // ── 执行态锁定：单一来源 = 唯一执行态（locked 由 App 层 executionStage 派生）──
+  // 收敛前是 `!canSwitch || locked`：把「5s 轮询的 guard_switch」与「事件驱动的
+  // 前端 isProcessing」两个不同来源 OR 起来，二者不同步时锁行为不可预测（且
+  // append_pending 残留会让 rail 永久锁死）。canSwitch 现在只用于下方「外部切换
+  // 检测的冻结判定」（执行期 get_chat_history 会话解析会漂移），不再参与 UI 锁定。
+  const hardLocked = !!locked
 
   // 翻转方向检测：记录上一帧 hardLocked，区分「执行开始」（false→true）与
   // 「执行完成」（true→false）——初始挂载 false→false 不触发任何动作

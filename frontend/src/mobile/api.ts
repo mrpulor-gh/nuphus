@@ -226,9 +226,17 @@ export async function fetchCustomAgents(token: string): Promise<CustomAgentsInfo
   return (await res.json()) as CustomAgentsInfo
 }
 
-/** GET /agent-status 返回：桌面端当前执行状态 */
+/** GET /agent-status 返回：桌面端当前执行状态（执行态唯一来源的派生投影） */
 export interface AgentStatus {
+  /**
+   * 后端权威执行阶段：`"idle" | "running" | "finalizing"`（同桌面 get_execution_state）。
+   * 新增代码一律读它；`running` 是它的一跳派生（后端 `stage != "idle"`），
+   * 两者同源（`SignalState::execution_stage`），不是两个来源。
+   */
+  stage?: string
   running: boolean
+  /** 当前提交是否会被当作追加指令受理（仅 running；收尾期会被拒收） */
+  append_accepting?: boolean
   /** 桌面端提炼进行中（refine_active 原子锁）：重连/刷新后恢复提炼状态。
    *  可选——旧后端无此字段（视为 false） */
   refine_active?: boolean
@@ -395,7 +403,8 @@ export async function fetchRelayHint(token: string): Promise<RelayCfg | null> {
 /** /boot 聚合返回：identity + agentStatus + relayHint + sessions（会话清单镜像） */
 export interface BootPayload {
   identity?: Identity
-  agentStatus?: { running?: boolean }
+  /** 同 /agent-status：stage 为权威执行态，running 是其派生（同源） */
+  agentStatus?: { running?: boolean; stage?: string; append_accepting?: boolean }
   relayHint?: {
     enabled?: boolean
     url?: string
@@ -462,7 +471,14 @@ export interface ShelfProjectEntry {
 }
 
 export interface ShelfSessions {
+  /** 后端切换守卫结论（busy ∨ 追加挂起）；仅用于「切换会被拒绝」的语义，非 UI 锁来源 */
   can_switch: boolean
+  /**
+   * 后端权威执行态（与桌面 get_execution_state 同源同值）：
+   * `"idle" | "running" | "finalizing"`。移动端「执行中锁定」**只认它**，
+   * 不再与 can_switch / activity.running 做 OR 派生。
+   */
+  stage?: string
   items: ShelfSessionItem[]
   /** 可见项目文件夹（顺序即组顺序：书签序 → auto） */
   projects: ShelfProjectEntry[]
@@ -566,7 +582,8 @@ export async function newChatSession(
 
 export type SendResult =
   | { ok: true; appended?: boolean; message?: string; timeout?: boolean; imagesDropped?: boolean }
-  | { ok: false; busy: boolean; error: string }
+  /** rejected='finalizing'：收尾期拒收，消息**未被受理**（未入队、未记去重基准） */
+  | { ok: false; busy: boolean; error: string; rejected?: string }
 
 /**
  * 发送消息到共享入口（submit_user_message，source="mobile"）。
@@ -651,13 +668,21 @@ export async function sendMessage(
     return { ok: true }
   }
   let error = `发送失败（${res.status}）`
+  let rejected: string | undefined
   try {
     const body = (await res.json()) as { error?: string }
-    if (body.error) error = body.error
+    if (body.error === 'finalizing') {
+      // 收尾期拒收（主循环已退出、后端在写记忆/自动提炼）：消息未被受理，
+      // 提示用户稍后重发（桌面端会把原文退回输入框；移动端无草稿回填，见盲区）。
+      rejected = 'finalizing'
+      error = '正在收尾，请稍后重发'
+    } else if (body.error) {
+      error = body.error
+    }
   } catch {
     /* 非 JSON 响应，保留默认错误 */
   }
-  return { ok: false, busy: res.status === 409, error }
+  return { ok: false, busy: res.status === 409 && !rejected, error, rejected }
 }
 
 /**

@@ -228,8 +228,24 @@ export function gracefulStop() {
   return invoke<string>('graceful_stop')
 }
 
-export function isBusy() {
-  return invoke<boolean>('is_busy')
+/**
+ * 后端唯一权威执行态（前端执行态单一来源）。
+ *
+ * 前端所有「执行中」相关 UI（气泡光标 / 思考条 / mode 锁 / 会话 rail 锁 / 终止按钮）
+ * 都从这里派生，禁止再各自订阅 is_busy / can_switch 或自行 OR 派生（曾因此出现
+ * 「主循环已退出、界面仍以为在执行」的不一致）。
+ */
+export interface ExecutionStateSnapshot {
+  /** "idle" | "running" | "finalizing"（见 nuphus::state::ExecutionStage） */
+  stage: string
+  /** stage !== "idle"（= 旧 is_busy 语义） */
+  busy: boolean
+  /** 当前提交是否会按追加指令受理（仅 running；finalizing 会被拒收） */
+  append_accepting: boolean
+}
+
+export function getExecutionState() {
+  return invoke<ExecutionStateSnapshot>('get_execution_state')
 }
 
 export function getAppendQueue() {

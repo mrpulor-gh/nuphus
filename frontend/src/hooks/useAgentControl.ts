@@ -3,9 +3,10 @@ import { useCallback, useRef } from 'react'
 import { invoke } from '../core/bridge'
 import type { MoodState } from '../ui/MoodFace'
 import type { TimelineEntry } from '../core/types'
+import type { ExecutionStage } from './useExecutionState'
 import {
   isLlmConfigured,
-  isBusy,
+  getExecutionState,
   interrupt,
   gracefulStop,
   pauseExecution,
@@ -34,7 +35,8 @@ export interface AgentControlDeps {
   hasWorkflowActivity: boolean
   setHasWorkflowActivity: (v: boolean) => void
   // Setters (using React.Dispatch where applicable)
-  setIsProcessing: (v: boolean) => void
+  /** 执行态置位（唯一来源，见 useExecutionState）：显式传阶段，禁止再传布尔 */
+  setExecutionStage: (stage: ExecutionStage) => void
   setCompleted: (v: boolean) => void
   setGoal: (v: string) => void
   setExecPhase: React.Dispatch<React.SetStateAction<any>>
@@ -74,7 +76,7 @@ export function useAgentControl(deps: AgentControlDeps) {
     workflowRunId,
     hasWorkflowActivity,
     setHasWorkflowActivity,
-    setIsProcessing,
+    setExecutionStage,
     setCompleted,
     setGoal,
     setExecPhase,
@@ -104,13 +106,13 @@ export function useAgentControl(deps: AgentControlDeps) {
   const pendingExitModeRef = useRef<string>('leader')
 
   // ── Backend ready check ──
-  // 只检查后端连通性，不再检查 busy：
-  // 执行中发送 = 追加指令（与移动端一致），busy 时后端会走 mobile_append
-  // 入队并返回 appended=true，前端据此提示"已作为追加指令插入"。
-  // 若在这里因 busy 直接 return false，桌面端将无法执行中追加——双端行为不一致。
+  // 只检查后端连通性，不再检查执行态：
+  // 执行中发送 = 追加指令（与移动端一致），Running 时后端会入队并返回 appended=true；
+  // Finalizing 时后端会返回 rejected="finalizing"，由 handleSend 退回输入框。
+  // 若在这里因忙碌直接 return false，桌面端将无法执行中追加——双端行为不一致。
   const checkBackendReady = useCallback(async (): Promise<boolean> => {
     try {
-      await isBusy()
+      await getExecutionState()
       return true
     } catch {
       invoke('hud_update', { text: '无法连接后端', phase: 'error' })
@@ -123,14 +125,15 @@ export function useAgentControl(deps: AgentControlDeps) {
     async (input: string) => {
       if (isProcessing) {
         try {
-          const busy = await isBusy()
-          if (!busy) {
-            setIsProcessing(false)
-            executionActiveRef.current = false
-          } else {
+          const state = await getExecutionState()
+          // 后端仍占用（Running ∨ Finalizing）→ 拒绝重试；后端空闲而本地残留
+          // → 复位为 idle（本身也会由执行态轮询自愈，这里给重试路径即时反馈）
+          if (state?.busy) {
             invoke('hud_update', { text: 'Already processing, please wait', phase: 'warning' })
             return
           }
+          setExecutionStage('idle')
+          executionActiveRef.current = false
         } catch {
           invoke('hud_update', { text: 'Already processing, please wait', phase: 'warning' })
           return
@@ -143,7 +146,7 @@ export function useAgentControl(deps: AgentControlDeps) {
       }
       // 回合内重来：移除失败回合的错误气泡，新回复流式输出到干净的新气泡
       removeRetryErrorBubble()
-      setIsProcessing(true)
+      setExecutionStage('running')
       setCompleted(false)
       setExecPhase('retrying')
       setTimeline([])
@@ -158,11 +161,12 @@ export function useAgentControl(deps: AgentControlDeps) {
       } catch (e: any) {
         invoke('hud_update', { text: 'Retry failed: ' + (e.message || e), phase: 'error' })
       } finally {
-        setIsProcessing(false)
+        // 重试轮次输出已收敛 → 后端进入收尾（Finalizing），随后由轮询收敛到 idle
+        setExecutionStage('finalizing')
         executionActiveRef.current = false
       }
     },
-    [isProcessing],
+    [isProcessing, setExecutionStage],
   )
 
   // ── toggleWorkAgentMode ──
@@ -262,12 +266,17 @@ export function useAgentControl(deps: AgentControlDeps) {
   }, [])
 
   // ── handleTerminate ──
-  const handleTerminate = useCallback(async (actionId: string) => {
-    await terminateExecution(actionId)
-    setIsProcessing(false)
-    setCompleted(true)
-    setPauseState(null)
-  }, [])
+  const handleTerminate = useCallback(
+    async (actionId: string) => {
+      await terminateExecution(actionId)
+      // 终止请求已受理：主循环在下个检查点收敛（后端 stage 仍 Running/Finalizing，
+      // 由执行态轮询给出真值）。这里只把本轮标记为「输出已收敛」。
+      setExecutionStage('finalizing')
+      setCompleted(true)
+      setPauseState(null)
+    },
+    [setExecutionStage],
+  )
 
   // ── handleGracefulStop ──
   const handleGracefulStop = useCallback(async () => {
@@ -284,9 +293,10 @@ export function useAgentControl(deps: AgentControlDeps) {
     interruptedRef.current = true
     setMood('idle')
     showToast('Interrupted', 'info')
-    setIsProcessing(false)
+    // 同上：中断是异步收敛，真值仍由执行态轮询给出（execution_error 会再收敛一次）
+    setExecutionStage('finalizing')
     setCompleted(true)
-  }, [showToast, setMood, interruptedRef])
+  }, [showToast, setMood, interruptedRef, setExecutionStage])
 
   // ── handleWfPause ──
   const handleWfPause = useCallback(async () => {
@@ -311,7 +321,8 @@ export function useAgentControl(deps: AgentControlDeps) {
   const forceReset = useCallback(async () => {
     await apiForceReset()
     messagesRef.current = []
-    setIsProcessing(false)
+    // force_reset 后端已释放执行态（busy=false ⇒ stage=Idle）→ 本端同步归零
+    setExecutionStage('idle')
     setCompleted(false)
     setGoal('')
     setTimeline([])
