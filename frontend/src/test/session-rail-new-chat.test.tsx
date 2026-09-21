@@ -232,7 +232,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
 
     await openModal()
     // 点弹窗内部（选项目）不收起抽屉——关窗后入口行与焦点都还在
-    fireEvent.mouseDown(option(/一号/))
+    fireEvent.pointerDown(option(/一号/))
     expect(drawer.classList.contains('is-open')).toBe(true)
 
     fireEvent.keyDown(document, { key: 'Escape' })

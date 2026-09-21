@@ -379,7 +379,80 @@ describe('会话工作台「项目」行：图标与 ⋯ 菜单', () => {
 
     // 点击菜单外关闭（抽屉也一并收起，符合既有「面板外点击」语义）
     openMenu()
-    fireEvent.mouseDown(document.body)
+    fireEvent.pointerDown(document.body)
+    await waitFor(() =>
+      expect(screen.queryByRole('menu', { name: '项目菜单' })).not.toBeInTheDocument(),
+    )
+  })
+})
+/**
+ * 菜单外点关闭的**拦截回归**：Tauri 的窗口拖动区脚本（tauri `src/window/scripts/drag.js`）
+ * 在 document 的冒泡阶段监听 mousedown，命中 `data-tauri-drag-region` 时调用
+ * `e.stopImmediatePropagation()` —— 冒泡阶段注册在它之后的监听器会被整体吞掉，
+ * 真机表现为「点标题栏等空白区域菜单收不起来，只能再点 ⋯」（ZPY 反馈）。
+ * 两个用例分别锁住：① 冒泡被吞时仍要关；② 菜单内部点击（含展开子菜单）不能误关。
+ */
+describe('会话工作台「项目」行：菜单外点关闭不被拖动区拦截', () => {
+  beforeEach(() => {
+    listShelfSessions
+      .mockReset()
+      .mockImplementation(async () => shelfResponse({ sort_prefs: { ...backendPrefs } }))
+    switchSession.mockReset().mockResolvedValue(undefined)
+    renameSession.mockReset().mockResolvedValue(undefined)
+    archiveSession.mockReset().mockResolvedValue(undefined)
+    setProjectBookmarks.mockReset().mockResolvedValue([])
+    setProjectFolderArchived.mockReset().mockResolvedValue([])
+  })
+
+  it('冒泡阶段的 mousedown 被 stopImmediatePropagation 吞掉时，点菜单外仍关闭', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号老会话')).toBeInTheDocument())
+    openDrawer()
+    openMenu()
+
+    // 复刻 drag.js：在 document 冒泡阶段拦截 mousedown 的后续监听器
+    const swallow = (e: Event) => e.stopImmediatePropagation()
+    document.addEventListener('mousedown', swallow)
+    try {
+      fireEvent.pointerDown(document.body)
+    } finally {
+      document.removeEventListener('mousedown', swallow)
+    }
+
+    await waitFor(() =>
+      expect(screen.queryByRole('menu', { name: '项目菜单' })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('pointerdown 落在菜单内部（含已展开的子菜单）不关闭菜单', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号老会话')).toBeInTheDocument())
+    openDrawer()
+    const menu = openMenu()
+    openSubmenu(menu, '排序条件')
+
+    fireEvent.pointerDown(screen.getByRole('menu', { name: '排序条件' }))
+    fireEvent.pointerDown(within(menu).getByRole('menuitem', { name: '整理侧边栏' }))
+
+    expect(screen.getByRole('menu', { name: '项目菜单' })).toBeInTheDocument()
+  })
+
+  it('点「项目」标签行自身的空白与文字也关闭菜单（菜单正上方那一行）', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号老会话')).toBeInTheDocument())
+    openDrawer()
+
+    const label = document.querySelector('.sr-list-label') as HTMLElement
+    // ① 行空白
+    openMenu()
+    fireEvent.pointerDown(label)
+    await waitFor(() =>
+      expect(screen.queryByRole('menu', { name: '项目菜单' })).not.toBeInTheDocument(),
+    )
+
+    // ② 行内标签文字
+    openMenu()
+    fireEvent.pointerDown(document.querySelector('.sr-list-label-text') as HTMLElement)
     await waitFor(() =>
       expect(screen.queryByRole('menu', { name: '项目菜单' })).not.toBeInTheDocument(),
     )

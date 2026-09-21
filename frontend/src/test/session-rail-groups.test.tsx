@@ -187,10 +187,10 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(isOpen()).toBe(false)
 
-    // ② 色块展开 → 点击面板与色块之外收起
+    // ② 色块展开 → 点击面板与色块之外收起（pointerdown：拖动区拦截 mousedown 冒泡也不受影响）
     fireEvent.click(chip)
     expect(isOpen()).toBe(true)
-    fireEvent.mouseDown(document.body)
+    fireEvent.pointerDown(document.body)
     expect(isOpen()).toBe(false)
 
     // ③ 色块展开 → 再点色块收起（色块是唯一常驻开合入口）
