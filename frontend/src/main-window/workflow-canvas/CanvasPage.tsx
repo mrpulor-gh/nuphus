@@ -96,6 +96,7 @@ import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
 import { WorkflowInputsEditor } from './WorkflowInputsEditor'
 import { WorkflowScheduleDialog } from '../workflow/WorkflowScheduleDialog'
+import { WorkflowSwitcher } from './WorkflowSwitcher'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -122,6 +123,8 @@ interface CanvasPageProps {
   replayRunId?: string | null
   onExitReplay?: () => void
   onClose: () => void
+  /** 切换到另一个工作流画布（工作台注入：换 id 即整页换成目标工作流） */
+  onSwitchWorkflow?: (id: string) => void
 }
 
 /**
@@ -191,7 +194,13 @@ interface ConfirmState {
   resolve: (ok: boolean) => void
 }
 
-function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: CanvasPageProps) {
+function CanvasInner({
+  workflowId,
+  replayRunId = null,
+  onExitReplay,
+  onClose,
+  onSwitchWorkflow,
+}: CanvasPageProps) {
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -1570,12 +1579,49 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
             {ir.name}
           </span>
         )}
+        {/* 工作流切换：标题即当前工作流名，紧跟一个下拉 —— 直接跳到另一张画布，
+            不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
+        <WorkflowSwitcher
+          currentId={workflowId}
+          onSwitch={id => onSwitchWorkflow?.(id)}
+          disabled={readOnly || !!replayRunId}
+          disabledHint={replayRunId ? '历史回放中不可切换工作流' : '运行中 · 画布只读'}
+        />
         {dirty && <span className="wfc-badge wfc-badge--dirty">未保存</span>}
         {readOnly && (
           <span className="wfc-badge">{snapshot.running ? '运行中 · 只读' : '只读'}</span>
         )}
 
         <div className="wfc-toolbar-spacer" />
+
+        {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
+        <div className="wfc-add-wrap" ref={addWrapRef}>
+          <button
+            type="button"
+            className="wfc-btn"
+            onClick={() => setAddMenuOpen(o => !o)}
+            disabled={readOnly}
+            title="添加节点（N）"
+          >
+            <Plus size={13} /> 添加
+          </button>
+          {addMenuOpen && (
+            <div className="wfc-add-menu">
+              {ADDABLE_KINDS.map(({ kind, desc }) => (
+                <button
+                  type="button"
+                  key={kind}
+                  className="wfc-add-item"
+                  title={desc}
+                  onClick={() => void addStep(kind)}
+                >
+                  <span className="wfc-add-item-kind">{kind}</span>
+                  <span className="wfc-add-item-desc">{desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <button
           type="button"
@@ -1649,33 +1695,6 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
         >
           <Redo2 size={13} />
         </button>
-        <div className="wfc-add-wrap" ref={addWrapRef}>
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => setAddMenuOpen(o => !o)}
-            disabled={readOnly}
-            title="添加节点（N）"
-          >
-            <Plus size={13} /> 添加
-          </button>
-          {addMenuOpen && (
-            <div className="wfc-add-menu">
-              {ADDABLE_KINDS.map(({ kind, desc }) => (
-                <button
-                  type="button"
-                  key={kind}
-                  className="wfc-add-item"
-                  title={desc}
-                  onClick={() => void addStep(kind)}
-                >
-                  <span className="wfc-add-item-kind">{kind}</span>
-                  <span className="wfc-add-item-desc">{desc}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
         <button
           type="button"
           className="wfc-btn"

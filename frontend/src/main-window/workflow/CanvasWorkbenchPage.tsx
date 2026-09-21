@@ -147,6 +147,9 @@ export function CanvasWorkbenchPage({
                   replayRunId={replayRunId}
                   onExitReplay={onExitReplay}
                   onClose={onClose}
+                  /* 标题旁下拉切换目标工作流：本页已持有 workflowId 与加载态，
+                     直接换 id 即整页换成目标画布（CanvasPage 的加载 effect 依赖 id） */
+                  onSwitchWorkflow={setWorkflowId}
                 />
               </Suspense>
             )}

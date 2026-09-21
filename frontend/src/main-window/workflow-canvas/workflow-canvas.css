@@ -54,6 +54,79 @@
   background: var(--surface-hover);
 }
 
+/* ── 工作流切换（标题右侧下拉）：标题即当前工作流名，点箭头换画布，
+      不必退回列表页重新找。菜单懒加载，运行中 / 回放中禁用。 ── */
+.wfc-wf-switch {
+  position: relative;
+  display: inline-flex;
+}
+.wfc-wf-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-elevated);
+}
+.wfc-wf-menu-hint {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+.wfc-wf-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.wfc-wf-menu-item:hover {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+}
+.wfc-wf-menu-item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.wfc-wf-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 当前工作流：只标记不隐藏（用户需要确认「我在哪」，且点它等于不操作） */
+.wfc-wf-menu-item.is-current {
+  color: var(--fg-1);
+}
+.wfc-wf-menu-tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--line-2);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
 /* 重命名输入：与 wfc-title 同尺寸，输入态替代标题 */
 .wfc-title-input {
   font-size: var(--fz-lg);
