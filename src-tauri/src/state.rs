@@ -125,6 +125,15 @@ pub struct SessionState {
     /// 写入方 [`crate::commands::process::shelf::new_chat_session_with_event`]，
     /// 消费方 [`crate::commands::process::shelf::register_session_birth`]。
     pub pending_new_chat_title: Option<String>,
+    /// 「新建项目文件夹」后立刻出现、尚未开说的**草稿对话**（见
+    /// [`crate::commands::process::shelf::DraftSession`]）。
+    ///
+    /// 与 session_backup / pending_new_chat_title 同类：会话边界的一次性意图，活在内存里。
+    /// **刻意不落库**——不写 sessions 行 / session_meta 归属行 / mirror / snapshot，
+    /// 因此进程退出即消失、重启后不会出现；用户未发消息就切走（切换会话 / 新建对话 /
+    /// 恢复最近会话）即由 [`crate::commands::process::shelf::clear_draft_session`] 清掉；
+    /// 首条消息发出时真实会话在诞生点登记归属并清掉它。
+    pub draft_session: Option<crate::commands::process::shelf::DraftSession>,
 }
 
 #[derive(Default)]

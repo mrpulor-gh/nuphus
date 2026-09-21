@@ -93,18 +93,16 @@ function shelfResponse(overrides: Record<string, unknown> = {}) {
 let backendPrefs: { group_order: string; sort_key: string }
 
 function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
-  const onOpenProjectDir = vi.fn()
   const utils = render(
     <SessionRail
       onSessionChanged={vi.fn()}
       onNewChat={vi.fn()}
-      onOpenProjectDir={onOpenProjectDir}
       onSwitchProjectDir={vi.fn(async () => true)}
       onModeSwitched={vi.fn()}
       {...props}
     />,
   )
-  return { ...utils, onOpenProjectDir }
+  return utils
 }
 
 /** 抽屉收起时内容带 aria-hidden（getByRole 不可达）→ 交互前先展开 */
@@ -152,8 +150,8 @@ describe('会话工作台「项目」行：图标与 ⋯ 菜单', () => {
       })
   })
 
-  it('「项目」行两个图标：⋯ 在前、📁+ 在后；📁+ 走既有项目中心入口', async () => {
-    const { onOpenProjectDir } = renderRail()
+  it('「项目」行两个图标：⋯ 在前、📁+ 在后；📁+ 打开「创建项目」弹窗', async () => {
+    renderRail()
     await waitFor(() => expect(screen.getByText('一号老会话')).toBeInTheDocument())
     openDrawer()
 
@@ -165,8 +163,8 @@ describe('会话工作台「项目」行：图标与 ⋯ 菜单', () => {
     expect(menuBtn.compareDocumentPosition(newFolderBtn) & following).toBeTruthy()
 
     fireEvent.click(newFolderBtn)
-    expect(onOpenProjectDir).toHaveBeenCalledTimes(1)
-    // 打开项目中心前先收起菜单（不叠在弹窗之上）
+    expect(await screen.findByRole('dialog', { name: '创建项目' })).toBeInTheDocument()
+    // 打开创建项目弹窗前先收起菜单（不叠在弹窗之上）
     expect(screen.queryByRole('menu', { name: '项目菜单' })).not.toBeInTheDocument()
   })
 

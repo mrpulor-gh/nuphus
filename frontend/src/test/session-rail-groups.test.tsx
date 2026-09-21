@@ -100,19 +100,17 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     calls.push('newChat')
     return true
   })
-  const onOpenProjectDir = vi.fn(() => calls.push('openProjectDir'))
   const onSessionChanged = vi.fn()
   const utils = render(
     <SessionRail
       onSessionChanged={onSessionChanged}
       onNewChat={onNewChat}
-      onOpenProjectDir={onOpenProjectDir}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}
     />,
   )
-  return { ...utils, onSwitchProjectDir, onNewChat, onOpenProjectDir, onSessionChanged }
+  return { ...utils, onSwitchProjectDir, onNewChat, onSessionChanged }
 }
 
 describe('SessionRail 项目文件夹分组渲染', () => {
@@ -149,7 +147,7 @@ describe('SessionRail 项目文件夹分组渲染', () => {
   })
 
   it('「项目」标签位于「新建对话」按钮之后、首个分组之前（DOM 顺序）', async () => {
-    const { onOpenProjectDir } = renderRail()
+    renderRail()
     await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
 
     const newChat = document.querySelector('.sr-new-chat-btn') as HTMLElement
@@ -168,9 +166,9 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const menuBtn = within(label).getByLabelText('项目菜单')
     const newFolderBtn = within(label).getByLabelText('新建项目文件夹')
     expect(menuBtn.compareDocumentPosition(newFolderBtn) & following).toBeTruthy()
-    // 📁+ 沿用既有流程：打开项目中心（选目录 + 命名 + 加入书签）
+    // 📁+ 已改语义：打开「创建项目」弹窗（不再进项目中心）
     fireEvent.click(newFolderBtn)
-    expect(onOpenProjectDir).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('dialog', { name: '创建项目' })).toBeInTheDocument()
   })
 
   it('抽屉三种关闭路径：Esc / 点击面板外 / 再点色块（删掉 ✕ 后无回归）', async () => {

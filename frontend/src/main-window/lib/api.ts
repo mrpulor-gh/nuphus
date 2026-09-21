@@ -354,6 +354,13 @@ export interface ShelfSessionItem {
    */
   project_path?: string | null
   /**
+   * 草稿对话标记（后端 `draft: true`）：新建项目文件夹后立刻出现、尚未开说的空对话。
+   * 它**不在** SQLite / session_meta / mirror / snapshot 任何一处（纯内存态），
+   * 切换会话或退出进程即消失。前端据此渲染「新建对话」标题，并隐藏重命名/归档
+   * （重命名会写 sessions 行，违反「草稿不落库」）。可选：老后端/mock 缺失即按普通会话处理。
+   */
+  draft?: boolean
+  /**
    * 会话创建时刻（Unix 毫秒）——「按时间顺序 → 创建时间」组内排序的**唯一**依据。
    * 来源 sessions.created_at（尚无落盘行的 active 会话取首条消息时间戳）。
    * 可选：老后端 / mock 缺失时前端退化为 updated_at（见 sessionGroups.createdMillis）。
@@ -417,6 +424,19 @@ export function switchSession(id: string, mode?: string) {
  * 无标题调用（Ctrl+N 等）同时清掉上一次的残留记录。失败 reject 稳定错误码。 */
 export function newChatSessionCmd(title?: string) {
   return invoke<string>('new_chat_session_cmd', { title: title ?? null })
+}
+
+/**
+ * 「新建项目文件夹」第 ③ 步：在当前项目目录下立刻生成一条**草稿对话**并成为当前对话。
+ *
+ * 调用方（创建项目弹窗）已按序完成 ① 写书签（`setProjectBookmarks`）② 切当前目录
+ * （`setProjectDir`）——本命令只做归属快照 + 内存态登记，**不落库**：
+ * 后端无 sessions 行 / session_meta / mirror / snapshot，因此用户未发消息就切换会话会
+ * 消失、退出进程不留痕迹；发出首条消息时真实会话在诞生点登记归属（= 该文件夹），
+ * 标题走既有派生规则。失败 reject 稳定错误码（busy / append_pending / no_project_dir）。
+ */
+export function createProjectChat() {
+  return invoke<{ id: string; mode: string; project_path: string }>('create_project_chat')
 }
 
 /** 重命名会话（落 sessions.summary 元数据行） */

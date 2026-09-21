@@ -8,7 +8,7 @@
  * - 生效：写入后 `setSessionGroupCollapsedLimit` 广播 SESSION_GROUP_LIMIT_CHANGED_EVENT，
  *   会话工作台监听后立即重绘（不必等下一轮 5s 轮询）。
  *
- * 版式复用 ProjectPage（Section + FormRow + compact-input-row + form-footer），不新造样式。
+ * 版式复用设置页通用骨架（Section + FormRow + compact-input-row + form-footer），不新造样式。
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '../../ui/Button'
