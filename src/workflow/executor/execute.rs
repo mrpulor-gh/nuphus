@@ -1,6 +1,6 @@
 //! 工作流入口执行
 use super::*;
-use crate::workflow::types::InputSpec;
+use crate::workflow::inputs::resolve_declared_inputs;
 
 impl Executor {
     /// 执行工作流入口
@@ -400,26 +400,6 @@ impl Executor {
 ///
 /// 纯函数（无 IO / 无状态）：调用方须在产生 RunRecord、发 RunStarted 之前调用，
 /// 保证缺必填输入时工作流「执行前即失败」且不留下空 run。
-pub(crate) fn resolve_declared_inputs(
-    specs: &[InputSpec],
-    provided: &HashMap<String, serde_json::Value>,
-) -> Result<serde_json::Map<String, serde_json::Value>> {
-    let mut resolved = serde_json::Map::new();
-    for spec in specs {
-        if let Some(v) = provided.get(&spec.name) {
-            resolved.insert(spec.name.clone(), v.clone());
-        } else if let Some(d) = &spec.default {
-            resolved.insert(spec.name.clone(), d.clone());
-        } else if spec.required {
-            return Err(crate::NuphusError::agent(format!(
-                "缺少必填输入：{}",
-                spec.name
-            )));
-        }
-    }
-    Ok(resolved)
-}
-
 /// 输入值日志：sensitive 声明只打印掩码（值不进日志、事件与错误文本）
 fn log_input_value(name: &str, value: &serde_json::Value, sensitive: bool) {
     if sensitive {

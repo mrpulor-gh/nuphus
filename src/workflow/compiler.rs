@@ -293,6 +293,9 @@ impl Compiler {
             missing_inputs: BTreeSet::new(),
         };
 
+        ctx.errors
+            .extend(crate::workflow::inputs::validate_specs(&workflow.inputs));
+
         // inputs 声明一致性：先扫步骤模板，条件 VarRef 在遍历中就地登记
         let mut template_refs = BTreeSet::new();
         collect_template_input_refs(&workflow.steps, &mut template_refs);
@@ -304,7 +307,7 @@ impl Compiler {
             ctx.warnings.push("工作流没有任何步骤".to_string());
             ctx.finalize_inputs();
             return ValidationReport {
-                passed: true,
+                passed: ctx.errors.is_empty(),
                 warnings: ctx.warnings,
                 errors: ctx.errors,
             };

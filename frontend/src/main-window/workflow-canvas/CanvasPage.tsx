@@ -34,6 +34,7 @@ import {
   CircleCheckBig,
   CornerUpLeft,
   ListChecks,
+  Braces,
 } from 'lucide-react'
 
 import type { WorkflowStep, ToolSchema } from '../../core/types'
@@ -90,6 +91,7 @@ import { IntentFormPanel } from './IntentFormPanel'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
+import { WorkflowInputsEditor } from './WorkflowInputsEditor'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -198,6 +200,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [dirty, setDirty] = useState(false)
   /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
   const [inputsOpen, setInputsOpen] = useState(false)
+  const [inputsEditorOpen, setInputsEditorOpen] = useState(false)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
   const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
@@ -1275,6 +1278,13 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         }
         return
       }
+      if (inputsEditorOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setInputsEditorOpen(false)
+        }
+        return
+      }
       const tag = (e.target as HTMLElement)?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -1333,6 +1343,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     closeInspector,
     intentFormOpen,
     inputsOpen,
+    inputsEditorOpen,
     layer,
     switchLayer,
   ])
@@ -1512,6 +1523,15 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         )}
 
         <div className="wfc-toolbar-spacer" />
+
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => setInputsEditorOpen(true)}
+          title={readOnly ? '运行中 · 画布只读' : '编辑工作流外部输入声明'}
+        >
+          <Braces size={13} /> 外部输入
+        </button>
 
         <button
           type="button"
@@ -1810,6 +1830,17 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         running={snapshot.running}
         onConfirm={inputs => void runWithInputs(inputs)}
         onCancel={() => setInputsOpen(false)}
+      />
+      <WorkflowInputsEditor
+        open={inputsEditorOpen}
+        specs={ir.inputs ?? NO_INPUT_SPECS}
+        readOnly={readOnly}
+        onApply={inputs => {
+          setIr(current => (current ? { ...current, inputs } : current))
+          setDirty(true)
+          setInputsEditorOpen(false)
+        }}
+        onCancel={() => setInputsEditorOpen(false)}
       />
 
       {/* ── 确认弹窗 ── */}

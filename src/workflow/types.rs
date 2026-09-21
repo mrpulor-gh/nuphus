@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 // ── Declarative external inputs ──
 
-/// 外部输入类型声明：供启动交互与校验提示使用，执行层不做强制类型转换
+/// 外部输入类型声明：供启动交互与契约校验使用；执行层校验类型但不做隐式转换。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum InputKind {

@@ -8,6 +8,7 @@ pub mod compiler;
 pub mod events;
 pub mod executor;
 pub mod hud_control;
+pub mod inputs;
 pub mod scheduler;
 pub mod store;
 pub mod types;

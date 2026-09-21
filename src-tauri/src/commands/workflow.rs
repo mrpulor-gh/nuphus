@@ -219,11 +219,19 @@ pub async fn wf_run(
     for key in inputs.keys() {
         tracing::debug!("[wf_run] 收到输入键: {}", key);
     }
-    let inputs = if inputs.is_empty() {
-        None
-    } else {
-        Some(inputs)
-    };
+    // 在异步 spawn 前执行与 executor 相同的输入契约预检，让 UI 直接收到必填/类型错误。
+    // 未声明键仍允许存在，executor 会按兼容语义只注入顶层。
+    {
+        let engine = state.workflow_engine.read().await;
+        let workflow = engine
+            .store
+            .get(&id)
+            .await
+            .ok_or_else(|| format!("Workflow not found: {id}"))?;
+        nuphus::workflow::inputs::resolve_declared_inputs(&workflow.inputs, &inputs)
+            .map_err(|e| e.to_string())?;
+    }
+    let inputs = (!inputs.is_empty()).then_some(inputs);
     // 注入 LLM client + ToolRegistry（ChatAgent 步骤依赖），与 plugin_workflow_run 共用公共函数
     {
         let mut engine = state.workflow_engine.write().await;

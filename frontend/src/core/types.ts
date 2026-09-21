@@ -400,7 +400,7 @@ export interface WorkflowInputSpec {
   /** 默认值（未填时后端兜底注入；UI 预填） */
   default?: unknown
   description?: string
-  /** 敏感值：密码控件、不回显、不落任何持久化 */
+  /** 敏感值：密码控件且不写日志/事件；本机运行快照仍会保留值 */
   sensitive?: boolean
 }
 

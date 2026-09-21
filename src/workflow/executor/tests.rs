@@ -1,6 +1,6 @@
-use super::execute::resolve_declared_inputs;
 use super::*;
 use crate::workflow::events::EventBus;
+use crate::workflow::inputs::resolve_declared_inputs;
 use crate::workflow::store::WorkflowStore;
 use crate::workflow::types::Workflow;
 use crate::workflow::types::{
