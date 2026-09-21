@@ -397,6 +397,17 @@ impl WorkflowEngine {
         config: ScheduleConfig,
         inputs: std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
+        self.set_schedule_with_inputs_and_anchor(workflow_id, config, inputs, None)
+            .await
+    }
+
+    async fn set_schedule_with_inputs_and_anchor(
+        &self,
+        workflow_id: &str,
+        config: ScheduleConfig,
+        inputs: std::collections::HashMap<String, serde_json::Value>,
+        anchor_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
         // Persist to store
         let mut wf = self.store.get(workflow_id).await.ok_or_else(|| {
             crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
@@ -404,10 +415,11 @@ impl WorkflowEngine {
         let wf_id = workflow_id.to_string();
         let exec_cb = self.schedule_exec.lock().unwrap().clone();
         self.scheduler
-            .set_schedule(
+            .set_schedule_with_anchor(
                 &wf_id.clone(),
                 config.clone(),
                 inputs,
+                anchor_at,
                 &self.store,
                 move |inputs| {
                     let wf_id = wf_id.clone();
@@ -476,7 +488,12 @@ impl WorkflowEngine {
                 }
             };
             if let Err(e) = self
-                .set_schedule_with_inputs(&wf_id, binding.config.clone(), inputs)
+                .set_schedule_with_inputs_and_anchor(
+                    &wf_id,
+                    binding.config.clone(),
+                    inputs,
+                    binding.anchor_at,
+                )
                 .await
             {
                 tracing::warn!(
@@ -552,6 +569,7 @@ impl WorkflowEngine {
                     timezone: timezone.to_string(),
                     enabled: true,
                     label: None,
+                    interval_minutes: None,
                 };
                 match self
                     .set_schedule_with_inputs(workflow_id, config, inputs)

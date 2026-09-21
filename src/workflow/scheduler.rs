@@ -23,6 +23,9 @@ pub struct ScheduleBinding {
     /// Explicit values only. Declaration defaults are deliberately resolved at trigger time.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     inputs: HashMap<String, serde_json::Value>,
+    /// Anchor used by interval schedules. Cron schedules ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) anchor_at: Option<DateTime<Utc>>,
 }
 
 impl ScheduleBinding {
@@ -45,7 +48,11 @@ impl ScheduleBinding {
             })?;
             *value = serde_json::Value::String(crate::cookies::encrypt_secret(&json));
         }
-        Ok(Self { config, inputs })
+        Ok(Self {
+            config,
+            inputs,
+            anchor_at: None,
+        })
     }
 
     pub fn decode_inputs(&self, specs: &[InputSpec]) -> Result<HashMap<String, serde_json::Value>> {
@@ -134,6 +141,34 @@ fn next_occurrence(schedule: &Schedule, timezone: Tz, now: DateTime<Utc>) -> Opt
         .map(|next| next.with_timezone(&Utc))
 }
 
+fn validate_interval(interval_minutes: u32) -> Result<()> {
+    if !(1..=1440).contains(&interval_minutes) {
+        return Err(crate::NuphusError::agent(format!(
+            "Invalid interval_minutes '{}': expected 1..=1440",
+            interval_minutes
+        )));
+    }
+    Ok(())
+}
+
+fn next_interval_occurrence(
+    anchor_at: DateTime<Utc>,
+    interval_minutes: u32,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    if validate_interval(interval_minutes).is_err() {
+        return None;
+    }
+    let interval = chrono::Duration::minutes(i64::from(interval_minutes));
+    let elapsed = now.signed_duration_since(anchor_at);
+    let steps = if elapsed < chrono::Duration::zero() {
+        0
+    } else {
+        elapsed.num_seconds().div_euclid(interval.num_seconds()) + 1
+    };
+    Some(anchor_at + interval * i32::try_from(steps).unwrap_or(i32::MAX))
+}
+
 impl SchedulerEngine {
     pub fn new() -> Self {
         Self::with_persist_path(resolve_persist_path())
@@ -158,6 +193,23 @@ impl SchedulerEngine {
         F: Fn(HashMap<String, serde_json::Value>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
+        self.set_schedule_with_anchor(workflow_id, config, explicit_inputs, None, store, on_run)
+            .await
+    }
+
+    pub async fn set_schedule_with_anchor<F, Fut>(
+        &self,
+        workflow_id: &str,
+        config: ScheduleConfig,
+        explicit_inputs: HashMap<String, serde_json::Value>,
+        anchor_at: Option<DateTime<Utc>>,
+        store: &WorkflowStore,
+        on_run: F,
+    ) -> Result<()>
+    where
+        F: Fn(HashMap<String, serde_json::Value>) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         let workflow = store.get(workflow_id).await.ok_or_else(|| {
             crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
         })?;
@@ -167,9 +219,17 @@ impl SchedulerEngine {
             ));
         }
 
-        let schedule = parse_five_field_cron(&config.cron)?;
+        if let Some(interval_minutes) = config.interval_minutes {
+            validate_interval(interval_minutes)?;
+        } else {
+            parse_five_field_cron(&config.cron)?;
+        }
         let timezone = parse_timezone(&config.timezone)?;
-        let binding = ScheduleBinding::new(config.clone(), &workflow.inputs, &explicit_inputs)?;
+        let binding_anchor = config
+            .interval_minutes
+            .map(|_| anchor_at.unwrap_or_else(Utc::now));
+        let mut binding = ScheduleBinding::new(config.clone(), &workflow.inputs, &explicit_inputs)?;
+        binding.anchor_at = binding_anchor;
 
         if let Some(previous) = self.tasks.write().await.remove(workflow_id) {
             if let Some(handle) = previous.handle {
@@ -179,9 +239,24 @@ impl SchedulerEngine {
 
         let handle = if config.enabled {
             let callback_inputs = explicit_inputs;
+            let interval_minutes = config.interval_minutes;
+            let anchor_at = binding.anchor_at;
+            let cron = if interval_minutes.is_none() {
+                Some(parse_five_field_cron(&config.cron)?)
+            } else {
+                None
+            };
             Some(tokio::spawn(async move {
                 loop {
-                    let Some(next) = next_occurrence(&schedule, timezone, Utc::now()) else {
+                    let now = Utc::now();
+                    let next = match (interval_minutes, anchor_at, cron.as_ref()) {
+                        (Some(interval), Some(anchor), _) => {
+                            next_interval_occurrence(anchor, interval, now)
+                        }
+                        (None, _, Some(schedule)) => next_occurrence(schedule, timezone, now),
+                        _ => None,
+                    };
+                    let Some(next) = next else {
                         tracing::error!("[scheduler] Cron expression has no future occurrence");
                         return;
                     };
@@ -257,6 +332,19 @@ impl SchedulerEngine {
     }
 
     pub fn preview(config: &ScheduleConfig, count: usize) -> Result<Vec<DateTime<Utc>>> {
+        if let Some(interval_minutes) = config.interval_minutes {
+            validate_interval(interval_minutes)?;
+            let anchor = Utc::now();
+            let mut now = anchor;
+            let mut dates = Vec::with_capacity(count);
+            for _ in 0..count {
+                let next = next_interval_occurrence(anchor, interval_minutes, now)
+                    .ok_or_else(|| crate::NuphusError::agent("无法计算间隔调度"))?;
+                dates.push(next);
+                now = next;
+            }
+            return Ok(dates);
+        }
         let schedule = parse_five_field_cron(&config.cron)?;
         let timezone = parse_timezone(&config.timezone)?;
         Ok(schedule
@@ -334,6 +422,7 @@ mod tests {
             timezone: timezone.into(),
             enabled: true,
             label: None,
+            interval_minutes: None,
         }
     }
 
@@ -381,6 +470,35 @@ mod tests {
         assert_eq!(next, Utc.with_ymd_and_hms(2026, 3, 9, 6, 30, 0).unwrap());
         assert!(parse_five_field_cron("0 0 * *").is_err());
         assert!(parse_timezone("Mars/Olympus").is_err());
+    }
+
+    #[test]
+    fn interval_schedule_supports_arbitrary_minutes_and_rejects_out_of_range() {
+        let anchor = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = anchor + chrono::Duration::minutes(89);
+        assert_eq!(
+            next_interval_occurrence(anchor, 90, now),
+            Some(anchor + chrono::Duration::minutes(180))
+        );
+        assert!(validate_interval(1).is_ok());
+        assert!(validate_interval(1440).is_ok());
+        assert!(validate_interval(0).is_err());
+        assert!(validate_interval(1441).is_err());
+    }
+
+    #[test]
+    fn interval_preview_uses_one_to_one_minute_anchor() {
+        let config = ScheduleConfig {
+            cron: "*/5 * * * *".into(),
+            timezone: "UTC".into(),
+            enabled: true,
+            label: None,
+            interval_minutes: Some(90),
+        };
+        let dates = SchedulerEngine::preview(&config, 3).unwrap();
+        assert_eq!(dates.len(), 3);
+        assert_eq!((dates[1] - dates[0]).num_minutes(), 90);
+        assert_eq!((dates[2] - dates[1]).num_minutes(), 90);
     }
 
     #[tokio::test]

@@ -171,6 +171,9 @@ pub struct ScheduleConfig {
     /// Human-readable description
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Optional fixed interval in minutes. When present, this takes precedence over `cron`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_minutes: Option<u32>,
 }
 
 fn default_cron_tz() -> String {
