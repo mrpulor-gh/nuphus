@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Clock3, ExternalLink, RefreshCw, Trash2 } from 'lucide-react'
 import type { WorkflowItem } from '../../core/types'
 import { Button } from '../../ui/Button'
+import { IconClock3, IconExternalLink, IconRefresh, IconTrash2 } from '../../ui/Icons'
 import {
   listWorkflows,
   wfScheduleHistoryDelete,
@@ -112,11 +112,11 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
     <div className="schedule-history-page">
       <div className="schedule-history-toolbar">
         <div className="schedule-history-heading">
-          <Clock3 size={16} />
+          <IconClock3 size={16} />
           <span>定时运行历史</span>
         </div>
         <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw size={13} />
+          <IconRefresh size={13} />
           刷新
         </Button>
         <Button
@@ -125,7 +125,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
           onClick={() => void clearHistory()}
           disabled={loading || total === 0}
         >
-          <Trash2 size={13} />
+          <IconTrash2 size={13} />
           清理历史
         </Button>
       </div>
@@ -228,7 +228,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
                       size="sm"
                       onClick={() => onOpenReplay(run.workflow_id, run.run_id)}
                     >
-                      <ExternalLink size={13} />
+                      <IconExternalLink size={13} />
                       查看回放
                     </Button>
                   </td>

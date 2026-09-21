@@ -5,11 +5,20 @@ import { useState, useEffect, useCallback } from 'react'
 import { listWorkflows, wfDelete, wfGetRaw, wfSave } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
 import type { WorkflowItem } from '../../core/types'
-import { IconSearch, IconTrash2, IconX, IconWorkflow, IconPlay, IconBot } from '../../ui/Icons'
+import {
+  IconSearch,
+  IconTrash2,
+  IconX,
+  IconWorkflow,
+  IconPlay,
+  IconBot,
+  IconClock3,
+  IconLayoutDashboard,
+  IconPencil,
+} from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ChatAgentConfig } from './ChatAgentConfig'
-import { LayoutDashboard, Pencil, Clock3 } from 'lucide-react'
 import { WorkflowScheduleDialog } from './WorkflowScheduleDialog'
 
 function formatTime(ts: number, t?: (key: string, ...args: string[]) => string): string {
@@ -278,7 +287,7 @@ export function WorkflowPage({
           disabled={gateLocked}
           title={gateLocked ? gateLockNotice : '新建空白工作流并直接在画布中编排'}
         >
-          <LayoutDashboard size={12} /> 画布新建
+          <IconLayoutDashboard size={12} /> 画布新建
         </Button>
       </div>
 
@@ -368,7 +377,7 @@ export function WorkflowPage({
                       onClick={() => startRename(item)}
                       className="wf-action-rename"
                     >
-                      <Pencil size={13} />
+                      <IconPencil size={13} />
                     </IconButton>
                     <IconButton
                       variant="default"
@@ -387,7 +396,7 @@ export function WorkflowPage({
                       title={item.schedule?.enabled ? '定时运行已启用' : '设置定时运行'}
                       onClick={() => setScheduleEditing(item)}
                     >
-                      <Clock3 size={14} />
+                      <IconClock3 size={14} />
                     </IconButton>
                     <IconButton
                       variant="ghost"
@@ -396,7 +405,7 @@ export function WorkflowPage({
                       disabled={gateLocked}
                       title={gateLocked ? gateLockNotice : t('workflow.canvas')}
                     >
-                      <LayoutDashboard size={14} />
+                      <IconLayoutDashboard size={14} />
                     </IconButton>
                     {confirmDelete === item.id ? (
                       <>

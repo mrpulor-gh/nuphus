@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Clock3, Trash2 } from 'lucide-react'
 import type {
   ScheduleConfig,
   WorkflowInputKind,
@@ -7,6 +6,7 @@ import type {
   WorkflowItem,
 } from '../../core/types'
 import { Button } from '../../ui/Button'
+import { IconClock3, IconTrash2 } from '../../ui/Icons'
 import { CompactModal } from '../layout/CompactModal'
 import {
   wfScheduleGet,
@@ -318,7 +318,7 @@ export function WorkflowScheduleDialog({
       open={open}
       onClose={onClose}
       title={`定时运行 · ${workflow.title}`}
-      icon={<Clock3 size={14} />}
+      icon={<IconClock3 size={14} />}
       size="xl"
       layer={layer}
       className="wfs-modal"
@@ -332,7 +332,7 @@ export function WorkflowScheduleDialog({
                 disabled={readOnly || saving}
                 onClick={() => void remove()}
               >
-                <Trash2 size={12} /> 删除定时
+                <IconTrash2 size={12} /> 删除定时
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={onClose}>

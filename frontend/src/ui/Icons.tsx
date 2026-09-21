@@ -70,6 +70,9 @@ export {
   Settings as IconSettings,
   MoreHorizontal as IconMoreHorizontal,
   ArchiveRestore as IconRestore,
+  Clock3 as IconClock3,
+  LayoutDashboard as IconLayoutDashboard,
+  Pencil as IconPencil,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {
