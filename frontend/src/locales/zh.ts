@@ -52,7 +52,7 @@ const zh: Record<string, string> = {
   'welcome.shortcut.wfStop': '终止工作流',
 
   'input.placeholder': '输入问题开始对话 · 按 / 查看快捷命令',
-  'input.hint.shortcuts': 'Enter 发送 · Shift+Enter 换行',
+  'input.hint.shortcuts': 'Enter 发送 · Shift+Enter / Ctrl+Enter 换行',
   'input.hint.commandsQueue': '按 / 查看快捷命令，执行中 · 直接输入消息发送 → 可追加内容到消息队列',
   'input.hint.modes': '模式：编程任务用 LEADER，自动化任务用 WORKFLOW',
   'input.hint.desktop': '我可以操作桌面应用和浏览器——试试直接描述你要做的事',
@@ -1471,7 +1471,6 @@ const zh: Record<string, string> = {
   'help.shortcut.send': '发送消息',
   'help.shortcut.newline': '换行',
   'help.shortcut.palette': '打开命令面板；Workflow 模式下打开工作流列表',
-  'help.shortcut.altSend': '发送（备选）',
   'help.shortcut.esc': '关闭弹窗 / 取消',
   'help.arch': '系统架构',
   'help.arch.desc':

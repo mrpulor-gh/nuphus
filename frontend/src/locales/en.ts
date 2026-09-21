@@ -52,7 +52,7 @@ const en: Record<string, string> = {
   'welcome.shortcut.wfStop': 'Stop Workflow',
 
   'input.placeholder': 'Type a message → Press / for commands',
-  'input.hint.shortcuts': 'Enter send → Shift+Enter newline',
+  'input.hint.shortcuts': 'Enter send → Shift+Enter / Ctrl+Enter newline',
   'input.hint.commandsQueue':
     'Press / for commands; while running → send directly to append to the message queue',
   'input.hint.modes': 'Mode: use LEADER for coding tasks, WORKFLOW for automation tasks',
@@ -1533,7 +1533,6 @@ const en: Record<string, string> = {
   'help.shortcut.send': 'Send message',
   'help.shortcut.newline': 'New line',
   'help.shortcut.palette': 'Open command palette; in Workflow mode, open workflows',
-  'help.shortcut.altSend': 'Send (alternate)',
   'help.shortcut.esc': 'Close modal / Cancel',
   'help.arch': 'Architecture',
   'help.arch.desc':

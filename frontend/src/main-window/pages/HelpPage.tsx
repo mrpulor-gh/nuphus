@@ -35,9 +35,8 @@ export function HelpPage() {
   const { t } = useLanguage()
   const shortcuts = [
     { keys: 'Enter', key: 'help.shortcut.send' },
-    { keys: 'Shift+Enter', key: 'help.shortcut.newline' },
+    { keys: `Shift+Enter / ${formatPrimaryShortcut('Enter')}`, key: 'help.shortcut.newline' },
     { keys: formatPrimaryShortcut('K'), key: 'help.shortcut.palette' },
-    { keys: formatPrimaryShortcut('Enter'), key: 'help.shortcut.altSend' },
     { keys: 'Esc', key: 'help.shortcut.esc' },
   ] as const
 
