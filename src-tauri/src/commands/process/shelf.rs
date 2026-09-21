@@ -1670,6 +1670,360 @@ mod tests {
         assert!(archived.is_empty());
     }
 
+    // ── 历史会话归属回填（启动一次性迁移）──
+    //
+    // 被测函数在 `nuphus::store::session`（lib 侧，session_meta 的唯一归属写入层）：
+    // 这里用内存连接驱动它，覆盖「tag 精确匹配 → 回填 / 不匹配 → 保持无归属 / 幂等 /
+    // 不覆盖已有路径 / 异常 tag 不 panic」，并附真实库副本的手动探针。
+
+    /// 与生产表结构一致的内存 session_meta（db.rs DDL）——回填不必碰真实 DB。
+    fn backfill_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_meta (
+                session_id      TEXT PRIMARY KEY,
+                project_tag     TEXT NOT NULL,
+                project_path    TEXT,
+                created_at      TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_meta(conn: &rusqlite::Connection, id: &str, tag: &str, path: Option<&str>) {
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_tag, project_path, created_at)
+             VALUES (?1, ?2, ?3, '2026-01-01T00:00:00Z')",
+            rusqlite::params![id, tag, path],
+        )
+        .unwrap();
+    }
+
+    fn stored_path(conn: &rusqlite::Connection, id: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT project_path FROM session_meta WHERE session_id = ?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn missing_path_count(conn: &rusqlite::Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM session_meta WHERE project_path IS NULL OR project_path = ''",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    /// ① tag 命中候选目录 → 回填成功；同 tag 多行共用一次解析结果（自愈复用）。
+    ///
+    /// 两个候选目录的 tag **都用 `derive_project_tag_from_dir` 现算**，不硬编码 Windows 上
+    /// 派生的字面值：该函数 name 段取 `Path::file_name()`，而 `E:\NUS\1` 这类字符串在非
+    /// Windows 上「整串即文件名」（分隔符不是分隔符），硬编码值会让本用例在 ubuntu 上失配。
+    /// 生产逻辑本身三平台一致（写入的是命中候选目录的原串，见 `dir_for_project_tag`），
+    /// Windows 上派生值的等价关系另由 `derive_tag_matches_legacy_windows_value` 守住。
+    #[test]
+    fn backfill_writes_path_when_tag_matches_candidate_dir() {
+        let conn = backfill_conn();
+        let dir = "E:\\NUS\\Nuphus";
+        let other_dir = "E:\\NUS\\1";
+        let tag = nuphus::utils::derive_project_tag_from_dir(dir).unwrap();
+        let other_tag = nuphus::utils::derive_project_tag_from_dir(other_dir).unwrap();
+        assert_ne!(
+            tag, other_tag,
+            "两个不同目录的 tag 必须可区分，否则本用例退化"
+        );
+        insert_meta(&conn, "s1", &tag, None);
+        insert_meta(&conn, "s2", &tag, None);
+        insert_meta(&conn, "s3", &other_tag, None);
+
+        let candidates = vec![
+            other_dir.to_string(), // 书签顺序无关：按 tag 精确匹配
+            dir.to_string(),
+        ];
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+
+        assert_eq!(n, 3, "三个同/异 tag 行都应命中候选目录并回填");
+        assert_eq!(stored_path(&conn, "s1").as_deref(), Some(dir));
+        assert_eq!(stored_path(&conn, "s2").as_deref(), Some(dir));
+        assert_eq!(
+            stored_path(&conn, "s3").as_deref(),
+            Some(other_dir),
+            "命中书签目录"
+        );
+        assert_eq!(missing_path_count(&conn), 0);
+    }
+
+    /// 真实库里的历史 tag 是 **Windows 上**派生的（`1-228c2201` ⇒ `E:\NUS\1`）：
+    /// 该等价关系依赖 Windows 的路径语义，只在 Windows 成立，故单独 cfg 断言——
+    /// 它是「回填能把真实库的旧 tag 还原成目录」这一事实的直接证据。
+    #[cfg(windows)]
+    #[test]
+    fn derive_tag_matches_legacy_windows_value() {
+        assert_eq!(
+            nuphus::utils::derive_project_tag_from_dir("E:\\NUS\\1").as_deref(),
+            Some("1-228c2201"),
+            "真实库 tag 1-228c2201 ⇒ E:\\NUS\\1（Windows 派生）"
+        );
+        assert_eq!(
+            nuphus::utils::derive_project_tag_from_dir("E:\\NUS\\Nuphus").as_deref(),
+            Some("Nuphus-9102132f"),
+            "真实库 tag Nuphus-9102132f ⇒ E:\\NUS\\Nuphus（Windows 派生）"
+        );
+    }
+
+    /// ② tag 无匹配 → 不写：保持无归属，前端仍归「未分组」（不猜测、不伪造）。
+    #[test]
+    fn backfill_leaves_unmatched_tag_without_path() {
+        let conn = backfill_conn();
+        insert_meta(&conn, "s1", "已删除的项目-deadbeef", None);
+        insert_meta(&conn, "s2", "Nuphus-00000000", None); // 名字对但哈希不匹配
+
+        let candidates = vec!["E:\\NUS\\Nuphus".to_string()];
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+
+        assert_eq!(n, 0, "无候选命中不得写入任何路径");
+        assert_eq!(stored_path(&conn, "s1"), None);
+        assert_eq!(stored_path(&conn, "s2"), None);
+        assert_eq!(
+            missing_path_count(&conn),
+            2,
+            "无归属行必须留在待填清单（未分组兜底）"
+        );
+    }
+
+    /// ③ 重复运行幂等：第二次零变更，且已填值稳定不变。
+    #[test]
+    fn backfill_is_idempotent() {
+        let conn = backfill_conn();
+        let dir = "E:\\NUS\\1";
+        let tag = nuphus::utils::derive_project_tag_from_dir(dir).unwrap();
+        insert_meta(&conn, "s1", &tag, None);
+        insert_meta(&conn, "s2", "未知-0badf00d", None);
+        let candidates = vec![dir.to_string()];
+
+        let first =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+        let second =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+
+        assert_eq!(first, 1, "首次只回填命中行");
+        assert_eq!(second, 0, "第二次不得产生任何变更");
+        assert_eq!(stored_path(&conn, "s1").as_deref(), Some(dir));
+        assert_eq!(missing_path_count(&conn), 1);
+    }
+
+    /// ④ 已有 project_path 不被覆盖：即使该行 tag 指向另一个候选目录。
+    #[test]
+    fn backfill_never_overwrites_existing_path() {
+        let conn = backfill_conn();
+        let old_dir = "E:\\work\\Old";
+        let new_dir = "E:\\work\\New";
+        // tag 由 new_dir 派生（人为构造「路径与 tag 不同源」的行），回填不得改写它
+        let tag = nuphus::utils::derive_project_tag_from_dir(new_dir).unwrap();
+        insert_meta(&conn, "s1", &tag, Some(old_dir));
+        insert_meta(&conn, "s2", &tag, Some("")); // 空串属于无归属：允许回填
+
+        let candidates = vec![new_dir.to_string()];
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+
+        assert_eq!(n, 1, "只有空值行可写");
+        assert_eq!(
+            stored_path(&conn, "s1").as_deref(),
+            Some(old_dir),
+            "既有归属不得被改写"
+        );
+        assert_eq!(
+            stored_path(&conn, "s2").as_deref(),
+            Some(new_dir),
+            "空串视为无归属，可回填"
+        );
+    }
+
+    /// ⑤ 空 / 异常 tag 不 panic、不写入（标签不可逆 → 只认精确匹配，不猜测）。
+    #[test]
+    fn backfill_tolerates_empty_and_odd_tags() {
+        let conn = backfill_conn();
+        let long_tag = format!("{}-{:08x}", "超长项目名".repeat(10), 1u32);
+        for (i, tag) in [
+            "",
+            "   ",
+            "default",
+            "Nuphus",                // 缺哈希段
+            "Nuphus-12345678-extra", // 多段
+            "🚀项目-1234abcd",       // 非 ASCII
+            long_tag.as_str(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            insert_meta(&conn, &format!("s{i}"), tag, None);
+        }
+        let candidates = vec!["E:\\NUS\\Nuphus".to_string(), "".to_string()];
+
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+
+        assert_eq!(n, 0, "异常 tag 一律不匹配，不得写入");
+        assert_eq!(missing_path_count(&conn), 7);
+
+        // 候选目录为空 → 直接短路，不查询、不 panic
+        let conn2 = backfill_conn();
+        insert_meta(&conn2, "s1", "Nuphus-9102132f", None);
+        assert_eq!(
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn2, &[]).unwrap(),
+            0
+        );
+        assert_eq!(
+            nuphus::store::session::sessions_missing_project_path(&conn2)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// 回填 → rail 分组闭环：候选目录取自书签 + 当前目录，回填后的归属路径直接喂给
+    /// 分组逻辑（`build_project_groups`），组必须按书签顺序出现、无归属行不产生组。
+    #[test]
+    fn backfill_output_feeds_rail_grouping() {
+        let conn = backfill_conn();
+        let dir_a = "E:\\NUS\\Nuphus";
+        let dir_b = "E:\\NUS\\1";
+        let tag_a = nuphus::utils::derive_project_tag_from_dir(dir_a).unwrap();
+        let tag_b = nuphus::utils::derive_project_tag_from_dir(dir_b).unwrap();
+        for i in 0..3 {
+            insert_meta(&conn, &format!("a{i}"), &tag_a, None);
+        }
+        for i in 0..2 {
+            insert_meta(&conn, &format!("b{i}"), &tag_b, None);
+        }
+        insert_meta(&conn, "u0", "已删除的项目-deadbeef", None);
+
+        let bookmarks = vec![
+            project_bookmark("Nuphus", dir_a, false),
+            project_bookmark("1", dir_b, false),
+        ];
+        let candidates =
+            nuphus::store::session::backfill_candidate_dirs(&conn, &bookmarks, dir_a).unwrap();
+        assert_eq!(
+            candidates,
+            vec![dir_a.to_string(), dir_b.to_string()],
+            "候选 = 书签序 + 当前目录（去重）"
+        );
+
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+        assert_eq!(n, 5, "命中的 5 行回填，无归属行保持 NULL");
+
+        // rail 侧：条目 project_path → 会话数（前端按此建组）
+        let mut stmt = conn
+            .prepare(
+                "SELECT project_path, COUNT(*) FROM session_meta
+                 WHERE project_path IS NOT NULL AND project_path != '' GROUP BY project_path",
+            )
+            .unwrap();
+        let counts: HashMap<String, i64> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let mut paths: Vec<String> = counts.keys().cloned().collect();
+        paths.sort();
+
+        let (visible, archived) = build_project_groups(&bookmarks, dir_a, &paths);
+        assert!(archived.is_empty());
+        assert_eq!(
+            visible.len(),
+            2,
+            "回填后两个书签目录各成一组，无归属行不产生组"
+        );
+        assert_eq!(
+            (
+                visible[0].path.as_str(),
+                visible[0].is_current,
+                visible[0].auto
+            ),
+            (dir_a, true, false)
+        );
+        assert_eq!(visible[1].path, dir_b);
+        assert_eq!(
+            counts.get(dir_a).copied(),
+            Some(3),
+            "E:\\NUS\\Nuphus 组 3 条"
+        );
+        assert_eq!(counts.get(dir_b).copied(), Some(2), "E:\\NUS\\1 组 2 条");
+    }
+
+    /// 真实库副本探针（手动，默认忽略）——把 `%APPDATA%\\nuphus\\nuphus.db`（含
+    /// `-wal`/`-shm`）**复制到临时目录**后，用副本路径运行：
+    ///   `cargo test -p nuphus-desktop --bin nuphus backfill_probe -- --ignored --nocapture`
+    /// 候选目录取自真实 preferences（只读）。真实库路径被显式拒绝：探针只写副本。
+    #[test]
+    #[ignore]
+    fn backfill_probe_on_real_db_copy() {
+        let Some(copy) = std::env::var("NUPHUS_BACKFILL_PROBE_DB")
+            .ok()
+            .filter(|p| !p.trim().is_empty())
+        else {
+            println!("[probe] 未设置 NUPHUS_BACKFILL_PROBE_DB（数据库副本路径），跳过");
+            return;
+        };
+        if let (Ok(a), Some(Ok(b))) = (
+            std::fs::canonicalize(&copy),
+            dirs::data_dir().map(|d| std::fs::canonicalize(d.join("nuphus").join("nuphus.db"))),
+        ) {
+            assert_ne!(a, b, "拒绝对真实库运行：请先复制副本再传副本路径");
+        }
+
+        let conn = rusqlite::Connection::open(&copy).expect("打开数据库副本失败");
+        let prefs = nuphus::config::UserPreferences::load();
+        let candidates = nuphus::store::session::backfill_candidate_dirs(
+            &conn,
+            &prefs.project_bookmarks,
+            &prefs.project_dir,
+        )
+        .unwrap();
+        println!("[probe] 候选目录 = {candidates:?}");
+        println!("[probe] 回填前 NULL 行数 = {}", missing_path_count(&conn));
+        let n =
+            nuphus::store::session::backfill_session_project_paths_with_conn(&conn, &candidates)
+                .unwrap();
+        println!("[probe] 本次回填 {n} 行");
+        println!("[probe] 回填后 NULL 行数 = {}", missing_path_count(&conn));
+        let mut stmt = conn
+            .prepare(
+                "SELECT project_tag, project_path, COUNT(*) FROM session_meta
+                 GROUP BY project_tag, project_path ORDER BY project_tag",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .unwrap();
+        for row in rows {
+            let (tag, path, count) = row.unwrap();
+            println!("[probe]   {tag} → {path:?}（{count} 行）");
+        }
+    }
+
     /// 会话台返回体形状：条目带 project_path（无归属 = null），顶层带
     /// projects / archived_projects / collapsed_limit，前端可直接分组。
     #[test]
