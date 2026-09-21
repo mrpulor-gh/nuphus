@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { IconSparkles } from '../../ui/Icons'
 import {
   getWorkflowEnhancedMode,
   setWorkflowEnhancedMode,
@@ -93,7 +93,7 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
           : '使用 Jev 从本地候选动作中做结构化选择；鼠标与视觉回退仍可用'
       }
     >
-      <Sparkles size={13} />
+      <IconSparkles size={13} />
       <span>增强模式</span>
       <span className="wfc-enhanced-switch" aria-hidden="true">
         <span />
