@@ -1906,7 +1906,7 @@ function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: 
         }
         replay={!!replayRunId}
         onLocate={locateNode}
-        nameOf={id => projection.index.nodeById.get(id)?.name ?? id}
+        nameOf={id => replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id}
       />
 
       {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}

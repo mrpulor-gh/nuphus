@@ -1,7 +1,9 @@
 //! Persistent five-field cron scheduling with IANA timezone support.
 
 use crate::workflow::store::WorkflowStore;
-use crate::workflow::types::{Action, InputSpec, RunRecord, RunStatus, ScheduleConfig, Step};
+use crate::workflow::types::{
+    Action, InputSpec, RunRecord, RunStatus, ScheduleConfig, Step, Workflow,
+};
 use crate::Result;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -105,6 +107,8 @@ pub struct ScheduleRunRecord {
     pub status: RunStatus,
     pub error: Option<String>,
     pub steps: Vec<crate::workflow::types::StepRunRecord>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub step_names: HashMap<String, String>,
 }
 
 impl ScheduleRunRecord {
@@ -118,6 +122,29 @@ impl ScheduleRunRecord {
             status: run.status.clone(),
             error: run.error.clone(),
             steps: run.steps.clone(),
+            step_names: HashMap::new(),
+        }
+    }
+
+    pub fn from_workflow(workflow: &Workflow, run: &RunRecord) -> Self {
+        let mut record = Self::from_run(&workflow.id, &workflow.name, run);
+        collect_step_names(&workflow.steps, &mut record.step_names);
+        record
+    }
+}
+
+fn collect_step_names(steps: &[Step], names: &mut HashMap<String, String>) {
+    for step in steps {
+        names.insert(step.id().to_string(), step.name().to_string());
+        match &step.action {
+            Action::Seq { seq } => collect_step_names(seq, names),
+            Action::Loop { def } => collect_step_names(&def.steps, names),
+            Action::If { def } => {
+                collect_step_names(&def.then, names);
+                collect_step_names(&def.else_branch, names);
+            }
+            Action::Wait { auto, .. } => collect_step_names(auto, names),
+            _ => {}
         }
     }
 }

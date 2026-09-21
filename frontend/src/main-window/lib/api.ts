@@ -1157,6 +1157,7 @@ export interface ScheduleRunRecord {
   status: RunRecord['status']
   error?: string | null
   steps: NonNullable<RunRecord['steps']>
+  step_names?: Record<string, string>
 }
 
 export interface ScheduleHistoryPage {

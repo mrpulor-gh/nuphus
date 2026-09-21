@@ -653,9 +653,8 @@ fn main() {
                                 variables_snapshot: std::collections::HashMap::new(),
                             };
                             let _ = engine.scheduler.record_schedule_run(
-                                nuphus::workflow::scheduler::ScheduleRunRecord::from_run(
-                                    &workflow_id,
-                                    &workflow.name,
+                                nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                    &workflow,
                                     &run,
                                 ),
                             ).await;
@@ -665,6 +664,22 @@ fn main() {
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
                         let previous_run_id = workflow.run_history.first().map(|run| run.run_id.clone());
                         let started_at = chrono::Utc::now();
+                        let schedule_run_id = uuid::Uuid::new_v4().to_string();
+                        let running = nuphus::workflow::types::RunRecord {
+                            run_id: schedule_run_id.clone(),
+                            started_at,
+                            finished_at: None,
+                            status: nuphus::workflow::types::RunStatus::Running,
+                            steps: Vec::new(),
+                            error: None,
+                            variables_snapshot: std::collections::HashMap::new(),
+                        };
+                        let _ = engine.scheduler.record_schedule_run(
+                            nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                &workflow,
+                                &running,
+                            ),
+                        ).await;
                         let execution = engine
                             .execute_workflow(
                                 &workflow_id,
@@ -698,13 +713,12 @@ fn main() {
                                 variables_snapshot: std::collections::HashMap::new(),
                             }
                         });
-                        let _ = engine.scheduler.record_schedule_run(
-                            nuphus::workflow::scheduler::ScheduleRunRecord::from_run(
-                                &workflow_id,
-                                &workflow.name,
-                                &run,
-                            ),
-                        ).await;
+                        let mut history = nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                            &workflow,
+                            &run,
+                        );
+                        history.run_id = schedule_run_id;
+                        let _ = engine.scheduler.record_schedule_run(history).await;
                     })
                 });
 
