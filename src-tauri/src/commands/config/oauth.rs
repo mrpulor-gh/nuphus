@@ -421,14 +421,11 @@ async fn run_login_flow(
     let wait_shutdown = {
         let notify = notify.clone();
         async move {
-            loop {
-                tokio::select! {
-                    _ = cancel_rx.changed() => {
-                        shutdown_flag.store(true, std::sync::atomic::Ordering::Release);
-                        break;
-                    }
-                    _ = notify.notified() => break,
+            tokio::select! {
+                _ = cancel_rx.changed() => {
+                    shutdown_flag.store(true, std::sync::atomic::Ordering::Release);
                 }
+                _ = notify.notified() => {}
             }
         }
     };

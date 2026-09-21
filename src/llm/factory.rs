@@ -208,9 +208,8 @@ impl ClientFactory {
             .name("oauth-token-refresh".to_string())
             .spawn(move || crate::config::oauth::ensure_fresh_oauth_token(&path, &name))
             .and_then(|h| {
-                h.join().map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::Other, "refresh thread panicked")
-                })
+                h.join()
+                    .map_err(|_| std::io::Error::other("refresh thread panicked"))
             });
         match refreshed {
             Ok(Ok(token)) => {

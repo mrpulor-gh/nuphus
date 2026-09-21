@@ -864,7 +864,7 @@ mod tests {
         assert!(before >= 12, "前置：库内非空快照应不少于本次新建数量");
 
         // 仅 1 个成员的残缺名单（模拟「只剩 active 会话」的内存态）
-        let n = prune_snapshots(&ids[..1].to_vec()).unwrap();
+        let n = prune_snapshots(&ids[..1]).unwrap();
         assert_eq!(n, 0, "残缺名单（1/{before}）不得裁剪任何快照");
         assert_eq!(
             list_snapshots(100_000).unwrap().len(),
