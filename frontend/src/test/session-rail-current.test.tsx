@@ -19,7 +19,9 @@ vi.mock('../main-window/lib/api', () => ({
           project_path: null,
         },
       ],
-      projects: [],
+      // 带一个「当前工作目录」分组：旧版会在组头渲染第二个「当前」徽标（本次已移除），
+      // 该分组存在时本用例才能证明「当前」唯一出现在会话行
+      projects: [{ path: 'E:\\NUS\\Nuphus', name: 'Nuphus', is_current: true, auto: false }],
       archived_projects: [],
       collapsed_limit: 6,
       sort_prefs: { group_order: 'bookmark', sort_key: 'updated' },
@@ -41,11 +43,14 @@ describe('会话工作台当前状态', () => {
     const title = screen.getByText('当前测试会话').closest('button')!
     expect(title).toHaveAttribute('aria-current', 'true')
     expect(title).toBeDisabled()
-    // 「当前」徽标：组头的 is_current 徽标只在有当前工作目录组时出现，
-    // 此处无 projects → 只剩会话行内的当前徽标
+    // 唯一「当前」= 会话行：即使存在「当前工作目录」分组，组头也不渲染「当前」徽标、
+    // 不带 is-current 类（否则 getByText('当前') 会因命中两处而抛错）
+    expect(document.querySelector('.sr-group-head.is-current')).toBeNull()
+    expect(document.querySelector('.sr-group-badge')).toBeNull()
     expect(screen.getByText('当前')).toBeInTheDocument()
+    expect(document.querySelector('.sr-current-badge')).not.toBeNull()
     expect(title.closest('.sr-item')).toHaveClass('active')
-    // 无归属会话落「未分组」兜底组（组头 + 行内徽标两处「当前」不会混淆）
+    // 无归属会话落「未分组」兜底组
     expect(screen.getByText('未分组')).toBeInTheDocument()
   })
 })

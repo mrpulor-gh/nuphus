@@ -121,6 +121,13 @@ describe('移动端会话列表分组', () => {
     // 空文件夹（书签存在但无会话）→ 组仍显示 + 弱提示
     // （组名「Nuphus」与抽屉品牌名重复，故按组容器定位而非文本全局查找）
     expect(within(groupEl('Nuphus')).getByText('该文件夹暂无会话')).toBeInTheDocument()
+
+    // 「当前工作目录」所属组（is_current: true）不在组头留任何痕迹 —— 无「当前」文本、
+    // 组名无 is-current 类、无徽标容器（与桌面 rail 同源同语义；「当前」只属于会话行）
+    const currentHead = groupEl('Nuphus').querySelector('.mobile-sess-group-head') as HTMLElement
+    expect(currentHead.querySelector('.mobile-sess-group-name')).not.toHaveClass('is-current')
+    expect(currentHead.querySelector('.mobile-sess-group-badge')).toBeNull()
+    expect(within(currentHead).queryByText('当前')).toBeNull()
   })
 
   it('组内按 collapsed_limit 折叠并支持展开其余；点选仍传 (id, mode)', async () => {

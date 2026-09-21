@@ -3143,7 +3143,7 @@ body {
 }
 
 /* ── 会话按项目文件夹分组（Phase 2，与桌面 rail 同一返回体 + 同一纯函数）──
-   组头 = 文件夹名 + 当前徽标 + 会话数 + 展开箭头（点击收起/展开整组）；
+   组头 = 文件夹名 + 会话数 + 展开箭头（点击收起/展开整组）；
    组内会话沿用 .mobile-sess-item 行样式，折叠上限与桌面同源 collapsed_limit。 */
 .mobile-sess-group {
   margin-bottom: 12px;
@@ -3178,25 +3178,10 @@ body {
   white-space: nowrap;
 }
 
-/* 当前工作目录所在组：仅高亮不上浮；未分组组弱化 */
-.mobile-sess-group-name.is-current {
-  color: var(--m-fg);
-}
-
+/* 未分组组弱化 */
 .mobile-sess-group-name.is-ungrouped {
   font-weight: 500;
   opacity: 0.8;
-}
-
-.mobile-sess-group-badge {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--m-fill);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.6;
-  color: var(--m-fg);
 }
 
 .mobile-sess-group-count {

@@ -207,9 +207,18 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const heads = Array.from(document.querySelectorAll('.sr-group-name')).map(e => e.textContent)
     expect(heads).toEqual(['一号', 'Nuphus', 'auto', '未分组'])
 
-    // 当前工作目录组带「当前」徽标，但顺序不上浮（仍在第 2 位）
-    const currentHead = screen.getByText('Nuphus').closest('.sr-group-head')!
-    expect(within(currentHead as HTMLElement).getByText('当前')).toBeInTheDocument()
+    // 当前工作目录组：顺序不上浮（仍在第 2 位），且组头**不再有任何「当前」迹象**——
+    // 无「当前」徽标、无 is-current 类，容器里也不存在 .sr-group-badge（死类名真删）
+    const currentHead = screen.getByText('Nuphus').closest('.sr-group-head') as HTMLElement
+    expect(within(currentHead).queryByText('当前')).toBeNull()
+    expect(currentHead).not.toHaveClass('is-current')
+    expect(document.querySelector('.sr-group-badge')).toBeNull()
+
+    // 组内当前会话行完全不变：「当前」高亮只属于会话行（active 块 + 行内「当前」徽标）
+    const activeItem = screen.getByText('当前会话').closest('.sr-item') as HTMLElement
+    expect(activeItem).toHaveClass('active')
+    expect(activeItem.querySelector('.sr-current-badge')).not.toBeNull()
+    expect(within(activeItem).getByText('当前')).toBeInTheDocument()
 
     // 归档文件夹：组名与组内会话都不可见
     expect(screen.queryByText('已归档目录')).not.toBeInTheDocument()

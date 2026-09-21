@@ -378,7 +378,8 @@ export interface ShelfProjectEntry {
   path: string
   /** 展示名：书签自定义名优先，自动组取目录末段 */
   name: string
-  /** 当前工作目录所在组（仅高亮，不上浮） */
+  /** 当前工作目录所在组（不上浮；**不驱动组头视觉**——组头不渲染「当前」/ 不着色，
+   *  组内会话点击时跳过重复 `set_project_dir` 的幂等判据是它唯一的前端消费点） */
   is_current: boolean
   /** true = 未收藏但有会话的自动组（只读：不可重命名/归档） */
   auto: boolean

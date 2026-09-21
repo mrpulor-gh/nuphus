@@ -1025,7 +1025,7 @@ export default function SessionRail({
    *    失败即中止并提示，**不新建**：新会话的归属在诞生时快照当前目录，先建后切会落错组；
    * ② 再走与 Ctrl+N / TitleBar / 组头「+」同一新建入口（后端 `new_chat_session_cmd`），
    *    把弹窗标题一并交给它；
-   * ③ 刷新列表（当前目录 chip / is_current 高亮同步）。
+   * ③ 刷新列表（当前目录 chip / 分组归属同步）。
    *
    * ⚠️ 会话**不在此时创建**（这是刻意的产品语义）：`new_chat_session_cmd` 只把当前槽置回
    * 欢迎页 + **记录标题**，真实会话仍在欢迎页直发首条消息那一刻诞生；后端在诞生点把记录的
@@ -1261,8 +1261,8 @@ export default function SessionRail({
           {/* 头部只有标题：文件夹管理入口已全部迁至项目中心，收起走 Esc / 面板外点击 / 再点色块 */}
           <span className="sr-drawer-title">{t('sessionRail.title')}</span>
         </div>
-        {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐、
-            右端 + 号），虚线描边 + 弱文字把「动作」与上方「数据」区分开。
+        {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐），
+            虚线描边 + 弱文字把「动作」与上方「数据」区分开。
             不放面板右上角 —— 那里已定稿为「每模块唯一关闭按钮」，不新增按钮。 */}
         {onNewChat && onSwitchProjectDir && (
           <div className="sr-new-chat-wrap">
@@ -1276,9 +1276,6 @@ export default function SessionRail({
               title={t('sessionRail.newChat')}
             >
               <span className="sr-new-chat-label">{t('sessionRail.newChat')}</span>
-              <span className="sr-new-chat-plus" aria-hidden="true">
-                <IconPlus size={14} />
-              </span>
             </button>
           </div>
         )}
@@ -1306,7 +1303,7 @@ export default function SessionRail({
             const ungrouped = group.path === null
             return (
               <div className="sr-group" key={group.key || '__ungrouped__'}>
-                <div className={`sr-group-head${group.isCurrent ? ' is-current' : ''}`}>
+                <div className="sr-group-head">
                   {editingProjectKey === group.key && group.path ? (
                     <div className="sr-head">
                       <input
@@ -1360,9 +1357,6 @@ export default function SessionRail({
                         <span className={`sr-group-name${ungrouped ? ' is-ungrouped' : ''}`}>
                           {group.name || t('sessionRail.ungrouped')}
                         </span>
-                        {group.isCurrent && (
-                          <span className="sr-group-badge">{t('sessionRail.current')}</span>
-                        )}
                         {group.auto && (
                           <span className="sr-group-tag" title={t('sessionRail.autoGroupHint')}>
                             {t('sessionRail.autoTag')}
