@@ -13,6 +13,7 @@ import type {
   ToolExecuteResult,
   SessionDetailEntry,
 } from './types'
+import { debugEnabled } from './debug'
 
 // ── WebSocket connection (browser mode) ──
 let wsPromise: Promise<WebSocket | null> | null = null
@@ -114,18 +115,22 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
     if (tauriAvail) {
       const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
       const rawResult = await tauriInvoke(cmd, args)
-      // 体积保护：>50KB 的结果跳过全量序列化打印，避免大 session 详情的 stringify 开销
-      try {
-        const json = JSON.stringify(rawResult)
-        if (json.length > 50 * 1024) {
-          console.log(
-            `[Bridge] invoke ${cmd} raw result: <${json.length} bytes, too large, skipped>`,
-          )
-        } else {
-          console.log(`[Bridge] invoke ${cmd} raw result:`, json)
+      // 结果体日志：**默认静音**（见 core/debug.ts）。每次 IPC 都打会把 DevTools 打满，
+      // 且序列化本身要花主线程时间——整块（含 stringify 与体积判断）都在开关内，
+      // 关闭时零开销。排查：localStorage.setItem('nuphus:debug','1') 后刷新。
+      if (debugEnabled()) {
+        try {
+          const json = JSON.stringify(rawResult)
+          if (json.length > 50 * 1024) {
+            console.log(
+              `[Bridge] invoke ${cmd} raw result: <${json.length} bytes, too large, skipped>`,
+            )
+          } else {
+            console.log(`[Bridge] invoke ${cmd} raw result:`, json)
+          }
+        } catch {
+          console.log(`[Bridge] invoke ${cmd} raw result: <unserializable>`)
         }
-      } catch {
-        console.log(`[Bridge] invoke ${cmd} raw result: <unserializable>`)
       }
       return rawResult as T
     }
@@ -177,7 +182,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
   }
   const mockFn = MOCKS[cmd]
   if (mockFn) {
-    console.log(`[Bridge] Using mock for ${cmd}`)
+    if (debugEnabled()) console.log(`[Bridge] Using mock for ${cmd}`)
     return mockFn(args) as T
   }
   console.warn(`[Bridge] No mock registered for ${cmd}, returning null`)
@@ -197,7 +202,7 @@ export async function invokeRaw<T>(cmd: string, body: Uint8Array): Promise<T | n
     const result = await tauriInvoke(cmd, body, {
       headers: { 'Content-Type': 'application/octet-stream' },
     })
-    console.log(`[Bridge] invokeRaw ${cmd} success`)
+    if (debugEnabled()) console.log(`[Bridge] invokeRaw ${cmd} success`)
     return result as T
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
