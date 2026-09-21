@@ -17,11 +17,13 @@ vi.mock('../workflow/WorkflowPage', () => ({
   WorkflowPage: ({
     onRunClick,
     onCanvasClick,
+    scheduleDialogLayer,
   }: {
     onRunClick: (wf: WorkflowItem) => void
     onCanvasClick: (wf: WorkflowItem) => void
+    scheduleDialogLayer?: 'default' | 'settings'
   }) => (
-    <div data-testid="page-workflows">
+    <div data-testid="page-workflows" data-schedule-dialog-layer={scheduleDialogLayer}>
       <button type="button" onClick={() => onRunClick({ id: 'wf-1' } as WorkflowItem)}>
         stub-run
       </button>
@@ -210,6 +212,16 @@ describe('SettingsCenter 设置中心外壳', () => {
 
     expect(props.onRunWorkflow).toHaveBeenCalledTimes(1)
     expect(props.onRunWorkflow).toHaveBeenCalledWith({ id: 'wf-1' })
+  })
+
+  it('工作流分区：定时设置弹窗使用高于控制面板的层级', async () => {
+    renderCenter()
+    fireEvent.click(navItem('工作流'))
+
+    expect(await screen.findByTestId('page-workflows')).toHaveAttribute(
+      'data-schedule-dialog-layer',
+      'settings',
+    )
   })
 
   it('工作流分区：行内「画布」委托宿主全屏打开，并带上目标工作流', async () => {

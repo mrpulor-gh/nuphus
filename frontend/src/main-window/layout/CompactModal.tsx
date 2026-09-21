@@ -9,6 +9,8 @@ interface CompactModalProps {
   title: string
   icon?: ReactElement
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'auto'
+  /** 弹层所在宿主；settings 需覆盖设置中心自身的高层遮罩 */
+  layer?: 'default' | 'settings'
   /** 追加到 modal 卡片的类（如 compact-modal--fit 高度自适应） */
   className?: string
   /** 固定底部操作区 — 渲染在滚动区之外，长内容时主操作始终可见 */
@@ -25,6 +27,7 @@ export function CompactModal({
   title,
   icon,
   size = 'auto',
+  layer = 'default',
   className,
   footer,
   children,
@@ -53,13 +56,20 @@ export function CompactModal({
   }
 
   const sizeClass = size === 'auto' ? 'compact-modal--auto' : `compact-modal--${size}`
+  const overlayClassName = [
+    'compact-overlay',
+    layer === 'settings' ? 'compact-overlay--above-settings' : '',
+    closing ? 'compact-overlay--closing' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   // Portal 到 body：就地渲染时，任何带 transform/filter 的祖辈会成为 fixed 后代的
   // 包含块（CSS 规范），导致弹窗按局部盒子定位而非视口——如 .chat-input-area 的
   // translate(-50%) 曾把终止确认弹窗错位到输入框区域内。与项目弹层 portal 惯例一致。
   return createPortal(
     <div
-      className={closing ? 'compact-overlay compact-overlay--closing' : 'compact-overlay'}
+      className={overlayClassName}
       onClick={requestClose}
     >
       <div

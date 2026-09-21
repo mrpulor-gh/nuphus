@@ -285,6 +285,7 @@ export function SettingsCenter({
           <WorkflowPage
             onClose={onClose}
             onRunClick={onRunWorkflow}
+            scheduleDialogLayer="settings"
             /* 行内「画布」= 关闭面板 → 由 App 层打开全屏画布工作台 */
             onCanvasClick={wf => onOpenCanvas(wf.id)}
           />

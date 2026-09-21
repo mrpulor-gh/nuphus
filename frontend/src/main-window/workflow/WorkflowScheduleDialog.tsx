@@ -169,6 +169,7 @@ interface WorkflowScheduleDialogProps {
   open: boolean
   workflow: Pick<WorkflowItem, 'id' | 'title' | 'inputs' | 'schedule'>
   readOnly?: boolean
+  layer?: 'default' | 'settings'
   onClose: () => void
   onChanged: (config: ScheduleConfig | null) => void
 }
@@ -177,6 +178,7 @@ export function WorkflowScheduleDialog({
   open,
   workflow,
   readOnly = false,
+  layer = 'default',
   onClose,
   onChanged,
 }: WorkflowScheduleDialogProps) {
@@ -317,6 +319,7 @@ export function WorkflowScheduleDialog({
       title={`定时运行 · ${workflow.title}`}
       icon={<Clock3 size={14} />}
       size="xl"
+      layer={layer}
       className="wfs-modal"
       footer={
         <>

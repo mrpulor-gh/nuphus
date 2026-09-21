@@ -366,3 +366,7 @@
 .compact-overlay--high {
   z-index: 200;
 }
+/* 设置中心宿主为 2500；从其中打开的二级弹窗必须位于其上。 */
+.compact-overlay--above-settings {
+  z-index: 2600;
+}

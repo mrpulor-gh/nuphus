@@ -43,9 +43,16 @@ interface WorkflowPageProps {
   onRunClick: (workflow: WorkflowItem) => void
   /** 打开节点画布（Pro 门禁在调用方与本组件双重检查） */
   onCanvasClick: (workflow: WorkflowItem) => void
+  /** 控制面板内打开的二级弹窗需覆盖设置中心宿主。 */
+  scheduleDialogLayer?: 'default' | 'settings'
 }
 
-export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPageProps) {
+export function WorkflowPage({
+  onClose,
+  onRunClick,
+  onCanvasClick,
+  scheduleDialogLayer = 'default',
+}: WorkflowPageProps) {
   const { t } = useLanguage()
   // 工作流列表只锁定工作流自身的运行/编辑操作；统一工作台的类型切换不受执行态影响。
   const gate = useWorkflowGate()
@@ -427,6 +434,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
           open
           workflow={scheduleEditing}
           readOnly={gate.locked}
+          layer={scheduleDialogLayer}
           onClose={() => setScheduleEditing(null)}
           onChanged={schedule => {
             setItems(current =>
