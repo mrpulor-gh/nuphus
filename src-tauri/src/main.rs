@@ -303,6 +303,9 @@ fn main() {
             commands::wf_schedule_preview,
             commands::wf_schedule_set,
             commands::wf_schedule_remove,
+            commands::wf_schedule_history_list,
+            commands::wf_schedule_history_get,
+            commands::wf_schedule_history_delete,
             commands::wf_gate_status,
             commands::wf_tools,
             commands::wf_layout_get,
@@ -639,11 +642,28 @@ fn main() {
                         };
                         if let Err(error) = nuphus::workflow::inputs::resolve_declared_only(&workflow.inputs, &inputs) {
                             tracing::error!("[Scheduler] Input validation failed for {}: {}", workflow_id, error);
+                            let now = chrono::Utc::now();
+                            let run = nuphus::workflow::types::RunRecord {
+                                run_id: uuid::Uuid::new_v4().to_string(),
+                                started_at: now,
+                                finished_at: Some(now),
+                                status: nuphus::workflow::types::RunStatus::Error(error.to_string()),
+                                steps: Vec::new(),
+                                error: Some(error.to_string()),
+                                variables_snapshot: std::collections::HashMap::new(),
+                            };
+                            let _ = engine.scheduler.record_schedule_run(
+                                nuphus::workflow::scheduler::ScheduleRunRecord::from_run(
+                                    &workflow_id,
+                                    &workflow.name,
+                                    &run,
+                                ),
+                            ).await;
                             return;
                         }
                         // For scheduled execution, tool schemas are not available (no Tauri state access)
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
-                        if let Err(e) = engine
+                        let execution = engine
                             .execute_workflow(
                                 &workflow_id,
                                 tool_exec,
@@ -653,9 +673,19 @@ fn main() {
                                 false,
                                 nuphus::workflow::WorkflowRunSource::Schedule,
                             )
-                            .await
-                        {
+                            .await;
+                        if let Err(e) = &execution {
                             tracing::error!("[Scheduler] Cron-triggered workflow {} failed: {}", workflow_id, e);
+                        }
+                        let run = engine.store.get(&workflow_id).await.and_then(|wf| wf.run_history.first().cloned());
+                        if let Some(run) = run {
+                            let _ = engine.scheduler.record_schedule_run(
+                                nuphus::workflow::scheduler::ScheduleRunRecord::from_run(
+                                    &workflow_id,
+                                    &workflow.name,
+                                    &run,
+                                ),
+                            ).await;
                         }
                     })
                 });

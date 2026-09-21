@@ -19,7 +19,7 @@ const DAILY: SchedulePattern = {
 
 describe('定时规则预设', () => {
   it.each([
-    [{ ...DAILY, mode: 'minutes', interval: 15 }, '*/15 * * * *'],
+    [{ ...DAILY, mode: 'minutes', interval: 90 }, '*/60 * * * *'],
     [{ ...DAILY, mode: 'hourly' }, '30 * * * *'],
     [DAILY, '30 9 * * *'],
     [{ ...DAILY, mode: 'weekdays' }, '30 9 * * 1-5'],

@@ -62,7 +62,7 @@ export function cronFromPattern(pattern: SchedulePattern): string {
   const hour = Math.max(0, Math.min(23, Math.trunc(pattern.hour)))
   switch (pattern.mode) {
     case 'minutes':
-      return `*/${[5, 10, 15, 30].includes(pattern.interval) ? pattern.interval : 5} * * * *`
+      return `*/${Math.max(1, Math.min(60, Math.trunc(pattern.interval)))} * * * *`
     case 'hourly':
       return `${minute} * * * *`
     case 'daily':
@@ -107,6 +107,13 @@ export function patternFromCron(cron: string): SchedulePattern {
     }
   }
   return { ...DEFAULT_PATTERN, mode: 'custom', custom: cron }
+}
+
+function patternFromConfig(config: ScheduleConfig): SchedulePattern {
+  if (config.interval_minutes !== undefined) {
+    return { ...DEFAULT_PATTERN, mode: 'minutes', interval: config.interval_minutes }
+  }
+  return patternFromCron(config.cron)
 }
 
 function inputKind(spec: WorkflowInputSpec): WorkflowInputKind {
@@ -203,7 +210,7 @@ export function WorkflowScheduleDialog({
           label: '',
         }
         setDetails(result)
-        setPattern(patternFromCron(config.cron))
+        setPattern(patternFromConfig(config))
         setTimezone(config.timezone)
         setLabel(config.label ?? '')
         setEnabled(config.enabled)
@@ -233,8 +240,16 @@ export function WorkflowScheduleDialog({
 
   const cron = cronFromPattern(pattern)
   const config = useMemo<ScheduleConfig>(
-    () => ({ cron, timezone, enabled, ...(label.trim() ? { label: label.trim() } : {}) }),
-    [cron, timezone, enabled, label],
+    () => ({
+      cron,
+      timezone,
+      enabled,
+      ...(label.trim() ? { label: label.trim() } : {}),
+      ...(pattern.mode === 'minutes'
+        ? { interval_minutes: Math.max(1, Math.min(1440, Math.trunc(pattern.interval))) }
+        : {}),
+    }),
+    [cron, timezone, enabled, label, pattern.mode, pattern.interval],
   )
   const resolvedInputs = useMemo(
     () => resolveScheduleInputs(specs, fixed, values, preserved),
@@ -324,7 +339,7 @@ export function WorkflowScheduleDialog({
               <label>频率<select value={pattern.mode} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, mode: event.target.value as ScheduleMode }))}>
                 <option value="minutes">每隔几分钟</option><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="custom">高级 Cron</option>
               </select></label>
-              {pattern.mode === 'minutes' && <label>间隔<select value={pattern.interval} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, interval: Number(event.target.value) }))}>{[5, 10, 15, 30].map(value => <option key={value} value={value}>{value} 分钟</option>)}</select></label>}
+              {pattern.mode === 'minutes' && <label>间隔（分钟）<input type="number" min={1} max={1440} step={1} value={pattern.interval} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, interval: Number(event.target.value) }))} /></label>}
               {pattern.mode === 'hourly' && <label>分钟<input type="number" min={0} max={59} value={pattern.minute} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, minute: Number(event.target.value) }))} /></label>}
               {['daily', 'weekdays', 'weekly', 'monthly'].includes(pattern.mode) && <label>时间<input type="time" value={`${String(pattern.hour).padStart(2, '0')}:${String(pattern.minute).padStart(2, '0')}`} disabled={readOnly} onChange={event => { const [hour, minute] = event.target.value.split(':').map(Number); setPattern(current => ({ ...current, hour, minute })) }} /></label>}
               {pattern.mode === 'weekly' && <label>星期<select value={pattern.weekday} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, weekday: Number(event.target.value) }))}><option value={1}>星期一</option><option value={2}>星期二</option><option value={3}>星期三</option><option value={4}>星期四</option><option value={5}>星期五</option><option value={6}>星期六</option><option value={0}>星期日</option></select></label>}

@@ -391,6 +391,7 @@ export interface ScheduleConfig {
   timezone: string
   enabled: boolean
   label?: string
+  interval_minutes?: number
 }
 
 // ── WorkflowInputSpec（后端 InputSpec 镜像：workflow.inputs[]）──

@@ -4,7 +4,7 @@
 //! 画布命令（wf_validate / wf_save / wf_run）：IR 唯一真源，保存前强制权威校验。
 
 use nuphus::workflow::compiler::{Compiler, ValidationReport};
-use nuphus::workflow::scheduler::{has_frontend_step, SchedulerEngine};
+use nuphus::workflow::scheduler::{has_frontend_step, ScheduleRunRecord, SchedulerEngine};
 use nuphus::workflow::types::{InputSpec, ScheduleConfig, Workflow};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -192,6 +192,118 @@ pub async fn wf_schedule_remove(state: State<'_, AppState>, id: String) -> Resul
     }
     engine.remove_schedule(&id).await;
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WfScheduleHistoryFilter {
+    pub workflow_id: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    pub to: Option<chrono::DateTime<chrono::Utc>>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WfScheduleHistoryPage {
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub runs: Vec<ScheduleRunRecord>,
+}
+
+fn schedule_status_matches(run: &ScheduleRunRecord, expected: &str) -> bool {
+    matches!(
+        (expected, &run.status),
+        ("running", nuphus::workflow::types::RunStatus::Running)
+            | ("success", nuphus::workflow::types::RunStatus::Success)
+            | ("cancelled", nuphus::workflow::types::RunStatus::Cancelled)
+            | ("paused", nuphus::workflow::types::RunStatus::Paused)
+            | ("error", nuphus::workflow::types::RunStatus::Error(_))
+    )
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_list(
+    state: State<'_, AppState>,
+    filter: Option<WfScheduleHistoryFilter>,
+) -> Result<WfScheduleHistoryPage, String> {
+    let filter = filter.unwrap_or(WfScheduleHistoryFilter {
+        workflow_id: None,
+        status: None,
+        from: None,
+        to: None,
+        page: None,
+        page_size: None,
+    });
+    let page = filter.page.unwrap_or(0);
+    let page_size = filter.page_size.unwrap_or(50).clamp(1, 200);
+    let engine = state.workflow_engine.read().await;
+    let mut runs: Vec<_> = engine
+        .scheduler
+        .list_schedule_runs()
+        .runs
+        .into_iter()
+        .filter(|run| {
+            filter
+                .workflow_id
+                .as_deref()
+                .map(|id| run.workflow_id == id)
+                .unwrap_or(true)
+        })
+        .filter(|run| {
+            filter
+                .status
+                .as_deref()
+                .map(|status| schedule_status_matches(run, status))
+                .unwrap_or(true)
+        })
+        .filter(|run| {
+            filter
+                .from
+                .map(|date| run.started_at >= date)
+                .unwrap_or(true)
+        })
+        .filter(|run| filter.to.map(|date| run.started_at <= date).unwrap_or(true))
+        .collect();
+    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+    let total = runs.len();
+    let start = page.saturating_mul(page_size).min(total);
+    let end = (start + page_size).min(total);
+    Ok(WfScheduleHistoryPage {
+        total,
+        page,
+        page_size,
+        runs: runs[start..end].to_vec(),
+    })
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_get(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<ScheduleRunRecord, String> {
+    let engine = state.workflow_engine.read().await;
+    engine
+        .scheduler
+        .list_schedule_runs()
+        .runs
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .ok_or_else(|| format!("Schedule run not found: {run_id}"))
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_delete(
+    state: State<'_, AppState>,
+    workflow_id: Option<String>,
+    before: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<usize, String> {
+    let engine = state.workflow_engine.read().await;
+    engine
+        .scheduler
+        .delete_schedule_runs(workflow_id.as_deref(), before)
+        .map_err(|error| error.to_string())
 }
 
 // ── 执行 ──

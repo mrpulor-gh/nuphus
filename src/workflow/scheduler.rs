@@ -1,7 +1,7 @@
 //! Persistent five-field cron scheduling with IANA timezone support.
 
 use crate::workflow::store::WorkflowStore;
-use crate::workflow::types::{Action, InputSpec, ScheduleConfig, Step};
+use crate::workflow::types::{Action, InputSpec, RunRecord, RunStatus, ScheduleConfig, Step};
 use crate::Result;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -95,9 +95,42 @@ pub struct PersistedSchedules {
     pub schedules: HashMap<String, ScheduleBinding>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleRunRecord {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub workflow_title: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub status: RunStatus,
+    pub error: Option<String>,
+    pub steps: Vec<crate::workflow::types::StepRunRecord>,
+}
+
+impl ScheduleRunRecord {
+    pub fn from_run(workflow_id: &str, workflow_title: &str, run: &RunRecord) -> Self {
+        Self {
+            run_id: run.run_id.clone(),
+            workflow_id: workflow_id.to_string(),
+            workflow_title: workflow_title.to_string(),
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            status: run.status.clone(),
+            error: run.error.clone(),
+            steps: run.steps.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PersistedScheduleRuns {
+    pub runs: Vec<ScheduleRunRecord>,
+}
+
 pub struct SchedulerEngine {
     tasks: RwLock<HashMap<String, ScheduledTask>>,
     persist_path: PathBuf,
+    history_path: PathBuf,
 }
 
 pub fn has_frontend_step(steps: &[Step]) -> bool {
@@ -178,7 +211,38 @@ impl SchedulerEngine {
         Self {
             tasks: RwLock::new(HashMap::new()),
             persist_path,
+            history_path: resolve_history_path(),
         }
+    }
+
+    pub async fn record_schedule_run(&self, record: ScheduleRunRecord) -> Result<()> {
+        let mut history = load_schedule_runs_from(&self.history_path);
+        history.runs.retain(|item| item.run_id != record.run_id);
+        history.runs.insert(0, record);
+        write_schedule_runs(&self.history_path, &history)
+    }
+
+    pub fn list_schedule_runs(&self) -> PersistedScheduleRuns {
+        load_schedule_runs_from(&self.history_path)
+    }
+
+    pub fn delete_schedule_runs(
+        &self,
+        workflow_id: Option<&str>,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<usize> {
+        let mut history = load_schedule_runs_from(&self.history_path);
+        let old_len = history.runs.len();
+        history.runs.retain(|item| {
+            let workflow_match = workflow_id.map(|id| item.workflow_id == id).unwrap_or(true);
+            let date_match = before.map(|date| item.started_at < date).unwrap_or(true);
+            !(workflow_match && date_match)
+        });
+        let removed = old_len - history.runs.len();
+        if removed > 0 {
+            write_schedule_runs(&self.history_path, &history)?;
+        }
+        Ok(removed)
     }
 
     pub async fn set_schedule<F, Fut>(
@@ -402,6 +466,31 @@ fn resolve_persist_path() -> PathBuf {
         .unwrap_or_default()
         .join(".nuphus")
         .join("schedules.json")
+}
+
+fn resolve_history_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_default()
+        .join(".nuphus")
+        .join("schedule_runs.json")
+}
+
+fn write_schedule_runs(path: &Path, data: &PersistedScheduleRuns) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(data)?)?;
+    Ok(())
+}
+
+fn load_schedule_runs_from(path: &Path) -> PersistedScheduleRuns {
+    match std::fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|error| {
+            tracing::warn!("[scheduler] Failed to parse schedule history: {}", error);
+            PersistedScheduleRuns::default()
+        }),
+        Err(_) => PersistedScheduleRuns::default(),
+    }
 }
 
 impl Default for SchedulerEngine {

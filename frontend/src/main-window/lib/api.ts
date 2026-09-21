@@ -1148,6 +1148,45 @@ export interface WfScheduleDetails {
   ineligible_reason?: string | null
 }
 
+export interface ScheduleRunRecord {
+  run_id: string
+  workflow_id: string
+  workflow_title: string
+  started_at: string
+  finished_at?: string | null
+  status: RunRecord['status']
+  error?: string | null
+  steps: NonNullable<RunRecord['steps']>
+}
+
+export interface ScheduleHistoryPage {
+  total: number
+  page: number
+  page_size: number
+  runs: ScheduleRunRecord[]
+}
+
+export interface ScheduleHistoryFilter {
+  workflow_id?: string
+  status?: 'running' | 'success' | 'error' | 'cancelled' | 'paused'
+  from?: string
+  to?: string
+  page?: number
+  page_size?: number
+}
+
+export function wfScheduleHistoryList(filter: ScheduleHistoryFilter = {}) {
+  return invoke<ScheduleHistoryPage>('wf_schedule_history_list', { filter })
+}
+
+export function wfScheduleHistoryGet(runId: string) {
+  return invoke<ScheduleRunRecord>('wf_schedule_history_get', { runId })
+}
+
+export function wfScheduleHistoryDelete(workflowId?: string, before?: string) {
+  return invoke<number>('wf_schedule_history_delete', { workflowId, before })
+}
+
 export function wfScheduleGet(id: string) {
   return invoke<WfScheduleDetails>('wf_schedule_get', { id })
 }
