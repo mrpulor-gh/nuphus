@@ -8,9 +8,9 @@ vi.mock('../main-window/lib/api', () => ({
       can_switch: true,
       items: [
         {
-          id: 'active-session',
-          mode: 'leader',
-          title: '当前测试会话',
+          id: 'active-workflow-session',
+          mode: 'workflow',
+          title: '当前 Workflow 会话',
           preview: '',
           message_count: 2,
           updated_at: Date.now(),
@@ -37,8 +37,8 @@ vi.mock('../main-window/lib/api', () => ({
 describe('会话工作台当前状态', () => {
   it('保留 aria-current 并显示明确的当前徽标', async () => {
     render(<SessionRail onSessionChanged={vi.fn()} />)
-    await waitFor(() => expect(screen.getByText('当前测试会话')).toBeInTheDocument())
-    const title = screen.getByText('当前测试会话').closest('button')!
+    await waitFor(() => expect(screen.getByText('当前 Workflow 会话')).toBeInTheDocument())
+    const title = screen.getByText('当前 Workflow 会话').closest('button')!
     expect(title).toHaveAttribute('aria-current', 'true')
     expect(title).toBeDisabled()
     // 「当前」徽标：组头的 is_current 徽标只在有当前工作目录组时出现，
