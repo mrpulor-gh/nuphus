@@ -158,7 +158,8 @@ const en: Record<string, string> = {
     'This session is executing ...please wait for it to finish before switching',
   'sessionRail.switchFailAppend': 'Instruction queue still processing ...switchable shortly',
   'sessionRail.switchFailMode': 'That session belongs to another run mode ...switch modes first',
-  'sessionRail.switchFailGeneric': 'Switch did not take effect, please retry',
+  'sessionRail.switchFailNotFound': 'That session no longer exists — it may have been archived',
+  'sessionRail.invalidTitle': 'Invalid title (1–60 characters)',
   'sessionRail.archive': 'Archive',
   'sessionRail.archiveConfirmTitle': 'Archive this session?',
   'sessionRail.archiveConfirmDesc':

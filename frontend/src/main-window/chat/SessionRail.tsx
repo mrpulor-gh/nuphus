@@ -137,18 +137,33 @@ interface SessionRailProps {
 
 type NoticeTone = 'info' | 'warning' | 'error'
 
-/** 错误码 → i18n key（按业务/系统错误拆分，业务等待有专属细分文案） */
-function codeToI18n(code: string): string {
+/** catch 值 → 可读消息（IPC 错误多为字符串；Error 对象取 message） */
+function errorText(e: unknown): string {
+  if (typeof e === 'string') return e
+  if (e instanceof Error) return e.message
+  return String(e)
+}
+
+/**
+ * 错误码 → i18n key；**未注册的码返回 null**（由调用方按后端原文展示）。
+ *
+ * 后端错误分两类：稳定错误码（busy / append_pending / mode_mismatch / archiveFailGeneric …）
+ * 与自由文本（DB、锁失败等 `e.to_string()`）。此前两类都无条件查表，自由文本会落到
+ * 「切换未生效」兜底文案——改名失败被告知「切换未生效」，且后端给的真实原因被丢弃。
+ */
+function codeToI18n(code: string): string | null {
   if (code === 'busy') return 'sessionRail.switchFailBusy'
   if (code === 'append_pending') return 'sessionRail.switchFailAppend'
   if (code === 'mode_mismatch') return 'sessionRail.switchFailMode'
+  if (code === 'not_found') return 'sessionRail.switchFailNotFound'
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
   if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
   if (code === 'sortPrefsFailGeneric') return 'sessionRail.sortPrefsFailGeneric'
   if (code === 'newChatSwitchFail') return 'sessionRail.newChatSwitchFail'
   if (code === 'browseDirFail') return 'sessionRail.newChatBrowseFail'
   if (code === 'no_project_dir') return 'sessionRail.createProjectFail'
-  return 'sessionRail.switchFailGeneric'
+  if (code === 'invalid_title') return 'sessionRail.invalidTitle'
+  return null
 }
 
 /** 错误码 → 视觉 tone：业务等待用 info（蓝），模式不匹配用 warning（橙），真错误用 error（红） */
@@ -810,10 +825,17 @@ export default function SessionRail({
     return () => window.removeEventListener(SESSION_GROUP_LIMIT_CHANGED_EVENT, onLimitChanged)
   }, [refresh])
 
+  /**
+   * 提示浮层：**已注册错误码 → 专属文案；未注册字符串 → 按后端原文展示**。
+   *
+   * 分流而非无条件查表的原因见 codeToI18n 注释：后端自由文本（DB / 锁失败等）若也走
+   * 查表，会被「切换未生效」兜底文案冒名顶替，真实原因一并丢失。
+   */
   const flashNotice = useCallback(
     (code: string) => {
+      const key = codeToI18n(code)
       const tone = codeToTone(code)
-      setNotice({ text: t(codeToI18n(code)), tone })
+      setNotice({ text: key ? t(key) : code, tone })
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
       // 业务等待（info）延长阅读时间；模式不匹配/真错误保留短促反馈
       const duration = tone === 'info' ? 3500 : 2400
@@ -925,7 +947,7 @@ export default function SessionRail({
         // 切换完成即收起抽屉：立刻让出消息区视野（唯一自动收起场景，非弹出）
         setOpen(false)
       } catch (e) {
-        flashNotice(typeof e === 'string' ? e : String(e))
+        flashNotice(errorText(e))
       }
     },
     [items, onSessionChanged, onModeSwitched, onSwitchProjectDir, refresh, flashNotice],
@@ -995,7 +1017,7 @@ export default function SessionRail({
         await setProjectBookmarks(next)
         void refresh()
       } catch (e) {
-        flashNotice(typeof e === 'string' ? e : String(e))
+        flashNotice(errorText(e))
       }
     },
     [projectDraft, projects, archivedProjects, refresh, flashNotice],
@@ -1066,7 +1088,7 @@ export default function SessionRail({
         ? { name: entry.name, path: entry.path }
         : { name: projectNameFromPath(picked), path: picked }
     } catch (e) {
-      flashNotice(typeof e === 'string' ? e : String(e))
+      flashNotice(errorText(e))
       return null
     }
   }, [projects, archivedProjects, refresh, flashNotice, t])
@@ -1154,7 +1176,7 @@ export default function SessionRail({
       try {
         await setProjectBookmarks(buildBookmarkTable(projects, archivedProjects, name, path))
       } catch (e) {
-        flashNotice(typeof e === 'string' ? e : String(e))
+        flashNotice(errorText(e))
         return false
       }
       const ok = await onSwitchProjectDir(path)
@@ -1166,7 +1188,7 @@ export default function SessionRail({
       try {
         await createProjectChat()
       } catch (e) {
-        flashNotice(typeof e === 'string' ? e : String(e))
+        flashNotice(errorText(e))
         return false
       }
       setCreateProjectOpen(false)
@@ -1188,7 +1210,7 @@ export default function SessionRail({
         await renameSession(id, draft)
         void refresh()
       } catch (e) {
-        flashNotice(typeof e === 'string' ? e : String(e))
+        flashNotice(errorText(e))
       }
     },
     [draftTitle, refresh, flashNotice],

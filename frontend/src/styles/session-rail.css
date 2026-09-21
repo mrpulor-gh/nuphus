@@ -742,3 +742,16 @@
     animation: none !important;
   }
 }
+
+/* ── 键盘焦点环（补全）
+   行内图标按钮（重命名/归档）与动作行按钮此前没有 focus-visible，键盘用户看不到焦点。
+   同面板的 .sr-icon-btn / .sr-title-btn 已自绘焦点环，此处与 .sr-icon-btn 统一：
+   accent-dim 内环（box-shadow，不挤出布局）+ 前景提到 fg-1。 ── */
+.sr-edit-btn:focus-visible,
+.sr-new-chat-btn:focus-visible,
+.sr-more-btn:focus-visible,
+.sr-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-dim, rgba(59, 130, 246, 0.35));
+  color: var(--fg-1);
+}
