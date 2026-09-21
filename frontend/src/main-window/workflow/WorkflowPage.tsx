@@ -9,7 +9,8 @@ import { IconSearch, IconTrash2, IconX, IconWorkflow, IconPlay, IconBot } from '
 import { Button, IconButton } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ChatAgentConfig } from './ChatAgentConfig'
-import { LayoutDashboard, Pencil } from 'lucide-react'
+import { LayoutDashboard, Pencil, Clock3 } from 'lucide-react'
+import { WorkflowScheduleDialog } from './WorkflowScheduleDialog'
 
 function formatTime(ts: number, t?: (key: string, ...args: string[]) => string): string {
   try {
@@ -42,9 +43,16 @@ interface WorkflowPageProps {
   onRunClick: (workflow: WorkflowItem) => void
   /** 打开节点画布（Pro 门禁在调用方与本组件双重检查） */
   onCanvasClick: (workflow: WorkflowItem) => void
+  /** 控制面板内打开的二级弹窗需覆盖设置中心宿主。 */
+  scheduleDialogLayer?: 'default' | 'settings'
 }
 
-export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPageProps) {
+export function WorkflowPage({
+  onClose,
+  onRunClick,
+  onCanvasClick,
+  scheduleDialogLayer = 'default',
+}: WorkflowPageProps) {
   const { t } = useLanguage()
   // 工作流列表只锁定工作流自身的运行/编辑操作；统一工作台的类型切换不受执行态影响。
   const gate = useWorkflowGate()
@@ -57,6 +65,7 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showChatAgent, setShowChatAgent] = useState(false)
+  const [scheduleEditing, setScheduleEditing] = useState<WorkflowItem | null>(null)
   // ── 画布新建：创建中防重复点击 ──
   const [canvasCreating, setCanvasCreating] = useState(false)
 
@@ -338,6 +347,15 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
                         <span className="item-title">{item.title}</span>
                       )}
                       <span className={st.badge}>{t(st.textKey)}</span>
+                      {item.schedule && (
+                        <span
+                          className={
+                            item.schedule.enabled ? 'badge badge-accent' : 'badge badge-neutral'
+                          }
+                        >
+                          {item.schedule.enabled ? '定时启用' : '定时停用'}
+                        </span>
+                      )}
                     </div>
                     {item.description && <div className="item-desc">{item.description}</div>}
                     <div className="item-meta-line">{metaLine}</div>
@@ -363,6 +381,14 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
                       <IconPlay size={14} />
                     </IconButton>
                     {/* 画布入口（闸门锁定态禁用：执行中禁止进入画布） */}
+                    <IconButton
+                      variant="ghost"
+                      label="设置定时运行"
+                      title={item.schedule?.enabled ? '定时运行已启用' : '设置定时运行'}
+                      onClick={() => setScheduleEditing(item)}
+                    >
+                      <Clock3 size={14} />
+                    </IconButton>
                     <IconButton
                       variant="ghost"
                       label={t('workflow.canvas')}
@@ -402,6 +428,20 @@ export function WorkflowPage({ onClose, onRunClick, onCanvasClick }: WorkflowPag
             )
           })}
         </div>
+      )}
+      {scheduleEditing && (
+        <WorkflowScheduleDialog
+          open
+          workflow={scheduleEditing}
+          readOnly={gate.locked}
+          layer={scheduleDialogLayer}
+          onClose={() => setScheduleEditing(null)}
+          onChanged={schedule => {
+            setItems(current =>
+              current.map(item => (item.id === scheduleEditing.id ? { ...item, schedule } : item)),
+            )
+          }}
+        />
       )}
     </div>
   )

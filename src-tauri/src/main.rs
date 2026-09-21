@@ -328,6 +328,13 @@ fn main() {
             commands::wf_validate,
             commands::wf_save,
             commands::wf_run,
+            commands::wf_schedule_get,
+            commands::wf_schedule_preview,
+            commands::wf_schedule_set,
+            commands::wf_schedule_remove,
+            commands::wf_schedule_history_list,
+            commands::wf_schedule_history_get,
+            commands::wf_schedule_history_delete,
             commands::wf_gate_status,
             commands::wf_tools,
             commands::wf_layout_get,
@@ -647,7 +654,7 @@ fn main() {
                 let state = app.state::<crate::state::AppState>();
                 let app_handle = app.handle().clone();
 
-                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String| {
+                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String, inputs: std::collections::HashMap<String, serde_json::Value>| {
                     let app_handle = app_handle.clone();
                     Box::pin(async move {
                         let state = app_handle.state::<crate::state::AppState>();
@@ -668,22 +675,89 @@ fn main() {
                         };
 
                         let engine = state.workflow_engine.read().await;
+                        let Some(workflow) = engine.store.get(&workflow_id).await else {
+                            tracing::error!("[Scheduler] Workflow {} no longer exists", workflow_id);
+                            return;
+                        };
+                        if let Err(error) = nuphus::workflow::inputs::resolve_declared_only(&workflow.inputs, &inputs) {
+                            tracing::error!("[Scheduler] Input validation failed for {}: {}", workflow_id, error);
+                            let now = chrono::Utc::now();
+                            let run = nuphus::workflow::types::RunRecord {
+                                run_id: uuid::Uuid::new_v4().to_string(),
+                                started_at: now,
+                                finished_at: Some(now),
+                                status: nuphus::workflow::types::RunStatus::Error(error.to_string()),
+                                steps: Vec::new(),
+                                error: Some(error.to_string()),
+                                variables_snapshot: std::collections::HashMap::new(),
+                            };
+                            let _ = engine.scheduler.record_schedule_run(
+                                nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                    &workflow,
+                                    &run,
+                                ),
+                            ).await;
+                            return;
+                        }
                         // For scheduled execution, tool schemas are not available (no Tauri state access)
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
-                        if let Err(e) = engine
+                        let previous_run_id = workflow.run_history.first().map(|run| run.run_id.clone());
+                        let started_at = chrono::Utc::now();
+                        let schedule_run_id = uuid::Uuid::new_v4().to_string();
+                        let running = nuphus::workflow::types::RunRecord {
+                            run_id: schedule_run_id.clone(),
+                            started_at,
+                            finished_at: None,
+                            status: nuphus::workflow::types::RunStatus::Running,
+                            steps: Vec::new(),
+                            error: None,
+                            variables_snapshot: std::collections::HashMap::new(),
+                        };
+                        let _ = engine.scheduler.record_schedule_run(
+                            nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                &workflow,
+                                &running,
+                            ),
+                        ).await;
+                        let execution = engine
                             .execute_workflow(
                                 &workflow_id,
                                 tool_exec,
                                 Some(vec![]),
                                 None,
-                                None,
+                                (!inputs.is_empty()).then_some(inputs),
                                 false,
                                 nuphus::workflow::WorkflowRunSource::Schedule,
                             )
-                            .await
-                        {
+                            .await;
+                        if let Err(e) = &execution {
                             tracing::error!("[Scheduler] Cron-triggered workflow {} failed: {}", workflow_id, e);
                         }
+                        let new_run = engine.store.get(&workflow_id).await
+                            .and_then(|wf| wf.run_history.first().cloned())
+                            .filter(|run| Some(&run.run_id) != previous_run_id.as_ref());
+                        let run = new_run.unwrap_or_else(|| {
+                            let error = execution
+                                .as_ref()
+                                .err()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| "定时运行未生成执行记录".to_string());
+                            nuphus::workflow::types::RunRecord {
+                                run_id: uuid::Uuid::new_v4().to_string(),
+                                started_at,
+                                finished_at: Some(chrono::Utc::now()),
+                                status: nuphus::workflow::types::RunStatus::Error(error.clone()),
+                                steps: Vec::new(),
+                                error: Some(error),
+                                variables_snapshot: std::collections::HashMap::new(),
+                            }
+                        });
+                        let mut history = nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                            &workflow,
+                            &run,
+                        );
+                        history.run_id = schedule_run_id;
+                        let _ = engine.scheduler.record_schedule_run(history).await;
                     })
                 });
 
@@ -696,6 +770,22 @@ fn main() {
                     busy_flag.load(std::sync::atomic::Ordering::SeqCst)
                 }));
                 drop(engine);
+
+                // schedule_cron runs in the registry's blocking executor. A Weak engine handle
+                // avoids a ToolRegistry ↔ WorkflowEngine ownership cycle while allowing changes
+                // to take effect immediately.
+                let weak_engine = std::sync::Arc::downgrade(&state.workflow_engine);
+                state.tools.set_schedule_tool_callback(std::sync::Arc::new(move |params| {
+                    let Some(engine) = weak_engine.upgrade() else {
+                        return Ok(nuphus::ToolResult::failure(
+                            "调度引擎已关闭".to_string(),
+                        ));
+                    };
+                    let params = params.clone();
+                    tauri::async_runtime::block_on(async move {
+                        engine.read().await.handle_schedule_tool(&params).await
+                    })
+                }));
 
                 // 恢复持久化的调度任务（在 tokio runtime 上异步执行）
                 let wf_engine = state.workflow_engine.clone();

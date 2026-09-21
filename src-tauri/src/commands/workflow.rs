@@ -4,7 +4,8 @@
 //! 画布命令（wf_validate / wf_save / wf_run）：IR 唯一真源，保存前强制权威校验。
 
 use nuphus::workflow::compiler::{Compiler, ValidationReport};
-use nuphus::workflow::types::Workflow;
+use nuphus::workflow::scheduler::{has_frontend_step, ScheduleRunRecord, SchedulerEngine};
+use nuphus::workflow::types::{InputSpec, ScheduleConfig, Workflow};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -24,6 +25,67 @@ pub struct WfSaveResponse {
     pub report: ValidationReport,
 }
 
+#[derive(Debug, Serialize)]
+pub struct WfScheduleDetails {
+    pub config: Option<ScheduleConfig>,
+    pub inputs: std::collections::HashMap<String, serde_json::Value>,
+    pub sensitive_inputs: Vec<String>,
+    pub eligible: bool,
+    pub ineligible_reason: Option<String>,
+}
+
+fn sanitized_schedule_inputs(
+    specs: &[InputSpec],
+    decoded: &std::collections::HashMap<String, serde_json::Value>,
+) -> (
+    std::collections::HashMap<String, serde_json::Value>,
+    Vec<String>,
+) {
+    let sensitive_names: std::collections::HashSet<&str> = specs
+        .iter()
+        .filter(|spec| spec.sensitive)
+        .map(|spec| spec.name.as_str())
+        .collect();
+    let inputs = decoded
+        .iter()
+        .filter(|(name, _)| !sensitive_names.contains(name.as_str()))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let mut sensitive_inputs: Vec<String> = decoded
+        .keys()
+        .filter(|name| sensitive_names.contains(name.as_str()))
+        .cloned()
+        .collect();
+    sensitive_inputs.sort();
+    (inputs, sensitive_inputs)
+}
+
+fn merge_preserved_sensitive(
+    specs: &[InputSpec],
+    previous: &std::collections::HashMap<String, serde_json::Value>,
+    explicit: &mut std::collections::HashMap<String, serde_json::Value>,
+    preserve: &[String],
+) -> Result<(), String> {
+    let sensitive_names: std::collections::HashSet<&str> = specs
+        .iter()
+        .filter(|spec| spec.sensitive)
+        .map(|spec| spec.name.as_str())
+        .collect();
+    for name in preserve {
+        if !sensitive_names.contains(name.as_str()) {
+            return Err("preserve_sensitive 只能包含已声明的敏感输入".to_string());
+        }
+        if explicit.contains_key(name) {
+            continue;
+        }
+        let value = previous
+            .get(name)
+            .ok_or_else(|| format!("敏感调度输入 '{name}' 没有可保留的旧值"))?;
+        explicit.insert(name.clone(), value.clone());
+    }
+    Ok(())
+}
+
 // ── CRUD ──
 
 #[tauri::command]
@@ -37,6 +99,212 @@ pub async fn wf_list(state: State<'_, AppState>) -> Result<WfListResponse, Strin
 pub async fn wf_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let engine = state.workflow_engine.read().await;
     engine.delete_workflow(&id).await.map_err(|e| e.to_string())
+}
+
+// ── 定时调度编辑 ──
+
+#[tauri::command]
+pub async fn wf_schedule_get(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<WfScheduleDetails, String> {
+    let engine = state.workflow_engine.read().await;
+    let workflow = engine
+        .store
+        .get(&id)
+        .await
+        .ok_or_else(|| format!("Workflow not found: {id}"))?;
+    let decoded = engine
+        .scheduler
+        .get_decoded_inputs(&id, &workflow.inputs)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let (inputs, sensitive_inputs) = sanitized_schedule_inputs(&workflow.inputs, &decoded);
+    let ineligible_reason = has_frontend_step(&workflow.steps)
+        .then(|| "包含桌面或浏览器前台步骤，需要用户在场，不能定时执行".to_string());
+    let config = engine
+        .scheduler
+        .get_schedule(&id)
+        .await
+        .or(workflow.schedule);
+    Ok(WfScheduleDetails {
+        config,
+        inputs,
+        sensitive_inputs,
+        eligible: ineligible_reason.is_none(),
+        ineligible_reason,
+    })
+}
+
+#[tauri::command]
+pub fn wf_schedule_preview(config: ScheduleConfig) -> Result<Vec<String>, String> {
+    SchedulerEngine::preview(&config, 3)
+        .map(|dates| dates.into_iter().map(|date| date.to_rfc3339()).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn wf_schedule_set(
+    state: State<'_, AppState>,
+    id: String,
+    config: ScheduleConfig,
+    inputs: serde_json::Value,
+    preserve_sensitive: Vec<String>,
+) -> Result<(), String> {
+    let mut explicit: std::collections::HashMap<String, serde_json::Value> = inputs
+        .as_object()
+        .ok_or_else(|| "inputs 必须是 JSON 对象".to_string())?
+        .clone()
+        .into_iter()
+        .collect();
+    let engine = state.workflow_engine.read().await;
+    let workflow = engine
+        .store
+        .get(&id)
+        .await
+        .ok_or_else(|| format!("Workflow not found: {id}"))?;
+    if !preserve_sensitive.is_empty() {
+        let previous = engine
+            .scheduler
+            .get_decoded_inputs(&id, &workflow.inputs)
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or_default();
+        merge_preserved_sensitive(
+            &workflow.inputs,
+            &previous,
+            &mut explicit,
+            &preserve_sensitive,
+        )?;
+    }
+    engine
+        .set_schedule_with_inputs(&id, config, explicit)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn wf_schedule_remove(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let engine = state.workflow_engine.read().await;
+    if engine.store.get(&id).await.is_none() {
+        return Err(format!("Workflow not found: {id}"));
+    }
+    engine.remove_schedule(&id).await;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WfScheduleHistoryFilter {
+    pub workflow_id: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    pub to: Option<chrono::DateTime<chrono::Utc>>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WfScheduleHistoryPage {
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub runs: Vec<ScheduleRunRecord>,
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_list(
+    state: State<'_, AppState>,
+    filter: Option<WfScheduleHistoryFilter>,
+) -> Result<WfScheduleHistoryPage, String> {
+    let filter = filter.unwrap_or(WfScheduleHistoryFilter {
+        workflow_id: None,
+        status: None,
+        from: None,
+        to: None,
+        page: None,
+        page_size: None,
+    });
+    let page = filter.page.unwrap_or(0);
+    let page_size = filter.page_size.unwrap_or(50).clamp(1, 200);
+    let engine = state.workflow_engine.read().await;
+    let mut runs: Vec<_> = engine
+        .scheduler
+        .list_schedule_runs()
+        .runs
+        .into_iter()
+        .filter(|run| {
+            filter
+                .workflow_id
+                .as_deref()
+                .map(|id| run.workflow_id == id)
+                .unwrap_or(true)
+        })
+        .filter(|run| {
+            filter
+                .status
+                .as_deref()
+                .map(|status| SchedulerEngine::schedule_run_status_matches(&run.status, status))
+                .unwrap_or(true)
+        })
+        .filter(|run| {
+            filter
+                .from
+                .map(|date| run.started_at >= date)
+                .unwrap_or(true)
+        })
+        .filter(|run| filter.to.map(|date| run.started_at <= date).unwrap_or(true))
+        .collect();
+    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+    let total = runs.len();
+    let start = page.saturating_mul(page_size).min(total);
+    let end = (start + page_size).min(total);
+    Ok(WfScheduleHistoryPage {
+        total,
+        page,
+        page_size,
+        runs: runs[start..end].to_vec(),
+    })
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_get(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<ScheduleRunRecord, String> {
+    let engine = state.workflow_engine.read().await;
+    engine
+        .scheduler
+        .list_schedule_runs()
+        .runs
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .ok_or_else(|| format!("Schedule run not found: {run_id}"))
+}
+
+#[tauri::command]
+pub async fn wf_schedule_history_delete(
+    state: State<'_, AppState>,
+    filter: Option<WfScheduleHistoryFilter>,
+) -> Result<usize, String> {
+    let filter = filter.unwrap_or(WfScheduleHistoryFilter {
+        workflow_id: None,
+        status: None,
+        from: None,
+        to: None,
+        page: None,
+        page_size: None,
+    });
+    let engine = state.workflow_engine.read().await;
+    engine
+        .scheduler
+        .delete_schedule_runs(
+            filter.workflow_id.as_deref(),
+            filter.status.as_deref(),
+            filter.from,
+            filter.to,
+        )
+        .map_err(|error| error.to_string())
 }
 
 // ── 执行 ──
@@ -219,11 +487,19 @@ pub async fn wf_run(
     for key in inputs.keys() {
         tracing::debug!("[wf_run] 收到输入键: {}", key);
     }
-    let inputs = if inputs.is_empty() {
-        None
-    } else {
-        Some(inputs)
-    };
+    // 在异步 spawn 前执行与 executor 相同的输入契约预检，让 UI 直接收到必填/类型错误。
+    // 未声明键仍允许存在，executor 会按兼容语义只注入顶层。
+    {
+        let engine = state.workflow_engine.read().await;
+        let workflow = engine
+            .store
+            .get(&id)
+            .await
+            .ok_or_else(|| format!("Workflow not found: {id}"))?;
+        nuphus::workflow::inputs::resolve_declared_inputs(&workflow.inputs, &inputs)
+            .map_err(|e| e.to_string())?;
+    }
+    let inputs = (!inputs.is_empty()).then_some(inputs);
     // 注入 LLM client + ToolRegistry（ChatAgent 步骤依赖），与 plugin_workflow_run 共用公共函数
     {
         let mut engine = state.workflow_engine.write().await;
@@ -346,4 +622,50 @@ pub async fn wf_gate_status(state: State<'_, AppState>) -> Result<serde_json::Va
         "owner": active.as_ref().map(|a| a.owner.as_str()),
         "workflow_id": active.as_ref().map(|a| a.workflow_id.as_str()),
     }))
+}
+
+#[cfg(test)]
+mod schedule_editor_tests {
+    use super::*;
+    use nuphus::workflow::types::InputKind;
+
+    fn input(name: &str, sensitive: bool) -> InputSpec {
+        InputSpec {
+            name: name.into(),
+            kind: InputKind::String,
+            required: false,
+            default: None,
+            description: None,
+            sensitive,
+        }
+    }
+
+    #[test]
+    fn schedule_details_never_return_sensitive_values() {
+        let specs = vec![input("topic", false), input("token", true)];
+        let decoded = std::collections::HashMap::from([
+            ("topic".into(), serde_json::json!("news")),
+            ("token".into(), serde_json::json!("secret")),
+        ]);
+        let (visible, sensitive) = sanitized_schedule_inputs(&specs, &decoded);
+        assert_eq!(
+            visible,
+            std::collections::HashMap::from([("topic".into(), serde_json::json!("news"))])
+        );
+        assert_eq!(sensitive, vec!["token"]);
+    }
+
+    #[test]
+    fn preserved_sensitive_value_is_merged_without_overwriting_reentry() {
+        let specs = vec![input("token", true)];
+        let previous =
+            std::collections::HashMap::from([("token".into(), serde_json::json!("old"))]);
+        let mut explicit = std::collections::HashMap::new();
+        merge_preserved_sensitive(&specs, &previous, &mut explicit, &["token".into()]).unwrap();
+        assert_eq!(explicit["token"], serde_json::json!("old"));
+
+        explicit.insert("token".into(), serde_json::json!("new"));
+        merge_preserved_sensitive(&specs, &previous, &mut explicit, &["token".into()]).unwrap();
+        assert_eq!(explicit["token"], serde_json::json!("new"));
+    }
 }

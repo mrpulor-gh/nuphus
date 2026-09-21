@@ -196,6 +196,10 @@ export default function App() {
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
   const [showSettingsCenter, setShowSettingsCenter] = useState(false)
+  const [scheduleReplay, setScheduleReplay] = useState<{
+    workflowId: string
+    runId: string
+  } | null>(null)
   const cmdIconMap: Record<string, React.ReactNode> = {
     workflows: <IconWorkflow size={14} />,
     canvas: <IconPalette size={14} />,
@@ -932,7 +936,12 @@ export default function App() {
               <div className="canvas-workbench-host">
                 <CanvasWorkbenchPage
                   workflowId={s.canvasWorkflowId}
-                  onClose={() => s.closeCanvas()}
+                  replayRunId={scheduleReplay?.runId ?? null}
+                  onExitReplay={() => setScheduleReplay(null)}
+                  onClose={() => {
+                    setScheduleReplay(null)
+                    s.closeCanvas()
+                  }}
                 />
               </div>
             </Suspense>
@@ -953,7 +962,13 @@ export default function App() {
                    点击后关闭面板，改走各自既有全屏宿主链路（与 Ctrl+K 入口同一实现）。 */
                 onOpenCanvas={workflowId => {
                   setShowSettingsCenter(false)
+                  setScheduleReplay(null)
                   s.openCanvas(workflowId ?? null)
+                }}
+                onOpenScheduleReplay={(workflowId, runId) => {
+                  setShowSettingsCenter(false)
+                  setScheduleReplay({ workflowId, runId })
+                  s.openCanvas(workflowId)
                 }}
                 onOpenModels={() => {
                   setShowSettingsCenter(false)

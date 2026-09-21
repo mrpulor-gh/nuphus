@@ -23,6 +23,7 @@ import {
   Pencil,
   Copy,
   Trash2,
+  Settings2,
 } from 'lucide-react'
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
@@ -36,6 +37,12 @@ export interface NodeActions {
 
 /** 由 CanvasPage 注入（ReactFlow 外层 Provider），节点组件内消费；null = 只读/无操作 */
 export const NodeActionsContext = createContext<NodeActions | null>(null)
+
+export interface InputAnchorActions {
+  onConfigure: (name: string) => void
+}
+
+export const InputAnchorActionsContext = createContext<InputAnchorActions | null>(null)
 
 export type StepNodeFlow = Node<
   { canvas: CanvasNode; status?: StepVisualStatus; problem?: 'error' | 'warning'; dir?: LayoutDir },
@@ -64,6 +71,7 @@ function statusClass(status?: StepVisualStatus): string {
 export const StepNode = memo(function StepNode({ data, selected }: NodeProps<StepNodeFlow>) {
   const { canvas: node, status, problem } = data
   const actions = useContext(NodeActionsContext)
+  const inputActions = useContext(InputAnchorActionsContext)
   const Icon = KIND_ICONS[node.kind] ?? Wrench
 
   // LR 层（root 横向流）→ 左右锚点；TB 层（子层树状）→ 上下锚点
@@ -76,13 +84,28 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
       node.synthetic === 'entry' ? LogIn : node.synthetic === 'cond' ? GitBranch : LogOut
     return (
       <div
-        className={`wfc-node wfc-anchor wfc-anchor--${node.synthetic}`}
+        className={`wfc-node wfc-anchor wfc-anchor--${node.synthetic}${node.externalInputDeclared === false ? ' is-undeclared' : ''}`}
         title={node.externalProducerId ? `生产者：${node.externalProducerId}` : node.name}
       >
         <Handle type="target" position={targetPos} className="wfc-handle" />
         <AnchorIcon size={12} aria-hidden="true" />
         <span className="wfc-anchor-name">{node.name}</span>
+        {node.externalInputDeclared === false && <span className="wfc-anchor-sub">未声明</span>}
         {node.containerSummary && <span className="wfc-anchor-sub">{node.containerSummary}</span>}
+        {node.externalInput && node.externalVar && inputActions && (
+          <button
+            type="button"
+            className="wfc-anchor-settings"
+            title={`设置外部输入 ${node.externalVar}`}
+            aria-label={`设置外部输入 ${node.externalVar}`}
+            onClick={event => {
+              event.stopPropagation()
+              inputActions.onConfigure(node.externalVar!)
+            }}
+          >
+            <Settings2 size={12} aria-hidden="true" />
+          </button>
+        )}
         <Handle type="source" position={sourcePos} className="wfc-handle" />
       </div>
     )

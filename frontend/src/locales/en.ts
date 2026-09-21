@@ -1013,6 +1013,7 @@ const en: Record<string, string> = {
   'app.mobile': 'Mobile',
   'app.soul': 'Identity',
   'app.workflows': 'Workflows',
+  'app.scheduleHistory': 'Scheduled Tasks',
   'app.help': 'Help',
 
   'titleBar.minimize': 'Minimize',

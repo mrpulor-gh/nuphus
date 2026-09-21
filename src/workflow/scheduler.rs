@@ -1,238 +1,556 @@
-//! scheduler.rs — Cron schedule engine
-//!
-//! Responsibilities:
-//! - Parse cron expressions → compute next execution time
-//! - Execute workflows on schedule (background workflows only)
-//! - Foreground workflows (desktop/browser) are rejected for scheduling
-//! - Persistent: schedules survive restart via .nuphus/schedules.json
-//!
-//! Cron format: 5-field "minute hour day month weekday"
+//! Persistent five-field cron scheduling with IANA timezone support.
 
 use crate::workflow::store::WorkflowStore;
-use crate::workflow::types::{Action, ScheduleConfig, Step};
+use crate::workflow::types::{
+    Action, InputSpec, RunRecord, RunStatus, ScheduleConfig, Step, Workflow,
+};
 use crate::Result;
-use chrono::{DateTime, Datelike, Local, Timelike};
+use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
+use cron::Schedule;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-/// Scheduled task handle
-struct ScheduledTask {
-    config: ScheduleConfig,
-    handle: JoinHandle<()>,
+/// Internal persisted binding. Flattening keeps old ScheduleConfig-only JSON readable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleBinding {
+    #[serde(flatten)]
+    pub config: ScheduleConfig,
+    /// Explicit values only. Declaration defaults are deliberately resolved at trigger time.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    inputs: HashMap<String, serde_json::Value>,
+    /// Anchor used by interval schedules. Cron schedules ignore this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) anchor_at: Option<DateTime<Utc>>,
 }
 
-/// Persisted schedule store format
+impl ScheduleBinding {
+    fn new(
+        config: ScheduleConfig,
+        specs: &[InputSpec],
+        explicit: &HashMap<String, serde_json::Value>,
+    ) -> Result<Self> {
+        crate::workflow::inputs::resolve_declared_only(specs, explicit)?;
+        let mut inputs = explicit.clone();
+        for spec in specs.iter().filter(|spec| spec.sensitive) {
+            let Some(value) = inputs.get_mut(&spec.name) else {
+                continue;
+            };
+            let json = serde_json::to_string(value).map_err(|error| {
+                crate::NuphusError::agent(format!(
+                    "无法序列化敏感调度输入 '{}': {}",
+                    spec.name, error
+                ))
+            })?;
+            *value = serde_json::Value::String(crate::cookies::encrypt_secret(&json));
+        }
+        Ok(Self {
+            config,
+            inputs,
+            anchor_at: None,
+        })
+    }
+
+    pub fn decode_inputs(&self, specs: &[InputSpec]) -> Result<HashMap<String, serde_json::Value>> {
+        let mut inputs = self.inputs.clone();
+        for spec in specs.iter().filter(|spec| spec.sensitive) {
+            let Some(value) = inputs.get_mut(&spec.name) else {
+                continue;
+            };
+            let stored = value.as_str().ok_or_else(|| {
+                crate::NuphusError::agent(format!("敏感调度输入 '{}' 的持久化格式无效", spec.name))
+            })?;
+            let json = crate::cookies::decrypt_secret(stored).ok_or_else(|| {
+                crate::NuphusError::agent(format!("敏感调度输入 '{}' 解密失败", spec.name))
+            })?;
+            *value = serde_json::from_str(&json).map_err(|_| {
+                crate::NuphusError::agent(format!(
+                    "敏感调度输入 '{}' 解密后的 JSON 无效",
+                    spec.name
+                ))
+            })?;
+        }
+        // Revalidate against the workflow's current declaration. This intentionally resolves
+        // current defaults only for validation and returns the original explicit snapshot.
+        crate::workflow::inputs::resolve_declared_only(specs, &inputs)?;
+        Ok(inputs)
+    }
+
+    pub fn input_count(&self) -> usize {
+        self.inputs.len()
+    }
+}
+
+struct ScheduledTask {
+    binding: ScheduleBinding,
+    handle: Option<JoinHandle<()>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PersistedSchedules {
-    pub schedules: HashMap<String, ScheduleConfig>,
+    pub schedules: HashMap<String, ScheduleBinding>,
 }
 
-/// SchedulerEngine — cron-based scheduling engine with disk persistence
-pub struct SchedulerEngine {
-    tasks: RwLock<HashMap<String, ScheduledTask>>,
-    persist_path: PathBuf,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleRunRecord {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub workflow_title: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub status: RunStatus,
+    pub error: Option<String>,
+    pub steps: Vec<crate::workflow::types::StepRunRecord>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub step_names: HashMap<String, String>,
 }
 
-/// 递归检查步骤树中是否包含前台工具（desktop_*/browser_*）
-fn has_frontend_step(steps: &[Step]) -> bool {
-    const FRONTEND_PREFIXES: [&str; 2] = ["desktop_", "browser_"];
+impl ScheduleRunRecord {
+    pub fn from_run(workflow_id: &str, workflow_title: &str, run: &RunRecord) -> Self {
+        Self {
+            run_id: run.run_id.clone(),
+            workflow_id: workflow_id.to_string(),
+            workflow_title: workflow_title.to_string(),
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            status: run.status.clone(),
+            error: run.error.clone(),
+            steps: run.steps.clone(),
+            step_names: HashMap::new(),
+        }
+    }
+
+    pub fn from_workflow(workflow: &Workflow, run: &RunRecord) -> Self {
+        let mut record = Self::from_run(&workflow.id, &workflow.name, run);
+        collect_step_names(&workflow.steps, &mut record.step_names);
+        record
+    }
+}
+
+fn collect_step_names(steps: &[Step], names: &mut HashMap<String, String>) {
     for step in steps {
+        names.insert(step.id().to_string(), step.name().to_string());
         match &step.action {
-            Action::Tool { tool, .. } if FRONTEND_PREFIXES.iter().any(|p| tool.starts_with(p)) => {
-                return true;
+            Action::Seq { seq } => collect_step_names(seq, names),
+            Action::Loop { def } => collect_step_names(&def.steps, names),
+            Action::If { def } => {
+                collect_step_names(&def.then, names);
+                collect_step_names(&def.else_branch, names);
             }
-            Action::Seq { seq } if has_frontend_step(seq) => {
-                return true;
-            }
-            Action::Loop { def } if has_frontend_step(&def.steps) => {
-                return true;
-            }
-            Action::If { def }
-                if (has_frontend_step(&def.then) || has_frontend_step(&def.else_branch)) =>
-            {
-                return true;
-            }
-            Action::Wait { auto, .. } if has_frontend_step(auto) => {
-                return true;
-            }
+            Action::Wait { auto, .. } => collect_step_names(auto, names),
             _ => {}
         }
     }
-    false
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PersistedScheduleRuns {
+    pub runs: Vec<ScheduleRunRecord>,
+}
+
+pub struct SchedulerEngine {
+    tasks: RwLock<HashMap<String, ScheduledTask>>,
+    persist_path: PathBuf,
+    history_path: PathBuf,
+    history_guard: std::sync::Mutex<()>,
+}
+
+pub fn has_frontend_step(steps: &[Step]) -> bool {
+    const FRONTEND_PREFIXES: [&str; 2] = ["desktop_", "browser_"];
+    steps.iter().any(|step| match &step.action {
+        Action::Tool { tool, .. } => FRONTEND_PREFIXES
+            .iter()
+            .any(|prefix| tool.starts_with(prefix)),
+        Action::Seq { seq } => has_frontend_step(seq),
+        Action::Loop { def } => has_frontend_step(&def.steps),
+        Action::If { def } => has_frontend_step(&def.then) || has_frontend_step(&def.else_branch),
+        Action::Wait { auto, .. } => has_frontend_step(auto),
+        _ => false,
+    })
+}
+
+fn parse_five_field_cron(expression: &str) -> Result<Schedule> {
+    if expression.split_whitespace().count() != 5 {
+        return Err(crate::NuphusError::agent(format!(
+            "Invalid cron expression '{}': expected exactly 5 fields",
+            expression
+        )));
+    }
+    Schedule::from_str(&format!("0 {expression}")).map_err(|error| {
+        crate::NuphusError::agent(format!(
+            "Invalid cron expression '{}': {}",
+            expression, error
+        ))
+    })
+}
+
+fn parse_timezone(name: &str) -> Result<Tz> {
+    name.parse::<Tz>()
+        .map_err(|_| crate::NuphusError::agent(format!("Invalid IANA timezone: '{}'", name)))
+}
+
+fn next_occurrence(schedule: &Schedule, timezone: Tz, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    schedule
+        .after(&now.with_timezone(&timezone))
+        .next()
+        .map(|next| next.with_timezone(&Utc))
+}
+
+fn validate_interval(interval_minutes: u32) -> Result<()> {
+    if !(1..=1440).contains(&interval_minutes) {
+        return Err(crate::NuphusError::agent(format!(
+            "Invalid interval_minutes '{}': expected 1..=1440",
+            interval_minutes
+        )));
+    }
+    Ok(())
+}
+
+fn next_interval_occurrence(
+    anchor_at: DateTime<Utc>,
+    interval_minutes: u32,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    if validate_interval(interval_minutes).is_err() {
+        return None;
+    }
+    let interval = chrono::Duration::minutes(i64::from(interval_minutes));
+    let elapsed = now.signed_duration_since(anchor_at);
+    let steps = if elapsed < chrono::Duration::zero() {
+        0
+    } else {
+        elapsed.num_seconds().div_euclid(interval.num_seconds()) + 1
+    };
+    Some(anchor_at + interval * i32::try_from(steps).unwrap_or(i32::MAX))
 }
 
 impl SchedulerEngine {
     pub fn new() -> Self {
-        let persist_path = resolve_persist_path();
+        Self::with_persist_path(resolve_persist_path())
+    }
+
+    pub(crate) fn with_persist_path(persist_path: PathBuf) -> Self {
         Self {
             tasks: RwLock::new(HashMap::new()),
             persist_path,
+            history_path: resolve_history_path(),
+            history_guard: std::sync::Mutex::new(()),
         }
     }
 
-    /// Setup cron schedule (background workflows only)
-    ///
-    /// `on_run` is the async callback executed when the schedule fires.
-    /// Foreground workflows (with desktop_/browser_ tools) are rejected.
-    /// Auto-persists to disk on success.
+    pub async fn record_schedule_run(&self, record: ScheduleRunRecord) -> Result<()> {
+        let _guard = self.history_guard.lock().unwrap();
+        let mut history = load_schedule_runs_from(&self.history_path);
+        history.runs.retain(|item| item.run_id != record.run_id);
+        history.runs.insert(0, record);
+        write_schedule_runs(&self.history_path, &history)
+    }
+
+    pub fn list_schedule_runs(&self) -> PersistedScheduleRuns {
+        let _guard = self.history_guard.lock().unwrap();
+        load_schedule_runs_from(&self.history_path)
+    }
+
+    pub fn delete_schedule_runs(
+        &self,
+        workflow_id: Option<&str>,
+        status: Option<&str>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+    ) -> Result<usize> {
+        let _guard = self.history_guard.lock().unwrap();
+        let mut history = load_schedule_runs_from(&self.history_path);
+        let old_len = history.runs.len();
+        history.runs.retain(|item| {
+            let workflow_match = workflow_id.map(|id| item.workflow_id == id).unwrap_or(true);
+            let status_match = status
+                .map(|expected| Self::schedule_run_status_matches(&item.status, expected))
+                .unwrap_or(true);
+            let from_match = from.map(|date| item.started_at >= date).unwrap_or(true);
+            let to_match = to.map(|date| item.started_at <= date).unwrap_or(true);
+            !(workflow_match && status_match && from_match && to_match)
+        });
+        let removed = old_len - history.runs.len();
+        if removed > 0 {
+            write_schedule_runs(&self.history_path, &history)?;
+        }
+        Ok(removed)
+    }
+
+    pub fn schedule_run_status_matches(status: &RunStatus, expected: &str) -> bool {
+        matches!(
+            (expected, status),
+            ("running", RunStatus::Running)
+                | ("success", RunStatus::Success)
+                | ("cancelled", RunStatus::Cancelled)
+                | ("paused", RunStatus::Paused)
+                | ("error", RunStatus::Error(_))
+        )
+    }
+
     pub async fn set_schedule<F, Fut>(
         &self,
         workflow_id: &str,
         config: ScheduleConfig,
+        explicit_inputs: HashMap<String, serde_json::Value>,
         store: &WorkflowStore,
         on_run: F,
     ) -> Result<()>
     where
-        F: Fn() -> Fut + Send + 'static,
+        F: Fn(HashMap<String, serde_json::Value>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        // Check if workflow contains foreground operations
-        if let Some(wf) = store.get(workflow_id).await {
-            let has_frontend = has_frontend_step(&wf.steps);
-            if has_frontend {
-                return Err(crate::NuphusError::agent(
-                    "Foreground workflows (desktop/browser) cannot use cron scheduling; they require user presence. Run manually instead.".to_string()
-                ));
+        self.set_schedule_with_anchor(workflow_id, config, explicit_inputs, None, store, on_run)
+            .await
+    }
+
+    pub async fn set_schedule_with_anchor<F, Fut>(
+        &self,
+        workflow_id: &str,
+        config: ScheduleConfig,
+        explicit_inputs: HashMap<String, serde_json::Value>,
+        anchor_at: Option<DateTime<Utc>>,
+        store: &WorkflowStore,
+        on_run: F,
+    ) -> Result<()>
+    where
+        F: Fn(HashMap<String, serde_json::Value>) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let workflow = store.get(workflow_id).await.ok_or_else(|| {
+            crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
+        })?;
+        if has_frontend_step(&workflow.steps) {
+            return Err(crate::NuphusError::agent(
+                "Foreground workflows (desktop/browser) cannot use cron scheduling; they require user presence. Run manually instead.".to_string(),
+            ));
+        }
+
+        if let Some(interval_minutes) = config.interval_minutes {
+            validate_interval(interval_minutes)?;
+        } else {
+            parse_five_field_cron(&config.cron)?;
+        }
+        let timezone = parse_timezone(&config.timezone)?;
+        let retained_anchor = {
+            let tasks = self.tasks.read().await;
+            tasks.get(workflow_id).and_then(|task| {
+                (task.binding.config.enabled
+                    && config.enabled
+                    && task.binding.config.interval_minutes == config.interval_minutes
+                    && task.binding.config.timezone == config.timezone)
+                    .then_some(task.binding.anchor_at)
+                    .flatten()
+            })
+        };
+        let binding_anchor = config
+            .interval_minutes
+            .map(|_| anchor_at.or(retained_anchor).unwrap_or_else(Utc::now));
+        let mut binding = ScheduleBinding::new(config.clone(), &workflow.inputs, &explicit_inputs)?;
+        binding.anchor_at = binding_anchor;
+
+        if let Some(previous) = self.tasks.write().await.remove(workflow_id) {
+            if let Some(handle) = previous.handle {
+                handle.abort();
             }
         }
 
-        // Remove existing schedule if present
-        self.remove_schedule(workflow_id).await;
-
-        if !config.enabled {
-            return Ok(());
-        }
-
-        // 验证 cron 表达式：无效表达式应返回错误，不静默默认 5 分钟
-        let cfg = config.clone();
-        if parse_cron_to_interval(&cfg.cron).is_none() {
-            return Err(crate::NuphusError::agent(format!(
-                "Invalid cron expression: '{}'",
-                cfg.cron
-            )));
-        }
-
-        let handle = tokio::spawn(async move {
-            loop {
-                // 精确对齐到下一次 cron 匹配时刻（修正：原实现按固定间隔 sleep，
-                // "1 6 * * *" 会退化为每 24h 从设置时刻偏移，永不命中 6:01）。
-                // 无法解析的复杂表达式退化为固定间隔兜底（与旧行为一致）。
-                let delay = next_cron_delay(&cfg.cron, Local::now()).unwrap_or_else(|| {
-                    Duration::from_secs(parse_cron_to_interval(&cfg.cron).unwrap_or(300))
-                });
-
-                // Wait until next execution
-                tokio::time::sleep(delay).await;
-
-                // Execute callback — spawn 到独立 task 中捕获 panic，避免静默死亡
-                let join_handle = tokio::spawn(on_run());
-                if let Err(e) = join_handle.await {
-                    tracing::error!("[scheduler] Scheduled task panicked: {:?}", e);
+        let handle = if config.enabled {
+            let callback_inputs = explicit_inputs;
+            let interval_minutes = config.interval_minutes;
+            let anchor_at = binding.anchor_at;
+            let cron = if interval_minutes.is_none() {
+                Some(parse_five_field_cron(&config.cron)?)
+            } else {
+                None
+            };
+            Some(tokio::spawn(async move {
+                loop {
+                    let now = Utc::now();
+                    let next = match (interval_minutes, anchor_at, cron.as_ref()) {
+                        (Some(interval), Some(anchor), _) => {
+                            next_interval_occurrence(anchor, interval, now)
+                        }
+                        (None, _, Some(schedule)) => next_occurrence(schedule, timezone, now),
+                        _ => None,
+                    };
+                    let Some(next) = next else {
+                        tracing::error!("[scheduler] Cron expression has no future occurrence");
+                        return;
+                    };
+                    let delay = (next - Utc::now())
+                        .to_std()
+                        .unwrap_or_else(|_| Duration::from_millis(1));
+                    tokio::time::sleep(delay).await;
+                    let join = tokio::spawn(on_run(callback_inputs.clone()));
+                    if let Err(error) = join.await {
+                        tracing::error!("[scheduler] Scheduled task panicked: {:?}", error);
+                    }
                 }
-            }
-        });
+            }))
+        } else {
+            None
+        };
 
         self.tasks
             .write()
             .await
-            .insert(workflow_id.to_string(), ScheduledTask { config, handle });
-
-        // 持久化到磁盘
-        self.persist().await;
-
+            .insert(workflow_id.to_string(), ScheduledTask { binding, handle });
+        if let Err(error) = self.persist_current().await {
+            if let Some(task) = self.tasks.write().await.remove(workflow_id) {
+                if let Some(handle) = task.handle {
+                    handle.abort();
+                }
+            }
+            return Err(error);
+        }
         Ok(())
     }
 
-    /// 移除定时调度（自动持久化 + 中止运行中的任务）
     pub async fn remove_schedule(&self, workflow_id: &str) {
-        // guard 必须先 drop：persist() 内部会 read()，write 持有期间 read 是死锁
-        let task = {
-            let mut tasks = self.tasks.write().await;
-            tasks.remove(workflow_id)
-        };
-        if let Some(task) = task {
-            task.handle.abort();
-            self.persist().await;
+        if let Some(task) = self.tasks.write().await.remove(workflow_id) {
+            if let Some(handle) = task.handle {
+                handle.abort();
+            }
+        }
+        if let Err(error) = self.persist_current().await {
+            tracing::error!("[scheduler] Failed to persist schedule removal: {}", error);
         }
     }
 
-    /// 获取工作流的调度配置
     pub async fn get_schedule(&self, workflow_id: &str) -> Option<ScheduleConfig> {
         self.tasks
             .read()
             .await
             .get(workflow_id)
-            .map(|t| t.config.clone())
+            .map(|task| task.binding.config.clone())
     }
 
-    /// 列出所有已配置的调度
     pub async fn list_schedules(&self) -> Vec<(String, ScheduleConfig)> {
         self.tasks
             .read()
             .await
             .iter()
-            .map(|(id, task)| (id.clone(), task.config.clone()))
+            .map(|(id, task)| (id.clone(), task.binding.config.clone()))
             .collect()
     }
 
-    // ── 持久化 ──
-
-    /// 将所有活跃调度写入磁盘
-    async fn persist(&self) {
+    /// Return explicit inputs for the trusted editor. Sensitive values are decoded here but must
+    /// be filtered by the command layer before crossing the Tauri boundary.
+    pub async fn get_decoded_inputs(
+        &self,
+        workflow_id: &str,
+        specs: &[InputSpec],
+    ) -> Result<Option<HashMap<String, serde_json::Value>>> {
         let tasks = self.tasks.read().await;
-        let schedules: HashMap<String, ScheduleConfig> = tasks
+        tasks
+            .get(workflow_id)
+            .map(|task| task.binding.decode_inputs(specs))
+            .transpose()
+    }
+
+    pub fn preview(config: &ScheduleConfig, count: usize) -> Result<Vec<DateTime<Utc>>> {
+        if let Some(interval_minutes) = config.interval_minutes {
+            validate_interval(interval_minutes)?;
+            let anchor = Utc::now();
+            let mut now = anchor;
+            let mut dates = Vec::with_capacity(count);
+            for _ in 0..count {
+                let next = next_interval_occurrence(anchor, interval_minutes, now)
+                    .ok_or_else(|| crate::NuphusError::agent("无法计算间隔调度"))?;
+                dates.push(next);
+                now = next;
+            }
+            return Ok(dates);
+        }
+        let schedule = parse_five_field_cron(&config.cron)?;
+        let timezone = parse_timezone(&config.timezone)?;
+        Ok(schedule
+            .after(&Utc::now().with_timezone(&timezone))
+            .take(count)
+            .map(|next| next.with_timezone(&Utc))
+            .collect())
+    }
+
+    pub async fn persist_current(&self) -> Result<()> {
+        let schedules = self
+            .tasks
+            .read()
+            .await
             .iter()
-            .map(|(id, t)| (id.clone(), t.config.clone()))
+            .map(|(id, task)| (id.clone(), task.binding.clone()))
             .collect();
-        let data = PersistedSchedules { schedules };
-
-        if let Some(parent) = self.persist_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match serde_json::to_string_pretty(&data) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&self.persist_path, &json) {
-                    tracing::error!("[scheduler] Failed to write schedules: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("[scheduler] Failed to serialize schedules: {}", e);
-            }
-        }
+        write_persisted(&self.persist_path, &PersistedSchedules { schedules })
     }
 
-    /// 从磁盘加载持久化的调度配置（返回数据，不启动任务）
     pub fn load_persisted() -> PersistedSchedules {
-        let path = resolve_persist_path();
-        match std::fs::read_to_string(&path) {
-            Ok(json) => match serde_json::from_str(&json) {
-                Ok(data) => data,
-                Err(e) => {
-                    tracing::warn!("[scheduler] Failed to parse schedules file: {}", e);
-                    PersistedSchedules::default()
-                }
-            },
-            Err(_) => PersistedSchedules::default(),
-        }
+        load_persisted_from(&resolve_persist_path())
     }
 
-    /// 获取持久化路径（供 schedule_cron 工具使用）
+    pub fn load_current(&self) -> PersistedSchedules {
+        load_persisted_from(&self.persist_path)
+    }
+
     pub fn persist_path() -> PathBuf {
         resolve_persist_path()
     }
 }
 
-/// 解析持久化文件路径
+fn write_persisted(path: &Path, data: &PersistedSchedules) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(data)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+fn load_persisted_from(path: &Path) -> PersistedSchedules {
+    match std::fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|error| {
+            tracing::warn!("[scheduler] Failed to parse schedules file: {}", error);
+            PersistedSchedules::default()
+        }),
+        Err(_) => PersistedSchedules::default(),
+    }
+}
+
 fn resolve_persist_path() -> PathBuf {
-    let mut path = std::env::current_dir().unwrap_or_default();
-    path.push(".nuphus");
-    path.push("schedules.json");
-    path
+    std::env::current_dir()
+        .unwrap_or_default()
+        .join(".nuphus")
+        .join("schedules.json")
+}
+
+fn resolve_history_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_default()
+        .join(".nuphus")
+        .join("schedule_runs.json")
+}
+
+fn write_schedule_runs(path: &Path, data: &PersistedScheduleRuns) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(data)?)?;
+    Ok(())
+}
+
+fn load_schedule_runs_from(path: &Path) -> PersistedScheduleRuns {
+    match std::fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|error| {
+            tracing::warn!("[scheduler] Failed to parse schedule history: {}", error);
+            PersistedScheduleRuns::default()
+        }),
+        Err(_) => PersistedScheduleRuns::default(),
+    }
 }
 
 impl Default for SchedulerEngine {
@@ -241,301 +559,248 @@ impl Default for SchedulerEngine {
     }
 }
 
-// ── Cron parser (lightweight) ──
-
-/// 解析 cron 表达式 → 执行间隔（秒）
-fn parse_cron_to_interval(cron: &str) -> Option<u64> {
-    let parts: Vec<&str> = cron.split_whitespace().collect();
-    if parts.len() != 5 {
-        return None;
-    }
-
-    let minute = parts[0];
-    let hour = parts[1];
-    let _day_of_month = parts[2];
-    let _month = parts[3];
-    let _day_of_week = parts[4];
-
-    // ── 情况 1: "*/N * * * *" → 每 N 分钟
-    if let Some(n) = minute.strip_prefix("*/") {
-        if let Ok(mins) = n.parse::<u64>() {
-            if hour == "*" && _day_of_month == "*" && _month == "*" && _day_of_week == "*" {
-                return Some(mins * 60);
-            }
-        }
-    }
-
-    // ── 情况 2: "M * * * *" → 每小时 M 分（间隔 1 小时）
-    if minute != "*" && hour == "*" {
-        return Some(3600);
-    }
-
-    // ── 情况 3: "M H * * *" → 每天 H:M（间隔 24 小时）
-    if minute != "*" && hour != "*" && _day_of_month == "*" && _month == "*" {
-        return Some(86400);
-    }
-
-    // ── 情况 4: "* * * * *" → 每分钟
-    if minute == "*" && hour == "*" {
-        return Some(60);
-    }
-
-    // ── 情况 5: "*/N * * * *" 或混合 → 保守使用 5 分钟
-    if minute.contains('/') || minute.contains(',') || minute.contains('-') {
-        return Some(300);
-    }
-
-    // ── 默认
-    if minute.parse::<u64>().is_ok() {
-        return Some(3600);
-    }
-
-    None
-}
-
-/// 计算从 now 到下一个 cron 匹配时刻的延迟（精确对齐；1 分钟粒度）。
-/// 修正语义：旧实现把 "1 6 * * *" 解析成固定 86400s 间隔从设置时刻偏移，
-/// 永不命中 6:01。此函数逐分钟扫描直到第一个匹配时刻，返回真实延迟。
-/// 无法解析（复杂/不支持表达式）返回 None，调用方退化为固定间隔兜底。
-fn next_cron_delay(cron: &str, now: DateTime<Local>) -> Option<Duration> {
-    let parts: Vec<&str> = cron.split_whitespace().collect();
-    if parts.len() != 5 {
-        return None;
-    }
-    let (minute, hour, dom, month, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
-
-    // 从下一分钟整点开始逐分钟扫描（最长 48 小时）
-    let start = now.with_second(0)?.with_nanosecond(0)? + chrono::Duration::minutes(1);
-    let mut t = start;
-    for _ in 0..(48 * 60) {
-        if cron_matches(t, minute, hour, dom, month, dow) {
-            let secs = (t - now).num_seconds();
-            if secs <= 0 {
-                return None;
-            }
-            return Some(Duration::from_secs(secs as u64));
-        }
-        t += chrono::Duration::minutes(1);
-    }
-    None
-}
-
-/// 判断给定时刻是否匹配 cron 字段（5 字段全匹配）
-fn cron_matches(
-    t: DateTime<Local>,
-    minute: &str,
-    hour: &str,
-    dom: &str,
-    month: &str,
-    dow: &str,
-) -> bool {
-    field_match(minute, t.minute())
-        && field_match(hour, t.hour())
-        && field_match(dom, t.day())
-        && field_match(month, t.month())
-        && field_match(dow, t.weekday().num_days_from_sunday())
-}
-
-/// 字段匹配：支持 `*`、`*/N`、`N`、`A-B` 范围、逗号列表（周日=0，cron 惯例）
-fn field_match(field: &str, value: u32) -> bool {
-    if field == "*" {
-        return true;
-    }
-    if let Some(step) = field.strip_prefix("*/") {
-        return step
-            .parse::<u32>()
-            .map(|n| n > 0 && value % n == 0)
-            .unwrap_or(false);
-    }
-    if field.contains(',') {
-        return field.split(',').any(|f| field_match(f, value));
-    }
-    if let Some((a, b)) = field.split_once('-') {
-        if let (Ok(lo), Ok(hi)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
-            return value >= lo && value <= hi;
-        }
-        return false;
-    }
-    field
-        .trim()
-        .parse::<u32>()
-        .map(|v| v == value)
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::store::WorkflowStore;
+    use crate::workflow::types::{InputKind, Workflow};
+    use chrono::TimeZone;
 
-    #[test]
-    fn test_parse_cron_every_minute() {
-        assert_eq!(parse_cron_to_interval("* * * * *"), Some(60));
+    fn config(cron: &str, timezone: &str) -> ScheduleConfig {
+        ScheduleConfig {
+            cron: cron.into(),
+            timezone: timezone.into(),
+            enabled: true,
+            label: None,
+            interval_minutes: None,
+        }
+    }
+
+    fn input(name: &str, kind: InputKind, sensitive: bool) -> InputSpec {
+        InputSpec {
+            name: name.into(),
+            kind,
+            required: false,
+            default: None,
+            description: None,
+            sensitive,
+        }
     }
 
     #[test]
-    fn test_parse_cron_every_5min() {
-        assert_eq!(parse_cron_to_interval("*/5 * * * *"), Some(300));
+    fn old_schedule_file_migrates_to_empty_inputs() {
+        let data: PersistedSchedules = serde_json::from_value(serde_json::json!({
+            "schedules": {"wf": {"cron": "0 9 * * *", "timezone": "UTC", "enabled": true}}
+        }))
+        .unwrap();
+        assert_eq!(data.schedules["wf"].input_count(), 0);
+        assert_eq!(data.schedules["wf"].config.cron, "0 9 * * *");
     }
 
     #[test]
-    fn test_parse_cron_hourly() {
-        assert_eq!(parse_cron_to_interval("0 * * * *"), Some(3600));
+    fn sensitive_input_round_trips_and_bad_cipher_fails() {
+        let specs = vec![input("token", InputKind::String, true)];
+        let explicit = HashMap::from([("token".into(), serde_json::json!("secret"))]);
+        let binding = ScheduleBinding::new(config("0 9 * * *", "UTC"), &specs, &explicit).unwrap();
+        assert_eq!(binding.decode_inputs(&specs).unwrap(), explicit);
+
+        let mut bad = binding;
+        bad.inputs
+            .insert("token".into(), serde_json::json!("enc:v1:not-base64"));
+        assert!(bad.decode_inputs(&specs).is_err());
     }
 
     #[test]
-    fn test_parse_cron_daily() {
-        assert_eq!(parse_cron_to_interval("0 9 * * *"), Some(86400));
+    fn cron_timezone_and_dst_are_resolved_by_timezone_database() {
+        let schedule = parse_five_field_cron("30 2 * * *").unwrap();
+        let timezone = parse_timezone("America/New_York").unwrap();
+        let before_gap = Utc.with_ymd_and_hms(2026, 3, 8, 6, 0, 0).unwrap();
+        let next = next_occurrence(&schedule, timezone, before_gap).unwrap();
+        // 02:30 does not exist on spring-forward day, so the next run is March 9.
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 3, 9, 6, 30, 0).unwrap());
+        assert!(parse_five_field_cron("0 0 * *").is_err());
+        assert!(parse_timezone("Mars/Olympus").is_err());
     }
 
     #[test]
-    fn test_parse_cron_invalid() {
-        assert_eq!(parse_cron_to_interval("invalid"), None);
-        assert_eq!(parse_cron_to_interval(""), None);
+    fn interval_schedule_supports_arbitrary_minutes_and_rejects_out_of_range() {
+        let anchor = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = anchor + chrono::Duration::minutes(89);
+        assert_eq!(
+            next_interval_occurrence(anchor, 90, now),
+            Some(anchor + chrono::Duration::minutes(90))
+        );
+        assert!(validate_interval(1).is_ok());
+        assert!(validate_interval(1440).is_ok());
+        assert!(validate_interval(0).is_err());
+        assert!(validate_interval(1441).is_err());
     }
 
     #[test]
-    fn test_next_cron_delay_daily_aligns_to_601() {
-        // 核心回归：2026-08-17 18:02 设置 "1 6 * * *" → 明天 6:01（约 11h59m），
-        // 旧实现按 86400s 固定偏移会错到明天 18:02。
-        use chrono::TimeZone;
-        let now = Local
-            .with_ymd_and_hms(2026, 8, 17, 18, 2, 0)
-            .single()
-            .unwrap();
-        let d = next_cron_delay("1 6 * * *", now).unwrap();
-        assert_eq!(d.as_secs(), 11 * 3600 + 59 * 60, "delay={}s", d.as_secs());
-    }
-
-    #[test]
-    fn test_next_cron_delay_daily_past_hour_rolls_to_tomorrow() {
-        use chrono::TimeZone;
-        let now = Local
-            .with_ymd_and_hms(2026, 8, 17, 18, 2, 0)
-            .single()
-            .unwrap();
-        // 9:00 已过 → 明天 9:00 = 14h58m
-        let d = next_cron_delay("0 9 * * *", now).unwrap();
-        assert_eq!(d.as_secs(), 14 * 3600 + 58 * 60, "delay={}s", d.as_secs());
-    }
-
-    #[test]
-    fn test_next_cron_delay_hourly_and_step() {
-        use chrono::TimeZone;
-        let now = Local
-            .with_ymd_and_hms(2026, 8, 17, 18, 2, 30)
-            .single()
-            .unwrap();
-        // 每分钟 → 18:03:00 = 30s（对齐到下一分钟整点）
-        let d = next_cron_delay("* * * * *", now).unwrap();
-        assert_eq!(d.as_secs(), 30);
-        // 每 5 分钟 → 18:05:00 = 150s
-        let d = next_cron_delay("*/5 * * * *", now).unwrap();
-        assert_eq!(d.as_secs(), 150);
-        // 每小时 0 分 → 19:00:00 = 57m30s = 3450s
-        let d = next_cron_delay("0 * * * *", now).unwrap();
-        assert_eq!(d.as_secs(), 3450);
-    }
-
-    #[test]
-    fn test_next_cron_delay_invalid_and_range() {
-        use chrono::TimeZone;
-        let now = Local
-            .with_ymd_and_hms(2026, 8, 17, 18, 2, 0)
-            .single()
-            .unwrap();
-        assert_eq!(next_cron_delay("invalid", now), None);
-        assert_eq!(next_cron_delay("", now), None);
-        // 范围：周一至周五 6:01；2026-08-17 是周一，已过 → 明天（周二）6:01
-        let d = next_cron_delay("1 6 * * 1-5", now).unwrap();
-        assert_eq!(d.as_secs(), 11 * 3600 + 59 * 60, "delay={}s", d.as_secs());
+    fn interval_preview_uses_one_to_one_minute_anchor() {
+        let config = ScheduleConfig {
+            cron: "*/5 * * * *".into(),
+            timezone: "UTC".into(),
+            enabled: true,
+            label: None,
+            interval_minutes: Some(90),
+        };
+        let dates = SchedulerEngine::preview(&config, 3).unwrap();
+        assert_eq!(dates.len(), 3);
+        assert_eq!((dates[1] - dates[0]).num_minutes(), 90);
+        assert_eq!((dates[2] - dates[1]).num_minutes(), 90);
     }
 
     #[tokio::test]
-    async fn test_schedule_set_and_remove() {
-        let scheduler = SchedulerEngine::new();
-        let store = WorkflowStore::new();
-        let config = ScheduleConfig {
-            enabled: true,
-            cron: "*/1 * * * *".to_string(),
-            timezone: "Asia/Shanghai".to_string(),
-            label: None,
+    async fn schedule_history_round_trips_and_filters_deletion() {
+        let root =
+            std::env::temp_dir().join(format!("nuphus_schedule_history_{}", uuid::Uuid::new_v4()));
+        let scheduler = SchedulerEngine {
+            tasks: RwLock::new(HashMap::new()),
+            persist_path: root.join("schedules.json"),
+            history_path: root.join("schedule_runs.json"),
+            history_guard: std::sync::Mutex::new(()),
         };
-
-        // 模拟回调
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let result = scheduler
-            .set_schedule("test-wf", config, &store, move || {
-                let tx = tx.clone();
-                async move {
-                    let _ = tx.send("tick");
-                }
-            })
-            .await;
-
-        // 没有这个工作流，但 set_schedule 中 get 返回 None → 不阻塞
-        assert!(result.is_ok());
-
-        // 等待任务注册
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        let listed = scheduler.list_schedules().await;
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].0, "test-wf");
-
-        scheduler.remove_schedule("test-wf").await;
-
-        let listed = scheduler.list_schedules().await;
-        assert_eq!(listed.len(), 0);
+        let now = Utc::now();
+        let run = RunRecord {
+            run_id: "run-1".into(),
+            started_at: now,
+            finished_at: Some(now),
+            status: RunStatus::Success,
+            steps: Vec::new(),
+            error: None,
+            variables_snapshot: HashMap::new(),
+        };
+        scheduler
+            .record_schedule_run(ScheduleRunRecord::from_run("wf", "示例", &run))
+            .await
+            .unwrap();
+        assert_eq!(scheduler.list_schedule_runs().runs.len(), 1);
+        assert_eq!(
+            scheduler
+                .delete_schedule_runs(Some("wf"), Some("success"), None, None)
+                .unwrap(),
+            1
+        );
+        assert!(scheduler.list_schedule_runs().runs.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    /// 真实时钟冒烟测试：注册 */1 调度，等待下一次整分钟触发，验证「cron 对齐 +
-    /// 定时触发 → on_run 回调」全链路。标 #[ignore] 防拖慢常驻测试集；
-    /// 手动执行：cargo test -p nuphus scheduler -- --ignored
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore]
-    async fn real_clock_trigger_smoke() {
-        let scheduler = SchedulerEngine::new();
-        let store = WorkflowStore::new();
-        let config = ScheduleConfig {
-            enabled: true,
-            cron: "*/1 * * * *".to_string(),
-            timezone: "Asia/Shanghai".to_string(),
-            label: Some("smoke".to_string()),
-        };
-
-        let flag_path = std::env::temp_dir().join(format!(
-            "nuphus-scheduler-smoke-{}.txt",
+    #[tokio::test]
+    async fn schedule_requires_workflow_and_replaces_input_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_scheduler_{}",
             uuid::Uuid::new_v4().simple()
         ));
-        let flag = flag_path.clone();
-        let result = scheduler
-            .set_schedule("smoke-wf", config, &store, move || {
-                let flag = flag.clone();
-                async move {
-                    // 触发成功标志：写入时间戳文件（无副作用）
-                    let _ = std::fs::write(&flag, chrono::Local::now().to_rfc3339());
-                }
-            })
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+        let missing = scheduler
+            .set_schedule(
+                "missing",
+                config("* * * * *", "UTC"),
+                HashMap::new(),
+                &store,
+                |_| async {},
+            )
             .await;
-        assert!(result.is_ok(), "set_schedule 应成功");
+        assert!(missing.is_err());
 
-        // 等待触发：下一次整分钟最多 60s + 余量
-        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(75);
-        let mut triggered = false;
-        while tokio::time::Instant::now() < deadline {
-            if flag_path.exists() {
-                triggered = true;
-                break;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-
-        scheduler.remove_schedule("smoke-wf").await;
-        let _ = std::fs::remove_file(&flag_path);
-        assert!(
-            triggered,
-            "*/1 调度应在 75s 内真实触发（cron 对齐 + 触发全链路）"
+        let mut workflow = Workflow::new("scheduled");
+        workflow.inputs = vec![input("count", InputKind::Number, false)];
+        store.save(&workflow).await.unwrap();
+        scheduler
+            .set_schedule(
+                &workflow.id,
+                config("* * * * *", "UTC"),
+                HashMap::from([("count".into(), serde_json::json!(1))]),
+                &store,
+                |_| async {},
+            )
+            .await
+            .unwrap();
+        scheduler
+            .set_schedule(
+                &workflow.id,
+                config("*/5 * * * *", "UTC"),
+                HashMap::from([("count".into(), serde_json::json!(2))]),
+                &store,
+                |_| async {},
+            )
+            .await
+            .unwrap();
+        let persisted = load_persisted_from(&root.join("schedules.json"));
+        assert_eq!(persisted.schedules.len(), 1);
+        assert_eq!(
+            persisted.schedules[&workflow.id].inputs["count"],
+            serde_json::json!(2)
         );
+        scheduler.remove_schedule(&workflow.id).await;
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn current_default_is_not_persisted() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_scheduler_default_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+        let mut workflow = Workflow::new("defaulted");
+        let mut spec = input("mode", InputKind::String, false);
+        spec.required = true;
+        spec.default = Some(serde_json::json!("old"));
+        workflow.inputs = vec![spec];
+        store.save(&workflow).await.unwrap();
+        scheduler
+            .set_schedule(
+                &workflow.id,
+                config("* * * * *", "UTC"),
+                HashMap::new(),
+                &store,
+                |_| async {},
+            )
+            .await
+            .unwrap();
+        let persisted = load_persisted_from(&root.join("schedules.json"));
+        assert_eq!(persisted.schedules[&workflow.id].input_count(), 0);
+        let mut current_spec = input("mode", InputKind::String, false);
+        current_spec.required = true;
+        current_spec.default = Some(serde_json::json!("new"));
+        let explicit = persisted.schedules[&workflow.id]
+            .decode_inputs(std::slice::from_ref(&current_spec))
+            .unwrap();
+        let resolved =
+            crate::workflow::inputs::resolve_declared_inputs(&[current_spec], &explicit).unwrap();
+        assert_eq!(resolved["mode"], serde_json::json!("new"));
+        scheduler.remove_schedule(&workflow.id).await;
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn disabled_schedule_keeps_binding_without_running_task() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_scheduler_disabled_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+        let workflow = Workflow::new("disabled");
+        store.save(&workflow).await.unwrap();
+        let mut disabled = config("0 9 * * *", "UTC");
+        disabled.enabled = false;
+
+        scheduler
+            .set_schedule(&workflow.id, disabled, HashMap::new(), &store, |_| async {})
+            .await
+            .unwrap();
+
+        let tasks = scheduler.tasks.read().await;
+        let task = tasks.get(&workflow.id).expect("binding should remain");
+        assert!(task.handle.is_none());
+        drop(tasks);
+        let persisted = load_persisted_from(&root.join("schedules.json"));
+        assert!(!persisted.schedules[&workflow.id].config.enabled);
+        scheduler.remove_schedule(&workflow.id).await;
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

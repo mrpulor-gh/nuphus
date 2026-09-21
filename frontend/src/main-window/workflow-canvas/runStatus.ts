@@ -22,6 +22,19 @@ export interface RunStatusSnapshot {
   running: boolean
   /** 最近一次终态（RunCompleted.status 的文本描述） */
   lastTerminal?: string
+  /** 当前或刚结束一轮的实时事件时间线（最多 500 条） */
+  timeline: RunLogEntry[]
+}
+
+export interface RunLogEntry {
+  id: number
+  at: number
+  event: string
+  level: 'info' | 'success' | 'warning' | 'error'
+  message: string
+  stepId?: string
+  stepName?: string
+  depth?: number
 }
 
 type Listener = (snap: RunStatusSnapshot) => void
@@ -69,10 +82,31 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
   let outputs = new Map<string, string[]>()
   let running = false
   let lastTerminal: string | undefined
+  let timeline: RunLogEntry[] = []
+  let logSequence = 0
 
   const pending = new Map<string, PendingMutation>()
   let rafId: number | null = null
   let dirtyMeta = false
+  const pendingTimeline: RunLogEntry[] = []
+
+  const appendLog = (
+    event: string,
+    level: RunLogEntry['level'],
+    message: string,
+    payload: Record<string, unknown>,
+  ) => {
+    pendingTimeline.push({
+      id: ++logSequence,
+      at: Date.now(),
+      event,
+      level,
+      message,
+      ...(payload.step_id ? { stepId: String(payload.step_id) } : {}),
+      ...(payload.step_name ? { stepName: String(payload.step_name) } : {}),
+      ...(typeof payload.depth === 'number' ? { depth: payload.depth } : {}),
+    })
+  }
 
   const flush = () => {
     rafId = null
@@ -91,6 +125,11 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
       }
     }
     pending.clear()
+    if (pendingTimeline.length > 0) {
+      timeline = [...timeline, ...pendingTimeline].slice(-500)
+      pendingTimeline.length = 0
+      changed = true
+    }
     if (changed) {
       // 快照不可变语义：回调前复制，React 可靠引用比较跳过
       onChange({
@@ -98,6 +137,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         outputs: new Map(outputs),
         running,
         lastTerminal,
+        timeline: [...timeline],
       })
     }
   }
@@ -117,9 +157,11 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         // 会话边界：新一轮运行清空上一运行状态
         steps = new Map()
         outputs = new Map()
+        timeline = []
         running = true
         lastTerminal = undefined
         dirtyMeta = true
+        appendLog('run_started', 'info', '工作流开始运行', payload)
         schedule()
         break
       }
@@ -129,6 +171,12 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           ...pending.get(String(payload.step_id)),
           status: { state: 'running' },
         })
+        appendLog(
+          type,
+          'info',
+          `开始 · ${String(payload.step_name ?? payload.step_id ?? '')}`,
+          payload,
+        )
         schedule()
         break
       }
@@ -139,6 +187,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           ...pending.get(id),
           status: { state: 'retrying', attempt: Number(payload.attempt ?? 0) },
         })
+        appendLog(type, 'warning', `第 ${Number(payload.attempt ?? 0)} 次重试`, payload)
         schedule()
         break
       }
@@ -149,6 +198,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           ...pending.get(id),
           outputLine: String(payload.text ?? ''),
         })
+        appendLog(type, 'info', String(payload.text ?? ''), payload)
         schedule()
         break
       }
@@ -158,6 +208,14 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         if (!st) return
         const id = String(payload.step_id)
         pending.set(id, { ...pending.get(id), status: st })
+        appendLog(
+          type,
+          st.state === 'error' ? 'error' : st.state === 'skipped' ? 'warning' : 'success',
+          st.state === 'error'
+            ? `失败 · ${String(payload.step_name ?? id)} · ${st.message ?? ''}`
+            : `${st.state === 'skipped' ? '跳过' : '完成'} · ${String(payload.step_name ?? id)}`,
+          payload,
+        )
         schedule()
         break
       }
@@ -168,6 +226,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           ...pending.get(id),
           status: { state: 'paused', reason: String(payload.reason ?? '') },
         })
+        appendLog(type, 'warning', `暂停 · ${String(payload.reason ?? '')}`, payload)
         schedule()
         break
       }
@@ -176,7 +235,32 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         if (!running) return
         running = false
         lastTerminal = terminalText(payload.status)
+        appendLog(
+          type,
+          lastTerminal.startsWith('Error') ? 'error' : 'success',
+          `运行结束 · ${lastTerminal}`,
+          payload,
+        )
         dirtyMeta = true
+        schedule()
+        break
+      }
+      case 'error': {
+        if (!running) return
+        appendLog(type, 'error', String(payload.message ?? '执行失败'), payload)
+        schedule()
+        break
+      }
+      case 'sub_workflow_started':
+      case 'sub_workflow_completed': {
+        if (!running) return
+        const started = type === 'sub_workflow_started'
+        appendLog(
+          type,
+          started ? 'info' : payload.success === false ? 'error' : 'success',
+          `${started ? '进入' : '结束'}子工作流 · ${String(payload.workflow_name ?? payload.workflow_id ?? '')}`,
+          payload,
+        )
         schedule()
         break
       }
