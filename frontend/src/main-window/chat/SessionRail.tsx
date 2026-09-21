@@ -229,17 +229,28 @@ function ProjectLabelRow({
     if (open) firstItemRef.current?.focus()
   }, [open])
 
-  // 点击外部关闭：菜单在抽屉内，抽屉自己的「面板外点击」不覆盖「菜单外点击」
+  // 点击外部关闭：除「菜单本体（含子菜单）」与「⋯ / 📁+ 两个图标按钮」外，
+  // 任何位置按下都收回菜单——包括「项目」标签行自身的文字与空白区
+  //（早期按整行 `rowRef` 放行，导致点菜单正上方那一行毫无反应，只能再点 ⋯）。
+  //
+  // ⚠️ 必须用 pointerdown + **捕获阶段**：Tauri 的窗口拖动区脚本（tauri
+  // `src/window/scripts/drag.js`）在 document 的**冒泡阶段**监听 mousedown，命中
+  // `data-tauri-drag-region` 时调用 `e.stopImmediatePropagation()` —— 冒泡阶段注册在
+  // 它之后的监听器会被整体吞掉，表现为「点标题栏等空白区域菜单不关，只能再点 ⋯」。
+  // 捕获阶段先于它执行，pointerdown 又早于 mousedown，两个维度都躲开拦截。
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node | null
-      if (!target) return
-      if (rowRef.current?.contains(target)) return
+    const onDown = (e: Event) => {
+      const target = e.target
+      if (!(target instanceof Element)) return
+      // 菜单本体（含子菜单/子菜单项）
+      if (target.closest('.sr-menu')) return
+      // 两个图标按钮：开合由它们自己的 onClick 负责（先关后开会闪）
+      if (target.closest('.sr-list-actions')) return
       close()
     }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
   }, [open, close])
 
   /**
@@ -604,7 +615,9 @@ export default function SessionRail({
       }
       setOpen(false)
     }
-    const onDown = (e: MouseEvent) => {
+    // 「面板外点击收起」与菜单外点同理：必须 pointerdown + 捕获阶段，
+    // 否则点在标题栏拖动区（Tauri drag.js 在冒泡阶段 stopImmediatePropagation）时收不起来。
+    const onDown = (e: Event) => {
       const target = e.target as Node | null
       if (!target) return
       if (panelRef.current?.contains(target)) return
@@ -615,10 +628,10 @@ export default function SessionRail({
       setOpen(false)
     }
     document.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown, true)
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('pointerdown', onDown, true)
     }
   }, [open, editingId, editingProjectKey])
 
