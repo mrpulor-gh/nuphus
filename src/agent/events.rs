@@ -181,7 +181,18 @@ pub enum NuphusEvent {
     DirectResponse { message: String },
 
     /// System warning
-    Warning { code: String, message: String },
+    ///
+    /// `attempt` / `max_attempts`：**重试类事件**（`llm_retry` / `llm_network_retry`）的结构化进度，
+    /// 供 UI 直接渲染「retry 1/3」这类实时数字标签——不从 `message` 文本反解（message 是给人读的，
+    /// 措辞与格式随时可改）。非重试事件不带这对字段（序列化为 null / 省略）。
+    Warning {
+        code: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_attempts: Option<u32>,
+    },
 
     /// System error
     Error {

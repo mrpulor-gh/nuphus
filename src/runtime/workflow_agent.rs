@@ -1279,6 +1279,8 @@ impl WorkflowAgent {
                             attempt + 1,
                             MAX_RETRIES + 1,
                         ),
+                        attempt: Some(attempt + 1),
+                        max_attempts: Some(MAX_RETRIES + 1),
                     });
                     tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
                 }

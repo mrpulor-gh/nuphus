@@ -1048,7 +1048,7 @@ impl EventEmitter for LoggingEmitter {
                 tracing::warn!("[plugin:{id}] 执行错误: {error}");
             }
             // LLM 重试/连接状态等警告（429 退避循环的唯一可见信号）
-            NuphusEvent::Warning { code, message } => {
+            NuphusEvent::Warning { code, message, .. } => {
                 tracing::warn!("[plugin:{id}] 警告[{code}]: {message}");
             }
             // LlmTextDelta 等高频/流式事件静默——日志噪声控制

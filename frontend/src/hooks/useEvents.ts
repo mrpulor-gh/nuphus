@@ -1,6 +1,7 @@
 // useEvents.ts — Event listener (nuphus-event + toolbar:action)
 import { useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
+import { debugEnabled } from '../core/debug'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -246,6 +247,8 @@ export function useEvents(h: EventHandlers) {
           status,
           stableSince: nextStableSince,
           lastTransitionAt: now,
+          // 恢复稳定 / 连接断开：上一次的重试进度已失效 → 清空（rail 不再显示过时数字）
+          retry: status === 'stable' || status === 'offline' ? null : prev.retry,
           consecutiveFailures:
             status === 'offline'
               ? prev.consecutiveFailures + 1
@@ -293,6 +296,7 @@ export function useEvents(h: EventHandlers) {
           status: 'stable',
           stableSince: prev.stableSince ?? now,
           consecutiveFailures: 0,
+          retry: null,
           lastTransitionAt: now,
           incidents: wasUnhealthy
             ? upsertIncident(prev, 'recovered', '连接已恢复', 'none', now)
@@ -331,6 +335,13 @@ export function useEvents(h: EventHandlers) {
         event.type === 'warning' &&
         (event.code === 'llm_retry' || event.code === 'llm_network_retry')
       ) {
+        // 结构化进度（后端 attempt / max_attempts）→ rail 的「retry 1/3」实时数字。
+        // 直接取事件字段，不解析 message 文案；老后端不带该对字段时保持原值（不显示数字，也不编造）
+        if (event.attempt != null && event.max_attempts != null) {
+          const attempt = event.attempt
+          const max = event.max_attempts
+          h.setApiHealth(prev => ({ ...prev, retry: { attempt, max, at: Date.now() } }))
+        }
         // 单次重试 = 瞬时脉冲（一闪而过）；连续 ≥2 次 = 常驻 degraded（持续性问题才占位）
         retryStreak += 1
         if (retryStreak >= 2)
@@ -914,9 +925,14 @@ export function useEvents(h: EventHandlers) {
           }
           break
         case 'token_usage':
-          console.log(
-            `[TRACE-TOKEN] source=${event.source}, input=${event.input_tokens}, output=${event.output_tokens}, cacheHit=${event.cache_hit_tokens}, eventCount=${eventCountRef.current}, execActive=${h.refs.executionActiveRef.current}, processing=${h.refs.processingRef.current}`,
-          )
+          // 事件级 trace：**默认静音**（见 core/debug.ts）——每个 token_usage 事件一行，
+          // 与 IPC 日志叠加会把 DevTools 打满。排查：DevTools 里
+          // localStorage.setItem('nuphus:debug','1') 后刷新
+          if (debugEnabled()) {
+            console.log(
+              `[TRACE-TOKEN] source=${event.source}, input=${event.input_tokens}, output=${event.output_tokens}, cacheHit=${event.cache_hit_tokens}, eventCount=${eventCountRef.current}, execActive=${h.refs.executionActiveRef.current}, processing=${h.refs.processingRef.current}`,
+            )
+          }
           ;(() => {
             const update = (setter: React.Dispatch<React.SetStateAction<TokenUsageState>>) =>
               setter((prev: TokenUsageState) => {

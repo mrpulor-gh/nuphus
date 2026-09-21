@@ -97,7 +97,11 @@ export interface ApiHealthState {
   lastTransitionAt: number
   currentTurnId: number
   consecutiveFailures: number
-  retryCount: number
+  /**
+   * 最近一次**重试事件**的结构化进度（直接来自事件，不从 message 反解）：
+   * rail 用它渲染「retry 1/3」这类实时数字标签。恢复稳定 / 转 offline 时清空。
+   */
+  retry: { attempt: number; max: number; at: number } | null
   /** 事件聚合时间线（按 kind 合并，lastAt 倒序展示） */
   incidents: ApiHealthIncident[]
   unreadCount: number
@@ -608,7 +612,14 @@ export type NuphusEvent =
       images?: string[]
     }
   | { type: 'direct_response'; message: string }
-  | { type: 'warning'; code: string; message: string }
+  | {
+      type: 'warning'
+      code: string
+      message: string
+      /** 重试类事件（llm_retry / llm_network_retry）的结构化进度；非重试事件省略 */
+      attempt?: number
+      max_attempts?: number
+    }
   | {
       type: 'error'
       code: string

@@ -10,7 +10,7 @@ export const initialApiHealthState = (): ApiHealthState => ({
   lastTransitionAt: Date.now(),
   currentTurnId: 0,
   consecutiveFailures: 0,
-  retryCount: 0,
+  retry: null,
   incidents: [],
   unreadCount: 0,
   pulse: null,
@@ -61,6 +61,24 @@ export function ApiSignalIcon({ status, size = 13 }: { status: ApiHealthStatus; 
   )
 }
 
+/**
+ * rail 的**紧凑实时状态标签**——同时是「要不要渲染这块连接 UI」的判据。
+ *
+ * - 出问题时返回最短文本，直述「现在在发生什么」：`retry 1/3`（数字来自事件字段，
+ *   不解析文案）/ `offline` / `connecting` / `degraded`；
+ * - 正常态（stable / unknown 且无重试进度）返回 `null` → **连状态圆点都不渲染**。
+ *   2026-09-22 定稿：常驻圆点无信息量，输入框底栏在健康时保持绝对干净。
+ */
+export function apiHealthRailLabel(state: ApiHealthState): string | null {
+  if (state.status === 'offline') return 'offline'
+  if (state.status === 'connecting') return 'connecting'
+  // 重试进度优先于 degraded 单词：单次重试时 status 可能尚未判定为 degraded（仍 stable），
+  // 但用户此刻最想知道的是「第几次 / 还剩几次」。重试成功收到内容后由状态机清空。
+  if (state.retry) return `retry ${state.retry.attempt}/${state.retry.max}`
+  if (state.status === 'degraded') return 'degraded'
+  return null
+}
+
 export function ApiHealthBadge({
   state,
   compact = false,
@@ -89,8 +107,10 @@ export function ApiHealthBadge({
     }
   }, [open])
   const label = t(`apiHealth.${state.status}`)
-  // 异常态展开文字标签（圆点孤立时用户无法识别含义）；正常态保持极简圆点不抢视线
-  const showLabel = state.status === 'degraded' || state.status === 'offline'
+  const railLabel = apiHealthRailLabel(state)
+  // 正常态：整块连接 UI（含状态圆点）不渲染 —— 底栏健康时保持干净。
+  // 注意必须在全部 hooks 之后返回，保证 hooks 调用顺序稳定。
+  if (!railLabel) return null
   // 瞬时事件脉冲（传输截断 / 单次重试）：一次性动效，1.5s 后由状态机清除 pulse
   const pulsing = !!state.pulse
   // 时间线：分类聚合行按最近发生倒序（≤8 类）
@@ -108,7 +128,7 @@ export function ApiHealthBadge({
         onClick={() => setOpen(v => !v)}
       >
         <ApiSignalIcon status={state.status} size={compact ? 11 : 12} />
-        {showLabel && <span className="api-health-label">{label}</span>}
+        {railLabel && <span className="api-health-label">{railLabel}</span>}
       </button>
       {open && (
         <div className="api-health-popover" role="dialog" aria-label={t('apiHealth.title')}>

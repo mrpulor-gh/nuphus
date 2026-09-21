@@ -475,6 +475,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             emitter.emit(NuphusEvent::Warning {
                                 code: "connection_status".to_string(),
                                 message: msg.clone(),
+                                attempt: None,
+                                max_attempts: None,
                             });
                         }
                     }
@@ -492,6 +494,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                     "响应传输中断，已保留 {} 字符内容与 {} 条工具调用",
                                     text_chars, tools_salvaged
                                 ),
+                                attempt: None,
+                                max_attempts: None,
                             });
                         }
                     }
@@ -608,6 +612,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                     max_llm_retries,
                                     err_detail
                                 ),
+                                attempt: Some(llm_retry),
+                                max_attempts: Some(max_llm_retries),
                             });
                         }
                         let mut remaining = wait_ms;
