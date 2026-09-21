@@ -459,9 +459,6 @@ impl WorkflowEngine {
             persisted.schedules.len()
         );
         for (wf_id, binding) in &persisted.schedules {
-            if !binding.config.enabled {
-                continue;
-            }
             let wf_id = wf_id.clone();
             let Some(workflow) = self.store.get(&wf_id).await else {
                 tracing::warn!("[Scheduler] Removing orphan schedule for '{}'", wf_id);

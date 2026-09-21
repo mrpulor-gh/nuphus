@@ -80,7 +80,7 @@ impl ScheduleBinding {
 
 struct ScheduledTask {
     binding: ScheduleBinding,
-    handle: JoinHandle<()>,
+    handle: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -93,7 +93,7 @@ pub struct SchedulerEngine {
     persist_path: PathBuf,
 }
 
-fn has_frontend_step(steps: &[Step]) -> bool {
+pub fn has_frontend_step(steps: &[Step]) -> bool {
     const FRONTEND_PREFIXES: [&str; 2] = ["desktop_", "browser_"];
     steps.iter().any(|step| match &step.action {
         Action::Tool { tool, .. } => FRONTEND_PREFIXES
@@ -171,28 +171,33 @@ impl SchedulerEngine {
         let timezone = parse_timezone(&config.timezone)?;
         let binding = ScheduleBinding::new(config.clone(), &workflow.inputs, &explicit_inputs)?;
 
-        self.remove_schedule(workflow_id).await;
-        if !config.enabled {
-            return Ok(());
+        if let Some(previous) = self.tasks.write().await.remove(workflow_id) {
+            if let Some(handle) = previous.handle {
+                handle.abort();
+            }
         }
 
-        let callback_inputs = explicit_inputs;
-        let handle = tokio::spawn(async move {
-            loop {
-                let Some(next) = next_occurrence(&schedule, timezone, Utc::now()) else {
-                    tracing::error!("[scheduler] Cron expression has no future occurrence");
-                    return;
-                };
-                let delay = (next - Utc::now())
-                    .to_std()
-                    .unwrap_or_else(|_| Duration::from_millis(1));
-                tokio::time::sleep(delay).await;
-                let join = tokio::spawn(on_run(callback_inputs.clone()));
-                if let Err(error) = join.await {
-                    tracing::error!("[scheduler] Scheduled task panicked: {:?}", error);
+        let handle = if config.enabled {
+            let callback_inputs = explicit_inputs;
+            Some(tokio::spawn(async move {
+                loop {
+                    let Some(next) = next_occurrence(&schedule, timezone, Utc::now()) else {
+                        tracing::error!("[scheduler] Cron expression has no future occurrence");
+                        return;
+                    };
+                    let delay = (next - Utc::now())
+                        .to_std()
+                        .unwrap_or_else(|_| Duration::from_millis(1));
+                    tokio::time::sleep(delay).await;
+                    let join = tokio::spawn(on_run(callback_inputs.clone()));
+                    if let Err(error) = join.await {
+                        tracing::error!("[scheduler] Scheduled task panicked: {:?}", error);
+                    }
                 }
-            }
-        });
+            }))
+        } else {
+            None
+        };
 
         self.tasks
             .write()
@@ -200,7 +205,9 @@ impl SchedulerEngine {
             .insert(workflow_id.to_string(), ScheduledTask { binding, handle });
         if let Err(error) = self.persist_current().await {
             if let Some(task) = self.tasks.write().await.remove(workflow_id) {
-                task.handle.abort();
+                if let Some(handle) = task.handle {
+                    handle.abort();
+                }
             }
             return Err(error);
         }
@@ -209,7 +216,9 @@ impl SchedulerEngine {
 
     pub async fn remove_schedule(&self, workflow_id: &str) {
         if let Some(task) = self.tasks.write().await.remove(workflow_id) {
-            task.handle.abort();
+            if let Some(handle) = task.handle {
+                handle.abort();
+            }
         }
         if let Err(error) = self.persist_current().await {
             tracing::error!("[scheduler] Failed to persist schedule removal: {}", error);
@@ -231,6 +240,30 @@ impl SchedulerEngine {
             .iter()
             .map(|(id, task)| (id.clone(), task.binding.config.clone()))
             .collect()
+    }
+
+    /// Return explicit inputs for the trusted editor. Sensitive values are decoded here but must
+    /// be filtered by the command layer before crossing the Tauri boundary.
+    pub async fn get_decoded_inputs(
+        &self,
+        workflow_id: &str,
+        specs: &[InputSpec],
+    ) -> Result<Option<HashMap<String, serde_json::Value>>> {
+        let tasks = self.tasks.read().await;
+        tasks
+            .get(workflow_id)
+            .map(|task| task.binding.decode_inputs(specs))
+            .transpose()
+    }
+
+    pub fn preview(config: &ScheduleConfig, count: usize) -> Result<Vec<DateTime<Utc>>> {
+        let schedule = parse_five_field_cron(&config.cron)?;
+        let timezone = parse_timezone(&config.timezone)?;
+        Ok(schedule
+            .after(&Utc::now().with_timezone(&timezone))
+            .take(count)
+            .map(|next| next.with_timezone(&Utc))
+            .collect())
     }
 
     pub async fn persist_current(&self) -> Result<()> {
@@ -437,6 +470,34 @@ mod tests {
         let resolved =
             crate::workflow::inputs::resolve_declared_inputs(&[current_spec], &explicit).unwrap();
         assert_eq!(resolved["mode"], serde_json::json!("new"));
+        scheduler.remove_schedule(&workflow.id).await;
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn disabled_schedule_keeps_binding_without_running_task() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_scheduler_disabled_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+        let workflow = Workflow::new("disabled");
+        store.save(&workflow).await.unwrap();
+        let mut disabled = config("0 9 * * *", "UTC");
+        disabled.enabled = false;
+
+        scheduler
+            .set_schedule(&workflow.id, disabled, HashMap::new(), &store, |_| async {})
+            .await
+            .unwrap();
+
+        let tasks = scheduler.tasks.read().await;
+        let task = tasks.get(&workflow.id).expect("binding should remain");
+        assert!(task.handle.is_none());
+        drop(tasks);
+        let persisted = load_persisted_from(&root.join("schedules.json"));
+        assert!(!persisted.schedules[&workflow.id].config.enabled);
         scheduler.remove_schedule(&workflow.id).await;
         let _ = tokio::fs::remove_dir_all(root).await;
     }
