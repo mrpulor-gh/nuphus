@@ -12,6 +12,10 @@
   align-items: center;
   justify-content: center;
   background: var(--overlay-bg);
+  /* 遮罩玻璃化 —— 与 ModalPage（.modal-overlay）同源。--overlay-bg 是 55% 半透黑，
+     不加模糊时背后正文以清晰轮廓透出，与卡片内表单文字互相干扰 */
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   animation: compactOverlayIn var(--dur-med) var(--ease-out);
 }
 @keyframes compactOverlayIn {
@@ -43,6 +47,11 @@
   display: flex;
   flex-direction: column;
   background: var(--modal-bg);
+  /* 毛玻璃材质 —— 与 ModalPage（.modal-content）同源。--modal-bg 是 80% 半透底
+     （可被主题不透明度滑块覆盖），缺这一层模糊时背后会话正文原样透入卡片，
+     与「会话标题 / 归属项目」等表单文字叠影 */
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-5);
   box-shadow: var(--shadow-modal);
