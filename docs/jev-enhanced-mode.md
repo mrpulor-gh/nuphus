@@ -1,12 +1,24 @@
 # 桌面自动化基础层与 Jev 增强模式设计
 
-> 状态：设计草案，尚未实现
+> 状态：v1 实现中；Windows UIA 语义垂直切片、Jev 配置与 Workflow 增强开关已落地
 >
 > 最后核对：2026-09-21
 >
 > 适用范围：Nuphus 工作流开发 / RPA 探索链路
 >
 > 平台顺序：Windows 首发，随后 macOS，最后 Linux
+
+### 当前实现快照（2026-09-21）
+
+本轮实现选择了与现有 `ToolRegistry`/`WorkflowAgent` 更贴合的最小垂直切片；本文后续章节仍包含目标态和后续阶段，不应把未勾选能力理解为已经完成。
+
+- `src/desktop_automation/` 已提供平台无关协议、有界 runner、严格的 TypeSafe System One Choice 客户端，以及 Windows `WindowsUiaAdapter`。
+- Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
+- 普通模式新增 `desktop_semantic_observe(goal)` 与 `desktop_semantic_execute(observation_token, candidate_id)`；候选空间使用不可预测、短期有效的 observation token，执行前重新观察并重新解析语义目标。
+- Workflow 增强模式才暴露 `desktop_agent_step(goal)`。每次只允许 Jev 从当前候选集中选择一个 ID，再由本地策略、执行器和重新观察完成动作与验证；低置信度只触发主模型回退，不作为权限判断。
+- `desktop_agent_step` 仅供 WorkflowAgent 探索，不进入可保存的工作流步骤；旧坐标/OCR/YOLO 工具继续兼容。
+- `[jev]` 使用独立配置和现有密钥加密；前端只读取 `has_key`。Jev 请求不发送完整 UI tree、截图、值、坐标、句柄或密钥。
+- 增强会话已具备 100 步硬上限、连续 3 次无界面变化停止和最近候选记录；完整的跨应用 grant、事件订阅等待、文本/SecretSlot 和确定性已保存语义工作流仍属于后续阶段。
 
 ## 1. 背景与目标
 
@@ -830,7 +842,7 @@ confidence_profile = "calibrated"
 要求：
 
 - 模型设置页增加独立的“Jev 增强层”，包含接口地址、模型、API Key、连接测试和清除密钥。
-- `base_url` 默认 `https://api.typesafe.ai`，客户端固定调用 `/v1/systemone`；测试连接调用 `/v1/models`。
+- `base_url` 默认 `https://api.typesafe.ai`，客户端固定调用 `/v1/systemone`；测试连接发送一个不含真实桌面内容的最小 bounded Choice 请求，验证实际决策端点而不是仅探测模型列表。
 - API Key 只进入 Rust 后端，不进入 WebView 状态、工作流 IR、日志、trace、错误文本、导出文件或测试快照。
 - 当前加密函数只覆盖 provider key 时，必须扩展为同时覆盖 `[jev].api_key`，并提供幂等明文迁移。
 - 配置查询只返回 `has_key`，绝不回显密钥。
