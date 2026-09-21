@@ -589,6 +589,61 @@ fn build_entry(
     }
 }
 
+/// 将当前会话加入展示台列表。当前会话可能来自 runtime agent，也可能来自
+/// `session_backup`（重启后首次切换 Workflow、或执行中 agent 被暂时 take 出槽位）。
+/// 统一构造路径，确保两种来源的 active 条目字段完全一致。
+fn push_active_candidate(
+    state: &AppState,
+    kind: &str,
+    session: &Session,
+    candidates: &mut Vec<(String, serde_json::Value, bool)>,
+    active_id: &mut Option<String>,
+    created_fallback: &mut HashMap<String, u64>,
+) {
+    // mode 以存储归属为准；新会话尚未持久化时回退到当前模式。
+    let stored_mode = nuphus::store::session::get_snapshot(&session.id)
+        .ok()
+        .flatten()
+        .map(|(mode, _)| mode)
+        .unwrap_or_else(|| kind.to_string());
+    let title = state
+        .shelf
+        .lock()
+        .ok()
+        .and_then(|s| s.titles.get(&session.id).cloned())
+        .unwrap_or_default();
+    let entry = build_entry(session.id.clone(), &stored_mode, session, Some(&title));
+    *active_id = Some(entry.id.clone());
+    created_fallback.insert(
+        entry.id.clone(),
+        session
+            .messages()
+            .first()
+            .and_then(|m| m.timestamp)
+            .unwrap_or(entry.updated_at),
+    );
+    candidates.push((
+        entry.id.clone(),
+        serde_json::json!({
+            "id": entry.id,
+            "mode": entry.mode,
+            "title": entry.title,
+            "preview": entry.preview,
+            "message_count": entry.message_count,
+            "updated_at": entry.updated_at,
+            "is_active": true,
+        }),
+        true,
+    ));
+}
+
+/// 读取会话列表的 backup 当前会话。该 backup 是 chat_history 在 runtime 槽为空时
+/// 使用的权威回退，因此列表也必须与聊天区保持同一当前会话。
+fn read_backup_session(state: &AppState) -> Option<Session> {
+    let json = state.session.lock().ok()?.session_backup.clone()?;
+    serde_json::from_str(&json).ok()
+}
+
 // ── 项目文件夹分组（会话工作台）──
 
 /// 路径相等判定：忽略首尾空白与结尾分隔符；Windows 下忽略大小写。
@@ -788,46 +843,31 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     // 比对 active id 变化以感知外部会话切换，若 active 在「empty → non-empty」
     // 之间跳变，会被误判为外部变更触发无意义重拉。保持 active id 从创建那一刻起
     // 稳定，让 SessionRail 只在真正切换时刷新。
-    if let Ok(ctx) = state.runtime.lock() {
-        if let Some(sess) = active_session(&ctx, kind) {
-            // mode 以存储归属为准（sessions 表快照列随 upsert_snapshot 绑定），
-            // 不依赖 current_mode 推断——跨 mode 切换后 active 会话的真实归属
-            // 仍以持久化记录为准；新会话尚未持久化时 fallback 当前 kind。
-            let stored_mode = nuphus::store::session::get_snapshot(&sess.id)
-                .ok()
-                .flatten()
-                .map(|(m, _)| m)
-                .unwrap_or_else(|| kind.to_string());
-            let title = state
-                .shelf
-                .lock()
-                .ok()
-                .and_then(|s| s.titles.get(&sess.id).cloned())
-                .unwrap_or_default();
-            let e = build_entry(sess.id.clone(), &stored_mode, sess, Some(&title));
-            active_id = Some(e.id.clone());
-            // active 会话频繁「刚创建、首条消息才产生」：此时 sessions 表还没有行，
-            // created_at 读不到 → 用**该会话首条消息时间戳**（≈ 创建时刻，Session::new
-            // 后首条 push 即打点）兜底；消息也没有（空会话）则退化为 updated_at。
-            // 两者都是会话自身的真实时间，不造值。
-            created_fallback.insert(
-                e.id.clone(),
-                sess.messages()
-                    .first()
-                    .and_then(|m| m.timestamp)
-                    .unwrap_or(e.updated_at),
-            );
-            candidates.push((
-                e.id.clone(),
-                serde_json::json!({
-                    "id": e.id, "mode": e.mode, "title": e.title,
-                    "preview": e.preview,
-                    "message_count": e.message_count, "updated_at": e.updated_at,
-                    "is_active": true,
-                }),
-                true,
-            ));
-        }
+    let runtime_active = state
+        .runtime
+        .lock()
+        .ok()
+        .and_then(|ctx| active_session(&ctx, kind).cloned());
+    if let Some(sess) = runtime_active.as_ref() {
+        push_active_candidate(
+            state,
+            kind,
+            sess,
+            &mut candidates,
+            &mut active_id,
+            &mut created_fallback,
+        );
+    } else if let Some(sess) = read_backup_session(state) {
+        // chat_history 在当前 mode 的 runtime 槽为空时也使用 session_backup；
+        // 列表必须复用同一回退源，否则 Workflow 会话切换成功后看不到“当前”。
+        push_active_candidate(
+            state,
+            kind,
+            &sess,
+            &mut candidates,
+            &mut active_id,
+            &mut created_fallback,
+        );
     }
 
     if let Ok(shelf) = state.shelf.lock() {
@@ -1862,6 +1902,84 @@ mod tests {
         );
 
         let _ = nuphus::store::session::delete_session(&agent_sess_id);
+    }
+
+    /// Workflow agent 尚未初始化时，切换会话会把目标放入 session_backup；列表的
+    /// 当前标记必须与 chat_history 使用同一回退源，而不能因为 workflow_agent=None
+    /// 把所有 Workflow 条目都显示为非当前。
+    #[test]
+    fn list_shelf_marks_workflow_backup_as_active_without_agent() {
+        let state = AppState::default();
+        {
+            let mut cm = state.current_mode.write().unwrap();
+            *cm = "workflow".to_string();
+        }
+
+        let target = session_with_user(&["备份中的工作流会话"]);
+        let target_id = target.id.clone();
+        let entry = build_entry(target_id.clone(), "workflow", &target, Some("工作流当前"));
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(entry, target.clone());
+        }
+        {
+            let mut session = state.session.lock().unwrap();
+            session.session_backup = Some(serde_json::to_string(&target).unwrap());
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let items = payload["items"].as_array().unwrap();
+        let active: Vec<&serde_json::Value> = items
+            .iter()
+            .filter(|item| item["is_active"] == true)
+            .collect();
+        assert_eq!(active.len(), 1, "backup 当前会话必须是唯一 active");
+        assert_eq!(active[0]["id"].as_str(), Some(target_id.as_str()));
+        assert_eq!(active[0]["mode"].as_str(), Some("workflow"));
+    }
+
+    /// runtime agent 已恢复时优先使用 runtime 会话，不能被旧 backup 覆盖。
+    #[test]
+    fn list_shelf_runtime_active_takes_precedence_over_backup() {
+        let state = AppState::default();
+        {
+            let mut cm = state.current_mode.write().unwrap();
+            *cm = "workflow".to_string();
+        }
+
+        let runtime_session = session_with_user(&["运行中的工作流会话"]);
+        let backup_session = session_with_user(&["旧的备份会话"]);
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.workflow_agent = Some(workflow_agent_with(runtime_session));
+        }
+        let runtime_id = {
+            let guard = state.runtime.lock().unwrap();
+            guard.workflow_agent.as_ref().unwrap().session().id.clone()
+        };
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            let entry = build_entry(
+                backup_session.id.clone(),
+                "workflow",
+                &backup_session,
+                Some("旧备份"),
+            );
+            shelf.put(entry, backup_session.clone());
+        }
+        {
+            let mut session = state.session.lock().unwrap();
+            session.session_backup = Some(serde_json::to_string(&backup_session).unwrap());
+        }
+
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let items = payload["items"].as_array().unwrap();
+        let active: Vec<&serde_json::Value> = items
+            .iter()
+            .filter(|item| item["is_active"] == true)
+            .collect();
+        assert_eq!(active.len(), 1, "runtime 会话必须是唯一 active");
+        assert_eq!(active[0]["id"].as_str(), Some(runtime_id.as_str()));
     }
 
     /// 欢迎页「继续对话」：workflow 镜像也应显示按钮（全 mode 统一支持，
