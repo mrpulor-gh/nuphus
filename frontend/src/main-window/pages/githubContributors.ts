@@ -62,6 +62,30 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.2.18',
+    date: '2026-09-22',
+    contributors: [
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          { pr: 43, summary: '会话台「当前」标记归位到会话行，去掉新建对话行加号，弹窗标题可留空' },
+          { pr: 44, summary: '创建项目弹窗：在目标文件夹下生成草稿对话，移除项目中心' },
+          { pr: 45, summary: '历史会话按项目标签精确匹配，回填归属路径' },
+          { pr: 46, summary: 'Ctrl/Cmd+Enter 改为换行，发送只保留 Enter' },
+          { pr: 47, summary: '主窗口与启动窗口四角改用系统圆角' },
+          { pr: 48, summary: '菜单 / 抽屉「外点关闭」改捕获阶段 pointerdown，白名单收窄' },
+        ],
+      },
+      {
+        user: 'yuansui486',
+        contributions: [
+          { pr: 40, summary: '修复未初始化工作流会话的当前状态显示' },
+          { pr: 42, summary: '工作流外部输入、定时任务与运行回放' },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.17',
     date: '2026-09-21',
     contributors: [

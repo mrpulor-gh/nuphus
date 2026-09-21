@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.17 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.18 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -277,20 +277,20 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 ## 致谢
 
-### v0.2.17 贡献者
+### v0.2.18 贡献者
 
 感谢本版本提交 Pull Request 的社区贡献者：
 
 | 贡献者 | PR | 内容 |
 |--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#33](https://github.com/mrpulor-gh/nuphus/pull/33) | 内置浏览器：规避运行期自动化特征检测、改进启动诊断 |
-| [@yuansui486](https://github.com/yuansui486) | [#34](https://github.com/mrpulor-gh/nuphus/pull/34) | 修复 Windows 浅色主题下主窗口黑边 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#32](https://github.com/mrpulor-gh/nuphus/pull/32) | 设置中心改版：左导航 + 右内容 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#35](https://github.com/mrpulor-gh/nuphus/pull/35) | 会话归属项目文件夹（后端） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#36](https://github.com/mrpulor-gh/nuphus/pull/36) | main 守卫工作流（fmt / tsc / prettier） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#37](https://github.com/mrpulor-gh/nuphus/pull/37) | 外部 Agent 契约补红线：不得擅自改动 git 历史 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#38](https://github.com/mrpulor-gh/nuphus/pull/38) | 会话工作台按项目文件夹分组（前端） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#39](https://github.com/mrpulor-gh/nuphus/pull/39) | 派发基线审计：完工比对未派发提交 |
+| [@yuansui486](https://github.com/yuansui486) | [#40](https://github.com/mrpulor-gh/nuphus/pull/40) | 修复未初始化工作流会话的当前状态显示 |
+| [@yuansui486](https://github.com/yuansui486) | [#42](https://github.com/mrpulor-gh/nuphus/pull/42) | 工作流外部输入、定时任务与运行回放 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#43](https://github.com/mrpulor-gh/nuphus/pull/43) | 会话台「当前」标记归位、新建对话入口调整 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#44](https://github.com/mrpulor-gh/nuphus/pull/44) | 创建项目弹窗：在目标文件夹下生成草稿对话 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#45](https://github.com/mrpulor-gh/nuphus/pull/45) | 历史会话按项目标签精确匹配，回填归属路径 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#46](https://github.com/mrpulor-gh/nuphus/pull/46) | Ctrl/Cmd+Enter 改为换行，发送只保留 Enter |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#47](https://github.com/mrpulor-gh/nuphus/pull/47) | 主窗口与启动窗口四角改用系统圆角 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#48](https://github.com/mrpulor-gh/nuphus/pull/48) | 菜单 / 抽屉「外点关闭」改捕获阶段 pointerdown |
 
 更早版本的贡献者记录见 [CHANGELOG.md](CHANGELOG.md)。
 

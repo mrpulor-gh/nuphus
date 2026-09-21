@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.17 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.18 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -272,20 +272,20 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 
 ## Acknowledgements
 
-### v0.2.17 Contributors
+### v0.2.18 Contributors
 
 Thanks to the community contributors who submitted pull requests in this release:
 
 | Contributor | PR | Summary |
 |-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#33](https://github.com/mrpulor-gh/nuphus/pull/33) | Built-in browser: avoid runtime automation-feature detection, better launch diagnostics |
-| [@yuansui486](https://github.com/yuansui486) | [#34](https://github.com/mrpulor-gh/nuphus/pull/34) | Fix dark edges of the main window under the Windows light theme |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#32](https://github.com/mrpulor-gh/nuphus/pull/32) | Settings center rework: left navigation + right content |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#35](https://github.com/mrpulor-gh/nuphus/pull/35) | Session-to-project-folder ownership (backend) |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#36](https://github.com/mrpulor-gh/nuphus/pull/36) | Main-branch guard workflow (fmt / tsc / prettier) |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#37](https://github.com/mrpulor-gh/nuphus/pull/37) | Handoff contract: external agents must not rewrite git history |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#38](https://github.com/mrpulor-gh/nuphus/pull/38) | Session rail grouped by project folder (frontend) |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#39](https://github.com/mrpulor-gh/nuphus/pull/39) | Dispatch baseline audit: detect undispatched commits on completion |
+| [@yuansui486](https://github.com/yuansui486) | [#40](https://github.com/mrpulor-gh/nuphus/pull/40) | Fix current-state display of uninitialized workflow sessions |
+| [@yuansui486](https://github.com/yuansui486) | [#42](https://github.com/mrpulor-gh/nuphus/pull/42) | Workflow external inputs, scheduled runs and run replay |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#43](https://github.com/mrpulor-gh/nuphus/pull/43) | Move the "current" marker to the session row; adjust the new-chat entry |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#44](https://github.com/mrpulor-gh/nuphus/pull/44) | Create-project dialog: generate a draft chat inside the target folder |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#45](https://github.com/mrpulor-gh/nuphus/pull/45) | Backfill project paths for history sessions by exact tag matching |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#46](https://github.com/mrpulor-gh/nuphus/pull/46) | Ctrl/Cmd+Enter inserts a newline; only Enter sends |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#47](https://github.com/mrpulor-gh/nuphus/pull/47) | Main and splash window corners use the system rounding |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#48](https://github.com/mrpulor-gh/nuphus/pull/48) | Menu / drawer "click-outside" uses capture-phase pointerdown |
 
 Contributors of earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
 
