@@ -751,19 +751,154 @@ export function clearProviderModels(provider: string) {
   return invoke<number>('clear_provider_models', { provider })
 }
 
+/**
+ * OAuth 订阅登录态（**只含状态与配置，绝无令牌**）。
+ *
+ * `oauth_status` 返回状态四字段；`ProviderInfo.oauth`（后端 OauthSummaryDto）
+ * 在此之上**附带配置五项**供编辑表单回显（snake_case，与后端字段一一对应）。
+ */
+export interface OauthStatusInfo {
+  /** 该段是否配了 OAuth（授权端点 / 令牌端点 / Client ID 齐全） */
+  configured: boolean
+  logged_in: boolean
+  /** access token 到期时刻（unix 秒）；null = 未知 */
+  expires_at: number | null
+  /** 需重新登录：配置完整但未登录，或令牌已过期且无 refresh_token 可自愈 */
+  needs_login: boolean
+  /** ── 以下五项仅 ProviderInfo.oauth 携带（oauth_status 不返回）── */
+  authorize_url?: string
+  token_url?: string
+  client_id?: string
+  scopes?: string
+  use_pkce?: boolean
+  redirect_port?: number | null
+}
+
 export interface ProviderInfo {
   id: string
   name: string
-  /** Protocol type; custom instances keep this as "custom" while id is custom-xxx. */
+  /** 界面显示名（自定义实例 = 用户填写的名称；官方 provider 为空 → 回退 name） */
+  display_name?: string
+  /** Protocol type: custom（OpenAI 兼容）/ anthropic（Anthropic 兼容）/ 官方 id */
   provider_type: string
   base_url: string
   default_model: string
   auth_header: string
   auth_prefix: string
+  /** 段级自定义请求头（编辑回显；官方 provider 恒为空对象） */
+  extra_headers?: Record<string, string>
+  /** OAuth 订阅登录摘要（仅状态，绝无令牌）；未配 oauth 的段与官方 provider 为 null */
+  oauth?: OauthStatusInfo | null
 }
 
 export function getSupportedProviders() {
   return invoke<ProviderInfo[]>('get_supported_providers')
+}
+
+/**
+ * create / update_custom_provider 的 OAuth 配置入参（五项，camelCase；与后端
+ * `OauthConfigDto` 同形）。**不含令牌字段** —— 令牌只由登录 / 刷新路径维护。
+ *
+ * 传 null 的语义按命令区分：create = 该实例不启用 OAuth（静态 api_key 模式）；
+ * update = **不动**已存 OAuth 配置（既有令牌保留）。
+ */
+export interface OauthConfigPayload {
+  authorizeUrl: string
+  tokenUrl: string
+  clientId: string
+  /** 空格分隔的 scope 列表；空串 = 授权请求不带 scope */
+  scopes: string
+  /** PKCE（RFC 7636）：缺省 true；仅在授权服务器不支持时才关 */
+  usePkce: boolean
+  /** 本地回调端口；null = 由系统分配空闲端口 */
+  redirectPort: number | null
+}
+
+/**
+ * 新建自定义模型实例（自定义中转站）—— custom 配置界面「创建」按钮的唯一落盘入口。
+ *
+ * `name` 是段 id（由名称 slug 化而来，见 lib/customProvider.buildCustomInstanceId），
+ * `displayName` 是用户填写的名称（界面只显示它）。`apiKey` 可空（无鉴权端点）。
+ * `headers` 是段级自定义请求头（二元组数组，空数组 = 不写标头；后端存在旧 `custom`
+ * 段时自动执行升级迁移，key/models 归新段）。重名/非法输入由后端拒绝并返回可读错误。
+ * `oauth`：Some → 该实例以 OAuth 令牌充当请求凭证；null → 静态 api_key 模式。
+ */
+export function createCustomProvider(
+  name: string,
+  displayName: string,
+  providerType: string,
+  baseUrl: string,
+  apiKey: string,
+  headers: Array<[string, string]>,
+  oauth: OauthConfigPayload | null,
+) {
+  return invoke<ProviderInfo>('create_custom_provider', {
+    name,
+    displayName,
+    providerType,
+    baseUrl,
+    apiKey,
+    headers,
+    oauth,
+  })
+}
+
+/**
+ * 更新既有自定义模型实例（重命名 / 换协议 / 改地址 / 换密钥）—— 编辑页四字段表单的落盘入口。
+ *
+ * `name` 是**已有段 id**，且**永不被修改**：同名模型靠「段 id + 模型 ID」精确路由，
+ * 改段 id 会把请求打到别的中转站；重命名写的是 `display_name`。
+ * `apiKey` 传空串 = 保持原密钥不变（编辑表单留空即「不修改密钥」，不是清空）。
+ * `headers` 是段级自定义请求头全量提交：空数组 = 清除全部已存标头（后端契约）。
+ * `oauth`：Some → 覆盖写 OAuth 配置五项（既有令牌保留）；null = 不动 OAuth 配置。
+ */
+export function updateCustomProvider(
+  name: string,
+  displayName: string,
+  providerType: string,
+  baseUrl: string,
+  apiKey: string,
+  headers: Array<[string, string]>,
+  oauth: OauthConfigPayload | null,
+) {
+  return invoke<ProviderInfo>('update_custom_provider', {
+    name,
+    displayName,
+    providerType,
+    baseUrl,
+    apiKey,
+    headers,
+    oauth,
+  })
+}
+
+// ── OAuth 订阅登录（custom 实例的授权码 + 本地回调流程）──
+
+/** `oauth_begin` 返回：授权 URL（前端经 openExternal 打开）与本地回调端口 */
+export interface OauthBeginResult {
+  authorize_url: string
+  port: number
+}
+
+/**
+ * 发起 OAuth 授权：后端绑定本地回调 server 并返回授权 URL。
+ *
+ * 结果**不从这里返回** —— 浏览器回调到达后由后端推送 `oauth-login-result`
+ * 事件（见 ModelsPage 的监听），本命令只负责把用户送进授权页。
+ * 段未配 oauth / 配置不完整 → reject 可读中文错误；重复调用会顶替旧会话。
+ */
+export function oauthBegin(provider: string) {
+  return invoke<OauthBeginResult>('oauth_begin', { provider })
+}
+
+/** 查询该实例的登录态（读盘 + 纯判定，不触发网络刷新） */
+export function oauthStatus(provider: string) {
+  return invoke<OauthStatusInfo>('oauth_status', { provider })
+}
+
+/** 清空该实例的 OAuth 令牌（配置五项保留；下次使用需重新授权） */
+export function oauthLogout(provider: string) {
+  return invoke<void>('oauth_logout', { provider })
 }
 
 // ── Capabilities ──

@@ -16,12 +16,48 @@ export function friendlyIpcError(e: unknown, fallback = '操作失败，请稍�
   const raw = e instanceof Error ? e.message : String(e)
   const reason = raw.match(/failed:\s*(.+)$/)?.[1]?.trim() ?? raw
 
-  // 前端命令已更新、后端仍是旧进程（最常见：更新后未重启应用）
-  if (/not found|unknown command|not allowed|not defined/i.test(reason)) {
-    return '当前后端尚未加载该功能，请重启应用后重试'
+  // 前端命令已更新、后端仍是旧进程：重启未必够（二进制本身没有该命令时，
+  // 重启多少次都无效）→ 文案必须同时覆盖「先重启」与「重启无效则需重新构建」。
+  // 注意排除 HTTP 状态码：`404 Not Found` 是地址问题，不是命令未注册（两者都含
+  // "not found"，若不加排除会被误判成版本问题，把用户引向错误的方向）。
+  if (
+    /not found|unknown command|not allowed|not defined/i.test(reason) &&
+    !/\b(4\d\d|5\d\d)\b/.test(reason)
+  ) {
+    return '应用后端版本过旧，未包含该功能：请先重启应用；若仍报错，需重新构建应用后再启动'
   }
 
   // 原因缺失或仍是原始 IPC 文本 → 兜底文案（细节留在 console）
   if (!reason.trim() || /IPC invoke/i.test(reason)) return fallback
+
+  // ── 连接类失败：地址 / 网络 / 鉴权 / 协议不匹配是最常见的四种 ──
+  // 原文（如 `error sending request for url (https://x/v1/models)`）只有开发者能读，
+  // 对用户零可操作性 → 逐类给出「下一步该做什么」，细节仍留在 console。
+  if (
+    /dns error|failed to lookup address|error sending request|tcp connect error|connection refused|connection reset|connection closed|timed?\s?out/i.test(
+      reason,
+    )
+  ) {
+    return '无法连接该接口地址：请检查地址填写是否正确、网络是否可达'
+  }
+  if (/\b401\b|unauthorized|invalid api key|incorrect api key|authentication/i.test(reason)) {
+    return 'API Key 无效或被拒绝，请检查密钥是否正确'
+  }
+  if (/\b403\b|forbidden/i.test(reason)) {
+    return '该 API Key 无权访问此接口，请确认密钥权限'
+  }
+  if (/\b404\b/i.test(reason)) {
+    return '接口地址不存在：请确认 URL 是否正确（常见原因是漏写或多写 /v1）'
+  }
+  if (/\b429\b|rate ?limit/i.test(reason)) {
+    return '请求过于频繁，请稍后重试'
+  }
+  if (/\b50[0-9]\b|internal server error|bad gateway|service unavailable/i.test(reason)) {
+    return '接口服务端异常，请稍后重试或联系服务商'
+  }
+  if (/expected value|expected ident|invalid json|EOF while parsing/i.test(reason)) {
+    return '该地址返回的不是模型列表：请确认它提供 OpenAI 兼容的 /v1/models 接口'
+  }
+
   return reason
 }

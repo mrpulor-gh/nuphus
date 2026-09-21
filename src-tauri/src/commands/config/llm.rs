@@ -6,12 +6,15 @@
 
 use super::toml_ops::{
     add_provider_model_entry, builtin_capability, clear_provider_api_key_in_config_toml,
-    clear_provider_models_in_config_toml, get_config_path, list_configured_providers,
-    model_has_user_vision_override, read_model_context_window, read_model_supports_vision,
+    clear_provider_models_in_config_toml, create_custom_provider_segment, get_config_path,
+    is_custom_segment_name, list_configured_providers, model_has_user_vision_override,
+    provider_segment_exists, read_model_context_window, read_model_supports_vision,
     read_provider_api_key_from_config_toml, read_provider_base_url_from_config_toml,
-    read_provider_reasoning_effort_from_config_toml, sync_provider_models, update_config_toml,
-    update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
-    update_reasoning_effort, CapabilityOverride, CapabilitySource, SyncReport,
+    read_provider_display_name, read_provider_reasoning_effort_from_config_toml,
+    sanitize_extra_headers, sync_provider_models, update_config_toml,
+    update_custom_provider_segment, update_model_context_window, update_model_reasoning_efforts,
+    update_model_supports_vision, update_reasoning_effort, CapabilityOverride, CapabilitySource,
+    SyncReport,
 };
 use crate::emitter::CompoundEmitter;
 use crate::models::aggregator as or_agg;
@@ -632,13 +635,23 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     context_window: Option<usize>,
     mode: Option<String>,
 ) -> Result<String, String> {
-    // Read the target provider's stored API key from config.toml
-    let api_key = read_provider_api_key_from_config_toml(&provider).ok_or_else(|| {
-        format!(
-            "Provider '{}' 尚未配置 API Key，请先在模型配置页面输入密钥",
-            provider
-        )
-    })?;
+    // Read the target provider's stored API key from config.toml.
+    //
+    // 自定义中转站允许无 key 切换（Ollama / llama-swap / 无鉴权网关：地址自己填，
+    // 本就不需要鉴权）—— 空串表示「不携带鉴权头」。前提是配置段已存在，否则切换会
+    // 「成功」但请求无处可发；官方远程服务商保持原强制校验，避免空鉴权头串台。
+    let api_key = match read_provider_api_key_from_config_toml(&provider) {
+        Some(k) => k,
+        None if is_custom_segment_name(&provider) && provider_segment_exists(&provider) => {
+            String::new()
+        }
+        None => {
+            return Err(format!(
+                "Provider '{}' 尚未配置 API Key，请先在模型配置页面输入密钥",
+                provider
+            ))
+        }
+    };
 
     // Resolve base_url from provider metadata
     let registry = ProviderRegistry::builtin();
@@ -792,13 +805,21 @@ pub async fn configure_llm(
     base_url: Option<String>,
     context_window: Option<usize>,
 ) -> Result<String, String> {
-    if api_key.is_empty() {
-        return Err("API Key 不能为空".to_string());
-    }
-
     let resolved_provider = provider
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "minimax".to_string());
+
+    // 空 key 只对自定义中转站放行（本地网关 / Ollama / 无 key 中转：地址由用户自填，
+    // 可能本就不需要鉴权，保存动作仍需可用）。官方远程服务商保持强制 —— 空鉴权头会把
+    // 请求发成匿名调用，且用户往往只是漏填。
+    // 文案独立于自定义实例（后者密钥框写的是「无鉴权端点可留空」）：官方这句必须点明
+    // 「本服务商需要密钥」，否则会被读成同一个可留空字段的误报。
+    if api_key.is_empty() && !is_custom_segment_name(&resolved_provider) {
+        return Err(format!(
+            "{} 需要 API Key 才能接入：请输入密钥后重试",
+            resolved_provider
+        ));
+    }
 
     // Check if this is a model switch (re-config vs initial setup)
     let prev_model = state
@@ -807,8 +828,11 @@ pub async fn configure_llm(
         .ok()
         .and_then(|g| g.llm_config.as_ref().map(|c| c.model.clone()));
 
+    // 协议类型 = provider_kind_for_segment 的解析结果（自定义实例解析回 custom /
+    // anthropic）。落盘（新建段）与内置默认模型都以此为准，只解析一次。
+    let protocol = provider_kind_for_segment(&resolved_provider);
     let registry = ProviderRegistry::builtin();
-    let provider = registry.get(provider_kind_for_segment(&resolved_provider).as_str());
+    let provider = registry.get(protocol.as_str());
     let default_model = provider
         .as_ref()
         .map(|p| p.default_model())
@@ -855,12 +879,15 @@ pub async fn configure_llm(
 
     // Write API key to config.toml
     if let Some(ref config_path) = toml_config_path {
+        // 新建段时写入**真实协议类型**（自定义实例可能是 anthropic 协议）；
+        // 既有段只更新 key / base_url，不动 name / display_name / provider_type。
         if let Err(e) = update_config_toml(
             config_path,
             &resolved_provider,
             &cfg.api_key,
             &resolved_model,
             Some(&resolved_base_url),
+            Some(protocol.as_str()),
         ) {
             tracing::error!("[configure_llm] Failed to update config.toml: {}", e);
             return Err(format!("保存 API Key 到配置文件失败: {}", e));
@@ -1508,13 +1535,18 @@ pub fn add_provider_model(provider: String, model_id: String) -> Result<(), Stri
     if model_id.is_empty() {
         return Err("模型代号不能为空".to_string());
     }
-    // 只允许已登记的服务商（无 provider 段时 upsert 会静默跳过，需提前拦下给明确反馈）
-    let configured = list_configured_providers();
-    if !configured.iter().any(|p| p == &provider) {
-        return Err(format!(
-            "服务商 {} 尚未登记，请先在上方连接并保存 API Key",
-            provider
-        ));
+    // 只允许已登记的服务商（无 provider 段时 upsert 会静默跳过，需提前拦下给明确反馈）。
+    // 判据：官方服务商看「是否已配 key」（无 key 的官方段不可用）；自定义实例看
+    // 「配置段是否存在」—— 无鉴权网关（Ollama / 无 key 中转）本来就没有 key，
+    // 用 key 判定会把它们的手动添加路径整条封死（Anthropic 兼容实例只有这条路）。
+    let registered = list_configured_providers().iter().any(|p| p == &provider)
+        || (is_custom_segment_name(&provider) && provider_segment_exists(&provider));
+    if !registered {
+        return Err(if is_custom_segment_name(&provider) {
+            "该自定义模型尚未创建，请先保存基本信息".to_string()
+        } else {
+            format!("服务商 {} 尚未登记，请先保存基本信息", provider)
+        });
     }
     let config_path =
         get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
@@ -1592,6 +1624,10 @@ pub async fn test_llm_connection(
     model: String,
     provider: String,
     base_url: String,
+    // 自定义实例的段级标头：测试连接与真实请求走同一 transport 链路，
+    // 标头不带上会让「配了网关标头的中转站」测试必败而实际请求可用（反馈失真）。
+    // Option：旧前端调用不传该参数时为 None，契约向后兼容。
+    headers: Option<Vec<(String, String)>>,
 ) -> Result<String, String> {
     // ProviderKind is now the canonical type (merged from KnownProvider).
     // 函数体内不需要直接命名该类型。
@@ -1641,6 +1677,14 @@ pub async fn test_llm_connection(
                 timeout_secs: 15,
                 models: vec![],
                 reasoning_effort: None,
+                // 与落盘同源清洗（sanitize_extra_headers），测试即所见
+                extra_headers: headers
+                    .as_deref()
+                    .map(sanitize_extra_headers)
+                    .unwrap_or_default(),
+                // 连接测试的临时 cfg 不承载 OAuth：配了 oauth 的段其凭证解析
+                // 走 `resolve_effective_api_key`（list_provider_models 路径）。
+                oauth: None,
             };
             LlmClient::with_transport_arc(pmeta.transport(&provider_cfg, &model))
         }
@@ -1783,6 +1827,24 @@ async fn fetch_provider_models(
 ) -> Result<Vec<ProviderModelBrief>, String> {
     use std::time::Duration;
 
+    // 空 key 回落段内已存凭证：编辑表单不回显密钥（安全约定）。两条来源：
+    // ① 普通段 → 段内静态 api_key；② 配了 oauth 的段 → 新鲜 access token
+    //（必要时自动刷新落盘）。段内也没有凭证时维持空串，交由下方 allows_no_key
+    // 判据决定放行或报错。
+    let effective_key;
+    let api_key = if api_key.is_empty() {
+        // oauth 路径可能触发令牌刷新（阻塞式 HTTP）→ 隔离到阻塞线程池，
+        // 不在 async 上下文里直接做网络 IO（与 factory 的注入点同一纪律）。
+        let provider_owned = provider.to_string();
+        effective_key =
+            tokio::task::spawn_blocking(move || resolve_effective_api_key(&provider_owned))
+                .await
+                .map_err(|e| format!("读取段凭证失败: {e}"))??;
+        effective_key.as_str()
+    } else {
+        api_key
+    };
+
     let registry = ProviderRegistry::builtin();
     let provider_kind = provider_kind_for_segment(provider);
     let pmeta = registry
@@ -1794,10 +1856,10 @@ async fn fetch_provider_models(
     // 可能本就不需要鉴权；含 custom-xxx 实例段）。官方远程服务商仍强制要求
     // key——防止空鉴权头串台。
     //
-    // 判据取自 Provider 元数据 + 协议类型，而非硬编码 id 列表：新增「无内置鉴权」
-    // 的 Provider 时自动生效，不会因为漏改这里而被迫瞎填 key。
-    let allows_no_key =
-        pmeta.auth_header().is_empty() || provider_kind == nuphus::api::ProviderKind::Custom;
+    // 判据取自 Provider 元数据 + 段名前缀，而非硬编码 id 列表：新增「无内置鉴权」
+    // 的 Provider 时自动生效；自定义实例按**段名前缀**识别（协议可能是 custom 或
+    // anthropic，用协议类型识别会漏掉 Anthropic 兼容实例），不会因为漏改而被迫瞎填 key。
+    let allows_no_key = pmeta.auth_header().is_empty() || is_custom_segment_name(provider);
     if api_key.is_empty() && !allows_no_key {
         return Err("API Key 不能为空".to_string());
     }
@@ -1942,7 +2004,10 @@ async fn fetch_provider_models(
     Ok(briefs)
 }
 
-/// 通过 /v1/models 检测 API key 并列出可用模型（连接检测：key 必须由前端显式传入）。
+/// 通过 /v1/models 检测 API key 并列出可用模型。
+///
+/// `api_key` 空 = 用户表单留空（编辑态本就不回显密钥）→ 回落该 provider 段已存
+/// 密钥（见 fetch_provider_models），而不是拿空鉴权头去打 401。
 #[tauri::command]
 pub async fn list_provider_models(
     api_key: String,
@@ -1950,6 +2015,43 @@ pub async fn list_provider_models(
     base_url: Option<String>,
 ) -> Result<Vec<ProviderModelBrief>, String> {
     fetch_provider_models(&api_key, &provider, base_url.as_deref()).await
+}
+
+/// 读指定 provider 段已存的 API key（ModelRegistry 加载即透明解密，明文不出进程）。
+///
+/// 路径参数版供单测注入临时 providers.toml；命令路径经 [`resolve_effective_api_key`]
+/// 统一取用（OAuth 段在那里分流，静态密钥分支即本函数）。
+pub(crate) fn stored_provider_api_key_in(path: &std::path::Path, provider: &str) -> Option<String> {
+    let registry = nuphus::config::ModelRegistry::from_toml(path.to_str()?).ok()?;
+    registry
+        .providers
+        .iter()
+        .find(|p| p.name == provider)
+        .map(|p| p.api_key.clone())
+        .filter(|k| !k.is_empty())
+}
+
+/// 段「有效 API 凭证」统一入口——静态密钥与 OAuth 令牌在此分流：
+///
+/// - **配了 oauth 的段** → `ensure_fresh_oauth_token`（新鲜 access token 直接返回，
+///   临期/过期自动刷新并落盘）。配置不完整 / 未授权 / 刷新失败 → `Err` 可读错误，
+///   比下游拿着空凭证去打 401 更早、更明确。
+/// - **其余段** → 段内静态 api_key（无则空串——无鉴权端点属合法场景，不报错）。
+///
+/// 调用方：`fetch_provider_models` 的空 key 回落、`refresh_provider_models`
+/// 的刷新取键；transport 注入走 `llm::factory` 的 `with_fresh_oauth_token`
+/// （同源判定，避免多处漂移）。
+pub(crate) fn resolve_effective_api_key(provider: &str) -> Result<String, String> {
+    let Some(path) = get_config_path() else {
+        return Ok(String::new());
+    };
+    if let Some(oauth) = nuphus::config::oauth::read_oauth_segment(&path, provider) {
+        if !oauth.config_complete() {
+            return Err("OAuth 配置不完整：授权端点、令牌端点与 Client ID 均为必填项".to_string());
+        }
+        return nuphus::config::oauth::ensure_fresh_oauth_token(&path, provider);
+    }
+    Ok(stored_provider_api_key_in(&path, provider).unwrap_or_default())
 }
 
 /// 显式刷新某服务商模型列表：读取 config.toml 已存 API key（不暴露 key 本身），
@@ -1974,13 +2076,16 @@ pub async fn refresh_provider_models(
         .map(|p| p.auth_header().is_empty())
         .unwrap_or(false)
         || provider_kind == nuphus::api::ProviderKind::Custom;
-    let api_key = match read_provider_api_key_from_config_toml(&provider) {
-        Some(k) => k,
-        None if allows_no_key => String::new(),
-        None => {
-            return Err("该服务商尚未配置 API Key，请先在连接区域输入并保存".to_string());
-        }
-    };
+    // 与 fetch_provider_models 同源：OAuth 段取新鲜 access token，其余段取静态密钥。
+    // 令牌刷新是阻塞式 HTTP → 隔离到阻塞线程池，不在 async 上下文里直接做网络 IO
+    // （与 factory 注入点、fetch_provider_models 同一纪律）。
+    let provider_for_key = provider.clone();
+    let api_key = tokio::task::spawn_blocking(move || resolve_effective_api_key(&provider_for_key))
+        .await
+        .map_err(|e| format!("读取段凭证失败: {e}"))??;
+    if api_key.is_empty() && !allows_no_key {
+        return Err("该服务商尚未配置 API Key，请先在连接区域输入并保存".to_string());
+    }
     let models = fetch_provider_models(&api_key, &provider, base_url.as_deref()).await?;
 
     // 持久化：把 API 返回集合同步进 config.toml，使 list_models（图像理解 / STT /
@@ -2066,6 +2171,12 @@ pub struct ProviderInfo {
     pub default_model: String,
     pub auth_header: String,
     pub auth_prefix: String,
+    /// 界面显示名（自定义实例 = 用户填写的名称；官方 provider 为空，前端回退 name）。
+    pub display_name: String,
+    /// 段级自定义请求头（编辑回显用；官方 provider 恒为空 map）。
+    pub extra_headers: std::collections::BTreeMap<String, String>,
+    /// OAuth 订阅凭证概要（登录状态，**绝不回传令牌**）；未配 oauth 的段为 None。
+    pub oauth: Option<super::oauth::OauthSummaryDto>,
 }
 
 #[tauri::command]
@@ -2081,12 +2192,24 @@ pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
             default_model: p.default_model.to_string(),
             auth_header: p.auth_header.to_string(),
             auth_prefix: p.auth_prefix.to_string(),
+            // 官方 provider 的展示名就是 name（无独立显示名字段）
+            display_name: String::new(),
+            // 官方 provider 无段级自定义标头
+            extra_headers: std::collections::BTreeMap::new(),
+            // 官方 provider 无段级 OAuth 配置
+            oauth: None,
         })
         .collect::<Vec<_>>();
 
     // Custom instances are configuration segments, not new protocol types.
     // Keep built-in provider behavior unchanged and expose configured custom
     // segments by their stable unique name for precise model routing.
+    //
+    // 实例识别用**段名前缀**（custom / custom-）而非 `provider_type == Custom`：
+    // 自定义实例的协议可以是 OpenAI 兼容（custom）或 Anthropic 兼容（anthropic），
+    // 按协议类型筛会把 Anthropic 实例整批漏掉（界面上凭空少一个中转站）。
+    // `name` / `display_name` 都返回用户填写的显示名（缺失回退段名），段 id 只留在
+    // `id` 里 —— 界面上不出现 custom-xxx。
     if let Some(path) = get_config_path() {
         if let Ok(registry) =
             nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap_or("providers.toml"))
@@ -2094,15 +2217,19 @@ pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
             for custom in registry
                 .providers
                 .iter()
-                .filter(|p| p.provider_type == nuphus::api::ProviderKind::Custom)
+                .filter(|p| is_custom_segment_name(&p.name))
             {
                 if providers.iter().any(|p| p.id == custom.name) {
                     continue;
                 }
+                let display = read_provider_display_name(&custom.name);
+                let shown = display.clone().unwrap_or_else(|| custom.name.clone());
                 providers.push(ProviderInfo {
                     id: custom.name.clone(),
-                    name: custom.name.clone(),
-                    provider_type: "custom".to_string(),
+                    name: shown.clone(),
+                    display_name: shown,
+                    // 段里的真实协议类型（custom / anthropic），不是硬编码的 "custom"
+                    provider_type: custom.provider_type.as_str().to_string(),
                     base_url: custom.base_url.clone(),
                     default_model: custom
                         .models
@@ -2119,6 +2246,13 @@ pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
                     } else {
                         custom.auth_prefix.clone()
                     },
+                    // 段级自定义标头：编辑表单回显（官方 provider 走不到这分支）
+                    extra_headers: custom.extra_headers.clone(),
+                    // OAuth 概要：registry 已透明解密，摘要只带状态不带令牌
+                    oauth: custom
+                        .oauth
+                        .as_ref()
+                        .map(super::oauth::OauthSummaryDto::from_oauth),
                 });
             }
         }
@@ -2129,6 +2263,147 @@ pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
         providers.len()
     );
     Ok(providers)
+}
+
+/// 自定义实例的落盘路径：优先规范配置路径；首装（providers.toml 尚不存在）时兜底到
+/// `AppState` 的配置目录并建父目录——否则「+ 新建 / 保存」在最需要它的时候报「无法定位配置路径」。
+fn custom_provider_config_path(state: &AppState) -> std::path::PathBuf {
+    get_config_path().unwrap_or_else(|| {
+        let fallback = state.llm_config_path.with_file_name("providers.toml");
+        if let Some(parent) = fallback.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        fallback
+    })
+}
+
+/// 新建自定义模型实例（自定义中转站）：模型页 custom 表单「创建」按钮的后端入口。
+///
+/// 字段 → providers.toml 一段：
+/// `display_name`（用户填写的名称，界面只显示它）/ `provider_type`（custom = OpenAI
+/// 兼容走 /v1/chat/completions；anthropic = Anthropic 兼容走 /v1/messages）/
+/// `api_key`（可空：无鉴权端点；为空且旧 `custom` 段有 key 时沿用旧段 key）/
+/// `base_url`（中转站或网关地址）/ `headers`（自定义标头，可空）。
+/// 段 id 由前端按 slug 规则生成（纯中文名退化为 `custom-<时间戳>`），这里只做校验。
+/// 存在旧 `custom` 段时执行升级迁移（见 `create_custom_provider_segment`）。
+/// `oauth`：可选 OAuth 订阅配置（授权端点等五项）；Some → 该实例以 OAuth 令牌
+/// 作为请求凭证（登录后由令牌路径维护），None → 静态 api_key 模式。
+#[tauri::command]
+pub fn create_custom_provider(
+    state: State<'_, AppState>,
+    name: String,
+    display_name: String,
+    provider_type: String,
+    base_url: String,
+    api_key: String,
+    headers: Vec<(String, String)>,
+    oauth: Option<super::oauth::OauthConfigDto>,
+) -> Result<ProviderInfo, String> {
+    let config_path = custom_provider_config_path(&state);
+    create_custom_provider_segment(
+        &config_path,
+        &name,
+        &display_name,
+        &provider_type,
+        &base_url,
+        &api_key,
+        &headers,
+        oauth.as_ref(),
+    )?;
+
+    let shown = {
+        let display = display_name.trim();
+        if display.is_empty() {
+            name.clone()
+        } else {
+            display.to_string()
+        }
+    };
+    tracing::info!(
+        "create_custom_provider: name={}, provider_type={}, headers={}",
+        name,
+        provider_type,
+        headers.len()
+    );
+    Ok(ProviderInfo {
+        id: name.clone(),
+        name: shown.clone(),
+        display_name: shown,
+        // 段写入后按同一解析链回读协议类型（provider_kind_for_segment），
+        // 保证返回值与后续请求实际走的协议一致。
+        provider_type: provider_kind_for_segment(&name).as_str().to_string(),
+        base_url: base_url.trim().to_string(),
+        default_model: String::new(),
+        auth_header: "Authorization".to_string(),
+        auth_prefix: "Bearer ".to_string(),
+        // 与落盘同源清洗（sanitize_extra_headers），回显即所见
+        extra_headers: sanitize_extra_headers(&headers),
+        // 新建后尚未登录：摘要按段内 oauth 实况回读（配置完整但未授权 → needs_login）
+        oauth: super::oauth::read_oauth_summary(&name),
+    })
+}
+
+/// 更新自定义模型实例（重命名 / 换协议 / 改地址 / 换密钥）：编辑页四字段表单的落盘入口。
+///
+/// `name` 是**已有段 id**：它是模型路由依据（同名模型靠「段 id + 模型 ID」精确路由），
+/// **永不修改** —— 重命名只写 `display_name`，否则请求会打到别的中转站。
+/// `api_key` 空串 = 保持原密钥不变（编辑表单留空即「不修改密钥」）；非空才覆盖。
+/// `headers`：自定义标头全量提交，空数组 = 清除已存标头（见 `update_custom_provider_segment`）。
+/// `oauth`：Some → 覆盖写 OAuth 配置五项（既有令牌保留）；None → 不动 OAuth 配置。
+#[tauri::command]
+pub fn update_custom_provider(
+    state: State<'_, AppState>,
+    name: String,
+    display_name: String,
+    provider_type: String,
+    base_url: String,
+    api_key: String,
+    headers: Vec<(String, String)>,
+    oauth: Option<super::oauth::OauthConfigDto>,
+) -> Result<ProviderInfo, String> {
+    let config_path = custom_provider_config_path(&state);
+    update_custom_provider_segment(
+        &config_path,
+        &name,
+        &display_name,
+        &provider_type,
+        &base_url,
+        &api_key,
+        &headers,
+        oauth.as_ref(),
+    )?;
+
+    // 显示名回显规则与新建一致：留空 → 段名（读回时同样回退段名，两处一条规矩）。
+    let shown = {
+        let display = display_name.trim();
+        if display.is_empty() {
+            name.clone()
+        } else {
+            display.to_string()
+        }
+    };
+    tracing::info!(
+        "update_custom_provider: name={}, provider_type={}, key_updated={}, headers={}",
+        name,
+        provider_type,
+        !api_key.trim().is_empty(),
+        headers.len()
+    );
+    Ok(ProviderInfo {
+        id: name.clone(),
+        name: shown.clone(),
+        display_name: shown,
+        // 同上：按同一解析链回读协议类型，保证界面显示的协议与请求实际用的一致。
+        provider_type: provider_kind_for_segment(&name).as_str().to_string(),
+        base_url: base_url.trim().to_string(),
+        default_model: String::new(),
+        auth_header: "Authorization".to_string(),
+        auth_prefix: "Bearer ".to_string(),
+        // 与落盘同源清洗（sanitize_extra_headers），回显即所见
+        extra_headers: sanitize_extra_headers(&headers),
+        // 登录态按段内 oauth 实况回读（保存不改动令牌，摘要如实反映）
+        oauth: super::oauth::read_oauth_summary(&name),
+    })
 }
 
 #[tauri::command]
@@ -2613,6 +2888,40 @@ mod tests {
         }
         std::fs::write(&cfg_path, cfg).unwrap();
         (am_path, cfg_path)
+    }
+
+    #[test]
+    fn stored_provider_api_key_reads_segment_key() {
+        // 明文 key 段 + enc: 密文 key 段 + 无 key 段：回落读取需三态正确。
+        // ModelRegistry::from_toml 对明文原样保留、对 enc: 走 DPAPI 解密——
+        // 这里用 encrypt_secret 造密文，验证「读回即明文」的完整链路。
+        let dir =
+            std::env::temp_dir().join(format!("nuphus-llm-test-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("providers.toml");
+        let enc = nuphus::cookies::encrypt_secret("sk-custom-secret");
+        std::fs::write(
+            &path,
+            format!(
+                "[[providers]]\nname = \"custom-a\"\nprovider_type = \"custom\"\napi_key = \"sk-plain\"\nbase_url = \"https://a.example.com\"\n\n[[providers]]\nname = \"custom-b\"\nprovider_type = \"custom\"\napi_key = \"{enc}\"\nbase_url = \"https://b.example.com\"\n\n[[providers]]\nname = \"custom-c\"\nprovider_type = \"custom\"\napi_key = \"\"\nbase_url = \"https://c.example.com\"\n"
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            stored_provider_api_key_in(&path, "custom-a").as_deref(),
+            Some("sk-plain")
+        );
+        assert_eq!(
+            stored_provider_api_key_in(&path, "custom-b").as_deref(),
+            Some("sk-custom-secret")
+        );
+        // 空 key 段 → None（调用方保持空串走 allows_no_key 判据，不伪装成有密钥）
+        assert_eq!(stored_provider_api_key_in(&path, "custom-c"), None);
+        // 段不存在 → None
+        assert_eq!(stored_provider_api_key_in(&path, "missing"), None);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

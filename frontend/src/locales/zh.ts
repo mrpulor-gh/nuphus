@@ -765,6 +765,8 @@ const zh: Record<string, string> = {
   'slash.reset': '任务卡死时复位后端状态',
 
   'models.title': '模型',
+  'models.customEntry': '创建（自定义/中转站）',
+  'models.customEntryTitle': '自定义模型配置（中转站 / 网关）',
   'models.provider': '模型提供商',
   'models.apiKey': 'API 密钥',
   'models.modelName': '模型名称',

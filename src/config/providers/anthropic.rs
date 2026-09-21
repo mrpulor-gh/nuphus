@@ -110,6 +110,12 @@ impl Provider for AnthropicProvider {
             timeout_secs: cfg.timeout_secs,
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: cfg.reasoning_effort.clone(),
+            // 段级自定义标头（anthropic 兼容中转实例）；官方段为空 → 零生效
+            extra_headers: cfg
+                .extra_headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }))
     }
 }

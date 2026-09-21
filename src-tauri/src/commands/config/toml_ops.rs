@@ -31,6 +31,39 @@ fn validate_custom_provider_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// Whether a segment name is a custom-relay instance (`custom` / `custom-<slug>`).
+///
+/// **实例身份由段名前缀承载，不由 `provider_type` 承载**：同一批自定义实例里
+/// OpenAI 兼容段写 `provider_type = "custom"`、Anthropic 兼容段写 `"anthropic"`，
+/// 用协议类型识别实例会把后者漏掉。规则与 `validate_custom_provider_name` 一致。
+pub(crate) fn is_custom_segment_name(name: &str) -> bool {
+    name == "custom" || name.starts_with("custom-")
+}
+
+/// 自定义实例支持的协议类型（与界面「模型提供商」下拉的两项一一对应）。
+pub const CUSTOM_PROVIDER_TYPES: [&str; 2] = ["custom", "anthropic"];
+
+/// 编辑入口按段 id 查找失败的文案（界面原样展示）：编辑既有实例的前提是它已落盘。
+pub const CUSTOM_PROVIDER_NOT_FOUND: &str = "自定义模型不存在，请先创建";
+
+/// 旧版唯一自定义段名：首建具名实例（custom-<slug>）时接管其数据后删除（升级迁移源段）。
+const LEGACY_CUSTOM_SEGMENT: &str = "custom";
+
+/// api_key 落盘编码：空 key（无鉴权端点）写空串，其余走 DPAPI 加密。
+///
+/// 不能用 `encrypt_secret("")`：空明文经 DPAPI 加密后，`dpapi_decrypt` 因
+/// `cbData == 0` 返回 `None`，读回时被判为「无法解密」并打告警 —— 一个无害的
+/// 「无鉴权」会被伪装成损坏配置。空串表示与 `clear_provider_api_key_in_config_toml`
+/// 完全一致（读回即空 = 不携带鉴权头）。
+fn encode_api_key(api_key: &str) -> toml::Value {
+    let key = api_key.trim();
+    if key.is_empty() {
+        toml::Value::String(String::new())
+    } else {
+        toml::Value::String(nuphus::cookies::encrypt_secret(key))
+    }
+}
+
 /// Update model context_window in config.toml model entry
 pub fn update_model_context_window(
     config_path: &std::path::Path,
@@ -538,22 +571,39 @@ fn sync_provider_models_inner(
     if incoming_ids.is_empty() {
         return Ok(report);
     }
-    // If file doesn't exist yet, silently skip — creating it is update_config_toml's job
+    // 目标段不存在时的统一出口：
+    // - 手动添加路径（mark_manual）**必须报错**——此前静默 Ok，前端据此弹「已添加模型」，
+    //   用户以为模型加上了，磁盘上其实一行没写（新建实例未落盘时的典型症状）。
+    // - 自动刷新路径保持静默：段可能由 update_config_toml 在随后的保存动作里创建。
+    let missing_segment = || -> Result<SyncReport, String> {
+        if !mark_manual {
+            return Ok(SyncReport::default());
+        }
+        if is_custom_segment_name(provider_name) {
+            Err("该自定义模型尚未创建，请先保存基本信息".to_string())
+        } else {
+            Err(format!(
+                "服务商 {provider_name} 尚未保存配置，请先保存基本信息"
+            ))
+        }
+    };
     let content = match std::fs::read_to_string(config_path) {
         Ok(c) => c,
-        Err(_) => return Ok(report),
+        Err(_) => return missing_segment(),
     };
     let mut doc: toml::Value = match content.parse() {
         Ok(d) => d,
-        Err(_) => return Ok(report),
+        Err(_) => return missing_segment(),
     };
 
     let mut mutated = false;
+    let mut found = false;
     if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
         for provider in providers.iter_mut() {
             if provider.get("name").and_then(|n| n.as_str()) != Some(provider_name) {
                 continue;
             }
+            found = true;
             let map = match provider.as_table_mut() {
                 Some(m) => m,
                 None => break,
@@ -570,6 +620,9 @@ fn sync_provider_models_inner(
             mutated = m;
             break;
         }
+    }
+    if !found {
+        return missing_segment();
     }
 
     if mutated {
@@ -935,12 +988,18 @@ pub fn clear_provider_api_key_in_config_toml(
 
 /// Update provider config in config.toml
 /// Parse/modify with toml::Value, preserving comments and other fields
+///
+/// `provider_type` 只在**新建段**时生效（`None` = 按段名判定：`custom*` 段写
+/// `"custom"`，官方段写自身 id）。既有段只更新 `api_key` / `base_url` ——
+/// `name` / `display_name` / `provider_type` 是实例身份，改它们属于重命名，
+/// 不在本函数的职责内（避免「保存密钥」顺手改掉用户的中转站归属）。
 pub fn update_config_toml(
     config_path: &std::path::Path,
     provider_name: &str,
     api_key: &str,
     model_id: &str,
     base_url: Option<&str>,
+    provider_type: Option<&str>,
 ) -> Result<(), String> {
     // Read existing config, or start fresh if file doesn't exist yet
     let content = std::fs::read_to_string(config_path).unwrap_or_default();
@@ -950,7 +1009,7 @@ pub fn update_config_toml(
         toml::Value::Table(table)
     });
 
-    if provider_name == "custom" || provider_name.starts_with("custom-") {
+    if is_custom_segment_name(provider_name) {
         validate_custom_provider_name(provider_name)?;
         let duplicate = doc
             .get("providers")
@@ -995,12 +1054,9 @@ pub fn update_config_toml(
                 provider_found = true;
                 provider_idx = idx;
 
-                // Update api_key（DPAPI 加密落盘；读取端透明解密）
+                // Update api_key（DPAPI 加密落盘；读取端透明解密；空 key 写空串）
                 if let Some(map) = provider.as_table_mut() {
-                    map.insert(
-                        "api_key".to_string(),
-                        toml::Value::String(nuphus::cookies::encrypt_secret(api_key)),
-                    );
+                    map.insert("api_key".to_string(), encode_api_key(api_key));
                     // Update base_url only when provided non-empty
                     if let Some(url) = base_url {
                         if !url.is_empty() {
@@ -1018,6 +1074,13 @@ pub fn update_config_toml(
 
     // If provider doesn't exist, append new one
     if !provider_found {
+        // 协议类型：调用方解析结果优先（自定义实例可能是 anthropic 协议，硬编码
+        // "custom" 会把 Anthropic 段写成 OpenAI 协议）；缺省按段名判定。
+        let kind = provider_type.unwrap_or(if is_custom_segment_name(provider_name) {
+            "custom"
+        } else {
+            provider_name
+        });
         let mut new_provider = toml::value::Table::new();
         new_provider.insert(
             "name".to_string(),
@@ -1025,18 +1088,9 @@ pub fn update_config_toml(
         );
         new_provider.insert(
             "provider_type".to_string(),
-            toml::Value::String(
-                if provider_name == "custom" || provider_name.starts_with("custom-") {
-                    "custom".to_string()
-                } else {
-                    provider_name.to_string()
-                },
-            ),
+            toml::Value::String(kind.to_string()),
         );
-        new_provider.insert(
-            "api_key".to_string(),
-            toml::Value::String(nuphus::cookies::encrypt_secret(api_key)),
-        );
+        new_provider.insert("api_key".to_string(), encode_api_key(api_key));
         if let Some(url) = base_url {
             if !url.is_empty() {
                 new_provider.insert("base_url".to_string(), toml::Value::String(url.to_string()));
@@ -1093,6 +1147,426 @@ pub fn update_config_toml(
 }
 
 // ============================================================================
+// Custom provider instances（自定义中转站实例）
+// ============================================================================
+
+/// OAuth 配置校验（create / update 同源）：三项必填 + 端点必须是 http(s) URL。
+///
+/// 三态语义（与调用方的清除逻辑配套）：
+/// - **三项全空** → `Ok`（= 用户要清除 OAuth 配置，由调用方移除段内 oauth 表）；
+/// - **部分填写** → `Err`（半配置存下来必然用不了，当场拦下）；
+/// - **齐全** → 端点必须 http(s) 开头。
+///
+/// 「齐全」的判据与 `oauth_begin` 的 `config_complete()` 保持一致——表单能存下来
+/// 的东西必须真的能用来发起授权，否则用户会在点「授权登录」时才撞墙。
+fn validate_oauth_config(dto: &super::oauth::OauthConfigDto) -> Result<(), String> {
+    let authorize = dto.authorize_url.trim();
+    let token = dto.token_url.trim();
+    let client = dto.client_id.trim();
+    if authorize.is_empty() && token.is_empty() && client.is_empty() {
+        return Ok(());
+    }
+    if authorize.is_empty() || token.is_empty() || client.is_empty() {
+        return Err("OAuth 配置不完整：授权端点、令牌端点与 Client ID 均为必填项".to_string());
+    }
+    for (label, url) in [("授权端点", authorize), ("令牌端点", token)] {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return Err(format!("OAuth {label}必须以 http:// 或 https:// 开头"));
+        }
+    }
+    Ok(())
+}
+
+/// 该 DTO 是否表示「清除 OAuth 配置」（三项必填全空）。
+fn oauth_dto_is_clear(dto: &super::oauth::OauthConfigDto) -> bool {
+    dto.authorize_url.trim().is_empty()
+        && dto.token_url.trim().is_empty()
+        && dto.client_id.trim().is_empty()
+}
+
+/// 段表写入 OAuth 配置：只写配置五项；令牌三字段从 `existing_tokens` 原样搬入
+/// （编辑保存保留登录态；清除令牌只能走 oauth_logout）。
+/// 入参 DTO 与 `oauth_begin` / create / update 命令共用一份（`super::oauth::OauthConfigDto`）。
+fn write_oauth_config(
+    segment: &mut toml::value::Table,
+    oauth: &super::oauth::OauthConfigDto,
+    existing_tokens: Option<&toml::value::Table>,
+) {
+    let mut table = toml::value::Table::new();
+    table.insert(
+        "authorize_url".to_string(),
+        toml::Value::String(oauth.authorize_url.trim().to_string()),
+    );
+    table.insert(
+        "token_url".to_string(),
+        toml::Value::String(oauth.token_url.trim().to_string()),
+    );
+    table.insert(
+        "client_id".to_string(),
+        toml::Value::String(oauth.client_id.trim().to_string()),
+    );
+    let scopes = oauth.scopes.trim();
+    if !scopes.is_empty() {
+        table.insert(
+            "scopes".to_string(),
+            toml::Value::String(scopes.to_string()),
+        );
+    }
+    table.insert("use_pkce".to_string(), toml::Value::Boolean(oauth.use_pkce));
+    if let Some(port) = oauth.redirect_port {
+        table.insert(
+            "redirect_port".to_string(),
+            toml::Value::Integer(port as i64),
+        );
+    }
+    if let Some(tokens) = existing_tokens {
+        for key in ["access_token", "refresh_token", "expires_at"] {
+            if let Some(v) = tokens.get(key) {
+                table.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    segment.insert("oauth".to_string(), toml::Value::Table(table));
+}
+
+/// 旧 `custom` 段升级迁移第一步：从 providers 数组摘除旧段并返回其数据。
+/// 不存在旧段（或新段名就是 `custom`）→ `None`，纯新建路径零行为变化。
+fn take_legacy_custom_segment(
+    providers: &mut Vec<toml::Value>,
+    new_name: &str,
+) -> Option<toml::Value> {
+    if new_name == LEGACY_CUSTOM_SEGMENT {
+        return None;
+    }
+    let idx = providers
+        .iter()
+        .position(|p| p.get("name").and_then(|n| n.as_str()) == Some(LEGACY_CUSTOM_SEGMENT))?;
+    Some(providers.remove(idx))
+}
+
+/// 旧 `custom` 段已删除后的引用同步：[last_model] 全表值 + [capabilities] 的
+/// provider 归属字段，值 == "custom" → 新段名。`vision` 承载模型 id（不是段名），
+/// 显式排除，白名单与 `Capabilities` struct 的 provider 归属字段一一对应。
+fn rebind_legacy_custom_refs(doc: &mut toml::Value, new_name: &str) {
+    if let Some(last_model) = doc.get_mut("last_model").and_then(|t| t.as_table_mut()) {
+        for (_key, value) in last_model.iter_mut() {
+            if value.as_str() == Some(LEGACY_CUSTOM_SEGMENT) {
+                *value = toml::Value::String(new_name.to_string());
+            }
+        }
+    }
+    const PROVIDER_CAPABILITY_FIELDS: [&str; 5] =
+        ["vision_provider", "stt", "tts", "voice", "image_generation"];
+    if let Some(caps) = doc.get_mut("capabilities").and_then(|t| t.as_table_mut()) {
+        for field in PROVIDER_CAPABILITY_FIELDS {
+            if caps.get(field).and_then(|v| v.as_str()) == Some(LEGACY_CUSTOM_SEGMENT) {
+                caps.insert(field.to_string(), toml::Value::String(new_name.to_string()));
+            }
+        }
+    }
+}
+
+/// 自定义标头清洗：key trim 后非空才保留，value 原样；重复 key 后者覆盖
+/// （编辑表单全量提交语义：同 key 的新值应生效）。BTreeMap 落盘键序稳定。
+/// 命令层回显与落盘共用同一实现（回显即所见）。
+pub(crate) fn sanitize_extra_headers(
+    headers: &[(String, String)],
+) -> std::collections::BTreeMap<String, String> {
+    let mut map = std::collections::BTreeMap::new();
+    for (k, v) in headers {
+        let key = k.trim();
+        if !key.is_empty() {
+            map.insert(key.to_string(), v.clone());
+        }
+    }
+    map
+}
+
+/// Create a new custom provider segment:
+/// `name` / `display_name` / `provider_type` / `base_url` / `api_key` / `headers`.
+///
+/// 只新建、不覆盖：段已存在即报错。新建入口是用户显式的一次「创建」动作，
+/// 悄悄改写已有实例的地址与密钥比报错危险得多（同名实例各自服务不同中转站）。
+///
+/// 旧 `custom` 段升级迁移：providers.toml 里存在旧版唯一自定义段 `custom`
+/// 且新段名不同时，该段被接管——api_key（用户未填才沿用）/ models /
+/// auth_header / auth_prefix / reasoning_effort（display_name 在用户留空时沿用）
+/// 迁入新段，旧段删除，[last_model] 与 [capabilities] 中指向旧段的值同步改名；
+/// 全部改动在同一份 doc 上完成后一次写回，失败不留半截状态。
+///
+/// 校验：段名（`validate_custom_provider_name`）、协议类型（custom / anthropic）、
+/// 地址非空且非内置文档占位示例。
+/// `headers`：自定义标头，空切片 = 不写该键（旧配置语义不变）。
+/// `oauth`：Some → 写入授权配置五项（不含令牌字段——它们由登录流程独占维护）。
+pub fn create_custom_provider_segment(
+    config_path: &std::path::Path,
+    name: &str,
+    display_name: &str,
+    provider_type: &str,
+    base_url: &str,
+    api_key: &str,
+    headers: &[(String, String)],
+    oauth: Option<&super::oauth::OauthConfigDto>,
+) -> Result<(), String> {
+    validate_custom_provider_name(name)?;
+    if !CUSTOM_PROVIDER_TYPES.contains(&provider_type) {
+        return Err(format!(
+            "不支持的模型提供商类型: {provider_type}（可选 custom / anthropic）"
+        ));
+    }
+    let url = base_url.trim();
+    if url.is_empty() {
+        return Err("请填写模型 API URL".to_string());
+    }
+    // 内置默认地址是文档占位示例：落盘后请求会打到示例域名，直接拒绝。
+    if url.eq_ignore_ascii_case(nuphus::config::providers::custom::PLACEHOLDER_BASE_URL) {
+        return Err("请填写真实的模型 API URL".to_string());
+    }
+    if let Some(dto) = oauth {
+        validate_oauth_config(dto)?;
+    }
+    if let Some(parent) = config_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let content = std::fs::read_to_string(config_path).unwrap_or_default();
+    let mut doc: toml::Value = content.parse().unwrap_or_else(|_| {
+        let mut table = toml::value::Table::new();
+        table.insert("providers".to_string(), toml::Value::Array(Vec::new()));
+        toml::Value::Table(table)
+    });
+    if let Some(table) = doc.as_table_mut() {
+        if !table.contains_key("providers") {
+            table.insert("providers".to_string(), toml::Value::Array(Vec::new()));
+        }
+    }
+    let providers = doc
+        .get_mut("providers")
+        .and_then(|p| p.as_array_mut())
+        .ok_or_else(|| "providers.toml 缺少 providers 数组".to_string())?;
+    if providers
+        .iter()
+        .any(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+    {
+        return Err(format!("已存在同名自定义模型: {name}"));
+    }
+
+    // 旧 `custom` 段升级迁移：从数组摘除旧段（同 doc 合并进新段，一次写回）。
+    // 同名检查已先行：name == "custom" 且旧段在时上面已报错，走不到这里。
+    let legacy = take_legacy_custom_segment(providers, name);
+
+    let shown = display_name.trim();
+    let mut segment = toml::value::Table::new();
+    segment.insert("name".to_string(), toml::Value::String(name.to_string()));
+    // display_name 可选：空则只写段名，读回时回退段名（向后兼容老配置）；
+    // 用户留空且旧段有 display_name → 沿用（升级迁移不丢界面显示名）。
+    let shown_value = if !shown.is_empty() {
+        Some(shown.to_string())
+    } else {
+        legacy
+            .as_ref()
+            .and_then(|t| t.get("display_name"))
+            .and_then(|d| d.as_str())
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(display) = shown_value {
+        segment.insert("display_name".to_string(), toml::Value::String(display));
+    }
+    segment.insert(
+        "provider_type".to_string(),
+        toml::Value::String(provider_type.to_string()),
+    );
+    segment.insert("base_url".to_string(), toml::Value::String(url.to_string()));
+    // api_key 归属：用户填了 → 用用户的（表单必填语义）；用户未填且旧段
+    // api_key 非空 → 原样搬运（密文不二次加密，明文交给末尾
+    // encrypt_plaintext_provider_keys 统一加密）；都无 → 空串（无鉴权端点）。
+    let legacy_key_present = legacy
+        .as_ref()
+        .and_then(|t| t.get("api_key"))
+        .and_then(|v| v.as_str())
+        .map(|k| !k.is_empty())
+        .unwrap_or(false);
+    let key_value = if !api_key.trim().is_empty() {
+        encode_api_key(api_key)
+    } else if legacy_key_present {
+        legacy
+            .as_ref()
+            .and_then(|t| t.get("api_key"))
+            .cloned()
+            .unwrap_or_else(|| encode_api_key(""))
+    } else {
+        encode_api_key("")
+    };
+    segment.insert("api_key".to_string(), key_value);
+    // 旧段模型列表与鉴权/推理配置原样迁入（base_url/provider_type 用户新填，不搬）。
+    if let Some(legacy_table) = &legacy {
+        for key in ["models", "auth_header", "auth_prefix", "reasoning_effort"] {
+            if let Some(v) = legacy_table.get(key) {
+                segment.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    // 自定义标头：非空才落盘（嵌套表 [providers.<段>.extra_headers]）；
+    // 空切片 = 不写该键，旧配置读回语义不变。
+    let extra_headers = sanitize_extra_headers(headers);
+    if !extra_headers.is_empty() {
+        let mut table = toml::value::Table::new();
+        for (k, v) in extra_headers {
+            table.insert(k, toml::Value::String(v));
+        }
+        segment.insert("extra_headers".to_string(), toml::Value::Table(table));
+    }
+    // OAuth 订阅凭证（可选）：写配置五项；迁移场景从旧段 oauth 表带入已有令牌
+    // （旧 custom 段若已登录，升级为具名实例不该丢登录态）。
+    // 三项全空 = 不启用（新建态无「清除」可言），不写该键。
+    if let Some(cfg) = oauth {
+        if !oauth_dto_is_clear(cfg) {
+            let legacy_tokens = legacy
+                .as_ref()
+                .and_then(|t| t.get("oauth"))
+                .and_then(|o| o.as_table());
+            write_oauth_config(&mut segment, cfg, legacy_tokens);
+        }
+    }
+    providers.push(toml::Value::Table(segment));
+
+    // 旧段已删除：同步指向旧段名的归属记录，生效模型 / 视觉 / 语音不悬空。
+    if legacy.is_some() {
+        rebind_legacy_custom_refs(&mut doc, name);
+    }
+
+    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+    let new_content =
+        toml::to_string_pretty(&doc).map_err(|e| format!("serialize config.toml failed: {}", e))?;
+    std::fs::write(config_path, new_content)
+        .map_err(|e| format!("write config.toml failed: {}", e))?;
+
+    tracing::info!(
+        "Created custom provider segment: name={}, display_name={}, provider_type={}",
+        name,
+        shown,
+        provider_type
+    );
+    Ok(())
+}
+
+/// Update an existing custom provider segment（重命名 / 换协议 / 改地址 / 换密钥）。
+///
+/// 与 [`create_custom_provider_segment`] 的分工：段必须**已存在**，这里只改写可变字段。
+///
+/// - 段 id（`name`）是模型路由依据（同名模型靠「段 id + 模型 ID」精确路由），
+///   **绝不修改**：重命名只改 `display_name`，改段 id 会让请求打到别的中转站。
+/// - `api_key` 空串 = **保持原 key 不变**（编辑表单留空即「不修改密钥」）；非空才覆盖。
+/// - `models` 数组不动：模型列表由 add / refresh / clear 各自维护。
+/// - `headers`：自定义标头。空切片 = **清除已存键**（编辑表单全量提交，
+///   「删掉所有标头」必须能落盘）；非空 = 覆盖写（key trim 后非空才写，value 原样）。
+///
+/// 校验与新建同源（段名 / 协议类型 / 地址非空且非占位示例地址），两个入口一条规矩。
+pub fn update_custom_provider_segment(
+    config_path: &std::path::Path,
+    name: &str,
+    display_name: &str,
+    provider_type: &str,
+    base_url: &str,
+    api_key: &str,
+    headers: &[(String, String)],
+    oauth: Option<&super::oauth::OauthConfigDto>,
+) -> Result<(), String> {
+    validate_custom_provider_name(name)?;
+    if !CUSTOM_PROVIDER_TYPES.contains(&provider_type) {
+        return Err(format!(
+            "不支持的模型提供商类型: {provider_type}（可选 custom / anthropic）"
+        ));
+    }
+    let url = base_url.trim();
+    if url.is_empty() {
+        return Err("请填写模型 API URL".to_string());
+    }
+    if url.eq_ignore_ascii_case(nuphus::config::providers::custom::PLACEHOLDER_BASE_URL) {
+        return Err("请填写真实的模型 API URL".to_string());
+    }
+    if let Some(dto) = oauth {
+        validate_oauth_config(dto)?;
+    }
+
+    let content = std::fs::read_to_string(config_path).unwrap_or_default();
+    let mut doc: toml::Value = content.parse().unwrap_or_else(|_| {
+        let mut table = toml::value::Table::new();
+        table.insert("providers".to_string(), toml::Value::Array(Vec::new()));
+        toml::Value::Table(table)
+    });
+    let providers = doc
+        .get_mut("providers")
+        .and_then(|p| p.as_array_mut())
+        .ok_or_else(|| "providers.toml 缺少 providers 数组".to_string())?;
+    let segment = providers
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+        .ok_or_else(|| CUSTOM_PROVIDER_NOT_FOUND.to_string())?;
+    let map = segment
+        .as_table_mut()
+        .ok_or_else(|| format!("配置段格式非法: {name}"))?;
+
+    // display_name 只在非空时写：留空 = 读回时回退段名（与新建同一条规则）。
+    let shown = display_name.trim();
+    if !shown.is_empty() {
+        map.insert(
+            "display_name".to_string(),
+            toml::Value::String(shown.to_string()),
+        );
+    }
+    map.insert(
+        "provider_type".to_string(),
+        toml::Value::String(provider_type.to_string()),
+    );
+    map.insert("base_url".to_string(), toml::Value::String(url.to_string()));
+    // 空 key = 保持原值：不写入、不覆盖（覆盖成空串等于把已配密钥清掉）。
+    if !api_key.trim().is_empty() {
+        map.insert("api_key".to_string(), encode_api_key(api_key));
+    }
+    // 自定义标头：空切片 = 清除已存键（编辑表单全量提交，「删掉所有标头」
+    // 必须能落盘）；非空 = 覆盖写，清洗规则与新建一致。
+    if headers.is_empty() {
+        map.remove("extra_headers");
+    } else {
+        let mut table = toml::value::Table::new();
+        for (k, v) in sanitize_extra_headers(headers) {
+            table.insert(k, toml::Value::String(v));
+        }
+        map.insert("extra_headers".to_string(), toml::Value::Table(table));
+    }
+    // OAuth 配置三态：Some(齐全) → 覆盖写配置五项、**既有令牌三字段原样保留**
+    //（改地址/标头不该把登录态抹掉）；Some(三项全空) → 清除整个 oauth 表
+    //（用户切回静态密钥模式的唯一通路：段里留着 oauth 表，凭证解析会一直走 OAuth）；
+    // None → 不动（未使用 OAuth 的实例零影响）。
+    if let Some(cfg) = oauth {
+        if oauth_dto_is_clear(cfg) {
+            map.remove("oauth");
+        } else {
+            let existing_tokens = map.get("oauth").and_then(|o| o.as_table()).cloned();
+            write_oauth_config(map, cfg, existing_tokens.as_ref());
+        }
+    }
+
+    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+    let new_content =
+        toml::to_string_pretty(&doc).map_err(|e| format!("serialize config.toml failed: {}", e))?;
+    std::fs::write(config_path, new_content)
+        .map_err(|e| format!("write config.toml failed: {}", e))?;
+
+    tracing::info!(
+        "Updated custom provider segment: name={}, display_name={}, provider_type={}, key_updated={}",
+        name,
+        shown,
+        provider_type,
+        !api_key.trim().is_empty()
+    );
+    Ok(())
+}
+
+// ============================================================================
 // Provider/key queries
 // ============================================================================
 
@@ -1144,6 +1618,57 @@ pub fn read_provider_base_url_from_config_toml(provider_name: &str) -> Option<St
         }
     }
     None
+}
+
+/// Read a custom instance's optional `display_name`（界面显示名）。
+///
+/// 缺失/空串 → `None`：老配置没有这个字段，调用方回退到段名（向后兼容）。
+pub fn read_provider_display_name(provider_name: &str) -> Option<String> {
+    let config_path = get_config_path()?;
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let providers = doc.get("providers")?.as_array()?;
+    for provider in providers {
+        let Some(name) = provider.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        if name != provider_name {
+            continue;
+        }
+        let display = provider
+            .get("display_name")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .trim();
+        if !display.is_empty() {
+            return Some(display.to_string());
+        }
+    }
+    None
+}
+
+/// Whether a `[[providers]]` segment with this name exists in config.toml.
+///
+/// 判据只看「段是否存在」，不看是否配了 key：无鉴权自定义实例（本地网关 /
+/// 无 key 中转）同样是登记在册的服务商，不能因为 key 为空就被判为未登记。
+pub fn provider_segment_exists(provider_name: &str) -> bool {
+    let Some(config_path) = get_config_path() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return false;
+    };
+    let Ok(doc) = content.parse::<toml::Value>() else {
+        return false;
+    };
+    doc.get("providers")
+        .and_then(|p| p.as_array())
+        .map(|providers| {
+            providers
+                .iter()
+                .any(|p| p.get("name").and_then(|n| n.as_str()) == Some(provider_name))
+        })
+        .unwrap_or(false)
 }
 
 /// Read a provider's reasoning-effort value from config.toml
@@ -1940,6 +2465,7 @@ api_key = "sk-test"
             "sk-test",
             "gpt-4o",
             Some("https://gw.example/v1"),
+            None,
         )
         .unwrap();
 
@@ -1964,7 +2490,438 @@ api_key = "sk-test"
     #[test]
     fn legacy_custom_segment_is_still_accepted() {
         let path = write_temp_config("");
-        assert!(update_config_toml(&path, "custom", "sk-test", "m", Some("https://gw/v1")).is_ok());
+        assert!(
+            update_config_toml(&path, "custom", "sk-test", "m", Some("https://gw/v1"), None)
+                .is_ok()
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 新建自定义实例：四字段一次写全（name / display_name / provider_type /
+    /// base_url / api_key），空 key 落盘为空串。
+    /// 无鉴权端点（本地网关、Ollama、无 key 中转）必须能建 —— 不能被加密成
+    /// 解不开的密文（`encrypt_secret("")` 的 DPAPI 密文读回即「无法解密」）。
+    #[test]
+    fn create_custom_provider_segment_writes_all_fields() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-my-relay",
+            "我的中转站",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let providers = doc.get("providers").and_then(|p| p.as_array()).unwrap();
+        assert_eq!(providers.len(), 1, "只应新建一个段");
+        let entry = &providers[0];
+        assert_eq!(
+            entry.get("name").and_then(|v| v.as_str()),
+            Some("custom-my-relay")
+        );
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("我的中转站"),
+            "界面显示名必须落盘（UI 只显示它，不显示段 id）"
+        );
+        assert_eq!(
+            entry.get("provider_type").and_then(|v| v.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            entry.get("base_url").and_then(|v| v.as_str()),
+            Some("https://relay.example/v1")
+        );
+        assert_eq!(
+            entry.get("api_key").and_then(|v| v.as_str()),
+            Some(""),
+            "空 key 落盘为空串（无鉴权端点）"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Anthropic 兼容实例：协议类型原样落盘。写成 "custom" 会让
+    /// `provider_kind_for_segment` 按 OpenAI 协议发 /v1/chat/completions。
+    #[test]
+    fn create_custom_provider_segment_keeps_anthropic_protocol() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-claude-relay",
+            "Claude 中转",
+            "anthropic",
+            "https://claude-relay.example/v1",
+            "sk-test",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .expect("segment must be created");
+        assert_eq!(
+            entry.get("provider_type").and_then(|v| v.as_str()),
+            Some("anthropic")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 新建入口的输入校验：重名 / 非法协议 / 空地址 / 占位示例地址一律拒绝，
+    /// 且拒绝时不得留下半个段。
+    #[test]
+    fn create_custom_provider_segment_rejects_invalid_input() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-a",
+            "A",
+            "custom",
+            "https://a.example/v1",
+            "sk-a",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        // 重名：新建是显式动作，不许悄悄改写既有实例
+        assert!(create_custom_provider_segment(
+            &path,
+            "custom-a",
+            "A2",
+            "custom",
+            "https://a2.example/v1",
+            "sk-a2",
+            &[],
+            None,
+        )
+        .is_err());
+        // 非法段名（中文直填段名会被拒 —— 前端必须走 slug 生成）
+        assert!(create_custom_provider_segment(
+            &path,
+            "我的中转站",
+            "我的中转站",
+            "custom",
+            "https://x.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+        // 协议类型必须是下拉里的两项
+        assert!(create_custom_provider_segment(
+            &path,
+            "custom-b",
+            "B",
+            "openai",
+            "https://b.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+        // 地址必填
+        assert!(create_custom_provider_segment(
+            &path,
+            "custom-c",
+            "C",
+            "custom",
+            "   ",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+        // 内置文档占位示例地址不是可用端点
+        assert!(create_custom_provider_segment(
+            &path,
+            "custom-d",
+            "D",
+            "custom",
+            "https://your-custom-api.com/v1",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(
+            doc.get("providers")
+                .and_then(|p| p.as_array())
+                .map(|a| a.len()),
+            Some(1),
+            "被拒绝的输入不得留下任何段"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 编辑既有实例：改的是显示名 / 协议 / 地址，**段 id 与 models 一动不动**。
+    /// 段 id 是模型路由依据（同名模型靠「段 id + 模型 ID」精确路由），
+    /// 重命名若顺手改段 id，请求就会打到别的中转站。
+    #[test]
+    fn update_custom_provider_segment_renames_without_touching_id_and_models() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom-relay"
+display_name = "旧名字"
+provider_type = "custom"
+api_key = ""
+base_url = "https://old.example/v1"
+
+[[providers.models]]
+id = "gpt-4o"
+"#,
+        );
+
+        update_custom_provider_segment(
+            &path,
+            "custom-relay",
+            "新名字",
+            "anthropic",
+            "https://new.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let providers = doc.get("providers").and_then(|p| p.as_array()).unwrap();
+        assert_eq!(providers.len(), 1, "编辑不得新增/删除段");
+        let entry = &providers[0];
+        assert_eq!(
+            entry.get("name").and_then(|v| v.as_str()),
+            Some("custom-relay"),
+            "段 id 必须稳定：它是模型路由依据"
+        );
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("新名字"),
+            "重命名只改 display_name"
+        );
+        assert_eq!(
+            entry.get("provider_type").and_then(|v| v.as_str()),
+            Some("anthropic"),
+            "「模型提供商」下拉可改协议类型"
+        );
+        assert_eq!(
+            entry.get("base_url").and_then(|v| v.as_str()),
+            Some("https://new.example/v1")
+        );
+        assert_eq!(
+            entry
+                .get("models")
+                .and_then(|m| m.as_array())
+                .and_then(|a| a.first())
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str()),
+            Some("gpt-4o"),
+            "models 数组不参与编辑，必须原样保留"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 编辑页「模型 API Key」留空 = 保持原密钥不变（不是清空）。
+    /// 非空才覆盖 —— 覆盖后可解密回用户填的新值。
+    #[test]
+    fn update_custom_provider_segment_keeps_key_when_api_key_empty() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-relay",
+            "中继",
+            "custom",
+            "https://relay.example/v1",
+            "sk-old",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let raw_key = |p: &std::path::Path| -> String {
+            let doc: toml::Value = std::fs::read_to_string(p).unwrap().parse().unwrap();
+            doc.get("providers")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.get("api_key"))
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .to_string()
+        };
+
+        let before = raw_key(&path);
+        assert_eq!(
+            nuphus::cookies::decrypt_secret(&before).as_deref(),
+            Some("sk-old")
+        );
+
+        // 留空 → 原密钥原封不动（含存储形态：不得被空串覆盖）
+        update_custom_provider_segment(
+            &path,
+            "custom-relay",
+            "中继（改名）",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+        assert_eq!(raw_key(&path), before, "留空 API Key 必须保持原密钥");
+        assert_eq!(
+            nuphus::cookies::decrypt_secret(&raw_key(&path)).as_deref(),
+            Some("sk-old")
+        );
+
+        // 非空 → 覆盖为新密钥
+        update_custom_provider_segment(
+            &path,
+            "custom-relay",
+            "中继（改名）",
+            "custom",
+            "https://relay.example/v1",
+            "sk-new",
+            &[],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            nuphus::cookies::decrypt_secret(&raw_key(&path)).as_deref(),
+            Some("sk-new"),
+            "非空 API Key 才覆盖"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 编辑入口的输入校验：段不存在 / 非法协议 / 空地址 / 占位示例地址一律拒绝，
+    /// 且拒绝时磁盘上的既有段保持原样。
+    #[test]
+    fn update_custom_provider_segment_rejects_invalid_input() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom-a"
+display_name = "A"
+provider_type = "custom"
+api_key = ""
+base_url = "https://a.example/v1"
+"#,
+        );
+
+        // 段不存在：编辑的前提是它已落盘
+        let err = update_custom_provider_segment(
+            &path,
+            "custom-ghost",
+            "幽灵",
+            "custom",
+            "https://g.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, CUSTOM_PROVIDER_NOT_FOUND);
+
+        // 协议类型必须是下拉里的两项
+        assert!(update_custom_provider_segment(
+            &path,
+            "custom-a",
+            "A",
+            "openai",
+            "https://a.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+        // 地址必填
+        assert!(update_custom_provider_segment(
+            &path,
+            "custom-a",
+            "A",
+            "custom",
+            "  ",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+        // 内置文档占位示例地址不是可用端点
+        assert!(update_custom_provider_segment(
+            &path,
+            "custom-a",
+            "A",
+            "custom",
+            "https://your-custom-api.com/v1",
+            "",
+            &[],
+            None,
+        )
+        .is_err());
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .unwrap();
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("A")
+        );
+        assert_eq!(
+            entry.get("base_url").and_then(|v| v.as_str()),
+            Some("https://a.example/v1")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 「+ 手动添加」路径下目标段不存在必须报错：此前静默 Ok，前端据此弹
+    /// 「已添加模型」而磁盘上什么都没写。自动刷新路径保持静默（官方段常在
+    /// 下一次保存时才创建）。
+    #[test]
+    fn manual_add_reports_missing_segment_but_refresh_stays_silent() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom-a"
+provider_type = "custom"
+api_key = "sk-a"
+base_url = "https://a.example/v1"
+"#,
+        );
+
+        // 段存在 → 正常并入
+        let report = add_provider_model_entry(&path, "custom-a", "custom", "gpt-4o").unwrap();
+        assert_eq!(report.added, 1);
+
+        // 段不存在 → 报错文案要指向「先保存基本信息」
+        let err = add_provider_model_entry(&path, "custom-b", "custom", "gpt-4o").unwrap_err();
+        assert!(
+            err.contains("尚未创建"),
+            "自定义实例缺段时错误应说明尚未创建: {err}"
+        );
+
+        // 自动刷新（sync）路径对缺失段保持静默，不改变官方服务商既有行为
+        let caps = BuiltinCapabilitySource {
+            provider_type: "custom",
+        };
+        assert!(
+            sync_provider_models(&path, "custom-b", &["gpt-4o".to_string()], &caps, false).is_ok()
+        );
+        assert!(sync_provider_models(&path, "deepseek", &["x".to_string()], &caps, false).is_ok());
+
         std::fs::remove_file(&path).ok();
     }
 
@@ -2087,7 +3044,8 @@ id = "gpt-4o"
             "custom-a-",
         ] {
             assert!(
-                update_config_toml(&path, bad, "sk-test", "m", Some("https://gw/v1")).is_err(),
+                update_config_toml(&path, bad, "sk-test", "m", Some("https://gw/v1"), None)
+                    .is_err(),
                 "{bad} 不应通过命名校验"
             );
         }
@@ -2153,6 +3111,365 @@ supports_streaming = true
         assert_eq!(
             read_model_context_window(&path, "deepseek", "nope-model"),
             None
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    // ── 自定义标头（extra_headers）与旧 custom 段升级迁移 ──
+
+    /// 新建时自定义标头落盘为嵌套表，ModelRegistry 读回 ProviderConfig.extra_headers
+    /// 往返一致；key trim 后非空才写（空白 key 被过滤），value 原样保留。
+    #[test]
+    fn create_custom_provider_segment_roundtrips_extra_headers() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-hdr",
+            "带标头实例",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[
+                ("X-Gateway".to_string(), "nuphus".to_string()),
+                ("   ".to_string(), "skipped".to_string()),
+                ("X-Trace".to_string(), "  padded  ".to_string()),
+            ],
+            None,
+        )
+        .unwrap();
+
+        // TOML 落盘形态：段内嵌套表，空白 key 不落盘，value 原样
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .unwrap();
+        let headers = entry
+            .get("extra_headers")
+            .and_then(|h| h.as_table())
+            .unwrap();
+        assert_eq!(headers.len(), 2, "空白 key 被过滤");
+        assert_eq!(
+            headers.get("X-Gateway").and_then(|v| v.as_str()),
+            Some("nuphus")
+        );
+        assert_eq!(
+            headers.get("X-Trace").and_then(|v| v.as_str()),
+            Some("  padded  "),
+            "value 原样保留"
+        );
+
+        // 读回：ProviderConfig.extra_headers 往返一致（serde default 空路径之外的正常链路）
+        let registry = nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap()).unwrap();
+        let cfg = registry
+            .providers
+            .iter()
+            .find(|p| p.name == "custom-hdr")
+            .expect("custom-hdr segment must load");
+        assert_eq!(
+            cfg.extra_headers.get("X-Gateway").map(String::as_str),
+            Some("nuphus")
+        );
+        assert_eq!(
+            cfg.extra_headers.get("X-Trace").map(String::as_str),
+            Some("  padded  ")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 新建 headers 为空切片 → 不写 extra_headers 键（旧配置语义不变）。
+    #[test]
+    fn create_custom_provider_segment_without_headers_writes_no_key() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-plain",
+            "无标头",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .unwrap();
+        assert!(
+            entry.get("extra_headers").is_none(),
+            "空标头不得写出 extra_headers 键"
+        );
+        // serde default：缺键读回空 map
+        let registry = nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap()).unwrap();
+        let cfg = registry
+            .providers
+            .iter()
+            .find(|p| p.name == "custom-plain")
+            .unwrap();
+        assert!(cfg.extra_headers.is_empty());
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 旧 `custom` 段升级迁移：首建具名实例时接管旧段——key/models/鉴权配置迁入、
+    /// 旧段删除、[last_model] 与 [capabilities] 指向旧段的值同步改名，一次写回。
+    #[test]
+    fn create_custom_provider_segment_migrates_legacy_custom_segment() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "custom"
+provider_type = "custom"
+api_key = "sk-legacy-key"
+base_url = "https://old.example/v1"
+auth_header = "X-Old-Auth"
+auth_prefix = "OldScheme "
+reasoning_effort = "high"
+display_name = "旧中转站"
+
+[[providers.models]]
+id = "step-5-preview"
+supports_streaming = true
+
+[[providers]]
+name = "zhipu"
+provider_type = "zhipu"
+api_key = "sk-zhipu"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+
+[last_model]
+step-5-preview = "custom"
+"glm-5.3-flashx" = "zhipu"
+
+[capabilities]
+vision_provider = "custom"
+vision = "step-5-preview"
+tts = "custom"
+"#,
+        );
+
+        create_custom_provider_segment(
+            &path,
+            "custom-new",
+            "", // 用户留空 display_name → 沿用旧段显示名（不丢界面名称）
+            "custom",
+            "https://new.example/v1",
+            "", // 用户未填 key → 沿用旧段 key（迁移不丢密钥）
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let providers = doc.get("providers").and_then(|p| p.as_array()).unwrap();
+        assert_eq!(
+            providers.len(),
+            2,
+            "旧 custom 段被接管删除，只剩新段与无关段"
+        );
+        assert!(
+            !providers
+                .iter()
+                .any(|p| p.get("name").and_then(|n| n.as_str()) == Some("custom")),
+            "旧 custom 段必须消失"
+        );
+        let new_seg = providers
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("custom-new"))
+            .expect("新段必须存在");
+
+        // 用户填的 base_url 生效；旧段 models / 鉴权配置 / reasoning_effort 迁入
+        assert_eq!(
+            new_seg.get("base_url").and_then(|v| v.as_str()),
+            Some("https://new.example/v1"),
+            "base_url 用户新填的"
+        );
+        assert_eq!(
+            new_seg
+                .get("models")
+                .and_then(|m| m.as_array())
+                .and_then(|a| a.first())
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str()),
+            Some("step-5-preview"),
+            "旧段 models 必须迁入新段"
+        );
+        assert_eq!(
+            new_seg.get("auth_header").and_then(|v| v.as_str()),
+            Some("X-Old-Auth")
+        );
+        assert_eq!(
+            new_seg.get("auth_prefix").and_then(|v| v.as_str()),
+            Some("OldScheme ")
+        );
+        assert_eq!(
+            new_seg.get("reasoning_effort").and_then(|v| v.as_str()),
+            Some("high")
+        );
+        // 用户留空 display_name → 沿用旧段显示名
+        assert_eq!(
+            new_seg.get("display_name").and_then(|v| v.as_str()),
+            Some("旧中转站"),
+            "用户留空 display_name 时沿用旧段显示名"
+        );
+
+        // key 沿用旧段（读回经 decrypt_secret 还原）
+        let raw_key = new_seg.get("api_key").and_then(|v| v.as_str()).unwrap();
+        assert_eq!(
+            nuphus::cookies::decrypt_secret(raw_key).as_deref(),
+            Some("sk-legacy-key"),
+            "用户未填 key 时必须沿用旧段密钥"
+        );
+
+        // [last_model]：指向旧段的值改名，无关条目不动
+        let last_model = doc.get("last_model").and_then(|t| t.as_table()).unwrap();
+        assert_eq!(
+            last_model.get("step-5-preview").and_then(|v| v.as_str()),
+            Some("custom-new"),
+            "生效模型归属同步改名"
+        );
+        assert_eq!(
+            last_model.get("glm-5.3-flashx").and_then(|v| v.as_str()),
+            Some("zhipu"),
+            "无关条目不动"
+        );
+
+        // [capabilities]：provider 归属字段改名；vision 是模型 id 字段，不改
+        let caps = doc.get("capabilities").and_then(|t| t.as_table()).unwrap();
+        assert_eq!(
+            caps.get("vision_provider").and_then(|v| v.as_str()),
+            Some("custom-new")
+        );
+        assert_eq!(caps.get("tts").and_then(|v| v.as_str()), Some("custom-new"));
+        assert_eq!(
+            caps.get("vision").and_then(|v| v.as_str()),
+            Some("step-5-preview"),
+            "vision 承载模型 id，不是段名，不改"
+        );
+
+        // 迁移后新段可被 ModelRegistry 正常加载（模型归属仍可解析）
+        let registry = nuphus::config::ModelRegistry::from_toml(path.to_str().unwrap()).unwrap();
+        assert!(registry.providers.iter().any(|p| p.name == "custom-new"));
+        assert!(
+            registry.providers.iter().all(|p| p.name != "custom"),
+            "加载后的 registry 不应再有旧段"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 无旧 custom 段时纯新建：迁移路径零行为变化（摘取函数返回 None）。
+    #[test]
+    fn create_custom_provider_segment_without_legacy_segment_is_pure_create() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "zhipu"
+provider_type = "zhipu"
+api_key = "sk-zhipu"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+"#,
+        );
+        create_custom_provider_segment(
+            &path,
+            "custom-fresh",
+            "全新实例",
+            "custom",
+            "https://fresh.example/v1",
+            "sk-fresh",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let providers = doc.get("providers").and_then(|p| p.as_array()).unwrap();
+        assert_eq!(providers.len(), 2, "只新增新段，不动无关段");
+        let fresh = providers
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("custom-fresh"))
+            .expect("新段必须存在");
+        assert!(
+            fresh.get("models").is_none(),
+            "无旧段时新段不得凭空带出 models"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 编辑表单标头语义：空切片清除已存键；非空覆盖写（与新建同一条清洗规则）。
+    #[test]
+    fn update_custom_provider_segment_headers_clear_and_overwrite() {
+        let path = write_temp_config("");
+        create_custom_provider_segment(
+            &path,
+            "custom-hdr",
+            "带标头实例",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[("X-Old".to_string(), "1".to_string())],
+            None,
+        )
+        .unwrap();
+
+        // 非空 → 覆盖写（旧键被整组替换，空白 key 过滤）
+        update_custom_provider_segment(
+            &path,
+            "custom-hdr",
+            "带标头实例",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[
+                ("X-New".to_string(), "2".to_string()),
+                (" ".to_string(), "dropped".to_string()),
+            ],
+            None,
+        )
+        .unwrap();
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .unwrap();
+        let headers = entry
+            .get("extra_headers")
+            .and_then(|h| h.as_table())
+            .unwrap();
+        assert_eq!(headers.len(), 1, "旧键整组替换，空白 key 过滤");
+        assert_eq!(headers.get("X-New").and_then(|v| v.as_str()), Some("2"));
+        assert!(headers.get("X-Old").is_none());
+
+        // 空切片 → 清除已存键（「删掉所有标头」必须能落盘）
+        update_custom_provider_segment(
+            &path,
+            "custom-hdr",
+            "带标头实例",
+            "custom",
+            "https://relay.example/v1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .unwrap();
+        assert!(
+            entry.get("extra_headers").is_none(),
+            "空标头编辑后 extra_headers 键必须被清除"
         );
 
         std::fs::remove_file(&path).ok();

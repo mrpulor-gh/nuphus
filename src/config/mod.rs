@@ -2,6 +2,7 @@
 
 pub mod last_model;
 pub mod model;
+pub mod oauth;
 pub mod preferences;
 pub mod provider;
 pub mod providers;

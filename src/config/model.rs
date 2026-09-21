@@ -3,7 +3,7 @@
 //! Supports multiple Providers, multiple models, alias mapping
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Canonical Provider type — re-exported from `api::ProviderKind` for config-layer consumers.
 pub use crate::api::ProviderKind;
@@ -99,10 +99,90 @@ pub struct ProviderConfig {
     /// `reasoning_effort` parameter). Optional — absent in existing configs.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// 段级自定义请求头（TOML 落盘为嵌套表 `[providers.<段>.extra_headers]`），
+    /// 中转站/网关要求的附加标头（如 `X-Gateway`）逐字注入每个请求。
+    /// BTreeMap 保证落盘键序稳定；旧配置无此键 → serde default 空 map。
+    #[serde(default)]
+    pub extra_headers: BTreeMap<String, String>,
+    /// 可选 OAuth2 授权配置（Authorization Code + PKCE + 本地回调）。
+    /// TOML 落盘为嵌套表 `[providers.<段>.oauth]`；令牌字段与 api_key 同一套
+    /// DPAPI 加密口径（from_toml 透明解密）。None = 该段走静态 api_key 鉴权。
+    #[serde(default)]
+    pub oauth: Option<ProviderOAuth>,
 }
 
 fn default_timeout() -> u64 {
     300
+}
+
+/// OAuth2 通用接入配置（Authorization Code + PKCE，本地回调）。
+///
+/// 五个配置项（authorize_url/token_url/client_id/scopes/use_pkce + redirect_port）
+/// 由用户在表单填写（Agent 可代填 providers.toml）；三个令牌字段是运行时状态：
+/// 落盘经 DPAPI 加密（`enc:` 前缀，与 api_key 同款），from_toml 读入即透明解密。
+///
+/// 演进关系：`transports/responses/config.rs` 的 ResponsesConfig 注明 OAuth 令牌
+/// 走 credentials 服务是 P3 方向；当前以段内加密存储落地（不过早抽象），届时
+/// 令牌的「读取出口」收敛到 `config::oauth::ensure_fresh_oauth_token` 一处，上层
+/// 无需感知存储形态即可平移。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderOAuth {
+    pub authorize_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    /// 空格分隔的 scope 列表；空 = 授权请求不带 scope 参数。
+    #[serde(default)]
+    pub scopes: String,
+    /// PKCE 开关（RFC 7636）；缺省 true（TOML 省略该键 = 开启）。
+    #[serde(default = "default_true")]
+    pub use_pkce: bool,
+    /// 本地回调端口；None = 自动选择空闲端口。
+    #[serde(default)]
+    pub redirect_port: Option<u16>,
+    /// access token（落盘 `enc:` DPAPI，内存为明文）。
+    #[serde(default)]
+    pub access_token: String,
+    /// refresh token（落盘 `enc:` DPAPI，内存为明文）。
+    #[serde(default)]
+    pub refresh_token: String,
+    /// access token 过期时刻（unix 秒）；None = 未知（视为需刷新）。
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+impl ProviderOAuth {
+    /// ���个授权配置项是否齐备（发起授权登录的前置条件）。
+    /// 令牌字段不参与判定——它们是登录产物，不是配置。
+    pub fn config_complete(&self) -> bool {
+        !self.authorize_url.trim().is_empty()
+            && !self.token_url.trim().is_empty()
+            && !self.client_id.trim().is_empty()
+    }
+
+    /// 是否已登录（持有 access token）。
+    pub fn is_logged_in(&self) -> bool {
+        !self.access_token.is_empty()
+    }
+}
+
+/// 敏感字段三态解密（api_key 与 OAuth 令牌共用，禁止复制粘贴出第二份）。
+///
+/// `enc:` 前缀 → DPAPI 解密（失败则清空 + 告警，视为未配置）；非密文（旧明文
+/// 配置 / 空串）原样保留。`label` 仅用于告警定位字段，不携带任何敏感值。
+pub(crate) fn decrypt_credential_three_state(field: &mut String, provider: &str, label: &str) {
+    let encrypted = field.starts_with("enc:");
+    match crate::cookies::decrypt_secret(field) {
+        Some(dec) => *field = dec,
+        None if encrypted => {
+            tracing::warn!(
+                "[config] provider '{}' 的 {} 无法解密，视为未配置（请重新配置）",
+                provider,
+                label
+            );
+            field.clear();
+        }
+        None => {}
+    }
 }
 
 /// 按能力独立配置模型（不配则使用 model）
@@ -146,6 +226,11 @@ pub struct ModelRegistry {
     /// Model alias mapping: alias -> (provider_name, model_id)
     #[serde(skip)]
     alias_map: HashMap<String, (String, String)>,
+    /// 配置文件来源路径（from_toml 记录；其它构造路径为 None）。
+    /// transport 构造链（factory）据此定位段配置，完成 OAuth 令牌的
+    /// 过期刷新与注入（见 `config::oauth::ensure_fresh_oauth_token`）。
+    #[serde(skip)]
+    pub source_path: Option<std::path::PathBuf>,
 }
 
 impl ModelRegistry {
@@ -179,21 +264,24 @@ impl ModelRegistry {
         }
         let mut registry: Self = serde::Deserialize::deserialize(doc.clone())
             .map_err(|e| crate::NuphusError::Config(format!("parse config failed: {e}")))?;
-        // API key 透明解密：落盘为 `enc:v1:`（DPAPI）时还原明文；旧明文配置原样兼容。
+        registry.source_path = Some(std::path::PathBuf::from(path));
+        // 敏感字段透明解密（api_key + OAuth 令牌共用一套三态口径）：
+        // 落盘为 `enc:v1:`（DPAPI）时还原明文；旧明文配置原样兼容。
         // 旧版 `enc:`（无版本号）密文一并迁移解密；密文但解密失败视为未配置（触发重新导入）。
         // 环境变量来源（from_env）不经此路径，无需解密。
         for p in &mut registry.providers {
-            let encrypted = p.api_key.starts_with("enc:");
-            match crate::cookies::decrypt_secret(&p.api_key) {
-                Some(dec) => p.api_key = dec,
-                None if encrypted => {
-                    tracing::warn!(
-                        "[config] provider '{}' 的 api_key 无法解密，视为未配置（请重新配置）",
-                        p.name
-                    );
-                    p.api_key.clear();
-                }
-                None => {}
+            decrypt_credential_three_state(&mut p.api_key, &p.name, "api_key");
+            if let Some(oauth) = p.oauth.as_mut() {
+                decrypt_credential_three_state(
+                    &mut oauth.access_token,
+                    &p.name,
+                    "oauth.access_token",
+                );
+                decrypt_credential_three_state(
+                    &mut oauth.refresh_token,
+                    &p.name,
+                    "oauth.refresh_token",
+                );
             }
         }
         // 模型真值 = [agent_models].leader（主模型，mode 绑定单一数据源）。
@@ -250,6 +338,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -281,6 +371,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -312,6 +404,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -343,6 +437,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -373,6 +469,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -404,6 +502,8 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             });
         }
 
@@ -419,6 +519,8 @@ impl ModelRegistry {
             providers,
             capabilities: Capabilities::default(),
             alias_map: Default::default(),
+            // env 来源没有配置文件：OAuth 令牌注入路径据此跳过（无盘可刷新）
+            source_path: None,
         };
         registry.build_alias_map();
         Ok(registry)
@@ -600,9 +702,13 @@ impl ModelRegistry {
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             }],
             capabilities: Capabilities::default(),
             alias_map: HashMap::new(),
+            // from_single 无文件来源（内存构造）：OAuth 刷新链路自然跳过。
+            source_path: None,
         };
         registry.build_alias_map();
         registry
@@ -690,6 +796,68 @@ id = "gpt-4o"
         assert_eq!(KnownProvider::Kimi.as_str(), "kimi");
     }
 
+    /// ProviderOAuth TOML 序列化往返：`use_pkce` 缺省 = true（省略键不改变语义），
+    /// 显式 false 必须保真；令牌/过期时间原样往返（加密由读写路径负责，serde 层不感知）。
+    #[test]
+    fn test_provider_oauth_toml_roundtrip() {
+        let toml_with_default_pkce = r#"
+authorize_url = "https://sso.example.com/authorize"
+token_url = "https://sso.example.com/token"
+client_id = "nuphus-cli"
+"#;
+        let oauth: ProviderOAuth = toml::from_str(toml_with_default_pkce).unwrap();
+        assert!(oauth.use_pkce, "缺省 use_pkce 必须为 true");
+        assert_eq!(oauth.scopes, "");
+        assert_eq!(oauth.redirect_port, None);
+        assert_eq!(oauth.access_token, "");
+        assert_eq!(oauth.expires_at, None);
+
+        let toml_explicit = r#"
+authorize_url = "https://sso.example.com/authorize"
+token_url = "https://sso.example.com/token"
+client_id = "nuphus-cli"
+scopes = "read write"
+use_pkce = false
+redirect_port = 19110
+access_token = "at-1"
+refresh_token = "rt-1"
+expires_at = 1800000000
+"#;
+        let oauth: ProviderOAuth = toml::from_str(toml_explicit).unwrap();
+        assert!(!oauth.use_pkce, "显式 false 必须保真");
+        assert_eq!(oauth.scopes, "read write");
+        assert_eq!(oauth.redirect_port, Some(19110));
+        assert_eq!(oauth.access_token, "at-1");
+        assert_eq!(oauth.refresh_token, "rt-1");
+        assert_eq!(oauth.expires_at, Some(1_800_000_000));
+
+        // 往返：serde 序列化 → 反序列化等值
+        let re: ProviderOAuth = toml::from_str(&toml::to_string(&oauth).unwrap()).unwrap();
+        assert_eq!(re.access_token, oauth.access_token);
+        assert_eq!(re.refresh_token, oauth.refresh_token);
+        assert_eq!(re.expires_at, oauth.expires_at);
+        assert!(!re.use_pkce);
+    }
+
+    /// 旧 providers.toml（无 oauth 键）读入 → oauth == None，不破坏既有段。
+    #[test]
+    fn test_provider_config_oauth_defaults_to_none() {
+        let doc: toml::Value = r#"
+name = "custom-a"
+provider_type = "custom"
+api_key = "sk-1"
+base_url = "https://relay.example.com/v1"
+
+[[providers.models]]
+id = "m1"
+"#
+        .parse()
+        .unwrap();
+        // 经与 from_toml 相同的反序列化入口验证缺省行为
+        let cfg: ProviderConfig = serde::Deserialize::deserialize(doc).unwrap();
+        assert!(cfg.oauth.is_none());
+    }
+
     #[test]
     fn test_model_registry_alias_lookup() {
         let mut registry = ModelRegistry {
@@ -718,9 +886,12 @@ id = "gpt-4o"
                     source: ModelSource::Auto,
                 }],
                 reasoning_effort: None,
+                extra_headers: BTreeMap::new(),
+                oauth: None,
             }],
             capabilities: Capabilities::default(),
             alias_map: Default::default(),
+            source_path: None,
         };
         registry.build_alias_map();
 
@@ -845,6 +1016,8 @@ vision_provider = "custom"
                 })
                 .collect(),
             reasoning_effort: None,
+            extra_headers: BTreeMap::new(),
+            oauth: None,
         }
     }
 
@@ -889,6 +1062,7 @@ vision_provider = "custom"
             providers,
             capabilities: Capabilities::default(),
             alias_map: Default::default(),
+            source_path: None,
         };
         registry.build_alias_map();
         registry

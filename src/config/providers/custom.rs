@@ -66,6 +66,15 @@ impl Provider for CustomProvider {
     }
 
     fn transport(&self, cfg: &ProviderConfig, model_id: &str) -> Arc<dyn Transport> {
+        // 段级自定义标头并入 quirks.extra_headers：与官方 quirks 头同一条注入链，
+        // ChatCompletionsTransport 发请求时统一带上。cfg.extra_headers 旧配置为空
+        // → extend 零生效，请求头与改造前逐字节一致。
+        let mut quirks = self.quirks();
+        quirks.extra_headers.extend(
+            cfg.extra_headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
         Arc::new(ChatCompletionsTransport::new(ChatCompletionsConfig {
             name: "custom".to_string(),
             api_key: cfg.api_key.clone(),
@@ -87,7 +96,7 @@ impl Provider for CustomProvider {
                 cfg.auth_prefix.clone()
             },
             provider_kind: Some(crate::api::ProviderKind::Custom),
-            quirks: self.quirks(),
+            quirks,
             reasoning_effort: cfg.reasoning_effort.clone(),
         }))
     }

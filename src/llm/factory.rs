@@ -86,6 +86,10 @@ impl ClientFactory {
         provider: &ProviderConfig,
         model_id: &str,
     ) -> Result<Arc<dyn Transport>> {
+        // OAuth 段透明化：配置了 oauth 的段以「新鲜 access token」充当 api_key
+        // 传入 transport（transport 本身不感知 oauth，继续走既有 Bearer 链）。
+        // 未配 oauth / 无文件来源（CLI 内存构造）→ 原样透传，零行为变化。
+        let provider = self.with_fresh_oauth_token(provider);
         let pmeta = ProviderRegistry::builtin()
             .get(provider.provider_type.as_str())
             .ok_or_else(|| {
@@ -161,7 +165,72 @@ impl ClientFactory {
                     model_id,
                     other
                 );
-                Ok(pmeta.transport(provider, model_id))
+                Ok(pmeta.transport(&provider, model_id))
+            }
+        }
+    }
+
+    /// OAuth 段的令牌注入：返回携带新鲜 access token 的段配置（或原引用内容）。
+    ///
+    /// 三级路径：
+    /// 1. 未配 oauth / 注册表无文件来源（CLI 内存构造）→ 原样返回，零开销。
+    /// 2. 内存令牌未过期（`config::oauth::in_memory_fresh_token`）→ 直接注入，
+    ///    零磁盘 IO、零网络（transport 构建高频路径的主形态）。
+    /// 3. 临期/已过期 → 经独立线程调用 `ensure_fresh_oauth_token`
+    ///    （磁盘刷新 + 落盘）。独立线程是为了与调用方运行时解耦：build_transport
+    ///    是同步函数，可能运行在 tokio worker 上，阻塞式 HTTP 客户端在
+    ///    async 上下文里有运行时嵌套风险，线程隔离一次到位。
+    ///    刷新失败（含 401 → 需重新授权）仅记 warn——不携带任何令牌值——
+    ///    transport 仍按原 api_key 构建，认证失败由请求链路报给上层。
+    fn with_fresh_oauth_token(&self, provider: &ProviderConfig) -> ProviderConfig {
+        let Some(oauth) = provider.oauth.as_ref() else {
+            return provider.clone();
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if let Some(token) = crate::config::oauth::in_memory_fresh_token(oauth, now) {
+            let mut cfg = provider.clone();
+            cfg.api_key = token;
+            return cfg;
+        }
+        let Some(path) = self.registry.source_path.clone() else {
+            tracing::warn!(
+                "[factory] provider '{}' 配置了 OAuth 但注册表无配置文件来源，无法自动刷新",
+                provider.name
+            );
+            return provider.clone();
+        };
+        let name = provider.name.clone();
+        // 网络刷新放独立线程：与宿主 async 运行时隔离（见方法注释）
+        let refreshed = std::thread::Builder::new()
+            .name("oauth-token-refresh".to_string())
+            .spawn(move || crate::config::oauth::ensure_fresh_oauth_token(&path, &name))
+            .and_then(|h| {
+                h.join().map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::Other, "refresh thread panicked")
+                })
+            });
+        match refreshed {
+            Ok(Ok(token)) => {
+                let mut cfg = provider.clone();
+                cfg.api_key = token;
+                cfg
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    "[factory] provider '{}' OAuth 令牌刷新失败: {e}",
+                    provider.name
+                );
+                provider.clone()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[factory] provider '{}' OAuth 刷新线程异常: {e}",
+                    provider.name
+                );
+                provider.clone()
             }
         }
     }

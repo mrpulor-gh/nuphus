@@ -20,6 +20,12 @@ import {
   setModelContextWindow,
   setModelSupportsVision,
   setVisionCapability,
+  createCustomProvider,
+  updateCustomProvider,
+  oauthBegin,
+  oauthStatus,
+  oauthLogout,
+  openExternal,
   sttStatus,
 } from '../lib/api'
 import type {
@@ -29,6 +35,8 @@ import type {
   SttStatus,
   AgentModels,
   SyncReport,
+  OauthConfigPayload,
+  OauthStatusInfo,
 } from '../lib/api'
 import {
   useSttModelDownload,
@@ -53,17 +61,18 @@ import {
   IconEdit3,
   IconPlug,
   IconX,
-  IconPlus,
+  IconHardDrive,
 } from '../../ui/Icons'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import {
-  LEGACY_CUSTOM_PROVIDER_ID,
+  buildCustomInstanceId,
   isCustomProviderId,
-  isValidCustomInstanceId,
+  LEGACY_CUSTOM_PROVIDER_ID,
 } from '../lib/customProvider'
+import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
 import '../../styles/models.css'
 
@@ -73,62 +82,153 @@ import '../../styles/models.css'
 // 重构后统一为页内文案，可读中文；通用词条（provider/modelList/…）仍走字典。
 // ════════════════════════════════════════════════════════════════
 const TXT = {
-  providerSelectHint: '选择要配置的服务商。deepseek / kimi / openai 等官方服务与本地兼容端点均可。',
+  // ── 自定义模型四字段（名称 / 提供商 / API Key / API URL）──
+  // 表单、实例配置页共用同一套字段名，全流程一个说法，用户不用做同义词翻译。
+  nameLabel: '自定义名称',
+  namePlaceholder: '例如：公司网关',
+  providerTypeLabel: '模型提供商',
+  customKeyLabel: '模型 API Key',
+  customBaseUrlLabel: '模型 API URL',
+  providerTypes: [
+    { value: 'custom', label: 'OpenAI 兼容' },
+    { value: 'anthropic', label: 'Anthropic 兼容' },
+  ],
+  keyPlaceholderCustom: '无鉴权端点可留空',
+  /** 编辑模式留空 = 不改密钥（不是清空）：密钥已在后端，界面不回显 */
+  keyPlaceholderKeep: '留空则保持原密钥不变',
+  /** 由名称 slug 化来的段 id 只在 title 里作调试信息，界面不显示 */
+  instanceIdTitle: (id: string) => `实例标识：${id}`,
+  /** 左栏固定入口（custom 配置界面）显示名走 i18n：models.customEntry */
+  /** 创建态/编辑态标题：同一套表单，只有按钮语义不同（「创建」/「保存」） */
+  customSectionTitle: '自定义模型',
+  createBtn: '创建',
+  creating: '创建中…',
+  /** 编辑页主按钮（同一套表单，只有按钮语义不同） */
+  saveBtn: '保存',
+  savingBtn: '保存中…',
+  /** 「连接测试」：用当前填写的地址与密钥探测可用模型 */
+  testBtn: '连接测试',
+  createSuccess: '已创建',
+  saveSuccess: '已保存',
+  createFail: '创建失败',
+  needName: '请填写自定义名称',
+  needUrl: '请填写模型 API URL',
+  /** Anthropic 协议没有标准模型列表端点：如实告知，并把入口指向唯一的可行路径 */
+  anthropicNoModelList: 'Anthropic 协议不支持自动获取模型列表，请手动填写模型名',
   apiKeyLabel: 'API 密钥',
-  keyConfiguredBadge: '已配置',
   keyInputPlaceholder: (name: string) => `输入 ${name} 的 API 密钥`,
   keyOverwritePlaceholder: '输入新密钥覆盖现有配置',
   keyShow: '显示',
   keyHide: '隐藏',
   connectBtn: '连接',
   connecting: '连接中…',
-  connectTitle: '用当前密钥探测可用模型',
+  connectTitle: '探测该接口下可用的模型',
   clearKeyTitle: '清除已保存的密钥',
   clearKeyConfirm:
     '确定要清除该服务商的 API 密钥吗？\n模型与其它配置会保留，清除后需重新输入才能使用云端服务。',
-  keyHelp: '密钥仅保存在本机配置中，用于向服务商发起请求；页面不展示已存密钥原文。',
+  keyHelp: '密钥仅存本机',
   keyHelpLocal:
     '本地服务通常无需密钥，可留空直接连接；若服务启用了鉴权（如 llama-swap、带 key 的网关/反向代理），在此填写后再连接。',
   keyPlaceholderLocal: '可选：本地服务启用鉴权时填写密钥',
   saveKeyBtn: '保存',
   savingKey: '保存中…',
   saveKeyTitle: '仅保存密钥（不检测模型）',
-  saveKeyNoModel:
-    '该服务商下还没有可用模型：请先点「连接」检测，或用下方「添加本地模型」手动添加一个模型后再保存。',
+  saveKeyNoModel: '请先点「连接测试」获取模型',
+  /** Anthropic 实例没有「连接」按钮，只能手动加模型名 */
+  saveKeyNoModelManual: '请先手动添加模型名',
   saveKeySuccess: (m: string) => `密钥已保存（目标模型：${m}）`,
+  /** 无鉴权实例（key 留空）保存：只说实际发生了什么（地址与默认模型落盘） */
+  saveNoKeySuccess: (m: string) => `已保存（目标模型：${m}）`,
   saveKeyFail: '保存密钥失败',
   filterPlaceholder: '筛选模型…',
   baseUrlLabel: '接口地址',
-  baseUrlPlaceholder: '自定义接口地址（可选）',
-  baseUrlHelp: '默认使用服务商官方地址；OpenAI 兼容代理或本地网关可在此覆盖。',
+  baseUrlPlaceholder: 'https://your-relay.com/v1',
+  baseUrlHelp: '中转站或网关的接口地址，通常以 /v1 结尾',
+  /** 自定义标头编辑区：中转站网关要求的附加请求头，逐字注入每个请求 */
+  headerSectionLabel: '自定义标头',
+  headerSectionHelp: '部分中转站要求附加请求头；留空则不发送',
+  headerNamePlaceholder: '头名称，如 X-Gateway',
+  headerValuePlaceholder: '值（可为空）',
+  addHeaderBtn: '+ 添加标头',
+  removeHeaderTitle: '删除此标头',
+  // ── 订阅账号（OAuth，可选路径）──
+  // 静态密钥与 OAuth 是同一实例的二选一凭证来源；区块默认折叠，避免给只用密钥的
+  // 用户增加六项 OAuth 字段的视觉负担（折叠态只留一行状态摘要）。
+  oauthSectionLabel: '订阅账号（OAuth）',
+  oauthSummaryOff: '未配置',
+  oauthSummaryNotLoggedIn: '已配置 · 未登录',
+  oauthSummaryLoggedIn: '已登录',
+  oauthSummaryNeedsLogin: '需重新授权',
+  /** 编辑态：OAuth 五项随 ProviderInfo.oauth 摘要回显可改；三态语义见 oauthToPayload */
+  oauthHelpEdit: '填写则覆盖更新；清空三项必填并保存 = 切回 API Key 模式（移除 OAuth 配置）。',
+  oauthHelpCreate: '填写三项必填即为该实例启用 OAuth；创建完成后可在此授权登录。',
+  /** 创建态：实例尚未落盘，后端 oauth_begin 找不到段 → 只能先说明可行路径 */
+  oauthCreateHint: '实例创建完成后，回到本页即可用「授权登录」绑定订阅账号。',
+  oauthAuthorizeLabel: '授权端点',
+  oauthAuthorizePlaceholder: 'https://sso.example.com/authorize',
+  oauthTokenLabel: '令牌端点',
+  oauthTokenPlaceholder: 'https://sso.example.com/token',
+  oauthClientIdLabel: 'Client ID',
+  oauthClientIdPlaceholder: 'OAuth 客户端标识',
+  oauthScopesLabel: 'Scopes',
+  oauthScopesPlaceholder: '空格分隔，可留空',
+  oauthScopesHelp: '空格分隔；留空则授权请求不带 scope',
+  oauthPkceLabel: 'PKCE',
+  oauthPkceHelp: '推荐开启（RFC 7636）；仅当授权服务器不支持时关闭',
+  oauthPkceOn: '开启',
+  oauthPkceOff: '关闭',
+  oauthRedirectPortLabel: '回调端口',
+  oauthRedirectPortPlaceholder: '留空由系统分配',
+  oauthRedirectPortHelp: '本地回调监听端口（http://127.0.0.1:<端口>/callback）',
+  oauthPortInvalid: '回调端口需为 1-65535 的整数',
+  oauthNeedRequired: '请先填写授权端点 / 令牌端点 / Client ID（三项必填）',
+  oauthLoginBtn: '授权登录',
+  oauthReauthorizeBtn: '重新授权',
+  oauthLogoutBtn: '退出登录',
+  oauthLoggingIn: '发起中…',
+  oauthLoggedIn: '已登录',
+  oauthExpiresAt: (time: string) => `有效期至 ${time}`,
+  oauthNotLoggedIn: '尚未登录：点「授权登录」在浏览器完成授权',
+  oauthNeedsLogin: '登录已失效：需重新授权',
+  oauthBrowserOpened: '已打开浏览器授权页，完成后本页自动更新登录状态',
+  oauthLoginSuccess: '授权成功',
+  oauthLogoutDone: '已退出登录',
+  oauthBeginFail: '发起授权失败',
+  oauthOpenFail: '打开浏览器失败',
+  oauthLogoutFail: '退出登录失败',
   modelListTitle: '可用模型',
   currentModelOf: (name: string) => `（当前使用：${name}）`,
   refreshBtn: '刷新',
   refreshing: '刷新中…',
   refreshTitle: '用已保存密钥重新拉取最新模型列表',
   addModelBtn: '+ 手动添加',
-  addModelTitle:
-    '手动添加模型代号（/v1/models 未返回的灰度或临时模型，如 deepseek-v4.1-flash-expires-on-0910）',
-  addModelPlaceholder: '输入模型代号，如 deepseek-v4.1-flash-expires-on-0910',
+  /** Anthropic 实例：这是唯一能拿到模型的入口，文案直接说清要填什么 */
+  addModelBtnManual: '+ 手动添加模型名',
+  addModelTitle: '手动添加模型代号',
+  addModelPlaceholder: '输入模型代号',
   addModelConfirm: '添加',
   addModelCancel: '取消',
   addModelRequired: '请输入模型代号',
   addModelSuccess: (id: string) => `已添加模型「${id}」，可在下方点击切换`,
-  addModelFail: '添加失败，请确认该服务商已配置密钥',
+  addModelFail: '添加失败',
   baseUrlChangedWarn:
     '接口地址已变更：旧模型列表可能在新地址下不可用（模型代号不存在，或同名模型能力不同）。建议清理后重新拉取。',
+  /** Anthropic 实例无法重新拉取：提示改成手动重加 */
+  baseUrlChangedWarnManual:
+    '接口地址已变更：旧模型名可能在新地址下不可用。建议清理后手动重新添加模型名。',
   clearModelsBtn: '清理旧模型',
   clearModelsConfirm:
     '确定清理该服务商的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请点「刷新」拉取新地址的模型。',
+  /** Anthropic 实例没有「刷新」：清理后只能手动重加模型名 */
+  clearModelsConfirmManual:
+    '确定清理该实例的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请手动重新添加模型名。',
   clearModelsSuccess: (n: number) => `已清理 ${n} 个旧模型`,
   clearModelsNone: '没有可清理的旧模型',
   clearModelsFail: '清理失败',
   emptyFiltered: (q: string) => `没有匹配「${q}」的模型`,
-  emptyNeedConnect:
-    '尚未检测到模型。填写密钥后点击「连接」，或展开列表用「刷新」同步已保存密钥下的模型。',
-  emptyNeedDetect: '尚无模型。请先在上方连接服务商，或点击「刷新」拉取已保存密钥下的最新模型。',
-  modelsCount: (n: number) => `${n} 个可用模型`,
-  configuredCount: (n: number) => `，含 ${n} 个已配置`,
+  emptyNeedConnect: '尚未获取模型，点「连接测试」',
+  emptyNeedManual: '尚未添加模型，点「+ 手动添加模型名」',
+  modelsCount: (n: number) => `${n} 个模型`,
   capVision: '支持图像理解',
   capAudio: '支持语音',
   capImageGen: '支持图像生成',
@@ -143,7 +243,7 @@ const TXT = {
   apiKeyRequired: '请先输入 API 密钥',
   ctxUnitHint: '单位 K（千 tokens），例如 128 = 128K',
   ctxCap: '上下文窗口',
-  visionNone: '未配置（使用默认）',
+  visionNone: '跟随 Leader 模型（需支持图像理解）（推荐）',
   downloadReady: '已就绪',
   downloadPaused: '下载已暂停',
   /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被覆写与被移除的 id） */
@@ -159,22 +259,105 @@ const TXT = {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 左侧两模块导航
+// 左侧导航三组（按「谁提供模型」划分，而非按「技术上是不是 provider」）
+//
+// 模块一「模型提供商」：云端远程服务商 + Opencode GO 套餐网关（都是「别人提供的服务」）
+// 模块二「自定义模型」：已落盘的自定义中转站实例（动态列表）+「+ 新建」入口
+// 模块三「本地模型」：跑在自己机器上的服务（local）——不是云端提供商，单独成组，
+//                     否则用户要在云厂商列表里找一个本机服务
+// 「图像音频模型 / 子智能体模型」不再占左栏，改为页面右上角工具栏入口。
 // ════════════════════════════════════════════════════════════════
-type CustomNavKey = 'custom' | 'opencode-go' | 'local' | 'capabilities' | 'agents'
 
-/** 模块二「自定义设置」固定导航项：provider 项（custom/opencode-go/local）路由到对应服务商页 */
-const CUSTOM_NAV_ITEMS: { key: CustomNavKey; label: string }[] = [
-  { key: 'custom', label: 'Custom（自定义/中转站）' },
-  { key: 'opencode-go', label: 'Opencode GO 套餐' },
-  { key: 'local', label: '本地模型' },
-  { key: 'capabilities', label: '图像音频模型' },
-  { key: 'agents', label: '子智能体模型' },
-]
+/** 本地模型段名（与后端 `LocalProvider::id` 一致）。 */
+const LOCAL_PROVIDER_ID = 'local'
 
-/** 归入模块二「自定义设置」的服务商 id（不出现在模块一「模型提供商」分组） */
-function isModule2Provider(id: string): boolean {
-  return isCustomProviderId(id) || id === 'opencode-go' || id === 'local'
+/** 实例条目的显示名：用户填写的名称优先，老配置（无 display_name）回退段名 */
+function instanceLabel(p: ProviderInfo): string {
+  return (p.display_name || p.name || p.id).trim() || p.id
+}
+
+/** 表单标头行 → invoke 二元组数组（全空行已在表单 submit 时过滤，这里只做形态转换） */
+function headersToTuples(headers: CustomHeaderRow[]): Array<[string, string]> {
+  return headers.map(h => [h.name, h.value])
+}
+
+/**
+ * 表单内的 OAuth 配置值（五项）。回调端口以**文本**持有 —— 输入框天然是字符串，
+ * 空串 = 未指定（提交时转 null，由后端分配空闲端口）。
+ */
+export interface OauthFormValues {
+  authorizeUrl: string
+  tokenUrl: string
+  clientId: string
+  scopes: string
+  usePkce: boolean
+  /** 回调端口文本；空串 = 未指定 */
+  redirectPort: string
+}
+
+/** OAuth 配置字段的空值（区块展开时字段全空；三项必填全空 = 该实例不启用 OAuth） */
+const EMPTY_OAUTH_VALUES: OauthFormValues = {
+  authorizeUrl: '',
+  tokenUrl: '',
+  clientId: '',
+  scopes: '',
+  usePkce: true,
+  redirectPort: '',
+}
+
+/**
+ * 后端 OAuth 摘要（snake_case）→ 表单值：编辑态回显已存配置。
+ *
+ * 摘要缺配置项（旧段只登录过、或后端未带）→ undefined，表单回落到空值：
+ * 空值提交 = 不动已存配置，与「配置躺在磁盘里」的既有语义一致。
+ */
+function oauthSummaryToForm(s: OauthStatusInfo | null | undefined): OauthFormValues | undefined {
+  if (!s) return undefined
+  return {
+    authorizeUrl: s.authorize_url ?? '',
+    tokenUrl: s.token_url ?? '',
+    clientId: s.client_id ?? '',
+    scopes: s.scopes ?? '',
+    usePkce: s.use_pkce ?? true,
+    redirectPort: s.redirect_port == null ? '' : String(s.redirect_port),
+  }
+}
+
+/**
+ * 表单 OAuth 值 → 落盘 DTO（三态语义，与后端 `update_custom_provider_segment` 对齐）：
+ *
+ * - `null`/`undefined`（表单层） → `null`：**不启用 / 不动**已存 OAuth 配置；
+ * - 三项必填全空的对象 → 全空 DTO：**清除** OAuth 配置（切回静态 API Key 模式）——
+ *   段里留着 oauth 表会让凭证解析一直走 OAuth 分支，必须有这条路出去；
+ * - 齐全 → 正常 DTO；部分填写由后端/表单给出「三项必填」可读错误。
+ */
+function oauthToPayload(v: OauthFormValues | null | undefined): OauthConfigPayload | null {
+  if (!v) return null
+  const port = v.redirectPort.trim()
+  return {
+    authorizeUrl: v.authorizeUrl.trim(),
+    tokenUrl: v.tokenUrl.trim(),
+    clientId: v.clientId.trim(),
+    scopes: v.scopes.trim(),
+    usePkce: v.usePkce,
+    redirectPort: port === '' ? null : Number(port),
+  }
+}
+
+/** 除三项必填外，区块内可选项是否被动过（Scopes / PKCE / 端口） */
+function hasOauthAuxInput(v: OauthFormValues): boolean {
+  return v.scopes.trim() !== '' || !v.usePkce || v.redirectPort.trim() !== ''
+}
+
+/** 回调端口合法性（后端按 u16 解析；非法值必须在表单拦下，而不是让后端报 JSON 解析错） */
+function isValidRedirectPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+}
+
+/** OAuth 到期时刻（unix 秒）→ 本地时间文本；无到期时间返回空串（只展示「已登录」） */
+function oauthExpiryText(expiresAt: number | null | undefined): string {
+  if (expiresAt == null) return ''
+  return TXT.oauthExpiresAt(new Date(expiresAt * 1000).toLocaleString())
 }
 
 /**
@@ -433,6 +616,596 @@ function RowCtxEditor({
 }
 
 // ════════════════════════════════════════════════════════════════
+// 自定义模型表单（新建 / 编辑共用同一套模板）
+//
+// 一个组件、一套字段顺序与一套校验：新建（左栏「+ 新建」）与编辑（选中某个自定义
+// 模型）渲染出的就是同一份 JSX。历史上两处各写一遍 —— 新建页四个可编辑字段、
+// 配置页把同两个字段又做成只读行 —— 于是同一个名字一屏出现两次、且都改不了；
+// 改一处字段得同时改两处，迟早漂移。
+//
+// 段 id（custom-xxx）不出现在表单里：它是模型路由依据（同名模型靠「段 id + 模型 ID」
+// 精确路由），重命名只改 display_name，由后端 update_custom_provider 保证。
+// ════════════════════════════════════════════════════════════════
+
+/** 一行自定义请求头（key/value 成对编辑；全空行在提交前被过滤） */
+export interface CustomHeaderRow {
+  name: string
+  value: string
+}
+
+export interface CustomModelFormValues {
+  displayName: string
+  providerType: string
+  baseUrl: string
+  apiKey: string
+  /** 段级自定义请求头（部分中转站网关要求），随创建/更新全量上报 */
+  headers: CustomHeaderRow[]
+  /**
+   * OAuth 订阅配置（五项）。null = 该实例不启用 OAuth（三项必填全空）；
+   * update 提交 null = 不动已存 OAuth 配置（后端契约）。
+   */
+  oauth: OauthFormValues | null
+}
+
+/** edit 模式的登录区数据源与动作（create 模式不传 —— 实例尚未落盘） */
+export interface OauthLoginSection {
+  /** 当前实例登录态（父组件经 oauth_status 拉取）；null = 尚未读到，按未登录展示 */
+  status: OauthStatusInfo | null
+  /** 发起授权 / 退出登录进行中：按钮 loading 且不可重复点击 */
+  busy: boolean
+  /** 最近一次交互结果（失败时是后端原文） */
+  feedback: { ok: boolean; msg: string } | null
+  onLogin: () => void
+  onLogout: () => void
+}
+
+export function CustomModelForm({
+  mode,
+  initial,
+  hasKey,
+  saving,
+  error,
+  onSubmit,
+  onValuesChange,
+  onTest,
+  testing,
+  onClearKey,
+  clearingKey,
+  oauthLogin,
+}: {
+  mode: 'create' | 'edit'
+  /** edit 模式：该实例当前已存值（create 模式不传，四个字段从空开始） */
+  initial?: {
+    displayName: string
+    providerType: string
+    baseUrl: string
+    /** 已存标头回显（extra_headers 的数组形态）；缺省 = 空列表 */
+    headers?: CustomHeaderRow[]
+    /** 已存 OAuth 配置回显（ProviderInfo.oauth 摘要 → 表单值）；缺省 = 空配置 */
+    oauth?: OauthFormValues
+  }
+  /** edit 模式：该实例是否已配置密钥（仅用于「留空 = 保持原密钥」的占位提示） */
+  hasKey?: boolean
+  saving: boolean
+  /** 落盘失败文案（IPC 错误经 friendlyIpcError 转换后由调用方传入） */
+  error: string | null
+  onSubmit: (v: CustomModelFormValues) => void
+  /**
+   * 字段变化上报（可选）。调用方的「连接测试」「刷新」「地址已变更」提示要用到用户**当前**
+   * 填入的地址与密钥；表单只做单向上报，不回灌，避免打字被打断。
+   */
+  onValuesChange?: (v: CustomModelFormValues) => void
+  /** 「连接测试」：用当前填写的地址与密钥探测可用模型。不传则不渲染（Anthropic 协议无 /v1/models） */
+  onTest?: () => void
+  testing?: boolean
+  /** 清除已保存的密钥（仅编辑态且已配置时传入）。不传则不渲染——清空输入框=保持原密钥，不是删除 */
+  onClearKey?: () => void
+  clearingKey?: boolean
+  /**
+   * 订阅账号登录区（仅编辑态传入）。传了才渲染「授权登录 / 退出登录」——
+   * create 模式下实例尚未落盘，后端 oauth_begin 找不到配置段，只能先填配置。
+   */
+  oauthLogin?: OauthLoginSection
+}) {
+  const [displayName, setDisplayName] = useState(initial?.displayName ?? '')
+  const [providerType, setProviderType] = useState(initial?.providerType || 'custom')
+  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
+  const [apiKey, setApiKey] = useState('')
+  /** 自定义标头行（key/value 成对）；空列表 = 不写标头（后端缺键语义不变） */
+  const [headers, setHeaders] = useState<CustomHeaderRow[]>(initial?.headers ?? [])
+  /**
+   * 订阅账号（OAuth）配置。编辑态从 ProviderInfo.oauth 摘要回显已存五项
+   *（与标头同一约定：配置可见可改）；创建态为空。
+   */
+  const [oauth, setOauth] = useState<OauthFormValues>(initial?.oauth ?? EMPTY_OAUTH_VALUES)
+  /** 订阅账号区块展开态：默认折叠（只用静态密钥的用户不该被六项 OAuth 字段挡视线） */
+  const [oauthOpen, setOauthOpen] = useState(false)
+  /** 用户手动开合过区块 → 不再由「已配 oauth / 需重新登录」自动展开（不抢用户的收放动作） */
+  const [oauthTouched, setOauthTouched] = useState(false)
+  const [showKey, setShowKey] = useState(false)
+  /** 字段级校验（名称为空 / 地址为空）——与落盘错误分开显示，谁先发生谁先提示 */
+  const [fieldError, setFieldError] = useState('')
+
+  // 跟随「当前实例」的已存值：切换实例、或落盘后列表刷新时同步一次。
+  // 依赖的是已存值（不是受控 value），所以打字过程不会被重置。
+  // headers / oauth 依赖用序列化内容：父组件每次渲染重建对象，按引用比较会每个键击都重置表单。
+  const initialHeadersKey = JSON.stringify(initial?.headers ?? [])
+  const initialOauthKey = JSON.stringify(initial?.oauth ?? null)
+  useEffect(() => {
+    setDisplayName(initial?.displayName ?? '')
+    setProviderType(initial?.providerType || 'custom')
+    setBaseUrl(initial?.baseUrl ?? '')
+    setApiKey('')
+    setHeaders(initial?.headers ?? [])
+    // OAuth 配置随实例回显（编辑态可见可改）；空值提交 = 不动后端已存 OAuth 配置。
+    setOauth(initial?.oauth ?? EMPTY_OAUTH_VALUES)
+    setOauthTouched(false)
+    setShowKey(false)
+    setFieldError('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 依赖已存值的形态而非 initial 对象引用
+  }, [
+    mode,
+    initial?.displayName,
+    initial?.providerType,
+    initial?.baseUrl,
+    initialHeadersKey,
+    initialOauthKey,
+  ])
+
+  /**
+   * 已配 oauth / 需重新登录 → 自动展开（登录态是异步读回来的，故用 effect 跟随）。
+   * 用户手动开合过（oauthTouched）后不再自动展开 —— 收放动作由用户说了算。
+   */
+  const oauthNeedsAttention = !!oauthLogin?.status?.configured || !!oauthLogin?.status?.needs_login
+  useEffect(() => {
+    if (oauthNeedsAttention && !oauthTouched) setOauthOpen(true)
+  }, [oauthNeedsAttention, oauthTouched])
+
+  const emit = (patch: Partial<CustomModelFormValues>) => {
+    onValuesChange?.({
+      displayName: patch.displayName ?? displayName,
+      providerType: patch.providerType ?? providerType,
+      baseUrl: patch.baseUrl ?? baseUrl,
+      apiKey: patch.apiKey ?? apiKey,
+      headers: patch.headers ?? headers,
+      oauth: patch.oauth !== undefined ? patch.oauth : oauth,
+    })
+  }
+
+  /** OAuth 字段变更：整块替换（字段少、以完整值上报，避免漏字段） */
+  const setOauthField = (patch: Partial<OauthFormValues>) => {
+    const next = { ...oauth, ...patch }
+    setOauth(next)
+    emit({ oauth: next })
+  }
+
+  const submit = () => {
+    const name = displayName.trim()
+    if (!name) {
+      setFieldError(TXT.needName)
+      return
+    }
+    const url = baseUrl.trim()
+    if (!url) {
+      setFieldError(TXT.needUrl)
+      return
+    }
+    // 「三项必填是否填了任意一项」= 用户是否真的想启用 OAuth（比对 DTO 判空更直接：
+    // 全空对象的 DTO 也非 null，不能用来判断「不启用」）
+    const oauthComplete = !!(
+      oauth.authorizeUrl.trim() ||
+      oauth.tokenUrl.trim() ||
+      oauth.clientId.trim()
+    )
+    // 三项必填留空却动了可选项（Scopes / PKCE / 端口）= 半配置状态：当场说明并拦下，
+    // 避免「填了却没生效」的静默丢弃；三项全空且可选项未动 = 该实例确实不启用 OAuth。
+    if (!oauthComplete && hasOauthAuxInput(oauth)) {
+      setFieldError(TXT.oauthNeedRequired)
+      return
+    }
+    // 端口只在「确实要提交 OAuth 配置」时才校验：整块留空 = 不启用，填了端口也无意义
+    if (oauthComplete) {
+      const portText = oauth.redirectPort.trim()
+      if (portText !== '' && !isValidRedirectPort(Number(portText))) {
+        setFieldError(TXT.oauthPortInvalid)
+        return
+      }
+    }
+    // 清除语义：编辑态原本配了 OAuth、用户把三项必填清空 → 提交全空值，
+    // 后端据此移除 oauth 表（切回静态密钥）。未配过 OAuth 的全空 = 不启用（传 null）。
+    const hadOauthConfig =
+      !!initial?.oauth &&
+      !!(initial.oauth.authorizeUrl || initial.oauth.tokenUrl || initial.oauth.clientId)
+    const clearingOauth = !oauthComplete && hadOauthConfig
+    setFieldError('')
+    onSubmit({
+      displayName: name,
+      providerType,
+      baseUrl: url,
+      apiKey: apiKey.trim(),
+      // name 与 value 均为空的行是编辑残渣，不上报；其余原样（value 可为空串）
+      headers: headers.filter(h => h.name.trim() !== '' || h.value.trim() !== ''),
+      // 三态：填写 = 覆盖；原配过且清空 = 全空对象（清除）；其余全空 = null（不启用/不动）
+      oauth: oauthComplete ? oauth : clearingOauth ? EMPTY_OAUTH_VALUES : null,
+    })
+  }
+
+  /** 标头行变更：改字段 / 增行 / 删行都走这里，同步上报给「连接测试」等消费方 */
+  const setHeaderRow = (idx: number, patch: Partial<CustomHeaderRow>) => {
+    const next = headers.map((h, i) => (i === idx ? { ...h, ...patch } : h))
+    setHeaders(next)
+    emit({ headers: next })
+  }
+  const addHeaderRow = () => {
+    const next = [...headers, { name: '', value: '' }]
+    setHeaders(next)
+    emit({ headers: next })
+  }
+  const removeHeaderRow = (idx: number) => {
+    const next = headers.filter((_, i) => i !== idx)
+    setHeaders(next)
+    emit({ headers: next })
+  }
+
+  const shownError = fieldError || error
+
+  const oauthStatus = oauthLogin?.status ?? null
+  const oauthExpiry = oauthExpiryText(oauthStatus?.expires_at)
+  /** 折叠态摘要：一眼看清该实例是否走 OAuth / 是否已登录（未配置时视觉负担最小） */
+  const oauthSummary = oauthStatus?.logged_in
+    ? TXT.oauthSummaryLoggedIn
+    : oauthStatus?.needs_login
+      ? TXT.oauthSummaryNeedsLogin
+      : oauthStatus?.configured
+        ? TXT.oauthSummaryNotLoggedIn
+        : TXT.oauthSummaryOff
+
+  return (
+    <>
+      <FormRow
+        stacked
+        label={TXT.nameLabel}
+        control={
+          <input
+            className="compact-input"
+            autoFocus={mode === 'create'}
+            value={displayName}
+            onChange={e => {
+              setDisplayName(e.target.value)
+              setFieldError('')
+              emit({ displayName: e.target.value })
+            }}
+            placeholder={TXT.namePlaceholder}
+            aria-label={TXT.nameLabel}
+          />
+        }
+      />
+      <FormRow
+        stacked
+        label={TXT.providerTypeLabel}
+        control={
+          <select
+            className="compact-input"
+            value={providerType}
+            onChange={e => {
+              setProviderType(e.target.value)
+              emit({ providerType: e.target.value })
+            }}
+            aria-label={TXT.providerTypeLabel}
+          >
+            {TXT.providerTypes.map(o => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        }
+      />
+      <FormRow
+        stacked
+        label={TXT.customKeyLabel}
+        control={
+          /* 结构对齐官方服务商密钥行：.models-key-field 是 position:relative 的输入框容器
+             （内含 100% 宽 input + 绝对定位的眼睛图标），.models-key-clear 是流式方块，
+             必须与 field 平级放在 .models-key-row 里 —— 塞进 field 内部会把输入框挤到换行、
+             眼睛图标也会被顶出输入框。 */
+          <div className="models-key-row">
+            <div className="models-key-field">
+              <input
+                className="compact-input"
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={e => {
+                  setApiKey(e.target.value)
+                  setFieldError('')
+                  emit({ apiKey: e.target.value })
+                }}
+                placeholder={
+                  mode === 'edit' && hasKey ? TXT.keyPlaceholderKeep : TXT.keyPlaceholderCustom
+                }
+                aria-label={TXT.customKeyLabel}
+              />
+              <button
+                type="button"
+                className="models-key-eye"
+                onClick={() => setShowKey(v => !v)}
+                tabIndex={-1}
+                title={showKey ? TXT.keyHide : TXT.keyShow}
+                aria-label={showKey ? TXT.keyHide : TXT.keyShow}
+              >
+                {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+              </button>
+            </div>
+            {/* 清空输入框 = 保持原密钥（不是删除）：删除已存密钥需要独立入口，放在密钥行右侧 */}
+            {onClearKey && (
+              <button
+                type="button"
+                className="models-key-clear"
+                onClick={onClearKey}
+                disabled={clearingKey}
+                title={TXT.clearKeyTitle}
+                aria-label={TXT.clearKeyTitle}
+              >
+                <IconBrushCleaning size={13} />
+              </button>
+            )}
+          </div>
+        }
+      />
+      <FormRow
+        stacked
+        label={TXT.customBaseUrlLabel}
+        control={
+          <input
+            className="compact-input"
+            value={baseUrl}
+            onChange={e => {
+              setBaseUrl(e.target.value)
+              setFieldError('')
+              emit({ baseUrl: e.target.value })
+            }}
+            placeholder={TXT.baseUrlPlaceholder}
+            aria-label={TXT.customBaseUrlLabel}
+          />
+        }
+      />
+      {/* ═══ 自定义标头：key/value 成对行，可增删（中转站网关要求的附加请求头） ═══ */}
+      <FormRow
+        stacked
+        label={TXT.headerSectionLabel}
+        control={
+          <div className="custom-headers-editor">
+            <div className="models-empty">{TXT.headerSectionHelp}</div>
+            {headers.map((h, idx) => (
+              <div className="custom-header-row" key={idx}>
+                <input
+                  className="compact-input"
+                  value={h.name}
+                  onChange={e => setHeaderRow(idx, { name: e.target.value })}
+                  placeholder={TXT.headerNamePlaceholder}
+                  aria-label={`${TXT.headerSectionLabel} ${idx + 1} 名称`}
+                />
+                <input
+                  className="compact-input"
+                  value={h.value}
+                  onChange={e => setHeaderRow(idx, { value: e.target.value })}
+                  placeholder={TXT.headerValuePlaceholder}
+                  aria-label={`${TXT.headerSectionLabel} ${idx + 1} 值`}
+                />
+                <button
+                  type="button"
+                  className="models-key-clear"
+                  onClick={() => removeHeaderRow(idx)}
+                  title={TXT.removeHeaderTitle}
+                  aria-label={`${TXT.removeHeaderTitle} ${idx + 1}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <div>
+              <Button variant="default" size="sm" onClick={addHeaderRow}>
+                {TXT.addHeaderBtn}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+      {/* ═══ 订阅账号（OAuth）：可选路径，默认折叠 ═══
+          折叠态只有一行状态摘要 —— 只配静态密钥的用户不该被六项 OAuth 字段挡住视线；
+          已配 oauth / 需重新登录时自动展开（登录态异步到达，见 oauthNeedsAttention）。
+          标题不用 FormRow：它不是单个字段，而是一组字段的开关（同「高级设置」式折叠）。 */}
+      <div className="custom-oauth">
+        <button
+          type="button"
+          className="custom-oauth-toggle"
+          aria-expanded={oauthOpen}
+          onClick={() => {
+            setOauthTouched(true)
+            setOauthOpen(v => !v)
+          }}
+        >
+          <span className="custom-oauth-caret">{oauthOpen ? '▾' : '▸'}</span>
+          <span className="custom-oauth-title">{TXT.oauthSectionLabel}</span>
+          <span className="custom-oauth-summary">{oauthSummary}</span>
+        </button>
+        {oauthOpen && (
+          <div className="custom-oauth-body">
+            <div className="models-empty">
+              {mode === 'create' ? TXT.oauthHelpCreate : TXT.oauthHelpEdit}
+            </div>
+            <FormRow
+              stacked
+              label={TXT.oauthAuthorizeLabel}
+              control={
+                <input
+                  className="compact-input"
+                  value={oauth.authorizeUrl}
+                  onChange={e => setOauthField({ authorizeUrl: e.target.value })}
+                  placeholder={TXT.oauthAuthorizePlaceholder}
+                  aria-label={TXT.oauthAuthorizeLabel}
+                />
+              }
+            />
+            <FormRow
+              stacked
+              label={TXT.oauthTokenLabel}
+              control={
+                <input
+                  className="compact-input"
+                  value={oauth.tokenUrl}
+                  onChange={e => setOauthField({ tokenUrl: e.target.value })}
+                  placeholder={TXT.oauthTokenPlaceholder}
+                  aria-label={TXT.oauthTokenLabel}
+                />
+              }
+            />
+            <FormRow
+              stacked
+              label={TXT.oauthClientIdLabel}
+              control={
+                <input
+                  className="compact-input"
+                  value={oauth.clientId}
+                  onChange={e => setOauthField({ clientId: e.target.value })}
+                  placeholder={TXT.oauthClientIdPlaceholder}
+                  aria-label={TXT.oauthClientIdLabel}
+                />
+              }
+            />
+            <FormRow
+              stacked
+              label={TXT.oauthScopesLabel}
+              hint={TXT.oauthScopesHelp}
+              control={
+                <input
+                  className="compact-input"
+                  value={oauth.scopes}
+                  onChange={e => setOauthField({ scopes: e.target.value })}
+                  placeholder={TXT.oauthScopesPlaceholder}
+                  aria-label={TXT.oauthScopesLabel}
+                />
+              }
+            />
+            <FormRow
+              stacked
+              label={TXT.oauthPkceLabel}
+              hint={TXT.oauthPkceHelp}
+              control={
+                <label className="custom-oauth-check">
+                  <input
+                    type="checkbox"
+                    checked={oauth.usePkce}
+                    onChange={e => setOauthField({ usePkce: e.target.checked })}
+                    aria-label={TXT.oauthPkceLabel}
+                  />
+                  <span>{oauth.usePkce ? TXT.oauthPkceOn : TXT.oauthPkceOff}</span>
+                </label>
+              }
+            />
+            <FormRow
+              stacked
+              label={TXT.oauthRedirectPortLabel}
+              hint={TXT.oauthRedirectPortHelp}
+              control={
+                <input
+                  className="compact-input"
+                  value={oauth.redirectPort}
+                  onChange={e => setOauthField({ redirectPort: e.target.value })}
+                  placeholder={TXT.oauthRedirectPortPlaceholder}
+                  aria-label={TXT.oauthRedirectPortLabel}
+                />
+              }
+            />
+            {/* 登录区：只有编辑态才有实例可授权（create 态给一行可操作指引） */}
+            {oauthLogin ? (
+              <div className="custom-oauth-login">
+                <div
+                  className={
+                    oauthStatus?.logged_in ? 'custom-oauth-status is-on' : 'custom-oauth-status'
+                  }
+                >
+                  <span
+                    className={
+                      oauthStatus?.logged_in ? 'custom-oauth-dot is-on' : 'custom-oauth-dot'
+                    }
+                  />
+                  <span className="custom-oauth-status-text">
+                    {oauthStatus?.logged_in
+                      ? `${TXT.oauthLoggedIn}${oauthExpiry ? ` · ${oauthExpiry}` : ''}`
+                      : oauthStatus?.needs_login
+                        ? TXT.oauthNeedsLogin
+                        : TXT.oauthNotLoggedIn}
+                  </span>
+                </div>
+                <div className="custom-oauth-actions">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={oauthLogin.onLogin}
+                    disabled={oauthLogin.busy}
+                  >
+                    {oauthLogin.busy
+                      ? TXT.oauthLoggingIn
+                      : oauthStatus?.logged_in
+                        ? TXT.oauthReauthorizeBtn
+                        : TXT.oauthLoginBtn}
+                  </Button>
+                  {/* 退出登录只对「有令牌可清」的实例有意义 */}
+                  {oauthStatus?.logged_in && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={oauthLogin.onLogout}
+                      disabled={oauthLogin.busy}
+                    >
+                      {TXT.oauthLogoutBtn}
+                    </Button>
+                  )}
+                </div>
+                {oauthLogin.feedback && (
+                  <div
+                    className={
+                      oauthLogin.feedback.ok
+                        ? 'custom-oauth-feedback is-ok'
+                        : 'custom-oauth-feedback is-err'
+                    }
+                    role="status"
+                  >
+                    {oauthLogin.feedback.msg}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="custom-oauth-hint">{TXT.oauthCreateHint}</div>
+            )}
+          </div>
+        )}
+      </div>
+      {shownError && <div className="detect-error">{shownError}</div>}
+      <div className="models-form-actions">
+        <Button variant="primary" size="sm" onClick={submit} disabled={saving}>
+          {saving
+            ? mode === 'create'
+              ? TXT.creating
+              : TXT.savingBtn
+            : mode === 'create'
+              ? TXT.createBtn
+              : TXT.saveBtn}
+        </Button>
+        {/* 连接测试与保存并排：两者都作用于「当前填写的地址与密钥」，
+            放在同一个动作区，用户一眼看到两条出路（存下来 / 先测通） */}
+        {onTest && (
+          <Button variant="default" size="sm" onClick={onTest} disabled={testing}>
+            {testing ? TXT.connecting : TXT.testBtn}
+          </Button>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════
 // 页面主体
 // ════════════════════════════════════════════════════════════════
 export function ModelsPage({
@@ -447,11 +1220,21 @@ export function ModelsPage({
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [providersLoading, setProvidersLoading] = useState(true)
   const [provider, setProvider] = useState('')
-  /** 新建自定义中转站实例名输入（custom-xxx）；提交后进入该实例的配置页 */
-  const [newInstanceId, setNewInstanceId] = useState('')
-  const [newInstanceError, setNewInstanceError] = useState('')
-  /** 内容页 tab 栏的「新建」是否展开为行内输入框（默认收起，避免长期占位） */
-  const [newInstanceOpen, setNewInstanceOpen] = useState(false)
+  // ── 自定义模型四字段表单（新建 / 编辑共用 CustomModelForm，字段状态由表单自己持有）──
+  // 只有这四个输入项，没有第五个；新建 = create_custom_provider，编辑 = update_custom_provider。
+  const [formOpen, setFormOpen] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [formSaving, setFormSaving] = useState(false)
+  /** 编辑（保存）态的独立反馈：与新建互不影响 */
+  const [editError, setEditError] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  // ── 订阅账号（OAuth）登录区（仅编辑自定义实例时使用）──
+  /** 当前实例登录态（oauth_status 权威读盘结果，不含令牌）；非自定义实例恒 null */
+  const [oauthState, setOauthState] = useState<OauthStatusInfo | null>(null)
+  /** 发起授权 / 退出登录进行中：按钮 loading，禁止重复点击 */
+  const [oauthBusy, setOauthBusy] = useState(false)
+  /** 最近一次登录交互结果（失败时是后端原文） */
+  const [oauthFeedback, setOauthFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [inputVal, setInputVal] = useState('')
@@ -486,6 +1269,15 @@ export function ModelsPage({
   })
   const [agentSaving, setAgentSaving] = useState(false)
   const [agentFeedback, setAgentFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  // ── 图像理解：默认「跟随 Leader」的可见性 ──
+  // 未显式配置时图像由 Leader 模型直接理解（backend resolve_vision_strategy 同口径），
+  // 这里把「跟随谁 / 它是否真能看图」如实呈现，用户不必猜"默认"指什么。
+  const leaderVisionModelId = agentModels.leader || currentModel
+  const leaderSupportsVision = !!allModels.find(
+    m =>
+      m.id === leaderVisionModelId &&
+      (!agentModels.leader_provider || m.provider === agentModels.leader_provider),
+  )?.supports_vision
   const [activeView, setActiveView] = useState<'provider' | 'capabilities' | 'agents'>('provider')
   const [hasKey, setHasKey] = useState(false)
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
@@ -660,6 +1452,69 @@ export function ModelsPage({
       })
   }, [activeView, provider, configuredProviders, providers])
 
+  // ── 订阅账号（OAuth）：登录态读取 + 授权结果事件 ──
+  //
+  // 登录态的唯一真值在磁盘（providers.toml 的 [providers.<段>.oauth]）：前端永远只
+  // 拿得到状态，拿不到令牌。授权结果不由 oauth_begin 返回 —— 浏览器回调到达时后端
+  // 推 `oauth-login-result` 事件，前端按 provider 匹配当前实例再刷新状态。
+
+  /** 重读当前实例登录态（切实例 / 授权成功 / 退出登录后调用） */
+  const reloadOauthStatus = useCallback(async (id: string) => {
+    if (!isCustomProviderId(id)) {
+      setOauthState(null)
+      return
+    }
+    try {
+      setOauthState(await oauthStatus(id))
+    } catch {
+      // 读盘失败（配置缺失等）不打断页面：按「未登录」展示，用户仍可点授权登录
+      setOauthState(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    setOauthFeedback(null)
+    setOauthBusy(false)
+    // 先清空再拉取：否则切换实例的瞬间会显示上一个实例的登录态（跨实例串状态会误导操作）
+    setOauthState(null)
+    void reloadOauthStatus(provider)
+  }, [provider, reloadOauthStatus])
+
+  // 授权结果事件：只认当前实例（同一事件通道上可能有别的实例在登录）。
+  // listen 用动态 import：本模块被多个测试/页面引用，不在顶层引入 Tauri 事件 API。
+  useEffect(() => {
+    if (!isCustomProviderId(provider)) return
+    const target = provider
+    let unlisten: (() => void) | null = null
+    let disposed = false
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) =>
+        listen<{ provider: string; ok: boolean; error: string | null }>('oauth-login-result', e => {
+          const p = e.payload
+          if (!p || p.provider !== target) return
+          setOauthBusy(false)
+          if (p.ok) {
+            setOauthFeedback({ ok: true, msg: TXT.oauthLoginSuccess })
+            void reloadOauthStatus(target)
+          } else {
+            setOauthFeedback({ ok: false, msg: p.error || TXT.oauthBeginFail })
+          }
+        }),
+      )
+      .then(un => {
+        // 订阅是异步完成的：组件已卸载/已切实例则立即退订，避免监听泄漏
+        if (disposed) un()
+        else unlisten = un
+      })
+      .catch(() => {
+        /* 事件 API 不可用（非 Tauri 环境）→ 交互仍可用，只是拿不到回调通知 */
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [provider, reloadOauthStatus])
+
   // local 默认上下文（仅在用户显式设置过时作为新模型默认值）
   const [localCtxWindow, setLocalCtxWindow] = useState<number | null>(() => {
     try {
@@ -679,18 +1534,37 @@ export function ModelsPage({
   const editingCtxRef = useRef<string | null>(null)
 
   const curProvider = providers.find(p => p.id === provider)
-  const currentProviderInfo = providers.find(p => p.id === provider)
-  const isCustom = currentProviderInfo?.provider_type === 'custom' || isCustomProviderId(provider)
+  const currentProviderInfo = curProvider
+  const isCustom = isCustomProviderId(provider)
   const isLocal = provider === 'local'
+  /** 该实例的协议类型：custom（OpenAI 兼容）/ anthropic（Anthropic 兼容） */
+  const providerType = currentProviderInfo?.provider_type || ''
+  /** 界面上该服务商/实例的显示名（自定义实例 = 用户填的名称；官方 = 内置展示名） */
+  const providerLabel = curProvider ? instanceLabel(curProvider) : provider
+  /** Anthropic 兼容实例没有 /v1/models：不展示「连接」，走手动填模型名 */
+  const isAnthropicInstance = isCustom && providerType === 'anthropic'
   /**
-   * 已配置的自定义中转站实例（provider_type=custom 且非旧版 `custom` 段）。
-   * 每个实例是独立配置段：同名模型靠实例名精确路由，官方 Provider 不参与。
+   * 左栏「自定义模型」分组的具名实例列表 = custom-xxx 已落盘实例。
+   * 旧版 `custom` 段**不在此列**：它是迁移前的老配置，界面上只以「Custom」配置
+   * 入口的预填数据出现（创建实例时由后端自动接管迁移），不再单独占一个条目。
    */
   const customInstances = providers.filter(
-    p => p.provider_type === 'custom' && p.id !== LEGACY_CUSTOM_PROVIDER_ID,
+    p => isCustomProviderId(p.id) && p.id !== LEGACY_CUSTOM_PROVIDER_ID,
   )
-  /** 模块一「模型提供商」= 官方远程服务商（排除归入模块二的 custom / opencode-go / local） */
-  const module1Providers = providers.filter(p => !isModule2Provider(p.id))
+  /**
+   * 旧版 `custom` 段（迁移源）：存在时作为创建态表单的预填数据（base_url /
+   * provider_type——地址是用户最不想重打的字段；display_name 留空由用户填）。
+   */
+  const legacyCustom = providers.find(p => p.id === LEGACY_CUSTOM_PROVIDER_ID)
+  /**
+   * 左栏「模型提供商」= 云端远程服务商 + Opencode GO 套餐网关。
+   * 本地模型（local）不在此列：它不是「云端提供商」，而是跑在自己机器上的服务。
+   */
+  const railProviders = providers.filter(
+    p => !isCustomProviderId(p.id) && p.id !== LOCAL_PROVIDER_ID,
+  )
+  /** 左栏「本地模型」= 本机运行的服务（Ollama / llama.cpp / vLLM 等） */
+  const localProviders = providers.filter(p => p.id === LOCAL_PROVIDER_ID)
 
   // 持久化当前 provider + current model，供快捷切换弹窗读取
   const persistCurrentProvider = (name?: string) => {
@@ -703,7 +1577,13 @@ export function ModelsPage({
     }
   }
 
-  const handleProviderChange = (id: string) => {
+  /**
+   * 切换左侧导航选中的服务商 / 实例。
+   *
+   * `configuredOverride`：刚创建完实例时传入最新一次配置读取结果——`configuredProviders`
+   * 状态更新是异步的，直接读会拿到旧值，把「刚填了密钥的实例」显示成未配置。
+   */
+  const handleProviderChange = (id: string, configuredOverride?: string[]) => {
     setProvider(id)
     loadProviderState(id)
     setInputVal('')
@@ -712,72 +1592,192 @@ export function ModelsPage({
     setDetectError(null)
     setRefreshError(null)
     setDetecting(false)
-    setHasKey(configuredProviders.includes(id))
+    setHasKey((configuredOverride ?? configuredProviders).includes(id))
   }
 
-  /** 左侧导航选择某个服务商：切到 provider 内容页并加载该服务商状态 */
-  const openProviderView = (id: string) => {
+  /** 左侧导航选择某个服务商 / 实例：切到其配置页并收起「新建」表单 */
+  const openProviderView = (id: string, configuredOverride?: string[]) => {
     setActiveView('provider')
-    handleProviderChange(id)
+    setFormOpen(false)
+    setFormError('')
+    handleProviderChange(id, configuredOverride)
+  }
+
+  /** 「Custom」配置入口：展开创建态表单（旧 custom 段存在时预填其地址与协议） */
+  const openCreateForm = () => {
+    setActiveView('provider')
+    setFormOpen(true)
+    setFormError('')
   }
 
   /**
-   * 新建自定义中转站实例：只做本地校验并进入该实例配置页；
-   * 真正的配置段落盘由 configureLlm（后端 update_config_toml）完成，
-   * 保证 name=custom-xxx / provider_type=custom 的写法由后端唯一决定。
+   * 新建保存（CustomModelForm mode="create" 的提交口）→ 落盘 → 立刻进入该实例。
+   *
+   * 段 id 由「自定义名称」slug 化而来（纯中文名退化为 custom-<时间戳>）：
+   * 界面上永远只显示用户填的名称，段 id 只出现在 title 里作调试信息。
+   * 字段级校验（名称/地址必填）由表单统一负责，这里只管落盘；
+   * 落盘失败（重名 / 非法地址 / 写盘错误）展示后端原文，不掩盖。
    */
-  const openNewCustomInstance = () => {
-    const id = newInstanceId.trim()
-    if (!isValidCustomInstanceId(id)) {
-      setNewInstanceError('名称需为 custom-xxx（小写英文/数字/连字符）')
-      return
+  const createInstance = async (v: CustomModelFormValues) => {
+    setFormSaving(true)
+    setFormError('')
+    try {
+      const id = buildCustomInstanceId(
+        v.displayName,
+        providers.map(p => p.id),
+      )
+      const created = await createCustomProvider(
+        id,
+        v.displayName,
+        v.providerType,
+        v.baseUrl,
+        v.apiKey,
+        headersToTuples(v.headers),
+        // OAuth 配置（可选）：三项必填全空 = null = 该实例走静态密钥
+        oauthToPayload(v.oauth),
+      )
+      // 落盘是唯一真值：重新拉列表（新实例立即出现在左栏）与配置状态
+      const [list, cfg] = await Promise.all([
+        getSupportedProviders().catch(() => null),
+        getCurrentConfig().catch(() => null),
+      ])
+      if (Array.isArray(list)) setProviders(sortProvidersStable(list))
+      const configured = cfg?.configured_providers
+      if (configured) setConfiguredProviders(configured)
+      // 表单字段无需手工清空：进入实例后表单卸载（formOpen=false），下次展开是全新一份
+      setFeedback({ ok: true, msg: TXT.createSuccess })
+      setTimeout(() => setFeedback(null), 2500)
+      openProviderView(created?.id || id, configured)
+    } catch (e: any) {
+      setFormError(friendlyIpcError(e, TXT.createFail))
+    } finally {
+      setFormSaving(false)
     }
-    if (providers.some(p => p.id === id)) {
-      setNewInstanceError('该名称已存在')
-      return
-    }
-    setNewInstanceError('')
-    setNewInstanceId('')
-    // 创建成功后收起行内输入：新实例已出现在 tab 栏，输入框不再需要占位
-    setNewInstanceOpen(false)
-    openProviderView(id)
   }
 
   /**
-   * 切换自定义中转站（tab 栏）：复用 openProviderView 的既有切换 + 状态重置逻辑，
-   * 同时收起「新建」行内输入——切换意图与新建互斥，残留的输入与错误提示会误导。
+   * 编辑保存（CustomModelForm mode="edit" 的提交口）：重命名 / 换协议 / 改地址 / 换密钥。
+   *
+   * 段 id（custom-xxx）是模型路由依据，**不随重命名变化**：后端只改 `display_name`，
+   * 因此这里传的是当前段 id（`provider`），不是用户填的名称。
+   * API Key 留空 = 保持原密钥（后端契约：空串不覆盖），界面不回显原密钥。
+   * 落盘成功后重拉服务商列表 —— 左栏立刻显示新名称（重启后从 providers.toml 读回同一值）。
    */
-  const selectCustomInstance = (id: string) => {
-    setNewInstanceOpen(false)
-    setNewInstanceError('')
-    openProviderView(id)
+  const saveCustomInstance = async (v: CustomModelFormValues) => {
+    setEditSaving(true)
+    setEditError('')
+    try {
+      await updateCustomProvider(
+        provider,
+        v.displayName,
+        v.providerType,
+        v.baseUrl,
+        v.apiKey,
+        headersToTuples(v.headers),
+        // OAuth 配置：null = 不动已存配置（编辑表单不回显五项，留空即「不修改」）；
+        // 五项填全 = 覆盖写配置，既有令牌由后端保留（清令牌只能走「退出登录」）
+        oauthToPayload(v.oauth),
+      )
+      const [list, cfg, savedUrl] = await Promise.all([
+        getSupportedProviders().catch(() => null),
+        getCurrentConfig().catch(() => null),
+        getProviderBaseUrl(provider).catch(() => null),
+      ])
+      if (Array.isArray(list)) setProviders(sortProvidersStable(list))
+      if (cfg?.configured_providers) {
+        setConfiguredProviders(cfg.configured_providers)
+        setHasKey(cfg.configured_providers.includes(provider))
+      }
+      // 回填已存地址：与「保存密钥」同一约定，地址变更提示随之归零
+      const savedBase = (savedUrl || '').trim()
+      if (savedBase) {
+        setBaseUrl(savedBase)
+        setLoadedBaseUrl(savedBase)
+      }
+      // 本次保存可能刚写入 / 覆盖了 OAuth 配置五项 → 登录区状态与摘要立即对齐磁盘
+      // （不刷新的话摘要会一直停在保存前的「未配置」，直到用户切换实例）
+      void reloadOauthStatus(provider)
+      setFeedback({ ok: true, msg: TXT.saveSuccess })
+    } catch (e: any) {
+      setEditError(friendlyIpcError(e, TXT.saveFail))
+    } finally {
+      setEditSaving(false)
+    }
+    setTimeout(() => setFeedback(null), 2500)
   }
 
-  /** 模块二「自定义设置」选中态：custom/opencode-go/local 跟随对应服务商页 */
-  const isCustomNavActive = (key: CustomNavKey): boolean => {
-    if (key === 'capabilities') return activeView === 'capabilities'
-    if (key === 'agents') return activeView === 'agents'
-    return activeView === 'provider' && provider === key
+  /**
+   * 「授权登录」：后端起本地回调 server → 拿到授权 URL → 系统浏览器打开。
+   *
+   * 授权结果**不由这里返回**：浏览器回调到达后由后端推 `oauth-login-result`
+   * 事件（见上方监听），成功再刷新登录态。这里只管「发起 + 打开 + 如实反馈」：
+   * 段未配 oauth / 配置不完整时后端 reject 可读中文错误，原样展示不掩盖。
+   * 重复点击是安全的（后端顶替旧会话），但请求期间仍锁按钮避免连点炸出一堆会话。
+   */
+  const startOauthLogin = async () => {
+    if (oauthBusy) return
+    setOauthBusy(true)
+    setOauthFeedback(null)
+    try {
+      // invoke 在通道异常时回 null（命令本身没报错也会拿到 null）→ 按失败处理，
+      // 不能拿一个空地址去开浏览器
+      const authorizeUrl = (await oauthBegin(provider))?.authorize_url ?? ''
+      if (!authorizeUrl) {
+        setOauthFeedback({ ok: false, msg: TXT.oauthBeginFail })
+        return
+      }
+      try {
+        await openExternal(authorizeUrl)
+      } catch (e) {
+        setOauthFeedback({ ok: false, msg: friendlyIpcError(e, TXT.oauthOpenFail) })
+        return
+      }
+      setOauthFeedback({ ok: true, msg: TXT.oauthBrowserOpened })
+    } catch (e) {
+      setOauthFeedback({ ok: false, msg: friendlyIpcError(e, TXT.oauthBeginFail) })
+    } finally {
+      setOauthBusy(false)
+    }
   }
 
-  /** 通过 /v1/models 检测 API key 并列出可用模型；本地服务允许空 key 直连（无鉴权场景） */
+  /** 「退出登录」：清空令牌（配置五项保留）→ 重读状态（界面立刻回到未登录） */
+  const logoutOauth = async () => {
+    if (oauthBusy) return
+    setOauthBusy(true)
+    setOauthFeedback(null)
+    try {
+      await oauthLogout(provider)
+      await reloadOauthStatus(provider)
+      setOauthFeedback({ ok: true, msg: TXT.oauthLogoutDone })
+    } catch (e) {
+      setOauthFeedback({ ok: false, msg: friendlyIpcError(e, TXT.oauthLogoutFail) })
+    } finally {
+      setOauthBusy(false)
+    }
+  }
+
+  /**
+   * 「连接」：通过 /v1/models 列出可用模型。
+   *
+   * 判据与后端 fetch_provider_models 对齐 —— 只对官方远程服务商要求 key；
+   * 本地服务（默认无鉴权）与自定义中转站（地址用户自己填，可能本就无鉴权，
+   * 如 Ollama / llama-swap / 无 key 中转）允许空 key 直连探测。
+   */
   const detectModels = async () => {
-    const key = apiKey.trim()
-    if (!key && !isLocal) {
-      setDetectError(TXT.apiKeyRequired)
-      return
-    }
+    // 空 key 直接交给后端：fetch_provider_models 空 key 时回落该段已存密钥
+    // （编辑表单不回显 key，改地址/标��后点「连接」不该被要求重贴密钥）；
+    // 段里也无 key 且该端点要求鉴权时，由后端返回「API Key 不能为空」。
     setDetecting(true)
     setDetectError(null)
     setDetectedModels([])
     try {
       // 只下发用户填写的地址；空值交给后端按「显式参数 → 已存配置 → 内置默认」解析，
       // 避免内置默认（自定义端点为文档占位示例）被当作有效地址。
-      const models = await listProviderModels(key, provider, baseUrl.trim() || undefined)
+      const models = await listProviderModels(apiKey.trim(), provider, baseUrl.trim() || undefined)
       setDetectedModels(models ?? [])
       saveDetectedModels(provider, models ?? [])
     } catch (e: any) {
-      setDetectError(e?.message || '检测失败')
+      setDetectError(friendlyIpcError(e, '检测失败'))
     } finally {
       setDetecting(false)
     }
@@ -805,7 +1805,7 @@ export function ModelsPage({
         })
         .catch(() => {})
     } catch (e: any) {
-      setRefreshError(e?.message || '刷新失败，请检查密钥与网络')
+      setRefreshError(friendlyIpcError(e, '刷新失败，请检查密钥与网络'))
     } finally {
       setRefreshing(false)
     }
@@ -833,7 +1833,7 @@ export function ModelsPage({
         })
         .catch(() => {})
     } catch (e: any) {
-      setAddError(e?.message || TXT.addModelFail)
+      setAddError(friendlyIpcError(e, TXT.addModelFail))
     } finally {
       setAddSaving(false)
     }
@@ -841,7 +1841,11 @@ export function ModelsPage({
 
   /** 清理该服务商旧模型列表（接口地址变更后调用；清空 config.toml models + 本地检测缓存） */
   const handleClearModels = async () => {
-    if (!window.confirm(TXT.clearModelsConfirm)) return
+    if (
+      !window.confirm(isAnthropicInstance ? TXT.clearModelsConfirmManual : TXT.clearModelsConfirm)
+    ) {
+      return
+    }
     setClearingModels(true)
     try {
       const n = (await clearProviderModels(provider)) ?? 0
@@ -854,10 +1858,11 @@ export function ModelsPage({
         })
         .catch(() => {})
       setFeedback({ ok: true, msg: n > 0 ? TXT.clearModelsSuccess(n) : TXT.clearModelsNone })
-      // 清理后自动尝试拉取新地址的模型列表（key 有效时一步到位，失败由刷新区提示）
-      refreshModels()
+      // 清理后自动尝试拉取新地址的模型列表（key 有效时一步到位，失败由刷新区提示）。
+      // Anthropic 协议没有 /v1/models：不发起必然失败的拉取（该实例也不展示「刷新」）。
+      if (!isAnthropicInstance) refreshModels()
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || TXT.clearModelsFail })
+      setFeedback({ ok: false, msg: friendlyIpcError(e, TXT.clearModelsFail) })
     } finally {
       setClearingModels(false)
     }
@@ -886,7 +1891,7 @@ export function ModelsPage({
       }
       setFeedback({ ok: true, msg: TXT.clearKeySuccess })
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || TXT.clearKeyFail })
+      setFeedback({ ok: false, msg: friendlyIpcError(e, TXT.clearKeyFail) })
     } finally {
       setClearingKey(false)
     }
@@ -902,14 +1907,16 @@ export function ModelsPage({
    */
   const saveKey = async () => {
     const key = apiKey.trim()
-    if (!key) {
+    // 自定义中转站允许空 key 保存（无鉴权端点：地址与密钥都由用户自己填）
+    if (!key && !isCustom) {
       setDetectError(TXT.apiKeyRequired)
       return
     }
     const own = allModels.filter(m => m.provider === provider).map(m => m.id)
     const target = (own.includes(currentModel) ? currentModel : '') || own[0] || ''
     if (!target) {
-      setDetectError(TXT.saveKeyNoModel)
+      // 提示必须指向本页真实存在的入口：Anthropic 实例没有「连接」按钮
+      setDetectError(isAnthropicInstance ? TXT.saveKeyNoModelManual : TXT.saveKeyNoModel)
       return
     }
     setSavingKey(true)
@@ -934,10 +1941,14 @@ export function ModelsPage({
         setHasKey(cfg.configured_providers.includes(provider))
       }
       setApiKey('')
-      setFeedback({ ok: true, msg: TXT.saveKeySuccess(target) })
+      // key 留空 = 无鉴权实例：别说「密钥已保存」（什么都没存）
+      setFeedback({
+        ok: true,
+        msg: key ? TXT.saveKeySuccess(target) : TXT.saveNoKeySuccess(target),
+      })
       onModelChanged?.()
     } catch (e: any) {
-      setDetectError(e?.message || TXT.saveKeyFail)
+      setDetectError(friendlyIpcError(e, TXT.saveKeyFail))
     } finally {
       setSavingKey(false)
     }
@@ -998,7 +2009,7 @@ export function ModelsPage({
           .catch(() => {})
         setFeedback({ ok: true, msg: `已切换到 ${name}` })
       } catch (e: any) {
-        setFeedback({ ok: false, msg: e?.message || '切换失败' })
+        setFeedback({ ok: false, msg: friendlyIpcError(e, '切换失败') })
       }
       setTimeout(() => setFeedback(null), 2500)
     }
@@ -1018,7 +2029,7 @@ export function ModelsPage({
       }))
       setAgentFeedback({ ok: true, msg: `${agent} 模型已保存${model ? '' : '（跟随默认模型）'}` })
     } catch (e: any) {
-      setAgentFeedback({ ok: false, msg: e?.message || '保存失败' })
+      setAgentFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
     }
     setAgentSaving(false)
     setTimeout(() => setAgentFeedback(null), 2500)
@@ -1111,7 +2122,7 @@ export function ModelsPage({
         })
         .catch(() => {})
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || '保存失败' })
+      setFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
     }
     setTimeout(() => setFeedback(null), 2500)
   }
@@ -1133,7 +2144,7 @@ export function ModelsPage({
       const list = await listModels().catch(() => null)
       if (Array.isArray(list)) setAllModels(list)
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || '保存失败' })
+      setFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
     } finally {
       setVisionToggling('')
     }
@@ -1164,7 +2175,7 @@ export function ModelsPage({
       onModelChanged?.()
       setFeedback({ ok: true, msg: `已切换到 ${name}` })
     } catch (e: any) {
-      setFeedback({ ok: false, msg: e?.message || '切换失败' })
+      setFeedback({ ok: false, msg: friendlyIpcError(e, '切换失败') })
     }
     setTimeout(() => setFeedback(null), 2500)
   }
@@ -1176,7 +2187,7 @@ export function ModelsPage({
 
   return (
     <div className="models-page-layout">
-      {/* ── 左侧：两模块分组导航（模型提供商 / 自定义设置） ── */}
+      {/* ── 左侧：两模块分组导航（模型提供商 / 自定义模型） ── */}
       <aside className="models-rail">
         <div className="models-rail-scroll">
           <div className="models-rail-group">
@@ -1185,289 +2196,335 @@ export function ModelsPage({
               <div className="models-rail-note">正在加载服务商…</div>
             ) : (
               <div className="models-rail-list">
-                {module1Providers.map(p => {
+                {railProviders.map(p => {
                   const isActive = activeView === 'provider' && p.id === provider
-                  const isConfigured = configuredProviders.includes(p.id)
                   return (
                     <button
                       type="button"
                       key={p.id}
-                      className={[
-                        'models-rail-item',
-                        isActive ? 'active' : '',
-                        isConfigured ? 'configured' : '',
-                      ]
+                      className={['models-rail-item', isActive ? 'active' : '']
                         .filter(Boolean)
                         .join(' ')}
                       onClick={() => openProviderView(p.id)}
-                      title={isConfigured ? `${p.name}（已配置密钥）` : `${p.name}（未配置密钥）`}
+                      title={p.name}
                     >
                       {hasProviderIcon(p.id) ? (
                         <ProviderIcon provider={p.id} size={16} />
                       ) : (
-                        /* 无图标 provider（custom / local）保留等宽占位，保证各行图标位对齐 */
+                        /* 无图标 provider（local 等）保留等宽占位，保证各行图标位对齐 */
                         <span className="provider-icon" style={{ width: 16, height: 16 }} />
                       )}
                       <span className="models-rail-name">{p.name}</span>
-                      {isConfigured && (
-                        <span className="model-badge models-rail-badge">已配置</span>
-                      )}
                     </button>
                   )
                 })}
               </div>
             )}
           </div>
+
+          {/* 模块二「自定义模型」：固定 Custom 配置入口（创建态表单）+ 已落盘具名实例。
+              旧版 `custom` 段不单独占条目：创建实例时后端自动接管迁移，其配置作为
+              创建态预填数据出现。条目只显示用户填写的名称（段 id 只作 title 调试信息）。 */}
           <div className="models-rail-group">
-            <div className="models-rail-group-title">自定义设置</div>
+            <div className="models-rail-group-title">自定义模型</div>
             <div className="models-rail-list">
-              {CUSTOM_NAV_ITEMS.map(item => (
-                <button
-                  type="button"
-                  key={item.key}
-                  className={[
-                    'models-rail-item',
-                    'models-rail-item--sub',
-                    isCustomNavActive(item.key) ? 'active' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => {
-                    if (item.key === 'capabilities' || item.key === 'agents') {
-                      setActiveView(item.key)
-                    } else {
-                      openProviderView(item.key)
-                    }
-                  }}
-                >
-                  <span className="models-rail-name">{item.label}</span>
-                </button>
-              ))}
-              {/* 中转站实例列表与新建入口已移到内容页 tab 栏（同名模型靠实例名精确
-                  路由，切换与新建都在该模块的内容页内完成，左侧栏只保留模块入口）。 */}
+              <button
+                type="button"
+                className={[
+                  'models-rail-item',
+                  activeView === 'provider' && formOpen ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={openCreateForm}
+                title={t('models.customEntryTitle')}
+                aria-expanded={formOpen}
+              >
+                <span className={`models-rail-dot${formOpen ? ' is-on' : ''}`} aria-hidden="true" />
+                <span className="models-rail-name">{t('models.customEntry')}</span>
+              </button>
+              {customInstances.map(p => {
+                const isActive = activeView === 'provider' && !formOpen && p.id === provider
+                const isConfigured = configuredProviders.includes(p.id)
+                return (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={['models-rail-item', isActive ? 'active' : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => openProviderView(p.id)}
+                    title={TXT.instanceIdTitle(p.id)}
+                  >
+                    <span
+                      className={`models-rail-dot${isConfigured ? ' is-on' : ''}`}
+                      title={isConfigured ? '已配置密钥' : '未配置密钥（无鉴权端点可留空）'}
+                      aria-hidden="true"
+                    />
+                    <span className="models-rail-name">{instanceLabel(p)}</span>
+                  </button>
+                )
+              })}
             </div>
           </div>
+
+          {/* 模块三「本地模型」：跑在自己机器上的服务，与云端提供商分开放，
+              避免用户被引导到云厂商列表里找一个本机服务。 */}
+          {!providersLoading && localProviders.length > 0 && (
+            <div className="models-rail-group">
+              <div className="models-rail-group-title">本地模型</div>
+              <div className="models-rail-list">
+                {localProviders.map(p => {
+                  const isActive = activeView === 'provider' && p.id === provider
+                  return (
+                    <button
+                      type="button"
+                      key={p.id}
+                      className={['models-rail-item', isActive ? 'active' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => openProviderView(p.id)}
+                      title="本机运行的服务（Ollama / llama.cpp / vLLM 等），默认地址 http://localhost:11434/v1"
+                    >
+                      {/* 本地服务图标：与「模型提供商」组的品牌图标同宽同位，
+                          不再留一块空白（曾表现为与其它分组不一致的缺口）。
+                          用「硬盘」表达「跑在自己机器上」，避免与云端品牌图标混淆。 */}
+                      <span
+                        className="provider-icon"
+                        style={{ width: 16, height: 16 }}
+                        aria-hidden="true"
+                      >
+                        <IconHardDrive size={16} />
+                      </span>
+                      <span className="models-rail-name">本地模型</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 
       {/* ── 右侧：按左侧所选显示对应内容页 ── */}
       <div className="models-main">
+        {/* 右上角工具栏：图像/语音模型与子智能体模型（不占左栏） */}
+        <div className="models-main-toolbar">
+          <button
+            type="button"
+            className={['models-toolbar-btn', activeView === 'capabilities' ? 'is-active' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setActiveView('capabilities')}
+          >
+            图像音频模型
+          </button>
+          <button
+            type="button"
+            className={['models-toolbar-btn', activeView === 'agents' ? 'is-active' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setActiveView('agents')}
+          >
+            子智能体模型
+          </button>
+        </div>
         {loadingView}
         {!providersLoading && (
           <>
             <div className="models-main-scroll">
-              {/* ═══════════ 模型服务商 + 可用模型（模块一 / Custom / Opencode GO / 本地模型共用） ═══════════ */}
-              {activeView === 'provider' && (
-                <>
-                  {/* ── 自定义中转站切换 tab：仅出现在 custom 模块（默认 custom 段 +
-                       各 custom-xxx 实例）；官方服务商页（deepseek/kimi/opencode-go/
-                       local 等）不渲染，布局与现状一致。 ── */}
-                  {isCustomProviderId(provider) && (
-                    <div className="models-instance-tabs">
-                      <div
-                        className="models-instance-tablist"
-                        role="tablist"
-                        aria-label="自定义中转站"
-                      >
-                        {[
-                          {
-                            id: LEGACY_CUSTOM_PROVIDER_ID,
-                            label: 'Custom',
-                            title: 'Custom（自定义/中转站默认配置段）',
-                          },
-                          ...customInstances.map(p => ({
-                            id: p.id,
-                            label: p.id,
-                            title: p.base_url || p.id,
-                          })),
-                        ].map(tab => (
-                          <button
-                            type="button"
-                            role="tab"
-                            key={tab.id}
-                            aria-selected={provider === tab.id}
-                            className={['models-instance-tab', provider === tab.id ? 'active' : '']
-                              .filter(Boolean)
-                              .join(' ')}
-                            onClick={() => selectCustomInstance(tab.id)}
-                            title={tab.title}
-                          >
-                            <span className="models-instance-tab-name">{tab.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                      {/* 新建实例：默认收起为按钮，点开后行内输入实例名（custom-xxx）；
-                          地址/密钥仍在该实例的内容页填写。 */}
-                      {newInstanceOpen ? (
-                        <div className="models-instance-new">
-                          <input
-                            className="compact-input models-instance-new-input"
-                            autoFocus
-                            value={newInstanceId}
-                            onChange={e => {
-                              setNewInstanceId(e.target.value)
-                              setNewInstanceError('')
-                            }}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') openNewCustomInstance()
-                              if (e.key === 'Escape') {
-                                setNewInstanceOpen(false)
-                                setNewInstanceError('')
-                              }
-                            }}
-                            placeholder="custom-xxx"
-                            aria-label="新建自定义中转站名称"
-                          />
-                          <button
-                            type="button"
-                            className="models-instance-new-btn"
-                            onClick={openNewCustomInstance}
-                          >
-                            新建
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="models-instance-new-trigger"
-                          onClick={() => {
-                            setNewInstanceOpen(true)
-                            setNewInstanceError('')
-                          }}
-                          title="新建自定义中转站"
-                          aria-label="新建自定义中转站"
-                        >
-                          <IconPlus size={12} />
-                          新建
-                        </button>
-                      )}
-                      {newInstanceError && (
-                        <div className="models-instance-new-error">{newInstanceError}</div>
-                      )}
-                    </div>
-                  )}
-                  {/* ── 服务商与连接：选择入口在左侧导航列 ── */}
-                  <Section
-                    title="模型服务商"
-                    description={
-                      isCustomProviderId(provider)
-                        ? '在左侧导航选择模块、在上方 tab 中切换中转站（custom-xxx）后配置；以下为当前中转站的访问密钥与可用模型。'
-                        : '在左侧导航中选择服务商后配置；以下为该服务商访问密钥与可用模型。'
-                    }
-                  >
-                    <div className="models-provider-current">
-                      {hasProviderIcon(provider) && <ProviderIcon provider={provider} size={18} />}
-                      <span className="models-provider-current-name">
-                        {curProvider?.name || provider}
-                      </span>
-                      <span className="models-provider-current-id">{provider}</span>
-                      {hasKey ? (
-                        <span className="model-badge label-badge">已配置</span>
-                      ) : (
-                        <span className="models-provider-current-hint">尚未配置密钥</span>
-                      )}
-                    </div>
+              {/* ═══════════ 自定义模型配置（Custom 入口）：创建态表单，落盘即新实例 ═══════════ */}
+              {activeView === 'provider' && formOpen && (
+                <Section title={TXT.customSectionTitle}>
+                  <CustomModelForm
+                    mode="create"
+                    /* 旧 `custom` 段存在时预填其地址与协议（display_name 留空由用户填）：
+                        迁移由后端在创建时自动完成，前端只把用户最不想重打的字段带上 */
+                    initial={{
+                      displayName: '',
+                      providerType: legacyCustom?.provider_type || 'custom',
+                      baseUrl: legacyCustom?.base_url || '',
+                    }}
+                    saving={formSaving}
+                    error={formError}
+                    onSubmit={createInstance}
+                  />
+                </Section>
+              )}
 
-                    {/* 密钥栏：远程服务商必填；本地服务可选（llama-swap 等启用鉴权时需要） */}
-                    <FormRow
-                      stacked
-                      label={
-                        <span className="models-field-label">
-                          <IconPlug size={12} className="icon-prefix" />
-                          {TXT.apiKeyLabel}
-                          {hasKey && <span className="model-badge label-badge">已配置</span>}
+              {/* ═══════════ 服务商配置 + 可用模型（官方服务商 / 自定义实例 / 本地模型共用） ═══════════ */}
+              {activeView === 'provider' && !formOpen && (
+                <>
+                  {/* 自定义实例：名称 / 协议 / 密钥 / 地址由同一套表单编辑（CustomModelForm）；
+                      官方与本地服务商保持原有只读展示与密钥栏 */}
+                  <Section title={isCustom ? TXT.customSectionTitle : '模型服务商'}>
+                    {/* 自定义模型：这一整行状态条不存在——名称/协议由下方表单承担（可编辑），
+                        密钥状态由密钥字段自身的占位提示表达，动作（连接测试 / 清除密钥）也各自
+                        归位到表单里。官方与本地服务商保留原有的「当前服务商」标题条。 */}
+                    {!isCustom && (
+                      <div className="models-provider-current">
+                        {hasProviderIcon(provider) && (
+                          <ProviderIcon provider={provider} size={18} />
+                        )}
+                        <span className="models-provider-current-name">{providerLabel}</span>
+                        <span className="models-provider-current-hint">
+                          {hasKey ? '已配置密钥' : '尚未配置密钥'}
                         </span>
-                      }
-                      hint={isLocal ? TXT.keyHelpLocal : TXT.keyHelp}
-                      control={
-                        <div className="models-key-row">
-                          <div className="models-key-field">
-                            <input
-                              className="compact-input"
-                              type={showKey ? 'text' : 'password'}
-                              value={apiKey}
-                              onChange={e => {
-                                setApiKey(e.target.value)
-                                setDetectError(null)
-                              }}
-                              placeholder={
-                                hasKey
-                                  ? TXT.keyOverwritePlaceholder
-                                  : isLocal
-                                    ? TXT.keyPlaceholderLocal
-                                    : TXT.keyInputPlaceholder(curProvider?.name || provider)
-                              }
-                            />
-                            <button
-                              type="button"
-                              className="models-key-eye"
-                              onClick={() => setShowKey(v => !v)}
-                              tabIndex={-1}
-                              title={showKey ? TXT.keyHide : TXT.keyShow}
-                              aria-label={showKey ? TXT.keyHide : TXT.keyShow}
-                            >
-                              {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                            </button>
-                          </div>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={detectModels}
-                            disabled={detecting || (!isLocal && !apiKey.trim())}
-                            title={TXT.connectTitle}
-                          >
-                            {detecting ? TXT.connecting : TXT.connectBtn}
-                          </Button>
-                          {/* 显式保存入口：key 原本只在「点击可用模型」时才落盘，
-                                鉴权失败（可用模型列表为空）时用户找不到任何保存按钮 */}
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={saveKey}
-                            disabled={savingKey || !apiKey.trim()}
-                            title={TXT.saveKeyTitle}
-                          >
-                            {savingKey ? TXT.savingKey : TXT.saveKeyBtn}
-                          </Button>
-                          {hasKey && (
-                            <button
-                              type="button"
-                              className="models-key-clear"
-                              onClick={handleClearKey}
-                              disabled={clearingKey}
-                              title={TXT.clearKeyTitle}
-                              aria-label={TXT.clearKeyTitle}
-                            >
-                              <IconBrushCleaning size={13} />
-                            </button>
-                          )}
-                        </div>
-                      }
-                    />
+                      </div>
+                    )}
+
+                    {isCustom ? (
+                      <CustomModelForm
+                        key={provider}
+                        mode="edit"
+                        initial={{
+                          displayName: providerLabel,
+                          providerType: providerType || 'custom',
+                          baseUrl: curProvider?.base_url || '',
+                          // 已存标头回显：对象 → 行数组（插入序 = 键名字典序，与落盘一致）
+                          headers: Object.entries(curProvider?.extra_headers ?? {}).map(
+                            ([name, value]) => ({ name, value }),
+                          ),
+                          // 已存 OAuth 配置回显（摘要带配置五项；无 oauth 段 → undefined）
+                          oauth: oauthSummaryToForm(curProvider?.oauth),
+                        }}
+                        hasKey={hasKey}
+                        saving={editSaving}
+                        error={editError}
+                        onSubmit={saveCustomInstance}
+                        onValuesChange={v => {
+                          setApiKey(v.apiKey)
+                          setBaseUrl(v.baseUrl)
+                        }}
+                        /* Anthropic 协议没有 /v1/models：不提供「连接测试」（不给必然失败的入口） */
+                        onTest={isAnthropicInstance ? undefined : detectModels}
+                        testing={detecting}
+                        onClearKey={hasKey ? handleClearKey : undefined}
+                        clearingKey={clearingKey}
+                        /* 订阅账号登录区：登录态 / 登录 / 退出都由本页持有（表单只管展示与转发） */
+                        oauthLogin={{
+                          status: oauthState,
+                          busy: oauthBusy,
+                          feedback: oauthFeedback,
+                          onLogin: () => void startOauthLogin(),
+                          onLogout: () => void logoutOauth(),
+                        }}
+                      />
+                    ) : (
+                      <>
+                        {/* 密钥栏：官方远程服务商必填；本地服务可选（llama-swap 等启用鉴权时需要）。 */}
+                        <FormRow
+                          stacked
+                          label={
+                            <span className="models-field-label">
+                              <IconPlug size={12} className="icon-prefix" />
+                              {TXT.apiKeyLabel}
+                            </span>
+                          }
+                          hint={isLocal ? TXT.keyHelpLocal : TXT.keyHelp}
+                          control={
+                            <div className="models-key-row">
+                              <div className="models-key-field">
+                                <input
+                                  className="compact-input"
+                                  type={showKey ? 'text' : 'password'}
+                                  value={apiKey}
+                                  onChange={e => {
+                                    setApiKey(e.target.value)
+                                    setDetectError(null)
+                                  }}
+                                  placeholder={
+                                    hasKey
+                                      ? TXT.keyOverwritePlaceholder
+                                      : isLocal
+                                        ? TXT.keyPlaceholderLocal
+                                        : TXT.keyInputPlaceholder(providerLabel)
+                                  }
+                                  aria-label={TXT.apiKeyLabel}
+                                />
+                                <button
+                                  type="button"
+                                  className="models-key-eye"
+                                  onClick={() => setShowKey(v => !v)}
+                                  tabIndex={-1}
+                                  title={showKey ? TXT.keyHide : TXT.keyShow}
+                                  aria-label={showKey ? TXT.keyHide : TXT.keyShow}
+                                >
+                                  {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                                </button>
+                              </div>
+                              {/* Anthropic 协议没有 /v1/models：不摆一个必然失败的按钮 */}
+                              {!isAnthropicInstance && (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={detectModels}
+                                  disabled={detecting || (!isLocal && !apiKey.trim())}
+                                  title={TXT.connectTitle}
+                                >
+                                  {detecting ? TXT.connecting : TXT.connectBtn}
+                                </Button>
+                              )}
+                              {/* 显式保存入口：key 原本只在「点击可用模型」时才落盘，
+                                    鉴权失败（可用模型列表为空）时用户找不到任何保存按钮 */}
+                              <Button
+                                variant="default"
+                                size="sm"
+                                onClick={saveKey}
+                                disabled={savingKey || !apiKey.trim()}
+                                title={TXT.saveKeyTitle}
+                              >
+                                {savingKey ? TXT.savingKey : TXT.saveKeyBtn}
+                              </Button>
+                              {hasKey && (
+                                <button
+                                  type="button"
+                                  className="models-key-clear"
+                                  onClick={handleClearKey}
+                                  disabled={clearingKey}
+                                  title={TXT.clearKeyTitle}
+                                  aria-label={TXT.clearKeyTitle}
+                                >
+                                  <IconBrushCleaning size={13} />
+                                </button>
+                              )}
+                            </div>
+                          }
+                        />
+
+                        {/* 本地服务可选填地址（自定义实例的地址在表单里） */}
+                        {isLocal && (
+                          <FormRow
+                            stacked
+                            label={TXT.baseUrlLabel}
+                            hint={TXT.baseUrlHelp}
+                            control={
+                              <input
+                                className="compact-input"
+                                value={baseUrl}
+                                onChange={e => setBaseUrl(e.target.value)}
+                                placeholder="http://localhost:11434/v1"
+                                aria-label={TXT.baseUrlLabel}
+                              />
+                            }
+                          />
+                        )}
+                      </>
+                    )}
 
                     {detectError && <div className="detect-error">{detectError}</div>}
 
-                    {(isCustom || isLocal) && (
-                      <FormRow
-                        stacked
-                        label="接口地址"
-                        hint={TXT.baseUrlHelp}
-                        control={
-                          <input
-                            className="compact-input"
-                            value={baseUrl}
-                            onChange={e => setBaseUrl(e.target.value)}
-                            placeholder={
-                              isLocal ? 'http://localhost:11434/v1' : TXT.baseUrlPlaceholder
-                            }
-                          />
-                        }
-                      />
+                    {isAnthropicInstance && (
+                      <div className="text-caption hint-text">{TXT.anthropicNoModelList}</div>
                     )}
 
                     {(isCustom || isLocal) && baseUrl.trim() !== loadedBaseUrl.trim() && (
                       <div className="models-baseurl-warn" role="alert">
-                        <span className="models-baseurl-warn-text">{TXT.baseUrlChangedWarn}</span>
+                        <span className="models-baseurl-warn-text">
+                          {isAnthropicInstance
+                            ? TXT.baseUrlChangedWarnManual
+                            : TXT.baseUrlChangedWarn}
+                        </span>
                         <button
                           type="button"
                           className="models-add-submit"
@@ -1512,27 +2569,36 @@ export function ModelsPage({
                     }
                     actions={
                       <>
+                        {/* Anthropic 实例只能手动填模型名：这条入口是本页唯一的获取途径，
+                            因此用强调态呈现，文案也直说「模型名」 */}
                         <button
                           type="button"
-                          className="models-refresh-btn"
+                          className={[
+                            'models-refresh-btn',
+                            isAnthropicInstance ? 'is-emphasis' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
                           onClick={() => {
                             setAddOpen(v => !v)
                             setAddError(null)
                           }}
                           title={TXT.addModelTitle}
                         >
-                          {TXT.addModelBtn}
+                          {isAnthropicInstance ? TXT.addModelBtnManual : TXT.addModelBtn}
                         </button>
-                        <button
-                          type="button"
-                          className="models-refresh-btn"
-                          onClick={refreshModels}
-                          disabled={refreshing}
-                          title={TXT.refreshTitle}
-                        >
-                          <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
-                          {refreshing ? TXT.refreshing : TXT.refreshBtn}
-                        </button>
+                        {!isAnthropicInstance && (
+                          <button
+                            type="button"
+                            className="models-refresh-btn"
+                            onClick={refreshModels}
+                            disabled={refreshing}
+                            title={TXT.refreshTitle}
+                          >
+                            <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
+                            {refreshing ? TXT.refreshing : TXT.refreshBtn}
+                          </button>
+                        )}
                       </>
                     }
                   >
@@ -1632,12 +2698,11 @@ export function ModelsPage({
                         return (
                           <div className="models-empty">
                             <div className="models-empty-title">
-                              {q ? TXT.emptyFiltered(filterInput) : TXT.emptyNeedConnect}
-                            </div>
-                            <div className="models-empty-hint">
-                              {hasKey
-                                ? '已保存密钥可直接点击右上角「刷新」同步模型。'
-                                : '密钥仅保存在本机；配置后点击「连接」探测可用模型。'}
+                              {q
+                                ? TXT.emptyFiltered(filterInput)
+                                : isAnthropicInstance
+                                  ? TXT.emptyNeedManual
+                                  : TXT.emptyNeedConnect}
                             </div>
                           </div>
                         )
@@ -1646,11 +2711,7 @@ export function ModelsPage({
                         return <div className="models-empty">正在连接并获取模型列表…</div>
                       }
                       if (filtered.length === 0) {
-                        return (
-                          <div className="models-empty">
-                            {q ? TXT.emptyFiltered(filterInput) : TXT.emptyNeedDetect}
-                          </div>
-                        )
+                        return <div className="models-empty">{TXT.emptyFiltered(filterInput)}</div>
                       }
                       const briefById = new Map<string, ProviderModelBrief>(
                         detectedModels.map(d => [d.id, d]),
@@ -1658,11 +2719,7 @@ export function ModelsPage({
                       const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
                       return (
                         <div className="models-list-wrap">
-                          <div className="detect-status">
-                            {TXT.modelsCount(display.length)}
-                            {configured.length > 0 && TXT.configuredCount(configured.length)}
-                            <span className="detect-status-hint">· 点击行切换为默认模型</span>
-                          </div>
+                          <div className="detect-status">{TXT.modelsCount(display.length)}</div>
                           <div className="model-list">
                             {filtered.map(name => {
                               const isActive = currentModel === name
@@ -1725,7 +2782,7 @@ export function ModelsPage({
                                     } catch (e: any) {
                                       setFeedback({
                                         ok: false,
-                                        msg: e?.message || '切换失败',
+                                        msg: friendlyIpcError(e, '切换失败'),
                                       })
                                     }
                                     setTimeout(() => setFeedback(null), 2500)
@@ -1909,12 +2966,12 @@ export function ModelsPage({
                     )}
                   </Section>
 
-                  {/* ── 高级：ExecAgent 子模型 已迁移至左侧「自定义设置 → 子智能体模型」页 ── */}
+                  {/* ── 高级：ExecAgent 子模型 已迁移至右上角「子智能体模型」入口 ── */}
                 </>
               )}
 
               {/* local：添加自定义模型（手动录入，用于本地网关模型列表外补充） */}
-              {activeView === 'provider' && provider === 'local' && (
+              {activeView === 'provider' && !formOpen && provider === 'local' && (
                 <div className="models-local-add">
                   <FormRow
                     stacked
@@ -1964,7 +3021,7 @@ export function ModelsPage({
                           provider={visionProvider}
                           models={allModels}
                           filterCapability="vision"
-                          placeholder="未配置（使用默认模型）"
+                          placeholder={TXT.visionNone}
                           onChange={async (modelId, selectedProvider) => {
                             setVisionSaving(true)
                             setVisionFeedback(null)
@@ -1979,7 +3036,7 @@ export function ModelsPage({
                             } catch (e: any) {
                               setVisionFeedback({
                                 ok: false,
-                                msg: e?.message || '保存失败',
+                                msg: friendlyIpcError(e, '保存失败'),
                               })
                             } finally {
                               setVisionSaving(false)
@@ -1996,6 +3053,20 @@ export function ModelsPage({
                         {visionFeedback.msg}
                       </div>
                     )}
+                    {/* 图像理解生效路径如实呈现：默认「跟随 Leader」时讲清由谁处理，
+                        Leader 不支持视觉时明确警示——否则用户无从知道截图识别已不可用
+                        （视觉不可用时桌面操作会真实报错，这里提前把原因摆在配置处）。 */}
+                    <div
+                      className={`text-caption${!visionModel && leaderVisionModelId && !leaderSupportsVision ? ' text-danger' : ''}`}
+                    >
+                      {visionModel
+                        ? `已显式指定：图像统一由 ${visionModel} 理解（不再跟随 Leader；换 Leader 不会自动改这里）`
+                        : leaderVisionModelId
+                          ? leaderSupportsVision
+                            ? `跟随 Leader：图像由当前 Leader 模型 ${leaderVisionModelId} 直接理解，无需额外配置`
+                            : `⚠ 当前 Leader 模型 ${leaderVisionModelId} 不支持图像理解 —— 截图/图像识别类操作将不可用。请在此指定一个图像理解模型，或把 Leader 换成支持视觉的模型。`
+                          : '跟随 Leader：图像由当前 Leader 模型直接理解（尚未检测到 Leader 模型信息）'}
+                    </div>
                   </Section>
 
                   {/* ── 本地视觉模型（OCR / UI 元素检测）：随应用自动下载 ── */}
@@ -2108,7 +3179,7 @@ export function ModelsPage({
                               setTimeout(() => setSttFeedback(null), 2000)
                               probeStt()
                             } catch (e: any) {
-                              setSttFeedback({ ok: false, msg: e?.message || '保存失败' })
+                              setSttFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
                             } finally {
                               setSttSaving(false)
                             }
@@ -2205,7 +3276,7 @@ export function ModelsPage({
                               setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
                               setTimeout(() => setTtsFeedback(null), 2000)
                             } catch (e: any) {
-                              setTtsFeedback({ ok: false, msg: e?.message || '保存失败' })
+                              setTtsFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
                             } finally {
                               setTtsSaving(false)
                             }
@@ -2248,7 +3319,7 @@ export function ModelsPage({
                               setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
                               setTimeout(() => setVoiceFeedback(null), 2000)
                             } catch (e: any) {
-                              setVoiceFeedback({ ok: false, msg: e?.message || '保存失败' })
+                              setVoiceFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
                             } finally {
                               setVoiceSaving(false)
                             }

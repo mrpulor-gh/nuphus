@@ -5,12 +5,6 @@
 
 /* 鈹€鈹€ 琛ㄥ崟缁勶紙label 涓?+ 鎺т欢涓嬶紝Section 鍐呯殑绾靛悜鑺傚锛夆攢鈹€ */
 
-/* 鈹€鈹€ 灏忓窘璁帮紙濡傘€屽凡閰嶇疆銆嶇姸鎬佸窘绔犵殑闂磋窛锛夆攢鈹€ */
-.label-badge {
-  margin-left: var(--space-2);
-}
-
-/* 鈹€鈹€ 妫€娴?鎻愮ず鏂囧瓧 鈹€鈹€ */
 .detect-status {
   font-size: var(--fz-xs);
   color: var(--fg-4);
@@ -537,157 +531,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.models-rail-badge {
-  flex-shrink: 0;
-}
 .models-rail-note {
   padding: var(--space-2);
   color: var(--fg-4);
   font-size: var(--fz-sm);
 }
 .models-main {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--surface-0);
 }
 .models-main-scroll {
   width: min(920px, 100%);
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   margin: 0 auto;
   overflow-y: auto;
   padding: var(--space-6) clamp(var(--space-5), 5vw, 72px) var(--space-8);
 }
 
-/* ── 自定义中转站切换 tab 栏（内容页顶部，仅 custom 模块渲染）──
-   视觉语言与 .models-rail-item 一致：透明底 + 选中态 accent 描边/淡底。 */
-.models-instance-tabs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--line-2);
-}
-.models-instance-tablist {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  flex: 1;
-  min-width: 0;
-}
-.models-instance-tab {
-  display: inline-flex;
-  align-items: center;
-  max-width: 220px;
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-2);
-  background: transparent;
-  color: var(--fg-3);
-  font: inherit;
-  font-size: var(--fz-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.models-instance-tab:hover {
-  background: var(--surface-hover);
-  color: var(--fg-1);
-}
-.models-instance-tab:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-.models-instance-tab.active {
-  border-color: rgba(var(--accent-rgb), 0.34);
-  background: var(--accent-dim);
-  color: var(--fg-1);
-}
-.models-instance-tab-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 新建入口（收起态按钮）：与 tab 同一行高，描边区分「动作」而非「切换」 */
-.models-instance-new-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: none;
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  color: var(--fg-3);
-  font: inherit;
-  font-size: var(--fz-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.models-instance-new-trigger:hover {
-  border-color: rgba(var(--accent-rgb), 0.34);
-  background: var(--accent-dim);
-  color: var(--fg-1);
-}
-.models-instance-new-trigger:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-/* 新建入口（展开态）：输入实例名 → 创建并跳转该实例页 */
-.models-instance-new {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: none;
-}
-.models-instance-new-input {
-  width: 150px;
-  font-size: var(--fz-sm);
-}
-.models-instance-new-btn {
-  flex: none;
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  color: var(--fg-2);
-  font: inherit;
-  font-size: var(--fz-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.models-instance-new-btn:hover {
-  border-color: rgba(var(--accent-rgb), 0.34);
-  background: var(--accent-dim);
-  color: var(--fg-1);
-}
-.models-instance-new-btn:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-.models-instance-new-error {
-  width: 100%;
-  color: var(--error);
-  font-size: var(--fz-xs);
-  line-height: 1.4;
-}
 .models-page-loading {
   display: grid;
   min-height: 180px;
@@ -954,4 +818,205 @@
   letter-spacing: 0.02em;
   vertical-align: middle;
   user-select: none;
+}
+/* ══════════════════════════════════════════════════════════════
+   自定义模型（四字段）相关：左栏实例列表 + 右上角工具栏 + 表单卡片
+   ══════════════════════════════════════════════════════════════ */
+
+/* 右上角工具栏：图像音频模型 / 子智能体模型（不占左栏，窄屏也不挤压） */
+.models-main-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-3) clamp(var(--space-5), 5vw, 72px) 0;
+}
+.models-toolbar-btn {
+  min-height: 28px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-toolbar-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-toolbar-btn.is-active {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+.models-toolbar-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+/* 左栏实例行的状态点：唯一保留的「已配置」指示（徽章不再重复出现） */
+.models-rail-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  background: transparent;
+}
+.models-rail-dot.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* 左栏「+ 新建」入口：与实例条目同排版，用强调色点出这是动作而非实例 */
+.models-rail-add {
+  color: var(--fg-2);
+}
+.models-rail-add svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* 自定义标头编辑器：key/value 成对行 + 增删（中转站网关要求的附加请求头） */
+.custom-headers-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.custom-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.custom-header-row input {
+  flex: 1;
+  min-width: 0;
+}
+.custom-header-row .models-key-clear {
+  flex-shrink: 0;
+}
+
+/* 表单底部主按钮行（「创建 / 保存」右对齐，与 Section 的既有按钮语言一致） */
+.models-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}
+
+/* Anthropic 实例唯一的模型入口（手动填模型名）：强调态 */
+.models-refresh-btn.is-emphasis {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: var(--accent-dim);
+  color: var(--fg-1);
+}
+
+/* 空态提示：尚无模型时给一行可读的指引（此前是无样式的裸文本） */
+.models-empty {
+  padding: var(--space-3) 0;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+}
+.models-empty-title {
+  line-height: 1.5;
+}
+/* 订阅账号（OAuth）：可折叠区块 —— 折叠态只有一行摘要（未配置时对用户零干扰），
+   展开后是 OAuth 配置五项 + 登录区。与「自定义标头」同为可选块，故用同一套排版语言。 */
+.custom-oauth {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-3);
+}
+.custom-oauth-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.custom-oauth-toggle:hover {
+  color: var(--fg-1);
+}
+.custom-oauth-caret {
+  color: var(--fg-3);
+}
+.custom-oauth-title {
+  font-weight: 500;
+}
+/* 折叠态摘要贴右：一眼看清该实例是否走 OAuth / 是否已登录 */
+.custom-oauth-summary {
+  margin-left: auto;
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+}
+.custom-oauth-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+.custom-oauth-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+}
+/* 登录区：与配置字段用虚线隔开 —— 上方是「把配置存下来」，下方是「用它登录」 */
+.custom-oauth-login {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--line-3);
+}
+.custom-oauth-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+}
+.custom-oauth-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--line-3);
+  border-radius: 50%;
+}
+.custom-oauth-dot.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.custom-oauth-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.custom-oauth-feedback {
+  font-size: var(--fz-xs);
+  line-height: 1.4;
+}
+.custom-oauth-feedback.is-ok {
+  color: var(--fg-3);
+}
+.custom-oauth-feedback.is-err {
+  color: var(--error);
+}
+.custom-oauth-hint {
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
 }

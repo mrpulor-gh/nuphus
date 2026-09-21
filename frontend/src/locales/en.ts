@@ -804,6 +804,8 @@ const en: Record<string, string> = {
   'slash.reset': 'Reset backend state',
 
   'models.title': 'Models',
+  'models.customEntry': 'Create (Custom / Relay)',
+  'models.customEntryTitle': 'Custom model configuration (relay / gateway)',
   'models.provider': 'Provider',
   'models.apiKey': 'API Key',
   'models.modelName': 'Model Name',

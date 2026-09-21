@@ -26,3 +26,40 @@ export function isValidCustomInstanceId(id: string): boolean {
 export function isCustomProviderId(id: string): boolean {
   return id === LEGACY_CUSTOM_PROVIDER_ID || id.startsWith('custom-')
 }
+
+/**
+ * 把用户填写的「自定义名称」规格化为段 id：`custom-<slug>`。
+ *
+ * 用户填的是显示名（可以是中文），段名必须是稳定唯一的纯 ASCII —— 后端
+ * `validate_custom_provider_name` 只接受 `custom-<小写英文/数字/连字符>`，
+ * 且同名模型靠「实例名 + 模型 ID」精确路由。因此这里：
+ *   转小写 → 非 [a-z0-9] 字符转 `-` → 合并连续 `-` → 去首尾 `-` →
+ *   截断到 55 字符（`custom-` 7 字符 + 55 ≤ 后端 64 上限）
+ * slug 为空（纯中文等最常见情况）或与已有实例重名时，退化为 `custom-<unix 秒>`；
+ * 同一秒内重复创建再追加 `-<序号>`，保证不重名。
+ *
+ * 界面永远只显示用户填写的名称（段 id 只在 title 属性里作调试信息）。
+ */
+export function buildCustomInstanceId(displayName: string, existingIds: string[]): string {
+  const taken = new Set(existingIds)
+  const slug = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 55)
+    .replace(/-+$/g, '')
+  const fromSlug = slug ? `custom-${slug}` : ''
+  if (fromSlug && isValidCustomInstanceId(fromSlug) && !taken.has(fromSlug)) {
+    return fromSlug
+  }
+  const stamp = Math.floor(Date.now() / 1000)
+  let id = `custom-${stamp}`
+  let seq = 1
+  while (taken.has(id)) {
+    seq += 1
+    id = `custom-${stamp}-${seq}`
+  }
+  return id
+}
