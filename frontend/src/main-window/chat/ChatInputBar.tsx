@@ -29,7 +29,7 @@ import {
   type CustomAgentConfig,
 } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
-import { ApiHealthBadge } from './ApiHealthBadge'
+import { ApiHealthBadge, apiHealthRailLabel } from './ApiHealthBadge'
 
 interface TokenUsageInfo {
   inputTokens: number
@@ -906,17 +906,6 @@ export function ChatInputBar({
         </div>
         {/* ── 右下角操作组：+ 工具 / 语音 / 发送 固定在整个输入框右下角 ── */}
         <div className="input-actions">
-          {/* ── 项目目录：纯展示当前对话归属的项目文件夹（不可点击、无菜单）。
-              管理 / 切换入口在会话栏「项目」行右端 📁+，本组件不持有任何项目入口 ── */}
-          <span
-            className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
-            title={projectDir || t('input.projectDir')}
-          >
-            <IconFolder size={14} />
-            <span className="input-project-chip-name">
-              {projectDirName || t('input.projectDir')}
-            </span>
-          </span>
           {/* ── 工具入口「+」：附件/图片合并弹窗 ── */}
           <div className="input-tool-plus-wrap" ref={toolMenuRef}>
             <IconButton
@@ -1162,6 +1151,18 @@ export function ChatInputBar({
               </span>
               {!executing && modeMenuOpen && (
                 <div className="input-bar-mode-menu">
+                  {/* 弹窗 title = 当前对话归属的项目目录。归属由**会话工作台**决定，
+                      此处纯回显（无点击 / 无菜单；管理 · 切换入口在会话栏「项目」行 📁+）。
+                      未设置时回退 input.projectDir 文案 */}
+                  <span
+                    className={`input-bar-mode-title${projectDirName ? ' is-set' : ''}`}
+                    title={projectDir || t('input.projectDir')}
+                  >
+                    <IconFolder size={11} />
+                    <span className="input-bar-mode-title-name">
+                      {projectDirName || t('input.projectDir')}
+                    </span>
+                  </span>
                   <div
                     className={`input-bar-mode-option ${mode !== 'workflow' && mode !== 'custom' ? 'active' : ''}`}
                     onClick={() => selectMode('leader')}
@@ -1347,9 +1348,11 @@ export function ChatInputBar({
               )}
             </div>
             {/* ── 状态：唯一常驻 ctx，迷你进度条 + hover 弹窗详情 ── */}
-            {/* ── 模型运行态组：ctx 用量（数字/颜色通道）+ 连接健康圆点（形状/动效通道）──
-                语义同族（同一模型的容量与可用性），细竖线分隔避免「同色系不同义」混淆；
-                圆点平时弱化、异常时展开文字标签，hover 弹层各自独立（ctx 详情 / 连接记录）。 */}
+            {/* ── 模型运行态组：ctx 用量（唯一常驻元素）+ 连接健康（**仅问题态**）──
+                同一模型的容量与可用性属同族信息，但显示策略相反：
+                ctx 常驻（容量是持续关注的量）；连接健康**健康时完全不渲染**——
+                常驻圆点没有信息量，只在出问题时出现「图标 + 短文本」（如 retry 1/3），
+                点击查看连接记录，恢复即隐藏。 */}
             <span className="input-bar-model-status">
               <span className="input-bar-ctx" onMouseEnter={openCtx} onMouseLeave={closeCtx}>
                 <span className="input-bar-ctx-label">ctx</span>
@@ -1407,13 +1410,12 @@ export function ChatInputBar({
                   </span>
                 )}
               </span>
-              {apiHealth && (
-                <>
-                  <span className="input-bar-status-sep" aria-hidden="true" />
-                  <div className="input-api-health-rail">
-                    <ApiHealthBadge state={apiHealth} compact onRead={onApiHealthRead} />
-                  </div>
-                </>
+              {/* 连接健康：**只在出问题时渲染**（判据与 Badge 内部同源 = apiHealthRailLabel），
+                  健康时不占位、无圆点、无分隔线；点开记录弹窗仅在问题态可达 */}
+              {apiHealth && apiHealthRailLabel(apiHealth) && (
+                <div className="input-api-health-rail">
+                  <ApiHealthBadge state={apiHealth} compact onRead={onApiHealthRead} />
+                </div>
               )}
             </span>
           </div>

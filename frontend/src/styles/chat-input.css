@@ -303,37 +303,6 @@
 .input-tool-plus-btn:active {
   background: rgba(255, 255, 255, 0.05);
 }
-/* ── 项目目录：纯展示当前对话归属的文件夹（无点击 / 无菜单，故无 hover 反馈）。
-   与 ctx / model chip 同视觉 token：6px 圆角 ── */
-.input-project-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--spark-tertiary);
-  font-family: inherit;
-  font-size: 11.5px;
-  line-height: 1;
-  user-select: none;
-}
-.input-project-chip svg {
-  flex-shrink: 0;
-  opacity: 0.85;
-}
-/* 已设置目录：文字抬到次级前景，与「未设置」的弱化态区分 */
-.input-project-chip.is-set {
-  color: var(--fg-2);
-}
-.input-project-chip-name {
-  max-width: 132px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* 语音按钮在容器内：取消 absolute 独立定位，由 flex 排布 */
 .input-actions .chat-voice-btn {
   position: static;
@@ -527,6 +496,41 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* ── mode 弹窗顶部的 title：当前对话归属的项目目录 ──
+   归属由会话工作台决定，此处是**纯回显**（无点击 / 无菜单） */
+.input-bar-mode-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 5px;
+  border: none;
+  text-decoration: none;
+  /* 与弹窗内各档模式名**刻意不同层级**（模式名 12px mono / 600）：
+     标题 13px 常规 UI 字体 / 400 / 弱色——比模式名大一档但更淡，读作「抬头」而非选项。
+     与下方列表之间只留间距，**不画分割线** */
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0;
+  color: var(--fg-4);
+  user-select: none;
+}
+/* 已设置目录：抬到次级前景，与「未设置」的弱化态区分 */
+.input-bar-mode-title.is-set {
+  color: var(--fg-3);
+}
+.input-bar-mode-title svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.input-bar-mode-title-name {
+  /* 上限让弹窗宽度恒定在 min-width（204）：名字再长也只走省略号，弹窗不随内容跳动 */
+  max-width: 156px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* mode chip 内：图标 + 文字 */
 .input-bar-mode-text {

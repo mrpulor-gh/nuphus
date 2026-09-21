@@ -4,17 +4,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChatInputBar } from '../main-window/chat/ChatInputBar'
 
 /**
- * 输入框项目 chip = **纯展示**当前对话归属的项目文件夹。
+ * mode **hover 弹窗的 title** = 纯展示当前对话归属的项目文件夹（原「输入框右下角项目 chip」迁入）。
  *
- * 回归背景：chip 曾是可点击入口（有可见书签 → 弹快捷切换菜单；无可见书签 → 直接进项目中心），
- * ZPY 实测后定调「我只要显示当前对话是在哪个项目文件目录，不需要点击管理」→ chip 收敛为
- * 非交互元素：不弹菜单、不进管理；ChatInputBar 不再持有任何项目入口
- * （项目中心的入口只剩会话栏「项目」行 📁+，见 session-rail-menu.test.tsx）。
+ * 回归背景：项目 chip 曾是可点击入口（有可见书签 → 弹快捷切换菜单；无可见书签 → 直接进项目中心），
+ * ZPY 实测后定调「我只要显示当前对话是在哪个项目文件目录，不需要点击管理」→ 收敛为纯展示元素。
+ * 项目目录如今主要由**会话工作台**确定，输入框里的目录只剩回显价值，故从右下角操作组
+ * 迁到 mode chip 的 hover 弹窗顶部作为其 title（chip 本身仍是单行「图标 + 模式名」）。
  *
  * 覆盖：
- * 1. chip 存在，显示工作目录末段名 + 完整路径 title；
- * 2. chip 非交互：不是 button / 无 role / 不可聚焦，点击后文档中不出现 role="menu"；
- * 3. 未设置目录 → 回退 `input.projectDir` 文案（弱化态，无 is-set）。
+ * 1. title 随弹窗开关（未展开不渲染）；
+ * 2. 展开后显示工作目录末段名 + 完整路径 title 属性，且 chip 上的模式名不受影响；
+ * 3. title 自身无交互语义（SPAN / 无 role / 不可聚焦）；
+ * 4. 未设置目录 → 回退 `input.projectDir` 文案（弱化态，无 is-set）。
  */
 vi.mock('../main-window/lib/api', () => ({
   wfGateStatus: vi.fn(() => Promise.resolve({ locked: false, reason: 'idle' })),
@@ -51,45 +52,51 @@ vi.mock('@tauri-apps/api/window', () => ({
 const ACTIVE_DIR = 'E:\\NUS\\A'
 
 /** ChatInputBar 必填 props 的最小夹具（projectDir 为本文件用例关心的输入；extra 覆盖 token 数据） */
+function makeProps(
+  projectDir: string,
+  extra: Partial<Parameters<typeof ChatInputBar>[0]> = {},
+): Parameters<typeof ChatInputBar>[0] {
+  return {
+    input: '',
+    onInputChange: vi.fn(),
+    onInputKeyDown: vi.fn(),
+    textareaRef: createRef<HTMLTextAreaElement>(),
+    imageInputRef: createRef<HTMLInputElement>(),
+    isProcessing: false,
+    pauseState: null,
+    refineState: null,
+    tokenUsage: null,
+    mainTokenUsage: null,
+    execTokenUsage: null,
+    totalDurationMs: undefined,
+    totalCalls: undefined,
+    mood: 'idle',
+    contextLimit: undefined,
+    security: null,
+    mode: 'leader',
+    modelLabel: 'DeepSeek',
+    modelName: 'deepseek-chat',
+    effort: null,
+    supportedEfforts: [],
+    onEffortChange: vi.fn(),
+    onModelSwitch: vi.fn(),
+    onSend: vi.fn(),
+    onFileSelect: vi.fn(),
+    onImageAttach: vi.fn(),
+    projectDir,
+    hints: ['输入框提示'],
+    hintIndex: 0,
+    hintFade: false,
+    ...extra,
+  }
+}
+
+/** 渲染输入框（返回 render 结果，供 rerender 模拟「切换会话后父组件换 projectDir」） */
 function renderInputBar(
   projectDir: string,
   extra: Partial<Parameters<typeof ChatInputBar>[0]> = {},
 ) {
-  render(
-    <ChatInputBar
-      input=""
-      onInputChange={vi.fn()}
-      onInputKeyDown={vi.fn()}
-      textareaRef={createRef<HTMLTextAreaElement>()}
-      imageInputRef={createRef<HTMLInputElement>()}
-      isProcessing={false}
-      pauseState={null}
-      refineState={null}
-      tokenUsage={null}
-      mainTokenUsage={null}
-      execTokenUsage={null}
-      totalDurationMs={undefined}
-      totalCalls={undefined}
-      mood="idle"
-      contextLimit={undefined}
-      security={null}
-      mode="leader"
-      modelLabel="DeepSeek"
-      modelName="deepseek-chat"
-      effort={null}
-      supportedEfforts={[]}
-      onEffortChange={vi.fn()}
-      onModelSwitch={vi.fn()}
-      onSend={vi.fn()}
-      onFileSelect={vi.fn()}
-      onImageAttach={vi.fn()}
-      projectDir={projectDir}
-      hints={['输入框提示']}
-      hintIndex={0}
-      hintFade={false}
-      {...extra}
-    />,
-  )
+  return render(<ChatInputBar {...makeProps(projectDir, extra)} />)
 }
 
 /** 展开 ctx 详情弹窗（hover 触发） */
@@ -99,44 +106,78 @@ function openCtxDetail() {
   fireEvent.mouseEnter(ctx)
 }
 
-/** 项目 chip（输入框内唯一持有该 class 的元素） */
-function chip(): HTMLElement {
-  const el = document.querySelector('.input-project-chip')
-  if (!el) throw new Error('未渲染 .input-project-chip')
+/** 展开 mode hover 弹窗（点击 chip 切换 open；title 只在弹窗内渲染） */
+function openModeMenu() {
+  const chip = document.querySelector('.input-bar-mode-wrap .input-bar-chip')
+  if (!chip) throw new Error('未渲染 .input-bar-mode-wrap .input-bar-chip')
+  fireEvent.click(chip)
+}
+
+/** mode 弹窗顶部的 title（弹窗打开后文档内唯一持有该 class 的元素） */
+function modeTitle(): HTMLElement {
+  const el = document.querySelector('.input-bar-mode-title')
+  if (!el) throw new Error('未渲染 .input-bar-mode-title')
   return el as HTMLElement
 }
 
-describe('输入框项目 chip：纯展示当前项目文件夹', () => {
-  it('显示工作目录末段名 + 完整路径 tooltip', () => {
+describe('mode 弹窗 title：纯展示当前项目文件夹', () => {
+  it('弹窗未展开时不渲染 title', () => {
     renderInputBar(ACTIVE_DIR)
 
-    expect(chip()).toHaveTextContent('A')
-    expect(chip()).toHaveAttribute('title', ACTIVE_DIR)
-    expect(chip()).toHaveClass('is-set')
+    expect(document.querySelector('.input-bar-mode-title')).toBeNull()
   })
 
-  it('非交互：不是按钮、无 role，点击不弹菜单', () => {
+  it('展开后显示工作目录末段名 + 完整路径 tooltip，chip 上的模式名不受影响', () => {
     renderInputBar(ACTIVE_DIR)
+    openModeMenu()
 
-    expect(chip().tagName).toBe('SPAN')
-    expect(chip().closest('button')).toBeNull()
-    expect(chip()).not.toHaveAttribute('role')
-    // 无 tabindex → 键盘 Tab 也聚焦不到该元素
-    expect(chip()).not.toHaveAttribute('tabindex')
+    expect(modeTitle()).toHaveTextContent('A')
+    expect(modeTitle()).toHaveAttribute('title', ACTIVE_DIR)
+    expect(modeTitle()).toHaveClass('is-set')
+    // title 在弹窗里、不在 chip 里：chip 仍是单行「图标 + 模式名」
+    expect(document.querySelector('.input-bar-mode-text')?.textContent).toBe('LEADER')
+  })
 
-    fireEvent.click(chip())
+  it('title 自身无交互语义（SPAN / 无 role / 不可聚焦）', () => {
+    renderInputBar(ACTIVE_DIR)
+    openModeMenu()
 
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
-    expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
-    expect(screen.queryByText('管理项目…')).not.toBeInTheDocument()
+    expect(modeTitle().tagName).toBe('SPAN')
+    expect(modeTitle()).not.toHaveAttribute('role')
+    expect(modeTitle()).not.toHaveAttribute('tabindex')
   })
 
   it('未设置目录 → 回退 input.projectDir 文案（弱化态）', () => {
     renderInputBar('')
+    openModeMenu()
 
-    expect(chip()).toHaveTextContent('项目目录')
-    expect(chip()).toHaveAttribute('title', '项目目录')
-    expect(chip()).not.toHaveClass('is-set')
+    expect(modeTitle()).toHaveTextContent('项目目录')
+    expect(modeTitle()).toHaveAttribute('title', '项目目录')
+    expect(modeTitle()).not.toHaveClass('is-set')
+  })
+
+  it('切换会话（父组件换 projectDir）后 title 与 tooltip 跟随更新', () => {
+    const utils = renderInputBar(ACTIVE_DIR)
+    openModeMenu()
+    expect(modeTitle()).toHaveTextContent('A')
+
+    // 模拟点击另一项目分组的会话：ChatPanel.switchProject 落盘（set_project_dir）后
+    // setProjectDir(新路径) → 本组件作为受控组件重新收到 projectDir
+    utils.rerender(<ChatInputBar {...makeProps('E:\\NUS\\B')} />)
+
+    expect(modeTitle()).toHaveTextContent('B')
+    expect(modeTitle()).toHaveAttribute('title', 'E:\\NUS\\B')
+  })
+
+  it('切换后目录变空 → 撤销 is-set 并回退文案（不残留上一个项目的名字）', () => {
+    const utils = renderInputBar(ACTIVE_DIR)
+    openModeMenu()
+    expect(modeTitle()).toHaveClass('is-set')
+
+    utils.rerender(<ChatInputBar {...makeProps('')} />)
+
+    expect(modeTitle()).toHaveTextContent('项目目录')
+    expect(modeTitle()).not.toHaveClass('is-set')
   })
 })
 
