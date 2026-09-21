@@ -6,8 +6,8 @@
 use super::registry::ToolRegistry;
 use crate::desktop_automation::{
     ActionCandidate, ActionClass, CandidateBuilder, CandidateKind, ComputerExecutor,
-    ComputerObserver, DecisionInput, DecisionProvider, ExecutionGrant, JevClient, LocalPolicy,
-    Observation, ObservationScope, Policy, PolicyDecision, Verification,
+    ComputerObserver, DecisionInput, DecisionProvider, ExecutionGrant, ExecutionInput, JevClient,
+    LocalPolicy, Observation, ObservationScope, Policy, PolicyDecision, RecentAction, Verification,
 };
 use crate::ToolResult;
 use serde_json::json;
@@ -42,7 +42,7 @@ struct EnhancedLoopState {
     goal: String,
     steps: u32,
     consecutive_stalls: u32,
-    recent_candidate_ids: Vec<String>,
+    recent_actions: Vec<RecentAction>,
 }
 
 impl SemanticDesktopBackend {
@@ -84,7 +84,7 @@ impl SemanticDesktopBackend {
         *self.last_space.lock().await = None;
     }
 
-    async fn begin_enhanced_step(&self, goal: &str) -> Result<Vec<String>, String> {
+    async fn begin_enhanced_step(&self, goal: &str) -> Result<Vec<RecentAction>, String> {
         let mut state = self.loop_state.lock().await;
         if state.goal != goal {
             *state = EnhancedLoopState {
@@ -102,10 +102,14 @@ impl SemanticDesktopBackend {
                 "连续 {STALL_LIMIT} 个语义动作未产生界面变化，已停止自动重试"
             ));
         }
-        Ok(state.recent_candidate_ids.clone())
+        Ok(state.recent_actions.clone())
     }
 
-    async fn record_enhanced_result(&self, candidate_id: &str, verification: Verification) {
+    async fn record_enhanced_result(
+        &self,
+        candidate: &ActionCandidate,
+        verification: Verification,
+    ) {
         let mut state = self.loop_state.lock().await;
         state.steps = state.steps.saturating_add(1);
         if verification == Verification::NoChange {
@@ -113,9 +117,13 @@ impl SemanticDesktopBackend {
         } else {
             state.consecutive_stalls = 0;
         }
-        state.recent_candidate_ids.push(candidate_id.to_string());
-        if state.recent_candidate_ids.len() > 8 {
-            state.recent_candidate_ids.remove(0);
+        state.recent_actions.push(RecentAction {
+            action_class: candidate.action_class(),
+            target_summary: candidate.public_description.clone(),
+            verification,
+        });
+        if state.recent_actions.len() > 8 {
+            state.recent_actions.remove(0);
         }
     }
 
@@ -149,7 +157,8 @@ impl ToolRegistry {
             "desktop_semantic_execute" => {
                 let observation_token = required_string(params, "observation_token")?;
                 let candidate_id = required_string(params, "candidate_id")?;
-                execute_cached_candidate(&backend, observation_token, candidate_id).await
+                let input = execution_input(params)?;
+                execute_cached_candidate(&backend, observation_token, candidate_id, input).await
             }
             "desktop_agent_step" => {
                 if !self.enhanced_mode {
@@ -177,10 +186,32 @@ fn required_string<'a>(params: &'a serde_json::Value, name: &str) -> Result<&'a 
         .ok_or_else(|| format!("{name} 不能为空"))
 }
 
+fn execution_input(params: &serde_json::Value) -> Result<ExecutionInput, String> {
+    let Some(value) = params.get("value") else {
+        return Ok(ExecutionInput::default());
+    };
+    if value.is_null() {
+        return Ok(ExecutionInput::default());
+    }
+    let value = value
+        .as_str()
+        .ok_or_else(|| "value 必须是字符串".to_string())?;
+    if value.chars().count() > 16_384 {
+        return Err("value 不得超过 16384 个字符".into());
+    }
+    if value.contains('\0') {
+        return Err("value 不得包含 NUL 字符".into());
+    }
+    Ok(ExecutionInput {
+        value: Some(value.to_string()),
+    })
+}
+
 async fn execute_cached_candidate(
     backend: &SemanticDesktopBackend,
     observation_token: &str,
     candidate_id: &str,
+    input: ExecutionInput,
 ) -> Result<serde_json::Value, String> {
     let space = backend
         .last_space
@@ -195,14 +226,14 @@ async fn execute_cached_candidate(
         .find(|candidate| candidate.id == candidate_id)
         .cloned()
         .ok_or_else(|| "candidate_id 不属于最近一次语义观察".to_string())?;
-    execute_candidate(backend, &space.observation, &candidate, None).await
+    execute_candidate(backend, &space.observation, &candidate, &input, None).await
 }
 
 async fn execute_jev_step(
     backend: &SemanticDesktopBackend,
     goal: &str,
 ) -> Result<serde_json::Value, String> {
-    let recent_candidate_ids = backend.begin_enhanced_step(goal).await?;
+    let recent_actions = backend.begin_enhanced_step(goal).await?;
     let space = backend.observe(goal).await?;
     let mut config = crate::config::load_registry()
         .map_err(|error| format!("读取 Jev 配置失败: {error}"))?
@@ -217,7 +248,7 @@ async fn execute_jev_step(
         goal: goal.to_string(),
         observation: space.observation.clone(),
         candidates: space.candidates.clone(),
-        recent_candidate_ids,
+        recent_actions,
     };
     let decision = match client.choose(decision_input).await {
         Ok(decision) => decision,
@@ -240,6 +271,7 @@ async fn execute_jev_step(
             "reason": "Jev 候选分布较分散，已回退当前主模型选择；这不是权限判断",
             "confidence": decision.confidence,
             "suggested_candidate_id": decision.candidate_id,
+            "usage": decision.usage,
             "action_space": action_space_json(&space),
         }));
     }
@@ -249,14 +281,34 @@ async fn execute_jev_step(
         .find(|candidate| candidate.id == decision.candidate_id)
         .cloned()
         .ok_or_else(|| "Jev 返回了候选集合之外的 ID".to_string())?;
+    if matches!(
+        candidate.kind,
+        CandidateKind::SetValue { .. } | CandidateKind::SetSecret { .. }
+    ) {
+        return Ok(json!({
+            "status": "needs_input_value",
+            "reason": "Jev 已选择文本目标；请由当前主模型提供业务文本并调用 desktop_semantic_execute。文本不会发送给 Jev",
+            "observation_token": space.token,
+            "candidate_id": candidate.id,
+            "description": candidate.public_description,
+            "decision": {
+                "provider": "jev",
+                "model": decision.actual_model,
+                "confidence": decision.confidence,
+                "usage": decision.usage,
+            },
+        }));
+    }
     let result = execute_candidate(
         backend,
         &space.observation,
         &candidate,
+        &ExecutionInput::default(),
         Some(json!({
             "provider": "jev",
             "model": decision.actual_model,
             "confidence": decision.confidence,
+            "usage": decision.usage,
         })),
     )
     .await?;
@@ -265,7 +317,7 @@ async fn execute_jev_step(
         .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok());
     if let Some(verification) = verification {
         backend
-            .record_enhanced_result(&candidate.id, verification)
+            .record_enhanced_result(&candidate, verification)
             .await;
     } else if matches!(candidate.kind, CandidateKind::Done) {
         backend.finish_enhanced_goal().await;
@@ -287,6 +339,7 @@ async fn execute_candidate(
     backend: &SemanticDesktopBackend,
     before: &Observation,
     candidate: &ActionCandidate,
+    input: &ExecutionInput,
     decision: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     match candidate.kind {
@@ -326,36 +379,30 @@ async fn execute_candidate(
         }
     }
 
-    // Candidate IDs are observation-bound. Re-read immediately before dispatch
-    // and reject the action if any semantic state changed.
+    // Candidate IDs are observation-bound, but unrelated dynamic content must
+    // not invalidate an otherwise stable semantic target. Re-read immediately
+    // before dispatch and keep only the app/window boundary here; the adapter
+    // re-resolves the local locator and verifies that the target still exposes
+    // the requested native action.
     let fresh = backend
         .observer
         .observe(&ObservationScope::default())
         .await
         .map_err(|error| error.to_string())?;
-    if fresh.revision != candidate.observation_revision || fresh.fingerprint != before.fingerprint {
+    if fresh.app.id != before.app.id || fresh.window.id != before.window.id {
         backend.clear_space().await;
-        return Err("界面已变化，候选动作已过期；请重新观察后再选择".into());
+        return Err("前台应用或窗口已变化，候选动作已过期；请重新观察后再选择".into());
     }
     let receipt = backend
         .executor
-        .execute(&fresh, candidate)
+        .execute(&fresh, candidate, input)
         .await
         .map_err(|error| error.to_string())?;
     if receipt.candidate_id != candidate.id {
         return Err("执行回执与候选动作不一致".into());
     }
-    let after = backend
-        .observer
-        .observe(&ObservationScope::default())
-        .await
-        .map_err(|error| error.to_string())?;
+    let (after, verification) = verify_with_settle(backend, &fresh, candidate).await?;
     backend.clear_space().await;
-    let verification = if after.fingerprint == fresh.fingerprint {
-        Verification::NoChange
-    } else {
-        Verification::Progress
-    };
     Ok(json!({
         "status": "executed",
         "candidate_id": candidate.id,
@@ -367,6 +414,72 @@ async fn execute_candidate(
         "after_window": after.window,
         "decision": decision,
     }))
+}
+
+async fn verify_with_settle(
+    backend: &SemanticDesktopBackend,
+    before: &Observation,
+    candidate: &ActionCandidate,
+) -> Result<(Observation, Verification), String> {
+    const ATTEMPTS: usize = 6;
+    const SETTLE_MS: u64 = 125;
+
+    let mut last = backend
+        .observer
+        .observe(&ObservationScope::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    for attempt in 0..ATTEMPTS {
+        let verification = verify_observation(before, candidate, &last);
+        if verification != Verification::NoChange || attempt + 1 == ATTEMPTS {
+            return Ok((last, verification));
+        }
+        tokio::time::sleep(Duration::from_millis(SETTLE_MS)).await;
+        last = backend
+            .observer
+            .observe(&ObservationScope::default())
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    unreachable!("bounded verification loop always returns")
+}
+
+fn verify_observation(
+    before: &Observation,
+    candidate: &ActionCandidate,
+    after: &Observation,
+) -> Verification {
+    if before.app.id != after.app.id || before.window.id != after.window.id {
+        return Verification::Progress;
+    }
+    let target_before = candidate
+        .target
+        .as_deref()
+        .and_then(|id| before.nodes.iter().find(|node| node.opaque_id == id));
+    let target_after = candidate
+        .target
+        .as_deref()
+        .and_then(|id| after.nodes.iter().find(|node| node.opaque_id == id));
+    let achieved = match (&candidate.kind, target_before, target_after) {
+        (CandidateKind::Toggle, Some(old), Some(new)) => {
+            old.toggled.zip(new.toggled).is_some_and(|(a, b)| a != b)
+        }
+        (CandidateKind::Select, _, Some(new)) => new.selected == Some(true),
+        (CandidateKind::Expand, _, Some(new)) => new.expanded == Some(true),
+        (CandidateKind::Collapse, _, Some(new)) => new.expanded == Some(false),
+        (CandidateKind::Focus, _, Some(new)) => new.focused,
+        (CandidateKind::SetValue { .. }, Some(old), Some(new)) => {
+            old.value_fingerprint != new.value_fingerprint
+        }
+        _ => false,
+    };
+    if achieved {
+        Verification::Achieved
+    } else if after.fingerprint != before.fingerprint {
+        Verification::Progress
+    } else {
+        Verification::NoChange
+    }
 }
 
 fn grant_for(observation: &Observation) -> ExecutionGrant {
@@ -439,9 +552,12 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     struct FakeAdapter {
         executions: AtomicUsize,
+        candidate_kind: CandidateKind,
+        received_value: Mutex<Option<String>>,
     }
 
     fn observation() -> Observation {
@@ -488,7 +604,7 @@ mod tests {
                 id: "fake-candidate".into(),
                 observation_revision: observation.revision,
                 target: Some("fake-target".into()),
-                kind: CandidateKind::Invoke,
+                kind: self.candidate_kind.clone(),
                 public_description: "Invoke fake button".into(),
                 local_risk: crate::desktop_automation::RiskClass::Reversible,
                 preconditions: vec![],
@@ -503,11 +619,13 @@ mod tests {
             &self,
             _fresh: &Observation,
             action: &ActionCandidate,
+            input: &ExecutionInput,
         ) -> Result<
             crate::desktop_automation::ActionReceipt,
             crate::desktop_automation::AutomationError,
         > {
             self.executions.fetch_add(1, Ordering::SeqCst);
+            *self.received_value.lock().unwrap() = input.value.clone();
             Ok(crate::desktop_automation::ActionReceipt {
                 candidate_id: action.id.clone(),
                 dispatched: true,
@@ -520,6 +638,8 @@ mod tests {
     async fn semantic_execute_requires_matching_observation_token() {
         let adapter = Arc::new(FakeAdapter {
             executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -557,12 +677,79 @@ mod tests {
             .unwrap();
         assert!(executed.success);
         assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+        assert_eq!(*adapter.received_value.lock().unwrap(), None);
+    }
+
+    fn stateful_observation(fingerprint: &str, toggled: bool) -> Observation {
+        let mut observation = observation();
+        observation.fingerprint = fingerprint.into();
+        observation.nodes = vec![crate::desktop_automation::UiNode {
+            opaque_id: "target".into(),
+            role: crate::desktop_automation::UiRole::CheckBox,
+            name: Some("Option".into()),
+            short_value: None,
+            enabled: true,
+            visible: true,
+            focused: false,
+            secure: false,
+            toggled: Some(toggled),
+            selected: None,
+            expanded: None,
+            value_fingerprint: None,
+            supported_actions: vec![crate::desktop_automation::NativeAction::Toggle],
+        }];
+        observation
+    }
+
+    #[tokio::test]
+    async fn semantic_set_value_stays_local_and_preserves_whitespace() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::SetValue {
+                slot_id: "value".into(),
+            },
+            received_value: Mutex::new(None),
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter.clone());
+
+        let observed = registry
+            .execute_semantic_desktop_tool("desktop_semantic_observe", &json!({ "goal": "fill" }))
+            .await
+            .unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(observed.output.as_deref().unwrap()).unwrap();
+        let token = payload["observation_token"].as_str().unwrap();
+        let executed = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_execute",
+                &json!({
+                    "observation_token": token,
+                    "candidate_id": "fake-candidate",
+                    "value": "  local text  "
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(executed.success);
+        assert_eq!(
+            adapter.received_value.lock().unwrap().as_deref(),
+            Some("  local text  ")
+        );
+        assert!(!executed
+            .output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local text"));
     }
 
     #[tokio::test]
     async fn jev_step_is_rejected_when_enhanced_mode_is_off() {
         let adapter = Arc::new(FakeAdapter {
             executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter);
@@ -576,5 +763,26 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("未启用"));
+    }
+
+    #[test]
+    fn verification_prefers_target_state_over_generic_window_change() {
+        let before = stateful_observation("before", false);
+        let after = stateful_observation("after", true);
+        let candidate = ActionCandidate {
+            id: "toggle".into(),
+            observation_revision: 1,
+            target: Some("target".into()),
+            kind: CandidateKind::Toggle,
+            public_description: "Toggle option".into(),
+            local_risk: crate::desktop_automation::RiskClass::Reversible,
+            preconditions: vec![],
+            expected_effects: vec![],
+        };
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Achieved
+        );
     }
 }

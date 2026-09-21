@@ -66,10 +66,11 @@ impl ToolRegistry {
             ),
             tool_def(
                 "desktop_semantic_execute",
-                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
+                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；SetValue 候选可附带 value，该文本只交给本地执行器且不会发送给 Jev。执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
                 json_props! {
                     "observation_token" => obj!("type"="string","description"="最近一次语义观察返回的不可预测短期令牌"),
-                    "candidate_id" => obj!("type"="string","description"="最近一次语义观察返回的候选动作 ID")
+                    "candidate_id" => obj!("type"="string","description"="最近一次语义观察返回的候选动作 ID"),
+                    "value" => obj!("type"="string","description"="仅用于 SetValue 候选的本地文本；保持原始空白，不会发送给 Jev","maxLength"=16384)
                 },
                 &["observation_token", "candidate_id"],
             ),

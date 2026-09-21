@@ -23,6 +23,7 @@ pub trait ComputerExecutor: Send + Sync {
         &self,
         fresh: &Observation,
         action: &ActionCandidate,
+        input: &ExecutionInput,
     ) -> Result<ActionReceipt, AutomationError>;
 }
 
@@ -130,7 +131,7 @@ impl AutomationRunner {
                 goal: request.goal.clone(),
                 observation: observation.clone(),
                 candidates: candidates.clone(),
-                recent_candidate_ids: recent.clone(),
+                recent_actions: recent.clone(),
             };
             let decider: &dyn DecisionProvider = if request.enhanced_mode {
                 self.jev_decider.as_deref().ok_or_else(|| {
@@ -147,13 +148,23 @@ impl AutomationRunner {
                 .find(|candidate| candidate.id == decision.candidate_id)
                 .cloned()
                 .ok_or_else(|| AutomationError::UnknownCandidate(decision.candidate_id.clone()))?;
+            let decision_detail = match (&decision.actual_model, decision.usage) {
+                (Some(model), Some(usage)) => format!(
+                    "{model}; usage input={} output={}",
+                    usage.input_tokens, usage.output_tokens
+                ),
+                (Some(model), None) => model.clone(),
+                (None, Some(usage)) => format!(
+                    "local decision provider; usage input={} output={}",
+                    usage.input_tokens, usage.output_tokens
+                ),
+                (None, None) => "local decision provider".into(),
+            };
             trace.push(TraceEvent {
                 kind: TraceEventKind::DecisionMade,
                 observation_revision: Some(observation.revision),
                 candidate_id: Some(candidate.id.clone()),
-                detail: decision
-                    .actual_model
-                    .unwrap_or_else(|| "local decision provider".into()),
+                detail: decision_detail,
             });
 
             match candidate.kind {
@@ -227,24 +238,22 @@ impl AutomationRunner {
                 continue;
             }
 
-            let receipt = self.executor.execute(&fresh, &candidate).await?;
+            let receipt = self
+                .executor
+                .execute(&fresh, &candidate, &ExecutionInput::default())
+                .await?;
             if receipt.candidate_id != candidate.id {
                 return Err(AutomationError::Execution(
                     "executor receipt candidate id does not match dispatched candidate".into(),
                 ));
             }
             executed_steps += 1;
-            recent.push(candidate.id.clone());
-            if recent.len() > 8 {
-                recent.remove(0);
-            }
             trace.push(TraceEvent {
                 kind: TraceEventKind::Executed,
                 observation_revision: Some(fresh.revision),
                 candidate_id: Some(candidate.id.clone()),
                 detail: "one locally validated action dispatched".into(),
             });
-
             let after = self.observer.observe(&request.scope).await?;
             let mut verification = self
                 .verifier
@@ -269,6 +278,14 @@ impl AutomationRunner {
                 candidate_id: Some(candidate.id.clone()),
                 detail: format!("{verification:?}"),
             });
+            recent.push(RecentAction {
+                action_class: candidate.action_class(),
+                target_summary: candidate.public_description.clone(),
+                verification,
+            });
+            if recent.len() > 8 {
+                recent.remove(0);
+            }
 
             match verification {
                 Verification::Achieved | Verification::Progress => stall_count = 0,
@@ -408,6 +425,7 @@ mod tests {
                 confidence: None,
                 probabilities: Default::default(),
                 actual_model: None,
+                usage: None,
             })
         }
     }
@@ -420,6 +438,7 @@ mod tests {
             &self,
             _fresh: &Observation,
             action: &ActionCandidate,
+            _input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
             Ok(ActionReceipt {
                 candidate_id: action.id.clone(),

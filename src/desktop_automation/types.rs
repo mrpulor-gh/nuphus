@@ -55,6 +55,15 @@ pub struct UiNode {
     pub visible: bool,
     pub focused: bool,
     pub secure: bool,
+    #[serde(default)]
+    pub toggled: Option<bool>,
+    #[serde(default)]
+    pub selected: Option<bool>,
+    #[serde(default)]
+    pub expanded: Option<bool>,
+    /// Opaque hash used only to verify that a non-secret ValuePattern changed.
+    #[serde(default)]
+    pub value_fingerprint: Option<String>,
     pub supported_actions: Vec<NativeAction>,
 }
 
@@ -259,7 +268,20 @@ pub struct DecisionInput {
     pub observation: Observation,
     pub candidates: Vec<ActionCandidate>,
     #[serde(default)]
-    pub recent_candidate_ids: Vec<String>,
+    pub recent_actions: Vec<RecentAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentAction {
+    pub action_class: ActionClass,
+    pub target_summary: String,
+    pub verification: Verification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -270,6 +292,7 @@ pub struct Decision {
     #[serde(default)]
     pub probabilities: BTreeMap<String, f64>,
     pub actual_model: Option<String>,
+    pub usage: Option<DecisionUsage>,
 }
 
 #[async_trait]
@@ -282,6 +305,15 @@ pub struct ActionReceipt {
     pub candidate_id: String,
     pub dispatched: bool,
     pub detail: Option<String>,
+}
+
+/// Ephemeral values supplied by the trusted local caller at dispatch time.
+///
+/// This payload is deliberately not serializable: decision providers select
+/// only a candidate id and never receive the text that will be written.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionInput {
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

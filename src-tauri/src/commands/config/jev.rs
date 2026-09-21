@@ -187,7 +187,7 @@ pub async fn test_jev_connection(
                 expected_effects: vec![],
             },
         ],
-        recent_candidate_ids: vec![],
+        recent_actions: vec![],
     };
     let decision = client
         .choose(input)

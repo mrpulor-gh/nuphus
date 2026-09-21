@@ -1047,7 +1047,7 @@ Explore → Solidify → Design → Verify → Decide
 | 场景 | 执行标准 |
 |------|----------|
 | 桌面元素定位 | UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe，禁止固化到工作流文件 |
-| Jev 增强模式 | Jev 参与只通过 `desktop_agent_step(goal)` 做一次有界选择；Jev 不生成坐标、脚本、选择器或输入内容。增强模式不禁用后续视觉/鼠标回退 |
+| Jev 增强模式 | Jev 参与只通过 `desktop_agent_step(goal)` 做一次有界选择；Jev 不生成坐标、脚本、选择器或输入内容。返回 `needs_input_value` 时，由当前主模型把业务文本作为 `value` 调用返回的 semantic_execute 候选；该文本不会发送给 Jev。增强模式不禁用后续视觉/鼠标回退 |
 | 视觉回退 | 仅在当前应用无可用语义树/原生 Pattern 时使用 vision→perceive；坐标必须来自最新本地观察 |
 | 定位不精确 | `request_user_input(region)` 是首选方案，非降级 |
 | 同坐标连续失败 ≥2 次 | 先怀疑功能约束（锁死/权限/状态），`request_user_input` 确认，不反复调坐标 |

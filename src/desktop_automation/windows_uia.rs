@@ -8,6 +8,7 @@ use super::runner::{CandidateBuilder, ComputerExecutor, ComputerObserver};
 use super::types::*;
 
 const DEFAULT_MAX_ELEMENTS: usize = 200;
+const MAX_DECISION_ACTIONS: usize = 37;
 
 #[cfg(windows)]
 mod platform {
@@ -18,7 +19,7 @@ mod platform {
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
-    use windows::core::Interface;
+    use windows::core::{Interface, BSTR};
     use windows::Win32::Foundation::{BOOL, HWND};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -27,14 +28,14 @@ mod platform {
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
         IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
-        TreeScope_Descendants, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-        UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-        UIA_ExpandCollapsePatternId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
-        UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuControlTypeId,
-        UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SelectionItemPatternId,
-        UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId, UIA_TogglePatternId,
-        UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_WindowControlTypeId,
-        UIA_CONTROLTYPE_ID,
+        IUIAutomationValuePattern, TreeScope_Descendants, UIA_ButtonControlTypeId,
+        UIA_CheckBoxControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
+        UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_HyperlinkControlTypeId,
+        UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+        UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
+        UIA_SelectionItemPatternId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+        UIA_TextControlTypeId, UIA_TogglePatternId, UIA_TreeControlTypeId,
+        UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
@@ -50,6 +51,10 @@ mod platform {
         visible: bool,
         focused: bool,
         secure: bool,
+        value_fingerprint: Option<u64>,
+        toggled: Option<bool>,
+        selected: Option<bool>,
+        expanded: Option<bool>,
         supported_actions: Vec<NativeAction>,
     }
 
@@ -69,6 +74,12 @@ mod platform {
                 visible: self.visible,
                 focused: self.focused,
                 secure: self.secure,
+                toggled: self.toggled,
+                selected: self.selected,
+                expanded: self.expanded,
+                value_fingerprint: self
+                    .value_fingerprint
+                    .map(|value| format!("value:{value:016x}")),
                 supported_actions: self.supported_actions.clone(),
             }
         }
@@ -77,7 +88,7 @@ mod platform {
     #[derive(Debug, Clone)]
     struct InternalLocator {
         app_id: String,
-        window_title: String,
+        window_id: String,
         target_opaque_id: String,
         role: UiRole,
         automation_id: Option<String>,
@@ -190,7 +201,7 @@ mod platform {
                 .count();
             Ok(InternalLocator {
                 app_id: observation.app.id.clone(),
-                window_title: observation.window.title.clone(),
+                window_id: observation.window.id.clone(),
                 target_opaque_id: node.opaque_id.clone(),
                 role: metadata.role.clone(),
                 automation_id: metadata.automation_id.clone(),
@@ -203,14 +214,10 @@ mod platform {
 
         fn execute_candidate(
             &self,
-            fresh: &Observation,
+            _fresh: &Observation,
             action: &ActionCandidate,
+            input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
-            if action.observation_revision != fresh.revision {
-                return Err(AutomationError::Execution(
-                    "candidate is bound to a stale UIA observation".into(),
-                ));
-            }
             let locator = self
                 .state
                 .lock()
@@ -235,16 +242,13 @@ mod platform {
             // Re-read the foreground tree immediately before dispatch. No COM
             // element or HWND from a previous observation is ever reused.
             let snapshot = capture_native(self.max_elements)?;
-            if snapshot.app.id != locator.app_id
-                || snapshot.window.title != locator.window_title
-                || snapshot.fingerprint != fresh.fingerprint
-            {
+            if snapshot.app.id != locator.app_id || snapshot.window.id != locator.window_id {
                 return Err(AutomationError::Execution(
                     "foreground UI changed before native dispatch".into(),
                 ));
             }
             let element = resolve_unique(&snapshot.nodes, &locator)?;
-            dispatch(element, &locator.action)?;
+            dispatch(element, &locator.action, input)?;
             Ok(ActionReceipt {
                 candidate_id: action.id.clone(),
                 dispatched: true,
@@ -260,6 +264,7 @@ mod platform {
                 supported: vec![
                     PlatformCapability::ReadSemanticTree,
                     PlatformCapability::NativeAction,
+                    PlatformCapability::WriteValue,
                 ],
                 accessibility_permission: true,
             }
@@ -273,21 +278,16 @@ mod platform {
     impl CandidateBuilder for WindowsUiaAdapter {
         fn build(
             &self,
-            _goal: &str,
+            goal: &str,
             observation: &Observation,
         ) -> Result<Vec<ActionCandidate>, AutomationError> {
-            let mut candidates = Vec::new();
-            let mut candidate_locators = HashMap::new();
+            let mut ranked = Vec::new();
 
-            // Reserve three Choice slots for bounded loop control candidates.
-            'nodes: for node in &observation.nodes {
+            for node in &observation.nodes {
                 if !node.enabled || !node.visible {
                     continue;
                 }
                 for native_action in &node.supported_actions {
-                    if candidates.len() >= 252 {
-                        break 'nodes;
-                    }
                     let locator = self.locator_for(observation, node, native_action.clone())?;
                     let id = format!("uia:{}", Uuid::new_v4().simple());
                     let kind = candidate_kind(native_action);
@@ -307,9 +307,20 @@ mod platform {
                             std::iter::empty::<(&str, &str)>(),
                         )],
                     };
-                    candidate_locators.insert(id, locator);
-                    candidates.push(candidate);
+                    ranked.push((
+                        candidate_relevance(goal, node, native_action),
+                        candidate,
+                        locator,
+                    ));
                 }
+            }
+            ranked.sort_by_key(|item| std::cmp::Reverse(item.0));
+            ranked.truncate(MAX_DECISION_ACTIONS);
+            let mut candidate_locators = HashMap::new();
+            let mut candidates = Vec::with_capacity(ranked.len() + 3);
+            for (_, candidate, locator) in ranked {
+                candidate_locators.insert(candidate.id.clone(), locator);
+                candidates.push(candidate);
             }
 
             for (suffix, kind, description) in [
@@ -351,8 +362,9 @@ mod platform {
             &self,
             fresh: &Observation,
             action: &ActionCandidate,
+            input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
-            self.execute_candidate(fresh, action)
+            self.execute_candidate(fresh, action, input)
         }
     }
 
@@ -397,10 +409,16 @@ mod platform {
         let window_title = nonempty(title)
             .or(root_name)
             .unwrap_or_else(|| "Untitled".into());
+        let root_automation_id = element_text(unsafe { root.CurrentAutomationId() }.ok(), 256);
         let window = WindowIdentity {
             id: format!(
                 "windows-window:{:016x}",
-                stable_hash(&format!("{}|{}", app.id, window_title))
+                stable_hash(&format!(
+                    "{}|{}|{}",
+                    app.id,
+                    window_class,
+                    root_automation_id.as_deref().unwrap_or_default()
+                ))
             ),
             title: window_title,
         };
@@ -456,22 +474,77 @@ mod platform {
         if supports_pattern::<IUIAutomationInvokePattern>(&element, UIA_InvokePatternId) {
             supported_actions.push(NativeAction::Invoke);
         }
-        if supports_pattern::<IUIAutomationTogglePattern>(&element, UIA_TogglePatternId) {
+        let toggle_pattern = unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+        }
+        .ok();
+        if toggle_pattern.is_some() {
             supported_actions.push(NativeAction::Toggle);
         }
-        if supports_pattern::<IUIAutomationSelectionItemPattern>(
-            &element,
-            UIA_SelectionItemPatternId,
-        ) {
+        let selection_pattern = unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
+                UIA_SelectionItemPatternId,
+            )
+        }
+        .ok();
+        let selected = selection_pattern
+            .as_ref()
+            .and_then(|pattern| unsafe { pattern.CurrentIsSelected() }.ok())
+            .map(|value| value.as_bool());
+        if selection_pattern.is_some() && selected != Some(true) {
             supported_actions.push(NativeAction::Select);
         }
-        if supports_pattern::<IUIAutomationExpandCollapsePattern>(
-            &element,
-            UIA_ExpandCollapsePatternId,
-        ) {
-            supported_actions.push(NativeAction::Expand);
-            supported_actions.push(NativeAction::Collapse);
+        let expand_pattern = unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(
+                UIA_ExpandCollapsePatternId,
+            )
         }
+        .ok();
+        let expanded = expand_pattern
+            .as_ref()
+            .and_then(|pattern| unsafe { pattern.CurrentExpandCollapseState() }.ok())
+            .and_then(|state| {
+                if state == windows::Win32::UI::Accessibility::ExpandCollapseState_Expanded {
+                    Some(true)
+                } else if state == windows::Win32::UI::Accessibility::ExpandCollapseState_Collapsed
+                {
+                    Some(false)
+                } else {
+                    None
+                }
+            });
+        if expand_pattern.is_some() {
+            match expanded {
+                Some(true) => supported_actions.push(NativeAction::Collapse),
+                Some(false) => supported_actions.push(NativeAction::Expand),
+                None => {
+                    supported_actions.push(NativeAction::Expand);
+                    supported_actions.push(NativeAction::Collapse);
+                }
+            }
+        }
+        let value_pattern =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+                .ok();
+        let writable_value = value_pattern
+            .as_ref()
+            .and_then(|pattern| unsafe { pattern.CurrentIsReadOnly() }.ok())
+            .is_some_and(|value| !value.as_bool());
+        if writable_value && !secure {
+            supported_actions.push(NativeAction::SetValue);
+        }
+        let value_fingerprint = if secure {
+            None
+        } else {
+            value_pattern
+                .as_ref()
+                .and_then(|pattern| unsafe { pattern.CurrentValue() }.ok())
+                .map(|value| stable_hash(&value.to_string()))
+        };
+        let toggled = toggle_pattern
+            .as_ref()
+            .and_then(|pattern| unsafe { pattern.CurrentToggleState() }.ok())
+            .map(|state| state == windows::Win32::UI::Accessibility::ToggleState_On);
         if bool_or(unsafe { element.CurrentIsKeyboardFocusable() }, false) {
             supported_actions.push(NativeAction::Focus);
         }
@@ -494,6 +567,10 @@ mod platform {
                 visible,
                 focused,
                 secure,
+                value_fingerprint,
+                toggled,
+                selected,
+                expanded,
                 supported_actions,
             },
             element,
@@ -533,6 +610,7 @@ mod platform {
     fn dispatch(
         element: &IUIAutomationElement,
         action: &NativeAction,
+        input: &ExecutionInput,
     ) -> Result<(), AutomationError> {
         let result = unsafe {
             match action {
@@ -558,6 +636,17 @@ mod platform {
                     )
                     .and_then(|pattern| pattern.Collapse()),
                 NativeAction::Focus => element.SetFocus(),
+                NativeAction::SetValue => {
+                    let value = input.value.as_deref().ok_or_else(|| {
+                        AutomationError::Execution(
+                            "SetValue requires caller-provided text at dispatch time".into(),
+                        )
+                    })?;
+                    let value = BSTR::from(value);
+                    element
+                        .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                        .and_then(|pattern| pattern.SetValue(&value))
+                }
                 unsupported => {
                     return Err(AutomationError::Execution(format!(
                         "native UIA action {unsupported:?} is not supported by this slice"
@@ -576,6 +665,9 @@ mod platform {
             NativeAction::Expand => CandidateKind::Expand,
             NativeAction::Collapse => CandidateKind::Collapse,
             NativeAction::Focus => CandidateKind::Focus,
+            NativeAction::SetValue => CandidateKind::SetValue {
+                slot_id: "value".into(),
+            },
             _ => unreachable!("candidate builder filters to the supported UIA slice"),
         }
     }
@@ -587,6 +679,34 @@ mod platform {
             .map(redact_public_name)
             .unwrap_or_else(|| "unnamed control".into());
         format!("{action:?} {:?} '{name}'", node.role)
+    }
+
+    fn candidate_relevance(goal: &str, node: &UiNode, action: &NativeAction) -> i32 {
+        let goal = goal.to_lowercase();
+        let name = node.name.as_deref().unwrap_or_default().to_lowercase();
+        let mut score = 0_i32;
+        if !name.is_empty() {
+            score += 20;
+            if goal.contains(&name) {
+                score += 120;
+            }
+            for token in goal.split(|ch: char| !ch.is_alphanumeric()) {
+                if token.chars().count() >= 2 && name.contains(token) {
+                    score += 35;
+                }
+            }
+        }
+        if node.focused {
+            score += 30;
+        }
+        score += match action {
+            NativeAction::Invoke | NativeAction::SetValue => 18,
+            NativeAction::Toggle | NativeAction::Select => 14,
+            NativeAction::Expand | NativeAction::Collapse => 10,
+            NativeAction::Focus => 2,
+            _ => 0,
+        };
+        score
     }
 
     fn redact_public_name(value: &str) -> String {
@@ -609,6 +729,9 @@ mod platform {
     }
 
     fn classify_risk(action: &NativeAction, name: Option<&str>) -> RiskClass {
+        if matches!(action, NativeAction::SetValue) {
+            return RiskClass::BoundedWrite;
+        }
         if !matches!(action, NativeAction::Invoke) {
             return RiskClass::Reversible;
         }
@@ -704,6 +827,10 @@ mod platform {
             node.metadata.visible.hash(&mut hasher);
             node.metadata.focused.hash(&mut hasher);
             node.metadata.secure.hash(&mut hasher);
+            node.metadata.value_fingerprint.hash(&mut hasher);
+            node.metadata.toggled.hash(&mut hasher);
+            node.metadata.selected.hash(&mut hasher);
+            node.metadata.expanded.hash(&mut hasher);
             for action in &node.metadata.supported_actions {
                 std::mem::discriminant(action).hash(&mut hasher);
             }
@@ -885,6 +1012,7 @@ mod platform {
             &self,
             _fresh: &Observation,
             _action: &ActionCandidate,
+            _input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
             Err(AutomationError::Execution(
                 "Windows UI Automation is unsupported on this platform".into(),
