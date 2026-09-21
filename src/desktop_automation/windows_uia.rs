@@ -963,10 +963,43 @@ mod platform {
         if [
             "permanently delete",
             "永久删除",
+            "delete account",
+            "remove account",
+            "close account",
+            "注销账户",
+            "注销账号",
+            "删除账户",
+            "删除账号",
+            "delete all data",
+            "erase all data",
+            "wipe all data",
+            "清除所有数据",
+            "删除所有数据",
+            "factory reset",
+            "restore factory settings",
+            "恢复出厂设置",
+            "format drive",
+            "format disk",
+            "格式化磁盘",
+            "格式化驱动器",
             "purchase",
+            "confirm purchase",
+            "place order",
+            "confirm order",
             "支付",
+            "确认支付",
+            "立即付款",
+            "提交订单",
             "buy now",
+            "transfer funds",
+            "wire transfer",
+            "confirm transfer",
+            "转账",
+            "确认转账",
             "grant permission",
+            "allow access",
+            "授予权限",
+            "允许访问",
             "security settings",
             "安全设置",
         ]
@@ -1330,6 +1363,30 @@ mod platform {
             assert!(!candidates
                 .iter()
                 .any(|candidate| candidate.kind == CandidateKind::Invoke));
+        }
+
+        #[test]
+        fn critical_risk_covers_account_payment_and_destructive_system_actions() {
+            for label in [
+                "Delete account",
+                "恢复出厂设置",
+                "Format drive",
+                "Confirm transfer",
+                "提交订单",
+                "Grant permission",
+            ] {
+                assert_eq!(
+                    classify_risk(&NativeAction::Invoke, Some(label)),
+                    RiskClass::DestructiveCritical,
+                    "{label} must be gated as a major irreversible action"
+                );
+            }
+
+            assert_eq!(
+                classify_risk(&NativeAction::Invoke, Some("Delete draft")),
+                RiskClass::Reversible,
+                "ordinary reversible deletion must not be over-gated"
+            );
         }
     }
 }

@@ -151,10 +151,6 @@ impl SemanticDesktopBackend {
             state.recent_actions.remove(0);
         }
     }
-
-    async fn finish_enhanced_goal(&self) {
-        *self.loop_state.lock().await = EnhancedLoopState::default();
-    }
 }
 
 fn normalize_goal_key(goal: &str) -> String {
@@ -407,7 +403,6 @@ async fn execute_jev_step(
         .ok_or_else(|| "Jev 返回了候选集合之外的 ID".to_string())?;
     if matches!(candidate.kind, CandidateKind::Done) {
         backend.clear_space().await;
-        backend.finish_enhanced_goal().await;
         return Ok(json!({
             "status": "needs_primary_completion_check",
             "reason": "Jev 只提出任务可能已完成；请由当前主模型结合业务目标确认是否结束，不会把 Jev 的 Done 直接当作本地完成事实",

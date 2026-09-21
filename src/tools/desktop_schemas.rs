@@ -114,7 +114,7 @@ impl ToolRegistry {
         if self.enhanced_mode {
             schemas.push(tool_def(
                 "desktop_agent_step",
-                "Jev 增强模式的单步桌面决策：本地读取 UIA、构造候选动作，Jev 只能选择一个 candidate_id，本地复核后执行并重新观察验证。一次调用最多执行一个原生动作。",
+                "Jev 增强模式下新桌面动作选择的首选入口：本地读取 UIA、构造候选动作，Jev 只能选择一个 candidate_id，本地复核后执行并重新观察验证。一次调用最多执行一个原生动作；Jev 转交主模型或语义树不适用时仍可回退普通语义、视觉与鼠标工具。",
                 json_props! {
                     "goal" => obj!("type"="string","description"="当前桌面任务目标；Jev 仅据此从本地候选集合中选择")
                 },
