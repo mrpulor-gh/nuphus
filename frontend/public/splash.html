@@ -38,15 +38,17 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 10px;
+        gap: 18px;
       }
 
       /* ── 等待态（默认）：logo + hint ── */
       .logo {
         position: relative;
       }
-      /* 下载面板出现时，logo 缩小让位（节奏：视口小，download 面板更高） */
-      body.downloading .logo {
+      /* 下载态：logo 与 hint 一起让位 —— 面板自带「标题 / 百分比 / 文件名」三段，
+         hint 的实时文案与面板信息重复（极简原则：同一时刻只留一套信息） */
+      body.downloading .logo,
+      body.downloading .hint {
         display: none;
       }
       .nv-eye {
@@ -90,43 +92,51 @@
 
       .hint {
         font-size: 12px;
-        color: var(--ink-2);
-        letter-spacing: 0.02em;
+        color: var(--ink-3);
+        letter-spacing: 0.06em;
         transition: opacity 0.3s ease;
       }
 
-      /* ── 下载态：面板式布局，黑白反色纪律（纸白底 + 墨色元素）── */
+      /* ── 下载态：极简四段式（抬头 → 百分比 → 进度条 → 文件名），整体居中。
+         黑白反色纪律：纸白底 + 墨色元素，不用彩色 ── */
       .dl-panel {
         display: none;
         flex-direction: column;
-        align-items: stretch;
-        width: 212px;
-        gap: 8px;
+        align-items: center;
+        width: 280px;
+        gap: 14px;
       }
       body.downloading .dl-panel {
         display: flex;
       }
 
-      .dl-head {
+      /* 抬头与百分比成一组：抬头弱、数字强——视线先落在「还要多久」 */
+      .dl-meta {
         display: flex;
-        align-items: baseline;
-        justify-content: space-between;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
       }
       .dl-title {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--ink);
-        letter-spacing: 0.02em;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--ink-3);
+        letter-spacing: 0.12em;
       }
       .dl-pct {
-        font-size: 12px;
+        min-height: 26px;
+        font-size: 26px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.01em;
         font-variant-numeric: tabular-nums;
         color: var(--ink);
-        font-weight: 600;
       }
       .dl-file {
+        max-width: 100%;
         font-size: 10px;
-        color: var(--ink-3);
+        color: var(--ink-4);
+        letter-spacing: 0.02em;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -136,7 +146,7 @@
          品牌纪律：黑白反色——实心墨色填充，不用彩色渐变 */
       .bar {
         width: 100%;
-        height: 6px;
+        height: 4px;
         border-radius: 999px;
         background: var(--track);
         overflow: hidden;
@@ -161,13 +171,14 @@
         }
       }
 
-      /* 「后台下载」出口：下载卡住 10s 才出现。黑白反色——纸白底墨字
-         墨描边，hover 反转为墨底纸白字 */
+      /* 「后台下载」出口：下载卡住 10s 才出现。
+         视觉 = 欢迎页「继续对话」按钮同款药丸（基底底 + 反色文字/描边、hover 反色互换、
+         按下微缩）——本页遵循黑白反色纪律，故映射为 paper 底 / ink 字，hover 互换 */
       .skip-wrap {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 5px;
+        gap: 10px;
       }
       /* 根治历史「后台下载常显」：作者样式的 display:flex 会覆盖 UA 默认的
          [hidden]{display:none} → hidden 属性设了也白设、按钮永远可见。
@@ -176,25 +187,36 @@
         display: none;
       }
       .skip-btn {
-        font-size: 11px;
+        padding: 8px 28px;
+        background: var(--paper);
         color: var(--ink);
-        background: none;
-        border: 1px solid var(--ink);
+        border: 2px solid var(--ink);
         border-radius: 999px;
-        padding: 3px 12px;
-        cursor: pointer;
         font-family: var(--font-ui);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        cursor: pointer;
         transition:
-          background 0.2s ease,
-          color 0.2s ease;
+          background 0.3s ease,
+          color 0.3s ease,
+          transform 0.2s ease;
       }
       .skip-btn:hover {
         background: var(--ink);
         color: var(--paper);
       }
+      .skip-btn:active {
+        transform: scale(0.97);
+      }
+      .skip-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
       .skip-note {
         font-size: 10px;
         color: var(--ink-4);
+        letter-spacing: 0.02em;
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -247,9 +269,9 @@
 
     <!-- 下载面板：仅真实模型下载（splash:progress 携带 pct）时由 splash.js 亮出 -->
     <div class="dl-panel" id="dlPanel">
-      <div class="dl-head">
-        <span class="dl-title">正在下载内置模型</span>
-        <span class="dl-pct" id="dlPct"></span>
+      <div class="dl-meta">
+        <div class="dl-title">正在下载内置模型</div>
+        <div class="dl-pct" id="dlPct"></div>
       </div>
       <div class="bar indeterminate" id="bar" hidden><div class="bar-fill" id="barFill"></div></div>
       <div class="dl-file" id="dlFile"></div>
@@ -265,6 +287,6 @@
     <!-- 版本号缓存破坏符：WebView2 曾长期缓存旧版 splash.js（URL 不变缓存不失效），
        导致"已全就绪仍显示后台下载"改了源码也变不过来的历史根因之一。
        每次改 splash.js 必须同时 bump 这个版本号，强制 WebView2 换 URL 重新拉取。 -->
-    <script src="splash.js?v=20260908"></script>
+    <script src="splash.js?v=20260922"></script>
   </body>
 </html>
