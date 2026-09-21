@@ -1124,6 +1124,8 @@ mod tests {
         assert_eq!(added, vec!["desktop_agent_step".to_string()]);
         assert!(enhanced.contains("desktop_semantic_observe"));
         assert!(enhanced.contains("desktop_semantic_execute"));
+        assert!(enhanced.contains("desktop_mouse"));
+        assert!(enhanced.contains("desktop_mouse_drag"));
     }
 
     /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。

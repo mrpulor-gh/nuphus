@@ -186,7 +186,10 @@ impl JevClient {
                     "candidate ids must be non-empty and unique".into(),
                 ));
             }
-            criteria.insert(candidate.id.clone(), candidate.public_description.clone());
+            criteria.insert(
+                candidate.id.clone(),
+                external_text(&candidate.public_description, 240),
+            );
         }
         // Deliberately do not serialize the Observation here. UI node names and
         // values can contain private document/application content. Jev only
@@ -194,7 +197,7 @@ impl JevClient {
         // metadata and recent candidate ids; the Choice criteria below carry
         // the already-redacted public descriptions.
         let state = serde_json::json!({
-            "goal": input.goal.chars().take(2_000).collect::<String>(),
+            "goal": external_text(&input.goal, 2_000),
             "app_id": input.observation.app.id,
             "actions": input.candidates.iter().map(|candidate| serde_json::json!({
                 "id": candidate.id,
@@ -283,6 +286,37 @@ impl JevClient {
             actual_model: Some(response.model),
         })
     }
+}
+
+fn external_text(value: &str, max_chars: usize) -> String {
+    value
+        .split_whitespace()
+        .map(|token| {
+            let lower = token.to_ascii_lowercase();
+            let long_digit_run = token
+                .split(|ch: char| !ch.is_ascii_digit())
+                .any(|part| part.len() >= 8);
+            let looks_like_local_path = token.contains(":\\")
+                || token.starts_with("/Users/")
+                || token.starts_with("/home/")
+                || token.starts_with("/private/");
+            if token.contains('@')
+                || long_digit_run
+                || looks_like_local_path
+                || lower.contains("apikey_")
+                || lower.starts_with("sk-")
+                || lower.starts_with("bearer")
+            {
+                "[redacted]"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
 }
 
 #[async_trait]
@@ -460,5 +494,36 @@ mod tests {
         assert!(!json.contains("\"nodes\":"));
         assert!(!json.contains("short_value"));
         assert!(!json.contains("test-only-placeholder"));
+    }
+
+    #[test]
+    fn request_redacts_common_secret_and_local_path_shapes() {
+        let transport = Arc::new(FakeTransport {
+            calls: AtomicUsize::new(0),
+            response: SystemOneResponse {
+                model: "unused".into(),
+                answers: BTreeMap::new(),
+                usage: SystemOneUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+            },
+        });
+        let client = JevClient::with_transport(config(), transport);
+        let mut input = input();
+        input.goal = "send user@example.com apikey_secret C:\\private\\report.txt 123456789".into();
+        input.candidates[0].public_description = "Open /Users/alice/private.txt".into();
+        let json = serde_json::to_string(&client.build_request(&input).unwrap()).unwrap();
+
+        for sensitive in [
+            "user@example.com",
+            "apikey_secret",
+            "C:\\\\private",
+            "/Users/alice",
+            "123456789",
+        ] {
+            assert!(!json.contains(sensitive), "request leaked {sensitive}");
+        }
+        assert!(json.contains("[redacted]"));
     }
 }

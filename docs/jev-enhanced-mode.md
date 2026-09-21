@@ -16,6 +16,7 @@
 - Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
 - 普通模式新增 `desktop_semantic_observe(goal)` 与 `desktop_semantic_execute(observation_token, candidate_id)`；候选空间使用不可预测、短期有效的 observation token，执行前重新观察并重新解析语义目标。
 - Workflow 增强模式才暴露 `desktop_agent_step(goal)`。每次只允许 Jev 从当前候选集中选择一个 ID，再由本地策略、执行器和重新观察完成动作与验证；低置信度只触发主模型回退，不作为权限判断。
+- 增强模式不会禁用既有鼠标、OCR/YOLO 等兼容工具，但 WorkflowAgent 必须优先使用 UIA/原生动作；只有语义树不完整、自绘控件等场景才显式回退。Jev 本身始终只能选择本地候选 ID，不能生成坐标。
 - `desktop_agent_step` 仅供 WorkflowAgent 探索，不进入可保存的工作流步骤；旧坐标/OCR/YOLO 工具继续兼容。
 - `[jev]` 使用独立配置和现有密钥加密；前端只读取 `has_key`。Jev 请求不发送完整 UI tree、截图、值、坐标、句柄或密钥。
 - 增强会话已具备 100 步硬上限、连续 3 次无界面变化停止和最近候选记录；完整的跨应用 grant、事件订阅等待、文本/SecretSlot 和确定性已保存语义工作流仍属于后续阶段。
