@@ -74,6 +74,7 @@ import {
 } from '../lib/customProvider'
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
+import { JevSettings } from './JevSettings'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
@@ -1278,7 +1279,9 @@ export function ModelsPage({
       m.id === leaderVisionModelId &&
       (!agentModels.leader_provider || m.provider === agentModels.leader_provider),
   )?.supports_vision
-  const [activeView, setActiveView] = useState<'provider' | 'capabilities' | 'agents'>('provider')
+  const [activeView, setActiveView] = useState<'provider' | 'capabilities' | 'agents' | 'jev'>(
+    'provider',
+  )
   const [hasKey, setHasKey] = useState(false)
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -2303,6 +2306,25 @@ export function ModelsPage({
               </div>
             </div>
           )}
+
+          <div className="models-rail-group">
+            <div className="models-rail-group-title">自动化增强</div>
+            <div className="models-rail-list">
+              <button
+                type="button"
+                className={[
+                  'models-rail-item',
+                  'models-rail-item--sub',
+                  activeView === 'jev' ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => setActiveView('jev')}
+              >
+                <span className="models-rail-name">Jev 增强判断</span>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -3371,6 +3393,8 @@ export function ModelsPage({
                   </Section>
                 </>
               )}
+
+              {activeView === 'jev' && <JevSettings />}
             </div>
           </>
         )}
