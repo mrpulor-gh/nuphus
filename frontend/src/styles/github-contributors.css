@@ -28,6 +28,63 @@
   line-height: var(--leading-normal);
 }
 
+/* ── 历史贡献者头像墙（副标题正下方）──
+   圆形头像**前后叠压 30%**：相邻头像的横向占位 = 尺寸 × (1 − 0.3)。
+   叠压幅度经 --gh-overlap 下发（组件侧 AVATAR_OVERLAP 为单一来源，回退值保证样式表独立可用）；
+   用负外边距而非 transform —— transform 不改变布局占位，会让整排右侧多出一截空隙。
+   环状描边取页面基底色 → 叠压处自然「切」出前后关系，深色头像也不会糊成一团。 */
+.github-contributor-stack {
+  --gh-avatar-size: 30px;
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-1);
+}
+/* 圆形头像容器：页头墙与轮次卡片共用几何（尺寸与兜底色各自覆盖） */
+.github-avatar,
+.github-contributor-avatar {
+  position: relative;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.github-avatar {
+  width: var(--gh-avatar-size);
+  height: var(--gh-avatar-size);
+  box-shadow: 0 0 0 2px var(--surface-0);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+/* 前后叠加 30% */
+.github-avatar + .github-avatar {
+  margin-left: calc(var(--gh-avatar-size) * var(--gh-overlap, -0.3));
+}
+/* 悬停浮到最上层并轻微上浮：叠压时也能完整看清某一个人 */
+.github-avatar:hover {
+  z-index: 1;
+  transform: translateY(-2px);
+}
+/* 兜底首字母：外链头像未加载 / 被拦 / 离线时露出（同尺寸，不留空洞） */
+.github-avatar-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-semibold);
+}
+.github-avatar .github-avatar-fallback {
+  background: var(--surface-2);
+  color: var(--fg-3);
+}
+.github-avatar-img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* 说明栏正文（标题下）：与副标题同层级，颜色提一档以示「行动号召」 */
 .github-page-intro {
   margin: 0;
@@ -105,18 +162,16 @@
   box-shadow: var(--shadow-focus);
 }
 
+/* 轮次卡片内的头像：与页头同款（GitHub 圆形 + 首字母兜底），尺寸更小；
+   几何来自共享规则，这里只覆盖尺寸与兜底色（沿用卡片原有的 accent 家族） */
 .github-contributor-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 22px;
   height: 22px;
-  flex-shrink: 0;
-  border-radius: var(--radius-2);
+  background: var(--accent-dim);
+}
+.github-contributor-avatar .github-avatar-fallback {
   background: var(--accent-dim);
   color: var(--accent);
-  font-size: var(--fz-xs);
-  font-weight: var(--fw-semibold);
 }
 
 .github-contributor-list {

@@ -10,8 +10,10 @@
  *   - yuansui486：README 致谢 #23 / #26 / #28 的链接用户名，且这些合并提交的作者名相同；
  *   - zhoupeiyu515-ui：README 致谢 #31 的链接用户名；#32 分支提交作者邮箱与 #31 完全一致（同一人）；
  *   - jiangdingwei123-afk：#21 分支提交作者名即 GitHub 用户名（README 未收录该轮次）。
- *   未收录：zjl（#13~#19 / #20 轮次）——提交作者名无法确认为 GitHub 用户名，
- *   按「缺证不写」略去，宁缺勿造。
+ *   未收录 PR 归属：fouyzjl（#13~#19 / #20 轮次）——当时提交作者名无法确认为 GitHub 用户名，
+ *   按「缺证不写」略去，宁缺勿造。2026-09-22 经 `/contributors` API 确认该账号真实存在
+ *   且有 12 次提交，已并入头像墙（见 REPO_COMMITTERS）；轮次表内的贡献记录仍待
+ *   CHANGELOG / README 出处再补，不凭印象回填。
  *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
@@ -21,6 +23,17 @@ export const REPO_URL = 'https://github.com/mrpulor-gh/nuphus'
 
 /** 贡献者主页 URL */
 export const profileUrl = (user: string) => `https://github.com/${user}`
+
+/**
+ * GitHub 头像地址（圆形头像墙用）。
+ *
+ * ⚠️ 依赖两处放行，缺一即被拦成破图：
+ *   1. CSP `img-src` 必须同时含 `https://github.com`（发起域）与
+ *      `https://avatars.githubusercontent.com`（302 后的真实域）——见 src-tauri/tauri.conf.json；
+ *   2. 网络可达。离线 / 被拦 / 404 时由同尺寸首字母色块兜底（见 GithubPage 头像墙），
+ *      页面不会出现破图或空洞。
+ */
+export const avatarUrl = (user: string, size = 96) => `https://github.com/${user}.png?size=${size}`
 
 /** PR 详情 URL */
 export const pullUrl = (pr: number) => `${REPO_URL}/pull/${pr}`
@@ -122,3 +135,41 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
     ],
   },
 ]
+
+/**
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-22 拉取，按提交数降序）。
+ *
+ * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
+ *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人，如 zhoupeiyu515-ui）；
+ *   - 本表按 **commit 作者**记录（覆盖没有 PR 记录的提交，如 fouyzjl 的 12 次提交）。
+ *
+ * ⛔ 更新本表必须重跑（禁止凭印象增删）：
+ *   curl -H 'Accept: application/vnd.github+json' \
+ *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
+ */
+export const REPO_COMMITTERS: string[] = [
+  'yuansui486', // 32 commits
+  'fouyzjl', // 12 commits
+  'mrpulor-gh', // 3 commits（仓库所有者）
+  'jiangdingwei123-afk', // 1 commit
+]
+
+/**
+ * 历史贡献者（跨来源去重）：先按提交数降序的 API 名单，再补轮次表里 API 未覆盖的人。
+ * 用于页头头像墙：一眼可见「有多少人参与过」，不必逐轮次读下去。
+ * 放在 CONTRIBUTOR_ROUNDS / REPO_COMMITTERS 之后：模块级 IIFE 会立刻求值，写在前面会撞上 TDZ。
+ */
+export const ALL_CONTRIBUTORS: string[] = (() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  const push = (user: string) => {
+    if (seen.has(user)) return
+    seen.add(user)
+    out.push(user)
+  }
+  for (const user of REPO_COMMITTERS) push(user)
+  for (const round of CONTRIBUTOR_ROUNDS) {
+    for (const c of round.contributors) push(c.user)
+  }
+  return out
+})()

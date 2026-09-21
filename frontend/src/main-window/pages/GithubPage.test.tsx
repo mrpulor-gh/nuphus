@@ -1,7 +1,13 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { GithubPage } from './GithubPage'
-import { CONTRIBUTOR_ROUNDS, REPO_URL, pullUrl } from './githubContributors'
+import {
+  ALL_CONTRIBUTORS,
+  CONTRIBUTOR_ROUNDS,
+  REPO_COMMITTERS,
+  REPO_URL,
+  pullUrl,
+} from './githubContributors'
 
 const contributorCount = CONTRIBUTOR_ROUNDS.reduce((n, r) => n + r.contributors.length, 0)
 const contributionCount = CONTRIBUTOR_ROUNDS.reduce(
@@ -33,9 +39,11 @@ describe('GithubPage 贡献者页', () => {
   })
 
   it('每位贡献者都有主页链接（href 正确、target=_blank、rel=noreferrer）', () => {
-    render(<GithubPage />)
+    const { container } = render(<GithubPage />)
 
-    const links = screen.getAllByRole('link')
+    // 只统计轮次卡片内的贡献者链接（页头头像墙也是同样的主页链接，另有用例覆盖）
+    const rounds = container.querySelector('.github-rounds') as HTMLElement
+    const links = within(rounds).getAllByRole('link')
     const profileLinks = links.filter(link => {
       const href = link.getAttribute('href') ?? ''
       return href.startsWith('https://github.com/') && href !== REPO_URL && !href.includes('/pull/')
@@ -104,15 +112,59 @@ describe('GithubPage 贡献者页', () => {
     expect(container.querySelector('.github-page-foot .github-repo-entry')).toBeNull()
   })
 
-  it('头像为首字母色块：不引用外链图片，首字母大写，且不污染可访问名', () => {
+  it('头像：页头头像墙与轮次卡片统一为 GitHub 圆形头像 + 首字母兜底', () => {
     const { container } = render(<GithubPage />)
 
-    expect(container.querySelector('img')).toBeNull()
-    const avatars = [...container.querySelectorAll('.github-contributor-avatar')]
-    expect(avatars).toHaveLength(contributorCount)
-    for (const avatar of avatars) {
-      expect(avatar.textContent).toMatch(/^[A-Z0-9]$/)
-      expect(avatar).toHaveAttribute('aria-hidden', 'true')
+    // 页头头像墙：每位历史贡献者一枚，位置紧跟副标题
+    const stack = container.querySelector('.github-contributor-stack') as HTMLElement
+    expect(stack).not.toBeNull()
+    expect(stack.previousElementSibling).toHaveClass('github-page-subtitle')
+
+    const avatars = [...stack.querySelectorAll('.github-avatar')]
+    expect(avatars).toHaveLength(ALL_CONTRIBUTORS.length)
+    expect([...stack.querySelectorAll('img')].map(i => i.getAttribute('src'))).toEqual(
+      ALL_CONTRIBUTORS.map(u => `https://github.com/${u}.png?size=96`),
+    )
+
+    // 轮次卡片内的头像同款（原先的首字母色块一并替换）
+    const rounds = container.querySelector('.github-rounds') as HTMLElement
+    const roundAvatars = [...rounds.querySelectorAll('.github-contributor-avatar')]
+    expect(roundAvatars).toHaveLength(contributorCount)
+    const roundImgs = [...rounds.querySelectorAll('img')]
+    expect(roundImgs).toHaveLength(contributorCount)
+    for (const img of roundImgs) {
+      expect(img.getAttribute('src')).toMatch(/^https:\/\/github\.com\/[\w-]+\.png\?size=96$/)
     }
+
+    // 每枚（含两处）都有同尺寸首字母兜底：离线 / 被 CSP 拦 / 404 时不出现破图或空洞
+    for (const avatar of [...avatars, ...roundAvatars]) {
+      const fallback = avatar.querySelector('.github-avatar-fallback')
+      expect(fallback?.textContent).toMatch(/^[A-Z0-9]$/)
+      expect(fallback).toHaveAttribute('aria-hidden', 'true')
+    }
+  })
+
+  it('叠压纪律：相邻头像按尺寸的 30% 重叠（幅度经 --gh-overlap 下发）', () => {
+    const { container } = render(<GithubPage />)
+    const stack = container.querySelector('.github-contributor-stack') as HTMLElement
+    // jsdom 不算布局，故钉住「下发给样式表的叠压变量」本身（30% → -0.3）
+    expect(stack.style.getPropertyValue('--gh-overlap')).toBe('-0.3')
+  })
+
+  it('头像列并入 GitHub `/contributors` 名单：与轮次表取并集、去重、API 序在前', () => {
+    // 提交数降序的 API 名单排在前，轮次表里 API 未覆盖的人补在后
+    expect(ALL_CONTRIBUTORS.slice(0, REPO_COMMITTERS.length)).toEqual(REPO_COMMITTERS)
+
+    // 并集 = API 名单 ∪ 轮次表用户；且无重复
+    const roundUsers = [
+      ...new Set(CONTRIBUTOR_ROUNDS.flatMap(r => r.contributors.map(c => c.user))),
+    ]
+    expect(new Set(ALL_CONTRIBUTORS)).toEqual(new Set([...REPO_COMMITTERS, ...roundUsers]))
+    expect(ALL_CONTRIBUTORS).toHaveLength(new Set(ALL_CONTRIBUTORS).size)
+
+    // fouyzjl：轮次表当初按「缺证不写」略去，本次由 API 确认（12 次提交）后并入
+    expect(ALL_CONTRIBUTORS).toContain('fouyzjl')
+    // zhoupeiyu515-ui：API 未把其 commit 关联到账号 → 只能由轮次表带来
+    expect(ALL_CONTRIBUTORS).toContain('zhoupeiyu515-ui')
   })
 })
