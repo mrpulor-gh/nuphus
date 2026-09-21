@@ -1426,7 +1426,29 @@ export function ChatPanel({
     if (el) el.scrollIntoView({ block: 'nearest' })
   }, [resIdx])
 
+  /**
+   * Ctrl/Cmd+Enter = 换行：受控 textarea 在 Ctrl+Enter 下没有原生换行行为，
+   * 需按当前光标/选区手动插入 `\n`，并在重渲染后把光标落回换行符之后。
+   * 高度自适应由 ChatInputBar 的 input 变化 effect 负责，这里不重复处理。
+   */
+  const insertLineBreakAtCaret = () => {
+    const ta = textareaRef.current
+    const start = ta?.selectionStart ?? input.length
+    const end = ta?.selectionEnd ?? start
+    handleInputChange(`${input.slice(0, start)}\n${input.slice(end)}`)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) el.selectionStart = el.selectionEnd = start + 1
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ctrl/Cmd+Enter：换行（不再等同于发送；Shift+Enter 仍是原生换行）
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      insertLineBreakAtCaret()
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey && !cmdOpen && !resPickerOpen) {
       e.preventDefault()
       handleSubmit()
