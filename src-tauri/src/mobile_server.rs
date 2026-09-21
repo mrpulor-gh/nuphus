@@ -1161,13 +1161,33 @@ async fn post_message<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    // 执行中（busy 锁占用）：手机消息不再 409 拒绝，转为追加指令。
-    // 分两种情况：
-    // 1) 暂停等待决策中（pause_flag=true）：agent 阻塞在 wait_for_pause_decision_global，
-    //    不会进入下一轮迭代，mobile_append 队列不会被 drain——必须直接写 PauseDecision::Append，
-    //    等价桌面 append_instruction，让暂停检查点立即返回 Append 并继续执行。
-    // 2) 非暂停 busy：入 mobile_append 队列，react_loop 轮次边界 drain 注入下一迭代。
-    if state.busy.load(std::sync::atomic::Ordering::SeqCst) {
+    // 执行阶段分流（唯一真相源 SignalState::execution_stage）：
+    // - Running（主循环在迭代中）：不再 409 拒绝，转为追加指令。分两种情况：
+    //   1) 暂停等待决策中（pause_flag=true）：agent 阻塞在 wait_for_pause_decision_global，
+    //      不会进入下一轮迭代，mobile_append 队列不会被 drain——必须直接写 PauseDecision::Append，
+    //      等价桌面 append_instruction，让暂停检查点立即返回 Append 并继续执行。
+    //   2) 非暂停：入 mobile_append 队列，react_loop 轮次边界 drain 注入下一迭代。
+    // - Finalizing（主循环已退出、正在收尾）：无消费方 → 409 显式拒收（见下）。
+    // - Idle：正常受理。
+    // 唯一判定入口（与桌面端 submit_user_message 同一函数）：执行阶段 → 处置。
+    let disposition = state.busy.stage().submit_disposition();
+    if let nuphus::state::SubmitDisposition::RejectFinalizing = disposition {
+        // 收尾期（主循环已退出、后端在写记忆/自动提炼）：追加无消费方 → **显式拒收**，
+        // 不入队（入队即永久滞留并锁死 guard_switch）。手机端按失败提示重发，
+        // 与桌面端「退回输入框」等价语义（手机端不保留草稿，提示文案需明确可重发）。
+        // ⚠️ 与桌面端一致：本路径不写 session.last_message（去重基准），
+        // 否则用户重发同一文本会被 is_duplicate_of_last 丢弃。
+        tracing::info!(
+            "[Mobile] 收尾期拒收追加指令（stage=finalizing）: len={}",
+            payload.message.chars().count()
+        );
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": crate::state::REJECT_FINALIZING })),
+        )
+            .into_response();
+    }
+    if let nuphus::state::SubmitDisposition::Append = disposition {
         if payload.message.trim().is_empty() {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1294,7 +1314,19 @@ async fn post_message<R: tauri::Runtime>(
     )
     .await
     {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Ok(resp) => {
+            // 收尾期拒收（兜住上方预检 → 提交之间的竞态）：绝不能按 200 受理返回——
+            // 手机端会把「无 status 字段的 200」当正常提交，乐观气泡永久 pending。
+            // 统一映射为与预检同款的 409 稳定错误码。见 ExecutionStage::Finalizing。
+            if resp.rejected.is_some() {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": crate::state::REJECT_FINALIZING })),
+                )
+                    .into_response();
+            }
+            (StatusCode::OK, Json(resp)).into_response()
+        }
         Err(e) => {
             let status = if e.contains("already running") {
                 // 竞态兜底：busy 刚被占用（检查与提交之间被抢）→ 同样转追加指令
@@ -1390,6 +1422,8 @@ async fn ws_handler<R: tauri::Runtime>(
                     "type": "session_snapshot",
                     "welcome": messages.is_empty(),
                     "running": st.busy.load(std::sync::atomic::Ordering::SeqCst),
+                    // 执行态权威（唯一真相源）：手机端据此派生锁定，不再自行 OR can_switch
+                    "stage": st.busy.stage().as_str(),
                     "message_count": messages.len(),
                 })
                 .to_string(),
@@ -1597,13 +1631,21 @@ async fn get_agent_status<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
+    // 执行态唯一真相源：stage 为权威，running/append_accepting 均为其派生字段
+    // （手机端刷新 / 重连后恢复执行态，与桌面端 get_execution_state 同源同语义）。
+    let stage = state.busy.stage();
     // refine_active 一并返回：手机端重连/刷新后恢复提炼状态（broadcast 不为迟到
     // 订阅者补发，refine_executing/session_refined/refine_failed 间隙事件会丢失）
     let refine_active = state
         .refine_active
         .load(std::sync::atomic::Ordering::SeqCst);
-    Json(serde_json::json!({ "running": busy, "refine_active": refine_active })).into_response()
+    Json(serde_json::json!({
+        "running": stage.is_busy(),
+        "stage": stage.as_str(),
+        "append_accepting": stage.accepts_append(),
+        "refine_active": refine_active,
+    }))
+    .into_response()
 }
 
 /// GET /relay-hint — 手机端获取中继配置（外网模式下经中继发送消息）。
@@ -1681,14 +1723,20 @@ async fn get_boot<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    let running = state.busy.load(std::sync::atomic::Ordering::SeqCst);
+    // 执行态唯一真相源：stage 权威，running 为其派生（前端不再自行 OR can_switch）
+    let stage = state.busy.stage();
     let refine_active = state
         .refine_active
         .load(std::sync::atomic::Ordering::SeqCst);
     let cfg = crate::relay_client::load_config();
     Json(serde_json::json!({
         "identity": identity_json(state.inner()),
-        "agentStatus": { "running": running, "refine_active": refine_active },
+        "agentStatus": {
+            "running": stage.is_busy(),
+            "stage": stage.as_str(),
+            "append_accepting": stage.accepts_append(),
+            "refine_active": refine_active,
+        },
         "relayHint": relay_hint_json(&cfg, ctx.port),
         // 会话清单投影（只读）：手机「会话」抽屉数据源——桌面当前视图的镜像，
         // 手机不维护独立会话状态（含 can_switch：busy/追加挂起时切换被禁）
@@ -3004,6 +3052,66 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.status(), 400);
+        });
+    }
+
+    /// 收尾期（Finalizing）提交：**必须拒绝而不是入队**，且不得写去重基准。
+    ///
+    /// 复现原缺陷的判据：主循环已退出（无消费方）时入队 → 消息永不执行 + 残留队列
+    /// 永久锁死 guard_switch + 用户重发被判 is_duplicate_of_last 丢弃。
+    #[test]
+    fn test_finalizing_rejects_append_instead_of_queueing() {
+        tokio_test::block_on(async {
+            let (base, token, app) = spawn_test_server().await;
+            let state = app.state::<AppState>();
+            let msg = "收尾期提交的指令";
+            // 主循环已退出、后端仍在收尾（记忆落盘 / 自动提炼）
+            state
+                .busy
+                .set_stage(nuphus::state::ExecutionStage::Finalizing);
+            assert!(
+                state.busy.load(std::sync::atomic::Ordering::SeqCst),
+                "Finalizing 仍应算「后端占用」（终止按钮 / 切换守卫语义）"
+            );
+
+            let client = np_client();
+            let r = client
+                .post(format!("{base}/message"))
+                .header("X-Mobile-Token", &token)
+                .json(&serde_json::json!({ "message": msg }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 409, "收尾期必须 409 拒绝而不是 200 受理");
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert_eq!(
+                body["error"], "finalizing",
+                "拒绝原因须可判别，实际: {body}"
+            );
+            assert!(
+                nuphus::state::SignalState::read(&state.signals)
+                    .append_queue
+                    .is_empty(),
+                "拒绝路径不得入队（入队即永久滞留）"
+            );
+            let last = state
+                .session
+                .lock()
+                .map(|g| g.last_message.clone())
+                .unwrap_or_default();
+            assert!(
+                !nuphus::mobile_append::is_duplicate_of_last(&last, msg),
+                "拒绝路径不得写去重基准，否则用户重发会被静默丢弃"
+            );
+
+            // 收尾结束 → Idle：同一文本不再被任何守卫拒绝（队列已空，去重不命中）
+            state.busy.set_stage(nuphus::state::ExecutionStage::Idle);
+            assert!(
+                nuphus::state::SignalState::read(&state.signals)
+                    .append_queue
+                    .is_empty(),
+                "Idle 时追加队列必须为空（残留会锁死 guard_switch）"
+            );
         });
     }
 

@@ -1013,7 +1013,7 @@ pub(crate) fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeCo
 }
 
 /// 列出展示台：按 created_at 降序稳定排序（最新创建在上，切换/激活不改变位置，
-/// 只通过 is_active 变化颜色/效果）。附 can_switch 供前端置灰。
+/// 只通过 is_active 变化颜色/效果）。附 stage（执行态权威）与 can_switch（切换守卫）。
 #[tauri::command]
 pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     list_shelf_sessions_inner(&state)
@@ -1022,6 +1022,9 @@ pub fn list_shelf_sessions(state: State<'_, AppState>) -> Result<serde_json::Val
 /// 内部实现（&AppState 直取）：mobile_server 的会话清单镜像端点复用
 pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::Value, String> {
     let can_switch = guard_switch(state).is_ok();
+    // 执行态（唯一真相源）：桌面 rail 与手机 NavBar 的「执行中锁定」读这一个字段，
+    // can_switch 只表达「切换动作是否会被守卫拒绝」，两者不再 OR 派生（见 ExecutionStage）。
+    let stage = state.busy.stage();
     let current_mode = state
         .current_mode
         .read()
@@ -1157,6 +1160,7 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
 
     Ok(serde_json::json!({
         "can_switch": can_switch,
+        "stage": stage.as_str(),
         "items": candidates
             .into_iter()
             .map(|(id, mut v, _)| {

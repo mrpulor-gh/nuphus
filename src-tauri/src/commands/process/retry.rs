@@ -17,7 +17,7 @@
 use crate::emitter::TauriEventEmitter;
 use crate::state::{AppState, ProcessInputResponse};
 use nuphus::agent::events::{EventEmitter, NuphusEvent, StepOutput};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 #[tauri::command]
@@ -41,10 +41,12 @@ pub async fn retry_agent(
         }
         return Err("任务正在执行中,请等待当前任务完成".to_string());
     }
-    struct BusyGuard<'a>(&'a AtomicBool);
+    // 执行态守卫：swap(true) 已把阶段置为 Running；收尾点显式转 Finalizing（见下），
+    // guard drop → Idle。见 nuphus::state::ExecutionStage 转换规则。
+    struct BusyGuard<'a>(&'a crate::state::ExecutionStageHandle);
     impl Drop for BusyGuard<'_> {
         fn drop(&mut self) {
-            self.0.store(false, Ordering::SeqCst);
+            self.0.set_stage(nuphus::state::ExecutionStage::Idle);
         }
     }
     let _guard = BusyGuard(&state.busy);
@@ -145,6 +147,13 @@ pub async fn retry_agent(
     )
     .await;
 
+    // 执行态：重试轮次的主循环已退出 → Finalizing（收尾工作之前）。
+    // 与 submit_user_message 同语义：此后不再有迭代边界 drain，追加指令必须被拒绝
+    // 而不是入队（入队即永久滞留）。见 nuphus::state::ExecutionStage。
+    state
+        .busy
+        .set_stage(nuphus::state::ExecutionStage::Finalizing);
+
     let (output, runtime) = match run_result {
         Ok(ok) => ok,
         Err(err_msg) => {
@@ -201,6 +210,7 @@ pub async fn retry_agent(
         success: output.success,
         message: response_message,
         appended: None,
+        rejected: None,
         image_warning: None,
         steps_count: output.steps.len(),
     })

@@ -107,19 +107,19 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     }
     struct RefineGuard {
         flag: Arc<AtomicBool>,
-        busy: Arc<AtomicBool>,
+        stage: crate::state::ExecutionStageHandle,
     }
     impl Drop for RefineGuard {
         fn drop(&mut self) {
-            // 无条件释放：busy 由上方 CAS 独占获得，占用期间其它执行体进不来
-            // （submit_user_message / retry 同样以 swap 抢占），故不存在「误清他人 busy」。
+            // 无条件释放：执行态由上方 CAS 独占获得，占用期间其它执行体进不来
+            // （submit_user_message / retry 同样以 swap 抢占），故不存在「误清他人执行态」。
             self.flag.store(false, Ordering::SeqCst);
-            self.busy.store(false, Ordering::SeqCst);
+            self.stage.set_stage(nuphus::state::ExecutionStage::Idle);
         }
     }
     let _refine_guard = RefineGuard {
         flag: refine_active,
-        busy: state.busy.clone(),
+        stage: state.busy.clone(),
     };
 
     let refine_prompt = nuphus::agent::distill::REFINE_PROMPT;

@@ -25,6 +25,16 @@ impl super::Runtime {
 
         let loop_start = std::time::Instant::now();
 
+        // ── 执行态：进入主循环 → Running（追加指令可被本轮迭代边界 drain）──
+        // 转换规则见 nuphus::state::ExecutionStage。react_loop 是 Leader/Custom 的
+        // 顶层主循环（子任务走 sub_task_loop，不嵌套本函数），故此处无条件声明 Running。
+        // Finalizing 不在此处置位：顶层「主循环退出」发生在轮次所有者（process.rs /
+        // retry.rs 调用 run/resume 返回之后），那里才是收尾工作之前的唯一点。
+        crate::state::SignalState::set_execution_stage(
+            self.agent.tools.signals(),
+            crate::state::ExecutionStage::Running,
+        );
+
         // resume（断点续跑）时跳过新回合初始化：
         // - steps 保留（失败回合的进度计入本轮 tools_used / total_calls）
         // - 不触发 session_start hook（不是新会话）

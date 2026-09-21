@@ -4,7 +4,7 @@ use nuphus::agent::goal_types::RelationConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -201,6 +201,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 success: true,
                 message: String::new(),
                 appended: None,
+                rejected: None,
                 image_warning: None,
                 steps_count: 0,
             });
@@ -209,14 +210,39 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         drop(guard);
     }
 
-    // 执行中（busy）：不拒绝、不丢弃——消息入队为追加指令（与移动端一致），
-    // 由 react_loop 迭代边界 drain 注入；短时间多条合并不覆盖。
-    // 去重防线：与本轮主指令同内容 → 丢弃，**整轮有效**（防界面重载 / 前端热更新 /
-    // 重试导致的重复提交）。旧实现限「受理后 30s 内」，分钟级长任务中形同虚设——
-    // 实测同一条指令被执行中重复提交后再次注入上下文。
-    // 判据唯一真源：`nuphus::mobile_append::is_duplicate_of_last`。
-    // 主指令受理时会写 guard.last_message（见下方非 busy 分支），此处直接复用该记录。
-    if state.busy.load(Ordering::SeqCst) {
+    // 执行阶段分流（唯一权威执行态 = core 共享信号 `SignalState::execution_stage`）：
+    // - Running  ：主循环在迭代中 → 消息入队为追加指令（与移动端一致），由迭代边界
+    //              drain 注入；短时间多条合并不覆盖。去重防线：与本轮主指令同内容 →
+    //              丢弃，**整轮有效**（防界面重载 / 前端热更新 / 重试导致的重复提交）。
+    //              判据唯一真源：`nuphus::mobile_append::is_duplicate_of_last`；
+    //              主指令受理时写 guard.last_message（见下方非 busy 分支），此处复用。
+    // - Finalizing：主循环已退出、正在收尾 → 无消费方，拒绝追加（见下方分支）。
+    // 唯一判定入口（core 提供，手机端 POST /message 共用同一函数）：阶段 → 处置。
+    let disposition = state.busy.stage().submit_disposition();
+    if let nuphus::state::SubmitDisposition::RejectFinalizing = disposition {
+        // ── Finalizing：主循环已退出、后端正在收尾（记忆落盘 / 自动提炼 / 镜像回填）──
+        // 此时入队等于永不执行（没有消费方会再 drain），且残留队列会让 guard_switch
+        // 永久返回 append_pending（会话切换 / 新建被永久拒绝）。故**显式拒收**，
+        // 由前端把用户输入原样退回输入框并提示稍后重发。
+        //
+        // ⚠️ 本路径**绝不**写 guard.last_message / last_send_id：那是提交级去重的
+        // 比对基准（is_duplicate_of_last，整轮有效）。一旦写入，用户按提示重发同一
+        // 文本会被判为重复而丢弃——「退回输入框」就变成新的静默丢失。
+        tracing::info!(
+            "[Append] 收尾期拒收追加指令（stage=finalizing）: len={} send_id={:?}",
+            message.chars().count(),
+            send_id
+        );
+        return Ok(ProcessInputResponse {
+            success: true,
+            message: String::new(),
+            appended: None,
+            rejected: Some(crate::state::REJECT_FINALIZING.to_string()),
+            image_warning: None,
+            steps_count: 0,
+        });
+    }
+    if let nuphus::state::SubmitDisposition::Append = disposition {
         // 规则3 兜底：执行中 mode 不应改变——若 current_mode 与当前执行 session
         // 绑定的 mode 不一致（异常，如执行期间外部/手机端切换了 mode），以 session
         // 存储快照的 mode 为准刷新 current_mode，避免后续按错误 mode 路由。
@@ -284,6 +310,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             // message 回传原始追加内容，前端弹窗直接显示消息本身（不显示解释性文案）
             message: message.clone(),
             appended: Some(true),
+            rejected: None,
             image_warning: None,
             steps_count: 0,
         });
@@ -317,6 +344,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 success: true,
                 message: String::new(),
                 appended: None,
+                rejected: None,
                 image_warning: None,
                 steps_count: 0,
             });
@@ -611,14 +639,38 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         // 导航/command 取消）被 drop，函数作用域 BusyGuard 会随之释放——但 spawn 任务
         // 继续运行。若锁被提前释放，执行中手机端追加会被误判为新任务（新 session）。
         // 因此任务内部重新持有锁：busy 状态与任务运行期严格绑定，IPC break 不再放锁。
-        state.busy.store(true, Ordering::SeqCst);
-        struct TaskBusyGuard<'a>(&'a AtomicBool);
+        // 执行态：任务起始即占用（Running；主循环入口再声明一次，幂等）。
+        // 轮次状态收敛由 guard 持有：Finalizing（主循环退出后，见下方收尾点）→ Idle。
+        state.busy.set_stage(nuphus::state::ExecutionStage::Running);
+        struct TaskBusyGuard<'a> {
+            stage: &'a crate::state::ExecutionStageHandle,
+            signals: nuphus::state::SharedSignals,
+        }
         impl Drop for TaskBusyGuard<'_> {
             fn drop(&mut self) {
-                self.0.store(false, Ordering::SeqCst);
+                // ── 轮次结束 → Idle（唯一自愈点）──
+                // 队列里若仍有追加指令：本轮消费方（主循环迭代边界 drain）已退出，
+                // 它们不可能再被执行（下一轮主循环起始还会再清一次，见 react_loop 0.5b），
+                // 但残留会让 guard_switch 永久返回 append_pending（会话切换 / 新建被永久
+                // 拒绝）。故与执行态同时收敛：先清队列、再置 Idle——顺序保证不会出现
+                // 「Idle + 非空队列」窗口，也保证前端轮询到 Idle 后不会看到假挂起。
+                let stale = {
+                    let mut signals = nuphus::state::SignalState::write(&self.signals);
+                    std::mem::take(&mut signals.append_queue)
+                };
+                if !stale.is_empty() {
+                    tracing::warn!(
+                        "[Append] 轮次结束时仍有 {} 条未消费的追加指令——主循环已退出、无消费方，已清空（否则锁死会话切换）",
+                        stale.len()
+                    );
+                }
+                self.stage.set_stage(nuphus::state::ExecutionStage::Idle);
             }
         }
-        let _task_guard = TaskBusyGuard(&state.busy);
+        let _task_guard = TaskBusyGuard {
+            stage: &state.busy,
+            signals: state.signals.clone(),
+        };
         // CompoundEmitter: mobile_server 运行时事件双推（桌面 + 手机 WS），否则纯 Tauri
         let emitter = crate::emitter::CompoundEmitter::new(app_handle.clone(), state.inner());
         // force_new（welcome 首发新建 / rule2 跨 mode 新建）→ 广播 SessionChanged：
@@ -1006,6 +1058,16 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             }
         };
 
+        // ── 执行态：顶层主循环已退出 → Finalizing（收尾工作之前）──
+        // 上方 `(output, ...)` 求值即 agent 主循环（Leader react_loop / WorkflowAgent）
+        // 的退出点，其内部已发射 ExecutionCompleted（用户已看到最终回复）。
+        // 其后是收尾：pending_retry 落盘 / 完成时间 / 镜像回填 / 记忆落盘 / 自动提炼
+        // （本地端点可达数分钟）。这段时间主循环不会再有迭代边界 drain，追加指令入队
+        // 即永久滞留，故必须先把执行态收敛为 Finalizing，让追加被显式拒绝（见入口分支）。
+        state
+            .busy
+            .set_stage(nuphus::state::ExecutionStage::Finalizing);
+
         // ── Response message (fallback annotation) ──
         let elapsed = start.elapsed().as_millis() as u64;
         let _goal_types: Vec<String> = output
@@ -1178,6 +1240,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             success: output.success,
             message: response_message,
             appended: None,
+            rejected: None,
             image_warning,
             steps_count: output.steps.len(),
         })
@@ -1237,7 +1300,15 @@ pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> 
         )
         .await
         {
-            Ok(_) => tracing::info!("[Handoff] done/blocked 自动唤醒已受理"),
+            Ok(r) if r.rejected.is_none() => {
+                tracing::info!("[Handoff] done/blocked 自动唤醒已受理")
+            }
+            // 收尾期拒收（ExecutionStage::Finalizing）：唤醒消息未被受理，
+            // 与「忙碌」同语义——门铃事件仍留在 pending 队列，留待后续轮次边界注入。
+            Ok(_) => tracing::warn!(
+                "[Handoff] 自动唤醒被收尾期拒绝（事件留队列，轮次边界消化）: rejected={:?}",
+                crate::state::REJECT_FINALIZING
+            ),
             Err(e) => {
                 tracing::warn!("[Handoff] 自动唤醒未受理（事件留队列，轮次边界消化）: {e}")
             }

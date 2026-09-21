@@ -182,9 +182,38 @@ pub fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
     Ok(format!("forced reset (was busy: {})", was_busy))
 }
 
+/// 兼容壳：只回答「后端是否仍被占用」。新代码请用 [`get_execution_state`]——
+/// 追加判定需要区分 Running / Finalizing，单一布尔无法表达（见 ExecutionStage）。
 #[tauri::command]
 pub fn is_busy(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.busy.load(Ordering::SeqCst))
+}
+
+/// 后端唯一权威执行态快照 —— 前端执行态的**单一来源**（拉通道；推通道 = nuphus-event）。
+///
+/// - `stage`：`"idle"` / `"running"` / `"finalizing"`
+/// - `busy`：`stage != "idle"`（= 旧 `is_busy`，终止按钮 / 会话锁定用）
+/// - `append_accepting`：当前提交会不会被当作追加指令受理（仅 `"running"`；
+///   `"finalizing"` 会返回 `rejected: "finalizing"`，前端须把输入退回输入框）
+///
+/// 收敛前执行态分散在 5 个来源（前端 isProcessing / 前端 completed / 后端 is_busy /
+/// 后端 can_switch / rail 的 OR 派生），同一时刻各方判断可以不一致。现在：
+/// 后端只有 `SignalState::execution_stage` 一个存储，前端只有本命令 + 事件两条通道。
+#[derive(serde::Serialize)]
+pub struct ExecutionStateSnapshot {
+    pub stage: String,
+    pub busy: bool,
+    pub append_accepting: bool,
+}
+
+#[tauri::command]
+pub fn get_execution_state(state: State<'_, AppState>) -> Result<ExecutionStateSnapshot, String> {
+    let stage = state.busy.stage();
+    Ok(ExecutionStateSnapshot {
+        stage: stage.as_str().to_string(),
+        busy: stage.is_busy(),
+        append_accepting: stage.accepts_append(),
+    })
 }
 
 /// Read the backend-owned append queue for the execution control UI.

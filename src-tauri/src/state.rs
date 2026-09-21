@@ -3,8 +3,86 @@ use nuphus::runtime::Runtime;
 use nuphus::runtime::WorkflowAgent;
 use nuphus_index::IndexEngine;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+// ── 执行态（唯一真相源）──
+
+/// 执行态共享句柄 —— `AppState::busy` 的类型。
+///
+/// **不持有任何独立状态**：所有读写都落到 `nuphus::state::SignalState::execution_stage`
+/// （唯一真相源，语义见 [`nuphus::state::ExecutionStage`]）。收敛前 `AppState::busy` 是
+/// 与 core 内共享信号、前端 `isProcessing`、`can_switch` 并列的第二个布尔源，正是
+/// 「主循环已退出、收尾仍在跑」窗口内各方判断不一致的根因。
+///
+/// 保留 `load/store/swap/compare_exchange` 这套旧 `Arc<AtomicBool>` 调用面，是为了让既有
+/// 调用点（workflow 引擎 busy provider、会话切换守卫 guard_switch、refine 原子抢占、
+/// 存量单测）零改动地落到唯一真相源上——它们语义等价于 `stage != Idle`。
+/// `Ordering` 参数仅为签名兼容：互斥由 `SignalState` 的 `RwLock` 提供，与内存序无关。
+/// 新代码请直接用 [`ExecutionStageHandle::stage`] / [`ExecutionStageHandle::set_stage`]。
+#[derive(Clone)]
+pub struct ExecutionStageHandle {
+    signals: nuphus::state::SharedSignals,
+}
+
+impl ExecutionStageHandle {
+    pub fn new(signals: nuphus::state::SharedSignals) -> Self {
+        Self { signals }
+    }
+
+    /// 当前执行阶段（唯一真相源）。
+    pub fn stage(&self) -> nuphus::state::ExecutionStage {
+        nuphus::state::SignalState::execution_stage(&self.signals)
+    }
+
+    /// 置位执行阶段，返回旧值。
+    pub fn set_stage(&self, stage: nuphus::state::ExecutionStage) -> nuphus::state::ExecutionStage {
+        nuphus::state::SignalState::set_execution_stage(&self.signals, stage)
+    }
+
+    // ── 旧 Arc<AtomicBool> 调用面（语义统一映射到 stage）──
+
+    /// `busy` 读取：`stage != Idle`（Running 与 Finalizing 都算占用）。
+    pub fn load(&self, _order: Ordering) -> bool {
+        self.stage().is_busy()
+    }
+
+    /// `busy` 写入：true → `Running`，false → `Idle`。
+    pub fn store(&self, value: bool, _order: Ordering) {
+        self.set_stage(stage_of(value));
+    }
+
+    /// 原子交换：返回旧 `busy` 值（= 旧阶段是否占用）。
+    pub fn swap(&self, value: bool, _order: Ordering) -> bool {
+        self.set_stage(stage_of(value)).is_busy()
+    }
+
+    /// 比较交换（refine 的「空闲才抢占」）：仅当旧值与 `current` 一致才写入，
+    /// 不一致返回 `Err(实际值)`——与 `AtomicBool::compare_exchange` 同语义。
+    pub fn compare_exchange(
+        &self,
+        current: bool,
+        new: bool,
+        _success: Ordering,
+        _failure: Ordering,
+    ) -> Result<bool, bool> {
+        let prev = self.stage().is_busy();
+        if prev != current {
+            return Err(prev);
+        }
+        self.set_stage(stage_of(new));
+        Ok(prev)
+    }
+}
+
+/// `busy` 布尔 ↔ 阶段映射（仅两态：`Running` / `Idle`）。
+fn stage_of(busy: bool) -> nuphus::state::ExecutionStage {
+    if busy {
+        nuphus::state::ExecutionStage::Running
+    } else {
+        nuphus::state::ExecutionStage::Idle
+    }
+}
 
 // ── App State ──
 
@@ -25,9 +103,11 @@ pub struct AppState {
     /// 后端权威当前运行模式（"leader" | "workflow" | "custom"），chat_history 按此选择 agent 会话。
     /// 由 set_mode_impl（显式切换）与 submit_user_message（发送确认）维护；默认 "leader"。
     pub current_mode: Arc<std::sync::RwLock<String>>,
-    /// 执行中标志（终止按钮权威源 / guard_switch 守卫）。Arc 化：refine 编排需在
-    /// state 被 move 进子编排前 clone 出恢复句柄（Drop guard 恢复原值，嵌套安全）。
-    pub busy: Arc<AtomicBool>,
+    /// 执行态句柄（终止按钮权威源 / guard_switch 守卫）。
+    /// 字段名沿用历史 `busy`；类型见 [`ExecutionStageHandle`]——唯一存储是 core 内
+    /// 共享信号的 `execution_stage`，`busy` 只是它的二值投影（`stage != Idle`）。
+    /// Clone 廉价（内部 Arc）：refine 编排需在 state 被 move 进子编排前 clone 出句柄。
+    pub busy: ExecutionStageHandle,
     pub last_process_time: AtomicI64,
     pub last_completion_time: AtomicI64,
     pub event_seq: Arc<AtomicU64>,
@@ -202,7 +282,7 @@ impl Default for AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             pause_flag: Arc::new(AtomicBool::new(false)),
             current_mode: Arc::new(std::sync::RwLock::new("leader".to_string())),
-            busy: Arc::new(AtomicBool::new(false)),
+            busy: ExecutionStageHandle::new(signals.clone()),
             last_process_time: AtomicI64::new(0),
             last_completion_time: AtomicI64::new(0),
             event_seq: Arc::new(AtomicU64::new(0)),
@@ -320,6 +400,10 @@ pub struct HistoryMessage {
     pub trace_items: Vec<HistoryTraceItem>,
 }
 
+/// [`ProcessInputResponse::rejected`] 的稳定取值：后端主循环已退出、正在收尾
+/// （见 `nuphus::state::ExecutionStage::Finalizing`），追加指令无消费方 → 拒收。
+pub const REJECT_FINALIZING: &str = "finalizing";
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProcessInputResponse {
     pub success: bool,
@@ -327,6 +411,17 @@ pub struct ProcessInputResponse {
     /// 执行中发送被接受为追加指令（不开启新执行；双端统一，不拒绝不丢弃）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appended: Option<bool>,
+    /// 拒绝原因（稳定标识，目前仅 `"finalizing"`）。
+    ///
+    /// 主循环已退出、后端仍在收尾（记忆落盘 / 自动提炼）时提交的消息**无消费方**
+    /// （追加队列只在迭代边界 drain），故拒收而不是静默入队：写入 `appended` 会让
+    /// 用户以为已生效，实际永不被执行。前端据此把用户输入**原样退回输入框**并提示
+    /// 「正在收尾，请稍后重发」。
+    ///
+    /// 该路径**不写** `guard.last_message`——否则用户按提示重发同一文本会被
+    /// `is_duplicate_of_last` 判为重复而丢弃，「退回输入框」就成了新的静默丢失。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected: Option<String>,
     /// 图片降级警告：主模型与 vision 模型都不支持视觉时返回，前端弹窗提示。
     /// 图片仍降级发送（保存临时文件路径占位），不阻塞消息。
     #[serde(default, skip_serializing_if = "Option::is_none")]

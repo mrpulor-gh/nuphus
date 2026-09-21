@@ -214,6 +214,7 @@ fn main() {
             commands::set_mode,
             commands::get_current_mode,
             commands::is_busy,
+            commands::get_execution_state,
             commands::get_append_queue,
             commands::remove_append_queue_item,
             commands::list_custom_agents,
