@@ -246,6 +246,30 @@ pub fn list_created_at(ids: &[String]) -> crate::Result<HashMap<String, String>>
     Ok(map)
 }
 
+/// 裁剪防护：库内非空快照达到该数量才启用比例判定（小库不设防，避免误拦）。
+const PRUNE_GUARD_MIN_TOTAL: i64 = 5;
+/// 裁剪防护：单次允许清空的比例上限。超过即判定白名单残缺，拒绝执行。
+const PRUNE_GUARD_MAX_CLEAR_RATIO: f64 = 0.5;
+
+/// 裁剪放行判定（纯函数，可测）——「白名单非空但残缺」的第二道防线。
+///
+/// 白名单来自**进程内存态**（runtime active ∪ shelf ∪ backup）：内存态残缺时
+/// （启动早期未预热 / 预热失败 / 并发抢锁 / 实例并存），名单会「非空但几乎为空」，
+/// 此时按名单裁剪等于**用易失内存态反推删除持久化数据**。2026-09-21 实测：一次
+/// `persist` 的裁剪把 11 个快照砍到 1 个，用户侧表现为「历史会话全部消失」，且
+/// `snapshot=NULL` 不可逆（无备份表、无审计，tracing 日志按运行覆盖）。
+///
+/// 判据选取：单次清除量本身即可区分两种情形——正常路径待清理项 ≤ 1~2 个
+/// （shelf 满员时 LRU 每次最多淘汰 1 个），残缺名单则 ≈ 全库。故超过半数即拒绝：
+/// **宁可漏清理，不可误删**。
+fn should_block_prune(total: i64, kept: i64) -> bool {
+    if total < PRUNE_GUARD_MIN_TOTAL {
+        return false;
+    }
+    let would_clear = total - kept;
+    would_clear > 0 && (would_clear as f64) > (total as f64) * PRUNE_GUARD_MAX_CLEAR_RATIO
+}
+
 /// 快照保留策略（白名单制）：仅清理 `protected` 名单之外会话的 snapshot 列
 /// （元数据行保留——记忆页列表历史仍在，仅不可切换恢复）。返回被清理的快照数量。
 ///
@@ -263,6 +287,28 @@ pub fn prune_snapshots(protected: &[String]) -> crate::Result<usize> {
     }
     let guard = crate::store::db::acquire()?;
     let placeholders: Vec<String> = (1..=protected.len()).map(|i| format!("?{i}")).collect();
+
+    // ① 库内非空快照总数 ② 白名单真实覆盖数 → 残缺判定（超半数即拒绝本次裁剪）
+    let total: i64 = guard.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE snapshot IS NOT NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    let kept_sql = format!(
+        "SELECT COUNT(*) FROM sessions WHERE snapshot IS NOT NULL AND id IN ({})",
+        placeholders.join(", ")
+    );
+    let kept: i64 = guard.query_row(&kept_sql, params_from_iter(protected.iter()), |row| {
+        row.get(0)
+    })?;
+    if should_block_prune(total, kept) {
+        tracing::warn!(
+            "[Store] 拒绝快照裁剪：库内 {total} 个、白名单仅覆盖 {kept} 个（将清 {} 个，超半数）——判定保护名单残缺，跳过本次裁剪",
+            total - kept
+        );
+        return Ok(0);
+    }
+
     let sql = format!(
         "UPDATE sessions SET snapshot = NULL
          WHERE snapshot IS NOT NULL
@@ -687,5 +733,59 @@ mod tests {
             .map(|(id, _, _)| id)
             .collect();
         assert_eq!(before.len(), after.len(), "空名单不得清除任何快照");
+    }
+
+    /// 回归（2026-09-21 用户反馈「历史会话全部消失」）：白名单「非空但残缺」必须零清除。
+    ///
+    /// 复刻真实事故：内存态残缺 → 名单只剩当前活跃会话 1 个，而库内已有 12 个快照。
+    /// 修复前该调用会把其余 11 个快照置 NULL（不可逆、无审计）；修复后必须拒绝执行。
+    /// ⚠️ 本用例以真实库为背景，其安全性依赖防护生效——不得在移除防护的分支上运行。
+    #[serial]
+    #[test]
+    fn prune_snapshots_partial_whitelist_does_not_wipe_library() {
+        let mut ids = Vec::new();
+        for _ in 0..12 {
+            let id = random_id();
+            upsert_snapshot(&id, "leader", r#"{"t":1}"#).unwrap();
+            ids.push(id);
+        }
+        let before = list_snapshots(100_000).unwrap().len();
+        assert!(before >= 12, "前置：库内非空快照应不少于本次新建数量");
+
+        // 仅 1 个成员的残缺名单（模拟「只剩 active 会话」的内存态）
+        let n = prune_snapshots(&ids[..1].to_vec()).unwrap();
+        assert_eq!(n, 0, "残缺名单（1/{before}）不得裁剪任何快照");
+        assert_eq!(
+            list_snapshots(100_000).unwrap().len(),
+            before,
+            "库内快照数量必须不变"
+        );
+        for id in &ids {
+            assert!(
+                get_snapshot(id).unwrap().is_some(),
+                "新建快照 {id} 必须幸存"
+            );
+        }
+
+        for id in &ids {
+            delete_session(id).unwrap();
+        }
+    }
+
+    /// 裁剪防护判据边界（纯函数）：正常清理放行、残缺名单拒绝、小库不设防。
+    #[test]
+    fn prune_guard_boundaries() {
+        // 小库（< 5）不设防：避免误拦正常小库清理
+        assert!(!should_block_prune(3, 1));
+        assert!(!should_block_prune(4, 0));
+        // 正常路径：库内 12 个、名单覆盖 11 个 → 只清 1 个（LRU 淘汰）→ 放行
+        assert!(!should_block_prune(12, 11));
+        // 临界：恰好半数放行（严格「大于」才拦）
+        assert!(!should_block_prune(12, 6));
+        // 残缺名单：11 个只剩 1 个（真实事故形态）→ 拦
+        assert!(should_block_prune(11, 1));
+        assert!(should_block_prune(12, 2));
+        // 无待清理项 → 不拦
+        assert!(!should_block_prune(12, 12));
     }
 }

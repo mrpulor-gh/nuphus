@@ -77,6 +77,11 @@ pub struct ShelfState {
     pub sessions: HashMap<String, Session>,
     /// 重命名覆盖表（active 会话改名时先记此处在归档时生效）
     pub titles: HashMap<String, String>,
+    /// 是否已从磁盘完成预热（`warm_from_disk` 成功路径置位）。
+    ///
+    /// false = 内存名单不可信（启动早期 / 预热失败）→ `collect_protected` 返回空名单，
+    /// 使快照裁剪走「空名单短路」零裁剪。禁止用残缺内存态反推删除持久化快照。
+    pub warmed: bool,
 }
 
 impl ShelfState {
@@ -84,7 +89,14 @@ impl ShelfState {
         self.order.len()
     }
 
-    /// 归档一个会话；返回被淘汰的 id（若有）。已存在则更新并提到最前。
+    /// 入台（归档/装载）一个会话；返回被淘汰的 id（若有）。已存在则更新并提到最前。
+    ///
+    /// 容量语义：驻留上限 [`SHELF_CAPACITY`]（10），超限淘汰最旧，并**同时清掉
+    /// `entries` / `sessions` 的内存残留**——此前只 `pop` 了 `order`，另两张表仍留着
+    /// 该 id，形成幽灵成员（`len()` 与 `order` 口径漂移 → 快照白名单口径跟着漂）。
+    ///
+    /// 被淘汰者的**快照处置由调用方决定**：`archive_active` 走主动归档（显式、可追溯），
+    /// 其余路径由 `prune_snapshots` 兜底（受残缺防护约束）。
     pub fn put(&mut self, entry: ShelfEntry, session: Session) -> Option<String> {
         let id = entry.id.clone();
         if let Some(pos) = self.order.iter().position(|x| x == &id) {
@@ -94,7 +106,12 @@ impl ShelfState {
         self.entries.insert(id.clone(), entry);
         self.sessions.insert(id.clone(), session);
         if self.order.len() > SHELF_CAPACITY {
-            return self.order.pop();
+            let evicted = self.order.pop();
+            if let Some(ref e) = evicted {
+                self.entries.remove(e);
+                self.sessions.remove(e);
+            }
+            return evicted;
         }
         None
     }
@@ -280,6 +297,22 @@ fn collect_protected(
     workflow_id: Option<String>,
     state: &AppState,
 ) -> Vec<String> {
+    // ── 预热门禁（2026-09-21 用户会话丢失修复）──
+    // 展示台尚未从磁盘预热完成时，内存态名单不可信（可能是空或残缺）。此时返回
+    // 空名单，让上层 `prune_snapshots` 走「空名单短路」→ 本轮零裁剪。
+    // 裁剪的输入必须来自已证明可信的内存态，禁止用未预热的状态反推删除持久化快照。
+    match state.shelf.lock() {
+        Ok(shelf) if shelf.warmed => {}
+        Ok(_) => {
+            tracing::warn!("[Shelf] 展示台尚未预热，本轮跳过镜像裁剪（返回空名单）");
+            return Vec::new();
+        }
+        Err(_) => {
+            tracing::warn!("[Shelf] 展示台锁中毒，本轮跳过镜像裁剪（返回空名单）");
+            return Vec::new();
+        }
+    }
+
     let mut out: Vec<String> = Vec::new();
     if let Some(id) = leader_id {
         out.push(id);
@@ -471,11 +504,16 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
         // 此前 insert(0) 把顺序倒转，重启后首次 put 会误淘汰「最新」）。
         shelf.order.push(id);
     }
+    // 预热完成（即使一个成员都没装回，也说明「读盘已成功、内存态可信」）。
+    // list_snapshots 失败时函数在上方提前 return，warmed 保持 false → 禁止裁剪。
+    shelf.warmed = true;
 }
 
 /// 旧磁盘镜像迁移：扫描 mirror_dir()/*.json（MirrorFile{mode,session} 格式），
-/// 按文件修改时间倒序，仅对 sessions 表无 snapshot 的 id 导入（有则跳过）。
-/// 文件解析失败仅 warn 不中断；旧文件保留不删。幂等（多次调用安全）。
+/// 按文件修改时间倒序，仅对 sessions 表无 snapshot 的 id 导入（已有则只做退场）。
+/// 文件解析失败仅 warn 不中断。**处理完毕即改名退场（`.json.migrated`）**，使迁移
+/// 只生效一次——否则这些会话的快照被裁剪/归档清空后，会在下次启动「复活占位」，
+/// 并把 updated_at 刷成启动时刻、长期霸占驻留位。幂等（已退场文件不再被扫描命中）。
 pub(crate) fn migrate_legacy_mirrors() {
     let dir = mirror_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -498,6 +536,7 @@ pub(crate) fn migrate_legacy_mirrors() {
         .collect();
     files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
     let mut imported = 0usize;
+    let mut retired = 0usize;
     for (_, path) in files {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
@@ -509,20 +548,57 @@ pub(crate) fn migrate_legacy_mirrors() {
         if file.session.is_empty() {
             continue;
         }
-        // 已有快照则跳过（幂等，不覆盖已有数据）
-        if let Ok(Some(_)) = nuphus::store::session::get_snapshot(&file.session.id) {
-            continue;
-        }
-        if let Ok(json) = serde_json::to_string(&file.session) {
-            if nuphus::store::session::upsert_snapshot(&file.session.id, &file.mode, &json).is_ok()
-            {
-                imported += 1;
+        // 已有快照则不覆盖（保留 DB 现有数据）；但仍要走下方退场标记——
+        // 否则「快照将来被裁剪/归档清空」时它会再次满足导入条件而复活。
+        let has_snapshot = matches!(
+            nuphus::store::session::get_snapshot(&file.session.id),
+            Ok(Some(_))
+        );
+        if !has_snapshot {
+            if let Ok(json) = serde_json::to_string(&file.session) {
+                if nuphus::store::session::upsert_snapshot(&file.session.id, &file.mode, &json)
+                    .is_ok()
+                {
+                    imported += 1;
+                }
             }
+        }
+        // ── 退场标记（2026-09-21 僵尸复活修复）──
+        // 旧行为「文件保留不删」+ 导入条件只看「DB 里有无快照」= 死循环复活：
+        // 一旦这些会话的快照被裁剪或归档清空，下次启动又满足条件 → 再次导入，且
+        // upsert_snapshot 把 updated_at 刷成启动时刻 → 永远占据驻留位前几席，
+        // 把近期会话挤出可恢复名单。改名后扩展名不再是 .json（扫描只认 .json），
+        // 迁移天然只生效一次；文件本体保留，可回滚或人工检查。
+        if let Some(renamed) = retire_migrated_file(&path) {
+            retired += 1;
+            tracing::info!(
+                "[Shelf] 旧镜像退场: {} -> {}",
+                path.display(),
+                renamed.display()
+            );
         }
     }
     if imported > 0 {
         tracing::info!("[Shelf] 旧镜像迁移完成，导入 {imported} 个快照");
     }
+    if retired > 0 {
+        tracing::info!("[Shelf] 旧镜像退场 {retired} 个（已改名 .json.migrated，不再参与扫描）");
+    }
+}
+
+/// 旧镜像退场标记：`*.json` → `*.json.migrated`（改名而非删除，保留可回滚）。
+/// 目标同名已存在时追加序号，绝不覆盖既有文件；改名失败返回 None（下次启动重试，
+/// 不会丢数据）。退场后该文件不再被 `migrate_legacy_mirrors` 的 `.json` 扫描命中。
+fn retire_migrated_file(path: &std::path::Path) -> Option<PathBuf> {
+    let mut target = path.with_extension("json.migrated");
+    if target.exists() {
+        let base = target.display().to_string();
+        target = (1..1000)
+            .map(|i| PathBuf::from(format!("{base}.{i}")))
+            .find(|c| !c.exists())?;
+    }
+    std::fs::rename(path, &target).ok()?;
+    Some(target)
 }
 
 /// 元数据行 upsert（title 空串时保留已有 summary，与退出钩子语义一致）
@@ -750,11 +826,19 @@ pub(crate) fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeCo
     let protected = protected_snapshot_ids_with_ctx(ctx, state);
     write_mirror(kind, &snapshot, &protected);
     upsert_meta_row(&snapshot, &entry.title);
-    if let Ok(mut shelf) = state.shelf.lock() {
-        if let Some(evicted) = shelf.put(entry, snapshot) {
-            // 淘汰仅移除内存 LRU 条目；SQLite 快照永久保留，重启后仍可恢复
-            tracing::info!("[Shelf] 淘汰最旧会话 {evicted}（SQLite 快照保留）");
-        }
+    // 超容量 = **主动归档**被淘汰者（元数据行与文本记忆保留，快照显式清空）。
+    // 出 shelf 锁后再落库：锁序规定 db 锁在 shelf 锁之外，避免与 write_mirror /
+    // upsert_meta_row 的加锁顺序交叉。
+    let evicted = match state.shelf.lock() {
+        Ok(mut shelf) => shelf.put(entry, snapshot),
+        Err(_) => None,
+    };
+    if let Some(id) = evicted {
+        // 旧实现只打一行日志，并声称「SQLite 快照永久保留」——与事实相反：下一次
+        // persist 的白名单裁剪会把它置 NULL，用户侧表现为「会话凭空消失」且无据可查。
+        // 现在改为显式归档：立刻清该会话快照，谁被归档、何时归档在日志与记忆页都可追溯。
+        delete_mirror(&id);
+        tracing::info!("[Shelf] 超容量主动归档会话 {id}：快照已清空，元数据行与文本记忆保留");
     }
 }
 
@@ -1806,6 +1890,8 @@ mod tests {
         let state = AppState::default();
         let want: Vec<String> = {
             let mut shelf = state.shelf.lock().unwrap();
+            // 模拟「已从磁盘预热完成」：本用例校验的是可信内存态下的名单完整性
+            shelf.warmed = true;
             for i in 0..3 {
                 let s = session_with_user(&[&format!("驻留成员{i}")]);
                 let title = format!("驻留成员{i}");
@@ -1822,6 +1908,99 @@ mod tests {
         for id in &want {
             assert!(got.contains(id), "保护名单应包含 shelf 驻留成员 {id}");
         }
+    }
+
+    /// 回归（2026-09-21 用户会话丢失）：展示台尚未预热时内存名单不可信 ——
+    /// 保护名单必须为空，使上游 `prune_snapshots` 走「空名单短路」零裁剪。
+    /// 这是「白名单非空但残缺」在生产路径上的第一道闸：预热未完成 → 名单为空。
+    #[test]
+    fn protected_snapshot_ids_is_empty_before_warmup() {
+        let state = AppState::default();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            let s = session_with_user(&["未预热成员"]);
+            shelf.put(
+                build_entry(s.id.clone(), "leader", &s, Some("未预热成员")),
+                s,
+            );
+        }
+        assert!(
+            !state.shelf.lock().unwrap().order.is_empty(),
+            "前置：展示台应有成员"
+        );
+        assert!(
+            protected_snapshot_ids(&state).is_empty(),
+            "未预热时名单必须为空（触发零裁剪），禁止用残缺内存态反推删除快照"
+        );
+
+        // 预热完成后同一展示台应恢复产出名单
+        state.shelf.lock().unwrap().warmed = true;
+        assert!(
+            !protected_snapshot_ids(&state).is_empty(),
+            "预热完成后名单应正常产出"
+        );
+    }
+
+    /// 容量语义：超上限淘汰最旧时，`entries` / `sessions` 不得留下幽灵成员
+    /// （旧实现只 pop `order`，另两张表仍持有该 id → `len()` 与 `order` 口径漂移）。
+    #[test]
+    fn shelf_put_eviction_clears_entry_and_session_residue() {
+        let mut shelf = ShelfState::default();
+        let mut ids = Vec::new();
+        for i in 0..SHELF_CAPACITY + 2 {
+            let s = session_with_user(&[&format!("成员{i}")]);
+            let id = s.id.clone();
+            let evicted = shelf.put(build_entry(id.clone(), "leader", &s, None), s);
+            if i < SHELF_CAPACITY {
+                assert!(evicted.is_none(), "未超容量不应淘汰");
+            } else {
+                assert!(evicted.is_some(), "超容量应淘汰最旧");
+            }
+            ids.push(id);
+        }
+        assert_eq!(shelf.order.len(), SHELF_CAPACITY);
+        assert_eq!(
+            shelf.entries.len(),
+            SHELF_CAPACITY,
+            "entries 不应留幽灵成员"
+        );
+        assert_eq!(
+            shelf.sessions.len(),
+            SHELF_CAPACITY,
+            "sessions 不应留幽灵成员"
+        );
+        for id in &ids[..2] {
+            assert!(!shelf.contains(id), "被淘汰会话不应仍可查询: {id}");
+        }
+        for id in &ids[2..] {
+            assert!(shelf.contains(id), "在台会话应可查询: {id}");
+        }
+    }
+
+    /// 老镜像退场：改名后扩展名不再是 `.json` → 不再被迁移扫描命中（杜绝僵尸复活）。
+    #[test]
+    fn migrated_mirror_file_is_renamed_out_of_scan_scope() {
+        let dir =
+            std::env::temp_dir().join(format!("nuphus-mirror-retire-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("legacy-session.json");
+        std::fs::write(&src, b"{}").unwrap();
+
+        let retired = retire_migrated_file(&src).expect("退场改名应成功");
+        assert!(!src.exists(), "原 .json 文件应已不在原位");
+        assert!(retired.exists(), "退场文件应保留（可回滚）");
+        assert_eq!(
+            retired.extension().and_then(|x| x.to_str()),
+            Some("migrated"),
+            "退场文件扩展名应为 migrated（≠ json，扫描不再命中）"
+        );
+        // 幂等：源已不存在 → rename 失败返回 None，不 panic、不覆盖
+        assert!(
+            retire_migrated_file(&src).is_none(),
+            "源已退场时应返回 None"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// 拉取会话台：active 条目 mode 必须来自存储快照归属（upsert_snapshot 写入的
