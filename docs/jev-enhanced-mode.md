@@ -1,6 +1,6 @@
 # 桌面自动化基础层与 Jev 增强模式设计
 
-> 状态：v1 实现中；Windows UIA 语义执行、可重放 locator、Jev 配置与 Workflow 增强开关已落地
+> 状态：Windows v1 已实现并通过自动化与真实前台 UIA 冒烟验证；macOS AX、Linux AT-SPI 与完整版本授权仍按后续阶段推进
 >
 > 最后核对：2026-09-22
 >
@@ -13,13 +13,14 @@
 本轮实现选择了与现有 `ToolRegistry`/`WorkflowAgent` 更贴合的最小垂直切片；本文后续章节仍包含目标态和后续阶段，不应把未勾选能力理解为已经完成。
 
 - `src/desktop_automation/` 已提供平台无关协议、有界 runner、严格的 TypeSafe System One Choice 客户端，以及 Windows `WindowsUiaAdapter`。
-- Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus、普通 ValuePattern 文本写入，并读取 Toggle/Select/Expand 状态与非敏感值哈希用于动作专属验证；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
+- Windows 首版读取前台窗口 UIA Control View（最多 200 个元素），支持 Invoke、Toggle、Select、Expand、Collapse、Focus、普通 ValuePattern 文本写入，并读取 Toggle/Select/Expand 状态与非敏感值哈希用于动作专属验证；稳定 locator 包含裁剪后的祖先/列表行语义上下文，重复目标无法唯一定位时不生成候选或拒绝重放，不使用序号猜测；公开观察不含 HWND、PID、坐标或 UI value，密码控件名称也不公开。
 - 普通模式提供 `desktop_semantic_observe(goal)` 与 `desktop_semantic_execute(observation_token, candidate_id)`；候选空间使用不可预测、短期有效的 observation token，执行前重新观察并重新解析语义目标。观察结果同时为可持久化动作返回 `workflow_step`，已保存工作流使用 `desktop_semantic_action(locator, action, value?)` 在运行时重新解析，不保存临时 ID 或坐标。
 - Workflow 增强模式才暴露 `desktop_agent_step(goal)`。每次只允许 Jev 从当前候选集中选择一个 ID，再由本地策略、执行器和重新观察完成动作与验证；低置信度只触发主模型回退，不作为权限判断。
 - 增强模式不会禁用既有鼠标、OCR/YOLO 等兼容工具，但 WorkflowAgent 必须优先使用 UIA/原生动作；只有语义树不完整、自绘控件等场景才显式回退。Jev 本身始终只能选择本地候选 ID，不能生成坐标。
 - `desktop_agent_step` 仅供 WorkflowAgent 探索，不进入可保存的工作流步骤；旧坐标/OCR/YOLO 工具继续兼容。Jev 选择 `Done` 时不会直接宣告任务完成，而是交回当前主模型做业务目标确认。
 - `[jev]` 使用独立配置和现有密钥加密；前端只读取 `has_key`，并可配置超时、有限重试、低置信回退和 confidence 下限。HTTP transport 对连接/超时、408、429、5xx 做有界退避，支持 `retry-after-ms` 与 `Retry-After`。Jev 请求不发送完整 UI tree、截图、值、坐标、句柄或密钥。
-- 增强开关已按 Workflow 会话隔离；新会话默认关闭，清除 Jev Key 会关闭所有会话的增强状态。增强会话具备 100 步硬上限、连续 3 次无界面变化停止和最近动作摘要；完整的跨应用 grant、事件订阅等待和 SecretSlot 仍属于后续阶段。
+- 增强开关已按 Workflow 会话隔离；新会话默认关闭，清除 Jev Key 会关闭所有会话的增强状态。增强会话具备 100 次决策尝试硬上限、相近目标归一化、连续 3 次无界面变化停止和最近动作摘要；Jev 转交主模型后延迟执行的同一候选也会回填停滞状态。完整的跨应用版本 grant、事件订阅等待和 SecretSlot 仍属于后续阶段。
+- 当前交互式语义工具使用“当前前台应用 + 本次动作类别”的临时执行范围，并继续执行本地风险分类；它不是已保存工作流的完整版本授权。`DestructiveCritical` 在 v1 中直接停止，不提供可伪造的 `confirmed=true` 参数；待统一审批回执能够绑定候选、界面版本和确切目标后再开放确认续行。该限制只影响永久删除、支付、账号权限和系统安全修改等重大动作，不给普通 UIA、鼠标或视觉回退增加逐步弹窗。
 
 ## 1. 背景与目标
 

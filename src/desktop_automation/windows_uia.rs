@@ -32,14 +32,15 @@ mod platform {
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
         IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
-        IUIAutomationValuePattern, TreeScope_Descendants, UIA_ButtonControlTypeId,
-        UIA_CheckBoxControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
-        UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_HyperlinkControlTypeId,
-        UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-        UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
-        UIA_SelectionItemPatternId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-        UIA_TextControlTypeId, UIA_TogglePatternId, UIA_TreeControlTypeId,
-        UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
+        IUIAutomationTreeWalker, IUIAutomationValuePattern, TreeScope_Descendants,
+        UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_DataItemControlTypeId,
+        UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_ExpandCollapsePatternId,
+        UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
+        UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
+        UIA_RadioButtonControlTypeId, UIA_SelectionItemPatternId, UIA_TabControlTypeId,
+        UIA_TabItemControlTypeId, UIA_TextControlTypeId, UIA_TogglePatternId,
+        UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValuePatternId,
+        UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
@@ -60,6 +61,7 @@ mod platform {
         toggled: Option<bool>,
         selected: Option<bool>,
         expanded: Option<bool>,
+        ancestor_chain: Vec<SemanticContext>,
         supported_actions: Vec<NativeAction>,
     }
 
@@ -101,7 +103,7 @@ mod platform {
         accessible_name: Option<String>,
         action: NativeAction,
         risk: RiskClass,
-        ordinal: usize,
+        ancestor_chain: Vec<SemanticContext>,
     }
 
     struct NativeNode {
@@ -193,7 +195,7 @@ mod platform {
             observation: &Observation,
             node: &UiNode,
             action: NativeAction,
-        ) -> Result<InternalLocator, AutomationError> {
+        ) -> Result<Option<InternalLocator>, AutomationError> {
             let state = self
                 .state
                 .lock()
@@ -201,14 +203,7 @@ mod platform {
             let metadata = state.metadata_by_node.get(&node.opaque_id).ok_or_else(|| {
                 AutomationError::Candidates("observation metadata is no longer available".into())
             })?;
-            let ordinal = observation
-                .nodes
-                .iter()
-                .take_while(|current| current.opaque_id != node.opaque_id)
-                .filter_map(|current| state.metadata_by_node.get(&current.opaque_id))
-                .filter(|current| semantic_match(current, metadata, &action))
-                .count();
-            Ok(InternalLocator {
+            let locator = InternalLocator {
                 app_id: observation.app.id.clone(),
                 window_id: observation.window.id.clone(),
                 window_title: observation.window.title.clone(),
@@ -218,8 +213,17 @@ mod platform {
                 accessible_name: metadata.name.clone(),
                 risk: classify_risk(&action, metadata.name.as_deref()),
                 action,
-                ordinal,
-            })
+                ancestor_chain: metadata.ancestor_chain.clone(),
+            };
+            // Do not offer a candidate that cannot be uniquely rebound from
+            // stable semantics. A list reorder must never turn an ordinal into
+            // permission to operate on another row.
+            let matches = state
+                .metadata_by_node
+                .values()
+                .filter(|current| internal_locator_matches(current, &locator))
+                .count();
+            Ok((matches == 1).then_some(locator))
         }
 
         fn execute_candidate(
@@ -298,7 +302,11 @@ mod platform {
                     continue;
                 }
                 for native_action in &node.supported_actions {
-                    let locator = self.locator_for(observation, node, native_action.clone())?;
+                    let Some(locator) =
+                        self.locator_for(observation, node, native_action.clone())?
+                    else {
+                        continue;
+                    };
                     let id = format!("uia:{}", Uuid::new_v4().simple());
                     let kind = candidate_kind(native_action);
                     let candidate = ActionCandidate {
@@ -312,10 +320,7 @@ mod platform {
                             "semantic_element_exists",
                             [("target", node.opaque_id.as_str())],
                         )],
-                        expected_effects: vec![predicate(
-                            "ui_state_reobserved_after_action",
-                            std::iter::empty::<(&str, &str)>(),
-                        )],
+                        expected_effects: expected_effects(native_action, node),
                     };
                     ranked.push((
                         candidate_relevance(goal, node, native_action),
@@ -375,8 +380,9 @@ mod platform {
                 role: Some(locator.role.clone()),
                 automation_id: locator.automation_id.clone(),
                 accessible_name: locator.accessible_name.clone(),
+                ancestor_chain: locator.ancestor_chain.clone(),
                 supported_action: Some(locator.action.clone()),
-                ordinal_hint: u16::try_from(locator.ordinal).ok(),
+                ordinal_hint: None,
             })
         }
 
@@ -451,29 +457,27 @@ mod platform {
                             .accessible_name
                             .as_ref()
                             .is_none_or(|name| metadata.name.as_ref() == Some(name))
+                        && (locator.ancestor_chain.is_empty()
+                            || locator.ancestor_chain == metadata.ancestor_chain)
                         && metadata.supported_actions.contains(&action);
                     matches.then_some((node, metadata))
                 })
                 .collect();
-            let ordinal = locator.ordinal_hint.map(usize::from);
-            let selected = if matches.len() == 1 {
-                matches.first().copied()
-            } else if let Some(ordinal) = ordinal {
-                matches.get(ordinal).copied()
-            } else {
-                None
-            };
-            let (node, metadata) = selected.ok_or_else(|| {
-                AutomationError::Candidates(
-                    if ordinal.is_none() && matches.len() > 1 {
-                        "saved semantic locator is ambiguous; add a stable identifier or ordinal hint"
-                    } else {
+            let (node, metadata) = match matches.as_slice() {
+                [unique] => *unique,
+                [] => {
+                    return Err(AutomationError::Candidates(
                         "saved semantic locator did not resolve to an actionable UIA element"
-                    }
-                    .into(),
-                )
-            })?;
-            let ordinal = ordinal.unwrap_or(0);
+                            .into(),
+                    ))
+                }
+                _ => {
+                    return Err(AutomationError::Candidates(
+                        "saved semantic locator is ambiguous; add a stable automation id or ancestor/row context"
+                            .into(),
+                    ))
+                }
+            };
             let internal = InternalLocator {
                 app_id: observation.app.id.clone(),
                 window_id: observation.window.id.clone(),
@@ -484,7 +488,7 @@ mod platform {
                 accessible_name: metadata.name.clone(),
                 action: action.clone(),
                 risk: classify_risk(&action, metadata.name.as_deref()),
-                ordinal,
+                ancestor_chain: metadata.ancestor_chain.clone(),
             };
             let id = format!("uia:persisted:{}", Uuid::new_v4().simple());
             let candidate = ActionCandidate {
@@ -498,10 +502,7 @@ mod platform {
                     "semantic_element_exists",
                     [("target", node.opaque_id.as_str())],
                 )],
-                expected_effects: vec![predicate(
-                    "ui_state_reobserved_after_action",
-                    std::iter::empty::<(&str, &str)>(),
-                )],
+                expected_effects: expected_effects(&action, node),
             };
             drop(state);
             self.state
@@ -582,8 +583,13 @@ mod platform {
             title: window_title,
         };
 
+        let walker = unsafe {
+            automation
+                .ControlViewWalker()
+                .map_err(|error| uia_observation_error("create UIA control-view walker", error))?
+        };
         let mut nodes = Vec::with_capacity(max_elements);
-        nodes.push(native_node(root, 0)?);
+        nodes.push(native_node(root.clone(), 0, vec![])?);
         if nodes.len() < max_elements {
             let condition = unsafe {
                 automation.ControlViewCondition().map_err(|error| {
@@ -602,7 +608,8 @@ mod platform {
                 let Ok(element) = (unsafe { elements.GetElement(index) }) else {
                     continue;
                 };
-                if let Ok(node) = native_node(element, index as usize + 1) {
+                let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
+                if let Ok(node) = native_node(element, index as usize + 1, ancestors) {
                     nodes.push(node);
                 }
             }
@@ -621,6 +628,7 @@ mod platform {
     fn native_node(
         element: IUIAutomationElement,
         index: usize,
+        ancestor_chain: Vec<SemanticContext>,
     ) -> Result<NativeNode, AutomationError> {
         let control_type = unsafe { element.CurrentControlType() }
             .map_err(|error| uia_observation_error("read UIA control type", error))?;
@@ -709,14 +717,15 @@ mod platform {
             supported_actions.push(NativeAction::Focus);
         }
         let role = role_for(control_type);
-        let opaque_id = format!(
-            "uie:{:016x}",
-            stable_hash(&format!(
-                "{index}|{role:?}|{}|{}",
-                name.as_deref().unwrap_or_default(),
-                automation_id.as_deref().unwrap_or_default()
-            ))
-        );
+        // Keep a stable semantic prefix across list reordering while retaining
+        // the local observation index as a collision suffix. The prefix is an
+        // opaque hash only; no ancestor text is exposed to decision providers.
+        let semantic_hash = stable_hash(&format!(
+            "{role:?}|{}|{}|{ancestor_chain:?}",
+            name.as_deref().unwrap_or_default(),
+            automation_id.as_deref().unwrap_or_default()
+        ));
+        let opaque_id = format!("uie:{semantic_hash:016x}:{index}");
         Ok(NativeNode {
             metadata: NodeMetadata {
                 opaque_id,
@@ -731,6 +740,7 @@ mod platform {
                 toggled,
                 selected,
                 expanded,
+                ancestor_chain,
                 supported_actions,
             },
             element,
@@ -744,6 +754,57 @@ mod platform {
         unsafe { element.GetCurrentPatternAs::<T>(pattern) }.is_ok()
     }
 
+    fn semantic_ancestor_chain(
+        automation: &IUIAutomation,
+        walker: &IUIAutomationTreeWalker,
+        element: &IUIAutomationElement,
+        root: &IUIAutomationElement,
+    ) -> Vec<SemanticContext> {
+        const MAX_ANCESTORS: usize = 8;
+        let mut chain = Vec::new();
+        let mut current = element.clone();
+        for _ in 0..MAX_ANCESTORS {
+            let Ok(parent) = (unsafe { walker.GetParentElement(&current) }) else {
+                break;
+            };
+            let is_root = unsafe { automation.CompareElements(&parent, root) }
+                .map(|same| same.as_bool())
+                .unwrap_or(false);
+            if is_root {
+                break;
+            }
+            if let Some(context) = semantic_context(&parent) {
+                chain.push(context);
+            }
+            current = parent;
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn semantic_context(element: &IUIAutomationElement) -> Option<SemanticContext> {
+        let role = unsafe { element.CurrentControlType() }.ok().map(role_for);
+        let automation_id = element_text(unsafe { element.CurrentAutomationId() }.ok(), 256);
+        let accessible_name = element_text(unsafe { element.CurrentName() }.ok(), 256);
+        let has_stable_text = automation_id.is_some() || accessible_name.is_some();
+        let is_structural = role.as_ref().is_some_and(|role| {
+            matches!(
+                role,
+                UiRole::List
+                    | UiRole::ListItem
+                    | UiRole::Menu
+                    | UiRole::MenuItem
+                    | UiRole::Tab
+                    | UiRole::Document
+            )
+        });
+        (has_stable_text || is_structural).then_some(SemanticContext {
+            role,
+            automation_id,
+            accessible_name,
+        })
+    }
+
     fn resolve_unique<'a>(
         nodes: &'a [NativeNode],
         locator: &InternalLocator,
@@ -754,17 +815,20 @@ mod platform {
                 node.metadata.role == locator.role
                     && node.metadata.automation_id == locator.automation_id
                     && node.metadata.name == locator.accessible_name
+                    && node.metadata.ancestor_chain == locator.ancestor_chain
                     && node.metadata.supported_actions.contains(&locator.action)
             })
             .collect();
-        matches
-            .get(locator.ordinal)
-            .map(|node| &node.element)
-            .ok_or_else(|| {
-                AutomationError::Execution(
-                    "semantic UIA target is missing after fresh re-observation".into(),
-                )
-            })
+        match matches.as_slice() {
+            [unique] => Ok(&unique.element),
+            [] => Err(AutomationError::Execution(
+                "semantic UIA target is missing after fresh re-observation".into(),
+            )),
+            _ => Err(AutomationError::Execution(
+                "semantic UIA target is ambiguous after fresh re-observation; refusing ordinal fallback"
+                    .into(),
+            )),
+        }
     }
 
     fn dispatch(
@@ -938,11 +1002,26 @@ mod platform {
         }
     }
 
-    fn semantic_match(a: &NodeMetadata, b: &NodeMetadata, action: &NativeAction) -> bool {
-        a.role == b.role
-            && a.name == b.name
-            && a.automation_id == b.automation_id
-            && a.supported_actions.contains(action)
+    fn expected_effects(action: &NativeAction, node: &UiNode) -> Vec<Predicate> {
+        let effect = match action {
+            NativeAction::Invoke => "invoke_target_changed_or_disappeared",
+            NativeAction::Toggle => "target_toggle_changed",
+            NativeAction::Select => "target_selected",
+            NativeAction::Expand => "target_expanded",
+            NativeAction::Collapse => "target_collapsed",
+            NativeAction::Focus => "target_focused",
+            NativeAction::SetValue => "target_value_changed",
+            _ => return Vec::new(),
+        };
+        vec![predicate(effect, [("target", node.opaque_id.as_str())])]
+    }
+
+    fn internal_locator_matches(metadata: &NodeMetadata, locator: &InternalLocator) -> bool {
+        metadata.role == locator.role
+            && metadata.automation_id == locator.automation_id
+            && metadata.name == locator.accessible_name
+            && metadata.ancestor_chain == locator.ancestor_chain
+            && metadata.supported_actions.contains(&locator.action)
     }
 
     fn validate_scope(
@@ -1135,6 +1214,123 @@ mod platform {
 
     const fn unchecked_hresult(value: u32) -> i32 {
         value as i32
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn context(name: &str) -> SemanticContext {
+            SemanticContext {
+                role: Some(UiRole::ListItem),
+                automation_id: None,
+                accessible_name: Some(name.into()),
+            }
+        }
+
+        fn metadata(id: &str, ancestors: Vec<SemanticContext>) -> NodeMetadata {
+            NodeMetadata {
+                opaque_id: id.into(),
+                role: UiRole::Button,
+                name: Some("Open".into()),
+                automation_id: Some("open-button".into()),
+                enabled: true,
+                visible: true,
+                focused: false,
+                secure: false,
+                value_fingerprint: None,
+                toggled: None,
+                selected: None,
+                expanded: None,
+                ancestor_chain: ancestors,
+                supported_actions: vec![NativeAction::Invoke],
+            }
+        }
+
+        fn observation(nodes: &[NodeMetadata]) -> Observation {
+            Observation {
+                revision: 1,
+                fingerprint: "test".into(),
+                app: AppIdentity {
+                    id: "app".into(),
+                    display_name: "App".into(),
+                },
+                window: WindowIdentity {
+                    id: "window".into(),
+                    title: "Window".into(),
+                },
+                nodes: nodes.iter().map(NodeMetadata::public_node).collect(),
+                captured_at_ms: 1,
+            }
+        }
+
+        fn adapter_with(nodes: &[NodeMetadata]) -> WindowsUiaAdapter {
+            let adapter = WindowsUiaAdapter::default();
+            adapter.state.lock().unwrap().metadata_by_node = nodes
+                .iter()
+                .cloned()
+                .map(|node| (node.opaque_id.clone(), node))
+                .collect();
+            adapter
+        }
+
+        fn locator(ancestors: Vec<SemanticContext>, ordinal_hint: Option<u16>) -> SemanticLocator {
+            SemanticLocator {
+                app_id: "app".into(),
+                window_id: Some("window".into()),
+                window_title: Some("Window".into()),
+                role: Some(UiRole::Button),
+                automation_id: Some("open-button".into()),
+                accessible_name: Some("Open".into()),
+                ancestor_chain: ancestors,
+                supported_action: Some(NativeAction::Invoke),
+                ordinal_hint,
+            }
+        }
+
+        #[test]
+        fn legacy_ordinal_never_selects_an_ambiguous_duplicate() {
+            let nodes = vec![metadata("first", vec![]), metadata("second", vec![])];
+            let adapter = adapter_with(&nodes);
+            let error = adapter
+                .rebuild_semantic_candidate(
+                    &locator(vec![], Some(1)),
+                    NativeAction::Invoke,
+                    &observation(&nodes),
+                )
+                .expect_err("ordinal fallback must not resolve duplicate controls");
+            assert!(error.to_string().contains("ambiguous"));
+        }
+
+        #[test]
+        fn ancestor_row_context_survives_list_reordering() {
+            let row_a = metadata("row-a-open", vec![context("Row A")]);
+            let row_b = metadata("row-b-open", vec![context("Row B")]);
+            // The current tree is deliberately in the opposite order from the
+            // saved row semantics. Resolution must follow context, not index.
+            let reordered = vec![row_b.clone(), row_a.clone()];
+            let adapter = adapter_with(&reordered);
+            let candidate = adapter
+                .rebuild_semantic_candidate(
+                    &locator(vec![context("Row B")], Some(0)),
+                    NativeAction::Invoke,
+                    &observation(&reordered),
+                )
+                .expect("stable row context should resolve uniquely");
+            assert_eq!(candidate.target.as_deref(), Some("row-b-open"));
+        }
+
+        #[test]
+        fn ambiguous_candidates_are_not_exposed_in_action_space() {
+            let nodes = vec![metadata("first", vec![]), metadata("second", vec![])];
+            let adapter = adapter_with(&nodes);
+            let candidates = adapter
+                .build("open", &observation(&nodes))
+                .expect("candidate construction should still return control choices");
+            assert!(!candidates
+                .iter()
+                .any(|candidate| candidate.kind == CandidateKind::Invoke));
+        }
     }
 }
 

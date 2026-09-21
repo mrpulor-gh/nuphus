@@ -86,6 +86,21 @@ pub struct ObservationScope {
     pub subtree_id: Option<String>,
 }
 
+/// Stable semantic context for one ancestor in the accessibility tree.
+///
+/// The chain is ordered from the outermost retained ancestor to the direct
+/// parent. Runtime ids, native handles, coordinates and observation indexes
+/// are deliberately excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<UiRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessible_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticLocator {
     pub app_id: String,
@@ -101,8 +116,13 @@ pub struct SemanticLocator {
     pub automation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accessible_name: Option<String>,
+    /// Stable row/container context used to distinguish repeated controls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_chain: Vec<SemanticContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supported_action: Option<NativeAction>,
+    /// Legacy diagnostic hint retained for old workflow compatibility.
+    /// Resolvers must never use it to break an ambiguous match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ordinal_hint: Option<u16>,
 }

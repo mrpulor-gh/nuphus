@@ -36,11 +36,12 @@ struct ActionSpace {
     observation: Observation,
     candidates: Vec<ActionCandidate>,
     persistent_locators: std::collections::HashMap<String, SemanticLocator>,
+    enhanced_goal_key: Option<String>,
 }
 
 #[derive(Clone, Default)]
 struct EnhancedLoopState {
-    goal: String,
+    goal_key: String,
     steps: u32,
     consecutive_stalls: u32,
     recent_actions: Vec<RecentAction>,
@@ -60,7 +61,11 @@ impl SemanticDesktopBackend {
         }
     }
 
-    async fn observe(&self, goal: &str) -> Result<ActionSpace, String> {
+    async fn observe(
+        &self,
+        goal: &str,
+        enhanced_goal_key: Option<String>,
+    ) -> Result<ActionSpace, String> {
         let observation = self
             .observer
             .observe(&ObservationScope::default())
@@ -85,6 +90,7 @@ impl SemanticDesktopBackend {
             observation,
             candidates,
             persistent_locators,
+            enhanced_goal_key,
         };
         *self.last_space.lock().await = Some(space.clone());
         Ok(space)
@@ -94,11 +100,12 @@ impl SemanticDesktopBackend {
         *self.last_space.lock().await = None;
     }
 
-    async fn begin_enhanced_step(&self, goal: &str) -> Result<Vec<RecentAction>, String> {
+    async fn begin_enhanced_step(&self, goal: &str) -> Result<(String, Vec<RecentAction>), String> {
+        let goal_key = normalize_goal_key(goal);
         let mut state = self.loop_state.lock().await;
-        if state.goal != goal {
+        if state.goal_key.is_empty() || !same_bounded_goal(&state.goal_key, &goal_key) {
             *state = EnhancedLoopState {
-                goal: goal.to_string(),
+                goal_key: goal_key.clone(),
                 ..Default::default()
             };
         }
@@ -112,16 +119,24 @@ impl SemanticDesktopBackend {
                 "连续 {STALL_LIMIT} 个语义动作未产生界面变化，已停止自动重试"
             ));
         }
-        Ok(state.recent_actions.clone())
+        // Count every enhanced decision attempt, including Jev protocol/network
+        // failures and attempts that hand the same action space back to the
+        // primary model. Delayed local execution records its outcome below but
+        // must not consume a second decision step.
+        state.steps = state.steps.saturating_add(1);
+        Ok((state.goal_key.clone(), state.recent_actions.clone()))
     }
 
     async fn record_enhanced_result(
         &self,
+        goal_key: &str,
         candidate: &ActionCandidate,
         verification: Verification,
     ) {
         let mut state = self.loop_state.lock().await;
-        state.steps = state.steps.saturating_add(1);
+        if state.goal_key != goal_key {
+            return;
+        }
         if verification == Verification::NoChange {
             state.consecutive_stalls = state.consecutive_stalls.saturating_add(1);
         } else {
@@ -142,6 +157,73 @@ impl SemanticDesktopBackend {
     }
 }
 
+fn normalize_goal_key(goal: &str) -> String {
+    let mut normalized = String::new();
+    let mut pending_separator = false;
+    for ch in goal.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            if pending_separator && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(ch);
+            pending_separator = false;
+        } else {
+            pending_separator = true;
+        }
+    }
+    if normalized.is_empty() {
+        "__nonsemantic_goal__".into()
+    } else {
+        normalized
+    }
+}
+
+fn same_bounded_goal(existing: &str, incoming: &str) -> bool {
+    if existing == incoming {
+        return true;
+    }
+    if existing.is_empty() || incoming.is_empty() {
+        return false;
+    }
+
+    let existing_chars: Vec<char> = existing.chars().collect();
+    let incoming_chars: Vec<char> = incoming.chars().collect();
+    let max_len = existing_chars.len().max(incoming_chars.len());
+    let min_len = existing_chars.len().min(incoming_chars.len());
+    if (existing.contains(incoming) || incoming.contains(existing))
+        && min_len.saturating_mul(4) >= max_len.saturating_mul(3)
+    {
+        return true;
+    }
+
+    let allowed_edits = 3_usize.max(max_len / 10);
+    bounded_edit_distance(&existing_chars, &incoming_chars, allowed_edits)
+        .is_some_and(|distance| distance <= allowed_edits)
+}
+
+fn bounded_edit_distance(left: &[char], right: &[char], limit: usize) -> Option<usize> {
+    if left.len().abs_diff(right.len()) > limit {
+        return None;
+    }
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_char) in left.iter().enumerate() {
+        current[0] = left_index + 1;
+        let mut row_min = current[0];
+        for (right_index, right_char) in right.iter().enumerate() {
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + usize::from(left_char != right_char));
+            row_min = row_min.min(current[right_index + 1]);
+        }
+        if row_min > limit {
+            return None;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    Some(previous[right.len()])
+}
+
 impl ToolRegistry {
     pub(super) async fn execute_semantic_desktop_tool(
         &self,
@@ -160,7 +242,7 @@ impl ToolRegistry {
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
                 backend
-                    .observe(goal)
+                    .observe(goal, None)
                     .await
                     .map(|space| action_space_json(&space))
             }
@@ -256,15 +338,26 @@ async fn execute_cached_candidate(
         .find(|candidate| candidate.id == candidate_id)
         .cloned()
         .ok_or_else(|| "candidate_id 不属于最近一次语义观察".to_string())?;
-    execute_candidate(backend, &space.observation, &candidate, &input, None).await
+    let result = execute_candidate(backend, &space.observation, &candidate, &input, None).await?;
+    if let (Some(goal_key), Some(verification)) = (
+        space.enhanced_goal_key.as_deref(),
+        result
+            .get("verification")
+            .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok()),
+    ) {
+        backend
+            .record_enhanced_result(goal_key, &candidate, verification)
+            .await;
+    }
+    Ok(result)
 }
 
 async fn execute_jev_step(
     backend: &SemanticDesktopBackend,
     goal: &str,
 ) -> Result<serde_json::Value, String> {
-    let recent_actions = backend.begin_enhanced_step(goal).await?;
-    let space = backend.observe(goal).await?;
+    let (goal_key, recent_actions) = backend.begin_enhanced_step(goal).await?;
+    let space = backend.observe(goal, Some(goal_key.clone())).await?;
     let mut config = crate::config::load_registry()
         .map_err(|error| format!("读取 Jev 配置失败: {error}"))?
         .jev;
@@ -363,7 +456,7 @@ async fn execute_jev_step(
         .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok());
     if let Some(verification) = verification {
         backend
-            .record_enhanced_result(&candidate, verification)
+            .record_enhanced_result(&goal_key, &candidate, verification)
             .await;
     }
     Ok(result)
@@ -485,7 +578,6 @@ async fn execute_persistent_action(
         })
         .await
         .map_err(|error| error.to_string())?;
-    let requires_achieved = !matches!(action, NativeAction::Invoke);
     let candidate = backend
         .candidates
         .rebuild_semantic_candidate(&locator, action, &before)
@@ -496,9 +588,7 @@ async fn execute_persistent_action(
         .cloned()
         .and_then(|value| serde_json::from_value::<Verification>(value).ok())
         .unwrap_or(Verification::Unknown);
-    let verified = verification == Verification::Achieved
-        || (!requires_achieved && verification == Verification::Progress);
-    if !verified {
+    if verification != Verification::Achieved {
         return Err(format!(
             "已保存的语义动作没有通过执行后验证: {verification:?}"
         ));
@@ -539,37 +629,125 @@ fn verify_observation(
     candidate: &ActionCandidate,
     after: &Observation,
 ) -> Verification {
-    if before.app.id != after.app.id || before.window.id != after.window.id {
-        return Verification::Progress;
-    }
     let target_before = candidate
         .target
         .as_deref()
         .and_then(|id| before.nodes.iter().find(|node| node.opaque_id == id));
-    let target_after = candidate
-        .target
-        .as_deref()
-        .and_then(|id| after.nodes.iter().find(|node| node.opaque_id == id));
+    let target_after = target_before.map(|target| resolve_target(after, target));
     let achieved = match (&candidate.kind, target_before, target_after) {
-        (CandidateKind::Toggle, Some(old), Some(new)) => {
+        (CandidateKind::Invoke, Some(old), Some(TargetResolution::Unique(new))) => {
+            invoke_expected(candidate)
+                && (old.enabled != new.enabled
+                    || old.visible != new.visible
+                    || old.focused != new.focused
+                    || old.toggled != new.toggled
+                    || old.selected != new.selected
+                    || old.expanded != new.expanded
+                    || old.value_fingerprint != new.value_fingerprint)
+        }
+        (CandidateKind::Invoke, Some(old), Some(TargetResolution::Missing)) => {
+            invoke_expected(candidate)
+                && target_is_unique(before, old)
+                && before.app.id == after.app.id
+                && before.window.id == after.window.id
+        }
+        (CandidateKind::Invoke, Some(old), _)
+            if invoke_expected(candidate)
+                && target_is_unique(before, old)
+                && before.app.id == after.app.id
+                && before.window.id != after.window.id =>
+        {
+            true
+        }
+        (CandidateKind::Toggle, Some(old), Some(TargetResolution::Unique(new))) => {
             old.toggled.zip(new.toggled).is_some_and(|(a, b)| a != b)
         }
-        (CandidateKind::Select, _, Some(new)) => new.selected == Some(true),
-        (CandidateKind::Expand, _, Some(new)) => new.expanded == Some(true),
-        (CandidateKind::Collapse, _, Some(new)) => new.expanded == Some(false),
-        (CandidateKind::Focus, _, Some(new)) => new.focused,
-        (CandidateKind::SetValue { .. }, Some(old), Some(new)) => {
+        (CandidateKind::Select, _, Some(TargetResolution::Unique(new))) => {
+            new.selected == Some(true)
+        }
+        (CandidateKind::Expand, _, Some(TargetResolution::Unique(new))) => {
+            new.expanded == Some(true)
+        }
+        (CandidateKind::Collapse, _, Some(TargetResolution::Unique(new))) => {
+            new.expanded == Some(false)
+        }
+        (CandidateKind::Focus, _, Some(TargetResolution::Unique(new))) => new.focused,
+        (CandidateKind::SetValue { .. }, Some(old), Some(TargetResolution::Unique(new))) => {
             old.value_fingerprint != new.value_fingerprint
         }
         _ => false,
     };
     if achieved {
         Verification::Achieved
-    } else if after.fingerprint != before.fingerprint {
-        Verification::Progress
     } else {
+        // A clock, notification badge, spinner or unrelated control may alter
+        // the window fingerprint. That is not evidence that this target's
+        // action succeeded and must never authorize replay continuation.
         Verification::NoChange
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TargetResolution<'a> {
+    Unique(&'a crate::desktop_automation::UiNode),
+    Missing,
+    Ambiguous,
+}
+
+fn resolve_target<'a>(
+    observation: &'a Observation,
+    target: &crate::desktop_automation::UiNode,
+) -> TargetResolution<'a> {
+    let matches: Vec<_> = observation
+        .nodes
+        .iter()
+        .filter(|node| same_public_semantics(node, target))
+        .collect();
+    match matches.as_slice() {
+        [unique] => TargetResolution::Unique(unique),
+        [] => TargetResolution::Missing,
+        _ => TargetResolution::Ambiguous,
+    }
+}
+
+fn target_is_unique(observation: &Observation, target: &crate::desktop_automation::UiNode) -> bool {
+    observation
+        .nodes
+        .iter()
+        .filter(|node| same_public_semantics(node, target))
+        .take(2)
+        .count()
+        == 1
+}
+
+fn same_public_semantics(
+    left: &crate::desktop_automation::UiNode,
+    right: &crate::desktop_automation::UiNode,
+) -> bool {
+    let identity_matches = match (
+        uia_semantic_key(&left.opaque_id),
+        uia_semantic_key(&right.opaque_id),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => true,
+    };
+    identity_matches
+        && left.role == right.role
+        && left.name == right.name
+        && left.secure == right.secure
+}
+
+fn uia_semantic_key(opaque_id: &str) -> Option<&str> {
+    let suffix = opaque_id.strip_prefix("uie:")?;
+    let (semantic_hash, _) = suffix.rsplit_once(':')?;
+    (!semantic_hash.is_empty()).then_some(semantic_hash)
+}
+
+fn invoke_expected(candidate: &ActionCandidate) -> bool {
+    candidate
+        .expected_effects
+        .iter()
+        .any(|predicate| predicate.name == "invoke_target_changed_or_disappeared")
 }
 
 fn grant_for(observation: &Observation) -> ExecutionGrant {
@@ -652,6 +830,7 @@ fn action_space_json(space: &ActionSpace) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::desktop_automation::Predicate;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -660,6 +839,7 @@ mod tests {
         executions: AtomicUsize,
         candidate_kind: CandidateKind,
         received_value: Mutex<Option<String>>,
+        changes_after_execute: bool,
     }
 
     fn observation() -> Observation {
@@ -693,7 +873,7 @@ mod tests {
             _scope: &ObservationScope,
         ) -> Result<Observation, crate::desktop_automation::AutomationError> {
             let mut current = observation();
-            let executed = self.executions.load(Ordering::SeqCst) > 0;
+            let executed = self.changes_after_execute && self.executions.load(Ordering::SeqCst) > 0;
             if executed {
                 current.fingerprint = "changed-ui".into();
                 current.revision = 2;
@@ -718,6 +898,22 @@ mod tests {
                     }),
                     supported_actions: vec![NativeAction::SetValue],
                 });
+            } else if matches!(self.candidate_kind, CandidateKind::Invoke) && !executed {
+                current.nodes.push(crate::desktop_automation::UiNode {
+                    opaque_id: "fake-target".into(),
+                    role: crate::desktop_automation::UiRole::Button,
+                    name: Some("Fake Button".into()),
+                    short_value: None,
+                    enabled: true,
+                    visible: true,
+                    focused: false,
+                    secure: false,
+                    toggled: None,
+                    selected: None,
+                    expanded: None,
+                    value_fingerprint: None,
+                    supported_actions: vec![NativeAction::Invoke],
+                });
             }
             Ok(current)
         }
@@ -737,7 +933,13 @@ mod tests {
                 public_description: "Invoke fake button".into(),
                 local_risk: crate::desktop_automation::RiskClass::Reversible,
                 preconditions: vec![],
-                expected_effects: vec![],
+                expected_effects: match self.candidate_kind {
+                    CandidateKind::Invoke => vec![Predicate {
+                        name: "invoke_target_changed_or_disappeared".into(),
+                        arguments: Default::default(),
+                    }],
+                    _ => vec![],
+                },
             }])
         }
 
@@ -749,6 +951,7 @@ mod tests {
                 role: Some(crate::desktop_automation::UiRole::Button),
                 automation_id: Some("fake-button".into()),
                 accessible_name: Some("Fake Button".into()),
+                ancestor_chain: vec![],
                 supported_action: Some(match candidate.kind {
                     CandidateKind::SetValue { .. } => NativeAction::SetValue,
                     _ => NativeAction::Invoke,
@@ -781,7 +984,13 @@ mod tests {
                 public_description: "Rebuilt fake action".into(),
                 local_risk: crate::desktop_automation::RiskClass::Reversible,
                 preconditions: vec![],
-                expected_effects: vec![],
+                expected_effects: match action {
+                    NativeAction::Invoke => vec![Predicate {
+                        name: "invoke_target_changed_or_disappeared".into(),
+                        arguments: Default::default(),
+                    }],
+                    _ => vec![],
+                },
             })
         }
     }
@@ -813,6 +1022,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Invoke,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -859,6 +1069,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Invoke,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter);
@@ -884,6 +1095,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Invoke,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -919,6 +1131,7 @@ mod tests {
                 slot_id: "value".into(),
             },
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -959,6 +1172,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Toggle,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -995,6 +1209,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Invoke,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -1040,6 +1255,45 @@ mod tests {
         observation
     }
 
+    fn invoke_observation(fingerprint: &str, target_count: usize) -> Observation {
+        let mut observation = observation();
+        observation.fingerprint = fingerprint.into();
+        observation.nodes = (0..target_count)
+            .map(|index| crate::desktop_automation::UiNode {
+                opaque_id: format!("invoke-target-{index}"),
+                role: crate::desktop_automation::UiRole::Button,
+                name: Some("Open".into()),
+                short_value: None,
+                enabled: true,
+                visible: true,
+                focused: false,
+                secure: false,
+                toggled: None,
+                selected: None,
+                expanded: None,
+                value_fingerprint: None,
+                supported_actions: vec![crate::desktop_automation::NativeAction::Invoke],
+            })
+            .collect();
+        observation
+    }
+
+    fn invoke_candidate(target: &str) -> ActionCandidate {
+        ActionCandidate {
+            id: "invoke".into(),
+            observation_revision: 1,
+            target: Some(target.into()),
+            kind: CandidateKind::Invoke,
+            public_description: "Invoke Open".into(),
+            local_risk: crate::desktop_automation::RiskClass::Reversible,
+            preconditions: vec![],
+            expected_effects: vec![Predicate {
+                name: "invoke_target_changed_or_disappeared".into(),
+                arguments: Default::default(),
+            }],
+        }
+    }
+
     #[tokio::test]
     async fn semantic_set_value_stays_local_and_preserves_whitespace() {
         let adapter = Arc::new(FakeAdapter {
@@ -1048,6 +1302,7 @@ mod tests {
                 slot_id: "value".into(),
             },
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -1089,6 +1344,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Done,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter.clone());
@@ -1122,6 +1378,7 @@ mod tests {
             executions: AtomicUsize::new(0),
             candidate_kind: CandidateKind::Invoke,
             received_value: Mutex::new(None),
+            changes_after_execute: true,
         });
         let mut registry = ToolRegistry::new();
         registry.set_semantic_desktop_adapter(adapter);
@@ -1135,6 +1392,137 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("未启用"));
+    }
+
+    #[tokio::test]
+    async fn enhanced_budget_counts_every_decision_attempt_across_minor_goal_edits() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+
+        for index in 0..HARD_STEP_LIMIT {
+            let goal = if index % 2 == 0 {
+                "Open the report"
+            } else {
+                "  OPEN   the report!!!  "
+            };
+            backend.begin_enhanced_step(goal).await.unwrap();
+        }
+
+        let rejected = backend
+            .begin_enhanced_step("open the report.")
+            .await
+            .unwrap_err();
+        assert!(rejected.contains("100 步硬上限"));
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, HARD_STEP_LIMIT);
+        assert_eq!(state.goal_key, "open the report");
+    }
+
+    #[tokio::test]
+    async fn enhanced_fallback_execution_records_stall_and_recent_action_without_double_counting() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::SetValue {
+                slot_id: "value".into(),
+            },
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        for _ in 0..STALL_LIMIT {
+            let (goal_key, _) = backend.begin_enhanced_step("Fill field").await.unwrap();
+            let space = backend.observe("Fill field", Some(goal_key)).await.unwrap();
+            let result = execute_cached_candidate(
+                &backend,
+                &space.token,
+                "fake-candidate",
+                ExecutionInput {
+                    value: Some("local text".into()),
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["verification"], "no_change");
+        }
+
+        let state = backend.loop_state.lock().await;
+        assert_eq!(
+            state.steps, STALL_LIMIT,
+            "delayed execution is not a new decision"
+        );
+        assert_eq!(state.consecutive_stalls, STALL_LIMIT);
+        assert_eq!(state.recent_actions.len(), STALL_LIMIT as usize);
+        assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
+        drop(state);
+
+        let rejected = backend
+            .begin_enhanced_step(" fill field! ")
+            .await
+            .unwrap_err();
+        assert!(rejected.contains("未产生界面变化"));
+    }
+
+    #[tokio::test]
+    async fn enhanced_primary_fallback_execution_records_recent_action() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        let (goal_key, _) = backend.begin_enhanced_step("Open report").await.unwrap();
+        let space = backend
+            .observe("Open report", Some(goal_key))
+            .await
+            .unwrap();
+
+        let result = execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["verification"], "no_change");
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, 1);
+        assert_eq!(state.consecutive_stalls, 1);
+        assert_eq!(state.recent_actions.len(), 1);
+        assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
+    }
+
+    #[tokio::test]
+    async fn ordinary_semantic_execution_does_not_join_enhanced_budget() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        let space = backend.observe("Open", None).await.unwrap();
+
+        execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, 0);
+        assert_eq!(state.consecutive_stalls, 0);
+        assert!(state.recent_actions.is_empty());
     }
 
     #[test]
@@ -1151,6 +1539,74 @@ mod tests {
             preconditions: vec![],
             expected_effects: vec![],
         };
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn unrelated_fingerprint_change_does_not_verify_invoke() {
+        let before = invoke_observation("before", 1);
+        let after = invoke_observation("unrelated-change", 1);
+        let candidate = invoke_candidate("invoke-target-0");
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::NoChange
+        );
+    }
+
+    #[test]
+    fn unique_invoke_target_disappearance_is_verified() {
+        let before = invoke_observation("before", 1);
+        let after = invoke_observation("after", 0);
+        let candidate = invoke_candidate("invoke-target-0");
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn duplicate_invoke_targets_cannot_be_verified_by_disappearance() {
+        let before = invoke_observation("before", 2);
+        let after = invoke_observation("after", 0);
+        let candidate = invoke_candidate("invoke-target-0");
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::NoChange
+        );
+    }
+
+    #[test]
+    fn unrelated_application_switch_does_not_verify_invoke() {
+        let before = invoke_observation("before", 1);
+        let mut after = invoke_observation("after", 0);
+        after.app.id = "another-app".into();
+        after.window.id = "another-window".into();
+        let candidate = invoke_candidate("invoke-target-0");
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::NoChange
+        );
+    }
+
+    #[test]
+    fn uia_row_semantic_key_verifies_the_intended_repeated_control() {
+        let mut before = invoke_observation("before", 2);
+        before.nodes[0].opaque_id = "uie:row-a-open:0".into();
+        before.nodes[1].opaque_id = "uie:row-b-open:1".into();
+        let mut after = before.clone();
+        after.fingerprint = "after".into();
+        // Row A disappeared while Row B remained and moved to index 0.
+        after.nodes.remove(0);
+        after.nodes[0].opaque_id = "uie:row-b-open:0".into();
+        let candidate = invoke_candidate("uie:row-a-open:0");
 
         assert_eq!(
             verify_observation(&before, &candidate, &after),

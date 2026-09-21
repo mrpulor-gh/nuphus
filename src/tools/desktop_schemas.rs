@@ -88,8 +88,20 @@ impl ToolRegistry {
                             "role" => obj!("type"="string","enum"=["window","button","text_field","check_box","radio_button","list","list_item","menu","menu_item","tab","document","other"]),
                             "automation_id" => obj!("type"="string"),
                             "accessible_name" => obj!("type"="string"),
+                            "ancestor_chain" => obj!(
+                                "type"="array",
+                                "description"="稳定的祖先/行上下文；用于区分重复控件，不包含坐标或运行时句柄",
+                                "items"=obj!(
+                                    "type"="object",
+                                    "properties"=json_props! {
+                                        "role" => obj!("type"="string","enum"=["window","button","text_field","check_box","radio_button","list","list_item","menu","menu_item","tab","document","other"]),
+                                        "automation_id" => obj!("type"="string"),
+                                        "accessible_name" => obj!("type"="string")
+                                    }
+                                )
+                            ),
                             "supported_action" => obj!("type"="string","enum"=["invoke","toggle","select","expand","collapse","focus","set_value"]),
-                            "ordinal_hint" => obj!("type"="integer","minimum"=0,"maximum"=65535)
+                            "ordinal_hint" => obj!("type"="integer","minimum"=0,"maximum"=65535,"description"="旧工作流诊断提示；不会用于消解歧义")
                         },
                         "required"=["app_id"]
                     ),
