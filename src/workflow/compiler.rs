@@ -383,9 +383,6 @@ impl Compiler {
                     }
                 }
                 ctx.scan_refs(with, &step.name);
-                if let Some(cap) = &step.capture {
-                    ctx.captured.insert(cap.clone());
-                }
             }
             Action::Seq { seq } => {
                 if seq.is_empty() {
@@ -544,6 +541,13 @@ impl Compiler {
                 ctx.warnings
                     .push(format!("步骤 '{}': custom 类型，跳过类型校验", step.name));
             }
+        }
+
+        // capture belongs to Step rather than any individual action variant. Register it only
+        // after validating the step so the producer cannot satisfy its own forward references,
+        // while every action kind can satisfy references in following steps.
+        if let Some(cap) = &step.capture {
+            ctx.captured.insert(cap.clone());
         }
     }
 

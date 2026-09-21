@@ -221,7 +221,8 @@ mod compiler_tests {
     use crate::workflow::compiler::Compiler;
     use crate::workflow::store::WorkflowStore;
     use crate::workflow::types::{
-        Action, Condition, ForEachDef, IfDef, InputKind, InputSpec, LoopDef, Step, VarRef, Workflow,
+        Action, Condition, ForEachDef, IfDef, InputKind, InputSpec, LoopDef, ScriptDef, Step,
+        VarRef, Workflow,
     };
 
     fn make_input(name: &str, required: bool, default: Option<serde_json::Value>) -> InputSpec {
@@ -639,6 +640,39 @@ mod compiler_tests {
             .warnings
             .iter()
             .any(|w| w.contains("data") && w.contains("尚未")));
+    }
+
+    #[test]
+    fn validate_script_capture_is_available_to_following_steps() {
+        let mut wf = Workflow::new("脚本捕获");
+        wf.steps = vec![
+            Step {
+                id: "timestamp".into(),
+                name: "生成时间戳".into(),
+                action: Action::Script {
+                    script: ScriptDef {
+                        runtime: "pwsh".into(),
+                        code: "Get-Date".into(),
+                        cwd: None,
+                    },
+                },
+                capture: Some("ts".into()),
+                ..Default::default()
+            },
+            Step {
+                id: "append".into(),
+                name: "追加记录".into(),
+                action: Action::Tool {
+                    tool: "Append".into(),
+                    with: serde_json::json!({"content": "[{{ts}}] message"}),
+                },
+                ..Default::default()
+            },
+        ];
+
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed);
+        assert!(!report.warnings.iter().any(|warning| warning.contains("ts")));
     }
 
     #[test]
