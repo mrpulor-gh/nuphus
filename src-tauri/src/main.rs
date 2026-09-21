@@ -678,6 +678,18 @@ fn main() {
                 // 旧磁盘镜像（sessions/{id}.json）幂等导入 SQLite（保留文件不删），
                 // 必须在 warm_from_disk 之前执行，保证列表/恢复立即可用
                 crate::commands::process::shelf::migrate_legacy_mirrors();
+                // 历史会话归属回填（一次性、幂等）：旧库归属行只有 project_tag、缺
+                // project_path，用 tag 与「已知候选目录」（书签 / 当前项目目录 / 已登记过的
+                // 归属路径）精确匹配补齐，避免 rail 把有项目目录的老对话堆进「未分组」；
+                // 匹配不上保持无归属（不猜测）。放在预热/首轮列表读取之前：列表分组读的
+                // 就是这批归属数据，先回填才能一次显示正确分组。失败只 warn 不阻断启动。
+                match nuphus::store::session::backfill_session_project_paths() {
+                    Ok(n) if n > 0 => tracing::info!("[Shelf] 历史会话项目归属回填 {n} 条"),
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("[Shelf] 历史会话项目归属回填失败（降级跳过）: {e}")
+                    }
+                }
                 let shelf_locked = state.shelf.lock();
                 if let Ok(mut shelf) = shelf_locked {
                     crate::commands::process::shelf::warm_from_disk(&mut shelf);

@@ -1153,6 +1153,34 @@ pub fn derive_project_tag_from_dir(dir: &str) -> Option<String> {
     ))
 }
 
+/// 由标签反查**已知候选目录**：对每个候选目录按 [`derive_project_tag_from_dir`] 派生标签，
+/// 与 `tag` 精确相等才返回该目录（返回的是命中的那个写法本身，保证 tag ↔ path 同源同值）。
+///
+/// 只做「tag 的精确匹配」：不按当前目录、会话内容或时间做任何推断；无候选命中 → None。
+/// 每个候选目录还会以「首尾空白 + 结尾分隔符」规范化后的写法再试一次——两者是同一目录
+/// 字符串的等价写法，不扩大候选集，仍属精确匹配。
+///
+/// 用途：一次性回填历史会话归属（`session_meta.project_path`）时，把不可逆的标签还原成
+/// 用户已确认过的目录（见 `store::session::backfill_session_project_paths`）。
+pub fn dir_for_project_tag(tag: &str, candidates: &[String]) -> Option<String> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return None;
+    }
+    for dir in candidates {
+        let trimmed = dir.trim().trim_end_matches(['\\', '/']);
+        for variant in [dir.as_str(), trimmed] {
+            if variant.is_empty() {
+                continue;
+            }
+            if derive_project_tag_from_dir(variant).as_deref() == Some(tag) {
+                return Some(variant.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// 目录展示名（路径末段）：兼容正反斜杠与结尾分隔符；空路径 → 空串。
 ///
 /// 项目目录 / 书签 / 会话归属路径共用的展示名规则（唯一实现，避免各处各写一套）。
