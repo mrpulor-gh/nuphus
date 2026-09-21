@@ -15,10 +15,24 @@ use std::time::Duration;
 /// PR-2 (AppState 合并): 携带 `SharedSignals`（pause/security/workflow 信号句柄），
 /// 供 tenet_add / request_user_input 等需要写信号状态的工具使用。
 /// 设计见 docs/internal/2026-08-06-appstate-merge-design.md §2.3 方案 A。
-#[derive(Debug, Clone, Default)]
+pub type ScheduleToolCallback =
+    Arc<dyn Fn(&serde_json::Value) -> std::result::Result<crate::ToolResult, String> + Send + Sync>;
+
+#[derive(Clone, Default)]
 pub struct ToolCtx {
     /// 共享信号状态句柄（由 ToolRegistry 在 execute() 注入）
     pub signals: crate::state::SharedSignals,
+    /// Desktop host bridge for schedule_cron. None in headless/library-only contexts.
+    pub schedule_tool: Option<ScheduleToolCallback>,
+}
+
+impl std::fmt::Debug for ToolCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolCtx")
+            .field("signals", &self.signals)
+            .field("schedule_tool", &self.schedule_tool.is_some())
+            .finish()
+    }
 }
 
 /// Tool definition
@@ -50,6 +64,7 @@ pub struct ToolRegistry {
     /// passed to tool executors via ToolCtx at the execute() choke point.
     /// Clone shares the same Arc (same pattern as desktop_client).
     signals: crate::state::SharedSignals,
+    schedule_tool: Arc<RwLock<Option<ScheduleToolCallback>>>,
     /// 自动化工具（`desktop_*` / `browser_*`）开关。
     ///
     /// false = 既不暴露 schema，也拒绝执行。ExecAgent 走此隔离：
@@ -67,6 +82,7 @@ impl Default for ToolRegistry {
             prompt_cache: Arc::new(RwLock::new(None)),
             canonical_map: HashMap::new(),
             signals: crate::state::new_shared_signals(),
+            schedule_tool: Arc::new(RwLock::new(None)),
             automation_tools_enabled: true,
         }
     }
@@ -81,6 +97,7 @@ impl Clone for ToolRegistry {
             prompt_cache: self.prompt_cache.clone(),
             canonical_map: self.canonical_map.clone(),
             signals: self.signals.clone(),
+            schedule_tool: self.schedule_tool.clone(),
             automation_tools_enabled: self.automation_tools_enabled,
         }
     }
@@ -125,6 +142,12 @@ impl ToolRegistry {
     /// 保证全进程指向同一 SignalState 实例）
     pub fn set_signals(&mut self, signals: crate::state::SharedSignals) {
         self.signals = signals;
+    }
+
+    pub fn set_schedule_tool_callback(&self, callback: ScheduleToolCallback) {
+        if let Ok(mut slot) = self.schedule_tool.write() {
+            *slot = Some(callback);
+        }
     }
 
     /// Register tool (automatically clears prompt cache)
@@ -299,6 +322,7 @@ impl ToolRegistry {
         // ToolCtx 携带本 registry 的共享信号句柄（src-tauri 启动时注入的唯一实例）
         let ctx = ToolCtx {
             signals: self.signals.clone(),
+            schedule_tool: self.schedule_tool.read().ok().and_then(|slot| slot.clone()),
         };
         // 超时分级：
         // - system_shell/system_sleep 自带超时机制，给 600s 容纳默认 180s + 余量

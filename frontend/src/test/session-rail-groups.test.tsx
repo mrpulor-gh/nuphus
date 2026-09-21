@@ -100,19 +100,17 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     calls.push('newChat')
     return true
   })
-  const onOpenProjectDir = vi.fn(() => calls.push('openProjectDir'))
   const onSessionChanged = vi.fn()
   const utils = render(
     <SessionRail
       onSessionChanged={onSessionChanged}
       onNewChat={onNewChat}
-      onOpenProjectDir={onOpenProjectDir}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}
     />,
   )
-  return { ...utils, onSwitchProjectDir, onNewChat, onOpenProjectDir, onSessionChanged }
+  return { ...utils, onSwitchProjectDir, onNewChat, onSessionChanged }
 }
 
 describe('SessionRail 项目文件夹分组渲染', () => {
@@ -149,7 +147,7 @@ describe('SessionRail 项目文件夹分组渲染', () => {
   })
 
   it('「项目」标签位于「新建对话」按钮之后、首个分组之前（DOM 顺序）', async () => {
-    const { onOpenProjectDir } = renderRail()
+    renderRail()
     await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
 
     const newChat = document.querySelector('.sr-new-chat-btn') as HTMLElement
@@ -168,9 +166,9 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const menuBtn = within(label).getByLabelText('项目菜单')
     const newFolderBtn = within(label).getByLabelText('新建项目文件夹')
     expect(menuBtn.compareDocumentPosition(newFolderBtn) & following).toBeTruthy()
-    // 📁+ 沿用既有流程：打开项目中心（选目录 + 命名 + 加入书签）
+    // 📁+ 已改语义：打开「创建项目」弹窗（不再进项目中心）
     fireEvent.click(newFolderBtn)
-    expect(onOpenProjectDir).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('dialog', { name: '创建项目' })).toBeInTheDocument()
   })
 
   it('抽屉三种关闭路径：Esc / 点击面板外 / 再点色块（删掉 ✕ 后无回归）', async () => {
@@ -187,10 +185,10 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(isOpen()).toBe(false)
 
-    // ② 色块展开 → 点击面板与色块之外收起
+    // ② 色块展开 → 点击面板与色块之外收起（pointerdown：拖动区拦截 mousedown 冒泡也不受影响）
     fireEvent.click(chip)
     expect(isOpen()).toBe(true)
-    fireEvent.mouseDown(document.body)
+    fireEvent.pointerDown(document.body)
     expect(isOpen()).toBe(false)
 
     // ③ 色块展开 → 再点色块收起（色块是唯一常驻开合入口）
@@ -207,9 +205,18 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     const heads = Array.from(document.querySelectorAll('.sr-group-name')).map(e => e.textContent)
     expect(heads).toEqual(['一号', 'Nuphus', 'auto', '未分组'])
 
-    // 当前工作目录组带「当前」徽标，但顺序不上浮（仍在第 2 位）
-    const currentHead = screen.getByText('Nuphus').closest('.sr-group-head')!
-    expect(within(currentHead as HTMLElement).getByText('当前')).toBeInTheDocument()
+    // 当前工作目录组：顺序不上浮（仍在第 2 位），且组头**不再有任何「当前」迹象**——
+    // 无「当前」徽标、无 is-current 类，容器里也不存在 .sr-group-badge（死类名真删）
+    const currentHead = screen.getByText('Nuphus').closest('.sr-group-head') as HTMLElement
+    expect(within(currentHead).queryByText('当前')).toBeNull()
+    expect(currentHead).not.toHaveClass('is-current')
+    expect(document.querySelector('.sr-group-badge')).toBeNull()
+
+    // 组内当前会话行完全不变：「当前」高亮只属于会话行（active 块 + 行内「当前」徽标）
+    const activeItem = screen.getByText('当前会话').closest('.sr-item') as HTMLElement
+    expect(activeItem).toHaveClass('active')
+    expect(activeItem.querySelector('.sr-current-badge')).not.toBeNull()
+    expect(within(activeItem).getByText('当前')).toBeInTheDocument()
 
     // 归档文件夹：组名与组内会话都不可见
     expect(screen.queryByText('已归档目录')).not.toBeInTheDocument()

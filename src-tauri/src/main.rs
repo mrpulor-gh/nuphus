@@ -25,6 +25,34 @@ mod state;
 mod utils;
 mod video;
 
+/// Win11 系统圆角：main 窗口是无装饰窗口（tauri.conf.json `decorations: false`），
+/// 四角默认裁成直角。这里向 DWM 声明圆角偏好，由系统按 Win11 规范裁剪四角。
+/// Win10 及更早系统没有该属性，调用失败即保持直角（不视为错误）。
+#[cfg(target_os = "windows")]
+fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    };
+
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    // tauri hwnd() 返回 windows crate 的 HWND(pub *mut c_void)，取 .0 原始指针
+    let raw: *mut core::ffi::c_void = hwnd.0;
+    let preference: i32 = DWMWCP_ROUND;
+    unsafe {
+        let hr = DwmSetWindowAttribute(
+            raw,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &preference as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+        if hr < 0 {
+            tracing::debug!("DwmSetWindowAttribute(CORNER_PREFERENCE) 未生效: {hr:#x}");
+        }
+    }
+}
+
 fn main() {
     // Inject the persisted external-browser CDP endpoint into the process env so
     // future BrowserClient::new() (direct channel) picks it up; the MCP channel
@@ -203,6 +231,7 @@ fn main() {
             commands::list_shelf_sessions,
             commands::switch_session,
             commands::new_chat_session_cmd,
+            commands::create_project_chat,
             commands::rename_session_cmd,
             commands::archive_session,
             commands::has_resume_candidate,
@@ -304,6 +333,13 @@ fn main() {
             commands::wf_validate,
             commands::wf_save,
             commands::wf_run,
+            commands::wf_schedule_get,
+            commands::wf_schedule_preview,
+            commands::wf_schedule_set,
+            commands::wf_schedule_remove,
+            commands::wf_schedule_history_list,
+            commands::wf_schedule_history_get,
+            commands::wf_schedule_history_delete,
             commands::wf_gate_status,
             commands::wf_tools,
             commands::wf_layout_get,
@@ -441,7 +477,17 @@ fn main() {
                 if let Err(error) = main.set_shadow(false) {
                     tracing::warn!("Failed to disable main window shadow: {error}");
                 }
+                // 无边框窗口的四角按系统圆角规范裁剪（Win11+；更早系统自动保持直角）
+                #[cfg(target_os = "windows")]
+                apply_win11_rounded_corners(&main);
                 let _ = main.hide();
+            }
+
+            // splash 同为无装饰窗口（配置与 main 一致）：四角同样走系统圆角，
+            // 否则启动画面是唯一一个直角窗口，视觉上不统一。
+            #[cfg(target_os = "windows")]
+            if let Some(splash) = app.get_webview_window("splash") {
+                apply_win11_rounded_corners(&splash);
             }
 
             // Register video subtitle pipeline into the nuphus lib tool bridge
@@ -613,7 +659,7 @@ fn main() {
                 let state = app.state::<crate::state::AppState>();
                 let app_handle = app.handle().clone();
 
-                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String| {
+                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String, inputs: std::collections::HashMap<String, serde_json::Value>| {
                     let app_handle = app_handle.clone();
                     Box::pin(async move {
                         let state = app_handle.state::<crate::state::AppState>();
@@ -634,22 +680,89 @@ fn main() {
                         };
 
                         let engine = state.workflow_engine.read().await;
+                        let Some(workflow) = engine.store.get(&workflow_id).await else {
+                            tracing::error!("[Scheduler] Workflow {} no longer exists", workflow_id);
+                            return;
+                        };
+                        if let Err(error) = nuphus::workflow::inputs::resolve_declared_only(&workflow.inputs, &inputs) {
+                            tracing::error!("[Scheduler] Input validation failed for {}: {}", workflow_id, error);
+                            let now = chrono::Utc::now();
+                            let run = nuphus::workflow::types::RunRecord {
+                                run_id: uuid::Uuid::new_v4().to_string(),
+                                started_at: now,
+                                finished_at: Some(now),
+                                status: nuphus::workflow::types::RunStatus::Error(error.to_string()),
+                                steps: Vec::new(),
+                                error: Some(error.to_string()),
+                                variables_snapshot: std::collections::HashMap::new(),
+                            };
+                            let _ = engine.scheduler.record_schedule_run(
+                                nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                    &workflow,
+                                    &run,
+                                ),
+                            ).await;
+                            return;
+                        }
                         // For scheduled execution, tool schemas are not available (no Tauri state access)
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
-                        if let Err(e) = engine
+                        let previous_run_id = workflow.run_history.first().map(|run| run.run_id.clone());
+                        let started_at = chrono::Utc::now();
+                        let schedule_run_id = uuid::Uuid::new_v4().to_string();
+                        let running = nuphus::workflow::types::RunRecord {
+                            run_id: schedule_run_id.clone(),
+                            started_at,
+                            finished_at: None,
+                            status: nuphus::workflow::types::RunStatus::Running,
+                            steps: Vec::new(),
+                            error: None,
+                            variables_snapshot: std::collections::HashMap::new(),
+                        };
+                        let _ = engine.scheduler.record_schedule_run(
+                            nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                                &workflow,
+                                &running,
+                            ),
+                        ).await;
+                        let execution = engine
                             .execute_workflow(
                                 &workflow_id,
                                 tool_exec,
                                 Some(vec![]),
                                 None,
-                                None,
+                                (!inputs.is_empty()).then_some(inputs),
                                 false,
                                 nuphus::workflow::WorkflowRunSource::Schedule,
                             )
-                            .await
-                        {
+                            .await;
+                        if let Err(e) = &execution {
                             tracing::error!("[Scheduler] Cron-triggered workflow {} failed: {}", workflow_id, e);
                         }
+                        let new_run = engine.store.get(&workflow_id).await
+                            .and_then(|wf| wf.run_history.first().cloned())
+                            .filter(|run| Some(&run.run_id) != previous_run_id.as_ref());
+                        let run = new_run.unwrap_or_else(|| {
+                            let error = execution
+                                .as_ref()
+                                .err()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| "定时运行未生成执行记录".to_string());
+                            nuphus::workflow::types::RunRecord {
+                                run_id: uuid::Uuid::new_v4().to_string(),
+                                started_at,
+                                finished_at: Some(chrono::Utc::now()),
+                                status: nuphus::workflow::types::RunStatus::Error(error.clone()),
+                                steps: Vec::new(),
+                                error: Some(error),
+                                variables_snapshot: std::collections::HashMap::new(),
+                            }
+                        });
+                        let mut history = nuphus::workflow::scheduler::ScheduleRunRecord::from_workflow(
+                            &workflow,
+                            &run,
+                        );
+                        history.run_id = schedule_run_id;
+                        let _ = engine.scheduler.record_schedule_run(history).await;
                     })
                 });
 
@@ -662,6 +775,22 @@ fn main() {
                     busy_flag.load(std::sync::atomic::Ordering::SeqCst)
                 }));
                 drop(engine);
+
+                // schedule_cron runs in the registry's blocking executor. A Weak engine handle
+                // avoids a ToolRegistry ↔ WorkflowEngine ownership cycle while allowing changes
+                // to take effect immediately.
+                let weak_engine = std::sync::Arc::downgrade(&state.workflow_engine);
+                state.tools.set_schedule_tool_callback(std::sync::Arc::new(move |params| {
+                    let Some(engine) = weak_engine.upgrade() else {
+                        return Ok(nuphus::ToolResult::failure(
+                            "调度引擎已关闭".to_string(),
+                        ));
+                    };
+                    let params = params.clone();
+                    tauri::async_runtime::block_on(async move {
+                        engine.read().await.handle_schedule_tool(&params).await
+                    })
+                }));
 
                 // 恢复持久化的调度任务（在 tokio runtime 上异步执行）
                 let wf_engine = state.workflow_engine.clone();
@@ -683,6 +812,18 @@ fn main() {
                 // 旧磁盘镜像（sessions/{id}.json）幂等导入 SQLite（保留文件不删），
                 // 必须在 warm_from_disk 之前执行，保证列表/恢复立即可用
                 crate::commands::process::shelf::migrate_legacy_mirrors();
+                // 历史会话归属回填（一次性、幂等）：旧库归属行只有 project_tag、缺
+                // project_path，用 tag 与「已知候选目录」（书签 / 当前项目目录 / 已登记过的
+                // 归属路径）精确匹配补齐，避免 rail 把有项目目录的老对话堆进「未分组」；
+                // 匹配不上保持无归属（不猜测）。放在预热/首轮列表读取之前：列表分组读的
+                // 就是这批归属数据，先回填才能一次显示正确分组。失败只 warn 不阻断启动。
+                match nuphus::store::session::backfill_session_project_paths() {
+                    Ok(n) if n > 0 => tracing::info!("[Shelf] 历史会话项目归属回填 {n} 条"),
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("[Shelf] 历史会话项目归属回填失败（降级跳过）: {e}")
+                    }
+                }
                 let shelf_locked = state.shelf.lock();
                 if let Ok(mut shelf) = shelf_locked {
                     crate::commands::process::shelf::warm_from_disk(&mut shelf);

@@ -354,6 +354,13 @@ export interface ShelfSessionItem {
    */
   project_path?: string | null
   /**
+   * 草稿对话标记（后端 `draft: true`）：新建项目文件夹后立刻出现、尚未开说的空对话。
+   * 它**不在** SQLite / session_meta / mirror / snapshot 任何一处（纯内存态），
+   * 切换会话或退出进程即消失。前端据此渲染「新建对话」标题，并隐藏重命名/归档
+   * （重命名会写 sessions 行，违反「草稿不落库」）。可选：老后端/mock 缺失即按普通会话处理。
+   */
+  draft?: boolean
+  /**
    * 会话创建时刻（Unix 毫秒）——「按时间顺序 → 创建时间」组内排序的**唯一**依据。
    * 来源 sessions.created_at（尚无落盘行的 active 会话取首条消息时间戳）。
    * 可选：老后端 / mock 缺失时前端退化为 updated_at（见 sessionGroups.createdMillis）。
@@ -378,7 +385,8 @@ export interface ShelfProjectEntry {
   path: string
   /** 展示名：书签自定义名优先，自动组取目录末段 */
   name: string
-  /** 当前工作目录所在组（仅高亮，不上浮） */
+  /** 当前工作目录所在组（不上浮；**不驱动组头视觉**——组头不渲染「当前」/ 不着色，
+   *  组内会话点击时跳过重复 `set_project_dir` 的幂等判据是它唯一的前端消费点） */
   is_current: boolean
   /** true = 未收藏但有会话的自动组（只读：不可重命名/归档） */
   auto: boolean
@@ -417,6 +425,19 @@ export function switchSession(id: string, mode?: string) {
  * 无标题调用（Ctrl+N 等）同时清掉上一次的残留记录。失败 reject 稳定错误码。 */
 export function newChatSessionCmd(title?: string) {
   return invoke<string>('new_chat_session_cmd', { title: title ?? null })
+}
+
+/**
+ * 「新建项目文件夹」第 ③ 步：在当前项目目录下立刻生成一条**草稿对话**并成为当前对话。
+ *
+ * 调用方（创建项目弹窗）已按序完成 ① 写书签（`setProjectBookmarks`）② 切当前目录
+ * （`setProjectDir`）——本命令只做归属快照 + 内存态登记，**不落库**：
+ * 后端无 sessions 行 / session_meta / mirror / snapshot，因此用户未发消息就切换会话会
+ * 消失、退出进程不留痕迹；发出首条消息时真实会话在诞生点登记归属（= 该文件夹），
+ * 标题走既有派生规则。失败 reject 稳定错误码（busy / append_pending / no_project_dir）。
+ */
+export function createProjectChat() {
+  return invoke<{ id: string; mode: string; project_path: string }>('create_project_chat')
 }
 
 /** 重命名会话（落 sessions.summary 元数据行） */
@@ -1273,6 +1294,80 @@ export function wfSave(workflow: unknown) {
  */
 export function wfRun(id: string, fresh?: boolean, inputs?: Record<string, unknown>) {
   return invoke<string>('wf_run', { id, fresh, inputs })
+}
+
+export interface WfScheduleDetails {
+  config: ScheduleConfig | null
+  inputs: Record<string, unknown>
+  sensitive_inputs: string[]
+  eligible: boolean
+  ineligible_reason?: string | null
+}
+
+export interface ScheduleRunRecord {
+  run_id: string
+  workflow_id: string
+  workflow_title: string
+  started_at: string
+  finished_at?: string | null
+  status: RunRecord['status']
+  error?: string | null
+  steps: NonNullable<RunRecord['steps']>
+  step_names?: Record<string, string>
+}
+
+export interface ScheduleHistoryPage {
+  total: number
+  page: number
+  page_size: number
+  runs: ScheduleRunRecord[]
+}
+
+export interface ScheduleHistoryFilter {
+  workflow_id?: string
+  status?: 'running' | 'success' | 'error' | 'cancelled' | 'paused'
+  from?: string
+  to?: string
+  page?: number
+  page_size?: number
+}
+
+export function wfScheduleHistoryList(filter: ScheduleHistoryFilter = {}) {
+  return invoke<ScheduleHistoryPage>('wf_schedule_history_list', { filter })
+}
+
+export function wfScheduleHistoryGet(runId: string) {
+  return invoke<ScheduleRunRecord>('wf_schedule_history_get', { runId })
+}
+
+export function wfScheduleHistoryDelete(filter: ScheduleHistoryFilter = {}) {
+  return invoke<number>('wf_schedule_history_delete', { filter })
+}
+
+export function wfScheduleGet(id: string) {
+  return invoke<WfScheduleDetails>('wf_schedule_get', { id })
+}
+
+export function wfSchedulePreview(config: ScheduleConfig) {
+  return invoke<string[]>('wf_schedule_preview', { config })
+}
+
+export function wfScheduleSet(
+  id: string,
+  config: ScheduleConfig,
+  inputs: Record<string, unknown>,
+  preserveSensitive: string[],
+) {
+  return invoke<void>('wf_schedule_set', {
+    id,
+    config,
+    inputs,
+    preserveSensitive,
+  })
+}
+
+export function wfScheduleRemove(id: string) {
+  return invoke<void>('wf_schedule_remove', { id })
 }
 
 export interface WfGateStatus {

@@ -145,7 +145,7 @@
   color: var(--fg-2);
 }
 /* ── 新建对话入口 = 列表首位的**动作行**：复用会话行骨架 —— 文字左缘与会话标题严格对齐
-   （.sr-group-body 的 6px 缩进 + .sr-item 的 10px 内边距 = 16px），`+` 号置右端（左端留给对齐）。
+   （.sr-group-body 的 6px 缩进 + .sr-item 的 10px 内边距 = 16px）。
    材质用虚线描边 + 弱文字，把「动作」与上方「数据」区分开；高度 42 与数据行天然分档。 ── */
 .sr-new-chat-wrap {
   padding: 0 var(--space-2) var(--space-2);
@@ -171,14 +171,11 @@
     border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
-/* hover 三层反馈同时给：深底上单给底色不足以感知（底 + 描边 + 文字，`+` 号转 accent） */
+/* hover 三层反馈同时给：深底上单给底色不足以感知（底 + 描边 + 文字） */
 .sr-new-chat-btn:hover:not(:disabled) {
   background: var(--line-1);
   border-color: rgba(var(--accent-rgb), 0.28);
   color: var(--fg-1);
-}
-.sr-new-chat-btn:hover:not(:disabled) .sr-new-chat-plus {
-  color: var(--accent-hover);
 }
 /* 执行中（hardLocked）禁用：后端 guard 双保险 */
 .sr-new-chat-btn:disabled {
@@ -190,13 +187,6 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.sr-new-chat-plus {
-  flex: none;
-  display: grid;
-  place-items: center;
-  color: var(--fg-4);
-  transition: color var(--dur-fast) var(--ease-out);
 }
 
 /* ── 折叠行：展开其余 N 个会话（居中弱文本，hover 提亮）── */
@@ -376,7 +366,7 @@
 }
 
 /* ═══ 项目文件夹分组（Phase 2）═══
-   组 = 项目文件夹：组头（chevron + 文件夹名 + 当前徽标 + 计数 + 组操作），
+   组 = 项目文件夹：组头（chevron + 文件夹名 + 计数 + 组操作），
    组体 = 该文件夹下会话（沿用 .sr-item 行样式，左缩进 6px 表达从属关系）。 */
 
 .sr-group {
@@ -438,22 +428,6 @@
   font-weight: 500;
 }
 
-/* 当前工作目录组：仅高亮不上浮（组名转 accent，无背景块） */
-.sr-group-head.is-current .sr-group-name {
-  color: var(--accent);
-}
-
-/* 当前徽标（is_current）：极轻描边胶囊，与行内 active 块的强高亮区分 */
-.sr-group-badge {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.14);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.6;
-  color: var(--accent);
-}
 /* 未收藏自动组（只读）：中性弱标签 */
 .sr-group-tag {
   flex: none;
@@ -757,7 +731,6 @@
   .sr-actions,
   .sr-edit-btn,
   .sr-new-chat-btn,
-  .sr-new-chat-plus,
   .sr-more-btn,
   .sr-group-head,
   .sr-group-actions,

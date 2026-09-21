@@ -8,7 +8,7 @@
  * - 合成节点（entry/cond/external 锚点）带 :: 后缀，绝不回写 IR
  */
 
-import type { WorkflowStep, Condition, VarRef } from '../../core/types'
+import type { WorkflowStep, Condition, VarRef, WorkflowInputSpec } from '../../core/types'
 import type {
   CanvasEdge,
   CanvasLayer,
@@ -283,8 +283,12 @@ function aggregateTo(
   return null
 }
 
-export function projectWorkflow(ir: { steps: WorkflowStep[] }): Projection {
+export function projectWorkflow(ir: {
+  steps: WorkflowStep[]
+  inputs?: WorkflowInputSpec[]
+}): Projection {
   const tree = buildTreeProfile(ir.steps)
+  const declaredInputs = new Set((ir.inputs ?? []).map(input => input.name))
   const shadowed = shadowedMap(tree)
   const stepById = new Map<string, WorkflowStep>()
   walkSteps(ir.steps, s => stepById.set(s.id, s))
@@ -428,6 +432,8 @@ export function projectWorkflow(ir: { steps: WorkflowStep[] }): Projection {
           synthetic: 'external',
           externalVar: varName,
           externalProducerId: producerId ?? undefined,
+          externalInput: producerId === null,
+          externalInputDeclared: declaredInputs.has(varName),
         }
         externalAnchors.set(varName, anchor)
         nodes.push(anchor)
@@ -435,6 +441,11 @@ export function projectWorkflow(ir: { steps: WorkflowStep[] }): Projection {
         anchor.externalProducerId = producerId
       }
       return anchor
+    }
+
+    // 工作流声明本身就是根画布的输入契约。即使尚未被步骤引用，也要作为明确起点出现。
+    if (layerId === 'root') {
+      for (const input of ir.inputs ?? []) anchorFor(input.name, null)
     }
 
     for (const profile of tree.order) {

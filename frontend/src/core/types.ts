@@ -371,9 +371,17 @@ export interface RunRecord {
   started_at: string
   finished_at?: string | null
   status: 'Running' | 'Success' | 'Cancelled' | 'Paused' | { Error: string }
-  steps?: unknown[]
+  steps?: StepRunRecord[]
   error?: string | null
   variables_snapshot?: Record<string, unknown>
+}
+
+export interface StepRunRecord {
+  step_id: string
+  started_at: string
+  finished_at?: string | null
+  status: 'Running' | 'Success' | 'Skipped' | { Error: string }
+  output_summary?: string | null
 }
 
 // ── ScheduleConfig ──
@@ -383,6 +391,7 @@ export interface ScheduleConfig {
   timezone: string
   enabled: boolean
   label?: string
+  interval_minutes?: number
 }
 
 // ── WorkflowInputSpec（后端 InputSpec 镜像：workflow.inputs[]）──
@@ -400,7 +409,7 @@ export interface WorkflowInputSpec {
   /** 默认值（未填时后端兜底注入；UI 预填） */
   default?: unknown
   description?: string
-  /** 敏感值：密码控件、不回显、不落任何持久化 */
+  /** 敏感值：密码控件且不写日志/事件；本机运行快照仍会保留值 */
   sensitive?: boolean
 }
 

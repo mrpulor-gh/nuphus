@@ -26,7 +26,9 @@ interface NewChatModalProps {
   onBrowseDir: () => Promise<NewChatProjectOption | null>
   /** 确认创建：父级按「切目录 → 记录标题并回欢迎页 → 刷新列表」执行；false = 未成功
    *  （弹窗保持打开，可改选）。会话本身在欢迎页直发首条消息那一刻才诞生，此处只是
-   *  把「标题 + 归属」记录下来，因此父级成功返回时列表里**不会**立刻多出会话卡。 */
+   *  把「标题 + 归属」记录下来，因此父级成功返回时列表里**不会**立刻多出会话卡。
+   *  `title` 可能是空串（未填标题）：后端 `normalize_new_chat_title` 把空白归一为 None，
+   *  与「没记录过标题」等价，会话走既有派生标题语义 —— 前端无需另行区分。 */
   onCreate: (title: string, project: NewChatProjectOption) => Promise<boolean>
 }
 
@@ -41,7 +43,8 @@ interface NewChatModalProps {
  * 主按钮 disabled）：弹窗常驻挂载、只在 open=false 时不渲染内容，表单状态必须显式清掉。
  *
  * 数据与副作用都在宿主（SessionRail）：本组件只负责表单状态与表单规则
- * （标题空或未选项目 → 主按钮 disabled；选中后底部 hint 显示所选目录完整路径）。
+ * （**未选项目** → 主按钮 disabled；标题可留空 = 不记录标题；选中后底部 hint 显示所选
+ * 目录完整路径）。
  */
 export function NewChatModal({
   open,
@@ -82,7 +85,7 @@ export function NewChatModal({
   const options =
     browsed && !projects.some(p => p.path === browsed.path) ? [...projects, browsed] : projects
   const selected = options.find(p => p.path === selectedPath) ?? null
-  const canCreate = !!selected && title.trim().length > 0 && !busy
+  const canCreate = !!selected && !busy
 
   const handleBrowse = async () => {
     if (busy) return

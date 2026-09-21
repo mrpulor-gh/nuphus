@@ -87,6 +87,10 @@ export interface CanvasNode {
   /** external 锚点：变量名 + 真实生产者 step.id（点击跳转用） */
   externalVar?: string
   externalProducerId?: string
+  /** 工作流外部输入源；允许从锚点进入声明设置 */
+  externalInput?: boolean
+  /** externalInput 对应的字段是否已经存在于 workflow.inputs */
+  externalInputDeclared?: boolean
 }
 
 export type EdgeKind = 'sequence' | 'data' | 'loopback' | 'cond' | 'external'

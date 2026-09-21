@@ -24,7 +24,16 @@ impl Executor {
         Fut: std::future::Future<Output = std::result::Result<String, String>> + Send,
     {
         let _ = step;
-        let mut call_params = params.clone();
+        let mut call_params = if params.is_null() {
+            serde_json::json!({})
+        } else if params.is_object() {
+            params.clone()
+        } else {
+            return Err(crate::NuphusError::agent(format!(
+                "Call step '{}': with 必须是对象",
+                step.name
+            )));
+        };
         // Ensure workflow_id is present
         if call_params.get("workflow_id").is_none() {
             if let Some(obj) = call_params.as_object_mut() {

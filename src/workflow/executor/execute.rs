@@ -1,6 +1,6 @@
 //! 工作流入口执行
 use super::*;
-use crate::workflow::types::InputSpec;
+use crate::workflow::inputs::resolve_declared_inputs;
 
 impl Executor {
     /// 执行工作流入口
@@ -79,6 +79,24 @@ impl Executor {
             .filter(|s| s.sensitive)
             .map(|s| s.name.clone())
             .collect();
+        let sensitive_values: Vec<String> = wf
+            .inputs
+            .iter()
+            .filter(|spec| spec.sensitive)
+            .filter_map(|spec| declared_inputs.get(&spec.name))
+            .flat_map(|value| {
+                let mut forms = vec![value.to_string()];
+                if let Some(text) = value.as_str() {
+                    forms.push(text.to_string());
+                }
+                forms
+            })
+            .filter(|value| !value.is_empty())
+            .collect();
+        self.sensitive_values
+            .write()
+            .await
+            .insert(workflow_id.to_string(), sensitive_values);
 
         // ── 断点续连：跳过已完成步骤（Success + Skipped）──
         // force_fresh=true（画布失败后「运行」从头执行）→ completed_ids 置空，跳过逻辑整体失效
@@ -344,7 +362,8 @@ impl Executor {
             Err(e) => {
                 // 失败：定稿为新 Error 记录并同步（push_run 语义，绝不改动上一次成功记录）
                 run_record.finished_at = Some(chrono::Utc::now());
-                run_record.status = RunStatus::Error(e.to_string());
+                run_record.status =
+                    RunStatus::Error(self.redact_run_text(workflow_id, &e.to_string()).await);
                 // ── 失败时同样保存变量快照 ——
                 let snapshot: Option<std::collections::HashMap<String, serde_json::Value>> = {
                     let mut m = std::collections::HashMap::new();
@@ -365,8 +384,14 @@ impl Executor {
             }
         }
 
-        // ── 清理取消标志 ──
+        let final_error = match &result {
+            Ok(_) => None,
+            Err(error) => Some(self.redact_run_text(workflow_id, &error.to_string()).await),
+        };
+
+        // ── 清理取消标志与本轮脱敏材料 ──
         self.cancel_flags.write().await.remove(workflow_id);
+        self.sensitive_values.write().await.remove(workflow_id);
 
         let completed_on_error: Vec<String> = if result.is_err() {
             run_record
@@ -381,10 +406,10 @@ impl Executor {
 
         result
             .map(|_msg| format!("工作流完成，共 {} 步", total_steps))
-            .map_err(|e| {
+            .map_err(|_| {
                 // ── 结构化错误 ──
                 // resume_hint 显式引导调用方：解决阻塞后重调 workflow_run 同 id 即断点续连
-                let err_msg = e.to_string();
+                let err_msg = final_error.unwrap_or_else(|| "execution failed".to_string());
                 crate::NuphusError::agent(format!(
                     "{{\"failed\":true,\"error\":{},\"completed_steps\":{},\"resume_hint\":{}}}",
                     serde_json::to_string(&err_msg).unwrap_or_else(|_| "\"unknown\"".into()),
@@ -400,40 +425,10 @@ impl Executor {
 ///
 /// 纯函数（无 IO / 无状态）：调用方须在产生 RunRecord、发 RunStarted 之前调用，
 /// 保证缺必填输入时工作流「执行前即失败」且不留下空 run。
-pub(crate) fn resolve_declared_inputs(
-    specs: &[InputSpec],
-    provided: &HashMap<String, serde_json::Value>,
-) -> Result<serde_json::Map<String, serde_json::Value>> {
-    let mut resolved = serde_json::Map::new();
-    for spec in specs {
-        if let Some(v) = provided.get(&spec.name) {
-            resolved.insert(spec.name.clone(), v.clone());
-        } else if let Some(d) = &spec.default {
-            resolved.insert(spec.name.clone(), d.clone());
-        } else if spec.required {
-            return Err(crate::NuphusError::agent(format!(
-                "缺少必填输入：{}",
-                spec.name
-            )));
-        }
-    }
-    Ok(resolved)
-}
-
-/// 输入值日志：sensitive 声明只打印掩码（值不进日志、事件与错误文本）
+/// 输入值日志：sensitive 声明完全不写日志；普通输入仅写 debug 日志。
 fn log_input_value(name: &str, value: &serde_json::Value, sensitive: bool) {
     if sensitive {
-        tracing::debug!("[executor] inputs.{} = {}", name, mask_input_value(value));
-    } else {
-        tracing::debug!("[executor] inputs.{} = {:?}", name, value);
+        return;
     }
-}
-
-/// sensitive 输入掩码：仅保留字符数便于排查，不暴露值本身
-fn mask_input_value(value: &serde_json::Value) -> String {
-    let len = match value {
-        serde_json::Value::String(s) => s.chars().count(),
-        other => other.to_string().chars().count(),
-    };
-    format!("<sensitive:{len}字符>")
+    tracing::debug!("[executor] inputs.{} = {:?}", name, value);
 }

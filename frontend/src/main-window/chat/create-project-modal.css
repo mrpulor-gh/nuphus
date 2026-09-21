@@ -1,0 +1,118 @@
+/* create-project-modal.css — 「创建项目」弹窗（.cp-* 前缀）
+ *
+ * 遮罩与卡片材质**复用**既有 CompactModal（.compact-overlay / .compact-modal）；
+ * 本文件只覆盖宽度与内部版式。视觉取值与 new-chat-modal.css 同源（同一批 token），
+ * 前缀刻意分开：两个弹窗字段与语义不同，改一边不牵连另一边。
+ *
+ * 版式（ZPY UI 稿）：标题 + 项目名称（必填，最多 80 字符）+ 源文件夹（必填，按钮选目录）
+ * + 底部 取消 / 创建项目。未填名称或未选目录时主按钮 disabled。
+ */
+
+/* 宽度 460（与「新建对话」弹窗对齐；CompactModal 的 sm=380 装不下目录路径）。
+   选择器写成两段类名，避免与 .compact-modal--sm 的 width 声明按加载顺序互有胜负 */
+.compact-modal.cp-modal {
+  width: 460px;
+  max-width: 92vw;
+}
+
+.cp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 字段：标签 + 控件（两段：项目名称 / 源文件夹）── */
+.cp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-lb {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+}
+
+/* 必填标记：与标签同色阶，只做视觉提示（aria-hidden，不进无障碍名） */
+.cp-req {
+  margin-left: 2px;
+  color: rgba(var(--accent-rgb), 0.9);
+}
+
+.cp-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--line-1);
+  font-family: inherit;
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.cp-input:focus {
+  border-color: var(--fg-4);
+}
+
+/* 名称字段下的 helper（UI 稿：「最多 80 个字符」） */
+.cp-helper {
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+
+/* 「选择项目文件夹」：次级按钮（描边 + 弱底），与底部主按钮区分 */
+.cp-pick {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  background: var(--line-1);
+  font-family: inherit;
+  font-size: var(--fz-md);
+  color: var(--fg-2);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.cp-pick:hover:not(:disabled) {
+  border-color: var(--fg-4);
+  color: var(--fg-1);
+}
+.cp-pick:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 已选目录：按钮下方完整路径（超出省略，hover 由 title 兜底） */
+.cp-picked {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 主按钮：弱蓝底 + 描边（不用 .btn-primary 的实心强调色，弹窗内不抢焦点） */
+.cp-btn-primary {
+  padding: 6px 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  border-radius: var(--radius-3);
+  background: var(--accent-dim);
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+}
+.cp-btn-primary:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.2);
+}
+.cp-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

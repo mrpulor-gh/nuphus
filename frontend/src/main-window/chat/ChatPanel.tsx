@@ -48,8 +48,6 @@ import {
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
-import { CompactModal } from '../layout/CompactModal'
-import { ProjectCenter } from '../pages/ProjectPage'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -64,7 +62,6 @@ import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import {
   IconCopy,
   IconCheck,
-  IconFolder,
   IconX,
   IconWorkflow,
   IconHistory,
@@ -548,7 +545,6 @@ export function ChatPanel({
   const [modelLabel, setModelLabel] = useState('')
   const [relation, setRelation] = useState(loadRelation)
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
-  const [dirOpen, setDirOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
@@ -648,14 +644,14 @@ export function ChatPanel({
     return () => clearInterval(t)
   }, [HINTS.length])
 
-  // ── 项目中心（入口：会话栏「项目」行右端 📁+ → setDirOpen(true)）──
-  // 界面复用 ProjectCenter（原「Ctrl+K → 项目配置」版式）；数据源为后端配置
-  // （preferences 是当前目录与书签的单一事实源）。此处只持有输入框 chip 的展示目录。
+  // ── 当前工作目录（输入框 chip 的展示态）──
+  // 数据源为后端配置（preferences 是当前目录与书签的单一事实源）；本组件只持有
+  // chip 的展示目录，书签的消费方是会话工作台「项目」行与「创建项目」弹窗。
   const [projectDir, setProjectDir] = useState('')
 
-  // 启动加载当前项目目录（输入框 chip 需在未打开弹窗前即可显示归属文件夹名）
+  // 启动加载当前项目目录（输入框 chip 需在弹窗/切换前即可显示归属文件夹名）
   // + 一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）。
-  // 书签本组件不再持有：输入框 chip 已改为纯展示，书签的唯一消费方是项目中心弹窗。
+  // 书签本组件不持有：输入框 chip 已改为纯展示。
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -1431,7 +1427,29 @@ export function ChatPanel({
     if (el) el.scrollIntoView({ block: 'nearest' })
   }, [resIdx])
 
+  /**
+   * Ctrl/Cmd+Enter = 换行：受控 textarea 在 Ctrl+Enter 下没有原生换行行为，
+   * 需按当前光标/选区手动插入 `\n`，并在重渲染后把光标落回换行符之后。
+   * 高度自适应由 ChatInputBar 的 input 变化 effect 负责，这里不重复处理。
+   */
+  const insertLineBreakAtCaret = () => {
+    const ta = textareaRef.current
+    const start = ta?.selectionStart ?? input.length
+    const end = ta?.selectionEnd ?? start
+    handleInputChange(`${input.slice(0, start)}\n${input.slice(end)}`)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) el.selectionStart = el.selectionEnd = start + 1
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ctrl/Cmd+Enter：换行（不再等同于发送；Shift+Enter 仍是原生换行）
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      insertLineBreakAtCaret()
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey && !cmdOpen && !resPickerOpen) {
       e.preventDefault()
       handleSubmit()
@@ -1445,7 +1463,6 @@ export function ChatPanel({
         <SessionRail
           onSessionChanged={onChatReplaced}
           onNewChat={onNewChat}
-          onOpenProjectDir={() => setDirOpen(true)}
           onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}
@@ -2147,23 +2164,6 @@ export function ChatPanel({
           onPreviewFile={setPreviewPath}
         />
       </div>
-
-      {/* ── 项目中心（入口：会话栏「项目」行 📁+）：沿用原项目配置版式 ── */}
-      <CompactModal
-        open={dirOpen}
-        onClose={() => setDirOpen(false)}
-        title={t('projectDir.title')}
-        icon={<IconFolder size={14} />}
-        size="auto"
-      >
-        <ProjectCenter
-          onApplied={state => {
-            setProjectDir(state.path)
-            setDirOpen(false)
-            hudUpdate(`项目已切换：${state.name}`, 'info')
-          }}
-        />
-      </CompactModal>
 
       {/* ── Skills Manager Modal ── */}
       {skillsOpen &&

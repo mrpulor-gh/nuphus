@@ -216,22 +216,33 @@ impl Executor {
             )),
         };
 
+        let safe_output = match &result {
+            Ok(message) => Some(self.redact_run_text(workflow_id, message).await),
+            Err(_) => None,
+        };
+        let safe_error = match &result {
+            Ok(_) => None,
+            Err(error) => Some(self.redact_run_text(workflow_id, &error.to_string()).await),
+        };
+
         // ── 记录步骤执行结果到 RunRecord（断点续连 / has_skipped / completed_steps 数据源）──
         {
             let finished_at = chrono::Utc::now();
             let record = match &result {
-                Ok(msg) => StepRunRecord {
+                Ok(_) => StepRunRecord {
                     step_id: step_id.clone(),
                     started_at,
                     finished_at: Some(finished_at),
                     status: StepRunStatus::Success,
-                    output_summary: Some(msg.chars().take(200).collect()),
+                    output_summary: safe_output
+                        .as_deref()
+                        .map(|message| message.chars().take(200).collect()),
                 },
-                Err(e) => StepRunRecord {
+                Err(_) => StepRunRecord {
                     step_id: step_id.clone(),
                     started_at,
                     finished_at: Some(finished_at),
-                    status: StepRunStatus::Error(e.to_string()),
+                    status: StepRunStatus::Error(safe_error.clone().unwrap_or_default()),
                     output_summary: None,
                 },
             };
@@ -244,6 +255,12 @@ impl Executor {
         // 前端无法定位失败步骤，导致 run_completed 时失败步骤被误收敛为绿色 completed）。
         match &result {
             Ok(_) => {
+                if let Some(message) = safe_output.filter(|message| !message.is_empty()) {
+                    events.emit(WorkflowEvent::StepRunOutput {
+                        step_id: step.id(),
+                        text: message.chars().take(200).collect(),
+                    });
+                }
                 events.emit(WorkflowEvent::StepRunCompleted {
                     step_id: step.id(),
                     step_name: step.name(),
@@ -251,14 +268,15 @@ impl Executor {
                     depth,
                 });
             }
-            Err(e) => {
+            Err(_) => {
+                let message = safe_error.unwrap_or_else(|| "执行失败".to_string());
                 events.emit(WorkflowEvent::Error {
-                    message: format!("Step '{}' failed: {}", step.name(), e),
+                    message: format!("Step '{}' failed: {}", step.name(), message),
                 });
                 events.emit(WorkflowEvent::StepRunCompleted {
                     step_id: step.id(),
                     step_name: step.name(),
-                    status: StepRunStatus::Error(e.to_string()),
+                    status: StepRunStatus::Error(message),
                     depth,
                 });
             }

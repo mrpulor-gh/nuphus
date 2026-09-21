@@ -102,7 +102,8 @@ export interface SessionGroup<T extends GroupSessionLike = GroupSessionLike> {
   path: string | null
   /** 展示名：书签自定义名 / 自动组取目录末段；未分组组为空串（由 UI 按 i18n 命名） */
   name: string
-  /** 当前工作目录所在组（仅高亮，不上浮——决策 2） */
+  /** 当前工作目录所在组（不上浮——决策 2；**不再驱动任何视觉**：组内会话点击时跳过重复
+   *  `set_project_dir` 的幂等判据仍是它。「当前」高亮只属于会话行 `.sr-item.active`） */
   isCurrent: boolean
   /** true = 未收藏但有会话的自动组（只读：不可重命名/归档——决策 7） */
   auto: boolean

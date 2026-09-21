@@ -47,10 +47,40 @@ impl Executor {
             workflow_name: sub_wf.name.clone(),
         });
 
+        let inputs_value = params
+            .get("inputs")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let inputs = inputs_value.as_object().ok_or_else(|| {
+            crate::NuphusError::agent("wf_call: with.inputs 必须是对象".to_string())
+        })?;
+        // Input mappings are evaluated against the parent scope before the child scope is built.
+        // A full template keeps its JSON type; embedded templates become strings as elsewhere.
+        let resolved_value =
+            Self::resolve_vars(&serde_json::Value::Object(inputs.clone()), variables);
+        let provided: HashMap<String, serde_json::Value> = resolved_value
+            .as_object()
+            .expect("resolving an object preserves its shape")
+            .clone()
+            .into_iter()
+            .collect();
+        let declared = crate::workflow::inputs::resolve_declared_inputs(&sub_wf.inputs, &provided)?;
+
         let mut sub_vars = variables.clone();
-        if let Some(inputs) = params.get("inputs").and_then(|v| v.as_object()) {
-            for (k, v) in inputs {
-                sub_vars.insert(k.clone(), v.clone());
+        if !sub_wf.inputs.is_empty() {
+            sub_vars.insert(
+                "inputs".to_string(),
+                serde_json::Value::Object(declared.clone()),
+            );
+        }
+        for (key, value) in &declared {
+            sub_vars.insert(key.clone(), value.clone());
+        }
+        // Compatibility: old sub-workflows may receive undeclared mapping keys. Keep those at
+        // the top level, but do not add them to the formal `inputs` namespace.
+        for (key, value) in provided {
+            if !declared.contains_key(&key) {
+                sub_vars.insert(key, value);
             }
         }
 
@@ -72,12 +102,19 @@ impl Executor {
             )
             .await;
 
-        if let Some(outputs) = params.get("outputs").and_then(|v| v.as_object()) {
+        if let Some(outputs_value) = params.get("outputs") {
+            let outputs = outputs_value.as_object().ok_or_else(|| {
+                crate::NuphusError::agent("wf_call: with.outputs 必须是对象".to_string())
+            })?;
             for (output_key, parent_key_val) in outputs {
-                if let Some(parent_key) = parent_key_val.as_str() {
-                    if let Some(val) = sub_vars.get(output_key) {
-                        variables.insert(parent_key.to_string(), val.clone());
-                    }
+                let parent_key = parent_key_val.as_str().ok_or_else(|| {
+                    crate::NuphusError::agent(format!(
+                        "wf_call: with.outputs.{} 必须映射到父变量名字符串",
+                        output_key
+                    ))
+                })?;
+                if let Some(val) = sub_vars.get(output_key) {
+                    variables.insert(parent_key.to_string(), val.clone());
                 }
             }
         }

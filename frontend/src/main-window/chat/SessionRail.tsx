@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 // `open` 是系统目录选择器；别名避免与抽屉开合态 `open` 同名遮蔽
 import { open as openDirDialog } from '@tauri-apps/plugin-dialog'
@@ -17,6 +18,7 @@ import {
 import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { NewChatModal, type NewChatProjectOption } from './NewChatModal'
+import { CreateProjectModal } from './CreateProjectModal'
 import { useLanguage } from '../../locales'
 import {
   listShelfSessions,
@@ -26,6 +28,7 @@ import {
   setProjectBookmarks,
   setProjectFolderArchived,
   setSessionSortPrefs,
+  createProjectChat,
   SESSION_GROUP_LIMIT_CHANGED_EVENT,
   type ProjectBookmark,
   type ShelfProjectEntry,
@@ -66,7 +69,7 @@ function modeToLetter(mode: string): string {
   return '·'
 }
 
-/** 路径末段名（新建书签的默认名，规则与项目中心 ProjectPage.nameFromPath 一致） */
+/** 路径末段名（新建书签的默认名；与后端 `utils::dir_display_name` 同为「路径末段」规则） */
 function projectNameFromPath(p: string): string {
   return (
     p
@@ -74,6 +77,37 @@ function projectNameFromPath(p: string): string {
       .split(/[\\/]/)
       .pop() || p
   )
+}
+
+/**
+ * 书签整表构建（`set_project_bookmarks` 是**整表替换**，不是增量）：未归档书签按原序 →
+ * 本次目标路径 → 已归档书签原样带回（否则归档记录被抹掉、「恢复隐藏项目」入口丢失）。
+ *
+ * 同路径已存在时**不产生重复项**：沿用原位置，名称取本次提交值；若该路径原本已归档，
+ * 此次同时**解除归档**——用户此刻明确要把这个文件夹当项目用，否则新建的组会被隐藏、
+ * 看不到刚生成的那条对话。（auto 只读组不写回书签表：它在 `projects[]` 里带 `auto`。）
+ *
+ * 判重与后端同口径：这里按 `normalizePathKey`（Windows 大小写不敏感）；后端
+ * `set_project_bookmarks` 再做一次按路径去重兜底（config/preferences.rs:445-447）。
+ */
+function buildBookmarkTable(
+  projects: readonly ShelfProjectEntry[],
+  archivedProjects: readonly ShelfProjectEntry[],
+  name: string,
+  path: string,
+): ProjectBookmark[] {
+  const key = normalizePathKey(path)
+  const table: ProjectBookmark[] = projects
+    .filter(p => !p.auto)
+    .map(p => ({ name: p.name, path: p.path }))
+  const existing = table.find(b => normalizePathKey(b.path) === key)
+  if (existing) existing.name = name
+  else table.push({ name, path })
+  for (const a of archivedProjects) {
+    if (normalizePathKey(a.path) === key) continue // 同路径：本次解除归档，不重复带回
+    table.push({ name: a.name, path: a.path, archived: true })
+  }
+  return table
 }
 
 interface SessionRailProps {
@@ -86,14 +120,9 @@ interface SessionRailProps {
    */
   onNewChat?: (title?: string) => Promise<boolean>
   /**
-   * 打开项目中心弹窗（ChatPanel 唯一入口：`setDirOpen(true)`）。
-   * 「项目」行右端 📁+ 走这条链路：选目录 → 命名 → 加入书签。
-   */
-  onOpenProjectDir?: () => void
-  /**
    * 切换工作目录（**复用** ChatPanel.switchProject 单一实现：落盘 + 后端向活跃槽注入
    * 变更提醒 + HUD 反馈）；返回 true = 已切到目标目录。
-   * 组内「新建对话」/ 点击组内会话依赖此入口，不另起一套切目录逻辑。
+   * 组内「新建对话」/ 点击组内会话 / 📁+ 创建项目都依赖此入口，不另起一套切目录逻辑。
    */
   onSwitchProjectDir?: (path: string) => Promise<boolean>
   /** 跨 mode 会话切换成功后同步前端 mode state（后端原子切换不单独广播 mode_changed，
@@ -118,6 +147,7 @@ function codeToI18n(code: string): string {
   if (code === 'sortPrefsFailGeneric') return 'sessionRail.sortPrefsFailGeneric'
   if (code === 'newChatSwitchFail') return 'sessionRail.newChatSwitchFail'
   if (code === 'browseDirFail') return 'sessionRail.newChatBrowseFail'
+  if (code === 'no_project_dir') return 'sessionRail.createProjectFail'
   return 'sessionRail.switchFailGeneric'
 }
 
@@ -185,8 +215,10 @@ interface ProjectLabelRowProps {
   onSelectSort: (prefs: SessionSortPrefs) => void
   /** 恢复某个已归档文件夹（归档标记置回 false） */
   onRestore: (path: string) => void
-  /** 打开项目中心（📁+）：选目录 + 命名 + 加入书签 */
-  onOpenProjectDir?: () => void
+  /** 新建项目文件夹（📁+）：打开「创建项目」弹窗（选目录 + 命名 → 书签 + 切目录 + 空对话） */
+  onCreateProject?: () => void
+  /** 📁+ 按钮句柄：关弹窗后把焦点还回去（与「新建对话」弹窗同一纪律） */
+  plusBtnRef?: RefObject<HTMLButtonElement>
 }
 
 /**
@@ -210,7 +242,8 @@ function ProjectLabelRow({
   onCollapseAll,
   onSelectSort,
   onRestore,
-  onOpenProjectDir,
+  onCreateProject,
+  plusBtnRef,
 }: ProjectLabelRowProps) {
   const { t } = useLanguage()
   const [open, setOpen] = useState(false)
@@ -229,17 +262,28 @@ function ProjectLabelRow({
     if (open) firstItemRef.current?.focus()
   }, [open])
 
-  // 点击外部关闭：菜单在抽屉内，抽屉自己的「面板外点击」不覆盖「菜单外点击」
+  // 点击外部关闭：除「菜单本体（含子菜单）」与「⋯ / 📁+ 两个图标按钮」外，
+  // 任何位置按下都收回菜单——包括「项目」标签行自身的文字与空白区
+  //（早期按整行 `rowRef` 放行，导致点菜单正上方那一行毫无反应，只能再点 ⋯）。
+  //
+  // ⚠️ 必须用 pointerdown + **捕获阶段**：Tauri 的窗口拖动区脚本（tauri
+  // `src/window/scripts/drag.js`）在 document 的**冒泡阶段**监听 mousedown，命中
+  // `data-tauri-drag-region` 时调用 `e.stopImmediatePropagation()` —— 冒泡阶段注册在
+  // 它之后的监听器会被整体吞掉，表现为「点标题栏等空白区域菜单不关，只能再点 ⋯」。
+  // 捕获阶段先于它执行，pointerdown 又早于 mousedown，两个维度都躲开拦截。
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node | null
-      if (!target) return
-      if (rowRef.current?.contains(target)) return
+    const onDown = (e: Event) => {
+      const target = e.target
+      if (!(target instanceof Element)) return
+      // 菜单本体（含子菜单/子菜单项）
+      if (target.closest('.sr-menu')) return
+      // 两个图标按钮：开合由它们自己的 onClick 负责（先关后开会闪）
+      if (target.closest('.sr-list-actions')) return
       close()
     }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
   }, [open, close])
 
   /**
@@ -337,15 +381,16 @@ function ProjectLabelRow({
         >
           <IconMoreHorizontal size={14} />
         </button>
-        {onOpenProjectDir && (
+        {onCreateProject && (
           <button
+            ref={plusBtnRef}
             type="button"
             className="sr-icon-btn"
             aria-label={t('sessionRail.newProjectFolder')}
             title={t('sessionRail.newProjectFolder')}
             onClick={() => {
               close()
-              onOpenProjectDir()
+              onCreateProject()
             }}
           >
             <IconFolderPlus size={14} />
@@ -487,8 +532,10 @@ function ProjectLabelRow({
  * - 开合入口只有三个：色块点击、面板外点击、Esc；**不做 hover 感应唤出，
  *   执行完成也不自动弹出**（2026-09-15 大王反馈：隐藏式选择看不到会话标题）。
  * - 抽屉头部只有「会话工作台」标题（无任何按钮）；文件夹管理入口收敛到「项目」标签行右端
- *   的两个图标：`⋯`（整理侧边栏 / 排序条件 / 恢复隐藏项目）与 `📁+`（新建项目文件夹，
- *   打开项目中心的既有流程：选目录 → 命名 → 加入书签）。
+ *   的两个图标：`⋯`（整理侧边栏 / 排序条件 / 恢复隐藏项目）与 `📁+`（新建项目文件夹 →
+ *   打开「创建项目」弹窗：选目录 + 命名 → 写书签 + 切当前目录 + 立刻生成一条空对话）。
+ * - 「创建项目」弹窗确认后，rail 里该文件夹下立刻出现 1 条**当前对话**（草稿，纯内存态：
+ *   未发消息就切换会话/退出进程即消失，发出首条消息才走既有诞生路径落库）。
  * - 数据源与切换逻辑完全沿用：list_shelf_sessions（5s 轮询 + 可见性刷新），
  *   分组完全来自返回体的 items/projects/archived_projects/collapsed_limit/sort_prefs
  *   （**不推断归属**：project_path=null 者进「未分组」兜底组；归档文件夹整组隐藏）。
@@ -497,7 +544,6 @@ function ProjectLabelRow({
 export default function SessionRail({
   onSessionChanged,
   onNewChat,
-  onOpenProjectDir,
   onSwitchProjectDir,
   onModeSwitched,
   locked = false,
@@ -529,6 +575,8 @@ export default function SessionRail({
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null)
   /** 新建对话弹窗开合（入口 = 列表首位动作行；会话标题 + 归属项目确认后创建） */
   const [newChatOpen, setNewChatOpen] = useState(false)
+  /** 「创建项目」弹窗开合（入口 = 「项目」行右端 📁+；不再进项目中心） */
+  const [createProjectOpen, setCreateProjectOpen] = useState(false)
   /** 抽屉开合态：默认收起（只露色块），点击色块才伸出 */
   const [open, setOpen] = useState(false)
   /** 组头折叠态（key → true=收起整组）：默认全部展开，运行时状态不持久化 */
@@ -542,6 +590,8 @@ export default function SessionRail({
   const panelRef = useRef<HTMLElement>(null)
   /** 新建对话入口动作行：弹窗关窗后焦点回到这里 */
   const newChatRowRef = useRef<HTMLButtonElement>(null)
+  /** 「项目」行右端 📁+：创建项目弹窗关窗后焦点回到这里 */
+  const plusBtnRef = useRef<HTMLButtonElement>(null)
   const stoppedRef = useRef(false)
   /** 外部会话变化检测基准：上轮轮询的 active 会话 id（null=无 active；首轮回填不触发） */
   const lastActiveIdRef = useRef<string | null>(null)
@@ -604,7 +654,9 @@ export default function SessionRail({
       }
       setOpen(false)
     }
-    const onDown = (e: MouseEvent) => {
+    // 「面板外点击收起」与菜单外点同理：必须 pointerdown + 捕获阶段，
+    // 否则点在标题栏拖动区（Tauri drag.js 在冒泡阶段 stopImmediatePropagation）时收不起来。
+    const onDown = (e: Event) => {
       const target = e.target as Node | null
       if (!target) return
       if (panelRef.current?.contains(target)) return
@@ -615,10 +667,10 @@ export default function SessionRail({
       setOpen(false)
     }
     document.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown, true)
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('pointerdown', onDown, true)
     }
   }, [open, editingId, editingProjectKey])
 
@@ -1025,7 +1077,7 @@ export default function SessionRail({
    *    失败即中止并提示，**不新建**：新会话的归属在诞生时快照当前目录，先建后切会落错组；
    * ② 再走与 Ctrl+N / TitleBar / 组头「+」同一新建入口（后端 `new_chat_session_cmd`），
    *    把弹窗标题一并交给它；
-   * ③ 刷新列表（当前目录 chip / is_current 高亮同步）。
+   * ③ 刷新列表（当前目录 chip / 分组归属同步）。
    *
    * ⚠️ 会话**不在此时创建**（这是刻意的产品语义）：`new_chat_session_cmd` 只把当前槽置回
    * 欢迎页 + **记录标题**，真实会话仍在欢迎页直发首条消息那一刻诞生；后端在诞生点把记录的
@@ -1054,6 +1106,77 @@ export default function SessionRail({
       return true
     },
     [onNewChat, onSwitchProjectDir, refresh, flashNotice],
+  )
+
+  /** 「项目」行 📁+：打开「创建项目」弹窗（**不再进项目中心**——本次改动后的唯一语义） */
+  const openCreateProjectModal = useCallback(() => setCreateProjectOpen(true), [])
+
+  /**
+   * 关窗（取消 / Esc / 点遮罩 / 右上角 ✕ 四条路径统一入口）：焦点还给 📁+。
+   * 抽屉保持展开——关窗后用户还要继续在列表里操作，入口按钮本身也在抽屉里。
+   */
+  const closeCreateProjectModal = useCallback(() => {
+    setCreateProjectOpen(false)
+    plusBtnRef.current?.focus()
+  }, [])
+
+  /**
+   * 「选择项目文件夹」：系统目录选择器（与「新建对话 → 浏览本地目录…」同款调用：
+   * `@tauri-apps/plugin-dialog` 的 `open({ directory: true })`）。返回 null = 用户取消
+   * （不是错误，不提示）或选择器不可用（已提示）。
+   */
+  const handlePickProjectDir = useCallback(async (): Promise<string | null> => {
+    try {
+      const dir = await openDirDialog({
+        directory: true,
+        multiple: false,
+        title: t('sessionRail.createProjectTitle'),
+      })
+      return typeof dir === 'string' && dir ? dir : null
+    } catch {
+      flashNotice('browseDirFail')
+      return null
+    }
+  }, [flashNotice, t])
+
+  /**
+   * 「创建项目」弹窗确认。顺序不可乱（与「创建对话」同一纪律）：
+   * ① 写书签——书签即 rail 的分组来源，新文件夹因此立刻成组（同路径已有书签时不产生
+   *    重复项：只更新名称并解除归档，见 [`buildBookmarkTable`]）；
+   * ② 切当前项目目录——**必须早于**生成空对话：归属是诞生时的目录快照，先建后切会落错组；
+   *    失败即中止（弹窗保持打开，用户可改路径重试）；
+   * ③ `create_project_chat`——生成一条**内存态**空对话并成为当前对话（不落库）。
+   * ④ 关弹窗 + 收起抽屉 + 刷新 rail（分组 + 该对话的当前高亮）+ 重拉聊天区（空态可立刻开说）。
+   */
+  const handleCreateProject = useCallback(
+    async (name: string, path: string): Promise<boolean> => {
+      if (!onSwitchProjectDir) return false
+      try {
+        await setProjectBookmarks(buildBookmarkTable(projects, archivedProjects, name, path))
+      } catch (e) {
+        flashNotice(typeof e === 'string' ? e : String(e))
+        return false
+      }
+      const ok = await onSwitchProjectDir(path)
+      if (!ok) {
+        // 切目录失败已由 HUD 反馈；这里再给一条，避免用户以为项目已创建
+        flashNotice('newChatSwitchFail')
+        return false
+      }
+      try {
+        await createProjectChat()
+      } catch (e) {
+        flashNotice(typeof e === 'string' ? e : String(e))
+        return false
+      }
+      setCreateProjectOpen(false)
+      setOpen(false)
+      void refresh()
+      // 当前对话换成刚生成的草稿 → 聊天区回空态（后端无历史，欢迎页可直接开说）
+      onSessionChanged()
+      return true
+    },
+    [projects, archivedProjects, onSwitchProjectDir, refresh, flashNotice, onSessionChanged],
   )
 
   const saveRename = useCallback(
@@ -1087,6 +1210,9 @@ export default function SessionRail({
 
   /** 渲染单条会话行（组内复用：L/W/C 标识 + 标题 + 相对时间 + 行内重命名/归档） */
   const renderSessionItem = (it: ShelfSessionItem, dirAlreadyCurrent: boolean) => {
+    // 草稿对话（新建项目文件夹后尚未开说的那条）：标题文案固定为「新建对话」，
+    // 且不提供行内重命名/归档——重命名会写 sessions 行，违反「草稿不落库」。
+    const titleText = it.draft ? t('sessionRail.newChat') : it.title || t('sessionRail.untitled')
     const modeText =
       it.mode === 'workflow'
         ? t('input.mode.workflow')
@@ -1158,7 +1284,7 @@ export default function SessionRail({
               className={`sr-title-btn${it.is_active ? ' active' : ''}`}
               disabled={it.is_active || hardLocked}
               aria-current={it.is_active ? 'true' : undefined}
-              title={it.title || t('sessionRail.untitled')}
+              title={titleText}
               onClick={() =>
                 void handleSwitch(
                   it.id,
@@ -1168,7 +1294,7 @@ export default function SessionRail({
                 )
               }
             >
-              {it.title || t('sessionRail.untitled')}
+              {titleText}
             </button>
             {it.is_active && (
               <span className="sr-current-badge" aria-hidden="true">
@@ -1177,32 +1303,35 @@ export default function SessionRail({
             )}
             {/* 行尾相对时间：hover 时淡出让位给操作按钮，避免按钮挤动布局 */}
             <span className="sr-time">{relativeTime(it.updated_at, t)}</span>
-            <span className="sr-actions">
-              <button
-                type="button"
-                className="sr-edit-btn"
-                onClick={() => {
-                  setDraftTitle(it.title)
-                  setEditingId(it.id)
-                }}
-                title={t('sessionRail.rename')}
-                aria-label={t('sessionRail.rename')}
-              >
-                <IconEdit3 size={12} />
-              </button>
-              {!it.is_active && (
+            {/* 草稿对话无行内操作：重命名会写 sessions 行（违反不落库），归档对内存态无意义 */}
+            {!it.draft && (
+              <span className="sr-actions">
                 <button
                   type="button"
-                  className="sr-edit-btn sr-archive-btn"
-                  onClick={() => setArchiveTarget({ kind: 'session', id: it.id })}
-                  disabled={!canSwitch}
-                  title={t('sessionRail.archive')}
-                  aria-label={t('sessionRail.archive')}
+                  className="sr-edit-btn"
+                  onClick={() => {
+                    setDraftTitle(it.title)
+                    setEditingId(it.id)
+                  }}
+                  title={t('sessionRail.rename')}
+                  aria-label={t('sessionRail.rename')}
                 >
-                  <IconTrash2 size={12} />
+                  <IconEdit3 size={12} />
                 </button>
-              )}
-            </span>
+                {!it.is_active && (
+                  <button
+                    type="button"
+                    className="sr-edit-btn sr-archive-btn"
+                    onClick={() => setArchiveTarget({ kind: 'session', id: it.id })}
+                    disabled={!canSwitch}
+                    title={t('sessionRail.archive')}
+                    aria-label={t('sessionRail.archive')}
+                  >
+                    <IconTrash2 size={12} />
+                  </button>
+                )}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -1261,8 +1390,8 @@ export default function SessionRail({
           {/* 头部只有标题：文件夹管理入口已全部迁至项目中心，收起走 Esc / 面板外点击 / 再点色块 */}
           <span className="sr-drawer-title">{t('sessionRail.title')}</span>
         </div>
-        {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐、
-            右端 + 号），虚线描边 + 弱文字把「动作」与上方「数据」区分开。
+        {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐），
+            虚线描边 + 弱文字把「动作」与上方「数据」区分开。
             不放面板右上角 —— 那里已定稿为「每模块唯一关闭按钮」，不新增按钮。 */}
         {onNewChat && onSwitchProjectDir && (
           <div className="sr-new-chat-wrap">
@@ -1276,14 +1405,13 @@ export default function SessionRail({
               title={t('sessionRail.newChat')}
             >
               <span className="sr-new-chat-label">{t('sessionRail.newChat')}</span>
-              <span className="sr-new-chat-plus" aria-hidden="true">
-                <IconPlus size={14} />
-              </span>
             </button>
           </div>
         )}
-        {/* 「项目」标签行：右端 ⋯ 菜单 + 📁+（新建项目文件夹 → 项目中心）；
-            视觉弱于上方主操作按钮、区别于组头（次级字号 / 弱色 / 左对齐） */}
+        {/* 「项目」标签行：右端 ⋯ 菜单 + 📁+（新建项目文件夹 → 「创建项目」弹窗）；
+            视觉弱于上方主操作按钮、区别于组头（次级字号 / 弱色 / 左对齐）。
+            📁+ 需要「切当前目录」这一入口才能完成创建（归属 = 切好目录后生成的空对话），
+            缺它时不渲染该按钮——与「新建对话」动作行同一可用性判据 */}
         <ProjectLabelRow
           prefs={sortPrefs}
           archivedProjects={archivedProjects}
@@ -1291,7 +1419,8 @@ export default function SessionRail({
           onCollapseAll={collapseAllGroups}
           onSelectSort={handleSelectSort}
           onRestore={handleRestoreProject}
-          onOpenProjectDir={onOpenProjectDir}
+          onCreateProject={onSwitchProjectDir ? openCreateProjectModal : undefined}
+          plusBtnRef={plusBtnRef}
         />
         <div className="sr-list">
           {groups.length === 0 && (
@@ -1306,7 +1435,7 @@ export default function SessionRail({
             const ungrouped = group.path === null
             return (
               <div className="sr-group" key={group.key || '__ungrouped__'}>
-                <div className={`sr-group-head${group.isCurrent ? ' is-current' : ''}`}>
+                <div className="sr-group-head">
                   {editingProjectKey === group.key && group.path ? (
                     <div className="sr-head">
                       <input
@@ -1360,9 +1489,6 @@ export default function SessionRail({
                         <span className={`sr-group-name${ungrouped ? ' is-ungrouped' : ''}`}>
                           {group.name || t('sessionRail.ungrouped')}
                         </span>
-                        {group.isCurrent && (
-                          <span className="sr-group-badge">{t('sessionRail.current')}</span>
-                        )}
                         {group.auto && (
                           <span className="sr-group-tag" title={t('sessionRail.autoGroupHint')}>
                             {t('sessionRail.autoTag')}
@@ -1504,6 +1630,16 @@ export default function SessionRail({
         onClose={closeNewChatModal}
         onBrowseDir={handleBrowseNewChatDir}
         onCreate={handleCreateNewChat}
+      />
+
+      {/* 创建项目弹窗（「项目」行 📁+ 唯一入口）：项目名称 + 源文件夹。
+          确认后由 handleCreateProject 按「写书签 → 切当前目录 → 生成空对话 → 刷新」执行：
+          rail 里该文件夹下立刻出现 1 条当前对话（草稿，纯内存态，不落库） */}
+      <CreateProjectModal
+        open={createProjectOpen}
+        onClose={closeCreateProjectModal}
+        onPickDir={handlePickProjectDir}
+        onSubmit={handleCreateProject}
       />
     </>
   )

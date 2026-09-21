@@ -28,8 +28,8 @@ export interface StepVarProfile {
   consumes: VarConsumption[]
 }
 
-// compiler.rs:116 同款：\{\{\s*([A-Za-z_]\w*) —— 只取标识符根名
-const VAR_REF_RE = /\{\{\s*([A-Za-z_]\w*)((?:[^}]*)?)\}\}/g
+// 额外保留首个点号字段，使 {{inputs.topic}} 在画布上显示为具体输入 topic。
+const VAR_REF_RE = /\{\{\s*([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?((?:[^}]*)?)\}\}/g
 
 /** 被排除的外部注入根名：params.* 由 params.json 注入；ENV:* 正则只捕获到根名 ENV */
 function isExternalVar(name: string): boolean {
@@ -56,9 +56,9 @@ export function scanTemplateRefs(text: string, out: VarConsumption[]): void {
   VAR_REF_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = VAR_REF_RE.exec(text)) !== null) {
-    const varName = m[1]
+    const varName = m[1] === 'inputs' && m[2] ? m[2] : m[1]
     if (isExternalVar(varName)) continue
-    out.push({ varName, pipes: parsePipes(m[2] || '') })
+    out.push({ varName, pipes: parsePipes(m[3] || '') })
   }
 }
 
@@ -81,7 +81,8 @@ function scanVarRef(r: VarRef | undefined, out: VarConsumption[]): void {
     return
   }
   if (typeof r === 'object' && 'var' in r && typeof r.var === 'string') {
-    const root = r.var.split('.')[0]
+    const parts = r.var.split('.')
+    const root = parts[0] === 'inputs' && parts[1] ? parts[1] : parts[0]
     if (root && !isExternalVar(root) && !root.startsWith('ENV:')) {
       out.push({ varName: root, pipes: [] })
     }

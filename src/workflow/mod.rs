@@ -8,6 +8,7 @@ pub mod compiler;
 pub mod events;
 pub mod executor;
 pub mod hud_control;
+pub mod inputs;
 pub mod scheduler;
 pub mod store;
 pub mod types;
@@ -29,7 +30,12 @@ use std::sync::Arc;
 
 /// Schedule-triggered execution callback — injected by Tauri command layer (with ToolRegistry)
 pub type ScheduleExecCallback = Arc<
-    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+    dyn Fn(
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
 >;
 
 /// Agent 执行态读取器 — 由 Tauri shell 注入读 AppState.busy 的闭包（无宿主 = 视为空闲）
@@ -380,24 +386,48 @@ impl WorkflowEngine {
 
     /// Set workflow cron schedule
     pub async fn set_schedule(&self, workflow_id: &str, config: ScheduleConfig) -> Result<()> {
-        // Persist to store
-        if let Some(mut wf) = self.store.get(workflow_id).await {
-            wf.schedule = Some(config.clone());
-            wf.updated_at = Some(chrono::Utc::now());
-            self.store.save(&wf).await?;
+        self.set_schedule_with_inputs(workflow_id, config, std::collections::HashMap::new())
+            .await
+    }
 
-            // Start scheduler timer
-            let wf_id = workflow_id.to_string();
-            let store_ref = &self.store;
-            let exec_cb = self.schedule_exec.lock().unwrap().clone();
-            self.scheduler
-                .set_schedule(&wf_id.clone(), config, store_ref, move || {
+    /// Set workflow cron schedule and atomically replace its explicit input snapshot.
+    pub async fn set_schedule_with_inputs(
+        &self,
+        workflow_id: &str,
+        config: ScheduleConfig,
+        inputs: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        self.set_schedule_with_inputs_and_anchor(workflow_id, config, inputs, None)
+            .await
+    }
+
+    async fn set_schedule_with_inputs_and_anchor(
+        &self,
+        workflow_id: &str,
+        config: ScheduleConfig,
+        inputs: std::collections::HashMap<String, serde_json::Value>,
+        anchor_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
+        // Persist to store
+        let mut wf = self.store.get(workflow_id).await.ok_or_else(|| {
+            crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
+        })?;
+        let wf_id = workflow_id.to_string();
+        let exec_cb = self.schedule_exec.lock().unwrap().clone();
+        self.scheduler
+            .set_schedule_with_anchor(
+                &wf_id.clone(),
+                config.clone(),
+                inputs,
+                anchor_at,
+                &self.store,
+                move |inputs| {
                     let wf_id = wf_id.clone();
                     let exec_cb = exec_cb.clone();
                     async move {
                         tracing::info!("[Scheduler] Cron fired for workflow: {}", wf_id);
                         if let Some(ref cb) = exec_cb {
-                            cb(wf_id).await;
+                            cb(wf_id, inputs).await;
                         } else {
                             tracing::warn!(
                                 "[Scheduler] No exec callback registered for workflow: {}",
@@ -405,9 +435,12 @@ impl WorkflowEngine {
                             );
                         }
                     }
-                })
-                .await?;
-        }
+                },
+            )
+            .await?;
+        wf.schedule = Some(config);
+        wf.updated_at = Some(chrono::Utc::now());
+        self.store.save(&wf).await?;
         self.events.emit(WorkflowEvent::StatusChange {
             status: "schedule_set".to_string(),
         });
@@ -429,7 +462,7 @@ impl WorkflowEngine {
     /// 启动时恢复所有持久化的调度任务
     /// 需在 set_schedule_exec_callback 之后调用
     pub async fn restore_schedules(&self) {
-        let persisted = crate::workflow::scheduler::SchedulerEngine::load_persisted();
+        let persisted = self.scheduler.load_current();
         if persisted.schedules.is_empty() {
             return;
         }
@@ -437,19 +470,133 @@ impl WorkflowEngine {
             "[Scheduler] Restoring {} persisted schedule(s)",
             persisted.schedules.len()
         );
-        for (wf_id, config) in &persisted.schedules {
-            if !config.enabled {
-                continue;
-            }
+        for (wf_id, binding) in &persisted.schedules {
             let wf_id = wf_id.clone();
-            let config = config.clone();
-            if let Err(e) = self.set_schedule(&wf_id, config).await {
+            let Some(workflow) = self.store.get(&wf_id).await else {
+                tracing::warn!("[Scheduler] Removing orphan schedule for '{}'", wf_id);
+                continue;
+            };
+            let inputs = match binding.decode_inputs(&workflow.inputs) {
+                Ok(inputs) => inputs,
+                Err(error) => {
+                    tracing::error!(
+                        "[Scheduler] Removing schedule for '{}' after input decode failed: {}",
+                        wf_id,
+                        error
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = self
+                .set_schedule_with_inputs_and_anchor(
+                    &wf_id,
+                    binding.config.clone(),
+                    inputs,
+                    binding.anchor_at,
+                )
+                .await
+            {
                 tracing::warn!(
                     "[Scheduler] Failed to restore schedule for '{}': {}",
                     wf_id,
                     e
                 );
             }
+        }
+        // set_schedule rewrites active bindings; this also removes orphan/invalid entries.
+        if let Err(error) = self.scheduler.persist_current().await {
+            tracing::error!(
+                "[Scheduler] Failed to persist restored schedules: {}",
+                error
+            );
+        }
+    }
+
+    /// schedule_cron tool entry. Values are never included in list output.
+    pub async fn handle_schedule_tool(
+        &self,
+        params: &serde_json::Value,
+    ) -> std::result::Result<crate::ToolResult, String> {
+        let action = params
+            .get("action")
+            .and_then(|value| value.as_str())
+            .unwrap_or("list");
+        match action {
+            "list" => {
+                let schedules = self.scheduler.list_schedules().await;
+                if schedules.is_empty() {
+                    return Ok(crate::ToolResult::success("暂无定时调度任务。".to_string()));
+                }
+                let lines = schedules
+                    .iter()
+                    .map(|(id, config)| {
+                        let status = if config.enabled { "启用" } else { "禁用" };
+                        format!(
+                            "- `{}` — cron: {} (tz: {}, {})",
+                            id, config.cron, config.timezone, status
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(crate::ToolResult::success(format!(
+                    "定时调度 ({} 个):\n{}",
+                    schedules.len(),
+                    lines
+                )))
+            }
+            "add" => {
+                let workflow_id = params
+                    .get("workflow_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "缺少 workflow_id 参数".to_string())?;
+                let cron = params
+                    .get("cron")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "缺少 cron 参数".to_string())?;
+                let timezone = params
+                    .get("timezone")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("UTC");
+                let inputs = match params.get("inputs") {
+                    None => std::collections::HashMap::new(),
+                    Some(serde_json::Value::Object(map)) => map.clone().into_iter().collect(),
+                    Some(_) => {
+                        return Ok(crate::ToolResult::failure("inputs 必须是对象".to_string()))
+                    }
+                };
+                let config = ScheduleConfig {
+                    cron: cron.to_string(),
+                    timezone: timezone.to_string(),
+                    enabled: true,
+                    label: None,
+                    interval_minutes: None,
+                };
+                match self
+                    .set_schedule_with_inputs(workflow_id, config, inputs)
+                    .await
+                {
+                    Ok(()) => Ok(crate::ToolResult::success(format!(
+                        "已为工作流 `{}` 添加定时调度: cron={} (tz={})，现已生效。",
+                        workflow_id, cron, timezone
+                    ))),
+                    Err(error) => Ok(crate::ToolResult::failure(error.to_string())),
+                }
+            }
+            "remove" => {
+                let workflow_id = params
+                    .get("workflow_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "缺少 workflow_id 参数".to_string())?;
+                self.remove_schedule(workflow_id).await;
+                Ok(crate::ToolResult::success(format!(
+                    "已移除工作流 `{}` 的定时调度。",
+                    workflow_id
+                )))
+            }
+            _ => Ok(crate::ToolResult::failure(format!(
+                "未知操作: {}。可用: list/add/remove",
+                action
+            ))),
         }
     }
 
@@ -611,5 +758,83 @@ mod gate_tests {
             ra && !rb,
             "concurrent acquire must admit exactly one run (a={ra}, b={rb})"
         );
+    }
+
+    #[tokio::test]
+    async fn schedule_tool_applies_add_and_remove_immediately() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_schedule_tool_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut engine = WorkflowEngine::new();
+        engine.store = WorkflowStore::with_root(root.join("workflows"));
+        engine.scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+        let mut workflow = Workflow::new("scheduled");
+        workflow.inputs = vec![crate::workflow::types::InputSpec {
+            name: "count".into(),
+            kind: crate::workflow::types::InputKind::Number,
+            required: true,
+            default: None,
+            description: None,
+            sensitive: false,
+        }];
+        engine.store.save(&workflow).await.unwrap();
+
+        let added = engine
+            .handle_schedule_tool(&serde_json::json!({
+                "action": "add",
+                "workflow_id": workflow.id,
+                "cron": "*/5 * * * *",
+                "timezone": "Asia/Shanghai",
+                "inputs": {"count": 2}
+            }))
+            .await
+            .unwrap();
+        assert!(added.success, "{:?}", added.error);
+        assert!(engine.scheduler.get_schedule(&workflow.id).await.is_some());
+
+        let removed = engine
+            .handle_schedule_tool(&serde_json::json!({
+                "action": "remove",
+                "workflow_id": workflow.id
+            }))
+            .await
+            .unwrap();
+        assert!(removed.success);
+        assert!(engine.scheduler.get_schedule(&workflow.id).await.is_none());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn restore_schedules_removes_orphans() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_schedule_orphan_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let schedule_path = root.join("schedules.json");
+        tokio::fs::write(
+            &schedule_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schedules": {
+                    "missing-workflow": {
+                        "cron": "0 9 * * *",
+                        "timezone": "UTC",
+                        "enabled": true
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let mut engine = WorkflowEngine::new();
+        engine.store = WorkflowStore::with_root(root.join("workflows"));
+        engine.scheduler = SchedulerEngine::with_persist_path(schedule_path.clone());
+        engine.restore_schedules().await;
+        let restored = engine.scheduler.load_current();
+        assert!(restored.schedules.is_empty());
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

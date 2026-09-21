@@ -416,6 +416,117 @@ pub fn session_project_paths(ids: &[String]) -> crate::Result<HashMap<String, St
     Ok(map)
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 历史会话归属回填（一次性、幂等）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 背景：`project_path` 是后来才加的展示列，旧库里的历史会话只有 `project_tag`
+// （记忆过滤仍以 tag 为准，语义不变）。标签含路径哈希、**不可逆**，因此回填只做
+// 「tag ↔ 已知候选目录」的精确匹配：候选目录全部来自用户已确认过的数据（书签 /
+// 当前项目目录 / 已登记过的归属路径），匹配不上就保持无归属（前端归「未分组」）。
+//
+// 禁止事项（与既有硬约束一致）：不得按当前目录 / 会话内容 / 时间推断归属，
+// 不得改写 `project_tag`，不得覆盖已有 `project_path`。
+
+/// 待回填清单：`project_path` 为 NULL/空的归属行 → `(session_id, project_tag)`。
+pub fn sessions_missing_project_path(
+    conn: &rusqlite::Connection,
+) -> crate::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT session_id, project_tag FROM session_meta
+         WHERE project_path IS NULL OR project_path = ''",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// 回填候选目录（按可靠度排序，全部来自用户已确认过的数据）：
+/// ① 项目书签路径（含归档——归档是展示维度，归属是数据）
+/// ② 当前项目目录
+/// ③ 已登记过 `project_path` 的会话去重路径集合（自愈：同一 tag 一旦解析成功即可复用）。
+pub fn backfill_candidate_dirs(
+    conn: &rusqlite::Connection,
+    bookmarks: &[crate::config::ProjectBookmark],
+    project_dir: &str,
+) -> crate::Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    let push = |dir: &str, out: &mut Vec<String>| {
+        let dir = dir.trim();
+        if !dir.is_empty() && !out.iter().any(|d| d == dir) {
+            out.push(dir.to_string());
+        }
+    };
+    for b in bookmarks {
+        push(&b.path, &mut out);
+    }
+    push(project_dir, &mut out);
+
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT project_path FROM session_meta
+         WHERE project_path IS NOT NULL AND project_path != ''",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    for path in rows {
+        push(&path?, &mut out);
+    }
+    Ok(out)
+}
+
+/// 回填主体：对 `session_meta` 中无 `project_path` 的行，用其 `project_tag` 与候选目录
+/// 精确匹配，命中才写（写的是命中候选目录的原始写法，保证 tag ↔ path 同源同值）。
+///
+/// 幂等：命中行写完即不再出现在待填清单里，且 UPDATE 自带空值守卫（见下），
+/// 因此重复调用第二次零变更。返回本次写入的行数。
+/// 既有 `project_path` 的行既不在待填清单内、也不会被 UPDATE 命中 —— 不可能被覆盖。
+pub fn backfill_session_project_paths_with_conn(
+    conn: &rusqlite::Connection,
+    candidates: &[String],
+) -> crate::Result<usize> {
+    let pending = sessions_missing_project_path(conn)?;
+    if pending.is_empty() || candidates.is_empty() {
+        return Ok(0);
+    }
+    // 同一 tag 只解析一次（自愈复用：一次命中即可喂给同 tag 的其余行）
+    let mut resolved: HashMap<String, String> = HashMap::new();
+    let mut filled = 0usize;
+    for (session_id, tag) in pending {
+        let path = match resolved.get(&tag) {
+            Some(p) => Some(p.clone()),
+            None => match crate::utils::dir_for_project_tag(&tag, candidates) {
+                Some(p) => {
+                    resolved.insert(tag.clone(), p.clone());
+                    Some(p)
+                }
+                None => None,
+            },
+        };
+        // 匹配不上 → 保持无归属（不猜测）；命中的 tag 已算过，不再重复尝试
+        let Some(path) = path else { continue };
+        let updated = conn.execute(
+            "UPDATE session_meta SET project_path = ?1
+             WHERE session_id = ?2 AND (project_path IS NULL OR project_path = '')",
+            params![path, session_id],
+        )?;
+        filled += updated;
+    }
+    Ok(filled)
+}
+
+/// 生产入口：启动时调用一次（幂等）。候选目录 = 书签（含归档）+ 当前项目目录 +
+/// 已登记过的归属路径。失败由调用方降级（warn，不阻断启动）。
+pub fn backfill_session_project_paths() -> crate::Result<usize> {
+    let guard = crate::store::db::acquire()?;
+    let prefs = crate::config::UserPreferences::load();
+    let candidates = backfill_candidate_dirs(&guard, &prefs.project_bookmarks, &prefs.project_dir)?;
+    backfill_session_project_paths_with_conn(&guard, &candidates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

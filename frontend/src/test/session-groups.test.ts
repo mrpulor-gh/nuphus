@@ -61,7 +61,8 @@ describe('sessionGroups 分组规则', () => {
     expect(groups[3].key).toBe(UNGROUPED_GROUP_KEY)
     expect(groups[3].path).toBeNull()
     expect(groups[3].sessions.map(s => s.id)).toEqual(['s-none'])
-    // 当前工作目录组仅标记不上浮：仍是书签序第 2 位
+    // 当前工作目录组不上浮：仍是书签序第 2 位（isCurrent 只是数据标记，不再驱动视觉，
+    // 但仍是「组内会话点击跳过重复 set_project_dir」的幂等判据）
     expect(groups[1].isCurrent).toBe(true)
     // auto 只读组标记保留（供 UI 关闭重命名/归档入口）
     expect(groups.map(g => g.auto)).toEqual([false, false, true, false])

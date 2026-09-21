@@ -698,7 +698,7 @@ export default function NavBar({
                     const slice = visibleGroupSessions(group, sessLimit, !!sessExpanded[group.key])
                     return (
                       <div className="mobile-sess-group" key={group.key || '__ungrouped__'}>
-                        {/* 组头：文件夹名 + 当前徽标 + 会话数；点击收起/展开整组 */}
+                        {/* 组头：文件夹名 + 会话数；点击收起/展开整组 */}
                         <button
                           type="button"
                           className="mobile-sess-group-head"
@@ -709,16 +709,11 @@ export default function NavBar({
                         >
                           <span
                             className={`mobile-sess-group-name${
-                              group.isCurrent ? ' is-current' : ''
-                            }${group.path === null ? ' is-ungrouped' : ''}`}
+                              group.path === null ? ' is-ungrouped' : ''
+                            }`}
                           >
                             {group.name || t('sessionRail.ungrouped')}
                           </span>
-                          {group.isCurrent && (
-                            <span className="mobile-sess-group-badge">
-                              {t('sessionRail.current')}
-                            </span>
-                          )}
                           <span className="mobile-sess-group-count">{group.sessions.length}</span>
                           {collapsed ? (
                             <ChevronRight size={14} aria-hidden="true" />

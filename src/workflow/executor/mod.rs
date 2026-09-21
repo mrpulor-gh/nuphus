@@ -153,6 +153,8 @@ pub struct Executor {
     /// ChatAgent 会话历史："{workflow_id}:{step_id}" → messages
     /// 同一 ChatAgent 步骤多次调用时保留上下文
     chat_sessions: RwLock<HashMap<String, Vec<serde_json::Value>>>,
+    /// 当前运行的敏感输入字面值；仅用于事件与运行摘要脱敏，运行结束即清理。
+    sensitive_values: RwLock<HashMap<String, Vec<String>>>,
     /// 共享信号状态（HUD active_workflow_id 读写）
     signals: crate::state::SharedSignals,
     /// 模型客户端工厂（chat 步骤 with.model 按 registry 模型 ID 路由专属 client）
@@ -165,6 +167,7 @@ impl Executor {
             cancel_flags: RwLock::new(HashMap::new()),
             pause_notifies: RwLock::new(HashMap::new()),
             chat_sessions: RwLock::new(HashMap::new()),
+            sensitive_values: RwLock::new(HashMap::new()),
             signals: crate::state::new_shared_signals(),
             client_factory: None,
         }
@@ -179,11 +182,44 @@ impl Executor {
     pub fn set_client_factory(&mut self, factory: crate::llm::ClientFactory) {
         self.client_factory = Some(factory);
     }
+
+    async fn redact_run_text(&self, workflow_id: &str, text: &str) -> String {
+        let values = self.sensitive_values.read().await;
+        redact_text(
+            text,
+            values.get(workflow_id).map(Vec::as_slice).unwrap_or(&[]),
+        )
+    }
+}
+
+fn redact_text(text: &str, sensitive_values: &[String]) -> String {
+    sensitive_values
+        .iter()
+        .filter(|value| !value.is_empty())
+        .fold(text.to_string(), |redacted, value| {
+            redacted.replace(value, "[敏感值]")
+        })
 }
 
 impl Default for Executor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact_text;
+
+    #[test]
+    fn sensitive_values_are_removed_from_output_text() {
+        assert_eq!(
+            redact_text(
+                "token=secret and json=\"secret\"",
+                &["secret".into(), "\"secret\"".into()]
+            ),
+            "token=[敏感值] and json=\"[敏感值]\""
+        );
     }
 }
 

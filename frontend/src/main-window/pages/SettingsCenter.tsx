@@ -56,6 +56,8 @@ import {
   IconX,
 } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
+import { Clock3 } from 'lucide-react'
+import { ScheduleHistoryPage } from '../workflow/ScheduleHistoryPage'
 import '../../styles/settings-center.css'
 
 // ── 子页按需加载（说明符与 App.tsx 完全一致 → 共用同一 chunk）──
@@ -90,6 +92,7 @@ export type SettingsSectionId =
   | 'memories'
   | 'canvas'
   | 'workflows'
+  | 'schedules'
   | 'skills'
   | 'knowledge'
   | 'mcp'
@@ -142,6 +145,7 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
     items: [
       { id: 'memories', labelKey: 'app.memories', icon: <IconHistory size={14} /> },
       { id: 'workflows', labelKey: 'app.workflows', icon: <IconWorkflow size={14} /> },
+      { id: 'schedules', labelKey: 'app.scheduleHistory', icon: <Clock3 size={14} /> },
       { id: 'skills', labelKey: 'app.skills', icon: <IconWrench size={14} /> },
       { id: 'knowledge', labelKey: 'app.knowledge', icon: <IconFile size={14} /> },
       { id: 'mcp', labelKey: 'cmd.mcp', icon: <IconPlug size={14} /> },
@@ -196,6 +200,8 @@ export interface SettingsCenterProps {
   onOpenCanvas: (workflowId?: string | null) => void
   /** 模型分区：关闭面板 → 走 App 层 `.models-page-host` 全屏整页 */
   onOpenModels: () => void
+  /** 打开指定工作流的定时运行历史回放 */
+  onOpenScheduleReplay?: (workflowId: string, runId: string) => void
 }
 
 export function SettingsCenter({
@@ -204,6 +210,7 @@ export function SettingsCenter({
   onRunWorkflow,
   onOpenCanvas,
   onOpenModels,
+  onOpenScheduleReplay,
 }: SettingsCenterProps) {
   const { t } = useLanguage()
   const [section, setSection] = useState<EmbeddedSectionId>('memories')
@@ -278,10 +285,13 @@ export function SettingsCenter({
           <WorkflowPage
             onClose={onClose}
             onRunClick={onRunWorkflow}
+            scheduleDialogLayer="settings"
             /* 行内「画布」= 关闭面板 → 由 App 层打开全屏画布工作台 */
             onCanvasClick={wf => onOpenCanvas(wf.id)}
           />
         )
+      case 'schedules':
+        return <ScheduleHistoryPage onOpenReplay={onOpenScheduleReplay ?? (() => {})} />
       case 'skills':
         return <SkillsPage />
       case 'knowledge':

@@ -34,9 +34,11 @@ import {
   CircleCheckBig,
   CornerUpLeft,
   ListChecks,
+  Braces,
+  Clock3,
 } from 'lucide-react'
 
-import type { WorkflowStep, ToolSchema } from '../../core/types'
+import type { RunRecord, WorkflowStep, ToolSchema } from '../../core/types'
 import {
   wfGetRaw,
   wfSave,
@@ -44,6 +46,8 @@ import {
   wfRun,
   wfLayoutGet,
   wfLayoutSave,
+  wfScheduleHistoryGet,
+  type ScheduleRunRecord,
   type ValidationReport,
 } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
@@ -76,7 +80,7 @@ import {
 } from './irEdit'
 import { validateIR, type Problem } from './validate'
 import { subscribeRunStatus, aggregateContainerBadges, type RunStatusSnapshot } from './runStatus'
-import { StepNode, NodeActionsContext } from './nodes/StepNode'
+import { StepNode, NodeActionsContext, InputAnchorActionsContext } from './nodes/StepNode'
 import { ContainerNode } from './nodes/ContainerNode'
 import { LaneFrame } from './nodes/LaneFrame'
 import { SequenceEdge, EDGE_INSERT_EVENT } from './edges/SequenceEdge'
@@ -90,6 +94,8 @@ import { IntentFormPanel } from './IntentFormPanel'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
+import { WorkflowInputsEditor } from './WorkflowInputsEditor'
+import { WorkflowScheduleDialog } from '../workflow/WorkflowScheduleDialog'
 import './workflow-canvas.css'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
@@ -113,6 +119,8 @@ const ADDABLE_KINDS: { kind: string; desc: string }[] = [
 
 interface CanvasPageProps {
   workflowId: string
+  replayRunId?: string | null
+  onExitReplay?: () => void
   onClose: () => void
 }
 
@@ -183,7 +191,7 @@ interface ConfirmState {
   resolve: (ok: boolean) => void
 }
 
-function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
+function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: CanvasPageProps) {
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -198,13 +206,19 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const [dirty, setDirty] = useState(false)
   /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
   const [inputsOpen, setInputsOpen] = useState(false)
+  const [inputsEditorOpen, setInputsEditorOpen] = useState(false)
+  const [inputsEditorFocus, setInputsEditorFocus] = useState<string | null>(null)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
   const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
     steps: new Map(),
     outputs: new Map(),
     running: false,
+    timeline: [],
   })
+  const [replayRecord, setReplayRecord] = useState<ScheduleRunRecord | null>(null)
+  const [replayLoading, setReplayLoading] = useState(false)
   // ── 顶部运行态派生（4.2 + Error→fresh 从头 / Paused→续跑 三态拆分）──
   // 供 runWorkflow（按钮/R 快捷键）与顶部按钮/横幅共用；runWorkflow 依赖数组据此更新。
   const lastRun = ir?.run_history?.[0]
@@ -334,6 +348,27 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     }
   }, [workflowId])
 
+  useEffect(() => {
+    if (!replayRunId) {
+      setReplayRecord(null)
+      setReplayLoading(false)
+      return
+    }
+    let alive = true
+    setReplayLoading(true)
+    void wfScheduleHistoryGet(replayRunId)
+      .then(record => {
+        if (alive) setReplayRecord(record)
+      })
+      .catch(reason => {
+        if (alive) setNotice(`读取历史运行记录失败：${String(reason)}`)
+      })
+      .finally(() => alive && setReplayLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [replayRunId])
+
   // ── 执行状态订阅（2.3：独立 listener，会话边界由 tracker 保证）──
   useEffect(() => subscribeRunStatus(workflowId, setSnapshot), [workflowId])
 
@@ -349,11 +384,14 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   }, [snapshot.running, workflowId])
 
   // ── 投影（IR → 图层）──
-  const projection = useMemo(() => (steps ? projectWorkflow({ steps }) : null), [steps])
+  const projection = useMemo(
+    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }) : null),
+    [steps, ir?.inputs],
+  )
   const layer = projection?.layers.get(layerId) ?? null
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
-  const readOnly = snapshot.running || !!projection?.index.hasCustomNodes
+  const readOnly = snapshot.running || !!projection?.index.hasCustomNodes || !!replayRunId
   // 只读翻转（运行开始等）时自动收起残留的连线插入菜单
   useEffect(() => {
     if (readOnly) setEdgeInsert(null)
@@ -381,7 +419,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   // ── run_history 回放基线（非运行时的持久着色，4.2）──
   const historyStatus = useMemo(() => {
     const m = new Map<string, StepVisualStatus>()
-    const last = ir?.run_history?.[0]
+    const last = replayRecord ?? ir?.run_history?.[0]
     if (!last || snapshot.running) return m
     const recs = Array.isArray(last.steps)
       ? (last.steps as { step_id: string; status: unknown }[])
@@ -401,7 +439,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       }
     }
     return m
-  }, [ir?.run_history, snapshot.running])
+  }, [ir?.run_history, replayRecord, snapshot.running])
 
   const badges = useMemo(
     () => (projection ? aggregateContainerBadges(projection.index, snapshot.steps) : new Map()),
@@ -1117,6 +1155,16 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     [duplicateSelected, deleteSelected],
   )
 
+  const inputAnchorActions = useMemo(
+    () => ({
+      onConfigure: (name: string) => {
+        setInputsEditorFocus(name)
+        setInputsEditorOpen(true)
+      },
+    }),
+    [],
+  )
+
   const addStep = useCallback(
     async (kind: string) => {
       // 先收菜单：即便守卫未命中（未加载完/只读）也不留残影
@@ -1275,6 +1323,20 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         }
         return
       }
+      if (inputsEditorOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setInputsEditorOpen(false)
+        }
+        return
+      }
+      if (scheduleOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setScheduleOpen(false)
+        }
+        return
+      }
       const tag = (e.target as HTMLElement)?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -1333,6 +1395,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     closeInspector,
     intentFormOpen,
     inputsOpen,
+    inputsEditorOpen,
+    scheduleOpen,
     layer,
     switchLayer,
   ])
@@ -1517,6 +1581,41 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           type="button"
           className="wfc-btn"
           onClick={() => {
+            setInputsEditorFocus(null)
+            setInputsEditorOpen(true)
+          }}
+          title={readOnly ? '运行中 · 画布只读' : '编辑工作流外部输入声明'}
+        >
+          <Braces size={13} /> 外部输入
+        </button>
+
+        {replayRunId && onExitReplay && (
+          <button
+            type="button"
+            className="wfc-btn wfc-btn--primary"
+            onClick={onExitReplay}
+            title="返回当前工作流画布"
+          >
+            返回当前画布
+          </button>
+        )}
+
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => setScheduleOpen(true)}
+          title={ir.schedule?.enabled ? '定时运行已启用' : '设置定时运行'}
+        >
+          <Clock3 size={13} /> 定时
+          {ir.schedule && (
+            <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
+          )}
+        </button>
+
+        <button
+          type="button"
+          className="wfc-btn"
+          onClick={() => {
             playUiSound('switch')
             setIntentFormOpen(true)
           }}
@@ -1598,7 +1697,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           type="button"
           className="wfc-btn wfc-btn--primary"
           onClick={() => void runWorkflow()}
-          disabled={snapshot.running || gateLocked}
+          disabled={snapshot.running || gateLocked || !!replayRunId}
           title={
             gateLocked && !snapshot.running
               ? gateLockNotice
@@ -1625,6 +1724,14 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           {lastRunError
             ? `上次运行失败${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「运行」将从头完整执行，不再续连上次进度。`
             : `上次运行已暂停${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「续跑」将自动跳过已完成步骤，从暂停处继续。`}
+        </div>
+      )}
+      {replayRunId && (
+        <div className="wfc-banner wfc-banner--info">
+          {replayLoading
+            ? '正在加载定时运行历史…'
+            : `历史回放 · ${replayRecord ? new Date(replayRecord.started_at).toLocaleString() : '记录不可用'} · ${replayRecord ? (typeof replayRecord.status === 'string' ? replayRecord.status : '失败') : ''}`}
+          <span className="wfc-replay-hint">当前为只读状态，返回后可继续编辑当前画布。</span>
         </div>
       )}
       {notice && (
@@ -1673,35 +1780,37 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       {/* ── 画布主体 ── */}
       <div className="wfc-canvas-wrap">
         {/* NodeActionsContext：节点 hover 操作（阶段 4）；readOnly 时注入 null 隐藏操作条 */}
-        <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
-          <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
-            onNodeDrag={onNodeDrag}
-            onNodeDragStop={onNodeDragStop}
-            onNodeClick={onNodeClick}
-            onNodeDoubleClick={onNodeDoubleClick}
-            onPaneClick={() => {
-              setSelectedId(null)
-              setInspectorOpen(false)
-            }}
-            onDragOver={onToolDragOver}
-            onDrop={onToolDrop}
-            nodesConnectable={false}
-            edgesFocusable={false}
-            deleteKeyCode={null}
-            fitView
-            minZoom={0.2}
-            maxZoom={2}
-            proOptions={{ hideAttribution: false }}
-          >
-            <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </NodeActionsContext.Provider>
+        <InputAnchorActionsContext.Provider value={inputAnchorActions}>
+          <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={onNodesChange}
+              onNodeDrag={onNodeDrag}
+              onNodeDragStop={onNodeDragStop}
+              onNodeClick={onNodeClick}
+              onNodeDoubleClick={onNodeDoubleClick}
+              onPaneClick={() => {
+                setSelectedId(null)
+                setInspectorOpen(false)
+              }}
+              onDragOver={onToolDragOver}
+              onDrop={onToolDrop}
+              nodesConnectable={false}
+              edgesFocusable={false}
+              deleteKeyCode={null}
+              fitView
+              minZoom={0.2}
+              maxZoom={2}
+              proOptions={{ hideAttribution: false }}
+            >
+              <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </NodeActionsContext.Provider>
+        </InputAnchorActionsContext.Provider>
 
         {/* ── 拖拽插入指示线（阶段 3：重排前视觉反馈；松手后按 dragInsertRef 决定是否重排）── */}
         {dragInsertScreen && (
@@ -1788,8 +1897,23 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       <ProblemsPanel
         problems={problems}
         backendReport={backendReport}
+        timeline={snapshot.timeline}
+        running={snapshot.running}
+        runHistory={
+          replayRecord
+            ? [
+                {
+                  ...replayRecord,
+                  variables_snapshot: {},
+                } as RunRecord,
+              ]
+            : (ir.run_history ?? [])
+        }
+        replay={!!replayRunId}
         onLocate={locateNode}
-        nameOf={id => projection.index.nodeById.get(id)?.name ?? id}
+        nameOf={id =>
+          replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id
+        }
       />
 
       {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}
@@ -1810,6 +1934,30 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         running={snapshot.running}
         onConfirm={inputs => void runWithInputs(inputs)}
         onCancel={() => setInputsOpen(false)}
+      />
+      <WorkflowInputsEditor
+        open={inputsEditorOpen}
+        specs={ir.inputs ?? NO_INPUT_SPECS}
+        readOnly={readOnly}
+        focusName={inputsEditorFocus}
+        onApply={inputs => {
+          setIr(current => (current ? { ...current, inputs } : current))
+          setDirty(true)
+          setInputsEditorOpen(false)
+        }}
+        onCancel={() => setInputsEditorOpen(false)}
+      />
+      <WorkflowScheduleDialog
+        open={scheduleOpen}
+        workflow={{
+          id: ir.id,
+          title: ir.name,
+          inputs: ir.inputs,
+          schedule: ir.schedule ?? null,
+        }}
+        readOnly={snapshot.running || gateLocked}
+        onClose={() => setScheduleOpen(false)}
+        onChanged={schedule => setIr(current => (current ? { ...current, schedule } : current))}
       />
 
       {/* ── 确认弹窗 ── */}

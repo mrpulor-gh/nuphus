@@ -52,7 +52,7 @@ const en: Record<string, string> = {
   'welcome.shortcut.wfStop': 'Stop Workflow',
 
   'input.placeholder': 'Type a message → Press / for commands',
-  'input.hint.shortcuts': 'Enter send → Shift+Enter newline',
+  'input.hint.shortcuts': 'Enter send → Shift+Enter / Ctrl+Enter newline',
   'input.hint.commandsQueue':
     'Press / for commands; while running → send directly to append to the message queue',
   'input.hint.modes': 'Mode: use LEADER for coding tasks, WORKFLOW for automation tasks',
@@ -189,6 +189,14 @@ const en: Record<string, string> = {
   // ── Session rail: "Projects" row menu (tidy / sort / restore hidden) + 📁+ ──
   'sessionRail.projectsMenu': 'Project menu',
   'sessionRail.newProjectFolder': 'New project folder',
+  // ── Session rail: create-project modal (📁+ → name + source folder → bookmark + empty chat) ──
+  'sessionRail.createProjectTitle': 'Create project',
+  'sessionRail.createProjectName': 'Project name',
+  'sessionRail.createProjectNameHint': 'Up to 80 characters',
+  'sessionRail.createProjectSource': 'Source folder',
+  'sessionRail.createProjectPick': 'Choose project folder',
+  'sessionRail.createProjectSubmit': 'Create project',
+  'sessionRail.createProjectFail': 'Could not create the project, please retry',
   'sessionRail.menuArrange': 'Tidy sidebar',
   'sessionRail.menuExpandAll': 'Expand all',
   'sessionRail.menuCollapseAll': 'Collapse all',
@@ -1007,6 +1015,7 @@ const en: Record<string, string> = {
   'app.mobile': 'Mobile',
   'app.soul': 'Identity',
   'app.workflows': 'Workflows',
+  'app.scheduleHistory': 'Scheduled Tasks',
   'app.help': 'Help',
 
   'titleBar.minimize': 'Minimize',
@@ -1265,13 +1274,6 @@ const en: Record<string, string> = {
   'modelManager.contextUnit': 'Context {0}',
   'modelManager.reasoning': 'Reasoning {0}',
 
-  'projectDir.title': 'Project Directory',
-  'projectDir.current': 'Current Directory',
-  'projectDir.bookmarks': 'Bookmarks',
-  'projectDir.customPath': 'Custom Path',
-  'projectDir.pathPlaceholder': 'Enter full path...',
-  'projectDir.saveBookmark': '+ Save Bookmark',
-
   'pause.title': 'Task Paused',
   'pause.desc': 'Nuphus is executing. What would you like to do?',
   'pause.continue': 'Continue',
@@ -1463,18 +1465,6 @@ const en: Record<string, string> = {
   'browser.statusUnreachable':
     'Unreachable ...the window may be closed; it will reconnect automatically once reopened',
 
-  'project.selectDir': 'Select Project Directory',
-  'project.currentDir': 'Current Project Directory',
-  'project.pathPlaceholder': 'Enter project directory path',
-  'project.browse': 'Browse',
-  'project.setCurrent': 'Set as Current',
-  'project.bookmarks': 'Project Bookmarks',
-  'project.noBookmarks': 'No bookmarks',
-  'project.bookmarkHint': 'Set a project directory first to add bookmarks',
-  'project.deleteBookmark': 'Delete bookmark',
-  'project.bookmarkNamePlaceholder': 'Bookmark name (optional)',
-  'project.addBookmark': 'Add current directory to bookmarks',
-
   'soul.aiLabel': 'AI Name',
   'soul.userLabel': 'User Label',
 
@@ -1535,7 +1525,6 @@ const en: Record<string, string> = {
   'help.shortcut.send': 'Send message',
   'help.shortcut.newline': 'New line',
   'help.shortcut.palette': 'Open command palette; in Workflow mode, open workflows',
-  'help.shortcut.altSend': 'Send (alternate)',
   'help.shortcut.esc': 'Close modal / Cancel',
   'help.arch': 'Architecture',
   'help.arch.desc':

@@ -89,7 +89,6 @@ function renderRail(props: Partial<Parameters<typeof SessionRail>[0]> = {}) {
     <SessionRail
       onSessionChanged={vi.fn()}
       onNewChat={onNewChat}
-      onOpenProjectDir={vi.fn()}
       onSwitchProjectDir={onSwitchProjectDir}
       onModeSwitched={vi.fn()}
       {...props}
@@ -144,13 +143,13 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     expect(within(dialog).getByRole('option', { name: /浏览本地目录/ })).toBeInTheDocument()
   })
 
-  it('未选项目或标题为空 → 「创建对话」disabled；两者齐备才可创建', async () => {
+  it('未选项目 → 「创建对话」disabled；选中项目即可创建（标题可留空）', async () => {
     renderRail()
     const dialog = await openModal()
 
     // ① 标题空 + 未选
     expect(createBtn()).toBeDisabled()
-    // ② 只填标题、未选项目
+    // ② 只填标题、未选项目 → 仍 disabled：唯一禁用条件是「没有归属项目」
     fireEvent.change(within(dialog).getByLabelText('会话标题'), {
       target: { value: '接口联调复盘' },
     })
@@ -158,9 +157,26 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     // ③ 选中项目 → 可创建
     fireEvent.click(option(/一号/))
     expect(createBtn()).toBeEnabled()
-    // ④ 标题清空 → 回到 disabled
+    // ④ 标题清空（含纯空白）→ 仍可创建：标题可留空，空标题交后端归一为「未记录标题」
     fireEvent.change(within(dialog).getByLabelText('会话标题'), { target: { value: '   ' } })
-    expect(createBtn()).toBeDisabled()
+    expect(createBtn()).toBeEnabled()
+  })
+
+  it('标题留空也能创建：先切目录，空标题原样交给 new_chat_session_cmd（后端归一为未记录）', async () => {
+    renderRail()
+    await openModal()
+    fireEvent.click(option(/一号/))
+    expect(createBtn()).toBeEnabled()
+
+    fireEvent.click(createBtn())
+
+    // 与填标题时同一条创建路径：切目录 → 记录标题（此处为空串 = 未记录）
+    await waitFor(() => expect(calls).toEqual(['set_project_dir:E:\\A', 'new_chat_session_cmd:']))
+    // 成功后的收尾也一致：弹窗关闭 + 抽屉收起
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建对话' })).toBeNull())
+    expect(document.querySelector('.session-rail-drawer')?.classList.contains('is-open')).toBe(
+      false,
+    )
   })
 
   it('选中项目后底部 hint 显示所选目录完整路径', async () => {
@@ -184,7 +200,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建对话' })).toBeNull())
 
-    // 重开：标题空 / 无选中项 / 主按钮 disabled
+    // 重开：标题空 / 无选中项 / 主按钮 disabled（禁用只因未选项目）
     dialog = await openModal()
     expect(within(dialog).getByLabelText('会话标题')).toHaveValue('')
     expect(
@@ -215,7 +231,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
 
     await openModal()
     // 点弹窗内部（选项目）不收起抽屉——关窗后入口行与焦点都还在
-    fireEvent.mouseDown(option(/一号/))
+    fireEvent.pointerDown(option(/一号/))
     expect(drawer.classList.contains('is-open')).toBe(true)
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -241,9 +257,9 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     expect(openDialog).toHaveBeenCalledWith(
       expect.objectContaining({ directory: true, multiple: false }),
     )
-    // 新目录成为选中项：hint 显示完整路径；标题仍为空 → 主按钮仍 disabled（两段齐备才可创建）
+    // 新目录成为选中项：hint 显示完整路径；标题空不影响可创建性（只按归属项目判定）
     await waitFor(() => expect(hintText()).toBe('E:\\New'))
-    expect(createBtn()).toBeDisabled()
+    expect(createBtn()).toBeEnabled()
 
     fireEvent.change(within(dialog).getByLabelText('会话标题'), { target: { value: '新项目会话' } })
     expect(createBtn()).toBeEnabled()
@@ -261,7 +277,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
 
     await waitFor(() => expect(hintText()).toBe('E:\\B'))
     expect(setProjectBookmarks).not.toHaveBeenCalled()
-    expect(createBtn()).toBeDisabled() // 标题仍为空
+    expect(createBtn()).toBeEnabled() // 标题可留空：选中项目即可创建
   })
 
   it('浏览取消（无返回）不提示、不改选中', async () => {
@@ -288,7 +304,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     await waitFor(() =>
       expect(calls).toEqual(['set_project_dir:E:\\A', 'new_chat_session_cmd:一号复盘']),
     )
-    // 确认后：弹窗关闭 + 抽屉收起 + 列表重拉（当前目录 chip / is_current 同步）
+    // 确认后：弹窗关闭 + 抽屉收起 + 列表重拉（当前目录 chip / 分组归属同步）
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建对话' })).toBeNull())
     expect(document.querySelector('.session-rail-drawer')?.classList.contains('is-open')).toBe(
       false,
@@ -335,12 +351,19 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     expect(document.querySelector('.session-rail-drawer')?.classList.contains('is-open')).toBe(true)
   })
 
-  it('入口动作行位于「项目」标签行之前（仍是列表首位动作）', async () => {
+  it('入口动作行位于「项目」标签行之前（仍是列表首位动作）：只留文字标签（无 +），点击仍开弹窗', async () => {
     renderRail()
     await waitFor(() => expect(screen.getByText('一号会话')).toBeInTheDocument())
     const row = document.querySelector('.sr-new-chat-btn') as HTMLElement
     const label = document.querySelector('.sr-list-label') as HTMLElement
     const following = Node.DOCUMENT_POSITION_FOLLOWING
     expect(row.compareDocumentPosition(label) & following).toBeTruthy()
+
+    // 动作行只留文字标签：无右端 `+` 图标（行内不留任何 svg），文字与可点性不变
+    expect(row.querySelector('.sr-new-chat-plus')).toBeNull()
+    expect(row.querySelector('svg')).toBeNull()
+    expect(row).toHaveTextContent('新建对话')
+    fireEvent.click(row)
+    expect(await screen.findByRole('dialog', { name: '新建对话' })).toBeInTheDocument()
   })
 })
