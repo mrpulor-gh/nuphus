@@ -760,6 +760,35 @@
 .wfc-anchor--external {
   color: var(--fg-4);
 }
+.wfc-anchor--external.is-undeclared {
+  border-color: rgba(var(--warning-rgb), 0.55);
+  color: var(--warning);
+}
+.wfc-anchor-settings {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.wfc-anchor:hover .wfc-anchor-settings,
+.wfc-anchor-settings:focus-visible {
+  opacity: 1;
+}
+.wfc-anchor-settings:hover {
+  background: var(--surface-hover);
+  color: var(--accent-hover);
+}
 
 .wfc-handle {
   width: 6px;

@@ -100,6 +100,7 @@ interface WorkflowInputsEditorProps {
   open: boolean
   specs: WorkflowInputSpec[]
   readOnly: boolean
+  focusName?: string | null
   onApply: (specs: WorkflowInputSpec[]) => void
   onCancel: () => void
 }
@@ -108,14 +109,33 @@ export function WorkflowInputsEditor({
   open,
   specs,
   readOnly,
+  focusName,
   onApply,
   onCancel,
 }: WorkflowInputsEditorProps) {
   const [drafts, setDrafts] = useState<DraftInput[]>([])
 
   useEffect(() => {
-    if (open) setDrafts(specs.map(toDraft))
-  }, [open, specs])
+    if (!open) return
+    const next = specs.map(toDraft)
+    if (focusName && !next.some(item => item.name === focusName)) {
+      next.push(toDraft({ name: focusName, type: 'string' }))
+    }
+    setDrafts(next)
+  }, [open, specs, focusName])
+
+  useEffect(() => {
+    if (!open || !focusName) return
+    const index = drafts.findIndex(item => item.name === focusName)
+    if (index < 0) return
+    const frame = requestAnimationFrame(() => {
+      const input = document.getElementById(`wfc-input-name-${index}`) as HTMLInputElement | null
+      input?.scrollIntoView({ block: 'center' })
+      input?.focus()
+      input?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, focusName, drafts.length])
 
   const errors = useMemo(() => drafts.map(draft => draftError(draft, drafts)), [drafts])
   const update = (index: number, patch: Partial<DraftInput>) =>
@@ -210,6 +230,7 @@ export function WorkflowInputsEditor({
               <label>
                 名称
                 <input
+                  id={`wfc-input-name-${index}`}
                   className="wfc-input wfc-input--mono"
                   disabled={readOnly}
                   value={draft.name}

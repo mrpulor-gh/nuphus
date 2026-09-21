@@ -77,7 +77,7 @@ import {
 } from './irEdit'
 import { validateIR, type Problem } from './validate'
 import { subscribeRunStatus, aggregateContainerBadges, type RunStatusSnapshot } from './runStatus'
-import { StepNode, NodeActionsContext } from './nodes/StepNode'
+import { StepNode, NodeActionsContext, InputAnchorActionsContext } from './nodes/StepNode'
 import { ContainerNode } from './nodes/ContainerNode'
 import { LaneFrame } from './nodes/LaneFrame'
 import { SequenceEdge, EDGE_INSERT_EVENT } from './edges/SequenceEdge'
@@ -201,6 +201,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
   const [inputsOpen, setInputsOpen] = useState(false)
   const [inputsEditorOpen, setInputsEditorOpen] = useState(false)
+  const [inputsEditorFocus, setInputsEditorFocus] = useState<string | null>(null)
   const [layerId, setLayerId] = useState('root')
   const [sidecar, setSidecar] = useState<CanvasLayoutSidecar | null>(null)
   const [snapshot, setSnapshot] = useState<RunStatusSnapshot>({
@@ -352,7 +353,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   }, [snapshot.running, workflowId])
 
   // ── 投影（IR → 图层）──
-  const projection = useMemo(() => (steps ? projectWorkflow({ steps }) : null), [steps])
+  const projection = useMemo(
+    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }) : null),
+    [steps, ir?.inputs],
+  )
   const layer = projection?.layers.get(layerId) ?? null
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
@@ -1120,6 +1124,16 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     [duplicateSelected, deleteSelected],
   )
 
+  const inputAnchorActions = useMemo(
+    () => ({
+      onConfigure: (name: string) => {
+        setInputsEditorFocus(name)
+        setInputsEditorOpen(true)
+      },
+    }),
+    [],
+  )
+
   const addStep = useCallback(
     async (kind: string) => {
       // 先收菜单：即便守卫未命中（未加载完/只读）也不留残影
@@ -1527,7 +1541,10 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         <button
           type="button"
           className="wfc-btn"
-          onClick={() => setInputsEditorOpen(true)}
+          onClick={() => {
+            setInputsEditorFocus(null)
+            setInputsEditorOpen(true)
+          }}
           title={readOnly ? '运行中 · 画布只读' : '编辑工作流外部输入声明'}
         >
           <Braces size={13} /> 外部输入
@@ -1693,8 +1710,9 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       {/* ── 画布主体 ── */}
       <div className="wfc-canvas-wrap">
         {/* NodeActionsContext：节点 hover 操作（阶段 4）；readOnly 时注入 null 隐藏操作条 */}
-        <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
-          <ReactFlow
+        <InputAnchorActionsContext.Provider value={inputAnchorActions}>
+          <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
+            <ReactFlow
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
@@ -1717,11 +1735,12 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
             minZoom={0.2}
             maxZoom={2}
             proOptions={{ hideAttribution: false }}
-          >
-            <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </NodeActionsContext.Provider>
+            >
+              <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </NodeActionsContext.Provider>
+        </InputAnchorActionsContext.Provider>
 
         {/* ── 拖拽插入指示线（阶段 3：重排前视觉反馈；松手后按 dragInsertRef 决定是否重排）── */}
         {dragInsertScreen && (
@@ -1835,6 +1854,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         open={inputsEditorOpen}
         specs={ir.inputs ?? NO_INPUT_SPECS}
         readOnly={readOnly}
+        focusName={inputsEditorFocus}
         onApply={inputs => {
           setIr(current => (current ? { ...current, inputs } : current))
           setDirty(true)
