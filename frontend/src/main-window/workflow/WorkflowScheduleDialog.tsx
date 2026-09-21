@@ -239,6 +239,9 @@ export function WorkflowScheduleDialog({
   }, [open, workflow.id, specs])
 
   const cron = cronFromPattern(pattern)
+  const intervalError =
+    pattern.mode === 'minutes' &&
+    (!Number.isInteger(pattern.interval) || pattern.interval < 1 || pattern.interval > 1440)
   const config = useMemo<ScheduleConfig>(
     () => ({
       cron,
@@ -257,7 +260,7 @@ export function WorkflowScheduleDialog({
   )
 
   useEffect(() => {
-    if (!open || !cron || !timezone) return
+    if (!open || !cron || !timezone || intervalError) return
     const timer = setTimeout(() => {
       void wfSchedulePreview(config)
         .then(runs => {
@@ -271,7 +274,7 @@ export function WorkflowScheduleDialog({
         })
     }, 250)
     return () => clearTimeout(timer)
-  }, [open, config, cron, timezone])
+  }, [open, config, cron, timezone, intervalError])
 
   const save = async () => {
     if (!details || Object.keys(resolvedInputs.errors).length > 0) return
@@ -322,7 +325,7 @@ export function WorkflowScheduleDialog({
             <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
           </div>
           <div className="wcf-footer-right">
-            <Button variant="primary" size="sm" loading={saving} disabled={readOnly || loading || !details?.eligible || !!error || Object.keys(resolvedInputs.errors).length > 0} onClick={() => void save()}>保存并应用</Button>
+            <Button variant="primary" size="sm" loading={saving} disabled={readOnly || loading || !details?.eligible || !!error || intervalError || Object.keys(resolvedInputs.errors).length > 0} onClick={() => void save()}>保存并应用</Button>
           </div>
         </>
       }
@@ -339,7 +342,7 @@ export function WorkflowScheduleDialog({
               <label>频率<select value={pattern.mode} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, mode: event.target.value as ScheduleMode }))}>
                 <option value="minutes">每隔几分钟</option><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="custom">高级 Cron</option>
               </select></label>
-              {pattern.mode === 'minutes' && <label>间隔（分钟）<input type="number" min={1} max={1440} step={1} value={pattern.interval} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, interval: Number(event.target.value) }))} /></label>}
+              {pattern.mode === 'minutes' && <label>间隔（分钟）<input type="number" min={1} max={1440} step={1} value={Number.isFinite(pattern.interval) ? pattern.interval : ''} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, interval: event.target.value === '' ? Number.NaN : Number(event.target.value) }))} />{intervalError && <span className="wfs-field-error">请输入 1–1440 的整数分钟数</span>}</label>}
               {pattern.mode === 'hourly' && <label>分钟<input type="number" min={0} max={59} value={pattern.minute} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, minute: Number(event.target.value) }))} /></label>}
               {['daily', 'weekdays', 'weekly', 'monthly'].includes(pattern.mode) && <label>时间<input type="time" value={`${String(pattern.hour).padStart(2, '0')}:${String(pattern.minute).padStart(2, '0')}`} disabled={readOnly} onChange={event => { const [hour, minute] = event.target.value.split(':').map(Number); setPattern(current => ({ ...current, hour, minute })) }} /></label>}
               {pattern.mode === 'weekly' && <label>星期<select value={pattern.weekday} disabled={readOnly} onChange={event => setPattern(current => ({ ...current, weekday: Number(event.target.value) }))}><option value={1}>星期一</option><option value={2}>星期二</option><option value={3}>星期三</option><option value={4}>星期四</option><option value={5}>星期五</option><option value={6}>星期六</option><option value={0}>星期日</option></select></label>}

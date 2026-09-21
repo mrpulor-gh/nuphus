@@ -25,10 +25,14 @@ type CanvasType = 'workflow-editor' | 'prototype' | 'tools'
 export function CanvasWorkbenchPage({
   onClose,
   workflowId: initialWorkflowId = null,
+  replayRunId = null,
+  onExitReplay,
 }: {
   onClose: () => void
   /** 由列表入口带过来的目标工作流；为 null 时由本页自行挑选最近更新的草稿 */
   workflowId?: string | null
+  replayRunId?: string | null
+  onExitReplay?: () => void
 }) {
   const { t } = useLanguage()
   const [canvasType, setCanvasType] = useState<CanvasType>('workflow-editor')
@@ -138,7 +142,7 @@ export function CanvasWorkbenchPage({
             {!loading && error && <div className="error-banner">{error}</div>}
             {!loading && workflowId && (
               <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
-                <CanvasPage workflowId={workflowId} onClose={onClose} />
+                <CanvasPage workflowId={workflowId} replayRunId={replayRunId} onExitReplay={onExitReplay} onClose={onClose} />
               </Suspense>
             )}
           </>

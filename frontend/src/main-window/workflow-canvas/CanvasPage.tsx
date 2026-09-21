@@ -38,7 +38,7 @@ import {
   Clock3,
 } from 'lucide-react'
 
-import type { WorkflowStep, ToolSchema } from '../../core/types'
+import type { RunRecord, WorkflowStep, ToolSchema } from '../../core/types'
 import {
   wfGetRaw,
   wfSave,
@@ -46,6 +46,8 @@ import {
   wfRun,
   wfLayoutGet,
   wfLayoutSave,
+  wfScheduleHistoryGet,
+  type ScheduleRunRecord,
   type ValidationReport,
 } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
@@ -117,6 +119,8 @@ const ADDABLE_KINDS: { kind: string; desc: string }[] = [
 
 interface CanvasPageProps {
   workflowId: string
+  replayRunId?: string | null
+  onExitReplay?: () => void
   onClose: () => void
 }
 
@@ -187,7 +191,7 @@ interface ConfirmState {
   resolve: (ok: boolean) => void
 }
 
-function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
+function CanvasInner({ workflowId, replayRunId = null, onExitReplay, onClose }: CanvasPageProps) {
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -213,6 +217,8 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     running: false,
     timeline: [],
   })
+  const [replayRecord, setReplayRecord] = useState<ScheduleRunRecord | null>(null)
+  const [replayLoading, setReplayLoading] = useState(false)
   // ── 顶部运行态派生（4.2 + Error→fresh 从头 / Paused→续跑 三态拆分）──
   // 供 runWorkflow（按钮/R 快捷键）与顶部按钮/横幅共用；runWorkflow 依赖数组据此更新。
   const lastRun = ir?.run_history?.[0]
@@ -342,6 +348,27 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     }
   }, [workflowId])
 
+  useEffect(() => {
+    if (!replayRunId) {
+      setReplayRecord(null)
+      setReplayLoading(false)
+      return
+    }
+    let alive = true
+    setReplayLoading(true)
+    void wfScheduleHistoryGet(replayRunId)
+      .then(record => {
+        if (alive) setReplayRecord(record)
+      })
+      .catch(reason => {
+        if (alive) setNotice(`读取历史运行记录失败：${String(reason)}`)
+      })
+      .finally(() => alive && setReplayLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [replayRunId])
+
   // ── 执行状态订阅（2.3：独立 listener，会话边界由 tracker 保证）──
   useEffect(() => subscribeRunStatus(workflowId, setSnapshot), [workflowId])
 
@@ -364,7 +391,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   const layer = projection?.layers.get(layerId) ?? null
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
-  const readOnly = snapshot.running || !!projection?.index.hasCustomNodes
+  const readOnly = snapshot.running || !!projection?.index.hasCustomNodes || !!replayRunId
   // 只读翻转（运行开始等）时自动收起残留的连线插入菜单
   useEffect(() => {
     if (readOnly) setEdgeInsert(null)
@@ -392,7 +419,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
   // ── run_history 回放基线（非运行时的持久着色，4.2）──
   const historyStatus = useMemo(() => {
     const m = new Map<string, StepVisualStatus>()
-    const last = ir?.run_history?.[0]
+    const last = replayRecord ?? ir?.run_history?.[0]
     if (!last || snapshot.running) return m
     const recs = Array.isArray(last.steps)
       ? (last.steps as { step_id: string; status: unknown }[])
@@ -412,7 +439,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       }
     }
     return m
-  }, [ir?.run_history, snapshot.running])
+  }, [ir?.run_history, replayRecord, snapshot.running])
 
   const badges = useMemo(
     () => (projection ? aggregateContainerBadges(projection.index, snapshot.steps) : new Map()),
@@ -1562,6 +1589,12 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           <Braces size={13} /> 外部输入
         </button>
 
+        {replayRunId && onExitReplay && (
+          <button type="button" className="wfc-btn wfc-btn--primary" onClick={onExitReplay} title="返回当前工作流画布">
+            返回当前画布
+          </button>
+        )}
+
         <button
           type="button"
           className="wfc-btn"
@@ -1659,7 +1692,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           type="button"
           className="wfc-btn wfc-btn--primary"
           onClick={() => void runWorkflow()}
-          disabled={snapshot.running || gateLocked}
+          disabled={snapshot.running || gateLocked || !!replayRunId}
           title={
             gateLocked && !snapshot.running
               ? gateLockNotice
@@ -1686,6 +1719,14 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
           {lastRunError
             ? `上次运行失败${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「运行」将从头完整执行，不再续连上次进度。`
             : `上次运行已暂停${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「续跑」将自动跳过已完成步骤，从暂停处继续。`}
+        </div>
+      )}
+      {replayRunId && (
+        <div className="wfc-banner wfc-banner--info">
+          {replayLoading
+            ? '正在加载定时运行历史…'
+            : `历史回放 · ${replayRecord ? new Date(replayRecord.started_at).toLocaleString() : '记录不可用'} · ${replayRecord ? (typeof replayRecord.status === 'string' ? replayRecord.status : '失败') : ''}`}
+          <span className="wfc-replay-hint">当前为只读状态，返回后可继续编辑当前画布。</span>
         </div>
       )}
       {notice && (
@@ -1853,7 +1894,17 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
         backendReport={backendReport}
         timeline={snapshot.timeline}
         running={snapshot.running}
-        runHistory={ir.run_history ?? []}
+        runHistory={
+          replayRecord
+            ? [
+                {
+                  ...replayRecord,
+                  variables_snapshot: {},
+                } as RunRecord,
+              ]
+            : ir.run_history ?? []
+        }
+        replay={!!replayRunId}
         onLocate={locateNode}
         nameOf={id => projection.index.nodeById.get(id)?.name ?? id}
       />

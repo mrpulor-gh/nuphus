@@ -18,6 +18,7 @@ interface ProblemsPanelProps {
   timeline: RunLogEntry[]
   running: boolean
   runHistory: RunRecord[]
+  replay?: boolean
   onLocate: (stepId: string) => void
   nameOf: (stepId: string) => string
 }
@@ -44,6 +45,7 @@ export function ProblemsPanel({
   timeline,
   running,
   runHistory,
+  replay = false,
   onLocate,
   nameOf,
 }: ProblemsPanelProps) {
@@ -61,6 +63,13 @@ export function ProblemsPanel({
     }
     wasRunning.current = running
   }, [running])
+
+  useEffect(() => {
+    if (!replay) return
+    setCollapsed(false)
+    setMainTab('logs')
+    setHistoryIndex(0)
+  }, [replay])
 
   const errorCount = useMemo(
     () => problems.filter(p => p.level === 'error').length + (backendReport?.errors.length ?? 0),

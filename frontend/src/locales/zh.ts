@@ -963,6 +963,7 @@ const zh: Record<string, string> = {
   'app.mobile': '移动端',
   'app.soul': '灵魂',
   'app.workflows': '工作流',
+  'app.scheduleHistory': '定时任务',
   'app.help': '帮助',
 
   'titleBar.minimize': '最小化',

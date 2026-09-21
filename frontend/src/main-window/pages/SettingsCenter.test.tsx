@@ -85,17 +85,17 @@ const navGroupLabels = (title: string) => {
 }
 
 describe('SettingsCenter 设置中心外壳', () => {
-  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 16 项，默认落在「记忆」', async () => {
+  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 17 项，默认落在「记忆」', async () => {
     renderCenter()
 
     const items = within(nav()).getAllByRole('button')
-    expect(items).toHaveLength(16)
+    expect(items).toHaveLength(17)
 
     // 分组顺序：快捷入口（最上）→ 浏览 → 设置 → 管理
     expect(navGroupTitles()).toEqual(['快捷入口', '浏览', '设置', '管理'])
-    // 2 + 5 + 6 + 3 = 16（GitHub 由「浏览」移入「管理」；「设置」含本分支新增的会话工作台）
+    // 2 + 6 + 6 + 3 = 17（浏览组新增定时任务中心）
     expect(navGroupLabels('快捷入口')).toHaveLength(2)
-    expect(navGroupLabels('浏览')).toHaveLength(5)
+    expect(navGroupLabels('浏览')).toHaveLength(6)
     expect(navGroupLabels('设置')).toHaveLength(6)
     expect(navGroupLabels('管理')).toHaveLength(3)
 
@@ -122,10 +122,10 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(navItem('会话工作台')).toHaveAttribute('aria-current', 'page')
   })
 
-  it('其余 14 项分组归属与内部顺序零变化（GitHub 由「浏览」移入「管理」）', async () => {
+  it('定时任务位于工作流之后，其余分组顺序保持不变', async () => {
     const props = renderCenter()
 
-    expect(navGroupLabels('浏览')).toEqual(['记忆', '工作流', '技能', '知识库', 'MCP'])
+    expect(navGroupLabels('浏览')).toEqual(['记忆', '工作流', '定时任务', '技能', '知识库', 'MCP'])
     expect(navGroupLabels('设置')).toEqual([
       '灵魂',
       '移动端',

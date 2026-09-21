@@ -1183,8 +1183,8 @@ export function wfScheduleHistoryGet(runId: string) {
   return invoke<ScheduleRunRecord>('wf_schedule_history_get', { runId })
 }
 
-export function wfScheduleHistoryDelete(workflowId?: string, before?: string) {
-  return invoke<number>('wf_schedule_history_delete', { workflowId, before })
+export function wfScheduleHistoryDelete(filter: ScheduleHistoryFilter = {}) {
+  return invoke<number>('wf_schedule_history_delete', { filter })
 }
 
 export function wfScheduleGet(id: string) {
