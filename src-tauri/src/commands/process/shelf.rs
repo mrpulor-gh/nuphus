@@ -1679,17 +1679,29 @@ mod tests {
     }
 
     /// ① tag 命中候选目录 → 回填成功；同 tag 多行共用一次解析结果（自愈复用）。
+    ///
+    /// 两个候选目录的 tag **都用 `derive_project_tag_from_dir` 现算**，不硬编码 Windows 上
+    /// 派生的字面值：该函数 name 段取 `Path::file_name()`，而 `E:\NUS\1` 这类字符串在非
+    /// Windows 上「整串即文件名」（分隔符不是分隔符），硬编码值会让本用例在 ubuntu 上失配。
+    /// 生产逻辑本身三平台一致（写入的是命中候选目录的原串，见 `dir_for_project_tag`），
+    /// Windows 上派生值的等价关系另由 `derive_tag_matches_legacy_windows_value` 守住。
     #[test]
     fn backfill_writes_path_when_tag_matches_candidate_dir() {
         let conn = backfill_conn();
         let dir = "E:\\NUS\\Nuphus";
+        let other_dir = "E:\\NUS\\1";
         let tag = nuphus::utils::derive_project_tag_from_dir(dir).unwrap();
+        let other_tag = nuphus::utils::derive_project_tag_from_dir(other_dir).unwrap();
+        assert_ne!(
+            tag, other_tag,
+            "两个不同目录的 tag 必须可区分，否则本用例退化"
+        );
         insert_meta(&conn, "s1", &tag, None);
         insert_meta(&conn, "s2", &tag, None);
-        insert_meta(&conn, "s3", "1-228c2201", None);
+        insert_meta(&conn, "s3", &other_tag, None);
 
         let candidates = vec![
-            "E:\\NUS\\1".to_string(), // 书签顺序无关：按 tag 精确匹配
+            other_dir.to_string(), // 书签顺序无关：按 tag 精确匹配
             dir.to_string(),
         ];
         let n =
@@ -1701,10 +1713,28 @@ mod tests {
         assert_eq!(stored_path(&conn, "s2").as_deref(), Some(dir));
         assert_eq!(
             stored_path(&conn, "s3").as_deref(),
-            Some("E:\\NUS\\1"),
+            Some(other_dir),
             "命中书签目录"
         );
         assert_eq!(missing_path_count(&conn), 0);
+    }
+
+    /// 真实库里的历史 tag 是 **Windows 上**派生的（`1-228c2201` ⇒ `E:\NUS\1`）：
+    /// 该等价关系依赖 Windows 的路径语义，只在 Windows 成立，故单独 cfg 断言——
+    /// 它是「回填能把真实库的旧 tag 还原成目录」这一事实的直接证据。
+    #[cfg(windows)]
+    #[test]
+    fn derive_tag_matches_legacy_windows_value() {
+        assert_eq!(
+            nuphus::utils::derive_project_tag_from_dir("E:\\NUS\\1").as_deref(),
+            Some("1-228c2201"),
+            "真实库 tag 1-228c2201 ⇒ E:\\NUS\\1（Windows 派生）"
+        );
+        assert_eq!(
+            nuphus::utils::derive_project_tag_from_dir("E:\\NUS\\Nuphus").as_deref(),
+            Some("Nuphus-9102132f"),
+            "真实库 tag Nuphus-9102132f ⇒ E:\\NUS\\Nuphus（Windows 派生）"
+        );
     }
 
     /// ② tag 无匹配 → 不写：保持无归属，前端仍归「未分组」（不猜测、不伪造）。
