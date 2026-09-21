@@ -608,7 +608,7 @@ fn main() {
                 let state = app.state::<crate::state::AppState>();
                 let app_handle = app.handle().clone();
 
-                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String| {
+                let exec_cb: nuphus::workflow::ScheduleExecCallback = std::sync::Arc::new(move |workflow_id: String, inputs: std::collections::HashMap<String, serde_json::Value>| {
                     let app_handle = app_handle.clone();
                     Box::pin(async move {
                         let state = app_handle.state::<crate::state::AppState>();
@@ -629,6 +629,14 @@ fn main() {
                         };
 
                         let engine = state.workflow_engine.read().await;
+                        let Some(workflow) = engine.store.get(&workflow_id).await else {
+                            tracing::error!("[Scheduler] Workflow {} no longer exists", workflow_id);
+                            return;
+                        };
+                        if let Err(error) = nuphus::workflow::inputs::resolve_declared_only(&workflow.inputs, &inputs) {
+                            tracing::error!("[Scheduler] Input validation failed for {}: {}", workflow_id, error);
+                            return;
+                        }
                         // For scheduled execution, tool schemas are not available (no Tauri state access)
                         // Pass empty vec — ChatAgent steps will work but without tool definitions
                         if let Err(e) = engine
@@ -637,7 +645,7 @@ fn main() {
                                 tool_exec,
                                 Some(vec![]),
                                 None,
-                                None,
+                                (!inputs.is_empty()).then_some(inputs),
                                 false,
                                 nuphus::workflow::WorkflowRunSource::Schedule,
                             )
@@ -657,6 +665,22 @@ fn main() {
                     busy_flag.load(std::sync::atomic::Ordering::SeqCst)
                 }));
                 drop(engine);
+
+                // schedule_cron runs in the registry's blocking executor. A Weak engine handle
+                // avoids a ToolRegistry ↔ WorkflowEngine ownership cycle while allowing changes
+                // to take effect immediately.
+                let weak_engine = std::sync::Arc::downgrade(&state.workflow_engine);
+                state.tools.set_schedule_tool_callback(std::sync::Arc::new(move |params| {
+                    let Some(engine) = weak_engine.upgrade() else {
+                        return Ok(nuphus::ToolResult::failure(
+                            "调度引擎已关闭".to_string(),
+                        ));
+                    };
+                    let params = params.clone();
+                    tauri::async_runtime::block_on(async move {
+                        engine.read().await.handle_schedule_tool(&params).await
+                    })
+                }));
 
                 // 恢复持久化的调度任务（在 tokio runtime 上异步执行）
                 let wf_engine = state.workflow_engine.clone();
