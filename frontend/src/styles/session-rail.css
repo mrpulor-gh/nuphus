@@ -144,11 +144,12 @@
   letter-spacing: 0.02em;
   color: var(--fg-2);
 }
-/* ── 新建对话入口 = 列表首位的**动作行**：复用会话行骨架 —— 文字左缘与会话标题严格对齐
-   （.sr-group-body 的 6px 缩进 + .sr-item 的 10px 内边距 = 16px）。
-   材质用虚线描边 + 弱文字，把「动作」与上方「数据」区分开；高度 42 与数据行天然分档。 ── */
+/* ── 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（虚线描边 + 弱文字，
+   把「动作」与上方「数据」区分开；高度 42 与数据行天然分档）。
+   文字**居中**：居中的动作按钮 + 下方左对齐的数据列表，层级一眼分明。 ── */
 .sr-new-chat-wrap {
   padding: 0 var(--space-2) var(--space-2);
+  margin-bottom: 20px;
 }
 .sr-new-chat-btn {
   display: flex;
@@ -156,14 +157,15 @@
   gap: var(--space-2);
   width: 100%;
   min-height: 42px;
-  padding: 8px 10px 8px 16px;
+  /* 左右内边距对称：文字改为居中后，原「左 16（对齐会话行）/ 右 10」会让视觉中心偏右 */
+  padding: 8px 16px;
   border: 1px dashed var(--line-3);
   border-radius: var(--radius-3);
   background: transparent;
   font-family: inherit;
   font-size: var(--fz-lg);
   color: var(--fg-3);
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
   cursor: pointer;
   transition:

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SessionRail from '../main-window/chat/SessionRail'
 
 /**
@@ -378,5 +378,55 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     await waitFor(() =>
       expect(screen.getByText('当前会话正在执行任务，等待完成即可切换')).toBeInTheDocument(),
     )
+  })
+})
+/**
+ * 外部（手机端遥控）切换会话时的工作目录同步。
+ *
+ * 回归背景：手机端 `POST /session/switch` 只切 mode + 装载，**不碰 `project_dir`**；
+ * 桌面端此前只在轮询里重拉聊天区 → 输入框显示的项目目录与当前会话的归属项目脱节。
+ * 补丁位置：SessionRail 轮询的「外部会话变化」分支，按目标会话 project_path 补一次
+ * `set_project_dir`（与桌面「点击组内会话」同语义；无归属会话不猜目录）。
+ */
+describe('外部会话切换 → 工作目录跟随', () => {
+  beforeEach(() => {
+    calls.length = 0
+    activeId = 'cur'
+    listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 首轮 refresh 只建立 active 基准，第二轮才做外部变更检测 */
+  async function primeThenSwitch(nextActiveId: string) {
+    renderRail()
+    await vi.advanceTimersByTimeAsync(0)
+    activeId = nextActiveId
+    await vi.advanceTimersByTimeAsync(5000)
+  }
+
+  it('active 变到另一项目分组的会话 → 按目标会话归属目录切工作目录', async () => {
+    await primeThenSwitch('bm1-new') // 归属 E:\NUS\1；当前目录 E:\NUS\Nuphus
+
+    expect(calls).toContain('dir:E:\\NUS\\1')
+  })
+
+  it('active 变到无归属会话 → 不猜目录（不下发切换）', async () => {
+    await primeThenSwitch('lonely')
+
+    expect(calls.filter(c => c.startsWith('dir:'))).toHaveLength(0)
+  })
+
+  it('active 变到同目录的其他会话 → 幂等判据命中，不重复切换', async () => {
+    listShelfSessions.mockImplementation(async () =>
+      shelfResponse({ items: [...baseItems(), item('same', '同目录会话', 'E:\\NUS\\Nuphus')] }),
+    )
+
+    await primeThenSwitch('same')
+
+    expect(calls.filter(c => c.startsWith('dir:'))).toHaveLength(0)
   })
 })

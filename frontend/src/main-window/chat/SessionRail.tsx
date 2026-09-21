@@ -677,6 +677,9 @@ export default function SessionRail({
    *  否则父组件每次渲染重建回调会导致轮询 effect 反复重启 */
   const onSessionChangedRef = useRef(onSessionChanged)
   onSessionChangedRef.current = onSessionChanged
+  // 同法持有「切工作目录」回调：refresh 是空依赖 useCallback（见下），直接闭包 prop 会 stale
+  const onSwitchProjectDirRef = useRef(onSwitchProjectDir)
+  onSwitchProjectDirRef.current = onSwitchProjectDir
 
   const refresh = useCallback(async () => {
     try {
@@ -743,6 +746,19 @@ export default function SessionRail({
           initializedRef.current = true
           lastActiveIdRef.current = activeId
         } else if (list.length > 0 && activeId !== lastActiveIdRef.current) {
+          // 外部（手机端遥控）切换会话：**工作目录必须跟上目标会话的归属目录**，与桌面
+          // 「点击组内会话」同语义（切 mode + 切目录 + 装载）——手机端 `POST /session/switch`
+          // 只切 mode + 装载，不碰 project_dir，若此处不补，输入框显示的项目目录会与
+          // 当前会话的归属项目脱节（本项目目录 = 全局 prefs，不是 per-session 状态）。
+          // 目录同步刻意放在去抖之外：`set_project_dir` 幂等（同路径直接返回，不落盘不注入），
+          // 而重拉聊天区是重操作才需要节流。无归属会话不猜目录（project_path=null 时跳过）。
+          const targetPath =
+            normalizePathKey(list.find(i => i.id === activeId)?.project_path) || null
+          const currentPath =
+            normalizePathKey((r.projects || []).find(p => p.is_current)?.path) || null
+          if (targetPath && targetPath !== currentPath) {
+            void onSwitchProjectDirRef.current?.(targetPath)
+          }
           // 去抖：2s 内只触发一次，防连续变更风暴
           const now = Date.now()
           if (now - lastFireAtRef.current >= SWITCH_NOTICE_THROTTLE_MS) {
@@ -1402,7 +1418,7 @@ export default function SessionRail({
               aria-haspopup="dialog"
               title={t('sessionRail.newChat')}
             >
-              <span className="sr-new-chat-label">{t('sessionRail.newChat')}</span>
+              <span className="sr-new-chat-label">+ {t('sessionRail.newChat')}</span>
             </button>
           </div>
         )}

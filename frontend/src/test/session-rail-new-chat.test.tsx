@@ -351,7 +351,7 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     expect(document.querySelector('.session-rail-drawer')?.classList.contains('is-open')).toBe(true)
   })
 
-  it('入口动作行位于「项目」标签行之前（仍是列表首位动作）：只留文字标签（无 +），点击仍开弹窗', async () => {
+  it('入口动作行位于「项目」标签行之前（仍是列表首位动作）：标签带 + 前缀（纯文本无图标），点击仍开弹窗', async () => {
     renderRail()
     await waitFor(() => expect(screen.getByText('一号会话')).toBeInTheDocument())
     const row = document.querySelector('.sr-new-chat-btn') as HTMLElement
@@ -359,10 +359,10 @@ describe('会话工作台：新建对话弹窗（动作行 → 标题 + 归属�
     const following = Node.DOCUMENT_POSITION_FOLLOWING
     expect(row.compareDocumentPosition(label) & following).toBeTruthy()
 
-    // 动作行只留文字标签：无右端 `+` 图标（行内不留任何 svg），文字与可点性不变
+    // `+` 是文本前缀，不是图标元素：行内不得出现 .sr-new-chat-plus 或任何 svg
     expect(row.querySelector('.sr-new-chat-plus')).toBeNull()
     expect(row.querySelector('svg')).toBeNull()
-    expect(row).toHaveTextContent('新建对话')
+    expect(row).toHaveTextContent('+ 新建对话')
     fireEvent.click(row)
     expect(await screen.findByRole('dialog', { name: '新建对话' })).toBeInTheDocument()
   })
