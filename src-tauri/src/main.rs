@@ -25,6 +25,34 @@ mod state;
 mod utils;
 mod video;
 
+/// Win11 系统圆角：main 窗口是无装饰窗口（tauri.conf.json `decorations: false`），
+/// 四角默认裁成直角。这里向 DWM 声明圆角偏好，由系统按 Win11 规范裁剪四角。
+/// Win10 及更早系统没有该属性，调用失败即保持直角（不视为错误）。
+#[cfg(target_os = "windows")]
+fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    };
+
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    // tauri hwnd() 返回 windows crate 的 HWND(pub *mut c_void)，取 .0 原始指针
+    let raw: *mut core::ffi::c_void = hwnd.0;
+    let preference: i32 = DWMWCP_ROUND;
+    unsafe {
+        let hr = DwmSetWindowAttribute(
+            raw,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &preference as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+        if hr < 0 {
+            tracing::debug!("DwmSetWindowAttribute(CORNER_PREFERENCE) 未生效: {hr:#x}");
+        }
+    }
+}
+
 fn main() {
     // Inject the persisted external-browser CDP endpoint into the process env so
     // future BrowserClient::new() (direct channel) picks it up; the MCP channel
@@ -436,6 +464,9 @@ fn main() {
                 if let Err(error) = main.set_shadow(false) {
                     tracing::warn!("Failed to disable main window shadow: {error}");
                 }
+                // 无边框窗口的四角按系统圆角规范裁剪（Win11+；更早系统自动保持直角）
+                #[cfg(target_os = "windows")]
+                apply_win11_rounded_corners(&main);
                 let _ = main.hide();
             }
 
