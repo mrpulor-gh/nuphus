@@ -219,6 +219,7 @@ mod store_tests {
 #[cfg(test)]
 mod compiler_tests {
     use crate::workflow::compiler::Compiler;
+    use crate::workflow::store::WorkflowStore;
     use crate::workflow::types::{
         Action, Condition, ForEachDef, IfDef, InputKind, InputSpec, LoopDef, Step, VarRef, Workflow,
     };
@@ -244,6 +245,116 @@ mod compiler_tests {
             },
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn validate_calls_checks_target_shape_and_required_mappings() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_validate_calls_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = WorkflowStore::with_root(root.clone());
+        let mut child = Workflow::new("child");
+        child.inputs = vec![make_input("topic", true, None)];
+        child.steps = vec![make_tool(
+            "child-step",
+            "child",
+            "Read",
+            serde_json::json!({}),
+        )];
+        store.save(&child).await.unwrap();
+
+        let mut parent = Workflow::new("parent");
+        parent.steps = vec![Step {
+            id: "call-child".into(),
+            name: "call child".into(),
+            action: Action::Call {
+                call: child.id.clone(),
+                with: serde_json::json!({"inputs": []}),
+            },
+            ..Default::default()
+        }];
+        let errors = Compiler::validate_calls(&parent, &store).await;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("with.inputs 必须是对象")),
+            "{errors:?}"
+        );
+
+        if let Action::Call { with, .. } = &mut parent.steps[0].action {
+            *with = serde_json::json!({"inputs": {}});
+        }
+        let errors = Compiler::validate_calls(&parent, &store).await;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("缺少必填输入映射 'topic'")),
+            "{errors:?}"
+        );
+
+        if let Action::Call { with, .. } = &mut parent.steps[0].action {
+            *with = serde_json::json!({"inputs": {"topic": "ok"}, "outputs": []});
+        }
+        let errors = Compiler::validate_calls(&parent, &store).await;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("with.outputs 必须是对象")),
+            "{errors:?}"
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn validate_calls_rejects_missing_target_and_literal_type_error() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_validate_call_types_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = WorkflowStore::with_root(root.clone());
+        let mut child = Workflow::new("child");
+        child.inputs = vec![InputSpec {
+            name: "count".into(),
+            kind: InputKind::Number,
+            required: true,
+            default: None,
+            description: None,
+            sensitive: false,
+        }];
+        store.save(&child).await.unwrap();
+
+        let mut parent = Workflow::new("parent");
+        parent.steps = vec![
+            Step {
+                id: "bad-type".into(),
+                name: "bad type".into(),
+                action: Action::Call {
+                    call: child.id.clone(),
+                    with: serde_json::json!({"inputs": {"count": "seven"}}),
+                },
+                ..Default::default()
+            },
+            Step {
+                id: "missing".into(),
+                name: "missing target".into(),
+                action: Action::Call {
+                    call: "does-not-exist".into(),
+                    with: serde_json::json!({}),
+                },
+                ..Default::default()
+            },
+        ];
+        let errors = Compiler::validate_calls(&parent, &store).await;
+        assert!(
+            errors.iter().any(|error| error.contains("类型不符合")),
+            "{errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("不存在")),
+            "{errors:?}"
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     // ── 基础验证 ──

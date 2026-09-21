@@ -549,11 +549,22 @@ impl Compiler {
 
     /// Claim: chained call detection → static deadlock prevention
     pub async fn validate_calls(workflow: &Workflow, store: &WorkflowStore) -> Vec<String> {
-        fn collect_calls(steps: &[Step], calls: &mut HashSet<String>) {
+        #[derive(Clone)]
+        struct CallSite {
+            target: String,
+            owner: String,
+            with: serde_json::Value,
+        }
+
+        fn collect_calls(steps: &[Step], calls: &mut Vec<CallSite>) {
             for step in steps {
                 match &step.action {
-                    Action::Call { call, .. } => {
-                        calls.insert(call.clone());
+                    Action::Call { call, with } => {
+                        calls.push(CallSite {
+                            target: call.clone(),
+                            owner: step.name.clone(),
+                            with: with.clone(),
+                        });
                     }
                     Action::Seq { seq } => collect_calls(seq, calls),
                     Action::Loop { def } => collect_calls(&def.steps, calls),
@@ -581,9 +592,10 @@ impl Compiler {
             let Some(wf) = store.get(wf_id).await else {
                 return;
             };
-            let mut calls = HashSet::new();
+            let mut calls = Vec::new();
             collect_calls(&wf.steps, &mut calls);
-            for target in calls {
+            for call in calls {
+                let target = call.target;
                 if path.contains(&target) {
                     errors.push(format!(
                         "检测到循环调用链: {} → {}",
@@ -599,6 +611,72 @@ impl Compiler {
         }
 
         let mut errors = Vec::new();
+        let mut sites = Vec::new();
+        collect_calls(&workflow.steps, &mut sites);
+        for site in &sites {
+            let Some(target) = store.get(&site.target).await else {
+                errors.push(format!(
+                    "Call step '{}': 目标工作流 '{}' 不存在",
+                    site.owner, site.target
+                ));
+                continue;
+            };
+            let with = if site.with.is_null() {
+                serde_json::Map::new()
+            } else if let Some(with) = site.with.as_object() {
+                with.clone()
+            } else {
+                errors.push(format!("Call step '{}': with 必须是对象", site.owner));
+                continue;
+            };
+            let input_map = match with.get("inputs") {
+                None => serde_json::Map::new(),
+                Some(value) if value.is_object() => value.as_object().cloned().unwrap_or_default(),
+                Some(_) => {
+                    errors.push(format!(
+                        "Call step '{}': with.inputs 必须是对象",
+                        site.owner
+                    ));
+                    continue;
+                }
+            };
+            if let Some(outputs) = with.get("outputs") {
+                match outputs.as_object() {
+                    None => errors.push(format!(
+                        "Call step '{}': with.outputs 必须是对象",
+                        site.owner
+                    )),
+                    Some(map) => {
+                        for (name, parent) in map {
+                            if !parent.is_string() {
+                                errors.push(format!(
+                                    "Call step '{}': with.outputs.{} 必须映射到父变量名字符串",
+                                    site.owner, name
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            for spec in &target.inputs {
+                match input_map.get(&spec.name) {
+                    None if spec.required && spec.default.is_none() => errors.push(format!(
+                        "Call step '{}': 子工作流 '{}' 缺少必填输入映射 '{}'",
+                        site.owner, target.name, spec.name
+                    )),
+                    Some(value)
+                        if !value.as_str().is_some_and(|text| text.contains("{{"))
+                            && !crate::workflow::inputs::value_matches_kind(spec.kind, value) =>
+                    {
+                        errors.push(format!(
+                            "Call step '{}': 输入映射 '{}' 类型不符合子工作流声明",
+                            site.owner, spec.name
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
         let mut path = vec![workflow.id.clone()];
         dfs(&workflow.id, store, &mut path, &mut errors, 0).await;
         errors

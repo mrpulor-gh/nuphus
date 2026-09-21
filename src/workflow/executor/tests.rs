@@ -357,6 +357,114 @@ async fn test_wf_call_error_propagation() {
     );
 }
 
+#[tokio::test]
+async fn test_wf_call_resolves_declared_inputs_and_defaults() {
+    let tmp = std::env::temp_dir().join(format!(
+        "nuphus_test_wfcall_inputs_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let mut sub = Workflow::new("typed_sub");
+    let sub_id = sub.id.clone();
+    sub.inputs = vec![
+        InputSpec {
+            name: "count".into(),
+            kind: InputKind::Number,
+            required: true,
+            default: None,
+            description: None,
+            sensitive: false,
+        },
+        InputSpec {
+            name: "label".into(),
+            kind: InputKind::String,
+            required: false,
+            default: Some(serde_json::json!("default-label")),
+            description: None,
+            sensitive: false,
+        },
+    ];
+    sub.steps = vec![make_tool_step(
+        "observe",
+        "mock_echo",
+        serde_json::json!({
+            "namespaced": "{{inputs.count}}",
+            "top_level": "{{count}}",
+            "defaulted": "{{inputs.label}}",
+            "parent_clone": "{{source}}"
+        }),
+    )];
+    store.save(&sub).await.unwrap();
+
+    let mut parent = Workflow::new("parent");
+    parent.steps = vec![Step {
+        id: "call".into(),
+        name: "call typed sub".into(),
+        action: Action::Call {
+            call: sub_id,
+            with: serde_json::json!({"inputs": {"count": "{{source}}"}}),
+        },
+        ..Default::default()
+    }];
+    let parent_id = parent.id.clone();
+    store.save(&parent).await.unwrap();
+
+    let bad_result = executor
+        .execute_v2(
+            &parent_id,
+            &store,
+            &events,
+            |_tool: String, _params: serde_json::Value| async { Ok("ok".to_string()) },
+            None,
+            None,
+            None,
+            Some(HashMap::from([(
+                "source".into(),
+                serde_json::json!("seven"),
+            )])),
+            false,
+        )
+        .await;
+    assert!(bad_result
+        .unwrap_err()
+        .to_string()
+        .contains("值类型必须是 number"));
+
+    let observed = Arc::new(std::sync::Mutex::new(None));
+    let observed_for_exec = observed.clone();
+    let tool_exec = move |_tool: String, params: serde_json::Value| {
+        let observed = observed_for_exec.clone();
+        async move {
+            *observed.lock().unwrap() = Some(params);
+            Ok("ok".to_string())
+        }
+    };
+    let result = executor
+        .execute_v2(
+            &parent_id,
+            &store,
+            &events,
+            tool_exec,
+            None,
+            None,
+            None,
+            Some(HashMap::from([("source".into(), serde_json::json!(7))])),
+            true,
+        )
+        .await;
+
+    let params = observed.lock().unwrap().clone().expect("tool called");
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(params["namespaced"], serde_json::json!(7));
+    assert_eq!(params["top_level"], serde_json::json!(7));
+    assert_eq!(params["defaulted"], serde_json::json!("default-label"));
+    assert_eq!(params["parent_clone"], serde_json::json!(7));
+}
+
 // ── P0 修复验证：StepRunRecord 管道 / 失败记录 push / for_each 点号路径 ──
 
 #[tokio::test]
