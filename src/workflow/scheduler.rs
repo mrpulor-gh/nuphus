@@ -567,7 +567,7 @@ mod tests {
         let now = anchor + chrono::Duration::minutes(89);
         assert_eq!(
             next_interval_occurrence(anchor, 90, now),
-            Some(anchor + chrono::Duration::minutes(180))
+            Some(anchor + chrono::Duration::minutes(90))
         );
         assert!(validate_interval(1).is_ok());
         assert!(validate_interval(1440).is_ok());
@@ -588,6 +588,35 @@ mod tests {
         assert_eq!(dates.len(), 3);
         assert_eq!((dates[1] - dates[0]).num_minutes(), 90);
         assert_eq!((dates[2] - dates[1]).num_minutes(), 90);
+    }
+
+    #[tokio::test]
+    async fn schedule_history_round_trips_and_filters_deletion() {
+        let root =
+            std::env::temp_dir().join(format!("nuphus_schedule_history_{}", uuid::Uuid::new_v4()));
+        let scheduler = SchedulerEngine {
+            tasks: RwLock::new(HashMap::new()),
+            persist_path: root.join("schedules.json"),
+            history_path: root.join("schedule_runs.json"),
+        };
+        let now = Utc::now();
+        let run = RunRecord {
+            run_id: "run-1".into(),
+            started_at: now,
+            finished_at: Some(now),
+            status: RunStatus::Success,
+            steps: Vec::new(),
+            error: None,
+            variables_snapshot: HashMap::new(),
+        };
+        scheduler
+            .record_schedule_run(ScheduleRunRecord::from_run("wf", "示例", &run))
+            .await
+            .unwrap();
+        assert_eq!(scheduler.list_schedule_runs().runs.len(), 1);
+        assert_eq!(scheduler.delete_schedule_runs(Some("wf"), None).unwrap(), 1);
+        assert!(scheduler.list_schedule_runs().runs.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
