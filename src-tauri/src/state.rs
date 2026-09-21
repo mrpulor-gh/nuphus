@@ -122,6 +122,11 @@ pub struct SessionState {
     /// 走 session_backup 回退路径时，append_last_turn_user 用它补回当前轮带图消息。
     pub last_message_images: Vec<String>,
     pub session_backup: Option<String>,
+    /// Workflow 欢迎页尚无真实会话时预先选择的 Jev 增强模式。
+    ///
+    /// 该值只供下一次 Workflow 会话诞生消费一次；绑定到真实 session id 后立即清空，
+    /// 因而不会让后续新会话继承上一会话的增强状态。
+    pub pending_workflow_enhanced_mode: Option<bool>,
     /// 「新建对话」弹窗确认时填写的标题——**只记录，不创建会话**。
     ///
     /// 与 session_backup 同类：会话边界的一次性意图，活在内存里。会话仍只在欢迎页

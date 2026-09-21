@@ -1325,6 +1325,9 @@ pub(crate) fn switch_session_inner_mode(
         }
     }
 
+    if target_kind == "workflow" {
+        crate::commands::config::clear_pending_workflow_enhanced_mode(state);
+    }
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
 
     // 归档**当前（原）**mode 的 active 会话——跨 mode 时必须归档用户正在离开的
@@ -1443,6 +1446,9 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     // 仍可被「重试」复活进新会话。
     if let Ok(mut sb) = state.session.lock() {
         sb.session_backup = None;
+        if kind == "workflow" {
+            sb.pending_workflow_enhanced_mode = None;
+        }
         sb.last_message.clear();
         sb.last_send_id = None;
         sb.last_message_images.clear();
@@ -1581,6 +1587,18 @@ pub fn resume_latest_session(
     // 镜像 mode 同步为当前权威（跨 mode 恢复：workflow/custom 会话不再被强制归 leader）
     if let Ok(mut cm) = state.current_mode.write() {
         *cm = mode.clone();
+    }
+    if mode == "workflow" {
+        crate::commands::config::clear_pending_workflow_enhanced_mode(&state);
+        let enabled = state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|modes| modes.get(&sess.id).copied())
+            .unwrap_or(false);
+        state
+            .workflow_enhanced_mode
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
     crate::commands::process::session::chat_history(&state)
 }
@@ -2774,11 +2792,17 @@ mod tests {
             .lock()
             .unwrap()
             .insert(first_id.clone(), true);
+        state.session.lock().unwrap().pending_workflow_enhanced_mode = Some(true);
 
         switch_session_inner_mode(&state, first_id.clone(), Some("workflow".into())).unwrap();
         assert!(state
             .workflow_enhanced_mode
             .load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            None,
+            "切换到真实 Workflow 会话后不得保留欢迎页的一次性偏好"
+        );
 
         switch_session_inner_mode(&state, second_id, Some("workflow".into())).unwrap();
         assert!(!state

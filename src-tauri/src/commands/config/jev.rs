@@ -29,12 +29,7 @@ pub struct WorkflowEnhancedModeStatus {
 }
 
 fn active_workflow_session_id(state: &AppState) -> Option<String> {
-    let is_workflow = state
-        .current_mode
-        .read()
-        .map(|mode| mode.as_str() == "workflow")
-        .unwrap_or(false);
-    if !is_workflow {
+    if !is_workflow_mode(state) {
         return None;
     }
     if let Some(id) = state.runtime.lock().ok().and_then(|runtime| {
@@ -45,13 +40,146 @@ fn active_workflow_session_id(state: &AppState) -> Option<String> {
     }) {
         return Some(id);
     }
-    state
+    workflow_backup_session_id(state)
+}
+
+pub(crate) fn workflow_backup_session_id(state: &AppState) -> Option<String> {
+    let id = state
         .session
         .lock()
         .ok()
         .and_then(|session| session.session_backup.clone())
         .and_then(|json| serde_json::from_str::<nuphus::session::Session>(&json).ok())
-        .map(|session| session.id)
+        .map(|session| session.id)?;
+    let shelf_mode = state
+        .shelf
+        .lock()
+        .ok()
+        .and_then(|shelf| shelf.entries.get(&id).map(|entry| entry.mode.clone()));
+    let stored_mode = shelf_mode
+        .or_else(|| crate::commands::process::shelf::read_mirror(&id).map(|(mode, _)| mode));
+    let known_workflow_preference = state
+        .workflow_enhanced_modes
+        .lock()
+        .ok()
+        .is_some_and(|modes| modes.contains_key(&id));
+    (stored_mode
+        .as_deref()
+        .is_some_and(|mode| crate::commands::process::shelf::normalize_mode(mode) == "workflow")
+        || known_workflow_preference)
+        .then_some(id)
+}
+
+fn is_workflow_mode(state: &AppState) -> bool {
+    state
+        .current_mode
+        .read()
+        .map(|mode| mode.as_str() == "workflow")
+        .unwrap_or(false)
+}
+
+fn current_workflow_enhanced_preference(state: &AppState) -> bool {
+    if !is_workflow_mode(state) {
+        return false;
+    }
+    if let Some(session_id) = active_workflow_session_id(state) {
+        return state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|modes| modes.get(&session_id).copied())
+            .unwrap_or(false);
+    }
+    state
+        .session
+        .lock()
+        .ok()
+        .and_then(|session| session.pending_workflow_enhanced_mode)
+        .unwrap_or(false)
+}
+
+fn set_workflow_enhanced_preference(state: &AppState, enabled: bool) -> Result<(), String> {
+    if !is_workflow_mode(state) {
+        return Err("当前不在 Workflow 模式".to_string());
+    }
+    if let Some(session_id) = active_workflow_session_id(state) {
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .map_err(|error| error.to_string())?
+            .insert(session_id, enabled);
+        if let Ok(mut session) = state.session.lock() {
+            session.pending_workflow_enhanced_mode = None;
+        }
+    } else {
+        state
+            .session
+            .lock()
+            .map_err(|error| error.to_string())?
+            .pending_workflow_enhanced_mode = Some(enabled);
+    }
+    state
+        .workflow_enhanced_mode
+        .store(enabled, Ordering::SeqCst);
+    if let Ok(mut runtime) = state.runtime.lock() {
+        if let Some(agent) = runtime.workflow_agent.as_mut() {
+            agent.set_enhanced_mode(enabled);
+        }
+    }
+    Ok(())
+}
+
+/// Bind the current Workflow enhanced-mode preference to a newly-created agent session.
+///
+/// A backup continuation receives a new core Session id today, so its old preference is
+/// moved to that replacement id. A genuinely new session instead consumes the one-shot
+/// welcome-page preference and defaults to disabled when the user made no pending choice.
+pub(crate) fn bind_workflow_enhanced_mode_to_session(
+    state: &AppState,
+    new_session_id: &str,
+    restored_session_id: Option<&str>,
+) -> bool {
+    let pending = state
+        .session
+        .lock()
+        .ok()
+        .and_then(|mut session| session.pending_workflow_enhanced_mode.take());
+    let enabled = if let Some(restored_session_id) = restored_session_id {
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|mut modes| modes.remove(restored_session_id))
+            .unwrap_or(false)
+    } else {
+        pending.unwrap_or(false)
+    };
+    if let Ok(mut modes) = state.workflow_enhanced_modes.lock() {
+        modes.insert(new_session_id.to_string(), enabled);
+    }
+    state
+        .workflow_enhanced_mode
+        .store(enabled, Ordering::SeqCst);
+    enabled
+}
+
+pub(crate) fn clear_pending_workflow_enhanced_mode(state: &AppState) {
+    if let Ok(mut session) = state.session.lock() {
+        session.pending_workflow_enhanced_mode = None;
+    }
+}
+
+fn clear_all_workflow_enhanced_preferences(state: &AppState) {
+    state.workflow_enhanced_mode.store(false, Ordering::SeqCst);
+    if let Ok(mut modes) = state.workflow_enhanced_modes.lock() {
+        modes.clear();
+    }
+    clear_pending_workflow_enhanced_mode(state);
+    if let Ok(mut runtime) = state.runtime.lock() {
+        if let Some(agent) = runtime.workflow_agent.as_mut() {
+            agent.set_enhanced_mode(false);
+        }
+    }
 }
 
 fn load_jev(state: &AppState) -> Result<nuphus::config::JevConfig, String> {
@@ -216,15 +344,7 @@ pub fn clear_jev_api_key(state: State<'_, AppState>) -> Result<(), String> {
         None,
         None,
     )?;
-    state.workflow_enhanced_mode.store(false, Ordering::SeqCst);
-    if let Ok(mut modes) = state.workflow_enhanced_modes.lock() {
-        modes.clear();
-    }
-    if let Ok(mut runtime) = state.runtime.lock() {
-        if let Some(agent) = runtime.workflow_agent.as_mut() {
-            agent.set_enhanced_mode(false);
-        }
-    }
+    clear_all_workflow_enhanced_preferences(&state);
     Ok(())
 }
 
@@ -292,12 +412,7 @@ pub fn get_workflow_enhanced_mode(
 ) -> Result<WorkflowEnhancedModeStatus, String> {
     let config = load_jev(&state)?;
     let configured = !config.api_key.trim().is_empty();
-    let session_id = active_workflow_session_id(&state);
-    let enabled = configured
-        && session_id
-            .as_ref()
-            .and_then(|id| state.workflow_enhanced_modes.lock().ok()?.get(id).copied())
-            .unwrap_or(false);
+    let enabled = configured && current_workflow_enhanced_preference(&state);
     state
         .workflow_enhanced_mode
         .store(enabled, Ordering::SeqCst);
@@ -327,21 +442,7 @@ pub fn set_workflow_enhanced_mode(
     if state.busy.load(Ordering::SeqCst) {
         return Err("任务执行中，停止后才能切换增强模式".to_string());
     }
-    let session_id = active_workflow_session_id(&state)
-        .ok_or_else(|| "当前没有可配置的 Workflow 会话".to_string())?;
-    state
-        .workflow_enhanced_modes
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(session_id, enabled);
-    state
-        .workflow_enhanced_mode
-        .store(enabled, Ordering::SeqCst);
-    if let Ok(mut runtime) = state.runtime.lock() {
-        if let Some(agent) = runtime.workflow_agent.as_mut() {
-            agent.set_enhanced_mode(enabled);
-        }
-    }
+    set_workflow_enhanced_preference(&state, enabled)?;
     Ok(WorkflowEnhancedModeStatus {
         enabled,
         configured,
@@ -351,8 +452,14 @@ pub fn set_workflow_enhanced_mode(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_workflow_session_id, validate_base_url, validate_policy};
+    use super::{
+        active_workflow_session_id, bind_workflow_enhanced_mode_to_session,
+        clear_all_workflow_enhanced_preferences, current_workflow_enhanced_preference,
+        set_workflow_enhanced_preference, validate_base_url, validate_policy,
+    };
+    use crate::commands::process::shelf::ShelfEntry;
     use crate::state::AppState;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn jev_endpoint_requires_https_except_localhost() {
@@ -378,9 +485,141 @@ mod tests {
         *state.current_mode.write().unwrap() = "workflow".into();
         let session = nuphus::session::Session::new();
         let expected = session.id.clone();
+        state.shelf.lock().unwrap().put(
+            ShelfEntry {
+                id: expected.clone(),
+                mode: "workflow".into(),
+                title: String::new(),
+                preview: String::new(),
+                message_count: 0,
+                updated_at: 0,
+            },
+            session.clone(),
+        );
         state.session.lock().unwrap().session_backup =
             Some(serde_json::to_string(&session).unwrap());
 
         assert_eq!(active_workflow_session_id(&state), Some(expected));
+    }
+
+    #[test]
+    fn non_workflow_backup_does_not_block_welcome_page_preference() {
+        let state = AppState::default();
+        *state.current_mode.write().unwrap() = "workflow".into();
+        let session = nuphus::session::Session::new();
+        let id = session.id.clone();
+        state.shelf.lock().unwrap().put(
+            ShelfEntry {
+                id,
+                mode: "leader".into(),
+                title: String::new(),
+                preview: String::new(),
+                message_count: 0,
+                updated_at: 0,
+            },
+            session.clone(),
+        );
+        state.session.lock().unwrap().session_backup =
+            Some(serde_json::to_string(&session).unwrap());
+
+        assert_eq!(active_workflow_session_id(&state), None);
+        set_workflow_enhanced_preference(&state, true).unwrap();
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn pending_enhanced_mode_binds_once_and_later_new_sessions_default_off() {
+        let state = AppState::default();
+        *state.current_mode.write().unwrap() = "workflow".into();
+
+        set_workflow_enhanced_preference(&state, true).unwrap();
+        assert!(current_workflow_enhanced_preference(&state));
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            Some(true)
+        );
+
+        assert!(bind_workflow_enhanced_mode_to_session(
+            &state,
+            "workflow-new-1",
+            None
+        ));
+        assert_eq!(
+            state
+                .workflow_enhanced_modes
+                .lock()
+                .unwrap()
+                .get("workflow-new-1"),
+            Some(&true)
+        );
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            None
+        );
+
+        assert!(!bind_workflow_enhanced_mode_to_session(
+            &state,
+            "workflow-new-2",
+            None
+        ));
+        assert_eq!(
+            state
+                .workflow_enhanced_modes
+                .lock()
+                .unwrap()
+                .get("workflow-new-2"),
+            Some(&false)
+        );
+    }
+
+    #[test]
+    fn backup_replacement_session_inherits_and_migrates_enhanced_mode() {
+        let state = AppState::default();
+        *state.current_mode.write().unwrap() = "workflow".into();
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .unwrap()
+            .insert("workflow-old".into(), true);
+        state.session.lock().unwrap().pending_workflow_enhanced_mode = Some(false);
+
+        assert!(bind_workflow_enhanced_mode_to_session(
+            &state,
+            "workflow-replacement",
+            Some("workflow-old")
+        ));
+        let modes = state.workflow_enhanced_modes.lock().unwrap();
+        assert!(!modes.contains_key("workflow-old"));
+        assert_eq!(modes.get("workflow-replacement"), Some(&true));
+        drop(modes);
+        assert!(state.workflow_enhanced_mode.load(Ordering::SeqCst));
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            None
+        );
+    }
+
+    #[test]
+    fn clearing_jev_preferences_disables_sessions_and_pending_choice() {
+        let state = AppState::default();
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .unwrap()
+            .insert("workflow-a".into(), true);
+        state.session.lock().unwrap().pending_workflow_enhanced_mode = Some(true);
+        state.workflow_enhanced_mode.store(true, Ordering::SeqCst);
+
+        clear_all_workflow_enhanced_preferences(&state);
+
+        assert!(state.workflow_enhanced_modes.lock().unwrap().is_empty());
+        assert!(!state.workflow_enhanced_mode.load(Ordering::SeqCst));
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            None
+        );
     }
 }
