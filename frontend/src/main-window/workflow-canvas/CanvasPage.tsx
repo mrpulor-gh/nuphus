@@ -208,6 +208,7 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
     steps: new Map(),
     outputs: new Map(),
     running: false,
+    timeline: [],
   })
   // ── 顶部运行态派生（4.2 + Error→fresh 从头 / Paused→续跑 三态拆分）──
   // 供 runWorkflow（按钮/R 快捷键）与顶部按钮/横幅共用；runWorkflow 依赖数组据此更新。
@@ -1827,6 +1828,9 @@ function CanvasInner({ workflowId, onClose }: CanvasPageProps) {
       <ProblemsPanel
         problems={problems}
         backendReport={backendReport}
+        timeline={snapshot.timeline}
+        running={snapshot.running}
+        runHistory={ir.run_history ?? []}
         onLocate={locateNode}
         nameOf={id => projection.index.nodeById.get(id)?.name ?? id}
       />

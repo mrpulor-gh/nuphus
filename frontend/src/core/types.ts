@@ -371,9 +371,17 @@ export interface RunRecord {
   started_at: string
   finished_at?: string | null
   status: 'Running' | 'Success' | 'Cancelled' | 'Paused' | { Error: string }
-  steps?: unknown[]
+  steps?: StepRunRecord[]
   error?: string | null
   variables_snapshot?: Record<string, unknown>
+}
+
+export interface StepRunRecord {
+  step_id: string
+  started_at: string
+  finished_at?: string | null
+  status: 'Running' | 'Success' | 'Skipped' | { Error: string }
+  output_summary?: string | null
 }
 
 // ── ScheduleConfig ──
