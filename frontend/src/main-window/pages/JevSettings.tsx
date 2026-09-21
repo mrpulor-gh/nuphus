@@ -262,9 +262,9 @@ export function JevSettings() {
         description="无论 Jev 是否启用，下列安全约束都由本地代码强制执行。"
       >
         <ul className="jev-settings-boundaries">
-          <li>模型只能从本地生成的候选动作中选择，不能自由生成坐标、脚本或选择器。</li>
+          <li>Jev 只能从本地生成的候选动作中选择，不能自由生成坐标、脚本或选择器。</li>
           <li>风险、权限、新鲜度检查、实际执行与结果验证都留在本机。</li>
-          <li>服务不可用时不会退回自由点击；可关闭增强模式继续普通语义自动化。</li>
+          <li>增强模式不禁用鼠标、OCR 或 YOLO；它们仍作为 UIA 不可用时的显式回退。</li>
         </ul>
       </Section>
     </>

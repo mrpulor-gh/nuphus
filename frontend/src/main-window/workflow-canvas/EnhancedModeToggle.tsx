@@ -88,7 +88,9 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
       disabled={locked}
       onClick={() => void toggle()}
       title={
-        disabled ? '运行中或只读画布不可切换增强模式' : '使用 Jev 参与动作选择、风险辅助与结果验证'
+        disabled
+          ? '运行中或只读画布不可切换增强模式'
+          : '使用 Jev 从本地候选动作中做结构化选择；鼠标与视觉回退仍可用'
       }
     >
       <Sparkles size={13} />
