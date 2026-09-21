@@ -470,6 +470,13 @@ fn main() {
                 let _ = main.hide();
             }
 
+            // splash 同为无装饰窗口（配置与 main 一致）：四角同样走系统圆角，
+            // 否则启动画面是唯一一个直角窗口，视觉上不统一。
+            #[cfg(target_os = "windows")]
+            if let Some(splash) = app.get_webview_window("splash") {
+                apply_win11_rounded_corners(&splash);
+            }
+
             // Register video subtitle pipeline into the nuphus lib tool bridge
             // (single process, fn-pointer injection — no IPC).
             crate::video::commands::init_bridge(app.handle());
