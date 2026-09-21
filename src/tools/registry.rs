@@ -1122,10 +1122,18 @@ mod tests {
             .collect();
         let added: Vec<_> = enhanced.difference(&normal).cloned().collect();
         assert_eq!(added, vec!["desktop_agent_step".to_string()]);
+        assert!(
+            normal.is_subset(&enhanced),
+            "增强模式不得移除普通模式已有工具"
+        );
         assert!(enhanced.contains("desktop_semantic_observe"));
         assert!(enhanced.contains("desktop_semantic_execute"));
         assert!(enhanced.contains("desktop_mouse"));
         assert!(enhanced.contains("desktop_mouse_drag"));
+        assert!(enhanced.contains("desktop_vision"));
+        assert!(enhanced.contains("desktop_perceive"));
+        assert!(enhanced.contains("desktop_find_image"));
+        assert!(enhanced.contains("desktop_find_text"));
     }
 
     /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。
