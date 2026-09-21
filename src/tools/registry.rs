@@ -10,6 +10,8 @@ use std::string::String;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use super::semantic_desktop::SemanticDesktopBackend;
+
 /// Tool execution context — bundle of injected handles passed to every executor.
 ///
 /// PR-2 (AppState 合并): 携带 `SharedSignals`（pause/security/workflow 信号句柄），
@@ -54,6 +56,12 @@ pub struct ToolDef {
 pub struct ToolRegistry {
     pub(super) tools: HashMap<String, ToolDef>,
     pub(super) desktop_client: Arc<RwLock<Option<DesktopClient>>>,
+    /// Accessibility/UIA-first desktop backend. Unlike `DesktopClient`, this
+    /// backend never exposes coordinates or native handles to the model.
+    pub(super) semantic_desktop: Option<SemanticDesktopBackend>,
+    /// Whether the WorkflowAgent may delegate one bounded semantic choice to
+    /// Jev. Semantic observation/execution remains available when this is off.
+    pub(super) enhanced_mode: bool,
     /// Browser client (Rust native CDP)
     pub(super) browser_client: Arc<tokio::sync::Mutex<Option<BrowserClient>>>,
     /// Rendered prompt cache (cleared on register, lazy-built on render)
@@ -78,6 +86,8 @@ impl Default for ToolRegistry {
         Self {
             tools: HashMap::new(),
             desktop_client: Arc::new(RwLock::new(None)),
+            semantic_desktop: None,
+            enhanced_mode: false,
             browser_client: crate::browser::shared_client(),
             prompt_cache: Arc::new(RwLock::new(None)),
             canonical_map: HashMap::new(),
@@ -93,6 +103,8 @@ impl Clone for ToolRegistry {
         Self {
             tools: self.tools.clone(),
             desktop_client: self.desktop_client.clone(),
+            semantic_desktop: self.semantic_desktop.clone(),
+            enhanced_mode: self.enhanced_mode,
             browser_client: self.browser_client.clone(),
             prompt_cache: self.prompt_cache.clone(),
             canonical_map: self.canonical_map.clone(),
@@ -276,6 +288,9 @@ impl ToolRegistry {
         // 检查是否是桌面工具，使用 DesktopClient 执行
         // 先 clone client 释放 MutexGuard，避免 guard 跨越 await 点
         if tool_name.starts_with("desktop_") {
+            if Self::is_semantic_desktop_tool(tool_name) {
+                return self.execute_semantic_desktop_tool(tool_name, params).await;
+            }
             // 双通道（dogfooding）：MCP 优先，失败回退直连
             match crate::mcp::dual::route_tool(tool_name, params).await {
                 crate::mcp::dual::RouteOutcome::Handled(result) => return Ok(result),
@@ -616,6 +631,37 @@ impl ToolRegistry {
         *guard = Some(client);
     }
 
+    /// Install one semantic adapter instance for observation, candidate
+    /// construction and execution. Sharing the same instance preserves the
+    /// adapter's opaque candidate-id to native-locator mapping.
+    pub fn set_semantic_desktop_adapter<T>(&mut self, adapter: Arc<T>)
+    where
+        T: crate::desktop_automation::ComputerObserver
+            + crate::desktop_automation::CandidateBuilder
+            + crate::desktop_automation::ComputerExecutor
+            + 'static,
+    {
+        self.semantic_desktop = Some(SemanticDesktopBackend::new(adapter));
+        if let Ok(mut guard) = self.prompt_cache.write() {
+            *guard = None;
+        }
+    }
+
+    /// Switch only the Jev decision layer. UIA observation and candidate-id
+    /// execution are deliberately independent of this flag.
+    pub fn set_enhanced_mode(&mut self, enabled: bool) {
+        if self.enhanced_mode != enabled {
+            self.enhanced_mode = enabled;
+            if let Ok(mut guard) = self.prompt_cache.write() {
+                *guard = None;
+            }
+        }
+    }
+
+    pub fn enhanced_mode(&self) -> bool {
+        self.enhanced_mode
+    }
+
     /// Get DesktopClient clone (preserves original reference)
     pub fn desktop_client(&self) -> Option<DesktopClient> {
         self.desktop_client
@@ -627,6 +673,13 @@ impl ToolRegistry {
     /// Check if tool name is a desktop tool
     pub fn is_desktop_tool(name: &str) -> bool {
         name.starts_with("desktop_")
+    }
+
+    pub fn is_semantic_desktop_tool(name: &str) -> bool {
+        matches!(
+            name,
+            "desktop_semantic_observe" | "desktop_semantic_execute" | "desktop_agent_step"
+        )
     }
 
     /// Check if tool name is a browser tool
@@ -690,6 +743,10 @@ pub const WORKFLOW_TOOL_EXCLUDE: &[&str] = &[
     "workflow_run",
     "workflow_validate",
     "schedule_cron",
+    // WorkflowAgent exploration helper. Saved workflows use the ordinary
+    // semantic observe/execute pair; they must not depend on a session toggle
+    // or silently call an external decision service at runtime.
+    "desktop_agent_step",
     // 会话内人机交互（暂停等待输入，步骤语境无意义）
     "request_user_input",
 ];
@@ -875,8 +932,9 @@ impl ToolRegistry {
     /// lightweight desktop operations (screenshots, mouse/keyboard, window management, clipboard),
     /// without dispatching via task_dispatch every time.
     pub fn leader_with_desktop(client: DesktopClient) -> Self {
-        let registry = Self::leader();
+        let mut registry = Self::leader();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         tracing::info!(
             "Leader registry with desktop tools ({} tools)",
             registry.len()
@@ -925,9 +983,10 @@ impl ToolRegistry {
 
     /// CLI + 桌面。
     pub fn builtin_with_desktop() -> Self {
-        let registry = Self::builtin();
+        let mut registry = Self::builtin();
         let client = DesktopClient::new();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         tracing::info!(
             "Registered {} builtin tools + 24 desktop tools",
             registry.len()
@@ -964,9 +1023,17 @@ impl ToolRegistry {
         registry.register_workflow_only_tools();
         let client = DesktopClient::new();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         registry.load_depends_from_file("config/tool_deps.toml");
         tracing::info!("Registered {} work_agent tools", registry.len());
         registry
+    }
+
+    fn install_platform_semantic_desktop(&mut self) {
+        #[cfg(windows)]
+        self.set_semantic_desktop_adapter(Arc::new(
+            crate::desktop_automation::WindowsUiaAdapter::default(),
+        ));
     }
 }
 
@@ -1022,6 +1089,41 @@ mod tests {
                 "自动化工具不得进入 Exec 工具集（{prefix}）: {leaked:?}"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn workflow_semantic_tools_are_available_without_jev() {
+        let registry = ToolRegistry::work_agent();
+        let names: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        assert!(names.contains("desktop_semantic_observe"));
+        assert!(names.contains("desktop_semantic_execute"));
+        assert!(!names.contains("desktop_agent_step"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn enhanced_mode_only_adds_the_jev_step_tool() {
+        let mut registry = ToolRegistry::work_agent();
+        let normal: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        registry.set_enhanced_mode(true);
+        let enhanced: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        let added: Vec<_> = enhanced.difference(&normal).cloned().collect();
+        assert_eq!(added, vec!["desktop_agent_step".to_string()]);
+        assert!(enhanced.contains("desktop_semantic_observe"));
+        assert!(enhanced.contains("desktop_semantic_execute"));
     }
 
     /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。

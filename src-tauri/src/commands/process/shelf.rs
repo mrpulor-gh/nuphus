@@ -1406,7 +1406,13 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     // 新会话只在下一次欢迎页直发消息时由 process.rs 空态判据创建。
     let new_id = uuid::Uuid::new_v4().to_string(); // SessionChanged 事件 token，非真实会话 id
     match kind {
-        "workflow" => ctx.workflow_agent = None,
+        "workflow" => {
+            ctx.workflow_agent = None;
+            // 增强模式是 Workflow 开发会话状态，不跨新会话继承。
+            state
+                .workflow_enhanced_mode
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         _ => ctx.leader_agent = None,
     }
     drop(ctx);

@@ -32,6 +32,12 @@ impl ToolRegistry {
         }
         let mut schemas = Vec::new();
 
+        // Accessibility/UIA semantic tools are independent of the legacy
+        // coordinate/OCR DesktopClient path.
+        if self.semantic_desktop.is_some() {
+            schemas.extend(self.semantic_desktop_tool_schemas());
+        }
+
         // Desktop 工具仅在 desktop_client 已连接时暴露
         let has_desktop = self
             .desktop_client
@@ -45,6 +51,39 @@ impl ToolRegistry {
         // Browser 工具总是暴露（由 execute_browser_tool 惰性初始化）
         schemas.extend(self.browser_tool_schemas());
 
+        schemas
+    }
+
+    fn semantic_desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
+        let mut schemas = vec![
+            tool_def(
+                "desktop_semantic_observe",
+                "读取当前前台应用的 Accessibility/UIA 语义元素并返回本次可执行的候选动作 ID。普通模式首选；不返回坐标、原生句柄或任意脚本能力。",
+                json_props! {
+                    "goal" => obj!("type"="string","description"="当前要推进的桌面任务；仅用于构造和说明有界候选动作")
+                },
+                &[],
+            ),
+            tool_def(
+                "desktop_semantic_execute",
+                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
+                json_props! {
+                    "observation_token" => obj!("type"="string","description"="最近一次语义观察返回的不可预测短期令牌"),
+                    "candidate_id" => obj!("type"="string","description"="最近一次语义观察返回的候选动作 ID")
+                },
+                &["observation_token", "candidate_id"],
+            ),
+        ];
+        if self.enhanced_mode {
+            schemas.push(tool_def(
+                "desktop_agent_step",
+                "Jev 增强模式的单步桌面决策：本地读取 UIA、构造候选动作，Jev 只能选择一个 candidate_id，本地复核后执行并重新观察验证。一次调用最多执行一个原生动作。",
+                json_props! {
+                    "goal" => obj!("type"="string","description"="当前桌面任务目标；Jev 仅据此从本地候选集合中选择")
+                },
+                &["goal"],
+            ));
+        }
         schemas
     }
 

@@ -801,6 +801,15 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 new_wa
             };
 
+            // The AppState atomic is the desktop-session authority. Sync it
+            // for both restored and newly-created WorkflowAgents before the
+            // schema/prompt caches are built for this round.
+            wa.set_enhanced_mode(
+                state
+                    .workflow_enhanced_mode
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
+
             wa.set_source(&source2);
             wa.sync_before_run(
                 Some(Arc::new(emitter.clone())),

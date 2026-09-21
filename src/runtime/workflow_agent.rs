@@ -210,6 +210,21 @@ impl WorkflowAgent {
         self.cached_tools = None;
     }
 
+    /// Enable or disable Jev participation for this WorkflowAgent. The
+    /// semantic UIA tools stay available in both modes; only the Jev-backed
+    /// `desktop_agent_step` schema is added or removed.
+    pub fn set_enhanced_mode(&mut self, enabled: bool) {
+        if self.tools.enhanced_mode() != enabled {
+            self.tools.set_enhanced_mode(enabled);
+            self.cached_prompt = None;
+            self.cached_tools = None;
+        }
+    }
+
+    pub fn enhanced_mode(&self) -> bool {
+        self.tools.enhanced_mode()
+    }
+
     /// 从 model registry 解析主模型是否原生支持视觉（与 RuntimeBuilder 同源逻辑）
     fn resolve_supports_vision(model_label: &str) -> bool {
         crate::config::load_registry()

@@ -6,6 +6,7 @@ pub mod definitions;
 pub mod desktop_executors;
 pub mod desktop_schemas;
 pub mod registry;
+mod semantic_desktop;
 
 pub use registry::ToolRegistry;
 
