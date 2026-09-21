@@ -190,6 +190,16 @@ impl AutomationRunner {
 
             match candidate.kind {
                 CandidateKind::Done => {
+                    if request.enhanced_mode {
+                        trace.push(stop_event(
+                            "Jev proposed completion; primary model confirmation is required",
+                        ));
+                        return Ok(RunOutcome {
+                            status: RunStatus::NeedsAttention,
+                            executed_steps,
+                            trace,
+                        });
+                    }
                     trace.push(stop_event("goal complete"));
                     return Ok(RunOutcome {
                         status: RunStatus::Completed,
@@ -591,5 +601,46 @@ mod tests {
         assert_eq!(outcome.status, RunStatus::Completed);
         assert_eq!(normal.calls.load(Ordering::SeqCst), 1);
         assert_eq!(jev.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn enhanced_done_requires_primary_model_confirmation() {
+        let normal = Arc::new(FirstDecision {
+            calls: AtomicUsize::new(0),
+        });
+        let jev = Arc::new(FirstDecision {
+            calls: AtomicUsize::new(0),
+        });
+        let observer = Arc::new(FakeObserver {
+            observations: Mutex::new(vec![observation(1, "done")]),
+        });
+        let runner = AutomationRunner::new(
+            observer,
+            Arc::new(FakeBuilder),
+            normal.clone(),
+            Arc::new(LocalPolicy),
+            Arc::new(FakeExecutor),
+            Arc::new(FakeVerifier),
+            RunLimits::default(),
+        )
+        .with_jev_decider(jev.clone());
+
+        let outcome = runner
+            .run(RunRequest {
+                goal: "already done".into(),
+                scope: ObservationScope::default(),
+                grant: grant(),
+                enhanced_mode: true,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, RunStatus::NeedsAttention);
+        assert_eq!(normal.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(jev.calls.load(Ordering::SeqCst), 1);
+        assert!(outcome
+            .trace
+            .last()
+            .is_some_and(|event| event.detail.contains("primary model confirmation")));
     }
 }
