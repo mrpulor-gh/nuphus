@@ -640,29 +640,37 @@ pub fn decrypt_secret(stored: &str) -> Option<String> {
     Some(stored.to_string())
 }
 
-/// 将 providers.toml 文档中所有明文 provider `api_key` 原地加密为 `enc:v1:`。
+/// 将 providers.toml 文档中所有明文 provider 及 `[jev]` 的 `api_key`
+/// 原地加密为 `enc:v1:`。
 ///
 /// 幂等：已带 `enc:` 前缀（新旧格式均可）的 key 保持不变；空 key / 缺失字段跳过。
 /// 供所有「整文档重序列化」的写路径调用，避免未加密写路径把存量明文 key 原样保留。
 pub fn encrypt_plaintext_provider_keys(doc: &mut toml::Value) {
-    let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) else {
+    if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+        for provider in providers.iter_mut() {
+            let Some(map) = provider.as_table_mut() else {
+                continue;
+            };
+            encrypt_api_key_in_table(map);
+        }
+    }
+
+    if let Some(jev) = doc.get_mut("jev").and_then(|v| v.as_table_mut()) {
+        encrypt_api_key_in_table(jev);
+    }
+}
+
+fn encrypt_api_key_in_table(map: &mut toml::value::Table) {
+    let Some(key) = map.get("api_key").and_then(|k| k.as_str()) else {
         return;
     };
-    for provider in providers.iter_mut() {
-        let Some(map) = provider.as_table_mut() else {
-            continue;
-        };
-        let Some(key) = map.get("api_key").and_then(|k| k.as_str()) else {
-            continue;
-        };
-        if key.is_empty() || key.starts_with("enc:") {
-            continue;
-        }
-        map.insert(
-            "api_key".to_string(),
-            toml::Value::String(encrypt_secret(key)),
-        );
+    if key.is_empty() || key.starts_with("enc:") {
+        return;
     }
+    map.insert(
+        "api_key".to_string(),
+        toml::Value::String(encrypt_secret(key)),
+    );
 }
 
 #[cfg(test)]
@@ -982,6 +990,26 @@ api_key = "sk-plaintext-1"
                 plain_key
             );
         }
+    }
+
+    #[test]
+    fn normalize_includes_jev_api_key() {
+        let plain_key = "jev-test-placeholder";
+        let mut doc: toml::Value = format!(
+            "[jev]\nenabled = true\napi_key = \"{plain_key}\"\nbase_url = \"https://api.typesafe.ai\"\n"
+        )
+        .parse()
+        .unwrap();
+
+        encrypt_plaintext_provider_keys(&mut doc);
+        let stored = doc["jev"]["api_key"].as_str().unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            assert!(stored.starts_with("enc:v1:"));
+            assert_eq!(decrypt_secret(stored).as_deref(), Some(plain_key));
+        }
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(stored, plain_key);
     }
 
     #[test]

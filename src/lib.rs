@@ -16,6 +16,7 @@ pub mod config;
 pub mod cookies;
 pub mod custom_agents;
 pub mod desktop;
+pub mod desktop_automation;
 pub mod embed;
 pub mod ext_agent_bridge;
 pub mod filter;
