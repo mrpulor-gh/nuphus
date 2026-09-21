@@ -400,20 +400,10 @@ impl Executor {
 ///
 /// 纯函数（无 IO / 无状态）：调用方须在产生 RunRecord、发 RunStarted 之前调用，
 /// 保证缺必填输入时工作流「执行前即失败」且不留下空 run。
-/// 输入值日志：sensitive 声明只打印掩码（值不进日志、事件与错误文本）
+/// 输入值日志：sensitive 声明完全不写日志；普通输入仅写 debug 日志。
 fn log_input_value(name: &str, value: &serde_json::Value, sensitive: bool) {
     if sensitive {
-        tracing::debug!("[executor] inputs.{} = {}", name, mask_input_value(value));
-    } else {
-        tracing::debug!("[executor] inputs.{} = {:?}", name, value);
+        return;
     }
-}
-
-/// sensitive 输入掩码：仅保留字符数便于排查，不暴露值本身
-fn mask_input_value(value: &serde_json::Value) -> String {
-    let len = match value {
-        serde_json::Value::String(s) => s.chars().count(),
-        other => other.to_string().chars().count(),
-    };
-    format!("<sensitive:{len}字符>")
+    tracing::debug!("[executor] inputs.{} = {:?}", name, value);
 }
