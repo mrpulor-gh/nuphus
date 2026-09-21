@@ -117,6 +117,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Registry",
+    # 无边框窗口的 Win11 系统圆角（DwmSetWindowAttribute + CORNER_PREFERENCE）
+    "Win32_Graphics_Dwm",
 ] }
 
 # macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需要 macos-private-api；
