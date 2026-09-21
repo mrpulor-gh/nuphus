@@ -72,6 +72,58 @@ fn read_cache_hit(usage: &serde_json::Value, field: &str) -> u32 {
     }
 }
 
+/// SSE 字节级行缓冲：跨传输分片累积原始字节，只在完整行边界解码。
+///
+/// 为什么必须按字节缓冲：HTTP/TCP 的分片边界与 UTF-8 字符边界无关。逐分片调用
+/// `String::from_utf8_lossy` 时，被切开的汉字两半各自解码失败，会被静默替换成
+/// U+FFFD 拼进正文并持久化——属结构性数据丢失，重试与事后修复都无法还原。
+/// `\n`（0x0A）不可能出现在 UTF-8 多字节序列中（续字节恒在 0x80..=0xBF），
+/// 因此按字节定位行边界是安全的帧切分，解码只发生在拿到完整行之后。
+#[derive(Debug, Default)]
+struct SseByteBuffer {
+    buf: Vec<u8>,
+    /// 已扫描水位：下一次找 `\n` 从该处继续，避免每个分片重扫整段历史
+    scanned: usize,
+}
+
+impl SseByteBuffer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// 追加一个传输分片，返回其中已完整的行（空白未裁剪，交由调用方 trim）。
+    ///
+    /// 完整行本身不是合法 UTF-8 时：记 warn 并跳过该行。此处刻意不做 lossy 替换——
+    /// 宁可丢一行并留下可诊断日志，也不把替换字符写进用户数据；流不中断，后续行照常解析。
+    fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buf.extend_from_slice(chunk);
+
+        let mut lines = Vec::new();
+        let mut line_start = 0usize;
+        let mut pos = self.scanned.min(self.buf.len());
+        while let Some(rel) = self.buf[pos..].iter().position(|b| *b == b'\n') {
+            let end = pos + rel;
+            match std::str::from_utf8(&self.buf[line_start..end]) {
+                Ok(line) => lines.push(line.to_string()),
+                Err(e) => tracing::warn!(
+                    valid_up_to = e.valid_up_to(),
+                    line_bytes = end - line_start,
+                    "SSE 行含非法 UTF-8，已跳过该行（不使用替换字符）"
+                ),
+            }
+            line_start = end + 1;
+            pos = line_start;
+        }
+
+        // 消费已产出的完整行，只保留最后一段未完成内容
+        if line_start > 0 {
+            self.buf.drain(..line_start);
+        }
+        self.scanned = self.buf.len();
+        lines
+    }
+}
+
 /// Chat Completions Transport implementation
 #[derive(Debug, Clone)]
 pub struct ChatCompletionsTransport {
@@ -601,7 +653,7 @@ impl ChatCompletionsTransport {
             }
 
             // Stream reading, parse SSE chunk by chunk
-            let mut sse_buffer = String::new();
+            let mut sse_buffer = SseByteBuffer::new();
             let mut current_text = String::new();
             let mut current_reasoning = String::new();
             let mut tool_calls_map: std::collections::HashMap<usize, (String, String, String)> =
@@ -650,15 +702,8 @@ impl ChatCompletionsTransport {
                         }
                     };
 
-                    let chunk_str = String::from_utf8_lossy(&chunk);
-                    sse_buffer.push_str(&chunk_str);
-
-                    // Split by \n to process complete lines
-                    let mut lines: Vec<String> = Vec::new();
-                    while let Some(pos) = sse_buffer.find('\n') {
-                        lines.push(sse_buffer[..pos].to_string());
-                        sse_buffer = sse_buffer[pos + 1..].to_string();
-                    }
+                    // 字节级累积，只在完整行边界解码（见 SseByteBuffer 文档）
+                    let lines = sse_buffer.feed(&chunk);
 
                     for line in &lines {
                         let line = line.trim();
@@ -1843,6 +1888,123 @@ mod salvage_tests {
                 .any(|e| matches!(e, AssistantEvent::MessageStop)),
             "应以 MessageStop 正常收尾"
         );
+    }
+
+    /// 启动一次性假服务器：正常响应，但把 SSE 字节按 `drip` 逐段 flush 写出
+    /// （制造跨分片的多字节字符）。注意 TCP 仍可能合并相邻小片，故这不是确定性
+    /// 复现手段——确定性护栏是 `sse_byte_buffer_*` 字节级单测。
+    async fn spawn_drip_server(payload: Vec<u8>, drip: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        sock.read(&mut buf),
+                    )
+                    .await;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    for piece in payload.chunks(drip.max(1)) {
+                        if sock.write_all(piece).await.is_err() {
+                            break;
+                        }
+                        let _ = sock.flush().await;
+                        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                    }
+                    // 保持连接片刻，确保客户端读完响应体
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// 传输分片切开的汉字不得变成替换字符（`那` = E9 82 A3 分三片到达）
+    #[test]
+    fn sse_byte_buffer_keeps_multibyte_char_split_across_chunks() {
+        let mut buf = SseByteBuffer::new();
+        let mut lines: Vec<String> = Vec::new();
+        lines.extend(buf.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"\xe9"));
+        lines.extend(buf.feed(b"\x82"));
+        lines.extend(buf.feed(b"\xa3\"}}]}\r\ndata: [DONE]\r\n"));
+
+        assert_eq!(lines.len(), 2, "只应解析出两条完整行: {lines:?}");
+        assert!(
+            lines[0].contains('那'),
+            "被切开的多字节字符必须完整还原: {:?}",
+            lines[0]
+        );
+        assert!(
+            !lines[0].contains('\u{fffd}'),
+            "不得出现替换字符: {:?}",
+            lines[0]
+        );
+        assert_eq!(lines[1].trim(), "data: [DONE]");
+    }
+
+    /// 一个分片含多行 / CRLF / 跨分片行尾：按字节判定行边界，空白交给调用方 trim
+    #[test]
+    fn sse_byte_buffer_handles_multi_line_chunk_and_crlf() {
+        let mut buf = SseByteBuffer::new();
+        let first = buf.feed(b"data: one\r\ndata: two\r\ndata: th");
+        assert_eq!(first.len(), 2, "未完成行不得产出: {first:?}");
+        assert_eq!(first[0].trim(), "data: one");
+        assert_eq!(first[1].trim(), "data: two");
+
+        let rest = buf.feed(b"ree\r\n");
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].trim(), "data: three");
+    }
+
+    /// 完整行本身非法 UTF-8：跳过该行、不产出替换字符，且不影响后续行
+    #[test]
+    fn sse_byte_buffer_skips_invalid_utf8_line_without_replacement() {
+        let mut buf = SseByteBuffer::new();
+        let lines = buf.feed(b"data: \xff\xfe\n\ndata: ok\n");
+
+        assert_eq!(lines.len(), 2, "非法行被丢弃，其余行照常产出: {lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains('\u{fffd}')),
+            "非法字节不得被替换字符顶替: {lines:?}"
+        );
+        assert_eq!(lines[0].trim(), "");
+        assert_eq!(lines[1].trim(), "data: ok");
+    }
+
+    /// 端到端：慢速分片投递的中文流式内容必须完整无损（真实 reqwest 流式路径）
+    #[tokio::test]
+    async fn test_streaming_multibyte_text_survives_chunked_delivery() {
+        let text = "那么说明这是一段中文流式输出";
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\ndata: [DONE]\n\n",
+            text
+        )
+        .into_bytes();
+        let port = spawn_drip_server(payload, 3).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+        assert!(result.is_ok(), "应正常收尾: {:?}", result.err());
+
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, text, "分片投递不得损坏多字节字符");
+        assert!(!full_text.contains('\u{fffd}'));
     }
 }
 
