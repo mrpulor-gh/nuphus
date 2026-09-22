@@ -22,6 +22,14 @@ pub fn tool_touches_automation(tool_name: &str) -> bool {
     nuphus::automation_gate::tool_resource_class(tool_name).is_some()
 }
 
+/// Compatibility helper for callers and tests that only need the lease.
+pub fn acquire_execution_body(
+    gate: &Arc<AutomationGate>,
+    label: &str,
+) -> Result<AutomationLease, String> {
+    acquire_execution_body_with_owner(gate, label).map(|(lease, _)| lease)
+}
+
 /// 工具 → 资源类别（仅用于诊断文案；互斥语义单槽一致）。
 pub fn class_of_tool(tool_name: &str) -> ResourceClass {
     nuphus::automation_gate::tool_resource_class(tool_name).unwrap_or(ResourceClass::Desktop)
