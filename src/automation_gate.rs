@@ -352,6 +352,24 @@ pub const OWNER_RECORDING: &str = "recording-session";
 /// 手动工具操作 owner 键：工具页每次调用独立（同一次并发双击也各自成 owner → 互斥）。
 pub const OWNER_MANUAL_TOOL: &str = "manual-tool";
 
+// Share one execution-body owner with every nested tool call in the same
+// asynchronous task. This lets semantic UIA operations re-enter the body
+// lease while unrelated manual calls are still rejected.
+tokio::task_local! {
+    static EXECUTION_OWNER: String;
+}
+
+pub async fn with_execution_owner<F>(owner: String, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    EXECUTION_OWNER.scope(owner, future).await
+}
+
+pub fn current_execution_owner() -> Option<String> {
+    EXECUTION_OWNER.try_with(Clone::clone).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

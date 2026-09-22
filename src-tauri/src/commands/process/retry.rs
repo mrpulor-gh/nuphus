@@ -36,9 +36,12 @@ pub async fn retry_agent(
 
     // 2. 防止并发执行 + 资源门（重试 = 又一个主执行体，整轮持锁）
     //    门在前：资源被录制/定时任务/插件运行时占用时明确拒绝，不做假轮次。
-    let gate_lease =
-        match crate::resource_gate::acquire_execution_body(&state.automation_gate, "retry_agent") {
-            Ok(lease) => lease,
+    let (gate_lease, execution_owner) =
+        match crate::resource_gate::acquire_execution_body_with_owner(
+            &state.automation_gate,
+            "retry_agent",
+        ) {
+            Ok(acquired) => acquired,
             Err(e) => {
                 // 重试数据必须回填，否则用户这次重试机会被门吃掉
                 if let Ok(mut pending) = state.execution.lock() {
@@ -47,170 +50,173 @@ pub async fn retry_agent(
                 return Err(e);
             }
         };
-    if state.busy.swap(true, Ordering::SeqCst) {
-        if let Ok(mut pending) = state.execution.lock() {
-            pending.pending_retry = Some((session_json, config, message));
-        }
-        return Err("任务正在执行中,请等待当前任务完成".to_string());
-    }
-    // 执行态守卫：swap(true) 已把阶段置为 Running；收尾点显式转 Finalizing（见下），
-    // guard drop → Idle。见 nuphus::state::ExecutionStage 转换规则。
-    struct BusyGuard<'a>(&'a crate::state::ExecutionStageHandle);
-    impl Drop for BusyGuard<'_> {
-        fn drop(&mut self) {
-            self.0.set_stage(nuphus::state::ExecutionStage::Idle);
-        }
-    }
-    // 释放顺序：先 Idle（_guard 后声明 → 先 drop），再放资源锁。
-    // 门铃唤醒重放（S2）声明最早 → 最后一个 drop：补开新轮次前必须
-    // 「stage 已 Idle + 资源门已释放」，否则新轮次会被本轮的残留占用拒绝（假重放）。
-    let _wake_replay = super::HandoffWakeReplay::new(app.clone());
-    let _gate_lease = gate_lease;
-    let _guard = BusyGuard(&state.busy);
-
-    let cancel_flag = state.cancel_flag.clone();
-    cancel_flag.store(false, Ordering::SeqCst);
-
-    let emitter = TauriEventEmitter {
-        app: app.clone(),
-        seq: state.event_seq.clone(),
-    };
-
-    // 3. ClientFactory：实时源（与 process.rs 同一口径 —— providers.toml 唯一权威源）
-    let factory = nuphus::llm::ClientFactory::live();
-    let llm = factory
-        .create_client_for(&config.provider, &config.model)
-        .or_else(|_| factory.create_main_client())
-        .map_err(|e| format!("创建 LLM 客户端失败: {}", e))?;
-
-    // Agent 级 exec 模型（单一入口 effective_model）：exec → default → leader
-    let registry = factory
-        .registry()
-        .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
-    let (exec_provider, exec_model) = crate::commands::config::llm::effective_model_binding(
-        &state.llm_config_path,
-        &registry,
-        "exec",
-    )?;
-    let exec_llm = factory
-        .create_client_for(&exec_provider, &exec_model)
-        .map_err(|e| format!("创建 Exec LLM 客户端失败 ({exec_model}): {e}"))?;
-
-    // 4. 断点续跑：失败时错误内容从未进入 session（流式缓冲成功才落库，
-    //    strip_incomplete_tools 已清理悬挂工具对），session 末尾即断点——
-    //    优先复用留存 Runtime（缓存第一），无留存时由统一路径按 session JSON 恢复，
-    //    无需任何回滚/改写。
-    let existing_runtime = state
-        .runtime
-        .lock()
-        .ok()
-        .and_then(|mut g| g.leader_agent.take());
-
-    // 5. 统一执行路径（与正常发送同一接线函数；resume=true → 断点续跑）
-    let start_time = std::time::Instant::now();
-    let tool_permissions = state
-        .runtime
-        .lock()
-        .map(|g| g.tool_permissions)
-        .unwrap_or_default();
-    let refine_threshold = state
-        .runtime
-        .lock()
-        .map(|g| g.refine_threshold)
-        .unwrap_or(0.5);
-
-    let run_result = super::leader::run_runtime_with_config(
-        llm,
-        exec_llm,
-        state.tools.clone(),
-        &config,
-        &message, // 作为 resume goal（不重新 push 进 session）
-        &None,    // images
-        &None,    // history（session 由留存 Runtime / JSON 恢复）
-        &None,    // relation（复用已构建的 context，见缓存第一）
-        "",       // soul（同正常路径，经 RelationConfig 传递）
-        "desktop",
-        tool_permissions,
-        state.tool_permissions_ref.clone(),
-        &cancel_flag,
-        &state.pause_flag,
-        &emitter,
-        existing_runtime,
-        Some(session_json), // 无留存 Runtime 时的 session 恢复来源（已是断点状态）
-        refine_threshold,
-        None, // mode（复用 Runtime 原 mode；新建则默认 Free）
-        state.workflow_engine.clone(),
-        true,   // resume：断点续跑
-        false,  // fresh：retry 是续跑既有会话，不按新建处理
-        &state, // 诞生点登记（归属 + 弹窗记录标题）用的全局状态（本路径 fresh=false，不消费）
-    )
-    .await;
-
-    // 执行态：重试轮次的主循环已退出 → Finalizing（收尾工作之前）。
-    // 与 submit_user_message 同语义：此后不再有迭代边界 drain，追加指令必须被拒绝
-    // 而不是入队（入队即永久滞留）。见 nuphus::state::ExecutionStage。
-    state
-        .busy
-        .set_stage(nuphus::state::ExecutionStage::Finalizing);
-
-    let (output, runtime) = match run_result {
-        Ok(ok) => ok,
-        Err(err_msg) => {
-            tracing::error!("Retry agent error: {}", err_msg);
-            emitter.emit(NuphusEvent::ExecutionError {
-                step_index: 0,
-                error: err_msg.clone(),
-            });
-            return Err(err_msg);
-        }
-    };
-
-    // 6. Runtime 存回 state（与正常路径 process.rs 一致）
-    if let Ok(mut guard) = state.runtime.lock() {
-        guard.leader_agent = Some(runtime);
-    }
-
-    // 7. 持久化对话记忆（与正常路径共享同一实现）：
-    //    重试复用失败回合的 turn id，INSERT OR REPLACE 覆盖失败记录。
-    let response_message = if output.message.trim().is_empty() && output.success {
-        "（模型未产出有效回复，可能需重试）".to_string()
-    } else {
-        output.message.clone()
-    };
-    super::persist_leader_turn(state.inner(), &message, &response_message, output.success);
-
-    // 8. 仍失败则保存现场，供再次重试（同 turn id，下次重试继续覆盖）
-    if let Some(retry_json) = &output.retry_session {
-        if !retry_json.is_empty() {
+    nuphus::automation_gate::with_execution_owner(execution_owner, async move {
+        if state.busy.swap(true, Ordering::SeqCst) {
             if let Ok(mut pending) = state.execution.lock() {
-                pending.pending_retry = Some((retry_json.clone(), config, message.clone()));
+                pending.pending_retry = Some((session_json, config, message));
             }
-            tracing::info!("[RETRY] Re-saved session for further retry");
+            return Err("任务正在执行中,请等待当前任务完成".to_string());
         }
-    }
+        // 执行态守卫：swap(true) 已把阶段置为 Running；收尾点显式转 Finalizing（见下），
+        // guard drop → Idle。见 nuphus::state::ExecutionStage 转换规则。
+        struct BusyGuard<'a>(&'a crate::state::ExecutionStageHandle);
+        impl Drop for BusyGuard<'_> {
+            fn drop(&mut self) {
+                self.0.set_stage(nuphus::state::ExecutionStage::Idle);
+            }
+        }
+        // 释放顺序：先 Idle（_guard 后声明 → 先 drop），再放资源锁。
+        // 门铃唤醒重放（S2）声明最早 → 最后一个 drop：补开新轮次前必须
+        // 「stage 已 Idle + 资源门已释放」，否则新轮次会被本轮的残留占用拒绝（假重放）。
+        let _wake_replay = super::HandoffWakeReplay::new(app.clone());
+        let _gate_lease = gate_lease;
+        let _guard = BusyGuard(&state.busy);
 
-    // 9. 发射完成事件（ExecutionStarted/流式事件由统一路径在运行中发射，
-    //    与正常路径一致，前端由 ExecutionCompleted 驱动收尾）
-    let elapsed = start_time.elapsed().as_millis() as u64;
-    let total_calls = output.steps.len();
-    emitter.emit(NuphusEvent::ExecutionCompleted {
-        step_index: 0,
-        output: StepOutput {
+        let cancel_flag = state.cancel_flag.clone();
+        cancel_flag.store(false, Ordering::SeqCst);
+
+        let emitter = TauriEventEmitter {
+            app: app.clone(),
+            seq: state.event_seq.clone(),
+        };
+
+        // 3. ClientFactory：实时源（与 process.rs 同一口径 —— providers.toml 唯一权威源）
+        let factory = nuphus::llm::ClientFactory::live();
+        let llm = factory
+            .create_client_for(&config.provider, &config.model)
+            .or_else(|_| factory.create_main_client())
+            .map_err(|e| format!("创建 LLM 客户端失败: {}", e))?;
+
+        // Agent 级 exec 模型（单一入口 effective_model）：exec → default → leader
+        let registry = factory
+            .registry()
+            .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
+        let (exec_provider, exec_model) = crate::commands::config::llm::effective_model_binding(
+            &state.llm_config_path,
+            &registry,
+            "exec",
+        )?;
+        let exec_llm = factory
+            .create_client_for(&exec_provider, &exec_model)
+            .map_err(|e| format!("创建 Exec LLM 客户端失败 ({exec_model}): {e}"))?;
+
+        // 4. 断点续跑：失败时错误内容从未进入 session（流式缓冲成功才落库，
+        //    strip_incomplete_tools 已清理悬挂工具对），session 末尾即断点——
+        //    优先复用留存 Runtime（缓存第一），无留存时由统一路径按 session JSON 恢复，
+        //    无需任何回滚/改写。
+        let existing_runtime = state
+            .runtime
+            .lock()
+            .ok()
+            .and_then(|mut g| g.leader_agent.take());
+
+        // 5. 统一执行路径（与正常发送同一接线函数；resume=true → 断点续跑）
+        let start_time = std::time::Instant::now();
+        let tool_permissions = state
+            .runtime
+            .lock()
+            .map(|g| g.tool_permissions)
+            .unwrap_or_default();
+        let refine_threshold = state
+            .runtime
+            .lock()
+            .map(|g| g.refine_threshold)
+            .unwrap_or(0.5);
+
+        let run_result = super::leader::run_runtime_with_config(
+            llm,
+            exec_llm,
+            state.tools.clone(),
+            &config,
+            &message, // 作为 resume goal（不重新 push 进 session）
+            &None,    // images
+            &None,    // history（session 由留存 Runtime / JSON 恢复）
+            &None,    // relation（复用已构建的 context，见缓存第一）
+            "",       // soul（同正常路径，经 RelationConfig 传递）
+            "desktop",
+            tool_permissions,
+            state.tool_permissions_ref.clone(),
+            &cancel_flag,
+            &state.pause_flag,
+            &emitter,
+            existing_runtime,
+            Some(session_json), // 无留存 Runtime 时的 session 恢复来源（已是断点状态）
+            refine_threshold,
+            None, // mode（复用 Runtime 原 mode；新建则默认 Free）
+            state.workflow_engine.clone(),
+            true,   // resume：断点续跑
+            false,  // fresh：retry 是续跑既有会话，不按新建处理
+            &state, // 诞生点登记（归属 + 弹窗记录标题）用的全局状态（本路径 fresh=false，不消费）
+        )
+        .await;
+
+        // 执行态：重试轮次的主循环已退出 → Finalizing（收尾工作之前）。
+        // 与 submit_user_message 同语义：此后不再有迭代边界 drain，追加指令必须被拒绝
+        // 而不是入队（入队即永久滞留）。见 nuphus::state::ExecutionStage。
+        state
+            .busy
+            .set_stage(nuphus::state::ExecutionStage::Finalizing);
+
+        let (output, runtime) = match run_result {
+            Ok(ok) => ok,
+            Err(err_msg) => {
+                tracing::error!("Retry agent error: {}", err_msg);
+                emitter.emit(NuphusEvent::ExecutionError {
+                    step_index: 0,
+                    error: err_msg.clone(),
+                });
+                return Err(err_msg);
+            }
+        };
+
+        // 6. Runtime 存回 state（与正常路径 process.rs 一致）
+        if let Ok(mut guard) = state.runtime.lock() {
+            guard.leader_agent = Some(runtime);
+        }
+
+        // 7. 持久化对话记忆（与正常路径共享同一实现）：
+        //    重试复用失败回合的 turn id，INSERT OR REPLACE 覆盖失败记录。
+        let response_message = if output.message.trim().is_empty() && output.success {
+            "（模型未产出有效回复，可能需重试）".to_string()
+        } else {
+            output.message.clone()
+        };
+        super::persist_leader_turn(state.inner(), &message, &response_message, output.success);
+
+        // 8. 仍失败则保存现场，供再次重试（同 turn id，下次重试继续覆盖）
+        if let Some(retry_json) = &output.retry_session {
+            if !retry_json.is_empty() {
+                if let Ok(mut pending) = state.execution.lock() {
+                    pending.pending_retry = Some((retry_json.clone(), config, message.clone()));
+                }
+                tracing::info!("[RETRY] Re-saved session for further retry");
+            }
+        }
+
+        // 9. 发射完成事件（ExecutionStarted/流式事件由统一路径在运行中发射，
+        //    与正常路径一致，前端由 ExecutionCompleted 驱动收尾）
+        let elapsed = start_time.elapsed().as_millis() as u64;
+        let total_calls = output.steps.len();
+        emitter.emit(NuphusEvent::ExecutionCompleted {
             step_index: 0,
-            result_message: response_message.clone(),
-            artifacts: vec![],
-            tool_calls_count: total_calls,
-        },
-        total_duration_ms: elapsed,
-        total_calls,
-    });
+            output: StepOutput {
+                step_index: 0,
+                result_message: response_message.clone(),
+                artifacts: vec![],
+                tool_calls_count: total_calls,
+            },
+            total_duration_ms: elapsed,
+            total_calls,
+        });
 
-    Ok(ProcessInputResponse {
-        success: output.success,
-        message: response_message,
-        appended: None,
-        rejected: None,
-        image_warning: None,
-        steps_count: output.steps.len(),
+        Ok(ProcessInputResponse {
+            success: output.success,
+            message: response_message,
+            appended: None,
+            rejected: None,
+            image_warning: None,
+            steps_count: output.steps.len(),
+        })
     })
+    .await
 }

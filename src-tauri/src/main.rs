@@ -672,11 +672,11 @@ fn main() {
                         // 拿不到即**明确跳过本次**（不排队、不等下一 tick 的隐式重试），记 warn。
                         // 注：cron 注册时已拒绝含 desktop_/browser_ 步骤的工作流
                         // （has_frontend_step），此处互斥的是「执行体并行」本身。
-                        let _gate_lease = match crate::resource_gate::acquire_execution_body(
+                        let (gate_lease, execution_owner) = match crate::resource_gate::acquire_execution_body_with_owner(
                             &state.automation_gate,
                             &format!("schedule_run:{workflow_id}"),
                         ) {
-                            Ok(lease) => lease,
+                            Ok(result) => result,
                             Err(e) => {
                                 tracing::warn!(
                                     "[Scheduler] 本次定时执行跳过（资源被占用）workflow={} : {e}",
@@ -745,21 +745,27 @@ fn main() {
                                 &running,
                             ),
                         ).await;
-                        let execution = engine
-                            .execute_workflow(
-                                &workflow_id,
-                                tool_exec,
-                                Some(vec![]),
-                                None,
-                                (!inputs.is_empty()).then_some(inputs),
-                                false,
-                                nuphus::workflow::WorkflowRunSource::Schedule,
-                            )
-                            .await;
+                        let workflow_id_for_exec = workflow_id.clone();
+                        let execution = nuphus::automation_gate::with_execution_owner(execution_owner, async move {
+                            let _gate_lease = gate_lease;
+                            engine
+                                .execute_workflow(
+                                    &workflow_id_for_exec,
+                                    tool_exec,
+                                    Some(vec![]),
+                                    None,
+                                    (!inputs.is_empty()).then_some(inputs),
+                                    false,
+                                    nuphus::workflow::WorkflowRunSource::Schedule,
+                                )
+                                .await
+                        })
+                        .await;
                         if let Err(e) = &execution {
                             tracing::error!("[Scheduler] Cron-triggered workflow {} failed: {}", workflow_id, e);
                         }
-                        let new_run = engine.store.get(&workflow_id).await
+                        let engine_after = state.workflow_engine.read().await;
+                        let new_run = engine_after.store.get(&workflow_id).await
                             .and_then(|wf| wf.run_history.first().cloned())
                             .filter(|run| Some(&run.run_id) != previous_run_id.as_ref());
                         let run = new_run.unwrap_or_else(|| {
@@ -783,7 +789,7 @@ fn main() {
                             &run,
                         );
                         history.run_id = schedule_run_id;
-                        let _ = engine.scheduler.record_schedule_run(history).await;
+                        let _ = engine_after.scheduler.record_schedule_run(history).await;
                     })
                 });
 

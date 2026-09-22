@@ -275,8 +275,10 @@ impl Default for AppState {
         // 全进程唯一信号状态实例：注入 ToolRegistry 与 WorkflowEngine，
         // core 库内所有 pause/security/workflow 信号读写均经此句柄
         let signals = nuphus::state::new_shared_signals();
+        let automation_gate = Arc::new(nuphus::automation_gate::AutomationGate::new());
         let mut tools = nuphus::ToolRegistry::builtin_with_desktop();
         tools.set_signals(signals.clone());
+        tools.set_automation_gate(automation_gate.clone());
         let mut workflow_engine = nuphus::workflow::WorkflowEngine::new();
         workflow_engine.set_signals(signals.clone());
 
@@ -301,7 +303,7 @@ impl Default for AppState {
             refine_active: Arc::new(AtomicBool::new(false)),
             workflow_engine: Arc::new(tokio::sync::RwLock::new(workflow_engine)),
             signals,
-            automation_gate: Arc::new(nuphus::automation_gate::AutomationGate::new()),
+            automation_gate,
             speech: crate::speech::SpeechState::default(),
             mobile_ws_tx: Arc::new(std::sync::Mutex::new(None)),
             mobile_server_shutdown: std::sync::Mutex::new(None),

@@ -79,9 +79,12 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     // 拿不到（录制会话 / 定时任务 / 插件运行时占用系统资源）→ 明确拒绝并回滚
     // refine_active（与下方 busy 抢占失败同一处置：不留下「提炼进行中」的假标记）。
     // 释放顺序：_refine_guard 声明在后 → 先 drop（Idle），再放资源锁。
-    let _refine_gate_lease =
-        match crate::resource_gate::acquire_execution_body(&state.automation_gate, "refine") {
-            Ok(lease) => lease,
+    let (refine_gate_lease, execution_owner) =
+        match crate::resource_gate::acquire_execution_body_with_owner(
+            &state.automation_gate,
+            "refine",
+        ) {
+            Ok(result) => result,
             Err(e) => {
                 refine_active.store(false, Ordering::SeqCst);
                 return Err(e);
@@ -188,7 +191,12 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     emitter.emit(NuphusEvent::RefineExecuting);
 
     if is_workflow {
-        return execute_workflow_refine(app, state, emitter, &cancel_flag).await;
+        let _refine_gate_lease = refine_gate_lease;
+        return nuphus::automation_gate::with_execution_owner(
+            execution_owner,
+            execute_workflow_refine(app, state, emitter, &cancel_flag),
+        )
+        .await;
     }
 
     // Leader refine
@@ -204,7 +212,8 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         )
     };
 
-    let refine_output = {
+    let refine_output = nuphus::automation_gate::with_execution_owner(execution_owner, async {
+        let _refine_gate_lease = refine_gate_lease;
         let mut rt_owned = {
             let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
             guard
@@ -238,7 +247,7 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         rt_owned.restore_emitter(saved_emitter);
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         guard.leader_agent = Some(rt_owned);
-        match result {
+        Ok(match result {
             Ok(output) => output,
             Err(reason) => {
                 // 失败也必须广播结束事件：RefineExecuting 已让双端进入「提炼中」UI，
@@ -249,8 +258,9 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
                 });
                 return Err(format!("提炼失败：{reason}。"));
             }
-        }
-    };
+        })
+    })
+    .await?;
 
     let distill = refine_output.message.trim().to_string();
     if distill.is_empty() || !refine_output.success {

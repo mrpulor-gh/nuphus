@@ -321,7 +321,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     // 拿不到（录制会话 / 定时任务 / 插件独立运行时正在占用系统资源）→ **明确拒绝**：
     // 不排队、不等待、不降级；否则新轮次会与旧执行体并存 → 双跑 → 浏览器单例死锁 / panic。
     // 注意：本门在「追加消息」分支之后，绝不拦截终止/停止通道。
-    let gate_lease = crate::resource_gate::acquire_execution_body(
+    let (gate_lease, execution_owner) = crate::resource_gate::acquire_execution_body_with_owner(
         &state.automation_gate,
         "submit_user_message",
     )?;
@@ -627,6 +627,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     let send_id2 = send_id.clone();
 
     let join_handle = tokio::spawn(async move {
+        nuphus::automation_gate::with_execution_owner(execution_owner, async move {
         let state = app_handle.state::<AppState>();
         // ⚠️ 任务生命周期持 busy 锁：Tauri command future 可能因 IPC break（页面刷新/
         // 导航/command 取消）被 drop，函数作用域 BusyGuard 会随之释放——但 spawn 任务
@@ -822,6 +823,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 let mut tools = nuphus::ToolRegistry::work_agent();
                 // 与 AppState 持有的全局唯一信号实例对齐
                 tools.set_signals(state.signals.clone());
+                tools.set_automation_gate(state.automation_gate.clone());
                 let perms = state
                     .runtime
                     .lock()
@@ -1245,6 +1247,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             image_warning,
             steps_count: output.steps.len(),
         })
+        }).await
     });
 
     let result = join_handle

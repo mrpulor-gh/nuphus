@@ -310,13 +310,17 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 | 场景 | 首选 | 备选 |
 |------|------|------|
 | 定位网页元素 | `browser_snapshot` → @eN ref | screenshot + OCR |
-| 桌面布局解析 | Vision 全窗口语义分析 | perceive 精确坐标 |
-| 定位桌面文字 | Vision 划定功能区 | `desktop_find_text`（需字库） |
+| 定位桌面控件 | `desktop_semantic_observe` 读取 UIA/Accessibility 候选 | Vision → perceive 精确坐标 |
+| 固化桌面动作 | 保存候选返回的 `workflow_step`，运行时调用 `desktop_semantic_action` | 无稳定语义定位器时再固化坐标方案 |
+| 桌面布局解析 | UIA/Accessibility 语义树 | Vision 全窗口语义分析 |
+| 定位桌面文字 | UIA/Accessibility 控件名称 | Vision 划定功能区 → `desktop_find_text`（需字库） |
 | 等待加载 | `browser_wait_for(selector)` | system_sleep（不得已） |
 | 验证状态 | snapshot + chat 语义判断 | extract 文本匹配 |
 | 查经验 | ui_maps_search 两级检索 | Read ui-maps JSON |
 
-**坐标体系**：`desktop_mouse` 一律用**屏幕绝对坐标**；perceive 结果为客户区坐标时手动加 `screen_x/screen_y` 偏移。
+**桌面语义动作**：探索时先调用 `desktop_semantic_observe`，从有限候选中执行并验证；写入工作流时只保存返回的稳定 `workflow_step`，禁止保存临时 `candidate_id` 或 `observation_token`。只有目标应用不暴露有效 UIA/Accessibility 控件时，才使用截图、OCR、YOLO 和鼠标坐标路径。
+
+**坐标体系**：确需使用 `desktop_mouse` 时一律用**屏幕绝对坐标**；perceive 结果为客户区坐标时手动加 `screen_x/screen_y` 偏移。
 
 **输入**：`desktop_input` 输入+发送一次调用；普通文本直接输入，>500 字用 clipboard 并事后 clean；敏感内容禁用 clipboard。
 
@@ -326,7 +330,7 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 
 | 陷阱 | 正确做法 |
 |------|---------|
-| 跳过布局解析直接找元素（W1） | 逐屏 vision+perceive 解析，保存 ui-maps |
+| 跳过语义观察直接猜坐标（W1） | 先 UIA/Accessibility 观察；不可用时再逐屏 vision+perceive，保存 ui-maps |
 | 窗口尺寸未固化（W2） | params.json window 字段固化 |
 | 探索阶段写步骤（W3） | 核心路径手动跑通后才设计 |
 | if contains 文案做登录检测 | chat 语义判断 + screenshot |
