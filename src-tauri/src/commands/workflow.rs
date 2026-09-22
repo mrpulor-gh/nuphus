@@ -566,41 +566,44 @@ pub async fn wf_run(
 
     // ── 资源门：画布发起的工作流 = 主执行体（非轮次内），整轮持锁 ──
     // 与 Agent 轮次/录制会话/插件运行时互斥：拿不到就明确拒绝（稳定码 automation_busy）。
-    let gate_lease =
-        crate::resource_gate::acquire_execution_body(&state.automation_gate, "wf_run")?;
+    let (gate_lease, execution_owner) =
+        crate::resource_gate::acquire_execution_body_with_owner(&state.automation_gate, "wf_run")?;
 
     tauri::async_runtime::spawn(async move {
-        // 租约随任务存活：工作流跑完（含 error 路径）才释放
-        let _gate_lease = gate_lease;
-        let tool_exec = move |tool: String, params: serde_json::Value| {
-            let tools = tools.clone();
-            async move {
-                // browser_ 工具需走异步入口（ToolRegistry::execute 会拒绝）
-                let result = if tool.starts_with("browser_") {
-                    tools.execute_browser_tool(&tool, &params).await
-                } else {
-                    tools.execute(&tool, &params).await
+        nuphus::automation_gate::with_execution_owner(execution_owner, async move {
+            // 租约随任务存活：工作流跑完（含 error 路径）才释放
+            let _gate_lease = gate_lease;
+            let tool_exec = move |tool: String, params: serde_json::Value| {
+                let tools = tools.clone();
+                async move {
+                    // browser_ 工具需走异步入口（ToolRegistry::execute 会拒绝）
+                    let result = if tool.starts_with("browser_") {
+                        tools.execute_browser_tool(&tool, &params).await
+                    } else {
+                        tools.execute(&tool, &params).await
+                    }
+                    .map_err(|e| e.to_string())?;
+                    result.into_exec_result()
                 }
-                .map_err(|e| e.to_string())?;
-                result.into_exec_result()
+            };
+            let engine_r = engine.read().await;
+            let tool_schemas = engine_r.tools().map(|t| t.get_schemas());
+            if let Err(e) = engine_r
+                .execute_workflow(
+                    &id,
+                    tool_exec,
+                    tool_schemas,
+                    None,
+                    inputs,
+                    force_fresh,
+                    nuphus::workflow::WorkflowRunSource::Ui,
+                )
+                .await
+            {
+                tracing::error!("[wf_run] Workflow {} failed: {}", id, e);
             }
-        };
-        let engine_r = engine.read().await;
-        let tool_schemas = engine_r.tools().map(|t| t.get_schemas());
-        if let Err(e) = engine_r
-            .execute_workflow(
-                &id,
-                tool_exec,
-                tool_schemas,
-                None,
-                inputs,
-                force_fresh,
-                nuphus::workflow::WorkflowRunSource::Ui,
-            )
-            .await
-        {
-            tracing::error!("[wf_run] Workflow {} failed: {}", id, e);
-        }
+        })
+        .await
     });
     Ok("started".to_string())
 }

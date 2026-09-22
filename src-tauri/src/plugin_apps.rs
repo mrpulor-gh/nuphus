@@ -1116,6 +1116,9 @@ async fn run_plugin_chat_isolated(
         nuphus::ToolRegistry::leader()
     };
     leader_tools.set_signals(tools.signals().clone());
+    if let Some(gate) = tools.automation_gate() {
+        leader_tools.set_automation_gate(gate);
+    }
 
     // 独立 cancel_flag：每调用新实例；command drop / IPC 断 → future 整体取消即停
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -1228,10 +1231,11 @@ async fn plugin_agent_chat_inner(
     // （leader_with_desktop，含 desktop_*/browser_*）却能并行于主轮次 —— 这正是
     // 双跑导致浏览器单例死锁 / panic 的真实链路。拿不到资源锁即明确拒绝。
     // 放在并发闸之后：排队等待期间不占用全局资源槽。
-    let _chat_gate_lease = crate::resource_gate::acquire_execution_body(
-        &state.automation_gate,
-        &format!("plugin-chat:{id}"),
-    )?;
+    let (chat_gate_lease, execution_owner) =
+        crate::resource_gate::acquire_execution_body_with_owner(
+            &state.automation_gate,
+            &format!("plugin-chat:{id}"),
+        )?;
 
     // ClientFactory：实时源（与主路径同口径 —— providers.toml 唯一权威源）
     let factory = nuphus::llm::ClientFactory::live();
@@ -1255,19 +1259,23 @@ async fn plugin_agent_chat_inner(
         .lock()
         .map_err(|e| format!("权限配置读取失败: {e}"))?;
 
-    run_plugin_chat_isolated(
-        id,
-        state.tools.clone(),
-        llm,
-        model,
-        provider,
-        tool_permissions,
-        state.tool_permissions_ref.clone(),
-        message,
-        &history,
-        &format!("plugin:{id}"),
-        PLUGIN_CHAT_TIMEOUT,
-    )
+    nuphus::automation_gate::with_execution_owner(execution_owner, async move {
+        let _chat_gate_lease = chat_gate_lease;
+        run_plugin_chat_isolated(
+            id,
+            state.tools.clone(),
+            llm,
+            model,
+            provider,
+            tool_permissions,
+            state.tool_permissions_ref.clone(),
+            message,
+            &history,
+            &format!("plugin:{id}"),
+            PLUGIN_CHAT_TIMEOUT,
+        )
+        .await
+    })
     .await
 }
 
@@ -1391,10 +1399,11 @@ async fn plugin_workflow_run_inner(
 
     // ── 资源门：插件触发的工作流 = 主执行体（非轮次内），执行期间整段持锁 ──
     // 与 Agent 轮次 / 录制会话 / 其它执行体互斥；拿不到即明确拒绝（automation_busy）。
-    let _workflow_gate_lease = crate::resource_gate::acquire_execution_body(
-        &state.automation_gate,
-        &format!("plugin-workflow:{plugin_id}"),
-    )?;
+    let (workflow_gate_lease, execution_owner) =
+        crate::resource_gate::acquire_execution_body_with_owner(
+            &state.automation_gate,
+            &format!("plugin-workflow:{plugin_id}"),
+        )?;
 
     let engine = state.workflow_engine.clone();
     // 热刷新 + 存在性校验 + 注入（写锁区间收窄到这段；执行走读锁，允许并发 pause/cancel）
@@ -1433,20 +1442,24 @@ async fn plugin_workflow_run_inner(
     };
     let tool_schemas = engine_r.tools().map(|t| t.get_schemas());
 
-    match tokio::time::timeout(
-        PLUGIN_WORKFLOW_TIMEOUT,
-        engine_r.execute_workflow(
-            workflow_id,
-            tool_exec,
-            tool_schemas,
-            None,
-            None,
-            false,
-            nuphus::workflow::WorkflowRunSource::Plugin,
-        ),
-    )
-    .await
-    {
+    let execution = nuphus::automation_gate::with_execution_owner(execution_owner, async move {
+        let _workflow_gate_lease = workflow_gate_lease;
+        tokio::time::timeout(
+            PLUGIN_WORKFLOW_TIMEOUT,
+            engine_r.execute_workflow(
+                workflow_id,
+                tool_exec,
+                tool_schemas,
+                None,
+                None,
+                false,
+                nuphus::workflow::WorkflowRunSource::Plugin,
+            ),
+        )
+        .await
+    })
+    .await;
+    match execution {
         Ok(Ok(_msg)) => Ok(PluginWorkflowRunResult {
             status: "completed".to_string(),
             error: None,

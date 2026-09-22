@@ -38,6 +38,11 @@ pub async fn execute_tool(
     tool_name: String,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let manual_owner = format!(
+        "{}:{}",
+        nuphus::automation_gate::OWNER_MANUAL_TOOL,
+        uuid::Uuid::new_v4()
+    );
     // ── 资源门：手动工具单次调用 ──
     // 工具页（截图 / 选区 / 找图找色等）绕过 agent 轮次直连同一批进程级单例，
     // 必须与执行体互斥：Agent 执行中（Running/Finalizing）或录制中一律**明确拒绝**
@@ -51,7 +56,7 @@ pub async fn execute_tool(
                 .try_acquire(
                     crate::resource_gate::class_of_tool(&tool_name),
                     nuphus::automation_gate::HoldKind::ManualTool,
-                    nuphus::automation_gate::OWNER_MANUAL_TOOL,
+                    manual_owner.clone(),
                 )
                 .map_err(|busy| {
                     tracing::warn!("[resource-gate] 拒绝手动工具 {tool_name}: {busy}");
@@ -68,11 +73,14 @@ pub async fn execute_tool(
         .map_err(|e| e.to_string())?
         .tool_permissions;
     let policy = nuphus::PermissionPolicy::new(perms);
-    let result = state
-        .tools
-        .execute_with_permission(&tool_name, &params, &policy)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = nuphus::automation_gate::with_execution_owner(
+        manual_owner,
+        state
+            .tools
+            .execute_with_permission(&tool_name, &params, &policy),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "success": result.success,
         "output": result.output.unwrap_or_default(),

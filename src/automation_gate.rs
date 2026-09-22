@@ -352,6 +352,24 @@ pub const OWNER_RECORDING: &str = "recording-session";
 /// 手动工具操作 owner 键：工具页每次调用独立（同一次并发双击也各自成 owner → 互斥）。
 pub const OWNER_MANUAL_TOOL: &str = "manual-tool";
 
+// Share one execution-body owner with every nested tool call in the same
+// asynchronous task. This lets semantic UIA operations re-enter the body
+// lease while unrelated manual calls are still rejected.
+tokio::task_local! {
+    static EXECUTION_OWNER: String;
+}
+
+pub async fn with_execution_owner<F>(owner: String, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    EXECUTION_OWNER.scope(owner, future).await
+}
+
+pub fn current_execution_owner() -> Option<String> {
+    EXECUTION_OWNER.try_with(Clone::clone).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,15 +394,23 @@ mod tests {
                     gate.try_acquire(ResourceClass::Desktop, HoldKind::ManualTool, owner)
                 }));
             }
+            let mut results = Vec::new();
+            for handle in handles {
+                results.push(
+                    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+                        .await
+                        .expect("并发竞争测试应在限定时间内完成"),
+                );
+            }
             let mut wins = 0;
             let mut losses = 0;
-            for h in handles {
-                // 租约必须活着到判定之后，否则会提前释放让另一方也成功
-                match h.await.expect("join") {
+            let mut leases = Vec::new();
+            for result in results {
+                match result.expect("join") {
                     Ok(lease) => {
                         assert!(!lease.is_reentrant(), "不同 owner 不可能重入");
                         wins += 1;
-                        drop(lease);
+                        leases.push(lease);
                     }
                     Err(e) => {
                         assert_eq!(e.code(), CODE_BUSY, "拒绝必须带稳定码");
@@ -398,6 +424,7 @@ mod tests {
                 }
             }
             assert_eq!((wins, losses), (1, 1), "恰有一方成功");
+            drop(leases);
             assert!(gate.is_free(), "持有者释放后门必须回到空闲");
         }
     }

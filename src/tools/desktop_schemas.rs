@@ -32,6 +32,12 @@ impl ToolRegistry {
         }
         let mut schemas = Vec::new();
 
+        // Accessibility/UIA semantic tools are independent of the legacy
+        // coordinate/OCR DesktopClient path.
+        if self.semantic_desktop.is_some() {
+            schemas.extend(self.semantic_desktop_tool_schemas());
+        }
+
         // Desktop 工具仅在 desktop_client 已连接时暴露
         let has_desktop = self
             .desktop_client
@@ -46,6 +52,65 @@ impl ToolRegistry {
         schemas.extend(self.browser_tool_schemas());
 
         schemas
+    }
+
+    fn semantic_desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
+        vec![
+            tool_def(
+                "desktop_semantic_observe",
+                "读取当前前台应用的 Accessibility/UIA 语义元素并返回本次可执行的候选动作 ID。可持久化候选同时返回 workflow_step，保存工作流时应使用该稳定语义步骤，禁止保存临时 candidate_id 或 observation_token。普通模式首选；不返回坐标、原生句柄或任意脚本能力。",
+                json_props! {
+                    "goal" => obj!("type"="string","description"="当前要推进的桌面任务；仅用于构造和说明有界候选动作")
+                },
+                &[],
+            ),
+            tool_def(
+                "desktop_semantic_execute",
+                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；SetValue 候选可附带 value，该文本只交给本地执行器。执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
+                json_props! {
+                    "observation_token" => obj!("type"="string","description"="最近一次语义观察返回的不可预测短期令牌"),
+                    "candidate_id" => obj!("type"="string","description"="最近一次语义观察返回的候选动作 ID"),
+                    "value" => obj!("type"="string","description"="仅用于 SetValue 候选的本地文本；保持原始空白并仅供本地执行","maxLength"=16384)
+                },
+                &["observation_token", "candidate_id"],
+            ),
+            tool_def(
+                "desktop_semantic_action",
+                "执行已保存工作流中的稳定 UIA 语义动作。运行时重新读取当前前台应用并解析 locator，不依赖临时 observation_token、candidate_id、坐标、选择器或脚本；SetValue 可附带 value。",
+                json_props! {
+                    "locator" => obj!(
+                        "type"="object",
+                        "description"="由 desktop_semantic_observe 的 workflow_step 返回并原样保存的稳定语义定位器",
+                        "properties"=json_props! {
+                            "app_id" => obj!("type"="string"),
+                            "window_id" => obj!("type"="string","description"="本地派生的稳定窗口身份；存在时优先于标题提示"),
+                            "window_title" => obj!("type"="string"),
+                            "role" => obj!("type"="string","enum"=["window","button","text_field","check_box","radio_button","list","list_item","menu","menu_item","tab","document","other"]),
+                            "automation_id" => obj!("type"="string"),
+                            "accessible_name" => obj!("type"="string"),
+                            "ancestor_chain" => obj!(
+                                "type"="array",
+                                "description"="稳定的祖先/行上下文；用于区分重复控件，不包含坐标或运行时句柄",
+                                "items"=obj!(
+                                    "type"="object",
+                                    "properties"=json_props! {
+                                        "role" => obj!("type"="string","enum"=["window","button","text_field","check_box","radio_button","list","list_item","menu","menu_item","tab","document","other"]),
+                                        "automation_id" => obj!("type"="string"),
+                                        "accessible_name" => obj!("type"="string")
+                                    }
+                                )
+                            ),
+                            "supported_action" => obj!("type"="string","enum"=["invoke","toggle","select","expand","collapse","focus","set_value"]),
+                            "ordinal_hint" => obj!("type"="integer","minimum"=0,"maximum"=65535,"description"="旧工作流诊断提示；不会用于消解歧义")
+                        },
+                        "required"=["app_id"]
+                    ),
+                    "action" => obj!("type"="string","enum"=["invoke","toggle","select","expand","collapse","focus","set_value"],"description"="本地允许的 UIA 原生动作"),
+                    "value" => obj!("type"="string","description"="仅用于 set_value；文本只交给本地 UIA 执行器","maxLength"=16384)
+                },
+                &["locator", "action"],
+            ),
+        ]
     }
 
     fn desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {

@@ -1,5 +1,6 @@
 //! Tool registry — enhanced tool definitions and permission binding
 
+use crate::automation_gate::{AutomationGate, HoldKind, ResourceClass, OWNER_MANUAL_TOOL};
 use crate::browser::BrowserClient;
 use crate::desktop::DesktopClient;
 use crate::permissions::{PermissionOutcome, PermissionPolicy, ToolCategory};
@@ -9,6 +10,8 @@ use std::collections::HashMap;
 use std::string::String;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+
+use super::semantic_desktop::SemanticDesktopBackend;
 
 /// Tool execution context — bundle of injected handles passed to every executor.
 ///
@@ -54,6 +57,9 @@ pub struct ToolDef {
 pub struct ToolRegistry {
     pub(super) tools: HashMap<String, ToolDef>,
     pub(super) desktop_client: Arc<RwLock<Option<DesktopClient>>>,
+    /// Accessibility/UIA-first desktop backend. Unlike `DesktopClient`, this
+    /// backend never exposes coordinates or native handles to the model.
+    pub(super) semantic_desktop: Option<SemanticDesktopBackend>,
     /// Browser client (Rust native CDP)
     pub(super) browser_client: Arc<tokio::sync::Mutex<Option<BrowserClient>>>,
     /// Rendered prompt cache (cleared on register, lazy-built on render)
@@ -71,6 +77,9 @@ pub struct ToolRegistry {
     /// 约束是「Exec 执行自动化操作属黑盒」，故必须双端阻断——仅在 schema 层
     /// 隐藏不够，模型仍可能凭上下文或历史消息臆造工具名直接调用。
     pub(super) automation_tools_enabled: bool,
+    /// Process-wide resource gate injected by the desktop shell. Core-only
+    /// callers may omit it; production registries all share AppState's gate.
+    automation_gate: Option<Arc<AutomationGate>>,
 }
 
 impl Default for ToolRegistry {
@@ -78,12 +87,14 @@ impl Default for ToolRegistry {
         Self {
             tools: HashMap::new(),
             desktop_client: Arc::new(RwLock::new(None)),
+            semantic_desktop: None,
             browser_client: crate::browser::shared_client(),
             prompt_cache: Arc::new(RwLock::new(None)),
             canonical_map: HashMap::new(),
             signals: crate::state::new_shared_signals(),
             schedule_tool: Arc::new(RwLock::new(None)),
             automation_tools_enabled: true,
+            automation_gate: None,
         }
     }
 }
@@ -93,12 +104,14 @@ impl Clone for ToolRegistry {
         Self {
             tools: self.tools.clone(),
             desktop_client: self.desktop_client.clone(),
+            semantic_desktop: self.semantic_desktop.clone(),
             browser_client: self.browser_client.clone(),
             prompt_cache: self.prompt_cache.clone(),
             canonical_map: self.canonical_map.clone(),
             signals: self.signals.clone(),
             schedule_tool: self.schedule_tool.clone(),
             automation_tools_enabled: self.automation_tools_enabled,
+            automation_gate: self.automation_gate.clone(),
         }
     }
 }
@@ -142,6 +155,36 @@ impl ToolRegistry {
     /// 保证全进程指向同一 SignalState 实例）
     pub fn set_signals(&mut self, signals: crate::state::SharedSignals) {
         self.signals = signals;
+    }
+
+    pub fn set_automation_gate(&mut self, gate: Arc<AutomationGate>) {
+        self.automation_gate = Some(gate);
+    }
+
+    /// Reuse the same process-wide automation gate when deriving a role-
+    /// specific registry. This mirrors `signals()` and avoids constructing a
+    /// second gate for Leader/Workflow/plugin runtimes.
+    pub fn automation_gate(&self) -> Option<Arc<AutomationGate>> {
+        self.automation_gate.clone()
+    }
+
+    fn acquire_semantic_desktop_lease(
+        &self,
+    ) -> Result<Option<crate::automation_gate::AutomationLease>, String> {
+        let Some(gate) = &self.automation_gate else {
+            return Ok(None);
+        };
+        let current_owner = crate::automation_gate::current_execution_owner();
+        let (owner, kind) = match current_owner {
+            Some(owner) => (owner, HoldKind::ExecutionBody),
+            None => (
+                format!("{OWNER_MANUAL_TOOL}:{}", uuid::Uuid::new_v4()),
+                HoldKind::ManualTool,
+            ),
+        };
+        gate.try_acquire(ResourceClass::Desktop, kind, owner)
+            .map(Some)
+            .map_err(|busy| busy.to_string())
     }
 
     pub fn set_schedule_tool_callback(&self, callback: ScheduleToolCallback) {
@@ -276,6 +319,10 @@ impl ToolRegistry {
         // 检查是否是桌面工具，使用 DesktopClient 执行
         // 先 clone client 释放 MutexGuard，避免 guard 跨越 await 点
         if tool_name.starts_with("desktop_") {
+            if Self::is_semantic_desktop_tool(tool_name) {
+                let _lease = self.acquire_semantic_desktop_lease()?;
+                return self.execute_semantic_desktop_tool(tool_name, params).await;
+            }
             // 双通道（dogfooding）：MCP 优先，失败回退直连
             match crate::mcp::dual::route_tool(tool_name, params).await {
                 crate::mcp::dual::RouteOutcome::Handled(result) => return Ok(result),
@@ -616,6 +663,22 @@ impl ToolRegistry {
         *guard = Some(client);
     }
 
+    /// Install one semantic adapter instance for observation, candidate
+    /// construction and execution. Sharing the same instance preserves the
+    /// adapter's opaque candidate-id to native-locator mapping.
+    pub fn set_semantic_desktop_adapter<T>(&mut self, adapter: Arc<T>)
+    where
+        T: crate::desktop_automation::ComputerObserver
+            + crate::desktop_automation::CandidateBuilder
+            + crate::desktop_automation::ComputerExecutor
+            + 'static,
+    {
+        self.semantic_desktop = Some(SemanticDesktopBackend::new(adapter));
+        if let Ok(mut guard) = self.prompt_cache.write() {
+            *guard = None;
+        }
+    }
+
     /// Get DesktopClient clone (preserves original reference)
     pub fn desktop_client(&self) -> Option<DesktopClient> {
         self.desktop_client
@@ -627,6 +690,13 @@ impl ToolRegistry {
     /// Check if tool name is a desktop tool
     pub fn is_desktop_tool(name: &str) -> bool {
         name.starts_with("desktop_")
+    }
+
+    pub fn is_semantic_desktop_tool(name: &str) -> bool {
+        matches!(
+            name,
+            "desktop_semantic_observe" | "desktop_semantic_execute" | "desktop_semantic_action"
+        )
     }
 
     /// Check if tool name is a browser tool
@@ -875,8 +945,9 @@ impl ToolRegistry {
     /// lightweight desktop operations (screenshots, mouse/keyboard, window management, clipboard),
     /// without dispatching via task_dispatch every time.
     pub fn leader_with_desktop(client: DesktopClient) -> Self {
-        let registry = Self::leader();
+        let mut registry = Self::leader();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         tracing::info!(
             "Leader registry with desktop tools ({} tools)",
             registry.len()
@@ -925,9 +996,10 @@ impl ToolRegistry {
 
     /// CLI + 桌面。
     pub fn builtin_with_desktop() -> Self {
-        let registry = Self::builtin();
+        let mut registry = Self::builtin();
         let client = DesktopClient::new();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         tracing::info!(
             "Registered {} builtin tools + 24 desktop tools",
             registry.len()
@@ -964,9 +1036,17 @@ impl ToolRegistry {
         registry.register_workflow_only_tools();
         let client = DesktopClient::new();
         registry.set_desktop_client(client);
+        registry.install_platform_semantic_desktop();
         registry.load_depends_from_file("config/tool_deps.toml");
         tracing::info!("Registered {} work_agent tools", registry.len());
         registry
+    }
+
+    fn install_platform_semantic_desktop(&mut self) {
+        #[cfg(windows)]
+        self.set_semantic_desktop_adapter(Arc::new(
+            crate::desktop_automation::WindowsUiaAdapter::default(),
+        ));
     }
 }
 
@@ -1024,6 +1104,20 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn workflow_semantic_tools_are_available_in_normal_mode() {
+        let registry = ToolRegistry::work_agent();
+        let names: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        assert!(names.contains("desktop_semantic_observe"));
+        assert!(names.contains("desktop_semantic_execute"));
+        assert!(names.contains("desktop_semantic_action"));
+    }
+
     /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。
     ///
     /// schema 层不暴露只是第一道防线：`has_tool` 一旦返回 true，react_loop 的
@@ -1051,6 +1145,60 @@ mod tests {
             leader.has_tool("desktop_mouse"),
             "Leader 应保留 desktop 工具"
         );
+    }
+
+    #[tokio::test]
+    async fn semantic_tool_reenters_the_current_execution_body_owner() {
+        let gate = Arc::new(AutomationGate::new());
+        let owner = "execution-body:test".to_string();
+        let body = gate
+            .try_acquire(
+                ResourceClass::ExecutionBody,
+                HoldKind::ExecutionBody,
+                owner.clone(),
+            )
+            .unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_automation_gate(gate.clone());
+
+        let result = crate::automation_gate::with_execution_owner(owner, async {
+            registry.acquire_semantic_desktop_lease()
+        })
+        .await;
+        assert!(result.unwrap().expect("gate configured").is_reentrant());
+        drop(body);
+        assert!(gate.is_free());
+    }
+
+    #[tokio::test]
+    async fn semantic_tool_is_rejected_for_a_different_owner() {
+        let gate = Arc::new(AutomationGate::new());
+        let _body = gate
+            .try_acquire(
+                ResourceClass::ExecutionBody,
+                HoldKind::ExecutionBody,
+                "execution-body:running",
+            )
+            .unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_automation_gate(gate);
+
+        let error = registry.acquire_semantic_desktop_lease().unwrap_err();
+        assert!(error.starts_with(crate::automation_gate::CODE_BUSY));
+    }
+
+    #[tokio::test]
+    async fn failed_semantic_lease_does_not_leak_the_gate() {
+        let gate = Arc::new(AutomationGate::new());
+        let mut registry = ToolRegistry::new();
+        registry.set_automation_gate(gate.clone());
+        let lease = registry
+            .acquire_semantic_desktop_lease()
+            .unwrap()
+            .expect("gate configured");
+        assert!(!gate.is_free());
+        drop(lease);
+        assert!(gate.is_free());
     }
 
     /// 真实执行路径验证：Exec 的自动化工具必须在「通用执行入口」上被拒。
@@ -1114,6 +1262,7 @@ mod tests {
             "web_search",
             "image_generate",
             "video_generate",
+            "desktop_semantic_action",
         ] {
             assert!(
                 is_workflow_step_tool(kept),

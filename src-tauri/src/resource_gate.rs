@@ -22,6 +22,15 @@ pub fn tool_touches_automation(tool_name: &str) -> bool {
     nuphus::automation_gate::tool_resource_class(tool_name).is_some()
 }
 
+/// Compatibility helper for callers and tests that only need the lease.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn acquire_execution_body(
+    gate: &Arc<AutomationGate>,
+    label: &str,
+) -> Result<AutomationLease, String> {
+    acquire_execution_body_with_owner(gate, label).map(|(lease, _)| lease)
+}
+
 /// 工具 → 资源类别（仅用于诊断文案；互斥语义单槽一致）。
 pub fn class_of_tool(tool_name: &str) -> ResourceClass {
     nuphus::automation_gate::tool_resource_class(tool_name).unwrap_or(ResourceClass::Desktop)
@@ -31,15 +40,17 @@ pub fn class_of_tool(tool_name: &str) -> ResourceClass {
 ///
 /// `label` 只进诊断日志（如 `"submit_user_message"`）；owner 键每次独立，
 /// 因此两个执行体**绝不**互相重入（这正是防双跑的关键）。
-pub fn acquire_execution_body(
+pub fn acquire_execution_body_with_owner(
     gate: &Arc<AutomationGate>,
     label: &str,
-) -> Result<AutomationLease, String> {
+) -> Result<(AutomationLease, String), String> {
+    let owner = execution_body_owner(label);
     gate.try_acquire(
         ResourceClass::ExecutionBody,
         HoldKind::ExecutionBody,
-        execution_body_owner(label),
+        owner.clone(),
     )
+    .map(|lease| (lease, owner))
     .map_err(|busy| {
         tracing::warn!("[resource-gate] 拒绝执行体 {label}：{busy}");
         busy.to_string()

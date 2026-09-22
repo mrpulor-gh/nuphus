@@ -35,6 +35,9 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
     // 与 AppState 持有的全局唯一信号实例对齐（leader()/leader_with_desktop() 新建 registry 默认独立实例）
     let mut leader_registry = leader_registry;
     leader_registry.set_signals(tools.signals().clone());
+    if let Some(gate) = tools.automation_gate() {
+        leader_registry.set_automation_gate(gate);
+    }
 
     let builder = RuntimeBuilder::new()
         .llm(llm.clone())
