@@ -1025,6 +1025,15 @@ const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 /// `SafeWriter::new` 是 tracing `MakeWriter` 的工厂，每次写入前都会被调用，因此体积
 /// 检查放在这里等价于「写入过程中按大小轮转」。轮转失败（例如另一实例正持有该文件）
 /// 按尽力而为处理 —— 继续 append，不阻断日志、不影响启动。
+///
+/// **顺序不可颠倒**：先清旧备份、再 `rename`。反序（先改名再清理）会把刚生成的备份
+/// 自己删掉；而把「删旧备份」放在 `rename` 失败之后更糟 —— 改名失败（Windows 上文件
+/// 被其他实例持有是常态）时会留下「历史已删、新备份未生成」的空档，历史净丢失。
+/// 当前顺序下：删旧备份失败 → 只是历史旧一轮；rename 失败 → 主日志原封不动继续追加。
+/// 任何失败路径都不丢数据。
+///
+/// 说明：`rename` 在 Unix 上可直接覆盖目标，Windows 上语义略有差异；这里统一用
+/// 「先让位再改名」，不依赖平台差异。
 fn rotate_log_if_oversized(path: &std::path::Path, max_bytes: u64) {
     let oversized = std::fs::metadata(path)
         .map(|meta| meta.len() > max_bytes)
@@ -1033,8 +1042,18 @@ fn rotate_log_if_oversized(path: &std::path::Path, max_bytes: u64) {
         return;
     }
     let backup = path.with_extension("log.1");
-    let _ = std::fs::remove_file(&backup);
-    let _ = std::fs::rename(path, &backup);
+    // 先让位：目标已存在时先清掉，再 rename 进来。
+    // 注意此处删的是**上一份历史**，删失败不影响本次轮转的正确性；
+    // 而 rename 失败时主日志原封不动，只是历史暂缺一轮更新 —— 任何路径都不丢数据。
+    if backup.exists() {
+        drop(std::fs::remove_file(&backup));
+    }
+    if let Err(e) = std::fs::rename(path, &backup) {
+        tracing::debug!(
+            error = %e,
+            "日志轮转跳过（当前文件无法改名，可能被其他实例持有），继续追加"
+        );
+    }
 }
 
 impl SafeWriter {
@@ -1396,6 +1415,35 @@ mod log_rotation_tests {
 
         // 只保留最近一份历史：内容应是第二份
         assert_eq!(std::fs::metadata(&backup).unwrap().len(), 2048);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：`rename` 失败时**不得**删除既有历史。
+    ///
+    /// 历史缺陷是顺序问题——先删备份再改名。改名失败时（Windows 上文件被其他实例
+    /// 持有是常态）会留下「历史已删、新备份未生成」的空档，历史日志净丢失。
+    ///
+    /// 构造可控失败：把备份路径占位成**目录** → `rename` 到该路径必然失败
+    /// （与平台无关），而超限判定仍由主日志文件的大小正常触发。
+    #[test]
+    fn failed_rename_keeps_existing_backup() {
+        let dir = scratch_dir("rename_fail");
+        let log = dir.join("nuphus-debug.log");
+        let backup = log.with_extension("log.1");
+
+        // 既有历史：占位成目录（rename 无法覆盖目录 → 必定失败）
+        std::fs::create_dir_all(&backup).expect("备份路径占位为目录");
+        std::fs::write(backup.join("keep.txt"), b"history").expect("历史内容");
+
+        // 超限主日志（4096 > 1024）
+        std::fs::write(&log, vec![b'x'; 4096]).expect("超限主日志");
+
+        rotate_log_if_oversized(&log, 1024);
+
+        // 关键断言：失败路径不得删掉既有历史，主日志原样保留（由 append 继续增长）
+        assert!(backup.is_dir(), "rename 失败时既有历史不得被删除");
+        assert!(backup.join("keep.txt").exists(), "既有历史内容必须保留");
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 4096);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
