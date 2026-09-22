@@ -1,9 +1,11 @@
 /* ══════════════════════════════════════════════════════════
    api-health.css — 模型连接状态辅助控件（输入框 ctx 同排、轻量辅助）
-   设计意图：标准状态点视觉（圆点 + 光晕环），对齐 ext-agent-dot 体系
-   （var(--success)/--error/--warning/--info/--fg-4 token + 异常脉冲 + 在途呼吸）。
-   图标即状态，色变即通知，不叠加计数式角标；弹窗对齐 app 通用
-   glass-bg / line-2 / shadow-elevated 视觉 token。
+   设计意图：**状态语义化图标**（非「实心圆点 + 光晕」——那与 mode 圆点无法区分）。
+   五态形状语言：connecting/retry=旋转加载环、offline=断裂环 + 极缓脉冲、
+   degraded=同心双弧摆动、stable/unknown=静态细环（rail 上不渲染）。
+   颜色语义 = **常态克制、异常才上色**：connecting/retry/stable 走中性灰
+   （--fg-4），degraded/offline 才用 --warning/--error；动效克制、尊重
+   prefers-reduced-motion；弹窗对齐 app 通用 glass-bg / line-2 / shadow-elevated。
    ══════════════════════════════════════════════════════════ */
 
 .api-health {
@@ -12,45 +14,51 @@
   align-items: center;
 }
 
+/* 无背景、无边框：底栏是辅助位，容器只承载图标与文字本身。
+   视觉重量全部落在图标形状与文字色上，不加任何底衬装饰。 */
 .api-health-badge {
   position: relative;
   min-width: 22px;
   height: 22px;
-  padding: 0 5px;
+  padding: 0 2px;
   border: 0;
-  border-radius: 6px;
-  background: transparent;
+  border-radius: 0;
+  background: none;
   color: var(--fg-3);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font: inherit;
-  transition:
-    background var(--dur-fast, 0.18s) var(--ease-out, ease),
-    color var(--dur-fast, 0.18s) var(--ease-out, ease);
+  transition: opacity var(--dur-fast, 0.18s) var(--ease-out, ease);
 }
 .api-health-badge:hover,
 .api-health-badge:focus-visible {
-  background: rgba(255, 255, 255, 0.03);
+  /* hover 仅提亮，不引入任何底衬 */
+  opacity: 0.78;
   outline: none;
 }
 
-/* 状态色 = currentColor → 直接染 SVG；token 对齐 ext-agent-dot */
+/* 状态色 = currentColor → 直接染 SVG；token 对齐 ext-agent-dot
+   ── 配色语义：**常态克制，异常才上色** ─────────────────────────
+   · connecting / retry（尝试连接 = 正常过程）→ 中性灰 --fg-4，不报"告警色"
+   · stable（已稳定但 rail 上不渲染）        → 中性灰 --fg-4
+   · degraded / offline（**确实出问题**）     → 才用 warning / error
+   依据：连接重试是系统在正常自愈，用告警色会让用户误以为故障。 */
 .api-health-unknown {
   color: var(--fg-4);
 }
 .api-health-connecting {
-  color: var(--info);
+  color: var(--fg-4);
+}
+.api-health-stable {
+  color: var(--fg-4);
 }
 .api-health-degraded {
   color: var(--warning);
 }
 .api-health-offline {
   color: var(--error);
-}
-.api-health-stable {
-  color: var(--success);
 }
 
 .api-health-icon {
@@ -59,56 +67,99 @@
   display: inline-block;
 }
 
-/* 离线 = 快速脉冲（异常态必备反馈）；核心点 + 光晕同步 */
-.api-health-offline .api-health-core,
-.api-health-offline .api-health-halo {
-  animation: api-health-pulse 1.1s ease-in-out infinite;
+/* ── 旋转/摆动的几何中心 ──────────────────────────────────
+   ⚠ 必须设在**被动画的元素自身**上：transform-origin / transform-box 不被
+   子元素继承，设在父 <svg> 上时 <circle> 仍用默认原点，旋转会绕左上角
+   把圆弧甩出视口（表现为「错位」）。故此处统一施加到动画目标元素。
+   transform-box: view-box 使 8px 8px 解释为 SVG 用户坐标系的圆心。 */
+.api-health-arc,
+.api-health-arc-inner,
+.api-health-break {
+  transform-origin: 8px 8px;
+  transform-box: view-box;
+}
+
+/* ── 在途（connecting / retry）：加载环匀速旋转 ──
+   工业级进度的通用语汇：线性匀速 = 「系统在持续工作」，不用缓动制造假起伏 */
+.api-health-connecting .api-health-arc {
+  animation: api-health-spin 1.25s linear infinite;
+}
+@keyframes api-health-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 波动（degraded）：内圈短弧缓慢摆动 + 内圈弧透明度呼吸 ──
+   ease-in-out 双向 = 「不稳定、在试探」，与 connecting 的匀速明确区分 */
+.api-health-degraded .api-health-arc-inner {
+  animation: api-health-sway 1.9s ease-in-out infinite;
+}
+@keyframes api-health-sway {
+  0%,
+  100% {
+    transform: rotate(-38deg);
+    stroke-opacity: 0.55;
+  }
+  50% {
+    transform: rotate(38deg);
+    stroke-opacity: 1;
+  }
+}
+
+/* ── 离线（offline）：断裂环极缓脉冲（异常态必备反馈，但克制不打扰） ── */
+.api-health-offline .api-health-break {
+  animation: api-health-pulse 1.4s ease-in-out infinite;
 }
 @keyframes api-health-pulse {
   0%,
   100% {
+    stroke-opacity: 0.9;
+  }
+  50% {
+    stroke-opacity: 0.35;
+  }
+}
+
+/* ── 瞬时事件脉冲（传输截断 / 单次重试）：整个徽标扩散一次，不改变常驻状态态 ──
+   作用在 svg 元素本身，避免与 .api-health-arc 的旋转共用 animation 简写而互相覆盖；
+   限定 .api-health-badge 作用域，避免弹窗内的状态图标一并闪动。
+   缩放同样需要几何中心：原点设在 svg 自身（此处是缩放目标），否则会绕左上角放大。 */
+.api-health.is-pulsing .api-health-badge .api-health-icon {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: api-health-ripple 1.5s ease-out 1;
+}
+.api-health.is-pulsing .api-health-label {
+  animation: api-health-flash 1.5s ease-out 1;
+}
+@keyframes api-health-ripple {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  18% {
+    opacity: 0.5;
+    transform: scale(1.18);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes api-health-flash {
+  0% {
     opacity: 1;
   }
-  50% {
-    opacity: 0.35;
+  18% {
+    opacity: 0.45;
   }
-}
-
-/* 在途 = 缓慢呼吸（连接中 / 波动）；光晕同步扩散增强呼吸感 */
-.api-health-connecting .api-health-core,
-.api-health-connecting .api-health-halo,
-.api-health-degraded .api-health-core,
-.api-health-degraded .api-health-halo {
-  animation: api-health-breathe 1.6s ease-in-out infinite;
-}
-@keyframes api-health-breathe {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
+  60% {
     opacity: 1;
   }
-}
-
-/* 稳定：微弱光晕呼吸（非动效夸张，仅提示"在监"） */
-.api-health-stable .api-health-halo {
-  animation: api-health-stable-glow 3s ease-in-out infinite;
-}
-@keyframes api-health-stable-glow {
-  0%,
   100% {
-    stroke-opacity: 0.2;
+    opacity: 1;
   }
-  50% {
-    stroke-opacity: 0.45;
-  }
-}
-
-/* 未知：无动画，仅静态点 */
-.api-health-unknown .api-health-core,
-.api-health-unknown .api-health-halo {
-  opacity: 0.7;
 }
 
 /* ── 弹窗：对齐 app 通用 glass 风格（var(--glass-bg) + blur + line-2 + shadow-elevated）── */
@@ -267,7 +318,7 @@
 .api-health-compact .api-health-badge {
   min-width: 22px;
   height: 22px;
-  padding: 0 5px;
+  padding: 0 7px;
 }
 .api-health-compact .api-health-icon {
   width: 11px;
@@ -279,61 +330,43 @@
   }
 }
 /* ══════════════════════════════════════════════════════════
-   2026-09-08 状态语义分层（与 ctx 集成）：
+   2026-09-22 状态语义分层（与 ctx 集成）：
    · 瞬时事件（传输截断 / 单次重试）→ 一次性脉冲，一闪而过，不常驻
-   · 持续异常（连续重试 / 请求失败）→ 常驻状态色 + 文字标签
-   · 正常态 → 极简圆点弱呼吸（在监，不抢视线）
+   · 持续异常（连续重试 / 请求失败）→ 常驻状态色 + 语义图标 + 文字标签
+   · 正常态 → 整块连接 UI 不渲染（输入框底栏保持绝对干净）
    ══════════════════════════════════════════════════════════ */
 
 /* 异常态文字标签（圆点孤立时用户无法识别含义；正常态不渲染）
    内容为紧凑实时状态：`retry 1/3` / `offline` / `connecting` / `degraded` */
 .api-health-label {
-  margin-left: 5px;
+  margin-left: 6px;
   font-size: 11px;
   line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   color: currentColor;
   opacity: 0.92;
   /* 标签含实时数字（retry 1/3）：等宽数字，避免进位时宽度抖动 */
   font-variant-numeric: tabular-nums;
 }
+.api-health-compact .api-health-label {
+  font-size: 11px;
+  font-weight: 550;
+}
 
-/* 瞬时事件脉冲：光晕扩散一次 + 核心点闪动（不改变常驻状态色） */
-.api-health-icon {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-.api-health.is-pulsing .api-health-halo {
-  animation: api-health-ripple 1.5s ease-out 1;
-}
-.api-health.is-pulsing .api-health-core {
-  animation: api-health-flash 1.5s ease-out 1;
-}
-@keyframes api-health-ripple {
-  0% {
-    stroke-opacity: 0.25;
-    transform: scale(1);
+/* ── 无障碍：跟随系统「减少动态效果」──────────────────────────
+   旋转 / 摆动 / 脉冲全部停用，仅保留静态状态色 + 形状语义（信息不丢失）。 */
+@media (prefers-reduced-motion: reduce) {
+  .api-health-connecting .api-health-arc,
+  .api-health-degraded .api-health-arc-inner,
+  .api-health-offline .api-health-break,
+  .api-health.is-pulsing .api-health-badge .api-health-icon,
+  .api-health.is-pulsing .api-health-label {
+    animation: none;
   }
-  18% {
-    stroke-opacity: 0.95;
-    transform: scale(1.55);
-  }
-  100% {
-    stroke-opacity: 0.25;
-    transform: scale(1);
-  }
-}
-@keyframes api-health-flash {
-  0% {
-    opacity: 1;
-  }
-  18% {
-    opacity: 0.45;
-  }
-  60% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 1;
+  /* 停旋转后加载环保留下侧 3/4 弧，仍是「环未闭合」的可读形状 */
+  .api-health-connecting .api-health-arc {
+    transform: rotate(-90deg);
   }
 }

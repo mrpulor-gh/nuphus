@@ -296,7 +296,10 @@ export function useEvents(h: EventHandlers) {
     const observeStable = () => {
       retryStreak = 0
       h.setApiHealth(prev => {
-        if (prev.status === 'stable') return prev
+        // 短路仅限「已 stable 且无待清的重试进度」：单次重试时 status 从未离开 stable
+        // （retryStreak < 2 只走 setPulse），若此处按 status 一刀切返回，retry 永远不会被清，
+        // `retry 1/3` 会永久驻留在 rail 上。retry 非空时必须走下面的清理分支。
+        if (prev.status === 'stable' && !prev.retry) return prev
         const now = Date.now()
         // 异常 → 恢复：记一条 recovered（时间线闭环：异常与恢复成对出现）
         const wasUnhealthy = prev.status === 'degraded' || prev.status === 'offline'
