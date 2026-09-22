@@ -214,7 +214,15 @@ impl WorkflowAgent {
     fn resolve_supports_vision(model_label: &str) -> bool {
         crate::config::load_registry()
             .ok()
-            .and_then(|r| r.find_model(model_label).map(|(_, m)| m.supports_vision))
+            .map(|r| {
+                crate::config::resolve_capability(
+                    &r,
+                    r.last_model_provider_hint().as_deref(),
+                    model_label,
+                    |m| m.supports_vision,
+                    false,
+                )
+            })
             .unwrap_or(false)
     }
 
@@ -336,14 +344,8 @@ impl WorkflowAgent {
                 crate::config::VisionStrategy::Main => Some(self.model_label.clone()),
                 crate::config::VisionStrategy::None => None,
             };
-            // 主模型 supports_vision：从配置/builtin 读取
-            let main_supports_vision = crate::config::load_registry()
-                .ok()
-                .and_then(|r| {
-                    r.find_model(&self.model_label)
-                        .map(|(_, m)| m.supports_vision)
-                })
-                .unwrap_or(false);
+            // 主模型 supports_vision：统一消歧入口（经 resolve_supports_vision 同源）
+            let main_supports_vision = Self::resolve_supports_vision(&self.model_label);
             self.cached_prompt = Some(crate::agent::prompt::build_workagent_prompt(
                 &self.model_label,
                 Some(self.llm.provider_name()),

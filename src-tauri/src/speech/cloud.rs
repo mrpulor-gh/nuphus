@@ -38,7 +38,14 @@ pub fn resolve_cloud_config() -> Option<CloudSttConfig> {
     if model_id.is_empty() {
         return None;
     }
-    let (provider, model) = registry.find_model(model_id)?;
+    // `stt_provider` 非空 → 按 provider 精确解析（同名模型跨段时命中选定段）；
+    // 为空（旧配置）→ 回落按 model id 解析，保持旧行为兼容。
+    let provider_name = registry.capabilities.stt_provider.trim();
+    let (provider, model) = if provider_name.is_empty() {
+        registry.find_model(model_id)?
+    } else {
+        registry.find_model_for_provider(provider_name, model_id)?
+    };
     if provider.base_url.trim().is_empty() {
         return None;
     }

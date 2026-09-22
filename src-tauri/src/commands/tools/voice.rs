@@ -12,6 +12,9 @@ use std::path::PathBuf;
 
 /// 从 providers.toml 的 capabilities.voice 解析 provider/model/base_url/api_key。
 /// 复用与 speech/cloud.rs 相同的 registry 读取路径（不新增配置管线）。
+///
+/// 消歧：`voice_provider` 非空时按 provider 精确解析（同名模型跨段时命中用户
+/// 选定的段）；为空（旧配置）时回落按 model id 解析，保持旧行为兼容。
 struct VoiceConfig {
     base_url: String,
     api_key: String,
@@ -27,7 +30,12 @@ fn resolve_voice_config() -> Option<VoiceConfig> {
     if model_id.is_empty() {
         return None;
     }
-    let (provider, model) = registry.find_model(model_id)?;
+    let provider_name = registry.capabilities.voice_provider.trim();
+    let (provider, model) = if provider_name.is_empty() {
+        registry.find_model(model_id)?
+    } else {
+        registry.find_model_for_provider(provider_name, model_id)?
+    };
     if provider.base_url.trim().is_empty() || provider.api_key.trim().is_empty() {
         return None;
     }

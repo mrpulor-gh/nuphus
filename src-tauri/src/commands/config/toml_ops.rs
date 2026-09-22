@@ -360,13 +360,16 @@ fn read_model_field(
         .cloned()
 }
 
-/// 原子写入视觉模型绑定：`capabilities.vision` 与 `capabilities.vision_provider`
+/// 原子写入能力模型绑定：`capabilities.{kind}` 与 `capabilities.{kind}_provider`
 /// 必须在**同一次读写**内落盘。
 ///
 /// 分两次写会出现「新 model + 旧 provider」的中间态：后端按 provider+model 精确
-/// 解析时找不到该组合，视觉请求直接失败（用户看到的是「保存成功但用不了」）。
-pub fn set_vision_capability_in_config_toml(
+/// 解析时找不到该组合，能力请求直接失败（用户看到的是「保存成功但用不了」）。
+///
+/// `kind` 为能力字段名（`vision` / `stt` / `tts` / `voice` / `image_generation`）。
+pub fn set_capability_in_config_toml(
     config_path: &std::path::Path,
+    kind: &str,
     model_id: &str,
     provider_name: &str,
 ) -> Result<(), String> {
@@ -390,18 +393,13 @@ pub fn set_vision_capability_in_config_toml(
         .and_then(|v| v.as_table_mut())
         .ok_or_else(|| "Cannot create [capabilities] table".to_string())?;
 
-    caps.insert(
-        "vision".to_string(),
-        toml::Value::String(model_id.to_string()),
-    );
-    // 空 provider（清除视觉模型）时一并清掉归属，避免留下悬空引用。
+    caps.insert(kind.to_string(), toml::Value::String(model_id.to_string()));
+    // 空 provider（清除该能力模型）时一并清掉归属，避免留下悬空引用。
+    let provider_key = format!("{kind}_provider");
     if provider_name.is_empty() {
-        caps.remove("vision_provider");
+        caps.remove(&provider_key);
     } else {
-        caps.insert(
-            "vision_provider".to_string(),
-            toml::Value::String(provider_name.to_string()),
-        );
+        caps.insert(provider_key, toml::Value::String(provider_name.to_string()));
     }
 
     nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
@@ -1245,8 +1243,9 @@ fn take_legacy_custom_segment(
 }
 
 /// 旧 `custom` 段已删除后的引用同步：[last_model] 全表值 + [capabilities] 的
-/// provider 归属字段，值 == "custom" → 新段名。`vision` 承载模型 id（不是段名），
-/// 显式排除，白名单与 `Capabilities` struct 的 provider 归属字段一一对应。
+/// provider 归属字段，值 == "custom" → 新段名。`vision`/`stt`/`tts`/`voice`/
+/// `image_generation` 承载模型 id（不是段名），显式排除，白名单与 `Capabilities`
+/// struct 的 provider 归属字段一一对应。
 fn rebind_legacy_custom_refs(doc: &mut toml::Value, new_name: &str) {
     if let Some(last_model) = doc.get_mut("last_model").and_then(|t| t.as_table_mut()) {
         for (_key, value) in last_model.iter_mut() {
@@ -1255,8 +1254,13 @@ fn rebind_legacy_custom_refs(doc: &mut toml::Value, new_name: &str) {
             }
         }
     }
-    const PROVIDER_CAPABILITY_FIELDS: [&str; 5] =
-        ["vision_provider", "stt", "tts", "voice", "image_generation"];
+    const PROVIDER_CAPABILITY_FIELDS: [&str; 5] = [
+        "vision_provider",
+        "stt_provider",
+        "tts_provider",
+        "voice_provider",
+        "image_generation_provider",
+    ];
     if let Some(caps) = doc.get_mut("capabilities").and_then(|t| t.as_table_mut()) {
         for field in PROVIDER_CAPABILITY_FIELDS {
             if caps.get(field).and_then(|v| v.as_str()) == Some(LEGACY_CUSTOM_SEGMENT) {
@@ -2954,7 +2958,7 @@ vision_provider = "custom-a"
 "#,
         );
 
-        set_vision_capability_in_config_toml(&path, "gpt-4o", "custom-b").unwrap();
+        set_capability_in_config_toml(&path, "vision", "gpt-4o", "custom-b").unwrap();
 
         let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
         let caps = doc.get("capabilities").unwrap();
@@ -2978,7 +2982,7 @@ vision_provider = "custom-a"
 "#,
         );
 
-        set_vision_capability_in_config_toml(&path, "", "").unwrap();
+        set_capability_in_config_toml(&path, "vision", "", "").unwrap();
 
         let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
         let caps = doc.get("capabilities").unwrap();
@@ -2986,6 +2990,31 @@ vision_provider = "custom-a"
         assert!(
             caps.get("vision_provider").is_none(),
             "provider 为空时必须清除 vision_provider，避免指向已删除的实例"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 泛型能力绑定：非 vision 能力（stt/tts/voice/image_generation）走同一实现，
+    /// model 与 `{kind}_provider` 一起落盘。
+    #[test]
+    fn set_capability_binding_writes_model_and_provider_together() {
+        let path = write_temp_config(
+            r#"
+[capabilities]
+stt = "whisper"
+stt_provider = "custom-a"
+"#,
+        );
+
+        set_capability_in_config_toml(&path, "stt", "whisper-v3", "custom-b").unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let caps = doc.get("capabilities").unwrap();
+        assert_eq!(caps.get("stt").and_then(|v| v.as_str()), Some("whisper-v3"));
+        assert_eq!(
+            caps.get("stt_provider").and_then(|v| v.as_str()),
+            Some("custom-b"),
+            "model 与 provider 必须同时指向新实例，杜绝半绑定"
         );
         std::fs::remove_file(&path).ok();
     }
@@ -3251,7 +3280,8 @@ step-5-preview = "custom"
 [capabilities]
 vision_provider = "custom"
 vision = "step-5-preview"
-tts = "custom"
+tts_provider = "custom"
+tts = "tts-model-id"
 "#,
         );
 
@@ -3341,13 +3371,23 @@ tts = "custom"
             "无关条目不动"
         );
 
-        // [capabilities]：provider 归属字段改名；vision 是模型 id 字段，不改
+        // [capabilities]：provider 归属字段改名；承载模型 id 的字段（vision/tts…）不改。
+        // 归属字段 = `*_provider` 全家族（与 Capabilities struct 一一对应）。
         let caps = doc.get("capabilities").and_then(|t| t.as_table()).unwrap();
         assert_eq!(
             caps.get("vision_provider").and_then(|v| v.as_str()),
             Some("custom-new")
         );
-        assert_eq!(caps.get("tts").and_then(|v| v.as_str()), Some("custom-new"));
+        assert_eq!(
+            caps.get("tts_provider").and_then(|v| v.as_str()),
+            Some("custom-new"),
+            "tts_provider 承载段名，必须同步改名"
+        );
+        assert_eq!(
+            caps.get("tts").and_then(|v| v.as_str()),
+            Some("tts-model-id"),
+            "tts 承载模型 id，不是段名，不改"
+        );
         assert_eq!(
             caps.get("vision").and_then(|v| v.as_str()),
             Some("step-5-preview"),

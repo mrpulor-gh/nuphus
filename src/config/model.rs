@@ -197,15 +197,27 @@ pub struct Capabilities {
     /// 语音转文字模型（空 = 使用本地 SenseVoice ONNX）
     #[serde(default)]
     pub stt: String,
+    /// 语音转文字模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub stt_provider: String,
     /// 文字转语音模型
     #[serde(default)]
     pub tts: String,
+    /// 文字转语音模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub tts_provider: String,
     /// 语音克隆模型（走云端克隆 API，空 = 不支持）
     #[serde(default)]
     pub voice: String,
+    /// 语音克隆模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub voice_provider: String,
     /// 图片生成模型（空 = 不支持）
     #[serde(default)]
     pub image_generation: String,
+    /// 图片生成模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub image_generation_provider: String,
     /// ChatAgent 默认最大推理轮数（不配则 15）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_agent_max_iterations: Option<u32>,
@@ -643,6 +655,63 @@ impl ModelRegistry {
             .find_map(|(_, model)| model.context_window)
     }
 
+    /// Resolve the model entry backing a capability by model id
+    /// (provider-aware — the single disambiguation entry point for capability
+    /// probes).
+    ///
+    /// `find_model` is the legacy first-segment-order interface and must not be
+    /// used for capability decisions: a same-named model published by several
+    /// providers silently resolves to whichever segment happens to come first
+    /// (root cause of cross-provider cross-routing). Capability probes go
+    /// through here instead.
+    ///
+    /// Rules (mirroring [`Self::resolve_context_window`]):
+    /// 1. `provider` given and that provider publishes `model_id` → that exact
+    ///    entry. Callers holding a routing binding (agent `provider` field,
+    ///    `run.provider`, `capabilities.*_provider`) must pass it.
+    /// 2. Otherwise every same-id candidate is scanned in segment order and the
+    ///    first one for which `predicate` holds is returned — a candidate that
+    ///    lacks the capability never masks a sibling that has it.
+    /// 3. No candidate satisfies `predicate` → `None`.
+    ///
+    /// `None` means "could not resolve": unknown model id, or no candidate
+    /// carries the capability. Callers must keep the two apart from "model
+    /// exists but is unverified" by giving unknown models a known fallback
+    /// before calling (see `config::resolve_capability`).
+    pub fn resolve_capability<F>(
+        &self,
+        provider: Option<&str>,
+        model_id: &str,
+        predicate: F,
+    ) -> Option<&ModelEntry>
+    where
+        F: Fn(&ModelEntry) -> bool,
+    {
+        if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+            if let Some((_, model)) = self.find_model_for_provider(provider, model_id) {
+                return predicate(model).then_some(model);
+            }
+        }
+        self.find_model_candidates(model_id)
+            .into_iter()
+            .map(|(_, model)| model)
+            .find(|model| predicate(model))
+    }
+
+    /// Provider hint for the registry's own main model (`self.model`).
+    ///
+    /// The main model binding is written by `switch_model` into `[last_model]`
+    /// (`model id → provider name`); reading it back gives the capability
+    /// probes a provider context so a same-named main model resolves to the
+    /// segment the user actually bound. Returns `None` when no binding is
+    /// recorded (or the record no longer resolves) — callers then fall back to
+    /// the candidate scan of [`Self::resolve_capability`].
+    pub fn last_model_provider_hint(&self) -> Option<String> {
+        let path = self.source_path.as_deref()?;
+        crate::config::load_last_model_provider(path, &self.model)
+            .filter(|p| self.find_model_for_provider(p, &self.model).is_some())
+    }
+
     /// List all available models
     pub fn list_models(&self) -> Vec<(String, String)> {
         let mut result = Vec::new();
@@ -724,11 +793,14 @@ impl ModelRegistry {
     /// ⚠️ Do NOT fall back to builtin metadata here: builtin `max_output_tokens`
     /// values (8192 for most providers) are conservative assumptions that
     /// truncated long thinking streams for reasoning models (see transport).
-    pub fn get_max_output_tokens(&self, model_id: &str) -> Option<u32> {
-        if let Some((_, model)) = self.find_model(model_id) {
-            return model.max_tokens;
-        }
-        None
+    ///
+    /// Provider-aware (`resolve_capability` semantics): with a known binding the
+    /// provider-exact entry wins, otherwise the first same-id candidate carrying
+    /// a value is used — a candidate without `max_tokens` never masks a sibling
+    /// that declares it. See [`Self::resolve_capability`].
+    pub fn get_max_output_tokens(&self, provider: Option<&str>, model_id: &str) -> Option<u32> {
+        self.resolve_capability(provider, model_id, |m| m.max_tokens.is_some())
+            .and_then(|m| m.max_tokens)
     }
 }
 
@@ -1207,5 +1279,147 @@ vision_provider = "custom"
             registry.resolve_context_window(None, "m-alias"),
             Some(32_000)
         );
+    }
+
+    /// `test_provider` variant with explicit capability flags + max_tokens —
+    /// capability-resolution fixtures need to control which same-id candidate
+    /// declares vision / image_generation / max_tokens.
+    fn provider_with_caps(
+        name: &str,
+        kind: KnownProvider,
+        models: &[(&str, bool, bool, Option<u32>)],
+    ) -> ProviderConfig {
+        let mut provider = test_provider(name, kind, &[]);
+        provider.models = models
+            .iter()
+            .map(|(id, vision, image_gen, max_tokens)| ModelEntry {
+                id: id.to_string(),
+                alias: Vec::new(),
+                max_tokens: *max_tokens,
+                context_window: None,
+                supports_streaming: true,
+                supports_vision: *vision,
+                supports_audio: false,
+                supports_image_generation: *image_gen,
+                reasoning_efforts: Vec::new(),
+                default_effort: None,
+                cost_per_million_in: None,
+                cost_per_million_out: None,
+                source: ModelSource::Auto,
+            })
+            .collect();
+        provider
+    }
+
+    /// `resolve_capability` provider-exact wins; empty provider = no hint =
+    /// candidate scan; a candidate lacking the capability never masks a sibling.
+    #[test]
+    fn test_resolve_capability_provider_exact_and_scan() {
+        let registry = registry_with(vec![
+            // Segment-order first: declares NO vision.
+            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            // Later segment: declares vision.
+            provider_with_caps("custom", KnownProvider::Custom, &[("m", true, false, None)]),
+        ]);
+
+        // Provider-exact: deepseek has no vision → None (not masked by custom).
+        assert!(registry
+            .resolve_capability(Some("deepseek"), "m", |e| e.supports_vision)
+            .is_none());
+        // Provider-exact: custom has vision → resolved.
+        assert!(registry
+            .resolve_capability(Some("custom"), "m", |e| e.supports_vision)
+            .is_some());
+        // No hint → candidate scan finds the vision-declaring sibling (the old
+        // first-segment-order lookup returned deepseek and missed it).
+        assert!(registry
+            .resolve_capability(None, "m", |e| e.supports_vision)
+            .is_some());
+        // Empty provider == no hint.
+        assert!(registry
+            .resolve_capability(Some(""), "m", |e| e.supports_vision)
+            .is_some());
+    }
+
+    /// No candidate (or no candidate) declares the capability → None.
+    #[test]
+    fn test_resolve_capability_absent_is_none() {
+        let registry = registry_with(vec![test_provider(
+            "deepseek",
+            KnownProvider::DeepSeek,
+            &[("m", &[])],
+        )]);
+        assert!(registry
+            .resolve_capability(None, "m", |e| e.supports_vision)
+            .is_none());
+        // Unknown model id → None.
+        assert!(registry
+            .resolve_capability(None, "nope", |e| e.supports_vision)
+            .is_none());
+    }
+
+    /// `get_max_output_tokens` is provider-aware: exact segment wins, and a
+    /// candidate without `max_tokens` never masks a sibling that declares it.
+    #[test]
+    fn test_get_max_output_tokens_provider_aware() {
+        let registry = registry_with(vec![
+            // Segment-order first: no max_tokens.
+            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            // Later segment: declares max_tokens.
+            provider_with_caps(
+                "custom",
+                KnownProvider::Custom,
+                &[("m", false, false, Some(65_536))],
+            ),
+        ]);
+
+        // Exact binding hits the declaring segment.
+        assert_eq!(
+            registry.get_max_output_tokens(Some("custom"), "m"),
+            Some(65_536)
+        );
+        // Exact binding on a segment without a value → None (does not borrow the
+        // sibling's value).
+        assert_eq!(registry.get_max_output_tokens(Some("deepseek"), "m"), None);
+        // No hint → scan finds the declaring sibling.
+        assert_eq!(registry.get_max_output_tokens(None, "m"), Some(65_536));
+    }
+
+    /// Capability provider fields round-trip; legacy configs omitting them
+    /// deserialize to empty strings (compat: resolved by model id).
+    #[test]
+    fn test_capabilities_provider_fields_roundtrip() {
+        let legacy = r#"
+[capabilities]
+vision = "gpt-4o"
+stt = "whisper"
+tts = "tts-1"
+voice = "clone"
+image_generation = "dall-e"
+"#;
+        let registry: ModelRegistry = toml::from_str(legacy).unwrap();
+        assert!(registry.capabilities.stt_provider.is_empty());
+        assert!(registry.capabilities.tts_provider.is_empty());
+        assert!(registry.capabilities.voice_provider.is_empty());
+        assert!(registry.capabilities.image_generation_provider.is_empty());
+
+        let current = r#"
+[capabilities]
+vision = "gpt-4o"
+vision_provider = "seg-a"
+stt = "whisper"
+stt_provider = "seg-b"
+tts = "tts-1"
+tts_provider = "seg-c"
+voice = "clone"
+voice_provider = "seg-d"
+image_generation = "dall-e"
+image_generation_provider = "seg-e"
+"#;
+        let registry: ModelRegistry = toml::from_str(current).unwrap();
+        assert_eq!(registry.capabilities.stt_provider, "seg-b");
+        assert_eq!(registry.capabilities.tts_provider, "seg-c");
+        assert_eq!(registry.capabilities.voice_provider, "seg-d");
+        assert_eq!(registry.capabilities.image_generation_provider, "seg-e");
     }
 }

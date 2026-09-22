@@ -263,7 +263,7 @@ fn main() {
             macos_permissions::request_macos_permission,
             macos_permissions::open_macos_permission_settings,
             commands::set_capability,
-            commands::set_vision_capability,
+            commands::set_capability_binding,
             commands::set_model_supports_vision,
             commands::get_context_limit,
             commands::get_reasoning_effort,

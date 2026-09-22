@@ -52,7 +52,10 @@ impl AnthropicTransport {
             } else {
                 &request.model
             };
-            crate::config::resolve_max_output_tokens(model).unwrap_or(8192)
+            // AnthropicConfig carries no provider-segment name (its
+            // `provider_name()` is the static protocol label "anthropic", not a
+            // providers.toml segment), so max_tokens resolves by model id.
+            crate::config::resolve_max_output_tokens(model, None).unwrap_or(8192)
         });
         let mut body = serde_json::json!({
             "model": if request.model.is_empty() {

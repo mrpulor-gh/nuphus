@@ -1973,7 +1973,12 @@ async fn fetch_provider_models(
     let briefs = models
         .into_iter()
         .map(|id| {
-            let meta = registry.find_model(&id).map(|(_, m)| m);
+            // builtin 元数据解析：provider 限定优先。同名模型可能同时由官方段与
+            // 网关段发布（官方 deepseek 与 opencode-go 都列 deepseek-v4-flash），
+            // 无限定的 find_model 会因迭代顺序命中另一段的元数据。
+            let meta = registry
+                .find_model_for_provider(provider_kind.as_str(), &id)
+                .or_else(|| registry.find_model(&id).map(|(_, m)| m));
             let mut brief = ProviderModelBrief {
                 id,
                 supports_streaming: meta.map(|m| m.supports_streaming).unwrap_or(true),
@@ -2429,8 +2434,13 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
         "vision": caps.vision,
         "vision_provider": caps.vision_provider,
         "stt": caps.stt,
+        "stt_provider": caps.stt_provider,
         "tts": caps.tts,
+        "tts_provider": caps.tts_provider,
         "voice": caps.voice,
+        "voice_provider": caps.voice_provider,
+        "image_generation": caps.image_generation,
+        "image_generation_provider": caps.image_generation_provider,
         "chat_agent_max_iterations": caps.chat_agent_max_iterations,
     });
 

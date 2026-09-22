@@ -65,18 +65,26 @@ pub fn set_capability(
     Ok(())
 }
 
-/// 原子设置视觉模型绑定：`vision` 与 `vision_provider` 必须一起落盘。
+/// 原子设置能力模型绑定：`{kind}` 与 `{kind}_provider` 必须一起落盘。
 ///
-/// 前端原先分两次调用 `set_capability('vision', …)` / `set_capability('vision_provider', …)`；
+/// 前端原先分两次调用 `set_capability(kind, …)` / `set_capability(kind_provider, …)`；
 /// 第二次失败就会留下「新 model + 旧 provider」的中间态 —— 后端按
-/// provider + model 精确解析时找不到该组合，视觉请求直接失败，而 UI 已经提示成功。
+/// provider + model 精确解析时找不到该组合，能力请求直接失败，而 UI 已经提示成功。
 /// 这里收敛为一次读写：要么两个字段都更新，要么都不动。
+///
+/// `kind` ∈ { vision, stt, tts, voice, image_generation }。
 #[tauri::command]
-pub fn set_vision_capability(
+pub fn set_capability_binding(
+    kind: String,
     model: String,
     provider: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    const KINDS: [&str; 5] = ["vision", "stt", "tts", "voice", "image_generation"];
+    if !KINDS.contains(&kind.as_str()) {
+        return Err(format!("未知能力类型: {kind}"));
+    }
+
     let config_path = {
         let providers_path = state.llm_config_path.with_file_name("providers.toml");
         if providers_path.exists() {
@@ -86,10 +94,11 @@ pub fn set_vision_capability(
         }
     };
 
-    super::toml_ops::set_vision_capability_in_config_toml(&config_path, &model, &provider)?;
+    super::toml_ops::set_capability_in_config_toml(&config_path, &kind, &model, &provider)?;
 
     tracing::info!(
-        "[set_vision_capability] vision={} provider={}",
+        "[set_capability_binding] kind={} model={} provider={}",
+        kind,
         model,
         provider
     );

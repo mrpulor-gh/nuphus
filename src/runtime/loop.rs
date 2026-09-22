@@ -300,23 +300,33 @@ impl RuntimeBuilder {
             crate::config::VisionStrategy::Main => Some(runtime.agent.config.model.clone()),
             crate::config::VisionStrategy::None => None,
         };
-        // 主模型 supports_vision：从配置/builtin 读取，不依赖 resolve_vision_strategy 的结论
+        // 主模型 supports_vision：统一消歧入口（provider 绑定优先，候选遍历）
         let main_supports_vision = crate::config::load_registry()
             .ok()
-            .and_then(|r| {
-                r.find_model(&runtime.agent.config.model)
-                    .map(|(_, m)| m.supports_vision)
+            .map(|r| {
+                crate::config::resolve_capability(
+                    &r,
+                    r.last_model_provider_hint().as_deref(),
+                    &runtime.agent.config.model,
+                    |m| m.supports_vision,
+                    false,
+                )
             })
             .unwrap_or(false);
         runtime.agent.config.vision_model = vision_model;
         runtime.agent.config.supports_vision = main_supports_vision;
 
-        // 主模型 supports_image_generation：从配置/builtin 读取
+        // 主模型 supports_image_generation：同一消歧入口
         let main_supports_image_gen = crate::config::load_registry()
             .ok()
-            .and_then(|r| {
-                r.find_model(&runtime.agent.config.model)
-                    .map(|(_, m)| m.supports_image_generation)
+            .map(|r| {
+                crate::config::resolve_capability(
+                    &r,
+                    r.last_model_provider_hint().as_deref(),
+                    &runtime.agent.config.model,
+                    |m| m.supports_image_generation,
+                    false,
+                )
             })
             .unwrap_or(false);
         runtime.agent.config.supports_image_generation = main_supports_image_gen;

@@ -460,21 +460,6 @@ impl ReactAgent {
         Ok(new_client)
     }
 
-    /// Legacy model-only switch retained for callers that do not have provider context.
-    pub fn switch_model(&mut self, model_id: &str) -> Result<()> {
-        let not_found = || crate::NuphusError::llm(format!("注册表中找不到模型 '{}'", model_id));
-        let registry = self
-            .client_factory
-            .as_ref()
-            .ok_or_else(not_found)?
-            .registry()?;
-        let provider = registry
-            .find_model(model_id)
-            .map(|(p, _)| p.name.clone())
-            .ok_or_else(not_found)?;
-        self.switch_model_for(&provider, model_id).map(|_| ())
-    }
-
     /// Execute a single tool call (with full-chain safety checks)
     ///
     /// Permission/safety checks delegated to exec_tool::check_tool_security,

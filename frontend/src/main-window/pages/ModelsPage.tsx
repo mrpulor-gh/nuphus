@@ -19,7 +19,7 @@ import {
   setAgentModel,
   setModelContextWindow,
   setModelSupportsVision,
-  setVisionCapability,
+  setCapabilityBinding,
   createCustomProvider,
   updateCustomProvider,
   oauthBegin,
@@ -1250,12 +1250,15 @@ export function ModelsPage({
   // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测）
   const [sttLocalStatus, setSttLocalStatus] = useState<SttStatus | null>(null)
   const [sttModel, setSttModel] = useState('')
+  const [sttProvider, setSttProvider] = useState('')
   const [sttSaving, setSttSaving] = useState(false)
   const [sttFeedback, setSttFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [ttsModel, setTtsModel] = useState('')
+  const [ttsProvider, setTtsProvider] = useState('')
   const [ttsSaving, setTtsSaving] = useState(false)
   const [ttsFeedback, setTtsFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [voiceModel, setVoiceModel] = useState('')
+  const [voiceProvider, setVoiceProvider] = useState('')
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [voiceFeedback, setVoiceFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
@@ -1365,8 +1368,11 @@ export function ModelsPage({
           setVisionModel(m.vision)
           setVisionProvider(m.vision_provider || '')
           setTtsModel(m.tts)
+          setTtsProvider(m.tts_provider || '')
           setSttModel(m.stt)
+          setSttProvider(m.stt_provider || '')
           setVoiceModel(m.voice)
+          setVoiceProvider(m.voice_provider || '')
         }
       })
       .catch(() => {})
@@ -3044,7 +3050,7 @@ export function ModelsPage({
                             try {
                               // 原子写入：model 与 provider 一起落盘，杜绝
                               // 「新 model + 旧 provider」的半绑定中间态。
-                              await setVisionCapability(modelId, selectedProvider)
+                              await setCapabilityBinding('vision', modelId, selectedProvider)
                               setVisionModel(modelId)
                               setVisionProvider(selectedProvider)
                               setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
@@ -3180,17 +3186,19 @@ export function ModelsPage({
                       control={
                         <VisionModelSelect
                           value={sttModel}
+                          provider={sttProvider}
                           models={allModels}
                           filterCapability="audio"
                           placeholder="未配置（使用本地识别）"
                           showVisionIcons={false}
                           menuUp
-                          onChange={async modelId => {
+                          onChange={async (modelId, selectedProvider) => {
                             setSttSaving(true)
                             setSttFeedback(null)
                             try {
-                              await setCapability('stt', modelId)
+                              await setCapabilityBinding('stt', modelId, selectedProvider)
                               setSttModel(modelId)
+                              setSttProvider(selectedProvider)
                               setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
                               setTimeout(() => setSttFeedback(null), 2000)
                               probeStt()
@@ -3279,16 +3287,18 @@ export function ModelsPage({
                       control={
                         <VisionModelSelect
                           value={ttsModel}
+                          provider={ttsProvider}
                           models={allModels}
                           placeholder="未配置（不使用朗读）"
                           showVisionIcons={false}
                           menuUp
-                          onChange={async modelId => {
+                          onChange={async (modelId, selectedProvider) => {
                             setTtsSaving(true)
                             setTtsFeedback(null)
                             try {
-                              await setCapability('tts', modelId)
+                              await setCapabilityBinding('tts', modelId, selectedProvider)
                               setTtsModel(modelId)
+                              setTtsProvider(selectedProvider)
                               setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
                               setTimeout(() => setTtsFeedback(null), 2000)
                             } catch (e: any) {
@@ -3322,16 +3332,18 @@ export function ModelsPage({
                       control={
                         <VisionModelSelect
                           value={voiceModel}
+                          provider={voiceProvider}
                           models={allModels}
                           placeholder="未配置（不使用）"
                           showVisionIcons={false}
                           menuUp
-                          onChange={async modelId => {
+                          onChange={async (modelId, selectedProvider) => {
                             setVoiceSaving(true)
                             setVoiceFeedback(null)
                             try {
-                              await setCapability('voice', modelId)
+                              await setCapabilityBinding('voice', modelId, selectedProvider)
                               setVoiceModel(modelId)
+                              setVoiceProvider(selectedProvider)
                               setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
                               setTimeout(() => setVoiceFeedback(null), 2000)
                             } catch (e: any) {

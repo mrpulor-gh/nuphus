@@ -147,11 +147,19 @@ impl SubTaskRunner {
         }
     }
 
-    /// 从 model registry 解析主模型是否原生支持视觉
+    /// 从 model registry 解析主模型是否原生支持视觉（统一消歧入口）
     fn resolve_supports_vision(model_name: &str) -> bool {
         crate::config::load_registry()
             .ok()
-            .and_then(|r| r.find_model(model_name).map(|(_, m)| m.supports_vision))
+            .map(|r| {
+                crate::config::resolve_capability(
+                    &r,
+                    r.last_model_provider_hint().as_deref(),
+                    model_name,
+                    |m| m.supports_vision,
+                    false,
+                )
+            })
             .unwrap_or(false)
     }
 

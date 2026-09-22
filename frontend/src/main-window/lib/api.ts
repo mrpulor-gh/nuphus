@@ -974,8 +974,13 @@ export interface Capabilities {
   vision: string
   vision_provider?: string
   stt: string
+  stt_provider?: string
   tts: string
+  tts_provider?: string
   voice: string
+  voice_provider?: string
+  image_generation?: string
+  image_generation_provider?: string
   chat_agent_max_iterations: number | null
 }
 
@@ -987,11 +992,12 @@ export function setCapability(key: string, value: string) {
   return invoke('set_capability', { key, value })
 }
 
-/** 原子设置视觉模型绑定：model 与 provider 必须在同一次写入内落盘，
- *  否则会留下「新 model + 旧 provider」的半绑定（视觉请求按 provider+model
- *  精确解析时找不到该组合，保存看似成功但实际用不了）。 */
-export function setVisionCapability(model: string, provider: string) {
-  return invoke<void>('set_vision_capability', { model, provider })
+/** 原子设置能力模型绑定：model 与 provider 必须在同一次写入内落盘，
+ *  否则会留下「新 model + 旧 provider」的半绑定（能力请求按 provider+model
+ *  精确解析时找不到该组合，保存看似成功但实际用不了）。
+ *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation'。 */
+export function setCapabilityBinding(kind: string, model: string, provider: string) {
+  return invoke<void>('set_capability_binding', { kind, model, provider })
 }
 
 /** 手动设定某 provider 下某模型的视觉（多模态）能力（模型行内开关）。

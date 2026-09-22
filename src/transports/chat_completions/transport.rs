@@ -1082,7 +1082,9 @@ impl ChatCompletionsTransport {
         });
         if let Some(max_tokens) = request.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
-        } else if let Some(cfg_max) = crate::config::resolve_max_output_tokens(&model) {
+        } else if let Some(cfg_max) =
+            crate::config::resolve_max_output_tokens(&model, Some(&self.config.name))
+        {
             // 用户显式在 providers.toml 配置了模型级 max_tokens → 遵循
             body["max_tokens"] = serde_json::json!(cfg_max);
         }

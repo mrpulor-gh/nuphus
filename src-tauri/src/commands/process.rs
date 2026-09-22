@@ -1207,18 +1207,27 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         }
 
         // 图片降级警告：主模型与 vision 模型都不支持视觉时，前端弹窗提示（图片仍降级发送，不阻塞）
-        // 判定与 runtime build（loop.rs resolve_vision_strategy）同源：load_registry + 主模型 supports_vision
+        // 判定与 runtime build（loop.rs resolve_vision_strategy）同源：统一消歧入口
         let image_warning = if images2.as_ref().map(|v| !v.is_empty()).unwrap_or(false) {
             let registry = nuphus::config::load_registry().ok();
             let main_model = registry
                 .as_ref()
                 .map(|r| r.model.clone())
                 .unwrap_or_default();
+            let main_supports_vision = registry
+                .as_ref()
+                .map(|r| {
+                    nuphus::config::resolve_capability(
+                        r,
+                        r.last_model_provider_hint().as_deref(),
+                        &main_model,
+                        |m| m.supports_vision,
+                        false,
+                    )
+                })
+                .unwrap_or(false);
             let strategy = nuphus::session::image::resolve_image_strategy(
-                registry
-                    .as_ref()
-                    .and_then(|r| r.find_model(&main_model).map(|(_, m)| m.supports_vision))
-                    .unwrap_or(false),
+                main_supports_vision,
                 match nuphus::config::resolve_vision_strategy() {
                     nuphus::config::VisionStrategy::Capability(m) => Some(m),
                     nuphus::config::VisionStrategy::Main => Some(main_model),

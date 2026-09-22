@@ -99,7 +99,10 @@ pub fn load_registry() -> crate::Result<ModelRegistry> {
 /// 配置是可在运行期被改写的权威源，永久缓存会让「改了 max_tokens / 新增模型」
 /// 要重启才生效（与「读一次就冻结的副本」同一类缺陷）。
 /// Priority follows `ModelRegistry::get_max_output_tokens` (see model.rs).
-pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
+/// `provider` is the routing binding of the calling transport (known at request
+/// build time) — same-named models across providers then resolve to the exact
+/// segment instead of the first segment-order hit.
+pub fn resolve_max_output_tokens(model_id: &str, provider: Option<&str>) -> Option<u32> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
@@ -108,7 +111,9 @@ pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
 
     struct Cache {
         identity: Identity,
-        entries: HashMap<String, Option<u32>>,
+        /// key = (provider, model_id)：同一 model id 在不同段可配不同 max_tokens，
+        /// 缓存必须按绑定区分，否则段间会互相串值。
+        entries: HashMap<(Option<String>, String), Option<u32>>,
     }
 
     fn current_identity() -> Identity {
@@ -128,7 +133,7 @@ pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
     let resolve_uncached = || {
         load_registry()
             .ok()
-            .and_then(|r| r.get_max_output_tokens(model_id))
+            .and_then(|r| r.get_max_output_tokens(provider, model_id))
     };
 
     let Ok(mut guard) = cache.lock() else {
@@ -139,13 +144,49 @@ pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
         guard.identity = identity;
         guard.entries.clear();
     }
-    if let Some(v) = guard.entries.get(model_id) {
+    let cache_key = (provider.map(str::to_string), model_id.to_string());
+    if let Some(v) = guard.entries.get(&cache_key) {
         return *v;
     }
     let resolved = resolve_uncached();
-    guard.entries.insert(model_id.to_string(), resolved);
+    guard.entries.insert(cache_key, resolved);
     resolved
 }
+/// Resolve whether the model bound to a capability carries the requested
+/// capability — the single disambiguation entry point for capability probes.
+///
+/// Same-named models can be published by several providers; the legacy
+/// `find_model` first-segment-order lookup and the scattered `.unwrap_or(false)`
+/// fallbacks that used to sit at every call site silently missed the sibling
+/// that declared the capability. This function replaces both:
+///
+/// - `provider` given (`Some`/non-empty) → that provider's entry decides.
+/// - otherwise every same-id candidate is scanned and **any** candidate that
+///   declares the capability wins (conservative: never under-report).
+/// - unknown model (`find_model_candidates` empty, e.g. a local model absent
+///   from the registry) → `presumed` (callers keep a stable default: `false`
+///   for capability gating, `true` for unrestricted metadata fields).
+///
+/// `None` is never returned: the boolean answer is well-defined for every input
+/// ("unknown model" is folded into `presumed`). Callers that must distinguish
+/// "unknown" from "verified absent" call `ModelRegistry::resolve_capability`
+/// directly.
+pub fn resolve_capability(
+    registry: &ModelRegistry,
+    provider: Option<&str>,
+    model_id: &str,
+    predicate: impl Fn(&ModelEntry) -> bool,
+    presumed: bool,
+) -> bool {
+    if registry.find_model_candidates(model_id).is_empty() {
+        // 未知模型：注册表中无该 id（本地/探测中模型）→ 保持既有默认。
+        return presumed;
+    }
+    registry
+        .resolve_capability(provider, model_id, predicate)
+        .is_some()
+}
+
 /// 视觉理解策略
 pub enum VisionStrategy {
     /// 主模型直接支持多模态，不需要额外配置
@@ -184,10 +225,13 @@ pub fn resolve_vision_strategy() -> VisionStrategy {
     }
 
     // 主模型直接支持多模态
-    let main_supports_vision = registry
-        .find_model(&registry.model)
-        .map(|(_, m)| m.supports_vision)
-        .unwrap_or(false);
+    let main_supports_vision = resolve_capability(
+        &registry,
+        registry.last_model_provider_hint().as_deref(),
+        &registry.model,
+        |m| m.supports_vision,
+        false,
+    );
     if main_supports_vision {
         return VisionStrategy::Main;
     }
