@@ -8,6 +8,7 @@ use super::runner::{CandidateBuilder, ComputerExecutor, ComputerObserver};
 use super::types::*;
 
 const DEFAULT_MAX_ELEMENTS: usize = 200;
+#[cfg(windows)]
 const MAX_DECISION_ACTIONS: usize = 37;
 
 #[cfg(windows)]
