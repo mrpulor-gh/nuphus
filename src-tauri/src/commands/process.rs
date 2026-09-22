@@ -316,6 +316,16 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         });
     }
 
+    // ── 资源门（后端资源级互斥）：本函数 = 主执行体入口，整轮持锁 ──
+    // 覆盖桌面发送与手机端 POST /message（同一个共享入口）。
+    // 拿不到（录制会话 / 定时任务 / 插件独立运行时正在占用系统资源）→ **明确拒绝**：
+    // 不排队、不等待、不降级；否则新轮次会与旧执行体并存 → 双跑 → 浏览器单例死锁 / panic。
+    // 注意：本门在「追加消息」分支之后，绝不拦截终止/停止通道。
+    let gate_lease = crate::resource_gate::acquire_execution_body(
+        &state.automation_gate,
+        "submit_user_message",
+    )?;
+
     // Prevent concurrent execution
     if state.busy.swap(true, Ordering::SeqCst) {
         return Err("Task is already running, please wait for completion".to_string());
@@ -641,6 +651,12 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         // 因此任务内部重新持有锁：busy 状态与任务运行期严格绑定，IPC break 不再放锁。
         // 执行态：任务起始即占用（Running；主循环入口再声明一次，幂等）。
         // 轮次状态收敛由 guard 持有：Finalizing（主循环退出后，见下方收尾点）→ Idle。
+        // 资源门租约：声明早于 TaskBusyGuard，确保释放顺序为「先 Idle、后放锁」——
+        // 轮次存活期间（含收尾）槽位一直被占，手动工具请求会被明确拒绝。
+        // 门铃唤醒重放（S2）声明更早：它最后一个 drop，保证重放新轮次时
+        // 「stage 已 Idle + 资源门已释放」，不会被本轮的残留占用拒绝。
+        let _wake_replay = HandoffWakeReplay::new(app_handle.clone());
+        let _gate_lease = gate_lease;
         state.busy.set_stage(nuphus::state::ExecutionStage::Running);
         struct TaskBusyGuard<'a> {
             stage: &'a crate::state::ExecutionStageHandle,
@@ -1276,10 +1292,21 @@ pub async fn submit_user_message<R: tauri::Runtime>(
 /// - 权威互斥由 submit_user_message 内部 `busy.swap(true)` 原子判定 —— 竞态窗口内
 ///   被并发用户消息抢走时，本任务在 submit 内被拒绝，事件照常留队列，无正确性问题；
 /// - spawn 的受理任务与 send_message_cmd 完全同路径（含事件 drain 注入）。
-pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> bool {
+///
+/// S2：**被忙碌挡下的唤醒必须被推迟重放**——Finalizing 期主循环已退出，轮次边界不会
+/// 再 drain 门铃事件，若不记下这次唤醒，外部 Agent 完工后 Leader 要等用户下次发消息
+/// 才被顺带唤醒（静默延迟）。推迟的消息由轮次结束点重放（见 HandoffWakeReplay）。
+pub(crate) fn try_spawn_leader_round<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    message: String,
+) -> bool {
     let state = app.state::<AppState>();
     if state.busy.load(Ordering::SeqCst) {
-        tracing::info!("[Handoff] Leader 忙碌，done/blocked 事件留队列（轮次边界自然消化）");
+        defer_if_execution_busy(
+            state.inner(),
+            &message,
+            "Leader 忙碌（Running/Finalizing），done/blocked 唤醒推迟",
+        );
         return false;
     }
     let app2 = app.clone();
@@ -1288,7 +1315,7 @@ pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> 
         match submit_user_message(
             app2.clone(),
             st.inner(),
-            message,
+            message.clone(),
             None,                        // images
             None,                        // history
             None,                        // relation
@@ -1304,17 +1331,119 @@ pub(crate) fn try_spawn_leader_round(app: tauri::AppHandle, message: String) -> 
                 tracing::info!("[Handoff] done/blocked 自动唤醒已受理")
             }
             // 收尾期拒收（ExecutionStage::Finalizing）：唤醒消息未被受理，
-            // 与「忙碌」同语义——门铃事件仍留在 pending 队列，留待后续轮次边界注入。
-            Ok(_) => tracing::warn!(
-                "[Handoff] 自动唤醒被收尾期拒绝（事件留队列，轮次边界消化）: rejected={:?}",
-                crate::state::REJECT_FINALIZING
+            // 与「忙碌」同语义——门铃事件仍留在 pending 队列，推迟到轮次结束点重放。
+            Ok(_) => defer_if_execution_busy(
+                st.inner(),
+                &message,
+                "自动唤醒被收尾期拒绝（rejected=finalizing），唤醒推迟",
             ),
             Err(e) => {
-                tracing::warn!("[Handoff] 自动唤醒未受理（事件留队列，轮次边界消化）: {e}")
+                defer_if_execution_busy(st.inner(), &message, &format!("自动唤醒未受理（{e}）"))
             }
         }
     });
     true
+}
+
+// ── 门铃唤醒推迟队列（S2）────────────────────────────────────────────────────
+// 纯队列逻辑与 AppState 解耦（入参即队列），便于单测固化「重放一次且不重复」语义。
+
+/// 推迟一条唤醒（幂等：同内容已在队列则不重复入队）。返回 true = 本次新入队。
+pub(crate) fn defer_handoff_wake(queue: &std::sync::Mutex<Vec<String>>, message: &str) -> bool {
+    let Ok(mut q) = queue.lock() else {
+        tracing::warn!("[Handoff] 唤醒推迟队列中毒，本次不推迟（事件仍留在门铃队列）");
+        return false;
+    };
+    if q.iter().any(|m| m == message) {
+        return false;
+    }
+    q.push(message.to_string());
+    true
+}
+
+/// 取出全部待重放唤醒（`take` 语义：同一条消息只重放一次，天然幂等）。
+pub(crate) fn take_deferred_handoff_wakes(queue: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
+    queue
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
+}
+
+/// 只在「执行体仍被别人占用」时推迟唤醒，避免失败重放死循环：
+/// - 收尾期拒收 / busy 竞态抢占 → 执行态仍非 Idle → 推迟（对方的轮次结束点重放，正确语义）；
+/// - 真启动失败（模型未配置等）→ 本端已回到 Idle → **不推迟**（否则重放→失败→再推迟会
+///   变成持续开空轮次）。门铃事件仍留在待注入队列，由下一个轮次边界注入。
+fn defer_if_execution_busy(state: &AppState, message: &str, why: &str) {
+    if state.busy.load(Ordering::SeqCst) {
+        let queued = defer_handoff_wake(&state.deferred_handoff_wakes, message);
+        tracing::warn!(
+            "[Handoff] {}：轮次结束点将重放（入队={}，待重放 {} 条）",
+            why,
+            queued,
+            state
+                .deferred_handoff_wakes
+                .lock()
+                .map(|q| q.len())
+                .unwrap_or(0)
+        );
+    } else {
+        tracing::warn!(
+            "[Handoff] {}：后端已回到空闲，不推迟（门铃事件留待下一个轮次边界注入）",
+            why
+        );
+    }
+}
+
+/// 轮次结束点的唤醒重放（S2 的「重放钩子」）。
+///
+/// 调用时机：stage 已转 `Idle` 且资源门已释放之后（见 [`HandoffWakeReplay`] 的声明顺序）。
+/// 幂等保证：
+/// 1. 推迟队列 `take` 后即消费——同一条消息不会被重放两遍；
+/// 2. 重放前先看门铃**待注入终态事件**是否还在——已被上一轮的轮次边界注入消化则丢弃
+///    （否则会为一件已被 Leader 读过的事件再开一轮，即「重复启动轮次」）；
+/// 3. 真正受理仍由 `submit_user_message` 的 `busy.swap(true)` 原子判定——重放与用户消息
+///    并发时只会有一方拿到执行体；
+/// 4. 重放自身再被拒（执行体又被人抢走）会重新入队，等下一个轮次结束点，不在此循环重试。
+pub(crate) fn replay_deferred_handoff_wakes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<AppState>();
+    let pending = take_deferred_handoff_wakes(&state.deferred_handoff_wakes);
+    if pending.is_empty() {
+        return;
+    }
+    if !nuphus::handoff::has_pending_terminal() {
+        tracing::info!(
+            "[Handoff] 轮次结束：丢弃 {} 条推迟唤醒——门铃事件已被上一轮轮次边界注入消化",
+            pending.len()
+        );
+        return;
+    }
+    // 一次唤醒即可：新轮次的迭代边界会 drain **全部**待注入事件，故把推迟的唤醒合并为
+    // 一条消息（含各自的完工审计说明），只开一轮。
+    let message = pending.join("\n");
+    tracing::info!(
+        "[Handoff] 轮次结束：重放推迟的完工唤醒（{} 条合并），补开一轮处理门铃事件",
+        pending.len()
+    );
+    try_spawn_leader_round(app.clone(), message);
+}
+
+/// 轮次结束后的唤醒重放守卫：**声明早于资源门租约**，使 drop 顺序为
+/// 「TaskBusyGuard → Idle」→「资源门释放」→「重放唤醒」。重放会新开一轮，
+/// 必须等 stage 与资源门都放开，否则新轮次会被本轮的残留占用拒绝（假重放）。
+pub(crate) struct HandoffWakeReplay<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
+}
+
+impl<R: tauri::Runtime> HandoffWakeReplay<R> {
+    pub(crate) fn new(app: tauri::AppHandle<R>) -> Self {
+        Self { app }
+    }
+}
+
+impl<R: tauri::Runtime> Drop for HandoffWakeReplay<R> {
+    fn drop(&mut self) {
+        replay_deferred_handoff_wakes(&self.app);
+    }
 }
 
 // ============================================================================
@@ -1410,6 +1539,32 @@ mod tests {
     // ── dedup 防线纯函数回归 ──
     // 历史事故：追加指令重复注入（busy 路径）与刷新重试重复提交（非 busy 路径）。
     // 这两个判定已抽为纯函数，以下测试固化边界语义。
+
+    #[test]
+    fn deferred_handoff_wake_replayed_once_after_round_end() {
+        let queue: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        let wake = "外部任务 t1 已完成，summary: 改完，验收产物 report_path: /tmp/r.md";
+
+        // ① 收尾期（Finalizing）到达：执行体仍被占用 → 推迟入队；
+        //    同一事件重复投递不重复入队（幂等）。
+        assert!(defer_handoff_wake(&queue, wake));
+        assert!(!defer_handoff_wake(&queue, wake), "同一条唤醒只入队一次");
+        // ② 轮次结束点重放：take 即消费，同一条不会被重放两遍（不重复启动轮次）。
+        assert_eq!(take_deferred_handoff_wakes(&queue), vec![wake.to_string()]);
+        assert!(
+            take_deferred_handoff_wakes(&queue).is_empty(),
+            "已重放的唤醒不得残留（否则转 Idle 后会被再次重放）"
+        );
+
+        // ③ 多条不同唤醒合并为一次重放：新轮次的迭代边界会 drain 全部门铃事件，
+        //    故只补开一轮（避免为同一批事件反复开轮次）。
+        assert!(defer_handoff_wake(&queue, "唤醒A"));
+        assert!(defer_handoff_wake(&queue, "唤醒B"));
+        let pending = take_deferred_handoff_wakes(&queue);
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.join("\n"), "唤醒A\n唤醒B");
+        assert!(take_deferred_handoff_wakes(&queue).is_empty());
+    }
 
     #[test]
     fn completion_duplicate_blocks_same_message_and_send_id_within_10s() {

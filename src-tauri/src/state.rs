@@ -118,6 +118,12 @@ pub struct AppState {
     /// 全进程唯一的会话级信号状态（pause/security/workflow）——core 库无全局 static，
     /// 由本实例持有并注入 ToolRegistry / WorkflowEngine / 各命令处理函数
     pub signals: nuphus::state::SharedSignals,
+    /// 全进程唯一的**资源互斥门**（桌面自动化 / 浏览器控制 / 录制 / 主执行体）。
+    ///
+    /// 与 `signals` 同一约定：唯一实例由本结构持有、显式注入各入口，core 库内不设
+    /// 全局 static。语义见 [`nuphus::automation_gate`]：单槽互斥、非阻塞拒绝、
+    /// RAII 释放、同 owner 可重入；**不拦截「追加消息（终止/停止）」通道**。
+    pub automation_gate: Arc<nuphus::automation_gate::AutomationGate>,
     /// Speech-to-text subsystem (lazy: recognizer loads on first stt_start)
     pub speech: crate::speech::SpeechState,
     /// Mobile server WS broadcaster — Some(tx) when mobile_server running, None when stopped.
@@ -143,6 +149,12 @@ pub struct AppState {
     pub plugin_workflow_inflight: Mutex<std::collections::HashSet<String>>,
     /// Session Shelf —— 浅层会话展示台（内存 LRU ≤10 + 磁盘镜像），见 process/shelf.rs
     pub shelf: Mutex<crate::commands::process::shelf::ShelfState>,
+    /// 门铃完工唤醒的**推迟队列**（S2）：门铃 done/blocked 到达时若执行体仍被占用
+    /// （Running/Finalizing），唤醒无法受理；而 Finalizing 期主循环已退出、轮次边界不会再
+    /// drain 门铃事件，外部 Agent 完工后 Leader 要等用户下次发消息才被顺带唤醒。
+    /// 被推迟的消息在此排队，由轮次结束点（stage 已转 Idle、资源门已释放）重放一次。
+    /// 见 `commands::process::try_spawn_leader_round` / `replay_deferred_handoff_wakes`。
+    pub deferred_handoff_wakes: Mutex<Vec<String>>,
 }
 
 /// 主题快照：base 为主题标识（dark/light），overrides 为 documentElement 内联覆盖
@@ -289,6 +301,7 @@ impl Default for AppState {
             refine_active: Arc::new(AtomicBool::new(false)),
             workflow_engine: Arc::new(tokio::sync::RwLock::new(workflow_engine)),
             signals,
+            automation_gate: Arc::new(nuphus::automation_gate::AutomationGate::new()),
             speech: crate::speech::SpeechState::default(),
             mobile_ws_tx: Arc::new(std::sync::Mutex::new(None)),
             mobile_server_shutdown: std::sync::Mutex::new(None),
@@ -300,6 +313,7 @@ impl Default for AppState {
             plugin_chat_inflight: Mutex::new(std::collections::HashSet::new()),
             plugin_workflow_inflight: Mutex::new(std::collections::HashSet::new()),
             shelf: Mutex::new(crate::commands::process::shelf::ShelfState::default()),
+            deferred_handoff_wakes: Mutex::new(Vec::new()),
         }
     }
 }

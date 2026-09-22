@@ -14,9 +14,12 @@
 //   rec_browser_capture_cancel       清空捕获结果（保留注入与监听，幂等）
 //
 // 设计约束：
-//   - 复用 rec.rs 录制会话：start 要求会话 active（busy/workflow-active 已被
-//     rec_set_workflow 闸门拒绝 → 用户操作浏览器期间无 agent 并行，无需
-//     automation_lock）；cancel 不依赖会话态（幂等清理）。
+//   - 复用 rec.rs 录制会话：start 要求会话 active。
+//   - **资源互斥**（2026-09 加固）：录制会话在 `rec_set_workflow` 时已通过资源门
+//     （`resource_gate::acquire_recording_session`）独占系统资源，因此「用户操作浏览器
+//     期间无 agent 并行」不再依赖「建立时 busy/workflow-active 恰好为空」这一时序假设，
+//     而是由资源锁**结构性保证**。本模块三个命令作为会话的子操作以同一 owner 键重入
+//     （`acquire_recording_sub_op`），不占新槽位、也不会与自身会话冲突。
 //   - 浏览器 client 复用进程级 shared 单例（nuphus::browser::shared_client /
 //     get_or_launch）——与 browser_tools / web CDP 渲染同一实例同一 profile。
 //   - 捕获脚本自包含，只依赖页面 DOM API，不引用任何 Nuphus 内部变量。
@@ -239,11 +242,21 @@ fn parse_eval_json(value: Value) -> Result<Value, String> {
 ///   - 尚未打开任何页面 / 当前页是 about:blank（提示先「打开网址」）
 ///   - 特殊页面（chrome://、扩展页、PDF 等）无法注入
 #[tauri::command]
-pub async fn rec_browser_capture_click_start() -> Result<Value, String> {
+pub async fn rec_browser_capture_click_start(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<Value, String> {
     crate::commands::rec::rec_session_ensure_active()?;
 
-    // 1) 浏览器就绪：进程级单例 + headed 可见窗口。录制会话建立时全局闸门已
-    //    拒绝 busy/workflow-active → 此处持锁期间无 agent 并行操作浏览器。
+    // 0) 资源门（录制会话子操作，同 owner 重入）：会话已独占资源，这里只做一致性守卫 ——
+    //    若资源被别的执行体占用（会话已被结束而资源未释放的异常态），此处会拿到明确拒绝。
+    let _lease = crate::resource_gate::acquire_recording_sub_op(
+        &state.automation_gate,
+        nuphus::automation_gate::ResourceClass::Browser,
+        "rec_browser_capture_click_start",
+    )?;
+
+    // 1) 浏览器就绪：进程级单例 + headed 可见窗口。资源独占由上面的会话租约保证
+    //    （不再依赖「录制会话建立那一刻恰好空闲」的时序假设）。
     let guard = nuphus::browser::get_or_launch(false).await.map_err(|e| {
         format!("浏览器启动失败: {e}（请确认已安装 Google Chrome / Microsoft Edge）")
     })?;
@@ -310,7 +323,15 @@ pub async fn rec_browser_capture_click_start() -> Result<Value, String> {
 ///     （前端可自动再次调 start 幂等重注入后继续提示用户点击）
 /// 错误（Err 中文）：浏览器未启动（请先 start）/ 页面已关闭 / CDP 连接异常。
 #[tauri::command]
-pub async fn rec_browser_capture_click_poll() -> Result<Value, String> {
+pub async fn rec_browser_capture_click_poll(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<Value, String> {
+    // 资源门：录制会话子操作（同 owner 重入）；资源被别的执行体占用时明确拒绝
+    let _lease = crate::resource_gate::acquire_recording_sub_op(
+        &state.automation_gate,
+        nuphus::automation_gate::ResourceClass::Browser,
+        "rec_browser_capture_click_poll",
+    )?;
     let shared = nuphus::browser::shared_client();
     let guard = shared.lock().await;
     let client = guard.as_ref().ok_or_else(|| {
@@ -326,9 +347,27 @@ pub async fn rec_browser_capture_click_poll() -> Result<Value, String> {
 
 /// 取消/清理当前点击捕获：清空 `window.__nuphus_rec_capture`（幂等），保留注入
 /// 与监听——cancel 后再次 start 直接复用（already），无需重新注入。
-/// 录制会话非 active 也返回 Ok（幂等清理）；浏览器不可用仅告警不报错。
+///
+/// 幂等语义（含资源门）：录制会话非 active、或资源被**别的执行体**占用时，
+/// 本命令无从清理也无必要清理（会话内的捕获态只对录制的下一个 start 有意义），
+/// 记一条 warn 后返回 Ok —— 与「cancel 不依赖会话态」的既有契约一致，且不静默假装成功。
 #[tauri::command]
-pub async fn rec_browser_capture_cancel() -> Result<(), String> {
+pub async fn rec_browser_capture_cancel(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<(), String> {
+    let _lease = match crate::resource_gate::acquire_recording_sub_op(
+        &state.automation_gate,
+        nuphus::automation_gate::ResourceClass::Browser,
+        "rec_browser_capture_cancel",
+    ) {
+        Ok(lease) => lease,
+        Err(e) => {
+            tracing::warn!(
+                "[rec_browser] capture cancel 跳过（资源被占用，无可清理的会话态）: {e}"
+            );
+            return Ok(());
+        }
+    };
     let shared = nuphus::browser::shared_client();
     let guard = shared.lock().await;
     if let Some(client) = guard.as_ref() {

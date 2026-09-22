@@ -22,6 +22,17 @@ pub async fn set_mode_impl<R: tauri::Runtime>(
     state: State<'_, AppState>,
     mode: String,
 ) -> Result<(), String> {
+    // ── 执行态判定（复用唯一权威执行态，不新增状态源）──
+    // 执行中（Running/Finalizing）不得改 mode：主指令受理时已按「发送时刻 mode」建立/
+    // 绑定当前 session（process.rs 规则2），执行中改写会让
+    //  ① append 分支的 mode 兜底刷新（process.rs 规则3）把当前轮次的路由改掉；
+    //  ② chat_history 按 current_mode 选 agent 会话 → 读到另一条会话的历史。
+    // 桌面端 mode chip / 手机端模式列表都在执行期锁定（同一 stage 投影），此处为后端兜底
+    // （手机 /switch-mode 与 UI 竞态窗口一并拒掉）。执行结束后（Idle）即可切换。
+    if state.busy.stage().is_busy() {
+        tracing::warn!("[MODE] 执行期拒绝切换模式: {}（stage 占用中）", mode);
+        return Err("任务执行中，暂不可切换模式（执行结束后可切换）".to_string());
+    }
     let parsed = nuphus::runtime::Mode::from_str(&mode).unwrap_or_else(|_| {
         tracing::warn!("[MODE] Unknown mode '{}', falling back to leader", mode);
         nuphus::runtime::Mode::default()
@@ -92,4 +103,51 @@ pub fn get_current_mode(state: State<'_, AppState>) -> Result<String, String> {
         .read()
         .map(|g| g.clone())
         .unwrap_or_else(|_| "leader".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nuphus::state::ExecutionStage;
+    use tauri::Manager;
+
+    /// 执行期（Running/Finalizing）改 mode 必须被拒；回到 Idle 才能切。
+    /// 判据是唯一权威执行态 `execution_stage`，不是另设标记。
+    #[test]
+    fn set_mode_rejected_while_executing() {
+        tokio_test::block_on(async {
+            let app = tauri::test::mock_app();
+            let handle = app.handle().clone();
+            handle.manage(AppState::default());
+            let state = handle.state::<AppState>();
+
+            for stage in [ExecutionStage::Running, ExecutionStage::Finalizing] {
+                state.busy.set_stage(stage);
+                let err = set_mode_impl(
+                    handle.clone(),
+                    handle.state::<AppState>(),
+                    "workflow".into(),
+                )
+                .await
+                .expect_err("执行中改 mode 必须被拒");
+                assert!(
+                    err.contains("执行中"),
+                    "拒绝原因需可读且说明是执行态拦截，实际: {err}"
+                );
+                // 被拒路径不得改写权威 mode（否则 chat_history 选路与 append 兜底都会错位）
+                assert_eq!(*state.current_mode.read().unwrap(), "leader");
+            }
+
+            // 收尾结束 → Idle：切换恢复可用，并写入权威 current_mode
+            state.busy.set_stage(ExecutionStage::Idle);
+            set_mode_impl(
+                handle.clone(),
+                handle.state::<AppState>(),
+                "workflow".into(),
+            )
+            .await
+            .expect("空闲时切换必须成功");
+            assert_eq!(*state.current_mode.read().unwrap(), "workflow");
+        });
+    }
 }

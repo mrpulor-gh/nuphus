@@ -1540,6 +1540,12 @@ pub fn has_resume_candidate() -> bool {
 pub fn resume_latest_session(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::state::HistoryMessage>, String> {
+    // ── 执行中禁止恢复（B8）──
+    // 本命令改写 `session_backup` + `current_mode`，而该快照是执行期的不变量：
+    // process.rs 规则3（追加时按 session 绑定 mode 兜底对齐）与 session.rs 的历史回退
+    // 都读它——执行中覆盖会让「执行前快照」指向另一条会话（mode 对齐错位 / 历史回退错页）。
+    // 与 switch_session / new_chat 同款守卫（busy / append_pending），不新增状态源。
+    guard_switch(&state).map_err(|c| c.to_string())?;
     let Some((mode, sess)) = load_latest_mirror() else {
         return Err("no_resume".to_string());
     };
@@ -3027,6 +3033,53 @@ mod tests {
         )
         .unwrap();
         let _ = nuphus::store::session::delete_session(&born.id);
+    }
+
+    /// B8：「继续对话」（resume_latest_session）在执行期必须被拒——它改写
+    /// session_backup + current_mode，而该快照是「执行前快照」不变量（append 的 mode
+    /// 对齐与历史回退都读它）。守卫必须在**任何改动之前**生效（快照/mode 原样保留）。
+    #[test]
+    fn resume_latest_session_rejected_while_executing() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        handle.manage(AppState::default());
+        let state = handle.state::<AppState>();
+
+        // 造一个「执行前快照」，验证拒绝路径不碰它
+        state.session.lock().unwrap().session_backup = Some("{\"preserve\":true}".to_string());
+        *state.current_mode.write().unwrap() = "leader".to_string();
+
+        state.busy.set_stage(nuphus::state::ExecutionStage::Running);
+        assert_eq!(
+            resume_latest_session(handle.state::<AppState>()).unwrap_err(),
+            "busy"
+        );
+        state
+            .busy
+            .set_stage(nuphus::state::ExecutionStage::Finalizing);
+        assert_eq!(
+            resume_latest_session(handle.state::<AppState>()).unwrap_err(),
+            "busy",
+            "收尾期同样占用执行体（busy = Running ∨ Finalizing）"
+        );
+
+        // 执行前快照与权威 mode 未被改写
+        assert_eq!(
+            state.session.lock().unwrap().session_backup.as_deref(),
+            Some("{\"preserve\":true}")
+        );
+        assert_eq!(*state.current_mode.read().unwrap(), "leader");
+
+        // 追加队列非空同样拒绝（与 switch_session / new_chat 同款守卫，同一判据）
+        state.busy.set_stage(nuphus::state::ExecutionStage::Idle);
+        nuphus::state::SignalState::write(&state.signals)
+            .append_queue
+            .push("追加指令".to_string());
+        assert_eq!(
+            resume_latest_session(handle.state::<AppState>()).unwrap_err(),
+            "append_pending"
+        );
     }
 
     /// 冷启动：草稿只活在 AppState 内存里——「新进程」（新 AppState）读不到它，

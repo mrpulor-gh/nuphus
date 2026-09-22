@@ -1223,6 +1223,16 @@ async fn plugin_agent_chat_inner(
         .await
         .map_err(|e| format!("插件并发闸异常: {e}"))?;
 
+    // ── 资源门：插件独立运行时也是主执行体 ──
+    // 本路径刻意不占 state.busy（插件失控不阻塞主会话），因此它有独立的工具集
+    // （leader_with_desktop，含 desktop_*/browser_*）却能并行于主轮次 —— 这正是
+    // 双跑导致浏览器单例死锁 / panic 的真实链路。拿不到资源锁即明确拒绝。
+    // 放在并发闸之后：排队等待期间不占用全局资源槽。
+    let _chat_gate_lease = crate::resource_gate::acquire_execution_body(
+        &state.automation_gate,
+        &format!("plugin-chat:{id}"),
+    )?;
+
     // ClientFactory 同法构建（与主路径 Priority 1 一致：完整 ModelRegistry 只读）
     let factory = nuphus::config::load_registry()
         .map(nuphus::llm::ClientFactory::new)
@@ -1378,6 +1388,13 @@ async fn plugin_workflow_run_inner(
         .acquire()
         .await
         .map_err(|e| format!("插件并发闸异常: {e}"))?;
+
+    // ── 资源门：插件触发的工作流 = 主执行体（非轮次内），执行期间整段持锁 ──
+    // 与 Agent 轮次 / 录制会话 / 其它执行体互斥；拿不到即明确拒绝（automation_busy）。
+    let _workflow_gate_lease = crate::resource_gate::acquire_execution_body(
+        &state.automation_gate,
+        &format!("plugin-workflow:{plugin_id}"),
+    )?;
 
     let engine = state.workflow_engine.clone();
     // 热刷新 + 存在性校验 + 注入（写锁区间收窄到这段；执行走读锁，允许并发 pause/cancel）

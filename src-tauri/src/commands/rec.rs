@@ -39,6 +39,15 @@ struct RecSession {
     workflow_dir: PathBuf,
     screenshots_dir: PathBuf,
     started_at_ms: u64,
+    /// 资源门租约：会话存活期间一直占用系统资源（桌面 hook 捕获 + 浏览器单例）。
+    ///
+    /// 放在会话结构里而非独立静态量：`rec_abort` / `rec_complete` / `rec_save_pending`
+    /// 用 `*guard = None` 结束会话时，租约随会话一起 drop —— 释放时机与状态机同源，
+    /// 不可能出现「会话已 idle 但资源仍被占」或反之。会话内的子操作（`rec_browser_*`）
+    /// 用同一 owner 键重入（见 resource_gate::acquire_recording_sub_op）。
+    /// 字段本身只作 RAII 持有（不读值），故显式 allow。
+    #[allow(dead_code)]
+    lease: nuphus::automation_gate::AutomationLease,
 }
 
 /// 会话状态：None = idle；Some = active
@@ -177,6 +186,12 @@ pub async fn rec_set_workflow(
 
     validate_workflow_id(&workflow_id)?;
 
+    // ── 资源门：录制会话独占系统资源（低层 hook + 浏览器单例）──
+    // 会话期间一直持有，直到 rec_abort/rec_complete/rec_save_pending 结束会话（随
+    // RecSession drop 释放）。反向同样成立：会话持有期间 Agent 轮次 / 手动工具被拒 ——
+    // 低层 hook 会把 agent 的合成输入一并录成「用户步骤」，且浏览器单例会被并发访问。
+    let lease = crate::resource_gate::acquire_recording_session(&state.automation_gate)?;
+
     let workflow_dir = workflows_root().join(&workflow_id);
     let screenshots_dir = workflow_dir.join("screenshots");
     std::fs::create_dir_all(&screenshots_dir).map_err(|e| format!("创建录制截图目录失败: {e}"))?;
@@ -186,6 +201,7 @@ pub async fn rec_set_workflow(
         workflow_dir,
         screenshots_dir,
         started_at_ms: now_ms(),
+        lease,
     };
     {
         // 锁必须在块作用域内释放——snapshot() 会再次 lock 同一 Mutex，

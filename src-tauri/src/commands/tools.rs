@@ -38,6 +38,30 @@ pub async fn execute_tool(
     tool_name: String,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    // ── 资源门：手动工具单次调用 ──
+    // 工具页（截图 / 选区 / 找图找色等）绕过 agent 轮次直连同一批进程级单例，
+    // 必须与执行体互斥：Agent 执行中（Running/Finalizing）或录制中一律**明确拒绝**
+    // （稳定码 automation_busy），绝不排队/重试——否则与 agent 并行操作浏览器单例
+    // 会永久死锁、桌面输入会互相污染。
+    // 注：非自动化工具（文件/记忆/网络等）不占系统资源，`should_acquire` 为 false。
+    let _manual_lease = if crate::resource_gate::tool_touches_automation(&tool_name) {
+        Some(
+            state
+                .automation_gate
+                .try_acquire(
+                    crate::resource_gate::class_of_tool(&tool_name),
+                    nuphus::automation_gate::HoldKind::ManualTool,
+                    nuphus::automation_gate::OWNER_MANUAL_TOOL,
+                )
+                .map_err(|busy| {
+                    tracing::warn!("[resource-gate] 拒绝手动工具 {tool_name}: {busy}");
+                    busy.to_string()
+                })?,
+        )
+    } else {
+        None
+    };
+
     let perms = state
         .runtime
         .lock()

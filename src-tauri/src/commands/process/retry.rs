@@ -34,7 +34,19 @@ pub async fn retry_agent(
             .ok_or_else(|| "没有可重试的会话".to_string())?
     };
 
-    // 2. 防止并发执行
+    // 2. 防止并发执行 + 资源门（重试 = 又一个主执行体，整轮持锁）
+    //    门在前：资源被录制/定时任务/插件运行时占用时明确拒绝，不做假轮次。
+    let gate_lease =
+        match crate::resource_gate::acquire_execution_body(&state.automation_gate, "retry_agent") {
+            Ok(lease) => lease,
+            Err(e) => {
+                // 重试数据必须回填，否则用户这次重试机会被门吃掉
+                if let Ok(mut pending) = state.execution.lock() {
+                    pending.pending_retry = Some((session_json, config, message));
+                }
+                return Err(e);
+            }
+        };
     if state.busy.swap(true, Ordering::SeqCst) {
         if let Ok(mut pending) = state.execution.lock() {
             pending.pending_retry = Some((session_json, config, message));
@@ -49,6 +61,11 @@ pub async fn retry_agent(
             self.0.set_stage(nuphus::state::ExecutionStage::Idle);
         }
     }
+    // 释放顺序：先 Idle（_guard 后声明 → 先 drop），再放资源锁。
+    // 门铃唤醒重放（S2）声明最早 → 最后一个 drop：补开新轮次前必须
+    // 「stage 已 Idle + 资源门已释放」，否则新轮次会被本轮的残留占用拒绝（假重放）。
+    let _wake_replay = super::HandoffWakeReplay::new(app.clone());
+    let _gate_lease = gate_lease;
     let _guard = BusyGuard(&state.busy);
 
     let cancel_flag = state.cancel_flag.clone();

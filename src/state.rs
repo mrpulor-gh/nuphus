@@ -184,6 +184,29 @@ impl SignalState {
     pub fn set_execution_stage(signals: &SharedSignals, stage: ExecutionStage) -> ExecutionStage {
         std::mem::replace(&mut Self::write(signals).execution_stage, stage)
     }
+
+    /// 轮询等待执行体**真正退出**（阶段回到 `Idle`）。
+    ///
+    /// 返回 `true` = 旧执行体已退出；`false` = 超时仍占用。
+    /// 供 `force_reset` 的「真终止」语义使用：**只观察、不改阶段** ——
+    /// 超时不得把阶段写成 `Idle`（那正是「Idle 但旧任务仍在跑」的假解锁，
+    /// 会让用户开出与旧执行体并存的新轮次 → 双跑 → panic）。
+    pub async fn wait_until_idle(
+        signals: &SharedSignals,
+        timeout: std::time::Duration,
+        poll_interval: std::time::Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if !Self::execution_stage(signals).is_busy() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -251,5 +274,76 @@ mod tests {
         assert_eq!(ExecutionStage::Idle.as_str(), "idle");
         assert_eq!(ExecutionStage::Running.as_str(), "running");
         assert_eq!(ExecutionStage::Finalizing.as_str(), "finalizing");
+    }
+
+    /// `wait_until_idle`：旧执行体退出（阶段回 Idle）后才返回 true。
+    ///
+    /// 这条是 `force_reset` 真终止语义的地基：置 Idle 前必须等到旧执行体退出，
+    /// 否则用户能立刻开出与旧轮次并存的新轮次（双跑 → panic）。
+    #[tokio::test]
+    async fn wait_until_idle_waits_for_body_exit() {
+        let signals = new_shared_signals();
+        SignalState::set_execution_stage(&signals, ExecutionStage::Running);
+        let body_signals = signals.clone();
+        let body = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            SignalState::set_execution_stage(&body_signals, ExecutionStage::Idle);
+        });
+
+        let started = Instant::now();
+        let exited = SignalState::wait_until_idle(
+            &signals,
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+        let waited = started.elapsed();
+        body.await.expect("body joins");
+        assert!(exited, "旧执行体退出后应返回 true");
+        assert!(
+            waited >= std::time::Duration::from_millis(80),
+            "必须真的等到旧执行体退出（wait = {waited:?}）"
+        );
+        assert_eq!(SignalState::execution_stage(&signals), ExecutionStage::Idle);
+    }
+
+    /// 超时路径：返回 false 且**不改阶段** —— 绝不做假解锁。
+    #[tokio::test]
+    async fn wait_until_idle_times_out_without_fake_unlock() {
+        let signals = new_shared_signals();
+        SignalState::set_execution_stage(&signals, ExecutionStage::Finalizing);
+        let started = Instant::now();
+        let exited = SignalState::wait_until_idle(
+            &signals,
+            std::time::Duration::from_millis(60),
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+        assert!(!exited, "旧执行体未退出 → 必须返回 false");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(60));
+        assert_eq!(
+            SignalState::execution_stage(&signals),
+            ExecutionStage::Finalizing,
+            "超时不得写阶段：Idle 但旧任务仍在跑 = 双跑入口"
+        );
+    }
+
+    /// 空闲时立即返回（force_reset 在空闲态不做无谓等待）。
+    #[tokio::test]
+    async fn wait_until_idle_returns_immediately_when_idle() {
+        let signals = new_shared_signals();
+        let started = Instant::now();
+        assert!(
+            SignalState::wait_until_idle(
+                &signals,
+                std::time::Duration::from_secs(1),
+                std::time::Duration::from_millis(10),
+            )
+            .await
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(50),
+            "空闲应零等待"
+        );
     }
 }
