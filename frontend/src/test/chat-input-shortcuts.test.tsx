@@ -61,7 +61,7 @@ function renderPanel() {
     <ThemeProvider>
       <ChatPanel
         messages={[]}
-        isProcessing={false}
+        executionStage="idle"
         onSend={onSend}
         startupStats={{ tools: 0, memories: 0 }}
         pendingRefine={null}

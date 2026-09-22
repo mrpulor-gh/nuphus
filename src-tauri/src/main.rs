@@ -17,6 +17,7 @@ mod plugin_apps;
 mod preview_protocol;
 mod relay_client;
 mod render;
+mod resource_gate;
 mod shortcut;
 mod speech;
 mod splash;
@@ -220,6 +221,7 @@ fn main() {
             commands::set_mode,
             commands::get_current_mode,
             commands::is_busy,
+            commands::get_execution_state,
             commands::get_append_queue,
             commands::remove_append_queue_item,
             commands::list_custom_agents,
@@ -670,6 +672,25 @@ fn main() {
                     Box::pin(async move {
                         let state = app_handle.state::<crate::state::AppState>();
                         let tools = state.tools.clone();
+
+                        // ── 资源门：定时触发的 workflow 同样是执行体 ──
+                        // 与 Agent 轮次 / 录制会话 / 手动工具互斥（同一把资源锁，非新的状态源）。
+                        // 拿不到即**明确跳过本次**（不排队、不等下一 tick 的隐式重试），记 warn。
+                        // 注：cron 注册时已拒绝含 desktop_/browser_ 步骤的工作流
+                        // （has_frontend_step），此处互斥的是「执行体并行」本身。
+                        let _gate_lease = match crate::resource_gate::acquire_execution_body(
+                            &state.automation_gate,
+                            &format!("schedule_run:{workflow_id}"),
+                        ) {
+                            Ok(lease) => lease,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[Scheduler] 本次定时执行跳过（资源被占用）workflow={} : {e}",
+                                    workflow_id
+                                );
+                                return;
+                            }
+                        };
 
                         let tool_exec = move |tool: String, params: serde_json::Value| {
                             let tools = tools.clone();

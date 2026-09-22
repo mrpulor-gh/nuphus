@@ -1,0 +1,132 @@
+/* ══════════════════════════════════════════════════════════════
+   app-pill.css — 轻反馈胶囊的**共享视觉层**（应用内提示的唯一形态来源）
+
+   谁在用（两处消费方，改规格必须同时覆盖）：
+     ① island（ui/AppIsland.tsx）—— 落在聊天区 header / 全屏宿主标题栏的锚点内
+     ② 模型页页内反馈（ModelsPage 的 .feedback-toast）—— 固定在宿主之上（top 16px / z 10000）
+   只共享**形态与语义**，不共享容器：定位与层叠各归其宿主（岛随落点锚点走，
+   页内反馈留在自己的宿主里，见各自 CSS 的落点/定位说明）。
+
+   规格（一处定义，两处生效）：
+   - 形态：实色胶囊 --surface-1 + 1px --line-2 + 既有投影 token；999px 圆角；
+           高 34px（--app-pill-h）；13px 界面字体；不做整块绿/黄/红彩色底
+   - 语义：只靠 14px 图标着色 + 2px 指示点表达（--app-pill-tone）
+   - 动效：进场位移+缩放+淡入（0.2s = --dur-med + --ease-out）；
+           活跃态呼吸与退场是 island 的生命周期，留在 app-island.css；
+           prefers-reduced-motion 下进场也关闭
+   颜色一律取 tokens.css 语义层，本文件不出现硬编码色值。
+   ══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* 胶囊高度：胶囊自身与 island 的回落定位（.app-island 的 top 计算）共用同一值，
+     两处写死会在改高度时错位（回落态会偏离顶栏中线） */
+  --app-pill-h: 34px;
+}
+
+/* ── 胶囊本体 ── */
+.app-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--app-pill-h);
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-1); /* 实色底：不做无脑毛玻璃 */
+  box-shadow: var(--shadow-elevated);
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: var(--fz-md);
+  line-height: var(--leading-tight);
+  text-align: left;
+  animation: appPillIn var(--dur-med) var(--ease-out) both;
+}
+
+/* ── 长文案变体 ──
+   短文案仍是 34px 单行（与 island 逐项一致）；文案超宽时按同一宽度上限换行增高。
+   用于承载错误详情的页内反馈：截断会丢掉后端给的原因，那是用户唯一的排查线索。 */
+.app-pill--multiline {
+  height: auto;
+  min-height: var(--app-pill-h);
+  padding: var(--space-2) var(--space-4);
+  max-width: min(62vw, 420px);
+}
+.app-pill--multiline .app-pill-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* ── 语义：只染图标与指示点 ── */
+.app-pill--info {
+  --app-pill-tone: var(--info);
+}
+.app-pill--success {
+  --app-pill-tone: var(--success);
+}
+.app-pill--warning {
+  --app-pill-tone: var(--warning);
+}
+.app-pill--error {
+  --app-pill-tone: var(--error);
+}
+
+/* ── 部件（图标经 ui/Icons.tsx 出口，尺寸由组件传入）── */
+.app-pill-icon {
+  flex: none;
+  color: var(--app-pill-tone);
+}
+.app-pill-dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: var(--app-pill-tone);
+}
+.app-pill-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 进场动效（两处消费方共用）── */
+@keyframes appPillIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-pill {
+    animation: none;
+  }
+}
+
+/* ── 落点锚点几何（island 的挂载点）──────────────────────────────
+   使用方：聊天区 .chat-header、设置中心 .settings-center-bar、模型页 .models-page-bar
+   —— 三者都是「标题栏」：父容器设 position: relative，锚点铺满其 padding box，
+   flex 居中且**不参与**父容器的 space-between / flex 排布（否则会被左右两组的宽度推偏）。
+
+   安全区 40px（左右对称）的依据：三处标题栏的横向中心都等于容器中心，胶囊自身
+   max-width ≤ min(62vw, 420px)；窗口最小宽 900（tauri.conf.json minWidth），
+   最窄的宿主是设置中心面板（窗口 − 2×32 = 836），此时胶囊半宽 ≤ 210，
+   距面板中心的左右各 > 200px，而标题文字止于 ~100px、关闭按钮起于 ~786px
+   —— 40px 的安全区足够，且左右对称，不改变居中位置。
+   父容器 pointer-events: none，胶囊自身 pointer-events: auto（app-island.css）：
+   锚点区域仍是宿主标题栏的拖动/点击区，只有胶囊本体可交互。 */
+.island-slot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  pointer-events: none;
+}

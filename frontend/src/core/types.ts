@@ -43,6 +43,23 @@ export interface InlineChatAgentEntry {
 export interface SendOutcome {
   ok: boolean
   message?: string
+  /**
+   * 后端拒收原因（稳定标识，目前仅 `'finalizing'`）：主循环已退出、后端正在收尾，
+   * 追加没有消费方 → 后端**未受理**这条消息（未入队、未记去重基准）。
+   *
+   * 调用方必须把用户输入**原样退回输入框**并提示稍后重发：
+   * 不得静默丢弃，也不得在聊天区留下不会被执行的气泡。
+   */
+  rejected?: string
+  /**
+   * 被受理为**追加指令**（执行中发送，与「新回合」区分）：消息已入后端队列，
+   * 由当前执行体的迭代边界注入，**不会立即开启新一轮**（工作流类指令是否启动取决于
+   * Agent 是否调用对应工具）。
+   *
+   * 非输入框入口（如「运行工作流」）据此给出「已作为追加指令插入当前任务」的提示，
+   * 否则用户会以为自己的工作流/任务已经启动（静默失效）。
+   */
+  appended?: boolean
 }
 
 export interface ChatReference {
@@ -460,6 +477,8 @@ export interface ProcessInputResponse {
   message: string
   /** 执行中发送被接受为追加指令（不开启新执行） */
   appended?: boolean
+  /** 收尾期拒收原因（"finalizing"）：消息未被受理，调用方须把原文退回输入框 */
+  rejected?: string
   /** 图片降级警告：主模型与 vision 模型都不支持视觉时返回，前端弹窗提示 */
   image_warning?: string
   /** 本次执行已执行工具步数（后端 output.steps.len()）。

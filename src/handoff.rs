@@ -208,6 +208,12 @@ impl HandoffState {
         out
     }
 
+    /// 是否仍有待注入的终态事件（done/blocked）——非消费窥视，见
+    /// [`crate::handoff::has_pending_terminal`]。
+    fn has_pending_terminal(&self) -> bool {
+        !self.terminal_events.is_empty()
+    }
+
     /// 窥视第一条匹配 id 前缀的事件（不消费 —— 事件仍留给轮次边界注入 Leader 上下文）。
     /// agent_dispatch 的「await 第一声拉铃」用：ready/progress/done/blocked 均算拉铃。
     fn peek_first_ringer(&self, prefix: &str) -> Option<HandoffEvent> {
@@ -286,6 +292,15 @@ pub fn doorbell_info() -> DoorbellInfo {
 /// 轮次边界被动 drain（react_loop 调用）。无事件时返回空 Vec，零日志零开销。
 pub fn drain_for_injection() -> Vec<HandoffEvent> {
     with_state(|s| s.drain_for_injection())
+}
+
+/// 是否仍有**待注入的终态事件**（done/blocked）——非消费窥视。
+///
+/// 轮次结束点的唤醒重放用（S2）：被推迟的唤醒若已被上一轮的轮次边界注入消化
+/// （`drain_for_injection` 取走终态事件），就不该再为它补开一轮
+/// （否则等于「同一件完工事件启动两个轮次」）。
+pub fn has_pending_terminal() -> bool {
+    with_state(|s| s.has_pending_terminal())
 }
 
 /// 等待外部 Agent 的第一声拉铃（id 前缀匹配；ready/progress/done/blocked 均算拉铃）。
@@ -431,6 +446,25 @@ mod tests {
         assert!(s.push_event("", "done", "x", None).is_err());
         assert!(s.push_event("  ", "done", "x", None).is_err());
         assert!(s.push_event("a", "done", "  ", None).is_err());
+    }
+
+    #[test]
+    fn test_pending_terminal_peek_tracks_done_only() {
+        let mut s = HandoffState::new();
+        assert!(!s.has_pending_terminal(), "空队列无待注入终态事件");
+        // progress/ready 不是终态：门铃唤醒只针对 done/blocked，窥视不应被它们点亮
+        ev(&mut s, "0812-01", "progress", "进行中");
+        ev(&mut s, "0812-02", "ready", "已就位");
+        assert!(!s.has_pending_terminal());
+        ev(&mut s, "0812-01", "done", "完成重构");
+        assert!(s.has_pending_terminal());
+        // 轮次边界注入消化（drain）后不再有待注入终态事件 ——
+        // 轮次结束点的唤醒重放据此丢弃「已被消化」的陈旧唤醒，不重复开轮
+        s.drain_for_injection();
+        assert!(!s.has_pending_terminal());
+        // blocked 同为终态，同样点亮
+        ev(&mut s, "0812-03", "blocked", "缺依赖");
+        assert!(s.has_pending_terminal());
     }
 
     #[test]

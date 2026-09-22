@@ -1,0 +1,123 @@
+/* ══════════════════════════════════════════════════════════════
+   app-island.css — island 落点与生命周期（胶囊形态来自共享层 app-pill.css）
+
+   落点：锚点内静态占位（聊天区 .chat-header / 全屏宿主标题栏的 .island-slot，
+         类 .app-island--anchored）；锚点不存在时回落窗口级顶部居中
+         （position: fixed + 顶栏垂直居中）——任何视图下提示都不会静默丢失
+         （落点解析见 ui/islandChannel.ts 的「落点锚点」）。
+   本文件只负责**岛独有**的部分：定位、指针契约、三态交互（hover / focus / active）、
+   生命周期动效（活跃态呼吸、退场）。形态/语义/进场在 app-pill.css（两处消费方共享）。
+   层级：高于内容区（≤70）与轻浮层（≤150），低于模态宿主
+         （命令面板 300 / 设置中心 2500 / 上下文菜单 3000）—— 不抢模态的视觉焦点。
+   颜色一律取 tokens.css 语义层，本文件不出现硬编码色值。
+   ══════════════════════════════════════════════════════════════ */
+
+.app-island {
+  /* 回落定位（锚点不存在时）：窗口级顶部居中，不参与布局流。
+     高度取共享层 --app-pill-h，避免与胶囊实际高度两处漂移 */
+  position: fixed;
+  top: calc((var(--titlebar-h) - var(--app-pill-h)) / 2);
+  left: 50%;
+  transform: translateX(-50%);
+  /* 层级：高于内容区（≤70）与轻浮层（.modal-overlay 100 / 审批 120 / CompactModal 150），
+     低于模态宿主（命令面板 300 / 设置中心 2500 / 上下文菜单 3000）。
+     ——为什么不是更低：ThemesPage 等业务在 CompactModal 内就在调 showToast，
+     低于 150 会让「保存主题」这类反馈掉到遮罩（55% 半透黑 + 4px 模糊）之下、直接看不见。
+     ——为什么不再更高：岛的条带（标题栏高度）与模态标题栏重叠，提到 2500 之上会压住
+     模态标题（与「不抢模态焦点」冲突）。全屏宿主（设置中心 / 模型页）的可见性由
+     **宿主内锚点**解决（见 ui/islandChannel.ts），不是靠抬 z-index。 */
+  z-index: 260;
+  display: flex;
+  justify-content: center;
+  width: max-content;
+  max-width: min(62vw, 420px);
+  /* 只有胶囊本身接收指针事件：锚点/留白区域仍可拖拽、点击（宿主标题栏的拖动区不受影响） */
+  pointer-events: none;
+}
+
+/* ── 锚点内（AppIsland 经 portal 挂到 .island-slot）──
+   取消窗口级 fixed / 平移：改为锚点内的静态占位（锚点 flex 居中，随容器宽度自适应）。
+   只改定位属性，形态与动效规格不动。
+   z-index 仍是 260 —— 聊天区锚点下该值在根 context 解析（.chat-header 不是 stacking
+   context，见 chat-messages.css），相对层级与改造前「窗口级 260」逐条一致；
+   宿主锚点下它随宿主层叠（宿主 2500）——**不需要也不允许**提高全局 z-index。 */
+.app-island--anchored {
+  position: static;
+  /* static 下 top/left 自然失效，但 transform 对静态元素仍生效 → 必须显式清掉 */
+  transform: none;
+}
+
+/* ── 岛独有：指针契约与三态交互 ──
+   形态/尺寸/配色全部由 .app-pill（共享层）提供，这里不重复任何视觉声明，
+   避免两处消费方的胶囊视觉漂移。 */
+.app-island-pill {
+  pointer-events: auto;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+/* ── 三态闭环：hover / focus-visible / active ── */
+.app-island-pill:hover {
+  background: var(--surface-2);
+  border-color: var(--line-3);
+}
+.app-island-pill:focus-visible {
+  /* 焦点环用 box-shadow（outline 会挤出布局） */
+  box-shadow: var(--shadow-elevated), var(--shadow-focus);
+  outline: none;
+}
+.app-island-pill:active {
+  background: var(--surface-active);
+}
+
+/* ── 岛独有：生命周期动效（进场的 appPillIn 在共享层）── */
+@keyframes appPillOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(1);
+  }
+}
+@keyframes appPillBreath {
+  0%,
+  100% {
+    opacity: 0.92;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.01);
+  }
+}
+
+/* 活跃态呼吸：同一元素上 opacity/transform 由动画列表中**靠后者**生效，
+   所以呼吸必须晚于进场启动（delay = 进场时长），否则进场位移会被呼吸吃掉 */
+.app-island-pill--active {
+  animation:
+    appPillIn var(--dur-med) var(--ease-out) both,
+    appPillBreath 3.2s ease-in-out var(--dur-med) infinite;
+}
+
+.app-island-pill--exit {
+  animation: appPillOut var(--dur-med) var(--ease-out) both;
+}
+
+/* ── 减少动态效果 ──
+   --still 是 JS 侧镜像（AppIsland 的 usePrefersReducedMotion）：对媒体查询
+   不生效的环境兜底，同时让「无位移 / 无呼吸」在 DOM 上可断言；
+   媒体查询是系统偏好本身（共享层已为 .app-pill 关闭进场）。两者策略一致：
+   只去掉位移与脉动，生命周期计时不变。选择器带 .app-island 前缀是为了压过
+   上面 --active / --exit 的动画声明（同层单类选择器会被它们按顺序覆盖）。 */
+.app-island--still .app-island-pill {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-island .app-island-pill {
+    animation: none;
+  }
+}

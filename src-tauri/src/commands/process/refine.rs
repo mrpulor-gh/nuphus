@@ -75,6 +75,19 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         return Err("提炼进行中，请等待当前提炼完成后再试。".to_string());
     }
 
+    // ── 资源门（提炼同样是主执行体：整轮持锁）──
+    // 拿不到（录制会话 / 定时任务 / 插件运行时占用系统资源）→ 明确拒绝并回滚
+    // refine_active（与下方 busy 抢占失败同一处置：不留下「提炼进行中」的假标记）。
+    // 释放顺序：_refine_guard 声明在后 → 先 drop（Idle），再放资源锁。
+    let _refine_gate_lease =
+        match crate::resource_gate::acquire_execution_body(&state.automation_gate, "refine") {
+            Ok(lease) => lease,
+            Err(e) => {
+                refine_active.store(false, Ordering::SeqCst);
+                return Err(e);
+            }
+        };
+
     let emitter = CompoundEmitter::new(app.clone(), &state);
     // ── busy 原子抢占 ── refine 期间 leader/workflow agent 被 take 移出 runtime，
     // 若不声明 busy：① guard_switch 放行 → can_switch=true，SessionRail 轮询看到
@@ -107,19 +120,19 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     }
     struct RefineGuard {
         flag: Arc<AtomicBool>,
-        busy: Arc<AtomicBool>,
+        stage: crate::state::ExecutionStageHandle,
     }
     impl Drop for RefineGuard {
         fn drop(&mut self) {
-            // 无条件释放：busy 由上方 CAS 独占获得，占用期间其它执行体进不来
-            // （submit_user_message / retry 同样以 swap 抢占），故不存在「误清他人 busy」。
+            // 无条件释放：执行态由上方 CAS 独占获得，占用期间其它执行体进不来
+            // （submit_user_message / retry 同样以 swap 抢占），故不存在「误清他人执行态」。
             self.flag.store(false, Ordering::SeqCst);
-            self.busy.store(false, Ordering::SeqCst);
+            self.stage.set_stage(nuphus::state::ExecutionStage::Idle);
         }
     }
     let _refine_guard = RefineGuard {
         flag: refine_active,
-        busy: state.busy.clone(),
+        stage: state.busy.clone(),
     };
 
     let refine_prompt = nuphus::agent::distill::REFINE_PROMPT;

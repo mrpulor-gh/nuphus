@@ -11,6 +11,7 @@ import {
   type HistoryMessage,
   type HistoryTraceItem,
 } from '../main-window/lib/api'
+import { showAppFeedback } from '../ui/islandChannel'
 
 type InitStatus = 'pending' | 'loading' | 'done' | 'error'
 
@@ -109,16 +110,10 @@ export function useInit(deps: InitDeps) {
   })
 
   // ── Toast ──
+  // 轻反馈的唯一入口：应用窗口在前台 → 应用内 island；不在前台/最小化 → HUD
+  // 独立窗口（分流与队列编排都在 ui/islandChannel.ts，调用点无需感知通道差异）
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
-    const phaseMap: Record<string, string> = {
-      info: 'info',
-      error: 'error',
-      warning: 'warning',
-      success: 'success',
-    }
-    invoke('hud_update', { text: message, phase: phaseMap[type] || 'info' }).catch(e =>
-      console.warn('[Toast] hud_update failed:', e),
-    )
+    showAppFeedback(message, type)
   }, [])
 
   // ── Helpers ──

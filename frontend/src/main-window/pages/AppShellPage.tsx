@@ -31,6 +31,7 @@ import {
   type PluginToastFn,
 } from '../lib/plugin-apps'
 import { mobileServerStatus, mobileServerEnsure } from '../lib/api'
+import { showAppFeedbackByHudPhase } from '../../ui/islandChannel'
 import '../../styles/plugin-apps.css'
 
 interface AppShellPageProps {
@@ -274,12 +275,25 @@ export function AppShellPage({
           return okEnvelope(id, await pluginWorkflowList())
         }
         if (method === 'workflow.run') {
-          if (!has('workflow.run')) return errEnvelope(id, 'PERMISSION_DENIED')
+          /* 桌面可见反馈（S3）：错误信封由第三方插件页面渲染，渲染与否/怎么渲染不受本应用
+             控制——宿主侧必须同时给一处桌面提示，否则用户在桌面看到的就是「点了没反应」。
+             通道复用全站唯一轻反馈入口（岛/HUD 分流），不新增第二套通道。 */
+          const blocked = (reason: string) =>
+            showAppFeedbackByHudPhase(t('plugins.workflowRunBlocked', pluginId, reason), 'warning')
+          if (!has('workflow.run')) {
+            blocked(t('plugins.errNoPermission'))
+            return errEnvelope(id, 'PERMISSION_DENIED')
+          }
           const wid = params?.id
-          if (typeof wid !== 'string' || !wid.trim()) return errEnvelope(id, 'INVALID_PARAMS')
+          if (typeof wid !== 'string' || !wid.trim()) {
+            blocked(t('plugins.errInvalidWorkflowId'))
+            return errEnvelope(id, 'INVALID_PARAMS')
+          }
           // 在途串行：同插件上一个 run 未完成时拒绝重入（后端 guard 为纵深防御）
-          if (workflowInFlightRef.current)
+          if (workflowInFlightRef.current) {
+            blocked(t('plugins.errWorkflowBusy'))
             return errEnvelope(id, 'BUSY', t('plugins.errWorkflowBusy'))
+          }
           workflowInFlightRef.current = true
           let timer: ReturnType<typeof setTimeout> | undefined
           try {
@@ -299,7 +313,9 @@ export function AppShellPage({
               return errEnvelope(id, 'TIMEOUT', t('plugins.errWorkflowTimeout'))
             }
             // 后端校验/执行错误（未声明权限、工作流不存在、后端在途等）透传 message
-            return errEnvelope(id, 'WORKFLOW_RUN_FAILED', e?.message || String(e))
+            const reason = e?.message || String(e)
+            blocked(reason)
+            return errEnvelope(id, 'WORKFLOW_RUN_FAILED', reason)
           } finally {
             if (timer) clearTimeout(timer)
             workflowInFlightRef.current = false

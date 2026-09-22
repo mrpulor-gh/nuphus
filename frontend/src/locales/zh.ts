@@ -635,6 +635,10 @@ const zh: Record<string, string> = {
   'plugins.errChatTimeout': '对话超时（120 秒）',
   'plugins.errWorkflowBusy': '上一个工作流执行进行中，请稍候',
   'plugins.errWorkflowTimeout': '工作流执行超时（120 秒）',
+  // 插件 workflow.run 被拒时的桌面侧提示（错误信封由第三方页面渲染，桌面需另一处可见反馈）
+  'plugins.workflowRunBlocked': '插件「{0}」未能启动工作流：{1}',
+  'plugins.errNoPermission': '插件未声明该权限',
+  'plugins.errInvalidWorkflowId': '工作流参数非法',
   'plugins.category.ai': '智能体',
   'plugins.category.tools': '工具',
   'plugins.category.productivity': '效率',
@@ -985,6 +989,14 @@ const zh: Record<string, string> = {
 
   'toast.configureApiKey': '请先配置 API Key',
   'toast.connectionLost': '连接断开，正在重试...',
+  // 收尾期（主循环已退出、正在写记忆/提炼）拒收追加：消息已退回输入框，可直接重发
+  'toast.finalizingPleaseResend': '正在收尾，请稍后重发（内容已退回输入框）',
+  // 执行中发送被受理为追加指令（未开启新回合）——不回显用户原文，说明真实处置
+  'toast.appendedToRunning': '已作为追加指令插入当前任务',
+  'workflow.runAppended':
+    '已作为追加指令插入当前任务：工作流不会立即启动，是否启动取决于 Agent 是否调用 workflow_run',
+  'workflow.runFinalizingRetry': '正在收尾，工作流尚未启动，请稍后重试',
+  'workflow.runFailed': '启动工作流失败',
   'toast.requestFailed': '请求失败',
   'toast.retryNotImplemented': '重试功能尚未实现',
   'toast.interrupted': '已中断',
@@ -1622,6 +1634,8 @@ const zh: Record<string, string> = {
   'mobile.sentAwaitConfirm': '已发送，执行结束后生效',
   'mobile.messageSent': '消息发送成功！',
   'mobile.messageSendFailed': '消息发送失败！',
+  // 收尾期（主循环已退出、后端在写记忆/提炼）拒收：消息未被受理，需重发
+  'mobile.finalizingPleaseResend': '正在收尾，消息未发送，请稍后重发',
   'mobile.sendTimeout': '发送超时，请重试',
   'mobile.sendFailedCheckNetwork': '发送失败，请检查网络后重试',
   'mobile.taskRunningPleaseRetry': '当前有任务正在执行，请稍后再试',

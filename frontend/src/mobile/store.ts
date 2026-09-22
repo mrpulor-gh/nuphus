@@ -56,6 +56,14 @@ export interface ToolActivity {
 }
 
 export interface ActivityState {
+  /**
+   * 桌面端是否在执行（= 后端执行态 `stage != "idle"` 的派生投影）。
+   *
+   * 唯一来源仍是后端 `SignalState::execution_stage`：本字段由 WS 事件
+   * （execution_started/completed）与 `/agent-status`·`/boot` 的 `agentStatus` 恢复，
+   * 两个通道下发的都是后端按 stage 计算好的同一值。移动端需要区分
+   * running/finalizing（如会话锁定）时请直接用 `/sessions` 的 `stage`。
+   */
   running: boolean
   goal: string
   mode: string

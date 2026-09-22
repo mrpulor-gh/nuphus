@@ -10,6 +10,7 @@
 pub mod agent;
 pub mod annotation;
 pub mod api;
+pub mod automation_gate;
 pub mod browser;
 pub mod cache;
 pub mod config;

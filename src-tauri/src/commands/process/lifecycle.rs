@@ -169,22 +169,105 @@ pub fn graceful_stop(state: State<'_, AppState>) -> Result<String, String> {
     Ok(action_id)
 }
 
+/// 强制重置的等待上限：旧执行体收到 `cancel_flag` 后收敛到 Idle 的时间预算。
+/// 覆盖「迭代边界检查 + 流式 LLM 收尾 + 运行态回写」；超时即如实报告未收敛。
+const FORCE_RESET_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// 等待轮询间隔（50ms：用户点「强制重置」的感知延迟要小，且不空转 CPU）
+const FORCE_RESET_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// 强制重置 —— **真终止**，不做「假解锁」。
+///
+/// 旧实现直接 `busy.swap(false)`（经视图映射 → stage=Idle）并清追加队列，只置
+/// `cancel_flag` **请求**停止就立刻返回：用户随即能开出新轮次，而旧执行体仍在跑
+/// —— 两个执行体并存（双跑）会并发操作进程级浏览器单例 → 死锁 / panic 全崩。
+///
+/// 现在的语义（与 `execution_stage` 单一真相源一致）：
+/// 1. 置 `cancel_flag` 请求旧执行体优雅退出（不写阶段）；
+/// 2. **等待**阶段真正回到 `Idle`（旧执行体的轮次所有者 guard drop 时写入），
+///    上限 [`FORCE_RESET_WAIT_TIMEOUT`]；
+/// 3. 超时 → **不写 Idle**，返回稳定错误码并记 error 日志：宁可用户看到「还在收敛」，
+///    也绝不放出「Idle 但旧任务仍在跑」这个双跑入口；
+/// 4. 确认退出后才清残留追加队列（与轮次所有者 guard 的清理同源，此处兜底）。
 #[tauri::command]
-pub fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
-    nuphus::state::SignalState::write(&state.signals)
-        .append_queue
-        .clear();
-    let was_busy = state.busy.swap(false, Ordering::SeqCst);
+pub async fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
+    let was_busy = state.busy.load(Ordering::SeqCst);
     state.cancel_flag.store(true, Ordering::SeqCst);
     state.pause_flag.store(false, Ordering::SeqCst);
     nuphus::agent::pause::clear_pause_action_id(&state.signals);
-    tracing::warn!("[FORCE-RESET] busy={}, forced by user", was_busy);
-    Ok(format!("forced reset (was busy: {})", was_busy))
+
+    if was_busy {
+        tracing::warn!(
+            "[FORCE-RESET] 已请求旧执行体退出，等待其真正收敛（≤{}s）",
+            FORCE_RESET_WAIT_TIMEOUT.as_secs()
+        );
+        let exited = nuphus::state::SignalState::wait_until_idle(
+            &state.signals,
+            FORCE_RESET_WAIT_TIMEOUT,
+            FORCE_RESET_POLL_INTERVAL,
+        )
+        .await;
+        if !exited {
+            // 关键：此处**绝不**无条件写 Idle（旧实现的假解锁点）
+            let held_stage = state.busy.stage();
+            tracing::error!(
+                "[FORCE-RESET] 旧执行体 {}s 内未退出（stage={}）：拒绝假解锁，保持占用态以免双跑",
+                FORCE_RESET_WAIT_TIMEOUT.as_secs(),
+                held_stage.as_str()
+            );
+            return Err(format!(
+                "{}: 旧任务在 {} 秒内未退出（当前 stage={}），已请求终止但尚未收敛；请稍后再试或等待其自行结束",
+                nuphus::automation_gate::CODE_BUSY,
+                FORCE_RESET_WAIT_TIMEOUT.as_secs(),
+                held_stage.as_str()
+            ));
+        }
+    }
+
+    // 旧执行体已确认退出（或本就空闲）：清残留追加队列再做状态自洽性收口。
+    let cleared = {
+        let mut signals = nuphus::state::SignalState::write(&state.signals);
+        std::mem::take(&mut signals.append_queue).len()
+    };
+    tracing::warn!(
+        "[FORCE-RESET] 重置完成：was_busy={}, 清空残留追加 {} 条（旧执行体已退出）",
+        was_busy,
+        cleared
+    );
+    Ok(format!("forced reset (was busy: {was_busy})"))
 }
 
+/// 兼容壳：只回答「后端是否仍被占用」。新代码请用 [`get_execution_state`]——
+/// 追加判定需要区分 Running / Finalizing，单一布尔无法表达（见 ExecutionStage）。
 #[tauri::command]
 pub fn is_busy(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.busy.load(Ordering::SeqCst))
+}
+
+/// 后端唯一权威执行态快照 —— 前端执行态的**单一来源**（拉通道；推通道 = nuphus-event）。
+///
+/// - `stage`：`"idle"` / `"running"` / `"finalizing"`
+/// - `busy`：`stage != "idle"`（= 旧 `is_busy`，终止按钮 / 会话锁定用）
+/// - `append_accepting`：当前提交会不会被当作追加指令受理（仅 `"running"`；
+///   `"finalizing"` 会返回 `rejected: "finalizing"`，前端须把输入退回输入框）
+///
+/// 收敛前执行态分散在 5 个来源（前端 isProcessing / 前端 completed / 后端 is_busy /
+/// 后端 can_switch / rail 的 OR 派生），同一时刻各方判断可以不一致。现在：
+/// 后端只有 `SignalState::execution_stage` 一个存储，前端只有本命令 + 事件两条通道。
+#[derive(serde::Serialize)]
+pub struct ExecutionStateSnapshot {
+    pub stage: String,
+    pub busy: bool,
+    pub append_accepting: bool,
+}
+
+#[tauri::command]
+pub fn get_execution_state(state: State<'_, AppState>) -> Result<ExecutionStateSnapshot, String> {
+    let stage = state.busy.stage();
+    Ok(ExecutionStateSnapshot {
+        stage: stage.as_str().to_string(),
+        busy: stage.is_busy(),
+        append_accepting: stage.accepts_append(),
+    })
 }
 
 /// Read the backend-owned append queue for the execution control UI.

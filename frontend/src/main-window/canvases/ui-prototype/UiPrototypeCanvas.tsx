@@ -607,9 +607,11 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
   const aiAbortRef = useRef<AbortController | null>(null)
 
   /* ── Nuphus 执行闸门（大王决策）──
-     画布编辑/复制/下载/预览/返回全程自由；仅两个会 Panic 的冲突点加锁：
-     ①「发送 Leader」②「AI 来画」外部模型请求。任务执行中（Agent busy /
-     workflow active_run）这两类入口禁用并提示。1.2s 轮询感知执行开始/结束。 */
+     画布编辑/复制/下载/预览/返回全程自由；仅会与执行体冲突的入口加锁：
+     ①「发送 Leader」②「AI 来画」③ AI 单字段重写（均会发起外部/后端执行）。
+     任务执行中（Agent busy / workflow active_run）这些入口禁用并提示。
+     判定同源：三处都在**动作前现场查一次后端权威源**（wf_gate_status =
+     执行态 + active_run），1.2s 轮询只用于按钮的被动禁用提示，不作为判定依据。 */
   const gate = useWorkflowGate(1200)
   const gateLocked = gate.locked
   const gateLockText = t('busyLocked', lang)
@@ -2324,7 +2326,10 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
   }
 
   const startDraft = async (idea: string) => {
-    if (gateLocked) {
+    /* 闸门判定与执行态**同源**：现场向后端权威源（`wf_gate_status` = 执行态 + active_run）
+       查一次，而不是用 1.2s 轮询缓存值——轮询窗口内刚进入执行态时只看缓存会漏。
+       与「发送 Leader」同一模式（sendPromptToLeader 的点击前二次校验）。 */
+    if ((await gate.refresh()).locked) {
       showToast(gateLockText, 2200, 'info')
       return
     }
@@ -2620,7 +2625,9 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
   /** Writes one field with the model: a part's behavior note, or a screen's description.
    *  The result goes straight in; the field remembers what it said so the rewrite can be undone. */
   const runAi = async (action: AiActionKey, f: Frame, itemId?: string) => {
-    if (gateLocked) {
+    /* 同源判定：与「AI 来画」/「发送 Leader」一致，现查后端权威执行态，
+       不用 1.2s 轮询内存值（外部模型请求前必须拿到最新闸门事实）。 */
+    if ((await gate.refresh()).locked) {
       showToast(gateLockText, 2200, 'info')
       return
     }
@@ -2746,7 +2753,13 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
         typeof detail?.message === 'string' && detail.message.trim()
           ? detail.message
           : t('sendFailedToLeader', langRef.current)
-      showToast(reason, 3000, 'error')
+      /* 收尾期拒收（rejected='finalizing'）用画布自有文案：桌面输入框那句
+         「内容已退回输入框」在画布不成立（提示词一直留在面板里，没有被退回任何输入框）。 */
+      showToast(
+        detail?.rejected === 'finalizing' ? t('sendFinalizingRetry', langRef.current) : reason,
+        3000,
+        'error',
+      )
     }
     window.addEventListener('nuphus:send-result', handler)
     return () => {

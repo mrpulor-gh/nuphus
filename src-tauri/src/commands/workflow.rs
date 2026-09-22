@@ -307,6 +307,28 @@ pub async fn wf_schedule_history_delete(
         .map_err(|error| error.to_string())
 }
 
+// ── 执行闸门（写路径与运行路径共用单一判定）──
+
+/// 全局执行闸门的**唯一判定**：`Some(reason)` = 当前禁止改/跑工作流。
+///
+/// `reason` 为稳定标识（前端按它映射文案）：`"workflow"` = 已有 active workflow run
+/// （画布 / 调度 / 插件 / 轮次内 workflow_run 任一来源）；`"agent"` = Agent 轮次占用执行体。
+///
+/// 消费者：`wf_gate_status`（UI 锁定态）、`wf_run`（启动前置拒绝）、`wf_save`（执行期
+/// 禁止改写 IR）。三处同源，禁止各自 OR 派生（见 `useWorkflowGate` 单一来源约定）。
+pub(crate) fn workflow_execution_locked(
+    state: &AppState,
+    engine: &nuphus::workflow::WorkflowEngine,
+) -> Option<&'static str> {
+    if engine.active_run_info().is_some() {
+        Some("workflow")
+    } else if state.busy.load(std::sync::atomic::Ordering::SeqCst) {
+        Some("agent")
+    } else {
+        None
+    }
+}
+
 // ── 执行 ──
 
 #[tauri::command]
@@ -395,12 +417,30 @@ pub async fn wf_validate(
 
 /// 保存工作流（画布唯一写回路径）。
 /// 保存前强制权威校验：errors 非空 → 阻断并回传报告（saved=false），前端落 ProblemsPanel。
+///
+/// B5：**执行期禁止保存**。执行器对同一份文档做 read-modify-write（run 进度节流落盘，
+/// 见 `executor/execute.rs` 的 `store.get` + `sync_run_record` + `store.save`），且
+/// `wf_call` 在**调用点**才 `store.get` 子工作流 IR（见 `executor/subcall.rs`）——
+/// 执行中保存会与执行器的回写互相覆盖（丢失一方），并改变后续子调用实际执行的 IR。
+/// 判定与 `wf_run` / `wf_gate_status` 同源（见 `workflow_execution_locked`），不新增状态源。
 #[tauri::command]
 pub async fn wf_save(
     state: State<'_, AppState>,
     mut workflow: Workflow,
 ) -> Result<WfSaveResponse, String> {
     let engine = state.workflow_engine.read().await;
+    if let Some(reason) = workflow_execution_locked(&state, &engine) {
+        tracing::warn!(
+            "[wf_save] 执行期拒绝保存 '{}'（reason={}）",
+            workflow.id,
+            reason
+        );
+        return Err(if reason == "workflow" {
+            "工作流执行中，暂不可保存（编辑仍在画布上，执行结束后再保存）".to_string()
+        } else {
+            "当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后再保存）".to_string()
+        });
+    }
     let tool_schemas = engine.tools().map(|t| t.get_schemas());
     let mut report = match tool_schemas.as_deref() {
         Some(schemas) => Compiler::validate_workflow_with_tools(&workflow, schemas),
@@ -511,16 +551,23 @@ pub async fn wf_run(
 
     // ── 全局执行闸门前置（大王铁律）──
     // 让 UI 直接拿到拒绝（而非 spawn 内 execute_workflow 拒绝后只有服务端日志）；
-    // 后端 execute_workflow 仍会二次校验（防 spawn 竞态窗口）。
+    // 后端 execute_workflow 仍会二次校验（防 spawn 竞态窗口）。判定与 wf_save /
+    // wf_gate_status 同源（workflow_execution_locked）。
     {
         let engine_r = engine.read().await;
-        let active = engine_r.active_run_info();
-        if active.is_some() || state.busy.load(std::sync::atomic::Ordering::SeqCst) {
+        if workflow_execution_locked(&state, &engine_r).is_some() {
             return Err("当前有任务执行中，暂不可用！".to_string());
         }
     }
 
+    // ── 资源门：画布发起的工作流 = 主执行体（非轮次内），整轮持锁 ──
+    // 与 Agent 轮次/录制会话/插件运行时互斥：拿不到就明确拒绝（稳定码 automation_busy）。
+    let gate_lease =
+        crate::resource_gate::acquire_execution_body(&state.automation_gate, "wf_run")?;
+
     tauri::async_runtime::spawn(async move {
+        // 租约随任务存活：工作流跑完（含 error 路径）才释放
+        let _gate_lease = gate_lease;
         let tool_exec = move |tool: String, params: serde_json::Value| {
             let tools = tools.clone();
             async move {
@@ -608,17 +655,10 @@ pub async fn wf_layout_save(id: String, layout: serde_json::Value) -> Result<(),
 pub async fn wf_gate_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let engine = state.workflow_engine.read().await;
     let active = engine.active_run_info();
-    let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
-    let (locked, reason) = if active.is_some() {
-        (true, "workflow")
-    } else if busy {
-        (true, "agent")
-    } else {
-        (false, "idle")
-    };
+    let reason = workflow_execution_locked(&state, &engine);
     Ok(serde_json::json!({
-        "locked": locked,
-        "reason": reason,
+        "locked": reason.is_some(),
+        "reason": reason.unwrap_or("idle"),
         "owner": active.as_ref().map(|a| a.owner.as_str()),
         "workflow_id": active.as_ref().map(|a| a.workflow_id.as_str()),
     }))

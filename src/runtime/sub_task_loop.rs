@@ -41,6 +41,17 @@ impl super::SubTaskRunner {
 
         tracing::info!("SubTaskRunner run_free started");
 
+        // ── 执行态：进入主循环 → Running（追加指令可被本循环迭代边界 drain）──
+        // 本循环常作为 Leader 主循环的嵌套子任务（task_dispatch），此时阶段本已是
+        // Running；独立运行（CLI / 无 Leader 场景）时由本行承担声明。
+        // 刻意不在退出处置 Finalizing：嵌套退出时 Leader 仍在迭代，置 Finalizing 会
+        // 误拒外层任务的追加指令（幂等声明 Running，阶段收敛交给轮次所有者）。
+        // 转换规则见 nuphus::state::ExecutionStage。
+        crate::state::SignalState::set_execution_stage(
+            self.tools.signals(),
+            crate::state::ExecutionStage::Running,
+        );
+
         if !self.suppress_lifecycle_events {
             self.emit(NuphusEvent::ExecutionStarted {
                 step_index: 0,

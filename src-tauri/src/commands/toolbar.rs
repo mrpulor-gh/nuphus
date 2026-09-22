@@ -102,6 +102,8 @@ pub async fn splash_skip_download(app: AppHandle) -> Result<(), String> {
         let _ = main.set_focus();
     }
     // 主界面提示：模型在后台继续下载（可在「设置-模型」查看进度）
+    // 后端直调：启动期/前端未就绪场景，刻意保留 HUD —— 此刻主界面刚 show 出来，
+    // 前端 island 未必已挂载（React 还在初始化），只有独立 HUD 窗口能保证提示可见。
     super::hud::hud_update(
         app.clone(),
         "模型正在后台下载…可在「设置-模型」查看进度".to_string(),

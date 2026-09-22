@@ -1,5 +1,6 @@
 // Nuphus API — typed wrappers for all backend Tauri commands
 import { invoke } from '../../core/bridge'
+import { showAppFeedbackByHudPhase } from '../../ui/islandChannel'
 import type { RelationConfig } from './relation'
 import type {
   ToolSchema,
@@ -288,8 +289,24 @@ export function gracefulStop() {
   return invoke<string>('graceful_stop')
 }
 
-export function isBusy() {
-  return invoke<boolean>('is_busy')
+/**
+ * 后端唯一权威执行态（前端执行态单一来源）。
+ *
+ * 前端所有「执行中」相关 UI（气泡光标 / 思考条 / mode 锁 / 会话 rail 锁 / 终止按钮）
+ * 都从这里派生，禁止再各自订阅 is_busy / can_switch 或自行 OR 派生（曾因此出现
+ * 「主循环已退出、界面仍以为在执行」的不一致）。
+ */
+export interface ExecutionStateSnapshot {
+  /** "idle" | "running" | "finalizing"（见 nuphus::state::ExecutionStage） */
+  stage: string
+  /** stage !== "idle"（= 旧 is_busy 语义） */
+  busy: boolean
+  /** 当前提交是否会按追加指令受理（仅 running；finalizing 会被拒收） */
+  append_accepting: boolean
+}
+
+export function getExecutionState() {
+  return invoke<ExecutionStateSnapshot>('get_execution_state')
 }
 
 export function getAppendQueue() {
@@ -302,6 +319,34 @@ export function removeAppendQueueItem(index: number) {
 
 export function forceReset() {
   return invoke<string>('force_reset')
+}
+
+// ── 后端资源互斥门（见 nuphus::automation_gate）──
+
+/**
+ * 稳定错误码：桌面自动化 / 浏览器控制 / 录制 / 主执行体互斥被拒。
+ * 后端 `LeaseBusy` 的 Display 固定为 `automation_busy: <人话>`（Tauri 的 Err 只有
+ * 字符串通道，码前缀是前端识别的唯一锚点，前后端契约不可改名）。
+ */
+export const AUTOMATION_BUSY = 'automation_busy'
+
+function errorText(err: unknown): string {
+  if (typeof err === 'string') return err
+  if (err instanceof Error) return err.message
+  return String(err ?? '')
+}
+
+/** 该错误是否来自资源互斥门（执行体/录制占用中） */
+export function isAutomationBusy(err: unknown): boolean {
+  return errorText(err).startsWith(AUTOMATION_BUSY)
+}
+
+/** 后端错误 → 可直接展示的文案（剥掉稳定码前缀，其余原样返回） */
+export function backendErrorMessage(err: unknown): string {
+  const text = errorText(err)
+  if (!text.startsWith(AUTOMATION_BUSY)) return text
+  const rest = text.slice(AUTOMATION_BUSY.length).replace(/^:\s*/, '').trim()
+  return rest || text
 }
 
 export function setMode(mode: string) {
@@ -1500,10 +1545,18 @@ export function updateChatAgentInline(
     config,
   })
 }
-// ── HUD ──
+// ── 轻反馈 ──
 
-export function hudUpdate(text: string, phase: string) {
-  return invoke('hud_update', { text, phase })
+/**
+ * 轻反馈（保留原签名与相位词汇，调用方无需改动）。
+ *
+ * 改造前：直发 `hud_update` → 屏幕右下角的 HUD 独立窗口，绕过了应用内的
+ * 前台/后台分流（应用就在眼前时反馈却甩到屏幕角落）。现在统一转调
+ * ui/islandChannel 的收编入口：前台走 island，后台/最小化仍走 HUD。
+ * 相位沿用 HUD 词汇（含 island 没有的 'done'），翻译集中在 islandChannel。
+ */
+export function hudUpdate(text: string, phase: string): void {
+  showAppFeedbackByHudPhase(text, phase)
 }
 // ── Speech-to-text (cloud-first: capabilities.stt → /audio/transcriptions;
 //    local sherpa-onnx fallback) ──

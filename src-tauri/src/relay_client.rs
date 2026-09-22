@@ -1259,6 +1259,12 @@ pub async fn handle_task<R: tauri::Runtime>(
     )
     .await?;
 
+    // 收尾期拒收（ExecutionStage::Finalizing）：任务**未被受理**——不能按成功回 "done"，
+    // 否则远端会把已丢弃的消息当作已完成。如实报错，远端可重投。
+    if resp.rejected.is_some() {
+        return Err("busy".to_string());
+    }
+
     if resp.success {
         // ProcessInputResponse.message 为最终回复文本；空则任务已执行完成
         let result = if resp.message.trim().is_empty() {

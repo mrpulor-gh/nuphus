@@ -660,6 +660,11 @@ const en: Record<string, string> = {
   'plugins.errChatTimeout': 'Chat timed out (120s)',
   'plugins.errWorkflowBusy': 'Previous workflow run is still in progress, please wait',
   'plugins.errWorkflowTimeout': 'Workflow run timed out (120s)',
+  // Desktop-side notice when a plugin's workflow.run is rejected (the plugin page renders
+  // the error envelope itself; the desktop still needs one visible hint).
+  'plugins.workflowRunBlocked': 'Plugin "{0}" could not start the workflow: {1}',
+  'plugins.errNoPermission': 'Plugin lacks the required permission',
+  'plugins.errInvalidWorkflowId': 'Invalid workflow parameters',
   'plugins.category.ai': 'Agents',
   'plugins.category.tools': 'Tools',
   'plugins.category.productivity': 'Productivity',
@@ -1027,6 +1032,14 @@ const en: Record<string, string> = {
 
   'toast.configureApiKey': 'Please configure API Key first',
   'toast.connectionLost': 'Connection lost, retrying...',
+  // Finalizing window rejects appends: the text is returned to the input box, resend shortly
+  'toast.finalizingPleaseResend': 'Wrapping up — please resend shortly (text restored)',
+  // Sent while executing → accepted as a follow-up instruction (no new round started)
+  'toast.appendedToRunning': 'Added to the running task as a follow-up instruction',
+  'workflow.runAppended':
+    'Added to the running task as a follow-up instruction: the workflow does not start immediately — it starts only if the agent calls workflow_run',
+  'workflow.runFinalizingRetry': 'Wrapping up — the workflow was not started, please retry shortly',
+  'workflow.runFailed': 'Failed to start the workflow',
   'toast.requestFailed': 'Request failed',
   'toast.retryNotImplemented': 'Retry not implemented',
   'toast.interrupted': 'Interrupted',
@@ -1696,6 +1709,8 @@ const en: Record<string, string> = {
   'mobile.sentAwaitConfirm': 'Sent, takes effect after current execution',
   'mobile.messageSent': 'Message sent!',
   'mobile.messageSendFailed': 'Message send failed!',
+  // Finalizing window rejects the message: it was NOT accepted, resend shortly
+  'mobile.finalizingPleaseResend': 'Wrapping up — message not sent, please resend shortly',
   'mobile.sendTimeout': 'Send timed out, please retry',
   'mobile.sendFailedCheckNetwork': 'Send failed, check your network and retry',
   'mobile.taskRunningPleaseRetry': 'A task is running; please try again later',

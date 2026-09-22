@@ -4,6 +4,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke } from '../../core/bridge'
+import { backendErrorMessage } from '../lib/api'
 import { IconX, IconCheck } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 
@@ -25,6 +26,11 @@ interface RegionPickerProps {
   capturePath?: string
   /** Preloaded screenshot path — if provided, skip internal desktop_screenshot */
   bgImagePath?: string
+  /**
+   * 外部（父组件）失败文案：如保存截图被后端资源门拒绝
+   * （`automation_busy` = 任务执行中 / 录制中，桌面自动化暂不可用）。
+   */
+  errorMessage?: string
 }
 
 export function RegionPicker({
@@ -32,6 +38,7 @@ export function RegionPicker({
   onConfirm,
   mode = 'picker',
   bgImagePath,
+  errorMessage,
 }: RegionPickerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -39,6 +46,8 @@ export function RegionPicker({
   // Screenshot background
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
   const [loading, setLoading] = useState(true)
+  /** 本组件内部失败文案（截图/取屏幕尺寸被拒等）：后端资源门拒绝时原样展示人话 */
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [screenW, setScreenW] = useState(1920)
   const [screenH, setScreenH] = useState(1080)
 
@@ -106,10 +115,16 @@ export function RegionPicker({
         if (!cancelled) {
           setBgImage(img)
           setLoading(false)
+          setLoadError(null)
         }
       } catch (e) {
         console.error('RegionPicker: screenshot failed', e)
-        if (!cancelled) setLoading(false)
+        // 后端资源门拒绝（automation_busy：任务执行中 / 录制中）等错误必须让用户看见，
+        // 否则只会停在空白选区界面，用户以为工具坏了。
+        if (!cancelled) {
+          setLoadError(backendErrorMessage(e))
+          setLoading(false)
+        }
       }
     })()
     return () => {
@@ -280,6 +295,9 @@ export function RegionPicker({
     draw()
   }
 
+  /** 失败提示优先级：父组件（保存失败）> 本组件（截图/取尺寸被拒） */
+  const shownError = errorMessage ?? loadError
+
   return (
     <div
       ref={containerRef}
@@ -345,20 +363,23 @@ export function RegionPicker({
         {/* Separator */}
         <div style={{ width: 1, height: 20, background: 'var(--glass-2)' }} />
 
-        {/* Coordinate info */}
+        {/* Coordinate info / 失败提示 */}
         <span
           style={{
             fontSize: 12,
-            color: 'var(--spark-secondary)',
+            color: shownError ? 'var(--danger, #e05555)' : 'var(--spark-secondary)',
             fontFamily: 'var(--font-mono)',
             minWidth: 100,
+            maxWidth: 460,
           }}
         >
-          {region
-            ? `${region.width}×${region.height}  at (${region.x}, ${region.y})`
-            : loading
-              ? '加载中...'
-              : '拖拽选择区域'}
+          {shownError
+            ? shownError
+            : region
+              ? `${region.width}×${region.height}  at (${region.x}, ${region.y})`
+              : loading
+                ? '加载中...'
+                : '拖拽选择区域'}
         </span>
 
         {/* Separator */}

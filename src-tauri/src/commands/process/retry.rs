@@ -17,7 +17,7 @@
 use crate::emitter::TauriEventEmitter;
 use crate::state::{AppState, ProcessInputResponse};
 use nuphus::agent::events::{EventEmitter, NuphusEvent, StepOutput};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 #[tauri::command]
@@ -34,19 +34,38 @@ pub async fn retry_agent(
             .ok_or_else(|| "没有可重试的会话".to_string())?
     };
 
-    // 2. 防止并发执行
+    // 2. 防止并发执行 + 资源门（重试 = 又一个主执行体，整轮持锁）
+    //    门在前：资源被录制/定时任务/插件运行时占用时明确拒绝，不做假轮次。
+    let gate_lease =
+        match crate::resource_gate::acquire_execution_body(&state.automation_gate, "retry_agent") {
+            Ok(lease) => lease,
+            Err(e) => {
+                // 重试数据必须回填，否则用户这次重试机会被门吃掉
+                if let Ok(mut pending) = state.execution.lock() {
+                    pending.pending_retry = Some((session_json, config, message));
+                }
+                return Err(e);
+            }
+        };
     if state.busy.swap(true, Ordering::SeqCst) {
         if let Ok(mut pending) = state.execution.lock() {
             pending.pending_retry = Some((session_json, config, message));
         }
         return Err("任务正在执行中,请等待当前任务完成".to_string());
     }
-    struct BusyGuard<'a>(&'a AtomicBool);
+    // 执行态守卫：swap(true) 已把阶段置为 Running；收尾点显式转 Finalizing（见下），
+    // guard drop → Idle。见 nuphus::state::ExecutionStage 转换规则。
+    struct BusyGuard<'a>(&'a crate::state::ExecutionStageHandle);
     impl Drop for BusyGuard<'_> {
         fn drop(&mut self) {
-            self.0.store(false, Ordering::SeqCst);
+            self.0.set_stage(nuphus::state::ExecutionStage::Idle);
         }
     }
+    // 释放顺序：先 Idle（_guard 后声明 → 先 drop），再放资源锁。
+    // 门铃唤醒重放（S2）声明最早 → 最后一个 drop：补开新轮次前必须
+    // 「stage 已 Idle + 资源门已释放」，否则新轮次会被本轮的残留占用拒绝（假重放）。
+    let _wake_replay = super::HandoffWakeReplay::new(app.clone());
+    let _gate_lease = gate_lease;
     let _guard = BusyGuard(&state.busy);
 
     let cancel_flag = state.cancel_flag.clone();
@@ -145,6 +164,13 @@ pub async fn retry_agent(
     )
     .await;
 
+    // 执行态：重试轮次的主循环已退出 → Finalizing（收尾工作之前）。
+    // 与 submit_user_message 同语义：此后不再有迭代边界 drain，追加指令必须被拒绝
+    // 而不是入队（入队即永久滞留）。见 nuphus::state::ExecutionStage。
+    state
+        .busy
+        .set_stage(nuphus::state::ExecutionStage::Finalizing);
+
     let (output, runtime) = match run_result {
         Ok(ok) => ok,
         Err(err_msg) => {
@@ -201,6 +227,7 @@ pub async fn retry_agent(
         success: output.success,
         message: response_message,
         appended: None,
+        rejected: None,
         image_warning: None,
         steps_count: output.steps.len(),
     })

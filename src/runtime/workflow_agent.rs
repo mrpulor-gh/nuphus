@@ -406,6 +406,13 @@ impl WorkflowAgent {
         self.tool_call_count = 0;
         self.tools_used_this_turn.clear();
         self.execution_steps.clear();
+        // ── 执行态：进入主循环 → Running（追加指令可被本轮迭代边界 drain）──
+        // Worker（workflow 模式）顶层主循环；Finalizing 由轮次所有者（process.rs）在
+        // run() 返回后、收尾工作之前置位。转换规则见 nuphus::state::ExecutionStage。
+        crate::state::SignalState::set_execution_stage(
+            self.tools.signals(),
+            crate::state::ExecutionStage::Running,
+        );
         // 新任务开始时清空上一任务残留的追加指令队列（防跨任务泄漏，与 react_loop 入口一致）
         crate::state::SignalState::write(self.tools.signals())
             .append_queue

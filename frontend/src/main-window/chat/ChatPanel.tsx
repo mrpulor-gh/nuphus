@@ -11,8 +11,10 @@ import type {
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
+import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
+import { setIslandAnchor } from '../../ui/islandChannel'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 /// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
@@ -103,7 +105,12 @@ function formatTokens(n: number): string {
 
 interface ChatPanelProps {
   messages: ChatMessage[]
-  isProcessing: boolean
+  /**
+   * 后端权威执行态（唯一来源，见 useExecutionState）。本组件内部只做谓词派生：
+   * `running` = agent 主循环在迭代中（气泡光标 / 思考条）；`!== 'idle'` = 后端仍占用
+   * （会话 rail 锁 / mode 锁 / 终止按钮）。禁止再各自订阅 is_busy / can_switch。
+   */
+  executionStage: ExecutionStage
   /** 返回发送的真实结果；画布等外部入口据此回执（见 nuphus:send-result）。
    *  sendId 为调用方（画布 requestId）指定的发送标识：后端受理事件按它精确对齐，
    *  缺省时由 useSession 生成（老调用方行为不变）。 */
@@ -248,7 +255,7 @@ function migrateLegacyProjectBookmarks(existing: ProjectBookmark[]): ProjectBook
 
 export function ChatPanel({
   messages,
-  isProcessing,
+  executionStage,
   onSend,
   onGracefulStop,
   onInterrupt,
@@ -306,6 +313,12 @@ export function ChatPanel({
   onShowExecTrace,
 }: ChatPanelProps) {
   const { t } = useLanguage()
+  // ── 执行态谓词（同一来源 executionStage 的两个派生，禁止再引入第二个来源）──
+  // isProcessing：主循环在迭代中 —— 气泡光标 / 思考条呼吸 / 「发送=追加」提示。
+  // backendLocked：后端仍占用（Running ∨ Finalizing）—— 会话 rail 锁 / mode 锁 / 终止按钮。
+  // 二者都取自 executionStage 同一个值，不再出现 `!canSwitch || locked` 式多源 OR。
+  const isProcessing = executionStage === 'running'
+  const backendLocked = executionStage !== 'idle'
   const [pauseMode, setPauseMode] = useState<'menu' | 'preparing' | 'input'>('menu')
   const [appendInput, setAppendInput] = useState('')
   const [pauseSubmitting, setPauseSubmitting] = useState(false)
@@ -1036,11 +1049,13 @@ export function ChatPanel({
       const mode = detail?.mode
       const requestId = typeof detail?.requestId === 'string' ? detail.requestId : ''
       /* 回执：发起方（画布）按 requestId 匹配后显示真实结果，不再无条件报成功。
-         没有 requestId 的老调用方不受影响（不回发）。 */
-      const rawReply = (ok: boolean, message?: string) => {
+         没有 requestId 的老调用方不受影响（不回发）。
+         rejected 一并透出（稳定拒收标识，如 'finalizing'）：画布没有输入框，
+         需要它给渠道自有文案，不能沿用桌面输入框的「内容已退回输入框」。 */
+      const rawReply = (ok: boolean, message?: string, rejected?: string) => {
         if (!requestId) return
         window.dispatchEvent(
-          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message } }),
+          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message, rejected } }),
         )
       }
       /* 先登记再发送：受理事件（后端真实收下）可能早于 onSend promise 返回，
@@ -1064,7 +1079,7 @@ export function ChatPanel({
           return
         }
         pending
-          .then(outcome => reply(outcome?.ok !== false, outcome?.message))
+          .then(outcome => reply(outcome?.ok !== false, outcome?.message, outcome?.rejected))
           .catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err)
             console.error('[nuphus:send-message] send failed', err)
@@ -1211,15 +1226,33 @@ export function ChatPanel({
       const fileRefs = pendingFiles.map(f => `[附件: ${f.path}]`).join('\n')
       finalInput = input + '\n' + fileRefs
     }
-    onSend(
+    // 发送前快照：收尾期拒收时按原样退回（含图片/附件/引用，避免「只退回文字」的半丢失）
+    const sentImageItems = pendingImages
+    const sentRefs = pendingReferences
+    const sentFiles = pendingFiles
+    const pending = onSend(
       finalInput,
-      pendingImages.length > 0 ? pendingImages.map(p => p.dataUrl) : undefined,
-      pendingReferences.length > 0 ? pendingReferences : undefined,
+      sentImageItems.length > 0 ? sentImageItems.map(p => p.dataUrl) : undefined,
+      sentRefs.length > 0 ? sentRefs : undefined,
     )
     setInput('')
     setPendingImages([])
     setPendingReferences([])
     setPendingFiles([])
+    /* 收尾期拒收（后端 rejected="finalizing"）：主循环已退出、后端正在收尾，
+       消息**未被受理**（未入队、未记去重基准）→ 原文原样退回输入框 + 提示稍后重发。
+       既有入口保持「先清空再发送」的手感，这里按回执回填；条件回填：期间用户已开始
+       输入新内容时不覆盖（不吞用户新打的字）。 */
+    void Promise.resolve(pending)
+      .then(outcome => {
+        if (!outcome?.rejected) return
+        setInput(prev => (prev.trim() ? prev : finalInput))
+        setPendingImages(sentImageItems)
+        setPendingReferences(sentRefs)
+        setPendingFiles(sentFiles)
+        hudUpdate(outcome.message || t('toast.finalizingPleaseResend'), 'warning')
+      })
+      .catch(() => {})
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto'
@@ -1465,13 +1498,21 @@ export function ChatPanel({
           onNewChat={onNewChat}
           onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
-          locked={isProcessing}
+          // rail 锁定直接来自唯一执行态（Running ∨ Finalizing 都锁），
+          // 不再与 can_switch 做 OR 派生（见 SessionRail.hardLocked）
+          locked={backendLocked}
           mood={mood}
         />
       )}
       {/* ── Chat Header：右上角设置入口（全应用唯一设置入口，打开设置中心弹窗）── */}
       <div className="chat-header">
         <div className="chat-header-left" />
+        {/* island 落点锚点：左右两组之间的中央留白（几何见 styles/app-pill.css 的
+            .island-slot：绝对定位铺满 header 的 padding box 并 flex 居中，不参与
+            space-between 排布 → 两侧内容位置不变）。
+            AppIsland 经 portal 渲染到这里；锚点不存在时（聊天视图未挂载）岛按
+            锚点优先级回落 —— 见 ui/islandChannel.ts 的「落点锚点」。 */}
+        <div className="island-slot" ref={setIslandAnchor} />
         <div className="chat-header-right">
           <button
             className="chat-header-settings-btn"
@@ -2102,7 +2143,7 @@ export function ChatPanel({
           onInputKeyDown={handleKeyDown}
           textareaRef={textareaRef}
           imageInputRef={fileInputRef}
-          isProcessing={isProcessing}
+          executionStage={executionStage}
           pauseState={pauseState ?? null}
           refineState={refineState ?? null}
           tokenUsage={tokenUsage || null}

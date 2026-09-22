@@ -12,7 +12,10 @@
  * 无 sendId（老调用方）不登记，直接返回原回调，行为与引入本模块前完全一致。
  */
 
-export type ReceiptReply = (ok: boolean, message?: string) => void
+/** 回执：ok=false 时 message 为失败原因；rejected 为后端**稳定拒收标识**（目前仅
+ *  `'finalizing'`）——调用方据此给渠道自有文案（画布没有输入框，不能沿用桌面输入框的
+ *  「内容已退回输入框」）。 */
+export type ReceiptReply = (ok: boolean, message?: string, rejected?: string) => void
 
 /** 事件分派只关心 type + send_id（结构类型，便于单测构造最小事件）。
  *  source（"desktop" | "mobile"）随受理事件携带但不参与判定。 */
@@ -42,13 +45,13 @@ export function createSendReceiptHub(): SendReceiptHub {
   const begin = (sendId: string | null | undefined, reply: ReceiptReply): ReceiptReply => {
     if (typeof sendId !== 'string' || !sendId) return reply
     let settled = false
-    const fire: ReceiptReply = (ok, message) => {
+    const fire: ReceiptReply = (ok, message, rejected) => {
       // 幂等：首次生效，后续（事件与 promise 谁后到）直接忽略
       if (settled) return
       settled = true
       // 仅当仍指向本次登记时注销（防止同 id 重登记后误删新登记）
       if (pending.get(sendId) === fire) pending.delete(sendId)
-      reply(ok, message)
+      reply(ok, message, rejected)
     }
     pending.set(sendId, fire)
     return fire

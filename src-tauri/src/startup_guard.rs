@@ -96,6 +96,7 @@ fn fire(app: &AppHandle, idle_ms: u64, timeout_secs: u64) {
     }
 
     // HUD 是独立窗口 + 独立前端：主界面 React 已经死掉时它照样能显示
+    // （后端直调：启动期/前端未就绪场景，刻意保留 HUD —— 前端 island 此时恰恰不可用）
     crate::commands::hud::hud_update(
         app.clone(),
         format!("启动超时（{timeout_secs}s 无响应）：已强行打开主界面，若仍空白请重启应用"),

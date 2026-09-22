@@ -18,7 +18,8 @@ describe('createSendReceiptHub', () => {
     // 受理事件到达 → 立即回执，此时 onSend 远未完成
     hub.handleEvent({ type: 'message_accepted', send_id: 'req-1', source: 'desktop' })
     expect(reply).toHaveBeenCalledTimes(1)
-    expect(reply).toHaveBeenCalledWith(true, undefined)
+    // 第三参 rejected 一并透出（本路径无拒收 → undefined）：调用方按它区分渠道文案
+    expect(reply).toHaveBeenCalledWith(true, undefined, undefined)
     expect(hub.pendingCount()).toBe(0)
 
     // 整轮结束（迟到的 promise 回执）→ 幂等忽略，不产生二次回执/二次收起
@@ -35,12 +36,30 @@ describe('createSendReceiptHub', () => {
     // 受理前失败（后端未就绪 / 未配置 Key / IPC 拒绝）
     fire(false, 'connection lost')
     expect(reply).toHaveBeenCalledTimes(1)
-    expect(reply).toHaveBeenCalledWith(false, 'connection lost')
+    expect(reply).toHaveBeenCalledWith(false, 'connection lost', undefined)
 
     // 迟到的受理事件不得把失败改写成成功（幂等，单一通道先到先得）
     hub.handleEvent({ type: 'message_accepted', send_id: 'req-2', source: 'desktop' })
     expect(reply).toHaveBeenCalledTimes(1)
-    expect(reply).toHaveBeenLastCalledWith(false, 'connection lost')
+    expect(reply).toHaveBeenLastCalledWith(false, 'connection lost', undefined)
+  })
+
+  it('(b2) 收尾期拒收：rejected 标识透出，画布可给渠道自有文案', () => {
+    const hub = createSendReceiptHub()
+    const reply = vi.fn()
+    const fire = hub.begin('req-2b', reply)
+
+    // useSession 的收尾拒收回执：ok=false + 稳定标识 + 桌面输入框文案
+    // （「内容已退回输入框」在画布不成立，画布按 rejected 换成自己的文案）
+    fire(false, '正在收尾，请稍后重发（内容已退回输入框）', 'finalizing')
+    expect(reply).toHaveBeenCalledWith(
+      false,
+      '正在收尾，请稍后重发（内容已退回输入框）',
+      'finalizing',
+    )
+    // 回执仍只发一次
+    fire(true)
+    expect(reply).toHaveBeenCalledTimes(1)
   })
 
   it('(c) send_id 不匹配 → 无回执，登记保留', () => {

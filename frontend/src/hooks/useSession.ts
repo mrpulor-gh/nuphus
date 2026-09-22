@@ -3,7 +3,6 @@
 // handleSend / handleNewChat 保留在此（紧密耦合 messages）
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { invoke } from '../core/bridge'
 import type {
   ChatMessage,
   ChatReference,
@@ -22,12 +21,13 @@ import {
   isLlmConfigured,
   getContextLimit,
   getCurrentConfig,
-  isBusy,
   getChatHistory,
   resumeLatestSession,
   newChatSessionCmd,
   type HistoryMessage,
 } from '../main-window/lib/api'
+import { useExecutionState } from './useExecutionState'
+import type { ExecutionStage } from './useExecutionState'
 import { foldHistoryAssistants, toTimelineEntry } from './useInit'
 import { loadRelation } from '../main-window/lib/relation'
 import { useLanguage } from '../locales'
@@ -65,7 +65,15 @@ export interface SessionAPI {
 
   // ── Core state ──
   messages: ChatMessage[]
+  /**
+   * 执行态唯一来源（后端 ExecutionStage + 事件推送，见 useExecutionState）。
+   * 所有「执行中」UI 一律从它派生，禁止各自订阅不同来源。
+   */
+  executionStage: ExecutionStage
+  /** 派生视图：`executionStage === 'running'`（主循环在迭代中）——气泡光标 / 思考条呼吸 */
   isProcessing: boolean
+  /** 派生视图：`executionStage !== 'idle'`（后端仍占用）——会话锁 / mode 锁 / 终止按钮 */
+  busy: boolean
   status: 'idle' | 'running' | 'error'
   modelName: string
   sessionId: string
@@ -182,7 +190,12 @@ export interface SessionAPI {
 
   // ── Setters (for useEvents) ──
   setMessages: (v: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void
-  setIsProcessing: (v: boolean) => void
+  /**
+   * 执行态置位（事件通道）。语义必须显式传阶段，不要再传布尔：
+   * `execution_completed` 只代表「本轮输出已收敛」，后端此时才进入收尾（Finalizing），
+   * 传 `false` 会被理解成空闲，正是「收尾期提交被判成新回合」的来源。
+   */
+  setExecutionStage: (stage: ExecutionStage) => void
   setCompleted: (v: boolean) => void
   setStepIndex: React.Dispatch<React.SetStateAction<number>>
   setGoal: (v: string) => void
@@ -310,13 +323,16 @@ export interface SessionAPI {
   // ── Handlers ──
   /** 返回发送的真实结果（画布等外部入口据此回执，见 nuphus:send-result）。
    *  sendId 由调用方指定（画布 requestId）时替代内部生成的 uuid —— 后端受理事件
-   *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。 */
+   *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。
+   *  appendedHint：调用方自有语境的「已受理为追加指令」补充文案（如「运行工作流」入口
+   *  需要说明工作流不会立即启动）；缺省用通用追加提示。 */
   handleSend: (
     input: string,
     images?: string[],
     forceMode?: string,
     refs?: import('../core/types').ChatReference[],
     sendId?: string,
+    appendedHint?: string,
   ) => Promise<SendOutcome>
   /** 新建对话（后端真转场，回欢迎页）——可带弹窗填写的标题（只记录，会话在首条
    *  消息时诞生）；返回 false = 后端拒绝，调用方据此保持弹窗打开。 */
@@ -359,7 +375,6 @@ export function useSession(): SessionAPI {
 
   // ── Core state ──
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isProcessing, setIsProcessing] = useState(false)
   const [status, setStatus] = useState<'idle' | 'running' | 'error'>('idle')
   const [modelName, setModelName] = useState('')
   const [sessionId, setSessionId] = useState('')
@@ -384,6 +399,22 @@ export function useSession(): SessionAPI {
   const toolCallCountRef = useRef(0)
   /** 用户已点击强制中断（interrupt）：置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
   const interruptedRef = useRef(false)
+
+  // ── 执行态（唯一来源）──
+  // 后端 `SignalState::execution_stage` 为权威（拉：get_execution_state；推：nuphus-event），
+  // 本 hook 是全前端唯一持有执行态的地方；下面两个是同一值的派生视图，供既有消费者使用：
+  //   isProcessing = stage === 'running'（主循环在迭代中：气泡光标 / 思考条 / 追加提示）
+  //   busy         = stage !== 'idle'  （后端仍占用：会话锁 / mode 锁 / 终止按钮）
+  // 禁止任何 UI 再各自订阅 is_busy / can_switch 或做 OR 派生（见 useExecutionState 头注）。
+  const execState = useExecutionState({
+    // 流式目标存在 = 本轮执行正在建立或进行中：此时后端若仍报 idle（受理前的空窗），
+    // 不把执行态打回空闲，否则刚发出的回合会被误判为「未执行」。
+    hasStreamingTarget: () => streamingMsgId.current !== null,
+  })
+  const executionStage = execState.stage
+  const isProcessing = execState.running
+  const busy = execState.busy
+  const setExecutionStage = execState.setStage
 
   const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set())
 
@@ -431,7 +462,7 @@ export function useSession(): SessionAPI {
     workflowRunId: execUI.workflowRunId,
     hasWorkflowActivity: execUI.hasWorkflowActivity,
     setHasWorkflowActivity: execUI.setHasWorkflowActivity,
-    setIsProcessing,
+    setExecutionStage,
     setCompleted: execUI.setCompleted,
     setGoal: execUI.setGoal,
     setExecPhase: execUI.setExecPhase,
@@ -465,39 +496,41 @@ export function useSession(): SessionAPI {
       forceMode?: string,
       refs?: ChatReference[],
       sendId?: string,
+      appendedHint?: string,
     ): Promise<SendOutcome> => {
       if (!(await agentControl.checkBackendReady())) {
         return { ok: false, message: t('toast.connectionLost') }
       }
 
-      // 后端 busy 是追加判定的权威（不依赖前端 isProcessing）：execution_completed 事件
-      // 早于后端收尾 guard drop——存在"前端已空闲、后端仍 busy"窗口期，此时发送后端会
-      // 走 mobile_append 队列当作追加注入；若按前端状态误判为新执行，会清空执行窗口
-      // （timeline）并覆盖 streamingMsgId（实测 bug：追加后执行过程全消失）。
-      let backendBusy = true
-      try {
-        backendBusy = (await isBusy()) ?? true
-      } catch {
-        backendBusy = true
-      }
-      // UI 残留 processing 但后端已空闲 → 复位，避免新执行态被吞
-      if (isProcessing && !backendBusy) {
-        setIsProcessing(false)
-        executionActiveRef.current = false
+      // 发送前先对齐后端权威执行态（唯一来源，不依赖前端 isProcessing）：
+      // execution_completed 事件早于后端收尾结束——「前端已空闲、后端仍占用」窗口期内，
+      // 按前端状态判新回合会清空执行窗口（timeline）并覆盖 streamingMsgId（实测 bug）。
+      // 同一调用顺带完成自愈：后端已空闲而本端仍非 idle → 复位（否则残留会把新执行态吞掉）。
+      const snapshot = await execState.refresh()
+      const isAppendAttempt = snapshot === 'running'
+
+      // ── 收尾期（Finalizing）拒收：不置位、不建气泡、正文退回输入框 ──
+      // 主循环已退出、后端在收尾（记忆落盘 / 自动提炼），此时追加没有消费方：
+      // 入队即永不执行。后端同样会拒收（返回 rejected="finalizing"）——
+      // 这里先拦是为了「正文原样退回输入框且不产生幽灵气泡」的即时反馈；
+      // 竞态路径（本端看到 running、后端已转 finalizing）由下方 rejected 分支兜底。
+      if (snapshot === 'finalizing') {
+        return {
+          ok: false,
+          rejected: 'finalizing',
+          message: t('toast.finalizingPleaseResend'),
+        }
       }
 
       const configured = await isLlmConfigured()
       if (!configured) {
-        invoke('hud_update', { text: 'Please configure API Key first', phase: 'error' })
+        showToast('Please configure API Key first', 'error')
         return { ok: false, message: t('toast.configureApiKey') }
       }
 
-      // 执行中（后端 busy）发送 = 追加指令：不创建独立 user 气泡。
+      // 执行中（后端 Running）发送 = 追加指令：不创建独立 user 气泡。
       // 追加消息只入后端队列注入执行——显示新气泡会让前端以为要开启新回合，
       // 并覆盖 streamingMsgId 导致 agent 当前气泡瞬间封闭、最终回复丢失。
-      // 判定只看后端 busy（权威），不看前端 isProcessing：前端状态可能因
-      // execution_completed 早于收尾 guard drop 而先复位，此时发送仍属追加。
-      const isAppendAttempt = backendBusy
 
       const msg: ChatMessage = {
         id: crypto.randomUUID(),
@@ -511,7 +544,8 @@ export function useSession(): SessionAPI {
         setMessages(prev => [...prev, msg])
       }
       setCurrentQuery('')
-      setIsProcessing(true)
+      // 乐观置位：后端受理后会发 execution_started 再确认一次；真值最终由轮询收敛
+      setExecutionStage('running')
       // Workflow 模式下发送消息 = WorkflowAgent 将执行内容，标记活动
       if ((forceMode || mode) === 'workflow') {
         execUI.setHasWorkflowActivity(true)
@@ -534,6 +568,8 @@ export function useSession(): SessionAPI {
         streamingMsgId.current = effectiveSendId
       }
       let isAppend = false
+      /** 收尾期拒收：后端未受理（仍在收尾），本轮不发起的执行不得被本端收敛掉 */
+      let rejectedFinalizing = false
       try {
         const history = messagesRef.current.map(m => ({ role: m.role, content: m.content }))
         const relation = loadRelation()
@@ -553,20 +589,35 @@ export function useSession(): SessionAPI {
           newSession,
         )
         if (result === null) {
-          invoke('hud_update', {
-            text: 'Connection lost - please try again',
-            phase: 'error',
-          })
+          showToast('Connection lost - please try again', 'error')
           return { ok: false, message: t('toast.connectionLost') }
+        }
+        if (result.rejected) {
+          // ── 收尾期拒收（竞态路径：本端看到 running，后端已转 finalizing）──
+          // 后端未受理、未入队、未记去重基准。此处必须把刚乐观 push 的 user 气泡撤掉，
+          // 执行态退回收尾（真值由轮询收敛），并把**原文退回输入框**（调用方按 rejected
+          // 回填）——绝不留下一个不会被执行的气泡，也绝不静默丢弃。
+          rejectedFinalizing = true
+          setMessages(prev => prev.filter(m => m.id !== msg.id))
+          setExecutionStage('finalizing')
+          return {
+            ok: false,
+            rejected: result.rejected,
+            message: t('toast.finalizingPleaseResend'),
+          }
         }
         if (result.appended) {
           // 执行中发送被接受为追加指令：不开启新执行、不清除执行态。
-          // 追加消息不显示为独立气泡——撤销可能已 push 的 msg（前端 isProcessing
-          // 与后端 busy 状态不同步时兜底），仅弹窗提示消息内容本身。
+          // 追加消息不显示为独立气泡——撤销可能已 push 的 msg（前端执行态
+          // 与后端状态不同步时兜底），并提示「已作为追加指令插入当前任务」。
+          // ⚠️ 不再回显用户原文（本端输入框入口看起来像自己刚打的字，非输入框入口
+          // ——如「运行工作流」——的文本还是合成指令），提示必须说明真实语义：
+          // 不会立即开新回合；调用方可用 appendedHint 补充自有语境。
           isAppend = true
           setMessages(prev => prev.filter(m => m.id !== msg.id))
-          showToast(result.message || input, 'info')
-          return { ok: true }
+          showToast(appendedHint || t('toast.appendedToRunning'), 'info')
+          // appended 必须透出：调用方据此区分「被当追加受理」与「正常开新回合」
+          return { ok: true, appended: true }
         }
         // 图片降级警告：主模型与视觉模型都不支持视觉，图片已降级发送但 AI 无法查看。
         // 弹窗提示，不阻塞消息流（后端已正常处理）。
@@ -574,10 +625,7 @@ export function useSession(): SessionAPI {
           showToast(result.image_warning, 'warning')
         }
         if (result.success === false) {
-          invoke('hud_update', {
-            text: result.message || '发送失败，请重试',
-            phase: 'error',
-          })
+          showToast(result.message || '发送失败，请重试', 'error')
           // ── 失败分流（仅本地展示：后端失败不 push session，错误气泡不入 agent 上下文）──
           // - steps_count > 0：已执行工具后失败 → 优雅停止（执行结果已保留，不提供重试）
           // - steps_count == 0：首轮 LLM 调用即失败 → 标记该 user 消息 failed，hover 可重试
@@ -613,19 +661,21 @@ export function useSession(): SessionAPI {
           return { ok: false, message: errorText }
         }
       } catch (e: any) {
-        invoke('hud_update', { text: 'Request failed: ' + (e.message || e), phase: 'error' })
+        showToast('Request failed: ' + (e.message || e), 'error')
         return { ok: false, message: e?.message || String(e) }
       } finally {
-        // 追加指令不改变执行态（仍在执行中）；只有真正开启新执行才清理
-        if (!isAppend) {
-          setIsProcessing(false)
+        // 追加受理 / 收尾期拒收都不改变执行态：前者的执行仍在进行（流式目标必须保留），
+        // 后者由后端收尾占用（真正收敛为 idle 由执行态轮询给出）。
+        // 只有本端真正发起的新执行才在此收敛——输出已发出 → Finalizing。
+        if (!isAppend && !rejectedFinalizing) {
+          setExecutionStage('finalizing')
           streamingMsgId.current = null
           executionActiveRef.current = false
         }
       }
       return { ok: true }
     },
-    [mode, isProcessing, agentControl.checkBackendReady],
+    [mode, execState.refresh, setExecutionStage, agentControl.checkBackendReady, showToast],
   )
 
   // ── handleNewChat (kept in useSession due to tight coupling with messages) ──
@@ -633,7 +683,8 @@ export function useSession(): SessionAPI {
     // 本地清空聊天区回 welcome（进既有会话 / 继续对话 / 新建成功都经此）。
     // 会话归属以后端为权威，前端无需维护任何"下一发送=新建"意图状态。
     setMessages([])
-    setIsProcessing(false)
+    // 回到欢迎页/装载他会话：后端守卫已保证空闲（busy 时切换/新建会被拒）
+    setExecutionStage('idle')
     execUI.setCompleted(false)
     execUI.setGoal('')
     execUI.setTimeline([])
@@ -648,7 +699,7 @@ export function useSession(): SessionAPI {
     execUI.setPendingRefine(null)
     streamingMsgId.current = null
     lastStreamingMsgId.current = null
-  }, [])
+  }, [setExecutionStage])
 
   const handleNewChat = useCallback(
     async (title?: string): Promise<boolean> => {
@@ -662,17 +713,17 @@ export function useSession(): SessionAPI {
       // 后台跑 → 界面与真实状态撕裂（实测）。所有入口（Ctrl+N / TitleBar / SessionRail+ /
       // 命令面板 / ChatPanel）统一走这里。
       // 返回 false = 后端拒绝（调用方据此保持弹窗打开；弹窗标题 ≤40 字且非空，
-      // 故 HUD 文案只覆盖 busy / append_pending 这两个真实失败）。
+      // 故轻反馈文案只覆盖 busy / append_pending 这两个真实失败）。
       try {
         await newChatSessionCmd(title)
       } catch {
-        invoke('hud_update', { text: '任务正在执行中，无法新建对话', phase: 'error' })
+        showToast('任务正在执行中，无法新建对话', 'error')
         return false
       }
       resetTransientUI()
       return true
     },
-    [resetTransientUI],
+    [resetTransientUI, showToast],
   )
 
   /**
@@ -987,7 +1038,10 @@ export function useSession(): SessionAPI {
 
     // Core
     messages,
+    // 执行态唯一来源 + 两个派生视图（见文件内 execState 注释）
+    executionStage,
     isProcessing,
+    busy,
     status,
     modelName,
     sessionId,
@@ -1061,7 +1115,7 @@ export function useSession(): SessionAPI {
 
     // Setters (for useEvents)
     setMessages,
-    setIsProcessing,
+    setExecutionStage,
     setCompleted: execUI.setCompleted,
     setStepIndex: execUI.setStepIndex,
     setGoal: execUI.setGoal,
