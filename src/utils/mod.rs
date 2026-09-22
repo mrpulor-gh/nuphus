@@ -1016,11 +1016,33 @@ struct SafeWriter {
     file: Option<std::fs::File>,
 }
 
+/// 日志单文件体积上限：超过则在下次写入前轮转，保留一份历史文件（`*.log.1`）。
+/// 未加此机制时 `nuphus-debug.log` 只 append 从不回收，实测可累积到 40 MB 以上。
+const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// 按体积轮转日志：超出上限即把当前文件改名为 `<原名>.1`（覆盖上一份历史）。
+///
+/// `SafeWriter::new` 是 tracing `MakeWriter` 的工厂，每次写入前都会被调用，因此体积
+/// 检查放在这里等价于「写入过程中按大小轮转」。轮转失败（例如另一实例正持有该文件）
+/// 按尽力而为处理 —— 继续 append，不阻断日志、不影响启动。
+fn rotate_log_if_oversized(path: &std::path::Path, max_bytes: u64) {
+    let oversized = std::fs::metadata(path)
+        .map(|meta| meta.len() > max_bytes)
+        .unwrap_or(false);
+    if !oversized {
+        return;
+    }
+    let backup = path.with_extension("log.1");
+    let _ = std::fs::remove_file(&backup);
+    let _ = std::fs::rename(path, &backup);
+}
+
 impl SafeWriter {
     fn new() -> Self {
         let log_path = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("nuphus-debug.log");
+        rotate_log_if_oversized(&log_path, LOG_ROTATE_BYTES);
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1304,6 +1326,80 @@ pub fn trim_memory_journal_to_cap(content: &str, cap_bytes: usize) -> String {
     kept.reverse();
     kept.join("\n\n")
 }
+
+/// 日志轮转（`SafeWriter`）：只测纯函数 `rotate_log_if_oversized` —— 不触碰
+/// `current_dir()` 依赖，全部落在系统临时目录下的独立子目录里。
+#[cfg(test)]
+mod log_rotation_tests {
+    use super::rotate_log_if_oversized;
+
+    /// 独立临时目录（pid + 用例名隔离，避免并行测试互相干扰）
+    fn scratch_dir(case: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join("nuphus_log_rotation_tests")
+            .join(format!("{}_{}", std::process::id(), case));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
+    }
+
+    #[test]
+    fn oversized_log_is_rotated_to_backup() {
+        let dir = scratch_dir("oversized");
+        let log = dir.join("nuphus-debug.log");
+        std::fs::write(&log, vec![b'x'; 4096]).expect("写入超限日志");
+
+        rotate_log_if_oversized(&log, 1024);
+
+        assert!(!log.exists(), "超限日志应被移走，交由 append 重新创建");
+        let backup = log.with_extension("log.1");
+        assert!(backup.exists(), "应保留 .log.1 历史文件");
+        assert_eq!(std::fs::metadata(&backup).unwrap().len(), 4096);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn small_log_is_left_untouched() {
+        let dir = scratch_dir("small");
+        let log = dir.join("nuphus-debug.log");
+        std::fs::write(&log, vec![b'x'; 256]).expect("写入小日志");
+
+        rotate_log_if_oversized(&log, 1024);
+
+        assert!(log.exists(), "未超限不应轮转");
+        assert!(!log.with_extension("log.1").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_log_is_noop() {
+        let dir = scratch_dir("missing");
+        let log = dir.join("nuphus-debug.log");
+
+        rotate_log_if_oversized(&log, 1024); // 首次运行：不 panic、不创建文件
+
+        assert!(!log.exists());
+        assert!(!log.with_extension("log.1").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repeated_rotation_keeps_single_backup() {
+        let dir = scratch_dir("repeat");
+        let log = dir.join("nuphus-debug.log");
+        let backup = log.with_extension("log.1");
+
+        std::fs::write(&log, vec![b'a'; 4096]).expect("第一份");
+        rotate_log_if_oversized(&log, 1024);
+        std::fs::write(&log, vec![b'b'; 2048]).expect("第二份");
+        rotate_log_if_oversized(&log, 1024);
+
+        // 只保留最近一份历史：内容应是第二份
+        assert_eq!(std::fs::metadata(&backup).unwrap().len(), 2048);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
