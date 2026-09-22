@@ -438,19 +438,58 @@
   font-family: var(--font-mono);
   font-weight: 600;
 }
+/* 尾随窗口：最多 2 行，最新内容常驻可见。
+   仅供展示执行速度，不是内容阅读区——正文见消息气泡、thinking 全文见执行面板。
+   布局要点：
+   · 尾随靠纯 CSS（column + justify-content: flex-end），**不依赖任何 JS**：
+     内容溢出被顶部裁掉，最新行永远贴底可见，JS 失效也不会退化成"只显示头部"；
+   · flex: 0 0 auto —— 不做 grow/shrink，按内容定高（用 flex:1(basis 0%) 会在
+     auto 高的父列中塌成 0）；
+   · min-height: 0 —— 必须显式关掉 flex item 的自动最小高度（= 内容高度），
+     否则它会压过 max-height（clamp 顺序 max(min-height, min(max-height, size))），
+     导致窗口永不裁切、指示器无限变高。 */
 .thinking-text-wrap {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
+  min-height: 0;
+  font-size: var(--fz-md);
+  line-height: 1.4;
+  max-height: 2.8em;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 .thinking-text {
-  font-size: var(--fz-md);
+  /* 不参与收缩：保持自身完整高度供 ResizeObserver 测行数，裁剪交给 wrap */
+  flex-shrink: 0;
+  font-size: inherit;
+  line-height: inherit;
   color: var(--spark-secondary);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
+  white-space: pre-wrap;
+}
+/* ── 换行脉冲：满一行即换行 → 一次毫秒级「按键按下再弹起」（仅换行触发，非逐字） ──
+   JS 只切 .keypress 状态类；类移除→重加可重启动画。
+   时长压到 70ms：必须明显短于常见换行间隔，否则连续换行时动画互相打断、看不出节奏。 */
+.thinking-indicator-inner.keypress {
+  animation: thinkingKeyPress 70ms ease-out;
+}
+@keyframes thinkingKeyPress {
+  0% {
+    transform: scale(1) translateY(0);
+  }
+  30% {
+    transform: scale(0.96) translateY(0.5px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-indicator-inner.keypress {
+    animation: none;
+  }
 }
 /* ── 右侧按钮 ── */
 .thinking-actions {

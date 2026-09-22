@@ -644,6 +644,7 @@ export function ExecutionTraceFloating({
   // Card/UI mode: thinking default collapsed (expanded = user manually expanded)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRafRef = useRef(0)
   const userScrolledRef = useRef(false)
   const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Track each tool_call entry's output length, detect streaming append
@@ -746,11 +747,18 @@ export function ExecutionTraceFloating({
     }
     prevTimelineLen.current = len
 
-    if (hasNewContent && !userScrolledRef.current) {
-      const timer = setTimeout(() => {
-        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' as ScrollBehavior })
-      }, 100)
-      return () => clearTimeout(timer)
+    // 流式尾随：用 rAF 合并滚动，而不是 setTimeout 防抖。
+    // 快速流式时 delta 间隔常 <100ms，防抖定时器会被不断清除、永不触发 →
+    // 新内容一直留在视野之外，用户误以为「没有流式」。rAF 每帧至多滚一次，不会被饿死。
+    if (hasNewContent && !userScrolledRef.current && scrollRafRef.current === 0) {
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = 0
+        const node = scrollRef.current
+        if (!node || userScrolledRef.current) return
+        // instant：每帧滚动本身即连续；且不会被 smooth 动画在持续重定向下拖着滞后，
+        // 保证最新行永不滞留在视野之外（这正是「看不到流式」的症结）。
+        node.scrollTo({ top: node.scrollHeight, behavior: 'instant' as ScrollBehavior })
+      })
     }
   }, [displayTimeline])
 
@@ -758,6 +766,7 @@ export function ExecutionTraceFloating({
   useEffect(() => {
     return () => {
       if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current)
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
     }
   }, [])
 

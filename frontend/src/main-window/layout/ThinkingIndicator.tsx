@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState } from 'react'
 import type { TimelineEntry } from '../../core/types'
 import { MoodFace } from '../../ui/MoodFace'
 import type { MoodState } from '../../ui/MoodFace'
@@ -114,6 +115,54 @@ export function ThinkingIndicator({
   onClose,
 }: ThinkingIndicatorProps) {
   const { t } = useLanguage()
+
+  // ── 换行脉冲 ──
+  // 满一行即换行 → 触发一次毫秒级「按键按下再弹起」（只在换行触发，不逐字，避免频闪）。
+  // 尾随本身由 CSS 负责（column + flex-end），JS 失效也不会退化成"只显示头部"；
+  // 这里只负责「测到换行 → 切一个状态类」，动画全在 CSS。
+  const [keyPulse, setKeyPulse] = useState(false)
+  const roRef = useRef<ResizeObserver | null>(null)
+  const lastLineCountRef = useRef(0)
+
+  const triggerPulse = useCallback(() => {
+    // 先落回 false 再于下一帧置 true：类名移除→重加可重启动画，
+    // 快速连续换行时不会因为「已是 true」而丢失后一次脉冲。
+    setKeyPulse(false)
+    requestAnimationFrame(() => setKeyPulse(true))
+  }, [])
+
+  const onTextGrow = useCallback(
+    (el: HTMLElement) => {
+      // 行数 = 文本节点自身高度 / 行高（该节点不被裁剪、随内容单调增长）
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight)
+      const lh = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 18
+      const lines = Math.max(1, Math.round(el.getBoundingClientRect().height / lh))
+      if (lastLineCountRef.current > 0 && lines > lastLineCountRef.current) triggerPulse()
+      lastLineCountRef.current = lines
+    },
+    [triggerPulse],
+  )
+
+  // ref 回调而非 useEffect：
+  // · 组件可能先因 dismissed 返回 null（无节点），之后才渲染出文本节点，回调更可靠；
+  // · 卸载时 React 会以 null 调用本回调，断开即在此完成 —— 不要再额外写
+  //   useEffect(() => () => ro.disconnect(), [])：StrictMode 下 effect 会被
+  //   双调用（mount→cleanup→mount），那次 cleanup 会断开刚建好的 observer，
+  //   而 effect 重跑并不会重建它，导致换行检测永久失效。
+  const setTextNode = useCallback(
+    (el: HTMLSpanElement | null) => {
+      roRef.current?.disconnect()
+      roRef.current = null
+      lastLineCountRef.current = 0
+      if (!el) return
+      onTextGrow(el)
+      const ro = new ResizeObserver(() => onTextGrow(el))
+      ro.observe(el)
+      roRef.current = ro
+    },
+    [onTextGrow],
+  )
+
   // 已点击「关闭」：无论是否 completed / isThinking，整条指示器都应隐藏。
   if (dismissed) return null
   if (!completed && !isThinking && !step) return null
@@ -140,7 +189,15 @@ export function ThinkingIndicator({
         boxShadow: `0 0 24px ${phaseColor}08, var(--shadow-elevated)`,
       }}
     >
-      <div className="thinking-indicator-inner" onClick={handleExpand}>
+      <div
+        className={`thinking-indicator-inner${keyPulse ? ' keypress' : ''}`}
+        onClick={handleExpand}
+        onAnimationEnd={e => {
+          // 仅响应本次脉冲：子元素（MoodFace/图标）的 animationend 会冒泡上来，
+          // 不过滤会在脉冲播放途中被提前清掉。
+          if (e.animationName === 'thinkingKeyPress') setKeyPulse(false)
+        }}
+      >
         <div className="thinking-mood-box">
           <MoodFace mood={mood || 'idle'} size={36} />
         </div>
@@ -159,7 +216,7 @@ export function ThinkingIndicator({
             )}
           </div>
           <div className="thinking-text-wrap">
-            <span className="thinking-text">
+            <span className="thinking-text" ref={setTextNode}>
               {completed
                 ? t('thinking.completed')
                 : step ||

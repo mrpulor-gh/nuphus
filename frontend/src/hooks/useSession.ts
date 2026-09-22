@@ -370,6 +370,23 @@ export interface SessionAPI {
 // Hook
 // ════════════════════════════════════════════════════════════
 
+/**
+ * 取「当前正在流式」条目的文本（**不截断**）。
+ *
+ * 仅供 ThinkingIndicator 展示执行速度，不是内容阅读区：正文由 agent 消息气泡承载、
+ * thinking 全文由执行面板承载。故只在**最后一个条目**仍是 thinking/text（= 正在流式）
+ * 时返回其全文；一旦被工具调用等条目接管即返回空 —— 不保留任何内容。
+ *
+ * 不截断的原因：指示器靠文本节点**高度单调增长**来测「满行换行」，任何定长窗口都会
+ * 让高度提前封顶、换行事件丢失（只做展示裁剪，由 CSS 容器裁到 2 行）。
+ */
+export function liveStreamText(timeline: TimelineEntry[]): string {
+  const last = timeline[timeline.length - 1]
+  if (!last) return ''
+  if (last.kind !== 'thinking' && last.kind !== 'text') return ''
+  return last.text || ''
+}
+
 export function useSession(): SessionAPI {
   const { t } = useLanguage()
 
@@ -985,25 +1002,13 @@ export function useSession(): SessionAPI {
   )
 
   // ── Derived / computed ──
-  const thinkingStep = useMemo(() => {
-    const timeline = execUI.timeline
-    if (timeline.length === 0) return ''
-    // 显示优先级：agent 正文输出（text）。不再显示 thinking（思考过程）——
-    // 指示器只反映 agent 对外产出：有正文显示正文；无正文返回空，
-    // 由 ThinkingIndicator 兜底显示当前工具调用。
-    const lastText = timeline.filter(t => t.kind === 'text').pop() as
-      { kind: 'text'; text: string } | undefined
-    const text = lastText?.text || ''
-    if (text && text.trim().length >= 2) {
-      const firstPara = text.split('\n\n')[0]?.trim() || ''
-      if (firstPara.length <= 200) return firstPara
-      const firstSentence = firstPara.split(/[。]|[.]\s/)[0]
-      if (firstSentence && firstSentence.length <= 180)
-        return firstSentence + (firstSentence.length < firstPara.length ? '…' : '')
-      return firstPara.slice(0, 160) + '…'
-    }
-    return ''
-  }, [execUI.timeline])
+  // 流式展示窗口 —— 仅供 ThinkingIndicator 展示「执行速度」，不是给用户读内容的。
+  //
+  // 职责边界：正文由 agent 消息气泡承载、thinking 全文由执行面板承载；指示器只做
+  // 「当前正在流式」的瞬时速度展示，故只取**最后一个条目**（= 正在流式的条目）的全文，
+  // 一旦被工具调用等后续条目接管即返回空、由 ThinkingIndicator 兜底显示工具调用。
+  // 展示裁剪交给 CSS 容器（2 行尾随），此处不截断 —— 截断会让换行检测失效。
+  const thinkingStep = useMemo(() => liveStreamText(execUI.timeline), [execUI.timeline])
 
   const displayTokenUsage = useMemo(() => execUI.mainTokenUsage, [execUI.mainTokenUsage])
   const liveCalls = useMemo(
