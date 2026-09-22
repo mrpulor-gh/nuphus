@@ -1,19 +1,25 @@
 //! Vision OCR via user-configured image understanding model
 //!
 //! Sends screenshot to user's configured vision model (capabilities.vision).
-//! Supports two protocols, chosen by `provider_type`:
-//! - **OpenAI-compatible** Chat Completions (default) — `image_url` content.
-//! - **Anthropic native** Messages API (`provider_type = "anthropic"`) — `/v1/messages`,
-//!   `x-api-key` + `anthropic-version`, native `image` source block.
 //!
-//! `max_tokens` defaults to 1024 — the compatibility floor for Chinese OpenAI-compatible
-//! providers (Zhipu GLM-4V-Flash rejects anything above 1024 with HTTP 400). Override per
-//! model via `ModelEntry.max_tokens` in the model registry.
+//! 传输层复用：本模块**不**自行拼 URL / 鉴权头 / JSON body，而是取出模型所在段的
+//! `Provider::transport()`（协议族由 Provider 自身声明：OpenAI 兼容自定义/中转段走
+//! Chat Completions，`provider_type = "anthropic"` 走 Messages API），把图片作为
+//! 一条 user 消息交给传输层。这样自定义/中转 Provider 与官方 Provider 的请求参数、
+//! 鉴权、重试、超时、代理回退完全一致——不再存在第二套旁路实现。
+//!
+//! `stream = true`：部分 OpenAI 兼容中转端点在非流式模式下不返回图片结果（要求
+//! 流式）；传输层用 `parse_sse` 解析 SSE，Anthropic 传输层同样按 SSE 解析，两者
+//! 返回统一的 `Vec<StreamEvent>`。
+//!
+//! `max_tokens` 仅在模型段显式配置了 `ModelEntry.max_tokens` 时下发；未配置则不
+//! 带该字段，由传输层回退链（`resolve_max_output_tokens` → 服务端默认上限）决定，
+//! 与本仓其它 LLM 调用同一口径。
 //!
 //! Returns `Result<String, String>` — Ok(text) on success, Err(message) on failure.
 //! Errors are wrapped into NuphusError::Tool by the caller (client::ocr).
 
-use crate::api::ProviderKind;
+use crate::api::MessageRequest;
 use crate::config::{self, resolve_vision_provider, resolve_vision_strategy, VisionStrategy};
 
 fn resolve_vision_model<'a>(
@@ -32,14 +38,14 @@ fn resolve_vision_model<'a>(
     }
 }
 
-/// OCR via vision model (Chat Completions API with image_url)
+/// OCR via vision model (image content block + unified transport layer)
 ///
 /// Loads the user's vision model config from capabilities.vision in the
 /// model registry, encodes the BMP/PNG image as base64 data URL, and sends it
-/// to the model's OpenAI-compatible endpoint.
+/// through the model segment's `Provider::transport()`.
 ///
 /// 对外行为不变：接受文件路径，内部读取文件 → data URL → 直调内部函数。
-pub fn vision_ocr(image_path: &str, prompt: Option<&str>) -> Result<String, String> {
+pub async fn vision_ocr(image_path: &str, prompt: Option<&str>) -> Result<String, String> {
     // 4. Read image — convert BMP to PNG (LLM APIs don't support image/bmp)
     let image_bytes = std::fs::read(image_path).map_err(|e| format!("读取图片失败: {e}"))?;
     let (mime_type, final_bytes) = if image_path.to_lowercase().ends_with(".png") {
@@ -55,7 +61,7 @@ pub fn vision_ocr(image_path: &str, prompt: Option<&str>) -> Result<String, Stri
     let base64_image = base64_encode(&final_bytes);
     let data_url = format!("data:{mime_type};base64,{base64_image}");
 
-    vision_ocr_data_url(&data_url, prompt)
+    vision_ocr_data_url(&data_url, prompt).await
 }
 
 /// 视觉模型直调（data URL 版本）
@@ -63,7 +69,9 @@ pub fn vision_ocr(image_path: &str, prompt: Option<&str>) -> Result<String, Stri
 /// 用户消息图片在 session 中已是冻结的 base64 data URL（BMP→PNG 在入 session 时
 /// 已完成），无需再落临时文件。此函数复用 vision_ocr 的完整调用链，供
 /// desktop_vision 工具与按需图片查看使用。
-pub fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<String, String> {
+///
+/// 协议解析（Chat Completions / Anthropic Messages）由对应 Provider 的传输层负责。
+pub async fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<String, String> {
     let vision_model_id = resolve_vision_model_id()?;
 
     // 2. 加载 registry 解析模型配置
@@ -74,10 +82,9 @@ pub fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<Strin
     let (provider_config, model_entry) =
         resolve_vision_model(&registry, &vision_model_id, vision_provider.as_deref())?;
 
-    // 4. 从内置 ProviderRegistry 获取正确的 auth_header/auth_prefix
-    //    TOML ProviderConfig 默认为空，应使用 Provider trait 定义的认证方式
-    let builtin_registry = crate::config::registry::ProviderRegistry::builtin();
-    let builtin_provider = builtin_registry
+    // 4. 该模型段的传输层（协议族由 Provider 自身声明；鉴权头 / 端点 / 重试 /
+    //    超时 / 代理回退与该模型的常规 LLM 调用完全同源）
+    let provider = config::registry::ProviderRegistry::builtin()
         .get(provider_config.provider_type.as_str())
         .ok_or_else(|| {
             format!(
@@ -85,128 +92,84 @@ pub fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result<Strin
                 provider_config.provider_type.as_str()
             )
         })?;
-    let auth_header = builtin_provider.auth_header();
-    let auth_prefix = builtin_provider.auth_prefix();
+    let transport = provider.transport(provider_config, &model_entry.id);
 
     // 5. 解析 data URL → mime_type + base64 载荷
     let (mime_type, base64_image) = split_data_url(data_url)?;
 
-    // 6. Build request body (OpenAI-compatible or Anthropic native Messages)
+    // 6. 图片内容块：Anthropic 原生 image source block / OpenAI image_url
+    //    （图片对两种协议都是「按 URL 取图」的远程资源，故统一用 data URL 形式传递）
     let prompt_text = prompt
         .filter(|p| !p.is_empty())
         .unwrap_or("请识别并输出这张图片中的所有文字，只输出文字内容，不要添加任何解释。");
 
-    // max_tokens 默认 1024：国产 OpenAI 兼容视觉模型（智谱 GLM-4V-Flash 等）上限就是 1024，
-    // 硬编码更高值会返回 HTTP 400。按模型在注册表配置 `ModelEntry.max_tokens` 可调高。
-    let max_tokens = model_entry.max_tokens.unwrap_or(1024);
-    let is_anthropic = provider_config.provider_type == ProviderKind::Anthropic;
-
-    let body = if is_anthropic {
-        serde_json::json!({
-            "model": model_entry.id,
-            "max_tokens": max_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime_type,
-                                "data": base64_image
-                            }
-                        },
-                        { "type": "text", "text": prompt_text }
-                    ]
+    let content = if provider_config.provider_type == crate::api::ProviderKind::Anthropic {
+        serde_json::json!([
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64_image
                 }
-            ]
-        })
+            },
+            { "type": "text", "text": prompt_text }
+        ])
     } else {
-        serde_json::json!({
-            "model": model_entry.id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt_text
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url,
-                                "detail": "high"
-                            }
-                        }
-                    ]
+        serde_json::json!([
+            { "type": "text", "text": prompt_text },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": data_url,
+                    "detail": "high"
                 }
-            ],
-            "max_tokens": max_tokens
-            // temperature 不传：部分模型（如 Kimi 推理系）强制 temperature=1，传 0.0 会被 400 拒绝
-        })
+            }
+        ])
     };
 
-    // 7. Make HTTP POST request
-    let client = reqwest::blocking::Client::new();
-    let base = provider_config.base_url.trim_end_matches('/');
-    let url = if is_anthropic {
-        format!("{base}/v1/messages")
-    } else {
-        format!("{base}/chat/completions")
-    };
-    // 空 auth_header（local 等未声明鉴权方案的 Provider）会被 http crate 判为
-    // 非法头名 → reqwest 只报一句难以定位的 builder error；统一走 resolve_auth。
-    let auth =
-        crate::config::provider::resolve_auth(auth_header, auth_prefix, &provider_config.api_key);
+    // temperature 不传：部分模型（如 Kimi 推理系）强制 temperature=1，传 0.0 会被 400 拒绝
+    let mut request = MessageRequest::new(&model_entry.id, vec![serde_json::json!({
+        "role": "user",
+        "content": content,
+    })]);
+    // max_tokens：仅显式配置时下发（未配置则由传输层回退链决定，见模块文档）
+    if let Some(max_tokens) = model_entry.max_tokens {
+        request = request.with_max_tokens(max_tokens);
+    }
+    // 流式：中转端点要求（非流式不返回图片结果），传输层按 SSE 解析
+    request = request.with_stream(true);
 
-    let mut request = client.post(&url).header("Content-Type", "application/json");
-    if let Some((h, v)) = &auth {
-        request = request.header(h.as_str(), v.as_str());
-    }
-    if is_anthropic {
-        request = request.header("anthropic-version", "2023-06-01");
-    }
-    let response = request
-        .json(&body)
-        .send()
+    // 7. 经统一传输层发起请求并解析为统一事件流
+    let events = transport
+        .stream(request)
+        .await
         .map_err(|e| format!("视觉模型请求失败: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let err_body = response.text().unwrap_or_default();
-        return Err(format!("视觉模型返回错误 HTTP {status}: {err_body}"));
+    // 8. 事件流 → 纯文本（TextDelta 拼接；Error 不吞）
+    events_to_text(events).map_err(|e| format!("视觉模型调用失败: {e}"))
+}
+
+/// 统一事件流 → 文本。
+///
+/// - 所有 `TextDelta` 按到达顺序拼接（SSE 分片已由传输层合并）；
+/// - 任一 `Error(e)` 直接失败——视觉调用的失败必须让 Leader 看到真实原因，
+///   不能当作「空结果」静默降级；
+/// - 空文本单独报错（模型拒答 / 事件流里没有可见文本），避免把空串当成功交付。
+fn events_to_text(events: Vec<crate::transports::StreamEvent>) -> Result<String, String> {
+    let mut text = String::new();
+    for event in events {
+        match event {
+            crate::transports::StreamEvent::TextDelta(delta) => text.push_str(&delta),
+            crate::transports::StreamEvent::Error(e) => return Err(e),
+            _ => {}
+        }
     }
-
-    // 8. Parse response
-    let resp_json: serde_json::Value = response
-        .json()
-        .map_err(|e| format!("解析视觉模型响应失败: {e}"))?;
-
-    let text = if is_anthropic {
-        // Anthropic: join content[*] text blocks (may be split across multiple blocks)
-        resp_json["content"]
-            .as_array()
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter(|b| b["type"] == "text")
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<String>()
-            })
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    } else {
-        resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    };
-
-    Ok(text)
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("视觉模型未返回任何文本内容".to_string());
+    }
+    Ok(text.to_string())
 }
 
 /// 使用统一判定获取视觉模型 ID（desktop_vision 工具与描述注入共用）
@@ -259,6 +222,7 @@ fn base64_encode(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transports::StreamEvent;
 
     fn duplicate_model_registry() -> config::ModelRegistry {
         toml::from_str(
@@ -299,5 +263,39 @@ id = "shared-model"
         let registry = duplicate_model_registry();
         let (provider, _) = resolve_vision_model(&registry, "shared-model", None).unwrap();
         assert_eq!(provider.name, "first");
+    }
+
+    #[test]
+    fn events_join_all_text_deltas() {
+        let events = vec![
+            StreamEvent::Reasoning("thinking".to_string()),
+            StreamEvent::TextDelta("第一行".to_string()),
+            StreamEvent::TextDelta("\n第二行".to_string()),
+            StreamEvent::Usage {
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_hit_tokens: 0,
+            },
+            StreamEvent::Done,
+        ];
+        assert_eq!(events_to_text(events).unwrap(), "第一行\n第二行");
+    }
+
+    #[test]
+    fn events_error_event_is_not_swallowed() {
+        let events = vec![
+            StreamEvent::TextDelta("部分".to_string()),
+            StreamEvent::Error("HTTP 400: bad request".to_string()),
+        ];
+        assert_eq!(
+            events_to_text(events).unwrap_err(),
+            "HTTP 400: bad request"
+        );
+    }
+
+    #[test]
+    fn events_empty_text_is_an_error() {
+        let events = vec![StreamEvent::Done];
+        assert!(events_to_text(events).is_err());
     }
 }

@@ -1023,19 +1023,14 @@ end tell"#;
     ) -> Result<Value> {
         match engine {
             "vision" => {
-                let path = image_path.to_string();
-                let prompt = prompt.map(|s| s.to_string());
+                // 远端模型调用（经统一传输层，async）——超时语义保持不变：
+                // 推理系主模型（如 k3）单次可达 50s+，30s 会误杀
                 let result = tokio::time::timeout(
-                    // vision 走远端模型：推理系主模型（如 k3）单次可达 50s+，30s 会误杀
                     std::time::Duration::from_secs(120),
-                    tokio::task::spawn_blocking(move || {
-                        super::vision_ocr::vision_ocr(&path, prompt.as_deref())
-                            .map_err(crate::NuphusError::Tool)
-                    }),
+                    super::vision_ocr::vision_ocr(image_path, prompt),
                 )
                 .await
-                .map_err(|_| crate::NuphusError::Tool("视觉模型超时（120秒）".to_string()))?
-                .map_err(|e| crate::NuphusError::Tool(format!("视觉模型线程异常: {e}")))?;
+                .map_err(|_| crate::NuphusError::Tool("视觉模型超时（120秒）".to_string()))?;
 
                 match result {
                     Ok(text) => {
