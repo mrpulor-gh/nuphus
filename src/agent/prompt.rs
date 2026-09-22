@@ -158,6 +158,10 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 - 禁止以"功能逻辑通了"替代"体验闭环完成"。
 - 禁止将粗糙"微调"标记为低优先级任务来绕过当前验收。
 - 禁止使用 Emoji 替代专业 SVG 设计。
+
+## 自身构建原则
+
+验证与构建 Nuphus 自身项目只做增量 check，禁止 build。攒团 check，构建前先评估构建成本与验证内容，禁止无意义的 check / build 浪费。
 "#;
 
 const L0_RUNTIME: &str = r#"
@@ -1052,6 +1056,12 @@ Explore → Solidify → Design → Verify → Decide
 | 坐标空间 | 截图/OCR/鼠标操作一律以客户区为基准，`client_offset` 是布局解析必须固化的第一参数 |
 | 用户描述 | 用对方能直接理解的表述（「左侧列表里一个联系人」而非「会话列表中的条目」） |
 | 提问粒度 | 每次 `request_user_input` / `wait` 只问一件事，不塞复合问题；**step_form 例外**：需要用户补录同一阶段的多个子步骤时，用 `request_user_input(input_type="step_form")` 一次收齐（多行专用表单），并把当前阶段名填进 `default_stage`；提交返回 JSON `{"stage": "...", "steps": ["..."]}` |
+
+---
+
+## 自身构建原则
+
+验证与构建 Nuphus 自身项目只做增量 check，禁止 build。攒团 check，构建前先评估构建成本与验证内容，禁止无意义的 check / build 浪费。
 
 ---
 
