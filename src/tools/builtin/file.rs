@@ -50,22 +50,22 @@ impl ToolRegistry {
                     )));
                 }
 
-                let p = std::path::Path::new(path);
+                let p = crate::utils::resolve_user_path(path);
                 if !p.exists() {
-                    let cwd = std::env::current_dir()
-                        .map(|c| c.display().to_string())
-                        .unwrap_or_else(|_| "unknown".to_string());
+                    let root = crate::utils::work_root();
                     return Ok(ToolResult::failure(format!(
-                        "directory not found: {} (cwd: {})", path, cwd
+                        "directory not found: {} (基准目录: {})",
+                        path,
+                        root.display()
                     )));
                 }
                 if !p.is_dir() {
                     return Ok(ToolResult::failure(format!("not a directory: {}", path)));
                 }
 
-                let abs_root = match std::fs::canonicalize(p) {
+                let abs_root = match std::fs::canonicalize(&p) {
                     Ok(r) => r,
-                    Err(_) => p.to_path_buf(),
+                    Err(_) => p.clone(),
                 };
 
                 let mut entries = Vec::new();
@@ -194,8 +194,10 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure("path is required"));
                 }
 
-                let p = std::path::Path::new(path);
-                let absolute = std::fs::canonicalize(p)
+                // 相对路径以当前工作根（项目目录，未配置则回退 cwd）为基准 ——
+                // 唯一入口见 utils::resolve_user_path，禁止在此各自 Path::new。
+                let p = crate::utils::resolve_user_path(path);
+                let absolute = std::fs::canonicalize(&p)
                     .map(|a| a.display().to_string())
                     .unwrap_or_else(|_| p.display().to_string());
                 let parent = p
@@ -289,7 +291,8 @@ impl ToolRegistry {
                     )));
                 }
 
-                let p = std::path::Path::new(path);
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）
+                let p = crate::utils::resolve_user_path(path);
                 if let Some(parent) = p.parent() {
                     if !parent.as_os_str().is_empty() && !parent.exists() {
                         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -302,7 +305,7 @@ impl ToolRegistry {
                 let mut file = match std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(p)
+                    .open(&p)
                 {
                     Ok(f) => f,
                     Err(e) => return Ok(ToolResult::failure(format!("open failed: {}", e))),
@@ -312,10 +315,12 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure(format!("write failed: {}", e)));
                 }
 
-                let total = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                let total = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 Ok(ToolResult::success(format!(
                     "Appended {} bytes to {} (total {} bytes)",
-                    content.len(), path, total
+                    content.len(),
+                    p.display(),
+                    total
                 )))
             },
             depends_on: vec![],

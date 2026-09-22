@@ -383,6 +383,16 @@ pub fn env_info_section(
         String::new()
     };
 
+    // 相对路径基准的声明必须与实现一致（utils::resolve_user_path）：
+    // 配了项目目录 → 基准是它；没配 → 基准是进程工作目录。
+    // 历史缺陷：两行并列注入却不区分来源，未配置时 project_dir 静默等于 cwd，
+    // 模型读到两个相同值会自行推断「两者等价」，进而把相对路径当成任选其一。
+    let path_base_line = if crate::utils::has_configured_project_dir() {
+        "相对路径基准: 项目目录（绝对路径不受影响）\n".to_string()
+    } else {
+        "相对路径基准: 工作目录（未配置项目目录）\n".to_string()
+    };
+
     format!(
         "## 执行环境\n\
           ⚠️ 此节内容在会话期间绝对不可变，任何变动都会导致 prompt cache 完全失效\n\
@@ -392,6 +402,7 @@ pub fn env_info_section(
           {}\n\
           工作目录: {}\n\
           项目目录: {}\n\
+          {}\
           语言偏好: {}\n\
           日期: {}\n\
           {}\
@@ -407,6 +418,7 @@ pub fn env_info_section(
         img_status,
         cwd,
         project_dir,
+        path_base_line,
         prefs.language,
         chrono::Local::now().format("%Y-%m-%d"),
         doorbell_line,

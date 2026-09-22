@@ -20,11 +20,17 @@ pub(crate) fn is_binary_office_format(path: &str) -> bool {
 }
 
 impl ToolRegistry {
+    /// 覆写前备份。`path` 为**用户原始入参**（绝对或相对），基准统一走
+    /// [`crate::utils::resolve_user_path`]，与写入落点保持一致。
+    ///
+    /// 备份目录同样基于工作根：原先用相对路径 `.nuphus/backup`，会随进程 cwd
+    /// 散落到程序目录 —— 与产物落错位置是同一类缺陷。
     fn backup_file(path: &str) -> Result<String, String> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let backup_dir = std::path::Path::new(".nuphus/backup");
-        std::fs::create_dir_all(backup_dir)
+        let source = crate::utils::resolve_user_path(path);
+        let backup_dir = crate::utils::work_root().join(".nuphus").join("backup");
+        std::fs::create_dir_all(&backup_dir)
             .map_err(|e| format!("create backup dir failed: {}", e))?;
 
         let now = SystemTime::now()
@@ -32,14 +38,14 @@ impl ToolRegistry {
             .unwrap_or_default()
             .as_millis();
 
-        let file_name = std::path::Path::new(path)
+        let file_name = source
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
         let backup_path = backup_dir.join(format!("{}_{}", file_name, now));
 
-        std::fs::copy(path, &backup_path).map_err(|e| format!("backup failed: {}", e))?;
+        std::fs::copy(&source, &backup_path).map_err(|e| format!("backup failed: {}", e))?;
 
         Ok(backup_path.to_string_lossy().to_string())
     }
@@ -159,16 +165,18 @@ impl ToolRegistry {
                     return Ok(ToolResult::success(format!("{}{}\n{}", path, range_note, text)));
                 }
 
-                let content = std::fs::read_to_string(path)
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）。
+                // Read 必须与 Write 同一基准：读走 cwd、写走项目目录，会出现
+                // 「刚写进项目目录的文件读不到」这种自相矛盾。
+                let resolved = crate::utils::resolve_user_path(path);
+                let content = std::fs::read_to_string(&resolved)
                     .map_err(|e| match e.kind() {
                         std::io::ErrorKind::PermissionDenied => {
                             format!("Permission denied: {}", path)
                         }
                         std::io::ErrorKind::NotFound => {
-                            let cwd = std::env::current_dir()
-                                .map(|p| p.display().to_string())
-                                .unwrap_or_else(|_| "unknown".to_string());
-                            format!("File not found: {} (cwd: {})", path, cwd)
+                            let root = crate::utils::work_root();
+                            format!("File not found: {} (基准目录: {})", path, root.display())
                         }
                         _ => format!("read failed: {} ({})", e, path),
                     })?;
@@ -245,7 +253,9 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure("empty path — you must provide a file path, e.g. 'C:/Users/YourName/Desktop/report.md'"));
                 }
 
-                let p = std::path::Path::new(path);
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）：
+                // Write 是「对话产物落到项目目录」这条链路的落点，基准则落进程序目录。
+                let p = crate::utils::resolve_user_path(path);
                 // 确保父目录存在
                 if let Some(parent) = p.parent() {
                     if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -382,9 +392,13 @@ impl ToolRegistry {
                     )));
                 }
 
+                // Edit 是「读—改—写」全链路，基准必须与 Read/Write 完全一致，
+                // 否则会出现「读到 A 处文件、改到 B 处文件」。唯一入口见 utils::resolve_user_path。
+                let target = crate::utils::resolve_user_path(path);
+
                 // 编码检测：读原始字节，验证 UTF-8 合法性
                 // PowerShell 重定向 / Set-Content 默认用 ANSI/GBK，会损坏非 ASCII 字符
-                let raw_bytes = std::fs::read(path)
+                let raw_bytes = std::fs::read(&target)
                     .map_err(|e| format!("无法读取文件: {} ({})", path, e))?;
                 let is_valid_utf8 = std::str::from_utf8(&raw_bytes).is_ok();
                 if !is_valid_utf8 {
@@ -401,7 +415,7 @@ impl ToolRegistry {
                     )));
                 }
 
-                let raw_content = std::fs::read_to_string(path)
+                let raw_content = std::fs::read_to_string(&target)
                     .map_err(|e| match e.kind() {
                         std::io::ErrorKind::PermissionDenied => {
                             format!("权限不足，无法读取文件: {}", path)
@@ -621,11 +635,11 @@ impl ToolRegistry {
                 } else {
                     new_content
                 };
-                std::fs::write(path, &write_content)
+                std::fs::write(&target, &write_content)
                     .map_err(|e| format!("write failed: {}", e))?;
 
                 // 写后验证：读回文件，检查编码完整性和替换结果
-                let verify_result = match std::fs::read(path) {
+                let verify_result = match std::fs::read(&target) {
                     Ok(bytes) => match std::str::from_utf8(&bytes) {
                         Ok(verified) => {
                             let check_token = new_str.lines().next().unwrap_or(&new_str).trim();
@@ -828,7 +842,7 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure("path is required"));
                 }
 
-                let p = std::path::Path::new(path);
+                let p = crate::utils::resolve_user_path(path);
                 if !p.exists() {
                     return Ok(ToolResult::failure(format!("directory not found: {}", path)));
                 }
@@ -837,7 +851,7 @@ impl ToolRegistry {
                 }
 
                 if recursive {
-                    match std::fs::remove_dir_all(p) {
+                    match std::fs::remove_dir_all(&p) {
                         Ok(_) => Ok(ToolResult::success(format!("Removed directory (recursive): {}", path))),
                         Err(e) => Ok(ToolResult::failure(format!("Remove dir failed: {}", e))),
                     }
@@ -1082,6 +1096,67 @@ mod edit_contract_tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(registry.execute("Edit", &params))
             .expect("execute should not Err")
+    }
+
+    /// 相对路径必须落在**工作根**（此处用隔离 HOME 配好项目目录），而非进程 cwd。
+    ///
+    /// 守护的是产品语义（issue：产物落错位置）：Write 落项目目录、Read/Edit 却按 cwd
+    /// 解析时，会出现「刚写进去的文件读不到、改不到」。本用例把三个动作串起来验证同一基准。
+    #[test]
+    fn relative_paths_resolve_against_work_root() {
+        let _guard = crate::utils::path_base_tests::HOME_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+
+        // 隔离 HOME：把项目目录指向一个干净临时目录
+        let home = std::env::temp_dir().join(format!("nuphus-edit-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".nuphus")).unwrap();
+        let project = home.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            home.join(".nuphus").join("preferences.json"),
+            format!(
+                "{{\"language\":\"zh-CN\",\"project_dir\":{:?}}}",
+                project.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &home);
+
+        // 用相对路径写入 → 应落在项目目录
+        let rel_name = "rel_probe.txt";
+        let write = {
+            let registry = ToolRegistry::builtin();
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(registry.execute(
+                "Write",
+                &serde_json::json!({ "path": rel_name, "content": "line-a\nline-b\n" }),
+            ))
+            .expect("execute should not Err")
+        };
+        assert!(write.success, "write failed: {:?}", write.error);
+        assert!(
+            project.join(rel_name).exists(),
+            "相对路径写入必须落在项目目录：{}",
+            project.join(rel_name).display()
+        );
+
+        // 同一相对路径的 Edit 必须命中同一文件（读—改—写同一基准）
+        let edit = run_edit(serde_json::json!({
+            "path": rel_name, "old_string": "line-a", "new_string": "line-A"
+        }));
+        assert!(edit.success, "edit failed: {:?}", edit.error);
+        let after = std::fs::read_to_string(project.join(rel_name)).unwrap();
+        assert!(after.contains("line-A"), "Edit 应改到项目目录下的同一文件");
+
+        match previous_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

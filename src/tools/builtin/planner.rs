@@ -14,12 +14,9 @@ use std::path::PathBuf;
 // ── 路径解析 ──
 
 fn resolve_plan_path(raw: &str) -> PathBuf {
-    let p = PathBuf::from(raw);
-    if p.is_absolute() {
-        p
-    } else {
-        std::env::current_dir().unwrap_or_default().join(p)
-    }
+    // 与文件工具同一基准（唯一入口 utils::resolve_user_path）：绝对路径原样、
+    // 相对路径按当前工作根展开。禁止在此另立一套 current_dir 解析。
+    crate::utils::resolve_user_path(raw)
 }
 
 fn get_plan_dir(root: &std::path::Path, project: &str) -> PathBuf {

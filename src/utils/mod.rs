@@ -1176,6 +1176,167 @@ pub fn active_memory_md_path() -> PathBuf {
     memory_md_path(active_project_tag().as_deref())
 }
 
+// ── 相对路径基准（唯一解析入口）──
+//
+// 历史缺陷（issue：产物落错位置）：文件、计划等工具各自 `Path::new(raw)`，相对路径
+// 由**进程 cwd** 解析。而 cwd 是应用启动目录（全仓无 `set_current_dir`），于是对话
+// 产物落在程序目录 —— 与「对话归属某项目」的产品语义断裂，还会污染安装目录
+// （现场证据：每个启动目录都长出一份 nuphus-debug.log，实测最大 14.7 MB）。
+//
+// 语义定准（一处定义，全仓引用）：
+//   1. 绝对路径 → 原样使用；
+//   2. 相对路径 → 以**当前项目目录**为基准；
+//   3. 未配置项目目录 → 回退进程 cwd（与旧行为一致，不破坏既有用法）。
+//
+// 基准取「当前生效的项目目录」而非会话诞生时的快照：与记忆标签、系统提示词
+// 的取值同源（`active_project_tag` 实时读配置），保证「同一时刻全应用只有一个
+// 工作根」——否则文件落点与记忆归属会在切目录后分裂到两处。
+
+/// 当前工作根：项目目录非空则用它，否则回退进程 cwd。
+///
+/// 未配置项目目录时 cwd 可能取不到（极罕见：进程启动目录已被删除）→ 回退当前盘
+/// 根目录，避免返回相对路径导致后续所有解析再次落到 cwd 上。
+pub fn work_root() -> PathBuf {
+    let project_dir = crate::config::UserPreferences::load().project_dir;
+    if !project_dir.trim().is_empty() {
+        return PathBuf::from(project_dir.trim());
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(std::path::MAIN_SEPARATOR.to_string()))
+}
+
+/// 是否是已配置的项目目录（区别于回退 cwd 的情形）。
+///
+/// 系统提示词据此决定是否注入「相对路径以项目目录为基准」——未配置时必须说明
+/// 基准是工作目录，避免模型自行推断出「项目目录 = 工作目录」的等价关系。
+pub fn has_configured_project_dir() -> bool {
+    !crate::config::UserPreferences::load()
+        .project_dir
+        .trim()
+        .is_empty()
+}
+
+/// 相对路径解析的**唯一入口**：绝对路径原样返回，相对路径按 [`work_root`] 展开。
+///
+/// 所有面向用户/模型的路径入口（文件工具、计划工具等）一律走这里，禁止各自
+/// `Path::new(raw)` —— 那样每新增一处就多一个可能漂移的基准。
+pub fn resolve_user_path(raw: &str) -> PathBuf {
+    let p = Path::new(raw);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        work_root().join(p)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod path_base_tests {
+    use super::{has_configured_project_dir, resolve_user_path, work_root};
+    use std::path::PathBuf;
+
+    /// 同一进程内多用例并发改 HOME → 串行执行，避免互相污染。
+    /// 跨模块（`tools::definitions::file`）也复用这把锁。
+    pub(crate) static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 在隔离的 HOME 下执行：`UserPreferences::load()` 读 `$HOME/.nuphus/preferences.json`，
+    /// 改 HOME 即可控制项目目录而不触碰真实用户配置。
+    ///
+    /// 这组用例守护的是一条产品语义（issue：产物落错位置）：
+    /// **相对路径必须以项目目录为基准**。回退到 cwd 会让对话产物落进程序目录。
+    fn with_home<T>(project_dir: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-path-base-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join(".nuphus")).expect("建临时 HOME");
+
+        let previous = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &dir);
+
+        if let Some(pd) = project_dir {
+            let prefs = dir.join(".nuphus").join("preferences.json");
+            std::fs::write(
+                &prefs,
+                format!("{{\"language\":\"zh-CN\",\"project_dir\":{pd:?}}}"),
+            )
+            .expect("写 preferences");
+        }
+
+        let out = f();
+
+        match previous {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    /// 核心断言：配了项目目录时，相对路径展开到项目目录下 —— 而非进程 cwd。
+    #[test]
+    fn relative_path_resolves_against_project_dir() {
+        with_home(Some("E:\\proj\\alpha"), || {
+            assert!(has_configured_project_dir(), "应识别为已配置项目目录");
+            let resolved = resolve_user_path("probe.txt");
+            assert_eq!(
+                resolved,
+                PathBuf::from("E:\\proj\\alpha").join("probe.txt"),
+                "相对路径必须以项目目录为基准"
+            );
+            // 反向保证：不得等于 cwd 拼接结果（旧缺陷正是落在这里）
+            let cwd_join = std::env::current_dir()
+                .unwrap_or_default()
+                .join("probe.txt");
+            assert_ne!(resolved, cwd_join, "不得回退到进程 cwd 基准");
+        });
+    }
+
+    /// 绝对路径必须原样透传：不受项目目录影响，也不能被二次拼接。
+    #[test]
+    fn absolute_path_is_untouched() {
+        with_home(Some("E:\\proj\\alpha"), || {
+            let abs = if cfg!(windows) {
+                "D:\\other\\abs.txt"
+            } else {
+                "/tmp/abs.txt"
+            };
+            assert_eq!(resolve_user_path(abs), PathBuf::from(abs));
+        });
+    }
+
+    /// 未配置项目目录 → 回退 cwd（与旧行为一致，不破坏既有用法）。
+    #[test]
+    fn falls_back_to_cwd_without_project_dir() {
+        with_home(None, || {
+            assert!(
+                !has_configured_project_dir(),
+                "未配置时应识别为回退状态（提示词据此声明基准）"
+            );
+            let expected = std::env::current_dir()
+                .unwrap_or_default()
+                .join("probe.txt");
+            assert_eq!(resolve_user_path("probe.txt"), expected);
+            assert_eq!(work_root(), std::env::current_dir().unwrap_or_default());
+        });
+    }
+
+    /// 空串 / 纯空白等同未配置：避免用户清空输入后基准意外变成空路径。
+    #[test]
+    fn blank_project_dir_is_treated_as_unset() {
+        with_home(Some("   "), || {
+            assert!(!has_configured_project_dir());
+            let expected = std::env::current_dir().unwrap_or_default().join("a.txt");
+            assert_eq!(resolve_user_path("a.txt"), expected);
+        });
+    }
+}
+
 /// 由项目目录派生标签：目录名截 24 字符 + 路径 8 位哈希（同名不同路径不冲突）。
 pub fn derive_project_tag_from_dir(dir: &str) -> Option<String> {
     if dir.trim().is_empty() {
