@@ -3,7 +3,6 @@
 // handleSend / handleNewChat 保留在此（紧密耦合 messages）
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { invoke } from '../core/bridge'
 import type {
   ChatMessage,
   ChatReference,
@@ -324,13 +323,16 @@ export interface SessionAPI {
   // ── Handlers ──
   /** 返回发送的真实结果（画布等外部入口据此回执，见 nuphus:send-result）。
    *  sendId 由调用方指定（画布 requestId）时替代内部生成的 uuid —— 后端受理事件
-   *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。 */
+   *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。
+   *  appendedHint：调用方自有语境的「已受理为追加指令」补充文案（如「运行工作流」入口
+   *  需要说明工作流不会立即启动）；缺省用通用追加提示。 */
   handleSend: (
     input: string,
     images?: string[],
     forceMode?: string,
     refs?: import('../core/types').ChatReference[],
     sendId?: string,
+    appendedHint?: string,
   ) => Promise<SendOutcome>
   /** 新建对话（后端真转场，回欢迎页）——可带弹窗填写的标题（只记录，会话在首条
    *  消息时诞生）；返回 false = 后端拒绝，调用方据此保持弹窗打开。 */
@@ -494,6 +496,7 @@ export function useSession(): SessionAPI {
       forceMode?: string,
       refs?: ChatReference[],
       sendId?: string,
+      appendedHint?: string,
     ): Promise<SendOutcome> => {
       if (!(await agentControl.checkBackendReady())) {
         return { ok: false, message: t('toast.connectionLost') }
@@ -521,7 +524,7 @@ export function useSession(): SessionAPI {
 
       const configured = await isLlmConfigured()
       if (!configured) {
-        invoke('hud_update', { text: 'Please configure API Key first', phase: 'error' })
+        showToast('Please configure API Key first', 'error')
         return { ok: false, message: t('toast.configureApiKey') }
       }
 
@@ -586,10 +589,7 @@ export function useSession(): SessionAPI {
           newSession,
         )
         if (result === null) {
-          invoke('hud_update', {
-            text: 'Connection lost - please try again',
-            phase: 'error',
-          })
+          showToast('Connection lost - please try again', 'error')
           return { ok: false, message: t('toast.connectionLost') }
         }
         if (result.rejected) {
@@ -609,11 +609,15 @@ export function useSession(): SessionAPI {
         if (result.appended) {
           // 执行中发送被接受为追加指令：不开启新执行、不清除执行态。
           // 追加消息不显示为独立气泡——撤销可能已 push 的 msg（前端执行态
-          // 与后端状态不同步时兜底），仅弹窗提示消息内容本身。
+          // 与后端状态不同步时兜底），并提示「已作为追加指令插入当前任务」。
+          // ⚠️ 不再回显用户原文（本端输入框入口看起来像自己刚打的字，非输入框入口
+          // ——如「运行工作流」——的文本还是合成指令），提示必须说明真实语义：
+          // 不会立即开新回合；调用方可用 appendedHint 补充自有语境。
           isAppend = true
           setMessages(prev => prev.filter(m => m.id !== msg.id))
-          showToast(result.message || input, 'info')
-          return { ok: true }
+          showToast(appendedHint || t('toast.appendedToRunning'), 'info')
+          // appended 必须透出：调用方据此区分「被当追加受理」与「正常开新回合」
+          return { ok: true, appended: true }
         }
         // 图片降级警告：主模型与视觉模型都不支持视觉，图片已降级发送但 AI 无法查看。
         // 弹窗提示，不阻塞消息流（后端已正常处理）。
@@ -621,10 +625,7 @@ export function useSession(): SessionAPI {
           showToast(result.image_warning, 'warning')
         }
         if (result.success === false) {
-          invoke('hud_update', {
-            text: result.message || '发送失败，请重试',
-            phase: 'error',
-          })
+          showToast(result.message || '发送失败，请重试', 'error')
           // ── 失败分流（仅本地展示：后端失败不 push session，错误气泡不入 agent 上下文）──
           // - steps_count > 0：已执行工具后失败 → 优雅停止（执行结果已保留，不提供重试）
           // - steps_count == 0：首轮 LLM 调用即失败 → 标记该 user 消息 failed，hover 可重试
@@ -660,7 +661,7 @@ export function useSession(): SessionAPI {
           return { ok: false, message: errorText }
         }
       } catch (e: any) {
-        invoke('hud_update', { text: 'Request failed: ' + (e.message || e), phase: 'error' })
+        showToast('Request failed: ' + (e.message || e), 'error')
         return { ok: false, message: e?.message || String(e) }
       } finally {
         // 追加受理 / 收尾期拒收都不改变执行态：前者的执行仍在进行（流式目标必须保留），
@@ -674,7 +675,7 @@ export function useSession(): SessionAPI {
       }
       return { ok: true }
     },
-    [mode, execState.refresh, setExecutionStage, agentControl.checkBackendReady],
+    [mode, execState.refresh, setExecutionStage, agentControl.checkBackendReady, showToast],
   )
 
   // ── handleNewChat (kept in useSession due to tight coupling with messages) ──
@@ -712,17 +713,17 @@ export function useSession(): SessionAPI {
       // 后台跑 → 界面与真实状态撕裂（实测）。所有入口（Ctrl+N / TitleBar / SessionRail+ /
       // 命令面板 / ChatPanel）统一走这里。
       // 返回 false = 后端拒绝（调用方据此保持弹窗打开；弹窗标题 ≤40 字且非空，
-      // 故 HUD 文案只覆盖 busy / append_pending 这两个真实失败）。
+      // 故轻反馈文案只覆盖 busy / append_pending 这两个真实失败）。
       try {
         await newChatSessionCmd(title)
       } catch {
-        invoke('hud_update', { text: '任务正在执行中，无法新建对话', phase: 'error' })
+        showToast('任务正在执行中，无法新建对话', 'error')
         return false
       }
       resetTransientUI()
       return true
     },
-    [resetTransientUI],
+    [resetTransientUI, showToast],
   )
 
   /**

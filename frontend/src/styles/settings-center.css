@@ -44,6 +44,8 @@
 
 /* ── 顶部 bar ── */
 .settings-center-bar {
+  /* 供 island 落点锚点（.island-slot，绝对定位于本栏）作为定位基准 */
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);

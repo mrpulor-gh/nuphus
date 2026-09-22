@@ -58,6 +58,7 @@ import {
 import { useLanguage } from '../../locales'
 import { Clock3 } from 'lucide-react'
 import { ScheduleHistoryPage } from '../workflow/ScheduleHistoryPage'
+import { useIslandHostAnchor } from '../../ui/islandChannel'
 import '../../styles/settings-center.css'
 
 // ── 子页按需加载（说明符与 App.tsx 完全一致 → 共用同一 chunk）──
@@ -214,6 +215,8 @@ export function SettingsCenter({
 }: SettingsCenterProps) {
   const { t } = useLanguage()
   const [section, setSection] = useState<EmbeddedSectionId>('memories')
+  // island 落点锚点：设置中心压住聊天区时，岛改挂到本面板标题栏（优先级见 islandChannel）
+  const settingsIslandAnchor = useIslandHostAnchor('settings-center')
 
   /**
    * 分区切换入口：宿主分流的两项交给 App 层全屏宿主，其余落在弹窗内容区。
@@ -344,6 +347,9 @@ export function SettingsCenter({
           <span className="settings-center-title">{t('app.settings')}</span>
           {/* 全屏覆盖层会盖住 TitleBar 的 data-tauri-drag-region，补一条拖动区保证窗口仍可拖动 */}
           <span className="settings-center-drag" data-tauri-drag-region />
+          {/* island 落点锚点：宿主（fixed inset:0 + z 2500）会盖住聊天区，
+              岛必须挂进宿主标题栏才可见（几何见 styles/app-pill.css 的 .island-slot） */}
+          <div className="island-slot" ref={settingsIslandAnchor} />
           <IconButton
             type="button"
             variant="modal-close"

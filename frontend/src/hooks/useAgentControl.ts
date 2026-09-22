@@ -1,9 +1,8 @@
 // useAgentControl — Agent 控制函数（pause/continue/interrupt/stop/terminate/retry/reset/mode/rate/wf）
 import { useCallback, useRef } from 'react'
-import { invoke } from '../core/bridge'
 import type { MoodState } from '../ui/MoodFace'
 import type { TimelineEntry } from '../core/types'
-import type { ExecutionStage } from './useExecutionState'
+import { normalizeExecutionStage, type ExecutionStage } from './useExecutionState'
 import {
   isLlmConfigured,
   getExecutionState,
@@ -21,6 +20,7 @@ import {
   wfPause,
   wfResume,
   submitExecutionRating,
+  backendErrorMessage,
 } from '../main-window/lib/api'
 import type { Toast } from './useInit'
 
@@ -115,10 +115,10 @@ export function useAgentControl(deps: AgentControlDeps) {
       await getExecutionState()
       return true
     } catch {
-      invoke('hud_update', { text: '无法连接后端', phase: 'error' })
+      showToast('无法连接后端', 'error')
       return false
     }
-  }, [])
+  }, [showToast])
 
   // ── handleRetryAgent ──
   const handleRetryAgent = useCallback(
@@ -129,19 +129,19 @@ export function useAgentControl(deps: AgentControlDeps) {
           // 后端仍占用（Running ∨ Finalizing）→ 拒绝重试；后端空闲而本地残留
           // → 复位为 idle（本身也会由执行态轮询自愈，这里给重试路径即时反馈）
           if (state?.busy) {
-            invoke('hud_update', { text: 'Already processing, please wait', phase: 'warning' })
+            showToast('Already processing, please wait', 'warning')
             return
           }
           setExecutionStage('idle')
           executionActiveRef.current = false
         } catch {
-          invoke('hud_update', { text: 'Already processing, please wait', phase: 'warning' })
+          showToast('Already processing, please wait', 'warning')
           return
         }
       }
       const configured = await isLlmConfigured()
       if (!configured) {
-        invoke('hud_update', { text: 'Please configure API Key first', phase: 'error' })
+        showToast('Please configure API Key first', 'error')
         return
       }
       // 回合内重来：移除失败回合的错误气泡，新回复流式输出到干净的新气泡
@@ -156,17 +156,17 @@ export function useAgentControl(deps: AgentControlDeps) {
       try {
         const result = await retryAgent()
         if (result === null) {
-          invoke('hud_update', { text: 'Connection lost - please try again', phase: 'error' })
+          showToast('Connection lost - please try again', 'error')
         }
       } catch (e: any) {
-        invoke('hud_update', { text: 'Retry failed: ' + (e.message || e), phase: 'error' })
+        showToast('Retry failed: ' + (e.message || e), 'error')
       } finally {
         // 重试轮次输出已收敛 → 后端进入收尾（Finalizing），随后由轮询收敛到 idle
         setExecutionStage('finalizing')
         executionActiveRef.current = false
       }
     },
-    [isProcessing, setExecutionStage],
+    [isProcessing, setExecutionStage, showToast],
   )
 
   // ── toggleWorkAgentMode ──
@@ -319,9 +319,27 @@ export function useAgentControl(deps: AgentControlDeps) {
 
   // ── forceReset ──
   const forceReset = useCallback(async () => {
-    await apiForceReset()
+    try {
+      await apiForceReset()
+    } catch (e) {
+      // 后端**拒绝假解锁**：旧执行体在超时内未退出（stage 仍占用）时会返回稳定错误码。
+      // 此时本端必须与后端保持同一事实——绝不能归零本地状态（那会显示「空闲」而
+      // 旧任务仍在跑，用户随即就能开出并存的新轮次 = 双跑入口）。
+      showToast(backendErrorMessage(e), 'error')
+      // 真值回后端拉一次（可能 running 也可能 finalizing），界面继续显示占用态。
+      try {
+        const snap = await getExecutionState()
+        // 无回执（IPC 异常）时保持当前本地阶段，不猜测空闲
+        if (snap && typeof snap.stage === 'string') {
+          setExecutionStage(normalizeExecutionStage(snap.stage))
+        }
+      } catch {
+        /* 拉取失败：保持当前本地阶段（宁可持续显示执行中，也不伪装空闲） */
+      }
+      return
+    }
     messagesRef.current = []
-    // force_reset 后端已释放执行态（busy=false ⇒ stage=Idle）→ 本端同步归零
+    // 后端已确认旧执行体退出（stage=Idle）才返回 Ok → 本端同步归零
     setExecutionStage('idle')
     setCompleted(false)
     setGoal('')

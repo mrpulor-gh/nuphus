@@ -930,7 +930,13 @@ export default function App() {
               showToast(t('mobile.messageSent'))
             }
           } else {
-            showToast(t('mobile.messageSendFailed'))
+            // 收尾期拒收（rejected='finalizing'）必须给专用文案：消息**未被受理**
+            // （未入队、内容不会自动重发），通用「发送失败」会让人以为只是网络问题。
+            showToast(
+              result.rejected === 'finalizing'
+                ? t('mobile.finalizingPleaseResend')
+                : result.error || t('mobile.messageSendFailed'),
+            )
           }
         } catch (e) {
           const reason =

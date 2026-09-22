@@ -498,6 +498,13 @@ export const UI = {
     en: 'The prompt to send is empty',
     zh: '提示词为空，无法发送',
   },
+  /* 收尾期（Leader 主循环已退出、正在写记忆/提炼）拒收：桌面输入框把内容退回输入框，
+     画布没有输入框（提示词一直在面板里）——所以这里给画布自有文案，不照搬那句。 */
+  sendFinalizingRetry: {
+    ja: '締めくくり中です。しばらくして再送してください（プロンプトはパネルに残っています）',
+    en: 'Wrapping up - retry shortly (your prompt stays in the panel)',
+    zh: '正在收尾，请稍后重试（提示词仍保留在面板中）',
+  },
   // preview
   back: { ja: '戻る', en: 'Back', zh: '返回' },
   close: { ja: '閉じる (Esc)', en: 'Close (Esc)', zh: '关闭 (Esc)' },
@@ -849,6 +856,7 @@ export const KO: Record<UIKey, string> = {
   sendFailedToLeader: 'Leader 전송에 실패했습니다',
   sendStatusUnknown: '전송 상태를 알 수 없습니다. 채팅을 확인하세요',
   sendEmptyPrompt: '보낼 프롬프트가 비어 있습니다',
+  sendFinalizingRetry: '마무리 중입니다. 잠시 후 다시 보내주세요 (프롬프트는 패널에 남아 있습니다)',
   back: '뒤로',
   close: '닫기 (Esc)',
   cancel: '취소',

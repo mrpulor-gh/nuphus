@@ -74,6 +74,8 @@ import {
 } from '../lib/customProvider'
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
+// 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
+import { AppPill } from '../../ui/AppPill'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
@@ -2185,6 +2187,20 @@ export function ModelsPage({
     <div className="models-page-loading">正在加载服务商列表…</div>
   ) : null
 
+  /* ── 页内反馈（六个反馈态共用一条「顶部居中」通道，见下方 .feedback-toast）──
+     文案取**首个非空态**；成功色沿用原语义（任一项为 ok 即成功）。
+     视觉与 island 统一：胶囊由共享组件 AppPill 渲染（app-pill.css 的 .app-pill） */
+  const pageFeedbacks = [
+    feedback,
+    visionFeedback,
+    sttFeedback,
+    ttsFeedback,
+    voiceFeedback,
+    agentFeedback,
+  ]
+  const pageFeedback = pageFeedbacks.find(f => f?.msg) ?? null
+  const pageFeedbackOk = pageFeedbacks.some(f => f?.ok)
+
   return (
     <div className="models-page-layout">
       {/* ── 左侧：两模块分组导航（模型提供商 / 自定义模型） ── */}
@@ -3375,33 +3391,15 @@ export function ModelsPage({
           </>
         )}
 
-        {/* ── 全局反馈 Toast ── */}
-        {(feedback ||
-          visionFeedback ||
-          sttFeedback ||
-          ttsFeedback ||
-          voiceFeedback ||
-          agentFeedback) &&
+        {/* ── 页内反馈：与 island 同一套胶囊视觉（共享层 ui/AppPill.tsx + app-pill.css），
+               位置与层级仍归本页（顶部居中 / z 10000 / 挂在 body）── */}
+        {pageFeedback &&
           createPortal(
-            <div
-              className={`feedback-toast ${
-                feedback?.ok ||
-                visionFeedback?.ok ||
-                sttFeedback?.ok ||
-                ttsFeedback?.ok ||
-                voiceFeedback?.ok ||
-                agentFeedback?.ok
-                  ? 'feedback-toast--ok'
-                  : 'feedback-toast--error'
-              }`}
-            >
-              {feedback?.msg ||
-                visionFeedback?.msg ||
-                sttFeedback?.msg ||
-                ttsFeedback?.msg ||
-                voiceFeedback?.msg ||
-                agentFeedback?.msg ||
-                ''}
+            <div className="feedback-toast">
+              {/* key 绑定文案：换一条时重新挂载，进场动画得以重放（与 island 同规格） */}
+              <AppPill key={pageFeedback.msg} tone={pageFeedbackOk ? 'success' : 'error'} multiline>
+                {pageFeedback.msg}
+              </AppPill>
             </div>,
             document.body,
           )}

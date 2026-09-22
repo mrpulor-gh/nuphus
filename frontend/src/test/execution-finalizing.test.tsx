@@ -159,6 +159,60 @@ describe('收尾期（Finalizing）拒绝追加', () => {
     )
   })
 
+  it('④ 执行中发送被受理为追加指令：回执必须透出 appended（S1：区分「追加」与「开新回合」）', async () => {
+    // 后端权威态 Running → 本端按追加发送；后端受理为追加（appended=true）
+    vi.mocked(api.getExecutionState).mockResolvedValue(snapshot('running') as never)
+    vi.mocked(api.processInput).mockResolvedValue({
+      success: true,
+      message: '启动工作流 wf-1',
+      appended: true,
+      steps_count: 0,
+    } as never)
+
+    const { result } = renderHook(() => useSession())
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    let outcome: Awaited<ReturnType<typeof result.current.handleSend>> | undefined
+    await act(async () => {
+      outcome = await result.current.handleSend('启动工作流 wf-1', undefined, 'workflow')
+    })
+
+    // 调用方（「运行工作流」等非输入框入口）靠 appended 判定「工作流不会立即启动」的提示；
+    // 缺了它就只能看到 ok=true，与真正开新回合无法区分（原缺陷：静默失效）。
+    expect(outcome).toEqual({ ok: true, appended: true })
+    expect(outcome?.rejected).toBeUndefined()
+    // 追加语义：不产生独立 user 气泡，也不留下「不会被执行」的消息
+    expect(result.current.messages).toHaveLength(0)
+  })
+
+  it('④b 竞态拒收：本端见 running、后端已转收尾 → 回执 rejected=finalizing 且不留气泡', async () => {
+    vi.mocked(api.getExecutionState).mockResolvedValue(snapshot('running') as never)
+    vi.mocked(api.processInput).mockResolvedValue({
+      success: true,
+      message: '',
+      rejected: 'finalizing',
+      steps_count: 0,
+    } as never)
+
+    const { result } = renderHook(() => useSession())
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    let outcome: Awaited<ReturnType<typeof result.current.handleSend>> | undefined
+    await act(async () => {
+      outcome = await result.current.handleSend(FINALIZING_MSG)
+    })
+
+    // 未受理：ok=false + 稳定拒收标识 + 可读原因（调用方据此退回原文并提示稍后重发）
+    expect(outcome?.ok).toBe(false)
+    expect(outcome?.rejected).toBe('finalizing')
+    expect(outcome?.message).toBeTruthy()
+    expect(result.current.messages).toHaveLength(0)
+  })
+
   it('②b 终止按钮：执行中（running）必须可见，收尾/空闲不显示（防「无法终止」回归）', async () => {
     const renderBar = (stage: 'idle' | 'running' | 'finalizing') =>
       render(

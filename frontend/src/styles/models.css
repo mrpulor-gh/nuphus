@@ -60,24 +60,21 @@
 
 /* 鈹€鈹€ 娴姩鍙嶉 Toast 鈹€鈹€ */
 .feedback-toast {
+  /* 只负责**定位与层叠**：胶囊形态/语义来自共享层 app-pill.css 的 .app-pill（与 island
+     同一套视觉，见 ui/AppPill.tsx）。原先的整块半透明绿/红底（rgba(--success-rgb, .92)）
+     已移除——那是与岛不一致的第二种观感。
+     位置与层级语义不变（顶部居中 / z 10000 / 挂在 body）：模型页是全屏宿主，
+     反馈必须留在宿主之上，改走全局岛反而会被宿主压住。
+     居中改用 flex（left/right + justify-content），不再用 translateX(-50%)：
+     共享层的进场动画会改写 transform，两者叠加会把胶囊横向拽偏。 */
   position: fixed;
   top: var(--space-4);
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
   z-index: 10000;
-  padding: var(--space-2) 18px;
-  border-radius: var(--radius-3);
-  font-size: var(--fz-md);
-  color: var(--on-accent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  display: flex;
+  justify-content: center;
   pointer-events: none;
-  animation: fadeIn var(--dur-med) var(--ease-out);
-}
-.feedback-toast--ok {
-  background: rgba(var(--success-rgb), 0.92);
-}
-.feedback-toast--error {
-  background: rgba(var(--error-rgb), 0.92);
 }
 
 /* 鈹€鈹€ 涓嬫媺閫夐」鍐呰仈鍏冪礌 鈹€鈹€ */
@@ -427,6 +424,8 @@
   color: var(--fg-1);
 }
 .models-page-bar {
+  /* 供 island 落点锚点（.island-slot，绝对定位于本栏）作为定位基准 */
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);

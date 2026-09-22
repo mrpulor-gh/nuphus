@@ -10,10 +10,11 @@ import type {
   TimelineEntry,
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
-import { invoke, listen } from '../../core/bridge'
+import { listen } from '../../core/bridge'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
+import { setIslandAnchor } from '../../ui/islandChannel'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 /// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
@@ -1048,11 +1049,13 @@ export function ChatPanel({
       const mode = detail?.mode
       const requestId = typeof detail?.requestId === 'string' ? detail.requestId : ''
       /* 回执：发起方（画布）按 requestId 匹配后显示真实结果，不再无条件报成功。
-         没有 requestId 的老调用方不受影响（不回发）。 */
-      const rawReply = (ok: boolean, message?: string) => {
+         没有 requestId 的老调用方不受影响（不回发）。
+         rejected 一并透出（稳定拒收标识，如 'finalizing'）：画布没有输入框，
+         需要它给渠道自有文案，不能沿用桌面输入框的「内容已退回输入框」。 */
+      const rawReply = (ok: boolean, message?: string, rejected?: string) => {
         if (!requestId) return
         window.dispatchEvent(
-          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message } }),
+          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message, rejected } }),
         )
       }
       /* 先登记再发送：受理事件（后端真实收下）可能早于 onSend promise 返回，
@@ -1076,7 +1079,7 @@ export function ChatPanel({
           return
         }
         pending
-          .then(outcome => reply(outcome?.ok !== false, outcome?.message))
+          .then(outcome => reply(outcome?.ok !== false, outcome?.message, outcome?.rejected))
           .catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err)
             console.error('[nuphus:send-message] send failed', err)
@@ -1247,10 +1250,7 @@ export function ChatPanel({
         setPendingImages(sentImageItems)
         setPendingReferences(sentRefs)
         setPendingFiles(sentFiles)
-        invoke('hud_update', {
-          text: outcome.message || t('toast.finalizingPleaseResend'),
-          phase: 'warning',
-        })
+        hudUpdate(outcome.message || t('toast.finalizingPleaseResend'), 'warning')
       })
       .catch(() => {})
     requestAnimationFrame(() => {
@@ -1507,6 +1507,12 @@ export function ChatPanel({
       {/* ── Chat Header：右上角设置入口（全应用唯一设置入口，打开设置中心弹窗）── */}
       <div className="chat-header">
         <div className="chat-header-left" />
+        {/* island 落点锚点：左右两组之间的中央留白（几何见 styles/app-pill.css 的
+            .island-slot：绝对定位铺满 header 的 padding box 并 flex 居中，不参与
+            space-between 排布 → 两侧内容位置不变）。
+            AppIsland 经 portal 渲染到这里；锚点不存在时（聊天视图未挂载）岛按
+            锚点优先级回落 —— 见 ui/islandChannel.ts 的「落点锚点」。 */}
+        <div className="island-slot" ref={setIslandAnchor} />
         <div className="chat-header-right">
           <button
             className="chat-header-settings-btn"

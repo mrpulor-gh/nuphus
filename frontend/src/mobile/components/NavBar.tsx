@@ -232,7 +232,9 @@ export default function NavBar({
   }
 
   const startNewChatWithMode = (m: string) => {
-    if (activity.running) return
+    // 执行中（含收尾期）不可「先切 mode 再新建」：切 mode 会被后端执行态判定拒绝，
+    // 保持与前一处 disabled 同一判定源（sessions.stage / 同源 WS 投影）。
+    if (sessLocked) return
     switchMobileMode(token, m)
       .then(() => {
         setNewChatOpen(false)
@@ -586,10 +588,15 @@ export default function NavBar({
                 </button>
                 {modeOpen && (
                   <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
+                    {/* 执行中锁定模式切换（与桌面 mode chip 一致，同一后端执行态投影）：
+                        主指令受理时已按发送 mode 绑定当前会话，执行中改写会让后端
+                        set_mode 拒绝（set_mode_impl 执行态判定），这里同步禁用并说明，
+                        避免「点了没反应」。 */}
                     <button
                       type="button"
                       role="radio"
                       aria-checked={currentMode === 'leader'}
+                      disabled={sessLocked}
                       className={[
                         'mobile-mode-info-opt',
                         currentMode === 'leader' ? 'is-active' : '',
@@ -606,6 +613,7 @@ export default function NavBar({
                       type="button"
                       role="radio"
                       aria-checked={currentMode === 'workflow'}
+                      disabled={sessLocked}
                       className={[
                         'mobile-mode-info-opt',
                         currentMode === 'workflow' ? 'is-active' : '',
@@ -623,6 +631,7 @@ export default function NavBar({
                         type="button"
                         role="radio"
                         aria-checked={currentMode === 'custom'}
+                        disabled={sessLocked}
                         className={[
                           'mobile-mode-info-opt',
                           currentMode === 'custom' ? 'is-active' : '',
@@ -637,6 +646,9 @@ export default function NavBar({
                       </button>
                     ) : (
                       <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
+                    )}
+                    {sessLocked && (
+                      <div className="mobile-mode-info-note">执行中不可切换模式，结束后可切换</div>
                     )}
                   </div>
                 )}
@@ -938,10 +950,12 @@ export default function NavBar({
           >
             {t('mobile.newChatCancel')}
           </button>
+          {/* 执行中（含收尾期）不可「先切 mode 再新建」：切 mode 会被后端执行态判定拒绝。
+              判定源与模式列表 / 会话列表同一（sessions.stage，未加载时回退同源 WS 投影）。 */}
           <button
             type="button"
             className="mobile-newchat-btn is-start"
-            disabled={activity.running}
+            disabled={sessLocked}
             onClick={() => startNewChatWithMode(pickedMode)}
           >
             {t('mobile.newChatStart')}

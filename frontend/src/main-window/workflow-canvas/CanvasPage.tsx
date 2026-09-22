@@ -764,6 +764,20 @@ function CanvasInner({
     async (nameOverride?: string) => {
       const cur = stepsRef.current
       if (!cur || !ir) return
+      // ── 执行期拒绝落盘（B5）──
+      // 执行器运行期间会对同一份文档做 read-modify-write（run 进度节流落盘），子工作流
+      // 更是**在调用点**才重新读取 IR——执行中保存会与执行器互相覆盖、并改变后续子调用
+      // 实际执行的 IR。故不改「只落内存」：内存改动本来就在画布上，落盘才是危险动作。
+      // 判定与「运行」入口同源（useWorkflowGate → wf_gate_status），后端 wf_save 兜底。
+      const gateNow = await gateRefresh()
+      if (gateNow.locked) {
+        setNotice(
+          gateNow.reason === 'workflow'
+            ? '工作流执行中，暂不可保存（编辑仍在画布上，执行结束后按 Ctrl+S 保存）'
+            : '当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后按 Ctrl+S 保存）',
+        )
+        return
+      }
       const name = nameOverride?.trim()
       const payload = { ...ir, steps: cur, ...(name ? { name } : {}) }
       try {
@@ -784,7 +798,7 @@ function CanvasInner({
         setNotice(`保存失败：${String(e)}`)
       }
     },
-    [ir],
+    [ir, gateRefresh],
   )
 
   const runCheck = useCallback(async () => {

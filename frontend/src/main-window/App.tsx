@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke, listen } from '../core/bridge'
+import { listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
 import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, openExternal } from './lib/api'
 import { handleExternalAnchorClick } from './lib/externalLink'
@@ -11,6 +11,8 @@ import { WorkflowRunModal } from './workflow/WorkflowRunModal'
 import { TitleBar } from './layout/TitleBar'
 import { ChatPanel } from './chat/ChatPanel'
 import AppContextMenu from '../ui/AppContextMenu'
+import { AppIsland } from '../ui/AppIsland'
+import { useIslandHostAnchor } from '../ui/islandChannel'
 import { ExecutionTraceFloating } from './layout/ExecutionTraceFloating'
 import { ThinkingIndicator } from './layout/ThinkingIndicator'
 // ModalPage replaced by CompactModal
@@ -196,6 +198,9 @@ export default function App() {
   const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
   const [showSettingsCenter, setShowSettingsCenter] = useState(false)
+  // island 落点锚点：模型页这类全屏宿主（fixed inset:0 + z 2500）会盖住聊天区，
+  // 岛在宿主打开时改挂到宿主标题栏（优先级见 ui/islandChannel.ts 的「落点锚点」）
+  const modelsIslandAnchor = useIslandHostAnchor('models-page')
   const [scheduleReplay, setScheduleReplay] = useState<{
     workflowId: string
     runId: string
@@ -304,15 +309,21 @@ export default function App() {
   // inputs：运行确认弹窗收集的声明式外部输入；工作流未声明 inputs 时保持 undefined（既有链路不变）
   const executeWorkflowRun = async (id: string, inputs?: Record<string, unknown>) => {
     const needSwitch = s.mode !== 'workflow'
-    invoke('hud_update', {
-      text: needSwitch ? '切换到 Workflow 模式执行工作流' : '启动工作流',
-      phase: 'info',
-    })
     setRunWorkflow(null)
     s.setShowWorkflow(false)
 
+    // 先切模式再启动：执行中后端**拒绝**切模式（执行态判定，见 set_mode_impl）——
+    // 此时不阻断也不谎报，消息改由「追加指令」通道送达当前任务（真实处置见下方回执分支）。
+    let switched = true
     if (needSwitch) {
-      await s.handleSetMode('workflow')
+      try {
+        await s.handleSetMode('workflow')
+      } catch {
+        switched = false
+      }
+    }
+    if (switched) {
+      s.showToast(needSwitch ? '切换到 Workflow 模式执行工作流' : '启动工作流', 'info')
     }
 
     // 声明了外部输入 → 走确定性 wf_run（与画布同一执行入口），值直接透传后端；
@@ -321,19 +332,40 @@ export default function App() {
       try {
         await wfRun(id, false, inputs)
       } catch (e) {
-        invoke('hud_update', { text: `启动失败：${String(e)}`, phase: 'error' })
+        s.showToast(`启动失败：${String(e)}`, 'error')
       }
       return
     }
 
-    // 发送用户消息给 WorkflowAgent，由其调用 workflow_run 工具启动工作流
-    await s.handleSend(`启动工作流 ${id}`, undefined, 'workflow')
+    // 发送用户消息给 WorkflowAgent，由其调用 workflow_run 工具启动工作流。
+    // ⚠️ 回执必须消费（S1）：执行中发送会被受理为**追加指令**（工作流不会立即启动），
+    // 收尾期则被拒收退回——丢弃回执会让这两条路径都静默，用户以为工作流已经在跑。
+    // appended 路径的提示由 appendedHint 经既有 showToast 通道给出（不重复弹）。
+    const outcome = await s.handleSend(
+      `启动工作流 ${id}`,
+      undefined,
+      'workflow',
+      undefined,
+      undefined,
+      t('workflow.runAppended'),
+    )
+    if (outcome.rejected) {
+      // 收尾期拒收：消息**未被受理**（未入队、内容不会自动重发）→ 明确告知稍后重试。
+      // 不复用桌面输入框那句「内容已退回输入框」——这条路径没有可退回的输入框，
+      // 用户点的是「运行工作流」，如实说明「尚未启动」即可（S1/S5 同一条纪律）。
+      s.showToast(t('workflow.runFinalizingRetry'), 'warning')
+    } else if (!outcome.ok) {
+      s.showToast(outcome.message || t('workflow.runFailed'), 'error')
+    }
   }
 
   return (
     <div className="app-shell">
       {/* 自绘右键复制菜单（拦截浏览器原生导航菜单，防误点刷新/检查中断运行） */}
       <AppContextMenu />
+      {/* 页头 island：应用在前台时的轻反馈（非前台仍走 HUD，见 ui/islandChannel.ts）。
+          常驻挂载：队列不丢提示，挂载即开始跟踪窗口焦点 */}
+      <AppIsland />
       {/* ── Splash Screen: loading / fade-out state ── */}
       {(s.appState === 'loading' || s.fadeOut) && (
         <SplashScreen items={s.initItems} fadeOut={s.fadeOut} />
@@ -365,7 +397,7 @@ export default function App() {
               ChatPanel `isCurrentAgent = idx === messages.length - 1`；
               useSession 的 last 判定）。中途插入任何消息都会把回答拦腰截断、
               令流式光标与 last 判定失真——实测会让用户看到 agent 输出被隔断。
-              反馈一律走 HUD 轻提示（s.showToast → hud_update），与「已保存」「已中断」同通道。
+              反馈一律走轻提示通道（s.showToast → island/HUD 分流），与「已保存」「已中断」同通道。
             */}
             <ChatPanel
               messages={s.messages}
@@ -759,6 +791,9 @@ export default function App() {
                   {/* 拖动条：模型页是全屏覆盖层，会盖住 TitleBar 的 data-tauri-drag-region，
                       导致停留在该页面时窗口无法拖动。这里补一条占满剩余空白的拖动区。 */}
                   <span className="models-page-drag" data-tauri-drag-region />
+                  {/* island 落点锚点：宿主（fixed inset:0 + z 2500）会盖住聊天区，
+                      岛必须挂进宿主标题栏才可见（几何见 styles/app-pill.css） */}
+                  <div className="island-slot" ref={modelsIslandAnchor} />
                 </div>
                 <div className="models-page-body">
                   <ModelsPage
@@ -849,8 +884,10 @@ export default function App() {
               <CustomAgentsPage
                 onClose={() => s.setShowCustomAgents(false)}
                 onActivated={() => {
-                  // 激活即进入：切到 Custom 模式 + 关闭配置页（链路闭合）
-                  s.handleSetMode('custom')
+                  // 激活即进入：切到 Custom 模式 + 关闭配置页（链路闭合）。
+                  // 执行中后端会拒绝切模式（执行态判定）→ 把原因提示出来，
+                  // 不让拒绝变成未捕获的 promise rejection（静默）。
+                  void s.handleSetMode('custom').catch(e => s.showToast(String(e), 'error'))
                   s.setShowCustomAgents(false)
                 }}
               />
@@ -1032,10 +1069,7 @@ export default function App() {
                   return
                 }
               } catch {
-                invoke('hud_update', {
-                  text: '无法检查安全权限，请确认权限已开启',
-                  phase: 'warning',
-                })
+                s.showToast('无法检查安全权限，请确认权限已开启', 'warning')
                 setRunWorkflow(null)
                 return
               }

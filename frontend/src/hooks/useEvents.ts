@@ -17,6 +17,7 @@ import type { MutableRefObject } from 'react'
 import type { ExecutionStage } from './useExecutionState'
 import type { MoodState } from '../ui/MoodFace'
 import { playUiSound } from '../ui/sound'
+import { showAppFeedbackByHudPhase } from '../ui/islandChannel'
 import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
 
 type RegionPickerMode = 'picker' | 'capture' | 'ocr' | null
@@ -441,7 +442,7 @@ export function useEvents(h: EventHandlers) {
           }
           break
         case 'warning': {
-          invoke('hud_update', { text: event.message, phase: 'warning' })
+          showAppFeedbackByHudPhase(event.message, 'warning')
           // LLM 重试提醒：收到重试告警（llm_retry / llm_network_retry）播放「咚咚」提示音，
           // 中性语义「还在重试、请稍候」——不是失败，不打断不恐慌。
           // 后端重试间隔带指数退避（2s/4s/8s...），不会连续轰炸。
@@ -840,7 +841,8 @@ export function useEvents(h: EventHandlers) {
           }
           h.refs.executionActiveRef.current = false
           h.setExecPhase('recording')
-          invoke('hud_update', { text: '执行完成', phase: 'done' })
+          // 「执行完成」：原 HUD 相位 'done' → island success（映射见 islandChannel）
+          showAppFeedbackByHudPhase('执行完成', 'done')
           setTimeout(() => h.setExecPhase(''), 2000)
           h.setCurrentTaskDesc('')
           h.setMood('success')

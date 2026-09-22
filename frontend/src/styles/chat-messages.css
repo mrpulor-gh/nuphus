@@ -42,20 +42,29 @@
   top: 8px;
   left: 16px;
   right: 16px;
-  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 4px;
   pointer-events: none;
+  /* 刻意**不设 z-index**：设了 .chat-header 就是 stacking context，落在 header 内的
+     island（app-island.css 的 z-index: 260）会被锁进第 10 层 —— 反而比改造前更低
+     （掉到 .canvas-workbench-host 100 / .compact-overlay 150 之下）。抬层职责下移给
+     两个内容组自身（.chat-header-left/right 的 z-index: 10），与改造前「header 整体在
+     第 10 层」对内容完全等效（header 自身无背景、无其它绘制物）。 */
 }
 .chat-header-left,
 .chat-header-right {
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 4px;
   pointer-events: auto;
 }
+/* ── island 落点锚点 ──
+   几何（.island-slot：铺满 padding box + flex 居中 + 左右 40px 安全区）在共享层
+   styles/app-pill.css，与设置中心 / 模型页标题栏的锚点同一份实现。 */
 .chat-header-settings-btn {
   display: flex;
   align-items: center;
