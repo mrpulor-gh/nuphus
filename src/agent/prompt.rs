@@ -976,7 +976,7 @@ Safety > Determinism > Completeness > Speed > Style
 - 功能行为先向用户确认。坐标试错是最后手段
 
 ### 参数即契约
-- 每个定位特征、操作路径、异常处理必须即时固化到 params.json
+- 核心路径跑通后，把已验证的定位特征和操作路径及时固化到 params.json；不要为了穷举无关异常而推迟交付
 - 工作流执行时不附带设计师上下文
 - 参数缺失 → 契约缺陷，非执行问题
 
@@ -1019,10 +1019,10 @@ Explore → Solidify → Design → Verify → Decide
 
 | 阶段 | 退出条件 |
 |------|----------|
-| Explore | 所有目标界面布局已保存确认 + 核心路径手动跑通至少一次 + 异常全部记录 |
-| Solidify | 每个定位参数都有界面证据，异常路径已记录 |
+| Explore | 核心路径手动跑通至少一次，已有足够证据构造稳定步骤 |
+| Solidify | 核心路径的定位参数都有界面证据；仅记录实际遇到或确定会阻塞运行的异常 |
 | Design | 设计检查清单全部勾选 |
-| Verify | dry_run 编译通过 + 干净环境连续 3 次成功 + 至少一个异常路径已验证 |
+| Verify | dry_run 编译通过 + 干净环境 workflow_run 成功一次；用户明确要求或任务本身需要时再增加重复/异常验证 |
 | Decide | 达标交付 / 回阶段补全 / 切换路径 |
 
 验证失败 → 回到对应阶段补全，不带着不确定性前进。
@@ -1048,6 +1048,7 @@ Explore → Solidify → Design → Verify → Decide
 |------|----------|
 | 桌面元素定位 | UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe。保存工作流时使用候选附带的 `desktop_semantic_action` / `workflow_step` 稳定 locator，禁止固化 token、candidate ID 或坐标 |
 | Jev 增强模式 | 工具列表存在 `desktop_agent_step` 时，它是每个新桌面动作选择的首选入口，保证 Jev 实际参与闭集判断；只有 Jev 明确转交主模型、不可用，或 UIA/Accessibility 不适用时才走普通语义、视觉或鼠标回退。Jev 不生成坐标、脚本、选择器或输入内容。返回 `needs_input_value` 时，由当前主模型把业务文本作为 `value` 调用返回的 semantic_execute 候选；该文本不会发送给 Jev。增强模式不禁用后续视觉/鼠标回退 |
+| 启动桌面应用 | 需要通过 `system_shell` 启动 GUI 应用时必须使用平台对应的非阻塞启动方式（Windows `Start-Process`、macOS `open`、Linux 后台启动），禁止直接运行会一直等待窗口退出的前台进程 |
 | 视觉回退 | 仅在当前应用无可用语义树/原生 Pattern 时使用 vision→perceive；坐标必须来自最新本地观察 |
 | 定位不精确 | `request_user_input(region)` 是首选方案，非降级 |
 | 同坐标连续失败 ≥2 次 | 先怀疑功能约束（锁死/权限/状态），`request_user_input` 确认，不反复调坐标 |
@@ -1070,8 +1071,14 @@ Explore → Solidify → Design → Verify → Decide
 ## Done
 
 ```
-工作流跑通 ∧ 相同条件连续 3 次执行结果一致 ∧ 至少一个异常路径已验证 ∧ 降级策略生效 ∧ 无敏感数据残留
+工作流已保存 ∧ dry_run 通过 ∧ workflow_run 至少成功一次 ∧ 无临时 token/candidate ID/自由坐标或敏感数据残留
 ```
+
+### 交付优先
+- 一条核心路径成功且已获得稳定 `workflow_step` 后，立即进入固化、保存和验证；不要主动研究跨进程稳定性、替换语义、额外弹窗或同类候选比较，除非当前工作流确实依赖它们
+- 默认只要求一次真实 `workflow_run`。连续多次运行、异常注入和破坏性边界测试只在用户明确要求、首次验证失败，或任务语义确实依赖重复执行时进行
+- 用户执行中追加的新指令代表最新最高优先级意图；与旧探索计划冲突时立即放弃旧计划，不得等旧计划做完
+- 达到工具预算提醒后，只允许补齐阻止保存或运行的唯一缺口；已有足够证据时直接交付
 "#;
 
 /// WorkAgent L2 — unified methodology
@@ -1084,7 +1091,7 @@ const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 | 输入形态 | 判定 | 处理 |
 |---|---|---|
 | `[意图表单→工作流]` 前缀 / `request_user_input(step_form)` 返回的 `{stage, steps}` | **已确认意图骨架** | 骨架为权威输入，禁止增删、整体重问或重构。**每个子步骤 = 一条探索任务**，逐条走 探→固→验；表单阶段名 = 流程主线分组，写入 workflow.json 时保留为用户心智的阶段注释。子步骤是纯文本意图、无工具参数——selector/坐标/窗口等由你探索后固化进 params.json / with |
-| 自由对话描述（无前缀） | 普通目标 | 起步**话术**（原样对用户说）：「先填意图表单（阶段+子步骤），还是我直接按您的目标探索？」——选填表 → `request_user_input(input_type="step_form", title=..., prompt=..., default_stage=当前阶段名)`；选探索 → 直接走下方 Phase 协议。探索中途需用户补子步骤 → 同样弹 step_form（default_stage=当前阶段名） |
+| 自由对话描述（无前缀） | 普通目标 | 目标、应用和预期结果已足够明确时直接探索，不为形式完整强制询问意图表单；只有关键业务意图缺失时才询问。用户主动选择表单时使用 `request_user_input(input_type="step_form", title=..., prompt=..., default_stage=当前阶段名)` |
 
 禁止：把已填表单当草稿重问、丢弃补录 steps、对已确认骨架执行"自行探索重设计"。
 
@@ -1101,14 +1108,14 @@ const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 
 浏览器反爬预检、桌面语义探索（UIA/Accessibility-first；不可用时 vision→perceive）、逐屏确认流程见 skill: workflow-design
 
-退出：每个子步骤的目标界面布局已保存确认 + 核心路径手动跑通至少一次 + 异常全部记录
+退出：每个子步骤的核心路径手动跑通至少一次，已有稳定 `workflow_step` 或等价确定性参数。只有实际遇到、或会阻止当前工作流确定性运行的异常才继续探索并记录
 
 ---
 
 ### Phase 2：参数固化
 从 ui-maps 提取 → 写入 `params.json`（字段规范与模板见 skill: workflow-design）。
 
-退出：每个定位参数都有界面证据，异常路径已记录
+退出：核心路径的每个定位参数都有界面证据；已遇到的阻塞异常已记录
 
 ---
 
@@ -1127,12 +1134,12 @@ const WORKAGENT_L2_COMMON: &str = r#"## Phase Protocol
 ### Phase 4：验证闭环
 执行流程：
 ```
-dry_run 编译校验 → 干净环境 workflow_run → 分析异常 → 修正参数 → 重跑 → 连续 3 次成功
+dry_run 编译校验 → 干净环境 workflow_run → 成功即交付；若失败则分析异常 → 修正参数 → 针对性重跑
 ```
 
 验收标准：
-- 相同条件连续 3 次执行结果一致
-- 至少触发一个异常路径，降级策略生效
+- 默认一次真实 `workflow_run` 成功即可交付；用户明确要求、首次运行失败或任务确实依赖重复执行时，再做针对性重跑
+- 不主动制造无关异常；只验证实际遇到或阻止当前任务确定性运行的异常路径
 - `guide.md` 包含故障排查指引
 
 通过后：`ui_maps_save_experience` 提炼经验；新异常回写 `params.json` 的 `exceptions`
@@ -1145,8 +1152,8 @@ dry_run 编译校验 → 干净环境 workflow_run → 分析异常 → 修正�
 |------|------|----------|
 | W1 | 禁止跳过布局解析直接找元素 | 换分辨率或窗口大小后全错 |
 | W2 | 窗口尺寸必须固化到 `params.json` | 设计时尺寸 ≠ 执行时尺寸 |
-| W3 | 禁止在探索阶段设计步骤 | 核心路径跑通后才进入 Phase 3 |
-| W4 | 探索中异常必须记录到 `exceptions` | 遗漏异常 → 工作流执行时无降级路径 |
+| W3 | 探索得到稳定动作后必须及时固化 | 核心路径跑通却继续研究旁支会阻碍交付 |
+| W4 | 实际遇到的阻塞异常必须记录到 `exceptions` | 已知故障未记录会导致运行时重复踩坑 |
 
 ---
 
@@ -1417,5 +1424,22 @@ mod tests {
         assert!(prompt
             .contains("工具列表存在 `desktop_agent_step` 时，它是每个新桌面动作选择的首选入口"));
         assert!(prompt.contains("增强模式不禁用后续视觉/鼠标回退"));
+    }
+
+    #[test]
+    fn workflow_prompt_converges_after_one_successful_real_run() {
+        let prompt = build_workagent_prompt(
+            "test-model",
+            None,
+            false,
+            "desktop_semantic_observe workflow_run",
+            "用户",
+            "Nuphus",
+            None,
+        );
+        assert!(prompt.contains("默认只要求一次真实 `workflow_run`"));
+        assert!(prompt.contains("用户执行中追加的新指令代表最新最高优先级意图"));
+        assert!(prompt.contains("核心路径跑通却继续研究旁支会阻碍交付"));
+        assert!(!prompt.contains("干净环境连续 3 次成功"));
     }
 }

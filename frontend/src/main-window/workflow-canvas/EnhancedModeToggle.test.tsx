@@ -51,4 +51,36 @@ describe('EnhancedModeToggle', () => {
       'true',
     )
   })
+
+  it('聊天与画布入口共享切换结果', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: false,
+      configured: true,
+      status: 'disabled',
+    })
+    vi.mocked(setWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+
+    render(
+      <>
+        <EnhancedModeToggle compact />
+        <EnhancedModeToggle />
+      </>,
+    )
+
+    const buttons = await screen.findAllByRole('button', { name: /增强模式，已关闭/ })
+    expect(buttons[0]).toHaveClass('is-compact')
+    fireEvent.click(buttons[0])
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /增强模式，可用/ })).toHaveLength(2),
+    )
+    for (const button of screen.getAllByRole('button', { name: /增强模式，可用/ })) {
+      expect(button).toHaveAttribute('aria-pressed', 'true')
+    }
+    expect(setWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+  })
 })

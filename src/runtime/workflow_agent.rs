@@ -33,8 +33,19 @@ pub struct WorkflowAgentConfig {
 impl Default for WorkflowAgentConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 1000, // 与 ExecAgent 保持一致（GoalType::MAX_ITERATIONS）
+            // Workflow 开发需要允许多步探索，但不应像通用 ExecAgent 一样把失控探索
+            // 放大到 1000 轮。180 轮仍可容纳复杂桌面流程，同时给停滞检测一个硬上界。
+            max_iterations: 180,
         }
+    }
+}
+
+fn delivery_warning_level(tool_calls: usize) -> usize {
+    match tool_calls {
+        0..=23 => 0,
+        24..=47 => 1,
+        48..=95 => 2,
+        _ => 3,
     }
 }
 
@@ -68,6 +79,8 @@ pub struct WorkflowAgent {
     pub(crate) reminders: ReminderQueue,
     /// Progressive warning level
     pub(crate) max_warning_injected: usize,
+    /// Progressive delivery/convergence warning level (based on tool calls, per turn)
+    pub(crate) delivery_warning_injected: usize,
     /// Protection detection state
     pub(crate) protection: ProtectionGuard,
     /// Pending warnings buffer
@@ -130,6 +143,7 @@ impl WorkflowAgent {
             safety_failures: 0,
             reminders: ReminderQueue::new(),
             max_warning_injected: 0,
+            delivery_warning_injected: 0,
             protection: ProtectionGuard::new(),
             pending_warnings: Vec::new(),
             user_terminated: false,
@@ -401,6 +415,7 @@ impl WorkflowAgent {
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();
         self.max_warning_injected = 0;
+        self.delivery_warning_injected = 0;
         self.user_terminated = false;
         self.pending_warnings.clear();
 
@@ -481,6 +496,15 @@ impl WorkflowAgent {
                 self.session.push_user_internal(
                     crate::mobile_append::format_mobile_append_section(&active_appends),
                 );
+                // 最新用户意图高于旧探索计划。清掉可能继续推动旧路径的提醒，并把
+                // 本次追加作为最近、持续两轮的最高优先级纠偏注入。
+                self.reminders.clear_all();
+                self.reminders.enqueue(
+                    crate::mobile_append::format_mobile_append_priority(&active_appends),
+                    2,
+                    ReminderPriority::Critical,
+                    ReminderCategory::DeviationCorrect,
+                );
                 self.emit(crate::agent::events::NuphusEvent::AppendQueueUpdated {
                     messages: vec![],
                 });
@@ -537,7 +561,16 @@ impl WorkflowAgent {
                 self.session.push_user_internal(
                     crate::mobile_append::format_mobile_append_section(&active_appends),
                 );
+                self.reminders.clear_all();
+                self.reminders.enqueue(
+                    crate::mobile_append::format_mobile_append_priority(&active_appends),
+                    2,
+                    ReminderPriority::Critical,
+                    ReminderCategory::DeviationCorrect,
+                );
             }
+
+            self.inject_delivery_warning();
 
             // ── Context watermark warning (WorkflowAgent 无压缩机制) ──
             if self.inject_context_warning() {
@@ -1396,6 +1429,50 @@ impl WorkflowAgent {
         level >= 4
     }
 
+    /// Tool-call based convergence guidance, independent of the model context window.
+    /// These are progressive delivery nudges rather than early hard stops: complex
+    /// workflows may continue when a missing fact genuinely blocks deterministic output.
+    fn inject_delivery_warning(&mut self) {
+        let level = delivery_warning_level(self.tool_call_count);
+        if level <= self.delivery_warning_injected {
+            return;
+        }
+        self.delivery_warning_injected = level;
+
+        let (text, deliveries, priority) = match level {
+            1 => (
+                format!(
+                    "已执行 {} 次工具调用。若核心路径已成功且已有稳定 workflow_step，请停止比较性、研究性或旁支测试，立即固化并验证工作流；只有阻止确定性运行的缺失信息才值得继续探索。",
+                    self.tool_call_count
+                ),
+                2,
+                ReminderPriority::Normal,
+            ),
+            2 => (
+                format!(
+                    "已执行 {} 次工具调用，必须进入交付收敛：只补齐阻止保存、workflow_validate 或 workflow_run 的唯一缺口，随后立即写入并运行工作流。不要再研究跨进程、替换语义或额外异常等非必要旁支。",
+                    self.tool_call_count
+                ),
+                3,
+                ReminderPriority::High,
+            ),
+            _ => (
+                format!(
+                    "已执行 {} 次工具调用，停止所有新探索。现在必须用已有证据保存、校验并运行工作流；若确有唯一阻塞，明确报告该阻塞后结束，不得继续扩展测试范围。",
+                    self.tool_call_count
+                ),
+                4,
+                ReminderPriority::Critical,
+            ),
+        };
+        self.reminders.enqueue(
+            text,
+            deliveries,
+            priority,
+            ReminderCategory::DeviationCorrect,
+        );
+    }
+
     /// Safety check: session authorization → permissions → SecurityGuard
     async fn check_tool_safety(
         &mut self,
@@ -1420,5 +1497,27 @@ impl WorkflowAgent {
             &mut self.pending_warnings,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod convergence_tests {
+    use super::{delivery_warning_level, WorkflowAgentConfig};
+
+    #[test]
+    fn workflow_iteration_budget_is_bounded_but_supports_complex_flows() {
+        let max = WorkflowAgentConfig::default().max_iterations;
+        assert!((160..=200).contains(&max));
+    }
+
+    #[test]
+    fn delivery_warnings_progress_at_expected_tool_budgets() {
+        assert_eq!(delivery_warning_level(23), 0);
+        assert_eq!(delivery_warning_level(24), 1);
+        assert_eq!(delivery_warning_level(47), 1);
+        assert_eq!(delivery_warning_level(48), 2);
+        assert_eq!(delivery_warning_level(95), 2);
+        assert_eq!(delivery_warning_level(96), 3);
+        assert_eq!(delivery_warning_level(500), 3);
     }
 }

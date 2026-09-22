@@ -30,6 +30,7 @@ import {
 } from '../lib/api'
 import { useWorkflowGate } from '../lib/useWorkflowGate'
 import { ApiHealthBadge, apiHealthRailLabel } from './ApiHealthBadge'
+import { EnhancedModeToggle } from '../workflow-canvas/EnhancedModeToggle'
 
 interface TokenUsageInfo {
   inputTokens: number
@@ -1230,6 +1231,9 @@ export function ChatInputBar({
             {/* ── workflow 工具菜单按钮（扳手，图标不变）：仅 workflow 模式显示。
                  hover/点击展开三项：工作流画布（直达续编/新建）/ 工作流列表（Ctrl+K 直达）
                  / 工具箱 Ctrl+U（原点击行为收进菜单）。录制更适合新手，画布入口提升曝光。── */}
+            {mode === 'workflow' && (
+              <EnhancedModeToggle compact disabled={gateLocked || isProcessing} />
+            )}
             {mode === 'workflow' && (
               <div
                 className="input-bar-toolbox-wrap"

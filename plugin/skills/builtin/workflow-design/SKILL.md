@@ -17,15 +17,15 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
 ```
 接收任务
   ├─ [查] ui_maps_search 检索同类经验 → 有 screen/experience 直接复用，跳过重复探索
-  ├─ [探] 逐屏探索 → ui_maps_save_screen 固化布局（每屏经用户确认）
-  ├─ [固] 生成 params.json + workflow.json + guide.md（参数即契约，全部有界面证据）
-  ├─ [验] workflow_validate 编译校验 → workflow_run 执行 → 连续 3 次一致 + 至少一个异常路径
+  ├─ [探] UIA/Accessibility 优先跑通核心路径；只在工作流依赖时补视觉或旁支证据
+  ├─ [固] 生成 params.json + workflow.json + guide.md（核心路径参数都有界面证据）
+  ├─ [验] workflow_validate 编译校验 → workflow_run 真实成功一次；失败时针对性修正重跑
   └─ [馈] 跑通后 ui_maps_save_experience 提炼经验；新异常回写 params.json exceptions
 ```
 
 **任务输入形态（先识别再走闭环）**：
 - 用户输入带 `[意图表单→工作流]` 前缀，或来自 `request_user_input(step_form)` 的 `{stage, steps}`：这些阶段/子步骤是**用户确认的意图骨架**。表单阶段 = 流程主线分组（写入 workflow.json 保留为用户心智的阶段注释）；**每个子步骤 = 一条探索任务**，逐条走 [探]→[固]→[设]→[验]；骨架为权威输入，不得重新向用户收集流程、整体重构或丢弃补录 steps。
-- 自由对话描述：起步先问「先填意图表单（阶段+子步骤），还是我直接按您的目标探索？」——选填表 → `request_user_input(input_type="step_form", default_stage=当前阶段名)`；选探索 → 走闭环。探索中途需用户补子步骤 → 同样弹 step_form。
+- 自由对话描述：目标、应用和预期结果已足够明确时直接探索，不为了形式完整强制询问意图表单；只有关键业务意图确实缺失时才询问。用户主动选择表单时使用 `request_user_input(input_type="step_form", default_stage=当前阶段名)`。
 - 表单行意图是纯文本，无工具参数；工具参数（selector/坐标/窗口等）由你探索后固化进 `params.json` / `with` 字段。
 
 ---
@@ -277,7 +277,7 @@ seq: 提交
 workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用/call 环）
   → 干净环境 workflow_run（第 1 次：探路，记录偏差）
   → 分析异常 → 修正 params / workflow（设计缺陷才改文件；运行时阻塞就地解决）
-  → 重跑（同 id 断点续连，禁新建复制）→ 连续 3 次结果一致
+  → 失败才重跑（同 id 断点续连，禁新建复制）→ 一次真实成功即可交付
   → 至少触发一个异常路径验证降级
 ```
 

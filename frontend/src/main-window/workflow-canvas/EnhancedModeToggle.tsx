@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { IconSparkles } from '../../ui/Icons'
+import './EnhancedModeToggle.css'
 import {
   getWorkflowEnhancedMode,
   setWorkflowEnhancedMode,
@@ -9,7 +10,10 @@ import {
 type EnhancedModeToggleProps = {
   disabled?: boolean
   onNotice?: (message: string) => void
+  compact?: boolean
 }
+
+const ENHANCED_MODE_CHANGED_EVENT = 'nuphus:workflow-enhanced-mode-changed'
 
 const INITIAL_STATE: WorkflowEnhancedMode = {
   enabled: false,
@@ -31,7 +35,11 @@ function statusLabel(state: WorkflowEnhancedMode, loadFailed: boolean): string {
   return state.enabled ? '可用' : '已关闭'
 }
 
-export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeToggleProps) {
+export function EnhancedModeToggle({
+  disabled = false,
+  onNotice,
+  compact = false,
+}: EnhancedModeToggleProps) {
   const [state, setState] = useState<WorkflowEnhancedMode>(INITIAL_STATE)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -56,6 +64,18 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
     void load()
   }, [load])
 
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const next = (event as CustomEvent<WorkflowEnhancedMode>).detail
+      if (!next) return
+      setState(next)
+      setLoadFailed(false)
+      setLoading(false)
+    }
+    window.addEventListener(ENHANCED_MODE_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(ENHANCED_MODE_CHANGED_EVENT, sync)
+  }, [])
+
   const toggle = async () => {
     if (disabled || loading || updating) return
     if (!state.enabled && !state.configured) {
@@ -68,6 +88,9 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
       if (!next) throw new Error('后端未返回增强模式状态')
       setState(next)
       setLoadFailed(false)
+      window.dispatchEvent(
+        new CustomEvent<WorkflowEnhancedMode>(ENHANCED_MODE_CHANGED_EVENT, { detail: next }),
+      )
     } catch (error) {
       setLoadFailed(true)
       onNotice?.(`切换增强模式失败：${String(error)}`)
@@ -82,7 +105,7 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
   return (
     <button
       type="button"
-      className={`wfc-enhanced-toggle${state.enabled ? ' is-on' : ''}`}
+      className={`wfc-enhanced-toggle${state.enabled ? ' is-on' : ''}${compact ? ' is-compact' : ''}`}
       aria-pressed={state.enabled}
       aria-label={`增强模式，${label}`}
       disabled={locked}
@@ -94,7 +117,7 @@ export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeT
       }
     >
       <IconSparkles size={13} />
-      <span>增强模式</span>
+      <span className="wfc-enhanced-label">{compact ? '增强' : '增强模式'}</span>
       <span className="wfc-enhanced-switch" aria-hidden="true">
         <span />
       </span>

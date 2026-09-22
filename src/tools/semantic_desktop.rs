@@ -644,7 +644,6 @@ fn verify_observation(
             invoke_expected(candidate)
                 && target_is_unique(before, old)
                 && before.app.id == after.app.id
-                && before.window.id == after.window.id
         }
         (CandidateKind::Invoke, Some(old), _)
             if invoke_expected(candidate)
@@ -1557,6 +1556,20 @@ mod tests {
     fn unique_invoke_target_disappearance_is_verified() {
         let before = invoke_observation("before", 1);
         let after = invoke_observation("after", 0);
+        let candidate = invoke_candidate("invoke-target-0");
+
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn invoke_that_closes_an_owned_dialog_is_verified() {
+        let before = invoke_observation("before", 1);
+        let mut after = invoke_observation("after", 0);
+        after.window.id = "main-window".into();
+        after.window.title = "Document - Notepad".into();
         let candidate = invoke_candidate("invoke-target-0");
 
         assert_eq!(

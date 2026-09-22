@@ -53,7 +53,19 @@ pub fn is_append_section(text: &str) -> bool {
 /// 格式化为注入 Agent 上下文的追加指令段。
 pub fn format_mobile_append_section(appends: &[String]) -> String {
     let mut body = String::from(APPEND_MARKER);
-    body.push_str("\n用户在执行过程中追加了指令，请立即将其纳入当前任务，如有必要调整后续步骤：");
+    body.push_str("\n用户在执行过程中追加了指令（以下为最新指令）。它代表当前最高优先级意图；如与旧计划冲突，立即放弃冲突的旧计划并按新指令收敛：");
+    for append in appends {
+        body.push_str("\n- ");
+        body.push_str(append);
+    }
+    body
+}
+
+/// Format the same append batch as a short critical reminder. Execution loops use
+/// this after clearing stale deviation reminders so the newest user intent cannot
+/// be buried below an older exploration plan.
+pub fn format_mobile_append_priority(appends: &[String]) -> String {
+    let mut body = String::from("最新用户追加指令必须立即执行；它覆盖所有与之冲突的旧探索计划：");
     for append in appends {
         body.push_str("\n- ");
         body.push_str(append);
@@ -113,6 +125,17 @@ mod tests {
         assert!(section.contains("- B"));
         assert!(section.contains("追加了指令"));
         assert!(is_append_section(&section));
+    }
+
+    #[test]
+    fn append_section_explicitly_overrides_conflicting_old_plan() {
+        let section = format_mobile_append_section(&["立即保存工作流".to_string()]);
+        assert!(section.contains("最高优先级"));
+        assert!(section.contains("放弃冲突的旧计划"));
+
+        let priority = format_mobile_append_priority(&["立即保存工作流".to_string()]);
+        assert!(priority.contains("覆盖所有与之冲突的旧探索计划"));
+        assert!(priority.contains("立即保存工作流"));
     }
 
     #[test]

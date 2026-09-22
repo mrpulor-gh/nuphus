@@ -556,12 +556,7 @@ mod platform {
             .or_else(|| nonempty(window_class.clone()))
             .unwrap_or_else(|| "Windows application".into());
         let process_identity = process_image_path(hwnd).unwrap_or_default().to_lowercase();
-        let app_seed = format!(
-            "{}|{}|{}",
-            framework.as_deref().unwrap_or("win32"),
-            window_class.to_lowercase(),
-            process_identity,
-        );
+        let app_seed = app_identity_seed(framework.as_deref(), &window_class, &process_identity);
         let app = AppIdentity {
             id: format!("windows-app:{:016x}", stable_hash(&app_seed)),
             display_name,
@@ -1203,6 +1198,28 @@ mod platform {
         hasher.finish()
     }
 
+    fn app_identity_seed(
+        framework: Option<&str>,
+        window_class: &str,
+        process_identity: &str,
+    ) -> String {
+        if !process_identity.is_empty() {
+            // A native application's main window and its owned dialogs often
+            // use different framework/class values. The executable identity is
+            // the stable application boundary across those transitions.
+            format!("process|{process_identity}")
+        } else {
+            // Some protected/system windows do not expose their image path. In
+            // that case retain the previous local-only fallback rather than
+            // merging every unknown foreground application.
+            format!(
+                "fallback|{}|{}",
+                framework.unwrap_or("win32"),
+                window_class.to_lowercase()
+            )
+        }
+    }
+
     fn now_ms() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1386,6 +1403,23 @@ mod platform {
                 classify_risk(&NativeAction::Invoke, Some("Delete draft")),
                 RiskClass::Reversible,
                 "ordinary reversible deletion must not be over-gated"
+            );
+        }
+
+        #[test]
+        fn application_identity_survives_owned_dialog_window_classes() {
+            let executable = r"c:\windows\system32\notepad.exe";
+            assert_eq!(
+                app_identity_seed(Some("Win32"), "Notepad", executable),
+                app_identity_seed(Some("Win32"), "#32770", executable)
+            );
+        }
+
+        #[test]
+        fn application_identity_fallback_keeps_unknown_window_classes_separate() {
+            assert_ne!(
+                app_identity_seed(Some("Win32"), "FirstWindow", ""),
+                app_identity_seed(Some("Win32"), "SecondWindow", "")
             );
         }
     }
