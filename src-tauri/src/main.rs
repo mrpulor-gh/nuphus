@@ -640,10 +640,10 @@ fn main() {
                                 let mut engine = state.workflow_engine.write().await;
                                 engine.set_llm_client(client);
                                 engine.set_tools(std::sync::Arc::new(state.tools.clone()));
-                                // 完整 registry 工厂：chat 步骤 with.model 按模型 ID 路由专属 provider
-                                if let Ok(full_registry) = nuphus::config::load_registry() {
-                                    engine.set_client_factory(nuphus::llm::ClientFactory::new(full_registry));
-                                }
+                                // 完整 registry 工厂（实时源）：chat 步骤 with.model 按模型 ID
+                                // 路由专属 provider，且每次按当前配置解析 —— 新建/修改
+                                // provider 后无需重启即可路由到新模型。
+                                engine.set_client_factory(nuphus::llm::ClientFactory::live());
                             });
                             tracing::info!("[STARTUP] LLM client + ToolRegistry injected into WorkflowEngine for ChatAgent");
                         }

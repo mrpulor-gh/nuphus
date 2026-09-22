@@ -1233,16 +1233,16 @@ async fn plugin_agent_chat_inner(
         &format!("plugin-chat:{id}"),
     )?;
 
-    // ClientFactory 同法构建（与主路径 Priority 1 一致：完整 ModelRegistry 只读）
-    let factory = nuphus::config::load_registry()
-        .map(nuphus::llm::ClientFactory::new)
-        .map_err(|e| format!("无法加载模型配置，请检查 config.toml: {e}"))?;
-    let registry = factory.registry();
+    // ClientFactory：实时源（与主路径同口径 —— providers.toml 唯一权威源）
+    let factory = nuphus::llm::ClientFactory::live();
     // Leader binding is already provider+model atomic; do not infer the provider
     // from a model-only lookup (official and OpenCode GO may share the model ID).
+    let registry = factory
+        .registry()
+        .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
     let (provider, model) = crate::commands::config::llm::effective_model_binding(
         &state.llm_config_path,
-        registry,
+        &registry,
         "leader",
     )?;
     let llm = factory

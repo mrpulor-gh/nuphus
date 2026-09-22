@@ -33,7 +33,8 @@ impl Executor {
                 let client_result = if let Some(ref provider) = opts.provider {
                     Some(factory.create_client_for(provider, model_id))
                 } else {
-                    let candidates = factory.registry().find_model_candidates(model_id);
+                    let registry = factory.registry()?;
+                    let candidates = registry.find_model_candidates(model_id);
                     match candidates.as_slice() {
                         // Preserve the legacy bare-model fallback for old workflows whose
                         // model was never registered; ambiguity, however, is never guessed.

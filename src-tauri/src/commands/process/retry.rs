@@ -76,38 +76,20 @@ pub async fn retry_agent(
         seq: state.event_seq.clone(),
     };
 
-    // 3. 创建 LLM 客户端（与 process.rs 一致：providers.toml registry）
-    //    复用留存 Runtime 时仅用于刷新 exec_resources；需要重建时作为主客户端。
-    let factory = {
-        nuphus::config::load_registry()
-            .ok()
-            .map(nuphus::llm::ClientFactory::new)
-            .or_else(|| {
-                let in_mem = state.runtime.lock().ok().and_then(|g| g.llm_config.clone());
-                in_mem
-                    .filter(|c| !c.model.is_empty() && !c.api_key.is_empty())
-                    .map(|cfg| {
-                        let registry = nuphus::config::ModelRegistry::from_single(
-                            cfg.model.clone(),
-                            cfg.provider.clone(),
-                            cfg.api_key.clone(),
-                            String::new(),
-                            cfg.reasoning_effort.clone(),
-                        );
-                        nuphus::llm::ClientFactory::new(registry)
-                    })
-            })
-    }
-    .ok_or_else(|| "无法加载模型配置".to_string())?;
+    // 3. ClientFactory：实时源（与 process.rs 同一口径 —— providers.toml 唯一权威源）
+    let factory = nuphus::llm::ClientFactory::live();
     let llm = factory
         .create_client_for(&config.provider, &config.model)
         .or_else(|_| factory.create_main_client())
         .map_err(|e| format!("创建 LLM 客户端失败: {}", e))?;
 
     // Agent 级 exec 模型（单一入口 effective_model）：exec → default → leader
+    let registry = factory
+        .registry()
+        .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
     let (exec_provider, exec_model) = crate::commands::config::llm::effective_model_binding(
         &state.llm_config_path,
-        factory.registry(),
+        &registry,
         "exec",
     )?;
     let exec_llm = factory

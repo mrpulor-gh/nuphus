@@ -378,34 +378,12 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         })?
         .refine_threshold;
 
-    // ── Create ClientFactory from full model registry (config.toml / env) ──
-    // 完整 registry 含全部已配置 provider/model（api_key 存于 config.toml），
-    // 使 create_client(任意模型) 可用——Leader/Workflow/Exec/Custom 各 agent 可独立模型。
-    // Priority 1: 完整 registry；Priority 2: in-memory from_single（startup llm_config）。
-    let factory = {
-        nuphus::config::load_registry()
-            .ok()
-            .map(nuphus::llm::ClientFactory::new)
-            .or_else(|| {
-                let in_mem = state.runtime.lock().ok().and_then(|g| g.llm_config.clone());
-                in_mem
-                    .filter(|c| !c.model.is_empty() && !c.api_key.is_empty())
-                    .map(|cfg| {
-                        let registry = nuphus::config::ModelRegistry::from_single(
-                            cfg.model.clone(),
-                            cfg.provider.clone(),
-                            cfg.api_key.clone(),
-                            String::new(),
-                            cfg.reasoning_effort.clone(),
-                        );
-                        nuphus::llm::ClientFactory::new(registry)
-                    })
-            })
-    }
-    .ok_or_else(|| "无法加载模型配置，请检查 config.toml".to_string())
-    .inspect_err(|_| {
-        state.busy.store(false, Ordering::SeqCst);
-    })?;
+    // ── ClientFactory：实时源（providers.toml 是唯一权威源）──
+    // 每次构建客户端时按当前配置解析：Leader/Workflow/Exec/Custom 各 agent 可独立模型，
+    // 且「配置写盘 → 立即可用」——不再持有「读一次就冻结」的快照
+    // （历史缺陷：快照遮蔽写入 → 新建 provider 后切模型报 model not found，
+    //  必须重启或新开一轮才恢复）。构造本身无 IO、不会失败。
+    let factory = nuphus::llm::ClientFactory::live();
 
     // 实际生效模型（单一入口 effective_model，与桌面输入框 getEffectiveModel 同源）：
     // 此前广播 factory.registry().model（config.toml 根模型）——mode 级 agent_models
@@ -417,9 +395,14 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         .unwrap_or_default()
         .as_str()
         .to_string();
+    // 权威源解析失败 → 与其它「spawn 之前」的提前返回路径同规矩：先释放 busy 再上抛。
+    let registry = factory.registry().map_err(|e| {
+        state.busy.store(false, Ordering::SeqCst);
+        format!("无法加载模型配置，请检查 providers.toml: {e}")
+    })?;
     let model_name = crate::commands::config::llm::effective_model(
         &state.llm_config_path,
-        factory.registry(),
+        &registry,
         &mode_effective,
     );
     let tools = state.tools.clone();
@@ -702,25 +685,27 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         }
         // ── Agent 级模型解析（单一入口 effective_model）：
         //    leader(锚点) → default → 各自 agent；「可用」= registry 命中。──
-        let registry = factory2.registry();
+        let registry = factory2
+            .registry()
+            .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
         let leader_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
-            registry,
+            &registry,
             "leader",
         )?;
         let workflow_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
-            registry,
+            &registry,
             "workflow",
         )?;
         let exec_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
-            registry,
+            &registry,
             "exec",
         )?;
         let custom_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
-            registry,
+            &registry,
             "custom",
         )?;
         let resolve_llm =

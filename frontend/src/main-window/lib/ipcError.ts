@@ -18,10 +18,14 @@ export function friendlyIpcError(e: unknown, fallback = '操作失败，请稍�
 
   // 前端命令已更新、后端仍是旧进程：重启未必够（二进制本身没有该命令时，
   // 重启多少次都无效）→ 文案必须同时覆盖「先重启」与「重启无效则需重新构建」。
+  //
+  // ⚠️ 判定必须**限定在命令上下文**：这里历史上是裸 `/not found/`，于是后端业务
+  // 错误（`model 'x' not found for provider 'y'`）也被吞成「版本过旧」，把排查
+  // 方向整体带偏——归因错误的代价远大于文案难看。
   // 注意排除 HTTP 状态码：`404 Not Found` 是地址问题，不是命令未注册（两者都含
   // "not found"，若不加排除会被误判成版本问题，把用户引向错误的方向）。
   if (
-    /not found|unknown command|not allowed|not defined/i.test(reason) &&
+    /Command\s+\S+\s+(not\s+found|not\s+allowed)|unknown command/i.test(reason) &&
     !/\b(4\d\d|5\d\d)\b/.test(reason)
   ) {
     return '应用后端版本过旧，未包含该功能：请先重启应用；若仍报错，需重新构建应用后再启动'

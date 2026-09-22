@@ -54,9 +54,8 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
         })
         .emitter(Arc::new(emitter.clone()))
         .pause_flag(pause_flag.clone())
-        .client_factory(nuphus::llm::ClientFactory::new(
-            nuphus::config::load_registry().map_err(|e| e.to_string())?,
-        ));
+        // 实时源：providers.toml 唯一权威源（配置写盘后下一次建客户端即生效）
+        .client_factory(nuphus::llm::ClientFactory::live());
 
     let runtime = builder.build()?;
 

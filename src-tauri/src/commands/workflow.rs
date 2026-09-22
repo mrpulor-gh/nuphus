@@ -483,22 +483,26 @@ pub fn inject_workflow_runtime(state: &AppState, engine: &mut nuphus::workflow::
     engine.set_tools(std::sync::Arc::new(state.tools.clone()));
     // Both the workflow default client and per-step factory use the complete
     // provider+model binding. This avoids model-only lookup when names collide.
-    if let Ok(full_registry) = nuphus::config::load_registry() {
-        let factory = nuphus::llm::ClientFactory::new(full_registry);
-        engine.set_client_factory(factory.clone());
-        match crate::commands::config::llm::effective_model_binding(
-            &state.llm_config_path,
-            factory.registry(),
-            "workflow",
-        ) {
-            Ok((provider, model)) => match factory.create_client_for(&provider, &model) {
-                Ok(client) => engine.set_llm_client(client),
-                Err(e) => tracing::warn!(
-                    "[workflow] Failed to create bound client ({provider}:{model}): {e}"
-                ),
-            },
-            Err(e) => tracing::warn!("[workflow] No workflow provider+model binding: {e}"),
+    // 实时源：providers.toml 是唯一权威源 —— 配置改完即生效，无需重启（闭环）。
+    let factory = nuphus::llm::ClientFactory::live();
+    match factory.registry() {
+        Ok(registry) => {
+            engine.set_client_factory(factory.clone());
+            match crate::commands::config::llm::effective_model_binding(
+                &state.llm_config_path,
+                &registry,
+                "workflow",
+            ) {
+                Ok((provider, model)) => match factory.create_client_for(&provider, &model) {
+                    Ok(client) => engine.set_llm_client(client),
+                    Err(e) => tracing::warn!(
+                        "[workflow] Failed to create bound client ({provider}:{model}): {e}"
+                    ),
+                },
+                Err(e) => tracing::warn!("[workflow] No workflow provider+model binding: {e}"),
+            }
         }
+        Err(e) => tracing::warn!("[workflow] Failed to load model registry: {e}"),
     }
 }
 

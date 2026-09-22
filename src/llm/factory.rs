@@ -15,30 +15,95 @@ use crate::{
 };
 use std::sync::Arc;
 
+/// 注册表来源。
+///
+/// `providers.toml` 是模型配置的**唯一权威源**，且它在进程运行期间会被改写
+/// （新建自定义模型 / 改密钥 / 加模型）。任何「读一次就冻结」的副本都会让之后的
+/// 写入被遮蔽——历史缺陷：新建 provider 段后立刻切模型报
+/// `model 'x' not found for provider 'y'`，因为长生命周期 Runtime 里持的是旧快照，
+/// 必须重启或新开一轮才恢复。
+///
+/// 所以长生命周期持有者一律用 [`RegistrySource::Live`]：每次构建客户端时按当前
+/// 配置解析。**消除副本**，而不是给副本加失效通知——后者要求穷举所有写盘点，
+/// 漏一处就再次断链。
+#[derive(Clone)]
+enum RegistrySource {
+    /// 调用方给定的快照，不随配置文件变化（测试 / CLI 单次运行 / 显式注入）
+    Static(ModelRegistry),
+    /// 每次使用都按当前配置解析（`path = None` → 进程规范配置发现）
+    Live { path: Option<std::path::PathBuf> },
+}
+
 /// LLM Client Factory
 #[derive(Clone)]
 pub struct ClientFactory {
-    registry: ModelRegistry,
+    source: RegistrySource,
 }
 
 impl ClientFactory {
+    /// 快照源：注册表内容固定不再变化（测试 / CLI / 显式注入场景）。
     pub fn new(registry: ModelRegistry) -> Self {
-        Self { registry }
+        Self {
+            source: RegistrySource::Static(registry),
+        }
     }
 
-    /// Get underlying registry (read-only)
-    pub fn registry(&self) -> &ModelRegistry {
-        &self.registry
+    /// **实时源**：每次构建客户端时按当前配置解析。
+    ///
+    /// 宿主（桌面 / 插件 / 工作流）一律用本构造器——它是「配置写盘 → 立即可用」
+    /// 闭环的实现点：配置改完即生效，无需重启、无需新开一轮。
+    pub fn live() -> Self {
+        Self {
+            source: RegistrySource::Live { path: None },
+        }
+    }
+
+    /// 实时源（显式配置文件路径）：测试与非规范配置宿主使用。
+    pub fn live_at(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            source: RegistrySource::Live {
+                path: Some(path.into()),
+            },
+        }
+    }
+
+    /// 当前生效的注册表（**当时**的权威状态，不做缓存）。
+    pub fn registry(&self) -> Result<ModelRegistry> {
+        match &self.source {
+            RegistrySource::Static(r) => Ok(r.clone()),
+            RegistrySource::Live { path: Some(p) } => {
+                ModelRegistry::from_toml(&p.to_string_lossy())
+            }
+            RegistrySource::Live { path: None } => crate::config::load_registry(),
+        }
     }
 
     /// Create Client for the specified model ID
     pub fn create_client(&self, model_id: &str) -> Result<Arc<dyn ApiClient>> {
-        let (provider, model) = self
-            .registry
+        let registry = self.registry()?;
+        self.build_client_for(&registry, model_id)
+    }
+
+    /// 在给定注册表上按 model id 建客户端（`create_client*` 的唯一公共实现）。
+    fn build_client_for(
+        &self,
+        registry: &ModelRegistry,
+        model_id: &str,
+    ) -> Result<Arc<dyn ApiClient>> {
+        let (provider, model) = registry
             .find_model(model_id)
             .ok_or_else(|| crate::NuphusError::llm(format!("model '{}' not found", model_id)))?;
+        self.build_client(registry, provider, &model.id)
+    }
 
-        let transport = self.build_transport(provider, &model.id)?;
+    /// 建客户端 + 标注段名（同 id 跨段时区分路由的唯一标识）。
+    fn build_client(
+        &self,
+        registry: &ModelRegistry,
+        provider: &ProviderConfig,
+        model_id: &str,
+    ) -> Result<Arc<dyn ApiClient>> {
+        let transport = self.build_transport(registry, provider, model_id)?;
         let client = super::client::LlmClient::with_transport_arc(transport)
             .with_provider_name(provider.name.clone());
         Ok(Arc::new(client))
@@ -50,8 +115,8 @@ impl ClientFactory {
         provider_name: &str,
         model_id: &str,
     ) -> Result<Arc<dyn ApiClient>> {
-        let (provider, model) = self
-            .registry
+        let registry = self.registry()?;
+        let (provider, model) = registry
             .find_model_for_provider(provider_name, model_id)
             .ok_or_else(|| {
                 crate::NuphusError::llm(format!(
@@ -59,21 +124,18 @@ impl ClientFactory {
                     model_id, provider_name
                 ))
             })?;
-        let transport = self.build_transport(provider, &model.id)?;
-        Ok(Arc::new(
-            super::client::LlmClient::with_transport_arc(transport)
-                .with_provider_name(provider.name.clone()),
-        ))
+        self.build_client(&registry, provider, &model.id)
     }
 
     /// Create Client for the main model (all text tasks)
     pub fn create_main_client(&self) -> Result<Arc<dyn ApiClient>> {
-        if self.registry.model.is_empty() {
+        let registry = self.registry()?;
+        if registry.model.is_empty() {
             return Err(crate::NuphusError::Config(
                 "no model configured".to_string(),
             ));
         }
-        self.create_client(&self.registry.model)
+        self.build_client_for(&registry, &registry.model)
     }
 
     /// Build a Transport for the given Provider + model.
@@ -81,15 +143,19 @@ impl ClientFactory {
     /// provider-driven: delegates to `Provider::transport()` which owns its metadata,
     /// quirks, and transport selection. The factory only handles registry
     /// lookup — transport construction is the Provider's responsibility.
+    ///
+    /// `registry` 仅用于 OAuth 段的配置文件来源（令牌自动刷新需要回写路径）。
     fn build_transport(
         &self,
+        registry: &ModelRegistry,
         provider: &ProviderConfig,
         model_id: &str,
     ) -> Result<Arc<dyn Transport>> {
         // OAuth 段透明化：配置了 oauth 的段以「新鲜 access token」充当 api_key
         // 传入 transport（transport 本身不感知 oauth，继续走既有 Bearer 链）。
         // 未配 oauth / 无文件来源（CLI 内存构造）→ 原样透传，零行为变化。
-        let provider = self.with_fresh_oauth_token(provider);
+        let provider =
+            self.with_fresh_oauth_token(provider, registry.source_path.as_deref());
         let pmeta = ProviderRegistry::builtin()
             .get(provider.provider_type.as_str())
             .ok_or_else(|| {
@@ -182,7 +248,12 @@ impl ClientFactory {
     ///    async 上下文里有运行时嵌套风险，线程隔离一次到位。
     ///    刷新失败（含 401 → 需重新授权）仅记 warn——不携带任何令牌值——
     ///    transport 仍按原 api_key 构建，认证失败由请求链路报给上层。
-    fn with_fresh_oauth_token(&self, provider: &ProviderConfig) -> ProviderConfig {
+    /// `source_path` 由调用方从**当前注册表**带入（实时源下每次都是最新配置的路径）。
+    fn with_fresh_oauth_token(
+        &self,
+        provider: &ProviderConfig,
+        source_path: Option<&std::path::Path>,
+    ) -> ProviderConfig {
         let Some(oauth) = provider.oauth.as_ref() else {
             return provider.clone();
         };
@@ -195,7 +266,7 @@ impl ClientFactory {
             cfg.api_key = token;
             return cfg;
         }
-        let Some(path) = self.registry.source_path.clone() else {
+        let Some(path) = source_path.map(std::path::Path::to_path_buf) else {
             tracing::warn!(
                 "[factory] provider '{}' 配置了 OAuth 但注册表无配置文件来源，无法自动刷新",
                 provider.name
@@ -243,8 +314,8 @@ mod tests {
     /// 枚举把二者一并折叠成 `ProviderKind::Custom`，只有 providers.toml 段名
     /// 能区分；窗口值也不同，便于断言「段名 → provider 精确取值」。
     ///
-    /// 返回 (temp dir, registry)：调用方负责 `remove_dir_all`。
-    fn dual_segment_registry() -> (std::path::PathBuf, ModelRegistry) {
+    /// 返回 (temp dir, 配置文件路径, registry)：调用方负责 `remove_dir_all`。
+    fn dual_segment_registry() -> (std::path::PathBuf, std::path::PathBuf, ModelRegistry) {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
@@ -277,15 +348,15 @@ mod tests {
              context_window = 64000\n";
         std::fs::write(&cfg_path, cfg).unwrap();
         let registry = ModelRegistry::from_toml(cfg_path.to_str().unwrap()).unwrap();
-        (dir, registry)
+        (dir, cfg_path, registry)
     }
 
     /// 工厂创建的 client 必须携带 providers.toml **段名**：这是同 id 跨段
     /// 场景下唯一能区分路由的标识（provider_kind 折叠成 Custom）。
     #[test]
     fn test_create_client_carries_segment_name() {
-        let (dir, registry) = dual_segment_registry();
-        let factory = ClientFactory::new(registry);
+        let (dir, _cfg_path, snapshot) = dual_segment_registry();
+        let factory = ClientFactory::new(snapshot);
 
         let a = factory.create_client_for("seg-a", "probe-model").unwrap();
         let b = factory.create_client_for("seg-b", "probe-model").unwrap();
@@ -297,29 +368,64 @@ mod tests {
         assert_eq!(a.provider_kind(), b.provider_kind());
 
         // 段名直接驱动 provider 精确窗口解析（同 id 两段取值不同）。
+        let registry = factory.registry().unwrap();
         assert_eq!(
-            factory
-                .registry()
-                .resolve_context_window(Some(a.provider_name()), "probe-model"),
+            registry.resolve_context_window(Some(a.provider_name()), "probe-model"),
             Some(200_000)
         );
         assert_eq!(
-            factory
-                .registry()
-                .resolve_context_window(Some(b.provider_name()), "probe-model"),
+            registry.resolve_context_window(Some(b.provider_name()), "probe-model"),
             Some(64_000)
         );
         // provider 未知（None / ""）→ 回落候选遍历，取首个带值的候选。
         assert_eq!(
-            factory
-                .registry()
-                .resolve_context_window(None, "probe-model"),
+            registry.resolve_context_window(None, "probe-model"),
             Some(200_000)
         );
 
         // create_client（find_model 段序首匹配）→ 段序首段，语义不变。
         let first = factory.create_client("probe-model").unwrap();
         assert_eq!(first.provider_name(), "seg-a");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 闭环回归：**同一** factory 实例必须看到构造之后写入配置文件的段。
+    ///
+    /// 历史缺陷：新建自定义模型后立刻切换模型报
+    /// `model 'x' not found for provider 'y'`——长生命周期 Runtime 持旧快照，
+    /// 写入被遮蔽，必须重启或新开一轮才恢复（用户可见症状是「应用后端版本过旧」）。
+    #[test]
+    fn live_source_sees_segments_written_after_construction() {
+        let (dir, cfg_path, snapshot) = dual_segment_registry();
+        let factory = ClientFactory::live_at(&cfg_path);
+
+        // 构造时已存在的段可用
+        assert!(factory.create_client_for("seg-a", "probe-model").is_ok());
+
+        // 模拟「新建自定义模型」写盘：追加新段
+        let appended = "\n[[providers]]\n\
+                        name = \"seg-c\"\n\
+                        provider_type = \"custom\"\n\
+                        api_key = \"sk-c\"\n\
+                        base_url = \"https://c.example.com/v1\"\n\n\
+                        [[providers.models]]\n\
+                        id = \"live-model\"\n";
+        let mut content = std::fs::read_to_string(&cfg_path).unwrap();
+        content.push_str(appended);
+        std::fs::write(&cfg_path, content).unwrap();
+
+        // 实时源：立即可见
+        assert!(
+            factory.create_client_for("seg-c", "live-model").is_ok(),
+            "Live 源必须看到构造之后写入的配置段"
+        );
+        // 反向对照：快照源看不到 —— 证明本测试不是恒真（旧实现正是在此失败）
+        assert!(
+            ClientFactory::new(snapshot)
+                .create_client_for("seg-c", "live-model")
+                .is_err()
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

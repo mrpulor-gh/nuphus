@@ -20,6 +20,15 @@ describe('friendlyIpcError', () => {
     expect(msg).not.toMatch(/IPC invoke/i)
   })
 
+  it('后端业务错误里的 "not found" 不得被误判成命令未注册', () => {
+    // 历史事故：`model 'x' not found for provider 'y'` 被吞成「后端版本过旧」，
+    // 排查方向被带偏。归因必须限定在命令上下文。
+    const biz = "model 'deepseek-v4.1-flash' not found for provider 'custom-41flash'"
+    const msg = friendlyIpcError(wrap(biz))
+    expect(msg).not.toContain('后端版本过旧')
+    expect(msg).toBe(biz)
+  })
+
   it('网络不可达 → 提示检查地址与网络', () => {
     const msg = friendlyIpcError(
       wrap('error sending request for url (https://api.example.com/v1/models)'),

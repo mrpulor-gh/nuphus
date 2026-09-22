@@ -94,25 +94,57 @@ pub fn load_registry() -> crate::Result<ModelRegistry> {
 
 /// Resolve the effective max output token budget for a model.
 ///
-/// Transport layer entry point — called on every request build, so results
-/// are cached per model id (registry file is only parsed on first miss).
+/// Transport layer entry point — called on every request build, so results are
+/// cached per model id. **缓存按配置文件的身份（路径 + mtime + 长度）作废**：
+/// 配置是可在运行期被改写的权威源，永久缓存会让「改了 max_tokens / 新增模型」
+/// 要重启才生效（与「读一次就冻结的副本」同一类缺陷）。
 /// Priority follows `ModelRegistry::get_max_output_tokens` (see model.rs).
 pub fn resolve_max_output_tokens(model_id: &str) -> Option<u32> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<u32>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = cache.lock() {
-        if let Some(v) = guard.get(model_id) {
-            return *v;
-        }
-        let resolved = load_registry()
-            .ok()
-            .and_then(|r| r.get_max_output_tokens(model_id));
-        guard.insert(model_id.to_string(), resolved);
-        return resolved;
+
+    /// 规范配置文件身份。文件未变 → 缓存有效；变了（或从无到有）→ 整表作废。
+    type Identity = Option<(std::path::PathBuf, std::time::SystemTime, u64)>;
+
+    struct Cache {
+        identity: Identity,
+        entries: HashMap<String, Option<u32>>,
     }
-    None
+
+    fn current_identity() -> Identity {
+        let path = config_search_paths().into_iter().find(|p| p.exists())?;
+        let meta = std::fs::metadata(&path).ok()?;
+        Some((path, meta.modified().ok()?, meta.len()))
+    }
+
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
+        Mutex::new(Cache {
+            identity: None,
+            entries: HashMap::new(),
+        })
+    });
+
+    let resolve_uncached = || {
+        load_registry()
+            .ok()
+            .and_then(|r| r.get_max_output_tokens(model_id))
+    };
+
+    let Ok(mut guard) = cache.lock() else {
+        return resolve_uncached();
+    };
+    let identity = current_identity();
+    if guard.identity != identity {
+        guard.identity = identity;
+        guard.entries.clear();
+    }
+    if let Some(v) = guard.entries.get(model_id) {
+        return *v;
+    }
+    let resolved = resolve_uncached();
+    guard.entries.insert(model_id.to_string(), resolved);
+    resolved
 }
 /// 视觉理解策略
 pub enum VisionStrategy {
