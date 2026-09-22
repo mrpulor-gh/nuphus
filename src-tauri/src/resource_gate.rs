@@ -23,6 +23,7 @@ pub fn tool_touches_automation(tool_name: &str) -> bool {
 }
 
 /// Compatibility helper for callers and tests that only need the lease.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn acquire_execution_body(
     gate: &Arc<AutomationGate>,
     label: &str,
