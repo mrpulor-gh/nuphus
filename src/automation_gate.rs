@@ -419,7 +419,7 @@ mod tests {
             HoldKind::ManualTool,
             OWNER_MANUAL_TOOL,
         );
-        let err = denied.err().expect("执行体持锁期间手动工具必须被拒");
+        let err = denied.expect_err("执行体持锁期间手动工具必须被拒");
         assert_eq!(err.code(), CODE_BUSY);
         assert_eq!(err.kind, HoldKind::ManualTool);
         assert_eq!(err.holder_kind, HoldKind::ExecutionBody);
@@ -601,8 +601,7 @@ mod tests {
                 HoldKind::ManualTool,
                 OWNER_MANUAL_TOOL,
             )
-            .err()
-            .expect("必须被拒");
+            .expect_err("必须被拒");
         assert!(
             started.elapsed() < std::time::Duration::from_millis(50),
             "拒绝必须是即时的（实测 {:?}），不得等待/重试",
