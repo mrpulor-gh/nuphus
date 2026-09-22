@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 enum RegistrySource {
     /// 调用方给定的快照，不随配置文件变化（测试 / CLI 单次运行 / 显式注入）
-    Static(ModelRegistry),
+    Static(Box<ModelRegistry>),
     /// 每次使用都按当前配置解析（`path = None` → 进程规范配置发现）
     Live { path: Option<std::path::PathBuf> },
 }
@@ -44,7 +44,7 @@ impl ClientFactory {
     /// 快照源：注册表内容固定不再变化（测试 / CLI / 显式注入场景）。
     pub fn new(registry: ModelRegistry) -> Self {
         Self {
-            source: RegistrySource::Static(registry),
+            source: RegistrySource::Static(Box::new(registry)),
         }
     }
 
@@ -70,7 +70,7 @@ impl ClientFactory {
     /// 当前生效的注册表（**当时**的权威状态，不做缓存）。
     pub fn registry(&self) -> Result<ModelRegistry> {
         match &self.source {
-            RegistrySource::Static(r) => Ok(r.clone()),
+            RegistrySource::Static(r) => Ok((**r).clone()),
             RegistrySource::Live { path: Some(p) } => {
                 ModelRegistry::from_toml(&p.to_string_lossy())
             }
@@ -154,8 +154,7 @@ impl ClientFactory {
         // OAuth 段透明化：配置了 oauth 的段以「新鲜 access token」充当 api_key
         // 传入 transport（transport 本身不感知 oauth，继续走既有 Bearer 链）。
         // 未配 oauth / 无文件来源（CLI 内存构造）→ 原样透传，零行为变化。
-        let provider =
-            self.with_fresh_oauth_token(provider, registry.source_path.as_deref());
+        let provider = self.with_fresh_oauth_token(provider, registry.source_path.as_deref());
         let pmeta = ProviderRegistry::builtin()
             .get(provider.provider_type.as_str())
             .ok_or_else(|| {
@@ -248,6 +247,7 @@ impl ClientFactory {
     ///    async 上下文里有运行时嵌套风险，线程隔离一次到位。
     ///    刷新失败（含 401 → 需重新授权）仅记 warn——不携带任何令牌值——
     ///    transport 仍按原 api_key 构建，认证失败由请求链路报给上层。
+    ///
     /// `source_path` 由调用方从**当前注册表**带入（实时源下每次都是最新配置的路径）。
     fn with_fresh_oauth_token(
         &self,
@@ -421,11 +421,9 @@ mod tests {
             "Live 源必须看到构造之后写入的配置段"
         );
         // 反向对照：快照源看不到 —— 证明本测试不是恒真（旧实现正是在此失败）
-        assert!(
-            ClientFactory::new(snapshot)
-                .create_client_for("seg-c", "live-model")
-                .is_err()
-        );
+        assert!(ClientFactory::new(snapshot)
+            .create_client_for("seg-c", "live-model")
+            .is_err());
 
         std::fs::remove_dir_all(&dir).ok();
     }
