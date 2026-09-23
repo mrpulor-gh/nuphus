@@ -7,7 +7,7 @@
 //!
 //! 条目的路径解析全部复用各功能已有的权威实现，本模块不重复推导：
 //! - `data`      → `nuphus_data_dir()` 同源的 `dirs::data_dir()/Nuphus`
-//!                 （models / browser_profile_v2 / dicts / tools / nuphus.db / providers.toml）
+//!   （models / browser_profile_v2 / dicts / tools / nuphus.db / providers.toml）
 //! - `runtime`   → `nuphus::utils::nuphus_data_dir()`（annotations / memory / tasks / workflows）
 //! - `generated` → `dirs::home_dir()/.nuphus/generated`（`tools/builtin/generation.rs` 的产出目录）
 //! - `plugin`    → `nuphus::utils::plugin_root()`（skills / knowledge / workflows / apps）
