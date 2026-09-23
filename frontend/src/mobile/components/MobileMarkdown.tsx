@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import LocalImage from './LocalImage'
+import { extractImagePaths, isImagePath } from '../imagePath'
 
 interface MarkdownContentProps {
   content: string
@@ -441,6 +443,29 @@ function TableRenderer({ lines }: { lines: string[] }) {
 //   3. Italic *text*                — fixed: removed faulty lookbehind that caused match failures
 //   4. Strikethrough ~~text~~
 //   5. Link [text](url)
+//   6. Local image path (last resort, plain text only — see applyImages)
+
+/**
+ * 把纯文本片段里的本机图片绝对路径替换为缩略图，其余原样保留。
+ * 与桌面端 MarkdownContent 的路径区间切分同款做法：只做替换，不碰解析逻辑。
+ * 放在内联渲染的最后一层：**bold** / 链接等结构先被消化，残余纯文本才安全替换。
+ */
+function applyImages(text: string, keyPrefix: string): React.ReactNode[] {
+  const ranges = extractImagePaths(text)
+  if (ranges.length === 0) return [text]
+  const out: React.ReactNode[] = []
+  let cursor = 0
+  ranges.forEach((range, ri) => {
+    if (range.start > cursor) out.push(text.slice(cursor, range.start))
+    out.push(
+      <LocalImage key={`${keyPrefix}-img-${ri}`} path={text.slice(range.start, range.end)} />,
+    )
+    cursor = range.end
+  })
+  if (cursor < text.length) out.push(text.slice(cursor))
+  return out
+}
+
 function MarkdownInline({ text }: { text: string }) {
   const boldRegex = /\*\*(.+?)\*\*/g
   const italicRegex = /(?<!\w)\*(?!\*)(.+?)\*(?!\*)/g
@@ -469,6 +494,12 @@ function MarkdownInline({ text }: { text: string }) {
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
       if (seg.t === 'code') {
+        // 行内代码若整体就是一条本机图片路径（Agent 习惯用反引号包路径），
+        // 同样接入图片通道——与桌面端 MarkdownContent 的反引号路径处理保持一致
+        if (isImagePath(seg.v)) {
+          nodes.push(<LocalImage key={`c-${i}-${seg.v}`} path={seg.v} />)
+          continue
+        }
         nodes.push(
           <code key={`c-${i}-${seg.v}`} className="inline-code">
             {seg.v}
@@ -536,6 +567,9 @@ function MarkdownInline({ text }: { text: string }) {
             })
           : [n],
       )
+
+      // ▸ 本机图片路径 → 缩略图（最后一层：markdown 结构已消化，残余纯文本才安全替换）
+      layer = layer.flatMap(n => (typeof n === 'string' ? applyImages(n, `${i}`) : [n]))
 
       nodes.push(...layer)
     }

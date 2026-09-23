@@ -5,6 +5,7 @@
 import type { TraceItem } from './store'
 import { t } from './i18n'
 import { isPrivateHost, resolveTunnelDeviceId } from './connection'
+import { readStoredToken } from './auth'
 
 /**
  * 当前 REST 通道地址（null=当前页面 origin；非 null=桌面局域网直连地址）。
@@ -190,6 +191,30 @@ export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
   )
   if (!res.ok) throw new Error(`history failed: ${res.status}`)
   return (await res.json()) as HistoryMessage[]
+}
+
+/**
+ * GET /file?path=<绝对路径>：拉取电脑本地图片字节（Agent 交付的验证截图等）。
+ *
+ * ⚠️ 必须走 fetch，不能 `<img src>` 直连端点：中继通道的归属路由依赖
+ * `X-Tunnel-Device` 头，`<img>` 无法携带自定义头 → 中继下必然路由失败/404；
+ * 且 token 走 Header（见文件头注释）。因此这里取回 Blob，由调用方
+ * `URL.createObjectURL` 渲染。
+ *
+ * 凭据：token 由 auth.readStoredToken() 从 localStorage 读（调用方是 Markdown
+ * 渲染组件，拿不到 App 层 token 状态）；未配对时抛 AuthError。
+ * 失败（401/4xx/网络/超时）一律抛出，由调用方降级为原始路径文本。
+ */
+export async function fetchFileBlob(path: string): Promise<Blob> {
+  const token = readStoredToken()
+  if (!token) throw new AuthError()
+  const res = await checkAuth(
+    await fetchWithTimeout(resolveApi(`./file?path=${encodeURIComponent(path)}`), {
+      headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
+    }),
+  )
+  if (!res.ok) throw new Error(`file failed: ${res.status}`)
+  return await res.blob()
 }
 
 /** 拉取当前生效的身份显示名（assistant_name / user_label，后端 relation_cache 下发） */
