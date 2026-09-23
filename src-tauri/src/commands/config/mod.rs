@@ -10,8 +10,10 @@
 //! single-file API surface).
 
 pub mod capabilities;
+pub mod data_dirs;
 pub mod handoff;
 pub mod jev;
+pub mod laya;
 pub mod llm;
 pub mod oauth;
 pub mod preferences;
@@ -23,8 +25,10 @@ pub mod toml_ops;
 // `model_supports_vision`, `load_llm_config_from_disk` etc. still resolve
 // exactly like they did when everything lived in a single `config.rs`.
 pub use self::capabilities::*;
+pub use self::data_dirs::*;
 pub use self::handoff::*;
 pub use self::jev::*;
+pub use self::laya::*;
 pub use self::llm::*;
 pub use self::oauth::*;
 pub use self::preferences::*;

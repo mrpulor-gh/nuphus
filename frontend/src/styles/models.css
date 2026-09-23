@@ -551,8 +551,38 @@
   padding: var(--space-6) clamp(var(--space-5), 5vw, 72px) var(--space-8);
 }
 
-/* ── Jev 独立配置（不属于聊天模型 Provider）── */
-.jev-settings-summary {
+/* ── 决策后端配置（增强判断模型页；不属于聊天模型 Provider）── */
+/* 后端切换（Jev 云端 / Laya 自托管）：同一 Section 内二选一，同一时刻只有一个生效 */
+.decision-backend-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  padding: 3px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+.decision-backend-tab {
+  flex: 1;
+  padding: 6px var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-2) - 2px);
+  background: transparent;
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.decision-backend-tab:hover {
+  color: var(--fg-1);
+}
+.decision-backend-tab.is-active {
+  background: var(--surface-2);
+  color: var(--fg-1);
+}
+.decision-settings-summary {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -562,17 +592,17 @@
   border-radius: var(--radius-2);
   background: var(--surface-1);
 }
-.jev-settings-summary strong {
+.decision-settings-summary strong {
   color: var(--fg-1);
   font-size: var(--fz-md);
 }
-.jev-settings-summary p {
+.decision-settings-summary p {
   margin: 3px 0 0;
   color: var(--fg-3);
   font-size: var(--fz-xs);
   line-height: var(--leading-normal);
 }
-.jev-settings-dot {
+.decision-settings-dot {
   width: 9px;
   height: 9px;
   flex: 0 0 auto;
@@ -580,10 +610,10 @@
   border-radius: 50%;
   background: var(--fg-5);
 }
-.jev-settings-dot.is-ready {
+.decision-settings-dot.is-ready {
   background: var(--success);
 }
-.jev-settings-actions {
+.decision-settings-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -591,16 +621,16 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--line-1);
 }
-.jev-policy-grid {
+.decision-policy-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
   border-top: 1px solid var(--line-1);
 }
-.jev-policy-grid .form-row {
+.decision-policy-grid .form-row {
   border-top: 0;
 }
-.jev-fallback-toggle {
+.decision-fallback-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -608,20 +638,20 @@
   font-size: var(--fz-sm);
   cursor: pointer;
 }
-.jev-fallback-toggle input {
+.decision-fallback-toggle input {
   accent-color: var(--accent);
 }
-.jev-settings-feedback {
+.decision-settings-feedback {
   color: var(--fg-3);
   font-size: var(--fz-xs);
 }
-.jev-settings-feedback.is-ok {
+.decision-settings-feedback.is-ok {
   color: var(--success);
 }
-.jev-settings-feedback.is-error {
+.decision-settings-feedback.is-error {
   color: var(--warning);
 }
-.jev-settings-boundaries {
+.decision-settings-boundaries {
   margin: 0;
   padding-left: 20px;
   color: var(--fg-3);
@@ -629,11 +659,11 @@
   line-height: 1.7;
 }
 @media (max-width: 840px) {
-  .jev-policy-grid {
+  .decision-policy-grid {
     grid-template-columns: 1fr;
     gap: 0;
   }
-  .jev-policy-grid .form-row + .form-row {
+  .decision-policy-grid .form-row + .form-row {
     border-top: 1px solid var(--line-1);
   }
 }

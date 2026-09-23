@@ -270,6 +270,133 @@ impl JevConfig {
     }
 }
 
+fn default_laya_base_url() -> String {
+    "http://127.0.0.1:8000".to_string()
+}
+
+fn default_laya_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_laya_max_retries() -> u32 {
+    2
+}
+
+fn default_laya_fallback() -> bool {
+    true
+}
+
+/// Self-hosted Laya decision layer — an alternative to the hosted Jev endpoint.
+///
+/// Laya (github.com/NandhaKishorM/laya) is a non-autoregressive decision engine
+/// whose `laya-serve` command speaks the same `POST /v1/systemone` wire protocol
+/// as TypeSafe's Jev. It is a *different* model with its own payload extensions,
+/// so it carries its own config block and its own client rather than reusing
+/// Jev's. Exactly one decision backend is active at a time; see
+/// [`DecisionBackend`].
+///
+/// Unlike Jev, a self-hosted Laya commonly needs no API key: `laya-serve`
+/// requires a bearer token only when `LAYA_API_KEY` is set on the server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayaConfig {
+    /// Master switch. Laya runs no model unless the user starts `laya-serve`, so
+    /// this defaults to off and nothing is contacted until it is turned on.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optional bearer token, sent only when non-empty.
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_laya_base_url")]
+    pub base_url: String,
+    /// Checkpoint to request: `english` / `multilingual` / `typed-decisions`.
+    /// Empty lets Laya's router auto-select by script and language.
+    #[serde(default)]
+    pub model: String,
+    #[serde(default = "default_laya_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Retries for transient failures, matching the Jev policy.
+    #[serde(default = "default_laya_max_retries")]
+    pub max_retries: u32,
+    /// Fall back to the primary model when the Laya call fails.
+    #[serde(default = "default_laya_fallback")]
+    pub fallback_to_primary_model: bool,
+}
+
+impl Default for LayaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            base_url: default_laya_base_url(),
+            model: String::new(),
+            timeout_ms: default_laya_timeout_ms(),
+            max_retries: default_laya_max_retries(),
+            fallback_to_primary_model: default_laya_fallback(),
+        }
+    }
+}
+
+/// Safe projection for UI/application state. It intentionally cannot expose
+/// the API key, even if a caller serializes the whole value.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LayaConfigStatus {
+    pub enabled: bool,
+    pub has_key: bool,
+    pub base_url: String,
+    pub model: String,
+    pub timeout_ms: u64,
+    pub max_retries: u32,
+    pub fallback_to_primary_model: bool,
+}
+
+impl LayaConfig {
+    pub fn status(&self) -> LayaConfigStatus {
+        LayaConfigStatus {
+            enabled: self.enabled,
+            has_key: !self.api_key.trim().is_empty(),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            timeout_ms: self.timeout_ms,
+            max_retries: self.max_retries,
+            fallback_to_primary_model: self.fallback_to_primary_model,
+        }
+    }
+
+    /// Whether this backend is usable as configured. A self-hosted Laya needs a
+    /// base URL but no key, so this deliberately does not require one.
+    pub fn is_ready(&self) -> bool {
+        self.enabled && !self.base_url.trim().is_empty()
+    }
+}
+
+/// Which decision backend the enhanced-mode desktop loop should use.
+///
+/// Jev and Laya are separate models that happen to share a wire protocol; only
+/// one drives a given run. Jev wins a tie because existing installations have it
+/// configured, and silently switching a working setup would be a surprise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionBackend {
+    Jev,
+    Laya,
+}
+
+impl ModelRegistry {
+    /// The decision backend to use, or `None` when neither is configured.
+    ///
+    /// Jev requires an API key (it is a hosted service); Laya requires a base
+    /// URL but no key. Returning `None` leaves the caller on the primary model.
+    pub fn decision_backend(&self) -> Option<DecisionBackend> {
+        if !self.jev.api_key.trim().is_empty() {
+            return Some(DecisionBackend::Jev);
+        }
+        if self.laya.is_ready() {
+            return Some(DecisionBackend::Laya);
+        }
+        None
+    }
+}
+
 /// 按能力独立配置模型（不配则使用 model）
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Capabilities {
@@ -323,6 +450,9 @@ pub struct ModelRegistry {
     /// Optional Jev structured decision layer (independent of LLM providers).
     #[serde(default)]
     pub jev: JevConfig,
+    /// Optional self-hosted Laya decision layer (alternative to `jev`).
+    #[serde(default)]
+    pub laya: LayaConfig,
     /// Model alias mapping: alias -> (provider_name, model_id)
     #[serde(skip)]
     alias_map: HashMap<String, (String, String)>,
@@ -620,6 +750,7 @@ impl ModelRegistry {
             providers,
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             // env 来源没有配置文件：OAuth 令牌注入路径据此跳过（无盘可刷新）
             source_path: None,
@@ -866,6 +997,7 @@ impl ModelRegistry {
             }],
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: HashMap::new(),
             // from_single 无文件来源（内存构造）：OAuth 刷新链路自然跳过。
             source_path: None,
@@ -921,6 +1053,40 @@ id = "m"
         assert_eq!(registry.jev.timeout_ms, 10_000);
         assert_eq!(registry.jev.max_retries, 2);
         assert!(registry.jev.fallback_to_primary_model);
+    }
+
+    /// 内存构造路径（from_single）必须补齐 `laya` 字段，且取值与 `jev`
+    /// 同源——都取 `*_default()`。此处锁定「无配置文件 → 两后端均为默认值」
+    /// 的行为，防止将来新增内存构造点时再漏字段而改变决策后端选择。
+    #[test]
+    fn from_single_memory_construction_includes_laya_default() {
+        let registry = ModelRegistry::from_single(
+            "m1".to_string(),
+            "custom".to_string(),
+            "k".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            None,
+        );
+
+        // 无配置文件来源：两个可选决策后端都落在默认值上。
+        assert_eq!(
+            registry.laya.base_url,
+            LayaConfig::default().base_url,
+            "from_single 必须补齐 laya，取值须与 LayaConfig::default() 一致"
+        );
+        assert_eq!(registry.laya.model, LayaConfig::default().model);
+        assert_eq!(registry.laya.timeout_ms, LayaConfig::default().timeout_ms);
+        assert_eq!(registry.laya.max_retries, LayaConfig::default().max_retries);
+        assert_eq!(registry.laya.api_key, LayaConfig::default().api_key);
+        assert_eq!(
+            registry.laya.fallback_to_primary_model,
+            LayaConfig::default().fallback_to_primary_model
+        );
+        assert!(registry.source_path.is_none(), "内存构造无盘来源");
+
+        // 与 jev 对称：两条内存构造路径的后端默认值语义保持一致。
+        assert!(!registry.jev.enabled);
+        assert!(!registry.laya.enabled);
     }
 
     #[test]
@@ -1105,6 +1271,7 @@ id = "m1"
             }],
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };
@@ -1277,6 +1444,7 @@ vision_provider = "custom"
             providers,
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };

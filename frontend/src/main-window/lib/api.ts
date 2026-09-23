@@ -168,6 +168,42 @@ export interface SaveJevConfigInput {
   fallbackToPrimaryModel: boolean
 }
 
+/**
+ * Laya 配置：Jev 之外的自托管决策后端选项。
+ *
+ * Laya（github.com/NandhaKishorM/laya）是独立模型，只是恰好兼容 Jev 的
+ * /v1/systemone 协议。它与 Jev 各自独立配置，同一时刻只有一个生效
+ * （见后端 ModelRegistry::decision_backend：Jev 已配 Key 时优先）。
+ *
+ * 与 Jev 的关键差异：自托管 Laya 通常不需要 API Key（仅当服务端设置了
+ * LAYA_API_KEY 时才要求）。
+ */
+export interface LayaConfig {
+  enabled: boolean
+  base_url: string
+  model: string
+  has_key: boolean
+  timeout_ms: number
+  max_retries: number
+  fallback_to_primary_model: boolean
+}
+
+export interface SaveLayaConfigInput {
+  apiKey?: string
+  baseUrl: string
+  model: string
+  enabled: boolean
+  timeoutMs: number
+  maxRetries: number
+  fallbackToPrimaryModel: boolean
+}
+
+export interface LayaConnectionStatus {
+  status: string
+  message?: string
+  model?: string
+}
+
 export interface JevConnectionStatus {
   status: string
   message?: string
@@ -192,6 +228,22 @@ export function saveJevConfig(input: SaveJevConfigInput) {
 
 export function clearJevApiKey() {
   return invoke<void>('clear_jev_api_key')
+}
+
+export function getLayaConfig() {
+  return invoke<LayaConfig>('get_laya_config')
+}
+
+export function saveLayaConfig(input: SaveLayaConfigInput) {
+  return invoke<LayaConfig>('save_laya_config', { ...input })
+}
+
+export function clearLayaApiKey() {
+  return invoke<void>('clear_laya_api_key')
+}
+
+export function testLayaConnection() {
+  return invoke<LayaConnectionStatus>('test_laya_connection')
 }
 
 export function testJevConnection() {
@@ -1784,6 +1836,21 @@ export function openPath(path: string) {
 /** 文件管理器定位（Windows explorer /select,） */
 export function revealPath(path: string) {
   return invoke<void>('reveal_path', { path })
+}
+
+// ── 数据目录（只读列举） ──
+
+/** 单个数据目录条目；path 为空串 = 本机无法解析该目录（exists 必为 false） */
+export interface DataDirEntry {
+  /** 稳定标识（data / runtime / generated / plugin / config） */
+  key: string
+  path: string
+  exists: boolean
+}
+
+/** 列出本机各数据目录的真实路径（只读；不做目录体积扫描） */
+export function listDataDirs() {
+  return invoke<DataDirEntry[]>('list_data_dirs')
 }
 
 // ── MCP 管理（只读） ──

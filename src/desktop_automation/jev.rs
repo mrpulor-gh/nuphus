@@ -8,10 +8,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const NEXT_ACTION: &str = "next_action";
-const RETRY_BACKOFF_INITIAL_MS: u64 = 500;
-const RETRY_BACKOFF_MAX_MS: u64 = 5_000;
-const RETRY_AFTER_MAX_MS: u64 = 60_000;
-const RETRY_JITTER_FRACTION: f64 = 0.25;
+/// Retry policy shared by both decision backends (Jev and Laya).
+pub(crate) const RETRY_BACKOFF_INITIAL_MS: u64 = 500;
+pub(crate) const RETRY_BACKOFF_MAX_MS: u64 = 5_000;
+pub(crate) const RETRY_AFTER_MAX_MS: u64 = 60_000;
+pub(crate) const RETRY_JITTER_FRACTION: f64 = 0.25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JevError {
@@ -122,7 +123,9 @@ impl ReqwestSystemOneTransport {
     }
 }
 
-fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+/// Whether an HTTP status is worth retrying. Shared with the Laya transport so
+/// both decision backends treat transient failures identically.
+pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 429 | 529) || status.is_server_error()
 }
 
@@ -152,7 +155,7 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     parse_retry_after_at(headers, SystemTime::now())
 }
 
-fn retry_backoff(attempt: u32, jitter_unit: f64) -> Duration {
+pub(crate) fn retry_backoff(attempt: u32, jitter_unit: f64) -> Duration {
     let exponential = RETRY_BACKOFF_INITIAL_MS
         .saturating_mul(2_u64.saturating_pow(attempt.min(16)))
         .min(RETRY_BACKOFF_MAX_MS);
@@ -160,7 +163,7 @@ fn retry_backoff(attempt: u32, jitter_unit: f64) -> Duration {
     Duration::from_millis((exponential as f64 * (1.0 - bounded_jitter)).round() as u64)
 }
 
-fn retry_delay(
+pub(crate) fn retry_delay(
     headers: Option<&reqwest::header::HeaderMap>,
     attempt: u32,
     jitter_unit: f64,
@@ -173,7 +176,7 @@ fn retry_delay(
     retry_backoff(attempt, jitter_unit)
 }
 
-fn retry_jitter(attempt: u32) -> f64 {
+pub(crate) fn retry_jitter(attempt: u32) -> f64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.subsec_nanos() as u64)

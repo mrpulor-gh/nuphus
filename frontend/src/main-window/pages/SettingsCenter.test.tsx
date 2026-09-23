@@ -55,6 +55,7 @@ vi.mock('./ExternalAgentsPage', () => ({
   ExternalAgentsPage: () => <div data-testid="page-external-agents" />,
 }))
 vi.mock('./SecurityPage', () => ({ SecurityPage: () => <div data-testid="page-security" /> }))
+vi.mock('./DataDirsPage', () => ({ DataDirsPage: () => <div data-testid="page-data-dirs" /> }))
 vi.mock('./UpdatePage', () => ({ UpdatePage: () => <div data-testid="page-update" /> }))
 
 function renderCenter() {
@@ -87,19 +88,19 @@ const navGroupLabels = (title: string) => {
 }
 
 describe('SettingsCenter 设置中心外壳', () => {
-  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 17 项，默认落在「记忆」', async () => {
+  it('左导航分「快捷入口 / 浏览 / 设置 / 管理」四组共 18 项，默认落在「记忆」', async () => {
     renderCenter()
 
     const items = within(nav()).getAllByRole('button')
-    expect(items).toHaveLength(17)
+    expect(items).toHaveLength(18)
 
     // 分组顺序：快捷入口（最上）→ 浏览 → 设置 → 管理
     expect(navGroupTitles()).toEqual(['快捷入口', '浏览', '设置', '管理'])
-    // 2 + 6 + 6 + 3 = 17（浏览组新增定时任务中心）
+    // 2 + 6 + 6 + 4 = 18（管理组新增「数据目录」）
     expect(navGroupLabels('快捷入口')).toHaveLength(2)
     expect(navGroupLabels('浏览')).toHaveLength(6)
     expect(navGroupLabels('设置')).toHaveLength(6)
-    expect(navGroupLabels('管理')).toHaveLength(3)
+    expect(navGroupLabels('管理')).toHaveLength(4)
 
     // 默认分区仍是「记忆」，右内容不变
     expect(navItem('记忆')).toHaveAttribute('aria-current', 'page')
@@ -136,8 +137,8 @@ describe('SettingsCenter 设置中心外壳', () => {
       '会话工作台',
       '外部 Agent',
     ])
-    // 管理组：GitHub 与「版本与更新」相邻（权限与安全 → GitHub → 版本与更新）
-    expect(navGroupLabels('管理')).toEqual(['权限与安全', 'GitHub', '版本与更新'])
+    // 管理组：数据目录插在权限与安全之后；GitHub 与「版本与更新」相邻
+    expect(navGroupLabels('管理')).toEqual(['权限与安全', '数据目录', 'GitHub', '版本与更新'])
 
     // 旧名「插件」不再出现在导航里；点击 GitHub 仍落在原 'plugins' 分区（渲染新页面）
     expect(within(nav()).queryByRole('button', { name: '插件' })).toBeNull()
@@ -235,6 +236,16 @@ describe('SettingsCenter 设置中心外壳', () => {
     // 弹窗内不渲染画布，分区也不切换（关闭面板与打开全屏宿主由宿主决定）
     expect(screen.queryByTestId('page-canvas')).toBeNull()
     expect(navItem('工作流')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('数据目录分区：弹窗内容区渲染页面，外壳保持打开', async () => {
+    const props = renderCenter()
+    await screen.findByTestId('page-memories')
+
+    fireEvent.click(navItem('数据目录'))
+    expect(await screen.findByTestId('page-data-dirs')).toBeInTheDocument()
+    expect(navItem('数据目录')).toHaveAttribute('aria-current', 'page')
+    expect(props.onClose).not.toHaveBeenCalled()
   })
 
   it('宿主分流：点「画布」「模型」交给 App 层全屏宿主，弹窗内容区不动', async () => {
