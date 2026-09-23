@@ -5,7 +5,57 @@
 
 use super::registry::ToolRegistry;
 use crate::desktop::DesktopClient;
+use crate::desktop_automation::{DesktopActionError, DispatchState};
 use crate::ToolResult;
+
+/// Preserve delivery metadata across legacy string-only tool callbacks.
+fn action_error(state: DispatchState, message: impl Into<String>) -> String {
+    let message = message.into();
+    if DesktopActionError::decode(&message).is_some() {
+        message
+    } else {
+        DesktopActionError::encode(state, message)
+    }
+}
+
+fn native_action_error(error: crate::NuphusError) -> String {
+    let message = match error {
+        crate::NuphusError::Tool(message) => message,
+        other => other.to_string(),
+    };
+    action_error(DispatchState::Unknown, message)
+}
+
+fn ensure_dispatch_response(value: serde_json::Value) -> Result<serde_json::Value, String> {
+    if value.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        return Err(action_error(
+            DispatchState::Unknown,
+            value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("桌面动作发送结果不明"),
+        ));
+    }
+    Ok(value)
+}
+
+fn capture_reference<'a>(
+    params: &'a serde_json::Value,
+    capture_key: &str,
+    element_key: &str,
+) -> Result<(&'a str, u32), String> {
+    let capture = params
+        .get(capture_key)
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{capture_key} 必须为非空字符串"))?;
+    let element = params
+        .get(element_key)
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| format!("{element_key} 必须为非负整数"))?;
+    Ok((capture, element))
+}
 
 fn optional_i32(params: &serde_json::Value, key: &str) -> Result<Option<i32>, String> {
     params
@@ -154,6 +204,27 @@ impl ToolRegistry {
         tool_name: &str,
         params: &serde_json::Value,
     ) -> std::result::Result<ToolResult, String> {
+        let result = self
+            .execute_desktop_tool_inner(client, tool_name, params)
+            .await;
+        if matches!(
+            tool_name,
+            "desktop_mouse" | "desktop_mouse_drag" | "desktop_input"
+        ) {
+            // Native calls below tag sent/unknown errors explicitly. Everything
+            // else failed during argument/target validation, before dispatch.
+            result.map_err(|error| action_error(DispatchState::NotSent, error))
+        } else {
+            result
+        }
+    }
+
+    async fn execute_desktop_tool_inner(
+        &self,
+        client: &DesktopClient,
+        tool_name: &str,
+        params: &serde_json::Value,
+    ) -> std::result::Result<ToolResult, String> {
         match tool_name {
             "desktop_mouse" => {
                 let action = params
@@ -192,8 +263,10 @@ impl ToolRegistry {
                     .transpose()?
                     .unwrap_or("down");
                 let amount = optional_i32(params, "amount")?.unwrap_or(3);
-                if action == "scroll" && (!matches!(direction, "up" | "down") || amount < 0) {
-                    return Err("direction 必须为 up/down，amount 必须为非负整数".into());
+                if action == "scroll"
+                    && (!matches!(direction, "up" | "down" | "left" | "right") || amount < 0)
+                {
+                    return Err("direction 必须为 up/down/left/right，amount 必须为非负整数".into());
                 }
                 let explicit_hwnd = optional_i32(params, "hwnd")?;
                 let (context, resolved_point) =
@@ -311,22 +384,18 @@ impl ToolRegistry {
                             client
                                 .mouse_move(x, y, 0.0)
                                 .await
-                                .map_err(|e| e.to_string())?;
+                                .map_err(native_action_error)
+                                .and_then(ensure_dispatch_response)?;
                         }
                         client.mouse_scroll(direction, amount).await
                     }
                     _ => unreachable!(),
                 }
-                .map_err(|e| e.to_string())?;
-                if result.get("success").and_then(|value| value.as_bool()) == Some(false) {
-                    return Err(result
-                        .get("error")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("鼠标动作失败")
-                        .into());
-                }
+                .map_err(native_action_error)
+                .and_then(ensure_dispatch_response)?;
+                let _ = result;
                 Self::wrap_desktop_result(Ok(serde_json::json!({"success":true,"result":{
-                    "status":"dispatched","action":action,"hwnd":hwnd,"coordinate_space":"screen",
+                    "status":"dispatched","dispatch_state":"sent","effect":"unverifiable","action":action,"hwnd":hwnd,"coordinate_space":"screen",
                     "coordinate_units":crate::desktop::capture_context::screen_coordinate_units(),
                     "point":point.map(|(x,y)|serde_json::json!({"x":x,"y":y})),
                     "capture_id":context.as_ref().map(|context|&context.capture_id),
@@ -334,13 +403,104 @@ impl ToolRegistry {
                 }})))
             }
             "desktop_mouse_drag" => {
-                let start_x = optional_i32(params, "start_x")?.ok_or("start_x required")?;
-                let start_y = optional_i32(params, "start_y")?.ok_or("start_y required")?;
-                let end_x = optional_i32(params, "end_x")?.ok_or("end_x required")?;
-                let end_y = optional_i32(params, "end_y")?.ok_or("end_y required")?;
-                Self::wrap_desktop_result(client.mouse_drag(start_x, start_y, end_x, end_y).await)
+                let capture_keys = [
+                    "start_capture_id",
+                    "start_element_id",
+                    "end_capture_id",
+                    "end_element_id",
+                ];
+                let ((start_x, start_y), (end_x, end_y)) =
+                    if capture_keys.iter().any(|key| params.get(*key).is_some()) {
+                        if ["start_x", "start_y", "end_x", "end_y"]
+                            .iter()
+                            .any(|key| params.get(*key).is_some())
+                        {
+                            return Err("拖拽元素引用不能与坐标混用".into());
+                        }
+                        let (start_id, start_element) =
+                            capture_reference(params, "start_capture_id", "start_element_id")?;
+                        let (end_id, end_element) =
+                            capture_reference(params, "end_capture_id", "end_element_id")?;
+                        let (start_context, start) = client
+                            .resolve_capture_element(start_id, start_element)
+                            .map_err(|e| e.to_string())?;
+                        let (end_context, end) = client
+                            .resolve_capture_element(end_id, end_element)
+                            .map_err(|e| e.to_string())?;
+                        if let Some(target) = &start_context.target {
+                            if !ensure_foreground(client, target.hwnd).await {
+                                return Err("拖拽起点窗口激活失败；未发送拖拽，请重新观察".into());
+                            }
+                        }
+                        // Both endpoints belong to recent local captures. Validate
+                        // both before consuming either, including cross-window drag.
+                        client
+                            .validate_capture_context(&start_context)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        client
+                            .validate_capture_context(&end_context)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        client
+                            .consume_capture(start_id)
+                            .map_err(|e| e.to_string())?;
+                        if end_id != start_id {
+                            client.consume_capture(end_id).map_err(|e| e.to_string())?;
+                        }
+                        (start, end)
+                    } else {
+                        (
+                            (
+                                optional_i32(params, "start_x")?.ok_or("start_x required")?,
+                                optional_i32(params, "start_y")?.ok_or("start_y required")?,
+                            ),
+                            (
+                                optional_i32(params, "end_x")?.ok_or("end_x required")?,
+                                optional_i32(params, "end_y")?.ok_or("end_y required")?,
+                            ),
+                        )
+                    };
+                let response = client
+                    .mouse_drag(start_x, start_y, end_x, end_y)
+                    .await
+                    .map_err(native_action_error)
+                    .and_then(ensure_dispatch_response)?;
+                Self::wrap_desktop_result(Ok(response))
             }
             "desktop_input" => {
+                let mode = params
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("type");
+                if !matches!(mode, "type" | "hotkey") {
+                    return Err("mode 必须为 type 或 hotkey".into());
+                }
+                let send_raw = params
+                    .get("send")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("enter");
+                let keys: Vec<String> = if mode == "hotkey" {
+                    params
+                        .get("keys")
+                        .and_then(|v| v.as_array())
+                        .ok_or("keys 必须为字符串数组")?
+                        .iter()
+                        .map(|v| v.as_str().map(String::from).ok_or("keys 只能包含字符串"))
+                        .collect::<Result<_, _>>()?
+                } else if send_raw == "none" {
+                    vec![]
+                } else {
+                    send_raw
+                        .split('+')
+                        .map(|key| key.trim().to_lowercase())
+                        .collect()
+                };
+                if mode == "hotkey" || !keys.is_empty() {
+                    let key_refs: Vec<_> = keys.iter().map(String::as_str).collect();
+                    desktop_api::input::keyboard::validate_keys(&key_refs)
+                        .map_err(|e| e.to_string())?;
+                }
                 let hwnd = if params.get("target_locator").is_some() {
                     self.semantic_input_window(params).await?
                 } else {
@@ -350,64 +510,53 @@ impl ToolRegistry {
                 if !ensure_foreground(client, hwnd).await {
                     return Err(format!("HWND({}) 窗口自动置前失败，为避免输入误入其他窗口已中止，请检查窗口状态后重试", hwnd));
                 }
-                let mode = params
-                    .get("mode")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("type");
                 match mode {
                     "hotkey" => {
-                        let keys: Vec<String> = params
-                            .get("keys")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
                         let keys_display = keys.join("+");
                         client
                             .keyboard_hotkey(keys)
                             .await
-                            .map_err(|e| format!("desktop_needs_observation: 键盘事件可能已发送，请重新观察，不自动重发: {e}"))?;
+                            .map_err(native_action_error)
+                            .and_then(ensure_dispatch_response)?;
                         let mut msg = format!(
                             "已发送 HWND({}) 窗口的热键事件；业务结果尚未验证。hwnd: {}, keys={}",
                             hwnd, hwnd, keys_display
                         );
                         msg.push_str(&foreground_note(client, hwnd).await);
-                        Ok(ToolResult::success(msg))
+                        Ok(ToolResult::success(serde_json::json!({"status":"dispatched", "dispatch_state":"sent", "effect":"unverifiable", "hwnd":hwnd, "keys":keys_display, "message":msg}).to_string()))
                     }
                     _ => {
                         let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                        let send_raw = params
-                            .get("send")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("enter");
-                        let send_keys: Vec<String> = if send_raw == "none" {
-                            vec![]
-                        } else {
-                            send_raw
-                                .split('+')
-                                .map(|s| s.trim().to_lowercase())
-                                .filter(|s| !s.is_empty())
-                                .collect()
-                        };
                         client
                             .input_send(text, hwnd, false)
                             .await
-                            .map_err(|e| format!("desktop_needs_observation: 文本可能已部分输入，请重新观察，不自动重发: {e}"))?;
-                        if !send_keys.is_empty() {
+                            .map_err(native_action_error)
+                            .and_then(ensure_dispatch_response)?;
+                        if !keys.is_empty() {
                             client
-                                .keyboard_hotkey(send_keys)
+                                .keyboard_hotkey(keys)
                                 .await
-                                .map_err(|e| format!("desktop_needs_observation: 文本已输入，后续按键结果不明，请重新观察，不自动重发: {e}"))?;
+                                .map_err(|e| {
+                                    action_error(
+                                        DispatchState::Partial,
+                                        format!("文本已输入，后续按键结果不明: {e}"),
+                                    )
+                                })
+                                .and_then(|response| {
+                                    ensure_dispatch_response(response).map_err(|e| {
+                                        action_error(
+                                            DispatchState::Partial,
+                                            format!("文本已输入: {e}"),
+                                        )
+                                    })
+                                })?;
                         }
                         let mut msg = format!(
                             "已发送 HWND({}) 窗口的输入事件；业务结果尚未验证。hwnd: {}, chars={}, send={}",
                             hwnd, hwnd, text.chars().count(), send_raw
                         );
                         msg.push_str(&foreground_note(client, hwnd).await);
-                        Ok(ToolResult::success(msg))
+                        Ok(ToolResult::success(serde_json::json!({"status":"dispatched", "dispatch_state":"sent", "effect":"unverifiable", "hwnd":hwnd, "chars":text.chars().count(), "send":send_raw, "message":msg}).to_string()))
                     }
                 }
             }
@@ -621,5 +770,43 @@ mod mouse_contract_tests {
             ToolRegistry::wrap_desktop_result(Ok(json!({"success":false,"error":"capture moved"})));
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), "Tool error: capture moved");
+    }
+
+    #[test]
+    fn native_delivery_errors_keep_their_state_through_string_callbacks() {
+        for state in [
+            DispatchState::NotSent,
+            DispatchState::Sent,
+            DispatchState::Partial,
+            DispatchState::Unknown,
+        ] {
+            let encoded = DesktopActionError::encode(state, "native failure");
+            let native = native_action_error(crate::NuphusError::Tool(encoded.clone()));
+            assert_eq!(native, encoded);
+            assert_eq!(action_error(DispatchState::NotSent, native), encoded);
+        }
+        let unknown = ensure_dispatch_response(json!({"success":false,"error":"native timeout"}))
+            .unwrap_err();
+        assert_eq!(
+            DesktopActionError::decode(&unknown).unwrap().dispatch_state,
+            DispatchState::Unknown
+        );
+    }
+
+    #[test]
+    fn drag_capture_references_require_valid_complete_pairs() {
+        let params = json!({"start_capture_id":"local-capture", "start_element_id":3});
+        assert_eq!(
+            capture_reference(&params, "start_capture_id", "start_element_id").unwrap(),
+            ("local-capture", 3)
+        );
+        for params in [
+            json!({}),
+            json!({"start_capture_id":"id"}),
+            json!({"start_capture_id":"id","start_element_id":-1}),
+            json!({"start_capture_id":"","start_element_id":0}),
+        ] {
+            assert!(capture_reference(&params, "start_capture_id", "start_element_id").is_err());
+        }
     }
 }

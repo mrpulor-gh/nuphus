@@ -2,12 +2,29 @@ use crate::state::AppState;
 use nuphus::permissions::ToolPermissions;
 use tauri::State;
 
+fn resolve_desktop_approval(
+    state: &AppState,
+    action_id: &str,
+    approved: bool,
+) -> Result<bool, String> {
+    if nuphus::security::approval::get(&state.signals, action_id)
+        .is_some_and(|pending| pending.kind == nuphus::tools::desktop_approval::KIND)
+    {
+        nuphus::tools::desktop_approval::resolve(&state.signals, action_id, approved)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// 批准一次
 #[tauri::command]
 pub async fn approve_once_security(
     state: State<'_, AppState>,
     action_id: String,
 ) -> Result<String, String> {
+    if resolve_desktop_approval(&state, &action_id, true)? {
+        return Ok("approved".to_string());
+    }
     nuphus::security::set_security_result(&state.signals, &action_id, true);
     let mut pending = state.execution.lock().map_err(|e| e.to_string())?;
     if let Some(entry) = pending.pending_security.get_mut(&action_id) {
@@ -24,6 +41,11 @@ pub async fn approve_session_security(
     action_id: String,
     tool: String,
 ) -> Result<String, String> {
+    // Older clients may display the generic security prompt. A desktop action
+    // still receives only one-shot approval, never a blanket session grant.
+    if resolve_desktop_approval(&state, &action_id, true)? {
+        return Ok("approved".to_string());
+    }
     nuphus::security::approve_session_tool(&state.signals, &tool);
     nuphus::security::set_security_result(&state.signals, &action_id, true);
     let mut pending = state.execution.lock().map_err(|e| e.to_string())?;
@@ -43,6 +65,9 @@ pub async fn reject_security(
     state: State<'_, AppState>,
     action_id: String,
 ) -> Result<String, String> {
+    if resolve_desktop_approval(&state, &action_id, false)? {
+        return Ok("rejected".to_string());
+    }
     nuphus::security::set_security_result(&state.signals, &action_id, false);
     let mut pending = state.execution.lock().map_err(|e| e.to_string())?;
     if let Some(entry) = pending.pending_security.get_mut(&action_id) {

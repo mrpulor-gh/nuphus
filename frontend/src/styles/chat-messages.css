@@ -874,6 +874,29 @@
   color: var(--status-error);
   background: var(--status-error-soft);
 }
+.desktop-action-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border-radius: var(--radius-1);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--status-warning);
+  background: var(--status-warning-soft);
+}
+.desktop-action-status.is-confirmed {
+  color: var(--status-success);
+  background: var(--status-success-soft);
+}
+.desktop-action-status.is-sent {
+  color: var(--accent);
+  background: var(--status-running-soft);
+}
+.desktop-action-status.is-not_sent {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
 /* 行态语义软底（仅运行/失败着色，成功保持克制，避免满屏绿） */
 .tc-option.running {
   background: rgba(var(--accent-rgb), 0.05);

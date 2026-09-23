@@ -13,7 +13,7 @@ tags: [agent, 外部Agent, 并行, 编排]
 
 ## 1. 登记（team.toml）
 
-渐进登记：每用一个外部 Agent，在 `plugin/team.toml` 追加一段。只记稳定事实（mode/launch/process/window_hint/dispatch_steps/note），禁止记 PID/窗口句柄/坐标（坐标走 ui-maps；PID/hwnd 每次启动必变，hwnd 编号还会被 OS 复用给无关窗口——任何把易变事实固化进配置或缓存当派发依据的做法都是错的，进程管理职责归 Leader 当次实况）。
+渐进登记：每用一个外部 Agent，在 `plugin/team.toml` 追加一段。只记稳定事实（mode/launch/process/window_hint/dispatch_steps/note），禁止记 PID/窗口句柄/绝对坐标（ui-maps 保存语义定位器或视觉锚点规则；PID/hwnd 每次启动必变，hwnd 编号还会被 OS 复用给无关窗口——易变事实必须按当次实况重新解析）。
 
 ```toml
 [{key}]
@@ -124,11 +124,11 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 |---|---|---|---|---|
 | 终端类 | mode=background、embedded | 控制台/TUI（conhost、Windows Terminal），无任何 GUI 控件 | 激活窗口后 desktop_input **直接打字**，`enter` 发送；OCR 仅用于读回显确认响应（§2 窗口定位）| ❌ 找输入框/按钮等控件；❌ 走 §6 ui-maps 控件定位 |
 | Web 类 | mode=web | 浏览器/WebView 渲染的页面 | 按 §6 定位页面输入框（textarea/contenteditable），send 多为 `ctrl+enter` | ❌ 当终端直打 |
-| 桌面类 | mode=standalone | 原生 GUI 应用（独立输入框/按钮） | 有 ui-maps 缓存 → 按 §6 缓存定位；**无缓存 → 首次必须先视觉分析定位（见下）** | ❌ 未定位就盲打坐标 |
+| 桌面类 | mode=standalone | 原生 GUI 应用（独立输入框/按钮） | UIA/Accessibility 语义候选优先；缓存只复用定位规则，能力不足再走当前视觉观察 | ❌ 未定位就盲打坐标 |
 
 判错代价（实测教训）：对终端窗口执行「找输入框」会无限空转——终端根本没有该控件，轻则浪费轮次，重则误点窗口内文本导致 TUI 进入意外状态。
 
-**桌面类无 ui-maps 首跑流程（强制）**：窗口激活 → 截图 + vision 读屏（识别窗口布局/目标控件语义位置）→ `desktop_perceive` 精确定位控件坐标与可交互性 → 确认后才执行操作 → **当轮把定位结论写入 `plugin/ui-maps/{应用名}.json`**（window 定位 + interact 步骤 + verify_anchor，格式见 §6）。视觉分析只做一次，之后一律走缓存；布局实质变化才重新识别。
+**桌面类首跑流程**：发现并绑定目标 → UIA/Accessibility 观察 → 从当前候选选择动作 → 本地执行与状态回读。工具列表含 `desktop_agent_step` 时使用增强判断入口，交回主模型后直接接手，不重复请求同一决策。语义能力不足时再截图/感知，使用本次 capture_id + element_id；缓存保存稳定 locator、动作能力和视觉锚点规则，不保存临时 ID 或绝对坐标。每次回放重新解析，旧缓存不是本次定位证据。
 
 ### 窗口定位（terminal 类，不可跳过）
 
@@ -144,7 +144,7 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 
 ### 发送
 
-- 短指令（≤200 字）→ desktop_input 直接输入，send 按目标：终端 `enter` / 即时通讯 `ctrl+enter` / 仅输入 `none`
+- 短指令（≤200 字）→ desktop_input 直接输入；仅填写时显式 send="none"，需要发送时按已核实的目标约定指定 enter/快捷键，不假定所有即时通讯应用都是 ctrl+enter。
 - 长指令（>200 字）→ Write 文件，desktop_input 只发「读 {文件路径} 并执行」
 
 ### 派发闭环（首次建立共识，后续直接派）
@@ -206,7 +206,7 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 
 1. 终端交互失败 → 确认是否实为普通终端 → 回退 system_shell
 2. Web UI 找不到元素 → 延长 wait_for 超时 → 检查登录态
-3. 桌面 UI 定位失败 → 有文字扩 OCR / 纯图标 hover+tooltip OCR / 不清晰走 icon_confirm 用户确认（见 §6）
+3. 桌面 UI 定位失败 → 分页/局部语义观察 → 能力不足才走本地 OCR/视觉锚点；目标仍不清晰时请用户帮助（见 §6）
 4. ui-maps 缓存失效（布局实质变化）→ 重新识别并更新参数文件
 5. 产出不合格 → §7.4 返工（brief 升版本重发 ≤3 轮）→ 超限报告用户
 6. **agent_dispatch 工具超时/失败接管 SOP**（实测有效）：① Read `.nuphus/handoff/{agent}/status.json` + briefs/ —— 确认上板是否已完成（brief 存在即算）；② process_list/windows_list 按 team 配置核对进程与窗口实况；③ 已上板但投递未完成 → 直接 `desktop_window_activate` 激活窗口后 `desktop_input` 直输「Read {brief_path} and execute it.」补完投递；④ 进程已死或从未启动 → 重走 §2 启动 SOP；⑤ 全程以文件与实况为准，禁止凭工具报错文本猜根因。
@@ -218,19 +218,20 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 ### 识别策略
 
 ```
-有文字 → 窗口级截图 → desktop_perceive 定位
+先 UIA/Accessibility 观察 → 分页/局部区域定位
+无可用语义能力且有文字 → 当前窗口截图 → desktop_perceive 定位
 纯图标 → hover + 小范围截图 OCR tooltip → 不清晰 → request_user_input(icon_confirm)
 最后手段 → request_user_input(region/text) 用户框选
 ```
 
-截图前置：窗口置顶、空间隔离（Nuphus 窗口移出目标区）、hover 后等 1.5~3s。
+截图按当前工具能力读取目标窗口；确需前台时明确激活，不移动用户窗口来恢复旧坐标。hover 提示尚未出现时等待并重新观察相关区域。
 
 ### ui-maps 缓存
 
 - 位置：`plugin/ui-maps/{应用名}.json`（通用应用）或 `plugin/workflows/{workflow}/`（workflow 专属）
 - 内容：window 定位（process/parent/locate/title_note）+ interact 步骤 + verify_anchor
-- 使用：有缓存 → 恢复窗口尺寸/位置 → 锚点校验通过即用；布局实质变化才重新识别
-- 核心：**窗口状态可控则坐标可信**。窗口移动/缩放不是缓存失效理由——恢复它即可
+- 使用：有缓存 → 重新解析稳定语义定位器或在新捕获中查找视觉锚点 → 验证目标后操作。
+- 核心：缓存的是定位规则，不是旧屏幕坐标；窗口移动、DPI、缩放和内部布局变化均由新观察与本地坐标换算处理，不主动搬动窗口。
 
 ### 纯图标确认
 

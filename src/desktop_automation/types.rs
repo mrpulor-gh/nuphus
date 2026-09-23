@@ -25,12 +25,25 @@ pub enum NativeAction {
     Activate,
     Invoke,
     Toggle,
+    SetChecked,
     Select,
     Expand,
     Collapse,
     Focus,
     SetValue,
     Scroll,
+    ScrollIntoView,
+    SetRangeValue,
+}
+
+/// Legacy calls retain foreground delivery; new workflows explicitly choose Auto.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryMode {
+    #[default]
+    Foreground,
+    Auto,
+    Background,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +113,14 @@ pub struct ObservationScope {
     pub app_id: Option<String>,
     pub window_id: Option<String>,
     pub subtree_id: Option<String>,
+    /// Local window handle supplied by target binding, never by a decision model.
+    #[serde(skip)]
+    pub window_handle: Option<i32>,
+    #[serde(default)]
+    pub delivery: DeliveryMode,
+    /// Native traversal offset, distinct from response pagination.
+    #[serde(default)]
+    pub tree_offset: usize,
 }
 
 /// Stable semantic context for one ancestor in the accessibility tree.
@@ -182,6 +203,13 @@ pub enum CandidateKind {
     },
     Invoke,
     Toggle,
+    SetChecked {
+        checked: bool,
+    },
+    ScrollIntoView,
+    SetRangeValue {
+        slot_id: String,
+    },
     Select,
     Expand,
     Collapse,
@@ -242,7 +270,9 @@ pub struct ActionCandidate {
 impl ActionCandidate {
     pub fn action_class(&self) -> ActionClass {
         match self.kind {
-            CandidateKind::SetValue { .. } => ActionClass::SetValue,
+            CandidateKind::SetValue { .. } | CandidateKind::SetRangeValue { .. } => {
+                ActionClass::SetValue
+            }
             CandidateKind::SetSecret { .. } => ActionClass::SetSecret,
             CandidateKind::PressKey { .. } => ActionClass::PressKey,
             CandidateKind::Scroll { .. } => ActionClass::Scroll,
@@ -256,9 +286,9 @@ impl ActionCandidate {
 
     pub fn slot_id(&self) -> Option<&str> {
         match &self.kind {
-            CandidateKind::SetValue { slot_id } | CandidateKind::SetSecret { slot_id } => {
-                Some(slot_id)
-            }
+            CandidateKind::SetValue { slot_id }
+            | CandidateKind::SetSecret { slot_id }
+            | CandidateKind::SetRangeValue { slot_id } => Some(slot_id),
             _ => None,
         }
     }
@@ -350,6 +380,9 @@ pub trait DecisionProvider: Send + Sync {
 pub struct ActionReceipt {
     pub candidate_id: String,
     pub dispatched: bool,
+    /// Native background delivery or foreground input; never the requested Auto policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_mode: Option<DeliveryMode>,
     pub detail: Option<String>,
 }
 
@@ -360,6 +393,10 @@ pub struct ActionReceipt {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionInput {
     pub value: Option<String>,
+    pub checked: Option<bool>,
+    pub direction: Option<ScrollDirection>,
+    pub amount: Option<ScrollAmount>,
+    pub delivery: DeliveryMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

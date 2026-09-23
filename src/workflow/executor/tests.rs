@@ -57,6 +57,62 @@ async fn desktop_unknown_postcondition_is_not_automatically_replayed() {
 }
 
 #[tokio::test]
+async fn desktop_delivery_state_controls_retries_for_every_input_tool() {
+    use crate::desktop_automation::{DesktopActionError, DispatchState};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    for tool in [
+        "desktop_semantic_action",
+        "desktop_input",
+        "desktop_mouse",
+        "desktop_mouse_drag",
+    ] {
+        for state in [
+            DispatchState::NotSent,
+            DispatchState::Sent,
+            DispatchState::Partial,
+            DispatchState::Unknown,
+        ] {
+            let attempts = AtomicUsize::new(0);
+            let executor = Executor::new();
+            let mut step = make_tool_step("delivery retry", tool, serde_json::json!({}));
+            step.on_error = OnError::Retry {
+                max: 2,
+                backoff_ms: 1,
+                backoff_multiplier: 2.0,
+            };
+            let tool_exec = |_: String, _: serde_json::Value| {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async move { Err(DesktopActionError::encode(state, "native delivery test")) }
+            };
+            let result = executor
+                .execute_tool_step(
+                    &step,
+                    tool,
+                    &serde_json::json!({}),
+                    &tool_exec,
+                    &mut HashMap::new(),
+                    "test-delivery-retry",
+                    &EventBus::new(),
+                    None,
+                    None,
+                )
+                .await;
+            assert!(result.is_err());
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                if state == DispatchState::NotSent {
+                    3
+                } else {
+                    1
+                },
+                "{tool}: {state:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_executor_linear_single_step() {
     let tmp = std::env::temp_dir().join("nuphus_test_exec");
     let _ = std::fs::create_dir_all(&tmp);

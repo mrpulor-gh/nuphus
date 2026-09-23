@@ -88,6 +88,13 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
                     let _ = main.set_focus();
                 }
             }
+            NuphusEvent::SecurityCheck { tool, .. }
+                if tool == nuphus::tools::desktop_approval::EVENT_TOOL =>
+            {
+                if let Some(main) = self.app.get_webview_window("main") {
+                    bring_to_front_no_activate(&main);
+                }
+            }
             NuphusEvent::ExecutionCompleted { .. } => {
                 // 不做窗口激活——子任务完成（sub_task_loop）和全局完成
                 // 都会发此事件。不做 show/focus，避免每次工具调用都抢前台。

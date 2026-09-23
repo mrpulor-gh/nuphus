@@ -23,9 +23,19 @@ pub trait ComputerObserver: Send + Sync {
                 .iter()
                 .any(|ancestor| ancestor.automation_id.as_deref() == Some("nuphus:scope:menu"))
                 .then(|| "@menu".into()),
+            ..Default::default()
         };
         let observation = self.observe(&scope).await?;
         Ok((observation, scope))
+    }
+
+    async fn observe_locator_scoped(
+        &self,
+        locator: &SemanticLocator,
+        scope: &ObservationScope,
+    ) -> Result<(Observation, ObservationScope), AutomationError> {
+        let _ = scope;
+        self.observe_locator(locator).await
     }
 }
 
@@ -43,6 +53,30 @@ pub trait CandidateBuilder: Send + Sync {
         None
     }
 
+    /// Local read-only locator, including static text and disabled controls that
+    /// must not be exposed as executable candidates.
+    fn node_locator(&self, _observation: &Observation, _node: &UiNode) -> Option<SemanticLocator> {
+        None
+    }
+
+    fn value_readback_reliable(&self, _node: &UiNode) -> bool {
+        true
+    }
+
+    fn matches_window(&self, locator: &SemanticLocator, observation: &Observation) -> bool {
+        locator.app_id == observation.app.id
+            && locator
+                .window_id
+                .as_ref()
+                .map(|id| id == &observation.window.id)
+                .unwrap_or_else(|| {
+                    locator
+                        .window_title
+                        .as_ref()
+                        .is_none_or(|title| title == &observation.window.title)
+                })
+    }
+
     /// Rebuild one executable candidate from a locator stored in a Workflow
     /// tool step. The returned candidate is bound to `observation`; persisted
     /// workflows never reuse the original candidate id or native handle.
@@ -55,6 +89,17 @@ pub trait CandidateBuilder: Send + Sync {
         Err(AutomationError::Candidates(
             "persistent semantic actions are unsupported by this adapter".into(),
         ))
+    }
+
+    fn rebuild_semantic_candidate_with_input(
+        &self,
+        locator: &SemanticLocator,
+        action: NativeAction,
+        observation: &Observation,
+        input: &ExecutionInput,
+    ) -> Result<ActionCandidate, AutomationError> {
+        let _ = input;
+        self.rebuild_semantic_candidate(locator, action, observation)
     }
 }
 
@@ -492,6 +537,7 @@ mod tests {
             _input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
             Ok(ActionReceipt {
+                delivery_mode: None,
                 candidate_id: action.id.clone(),
                 dispatched: true,
                 detail: None,

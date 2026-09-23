@@ -370,6 +370,7 @@ fn main() {
             commands::chat_agent_update_inline,
             // -- Desktop 工具直通命令 --
             commands::desktop::desktop_mouse_position,
+            commands::desktop::desktop_register_application,
             commands::desktop::desktop_clipboard_read_file_paths,
             commands::desktop::desktop_clipboard_write,
             // -- 字典 OCR 命令 --
@@ -471,6 +472,12 @@ fn main() {
             commands::get_changelog,
         ])
         .setup(|app| {
+            let desktop_state = app.state::<state::AppState>();
+            nuphus::tools::desktop_approval::install_host(
+                &desktop_state.signals,
+                std::sync::Arc::new(emitter::CompoundEmitter::new(app.handle().clone(), &desktop_state)),
+                desktop_state.cancel_flag.clone(),
+            );
             // ── 便携模式桌面快捷方式自建 ──
             // npm 一键安装 / 手工拷贝的便携 exe 不经安装器 → 无桌面图标，用户找不到。
             // 仅便携模式且 .lnk 不存在时创建一次；NSIS/Program Files 安装自动跳过。

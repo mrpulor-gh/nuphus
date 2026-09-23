@@ -6,6 +6,7 @@
 
 use nuphus::memory::{EnforceLevel, Tenet, TenetPriority, TenetSource};
 use nuphus::security::approval;
+use nuphus::tools::desktop_approval;
 use tauri::State;
 
 /// 批准待审批项
@@ -16,6 +17,14 @@ pub async fn approve_pending(
 ) -> Result<String, String> {
     let pending = approval::get(&state.signals, &action_id)
         .ok_or_else(|| format!("待审批项不存在或已过期: {}", action_id))?;
+
+    if pending.kind == desktop_approval::KIND {
+        desktop_approval::resolve(&state.signals, &action_id, true)?;
+        return Ok("approved".to_string());
+    }
+    if pending.kind != "tenet" {
+        return Err(format!("不支持的审批类型: {}", pending.kind));
+    }
 
     let priority = pending
         .metadata
@@ -63,6 +72,12 @@ pub async fn reject_pending(
     state: State<'_, crate::state::AppState>,
     action_id: String,
 ) -> Result<String, String> {
+    let pending = approval::get(&state.signals, &action_id)
+        .ok_or_else(|| format!("待审批项不存在或已过期: {}", action_id))?;
+    if pending.kind == desktop_approval::KIND {
+        desktop_approval::resolve(&state.signals, &action_id, false)?;
+        return Ok("rejected".to_string());
+    }
     approval::remove(&state.signals, &action_id)
         .ok_or_else(|| format!("待审批项不存在或已过期: {}", action_id))?;
 

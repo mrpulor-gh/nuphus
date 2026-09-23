@@ -3,6 +3,9 @@
 //! The model can only observe an opaque candidate set and select a candidate
 //! id. Native handles, coordinates and platform locators stay in the adapter.
 
+use super::desktop_verification::{
+    CompletionPolicy, DesktopExpectation, StateCondition, StateStatus,
+};
 use super::registry::ToolRegistry;
 use crate::desktop_automation::{
     ActionCandidate, ActionClass, CandidateBuilder, CandidateKind, ComputerExecutor,
@@ -10,6 +13,7 @@ use crate::desktop_automation::{
     LocalPolicy, NativeAction, Observation, ObservationScope, Policy, PolicyDecision, RecentAction,
     SemanticLocator, Verification,
 };
+use crate::desktop_automation::{ActionEffect, DeliveryMode, DesktopActionError, DispatchState};
 use crate::ToolResult;
 use serde_json::json;
 use std::sync::Arc;
@@ -17,7 +21,6 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const ACTION_SPACE_TTL: Duration = Duration::from_secs(120);
-const HARD_STEP_LIMIT: u32 = 100;
 const STALL_LIMIT: u32 = 3;
 const CANDIDATE_PAGE_SIZE: usize = 20;
 const CANDIDATE_PAGE_CHARS: usize = 7_000;
@@ -30,6 +33,7 @@ pub(super) struct SemanticDesktopBackend {
     executor: Arc<dyn ComputerExecutor>,
     last_space: Arc<tokio::sync::Mutex<Option<ActionSpace>>>,
     loop_state: Arc<tokio::sync::Mutex<EnhancedLoopState>>,
+    approval_signals: Option<crate::state::SharedSignals>,
 }
 
 #[derive(Clone)]
@@ -65,6 +69,7 @@ impl SemanticDesktopBackend {
             executor: adapter,
             last_space: Arc::new(tokio::sync::Mutex::new(None)),
             loop_state: Arc::new(tokio::sync::Mutex::new(EnhancedLoopState::default())),
+            approval_signals: None,
         }
     }
 
@@ -148,16 +153,8 @@ impl SemanticDesktopBackend {
                 ..Default::default()
             };
         }
-        if state.steps >= HARD_STEP_LIMIT {
-            return Err(format!(
-                "增强桌面任务已达到 {HARD_STEP_LIMIT} 步硬上限，请检查目标或重新开始"
-            ));
-        }
-        if state.consecutive_stalls >= STALL_LIMIT {
-            return Err(format!(
-                "连续 {STALL_LIMIT} 个语义动作未产生界面变化，已停止自动重试"
-            ));
-        }
+        // The owning agent already supplies iteration, cancellation and timeout
+        // bounds. A single-step decision tool must not permanently lock that run.
         // Count every enhanced decision attempt, including Jev protocol/network
         // failures and attempts that hand the same action space back to the
         // primary model. Delayed local execution records its outcome below but
@@ -176,11 +173,17 @@ impl SemanticDesktopBackend {
         if state.goal_key != goal_key {
             return;
         }
-        if matches!(
-            verification,
-            Verification::NoChange | Verification::Unexpected | Verification::Unknown
-        ) {
-            state.consecutive_stalls = state.consecutive_stalls.saturating_add(1);
+        if verification == Verification::NoChange {
+            let repeated = state.recent_actions.last().is_some_and(|previous| {
+                previous.target_summary == candidate.public_description
+                    && previous.action_class == candidate.action_class()
+                    && previous.verification == Verification::NoChange
+            });
+            state.consecutive_stalls = if repeated {
+                state.consecutive_stalls.saturating_add(1)
+            } else {
+                1
+            };
         } else {
             state.consecutive_stalls = 0;
         }
@@ -308,12 +311,16 @@ impl ToolRegistry {
         &self,
         params: &serde_json::Value,
     ) -> Result<(ObservationScope, Option<String>), String> {
-        let mut scope = ObservationScope::default();
+        let mut scope = ObservationScope {
+            delivery: delivery_mode(params)?,
+            ..Default::default()
+        };
         let mut launch_ref = None;
         if let Some(token) = params.get("target_token").and_then(|v| v.as_str()) {
-            let target = self.target_service()?.ensure(token).await?;
-            scope.app_id = Some(target.app_id);
-            launch_ref = target.launch_ref;
+            (scope, launch_ref) = self
+                .target_service()?
+                .bound_scope(token, delivery_mode(params)?)
+                .await?;
         }
         scope.subtree_id = params
             .get("subtree_id")
@@ -334,11 +341,12 @@ impl ToolRegistry {
         tool_name: &str,
         params: &serde_json::Value,
     ) -> Result<ToolResult, String> {
-        let Some(backend) = self.semantic_desktop.clone() else {
+        let Some(mut backend) = self.semantic_desktop.clone() else {
             return Ok(ToolResult::failure(
                 "当前平台尚未提供 Accessibility/UIA 语义桌面适配器",
             ));
         };
+        backend.approval_signals = Some(self.signals().clone());
         if matches!(
             tool_name,
             "desktop_target_bind"
@@ -362,15 +370,41 @@ impl ToolRegistry {
             "desktop_target_bind" => {
                 let result = self
                     .target_service()?
-                    .bind(
+                    .bind_with_delivery(
                         required_string(params, "app_ref")?,
                         params.get("window_ref").and_then(|v| v.as_str()),
+                        delivery_mode(params)?,
                     )
                     .await;
                 backend.clear_space().await;
                 result
             }
             "desktop_semantic_observe" => {
+                if let Some(cursor) = params.get("tree_cursor").and_then(|v| v.as_str()) {
+                    let space = backend
+                        .last_space
+                        .lock()
+                        .await
+                        .clone()
+                        .ok_or("stale_observation: 请重新观察")?;
+                    validate_space_token(&space, &space.token)?;
+                    if next_tree_cursor(&space).as_deref() != Some(cursor) {
+                        return Err("invalid_tree_cursor: 请使用最近一次观察返回的续读令牌".into());
+                    }
+                    let mut scope = space.scope.clone();
+                    scope.tree_offset = scope
+                        .tree_offset
+                        .saturating_add(space.observation.nodes.len());
+                    let next = backend
+                        .observe_scoped(
+                            params.get("goal").and_then(|v| v.as_str()).unwrap_or(""),
+                            None,
+                            scope,
+                            space.launch_ref,
+                        )
+                        .await?;
+                    return Ok(ToolResult::success(action_space_json(&next).to_string()));
+                }
                 if let Some(token) = params.get("observation_token").and_then(|v| v.as_str()) {
                     let space = backend
                         .last_space
@@ -430,7 +464,12 @@ impl ToolRegistry {
             "desktop_semantic_execute" => {
                 let observation_token = required_string(params, "observation_token")?;
                 let candidate_id = required_string(params, "candidate_id")?;
-                let input = execution_input(params)?;
+                let mut input = execution_input(params)?;
+                if params.get("delivery_mode").is_none() {
+                    if let Some(space) = backend.last_space.lock().await.as_ref() {
+                        input.delivery = space.scope.delivery;
+                    }
+                }
                 execute_cached_candidate(&backend, observation_token, candidate_id, input).await
             }
             "desktop_semantic_action" => {
@@ -451,12 +490,51 @@ impl ToolRegistry {
                             .map_err(|error| format!("action 格式无效: {error}"))
                     })?;
                 let input = execution_input(params)?;
-                if let Ok(targets) = self.target_service() {
+                let options = ActionOptions::parse(params)?;
+                let scope = if let Ok(targets) = self.target_service() {
                     targets
-                        .ensure_saved(&locator, params.get("launch_ref").and_then(|v| v.as_str()))
-                        .await?;
-                }
-                execute_persistent_action(&backend, locator, action, input).await
+                        .ensure_saved_scope(
+                            &locator,
+                            params.get("launch_ref").and_then(|v| v.as_str()),
+                            input.delivery,
+                        )
+                        .await?
+                } else {
+                    ObservationScope::default()
+                };
+                execute_persistent_action_with_options(
+                    &backend,
+                    locator,
+                    action,
+                    input,
+                    scope,
+                    options,
+                    self.target_service().ok(),
+                )
+                .await
+            }
+            "desktop_verify_state" => {
+                let expectation: DesktopExpectation = serde_json::from_value(
+                    params
+                        .get("expectation")
+                        .cloned()
+                        .unwrap_or_else(|| params.clone()),
+                )
+                .map_err(|e| format!("expectation 无效: {e}"))?;
+                expectation.validate()?;
+                let scope = ObservationScope {
+                    app_id: Some(expectation.locator.app_id.clone()),
+                    delivery: DeliveryMode::Auto,
+                    ..Default::default()
+                };
+                backend.clear_space().await;
+                verify_expected_state(
+                    &backend,
+                    &expectation,
+                    &scope,
+                    self.target_service().ok().as_deref(),
+                )
+                .await
             }
             "desktop_agent_step" => {
                 if !self.enhanced_mode {
@@ -489,11 +567,27 @@ fn required_string<'a>(params: &'a serde_json::Value, name: &str) -> Result<&'a 
 }
 
 fn execution_input(params: &serde_json::Value) -> Result<ExecutionInput, String> {
+    let mut input = ExecutionInput {
+        delivery: delivery_mode(params)?,
+        checked: params
+            .get("checked")
+            .map(|v| v.as_bool().ok_or("checked 必须为布尔值"))
+            .transpose()?,
+        direction: params
+            .get("direction")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| "direction 无效"))
+            .transpose()?,
+        amount: params
+            .get("amount")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| "amount 必须为 small/page"))
+            .transpose()?,
+        ..Default::default()
+    };
     let Some(value) = params.get("value") else {
-        return Ok(ExecutionInput::default());
+        return Ok(input);
     };
     if value.is_null() {
-        return Ok(ExecutionInput::default());
+        return Ok(input);
     }
     let value = value
         .as_str()
@@ -504,9 +598,46 @@ fn execution_input(params: &serde_json::Value) -> Result<ExecutionInput, String>
     if value.contains('\0') {
         return Err("value 不得包含 NUL 字符".into());
     }
-    Ok(ExecutionInput {
-        value: Some(value.to_string()),
-    })
+    input.value = Some(value.to_string());
+    Ok(input)
+}
+
+fn delivery_mode(params: &serde_json::Value) -> Result<DeliveryMode, String> {
+    params
+        .get("delivery_mode")
+        .map(|v| {
+            serde_json::from_value(v.clone())
+                .map_err(|_| "delivery_mode 必须为 foreground/auto/background".into())
+        })
+        .unwrap_or(Ok(DeliveryMode::Foreground))
+}
+
+#[derive(Default)]
+struct ActionOptions {
+    completion: CompletionPolicy,
+    expectation: Option<DesktopExpectation>,
+}
+impl ActionOptions {
+    fn parse(params: &serde_json::Value) -> Result<Self, String> {
+        let completion = params
+            .get("completion_policy")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("completion_policy 无效: {e}"))?
+            .unwrap_or_default();
+        let expectation: Option<DesktopExpectation> = params
+            .get("expectation")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("expectation 无效: {e}"))?;
+        if let Some(expected) = &expectation {
+            expected.validate()?;
+        }
+        Ok(Self {
+            completion,
+            expectation,
+        })
+    }
 }
 
 async fn execute_cached_candidate(
@@ -554,6 +685,11 @@ async fn execute_jev_step(
     let space = backend
         .observe_scoped(goal, Some(goal_key.clone()), scope, launch_ref)
         .await?;
+    if backend.loop_state.lock().await.consecutive_stalls >= STALL_LIMIT {
+        return Ok(json!({"status":"needs_primary_decision",
+            "reason":"同一语义动作连续无进展；请检查新观察或换用其他能力，取得进展后可继续增强判断",
+            "action_space":action_space_json(&space)}));
+    }
     let mut config = crate::config::load_registry()
         .map_err(|error| format!("读取增强判断模型配置失败: {error}"))?
         .jev;
@@ -625,7 +761,9 @@ async fn apply_enhanced_decision(
     }
     if matches!(
         candidate.kind,
-        CandidateKind::SetValue { .. } | CandidateKind::SetSecret { .. }
+        CandidateKind::SetValue { .. }
+            | CandidateKind::SetSecret { .. }
+            | CandidateKind::SetRangeValue { .. }
     ) {
         return Ok(json!({
             "status": "needs_input_value",
@@ -645,7 +783,10 @@ async fn apply_enhanced_decision(
         backend,
         &space.observation,
         &candidate,
-        &ExecutionInput::default(),
+        &ExecutionInput {
+            delivery: space.scope.delivery,
+            ..Default::default()
+        },
         Some(json!({
             "provider": "jev",
             "model": decision.actual_model,
@@ -688,6 +829,17 @@ async fn execute_candidate(
     decision: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     match candidate.kind {
+        CandidateKind::SetChecked { checked }
+            if input.checked.is_some_and(|value| value != checked) =>
+        {
+            return Err("checked 参数与本地候选的目标状态不一致，请重新选择候选".into());
+        }
+        CandidateKind::Scroll { direction, amount }
+            if input.direction.is_some_and(|value| value != direction)
+                || input.amount.is_some_and(|value| value != amount) =>
+        {
+            return Err("滚动参数与本地候选不一致，请重新选择候选".into());
+        }
         CandidateKind::Done => {
             backend.clear_space().await;
             return Ok(json!({
@@ -718,7 +870,21 @@ async fn execute_candidate(
     match LocalPolicy.evaluate(before, candidate, &grant) {
         PolicyDecision::Allow => {}
         PolicyDecision::NeedsConfirmation(reason) => {
-            return Err(format!("该候选动作需要用户确认: {reason}"));
+            let signals = backend
+                .approval_signals
+                .as_ref()
+                .ok_or_else(|| DesktopActionError::refused("当前运行入口未连接关键操作确认"))?;
+            let binding = super::desktop_approval::ApprovalBinding::new(
+                json!({"app":before.app.id,"window":before.window.id,"candidate":candidate}),
+                json!({"value":input.value,"checked":input.checked,"direction":input.direction,"amount":input.amount,"delivery_mode":input.delivery}),
+            );
+            let summary = format!(
+                "{} · {}\n{}",
+                before.app.display_name, before.window.title, reason
+            );
+            super::desktop_approval::authorize(signals, binding, &summary)
+                .await
+                .map_err(DesktopActionError::refused)?;
         }
         PolicyDecision::NeedsIncrementalGrant(reason) | PolicyDecision::Deny(reason) => {
             return Err(format!("本地策略拒绝执行: {reason}"));
@@ -730,7 +896,7 @@ async fn execute_candidate(
     // before dispatch and keep only the app/window boundary here; the adapter
     // re-resolves the local locator and verifies that the target still exposes
     // the requested native action.
-    let scope = backend
+    let mut scope = backend
         .last_space
         .lock()
         .await
@@ -740,6 +906,7 @@ async fn execute_candidate(
         })
         .map(|s| s.scope.clone())
         .unwrap_or_default();
+    scope.delivery = input.delivery;
     let fresh = backend
         .observer
         .observe(&scope)
@@ -750,42 +917,82 @@ async fn execute_candidate(
         return Err("前台应用或窗口已变化，候选动作已过期；请重新观察后再选择".into());
     }
     let verification_candidate = rebind_verification_target(before, &fresh, candidate)?;
+    if let CandidateKind::SetChecked { checked } = candidate.kind {
+        if verification_candidate
+            .target
+            .as_ref()
+            .and_then(|id| fresh.nodes.iter().find(|n| &n.opaque_id == id))
+            .is_some_and(|node| node.toggled == Some(checked))
+        {
+            backend.clear_space().await;
+            backend.loop_state.lock().await.consecutive_stalls = 0;
+            return Ok(
+                json!({"status":"already_satisfied","candidate_id":candidate.id,
+                "dispatch_state":DispatchState::NotSent,"effect":ActionEffect::Confirmed,
+                "verification":Verification::Achieved,"business_goal_confirmed":false,"retry_action":false}),
+            );
+        }
+    }
     // An execution error may mean a native timeout after dispatch. Consume the
     // token before attempting it; callers must observe rather than replay.
     backend.clear_space().await;
     let receipt = match backend.executor.execute(&fresh, candidate, input).await {
         Ok(receipt) => receipt,
         Err(error) => {
+            if let crate::desktop_automation::AutomationError::Execution(ref message) = error {
+                if DesktopActionError::decode(message).is_some() {
+                    return Err(message.clone());
+                }
+            }
             return Ok(json!({
                 "status": "needs_observation", "candidate_id": candidate.id,
-                "verification": Verification::Unknown, "dispatch_state": "unknown",
+                "verification": Verification::Unknown, "dispatch_state": "unknown", "effect":ActionEffect::Unverifiable,
                 "reason": error.to_string(), "retry_action": false, "decision": decision,
             }));
         }
     };
     if receipt.candidate_id != candidate.id {
-        return Err("执行回执与候选动作不一致".into());
+        return Err(DesktopActionError::encode(
+            DispatchState::Unknown,
+            "执行回执与候选动作不一致",
+        ));
     }
     // Consume the observation once dispatch may have happened. A failed read
     // afterwards must never leave a replayable click/send candidate cached.
     backend.clear_space().await;
-    let (after, verification) =
-        match verify_with_settle(backend, &fresh, &verification_candidate, input, &scope).await {
-            Ok(value) => value,
-            Err(error) => {
-                return Ok(json!({
-                    "status": "needs_observation", "candidate_id": candidate.id,
-                    "receipt": receipt, "verification": Verification::Unknown,
-                    "reason": error, "retry_action": false, "decision": decision,
-                }))
-            }
-        };
+    let (after, verification) = match verify_with_settle(
+        backend,
+        &fresh,
+        &verification_candidate,
+        input,
+        &scope,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json!({
+                "status": "needs_observation", "candidate_id": candidate.id,
+                "receipt": receipt, "verification": Verification::Unknown, "dispatch_state":DispatchState::Sent,
+                "effect":ActionEffect::Unverifiable,
+                "reason": error, "retry_action": false, "decision": decision,
+            }))
+        }
+    };
+    if matches!(
+        verification,
+        Verification::Achieved | Verification::Progress
+    ) {
+        backend.loop_state.lock().await.consecutive_stalls = 0;
+    }
     Ok(json!({
         "status": if matches!(verification, Verification::Achieved | Verification::Progress) { "executed" } else { "needs_observation" },
         "candidate_id": candidate.id,
         "description": candidate.public_description,
         "receipt": receipt,
         "verification": verification,
+        "dispatch_state": if receipt.dispatched { DispatchState::Sent } else { DispatchState::NotSent },
+        "effect": if verification == Verification::Achieved { ActionEffect::Confirmed } else if verification == Verification::NoChange { ActionEffect::SuspectedNoop } else { ActionEffect::Unverifiable },
         "before_revision": fresh.revision,
         "after_revision": after.revision,
         "after_window": after.window,
@@ -816,11 +1023,14 @@ fn rebind_verification_target(
     Ok(rebound)
 }
 
-async fn execute_persistent_action(
+async fn execute_persistent_action_with_options(
     backend: &SemanticDesktopBackend,
     locator: SemanticLocator,
     action: NativeAction,
     input: ExecutionInput,
+    scope: ObservationScope,
+    options: ActionOptions,
+    targets: Option<Arc<crate::desktop::targets::DesktopTargetService>>,
 ) -> Result<serde_json::Value, String> {
     if locator.app_id.trim().is_empty() {
         return Err("locator.app_id 不能为空".into());
@@ -833,31 +1043,240 @@ async fn execute_persistent_action(
     }
     let (observation, scope) = backend
         .observer
-        .observe_locator(&locator)
+        .observe_locator_scoped(&locator, &scope)
         .await
         .map_err(|e| e.to_string())?;
     // Persist only stable ancestry; the adapter reconstructs a fresh local
     // region after restart. Reuse it for dispatch and verification as well.
     let before = backend
-        .store_observation("", None, scope, None, observation)
+        .store_observation("", None, scope.clone(), None, observation)
         .await?
         .observation;
     let candidate = backend
         .candidates
-        .rebuild_semantic_candidate(&locator, action, &before)
+        .rebuild_semantic_candidate_with_input(&locator, action, &before, &input)
         .map_err(|error| error.to_string())?;
-    let result = execute_candidate(backend, &before, &candidate, &input, None).await?;
+    let mut result = execute_candidate(backend, &before, &candidate, &input, None).await?;
+    if let Some(expectation) = &options.expectation {
+        let checked =
+            verify_expected_state(backend, expectation, &scope, targets.as_deref()).await?;
+        if checked["status"] != "satisfied" {
+            let dispatch = serde_json::from_value(result["dispatch_state"].clone())
+                .unwrap_or(DispatchState::Unknown);
+            return Err(DesktopActionError::encode(
+                dispatch,
+                format!("后置条件尚未满足，不重发原动作: {}", checked),
+            ));
+        }
+        result["postcondition"] = checked;
+        result["status"] = json!("executed");
+        return Ok(result);
+    }
     let verification = result
         .get("verification")
         .cloned()
         .and_then(|value| serde_json::from_value::<Verification>(value).ok())
         .unwrap_or(Verification::Unknown);
     if verification != Verification::Achieved {
-        return Err(format!(
-            "desktop_needs_observation: 动作可能已发送，不可自动重放；请先重新观察并确认业务结果。执行后验证: {verification:?}"
-        ));
+        let sent = result["dispatch_state"] == "sent";
+        let ordinary = !matches!(
+            candidate.local_risk,
+            crate::desktop_automation::RiskClass::ExternalCommit
+                | crate::desktop_automation::RiskClass::DestructiveCritical
+                | crate::desktop_automation::RiskClass::Restricted
+        );
+        if sent
+            && ordinary
+            && (options.completion == CompletionPolicy::Dispatched
+                || (options.completion == CompletionPolicy::Auto
+                    && ordinary
+                    && matches!(
+                        candidate.kind,
+                        CandidateKind::Invoke | CandidateKind::Scroll { .. }
+                    )))
+        {
+            result["status"] = json!("dispatched_unverified");
+            result["note"] = json!("已发送，效果未验证；可继续后续定位，不代表业务目标完成");
+        } else {
+            return Err(DesktopActionError::encode(if sent { DispatchState::Sent } else { DispatchState::Unknown },
+                format!("desktop_needs_observation: 请先检查结果，不自动重发。执行后验证: {verification:?}")));
+        }
     }
     Ok(result)
+}
+
+async fn verify_expected_state(
+    backend: &SemanticDesktopBackend,
+    expected: &DesktopExpectation,
+    scope: &ObservationScope,
+    targets: Option<&crate::desktop::targets::DesktopTargetService>,
+) -> Result<serde_json::Value, String> {
+    expected.validate()?;
+    let started = tokio::time::Instant::now();
+    let deadline = started + Duration::from_millis(expected.timeout_ms);
+    let mut stable = 0_u8;
+    let mut last: StateStatus;
+    let mut reason = "condition_not_observed".to_string();
+    loop {
+        let mut actual_scope = scope.clone();
+        let mut missing_window = false;
+        let mut can_observe = true;
+        if let Some(targets) = targets {
+            match targets.verification_scope(&expected.locator).await {
+                Ok(Some(resolved)) => actual_scope = resolved,
+                Ok(None) => missing_window = true,
+                Err(error) => {
+                    reason = error;
+                    can_observe = false;
+                }
+            }
+        }
+        if missing_window {
+            last = if matches!(expected.condition, StateCondition::WindowAbsent) {
+                StateStatus::Satisfied
+            } else {
+                StateStatus::Unsatisfied
+            };
+            reason = "window_not_present".into();
+        } else if can_observe {
+            actual_scope.tree_offset = 0;
+            actual_scope.subtree_id = None;
+            let read_deadline = if expected.timeout_ms == 0 {
+                started + Duration::from_secs(5)
+            } else {
+                deadline
+            };
+            match tokio::time::timeout_at(read_deadline, backend.observer.observe(&actual_scope))
+                .await
+            {
+                Ok(Ok(observation)) => {
+                    let candidates = backend
+                        .candidates
+                        .build("", &observation)
+                        .map_err(|e| e.to_string())?;
+                    let mut ids = std::collections::HashSet::new();
+                    for candidate in &candidates {
+                        if let Some(locator) = backend.candidates.semantic_locator(candidate) {
+                            if locator_matches(&expected.locator, &locator) {
+                                if let Some(target) = &candidate.target {
+                                    ids.insert(target.clone());
+                                }
+                            }
+                        }
+                    }
+                    let mut all_locators_available = true;
+                    let matches: Vec<_> = observation
+                        .nodes
+                        .iter()
+                        .filter(|node| {
+                            if let Some(locator) =
+                                backend.candidates.node_locator(&observation, node)
+                            {
+                                return locator_matches(&expected.locator, &locator);
+                            }
+                            all_locators_available = false;
+                            ids.contains(&node.opaque_id)
+                                || (expected.locator.automation_id.is_none()
+                                    && expected.locator.ancestor_chain.is_empty()
+                                    && expected
+                                        .locator
+                                        .accessible_name
+                                        .as_ref()
+                                        .is_none_or(|v| node.name.as_ref() == Some(v))
+                                    && expected
+                                        .locator
+                                        .role
+                                        .as_ref()
+                                        .is_none_or(|v| &node.role == v))
+                        })
+                        .collect();
+                    let mut resolved_expected = expected.clone();
+                    // Platform adapters know both durable and live window IDs.
+                    // A durable identity takes priority over mutable title hints.
+                    resolved_expected.locator.window_id = None;
+                    resolved_expected.locator.window_title = None;
+                    last = if backend
+                        .candidates
+                        .matches_window(&expected.locator, &observation)
+                    {
+                        resolved_expected.evaluate(&observation, &matches)
+                    } else {
+                        StateStatus::Unknown
+                    };
+                    if expected.condition == StateCondition::ValueEquals
+                        && matches
+                            .iter()
+                            .any(|node| !backend.candidates.value_readback_reliable(node))
+                    {
+                        last = StateStatus::Unknown;
+                    }
+                    // A locator not represented by the public tree cannot establish absence.
+                    if !all_locators_available
+                        && matches.is_empty()
+                        && (expected.locator.automation_id.is_some()
+                            || !expected.locator.ancestor_chain.is_empty())
+                    {
+                        last = StateStatus::Unknown;
+                    }
+                    reason = if observation.truncated {
+                        "partial_tree"
+                    } else {
+                        "state_readback"
+                    }
+                    .into();
+                }
+                Ok(Err(error)) => {
+                    last = StateStatus::Unknown;
+                    reason = error.to_string();
+                }
+                Err(_) => {
+                    last = StateStatus::Unknown;
+                    reason = "observation_timeout".into();
+                }
+            }
+        } else {
+            last = StateStatus::Unknown;
+        }
+        stable = if last == StateStatus::Satisfied {
+            stable.saturating_add(1)
+        } else {
+            0
+        };
+        if stable >= expected.stable_samples {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            if last == StateStatus::Satisfied {
+                last = StateStatus::Unknown;
+                reason = "not_yet_stable".into();
+            }
+            break;
+        }
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(125)).min(deadline),
+        )
+        .await;
+    }
+    Ok(
+        json!({"status":last,"stable_samples":stable,"elapsed_ms":started.elapsed().as_millis(),"reason":reason,"read_only":true}),
+    )
+}
+
+fn locator_matches(expected: &SemanticLocator, actual: &SemanticLocator) -> bool {
+    expected.app_id == actual.app_id
+        && expected
+            .role
+            .as_ref()
+            .is_none_or(|v| actual.role.as_ref() == Some(v))
+        && expected
+            .automation_id
+            .as_ref()
+            .is_none_or(|v| actual.automation_id.as_ref() == Some(v))
+        && expected
+            .accessible_name
+            .as_ref()
+            .is_none_or(|v| actual.accessible_name.as_ref() == Some(v))
+        && (expected.ancestor_chain.is_empty() || expected.ancestor_chain == actual.ancestor_chain)
 }
 
 async fn verify_with_settle(
@@ -874,7 +1293,9 @@ async fn verify_with_settle(
     for attempt in 0..ATTEMPTS {
         let verification =
             verify_observation_with_value(before, candidate, &last, input.value.as_deref());
-        if verification != Verification::NoChange || attempt + 1 == ATTEMPTS {
+        if !matches!(verification, Verification::NoChange | Verification::Unknown)
+            || attempt + 1 == ATTEMPTS
+        {
             return Ok((last, verification));
         }
         tokio::time::sleep(Duration::from_millis(SETTLE_MS)).await;
@@ -887,17 +1308,17 @@ async fn observe_after_action(
     backend: &SemanticDesktopBackend,
     scope: &ObservationScope,
 ) -> Result<Observation, String> {
-    let verification_scope = ObservationScope {
-        app_id: None,
-        window_id: None,
-        subtree_id: scope.subtree_id.clone(),
-    };
+    let verification_scope = scope.clone();
     match backend.observer.observe(&verification_scope).await {
         Ok(observation) => Ok(observation),
         Err(_) if scope.subtree_id.is_some() => {
             let mut observation = backend
                 .observer
-                .observe(&ObservationScope::default())
+                .observe(&ObservationScope {
+                    subtree_id: None,
+                    tree_offset: 0,
+                    ..scope.clone()
+                })
                 .await
                 .map_err(|e| e.to_string())?;
             // A different observation region is not evidence that the original
@@ -929,6 +1350,23 @@ fn verify_observation_with_value(
     if before.app.id != after.app.id {
         return Verification::Unexpected;
     }
+    if before.window.id != after.window.id {
+        // A different window (even in the same process) is not proof that the
+        // target closed. Explicit window postconditions verify such transitions.
+        return Verification::Unknown;
+    }
+    if matches!(candidate.kind, CandidateKind::SetValue { .. })
+        && candidate.expected_effects.iter().any(|predicate| {
+            predicate
+                .arguments
+                .get("readback_trust")
+                .is_some_and(|v| v == "web_content")
+        })
+    {
+        // Web AX setters may change the accessibility value without dispatching
+        // framework input/change events. Require independent application state.
+        return Verification::Unknown;
+    }
     let target_before = candidate
         .target
         .as_deref()
@@ -939,7 +1377,6 @@ fn verify_observation_with_value(
             invoke_expected(candidate)
                 && (old.enabled != new.enabled
                     || old.visible != new.visible
-                    || old.focused != new.focused
                     || old.toggled != new.toggled
                     || old.selected != new.selected
                     || old.expanded != new.expanded
@@ -951,13 +1388,20 @@ fn verify_observation_with_value(
                 && target_is_unique(before, old)
                 && before.app.id == after.app.id
         }
-        (CandidateKind::Invoke, Some(old), _)
-            if invoke_expected(candidate)
-                && target_is_unique(before, old)
-                && before.app.id == after.app.id
-                && before.window.id != after.window.id =>
-        {
-            true
+        (CandidateKind::SetChecked { checked }, _, Some(TargetResolution::Unique(new))) => {
+            new.toggled == Some(*checked)
+        }
+        (CandidateKind::ScrollIntoView, _, Some(TargetResolution::Unique(new))) => new.visible,
+        (CandidateKind::SetRangeValue { .. }, _, Some(TargetResolution::Unique(new))) => {
+            expected_value
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+                .is_some_and(|v| {
+                    new.value_fingerprint.as_deref()
+                        == Some(
+                            crate::desktop_automation::value_fingerprint(&v.to_string()).as_str(),
+                        )
+                })
         }
         (CandidateKind::Toggle, Some(old), Some(TargetResolution::Unique(new))) => {
             old.toggled.zip(new.toggled).is_some_and(|(a, b)| a != b)
@@ -981,6 +1425,11 @@ fn verify_observation_with_value(
     };
     if achieved {
         Verification::Achieved
+    } else if matches!(
+        candidate.kind,
+        CandidateKind::Invoke | CandidateKind::Scroll { .. }
+    ) {
+        Verification::Unknown
     } else {
         // A clock, notification badge, spinner or unrelated control may alter
         // the window fingerprint. That is not evidence that this target's
@@ -1112,10 +1561,20 @@ fn workflow_step(space: &ActionSpace, candidate: &ActionCandidate) -> serde_json
             locator.supported_action.as_ref().map(|action| {
                 let mut step = json!({
                 "tool": "desktop_semantic_action",
-                "params": {"locator": locator, "action": action},
+                "params": {"locator": locator, "action": action, "delivery_mode":"auto"},
                 });
                 if let Some(launch_ref) = &space.launch_ref {
                     step["params"]["launch_ref"] = json!(launch_ref);
+                }
+                match candidate.kind {
+                    CandidateKind::SetChecked { checked } => {
+                        step["params"]["checked"] = json!(checked)
+                    }
+                    CandidateKind::Scroll { direction, amount } => {
+                        step["params"]["direction"] = json!(direction);
+                        step["params"]["amount"] = json!(amount);
+                    }
+                    _ => {}
                 }
                 step
             })
@@ -1132,6 +1591,8 @@ fn candidate_summary(candidate: &ActionCandidate) -> serde_json::Value {
 fn action_space_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
     let mut result = json!({
         "observation_token": space.token,
+        "tree_incomplete": space.observation.truncated,
+        "next_tree_cursor": next_tree_cursor(space),
         "expires_in_ms": ACTION_SPACE_TTL.saturating_sub(space.created_at.elapsed()).as_millis() as u64,
         "observation": {
             "revision": space.observation.revision,
@@ -1171,6 +1632,19 @@ fn action_space_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
     result
 }
 
+fn next_tree_cursor(space: &ActionSpace) -> Option<String> {
+    (space.observation.truncated && space.observation.nodes.len() >= 200).then(|| {
+        format!(
+            "{}:tree:{}",
+            space.token,
+            space
+                .scope
+                .tree_offset
+                .saturating_add(space.observation.nodes.len())
+        )
+    })
+}
+
 fn region_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
     let nodes = &space.observation.nodes;
     let end = (cursor + CANDIDATE_PAGE_SIZE).min(nodes.len());
@@ -1187,13 +1661,27 @@ fn region_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
 }
 
 fn decision_candidates(space: &ActionSpace) -> Vec<ActionCandidate> {
-    let mut candidates: Vec<_> = space
+    // Keep one control's many action variants from hiding all other targets.
+    let actionable: Vec<_> = space
         .candidates
         .iter()
         .filter(|c| c.action_class() != ActionClass::Control)
-        .take(36)
-        .cloned()
         .collect();
+    let mut targets = std::collections::HashSet::new();
+    let mut candidates: Vec<ActionCandidate> = actionable
+        .iter()
+        .filter(|c| targets.insert(c.target.as_deref().unwrap_or(&c.id)))
+        .take(24)
+        .map(|c| (*c).clone())
+        .collect();
+    for candidate in actionable {
+        if candidates.len() >= 36 {
+            break;
+        }
+        if !candidates.iter().any(|chosen| chosen.id == candidate.id) {
+            candidates.push(candidate.clone());
+        }
+    }
     candidates.extend(
         space
             .candidates
@@ -1475,16 +1963,17 @@ mod tests {
             changes_after_execute: false,
         }));
         crate::automation_gate::with_execution_owner("one-task".into(), async {
-            for n in 0..HARD_STEP_LIMIT {
+            for n in 0..100 {
                 backend
                     .begin_enhanced_step(&format!("different step {n}"))
                     .await
                     .unwrap();
             }
-            assert!(backend
+            backend
                 .begin_enhanced_step("entirely different wording")
                 .await
-                .is_err());
+                .unwrap();
+            assert_eq!(backend.loop_state.lock().await.steps, 101);
         })
         .await;
     }
@@ -1560,12 +2049,18 @@ mod tests {
                     }),
                     supported_actions: vec![NativeAction::SetValue],
                 });
-            } else if matches!(self.candidate_kind, CandidateKind::Toggle) {
+            } else if matches!(
+                self.candidate_kind,
+                CandidateKind::Toggle | CandidateKind::SetChecked { .. }
+            ) {
                 // This fixture changes the window fingerprint, but deliberately
                 // leaves the target checkbox unchanged after dispatch.
                 let mut node = stateful_observation("checkbox", false).nodes.remove(0);
                 node.opaque_id = "fake-target".into();
                 node.name = Some("Fake checkbox".into());
+                if let CandidateKind::SetChecked { checked } = self.candidate_kind {
+                    node.toggled = Some(checked);
+                }
                 current.nodes.push(node);
             } else if matches!(self.candidate_kind, CandidateKind::Invoke) && !executed {
                 current.nodes.push(crate::desktop_automation::UiNode {
@@ -1680,6 +2175,7 @@ mod tests {
             self.executions.fetch_add(1, Ordering::SeqCst);
             *self.received_value.lock().unwrap() = input.value.clone();
             Ok(crate::desktop_automation::ActionReceipt {
+                delivery_mode: None,
                 candidate_id: action.id.clone(),
                 dispatched: true,
                 detail: None,
@@ -1994,9 +2490,14 @@ mod tests {
         after.nodes[0].focused = true;
         assert_eq!(
             verify_observation(&before, &candidate, &after),
-            Verification::NoChange
+            Verification::Unknown
         );
         after.nodes[1].focused = true;
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Unknown
+        );
+        after.nodes[1].enabled = false;
         assert_eq!(
             verify_observation(&before, &candidate, &after),
             Verification::Achieved
@@ -2014,7 +2515,7 @@ mod tests {
         assert_eq!(rebound.target.as_deref(), Some("new-runtime-id"));
         assert_eq!(candidate.target.as_deref(), Some("invoke-target-0"));
         let mut after = fresh.clone();
-        after.nodes[0].focused = true;
+        after.nodes[0].enabled = false;
         assert_eq!(
             verify_observation(&fresh, &rebound, &after),
             Verification::Achieved
@@ -2071,7 +2572,7 @@ mod tests {
         after.truncated = true;
         assert_eq!(
             verify_observation(&before, &invoke_candidate("invoke-target-0"), &after),
-            Verification::NoChange
+            Verification::Unknown
         );
         after.truncated = false;
         assert_eq!(
@@ -2110,6 +2611,149 @@ mod tests {
             verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
             Verification::NoChange
         );
+    }
+
+    #[test]
+    fn web_ax_value_does_not_prove_framework_input_events() {
+        let mut before = invoke_observation("before", 1);
+        before.nodes[0].value_fingerprint =
+            Some(crate::desktop_automation::value_fingerprint("typed"));
+        let mut candidate = invoke_candidate("invoke-target-0");
+        candidate.kind = CandidateKind::SetValue {
+            slot_id: "value".into(),
+        };
+        candidate.expected_effects[0]
+            .arguments
+            .insert("readback_trust".into(), "web_content".into());
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &before, Some("typed")),
+            Verification::Unknown
+        );
+    }
+
+    #[tokio::test]
+    async fn postcondition_wait_is_read_only_and_requires_stability() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter.clone());
+        let mut expected: DesktopExpectation = serde_json::from_value(json!({
+            "locator":{"app_id":"fake-app","automation_id":"fake-button"},
+            "condition":"exists", "timeout_ms":1000, "stable_samples":2
+        }))
+        .unwrap();
+        let result = verify_expected_state(&backend, &expected, &ObservationScope::default(), None)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "satisfied");
+        assert_eq!(result["stable_samples"], 2);
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
+        expected.timeout_ms = 0;
+        let result = verify_expected_state(&backend, &expected, &ObservationScope::default(), None)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "unknown");
+        assert_eq!(result["reason"], "not_yet_stable");
+        expected.stable_samples = 1;
+        expected.locator.automation_id = Some("missing-static-label".into());
+        expected.condition = StateCondition::Absent;
+        let result = verify_expected_state(&backend, &expected, &ObservationScope::default(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            result["status"], "unknown",
+            "an adapter without static-node locators cannot prove absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_navigation_continues_but_verified_policy_never_replays() {
+        for (completion, success) in [("auto", true), ("dispatched", true), ("verified", false)] {
+            let adapter = Arc::new(FakeAdapter {
+                executions: AtomicUsize::new(0),
+                candidate_kind: CandidateKind::Invoke,
+                received_value: Mutex::new(None),
+                changes_after_execute: false,
+            });
+            let mut registry = ToolRegistry::new();
+            registry.set_semantic_desktop_adapter(adapter.clone());
+            let result = registry.execute_semantic_desktop_tool("desktop_semantic_action", &json!({
+                "locator":{"app_id":"fake-app","role":"button"}, "action":"invoke", "completion_policy":completion
+            })).await.unwrap();
+            assert_eq!(result.success, success);
+            if success {
+                let output: serde_json::Value =
+                    serde_json::from_str(result.output.as_deref().unwrap()).unwrap();
+                assert_eq!(output["status"], "dispatched_unverified");
+                assert_eq!(output["business_goal_confirmed"], false);
+            } else {
+                assert!(
+                    !DesktopActionError::decode(result.error.as_deref().unwrap())
+                        .unwrap()
+                        .may_retry()
+                );
+            }
+            assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn desired_checked_state_does_not_toggle_again_and_recovers_stall() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::SetChecked { checked: true },
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter.clone());
+        backend.loop_state.lock().await.consecutive_stalls = STALL_LIMIT;
+        for _ in 0..2 {
+            let space = backend.observe("enable", None).await.unwrap();
+            let result = execute_cached_candidate(
+                &backend,
+                &space.token,
+                "fake-candidate",
+                ExecutionInput::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["status"], "already_satisfied");
+            assert_eq!(result["dispatch_state"], "not_sent");
+            assert_eq!(result["effect"], "confirmed");
+        }
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
+        assert_eq!(backend.loop_state.lock().await.consecutive_stalls, 0);
+    }
+
+    #[tokio::test]
+    async fn decision_batch_reserves_room_for_distinct_targets() {
+        let backend = SemanticDesktopBackend::new(Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        }));
+        let mut space = backend.observe("open", None).await.unwrap();
+        let template = space.candidates[0].clone();
+        space.candidates = (0..80)
+            .map(|i| {
+                let mut candidate = template.clone();
+                candidate.id = format!("c-{i}");
+                candidate.target = Some(format!("target-{}", i / 10));
+                candidate
+            })
+            .collect();
+        let chosen = decision_candidates(&space);
+        assert!(chosen.len() <= 40);
+        for target in 0..8 {
+            assert!(chosen
+                .iter()
+                .any(|c| c.target.as_deref() == Some(format!("target-{target}").as_str())));
+        }
+        assert!(chosen.iter().any(|c| c.id == PRIMARY_HANDOFF_ID));
     }
 
     #[tokio::test]
@@ -2222,7 +2866,7 @@ mod tests {
         });
         let backend = SemanticDesktopBackend::new(adapter);
 
-        for index in 0..HARD_STEP_LIMIT {
+        for index in 0..100 {
             let goal = if index % 2 == 0 {
                 "Open the report"
             } else {
@@ -2231,13 +2875,12 @@ mod tests {
             backend.begin_enhanced_step(goal).await.unwrap();
         }
 
-        let rejected = backend
+        backend
             .begin_enhanced_step("open the report.")
             .await
-            .unwrap_err();
-        assert!(rejected.contains("100 步硬上限"));
+            .unwrap();
         let state = backend.loop_state.lock().await;
-        assert_eq!(state.steps, HARD_STEP_LIMIT);
+        assert_eq!(state.steps, 101);
         assert_eq!(state.goal_key, "open the report");
     }
 
@@ -2261,6 +2904,7 @@ mod tests {
                 "fake-candidate",
                 ExecutionInput {
                     value: Some("local text".into()),
+                    ..Default::default()
                 },
             )
             .await
@@ -2278,11 +2922,12 @@ mod tests {
         assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
         drop(state);
 
-        let rejected = backend
-            .begin_enhanced_step(" fill field! ")
-            .await
-            .unwrap_err();
-        assert!(rejected.contains("未产生界面变化"));
+        let handoff =
+            execute_jev_step(&backend, " fill field! ", ObservationScope::default(), None)
+                .await
+                .unwrap();
+        assert_eq!(handoff["status"], "needs_primary_decision");
+        assert!(handoff["action_space"]["observation_token"].is_string());
     }
 
     #[tokio::test]
@@ -2309,12 +2954,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result["verification"], "no_change");
+        assert_eq!(result["verification"], "unknown");
         let state = backend.loop_state.lock().await;
         assert_eq!(state.steps, 1);
-        assert_eq!(state.consecutive_stalls, 1);
+        assert_eq!(state.consecutive_stalls, 0);
         assert_eq!(state.recent_actions.len(), 1);
-        assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
+        assert_eq!(state.recent_actions[0].verification, Verification::Unknown);
     }
 
     #[tokio::test]
@@ -2372,7 +3017,7 @@ mod tests {
 
         assert_eq!(
             verify_observation(&before, &candidate, &after),
-            Verification::NoChange
+            Verification::Unknown
         );
     }
 
@@ -2389,7 +3034,7 @@ mod tests {
     }
 
     #[test]
-    fn invoke_that_closes_an_owned_dialog_is_verified() {
+    fn switching_to_another_app_window_requires_explicit_postcondition() {
         let before = invoke_observation("before", 1);
         let mut after = invoke_observation("after", 0);
         after.window.id = "main-window".into();
@@ -2398,7 +3043,7 @@ mod tests {
 
         assert_eq!(
             verify_observation(&before, &candidate, &after),
-            Verification::Achieved
+            Verification::Unknown
         );
     }
 
@@ -2410,7 +3055,7 @@ mod tests {
 
         assert_eq!(
             verify_observation(&before, &candidate, &after),
-            Verification::NoChange
+            Verification::Unknown
         );
     }
 

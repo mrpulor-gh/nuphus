@@ -21,6 +21,18 @@ extern "C" {
     fn AXUIElementGetPid(element: Ref, pid: *mut i32) -> AxError;
     fn AXUIElementSetMessagingTimeout(element: Ref, seconds: f32) -> AxError;
     fn AXUIElementCopyAttributeValue(element: Ref, attribute: Ref, value: *mut Ref) -> AxError;
+    fn AXUIElementGetAttributeValueCount(
+        element: Ref,
+        attribute: Ref,
+        count: *mut isize,
+    ) -> AxError;
+    fn AXUIElementCopyAttributeValues(
+        element: Ref,
+        attribute: Ref,
+        index: isize,
+        count: isize,
+        values: *mut Ref,
+    ) -> AxError;
     fn AXUIElementIsAttributeSettable(element: Ref, attribute: Ref, settable: *mut u8) -> AxError;
     fn AXUIElementCopyActionNames(element: Ref, value: *mut Ref) -> AxError;
     fn AXUIElementSetAttributeValue(element: Ref, attribute: Ref, value: Ref) -> AxError;
@@ -33,6 +45,7 @@ extern "C" {
     fn CFRetain(value: Ref) -> Ref;
     fn CFGetTypeID(value: Ref) -> usize;
     fn CFEqual(first: Ref, second: Ref) -> u8;
+    fn CFHash(value: Ref) -> usize;
     fn CFStringGetTypeID() -> usize;
     fn CFStringCreateWithBytes(
         allocator: Ref,
@@ -51,6 +64,7 @@ extern "C" {
     fn CFBooleanGetValue(value: Ref) -> u8;
     fn CFNumberGetTypeID() -> usize;
     fn CFNumberGetValue(value: Ref, number_type: isize, result: *mut c_void) -> u8;
+    fn CFNumberCreate(allocator: Ref, number_type: isize, value: *const c_void) -> Ref;
     static kCFBooleanTrue: Ref;
     static kCFBooleanFalse: Ref;
 }
@@ -143,6 +157,17 @@ impl Owned {
             None
         }
     }
+    fn number(&self) -> Option<f64> {
+        unsafe {
+            if CFGetTypeID(self.0) != CFNumberGetTypeID() {
+                return None;
+            }
+            let mut number = 0.0_f64;
+            (CFNumberGetValue(self.0, 6, (&mut number as *mut f64).cast()) != 0
+                && number.is_finite())
+            .then_some(number)
+        }
+    }
     fn array(&self, limit: usize) -> Vec<Self> {
         unsafe {
             if CFGetTypeID(self.0) != CFArrayGetTypeID() {
@@ -233,6 +258,15 @@ impl Element {
         limit: usize,
         deadline: Instant,
     ) -> Result<(Vec<Self>, bool), AutomationError> {
+        self.children_page_at(name, 0, limit, deadline)
+    }
+    fn children_page_at(
+        &self,
+        name: &str,
+        offset: usize,
+        limit: usize,
+        deadline: Instant,
+    ) -> Result<(Vec<Self>, bool), AutomationError> {
         check_deadline(deadline)?;
         let key = Owned::string(name);
         if key.0.is_null() {
@@ -240,9 +274,8 @@ impl Element {
                 "AX attribute allocation failed".into(),
             ));
         }
-        let mut result = std::ptr::null();
-        let status = unsafe { AXUIElementCopyAttributeValue(self.0 .0, key.0, &mut result) };
-        let owned = unsafe { Owned::take(result) };
+        let mut count = 0_isize;
+        let status = unsafe { AXUIElementGetAttributeValueCount(self.0 .0, key.0, &mut count) };
         check_deadline(deadline)?;
         // Unsupported/absent children are normal on leaf controls. Messaging
         // failures must not masquerade as an empty, complete subtree.
@@ -254,18 +287,45 @@ impl Element {
                 "AX tree enumeration failed (AXError {status}); partial tree discarded"
             )));
         }
-        let Some(array) = owned else {
-            return Ok((vec![], true));
+        let count = usize::try_from(count).map_err(|_| {
+            AutomationError::Observation("AX returned an invalid child count".into())
+        })?;
+        let (requested, omitted) = native_child_page(count, offset, limit);
+        if requested == 0 {
+            return Ok((vec![], omitted));
+        }
+        let mut result = std::ptr::null();
+        let status = unsafe {
+            AXUIElementCopyAttributeValues(
+                self.0 .0,
+                key.0,
+                offset as isize,
+                requested as isize,
+                &mut result,
+            )
         };
-        let Some(count) = array.array_len() else {
-            return Ok((vec![], true));
-        };
+        let owned = unsafe { Owned::take(result) };
+        check_deadline(deadline)?;
+        if status != 0 {
+            return Err(AutomationError::Observation(format!("AX child page changed or could not be read (AXError {status}); refresh the observation")));
+        }
+        let array = owned
+            .ok_or_else(|| AutomationError::Observation("AX child page is unavailable".into()))?;
+        if array.array_len() != Some(requested) {
+            return Err(AutomationError::Observation(
+                "AX child page changed during traversal; refresh the observation".into(),
+            ));
+        }
         let children: Vec<_> = array
-            .array(limit)
+            .array(requested)
             .into_iter()
             .filter_map(Self::from_owned)
             .collect();
-        let omitted = count > children.len();
+        if children.len() != requested {
+            return Err(AutomationError::Observation(
+                "AX child page contains an invalid element".into(),
+            ));
+        }
         Ok((children, omitted))
     }
     pub(crate) fn pid(&self) -> Option<i32> {
@@ -309,13 +369,14 @@ impl Element {
         check(unsafe { AXUIElementPerformAction(self.0 .0, name.0) })
     }
     pub(crate) fn set_bool(&self, name: &str, value: bool) -> Result<(), AutomationError> {
+        check(self.set_bool_status(name, value))
+    }
+    fn set_bool_status(&self, name: &str, value: bool) -> AxError {
         let key = Owned::string(name);
         if key.0.is_null() {
-            return Err(AutomationError::Execution(
-                "AX attribute allocation failed".into(),
-            ));
+            return -25200;
         }
-        check(unsafe {
+        unsafe {
             AXUIElementSetAttributeValue(
                 self.0 .0,
                 key.0,
@@ -325,7 +386,7 @@ impl Element {
                     kCFBooleanFalse
                 },
             )
-        })
+        }
     }
     fn set_text(&self, name: &str, value: &str) -> Result<(), AutomationError> {
         let key = Owned::string(name);
@@ -336,6 +397,23 @@ impl Element {
             ));
         }
         check(unsafe { AXUIElementSetAttributeValue(self.0 .0, key.0, value.0) })
+    }
+    fn set_number(&self, name: &str, value: f64) -> Result<(), AutomationError> {
+        let key = Owned::string(name);
+        let number = unsafe {
+            Owned::take(CFNumberCreate(
+                std::ptr::null(),
+                6,
+                (&value as *const f64).cast(),
+            ))
+        }
+        .ok_or_else(|| AutomationError::Execution("AX numeric value allocation failed".into()))?;
+        if key.0.is_null() {
+            return Err(AutomationError::Execution(
+                "AX attribute allocation failed".into(),
+            ));
+        }
+        check(unsafe { AXUIElementSetAttributeValue(self.0 .0, key.0, number.0) })
     }
 }
 
@@ -386,6 +464,127 @@ pub(crate) fn application_identity(pid: i32) -> Option<AppIdentity> {
     }
 }
 
+/// Public AppKit launchDate supplies a process-lifetime key without PID-only
+/// caching or depending on a private WindowServer interface.
+fn process_lifetime(pid: i32) -> Option<u64> {
+    let _pool = Pool::new();
+    unsafe {
+        let class = objc_getClass(c"NSRunningApplication".as_ptr());
+        if class.is_null() {
+            return None;
+        }
+        let send_pid: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let app = send_pid(
+            class,
+            sel_registerName(c"runningApplicationWithProcessIdentifier:".as_ptr()),
+            pid,
+        );
+        if app.is_null() {
+            return None;
+        }
+        let send_object: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let date = send_object(app, sel_registerName(c"launchDate".as_ptr()));
+        if date.is_null() {
+            return None;
+        }
+        let send_number: unsafe extern "C" fn(*mut c_void, *mut c_void) -> f64 =
+            std::mem::transmute(objc_msgSend as *const ());
+        let started = send_number(date, sel_registerName(c"timeIntervalSince1970".as_ptr()));
+        started.is_finite().then_some(started.to_bits())
+    }
+}
+
+fn enable_application_accessibility(
+    app: &Element,
+    pid: i32,
+    deadline: Instant,
+) -> Result<(), AutomationError> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static ATTEMPTED: OnceLock<Mutex<HashMap<i32, u64>>> = OnceLock::new();
+    let cache = ATTEMPTED.get_or_init(|| Mutex::new(HashMap::new()));
+    let lifetime = process_lifetime(pid);
+    if cache
+        .lock()
+        .ok()
+        .is_some_and(|entries| same_process_lifetime(entries.get(&pid).copied(), lifetime))
+    {
+        return Ok(());
+    }
+    check_deadline(deadline)?;
+    let modern = app.set_bool_status("AXManualAccessibility", true);
+    let status = if legacy_ax_enablement_allowed(modern) {
+        app.set_bool_status("AXEnhancedUserInterface", true)
+    } else {
+        modern
+    };
+    if status == 0 {
+        // Chromium builds its tree asynchronously after accepting the attribute.
+        std::thread::sleep(
+            std::time::Duration::from_millis(300)
+                .min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+    if status == 0 || legacy_ax_enablement_allowed(status) {
+        if let (Some(stamp), Ok(mut entries)) = (lifetime, cache.lock()) {
+            if entries.len() >= 256 {
+                entries.clear();
+            }
+            entries.insert(pid, stamp);
+        }
+    }
+    check_deadline(deadline)
+}
+
+fn target_elements(
+    scope: &ObservationScope,
+    deadline: Instant,
+) -> Result<(Element, Element, i32), AutomationError> {
+    if let Some(handle) = scope.window_handle {
+        let reference = crate::desktop::macos_window::accessibility_target(handle)
+            .map_err(|error| AutomationError::Observation(error.to_string()))?;
+        let (pid, app, window) = reference.into_raw();
+        // These are independent retained ownerships sent by the native window
+        // service. Adopt both before validating so every error releases both.
+        let app = unsafe { Owned::take(app as Ref) }.and_then(Element::from_owned);
+        let window = unsafe { Owned::take(window as Ref) }.and_then(Element::from_owned);
+        let (Some(app), Some(window)) = (app, window) else {
+            return Err(AutomationError::Observation(
+                "bound AX target is no longer available".into(),
+            ));
+        };
+        if app.pid() != Some(pid)
+            || window.pid() != Some(pid)
+            || window.text("AXRole", deadline).is_none()
+        {
+            return Err(AutomationError::Observation(
+                "bound AX target expired".into(),
+            ));
+        }
+        return Ok((app, window, pid));
+    }
+    let app = Element::system()
+        .and_then(|system| system.child("AXFocusedApplication", deadline))
+        .ok_or_else(|| {
+            AutomationError::Observation("no accessible foreground application".into())
+        })?;
+    let pid = app.pid().ok_or_else(|| {
+        AutomationError::Observation("foreground application has no process identity".into())
+    })?;
+    let app = Element::application(pid).ok_or_else(|| {
+        AutomationError::Observation("foreground application is no longer available".into())
+    })?;
+    let window = app
+        .child("AXFocusedWindow", deadline)
+        .or_else(|| app.child("AXMainWindow", deadline))
+        .ok_or_else(|| {
+            AutomationError::Observation("foreground application has no accessible window".into())
+        })?;
+    Ok((app, window, pid))
+}
+
 pub(super) struct Snapshot {
     pub app: AppIdentity,
     pub window: WindowIdentity,
@@ -407,6 +606,20 @@ struct Region {
     window: Element,
     ancestors: Vec<SemanticContext>,
     origin: String,
+    web_content: bool,
+}
+
+struct WalkNode {
+    element: Element,
+    ancestors: Vec<SemanticContext>,
+    secure_parent: bool,
+    web_parent: bool,
+    depth: usize,
+}
+
+enum WalkWork {
+    Node(WalkNode),
+    Children { parent: WalkNode, offset: usize },
 }
 
 /// Ephemeral references stay on the worker. Tokens are never serialized into
@@ -467,6 +680,7 @@ impl Session {
                     window: window.retained(),
                     ancestors: meta.ancestors.clone(),
                     origin: meta.origin.clone(),
+                    web_content: meta.web_content,
                 },
             );
         }
@@ -491,7 +705,7 @@ impl Session {
         input: &ExecutionInput,
         deadline: Instant,
         cancelled: impl Fn() -> bool,
-    ) -> Result<(), AutomationError> {
+    ) -> Result<bool, AutomationError> {
         let (_, window) = self
             .windows
             .iter()
@@ -526,30 +740,13 @@ fn capture_native(
     if !trusted() {
         return Err(AutomationError::Observation("macOS Accessibility permission is required; enable Nuphus in System Settings > Privacy & Security > Accessibility".into()));
     }
-    let system = Element::system()
-        .ok_or_else(|| AutomationError::Observation("could not create AX system element".into()))?;
-    let app = system
-        .child("AXFocusedApplication", deadline)
-        .ok_or_else(|| {
-            AutomationError::Observation("no accessible foreground application".into())
-        })?;
-    let pid = app.pid().ok_or_else(|| {
-        AutomationError::Observation("foreground application has no process identity".into())
-    })?;
-    let app = Element::application(pid).ok_or_else(|| {
-        AutomationError::Observation("foreground application is no longer available".into())
-    })?;
+    let (app, window, pid) = target_elements(scope, deadline)?;
+    enable_application_accessibility(&app, pid, deadline)?;
     let identity = application_identity(pid).ok_or_else(|| {
         AutomationError::Observation(
             "foreground application has no stable bundle identifier".into(),
         )
     })?;
-    let window = app
-        .child("AXFocusedWindow", deadline)
-        .or_else(|| app.child("AXMainWindow", deadline))
-        .ok_or_else(|| {
-            AutomationError::Observation("foreground application has no accessible window".into())
-        })?;
     let title = window.text("AXTitle", deadline).unwrap_or_default();
     let identifier = window.text("AXIdentifier", deadline);
     // Inspect sibling windows before deriving the persisted identity. Some
@@ -644,20 +841,83 @@ fn capture_native(
                 ))
             }
         };
-    let mut pending = std::collections::VecDeque::from([(root, root_ancestors, false, 0_usize)]);
+    if scope.tree_offset > 10_000 {
+        return Err(AutomationError::Observation(
+            "AX traversal offset exceeds the bounded window scan; choose a narrower region".into(),
+        ));
+    }
+    let mut pending = vec![WalkWork::Node(WalkNode {
+        element: root,
+        ancestors: root_ancestors,
+        secure_parent: false,
+        web_parent: region.is_some_and(|region| region.web_content),
+        depth: 0,
+    })];
     let mut metadata = Vec::new();
     let mut elements: Vec<Element> = Vec::new();
-    let mut truncated = false;
-    while let Some((element, ancestors, secure_parent, depth)) = pending.pop_front() {
+    let mut truncated = scope.tree_offset > 0;
+    let mut visited = 0usize;
+    let mut seen: std::collections::HashMap<usize, Vec<Element>> = std::collections::HashMap::new();
+    while let Some(work) = pending.pop() {
         check_deadline(deadline)?;
         if metadata.len() >= limit {
             truncated = true;
             break;
         }
-        if elements.iter().any(|old| old.same(&element)) {
+        let node = match work {
+            WalkWork::Node(node) => node,
+            WalkWork::Children { parent, offset } => {
+                let (children, more) =
+                    parent
+                        .element
+                        .children_page_at("AXChildren", offset, 32, deadline)?;
+                let count = children.len();
+                for child in children.into_iter().rev() {
+                    // Insert child work below the continuation, preserving DFS
+                    // ordering independently of the native array page size.
+                    let node = WalkNode {
+                        element: child,
+                        ancestors: parent.ancestors.clone(),
+                        secure_parent: parent.secure_parent,
+                        web_parent: parent.web_parent,
+                        depth: parent.depth,
+                    };
+                    // The continuation is pushed first below the child batch.
+                    pending.push(WalkWork::Node(node));
+                }
+                if more {
+                    let position = pending.len().saturating_sub(count);
+                    pending.insert(
+                        position,
+                        WalkWork::Children {
+                            parent,
+                            offset: offset + count,
+                        },
+                    );
+                }
+                continue;
+            }
+        };
+        let WalkNode {
+            element,
+            ancestors,
+            secure_parent,
+            web_parent,
+            depth,
+        } = node;
+        let bucket = seen.entry(unsafe { CFHash(element.0 .0) }).or_default();
+        if bucket.iter().any(|old| old.same(&element)) {
             continue;
         }
+        bucket.push(element.retained());
+        if visited >= 10_000 {
+            truncated = true;
+            break;
+        }
+        let include = visited >= scope.tree_offset;
+        visited += 1;
         let raw_role = element.text("AXRole", deadline).unwrap_or_default();
+        let web_content = web_parent || raw_role == "AXWebArea";
         let role = role(&raw_role);
         let secure = secure_parent
             || element.text("AXSubrole", deadline).as_deref() == Some("AXSecureTextField")
@@ -697,16 +957,41 @@ fn capture_native(
                 .flatten()
         });
         let names = element.action_names(deadline);
-        let supported_actions = actions(
+        let value_settable = element.settable("AXValue", deadline);
+        let mut supported_actions = actions(
             &role,
             secure,
             &names,
             element.settable("AXFocused", deadline),
-            element.settable("AXValue", deadline),
+            value_settable,
             element.settable("AXSelected", deadline),
             element.settable("AXExpanded", deadline),
             expanded,
         );
+        if role == UiRole::CheckBox && toggled.is_none() && !value_settable {
+            // AXPress may cycle a mixed checkbox in provider-specific order.
+            // Keep explicit legacy Toggle, but do not advertise a desired-state
+            // action that cannot be implemented without guessing that order.
+            supported_actions.retain(|action| *action != NativeAction::SetChecked);
+        }
+        if !secure
+            && value_settable
+            && matches!(
+                raw_role.as_str(),
+                "AXSlider" | "AXScrollBar" | "AXIncrementor"
+            )
+            && value.as_ref().and_then(Owned::number).is_some()
+            && element
+                .attribute("AXMinValue", deadline)
+                .and_then(|value| value.number())
+                .is_some()
+            && element
+                .attribute("AXMaxValue", deadline)
+                .and_then(|value| value.number())
+                .is_some()
+        {
+            supported_actions.push(NativeAction::SetRangeValue);
+        }
         let key = hash(&format!(
             "{}|{}|{:?}|{:?}|{:?}|{:?}",
             identity.id, window_identity.id, role, identifier, raw_name, ancestors
@@ -726,7 +1011,11 @@ fn capture_native(
             expanded,
             value_fingerprint: value
                 .as_ref()
-                .and_then(Owned::text)
+                .and_then(|value| {
+                    value
+                        .text()
+                        .or_else(|| value.number().map(|number| number.to_string()))
+                })
                 .map(|s| format!("value:{}", hash(&s))),
             supported_actions,
         };
@@ -764,25 +1053,37 @@ fn capture_native(
                     node.focused,
                 ))
         {
-            let capacity = child_capacity(limit, metadata.len(), pending.len(), depth);
-            let (children, omitted) = element.children_page("AXChildren", capacity, deadline)?;
-            truncated |= omitted;
-            for child in children {
-                pending.push_back((child, child_ancestors.clone(), secure, depth + 1));
+            if depth < 24 {
+                pending.push(WalkWork::Children {
+                    parent: WalkNode {
+                        element: element.retained(),
+                        ancestors: child_ancestors,
+                        secure_parent: secure,
+                        web_parent: web_content,
+                        depth: depth + 1,
+                    },
+                    offset: 0,
+                });
+            } else {
+                truncated |= element.children_page_at("AXChildren", 0, 0, deadline)?.1;
             }
         }
         check_deadline(deadline)?;
-        metadata.push(Metadata {
-            node,
-            identifier,
-            raw_name,
-            ancestors,
-            origin: origin.clone(),
-        });
-        elements.push(element);
+        if include {
+            metadata.push(Metadata {
+                node,
+                identifier,
+                raw_name,
+                ancestors,
+                origin: origin.clone(),
+                web_content,
+                scroll_directions: scroll_directions(&names),
+            });
+            elements.push(element);
+        }
     }
     check_deadline(deadline)?;
-    if metadata.is_empty() {
+    if metadata.is_empty() && scope.tree_offset == 0 {
         return Err(AutomationError::Observation(
             "Accessibility tree was empty or timed out".into(),
         ));
@@ -841,13 +1142,16 @@ fn execute(
     input: &ExecutionInput,
     deadline: Instant,
     cancelled: impl Fn() -> bool,
-) -> Result<(), AutomationError> {
+) -> Result<bool, AutomationError> {
     let snapshot = capture_native(
         limit,
         &ObservationScope {
             app_id: Some(locator.app_id.clone()),
             window_id: locator.window_id.clone(),
             subtree_id: scope.subtree_id.clone(),
+            window_handle: scope.window_handle,
+            delivery: scope.delivery,
+            tree_offset: scope.tree_offset,
         },
         region,
         deadline,
@@ -880,29 +1184,111 @@ fn execute(
         ));
     }
     let element = &snapshot.elements[*index];
-    // A user can switch applications while a large tree is being read. Check
-    // the concrete foreground window again immediately before dispatch.
-    let foreground = Element::system()
-        .and_then(|system| system.child("AXFocusedApplication", deadline))
-        .ok_or_else(|| {
-            AutomationError::Execution("foreground application changed before AX dispatch".into())
+    let is_foreground = || {
+        Element::system()
+            .and_then(|system| system.child("AXFocusedApplication", deadline))
+            .is_some_and(|app| {
+                app.same(&snapshot.app)
+                    && app
+                        .child("AXFocusedWindow", deadline)
+                        .or_else(|| app.child("AXMainWindow", deadline))
+                        .is_some_and(|window| window.same(&snapshot.window))
+            })
+    };
+    let needs_foreground =
+        requires_foreground(scope.delivery, scope.window_handle.is_some(), action);
+    if needs_foreground && !is_foreground() {
+        if scope.delivery == DeliveryMode::Background {
+            return Err(AutomationError::Execution("background_unavailable: this AX focus action requires the bound window in foreground".into()));
+        }
+        let handle = scope.window_handle.ok_or_else(|| {
+            AutomationError::Execution(
+                "foreground application/window changed before AX dispatch".into(),
+            )
         })?;
-    let focused_window = foreground
-        .child("AXFocusedWindow", deadline)
-        .or_else(|| foreground.child("AXMainWindow", deadline));
-    if !foreground.same(&snapshot.app)
-        || focused_window
-            .as_ref()
-            .is_none_or(|window| !window.same(&snapshot.window))
-        || Instant::now() >= deadline
-        || cancelled()
-    {
+        crate::desktop::macos_window::window_activate(handle)
+            .map_err(|error| AutomationError::Execution(error.to_string()))?;
+        if !is_foreground() {
+            return Err(AutomationError::Execution(
+                "the exact AX target did not become foreground".into(),
+            ));
+        }
+    }
+    // Target-addressed actions do not depend on whichever app is frontmost.
+    // With an explicit handle, re-check its retained public AX identity rather
+    // than silently changing the target after a user focus switch.
+    if scope.window_handle.is_some() {
+        let (app, window, _) = target_elements(scope, deadline)?;
+        if !app.same(&snapshot.app) || !window.same(&snapshot.window) {
+            return Err(AutomationError::Execution(
+                "bound AX target changed before dispatch".into(),
+            ));
+        }
+    }
+    if Instant::now() >= deadline || cancelled() {
         return Err(AutomationError::Execution(
-            "foreground application/window changed before AX dispatch".into(),
+            "AX request expired before dispatch".into(),
         ));
     }
     match action {
         NativeAction::Invoke | NativeAction::Toggle => element.perform("AXPress"),
+        NativeAction::SetChecked => {
+            let desired = input.checked.ok_or_else(|| {
+                AutomationError::Execution("set_checked requires an explicit desired state".into())
+            })?;
+            let current = element
+                .attribute("AXValue", deadline)
+                .and_then(|value| value.boolean());
+            if current == Some(desired) {
+                return Ok(false);
+            }
+            if element.settable("AXValue", deadline) {
+                element.set_number("AXValue", f64::from(u8::from(desired)))
+            } else if checked_needs_press(current, desired)? {
+                element.perform("AXPress")
+            } else {
+                Ok(())
+            }
+        }
+        NativeAction::Scroll => {
+            if input.amount == Some(ScrollAmount::Small) {
+                return Err(AutomationError::Execution(
+                    "AX supports page scrolling for this control, not a small increment".into(),
+                ));
+            }
+            let direction = input.direction.ok_or_else(|| {
+                AutomationError::Execution("AX scroll requires a direction".into())
+            })?;
+            let action = scroll_action(direction);
+            if !element
+                .action_names(deadline)
+                .iter()
+                .any(|name| name == action)
+            {
+                return Err(AutomationError::Execution(
+                    "AX scroll direction is no longer supported".into(),
+                ));
+            }
+            element.perform(action)
+        }
+        NativeAction::ScrollIntoView => element.perform("AXScrollToVisible"),
+        NativeAction::SetRangeValue => {
+            let minimum = element
+                .attribute("AXMinValue", deadline)
+                .and_then(|value| value.number());
+            let maximum = element
+                .attribute("AXMaxValue", deadline)
+                .and_then(|value| value.number());
+            let (Some(minimum), Some(maximum), Some(value)) =
+                (minimum, maximum, input.value.as_deref())
+            else {
+                return Err(AutomationError::Execution(
+                    "AX range value or its live bounds are unavailable".into(),
+                ));
+            };
+            let value = range_value(value, minimum, maximum)?;
+            element.set_number("AXValue", value)
+        }
         NativeAction::Select => {
             if element.settable("AXSelected", deadline) {
                 element.set_bool("AXSelected", true)
@@ -921,6 +1307,7 @@ fn execute(
         }
         _ => Err(AutomationError::Execution("unsupported AX action".into())),
     }
+    .map(|()| true)
 }
 
 #[cfg(test)]
@@ -935,6 +1322,22 @@ mod tests {
         assert_eq!(retained.text().as_deref(), Some("中文 RPA 🖥️"));
         assert!(retained.boolean().is_none());
         assert!(retained.array(10).is_empty());
+    }
+
+    #[test]
+    fn native_checkbox_mixed_value_is_not_a_boolean() {
+        for (number, expected) in [(0.0_f64, Some(false)), (1.0, Some(true)), (2.0, None)] {
+            let value = unsafe {
+                Owned::take(CFNumberCreate(
+                    std::ptr::null(),
+                    6,
+                    (&number as *const f64).cast(),
+                ))
+            }
+            .unwrap();
+            assert_eq!(value.boolean(), expected);
+            assert_eq!(value.number(), Some(number));
+        }
     }
 
     #[test]

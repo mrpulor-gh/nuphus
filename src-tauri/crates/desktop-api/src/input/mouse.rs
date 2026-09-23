@@ -89,13 +89,13 @@ pub async fn click(x: i32, y: i32) -> Result<()> {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{
             mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         };
+        let mut held = super::HeldInput::new(|flags| unsafe { mouse_event(flags, 0, 0, 0, 0) });
+        held.hold(MOUSEEVENTF_LEFTUP);
         unsafe {
             mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        unsafe {
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-        }
+        held.release_last();
         Ok(())
     }
     #[cfg(target_os = "macos")]
@@ -126,13 +126,13 @@ pub async fn right_click(x: i32, y: i32) -> Result<()> {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{
             mouse_event, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
         };
+        let mut held = super::HeldInput::new(|flags| unsafe { mouse_event(flags, 0, 0, 0, 0) });
+        held.hold(MOUSEEVENTF_RIGHTUP);
         unsafe {
             mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        unsafe {
-            mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
-        }
+        held.release_last();
         Ok(())
     }
     #[cfg(target_os = "macos")]
@@ -163,13 +163,13 @@ pub async fn middle_click(x: i32, y: i32) -> Result<()> {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             mouse_event, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
         };
+        let mut held = super::HeldInput::new(|flags| unsafe { mouse_event(flags, 0, 0, 0, 0) });
+        held.hold(MOUSEEVENTF_MIDDLEUP);
         unsafe {
             mouse_event(MOUSEEVENTF_MIDDLEDOWN, 0, 0, 0, 0);
         }
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        unsafe {
-            mouse_event(MOUSEEVENTF_MIDDLEUP, 0, 0, 0, 0);
-        }
+        held.release_last();
         Ok(())
     }
     #[cfg(target_os = "macos")]
@@ -189,16 +189,28 @@ pub async fn middle_click(x: i32, y: i32) -> Result<()> {
 
 /// 滚动鼠标滚轮
 ///
-/// `direction`: "up" / "down"；`amount`: 滚轮格数（每格 120 delta）。
+/// `direction`: "up" / "down" / "left" / "right"；`amount`: 滚轮格数。
 pub async fn scroll(direction: &str, amount: i32) -> Result<()> {
     let _ = scroll_delta(direction, amount)?;
     #[cfg(windows)]
     {
-        use ::windows::Win32::UI::Input::KeyboardAndMouse::{mouse_event, MOUSEEVENTF_WHEEL};
-        let delta: i32 = if direction == "up" { 120 } else { -120 };
+        use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+            mouse_event, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_WHEEL,
+        };
+        // Win32 vertical positive means up; horizontal positive means right.
+        let delta: i32 = if matches!(direction, "up" | "right") {
+            120
+        } else {
+            -120
+        };
+        let flags = if matches!(direction, "left" | "right") {
+            MOUSEEVENTF_HWHEEL
+        } else {
+            MOUSEEVENTF_WHEEL
+        };
         for _ in 0..amount.max(0) {
             unsafe {
-                mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0);
+                mouse_event(flags, 0, 0, delta, 0);
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
@@ -208,9 +220,14 @@ pub async fn scroll(direction: &str, amount: i32) -> Result<()> {
     {
         use enigo::{Axis, Mouse};
         let delta = scroll_delta(direction, amount)?;
+        let axis = if matches!(direction, "left" | "right") {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        };
         super::with_enigo(|engine| {
             engine
-                .scroll(delta, Axis::Vertical)
+                .scroll(delta, axis)
                 .map_err(|e| DesktopError::InputFailed(e.to_string()))
         })
     }
@@ -225,6 +242,8 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{
             mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         };
+        let mut held = super::HeldInput::new(|flags| unsafe { mouse_event(flags, 0, 0, 0, 0) });
+        held.hold(MOUSEEVENTF_LEFTUP);
         unsafe {
             mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
         }
@@ -233,17 +252,10 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
             let t = i as f32 / steps as f32;
             let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
             let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
-            if let Err(error) = move_to(x, y).await {
-                unsafe {
-                    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-                }
-                return Err(error);
-            }
+            move_to(x, y).await?;
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        unsafe {
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-        }
+        held.release_last();
         Ok(())
     }
     #[cfg(target_os = "macos")]
@@ -256,6 +268,18 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
         // 用作用域块让 MutexGuard 在 await 前自然 drop——clippy await_holding_lock
         // 对显式 drop(e) 仍告警（版本差异），作用域块是跨 clippy 版本稳定的写法。
         use enigo::{Button, Direction, Mouse};
+        let mut release_error = None;
+        let mut held = super::HeldInput::new(|button| {
+            if let Err(error) = super::with_enigo(|engine| {
+                engine
+                    .button(button, Direction::Release)
+                    .map_err(|error| DesktopError::InputFailed(error.to_string()))
+            }) {
+                release_error = Some(error);
+            }
+        });
+        // Register before sending: a native error can follow a successful down.
+        held.hold(Button::Left);
         {
             super::with_enigo(|engine| {
                 engine
@@ -267,22 +291,14 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
             let t = i as f32 / 20.0;
             let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
             let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
-            if let Err(error) = move_to(x, y).await {
-                let _ = super::with_enigo(|engine| {
-                    engine
-                        .button(Button::Left, Direction::Release)
-                        .map_err(|e| DesktopError::InputFailed(e.to_string()))
-                });
-                return Err(error);
-            }
+            move_to(x, y).await?;
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        {
-            super::with_enigo(|engine| {
-                engine
-                    .button(Button::Left, Direction::Release)
-                    .map_err(|e| DesktopError::InputFailed(e.to_string()))
-            })
+        held.release_last();
+        drop(held);
+        match release_error {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -299,8 +315,8 @@ fn scroll_delta(direction: &str, amount: i32) -> Result<i32> {
         ));
     }
     match direction {
-        "up" => Ok(-amount),
-        "down" => Ok(amount),
+        "up" | "left" => Ok(-amount),
+        "down" | "right" => Ok(amount),
         _ => Err(DesktopError::InputFailed(format!(
             "unknown scroll direction: {direction}"
         ))),
@@ -315,6 +331,8 @@ mod tests {
     fn scroll_direction_matches_native_input_contract() {
         assert_eq!(scroll_delta("up", 3).unwrap(), -3);
         assert_eq!(scroll_delta("down", 3).unwrap(), 3);
+        assert_eq!(scroll_delta("left", 3).unwrap(), -3);
+        assert_eq!(scroll_delta("right", 3).unwrap(), 3);
         assert_eq!(scroll_delta("down", 0).unwrap(), 0);
         assert!(scroll_delta("up", -1).is_err());
         assert!(scroll_delta("sideways", 3).is_err());

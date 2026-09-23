@@ -450,6 +450,27 @@ const en: Record<string, string> = {
   'tools.reveal': 'Show in folder',
   'tools.openDir': 'Open Folder',
   'tools.resultDone': 'Success',
+  'desktopAction.sent': 'Dispatched',
+  'desktopAction.delivery.foreground': 'Delivered in foreground',
+  'desktopAction.delivery.background': 'Delivered through a background native action',
+  'desktopAction.sent.detail': 'Input events were sent; the business result has not been verified.',
+  'desktopAction.confirmed': 'State confirmed',
+  'desktopAction.confirmed.detail':
+    'The specified UI state was confirmed, not completion of the whole task.',
+  'desktopAction.unverifiable': 'Effect unverified',
+  'desktopAction.unverifiable.detail':
+    'Observe the current state before continuing; do not automatically replay a submission.',
+  'desktopAction.suspected_noop': 'Possibly ineffective',
+  'desktopAction.suspected_noop.detail':
+    'No expected change was observed; inspect the current UI instead of retrying blindly.',
+  'desktopAction.partial': 'Partially dispatched',
+  'desktopAction.partial.detail':
+    'The action may have partially completed; observe before taking further action.',
+  'desktopAction.not_sent': 'Not dispatched',
+  'desktopAction.not_sent.detail': 'No action was sent; retry after resolving the precondition.',
+  'desktopAction.unknown': 'Delivery unknown',
+  'desktopAction.unknown.detail':
+    'Events may already have been sent; observe first to avoid duplicates.',
   'tools.resultFailed': 'Failed',
   'tools.pdfInputPlaceholder': 'Select PDF files (multi-select for merge)',
   'tools.imageInputPlaceholder': 'Select an image file',
@@ -1251,6 +1272,14 @@ const en: Record<string, string> = {
   'security.hintEsc': 'Esc deny',
 
   'approval.saved': 'Saved as tenet',
+  'approval.desktopTitle': 'Confirm desktop action',
+  'approval.desktopDesc':
+    'Confirm this critical action to continue the current step. This is not a permanent rule.',
+  'approval.desktopApprove': 'Approve this action only',
+  'approval.desktopApproved': 'Action approved',
+  'approval.desktopApprovedDesc':
+    'Rechecking the target before continuing. Approval does not mean the action is complete.',
+  'approval.desktopRejectedDesc': 'This action was not executed.',
   'approval.rejected': 'Rejected',
   'approval.savedDesc': 'Tenet will be injected in future conversations',
   'approval.rejectedDesc': 'Proposal discarded',

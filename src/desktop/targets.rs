@@ -1,6 +1,6 @@
 //! Registry-local desktop targets. Models select catalog references, never launch paths.
 use super::DesktopClient;
-use crate::desktop_automation::SemanticLocator;
+use crate::desktop_automation::{DeliveryMode, ObservationScope, SemanticLocator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -11,8 +11,14 @@ use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 mod macos;
+mod registered;
 #[cfg(target_os = "windows")]
 mod windows;
+
+/// Host-only entry point. It is deliberately absent from model tool schemas.
+pub fn register_user_application(path: &std::path::Path) -> Result<Value, String> {
+    registered::register(path)
+}
 
 #[derive(Clone, Debug)]
 struct Application {
@@ -170,6 +176,16 @@ impl DesktopTargetService {
     /// Launch is possible only for a reference previously returned by the local catalog.
     /// Multiple windows are returned to the caller for explicit selection.
     pub async fn bind(&self, app_ref: &str, window_ref: Option<&str>) -> Result<Value, String> {
+        self.bind_with_delivery(app_ref, window_ref, DeliveryMode::Foreground)
+            .await
+    }
+
+    pub async fn bind_with_delivery(
+        &self,
+        app_ref: &str,
+        window_ref: Option<&str>,
+        delivery: DeliveryMode,
+    ) -> Result<Value, String> {
         let app = self
             .state
             .lock()
@@ -242,7 +258,9 @@ impl DesktopTargetService {
                 return window_selection_page(app_ref, windows);
             }
         };
-        self.activate(&window).await?;
+        if delivery == DeliveryMode::Foreground {
+            self.activate(&window).await?;
+        }
         let token = format!("target:{}", uuid::Uuid::new_v4().simple());
         let descriptor = DesktopTargetDescriptor {
             app_id: app.app_id,
@@ -314,6 +332,17 @@ impl DesktopTargetService {
         locator: &SemanticLocator,
         launch_ref: Option<&str>,
     ) -> Result<(), String> {
+        self.ensure_saved_scope(locator, launch_ref, DeliveryMode::Foreground)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn ensure_saved_scope(
+        &self,
+        locator: &SemanticLocator,
+        launch_ref: Option<&str>,
+        delivery: DeliveryMode,
+    ) -> Result<ObservationScope, String> {
         let key = (
             self.owner(),
             locator.app_id.clone(),
@@ -340,7 +369,10 @@ impl DesktopTargetService {
                 // execution, retain the verified live window rather than
                 // asking a model to invent clean/dirty title variants.
                 // Native semantic validation still runs before any input.
-                return self.activate(current).await;
+                if delivery == DeliveryMode::Foreground {
+                    self.activate(current).await?;
+                }
+                return Ok(window_scope(current, delivery));
             }
             self.state
                 .lock()
@@ -382,7 +414,9 @@ impl DesktopTargetService {
         }
         let window = choose_saved_window(&windows, locator)?
             .ok_or("Saved target matches multiple windows; select a window before replay")?;
-        self.activate(window).await?;
+        if delivery == DeliveryMode::Foreground {
+            self.activate(window).await?;
+        }
         let mut state = self
             .state
             .lock()
@@ -391,7 +425,88 @@ impl DesktopTargetService {
             state.saved_windows.clear();
         }
         state.saved_windows.insert(key, window.clone());
-        Ok(())
+        Ok(window_scope(window, delivery))
+    }
+
+    pub async fn bound_scope(
+        &self,
+        token: &str,
+        delivery: DeliveryMode,
+    ) -> Result<(ObservationScope, Option<String>), String> {
+        let binding = self
+            .state
+            .lock()
+            .map_err(|_| "Desktop target state unavailable")?
+            .bindings
+            .get(token)
+            .cloned()
+            .ok_or("Unknown target_token")?;
+        if binding.owner != self.owner() {
+            return Err("target_token belongs to another execution owner".into());
+        }
+        if !self
+            .running()
+            .await?
+            .iter()
+            .any(|(_, actual)| same_window(actual, &binding.window))
+        {
+            return Err("Bound window no longer exists; bind again".into());
+        }
+        if delivery == DeliveryMode::Foreground {
+            self.activate(&binding.window).await?;
+        }
+        Ok((
+            window_scope(&binding.window, delivery),
+            binding.descriptor.launch_ref,
+        ))
+    }
+
+    /// Read-only verification resolution. Never starts or activates an app.
+    pub async fn verification_scope(
+        &self,
+        locator: &SemanticLocator,
+    ) -> Result<Option<ObservationScope>, String> {
+        let windows: Vec<_> = self
+            .running()
+            .await?
+            .into_iter()
+            .map(|(_, window)| window)
+            .filter(|w| w.app_id == locator.app_id)
+            .collect();
+        if windows.is_empty() {
+            return Ok(None);
+        }
+        // Titles may be redacted or change after saving. A missing title match
+        // does not prove a stable window ID disappeared; the observer checks it.
+        if locator.window_id.is_some() && windows.len() == 1 {
+            return Ok(Some(window_scope(&windows[0], DeliveryMode::Auto)));
+        }
+        let selected = if let Some(title) = &locator.window_title {
+            let matches: Vec<_> = windows.iter().filter(|w| &w.title == title).collect();
+            match matches.as_slice() {
+                [] if locator.window_id.is_some() => {
+                    return Err("stable verification window could not be resolved by title".into())
+                }
+                [] => return Ok(None),
+                [one] => *one,
+                _ => return Err("verification window is ambiguous".into()),
+            }
+        } else {
+            match windows.as_slice() {
+                [one] => one,
+                _ => return Err("verification requires an exact window".into()),
+            }
+        };
+        Ok(Some(window_scope(selected, DeliveryMode::Auto)))
+    }
+}
+
+fn window_scope(window: &Window, delivery: DeliveryMode) -> ObservationScope {
+    ObservationScope {
+        app_id: Some(window.app_id.clone()),
+        window_handle: Some(window.hwnd),
+        delivery,
+        ..Default::default()
     }
 }
 
@@ -616,18 +731,12 @@ fn running_window(_: &Value) -> Option<(Application, Window)> {
 }
 
 fn installed_applications() -> Vec<Application> {
+    let result = registered::applications();
     #[cfg(target_os = "windows")]
-    {
-        windows::installed()
-    }
+    let result = result.into_iter().chain(windows::installed()).collect();
     #[cfg(target_os = "macos")]
-    {
-        macos::installed()
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        vec![]
-    }
+    let result = result.into_iter().chain(macos::installed()).collect();
+    result
 }
 
 fn launch(path: &std::path::Path) -> Result<(), String> {

@@ -331,6 +331,55 @@ pub fn window_info(handle: i32) -> crate::Result<Value> {
         state.info(handle)
     })
 }
+
+/// An ownership-only ferry for public AX proxy references. The source worker
+/// retains each object before sending it; the receiving AX worker creates its
+/// own non-Send owner. No native call is made through these pointers in transit.
+/// Unlike a title/geometry match, CFEqual still identifies the exact window.
+pub(crate) struct AxWindowReference {
+    pid: i32,
+    app: usize,
+    window: usize,
+}
+
+impl AxWindowReference {
+    pub(crate) fn into_raw(mut self) -> (i32, usize, usize) {
+        let app = std::mem::take(&mut self.app);
+        let window = std::mem::take(&mut self.window);
+        (self.pid, app, window)
+    }
+}
+
+impl Drop for AxWindowReference {
+    fn drop(&mut self) {
+        for value in [self.app, self.window] {
+            if value != 0 {
+                unsafe { CFRelease(value as Ref) };
+            }
+        }
+    }
+}
+
+pub(crate) fn accessibility_target(handle: i32) -> crate::Result<AxWindowReference> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    call(move |state| {
+        permission()?;
+        state.info(handle)?;
+        let target = state.get(handle)?;
+        let reference = AxWindowReference {
+            pid: target.pid,
+            app: unsafe { CFRetain(target.app.0) } as usize,
+            window: unsafe { CFRetain(target.element.0) } as usize,
+        };
+        sender
+            .send(reference)
+            .map_err(|_| "AX target receiver stopped")?;
+        Ok(Value::Null)
+    })?;
+    receiver
+        .recv()
+        .map_err(|_| crate::NuphusError::Tool("AX target identity was unavailable".into()))
+}
 pub fn foreground_hwnd() -> crate::Result<Value> {
     call(|state| Ok(json!({"hwnd": state.foreground()?})))
 }
@@ -457,6 +506,24 @@ mod tests {
     fn stale_handles_are_errors_without_desktop_permissions() {
         let state = State::default();
         assert!(state.info(123).unwrap_err().contains("expired"));
+    }
+
+    #[test]
+    fn retained_identity_ferry_keeps_both_ownerships_alive() {
+        let original = Owned::string("identity ferry").unwrap();
+        let reference = AxWindowReference {
+            pid: 7,
+            app: unsafe { CFRetain(original.0) } as usize,
+            window: unsafe { CFRetain(original.0) } as usize,
+        };
+        drop(original);
+        let (pid, app, window) = reference.into_raw();
+        let app = Owned::new(app as Ref).unwrap();
+        let window = Owned::new(window as Ref).unwrap();
+        assert_eq!(pid, 7);
+        assert_ne!(unsafe { CFEqual(app.0, window.0) }, 0);
+        drop(app);
+        assert_eq!(window.text(), "identity ferry");
     }
 
     #[test]

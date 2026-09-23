@@ -51,6 +51,89 @@ impl ToolRegistry {
         // Browser 工具总是暴露（由 execute_browser_tool 惰性初始化）
         schemas.extend(self.browser_tool_schemas());
 
+        let actions = serde_json::json!([
+            "invoke",
+            "toggle",
+            "set_checked",
+            "select",
+            "expand",
+            "collapse",
+            "focus",
+            "set_value",
+            "scroll",
+            "scroll_into_view",
+            "set_range_value"
+        ]);
+        let Some(semantic_schema) = schemas
+            .iter()
+            .find(|s| s.function.name == "desktop_semantic_action")
+        else {
+            return schemas;
+        };
+        let mut locator = semantic_schema.function.parameters["properties"]["locator"].clone();
+        locator["properties"]["supported_action"]["enum"] = actions.clone();
+        let expectation = obj!(
+            "type" = "object",
+            "additionalProperties" = false,
+            "properties" = json_props! {
+                "locator" => locator,
+                "condition" => obj!("type"="string","enum"=["exists","absent","window_exists","window_absent","focused","checked","selected","expanded","value_equals"]),
+                "expected" => obj!("type"="boolean","default"=true),
+                "value" => obj!("type"="string"),
+                "timeout_ms" => obj!("type"="integer","minimum"=0,"maximum"=300000,"default"=5000),
+                "stable_samples" => obj!("type"="integer","minimum"=1,"maximum"=5,"default"=2)
+            },
+            "required" = ["locator", "condition"]
+        );
+        schemas.push(tool_def("desktop_verify_state",
+            "只读验证指定窗口/元素的后置条件，可有界等待；返回 satisfied/unsatisfied/unknown。不会重发原动作、启动应用或抢前台。",
+            json_props! {"expectation" => expectation.clone()}, &["expectation"]));
+        for schema in &mut schemas {
+            let name = schema.function.name.as_str();
+            let properties = schema.function.parameters["properties"]
+                .as_object_mut()
+                .unwrap();
+            if matches!(
+                name,
+                "desktop_target_bind"
+                    | "desktop_semantic_observe"
+                    | "desktop_agent_step"
+                    | "desktop_semantic_execute"
+                    | "desktop_semantic_action"
+            ) {
+                properties.insert("delivery_mode".into(), obj!("type"="string", "enum"=["foreground","auto","background"],
+                    "description"="新动作优先 auto：可可靠后台的原生动作不抢前台，必要时前台执行；旧步骤省略保持 foreground。background 不允许切前台"));
+            }
+            if name == "desktop_semantic_observe" {
+                properties.insert("tree_cursor".into(), obj!("type"="string","description"="next_tree_cursor 返回的本地续读令牌；读取原生树下一批，不同于候选 cursor，新观察替换旧候选"));
+            }
+            if matches!(name, "desktop_semantic_action" | "desktop_semantic_execute") {
+                properties.insert(
+                    "checked".into(),
+                    obj!(
+                        "type" = "boolean",
+                        "description" =
+                            "set_checked 的目标状态；已满足时不点击，旧 toggle 保留反转语义"
+                    ),
+                );
+                properties.insert(
+                    "direction".into(),
+                    obj!("type" = "string", "enum" = ["up", "down", "left", "right"]),
+                );
+                properties.insert(
+                    "amount".into(),
+                    obj!("type" = "string", "enum" = ["small", "page"]),
+                );
+            }
+            if name == "desktop_semantic_action" {
+                properties.get_mut("action").unwrap()["enum"] = actions.clone();
+                properties.get_mut("locator").unwrap()["properties"]["supported_action"]["enum"] =
+                    actions.clone();
+                properties.insert("completion_policy".into(), obj!("type"="string","enum"=["auto","verified","dispatched"],"default"="auto",
+                    "description"="auto 允许普通导航的已发送未验证结果继续；关键提交仍需验证。expectation 存在时始终验证，不重发动作"));
+                properties.insert("expectation".into(), expectation.clone());
+            }
+        }
         schemas
     }
 
@@ -65,7 +148,7 @@ impl ToolRegistry {
             ),
             tool_def(
                 "desktop_target_bind",
-                "绑定查询返回的应用/窗口；本地必要时启动、还原并激活。多个窗口返回候选供选择。成功返回 target_token，后续观察传入此令牌。不接受脚本或任意启动路径。",
+                "绑定查询返回的应用/窗口；必要时启动。auto/background 不主动激活已有窗口，foreground 可还原并激活。多个窗口返回候选供选择。成功返回 target_token，后续观察传入此令牌。不接受脚本或任意启动路径。",
                 json_props! {
                     "app_ref" => obj!("type"="string"),
                     "window_ref" => obj!("type"="string","description"="多窗口时选择列表返回的引用")
@@ -107,7 +190,7 @@ impl ToolRegistry {
             ),
             tool_def(
                 "desktop_semantic_action",
-                "执行已保存工作流中的稳定 UIA 语义动作。运行时重新读取当前前台应用并解析 locator，不依赖临时 observation_token、candidate_id、坐标、选择器或脚本；SetValue 可附带 value。",
+                "执行已保存工作流中的稳定 UIA/Accessibility 语义动作。运行时重新绑定目标窗口并解析 locator，不依赖临时 observation_token、candidate_id、坐标、选择器或脚本；文本和范围值通过 value 本地传入。",
                 json_props! {
                     "locator" => obj!(
                         "type"="object",
@@ -173,19 +256,23 @@ impl ToolRegistry {
                     "y" => obj!("type"="integer","description"="旧接口：屏幕绝对 Y，不能直接传图片内 center"),
                     "button" => obj!("type"="string","enum"=["left","right","middle"],"description"="Mouse button (click)"),
                     "clicks" => obj!("type"="integer","default"=1,"description"="Number of clicks (click)"),
-                    "direction" => obj!("type"="string","enum"=["up","down"],"description"="Scroll direction (scroll)"),
+                    "direction" => obj!("type"="string","enum"=["up","down","left","right"],"description"="Scroll direction (scroll)"),
                     "amount" => obj!("type"="integer","default"=3,"description"="Scroll ticks (scroll)")
                 },
                 &["action"]),
             tool_def("desktop_mouse_drag",
                 "拖拽鼠标起点→终点（验证码滑块等）。macOS 需辅助功能授权",
                 json_props! {
+                    "start_capture_id" => obj!("type"="string","description"="起点本地捕获，与 start_element_id 成对；不与裸坐标混用"),
+                    "start_element_id" => obj!("type"="integer","minimum"=0),
+                    "end_capture_id" => obj!("type"="string","description"="终点本地捕获，与 end_element_id 成对"),
+                    "end_element_id" => obj!("type"="integer","minimum"=0),
                     "start_x" => obj!("type"="integer","description"="Start X coordinate"),
                     "start_y" => obj!("type"="integer","description"="Start Y coordinate"),
                     "end_x" => obj!("type"="integer","description"="End X coordinate"),
                     "end_y" => obj!("type"="integer","description"="End Y coordinate")
                 },
-                &["start_x","start_y","end_x","end_y"]),
+                &[]),
             tool_def("desktop_input",
                 "向窗口输入文本或快捷键。保存工作流优先传成功语义动作的 target_locator，由本地重定位、激活并验证目标；不固化 hwnd。输入文本前先聚焦输入控件；快捷键可直接定位目标窗口。旧 hwnd 接口保留。",
                 json_props! {

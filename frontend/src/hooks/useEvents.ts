@@ -860,6 +860,24 @@ export function useEvents(h: EventHandlers) {
           break
         }
         case 'security_check':
+          if (event.tool === 'desktop_action_approval') {
+            let details: { title?: string; content?: string } = {}
+            try {
+              const parsed = JSON.parse(event.params)
+              if (parsed && typeof parsed === 'object') details = parsed
+            } catch {
+              // The trusted host normally sends a compact display payload.
+            }
+            h.setApprovalState({
+              open: true,
+              kind: 'desktop_action',
+              title: typeof details.title === 'string' ? details.title : event.reason,
+              content: typeof details.content === 'string' ? details.content : event.reason,
+              actionId: event.action_id,
+              tenetCount: 0,
+            })
+            break
+          }
           h.setSecurity({
             actionId: event.action_id,
             tool: event.tool,
@@ -887,6 +905,9 @@ export function useEvents(h: EventHandlers) {
         case 'prompt_timeout':
           // 后端等待超时/取消 → 清除对应 action_id 的安全弹窗与输入请求弹窗
           h.setSecurity(prev => (prev && prev.actionId === event.action_id ? null : prev))
+          h.setApprovalState(prev =>
+            prev.actionId === event.action_id ? { ...prev, open: false } : prev,
+          )
           if (
             userInputRequestRef.current &&
             userInputRequestRef.current.actionId === event.action_id

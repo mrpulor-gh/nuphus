@@ -1,6 +1,6 @@
 //! PendingApprovalStore — pending approval item storage
 //!
-//! Global static HashMap<String, PendingApproval>, key = action_id (UUID).
+//! Session-scoped HashMap<String, PendingApproval>, key = action_id (UUID).
 //! TTL 10 minutes auto-expiry to prevent accumulation.
 //!
 //! Design principles:
@@ -65,12 +65,43 @@ pub fn add(
 
 /// Get pending approval item (without removing)
 pub fn get(signals: &crate::state::SharedSignals, action_id: &str) -> Option<PendingApproval> {
-    let state = crate::state::SignalState::read(signals);
+    let mut state = crate::state::SignalState::write(signals);
+    cleanup_expired(&mut state.security.pending_approvals);
     state
         .security
         .pending_approvals
         .get(action_id)
         .map(|(p, _)| p.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_does_not_return_expired_approval() {
+        let signals = crate::state::new_shared_signals();
+        let id = add(&signals, "tenet", "title", "content", serde_json::json!({}));
+        crate::state::SignalState::write(&signals)
+            .security
+            .pending_approvals
+            .get_mut(&id)
+            .unwrap()
+            .1 = Instant::now() - APPROVAL_TTL;
+        assert!(get(&signals, &id).is_none());
+        assert!(remove(&signals, &id).is_none());
+    }
+
+    #[test]
+    fn remove_is_single_use_and_scoped_to_signals() {
+        let signals = crate::state::new_shared_signals();
+        let other = crate::state::new_shared_signals();
+        let id = add(&signals, "tenet", "title", "content", serde_json::json!({}));
+        assert!(get(&other, &id).is_none());
+        assert!(get(&signals, &id).is_some());
+        assert!(remove(&signals, &id).is_some());
+        assert!(remove(&signals, &id).is_none());
+    }
 }
 
 /// Remove and return pending approval item (called on approve/reject)

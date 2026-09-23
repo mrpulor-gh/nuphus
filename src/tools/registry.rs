@@ -340,6 +340,15 @@ impl ToolRegistry {
                 "desktop_screenshot" | "desktop_window_screenshot" | "desktop_perceive"
             ) || (tool_name == "desktop_mouse"
                 && (params.get("capture_id").is_some() || params.get("element_id").is_some()))
+                || (tool_name == "desktop_mouse_drag"
+                    && [
+                        "start_capture_id",
+                        "start_element_id",
+                        "end_capture_id",
+                        "end_element_id",
+                    ]
+                    .iter()
+                    .any(|key| params.get(*key).is_some()))
                 || (tool_name == "desktop_input" && params.get("target_locator").is_some())
             {
                 let _lease = self.acquire_semantic_desktop_lease()?;
@@ -757,6 +766,7 @@ impl ToolRegistry {
                 | "desktop_target_bind"
                 | "desktop_semantic_execute"
                 | "desktop_semantic_action"
+                | "desktop_verify_state"
                 | "desktop_agent_step"
         )
     }

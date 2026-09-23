@@ -406,6 +406,33 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
           </IconButton>
         ))}
 
+        <IconButton
+          variant="desktop-toolbar"
+          label="登记应用"
+          disabled={loading}
+          title="通过本地选择器登记未被自动发现的桌面应用；不会立即启动应用"
+          onClick={async () => {
+            setLoading(true)
+            try {
+              const registered = await tauriInvoke<{ name: string } | null>(
+                'desktop_register_application',
+              )
+              if (registered)
+                setResult({
+                  type: 'info',
+                  title: '应用已登记',
+                  content: `${registered.name}\n现在可在工作流中按应用名称选择，不需要提供启动脚本。`,
+                })
+            } catch (error) {
+              setResult({ type: 'info', title: '应用登记失败', content: String(error) })
+            } finally {
+              setLoading(false)
+            }
+          }}
+        >
+          登记应用
+        </IconButton>
+
         {/* Separator */}
         <div className="desktop-toolbar-divider" />
 
