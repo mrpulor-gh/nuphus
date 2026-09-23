@@ -1461,7 +1461,11 @@ vision_provider = "custom"
     fn test_resolve_capability_provider_exact_and_scan() {
         let registry = registry_with(vec![
             // Segment-order first: declares NO vision.
-            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            provider_with_caps(
+                "deepseek",
+                KnownProvider::DeepSeek,
+                &[("m", false, false, None)],
+            ),
             // Later segment: declares vision.
             provider_with_caps("custom", KnownProvider::Custom, &[("m", true, false, None)]),
         ]);
@@ -1508,7 +1512,11 @@ vision_provider = "custom"
     fn test_get_max_output_tokens_provider_aware() {
         let registry = registry_with(vec![
             // Segment-order first: no max_tokens.
-            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            provider_with_caps(
+                "deepseek",
+                KnownProvider::DeepSeek,
+                &[("m", false, false, None)],
+            ),
             // Later segment: declares max_tokens.
             provider_with_caps(
                 "custom",

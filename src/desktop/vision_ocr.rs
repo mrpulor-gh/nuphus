@@ -129,10 +129,13 @@ pub async fn vision_ocr_data_url(data_url: &str, prompt: Option<&str>) -> Result
     };
 
     // temperature 不传：部分模型（如 Kimi 推理系）强制 temperature=1，传 0.0 会被 400 拒绝
-    let mut request = MessageRequest::new(&model_entry.id, vec![serde_json::json!({
-        "role": "user",
-        "content": content,
-    })]);
+    let mut request = MessageRequest::new(
+        &model_entry.id,
+        vec![serde_json::json!({
+            "role": "user",
+            "content": content,
+        })],
+    );
     // max_tokens：仅显式配置时下发（未配置则由传输层回退链决定，见模块文档）
     if let Some(max_tokens) = model_entry.max_tokens {
         request = request.with_max_tokens(max_tokens);
@@ -287,10 +290,7 @@ id = "shared-model"
             StreamEvent::TextDelta("部分".to_string()),
             StreamEvent::Error("HTTP 400: bad request".to_string()),
         ];
-        assert_eq!(
-            events_to_text(events).unwrap_err(),
-            "HTTP 400: bad request"
-        );
+        assert_eq!(events_to_text(events).unwrap_err(), "HTTP 400: bad request");
     }
 
     #[test]

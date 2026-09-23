@@ -154,8 +154,7 @@ impl ClientFactory {
         }
         match registry.find_model_candidates(&registry.model).len() {
             1 => {
-                let provider = registry
-                    .find_model_candidates(&registry.model)[0]
+                let provider = registry.find_model_candidates(&registry.model)[0]
                     .0
                     .name
                     .clone();
