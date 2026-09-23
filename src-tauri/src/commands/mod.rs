@@ -23,6 +23,7 @@ pub mod skill;
 pub mod tenet;
 pub mod toolbar;
 pub mod tools;
+pub mod user_image;
 pub mod user_input;
 pub mod workflow;
 
@@ -48,5 +49,6 @@ pub use self::skill::*;
 pub use self::tenet::*;
 pub use self::toolbar::*;
 pub use self::tools::*;
+pub use self::user_image::*;
 pub use self::user_input::*;
 pub use self::workflow::*;

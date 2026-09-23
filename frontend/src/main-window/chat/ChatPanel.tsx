@@ -16,6 +16,13 @@ import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
 import { setIslandAnchor } from '../../ui/islandChannel'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import {
+  loadStoredImage,
+  USER_IMAGES_CHANGED_EVENT,
+  SKIN_BG_KEY,
+  USER_AVATAR_KEY,
+  NUPHUS_AVATAR_KEY,
+} from '../lib/userImage'
 
 /// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
 function toAssetUrl(path: string | null | undefined): string | null {
@@ -557,6 +564,24 @@ export function ChatPanel({
   }, [contextLimit])
   const [modelLabel, setModelLabel] = useState('')
   const [relation, setRelation] = useState(loadRelation)
+  // 皮肤背景 / 头像：图片落盘后 localStorage 只存文件名，此处载入 dataURL 供渲染。
+  // 主题页的保存 / 清除经 USER_IMAGES_CHANGED_EVENT 通知本组件重载。
+  const [userImages, setUserImages] = useState({ user: '', nuphus: '', skin: '' })
+  useEffect(() => {
+    const reload = () => {
+      void (async () => {
+        const [user, nuphus, skin] = await Promise.all([
+          loadStoredImage(USER_AVATAR_KEY),
+          loadStoredImage(NUPHUS_AVATAR_KEY),
+          loadStoredImage(SKIN_BG_KEY),
+        ])
+        setUserImages({ user, nuphus, skin })
+      })()
+    }
+    reload()
+    window.addEventListener(USER_IMAGES_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(USER_IMAGES_CHANGED_EVENT, reload)
+  }, [])
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
@@ -1617,11 +1642,11 @@ export function ChatPanel({
                       )
                     }
                     const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1
-                    // Avatar settings
+                    // Avatar settings（userImages 由 state 提供：文件名→dataURL 已载入）
                     const showAvatar = localStorage.getItem('nuphus_show_avatar') === 'true'
-                    const userAvatar = localStorage.getItem('nuphus_user_avatar') || ''
-                    const nuphusAvatar = localStorage.getItem('nuphus_nuphus_avatar') || ''
-                    const skinBg = localStorage.getItem('nuphus_skin_bg') || ''
+                    const userAvatar = userImages.user
+                    const nuphusAvatar = userImages.nuphus
+                    const skinBg = userImages.skin
 
                     // Default avatar — NuphusLogo (窗口 N)
                     const AvatarComp =

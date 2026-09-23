@@ -20,6 +20,16 @@ import { NuphusLogo } from '../../ui/NuphusLogo'
 import { Button } from '../../ui/Button'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { setLanguage as apiSetLanguage, getLanguage } from '../lib/api'
+import {
+  deleteStoredImage,
+  loadStoredImage,
+  migrateLegacyImage,
+  saveStoredImage,
+  SKIN_BG_KEY,
+  USER_AVATAR_KEY,
+  NUPHUS_AVATAR_KEY,
+  type UserImageKind,
+} from '../lib/userImage'
 import { useLanguage } from '../../locales'
 import '../../styles/themes.css'
 
@@ -48,10 +58,7 @@ const TOKEN_LABELS: Record<CoreTokenKey, string> = {
 const EMPTY_OVERRIDES: Record<string, string> = {}
 
 const LS_LANG = 'nuphus_language'
-const LS_SKIN = 'nuphus_skin_bg'
 const LS_SHOW_AVATAR = 'nuphus_show_avatar'
-const LS_USER_AVATAR = 'nuphus_user_avatar'
-const LS_NUPHUS_AVATAR = 'nuphus_nuphus_avatar'
 
 type ToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
 
@@ -501,9 +508,28 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
         setLanguage(raw.startsWith('zh') ? 'zh' : 'en')
       })
     setShowAvatar(localStorage.getItem(LS_SHOW_AVATAR) === 'true')
-    setSkinBg(localStorage.getItem(LS_SKIN) || '')
-    setUserAvatar(localStorage.getItem(LS_USER_AVATAR) || '')
-    setNuphusAvatar(localStorage.getItem(LS_NUPHUS_AVATAR) || '')
+    // 皮肤/头像现为文件名：异步读回 dataURL；历史 dataURL 值就地迁移为文件
+    void (async () => {
+      const [skinUrl, skinMigrated] = await Promise.all([
+        loadStoredImage(SKIN_BG_KEY),
+        migrateLegacyImage('skin', SKIN_BG_KEY),
+      ])
+      const skin = skinMigrated || skinUrl
+      if (skin) {
+        setSkinBg(skin)
+        document.documentElement.style.setProperty('--app-skin-bg', `url(${skin})`)
+      }
+      const [userAvatar, userMigrated] = await Promise.all([
+        loadStoredImage(USER_AVATAR_KEY),
+        migrateLegacyImage('avatar', USER_AVATAR_KEY),
+      ])
+      if (userMigrated || userAvatar) setUserAvatar(userMigrated || userAvatar)
+      const [nuphusAvatar, nuphusMigrated] = await Promise.all([
+        loadStoredImage(NUPHUS_AVATAR_KEY),
+        migrateLegacyImage('nuphus-avatar', NUPHUS_AVATAR_KEY),
+      ])
+      if (nuphusMigrated || nuphusAvatar) setNuphusAvatar(nuphusMigrated || nuphusAvatar)
+    })()
   }, [])
 
   const handleLang = (id: string) => {
@@ -521,11 +547,17 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
       const file = (e.target as HTMLInputElement).files?.[0]
       if (file) {
         const reader = new FileReader()
-        reader.onload = ev => {
+        reader.onload = async ev => {
           const dataUrl = ev.target?.result as string
-          setSkinBg(dataUrl)
-          localStorage.setItem(LS_SKIN, dataUrl)
-          document.documentElement.style.setProperty('--app-skin-bg', `url(${dataUrl})`)
+          try {
+            // 图片落盘（不受 localStorage 配额限制），localStorage 只留文件名
+            const url = await saveStoredImage('skin', SKIN_BG_KEY, dataUrl)
+            setSkinBg(url)
+            document.documentElement.style.setProperty('--app-skin-bg', `url(${url})`)
+            showToast(t('themes.bgApplied'), 'success')
+          } catch {
+            showToast(t('themes.bgSaveFailed'), 'error')
+          }
         }
         reader.readAsDataURL(file)
       }
@@ -534,25 +566,32 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   }
 
   const clearSkin = () => {
-    setSkinBg('')
-    localStorage.removeItem(LS_SKIN)
-    document.documentElement.style.removeProperty('--app-skin-bg')
+    void deleteStoredImage(SKIN_BG_KEY).then(() => {
+      setSkinBg('')
+      document.documentElement.style.removeProperty('--app-skin-bg')
+    })
   }
 
   const handleAvatarSelect = (type: 'user' | 'nuphus') => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'image/*'
-    input.onchange = e => {
+    input.onchange = async e => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (file) {
         const reader = new FileReader()
-        reader.onload = ev => {
+        reader.onload = async ev => {
           const dataUrl = ev.target?.result as string
-          const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
-          const setter = type === 'user' ? setUserAvatar : setNuphusAvatar
-          setter(dataUrl)
-          localStorage.setItem(key, dataUrl)
+          const key = type === 'user' ? USER_AVATAR_KEY : NUPHUS_AVATAR_KEY
+          const kind: UserImageKind = type === 'user' ? 'avatar' : 'nuphus-avatar'
+          try {
+            const url = await saveStoredImage(kind, key, dataUrl)
+            if (type === 'user') setUserAvatar(url)
+            else setNuphusAvatar(url)
+            showToast(t('themes.avatarApplied'), 'success')
+          } catch {
+            showToast(t('themes.bgSaveFailed'), 'error')
+          }
         }
         reader.readAsDataURL(file)
       }
@@ -561,9 +600,11 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   }
 
   const clearAvatar = (type: 'user' | 'nuphus') => {
-    const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
-    ;(type === 'user' ? setUserAvatar : setNuphusAvatar)('')
-    localStorage.removeItem(key)
+    const key = type === 'user' ? USER_AVATAR_KEY : NUPHUS_AVATAR_KEY
+    void deleteStoredImage(key).then(() => {
+      if (type === 'user') setUserAvatar('')
+      else setNuphusAvatar('')
+    })
   }
 
   const handleToggleAvatar = () => {
@@ -788,8 +829,8 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
       {/* ── 皮肤背景 ── */}
       <Section title={t('themes.skinBg')}>
         {skinBg && (
-          /* 预览图为用户上传数据（动态值），保留内联 */
-          <div className="skin-preview" style={{ backgroundImage: skinBg }}>
+          /* 预览图为用户上传数据（动态值），保留内联；url() 包裹缺失会让 computed 值为 none */
+          <div className="skin-preview" style={{ backgroundImage: `url(${skinBg})` }}>
             <div className="skin-preview-overlay">
               <span className="skin-preview-badge">{t('themes.applied')}</span>
             </div>
