@@ -12,6 +12,7 @@
 pub mod capabilities;
 pub mod handoff;
 pub mod jev;
+pub mod laya;
 pub mod llm;
 pub mod oauth;
 pub mod preferences;
@@ -25,6 +26,7 @@ pub mod toml_ops;
 pub use self::capabilities::*;
 pub use self::handoff::*;
 pub use self::jev::*;
+pub use self::laya::*;
 pub use self::llm::*;
 pub use self::oauth::*;
 pub use self::preferences::*;

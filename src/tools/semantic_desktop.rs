@@ -7,8 +7,8 @@ use super::registry::ToolRegistry;
 use crate::desktop_automation::{
     ActionCandidate, ActionClass, CandidateBuilder, CandidateKind, ComputerExecutor,
     ComputerObserver, DecisionInput, DecisionProvider, ExecutionGrant, ExecutionInput, JevClient,
-    LocalPolicy, NativeAction, Observation, ObservationScope, Policy, PolicyDecision, RecentAction,
-    SemanticLocator, Verification,
+    LayaClient, LayaConfig, LocalPolicy, NativeAction, Observation, ObservationScope, Policy,
+    PolicyDecision, RecentAction, SemanticLocator, Verification,
 };
 use crate::ToolResult;
 use serde_json::json;
@@ -554,29 +554,58 @@ async fn execute_jev_step(
     let space = backend
         .observe_scoped(goal, Some(goal_key.clone()), scope, launch_ref)
         .await?;
-    let mut config = crate::config::load_registry()
-        .map_err(|error| format!("读取增强判断模型配置失败: {error}"))?
-        .jev;
-    if config.api_key.trim().is_empty() {
-        return Ok(json!({
-            "status": "needs_primary_decision",
-            "reason": "增强判断模型未配置，当前由主模型从同一候选动作空间选择；效果可能较差并消耗更多 Token",
-            "action_space": action_space_json(&space),
-        }));
-    }
-    let fallback_to_primary_model = config.fallback_to_primary_model;
-    config.enabled = true;
-    let client = JevClient::from_config(config).map_err(|error| error.to_string())?;
+    // Jev and Laya are separate models sharing a wire protocol; the registry
+    // decides which one is configured. Neither configured → stay on the primary
+    // model, unchanged from before Laya existed.
+    let registry = crate::config::load_registry()
+        .map_err(|error| format!("读取增强判断模型配置失败: {error}"))?;
     let decision_input = DecisionInput {
         goal: goal.to_string(),
         observation: space.observation.clone(),
         candidates: decision_candidates(&space),
         recent_actions,
     };
+
+    let (client, provider_name, fallback_to_primary_model): (
+        std::sync::Arc<dyn DecisionProvider>,
+        &'static str,
+        bool,
+    ) = match registry.decision_backend() {
+        Some(crate::config::DecisionBackend::Jev) => {
+            let mut config = registry.jev.clone();
+            let fallback_to_primary_model = config.fallback_to_primary_model;
+            config.enabled = true;
+            let client = JevClient::from_config(config).map_err(|error| error.to_string())?;
+            (
+                std::sync::Arc::new(client),
+                "jev",
+                fallback_to_primary_model,
+            )
+        }
+        Some(crate::config::DecisionBackend::Laya) => {
+            let config = registry.laya.clone();
+            let fallback_to_primary_model = config.fallback_to_primary_model;
+            let client = LayaClient::from_config(to_laya_config(config))
+                .map_err(|error| error.to_string())?;
+            (
+                std::sync::Arc::new(client),
+                "laya",
+                fallback_to_primary_model,
+            )
+        }
+        None => {
+            return Ok(json!({
+                "status": "needs_primary_decision",
+                "reason": "增强判断模型未配置，当前由主模型从同一候选动作空间选择；效果可能较差并消耗更多 Token",
+                "action_space": action_space_json(&space),
+            }));
+        }
+    };
+
     let decision = match client.choose(decision_input).await {
         Ok(decision) => decision,
         Err(error) if fallback_to_primary_model => {
-            tracing::warn!(error = %error, "Jev semantic choice failed; falling back to primary model");
+            tracing::warn!(provider = provider_name, error = %error, "Enhanced semantic choice failed; falling back to primary model");
             return Ok(json!({
                 "status": "needs_primary_decision",
                 "reason": "增强判断模型暂时不可用，已回退当前主模型选择；详细网络或协议错误仅记录在本地诊断中",
@@ -585,13 +614,28 @@ async fn execute_jev_step(
         }
         Err(error) => return Err(format!("增强判断模型决策失败: {error}")),
     };
-    apply_enhanced_decision(backend, &space, decision).await
+    apply_enhanced_decision(backend, &space, decision, provider_name).await
+}
+
+/// Bridge the registry's `LayaConfig` into the provider's own config type.
+///
+/// `LayaClient` deliberately does not depend on `crate::config`, so that the
+/// provider stays a plain decision backend testable without a registry.
+fn to_laya_config(config: crate::config::LayaConfig) -> LayaConfig {
+    LayaConfig {
+        base_url: config.base_url,
+        model: config.model,
+        timeout_ms: config.timeout_ms,
+        max_retries: config.max_retries,
+        api_key: config.api_key,
+    }
 }
 
 async fn apply_enhanced_decision(
     backend: &SemanticDesktopBackend,
     space: &ActionSpace,
     decision: crate::desktop_automation::Decision,
+    provider_name: &str,
 ) -> Result<serde_json::Value, String> {
     validate_space_token(space, &space.token)?;
     if decision.candidate_id == PRIMARY_HANDOFF_ID {
@@ -599,7 +643,7 @@ async fn apply_enhanced_decision(
             "status": "needs_primary_decision",
             "reason": "增强判断模型请求主模型结合目标与界面上下文继续判断；无需再次调用增强模型或询问用户",
             "action_space": action_space_json(space),
-            "decision": {"provider": "jev", "model": decision.actual_model,
+            "decision": {"provider": provider_name, "model": decision.actual_model,
                 "confidence": decision.confidence, "usage": decision.usage},
         }));
     }
@@ -616,7 +660,7 @@ async fn apply_enhanced_decision(
             "reason": "增强判断模型只提出任务可能已完成；请由当前主模型结合业务目标确认是否结束，不会把该判断直接当作本地完成事实",
             "candidate_id": candidate.id,
             "decision": {
-                "provider": "jev",
+                "provider": provider_name,
                 "model": decision.actual_model,
                 "confidence": decision.confidence,
                 "usage": decision.usage,
@@ -634,7 +678,7 @@ async fn apply_enhanced_decision(
             "candidate_id": candidate.id,
             "description": candidate.public_description,
             "decision": {
-                "provider": "jev",
+                "provider": provider_name,
                 "model": decision.actual_model,
                 "confidence": decision.confidence,
                 "usage": decision.usage,
@@ -647,7 +691,7 @@ async fn apply_enhanced_decision(
         &candidate,
         &ExecutionInput::default(),
         Some(json!({
-            "provider": "jev",
+            "provider": provider_name,
             "model": decision.actual_model,
             "confidence": decision.confidence,
             "usage": decision.usage,

@@ -39,7 +39,7 @@ describe('JevSettings', () => {
     expect(keyInput).toHaveValue('')
     expect(keyInput).toHaveAttribute('type', 'password')
     expect(
-      screen.getByText('已配置', { selector: '.jev-settings-summary strong' }),
+      screen.getByText('已配置', { selector: '.decision-settings-summary strong' }),
     ).toBeInTheDocument()
   })
 

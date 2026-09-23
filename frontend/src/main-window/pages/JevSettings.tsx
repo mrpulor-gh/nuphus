@@ -13,6 +13,7 @@ import {
   type JevConnectionStatus,
 } from '../lib/api'
 import { publishWorkflowEnhancedMode } from '../workflow-canvas/enhancedModeEvents'
+import { LayaBackendPanel } from './LayaBackendPanel'
 
 const DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 const DEFAULT_MODEL = 'jev-latest'
@@ -46,6 +47,7 @@ async function refreshEnhancedModeStatus(): Promise<void> {
 }
 
 export function JevSettings() {
+  const [backend, setBackend] = useState<'jev' | 'laya'>('jev')
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [apiKey, setApiKey] = useState('')
@@ -191,179 +193,212 @@ export function JevSettings() {
         title="增强判断模型"
         description="用于在工作流开发中从有限候选动作里进行结构化判断，不替代聊天模型，也不能直接点击坐标或生成任意脚本。"
       >
-        <div className="jev-settings-summary">
-          <span className={`jev-settings-dot${hasKey ? ' is-ready' : ''}`} />
-          <div>
-            <strong>{hasKey ? '已配置' : '未配置'}</strong>
-            <p>
-              开启增强模式后，只会发送经过裁剪和脱敏的候选动作元数据；完整截图和 API Key
-              不会发送给增强判断模型。
-            </p>
-          </div>
+        <div className="decision-backend-tabs" role="tablist" aria-label="决策后端">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={backend === 'jev'}
+            className={['decision-backend-tab', backend === 'jev' ? 'is-active' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setBackend('jev')}
+          >
+            Jev（云端）
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={backend === 'laya'}
+            className={['decision-backend-tab', backend === 'laya' ? 'is-active' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setBackend('laya')}
+          >
+            Laya（自托管）
+          </button>
         </div>
 
-        <FormRow
-          stacked
-          label="接口地址"
-          hint="TypeSafe System One API 地址；可替换为兼容的企业网关地址。"
-          control={
-            <input
-              className="compact-input"
-              value={baseUrl}
-              disabled={loading}
-              onChange={event => setBaseUrl(event.target.value)}
-              placeholder={DEFAULT_BASE_URL}
-              aria-label="增强判断模型接口地址"
-            />
-          }
-        />
+        {backend === 'laya' ? (
+          <LayaBackendPanel />
+        ) : (
+          <>
+            <div className="decision-settings-summary">
+              <span className={`decision-settings-dot${hasKey ? ' is-ready' : ''}`} />
+              <div>
+                <strong>{hasKey ? '已配置' : '未配置'}</strong>
+                <p>
+                  开启增强模式后，只会发送经过裁剪和脱敏的候选动作元数据；完整截图和 API Key
+                  不会发送给增强判断模型。
+                </p>
+              </div>
+            </div>
 
-        <FormRow
-          stacked
-          label="模型"
-          hint="建议开发阶段使用 jev-latest；生产环境可固定经过评测的具体版本。"
-          control={
-            <input
-              className="compact-input"
-              value={model}
-              disabled={loading}
-              onChange={event => setModel(event.target.value)}
-              placeholder={DEFAULT_MODEL}
-              aria-label="增强判断模型"
-            />
-          }
-        />
-
-        <FormRow
-          stacked
-          label={
-            <span className="models-field-label">
-              <IconPlug size={12} className="icon-prefix" /> API Key
-              {hasKey && <span className="model-badge label-badge">已配置</span>}
-            </span>
-          }
-          hint="密钥仅由本机后端安全保存；页面只读取是否已配置，不会回显原文。"
-          control={
-            <div className="models-key-row">
-              <div className="models-key-field">
+            <FormRow
+              stacked
+              label="接口地址"
+              hint="TypeSafe System One API 地址；可替换为兼容的企业网关地址。"
+              control={
                 <input
                   className="compact-input"
-                  type={showKey ? 'text' : 'password'}
-                  value={apiKey}
+                  value={baseUrl}
                   disabled={loading}
-                  onChange={event => setApiKey(event.target.value)}
-                  placeholder={hasKey ? '已配置；输入新密钥可覆盖' : '输入 API Key'}
-                  aria-label="增强判断模型 API Key"
+                  onChange={event => setBaseUrl(event.target.value)}
+                  placeholder={DEFAULT_BASE_URL}
+                  aria-label="增强判断模型接口地址"
                 />
-                <button
-                  type="button"
-                  className="models-key-eye"
-                  onClick={() => setShowKey(value => !value)}
-                  tabIndex={-1}
-                  title={showKey ? '隐藏' : '显示'}
-                  aria-label={showKey ? '隐藏增强判断模型 API Key' : '显示增强判断模型 API Key'}
+              }
+            />
+
+            <FormRow
+              stacked
+              label="模型"
+              hint="建议开发阶段使用 jev-latest；生产环境可固定经过评测的具体版本。"
+              control={
+                <input
+                  className="compact-input"
+                  value={model}
+                  disabled={loading}
+                  onChange={event => setModel(event.target.value)}
+                  placeholder={DEFAULT_MODEL}
+                  aria-label="增强判断模型"
+                />
+              }
+            />
+
+            <FormRow
+              stacked
+              label={
+                <span className="models-field-label">
+                  <IconPlug size={12} className="icon-prefix" /> API Key
+                  {hasKey && <span className="model-badge label-badge">已配置</span>}
+                </span>
+              }
+              hint="密钥仅由本机后端安全保存；页面只读取是否已配置，不会回显原文。"
+              control={
+                <div className="models-key-row">
+                  <div className="models-key-field">
+                    <input
+                      className="compact-input"
+                      type={showKey ? 'text' : 'password'}
+                      value={apiKey}
+                      disabled={loading}
+                      onChange={event => setApiKey(event.target.value)}
+                      placeholder={hasKey ? '已配置；输入新密钥可覆盖' : '输入 API Key'}
+                      aria-label="增强判断模型 API Key"
+                    />
+                    <button
+                      type="button"
+                      className="models-key-eye"
+                      onClick={() => setShowKey(value => !value)}
+                      tabIndex={-1}
+                      title={showKey ? '隐藏' : '显示'}
+                      aria-label={showKey ? '隐藏增强判断模型 API Key' : '显示增强判断模型 API Key'}
+                    >
+                      {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                    </button>
+                  </div>
+                  {hasKey && (
+                    <button
+                      type="button"
+                      className="models-key-clear"
+                      onClick={() => setShowClearConfirm(true)}
+                      disabled={clearing}
+                      title="清除已保存的增强判断模型 API Key"
+                      aria-label="清除已保存的增强判断模型 API Key"
+                    >
+                      <IconBrushCleaning size={13} />
+                    </button>
+                  )}
+                </div>
+              }
+            />
+
+            <div className="decision-policy-grid">
+              <FormRow
+                stacked
+                label="请求超时（毫秒）"
+                hint="单次请求的最长等待时间，范围 100–120000。"
+                control={
+                  <input
+                    className="compact-input"
+                    type="number"
+                    min={100}
+                    max={120000}
+                    step={1000}
+                    value={timeoutMs}
+                    disabled={loading}
+                    onChange={event => setTimeoutMs(event.target.value)}
+                    aria-label="增强判断模型请求超时"
+                  />
+                }
+              />
+
+              <FormRow
+                stacked
+                label="最大重试次数"
+                hint="只对可重试的临时错误生效，范围 0–10。"
+                control={
+                  <input
+                    className="compact-input"
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={maxRetries}
+                    disabled={loading}
+                    onChange={event => setMaxRetries(event.target.value)}
+                    aria-label="增强判断模型最大重试次数"
+                  />
+                }
+              />
+            </div>
+
+            <FormRow
+              label="增强判断模型不可用时回退主模型"
+              hint="服务请求失败时，由主模型继续从同一有限候选动作空间选择。"
+              control={
+                <label className="decision-fallback-toggle">
+                  <input
+                    type="checkbox"
+                    checked={fallbackToPrimaryModel}
+                    disabled={loading}
+                    onChange={event => setFallbackToPrimaryModel(event.target.checked)}
+                    aria-label="回退到主模型"
+                  />
+                  <span>{fallbackToPrimaryModel ? '已启用' : '已关闭'}</span>
+                </label>
+              }
+            />
+
+            <div className="decision-settings-actions">
+              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>
+                保存配置
+              </Button>
+              <Button size="sm" loading={testing} onClick={() => void test()}>
+                测试连接
+              </Button>
+              {feedback && (
+                <span
+                  role="status"
+                  className={
+                    feedback.ok
+                      ? 'decision-settings-feedback is-ok'
+                      : 'decision-settings-feedback is-error'
+                  }
                 >
-                  {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                </button>
-              </div>
-              {hasKey && (
-                <button
-                  type="button"
-                  className="models-key-clear"
-                  onClick={() => setShowClearConfirm(true)}
-                  disabled={clearing}
-                  title="清除已保存的增强判断模型 API Key"
-                  aria-label="清除已保存的增强判断模型 API Key"
-                >
-                  <IconBrushCleaning size={13} />
-                </button>
+                  {feedback.message}
+                </span>
               )}
             </div>
-          }
-        />
-
-        <div className="jev-policy-grid">
-          <FormRow
-            stacked
-            label="请求超时（毫秒）"
-            hint="单次请求的最长等待时间，范围 100–120000。"
-            control={
-              <input
-                className="compact-input"
-                type="number"
-                min={100}
-                max={120000}
-                step={1000}
-                value={timeoutMs}
-                disabled={loading}
-                onChange={event => setTimeoutMs(event.target.value)}
-                aria-label="增强判断模型请求超时"
-              />
-            }
-          />
-
-          <FormRow
-            stacked
-            label="最大重试次数"
-            hint="只对可重试的临时错误生效，范围 0–10。"
-            control={
-              <input
-                className="compact-input"
-                type="number"
-                min={0}
-                max={10}
-                step={1}
-                value={maxRetries}
-                disabled={loading}
-                onChange={event => setMaxRetries(event.target.value)}
-                aria-label="增强判断模型最大重试次数"
-              />
-            }
-          />
-        </div>
-
-        <FormRow
-          label="增强判断模型不可用时回退主模型"
-          hint="服务请求失败时，由主模型继续从同一有限候选动作空间选择。"
-          control={
-            <label className="jev-fallback-toggle">
-              <input
-                type="checkbox"
-                checked={fallbackToPrimaryModel}
-                disabled={loading}
-                onChange={event => setFallbackToPrimaryModel(event.target.checked)}
-                aria-label="回退到主模型"
-              />
-              <span>{fallbackToPrimaryModel ? '已启用' : '已关闭'}</span>
-            </label>
-          }
-        />
-
-        <div className="jev-settings-actions">
-          <Button variant="primary" size="sm" loading={saving} onClick={() => void save()}>
-            保存配置
-          </Button>
-          <Button size="sm" loading={testing} onClick={() => void test()}>
-            测试连接
-          </Button>
-          {feedback && (
-            <span
-              role="status"
-              className={
-                feedback.ok ? 'jev-settings-feedback is-ok' : 'jev-settings-feedback is-error'
-              }
-            >
-              {feedback.message}
-            </span>
-          )}
-        </div>
+          </>
+        )}
       </Section>
 
       <Section
         title="增强模式边界"
         description="无论增强判断模型是否可用，下列执行约束都由本地代码保证。"
       >
-        <ul className="jev-settings-boundaries">
+        <ul className="decision-settings-boundaries">
           <li>增强判断模型只能从本地生成的候选动作中选择，不能自由生成坐标、脚本或选择器。</li>
           <li>风险、权限、新鲜度检查、实际执行与结果验证都留在本机。</li>
         </ul>
