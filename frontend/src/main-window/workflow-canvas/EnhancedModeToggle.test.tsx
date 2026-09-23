@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EnhancedModeToggle } from './EnhancedModeToggle'
 import { getWorkflowEnhancedMode, setWorkflowEnhancedMode } from '../lib/api'
+import { requestWorkflowEnhancedModeRefresh } from './enhancedModeEvents'
 
 vi.mock('../lib/api', () => ({
   getWorkflowEnhancedMode: vi.fn(),
@@ -113,5 +114,33 @@ describe('EnhancedModeToggle', () => {
       expect(button).toHaveAttribute('aria-pressed', 'true')
     }
     expect(setWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+  })
+
+  it('会话变化后重新读取后端权威状态', async () => {
+    vi.mocked(getWorkflowEnhancedMode)
+      .mockResolvedValueOnce({
+        enabled: true,
+        configured: true,
+        status: 'ready',
+      })
+      .mockResolvedValueOnce({
+        enabled: false,
+        configured: true,
+        status: 'disabled',
+      })
+
+    render(<EnhancedModeToggle />)
+    expect(await screen.findByRole('button', { name: /增强模式，可用/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    act(() => requestWorkflowEnhancedModeRefresh())
+
+    expect(await screen.findByRole('button', { name: /增强模式，已关闭/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(2)
   })
 })

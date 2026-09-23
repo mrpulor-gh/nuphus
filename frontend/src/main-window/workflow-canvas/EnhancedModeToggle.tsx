@@ -8,14 +8,17 @@ import {
   setWorkflowEnhancedMode,
   type WorkflowEnhancedMode,
 } from '../lib/api'
+import {
+  publishWorkflowEnhancedMode,
+  WORKFLOW_ENHANCED_MODE_CHANGED_EVENT,
+  WORKFLOW_ENHANCED_MODE_REFRESH_EVENT,
+} from './enhancedModeEvents'
 
 type EnhancedModeToggleProps = {
   disabled?: boolean
   onNotice?: (message: string) => void
   compact?: boolean
 }
-
-const ENHANCED_MODE_CHANGED_EVENT = 'nuphus:workflow-enhanced-mode-changed'
 
 const INITIAL_STATE: WorkflowEnhancedMode = {
   enabled: false,
@@ -81,9 +84,14 @@ export function EnhancedModeToggle({
       setLoadFailed(false)
       setLoading(false)
     }
-    window.addEventListener(ENHANCED_MODE_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(ENHANCED_MODE_CHANGED_EVENT, sync)
-  }, [])
+    const refresh = () => void load()
+    window.addEventListener(WORKFLOW_ENHANCED_MODE_CHANGED_EVENT, sync)
+    window.addEventListener(WORKFLOW_ENHANCED_MODE_REFRESH_EVENT, refresh)
+    return () => {
+      window.removeEventListener(WORKFLOW_ENHANCED_MODE_CHANGED_EVENT, sync)
+      window.removeEventListener(WORKFLOW_ENHANCED_MODE_REFRESH_EVENT, refresh)
+    }
+  }, [load])
 
   const updateMode = async (enabled: boolean) => {
     setUpdating(true)
@@ -92,9 +100,7 @@ export function EnhancedModeToggle({
       if (!next) throw new Error('后端未返回增强模式状态')
       setState(next)
       setLoadFailed(false)
-      window.dispatchEvent(
-        new CustomEvent<WorkflowEnhancedMode>(ENHANCED_MODE_CHANGED_EVENT, { detail: next }),
-      )
+      publishWorkflowEnhancedMode(next)
     } catch (error) {
       setLoadFailed(true)
       onNotice?.(`切换增强模式失败：${String(error)}`)

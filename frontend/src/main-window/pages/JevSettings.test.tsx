@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JevSettings } from './JevSettings'
-import { clearJevApiKey, getJevConfig, getWorkflowEnhancedMode, saveJevConfig } from '../lib/api'
+import {
+  clearJevApiKey,
+  getJevConfig,
+  getWorkflowEnhancedMode,
+  saveJevConfig,
+  testJevConnection,
+} from '../lib/api'
 
 vi.mock('../lib/api', () => ({
   getJevConfig: vi.fn(),
@@ -56,6 +62,13 @@ describe('JevSettings', () => {
       max_retries: 3,
       fallback_to_primary_model: false,
     })
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+    const changed = vi.fn()
+    window.addEventListener('nuphus:workflow-enhanced-mode-changed', changed)
     render(<JevSettings />)
 
     const timeout = await screen.findByLabelText('增强判断模型请求超时')
@@ -85,6 +98,47 @@ describe('JevSettings', () => {
       }),
     )
     expect(await screen.findByText('增强判断模型配置已保存')).toBeInTheDocument()
+    expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+    expect((changed.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+    window.removeEventListener('nuphus:workflow-enhanced-mode-changed', changed)
+  })
+
+  it('连接测试保存配置后同步增强模式状态', async () => {
+    const config = {
+      enabled: true,
+      base_url: 'https://api.typesafe.ai',
+      model: 'jev-latest',
+      has_key: true,
+      timeout_ms: 10000,
+      max_retries: 2,
+      fallback_to_primary_model: true,
+    }
+    vi.mocked(getJevConfig).mockResolvedValue(config)
+    vi.mocked(saveJevConfig).mockResolvedValue(config)
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+    vi.mocked(testJevConnection).mockResolvedValue({
+      status: 'ready',
+      model: 'jev-1.13.0',
+    })
+    const changed = vi.fn()
+    window.addEventListener('nuphus:workflow-enhanced-mode-changed', changed)
+    render(<JevSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
+
+    await waitFor(() => expect(testJevConnection).toHaveBeenCalledTimes(1))
+    expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('连接正常（jev-1.13.0）')).toBeInTheDocument()
+    window.removeEventListener('nuphus:workflow-enhanced-mode-changed', changed)
   })
 
   it('拒绝越界的策略参数且不调用保存 IPC', async () => {

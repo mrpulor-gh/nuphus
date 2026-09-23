@@ -12,6 +12,7 @@ import {
   type JevConfig,
   type JevConnectionStatus,
 } from '../lib/api'
+import { publishWorkflowEnhancedMode } from '../workflow-canvas/enhancedModeEvents'
 
 const DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 const DEFAULT_MODEL = 'jev-latest'
@@ -33,6 +34,15 @@ function connectionOk(result: JevConnectionStatus | string): boolean {
     return ['ok', 'ready', 'available', 'connected', 'success'].includes(result.toLowerCase())
   }
   return ['ok', 'ready', 'available', 'connected', 'success'].includes(result.status.toLowerCase())
+}
+
+async function refreshEnhancedModeStatus(): Promise<void> {
+  try {
+    const enhancedMode = await getWorkflowEnhancedMode()
+    if (enhancedMode) publishWorkflowEnhancedMode(enhancedMode)
+  } catch {
+    // 配置保存本身已经成功时，不因状态徽标刷新失败而误报保存失败。
+  }
 }
 
 export function JevSettings() {
@@ -123,6 +133,7 @@ export function JevSettings() {
     setFallbackToPrimaryModel(config.fallback_to_primary_model ?? fallbackToPrimaryModel)
     setApiKey('')
     setShowKey(false)
+    await refreshEnhancedModeStatus()
     return config
   }
 
@@ -166,13 +177,7 @@ export function JevSettings() {
       setApiKey('')
       setShowKey(false)
       setFeedback({ ok: true, message: '增强判断模型 API Key 已清除' })
-      void getWorkflowEnhancedMode()
-        .then(enhancedMode => {
-          window.dispatchEvent(
-            new CustomEvent('nuphus:workflow-enhanced-mode-changed', { detail: enhancedMode }),
-          )
-        })
-        .catch(() => undefined)
+      await refreshEnhancedModeStatus()
     } catch (error) {
       setFeedback({ ok: false, message: `清除失败：${String(error)}` })
     } finally {
