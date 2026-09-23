@@ -212,15 +212,11 @@ mod tests {
 
     /// 1x1 透明 PNG 的 dataURL（最小合法载荷）。
     fn tiny_png_data_url() -> String {
-        let bytes = base64_decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
-        format!("data:image/png;base64,{}", encode_base64(&bytes))
-    }
-
-    fn base64_decode(encoded: &str) -> Vec<u8> {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .unwrap()
+        concat!(
+            "data:image/png;base64,",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        .to_string()
     }
 
     #[test]
@@ -266,7 +262,7 @@ mod tests {
         let root = test_root("reject");
         let result = save_user_image_at(&root, "skin", "", "data:text/html;base64,PGh0bWw+");
         assert!(result.is_err(), "非图片 mime 必须拒绝");
-        assert!(result.unwrap_err().contains("不支持的图片格式"));
+        assert!(matches!(result, Err(error) if error.contains("不支持的图片格式")));
         let no_prefix = save_user_image_at(&root, "skin", "", "https://example.com/a.png");
         assert!(no_prefix.is_err(), "普通 URL 必须拒绝");
         let empty = save_user_image_at(&root, "unknown-kind", "", &tiny_png_data_url());
