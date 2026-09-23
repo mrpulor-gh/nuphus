@@ -57,12 +57,43 @@ impl ToolRegistry {
     fn semantic_desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
         let mut schemas = vec![
             tool_def(
-                "desktop_semantic_observe",
-                "读取当前前台应用的 Accessibility/UIA 语义元素并返回本次可执行的候选动作 ID。可持久化候选同时返回 workflow_step，保存工作流时应使用该稳定语义步骤，禁止保存临时 candidate_id 或 observation_token。普通模式首选；不返回坐标、原生句柄或任意脚本能力。",
+                "desktop_targets_list",
+                "查询本机运行窗口和已登记应用，返回 app_ref/window_ref 与 is_self。先依据用户任务选择目标；提交任务时前台通常是 Nuphus，不代表它是任务目标。",
+                json_props! { "query" => obj!("type"="string","description"="可选应用名称或窗口标题查询"),
+                    "cursor" => obj!("type"="integer","minimum"=0,"description"="下一页使用返回的 next_cursor 并保持相同 query") },
+                &[],
+            ),
+            tool_def(
+                "desktop_target_bind",
+                "绑定查询返回的应用/窗口；本地必要时启动、还原并激活。多个窗口返回候选供选择。成功返回 target_token，后续观察传入此令牌。不接受脚本或任意启动路径。",
                 json_props! {
-                    "goal" => obj!("type"="string","description"="当前要推进的桌面任务；仅用于构造和说明有界候选动作")
+                    "app_ref" => obj!("type"="string"),
+                    "window_ref" => obj!("type"="string","description"="多窗口时选择列表返回的引用")
+                },
+                &["app_ref"],
+            ),
+            tool_def(
+                "desktop_semantic_observe",
+                "读取绑定目标的 UIA/Accessibility 元素，返回完整 JSON 候选页；未传 target_token 兼容观察前台。翻页传同次 observation_token 与 next_cursor，不重新采集。详情和可保存 workflow_step 使用 desktop_semantic_candidate 查询。普通模式首选；候选不足可查看菜单或局部区域，不等于原生不可用。",
+                json_props! {
+                    "goal" => obj!("type"="string","description"="当前要推进的桌面任务；仅用于构造和说明有界候选动作"),
+                    "target_token" => obj!("type"="string","description"="desktop_target_bind 返回的任务目标令牌"),
+                    "scope" => obj!("type"="string","enum"=["window","menu"],"description"="默认窗口内容区；menu 按需读取菜单"),
+                    "subtree_id" => obj!("type"="string","description"="本地观察返回的元素/区域 ID；不接受编造的选择器"),
+                    "observation_token" => obj!("type"="string","description"="翻页时传入；此时不改变目标或观察范围"),
+                    "cursor" => obj!("type"="integer","minimum"=0)
+                    ,"view" => obj!("type"="string","enum"=["candidates","regions"],"description"="同一观察可分页查看候选或可深入查询的区域")
                 },
                 &[],
+            ),
+            tool_def(
+                "desktop_semantic_candidate",
+                "只读查询同一次观察的候选详情和可保存 workflow_step。保存时使用返回的稳定步骤，不保存候选 ID 或 token。",
+                json_props! {
+                    "observation_token" => obj!("type"="string"),
+                    "candidate_id" => obj!("type"="string")
+                },
+                &["observation_token", "candidate_id"],
             ),
             tool_def(
                 "desktop_semantic_execute",
@@ -106,6 +137,7 @@ impl ToolRegistry {
                         "required"=["app_id"]
                     ),
                     "action" => obj!("type"="string","enum"=["invoke","toggle","select","expand","collapse","focus","set_value"],"description"="本地允许的 UIA 原生动作"),
+                    "launch_ref" => obj!("type"="string","description"="本地返回的可选稳定应用启动引用；不得自行编造"),
                     "value" => obj!("type"="string","description"="仅用于 set_value；文本只交给本地 UIA 执行器","maxLength"=16384)
                 },
                 &["locator", "action"],
@@ -116,7 +148,10 @@ impl ToolRegistry {
                 "desktop_agent_step",
                 "增强模式下新桌面动作选择的首选入口：本地读取 UIA、构造候选动作，增强判断模型只能选择一个 candidate_id，本地复核后执行并重新观察验证。一次调用最多执行一个原生动作；未配置、服务不可用或语义树不适用时，由主模型从同一有限候选空间继续判断。",
                 json_props! {
-                    "goal" => obj!("type"="string","description"="当前桌面任务目标；增强判断模型仅据此从本地候选集合中选择")
+                    "goal" => obj!("type"="string","description"="当前桌面任务目标；增强判断模型仅据此从本地候选集合中选择"),
+                    "target_token" => obj!("type"="string","description"="先通过 desktop_target_bind 确定任务目标"),
+                    "scope" => obj!("type"="string","enum"=["window","menu"]),
+                    "subtree_id" => obj!("type"="string","description"="本地观察返回的区域/元素 ID")
                 },
                 &["goal"],
             ));
@@ -128,12 +163,14 @@ impl ToolRegistry {
         vec![
             // ═══ Desktop automation tools ═══
             tool_def("desktop_mouse",
-                "鼠标操作。写操作(click/double_click/hover/scroll/move)传(x,y)并先激活窗口；position 只读返回光标位置。macOS 需辅助功能授权",
+                "鼠标操作。点击/悬停/移动优先传本次 perceive 的 capture_id + element_id，由本地换算并验证目标。旧 x/y 是屏幕绝对坐标（Windows 原生屏幕坐标，macOS 逻辑点），不是窗口/图片相对坐标。事件发送不代表业务成功。position 只读；macOS 需辅助功能授权。",
                 json_props! {
-                    "action" => obj!("type"="string","enum"=["click","double_click","hover","scroll","position","move"],"description"="click/double_click/hover/scroll/move 写操作需(x,y)；position 只读"),
+                    "action" => obj!("type"="string","enum"=["click","double_click","hover","scroll","position","move"],"description"="写操作需 capture_id + element_id，或旧接口 (x,y)；position 只读"),
                     "hwnd" => obj!("type"="integer","description"="Target window handle. Optional for all write-actions; skip for position."),
-                    "x" => obj!("type"="integer","description"="X coordinate (click/double_click/hover/move)"),
-                    "y" => obj!("type"="integer","description"="Y coordinate (click/double_click/hover/move)"),
+                    "capture_id" => obj!("type"="string","description"="perceive 返回的本次本地捕获 ID，与 element_id 成对；不能同时传 x/y"),
+                    "element_id" => obj!("type"="integer","minimum"=0,"description"="本次 perceive 返回的元素 ID；不保存到工作流常量"),
+                    "x" => obj!("type"="integer","description"="旧接口：屏幕绝对 X，不能直接传图片内 center"),
+                    "y" => obj!("type"="integer","description"="旧接口：屏幕绝对 Y，不能直接传图片内 center"),
                     "button" => obj!("type"="string","enum"=["left","right","middle"],"description"="Mouse button (click)"),
                     "clicks" => obj!("type"="integer","default"=1,"description"="Number of clicks (click)"),
                     "direction" => obj!("type"="string","enum"=["up","down"],"description"="Scroll direction (scroll)"),
@@ -150,15 +187,17 @@ impl ToolRegistry {
                 },
                 &["start_x","start_y","end_x","end_y"]),
             tool_def("desktop_input",
-                "向窗口输入文本(UTF-8)，可附带后续按键。>500 字符用 clipboard。需先激活目标窗口",
+                "向窗口输入文本或快捷键。保存工作流优先传成功语义动作的 target_locator，由本地重定位、激活并验证目标；不固化 hwnd。输入文本前先聚焦输入控件；快捷键可直接定位目标窗口。旧 hwnd 接口保留。",
                 json_props! {
                     "mode" => obj!("type"="string","enum"=["type","hotkey"],"description"="type: input text; hotkey: press keys only"),
+                    "target_locator" => obj!("type"="object","description"="成功 workflow_step.params.locator 的原样副本；与 hwnd 二选一，用于跨次运行的稳定定位"),
+                    "launch_ref" => obj!("type"="string","description"="可选：成功 workflow_step.params.launch_ref，应用未运行时使用本地目录启动"),
                     "hwnd" => obj!("type"="integer","description"="Target window handle. Get from desktop_windows_list."),
                     "text" => obj!("type"="string","description"="Text to type (mode=type required)"),
                     "send" => obj!("type"="string","description"="Key to send after typing: \"enter\" (default), \"ctrl+enter\", \"tab\", or \"none\" to skip."),
                     "keys" => obj!("type"="array","items"=obj!("type"="string"),"description"="Key combo to press (mode=hotkey required). Single key: [\"enter\"],[\"f5\"],[\"esc\"]. Combo: [\"ctrl\",\"c\"],[\"alt\",\"tab\"].")
                 },
-                &["mode","hwnd"]),
+                &["mode"]),
             tool_def("desktop_screenshot",
                 "全屏截图（支持 region 区域截图），保存为 BMP",
                 json_props! {
@@ -218,7 +257,7 @@ impl ToolRegistry {
                 },
                 &["image_path"]),
             tool_def("desktop_perceive",
-"本地 OCR+YOLO 元素定位，返回 rect{x,y,w,h} 与 center 点击坐标。点击必须用 center。OCR 文字可能有误，以 vision 为准",
+"本地 OCR+YOLO 元素定位。rect/center/image_center 是图片内坐标，不可直接当屏幕点。已登记截图附带 capture_id、element_id 和本地换算的 screen_center，优先用这两个 ID 调用 desktop_mouse。未知来源图片 screen_center 为 null。",
                 json_props! {
                     "image_path" => obj!("type"="string","description"="BMP 截图路径（来自 desktop_screenshot）")
                 },

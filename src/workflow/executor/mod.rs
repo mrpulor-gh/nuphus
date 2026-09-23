@@ -66,6 +66,13 @@ pub(crate) const CHAT_AGENT_ALLOWED_TOOLS: &[&str] = &[
     "ui_maps_search",
     // 桌面全量（16）
     "desktop_windows_list",
+    "desktop_targets_list",
+    "desktop_target_bind",
+    "desktop_semantic_observe",
+    "desktop_semantic_candidate",
+    "desktop_semantic_execute",
+    "desktop_semantic_action",
+    "desktop_agent_step",
     "desktop_window_info",
     "desktop_window_activate",
     "desktop_window_move",

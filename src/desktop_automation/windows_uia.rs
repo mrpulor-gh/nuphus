@@ -8,17 +8,15 @@ use super::runner::{CandidateBuilder, ComputerExecutor, ComputerObserver};
 use super::types::*;
 
 const DEFAULT_MAX_ELEMENTS: usize = 200;
-#[cfg(windows)]
-const MAX_DECISION_ACTIONS: usize = 37;
 
 #[cfg(windows)]
 mod platform {
     use super::*;
     use async_trait::async_trait;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::hash::{Hash, Hasher};
     use std::sync::Mutex;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
     use windows::core::{Interface, BSTR, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, BOOL, HWND};
@@ -31,17 +29,17 @@ mod platform {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-        IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
-        IUIAutomationTreeWalker, IUIAutomationValuePattern, TreeScope_Descendants,
-        UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_DataItemControlTypeId,
-        UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_ExpandCollapsePatternId,
-        UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
-        UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
-        UIA_RadioButtonControlTypeId, UIA_SelectionItemPatternId, UIA_TabControlTypeId,
-        UIA_TabItemControlTypeId, UIA_TextControlTypeId, UIA_TogglePatternId,
-        UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValuePatternId,
-        UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
+        CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
+        IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+        IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+        IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+        UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+        UIA_ExpandCollapsePatternId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
+        UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId,
+        UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
+        UIA_SelectionItemPatternId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+        UIA_TextControlTypeId, UIA_TogglePatternId, UIA_TreeControlTypeId,
+        UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
@@ -110,6 +108,8 @@ mod platform {
         action: NativeAction,
         risk: RiskClass,
         ancestor_chain: Vec<SemanticContext>,
+        scope: ObservationScope,
+        scope_root: Option<NodeMetadata>,
     }
 
     struct NativeNode {
@@ -123,6 +123,9 @@ mod platform {
         nodes: Vec<NativeNode>,
         fingerprint: String,
         truncated: bool,
+        stable_window_id: String,
+        scope: ObservationScope,
+        scope_root: Option<NodeMetadata>,
         // Keep COM initialized until every UIAutomation interface above has
         // been released. This field must remain last so it drops last.
         _com: ComApartment,
@@ -134,6 +137,9 @@ mod platform {
         revision: u64,
         metadata_by_node: HashMap<String, NodeMetadata>,
         locators_by_candidate: HashMap<String, InternalLocator>,
+        stable_window_id: Option<String>,
+        scope: ObservationScope,
+        scope_root: Option<NodeMetadata>,
     }
 
     /// UIA-first adapter for the current Windows foreground window.
@@ -160,7 +166,34 @@ mod platform {
             &self,
             scope: &ObservationScope,
         ) -> Result<Observation, AutomationError> {
-            let snapshot = capture_native(self.max_elements)?;
+            let root = {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| AutomationError::Observation("UIA state unavailable".into()))?;
+                match scope.subtree_id.as_deref() {
+                    Some("@window" | "@menu") | None => None,
+                    Some(id) => Some(
+                        state
+                            .metadata_by_node
+                            .get(id)
+                            .cloned()
+                            .or_else(|| {
+                                state
+                                    .scope_root
+                                    .as_ref()
+                                    .filter(|root| root.opaque_id == id)
+                                    .cloned()
+                            })
+                            .ok_or_else(|| {
+                                AutomationError::Observation(
+                                    "Unknown subtree_id; use an observed node id".into(),
+                                )
+                            })?,
+                    ),
+                }
+            };
+            let snapshot = capture_native(self.max_elements, scope, root.as_ref())?;
             validate_scope(scope, &snapshot)?;
             self.observation_from_snapshot(snapshot)
         }
@@ -177,6 +210,9 @@ mod platform {
                 state.revision = state.revision.saturating_add(1).max(1);
                 state.last_fingerprint = Some(snapshot.fingerprint.clone());
             }
+            state.stable_window_id = Some(snapshot.stable_window_id.clone());
+            state.scope = snapshot.scope.clone();
+            state.scope_root = snapshot.scope_root.clone();
             state.metadata_by_node = snapshot
                 .nodes
                 .iter()
@@ -222,6 +258,8 @@ mod platform {
                 risk: classify_risk(&action, metadata.name.as_deref()),
                 action,
                 ancestor_chain: metadata.ancestor_chain.clone(),
+                scope: state.scope.clone(),
+                scope_root: state.scope_root.clone(),
             };
             // Do not offer a candidate that cannot be uniquely rebound from
             // stable semantics. A list reorder must never turn an ordinal into
@@ -263,13 +301,24 @@ mod platform {
 
             // Re-read the foreground tree immediately before dispatch. No COM
             // element or HWND from a previous observation is ever reused.
-            let snapshot = capture_native(self.max_elements)?;
+            let snapshot = capture_native(
+                self.max_elements,
+                &locator.scope,
+                locator.scope_root.as_ref(),
+            )?;
             if snapshot.app.id != locator.app_id || snapshot.window.id != locator.window_id {
                 return Err(AutomationError::Execution(
                     "foreground UI changed before native dispatch".into(),
                 ));
             }
             let element = resolve_unique(&snapshot.nodes, &locator)?;
+            if live_window_id(&snapshot.stable_window_id, unsafe { GetForegroundWindow() })
+                != snapshot.window.id
+            {
+                return Err(AutomationError::Execution(
+                    "foreground window changed immediately before UIA dispatch".into(),
+                ));
+            }
             dispatch(element, &locator.action, input)?;
             Ok(ActionReceipt {
                 candidate_id: action.id.clone(),
@@ -295,6 +344,110 @@ mod platform {
         async fn observe(&self, scope: &ObservationScope) -> Result<Observation, AutomationError> {
             self.capture_observation(scope)
         }
+
+        async fn observe_locator(
+            &self,
+            locator: &SemanticLocator,
+        ) -> Result<(Observation, ObservationScope), AutomationError> {
+            let mut scope = ObservationScope {
+                app_id: Some(locator.app_id.clone()),
+                window_id: locator.window_id.clone(),
+                subtree_id: None,
+            };
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut visited = std::collections::HashSet::new();
+            for _ in 0..locator.ancestor_chain.len().saturating_add(2).min(12) {
+                if Instant::now() >= deadline {
+                    return Err(AutomationError::Observation(
+                        "Saved UIA region resolution timed out".into(),
+                    ));
+                }
+                let observation = self.capture_observation(&scope)?;
+                let next = {
+                    let state = self.state.lock().map_err(|_| {
+                        AutomationError::Observation("UIA state unavailable".into())
+                    })?;
+                    replay_region(
+                        &state.metadata_by_node.values().collect::<Vec<_>>(),
+                        locator,
+                    )?
+                };
+                match next {
+                    None => return Ok((observation, scope)),
+                    Some(id) if visited.insert(id.clone()) => scope.subtree_id = Some(id),
+                    Some(_) => return Err(AutomationError::Observation(
+                        "Saved UIA target is missing from its ancestor region; refresh the locator"
+                            .into(),
+                    )),
+                }
+            }
+            Err(AutomationError::Observation(
+                "Saved UIA region exceeds bounded ancestor depth".into(),
+            ))
+        }
+    }
+
+    fn replay_region(
+        nodes: &[&NodeMetadata],
+        locator: &SemanticLocator,
+    ) -> Result<Option<String>, AutomationError> {
+        let target_count = nodes
+            .iter()
+            .filter(|node| {
+                locator.role.as_ref().is_none_or(|v| v == &node.role)
+                    && locator
+                        .automation_id
+                        .as_ref()
+                        .is_none_or(|v| Some(v) == node.automation_id.as_ref())
+                    && locator
+                        .accessible_name
+                        .as_ref()
+                        .is_none_or(|v| Some(v) == node.name.as_ref())
+                    && (locator.ancestor_chain.is_empty()
+                        || locator.ancestor_chain == node.ancestor_chain)
+            })
+            .count();
+        if target_count == 1 {
+            return Ok(None);
+        }
+        if target_count > 1 {
+            return Err(AutomationError::Observation(
+                "Saved UIA target is ambiguous".into(),
+            ));
+        }
+        for (index, ancestor) in locator.ancestor_chain.iter().enumerate().rev() {
+            if ancestor.automation_id.is_none() && ancestor.accessible_name.is_none() {
+                continue;
+            }
+            let matches: Vec<_> = nodes
+                .iter()
+                .filter(|node| {
+                    ancestor.role.as_ref().is_none_or(|v| v == &node.role)
+                        && ancestor
+                            .automation_id
+                            .as_ref()
+                            .is_none_or(|v| Some(v) == node.automation_id.as_ref())
+                        && ancestor
+                            .accessible_name
+                            .as_ref()
+                            .is_none_or(|v| Some(v) == node.name.as_ref())
+                        && node.ancestor_chain == locator.ancestor_chain[..index]
+                })
+                .collect();
+            match matches.as_slice() {
+                [node] => return Ok(Some(node.opaque_id.clone())),
+                [] => {}
+                _ => {
+                    return Err(AutomationError::Observation(
+                        "Saved UIA ancestor region is ambiguous".into(),
+                    ))
+                }
+            }
+        }
+        Err(AutomationError::Observation(
+            "Saved UIA target and its ancestor region are unavailable in the bounded observation"
+                .into(),
+        ))
     }
 
     impl CandidateBuilder for WindowsUiaAdapter {
@@ -322,7 +475,11 @@ mod platform {
                         observation_revision: observation.revision,
                         target: Some(node.opaque_id.clone()),
                         kind,
-                        public_description: describe_action(native_action, node),
+                        public_description: describe_action_with_context(
+                            native_action,
+                            node,
+                            &locator.ancestor_chain,
+                        ),
                         local_risk: classify_risk(native_action, node.name.as_deref()),
                         preconditions: vec![predicate(
                             "semantic_element_exists",
@@ -338,7 +495,6 @@ mod platform {
                 }
             }
             ranked.sort_by_key(|item| std::cmp::Reverse(item.0));
-            ranked.truncate(MAX_DECISION_ACTIONS);
             let mut candidate_locators = HashMap::new();
             let mut candidates = Vec::with_capacity(ranked.len() + 3);
             for (_, candidate, locator) in ranked {
@@ -383,7 +539,10 @@ mod platform {
             let locator = state.locators_by_candidate.get(&candidate.id)?;
             Some(SemanticLocator {
                 app_id: locator.app_id.clone(),
-                window_id: Some(locator.window_id.clone()),
+                window_id: state
+                    .stable_window_id
+                    .clone()
+                    .or_else(|| Some(locator.window_id.clone())),
                 window_title: Some(locator.window_title.clone()),
                 role: Some(locator.role.clone()),
                 automation_id: locator.automation_id.clone(),
@@ -405,10 +564,15 @@ mod platform {
                     "foreground application does not match the saved semantic locator".into(),
                 ));
             }
+            let stable_window_id = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|state| state.stable_window_id.clone());
             let wrong_window = locator
                 .window_id
                 .as_ref()
-                .map(|id| id != &observation.window.id)
+                .map(|id| id != &observation.window.id && Some(id) != stable_window_id.as_ref())
                 .unwrap_or_else(|| {
                     locator
                         .window_title
@@ -497,6 +661,8 @@ mod platform {
                 action: action.clone(),
                 risk: classify_risk(&action, metadata.name.as_deref()),
                 ancestor_chain: metadata.ancestor_chain.clone(),
+                scope: state.scope.clone(),
+                scope_root: state.scope_root.clone(),
             };
             let id = format!("uia:persisted:{}", Uuid::new_v4().simple());
             let candidate = ActionCandidate {
@@ -504,7 +670,11 @@ mod platform {
                 observation_revision: observation.revision,
                 target: Some(node.opaque_id.clone()),
                 kind: candidate_kind(&action),
-                public_description: describe_action(&action, node),
+                public_description: describe_action_with_context(
+                    &action,
+                    node,
+                    &internal.ancestor_chain,
+                ),
                 local_risk: internal.risk,
                 preconditions: vec![predicate(
                     "semantic_element_exists",
@@ -534,7 +704,12 @@ mod platform {
         }
     }
 
-    fn capture_native(max_elements: usize) -> Result<NativeSnapshot, AutomationError> {
+    fn capture_native(
+        max_elements: usize,
+        scope: &ObservationScope,
+        subtree: Option<&NodeMetadata>,
+    ) -> Result<NativeSnapshot, AutomationError> {
+        let deadline = Instant::now() + Duration::from_secs(5);
         let com = ComApartment::initialize()?;
         let hwnd = unsafe { GetForegroundWindow() };
         if hwnd.0 == 0 {
@@ -545,9 +720,20 @@ mod platform {
         let title = window_title(hwnd);
         let window_class = window_class(hwnd);
         let automation: IUIAutomation = unsafe {
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
                 .map_err(|error| uia_observation_error("create UI Automation client", error))?
         };
+        // The traversal deadline alone cannot interrupt a blocked provider call.
+        // UIAutomation8 supports per-connection and per-transaction timeouts.
+        let timeouts = automation
+            .cast::<IUIAutomation2>()
+            .map_err(|error| uia_observation_error("configure UI Automation timeout", error))?;
+        unsafe {
+            timeouts
+                .SetConnectionTimeout(1000)
+                .and_then(|_| timeouts.SetTransactionTimeout(1000))
+                .map_err(|error| uia_observation_error("set UI Automation timeout", error))?;
+        }
         let root = unsafe {
             automation
                 .ElementFromHandle(hwnd)
@@ -573,16 +759,17 @@ mod platform {
             .or(root_name)
             .unwrap_or_else(|| "Untitled".into());
         let root_automation_id = element_text(unsafe { root.CurrentAutomationId() }.ok(), 256);
+        let stable_window_id = format!(
+            "windows-window:{:016x}",
+            stable_hash(&format!(
+                "{}|{}|{}",
+                app.id,
+                window_class,
+                root_automation_id.as_deref().unwrap_or_default()
+            ))
+        );
         let window = WindowIdentity {
-            id: format!(
-                "windows-window:{:016x}",
-                stable_hash(&format!(
-                    "{}|{}|{}",
-                    app.id,
-                    window_class,
-                    root_automation_id.as_deref().unwrap_or_default()
-                ))
-            ),
+            id: live_window_id(&stable_window_id, hwnd),
             title: window_title,
         };
 
@@ -591,37 +778,118 @@ mod platform {
                 .ControlViewWalker()
                 .map_err(|error| uia_observation_error("create UIA control-view walker", error))?
         };
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        }
+        let focused_menu = focused_menu_root(&automation, &walker, pid, deadline);
+        // Walk lazily instead of FindAll, which materializes the entire provider tree.
+        let scoped_root = if scope.subtree_id.as_deref().is_none_or(|id| id == "@window") {
+            root.clone()
+        } else if scope.subtree_id.as_deref() == Some("@menu") && focused_menu.is_some() {
+            focused_menu.clone().expect("checked focused menu")
+        } else {
+            let mut pending = VecDeque::from([(root.clone(), 0usize)]);
+            if let Some(menu) = focused_menu {
+                pending.push_back((menu, 0));
+            }
+            let mut selected = None;
+            let mut inspected = 0;
+            let mut search_truncated = false;
+            let mut seen: Vec<IUIAutomationElement> = Vec::new();
+            while let Some((element, depth)) = pending.pop_front() {
+                if Instant::now() >= deadline || inspected >= 2000 {
+                    search_truncated = true;
+                    break;
+                }
+                if seen.iter().any(|old| {
+                    unsafe { automation.CompareElements(old, &element) }
+                        .is_ok_and(|same| same.as_bool())
+                }) {
+                    continue;
+                }
+                seen.push(element.clone());
+                inspected += 1;
+                let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
+                if let Ok(node) = native_node(element.clone(), inspected, ancestors) {
+                    let matched = if let Some(subtree) = subtree {
+                        same_container(&node.metadata, subtree)
+                    } else {
+                        node.metadata.role == UiRole::Menu && node.metadata.visible
+                    };
+                    if matched {
+                        if selected.is_some() {
+                            return Err(AutomationError::Observation("Requested UIA subtree is ambiguous; observe a distinct named container".into()));
+                        }
+                        selected = Some(element.clone());
+                        if subtree.is_none() {
+                            break;
+                        }
+                    }
+                }
+                search_truncated |= enqueue_children(
+                    &walker,
+                    &element,
+                    depth,
+                    &mut pending,
+                    2000 - inspected,
+                    deadline,
+                );
+            }
+            if subtree.is_some() && search_truncated {
+                return Err(AutomationError::Observation(
+                    "Could not uniquely locate the UIA subtree within the observation budget"
+                        .into(),
+                ));
+            }
+            selected.ok_or_else(|| AutomationError::Observation("Requested UIA subtree is unavailable within the bounded tree; observe @window again".into()))?
+        };
         let mut nodes = Vec::with_capacity(max_elements);
-        let mut truncated = max_elements <= 1;
-        nodes.push(native_node(root.clone(), 0, vec![])?);
-        if nodes.len() < max_elements {
-            let condition = unsafe {
-                automation.ControlViewCondition().map_err(|error| {
-                    uia_observation_error("create UIA control-view condition", error)
-                })?
-            };
-            let elements = unsafe {
-                nodes[0]
-                    .element
-                    .FindAll(TreeScope_Descendants, &condition)
-                    .map_err(|error| uia_observation_error("enumerate UIA control tree", error))?
-            };
-            let count = unsafe { elements.Length() }
-                .map_err(|error| uia_observation_error("read UIA element count", error))?;
-            truncated = count > (max_elements - 1) as i32;
-            for index in 0..count.min((max_elements - 1) as i32) {
-                let Ok(element) = (unsafe { elements.GetElement(index) }) else {
+        let mut pending = VecDeque::from([(scoped_root, 0usize)]);
+        let mut truncated = false;
+        while let Some((element, depth)) = pending.pop_front() {
+            if nodes.len() >= max_elements || Instant::now() >= deadline {
+                truncated = true;
+                break;
+            }
+            let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
+            let index = nodes.len();
+            match native_node(element.clone(), index, ancestors) {
+                Ok(node) => nodes.push(node),
+                Err(_) => {
                     truncated = true;
                     continue;
-                };
-                let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
-                if let Ok(node) = native_node(element, index as usize + 1, ancestors) {
-                    nodes.push(node);
-                } else {
-                    truncated = true;
                 }
             }
+            // The window-content pass retains the menu entry itself but does
+            // not spend its body budget traversing the full menu hierarchy.
+            // Explicit @menu or region observations expand that hierarchy.
+            if scope.subtree_id.as_deref().is_none_or(|id| id == "@window")
+                && nodes
+                    .last()
+                    .is_some_and(|node| node.metadata.role == UiRole::Menu)
+            {
+                continue;
+            }
+            truncated |= enqueue_children(
+                &walker,
+                &element,
+                depth,
+                &mut pending,
+                max_elements - nodes.len(),
+                deadline,
+            );
         }
+        if nodes.is_empty() || Instant::now() >= deadline {
+            return Err(AutomationError::Observation(
+                "UIA observation exceeded its time budget".into(),
+            ));
+        }
+        let scope_root = scope
+            .subtree_id
+            .as_ref()
+            .filter(|id| id.as_str() != "@window")
+            .and_then(|_| nodes.first().map(|node| node.metadata.clone()));
 
         let fingerprint = fingerprint(&app, &window, &nodes);
         Ok(NativeSnapshot {
@@ -630,8 +898,89 @@ mod platform {
             nodes,
             fingerprint,
             truncated,
+            stable_window_id,
+            scope: scope.clone(),
+            scope_root,
             _com: com,
         })
+    }
+
+    fn live_window_id(stable: &str, hwnd: HWND) -> String {
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        }
+        window_runtime_key(stable, hwnd.0, pid)
+    }
+
+    fn focused_menu_root(
+        automation: &IUIAutomation,
+        walker: &IUIAutomationTreeWalker,
+        pid: u32,
+        deadline: Instant,
+    ) -> Option<IUIAutomationElement> {
+        let mut element = unsafe { automation.GetFocusedElement() }.ok()?;
+        if unsafe { element.CurrentProcessId() }.ok()? != pid as i32 {
+            return None;
+        }
+        let mut menu = None;
+        for _ in 0..24 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            if unsafe { element.CurrentControlType() }
+                .ok()
+                .is_some_and(|role| {
+                    role == UIA_MenuControlTypeId || role == UIA_MenuBarControlTypeId
+                })
+            {
+                menu = Some(element.clone());
+            }
+            let Ok(parent) = (unsafe { walker.GetParentElement(&element) }) else {
+                break;
+            };
+            if unsafe { parent.CurrentProcessId() }.ok() != Some(pid as i32) {
+                break;
+            }
+            element = parent;
+        }
+        menu
+    }
+
+    fn window_runtime_key(stable: &str, hwnd: isize, pid: u32) -> String {
+        format!(
+            "windows-live:{:016x}",
+            stable_hash(&format!("{stable}|{hwnd}|{pid}"))
+        )
+    }
+
+    fn same_container(left: &NodeMetadata, right: &NodeMetadata) -> bool {
+        left.role == right.role
+            && left.automation_id == right.automation_id
+            && left.name == right.name
+            && left.ancestor_chain == right.ancestor_chain
+    }
+
+    fn enqueue_children(
+        walker: &IUIAutomationTreeWalker,
+        element: &IUIAutomationElement,
+        depth: usize,
+        pending: &mut VecDeque<(IUIAutomationElement, usize)>,
+        capacity: usize,
+        deadline: Instant,
+    ) -> bool {
+        let mut child = unsafe { walker.GetFirstChildElement(element) }.ok();
+        if depth >= 24 {
+            return child.is_some();
+        }
+        while let Some(current) = child {
+            if pending.len() >= capacity || Instant::now() >= deadline {
+                return true;
+            }
+            child = unsafe { walker.GetNextSiblingElement(&current) }.ok();
+            pending.push_back((current, depth + 1));
+        }
+        false
     }
 
     fn native_node(
@@ -668,7 +1017,7 @@ mod platform {
             .as_ref()
             .and_then(|pattern| unsafe { pattern.CurrentIsSelected() }.ok())
             .map(|value| value.as_bool());
-        if selection_pattern.is_some() && selected != Some(true) {
+        if selection_pattern.is_some() {
             supported_actions.push(NativeAction::Select);
         }
         let expand_pattern = unsafe {
@@ -914,6 +1263,32 @@ mod platform {
         format!("{action:?} {:?} '{name}'", node.role)
     }
 
+    fn describe_action_with_context(
+        action: &NativeAction,
+        node: &UiNode,
+        ancestors: &[SemanticContext],
+    ) -> String {
+        let contexts: Vec<_> = ancestors
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .filter_map(|parent| {
+                parent
+                    .accessible_name
+                    .as_deref()
+                    .or(parent.automation_id.as_deref())
+                    .map(redact_public_name)
+            })
+            .collect();
+        let action = describe_action(action, node);
+        if contexts.is_empty() {
+            action
+        } else {
+            format!("{action} in {}", contexts.join(" > "))
+        }
+    }
+
     fn candidate_relevance(goal: &str, node: &UiNode, action: &NativeAction) -> i32 {
         let goal = goal.to_lowercase();
         let name = node.name.as_deref().unwrap_or_default().to_lowercase();
@@ -1079,18 +1454,11 @@ mod platform {
                 "foreground application is outside the requested scope".into(),
             ));
         }
-        if scope
-            .window_id
-            .as_ref()
-            .is_some_and(|expected| expected != &snapshot.window.id)
-        {
+        if scope.window_id.as_ref().is_some_and(|expected| {
+            expected != &snapshot.window.id && expected != &snapshot.stable_window_id
+        }) {
             return Err(AutomationError::Observation(
                 "foreground window is outside the requested scope".into(),
-            ));
-        }
-        if scope.subtree_id.is_some() {
-            return Err(AutomationError::Observation(
-                "subtree-scoped Windows UIA observation is not implemented yet".into(),
             ));
         }
         Ok(())
@@ -1128,7 +1496,9 @@ mod platform {
             value if value == UIA_RadioButtonControlTypeId => UiRole::RadioButton,
             value if value == UIA_ListControlTypeId => UiRole::List,
             value if value == UIA_ListItemControlTypeId => UiRole::ListItem,
-            value if value == UIA_MenuControlTypeId => UiRole::Menu,
+            value if value == UIA_MenuControlTypeId || value == UIA_MenuBarControlTypeId => {
+                UiRole::Menu
+            }
             value if value == UIA_MenuItemControlTypeId => UiRole::MenuItem,
             value if value == UIA_TabControlTypeId || value == UIA_TabItemControlTypeId => {
                 UiRole::Tab
@@ -1172,7 +1542,7 @@ mod platform {
         let length = unsafe { GetWindowTextLengthW(hwnd) }.max(0) as usize;
         let mut buffer = vec![0_u16; length.saturating_add(1).max(1)];
         let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) }.max(0) as usize;
-        truncate(&String::from_utf16_lossy(&buffer[..copied]), 256)
+        String::from_utf16_lossy(&buffer[..copied])
     }
 
     fn window_class(hwnd: HWND) -> String {
@@ -1311,6 +1681,35 @@ mod platform {
             }
         }
 
+        #[test]
+        fn replay_descends_stable_ancestry_without_reusing_old_node_ids() {
+            let parent = context("Row A");
+            let mut region = metadata("fresh-region", vec![]);
+            region.role = UiRole::ListItem;
+            region.name = Some("Row A".into());
+            region.automation_id = None;
+            let target = metadata("fresh-button", vec![parent.clone()]);
+            let locator = SemanticLocator {
+                app_id: "app".into(),
+                window_id: None,
+                window_title: None,
+                role: Some(UiRole::Button),
+                automation_id: Some("open-button".into()),
+                accessible_name: Some("Open".into()),
+                ancestor_chain: vec![parent],
+                supported_action: Some(NativeAction::Invoke),
+                ordinal_hint: None,
+            };
+            assert_eq!(
+                replay_region(&[&region], &locator).unwrap(),
+                Some("fresh-region".into())
+            );
+            assert_eq!(replay_region(&[&target], &locator).unwrap(), None);
+            assert!(replay_region(&[&target, &target], &locator).is_err());
+            region.ancestor_chain = vec![context("wrong document")];
+            assert!(replay_region(&[&region], &locator).is_err());
+        }
+
         fn observation(nodes: &[NodeMetadata]) -> Observation {
             Observation {
                 revision: 1,
@@ -1395,6 +1794,67 @@ mod platform {
             assert!(!candidates
                 .iter()
                 .any(|candidate| candidate.kind == CandidateKind::Invoke));
+        }
+
+        #[test]
+        fn all_candidates_remain_available_for_pagination_and_retain_scope() {
+            let nodes: Vec<_> = (0..60)
+                .map(|index| {
+                    metadata(
+                        &format!("button-{index}"),
+                        vec![context(&format!("Row {index}"))],
+                    )
+                })
+                .collect();
+            let adapter = adapter_with(&nodes);
+            adapter.state.lock().unwrap().scope.subtree_id = Some("@menu".into());
+            let candidates = adapter.build("Open", &observation(&nodes)).unwrap();
+            assert_eq!(
+                candidates
+                    .iter()
+                    .filter(|c| c.kind == CandidateKind::Invoke)
+                    .count(),
+                60
+            );
+            assert!(candidates
+                .iter()
+                .any(|c| c.public_description.contains("Row 59")));
+            let state = adapter.state.lock().unwrap();
+            assert!(state.locators_by_candidate.values().all(|locator| locator
+                .scope
+                .subtree_id
+                .as_deref()
+                == Some("@menu")));
+        }
+
+        #[test]
+        fn same_class_windows_have_separate_live_identities_but_durable_locators() {
+            assert_ne!(
+                window_runtime_key("same-class", 1, 42),
+                window_runtime_key("same-class", 2, 42)
+            );
+            assert_ne!(
+                window_runtime_key("same-class", 1, 42),
+                window_runtime_key("same-class", 1, 43)
+            );
+            let node = metadata("button", vec![]);
+            let adapter = adapter_with(std::slice::from_ref(&node));
+            adapter.state.lock().unwrap().stable_window_id = Some("stable-window".into());
+            let candidates = adapter.build("Open", &observation(&[node])).unwrap();
+            let saved = adapter.semantic_locator(&candidates[0]).unwrap();
+            assert_eq!(saved.window_id.as_deref(), Some("stable-window"));
+        }
+
+        #[test]
+        fn ancestor_descriptions_are_redacted() {
+            let node = metadata("button", vec![]).public_node();
+            let description = describe_action_with_context(
+                &NativeAction::Invoke,
+                &node,
+                &[context("person@example.com")],
+            );
+            assert!(description.contains("redacted control"));
+            assert!(!description.contains("person@example.com"));
         }
 
         #[test]

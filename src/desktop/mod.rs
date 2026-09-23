@@ -3,12 +3,14 @@
 //! Desktop automation based on desktop-api crate (Win32 + xcap).
 //! All features implemented natively in Rust.
 
+pub mod capture_context;
 pub mod client;
 pub mod dict_ocr;
 pub mod linux_window;
 #[cfg(target_os = "macos")]
 pub mod macos_window;
 pub mod paddle_ocr;
+pub mod targets;
 // 桌面操作录制（低层 hook 捕获）仅 Windows 平台实现（WH_MOUSE_LL/KEYBOARD_LL）。
 // 其余平台提供同名 stub：命令层 rec.rs 引用 rec_hook:: 符号时无需逐处 cfg，
 // 运行期 capture_once 返回明确错误（2026-09-03 CI clippy -D warnings 修复）。

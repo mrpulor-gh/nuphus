@@ -19,6 +19,9 @@ use uuid::Uuid;
 const ACTION_SPACE_TTL: Duration = Duration::from_secs(120);
 const HARD_STEP_LIMIT: u32 = 100;
 const STALL_LIMIT: u32 = 3;
+const CANDIDATE_PAGE_SIZE: usize = 20;
+const CANDIDATE_PAGE_CHARS: usize = 7_000;
+const PRIMARY_HANDOFF_ID: &str = "control:primary-decision";
 
 #[derive(Clone)]
 pub(super) struct SemanticDesktopBackend {
@@ -37,10 +40,14 @@ struct ActionSpace {
     candidates: Vec<ActionCandidate>,
     persistent_locators: std::collections::HashMap<String, SemanticLocator>,
     enhanced_goal_key: Option<String>,
+    owner: Option<String>,
+    scope: ObservationScope,
+    launch_ref: Option<String>,
 }
 
 #[derive(Clone, Default)]
 struct EnhancedLoopState {
+    owner: Option<String>,
     goal_key: String,
     steps: u32,
     consecutive_stalls: u32,
@@ -61,16 +68,40 @@ impl SemanticDesktopBackend {
         }
     }
 
+    #[cfg(test)]
     async fn observe(
         &self,
         goal: &str,
         enhanced_goal_key: Option<String>,
     ) -> Result<ActionSpace, String> {
+        self.observe_scoped(goal, enhanced_goal_key, ObservationScope::default(), None)
+            .await
+    }
+
+    async fn observe_scoped(
+        &self,
+        goal: &str,
+        enhanced_goal_key: Option<String>,
+        scope: ObservationScope,
+        launch_ref: Option<String>,
+    ) -> Result<ActionSpace, String> {
         let observation = self
             .observer
-            .observe(&ObservationScope::default())
+            .observe(&scope)
             .await
             .map_err(|error| error.to_string())?;
+        self.store_observation(goal, enhanced_goal_key, scope, launch_ref, observation)
+            .await
+    }
+
+    async fn store_observation(
+        &self,
+        goal: &str,
+        enhanced_goal_key: Option<String>,
+        scope: ObservationScope,
+        launch_ref: Option<String>,
+        observation: Observation,
+    ) -> Result<ActionSpace, String> {
         let candidates = self
             .candidates
             .build(goal, &observation)
@@ -91,6 +122,9 @@ impl SemanticDesktopBackend {
             candidates,
             persistent_locators,
             enhanced_goal_key,
+            owner: crate::automation_gate::current_execution_owner(),
+            scope,
+            launch_ref,
         };
         *self.last_space.lock().await = Some(space.clone());
         Ok(space)
@@ -103,9 +137,14 @@ impl SemanticDesktopBackend {
     async fn begin_enhanced_step(&self, goal: &str) -> Result<(String, Vec<RecentAction>), String> {
         let goal_key = normalize_goal_key(goal);
         let mut state = self.loop_state.lock().await;
-        if state.goal_key.is_empty() || !same_bounded_goal(&state.goal_key, &goal_key) {
+        let owner = crate::automation_gate::current_execution_owner();
+        if state.goal_key.is_empty()
+            || state.owner != owner
+            || (owner.is_none() && !same_bounded_goal(&state.goal_key, &goal_key))
+        {
             *state = EnhancedLoopState {
                 goal_key: goal_key.clone(),
+                owner,
                 ..Default::default()
             };
         }
@@ -137,7 +176,10 @@ impl SemanticDesktopBackend {
         if state.goal_key != goal_key {
             return;
         }
-        if verification == Verification::NoChange {
+        if matches!(
+            verification,
+            Verification::NoChange | Verification::Unexpected | Verification::Unknown
+        ) {
             state.consecutive_stalls = state.consecutive_stalls.saturating_add(1);
         } else {
             state.consecutive_stalls = 0;
@@ -221,6 +263,72 @@ fn bounded_edit_distance(left: &[char], right: &[char], limit: usize) -> Option<
 }
 
 impl ToolRegistry {
+    pub(super) async fn semantic_input_window(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<i32, String> {
+        if params.get("hwnd").is_some() {
+            return Err("target_locator 与 hwnd 不能同时指定".into());
+        }
+        let locator: SemanticLocator = serde_json::from_value(params["target_locator"].clone())
+            .map_err(|_| "target_locator 必须是成功语义动作返回的稳定定位器")?;
+        let backend = self
+            .semantic_desktop
+            .as_ref()
+            .ok_or("当前平台没有语义目标适配器")?;
+        self.target_service()?
+            .ensure_saved(&locator, params.get("launch_ref").and_then(|v| v.as_str()))
+            .await?;
+        let client = self.desktop_client().ok_or("本地桌面服务尚未连接")?;
+        let current_hwnd = || async {
+            let value = client.foreground_hwnd().await.map_err(|e| e.to_string())?;
+            value["result"]["hwnd"]
+                .as_i64()
+                .and_then(|v| i32::try_from(v).ok())
+                .filter(|v| *v != 0)
+                .ok_or_else(|| "前台窗口不可用".to_string())
+        };
+        let hwnd = current_hwnd().await?;
+        // Validate the stable app/window/element through the native adapter.
+        // No guessed handle or model-generated selector enters the input call.
+        backend
+            .observer
+            .observe_locator(&locator)
+            .await
+            .map_err(|e| e.to_string())?;
+        if current_hwnd().await? != hwnd {
+            return Err("目标窗口在定位期间变化，请重新观察；尚未发送键盘事件".into());
+        }
+        backend.clear_space().await;
+        client.invalidate_captures().map_err(|e| e.to_string())?;
+        Ok(hwnd)
+    }
+
+    async fn semantic_scope(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<(ObservationScope, Option<String>), String> {
+        let mut scope = ObservationScope::default();
+        let mut launch_ref = None;
+        if let Some(token) = params.get("target_token").and_then(|v| v.as_str()) {
+            let target = self.target_service()?.ensure(token).await?;
+            scope.app_id = Some(target.app_id);
+            launch_ref = target.launch_ref;
+        }
+        scope.subtree_id = params
+            .get("subtree_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        if scope.subtree_id.is_none() {
+            scope.subtree_id = match params.get("scope").and_then(|v| v.as_str()) {
+                None | Some("window") => None,
+                Some("menu") => Some("@menu".into()),
+                Some(_) => return Err("invalid_scope: scope 必须是 window 或 menu".into()),
+            };
+        }
+        Ok((scope, launch_ref))
+    }
+
     pub(super) async fn execute_semantic_desktop_tool(
         &self,
         tool_name: &str,
@@ -231,16 +339,93 @@ impl ToolRegistry {
                 "当前平台尚未提供 Accessibility/UIA 语义桌面适配器",
             ));
         };
+        if matches!(
+            tool_name,
+            "desktop_target_bind"
+                | "desktop_semantic_execute"
+                | "desktop_semantic_action"
+                | "desktop_agent_step"
+        ) {
+            if let Some(client) = self.desktop_client() {
+                client.invalidate_captures().map_err(|e| e.to_string())?;
+            }
+        }
         let result = match tool_name {
+            "desktop_targets_list" => {
+                self.target_service()?
+                    .list(
+                        params.get("query").and_then(|v| v.as_str()),
+                        params.get("cursor").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    )
+                    .await
+            }
+            "desktop_target_bind" => {
+                let result = self
+                    .target_service()?
+                    .bind(
+                        required_string(params, "app_ref")?,
+                        params.get("window_ref").and_then(|v| v.as_str()),
+                    )
+                    .await;
+                backend.clear_space().await;
+                result
+            }
             "desktop_semantic_observe" => {
+                if let Some(token) = params.get("observation_token").and_then(|v| v.as_str()) {
+                    let space = backend
+                        .last_space
+                        .lock()
+                        .await
+                        .clone()
+                        .ok_or("stale_observation: 没有可继续查询的观察，请重新观察")?;
+                    validate_space_token(&space, token)?;
+                    let cursor =
+                        params.get("cursor").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let region_view =
+                        params.get("view").and_then(|v| v.as_str()) == Some("regions");
+                    if cursor
+                        > if region_view {
+                            space.observation.nodes.len()
+                        } else {
+                            space.candidates.len()
+                        }
+                    {
+                        return Ok(ToolResult::failure("invalid_cursor: 候选分页位置无效"));
+                    }
+                    let page = if region_view {
+                        region_page(&space, cursor)
+                    } else {
+                        action_space_page(&space, cursor)
+                    };
+                    return Ok(ToolResult::success(page.to_string()));
+                }
                 let goal = params
                     .get("goal")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
+                let (scope, launch_ref) = self.semantic_scope(params).await?;
                 backend
-                    .observe(goal, None)
+                    .observe_scoped(goal, None, scope, launch_ref)
                     .await
                     .map(|space| action_space_json(&space))
+            }
+            "desktop_semantic_candidate" => {
+                let token = required_string(params, "observation_token")?;
+                let id = required_string(params, "candidate_id")?;
+                let space = backend
+                    .last_space
+                    .lock()
+                    .await
+                    .clone()
+                    .ok_or("stale_observation: 请重新观察")?;
+                validate_space_token(&space, token)?;
+                let candidate = space
+                    .candidates
+                    .iter()
+                    .find(|c| c.id == id)
+                    .ok_or("candidate_id 不属于本次观察")?;
+                Ok(json!({"observation_token": token, "candidate": candidate,
+                    "workflow_step": workflow_step(&space, candidate)}))
             }
             "desktop_semantic_execute" => {
                 let observation_token = required_string(params, "observation_token")?;
@@ -266,6 +451,11 @@ impl ToolRegistry {
                             .map_err(|error| format!("action 格式无效: {error}"))
                     })?;
                 let input = execution_input(params)?;
+                if let Ok(targets) = self.target_service() {
+                    targets
+                        .ensure_saved(&locator, params.get("launch_ref").and_then(|v| v.as_str()))
+                        .await?;
+                }
                 execute_persistent_action(&backend, locator, action, input).await
             }
             "desktop_agent_step" => {
@@ -276,7 +466,8 @@ impl ToolRegistry {
                     )
                 } else {
                     let goal = required_string(params, "goal")?;
-                    execute_jev_step(&backend, goal).await
+                    let (scope, launch_ref) = self.semantic_scope(params).await?;
+                    execute_jev_step(&backend, goal, scope, launch_ref).await
                 }
             }
             _ => Err(format!("未知语义桌面工具: {tool_name}")),
@@ -337,7 +528,9 @@ async fn execute_cached_candidate(
         .find(|candidate| candidate.id == candidate_id)
         .cloned()
         .ok_or_else(|| "candidate_id 不属于最近一次语义观察".to_string())?;
-    let result = execute_candidate(backend, &space.observation, &candidate, &input, None).await?;
+    let mut result =
+        execute_candidate(backend, &space.observation, &candidate, &input, None).await?;
+    result["workflow_step"] = workflow_step(&space, &candidate);
     if let (Some(goal_key), Some(verification)) = (
         space.enhanced_goal_key.as_deref(),
         result
@@ -354,9 +547,13 @@ async fn execute_cached_candidate(
 async fn execute_jev_step(
     backend: &SemanticDesktopBackend,
     goal: &str,
+    scope: ObservationScope,
+    launch_ref: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let (goal_key, recent_actions) = backend.begin_enhanced_step(goal).await?;
-    let space = backend.observe(goal, Some(goal_key.clone())).await?;
+    let space = backend
+        .observe_scoped(goal, Some(goal_key.clone()), scope, launch_ref)
+        .await?;
     let mut config = crate::config::load_registry()
         .map_err(|error| format!("读取增强判断模型配置失败: {error}"))?
         .jev;
@@ -373,7 +570,7 @@ async fn execute_jev_step(
     let decision_input = DecisionInput {
         goal: goal.to_string(),
         observation: space.observation.clone(),
-        candidates: space.candidates.clone(),
+        candidates: decision_candidates(&space),
         recent_actions,
     };
     let decision = match client.choose(decision_input).await {
@@ -388,6 +585,24 @@ async fn execute_jev_step(
         }
         Err(error) => return Err(format!("增强判断模型决策失败: {error}")),
     };
+    apply_enhanced_decision(backend, &space, decision).await
+}
+
+async fn apply_enhanced_decision(
+    backend: &SemanticDesktopBackend,
+    space: &ActionSpace,
+    decision: crate::desktop_automation::Decision,
+) -> Result<serde_json::Value, String> {
+    validate_space_token(space, &space.token)?;
+    if decision.candidate_id == PRIMARY_HANDOFF_ID {
+        return Ok(json!({
+            "status": "needs_primary_decision",
+            "reason": "增强判断模型请求主模型结合目标与界面上下文继续判断；无需再次调用增强模型或询问用户",
+            "action_space": action_space_json(space),
+            "decision": {"provider": "jev", "model": decision.actual_model,
+                "confidence": decision.confidence, "usage": decision.usage},
+        }));
+    }
     let candidate = space
         .candidates
         .iter()
@@ -426,7 +641,7 @@ async fn execute_jev_step(
             },
         }));
     }
-    let result = execute_candidate(
+    let mut result = execute_candidate(
         backend,
         &space.observation,
         &candidate,
@@ -439,18 +654,23 @@ async fn execute_jev_step(
         })),
     )
     .await?;
+    result["workflow_step"] = workflow_step(space, &candidate);
     let verification = result
         .get("verification")
         .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok());
-    if let Some(verification) = verification {
+    if let (Some(verification), Some(goal_key)) = (verification, space.enhanced_goal_key.as_deref())
+    {
         backend
-            .record_enhanced_result(&goal_key, &candidate, verification)
+            .record_enhanced_result(goal_key, &candidate, verification)
             .await;
     }
     Ok(result)
 }
 
 fn validate_space_token(space: &ActionSpace, observation_token: &str) -> Result<(), String> {
+    if space.owner != crate::automation_gate::current_execution_owner() {
+        return Err("stale_observation: 观察属于其他执行任务，请重新观察".into());
+    }
     if space.token != observation_token {
         return Err("observation_token 不属于最近一次语义观察".into());
     }
@@ -510,9 +730,19 @@ async fn execute_candidate(
     // before dispatch and keep only the app/window boundary here; the adapter
     // re-resolves the local locator and verifies that the target still exposes
     // the requested native action.
+    let scope = backend
+        .last_space
+        .lock()
+        .await
+        .as_ref()
+        .filter(|s| {
+            s.observation.app.id == before.app.id && s.observation.window.id == before.window.id
+        })
+        .map(|s| s.scope.clone())
+        .unwrap_or_default();
     let fresh = backend
         .observer
-        .observe(&ObservationScope::default())
+        .observe(&scope)
         .await
         .map_err(|error| error.to_string())?;
     if fresh.app.id != before.app.id || fresh.window.id != before.window.id {
@@ -520,19 +750,38 @@ async fn execute_candidate(
         return Err("前台应用或窗口已变化，候选动作已过期；请重新观察后再选择".into());
     }
     let verification_candidate = rebind_verification_target(before, &fresh, candidate)?;
-    let receipt = backend
-        .executor
-        .execute(&fresh, candidate, input)
-        .await
-        .map_err(|error| error.to_string())?;
+    // An execution error may mean a native timeout after dispatch. Consume the
+    // token before attempting it; callers must observe rather than replay.
+    backend.clear_space().await;
+    let receipt = match backend.executor.execute(&fresh, candidate, input).await {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return Ok(json!({
+                "status": "needs_observation", "candidate_id": candidate.id,
+                "verification": Verification::Unknown, "dispatch_state": "unknown",
+                "reason": error.to_string(), "retry_action": false, "decision": decision,
+            }));
+        }
+    };
     if receipt.candidate_id != candidate.id {
         return Err("执行回执与候选动作不一致".into());
     }
-    let (after, verification) =
-        verify_with_settle(backend, &fresh, &verification_candidate, input).await?;
+    // Consume the observation once dispatch may have happened. A failed read
+    // afterwards must never leave a replayable click/send candidate cached.
     backend.clear_space().await;
+    let (after, verification) =
+        match verify_with_settle(backend, &fresh, &verification_candidate, input, &scope).await {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(json!({
+                    "status": "needs_observation", "candidate_id": candidate.id,
+                    "receipt": receipt, "verification": Verification::Unknown,
+                    "reason": error, "retry_action": false, "decision": decision,
+                }))
+            }
+        };
     Ok(json!({
-        "status": "executed",
+        "status": if matches!(verification, Verification::Achieved | Verification::Progress) { "executed" } else { "needs_observation" },
         "candidate_id": candidate.id,
         "description": candidate.public_description,
         "receipt": receipt,
@@ -540,6 +789,9 @@ async fn execute_candidate(
         "before_revision": fresh.revision,
         "after_revision": after.revision,
         "after_window": after.window,
+        "after_app": after.app,
+        "business_goal_confirmed": false,
+        "retry_action": false,
         "decision": decision,
     }))
 }
@@ -579,15 +831,17 @@ async fn execute_persistent_action(
     {
         return Err("locator 至少需要 role、automation_id 或 accessible_name 之一".into());
     }
-    let before = backend
+    let (observation, scope) = backend
         .observer
-        .observe(&ObservationScope {
-            app_id: Some(locator.app_id.clone()),
-            window_id: locator.window_id.clone(),
-            subtree_id: None,
-        })
+        .observe_locator(&locator)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|e| e.to_string())?;
+    // Persist only stable ancestry; the adapter reconstructs a fresh local
+    // region after restart. Reuse it for dispatch and verification as well.
+    let before = backend
+        .store_observation("", None, scope, None, observation)
+        .await?
+        .observation;
     let candidate = backend
         .candidates
         .rebuild_semantic_candidate(&locator, action, &before)
@@ -600,7 +854,7 @@ async fn execute_persistent_action(
         .unwrap_or(Verification::Unknown);
     if verification != Verification::Achieved {
         return Err(format!(
-            "已保存的语义动作没有通过执行后验证: {verification:?}"
+            "desktop_needs_observation: 动作可能已发送，不可自动重放；请先重新观察并确认业务结果。执行后验证: {verification:?}"
         ));
     }
     Ok(result)
@@ -611,15 +865,12 @@ async fn verify_with_settle(
     before: &Observation,
     candidate: &ActionCandidate,
     input: &ExecutionInput,
+    scope: &ObservationScope,
 ) -> Result<(Observation, Verification), String> {
     const ATTEMPTS: usize = 6;
     const SETTLE_MS: u64 = 125;
 
-    let mut last = backend
-        .observer
-        .observe(&ObservationScope::default())
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut last = observe_after_action(backend, scope).await?;
     for attempt in 0..ATTEMPTS {
         let verification =
             verify_observation_with_value(before, candidate, &last, input.value.as_deref());
@@ -627,13 +878,35 @@ async fn verify_with_settle(
             return Ok((last, verification));
         }
         tokio::time::sleep(Duration::from_millis(SETTLE_MS)).await;
-        last = backend
-            .observer
-            .observe(&ObservationScope::default())
-            .await
-            .map_err(|error| error.to_string())?;
+        last = observe_after_action(backend, scope).await?;
     }
     unreachable!("bounded verification loop always returns")
+}
+
+async fn observe_after_action(
+    backend: &SemanticDesktopBackend,
+    scope: &ObservationScope,
+) -> Result<Observation, String> {
+    let verification_scope = ObservationScope {
+        app_id: None,
+        window_id: None,
+        subtree_id: scope.subtree_id.clone(),
+    };
+    match backend.observer.observe(&verification_scope).await {
+        Ok(observation) => Ok(observation),
+        Err(_) if scope.subtree_id.is_some() => {
+            let mut observation = backend
+                .observer
+                .observe(&ObservationScope::default())
+                .await
+                .map_err(|e| e.to_string())?;
+            // A different observation region is not evidence that the original
+            // target disappeared. Still report foreground app/window changes.
+            observation.truncated = true;
+            Ok(observation)
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -812,8 +1085,8 @@ fn validate_action_space(
     if candidates.is_empty() {
         return Err("语义适配器没有生成候选动作".into());
     }
-    if candidates.len() > 255 {
-        return Err("候选动作超过增强判断模型单次选择的 255 项上限".into());
+    if candidates.len() > 4096 {
+        return Err("本地候选动作超过有界观察容量".into());
     }
     let mut ids = std::collections::HashSet::new();
     for candidate in candidates {
@@ -828,9 +1101,38 @@ fn validate_action_space(
 }
 
 fn action_space_json(space: &ActionSpace) -> serde_json::Value {
-    json!({
+    action_space_page(space, 0)
+}
+
+fn workflow_step(space: &ActionSpace, candidate: &ActionCandidate) -> serde_json::Value {
+    space
+        .persistent_locators
+        .get(&candidate.id)
+        .and_then(|locator| {
+            locator.supported_action.as_ref().map(|action| {
+                let mut step = json!({
+                "tool": "desktop_semantic_action",
+                "params": {"locator": locator, "action": action},
+                });
+                if let Some(launch_ref) = &space.launch_ref {
+                    step["params"]["launch_ref"] = json!(launch_ref);
+                }
+                step
+            })
+        })
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn candidate_summary(candidate: &ActionCandidate) -> serde_json::Value {
+    json!({"id": candidate.id, "kind": candidate.kind,
+        "description": candidate.public_description.chars().take(360).collect::<String>(),
+        "risk": candidate.local_risk, "target": candidate.target})
+}
+
+fn action_space_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
+    let mut result = json!({
         "observation_token": space.token,
-        "expires_in_ms": ACTION_SPACE_TTL.as_millis() as u64,
+        "expires_in_ms": ACTION_SPACE_TTL.saturating_sub(space.created_at.elapsed()).as_millis() as u64,
         "observation": {
             "revision": space.observation.revision,
             "app": space.observation.app,
@@ -839,26 +1141,75 @@ fn action_space_json(space: &ActionSpace) -> serde_json::Value {
             "captured_at_ms": space.observation.captured_at_ms,
             "truncated": space.observation.truncated,
         },
-        "candidates": space.candidates.iter().map(|candidate| {
-            let workflow_step = space.persistent_locators.get(&candidate.id).and_then(|locator| {
-                locator.supported_action.as_ref().map(|action| json!({
-                    "tool": "desktop_semantic_action",
-                    "params": {
-                        "locator": locator,
-                        "action": action,
-                    },
-                }))
-            });
-            json!({
-                "id": candidate.id,
-                "kind": candidate.kind,
-                "description": candidate.public_description,
-                "risk": candidate.local_risk,
-                "target": candidate.target,
-                "workflow_step": workflow_step,
-            })
-        }).collect::<Vec<_>>(),
+        "candidate_count": space.candidates.len(),
+        "cursor": cursor,
+        "next_cursor": null,
+        "candidates": [],
+        "control_candidates": space.candidates.iter().filter(|c| c.action_class() == ActionClass::Control).map(candidate_summary).collect::<Vec<_>>(),
+        "details_tool": "desktop_semantic_candidate",
+        "region_count": space.observation.nodes.len(),
+        "regions_query": {"tool": "desktop_semantic_observe", "params": {
+            "observation_token": space.token, "view": "regions", "cursor": 0
+        }},
+    });
+    let mut end = cursor.min(space.candidates.len());
+    for candidate in space.candidates.iter().skip(end).take(CANDIDATE_PAGE_SIZE) {
+        result["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .push(candidate_summary(candidate));
+        if result.to_string().chars().count() > CANDIDATE_PAGE_CHARS && end > cursor {
+            result["candidates"].as_array_mut().unwrap().pop();
+            break;
+        }
+        end += 1;
+    }
+    if end < space.candidates.len() {
+        result["next_cursor"] = json!(end);
+    }
+    result["remaining_count"] = json!(space.candidates.len().saturating_sub(end));
+    result
+}
+
+fn region_page(space: &ActionSpace, cursor: usize) -> serde_json::Value {
+    let nodes = &space.observation.nodes;
+    let end = (cursor + CANDIDATE_PAGE_SIZE).min(nodes.len());
+    json!({
+        "observation_token": space.token, "view": "regions",
+        "region_count": nodes.len(), "cursor": cursor,
+        "next_cursor": (end < nodes.len()).then_some(end),
+        "regions": nodes.iter().skip(cursor).take(CANDIDATE_PAGE_SIZE).map(|node| json!({
+            "subtree_id": node.opaque_id, "role": node.role,
+            "name": node.name.as_ref().map(|s| s.chars().take(80).collect::<String>()),
+        })).collect::<Vec<_>>(),
+        "hint": "从区域列表选取 subtree_id 发起新的局部观察；新观察会替换旧候选。菜单可通过 scope=menu 观察。",
     })
+}
+
+fn decision_candidates(space: &ActionSpace) -> Vec<ActionCandidate> {
+    let mut candidates: Vec<_> = space
+        .candidates
+        .iter()
+        .filter(|c| c.action_class() != ActionClass::Control)
+        .take(36)
+        .cloned()
+        .collect();
+    candidates.extend(
+        space
+            .candidates
+            .iter()
+            .filter(|c| c.action_class() == ActionClass::Control)
+            .take(3)
+            .cloned(),
+    );
+    candidates.push(ActionCandidate {
+        id: PRIMARY_HANDOFF_ID.into(), observation_revision: space.observation.revision,
+        target: None, kind: CandidateKind::CannotProceed,
+        public_description: format!("Hand off to the primary reasoning model: choose when target/intent is ambiguous, more context or another candidate page is needed, or no clear action is justified. This batch offers {} of {} local candidates; tree incomplete: {}. No user approval is requested.", candidates.len(), space.candidates.len(), space.observation.truncated),
+        local_risk: crate::desktop_automation::RiskClass::ReadOnly,
+        preconditions: vec![], expected_effects: vec![],
+    });
+    candidates
 }
 
 #[cfg(test)]
@@ -868,6 +1219,275 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn candidate_pages_are_complete_json_and_keep_ids_and_controls() {
+        let backend = SemanticDesktopBackend::new(Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        }));
+        let mut space = backend.observe("open", None).await.unwrap();
+        let template = space.candidates[0].clone();
+        space.candidates = (0..80)
+            .map(|i| {
+                let mut c = template.clone();
+                c.id = format!("candidate-{i}");
+                c.public_description = "界面内容与上下文".repeat(100);
+                c
+            })
+            .collect();
+        let mut control = template;
+        control.id = "cannot-proceed".into();
+        control.kind = CandidateKind::CannotProceed;
+        control.public_description = "No native candidate".into();
+        space.candidates.push(control);
+        let mut cursor = 0;
+        let mut ids = Vec::new();
+        loop {
+            let page = action_space_page(&space, cursor);
+            assert!(page.to_string().chars().count() < 8_000);
+            assert_eq!(page["control_candidates"][0]["id"], "cannot-proceed");
+            let wire = crate::utils::truncate_tool_output(
+                &page.to_string(),
+                8000,
+                "desktop_semantic_observe",
+            );
+            let reparsed: serde_json::Value = serde_json::from_str(&wire).unwrap();
+            ids.extend(
+                reparsed["candidates"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| c["id"].as_str().unwrap().to_owned()),
+            );
+            match page["next_cursor"].as_u64() {
+                Some(next) => {
+                    assert!(next as usize > cursor);
+                    cursor = next as usize;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(
+            ids,
+            space
+                .candidates
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>()
+        );
+        let batch = decision_candidates(&space);
+        assert!(batch.len() <= 40);
+        assert!(batch.iter().any(|c| c.id == PRIMARY_HANDOFF_ID));
+        assert_eq!(space.candidates.len(), 81);
+    }
+
+    #[tokio::test]
+    async fn consumed_action_token_cannot_send_a_second_native_action() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter.clone());
+        let space = backend.observe("open", None).await.unwrap();
+        let result = execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], "needs_observation");
+        assert_eq!(result["retry_action"], false);
+        assert!(execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default()
+        )
+        .await
+        .is_err());
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stable_keyboard_target_rejects_mixed_or_incomplete_locators_before_input() {
+        let registry = ToolRegistry::new();
+        let mixed = registry
+            .semantic_input_window(&json!({"hwnd": 42, "target_locator": {"app_id": "test"}}))
+            .await
+            .unwrap_err();
+        assert!(mixed.contains("不能同时"));
+        let missing = registry
+            .semantic_input_window(&json!({"target_locator": {"role": "button"}}))
+            .await
+            .unwrap_err();
+        assert!(missing.contains("稳定定位器"));
+    }
+
+    #[tokio::test]
+    async fn native_error_after_dispatch_requires_observation_and_consumes_token() {
+        struct AmbiguousDispatch(Arc<AtomicUsize>);
+        #[async_trait]
+        impl ComputerExecutor for AmbiguousDispatch {
+            async fn execute(
+                &self,
+                _: &Observation,
+                _: &ActionCandidate,
+                _: &ExecutionInput,
+            ) -> Result<
+                crate::desktop_automation::ActionReceipt,
+                crate::desktop_automation::AutomationError,
+            > {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(crate::desktop_automation::AutomationError::Execution(
+                    "provider timed out after dispatch".into(),
+                ))
+            }
+        }
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut backend = SemanticDesktopBackend::new(Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        }));
+        backend.executor = Arc::new(AmbiguousDispatch(count.clone()));
+        let space = backend.observe("send", None).await.unwrap();
+        let result = execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], "needs_observation");
+        assert_eq!(result["retry_action"], false);
+        assert_eq!(result["dispatch_state"], "unknown");
+        assert!(execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default()
+        )
+        .await
+        .is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn different_execution_owner_cannot_reuse_observation() {
+        let backend = SemanticDesktopBackend::new(Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        }));
+        let space = crate::automation_gate::with_execution_owner(
+            "task-a".into(),
+            backend.observe("open", None),
+        )
+        .await
+        .unwrap();
+        crate::automation_gate::with_execution_owner("task-b".into(), async {
+            assert!(validate_space_token(&space, &space.token).is_err());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn enhanced_handoff_keeps_the_same_executable_space_without_dispatch() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter.clone());
+        let space = backend.observe("open", Some("open".into())).await.unwrap();
+        let result = apply_enhanced_decision(
+            &backend,
+            &space,
+            crate::desktop_automation::Decision {
+                candidate_id: PRIMARY_HANDOFF_ID.into(),
+                confidence: Some(0.99),
+                probabilities: Default::default(),
+                actual_model: None,
+                usage: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], "needs_primary_decision");
+        assert_eq!(result["action_space"]["observation_token"], space.token);
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
+        let executed = execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(executed["status"], "executed");
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn enhanced_choice_does_not_add_a_confidence_floor() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter.clone());
+        let space = backend.observe("open", Some("open".into())).await.unwrap();
+        let result = apply_enhanced_decision(
+            &backend,
+            &space,
+            crate::desktop_automation::Decision {
+                candidate_id: "fake-candidate".into(),
+                confidence: Some(0.27),
+                probabilities: Default::default(),
+                actual_model: None,
+                usage: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], "executed");
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn enhanced_budget_is_not_reset_by_goal_rewording_in_one_task() {
+        let backend = SemanticDesktopBackend::new(Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        }));
+        crate::automation_gate::with_execution_owner("one-task".into(), async {
+            for n in 0..HARD_STEP_LIMIT {
+                backend
+                    .begin_enhanced_step(&format!("different step {n}"))
+                    .await
+                    .unwrap();
+            }
+            assert!(backend
+                .begin_enhanced_step("entirely different wording")
+                .await
+                .is_err());
+        })
+        .await;
+    }
 
     struct FakeAdapter {
         executions: AtomicUsize,
@@ -1131,7 +1751,20 @@ mod tests {
             .unwrap();
         let payload: serde_json::Value =
             serde_json::from_str(observed.output.as_deref().unwrap()).unwrap();
-        let step = &payload["candidates"][0]["workflow_step"];
+        assert!(payload["candidates"][0].get("workflow_step").is_none());
+        let detail = registry
+            .execute_semantic_desktop_tool(
+                "desktop_semantic_candidate",
+                &json!({
+                    "observation_token": payload["observation_token"],
+                    "candidate_id": payload["candidates"][0]["id"],
+                }),
+            )
+            .await
+            .unwrap();
+        let detail: serde_json::Value =
+            serde_json::from_str(detail.output.as_deref().unwrap()).unwrap();
+        let step = &detail["workflow_step"];
 
         assert_eq!(step["tool"], "desktop_semantic_action");
         assert_eq!(step["params"]["locator"]["app_id"], "fake-app");
@@ -1251,7 +1884,7 @@ mod tests {
             .error
             .as_deref()
             .unwrap_or_default()
-            .contains("没有通过执行后验证"));
+            .contains("desktop_needs_observation:"));
     }
 
     #[tokio::test]

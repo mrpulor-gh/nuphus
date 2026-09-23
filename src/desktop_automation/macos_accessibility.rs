@@ -18,6 +18,181 @@ mod semantic {
         pub identifier: Option<String>,
         pub raw_name: Option<String>,
         pub ancestors: Vec<SemanticContext>,
+        pub origin: String,
+    }
+
+    pub(super) const MENU_SCOPE_ID: &str = "nuphus:scope:menu";
+
+    pub(super) fn scope_is_menu(ancestors: &[SemanticContext]) -> bool {
+        ancestors
+            .iter()
+            .any(|context| context.automation_id.as_deref() == Some(MENU_SCOPE_ID))
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ReplayResolution {
+        Target,
+        Region(String),
+    }
+
+    pub(super) fn replay_resolution(
+        metadata: &[Metadata],
+        locator: &SemanticLocator,
+    ) -> Result<ReplayResolution, AutomationError> {
+        let targets: Vec<_> = metadata
+            .iter()
+            .filter(|meta| {
+                locator
+                    .role
+                    .as_ref()
+                    .is_none_or(|role| role == &meta.node.role)
+                    && locator
+                        .automation_id
+                        .as_ref()
+                        .is_none_or(|id| Some(id) == meta.identifier.as_ref())
+                    && locator
+                        .accessible_name
+                        .as_ref()
+                        .is_none_or(|name| Some(name) == meta.raw_name.as_ref())
+                    && (locator.ancestor_chain.is_empty()
+                        || locator.ancestor_chain == meta.ancestors)
+            })
+            .collect();
+        match targets.len() {
+            1 => return Ok(ReplayResolution::Target),
+            0 => {}
+            _ => {
+                return Err(AutomationError::Observation(
+                    "saved AX target is ambiguous; refine its stable ancestor context".into(),
+                ))
+            }
+        }
+        // Prefer the deepest uniquely observed ancestor. Compare the preceding
+        // chain as well, so a same-named group in another row is never selected.
+        for (index, context) in locator.ancestor_chain.iter().enumerate().rev() {
+            if context.automation_id.as_deref() == Some(MENU_SCOPE_ID)
+                || (context.automation_id.is_none() && context.accessible_name.is_none())
+            {
+                continue;
+            }
+            let regions: Vec<_> = metadata
+                .iter()
+                .filter(|meta| {
+                    meta.ancestors == locator.ancestor_chain[..index]
+                        && context
+                            .role
+                            .as_ref()
+                            .is_none_or(|role| role == &meta.node.role)
+                        && context
+                            .automation_id
+                            .as_ref()
+                            .is_none_or(|id| Some(id) == meta.identifier.as_ref())
+                        && context
+                            .accessible_name
+                            .as_ref()
+                            .is_none_or(|name| Some(name) == meta.raw_name.as_ref())
+                })
+                .collect();
+            match regions.as_slice() {
+                [region] => return Ok(ReplayResolution::Region(region.node.opaque_id.clone())),
+                [] => {}
+                _ => {
+                    return Err(AutomationError::Observation(
+                        "saved AX ancestor region is ambiguous; refine the workflow locator".into(),
+                    ))
+                }
+            }
+        }
+        Err(AutomationError::Observation("saved AX target or its stable ancestor region is missing; refresh the workflow locator".into()))
+    }
+
+    pub(super) fn describe(meta: &Metadata, action: &NativeAction) -> String {
+        let context = meta
+            .ancestors
+            .iter()
+            .filter_map(|ancestor| ancestor.accessible_name.as_deref())
+            .rev()
+            .take(3)
+            .map(|name| redact(name).chars().take(32).collect::<String>())
+            .collect::<Vec<_>>();
+        format!(
+            "{} / {}: {action:?} {:?} '{}'",
+            meta.origin,
+            context.into_iter().rev().collect::<Vec<_>>().join(" > "),
+            meta.node.role,
+            meta.node.name.as_deref().unwrap_or("unnamed control")
+        )
+    }
+
+    pub(super) fn descend_menu(
+        raw_role: &str,
+        explicit_root: bool,
+        expanded: Option<bool>,
+        selected: Option<bool>,
+        focused: bool,
+    ) -> bool {
+        explicit_root
+            || !matches!(raw_role, "AXMenuBarItem" | "AXMenuItem")
+            || expanded == Some(true)
+            || selected == Some(true)
+            || focused
+    }
+
+    pub(super) fn ranked_actions(
+        goal: &str,
+        metadata: &[Metadata],
+    ) -> Vec<(i32, Metadata, NativeAction)> {
+        let goal = goal.to_lowercase();
+        let mut ranked = Vec::new();
+        for meta in metadata {
+            if !meta.node.enabled || !meta.node.visible {
+                continue;
+            }
+            for action in &meta.node.supported_actions {
+                let duplicate_count = metadata
+                    .iter()
+                    .filter(|other| {
+                        other.node.enabled
+                            && other.node.visible
+                            && other.node.role == meta.node.role
+                            && other.identifier == meta.identifier
+                            && other.raw_name == meta.raw_name
+                            && other.ancestors == meta.ancestors
+                            && other.origin == meta.origin
+                            && other.node.supported_actions.contains(action)
+                    })
+                    .count();
+                if duplicate_count != 1 {
+                    continue;
+                }
+                let name = meta.node.name.as_deref().unwrap_or_default().to_lowercase();
+                let context = meta
+                    .ancestors
+                    .iter()
+                    .filter_map(|ancestor| ancestor.accessible_name.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                let token_score: i32 = goal
+                    .split(|ch: char| !ch.is_alphanumeric())
+                    .filter(|token| token.chars().count() >= 2)
+                    .map(|token| {
+                        i32::from(name.contains(token)) * 40
+                            + i32::from(context.contains(token)) * 15
+                    })
+                    .sum();
+                let relevance = i32::from(!name.is_empty() && goal.contains(&name)) * 120
+                    + token_score
+                    + i32::from(meta.node.focused) * 30
+                    + i32::from(matches!(
+                        action,
+                        NativeAction::SetValue | NativeAction::Invoke
+                    )) * 18;
+                ranked.push((relevance, meta.clone(), action.clone()));
+            }
+        }
+        ranked.sort_by_key(|item| std::cmp::Reverse(item.0));
+        ranked
     }
 
     pub(super) fn hash(value: &str) -> String {
@@ -274,6 +449,7 @@ mod platform {
         action: NativeAction,
         window_token: u64,
         require_unique_window: bool,
+        scope: ObservationScope,
     }
 
     #[derive(Default)]
@@ -285,6 +461,7 @@ mod platform {
         actions: HashMap<String, BoundAction>,
         window_token: u64,
         window_unique: bool,
+        scope: ObservationScope,
     }
 
     enum Request {
@@ -340,6 +517,7 @@ mod platform {
                                             max_elements.clamp(1, 200),
                                             bound.window_token,
                                             bound.require_unique_window,
+                                            &bound.scope,
                                             &bound.locator,
                                             &bound.action,
                                             &input,
@@ -387,11 +565,7 @@ mod platform {
                 observation_revision: observation.revision,
                 target: Some(meta.node.opaque_id.clone()),
                 kind: kind(&action)?,
-                public_description: format!(
-                    "{action:?} {:?} '{}'",
-                    meta.node.role,
-                    meta.node.name.as_deref().unwrap_or("unnamed control")
-                ),
+                public_description: describe(meta, &action),
                 local_risk: risk(&action, meta.raw_name.as_deref()),
                 preconditions: vec![Predicate {
                     name: "semantic_element_exists".into(),
@@ -407,6 +581,7 @@ mod platform {
                     action,
                     window_token: state.window_token,
                     require_unique_window: false,
+                    scope: state.scope.clone(),
                 },
             );
             Ok(candidate)
@@ -473,8 +648,55 @@ mod platform {
             state.metadata = snapshot.metadata;
             state.window_token = snapshot.window_token;
             state.window_unique = snapshot.window_unique;
+            state.scope = scope.clone();
             state.observation = Some(observation.clone());
             Ok(observation)
+        }
+
+        async fn observe_locator(
+            &self,
+            locator: &SemanticLocator,
+        ) -> Result<(Observation, ObservationScope), AutomationError> {
+            let mut scope = ObservationScope {
+                app_id: Some(locator.app_id.clone()),
+                window_id: locator.window_id.clone(),
+                subtree_id: scope_is_menu(&locator.ancestor_chain).then(|| "@menu".into()),
+            };
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            let mut visited = std::collections::HashSet::new();
+            for _ in 0..locator.ancestor_chain.len().saturating_add(2).min(12) {
+                let observation = tokio::time::timeout_at(deadline, self.observe(&scope))
+                    .await
+                    .map_err(|_| {
+                        AutomationError::Observation("saved AX region resolution timed out".into())
+                    })??;
+                native::validate_locator_window(locator, &observation)?;
+                let resolution = {
+                    let state = self
+                        .state
+                        .lock()
+                        .map_err(|_| AutomationError::Observation("AX state unavailable".into()))?;
+                    Self::current(&state, &observation)?;
+                    if !state.window_unique {
+                        return Err(AutomationError::Observation("saved AX window identity is ambiguous; select a unique window before replay".into()));
+                    }
+                    replay_resolution(&state.metadata, locator)?
+                };
+                match resolution {
+                    ReplayResolution::Target => return Ok((observation, scope)),
+                    ReplayResolution::Region(id) => {
+                        if !visited.insert(id.clone())
+                            || scope.subtree_id.as_deref() == Some(id.as_str())
+                        {
+                            return Err(AutomationError::Observation("saved AX target was not found in its ancestor region; refresh the workflow locator".into()));
+                        }
+                        scope.subtree_id = Some(id);
+                    }
+                }
+            }
+            Err(AutomationError::Observation(
+                "saved AX ancestor resolution exceeded its bounded depth".into(),
+            ))
         }
     }
 
@@ -489,45 +711,7 @@ mod platform {
                 .lock()
                 .map_err(|_| AutomationError::Candidates("AX state unavailable".into()))?;
             Self::current(&state, observation)?;
-            let mut ranked = Vec::new();
-            let goal = goal.to_lowercase();
-            for meta in &state.metadata {
-                if !meta.node.enabled || !meta.node.visible {
-                    continue;
-                }
-                for action in &meta.node.supported_actions {
-                    let locator = SemanticLocator {
-                        app_id: observation.app.id.clone(),
-                        window_id: None,
-                        window_title: None,
-                        role: Some(meta.node.role.clone()),
-                        automation_id: meta.identifier.clone(),
-                        accessible_name: meta.raw_name.clone(),
-                        ancestor_chain: meta.ancestors.clone(),
-                        supported_action: Some(action.clone()),
-                        ordinal_hint: None,
-                    };
-                    if state
-                        .metadata
-                        .iter()
-                        .filter(|m| matches(m, &locator, action))
-                        .count()
-                        != 1
-                    {
-                        continue;
-                    }
-                    let name = meta.node.name.as_deref().unwrap_or_default().to_lowercase();
-                    let relevance = i32::from(!name.is_empty() && goal.contains(&name)) * 120
-                        + i32::from(meta.node.focused) * 30
-                        + i32::from(matches!(
-                            action,
-                            NativeAction::SetValue | NativeAction::Invoke
-                        )) * 18;
-                    ranked.push((relevance, meta.clone(), action.clone()));
-                }
-            }
-            ranked.sort_by_key(|item| std::cmp::Reverse(item.0));
-            ranked.truncate(37);
+            let ranked = ranked_actions(goal, &state.metadata);
             state.actions.clear();
             let mut result = Vec::new();
             for (_, meta, action) in ranked {
@@ -586,6 +770,11 @@ mod platform {
                 .lock()
                 .map_err(|_| AutomationError::Candidates("AX state unavailable".into()))?;
             Self::current(&state, observation)?;
+            if scope_is_menu(&locator.ancestor_chain)
+                && !state.metadata.iter().any(|meta| meta.origin == "menu")
+            {
+                return Err(AutomationError::Candidates("saved menu action requires an @menu observation or a menu region; refresh that scope before replay".into()));
+            }
             if !state.window_unique {
                 return Err(AutomationError::Candidates("saved AX window identity is ambiguous; give the windows distinct titles or close the duplicate before replay".into()));
             }
@@ -732,6 +921,7 @@ mod tests {
                 automation_id: Some(container.into()),
                 accessible_name: None,
             }],
+            origin: "window".into(),
         }
     }
 
@@ -941,5 +1131,136 @@ mod tests {
         assert_eq!(child_capacity(200, 199, 0, 5), 0);
         assert_eq!(child_capacity(200, 0, 0, 24), 0);
         assert_eq!(child_capacity(200, 0, 0, 23), 199);
+    }
+
+    #[test]
+    fn closed_menus_do_not_expand_unless_the_branch_is_explicitly_requested() {
+        assert!(!descend_menu("AXMenuBarItem", false, None, None, false));
+        assert!(!descend_menu(
+            "AXMenuItem",
+            false,
+            Some(false),
+            Some(false),
+            false
+        ));
+        assert!(descend_menu("AXMenuBar", false, None, None, false));
+        assert!(descend_menu("AXMenu", false, None, None, false));
+        assert!(descend_menu("AXMenuBarItem", true, None, None, false));
+        assert!(descend_menu(
+            "AXMenuBarItem",
+            false,
+            None,
+            Some(true),
+            false
+        ));
+        assert!(descend_menu("AXMenuItem", false, Some(true), None, false));
+    }
+
+    #[test]
+    fn all_unique_observed_actions_remain_available_beyond_the_previous_37_limit() {
+        let metadata: Vec<_> = (0..80)
+            .map(|index| metadata(&format!("row-{index}")))
+            .collect();
+        let ranked = ranked_actions("Open", &metadata);
+        assert_eq!(ranked.len(), 80);
+        let mut ambiguous = metadata.clone();
+        ambiguous.push(metadata[0].clone());
+        assert_eq!(ranked_actions("Open", &ambiguous).len(), 79);
+    }
+
+    #[test]
+    fn candidate_description_preserves_menu_origin_and_redacted_parent_context() {
+        let mut item = metadata("preferences");
+        item.origin = "menu".into();
+        item.ancestors = vec![
+            SemanticContext {
+                role: Some(UiRole::Menu),
+                automation_id: Some(MENU_SCOPE_ID.into()),
+                accessible_name: Some("menu bar".into()),
+            },
+            SemanticContext {
+                role: Some(UiRole::MenuItem),
+                automation_id: None,
+                accessible_name: Some("Apple".into()),
+            },
+        ];
+        assert!(scope_is_menu(&item.ancestors));
+        let label = describe(&item, &NativeAction::Invoke);
+        assert!(label.contains("menu / menu bar > Apple"));
+        item.ancestors[1].accessible_name = Some("person@example.org".into());
+        assert!(!describe(&item, &NativeAction::Invoke).contains("person@example.org"));
+        assert!(!scope_is_menu(&metadata("window-row").ancestors));
+    }
+
+    #[test]
+    fn replay_restores_deep_region_using_stable_ancestors_and_fresh_runtime_ids() {
+        let mut outer = metadata("unused");
+        outer.node.opaque_id = "fresh-outer".into();
+        outer.node.role = UiRole::Other;
+        outer.identifier = Some("outer-panel".into());
+        outer.raw_name = Some("Preferences".into());
+        outer.ancestors.clear();
+        let outer_context = SemanticContext {
+            role: Some(outer.node.role.clone()),
+            automation_id: outer.identifier.clone(),
+            accessible_name: outer.raw_name.clone(),
+        };
+        let mut inner = outer.clone();
+        inner.node.opaque_id = "fresh-inner".into();
+        inner.identifier = Some("notification-settings".into());
+        inner.raw_name = Some("Notifications".into());
+        inner.ancestors = vec![outer_context.clone()];
+        let inner_context = SemanticContext {
+            role: Some(inner.node.role.clone()),
+            automation_id: inner.identifier.clone(),
+            accessible_name: inner.raw_name.clone(),
+        };
+        let mut target = metadata("unused");
+        target.node.opaque_id = "fresh-target".into();
+        target.ancestors = vec![outer_context, inner_context];
+        let locator = SemanticLocator {
+            app_id: "app.test".into(),
+            window_id: None,
+            window_title: None,
+            role: Some(target.node.role.clone()),
+            automation_id: target.identifier.clone(),
+            accessible_name: target.raw_name.clone(),
+            ancestor_chain: target.ancestors.clone(),
+            supported_action: Some(NativeAction::Invoke),
+            ordinal_hint: None,
+        };
+        assert_eq!(
+            replay_resolution(std::slice::from_ref(&outer), &locator).unwrap(),
+            ReplayResolution::Region("fresh-outer".into())
+        );
+        assert_eq!(
+            replay_resolution(&[outer, inner.clone()], &locator).unwrap(),
+            ReplayResolution::Region("fresh-inner".into())
+        );
+        assert_eq!(
+            replay_resolution(&[inner, target], &locator).unwrap(),
+            ReplayResolution::Target
+        );
+        assert!(!serde_json::to_string(&locator).unwrap().contains("fresh-"));
+    }
+
+    #[test]
+    fn replay_rejects_ambiguous_regions_and_does_not_ignore_parent_context() {
+        let mut target = metadata("intended-row");
+        let locator = SemanticLocator {
+            app_id: "app.test".into(),
+            window_id: None,
+            window_title: None,
+            role: Some(target.node.role.clone()),
+            automation_id: target.identifier.clone(),
+            accessible_name: target.raw_name.clone(),
+            ancestor_chain: target.ancestors.clone(),
+            supported_action: Some(NativeAction::Invoke),
+            ordinal_hint: None,
+        };
+        assert!(replay_resolution(&[target.clone(), target.clone()], &locator).is_err());
+        target.ancestors[0].automation_id = Some("different-row".into());
+        assert!(replay_resolution(&[target], &locator).is_err());
+        assert!(replay_resolution(&[], &locator).is_err());
     }
 }
