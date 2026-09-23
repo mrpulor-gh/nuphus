@@ -42,9 +42,15 @@ export function isLegacyDataUrl(stored: string): boolean {
   return stored.startsWith(LEGACY_PREFIX)
 }
 
-/** 磁盘路径 → WebView 可直接加载的 asset:// URL（图片渲染的唯一出口）。 */
+/** 磁盘路径 → WebView 可直接加载的 asset:// URL（图片渲染的唯一出口）。
+ *
+ * Windows 上 Rust 回传的是反斜杠路径，而 convertFileSrc 只做 encodeURIComponent：
+ * `\` 会被编码成 %5C，asset 协议 handler 解 URL 时不把 %5C 当路径分隔符，
+ * 于是「文件确实存在、localStorage 也写入了，但图片加载不出来」。
+ * 先归一化为正斜杠再交给 convertFileSrc（正斜杠在 Windows 上同样有效）。
+ */
 export function toImageUrl(path: string): string {
-  return convertFileSrc(path)
+  return convertFileSrc(path.replace(/\\/g, '/'))
 }
 
 /**
