@@ -581,6 +581,20 @@ impl WorkflowStore {
 
     // ── 读取 ──
 
+    /// Explain why an on-disk workflow could not be loaded. Validation callers
+    /// must distinguish invalid JSON/schema from a genuinely missing workflow,
+    /// otherwise agents search directories instead of fixing the offending line.
+    pub async fn validation_load_error(&self, id: &str) -> Option<String> {
+        let path = self.root.join(id).join("workflow.json");
+        match tokio::fs::read_to_string(&path).await {
+            Ok(data) => serde_json::from_str::<Workflow>(&data).err().map(|error| {
+                format!("Workflow '{}' exists but workflow.json is invalid at line {}, column {}: {}. Fix the JSON/schema in this file; {{params.x}} references must be JSON strings such as \"{{params.x}}\".", id, error.line(), error.column(), error)
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => Some(format!("Cannot read workflow '{}' from {}: {}", id, path.display(), error)),
+        }
+    }
+
     /// 列出所有工作流摘要（从缓存读；缓存为空时自动 load）
     pub async fn list(&self) -> Vec<WorkflowSummary> {
         {
@@ -781,6 +795,20 @@ impl Default for WorkflowStore {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn validation_reports_malformed_file_instead_of_missing_workflow() {
+        let root = std::env::temp_dir().join(format!("nuphus-validation-{}", uuid::Uuid::new_v4()));
+        let directory = root.join("broken");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("workflow.json"), "{\n\"id\": {params.id}\n}").unwrap();
+        let store = super::WorkflowStore::with_root(root.clone());
+        assert!(store.validation_load_error("missing").await.is_none());
+        let error = store.validation_load_error("broken").await.unwrap();
+        assert!(error.contains("exists but workflow.json is invalid"));
+        assert!(error.contains("line 2"));
+        assert!(error.contains("JSON strings"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
     use std::path::PathBuf;
 

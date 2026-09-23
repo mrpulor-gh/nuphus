@@ -187,15 +187,17 @@ impl ToolRegistry {
                 },
                 &["start_x","start_y","end_x","end_y"]),
             tool_def("desktop_input",
-                "向窗口输入文本(UTF-8)，可附带后续按键。>500 字符用 clipboard。需先激活目标窗口",
+                "向窗口输入文本或快捷键。保存工作流优先传成功语义动作的 target_locator，由本地重定位、激活并验证目标；不固化 hwnd。输入文本前先聚焦输入控件；快捷键可直接定位目标窗口。旧 hwnd 接口保留。",
                 json_props! {
                     "mode" => obj!("type"="string","enum"=["type","hotkey"],"description"="type: input text; hotkey: press keys only"),
+                    "target_locator" => obj!("type"="object","description"="成功 workflow_step.params.locator 的原样副本；与 hwnd 二选一，用于跨次运行的稳定定位"),
+                    "launch_ref" => obj!("type"="string","description"="可选：成功 workflow_step.params.launch_ref，应用未运行时使用本地目录启动"),
                     "hwnd" => obj!("type"="integer","description"="Target window handle. Get from desktop_windows_list."),
                     "text" => obj!("type"="string","description"="Text to type (mode=type required)"),
                     "send" => obj!("type"="string","description"="Key to send after typing: \"enter\" (default), \"ctrl+enter\", \"tab\", or \"none\" to skip."),
                     "keys" => obj!("type"="array","items"=obj!("type"="string"),"description"="Key combo to press (mode=hotkey required). Single key: [\"enter\"],[\"f5\"],[\"esc\"]. Combo: [\"ctrl\",\"c\"],[\"alt\",\"tab\"].")
                 },
-                &["mode","hwnd"]),
+                &["mode"]),
             tool_def("desktop_screenshot",
                 "全屏截图（支持 region 区域截图），保存为 BMP",
                 json_props! {

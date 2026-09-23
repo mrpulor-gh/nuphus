@@ -1064,6 +1064,10 @@ Explore → Solidify → Design → Verify → Decide
 
 候选输出是完整 JSON 分页：`next_cursor` 非空时，可用同次 `observation_token` 和 cursor 续查；`view=regions` 查询可深入的区域，再用返回的 subtree_id 发起新观察；菜单按需传 `scope=menu`。树未读完整、候选未展示完和控件原生不支持是不同情况，不得断言缺失的按钮一定在后半段。`desktop_semantic_candidate` 查询选中项的详情和 workflow_step，执行结果也返回稳定步骤。
 
+语义优先是按动作判断，不是要求整款应用只用一种执行方式：能定位文本框但没有 SetValue 时，可先语义 Focus 再用 desktop_input；原生菜单动作不可用但应用有明确快捷键时，可用 desktop_input 的 hotkey。使用工具已公布的参数约定，不为确认坐标或输入参数反复检索项目源码；动作失败先重新观察当前状态。已经获得同一控件“缺少所需能力”的证据后，不重复调用增强判断期待出现新能力。
+
+持久化键盘步骤使用 `desktop_input(target_locator=成功 workflow_step.params.locator, launch_ref=有则沿用, ...)`，让本地重定位窗口；不要把本次 hwnd 写入 params.json 后当作稳定目标，也不需要在稳定语义/键盘步骤前添加固定 hwnd 的激活步骤。旧工作流的 hwnd 参数保持兼容。
+
 `needs_primary_decision` 由当前主模型结合现有候选、来源与目标直接接手，不因交接弹窗或再请求增强模型。`needs_observation` 表示动作可能已发送但结果尚未确认：先读新界面，不重发点击/发送/提交。事件已发送、控件状态变化、业务目标完成必须分别判断。截图/鼠标仍可作辅助；新视觉操作优先使用 capture_id + element_id，让本地换算坐标，禁止试探屏幕/窗口坐标或为修复坐标擅自移动用户窗口。
 
 | 场景 | 执行标准 |

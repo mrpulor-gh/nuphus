@@ -820,10 +820,15 @@ impl WorkflowAgent {
                                     });
                                     crate::ToolResult::success(json.to_string())
                                 }
-                                None => crate::ToolResult::failure(format!(
-                                    "Workflow '{}' not found",
-                                    raw_id
-                                )),
+                                None => crate::ToolResult::failure(
+                                    engine_r
+                                        .store
+                                        .validation_load_error(raw_id)
+                                        .await
+                                        .unwrap_or_else(|| {
+                                            format!("Workflow '{}' not found", raw_id)
+                                        }),
+                                ),
                             }
                         }
                         None => {

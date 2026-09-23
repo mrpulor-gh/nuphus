@@ -340,6 +340,7 @@ impl ToolRegistry {
                 "desktop_screenshot" | "desktop_window_screenshot" | "desktop_perceive"
             ) || (tool_name == "desktop_mouse"
                 && (params.get("capture_id").is_some() || params.get("element_id").is_some()))
+                || (tool_name == "desktop_input" && params.get("target_locator").is_some())
             {
                 let _lease = self.acquire_semantic_desktop_lease()?;
                 let lock = crate::utils::automation_lock::AutomationLock::new();

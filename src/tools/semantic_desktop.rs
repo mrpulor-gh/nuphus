@@ -263,6 +263,47 @@ fn bounded_edit_distance(left: &[char], right: &[char], limit: usize) -> Option<
 }
 
 impl ToolRegistry {
+    pub(super) async fn semantic_input_window(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<i32, String> {
+        if params.get("hwnd").is_some() {
+            return Err("target_locator 与 hwnd 不能同时指定".into());
+        }
+        let locator: SemanticLocator = serde_json::from_value(params["target_locator"].clone())
+            .map_err(|_| "target_locator 必须是成功语义动作返回的稳定定位器")?;
+        let backend = self
+            .semantic_desktop
+            .as_ref()
+            .ok_or("当前平台没有语义目标适配器")?;
+        self.target_service()?
+            .ensure_saved(&locator, params.get("launch_ref").and_then(|v| v.as_str()))
+            .await?;
+        let client = self.desktop_client().ok_or("本地桌面服务尚未连接")?;
+        let current_hwnd = || async {
+            let value = client.foreground_hwnd().await.map_err(|e| e.to_string())?;
+            value["result"]["hwnd"]
+                .as_i64()
+                .and_then(|v| i32::try_from(v).ok())
+                .filter(|v| *v != 0)
+                .ok_or_else(|| "前台窗口不可用".to_string())
+        };
+        let hwnd = current_hwnd().await?;
+        // Validate the stable app/window/element through the native adapter.
+        // No guessed handle or model-generated selector enters the input call.
+        backend
+            .observer
+            .observe_locator(&locator)
+            .await
+            .map_err(|e| e.to_string())?;
+        if current_hwnd().await? != hwnd {
+            return Err("目标窗口在定位期间变化，请重新观察；尚未发送键盘事件".into());
+        }
+        backend.clear_space().await;
+        client.invalidate_captures().map_err(|e| e.to_string())?;
+        Ok(hwnd)
+    }
+
     async fn semantic_scope(
         &self,
         params: &serde_json::Value,
@@ -1272,6 +1313,21 @@ mod tests {
         .await
         .is_err());
         assert_eq!(adapter.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stable_keyboard_target_rejects_mixed_or_incomplete_locators_before_input() {
+        let registry = ToolRegistry::new();
+        let mixed = registry
+            .semantic_input_window(&json!({"hwnd": 42, "target_locator": {"app_id": "test"}}))
+            .await
+            .unwrap_err();
+        assert!(mixed.contains("不能同时"));
+        let missing = registry
+            .semantic_input_window(&json!({"target_locator": {"role": "button"}}))
+            .await
+            .unwrap_err();
+        assert!(missing.contains("稳定定位器"));
     }
 
     #[tokio::test]

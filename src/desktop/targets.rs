@@ -68,6 +68,7 @@ struct State {
     apps: BTreeMap<String, Application>,
     windows: HashMap<String, Window>,
     bindings: HashMap<String, Binding>,
+    saved_windows: HashMap<(String, String, Option<String>, Option<String>), Window>,
     catalogs: HashMap<(String, String), CatalogSnapshot>,
 }
 
@@ -313,6 +314,12 @@ impl DesktopTargetService {
         locator: &SemanticLocator,
         launch_ref: Option<&str>,
     ) -> Result<(), String> {
+        let key = (
+            self.owner(),
+            locator.app_id.clone(),
+            locator.window_id.clone(),
+            locator.window_title.clone(),
+        );
         let mut windows: Vec<_> = self
             .running()
             .await?
@@ -320,6 +327,27 @@ impl DesktopTargetService {
             .map(|(_, w)| w)
             .filter(|w| w.app_id == locator.app_id)
             .collect();
+        let bound = self
+            .state
+            .lock()
+            .map_err(|_| "Desktop target state unavailable")?
+            .saved_windows
+            .get(&key)
+            .cloned();
+        if let Some(bound) = bound {
+            if let Some(current) = windows.iter().find(|w| same_window(w, &bound)) {
+                // A title may change after editing or saving. Within this
+                // execution, retain the verified live window rather than
+                // asking a model to invent clean/dirty title variants.
+                // Native semantic validation still runs before any input.
+                return self.activate(current).await;
+            }
+            self.state
+                .lock()
+                .map_err(|_| "Desktop target state unavailable")?
+                .saved_windows
+                .remove(&key);
+        }
         if windows.is_empty() {
             let reference = launch_ref.ok_or(
                 "Saved target application is not running; a catalog launch_ref is required",
@@ -354,7 +382,16 @@ impl DesktopTargetService {
         }
         let window = choose_saved_window(&windows, locator)?
             .ok_or("Saved target matches multiple windows; select a window before replay")?;
-        self.activate(window).await
+        self.activate(window).await?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Desktop target state unavailable")?;
+        if state.saved_windows.len() >= 256 {
+            state.saved_windows.clear();
+        }
+        state.saved_windows.insert(key, window.clone());
+        Ok(())
     }
 }
 
@@ -366,7 +403,12 @@ fn choose_saved_window<'a>(
     // app window and a stable identity, let the native adapter check that
     // identity before any action instead of comparing a redacted display label.
     // Never use this fallback to choose among multiple documents.
-    if locator.window_id.is_some() && windows.len() == 1 {
+    if locator
+        .window_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("axw:"))
+        && windows.len() == 1
+    {
         return Ok(windows.first());
     }
     choose_window(windows, None, locator.window_title.as_deref())
@@ -640,9 +682,30 @@ mod tests {
         );
     }
     #[test]
+    fn live_window_binding_survives_title_changes_but_not_window_replacement() {
+        let original = window(10, "Document");
+        let dirty = window(10, "*Document");
+        assert!(same_window(&original, &dirty));
+        assert!(!same_window(&original, &window(11, "*Document")));
+        let mut replaced = dirty;
+        replaced.pid += 1;
+        assert!(!same_window(&original, &replaced));
+        let mut state = State::default();
+        let key = (
+            "task-a".to_string(),
+            "app.test".to_string(),
+            None,
+            Some("Document".to_string()),
+        );
+        state.saved_windows.insert(key.clone(), original);
+        let mut other_task = key;
+        other_task.0 = "task-b".into();
+        assert!(!state.saved_windows.contains_key(&other_task));
+    }
+    #[test]
     fn stable_identity_allows_native_validation_of_a_redacted_single_window() {
         let mut locator: SemanticLocator = serde_json::from_value(json!({
-            "app_id": "app.test", "window_id": "stable", "window_title": "redacted control"
+            "app_id": "app.test", "window_id": "axw:stable", "window_title": "redacted control"
         }))
         .unwrap();
         let windows = [window(1, "Private long title: user@example.invalid")];
@@ -655,6 +718,8 @@ mod tests {
         );
         let multiple = [windows[0].clone(), window(2, "Another document")];
         assert!(choose_saved_window(&multiple, &locator).is_err());
+        locator.window_id = Some("windows-window:shared-class".into());
+        assert!(choose_saved_window(&windows, &locator).is_err());
         locator.window_id = None;
         assert!(choose_saved_window(&windows, &locator).is_err());
     }

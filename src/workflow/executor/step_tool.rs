@@ -73,7 +73,7 @@ impl Executor {
                     // Native desktop dispatch may already have caused a side
                     // effect even if its postcondition cannot be established.
                     // A retry would repeat a click/send/submit with a fresh token.
-                    if tool == "desktop_semantic_action"
+                    if matches!(tool, "desktop_semantic_action" | "desktop_input")
                         && last_error.contains("desktop_needs_observation:")
                     {
                         return Err(crate::NuphusError::agent(format!(

@@ -341,11 +341,11 @@ impl ToolRegistry {
                 Self::wrap_desktop_result(client.mouse_drag(start_x, start_y, end_x, end_y).await)
             }
             "desktop_input" => {
-                let hwnd = params
-                    .get("hwnd")
-                    .and_then(|v| v.as_i64())
-                    .map(|h| h as i32)
-                    .ok_or_else(|| "hwnd is required".to_string())?;
+                let hwnd = if params.get("target_locator").is_some() {
+                    self.semantic_input_window(params).await?
+                } else {
+                    optional_i32(params, "hwnd")?.ok_or("需要 target_locator 或当前 hwnd")?
+                };
                 // 键盘输入必须前置：executor 内部自动置前，失败才中止（避免输入误入其他窗口）
                 if !ensure_foreground(client, hwnd).await {
                     return Err(format!("HWND({}) 窗口自动置前失败，为避免输入误入其他窗口已中止，请检查窗口状态后重试", hwnd));
@@ -369,9 +369,9 @@ impl ToolRegistry {
                         client
                             .keyboard_hotkey(keys)
                             .await
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| format!("desktop_needs_observation: 键盘事件可能已发送，请重新观察，不自动重发: {e}"))?;
                         let mut msg = format!(
-                            "已完成对 HWND({}) 窗口的热键操作！hwnd: {}, 参数: keys={}",
+                            "已发送 HWND({}) 窗口的热键事件；业务结果尚未验证。hwnd: {}, keys={}",
                             hwnd, hwnd, keys_display
                         );
                         msg.push_str(&foreground_note(client, hwnd).await);
@@ -395,16 +395,16 @@ impl ToolRegistry {
                         client
                             .input_send(text, hwnd, false)
                             .await
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| format!("desktop_needs_observation: 文本可能已部分输入，请重新观察，不自动重发: {e}"))?;
                         if !send_keys.is_empty() {
                             client
                                 .keyboard_hotkey(send_keys)
                                 .await
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|e| format!("desktop_needs_observation: 文本已输入，后续按键结果不明，请重新观察，不自动重发: {e}"))?;
                         }
                         let mut msg = format!(
-                            "已完成对 HWND({}) 窗口的输入操作！hwnd: {}, 参数: text={}, send={}",
-                            hwnd, hwnd, text, send_raw
+                            "已发送 HWND({}) 窗口的输入事件；业务结果尚未验证。hwnd: {}, chars={}, send={}",
+                            hwnd, hwnd, text.chars().count(), send_raw
                         );
                         msg.push_str(&foreground_note(client, hwnd).await);
                         Ok(ToolResult::success(msg))
