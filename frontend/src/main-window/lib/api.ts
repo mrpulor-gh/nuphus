@@ -1838,6 +1838,21 @@ export function revealPath(path: string) {
   return invoke<void>('reveal_path', { path })
 }
 
+// ── 数据目录（只读列举） ──
+
+/** 单个数据目录条目；path 为空串 = 本机无法解析该目录（exists 必为 false） */
+export interface DataDirEntry {
+  /** 稳定标识（data / runtime / generated / plugin / config） */
+  key: string
+  path: string
+  exists: boolean
+}
+
+/** 列出本机各数据目录的真实路径（只读；不做目录体积扫描） */
+export function listDataDirs() {
+  return invoke<DataDirEntry[]>('list_data_dirs')
+}
+
 // ── MCP 管理（只读） ──
 
 export interface McpServerInfo {

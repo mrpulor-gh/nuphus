@@ -42,6 +42,7 @@ import {
   IconExternalLink,
   IconFile,
   IconFolder,
+  IconHardDrive,
   IconHistory,
   IconPalette,
   IconPlug,
@@ -84,6 +85,7 @@ const ExternalAgentsPage = lazy(() =>
   import('./ExternalAgentsPage').then(m => ({ default: m.ExternalAgentsPage })),
 )
 const SecurityPage = lazy(() => import('./SecurityPage').then(m => ({ default: m.SecurityPage })))
+const DataDirsPage = lazy(() => import('./DataDirsPage').then(m => ({ default: m.DataDirsPage })))
 const UpdatePage = lazy(() => import('./UpdatePage').then(m => ({ default: m.UpdatePage })))
 const SessionGroupsPage = lazy(() =>
   import('./SessionGroupsPage').then(m => ({ default: m.SessionGroupsPage })),
@@ -106,6 +108,7 @@ export type SettingsSectionId =
   | 'session-groups'
   | 'external-agents'
   | 'security'
+  | 'data-dirs'
   | 'update'
 
 /** 走 App 层全屏宿主的分区：导航里可见、点击即关闭面板（不在弹窗内渲染） */
@@ -171,6 +174,8 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
     titleKey: 'cmd.category.management',
     items: [
       { id: 'security', labelKey: 'app.security', icon: <IconShield size={14} /> },
+      /* 数据目录：只读展示各数据目录真实路径（排障 / 备份入口，不做修改与迁移） */
+      { id: 'data-dirs', labelKey: 'app.dataDirs', icon: <IconHardDrive size={14} /> },
       /* 原「插件」（付费市场筹备页）改造为 GitHub 贡献者页，随之下移到管理组：
          内部 id 保持 'plugins'（renderSection / 命令面板 / App.showPlugins 链路不受影响） */
       { id: 'plugins', labelKey: 'app.github', icon: <IconPuzzle size={14} /> },
@@ -317,6 +322,8 @@ export function SettingsCenter({
         return <ExternalAgentsPage onClose={onClose} />
       case 'security':
         return <SecurityPage onClose={onClose} />
+      case 'data-dirs':
+        return <DataDirsPage />
       case 'update':
         return <UpdatePage />
     }

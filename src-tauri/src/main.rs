@@ -215,6 +215,8 @@ fn main() {
             commands::get_browser_connection,
             commands::test_browser_cdp_url,
             commands::detect_cdp_browsers,
+            // -- 数据目录（只读列举；路径解析 + 存在性判定）--
+            commands::list_data_dirs,
             commands::interrupt,
             commands::pause_execution,
             commands::continue_execution,
