@@ -1118,6 +1118,13 @@ async fn verify_expected_state(
     let mut last: StateStatus;
     let mut reason = "condition_not_observed".to_string();
     loop {
+        if backend
+            .approval_signals
+            .as_ref()
+            .is_some_and(super::desktop_approval::cancellation_requested)
+        {
+            return Err("已取消桌面状态检查；不重发原动作".into());
+        }
         let mut actual_scope = scope.clone();
         let mut missing_window = false;
         let mut can_observe = true;
@@ -2659,6 +2666,32 @@ mod tests {
             verify_observation_with_value(&before, &candidate, &before, Some("typed")),
             Verification::Unknown
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_postcondition_wait_does_not_send_actions() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let mut backend = SemanticDesktopBackend::new(adapter.clone());
+        backend.approval_signals = Some(crate::state::new_shared_signals());
+        let expected: DesktopExpectation = serde_json::from_value(json!({
+            "locator":{"app_id":"fake-app","automation_id":"fake-button"},
+            "condition":"exists", "timeout_ms":1000, "stable_samples":2
+        }))
+        .unwrap();
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let scope = ObservationScope::default();
+        let result = super::super::desktop_approval::with_cancellation(
+            cancelled,
+            verify_expected_state(&backend, &expected, &scope, None),
+        )
+        .await;
+        assert!(result.unwrap_err().contains("已取消"));
+        assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

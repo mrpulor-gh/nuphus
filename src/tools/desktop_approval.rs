@@ -38,6 +38,20 @@ fn cancelled(host: &ApprovalHost) -> bool {
         .unwrap_or_else(|_| host.cancel.load(Ordering::SeqCst))
 }
 
+/// Reuse the same execution cancellation scope for read-only desktop waits.
+pub fn cancellation_requested(signals: &SharedSignals) -> bool {
+    CALL_CANCEL
+        .try_with(|flag| flag.load(Ordering::SeqCst))
+        .unwrap_or_else(|_| {
+            SignalState::read(signals)
+                .security
+                .desktop_approvals
+                .host
+                .as_ref()
+                .is_some_and(|host| host.cancel.load(Ordering::SeqCst))
+        })
+}
+
 /// Built from the locally resolved target/action and actual input, not the
 /// decision model's output. An unscoped manual call gets its own request nonce.
 #[derive(Clone, PartialEq, Eq)]
@@ -278,6 +292,23 @@ mod tests {
                 .await
             },
         ))
+    }
+
+    #[tokio::test]
+    async fn read_only_wait_cancellation_uses_execution_scope_before_host() {
+        let (signals, host_cancel, _rx) = setup();
+        assert!(!cancellation_requested(&signals));
+        host_cancel.store(true, Ordering::SeqCst);
+        assert!(cancellation_requested(&signals));
+        with_cancellation(Arc::new(AtomicBool::new(false)), async {
+            assert!(!cancellation_requested(&signals));
+        })
+        .await;
+        host_cancel.store(false, Ordering::SeqCst);
+        with_cancellation(Arc::new(AtomicBool::new(true)), async {
+            assert!(cancellation_requested(&signals));
+        })
+        .await;
     }
 
     async fn next_id(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NuphusEvent>) -> String {
