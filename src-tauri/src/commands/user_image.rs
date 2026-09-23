@@ -27,7 +27,7 @@ const ALLOWED_EXTENSIONS: [(&str, &str); 5] = [
 const ALLOWED_KINDS: [&str; 3] = ["skin", "avatar", "nuphus-avatar"];
 
 /// 保存结果：绝对路径（前端经 convertFileSrc 直接加载，无需 base64 中转）+ 文件名（写回 localStorage）。
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct SavedUserImage {
     /// localStorage 只存这个短标识；避免绝对路径随用户目录变化而失效。
     pub name: String,
@@ -176,7 +176,9 @@ fn save_user_image_at(
 
     Ok(SavedUserImage {
         name: format!("{kind}/{file_name}"),
-        path: path.to_string_lossy().into_owned(),
+        // 统一输出正斜杠：Windows 的反斜杠经 encodeURIComponent 会变成 %5C，
+        // asset 协议解析时不识别，导致前端图片加载失败。在源头归一化。
+        path: forward_slashes(&path),
     })
 }
 
@@ -186,7 +188,12 @@ fn read_user_image_at(base: &Path, name: &str) -> Result<String, String> {
     if !path.is_file() {
         return Err("图片文件不存在".into());
     }
-    Ok(path.to_string_lossy().into_owned())
+    Ok(forward_slashes(&path))
+}
+
+/// 路径 → 正斜杠字符串。Windows 反斜杠在 asset 协议 URL 中不识别，统一在此归一。
+fn forward_slashes(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// 删除逻辑主体：文件不存在视为成功（幂等，重复清除不报错）。
@@ -210,13 +217,9 @@ mod tests {
         root
     }
 
-    /// 1x1 透明 PNG 的 dataURL（最小合法载荷）。
+    /// 1x1 透明 PNG 的 dataURL（最小合法载荷；原样内联，无需编解码往返）。
     fn tiny_png_data_url() -> String {
-        concat!(
-            "data:image/png;base64,",
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-        )
-        .to_string()
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".to_string()
     }
 
     #[test]
@@ -299,6 +302,24 @@ mod tests {
         }
         // 合法形态必须放行
         assert!(resolve_image_path(&root, "skin/abc.png").is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 路径归一化：反斜杠必须转成正斜杠（Windows asset URL 不识别 %5C）
+    #[test]
+    fn stored_paths_use_forward_slashes_for_asset_urls() {
+        let root = test_root("slashes");
+        let saved = save_user_image_at(&root, "skin", "", &tiny_png_data_url()).unwrap();
+        assert!(
+            !saved.path.contains('\\'),
+            "返回路径不得含反斜杠（会导致 asset URL 加载失败）：{}",
+            saved.path
+        );
+        assert!(saved.path.ends_with(".png"));
+        let read = read_user_image_at(&root, &saved.name).unwrap();
+        assert!(!read.contains('\\'), "读回路径同样不得含反斜杠：{read}");
+        // 归一化后仍是有效文件路径（Windows 接受正斜杠）
+        assert!(std::path::Path::new(&saved.path).is_file());
         let _ = std::fs::remove_dir_all(&root);
     }
 
