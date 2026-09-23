@@ -137,7 +137,7 @@ jobs:
           hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" nuphus-macos-arm64-rpa.dmg
           trap 'hdiutil detach "$mount_dir" || true' EXIT
           codesign --verify --deep --strict "$mount_dir/Nuphus.app"
-          lipo -verify_arch arm64 "$mount_dir/Nuphus.app/Contents/MacOS/nuphus"
+          lipo "$mount_dir/Nuphus.app/Contents/MacOS/nuphus" -verify_arch arm64
           test "$(readlink "$mount_dir/Applications")" = /Applications
           env -u ORT_DYLIB_PATH target/debug/examples/macos_runtime_smoke "$mount_dir/Nuphus.app"
           shasum -a 256 nuphus-macos-arm64-rpa.dmg > nuphus-macos-arm64-rpa.dmg.sha256

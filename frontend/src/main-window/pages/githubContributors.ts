@@ -68,15 +68,16 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
       {
         user: 'yuansui486',
         contributions: [
-          { pr: 52, summary: 'UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核' },
+          {
+            pr: 52,
+            summary: 'UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核',
+          },
           { pr: 54, summary: '增强判断模型：独立配置 + 从本地有限候选中做结构化选择' },
         ],
       },
       {
         user: 'zhoupeiyu515-ui',
-        contributions: [
-          { pr: 50, summary: '日志轮转加固：改名失败不再丢历史' },
-        ],
+        contributions: [{ pr: 50, summary: '日志轮转加固：改名失败不再丢历史' }],
       },
     ],
   },
