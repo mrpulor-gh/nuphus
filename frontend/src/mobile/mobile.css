@@ -958,6 +958,29 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Markdown 内「本机图片路径」缩略图（Agent 交付截图 → /file 拉 blob → objectURL） */
+.m-local-image {
+  display: inline-block;
+  vertical-align: top;
+  margin: 2px 4px 2px 0;
+}
+/* 拉取中占位：固定尺寸，图到达时不引起版面跳动 */
+.m-local-image-pending {
+  display: inline-block;
+  width: 132px;
+  height: 92px;
+  border-radius: 10px;
+  border: 0.5px solid var(--m-separator);
+  background: var(--m-surface);
+}
+/* 拉取失败降级：原样显示路径文本（可换行，不空白、不破图） */
+.m-local-image-error {
+  font-family: var(--m-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  word-break: break-all;
+  opacity: 0.72;
+}
+
 /* 消息内音频（可播放） */
 .mobile-msg-audios {
   display: flex;

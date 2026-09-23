@@ -48,6 +48,40 @@ const WS_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_sec
 /// 文本与 JSON 结构，设 8MB 覆盖并留余量。对齐前端常量，勿单边改动。
 const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
+/// GET /file 单文件字节上限。Agent 交付的截图/图表多为 1-5MB（4K 截图 BMP 转
+/// PNG 后 ~3MB），30MB 覆盖大图并留余量；超限直接 413，不读盘（防大文件打满
+/// 中继隧道带宽与桌面内存）。
+const MAX_FILE_BYTES: u64 = 30 * 1024 * 1024;
+
+/// GET /file 图片扩展名白名单（小写比较）。返回 Some(mime) = 放行读取，
+/// None = 一律拒绝（不读盘）——禁止任意类型文件读取。
+/// ⚠️ 与前端 MobileMarkdown.tsx 的 IMAGE_EXT_RE 必须一致，勿单边改动。
+fn image_mime_for(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        // 手机 WebView 对 BMP 支持不一致（iOS Safari 不支持）→ 读盘后统一转 PNG
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+/// BMP 字节 → PNG 字节（与 utils::convert_bmp_data_url_to_png 同一做法，
+/// 仅少了 base64 两层转换）。desktop_screenshot 默认产出 BMP，必须转码后下发。
+fn bmp_bytes_to_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = image::load_from_memory(bytes).map_err(|e| format!("BMP 解码失败: {e}"))?;
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png_buf, image::ImageFormat::Png)
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
+    Ok(png_buf.into_inner())
+}
+
 // ============================================================================
 // 配置持久化（沿用 tool_permissions.json 模式：config_dir 下的 JSON 文件）
 // ============================================================================
@@ -229,6 +263,10 @@ struct AuthQuery {
     token: Option<String>,
     /// 可选 mode（leader/workflow/custom）：/model-config 按 mode 返回生效模型
     mode: Option<String>,
+    /// 可选 path（仅 /file 使用）：电脑本地图片的绝对路径。
+    /// 与 mode 同属「按端点选用的可选参数」——auth 字段（token）与业务字段共用
+    /// 同一个 query 结构体，避免每个端点复制一份仅 token 不同的结构体。
+    path: Option<String>,
 }
 
 /// 鉴权：Header `X-Mobile-Token` 或 query `?token=`（浏览器 WebSocket API
@@ -350,6 +388,100 @@ async fn get_history<R: tauri::Runtime>(
         )
             .into_response(),
     }
+}
+
+/// GET /file?path=<绝对路径>：把电脑本地图片字节下发给手机端。
+///
+/// 为什么需要它：Agent 回复里的本机绝对路径在桌面端可点开预览（Tauri read_file），
+/// PWA 没有文件系统权限 → 图片路径只能当纯文本。本端点补上「本地图片 → 手机可见」
+/// 的最后一段：鉴权与其它端点一致（X-Mobile-Token / ?token=），中继模式下同样依赖
+/// X-Tunnel-Device 头路由，故前端必须 fetch（不能 <img src> 直链）。
+///
+/// 安全边界（最小权限，勿放宽）：绝对路径 + 图片扩展名白名单 + 必须为普通文件 +
+/// 30MB 上限 + 拒绝 `..` 上级引用；不做目录列举、不做通配、不支持任意类型读取。
+/// BMP 手机端支持不一致 → 读盘后统一转 PNG 返回（Content-Type: image/png）。
+///
+/// 响应：200 bytes + Content-Type（image/png|jpeg|gif|webp）；错误一律 JSON {error}：
+/// 400 参数/类型/路径非法、401 token 无效、404 不存在或非文件、413 超限、
+/// 500 读盘或转码失败。
+async fn get_file<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    let raw = query.path.as_deref().unwrap_or("").trim();
+    if raw.is_empty() {
+        return file_err(StatusCode::BAD_REQUEST, "缺少 path 参数");
+    }
+    // 只接受绝对路径：相对路径按进程 cwd 解析会脱离用户预期，且是遍历入口
+    let path = std::path::Path::new(raw);
+    if !path.is_absolute() {
+        return file_err(StatusCode::BAD_REQUEST, "path 必须为绝对路径");
+    }
+    // `..` 上级引用一律拒绝（遍历纵深防御；正常交付路径不含 ..）
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return file_err(StatusCode::BAD_REQUEST, "path 不允许包含上级引用");
+    }
+    // 类型白名单先于任何 fs 访问：非图片类型连 stat 都不做
+    let mime = match image_mime_for(raw) {
+        Some(m) => m,
+        None => {
+            return file_err(
+                StatusCode::BAD_REQUEST,
+                "仅支持图片类型（png/jpg/jpeg/gif/webp/bmp）",
+            )
+        }
+    };
+
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return file_err(StatusCode::NOT_FOUND, "文件不存在或不可访问"),
+    };
+    if !meta.is_file() {
+        return file_err(StatusCode::NOT_FOUND, "不是文件");
+    }
+    if meta.len() > MAX_FILE_BYTES {
+        return file_err(StatusCode::PAYLOAD_TOO_LARGE, "文件超过 30MB 上限");
+    }
+
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("[Mobile] /file 读取失败: {e}");
+            return file_err(StatusCode::INTERNAL_SERVER_ERROR, "读取文件失败");
+        }
+    };
+
+    let (bytes, mime) = if mime == "image/bmp" {
+        match bmp_bytes_to_png(&bytes) {
+            Ok(png) => (png, "image/png"),
+            Err(e) => {
+                tracing::warn!("[Mobile] /file BMP 转 PNG 失败: {e}");
+                return file_err(StatusCode::BAD_REQUEST, "BMP 解码失败");
+            }
+        }
+    } else {
+        (bytes, mime)
+    };
+
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    // no-store：Agent 常以同一文件名覆盖重出截图（_settings_popup_wide.png 等），
+    // 缓存会下发陈旧图；且响应内容与 token 绑定，不应进入任何共享缓存。
+    resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    (StatusCode::OK, resp_headers, bytes).into_response()
+}
+
+/// /file 错误响应统一出口（JSON body，便于前端提示与测试断言）
+fn file_err(status: StatusCode, msg: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": msg }))).into_response()
 }
 
 /// POST /confirm 请求体：危险操作确认回执
@@ -2210,6 +2342,7 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/health", get(health))
         .route("/pair", post(post_pair))
         .route("/history", get(get_history))
+        .route("/file", get(get_file))
         .route("/identity", get(get_identity))
         .route("/custom-agents", get(get_custom_agents))
         .route("/agent-status", get(get_agent_status))
@@ -3009,6 +3142,283 @@ mod tests {
             // query token 渠道与 header 等效（正确 token 的 WS 升级在 ws_receives_events 验证）
             let _ = token;
         });
+    }
+
+    // ── GET /file（本机图片 → 手机端）────────────────────────────────────────
+
+    /// 临时图片目录（Drop 清理）：并行测试互不干扰，退出后不在 %TEMP% 残留。
+    struct TempImageDir(std::path::PathBuf);
+
+    impl TempImageDir {
+        fn new() -> Self {
+            static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "nuphus_mobile_file_test_{}_{}",
+                std::process::id(),
+                n
+            ));
+            std::fs::create_dir_all(&dir).expect("创建临时目录");
+            Self(dir)
+        }
+
+        /// 目录内路径（是否落盘由调用方决定：用于断言不存在 / 目录 / 超限等状态）
+        fn path(&self, name: &str) -> std::path::PathBuf {
+            self.0.join(name)
+        }
+
+        /// 写入文件并返回路径
+        fn write(&self, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+            let p = self.path(name);
+            std::fs::write(&p, bytes).expect("写临时图片");
+            p
+        }
+    }
+
+    impl Drop for TempImageDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 2x2 PNG 字节（image crate 已在依赖树内）
+    fn tiny_png() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([10, 20, 30]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .expect("编码 PNG");
+        buf.into_inner()
+    }
+
+    /// 2x2 BMP 字节（desktop_screenshot 默认产出格式）
+    fn tiny_bmp() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([200, 100, 50]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Bmp)
+            .expect("编码 BMP");
+        buf.into_inner()
+    }
+
+    #[test]
+    fn test_file_endpoint_serves_local_image() {
+        tokio_test::block_on(async {
+            let (base, token, _app) = spawn_test_server().await;
+            let client = np_client();
+            let dir = TempImageDir::new();
+            let png = tiny_png();
+            let path = dir.write("shot.png", &png);
+            let path_str = path.to_string_lossy().to_string();
+
+            // ① header token 通道
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", path_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.headers()["content-type"], "image/png");
+            assert_eq!(r.headers()["cache-control"], "no-store");
+            // Content-Length 必须存在（中继隧道按长度判定响应完成，chunked 会丢尾）
+            assert!(r.headers().contains_key("content-length"));
+            assert_eq!(r.bytes().await.unwrap().as_ref(), png.as_slice());
+
+            // ② query token 通道（WS 走 query，此处验证两渠道等效）
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", path_str.as_str()), ("token", token.as_str())])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.bytes().await.unwrap().as_ref(), png.as_slice());
+        });
+    }
+
+    #[test]
+    fn test_file_endpoint_converts_bmp_to_png() {
+        tokio_test::block_on(async {
+            let (base, token, _app) = spawn_test_server().await;
+            let dir = TempImageDir::new();
+            let bmp = tiny_bmp();
+            let path = dir.write("shot.bmp", &bmp);
+            let path_str = path.to_string_lossy().to_string();
+
+            let r = np_client()
+                .get(format!("{base}/file"))
+                .query(&[("path", path_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(
+                r.headers()["content-type"],
+                "image/png",
+                "BMP 必须转 PNG 下发"
+            );
+            let body = r.bytes().await.unwrap();
+            assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n", "响应应是 PNG 魔数");
+            assert!(image::load_from_memory(&body).is_ok(), "PNG 应可解码");
+        });
+    }
+
+    #[test]
+    fn test_file_endpoint_auth_and_path_guards() {
+        tokio_test::block_on(async {
+            let (base, token, _app) = spawn_test_server().await;
+            let client = np_client();
+            let dir = TempImageDir::new();
+            let path = dir.write("shot.png", &tiny_png());
+            let path_str = path.to_string_lossy().to_string();
+
+            // ① 无 token → 401
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", path_str.as_str())])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401);
+            // ② 错误 token → 401（且不泄漏任何文件内容）
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", path_str.as_str())])
+                .header("X-Mobile-Token", "wrong-token")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401);
+
+            // ③ 缺少 path → 400 + JSON error
+            let r = client
+                .get(format!("{base}/file"))
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 400);
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert!(body["error"].as_str().unwrap().contains("path"));
+
+            // ④ 相对路径（遍历入口）→ 400
+            for bad in ["../../windows/win.ini", "shot.png", "..\\..\\win.ini"] {
+                let r = client
+                    .get(format!("{base}/file"))
+                    .query(&[("path", bad)])
+                    .header("X-Mobile-Token", &token)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), 400, "相对路径 {bad} 应 400");
+            }
+
+            // ⑤ 绝对路径含 `..` → 400（扩展名合法，证明拒绝来自上级引用检查）
+            let traversal = if cfg!(windows) {
+                r"C:\Windows\..\..\win.png".to_string()
+            } else {
+                "/tmp/../etc/passwd.png".to_string()
+            };
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", traversal.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 400);
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert!(body["error"].as_str().unwrap().contains("上级引用"));
+
+            // ⑥ 非图片扩展名 → 400（文件真实存在，拒绝来自类型白名单而非路径）
+            let txt = dir.write("notes.txt", b"hello");
+            let txt_str = txt.to_string_lossy().to_string();
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", txt_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 400);
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert!(body["error"].as_str().unwrap().contains("图片类型"));
+        });
+    }
+
+    #[test]
+    fn test_file_endpoint_file_state_errors() {
+        tokio_test::block_on(async {
+            let (base, token, _app) = spawn_test_server().await;
+            let client = np_client();
+            let dir = TempImageDir::new();
+
+            // ① 不存在 → 404
+            let missing = dir.path("gone.png");
+            let missing_str = missing.to_string_lossy().to_string();
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", missing_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 404);
+
+            // ② 同名目录（扩展名合法但非文件）→ 404
+            let as_dir = dir.path("dir.png");
+            std::fs::create_dir(&as_dir).unwrap();
+            let as_dir_str = as_dir.to_string_lossy().to_string();
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", as_dir_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 404);
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert!(body["error"].as_str().unwrap().contains("不是文件"));
+
+            // ③ 超限 → 413（set_len 稀疏文件，不写 30MB 数据）
+            let huge = dir.path("huge.png");
+            let f = std::fs::File::create(&huge).unwrap();
+            f.set_len(MAX_FILE_BYTES + 1).unwrap();
+            drop(f);
+            let huge_str = huge.to_string_lossy().to_string();
+            let r = client
+                .get(format!("{base}/file"))
+                .query(&[("path", huge_str.as_str())])
+                .header("X-Mobile-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 413);
+            let body: serde_json::Value = r.json().await.unwrap();
+            assert!(body["error"].as_str().unwrap().contains("30MB"));
+        });
+    }
+
+    #[test]
+    fn test_image_mime_whitelist() {
+        // 白名单逐个覆盖（大小写不敏感），其余一律 None（拒绝读取）
+        for (p, expect) in [
+            ("C:\\a\\shot.PNG", Some("image/png")),
+            ("C:\\a\\shot.jpg", Some("image/jpeg")),
+            ("/tmp/a/shot.jpeg", Some("image/jpeg")),
+            ("/tmp/a/anim.gif", Some("image/gif")),
+            ("/tmp/a/anim.webp", Some("image/webp")),
+            ("/tmp/a/shot.bmp", Some("image/bmp")),
+            ("/tmp/a/notes.txt", None),
+            ("/tmp/a/archive.zip", None),
+            ("/tmp/a/noext", None),
+            ("/tmp/a/shot.png.bak", None),
+        ] {
+            assert_eq!(image_mime_for(p), expect, "{p}");
+        }
     }
 
     #[test]

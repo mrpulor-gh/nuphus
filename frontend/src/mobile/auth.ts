@@ -17,6 +17,14 @@ export function initToken(): string | null {
     window.history.replaceState(null, '', url.pathname + url.search + url.hash)
     return fromUrl
   }
+  return readStoredToken()
+}
+
+/**
+ * 读取已落盘 token（不触碰 URL，无副作用）：供 api.ts 内部按需取凭据的请求使用
+ * （如 GET /file 拉本机图片 blob——调用方是渲染组件，拿不到 App 层 token 状态）。
+ */
+export function readStoredToken(): string | null {
   const stored = localStorage.getItem(TOKEN_KEY)
   return stored && stored.length > 0 ? stored : null
 }
