@@ -62,6 +62,30 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.2.20',
+    date: '2026-09-24',
+    contributors: [
+      {
+        user: 'yuansui486',
+        contributions: [
+          {
+            pr: 56,
+            summary: '完善跨平台目标绑定、语义观察与稳定回放',
+          },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 57,
+            summary: '手机端可查看电脑本地图片：新增 /file 端点与内联渲染',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.19',
     date: '2026-09-23',
     contributors: [
@@ -181,7 +205,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
 ]
 
 /**
- * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-22 拉取，按提交数降序）。
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-24 拉取，按提交数降序）。
  *
  * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
  *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人，如 zhoupeiyu515-ui）；
@@ -192,7 +216,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
  */
 export const REPO_COMMITTERS: string[] = [
-  'yuansui486', // 32 commits
+  'yuansui486', // 48 commits
   'fouyzjl', // 12 commits
   'mrpulor-gh', // 3 commits（仓库所有者）
   'jiangdingwei123-afk', // 1 commit
