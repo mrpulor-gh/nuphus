@@ -1617,14 +1617,11 @@ export function ChatPanel({
                       )
                     }
                     const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1
-                    // Avatar settings（localStorage 存图片路径，渲染前转 asset URL）
+                    // Avatar settings
                     const showAvatar = localStorage.getItem('nuphus_show_avatar') === 'true'
-                    const userAvatarPath = localStorage.getItem('nuphus_user_avatar') || ''
-                    const nuphusAvatarPath = localStorage.getItem('nuphus_nuphus_avatar') || ''
-                    const skinBgPath = localStorage.getItem('nuphus_skin_bg') || ''
-                    const userAvatar = userAvatarPath ? convertFileSrc(userAvatarPath) : ''
-                    const nuphusAvatar = nuphusAvatarPath ? convertFileSrc(nuphusAvatarPath) : ''
-                    const skinBg = skinBgPath ? convertFileSrc(skinBgPath) : ''
+                    const userAvatar = localStorage.getItem('nuphus_user_avatar') || ''
+                    const nuphusAvatar = localStorage.getItem('nuphus_nuphus_avatar') || ''
+                    const skinBg = localStorage.getItem('nuphus_skin_bg') || ''
 
                     // Default avatar — NuphusLogo (窗口 N)
                     const AvatarComp =

@@ -20,7 +20,6 @@ import { NuphusLogo } from '../../ui/NuphusLogo'
 import { Button } from '../../ui/Button'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { setLanguage as apiSetLanguage, getLanguage } from '../lib/api'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { useLanguage } from '../../locales'
 import '../../styles/themes.css'
 
@@ -502,17 +501,9 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
         setLanguage(raw.startsWith('zh') ? 'zh' : 'en')
       })
     setShowAvatar(localStorage.getItem(LS_SHOW_AVATAR) === 'true')
-    // localStorage 存图片文件路径；渲染前转成 asset URL
-    const storedSkin = localStorage.getItem(LS_SKIN) || ''
-    if (storedSkin) {
-      const url = convertFileSrc(storedSkin)
-      setSkinBg(url)
-      document.documentElement.style.setProperty('--app-skin-bg', `url(${url})`)
-    }
-    const storedUser = localStorage.getItem(LS_USER_AVATAR) || ''
-    const storedNuphus = localStorage.getItem(LS_NUPHUS_AVATAR) || ''
-    if (storedUser) setUserAvatar(convertFileSrc(storedUser))
-    if (storedNuphus) setNuphusAvatar(convertFileSrc(storedNuphus))
+    setSkinBg(localStorage.getItem(LS_SKIN) || '')
+    setUserAvatar(localStorage.getItem(LS_USER_AVATAR) || '')
+    setNuphusAvatar(localStorage.getItem(LS_NUPHUS_AVATAR) || '')
   }, [])
 
   const handleLang = (id: string) => {
@@ -522,20 +513,24 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     apiSetLanguage(id === 'zh' ? 'zh-CN' : 'en-US')
   }
 
-  const handleSkinSelect = async () => {
-    // 本地应用选本地图片：用系统选择器拿真实文件路径，直接把路径当图片地址
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
-    })
-    if (typeof selected !== 'string') return
-    // skinBg 存纯 URL；预览区/主界面各自按需包裹 url()
-    const url = convertFileSrc(selected)
-    setSkinBg(url)
-    document.documentElement.style.setProperty('--app-skin-bg', `url(${url})`)
-    localStorage.setItem(LS_SKIN, selected)
+  const handleSkinSelect = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = e => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (file) {
+        const reader = new FileReader()
+        reader.onload = ev => {
+          const dataUrl = ev.target?.result as string
+          setSkinBg(dataUrl)
+          localStorage.setItem(LS_SKIN, dataUrl)
+          document.documentElement.style.setProperty('--app-skin-bg', `url(${dataUrl})`)
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+    input.click()
   }
 
   const clearSkin = () => {
@@ -544,18 +539,25 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     document.documentElement.style.removeProperty('--app-skin-bg')
   }
 
-  const handleAvatarSelect = async (type: 'user' | 'nuphus') => {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
-    })
-    if (typeof selected !== 'string') return
-    const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
-    const setter = type === 'user' ? setUserAvatar : setNuphusAvatar
-    setter(convertFileSrc(selected))
-    localStorage.setItem(key, selected)
+  const handleAvatarSelect = (type: 'user' | 'nuphus') => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = e => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (file) {
+        const reader = new FileReader()
+        reader.onload = ev => {
+          const dataUrl = ev.target?.result as string
+          const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
+          const setter = type === 'user' ? setUserAvatar : setNuphusAvatar
+          setter(dataUrl)
+          localStorage.setItem(key, dataUrl)
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+    input.click()
   }
 
   const clearAvatar = (type: 'user' | 'nuphus') => {
@@ -787,7 +789,7 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
       <Section title={t('themes.skinBg')}>
         {skinBg && (
           /* 预览图为用户上传数据（动态值），保留内联 */
-          <div className="skin-preview" style={{ backgroundImage: `url(${skinBg})` }}>
+          <div className="skin-preview" style={{ backgroundImage: skinBg }}>
             <div className="skin-preview-overlay">
               <span className="skin-preview-badge">{t('themes.applied')}</span>
             </div>
