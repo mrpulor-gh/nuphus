@@ -57,6 +57,8 @@ pub struct ToolDef {
 pub struct ToolRegistry {
     pub(super) tools: HashMap<String, ToolDef>,
     pub(super) desktop_client: Arc<RwLock<Option<DesktopClient>>>,
+    pub(super) desktop_targets:
+        Arc<RwLock<Option<Arc<crate::desktop::targets::DesktopTargetService>>>>,
     /// Accessibility/UIA-first desktop backend. Unlike `DesktopClient`, this
     /// backend never exposes coordinates or native handles to the model.
     pub(super) semantic_desktop: Option<SemanticDesktopBackend>,
@@ -90,6 +92,7 @@ impl Default for ToolRegistry {
         Self {
             tools: HashMap::new(),
             desktop_client: Arc::new(RwLock::new(None)),
+            desktop_targets: Arc::new(RwLock::new(None)),
             semantic_desktop: None,
             enhanced_mode: false,
             browser_client: crate::browser::shared_client(),
@@ -108,6 +111,7 @@ impl Clone for ToolRegistry {
         Self {
             tools: self.tools.clone(),
             desktop_client: self.desktop_client.clone(),
+            desktop_targets: self.desktop_targets.clone(),
             semantic_desktop: self.semantic_desktop.clone(),
             enhanced_mode: self.enhanced_mode,
             browser_client: self.browser_client.clone(),
@@ -327,6 +331,21 @@ impl ToolRegistry {
             if Self::is_semantic_desktop_tool(tool_name) {
                 let _lease = self.acquire_semantic_desktop_lease()?;
                 return self.execute_semantic_desktop_tool(tool_name, params).await;
+            }
+            // Capture provenance is registry-local. Keep both producers and
+            // consumers on this backend; routing only one half through MCP
+            // would lose the transform/cache or make IDs refer to another app.
+            if matches!(
+                tool_name,
+                "desktop_screenshot" | "desktop_window_screenshot" | "desktop_perceive"
+            ) || (tool_name == "desktop_mouse"
+                && (params.get("capture_id").is_some() || params.get("element_id").is_some()))
+            {
+                let _lease = self.acquire_semantic_desktop_lease()?;
+                let lock = crate::utils::automation_lock::AutomationLock::new();
+                let _guard = lock.acquire(tool_name).map_err(|e| e.to_string())?;
+                let client = self.desktop_client().ok_or("本地桌面服务尚未连接")?;
+                return self.execute_desktop_tool(&client, tool_name, params).await;
             }
             // 双通道（dogfooding）：MCP 优先，失败回退直连
             match crate::mcp::dual::route_tool(tool_name, params).await {
@@ -661,11 +680,27 @@ impl ToolRegistry {
 
     /// Set DesktopClient
     pub fn set_desktop_client(&self, client: DesktopClient) {
+        *self
+            .desktop_targets
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(
+            crate::desktop::targets::DesktopTargetService::new(client.clone()),
+        ));
         let mut guard = self
             .desktop_client
             .write()
             .unwrap_or_else(|e| e.into_inner());
         *guard = Some(client);
+    }
+
+    pub(super) fn target_service(
+        &self,
+    ) -> Result<Arc<crate::desktop::targets::DesktopTargetService>, String> {
+        self.desktop_targets
+            .read()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .ok_or_else(|| "target_unavailable: 桌面目标服务尚未连接".to_string())
     }
 
     /// Install one semantic adapter instance for observation, candidate
@@ -716,6 +751,9 @@ impl ToolRegistry {
         matches!(
             name,
             "desktop_semantic_observe"
+                | "desktop_semantic_candidate"
+                | "desktop_targets_list"
+                | "desktop_target_bind"
                 | "desktop_semantic_execute"
                 | "desktop_semantic_action"
                 | "desktop_agent_step"

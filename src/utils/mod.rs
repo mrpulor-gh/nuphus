@@ -29,6 +29,22 @@ pub fn truncate_output(text: &str, max_chars: usize) -> String {
 /// (previously truncated mid-body) now reach the model coherently.
 /// task_dispatch 豁免：Exec 报告是给 Leader 的核心交付物，截断等于砍掉工作成果。
 pub fn truncate_tool_output(text: &str, max_chars: usize, tool_name: &str) -> String {
+    // These producers return bounded candidate pages or one selected locator.
+    // Cutting their JSON breaks observation tokens, page cursors and recovery
+    // statuses. Preserve valid structured results across every agent loop.
+    if matches!(
+        tool_name,
+        "desktop_semantic_observe"
+            | "desktop_semantic_candidate"
+            | "desktop_semantic_execute"
+            | "desktop_semantic_action"
+            | "desktop_agent_step"
+            | "desktop_targets_list"
+            | "desktop_target_bind"
+    ) && serde_json::from_str::<serde_json::Value>(text).is_ok()
+    {
+        return text.to_owned();
+    }
     if tool_name == "task_dispatch" {
         return text.to_string();
     }
@@ -1611,6 +1627,30 @@ mod log_rotation_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desktop_pages_survive_workflow_output_pipeline() {
+        for name in [
+            "desktop_semantic_observe",
+            "desktop_agent_step",
+            "desktop_targets_list",
+        ] {
+            let original = serde_json::json!({
+                "observation_token": "obs:test", "next_cursor": 20,
+                "candidates": [{"id": "candidate:1", "label": "界面内容".repeat(2300)}]
+            })
+            .to_string();
+            let filtered = crate::filter::ToolOutputFilter::apply(name, &original);
+            let filtered =
+                crate::security::injection::process_external_output(name, None, &filtered);
+            let result = super::truncate_tool_output(&filtered, 8000, name);
+            assert_eq!(result, original);
+            assert!(serde_json::from_str::<serde_json::Value>(&result).is_ok());
+        }
+        assert!(
+            super::truncate_tool_output(&"x".repeat(9000), 8000, "desktop_semantic_observe")
+                .contains("截断")
+        );
+    }
     use super::*;
 
     // ── extract_think_blocks ──────────────────────────────────────────

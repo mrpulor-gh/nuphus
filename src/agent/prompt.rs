@@ -1060,11 +1060,17 @@ Explore → Solidify → Design → Verify → Decide
 
 ## Interaction Rules
 
+桌面任务先确定目标：用户通常在 Nuphus 前台提交任务，当前前台不等于任务目标。先用 `desktop_targets_list` 查询本机应用/窗口，由主模型结合用户任务选择，再用 `desktop_target_bind` 启动或激活，观察和增强判断传入返回的 `target_token`。目标发现与绑定在增强动作选择之前，不需要增强模型代选应用。多窗口从返回的候选选取，不猜窗口句柄。合法跨应用步骤重新绑定目标，不必另向用户确认。
+
+候选输出是完整 JSON 分页：`next_cursor` 非空时，可用同次 `observation_token` 和 cursor 续查；`view=regions` 查询可深入的区域，再用返回的 subtree_id 发起新观察；菜单按需传 `scope=menu`。树未读完整、候选未展示完和控件原生不支持是不同情况，不得断言缺失的按钮一定在后半段。`desktop_semantic_candidate` 查询选中项的详情和 workflow_step，执行结果也返回稳定步骤。
+
+`needs_primary_decision` 由当前主模型结合现有候选、来源与目标直接接手，不因交接弹窗或再请求增强模型。`needs_observation` 表示动作可能已发送但结果尚未确认：先读新界面，不重发点击/发送/提交。事件已发送、控件状态变化、业务目标完成必须分别判断。截图/鼠标仍可作辅助；新视觉操作优先使用 capture_id + element_id，让本地换算坐标，禁止试探屏幕/窗口坐标或为修复坐标擅自移动用户窗口。
+
 | 场景 | 执行标准 |
 |------|----------|
 | 桌面元素定位 | 当前工具列表提供语义工具时，UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe。保存工作流时使用候选附带的 `desktop_semantic_action` / `workflow_step` 稳定 locator，禁止固化 token、candidate ID 或坐标。未提供的工具不可调用或反复重试 |
 | 增强模式 | 工具列表存在 `desktop_agent_step` 时，它是每个新桌面动作选择的首选入口；增强判断模型未配置、明确转交主模型、不可用，或 UIA/Accessibility 不适用时，才走普通语义、视觉或鼠标路径。增强判断模型不生成坐标、脚本、选择器或输入内容。返回 `needs_input_value` 时，由当前主模型把业务文本作为 `value` 调用返回的 semantic_execute 候选；该文本不会发送给增强判断模型 |
-| 启动桌面应用 | 需要通过 `system_shell` 启动 GUI 应用时必须使用平台对应的非阻塞启动方式（Windows `Start-Process`、macOS `open`、Linux 后台启动），禁止直接运行会一直等待窗口退出的前台进程 |
+| 启动桌面应用 | 优先使用 `desktop_targets_list` 和 `desktop_target_bind` 的本机目录启动入口；旧环境未提供目标工具且需要通过 `system_shell` 启动 GUI 应用时，使用平台对应的非阻塞启动方式（Windows `Start-Process`、macOS `open`、Linux 后台启动），禁止直接运行会一直等待窗口退出的前台进程 |
 | 视觉回退 | 当前平台未提供语义工具，或目标应用无可用语义树/原生动作时，使用当前实际提供的视觉和鼠标工具；坐标必须来自最新本地观察。macOS 截图需要录屏权限，纯 Accessibility 操作不需要 |
 | 定位不精确 | `request_user_input(region)` 是首选方案，非降级 |
 | 同坐标连续失败 ≥2 次 | 先怀疑功能约束（锁死/权限/状态），`request_user_input` 确认，不反复调坐标 |

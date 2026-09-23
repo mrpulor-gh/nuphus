@@ -7,6 +7,18 @@ use super::registry::ToolRegistry;
 use crate::desktop::DesktopClient;
 use crate::ToolResult;
 
+fn optional_i32(params: &serde_json::Value, key: &str) -> Result<Option<i32>, String> {
+    params
+        .get(key)
+        .map(|value| {
+            value
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or_else(|| format!("{key} 必须为有效的 32 位整数"))
+        })
+        .transpose()
+}
+
 /// Check if window is foreground without activation (post-operation verification)
 async fn check_foreground(client: &DesktopClient, hwnd: i32) -> bool {
     match client.window_is_foreground(hwnd).await {
@@ -21,8 +33,7 @@ async fn check_foreground(client: &DesktopClient, hwnd: i32) -> bool {
 
 /// 操作前置前：先检查，未前置则 executor 内部自动激活（不再让 LLM 多跑一轮 activate）。
 /// 返回最终是否前置。键盘类操作必须以 true 为前提（输入流进焦点窗口）；
-/// 鼠标类操作 false 时仍可执行——点击可见的后台窗口，Windows 会激活并投递点击，
-/// 仅在结果中标注警告。
+/// 显式指定目标窗口的鼠标操作同样必须以 true 为前提。
 async fn ensure_foreground(client: &DesktopClient, hwnd: i32) -> bool {
     if check_foreground(client, hwnd).await {
         return true;
@@ -86,6 +97,19 @@ impl ToolRegistry {
         result: std::result::Result<serde_json::Value, crate::NuphusError>,
     ) -> std::result::Result<ToolResult, String> {
         result
+            .and_then(|value| {
+                if value.get("success").and_then(|value| value.as_bool()) == Some(false) {
+                    Err(crate::NuphusError::Tool(
+                        value
+                            .get("error")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("桌面操作失败")
+                            .into(),
+                    ))
+                } else {
+                    Ok(value)
+                }
+            })
             .map(|v| {
                 let text = match &v {
                     serde_json::Value::Null => String::new(),
@@ -134,171 +158,186 @@ impl ToolRegistry {
             "desktop_mouse" => {
                 let action = params
                     .get("action")
-                    .and_then(|v| v.as_str())
+                    .and_then(|value| value.as_str())
                     .unwrap_or("position");
-                // Optional hwnd for foreground verification and coordinate validation before click
-                let hwnd_opt = params
-                    .get("hwnd")
-                    .and_then(|v| v.as_i64())
-                    .map(|h| h as i32);
-                match action {
-                    "click" | "double_click" => {
-                        let clicks = if action == "double_click" {
-                            2
-                        } else {
-                            params.get("clicks").and_then(|v| v.as_i64()).unwrap_or(1) as i32
-                        };
-                        let x = params.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        let y = params.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        // Verify foreground + coordinate bounds before clicking
-                        let mut activated = true;
-                        if let Some(hwnd) = hwnd_opt {
-                            activated = ensure_foreground(client, hwnd).await;
-                        }
-                        let button = params
-                            .get("button")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("left");
-                        let click_result = client.mouse_click(x, y, button, clicks).await;
-                        if let Err(error) = &click_result {
-                            return Err(error.to_string());
-                        }
-                        if let Some(hwnd) = hwnd_opt {
-                            let mut msg = format!(
-                                "已完成对 HWND({}) 窗口的点击操作！hwnd: {}, 参数: x={}, y={}, button={}, clicks={}",
-                                hwnd, hwnd, x, y, button, clicks
-                            );
-                            if !activated {
-                                msg.push_str("；警告：自动置前失败，点击依赖目标点可见未被遮挡");
+                if action == "position" {
+                    return Self::wrap_desktop_result(client.mouse_position().await);
+                }
+                if !matches!(
+                    action,
+                    "click" | "double_click" | "hover" | "move" | "scroll"
+                ) {
+                    return Err(format!("unknown mouse action: {action}"));
+                }
+                // Validate before activating a window or consuming a one-use observation.
+                let button = params
+                    .get("button")
+                    .map(|value| value.as_str().ok_or("button 必须为字符串"))
+                    .transpose()?
+                    .unwrap_or("left");
+                let clicks = if action == "double_click" {
+                    2
+                } else {
+                    optional_i32(params, "clicks")?.unwrap_or(1)
+                };
+                if matches!(action, "click" | "double_click")
+                    && (!matches!(button, "left" | "right" | "middle")
+                        || !(1..=2).contains(&clicks))
+                {
+                    return Err("button 必须为 left/right/middle，clicks 必须为 1 或 2".into());
+                }
+                let direction = params
+                    .get("direction")
+                    .map(|value| value.as_str().ok_or("direction 必须为字符串"))
+                    .transpose()?
+                    .unwrap_or("down");
+                let amount = optional_i32(params, "amount")?.unwrap_or(3);
+                if action == "scroll" && (!matches!(direction, "up" | "down") || amount < 0) {
+                    return Err("direction 必须为 up/down，amount 必须为非负整数".into());
+                }
+                let explicit_hwnd = optional_i32(params, "hwnd")?;
+                let (context, resolved_point) =
+                    match (params.get("capture_id"), params.get("element_id")) {
+                        (None, None) => (None, None),
+                        (Some(id), Some(element)) => {
+                            if params.get("x").is_some() || params.get("y").is_some() {
+                                return Err("capture_id + element_id 不能与 x/y 混用".into());
                             }
-                            msg.push_str(&foreground_note(client, hwnd).await);
-                            return Ok(ToolResult::success(msg));
+                            let id = id.as_str().ok_or("capture_id 必须为字符串")?;
+                            let element = element
+                                .as_u64()
+                                .and_then(|value| u32::try_from(value).ok())
+                                .ok_or("element_id 必须为非负整数")?;
+                            let (context, point) = client
+                                .resolve_capture_element(id, element)
+                                .map_err(|e| e.to_string())?;
+                            (Some(context), Some(point))
                         }
-                        Self::wrap_desktop_result(click_result)
+                        _ => return Err("capture_id 与 element_id 必须同时提供".into()),
+                    };
+                let capture_hwnd = context
+                    .as_ref()
+                    .and_then(|context| context.target.as_ref())
+                    .map(|target| target.hwnd);
+                if explicit_hwnd.is_some()
+                    && capture_hwnd.is_some()
+                    && explicit_hwnd != capture_hwnd
+                {
+                    return Err("hwnd 不属于该捕获".into());
+                }
+                let hwnd = explicit_hwnd.or(capture_hwnd);
+                let before = match hwnd {
+                    Some(hwnd) => Some(
+                        client
+                            .window_snapshot(hwnd)
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => None,
+                };
+                if let Some(hwnd) = hwnd {
+                    if !ensure_foreground(client, hwnd).await {
+                        return Err("目标窗口激活失败，未发送鼠标动作；请刷新窗口状态".into());
+                    }
+                    let after = client
+                        .window_snapshot(hwnd)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if before.as_ref() != Some(&after) {
+                        return Err("窗口在激活期间发生变化，未发送鼠标动作；请重新观察".into());
+                    }
+                }
+                if let Some(context) = &context {
+                    client
+                        .validate_capture_context(context)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                let point = match resolved_point {
+                    Some(point) => Some(point),
+                    None => match (optional_i32(params, "x")?, optional_i32(params, "y")?) {
+                        (Some(x), Some(y)) => Some((x, y)),
+                        (None, None) if action == "scroll" => before.as_ref().map(|window| {
+                            (
+                                (i64::from(window.bounds.x) + i64::from(window.bounds.width) / 2)
+                                    as i32,
+                                (i64::from(window.bounds.y) + i64::from(window.bounds.height) / 2)
+                                    as i32,
+                            )
+                        }),
+                        _ => {
+                            return Err(
+                                "请提供本次 capture_id + element_id，或完整的屏幕绝对坐标 x/y"
+                                    .into(),
+                            )
+                        }
+                    },
+                };
+                if let (Some(window), Some((x, y))) = (&before, point) {
+                    if (explicit_hwnd.is_some()
+                        || context
+                            .as_ref()
+                            .is_some_and(|context| context.scope == "window"))
+                        && !window.bounds.contains(x, y)
+                    {
+                        return Err(format!(
+                            "屏幕坐标 ({x}, {y}) 不在目标窗口中；未发送鼠标动作，请重新观察"
+                        ));
+                    }
+                }
+                // Consume before dispatch. An ambiguous OS failure must not replay a click.
+                if matches!(action, "click" | "double_click" | "scroll") {
+                    if let Some(context) = &context {
+                        client
+                            .consume_capture(&context.capture_id)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                let result = match action {
+                    "click" | "double_click" => {
+                        let (x, y) = point.ok_or("点击缺少目标")?;
+                        client.mouse_click(x, y, button, clicks).await
                     }
                     "hover" => {
-                        let x = params.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        let y = params.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        // Verify foreground + coordinate bounds before hover
-                        let mut activated = true;
-                        if let Some(hwnd) = hwnd_opt {
-                            activated = ensure_foreground(client, hwnd).await;
-                            let info = client
-                                .window_info(hwnd)
-                                .await
-                                .map_err(|e| format!("获取窗口信息失败: {}", e))?;
-                            let win = info
-                                .get("result")
-                                .and_then(|r| r.get("window"))
-                                .ok_or("无法解析窗口信息")?;
-                            let wx = win.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let wy = win.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let ww = win.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let wh = win.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            if x < wx || x > wx + ww || y < wy || y > wy + wh {
-                                return Err(format!(
-                                    "悬停坐标({},{})不在目标窗口范围内(窗口: x={} y={} w={} h={})，窗口可能已被移动",
-                                    x, y, wx, wy, ww, wh
-                                ));
-                            }
-                        }
-                        let _hover_result = client.mouse_hover(x, y).await;
-                        if let Err(error) = &_hover_result {
-                            return Err(error.to_string());
-                        }
-                        if let Some(hwnd) = hwnd_opt {
-                            let mut msg = format!(
-                                "已完成对 HWND({}) 窗口的悬停操作！hwnd: {}, 参数: x={}, y={}",
-                                hwnd, hwnd, x, y
-                            );
-                            if !activated {
-                                msg.push_str("；警告：自动置前失败，悬停依赖目标点可见未被遮挡");
-                            }
-                            msg.push_str(&foreground_note(client, hwnd).await);
-                            return Ok(ToolResult::success(msg));
-                        }
-                        Self::wrap_desktop_result(_hover_result)
-                    }
-                    "scroll" => {
-                        let direction = params
-                            .get("direction")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("down");
-                        let amount =
-                            params.get("amount").and_then(|v| v.as_i64()).unwrap_or(3) as i32;
-                        // Scroll uses SendInput which goes to foreground window — must verify
-                        let mut activated = true;
-                        if let Some(hwnd) = hwnd_opt {
-                            activated = ensure_foreground(client, hwnd).await;
-                        }
-                        let _scroll_result = client.mouse_scroll(direction, amount).await;
-                        if let Err(error) = &_scroll_result {
-                            return Err(error.to_string());
-                        }
-                        if let Some(hwnd) = hwnd_opt {
-                            let mut msg = format!(
-                                "已完成对 HWND({}) 窗口的滚轮操作！hwnd: {}, 参数: direction={}, amount={}",
-                                hwnd, hwnd, direction, amount
-                            );
-                            if !activated {
-                                msg.push_str("；警告：自动置前失败，滚轮依赖目标点可见未被遮挡");
-                            }
-                            msg.push_str(&foreground_note(client, hwnd).await);
-                            return Ok(ToolResult::success(msg));
-                        }
-                        Self::wrap_desktop_result(_scroll_result)
+                        let (x, y) = point.ok_or("悬停缺少目标")?;
+                        client.mouse_hover(x, y).await
                     }
                     "move" => {
-                        let x = params.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        let y = params.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        // Verify foreground + coordinate bounds before move
-                        let mut activated = true;
-                        if let Some(hwnd) = hwnd_opt {
-                            activated = ensure_foreground(client, hwnd).await;
-                            let info = client
-                                .window_info(hwnd)
-                                .await
-                                .map_err(|e| format!("获取窗口信息失败: {}", e))?;
-                            let win = info
-                                .get("result")
-                                .and_then(|r| r.get("window"))
-                                .ok_or("无法解析窗口信息")?;
-                            let wx = win.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let wy = win.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let ww = win.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            let wh = win.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                            if x < wx || x > wx + ww || y < wy || y > wy + wh {
-                                return Err(format!(
-                                    "移动坐标({},{})不在目标窗口范围内(窗口: x={} y={} w={} h={})，窗口可能已被移动",
-                                    x, y, wx, wy, ww, wh
-                                ));
-                            }
-                        }
-                        let _move_result = client.mouse_move(x, y, 0.0).await;
-                        if let Err(error) = &_move_result {
-                            return Err(error.to_string());
-                        }
-                        if let Some(hwnd) = hwnd_opt {
-                            let mut msg = format!(
-                                "已完成对 HWND({}) 窗口的鼠标移动！hwnd: {}, 参数: x={}, y={}",
-                                hwnd, hwnd, x, y
-                            );
-                            if !activated {
-                                msg.push_str("；警告：自动置前失败，移动依赖目标点可见未被遮挡");
-                            }
-                            msg.push_str(&foreground_note(client, hwnd).await);
-                            return Ok(ToolResult::success(msg));
-                        }
-                        Self::wrap_desktop_result(_move_result)
+                        let (x, y) = point.ok_or("移动缺少目标")?;
+                        client.mouse_move(x, y, 0.0).await
                     }
-                    _ => Self::wrap_desktop_result(client.mouse_position().await),
+                    "scroll" => {
+                        if let Some((x, y)) = point {
+                            client
+                                .mouse_move(x, y, 0.0)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                        }
+                        client.mouse_scroll(direction, amount).await
+                    }
+                    _ => unreachable!(),
                 }
+                .map_err(|e| e.to_string())?;
+                if result.get("success").and_then(|value| value.as_bool()) == Some(false) {
+                    return Err(result
+                        .get("error")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("鼠标动作失败")
+                        .into());
+                }
+                Self::wrap_desktop_result(Ok(serde_json::json!({"success":true,"result":{
+                    "status":"dispatched","action":action,"hwnd":hwnd,"coordinate_space":"screen",
+                    "coordinate_units":crate::desktop::capture_context::screen_coordinate_units(),
+                    "point":point.map(|(x,y)|serde_json::json!({"x":x,"y":y})),
+                    "capture_id":context.as_ref().map(|context|&context.capture_id),
+                    "verified":false,"note":"已发送输入事件；请重新观察确认目标应用的结果"
+                }})))
             }
             "desktop_mouse_drag" => {
-                let start_x = params.get("start_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                let start_y = params.get("start_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                let end_x = params.get("end_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                let end_y = params.get("end_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                let start_x = optional_i32(params, "start_x")?.ok_or("start_x required")?;
+                let start_y = optional_i32(params, "start_y")?.ok_or("start_y required")?;
+                let end_x = optional_i32(params, "end_x")?.ok_or("end_x required")?;
+                let end_y = optional_i32(params, "end_y")?.ok_or("end_y required")?;
                 Self::wrap_desktop_result(client.mouse_drag(start_x, start_y, end_x, end_y).await)
             }
             "desktop_input" => {
@@ -557,5 +596,30 @@ impl ToolRegistry {
             }
             _ => Err(format!("Unknown desktop tool: {}", tool_name)),
         }
+    }
+}
+
+#[cfg(test)]
+mod mouse_contract_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn absolute_coordinates_preserve_negative_monitor_origins_and_reject_overflow() {
+        assert_eq!(
+            optional_i32(&json!({"x": -1920}), "x").unwrap(),
+            Some(-1920)
+        );
+        assert!(optional_i32(&json!({"x": 4294967296_i64}), "x").is_err());
+        assert!(optional_i32(&json!({"x": "300"}), "x").is_err());
+        assert_eq!(optional_i32(&json!({}), "x").unwrap(), None);
+    }
+
+    #[test]
+    fn desktop_failure_payload_is_not_a_successful_tool_result() {
+        let result =
+            ToolRegistry::wrap_desktop_result(Ok(json!({"success":false,"error":"capture moved"})));
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), "Tool error: capture moved");
     }
 }

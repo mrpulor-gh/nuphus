@@ -7,6 +7,26 @@ use std::time::{Duration, Instant};
 pub trait ComputerObserver: Send + Sync {
     fn capabilities(&self) -> PlatformCapabilities;
     async fn observe(&self, scope: &ObservationScope) -> Result<Observation, AutomationError>;
+
+    /// Restore a saved semantic region without persisting runtime node ids.
+    /// Platform adapters may descend through stable ancestor contexts and
+    /// return the ephemeral scope to reuse for pre/post-dispatch observations.
+    async fn observe_locator(
+        &self,
+        locator: &SemanticLocator,
+    ) -> Result<(Observation, ObservationScope), AutomationError> {
+        let scope = ObservationScope {
+            app_id: Some(locator.app_id.clone()),
+            window_id: locator.window_id.clone(),
+            subtree_id: locator
+                .ancestor_chain
+                .iter()
+                .any(|ancestor| ancestor.automation_id.as_deref() == Some("nuphus:scope:menu"))
+                .then(|| "@menu".into()),
+        };
+        let observation = self.observe(&scope).await?;
+        Ok((observation, scope))
+    }
 }
 
 pub trait CandidateBuilder: Send + Sync {

@@ -399,6 +399,14 @@ struct NativeSnapshot {
     snapshot: Snapshot,
     elements: Vec<Element>,
     app: Element,
+    window: Element,
+}
+
+struct Region {
+    element: Element,
+    window: Element,
+    ancestors: Vec<SemanticContext>,
+    origin: String,
 }
 
 /// Ephemeral references stay on the worker. Tokens are never serialized into
@@ -407,6 +415,7 @@ struct NativeSnapshot {
 pub(super) struct Session {
     windows: std::collections::VecDeque<(u64, Element)>,
     next_token: u64,
+    regions: std::collections::HashMap<String, Region>,
 }
 
 impl Session {
@@ -416,8 +425,9 @@ impl Session {
         scope: &ObservationScope,
         deadline: Instant,
     ) -> Result<Snapshot, AutomationError> {
-        let mut native = capture_native(limit, scope, deadline)?;
-        let window = &native.elements[0];
+        let region = self.region_for(scope)?;
+        let mut native = capture_native(limit, scope, region, deadline)?;
+        let window = &native.window;
         let token = match self
             .windows
             .iter()
@@ -436,7 +446,38 @@ impl Session {
             }
         };
         native.snapshot.window_token = token;
+        // Bound this local cache without invalidating the currently requested
+        // region during capture. Native references never enter model output.
+        if self.regions.len() + native.elements.len() > 1024 {
+            self.regions.clear();
+        }
+        let mut counts = std::collections::HashMap::new();
+        for meta in &native.snapshot.metadata {
+            *counts.entry(meta.node.opaque_id.as_str()).or_insert(0) += 1;
+        }
+        for (meta, element) in native.snapshot.metadata.iter().zip(&native.elements) {
+            if counts.get(meta.node.opaque_id.as_str()) != Some(&1) {
+                self.regions.remove(&meta.node.opaque_id);
+                continue;
+            }
+            self.regions.insert(
+                meta.node.opaque_id.clone(),
+                Region {
+                    element: element.retained(),
+                    window: window.retained(),
+                    ancestors: meta.ancestors.clone(),
+                    origin: meta.origin.clone(),
+                },
+            );
+        }
         Ok(native.snapshot)
+    }
+
+    fn region_for(&self, scope: &ObservationScope) -> Result<Option<&Region>, AutomationError> {
+        match scope.subtree_id.as_deref() {
+            None | Some("@window" | "@menu") => Ok(None),
+            Some(id) => self.regions.get(id).map(Some).ok_or_else(|| AutomationError::Observation("AX region expired or is ambiguous; observe the window/menu and select a fresh region".into())),
+        }
     }
 
     pub(super) fn execute(
@@ -444,6 +485,7 @@ impl Session {
         limit: usize,
         token: u64,
         require_unique: bool,
+        scope: &ObservationScope,
         locator: &SemanticLocator,
         action: &NativeAction,
         input: &ExecutionInput,
@@ -463,6 +505,8 @@ impl Session {
             limit,
             window,
             require_unique,
+            scope,
+            self.region_for(scope)?,
             locator,
             action,
             input,
@@ -475,16 +519,12 @@ impl Session {
 fn capture_native(
     limit: usize,
     scope: &ObservationScope,
+    region: Option<&Region>,
     deadline: Instant,
 ) -> Result<NativeSnapshot, AutomationError> {
     check_deadline(deadline)?;
     if !trusted() {
         return Err(AutomationError::Observation("macOS Accessibility permission is required; enable Nuphus in System Settings > Privacy & Security > Accessibility".into()));
-    }
-    if scope.subtree_id.is_some() {
-        return Err(AutomationError::Observation(
-            "subtree observation is not supported; observe the target window".into(),
-        ));
     }
     let system = Element::system()
         .ok_or_else(|| AutomationError::Observation("could not create AX system element".into()))?;
@@ -558,16 +598,53 @@ fn capture_native(
         id: window_id,
         title: redact(&title),
     };
-    // A title/AXIdentifier identifies a saved window only if exactly one open
-    // window has it. Ephemeral candidates still work in either duplicate window
-    // because Session binds those candidates to its retained native reference.
-    let mut pending =
-        std::collections::VecDeque::from([(window, Vec::<SemanticContext>::new(), false, 0_usize)]);
-    // The menu bar is outside AXWindow. Include it so native application menus
-    // are available without resorting to blind keyboard/coordinate sequences.
-    if let Some(menu) = app.child("AXMenuBar", deadline) {
-        pending.push_back((menu, vec![], false, 0));
-    }
+    let (root, root_ancestors, origin, explicit_region) =
+        match (scope.subtree_id.as_deref(), region) {
+            (None | Some("@window"), _) => (window.retained(), vec![], "window".to_string(), false),
+            (Some("@menu"), _) => {
+                let menu = app.child("AXMenuBar", deadline).ok_or_else(|| {
+                    AutomationError::Observation(
+                        "application exposes no Accessibility menu bar".into(),
+                    )
+                })?;
+                (
+                    menu,
+                    vec![SemanticContext {
+                        role: Some(UiRole::Menu),
+                        automation_id: Some(MENU_SCOPE_ID.into()),
+                        accessible_name: Some("menu bar".into()),
+                    }],
+                    "menu".to_string(),
+                    false,
+                )
+            }
+            (Some(_), Some(region)) => {
+                if !region.window.same(&window) {
+                    return Err(AutomationError::Observation(
+                        "AX region belongs to a different window; refresh the target region".into(),
+                    ));
+                }
+                // Invalid native elements return no role. Never silently fall back
+                // from a vanished local region to a different window/element.
+                if region.element.text("AXRole", deadline).is_none() {
+                    return Err(AutomationError::Observation(
+                        "AX region disappeared; refresh the target region".into(),
+                    ));
+                }
+                (
+                    region.element.retained(),
+                    region.ancestors.clone(),
+                    region.origin.clone(),
+                    true,
+                )
+            }
+            _ => {
+                return Err(AutomationError::Observation(
+                    "AX region is unknown; select a region returned by observation".into(),
+                ))
+            }
+        };
+    let mut pending = std::collections::VecDeque::from([(root, root_ancestors, false, 0_usize)]);
     let mut metadata = Vec::new();
     let mut elements: Vec<Element> = Vec::new();
     let mut truncated = false;
@@ -656,17 +733,37 @@ fn capture_native(
         let mut child_ancestors = ancestors.clone();
         // Root window identity already lives in the locator. Keeping window
         // titles out of ancestry allows providers' stable AXIdentifier to work.
-        if depth > 0 && (identifier.is_some() || raw_name.is_some()) {
+        if !matches!(raw_role.as_str(), "AXWindow" | "AXMenuBar")
+            && (identifier.is_some() || raw_name.is_some())
+        {
             child_ancestors.push(SemanticContext {
                 role: Some(role),
                 automation_id: identifier.clone(),
                 accessible_name: raw_name.clone(),
             });
             if child_ancestors.len() > 8 {
-                child_ancestors.remove(0);
+                // Keep the scope marker in saved locators even for deeply
+                // nested menus; it is needed to reopen the same observation
+                // scope during replay instead of searching window contents.
+                let oldest_context = usize::from(
+                    child_ancestors
+                        .first()
+                        .and_then(|ancestor| ancestor.automation_id.as_deref())
+                        == Some(MENU_SCOPE_ID),
+                );
+                child_ancestors.remove(oldest_context);
             }
         }
-        if !secure {
+        if !secure
+            && (origin != "menu"
+                || descend_menu(
+                    &raw_role,
+                    explicit_region && depth == 0,
+                    expanded,
+                    selected,
+                    node.focused,
+                ))
+        {
             let capacity = child_capacity(limit, metadata.len(), pending.len(), depth);
             let (children, omitted) = element.children_page("AXChildren", capacity, deadline)?;
             truncated |= omitted;
@@ -680,6 +777,7 @@ fn capture_native(
             identifier,
             raw_name,
             ancestors,
+            origin: origin.clone(),
         });
         elements.push(element);
     }
@@ -705,6 +803,7 @@ fn capture_native(
         },
         elements,
         app,
+        window,
     })
 }
 
@@ -735,6 +834,8 @@ fn execute(
     limit: usize,
     expected_window: &Element,
     require_unique_window: bool,
+    scope: &ObservationScope,
+    region: Option<&Region>,
     locator: &SemanticLocator,
     action: &NativeAction,
     input: &ExecutionInput,
@@ -746,11 +847,12 @@ fn execute(
         &ObservationScope {
             app_id: Some(locator.app_id.clone()),
             window_id: locator.window_id.clone(),
-            subtree_id: None,
+            subtree_id: scope.subtree_id.clone(),
         },
+        region,
         deadline,
     )?;
-    if !snapshot.elements[0].same(expected_window) {
+    if !snapshot.window.same(expected_window) {
         return Err(AutomationError::Execution(
             "AX window changed since the candidate was created".into(),
         ));
@@ -791,7 +893,7 @@ fn execute(
     if !foreground.same(&snapshot.app)
         || focused_window
             .as_ref()
-            .is_none_or(|window| !window.same(&snapshot.elements[0]))
+            .is_none_or(|window| !window.same(&snapshot.window))
         || Instant::now() >= deadline
         || cancelled()
     {

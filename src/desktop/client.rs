@@ -14,6 +14,7 @@ use desktop_api::{
 #[cfg(windows)]
 use desktop_api::{sendinput, WindowManager};
 
+use super::capture_context::{Bounds, CaptureCache, CaptureContext, WindowSnapshot};
 use crate::desktop::YoloDetector;
 
 // enigo 0.2: text/key/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
@@ -29,6 +30,7 @@ pub struct DesktopClient {
     window_manager: std::sync::Arc<std::sync::Mutex<WindowManager>>,
     /// YOLO icon detector
     yolo: std::sync::Arc<YoloDetector>,
+    captures: std::sync::Arc<std::sync::Mutex<CaptureCache>>,
 }
 
 impl Default for DesktopClient {
@@ -43,6 +45,7 @@ impl DesktopClient {
             #[cfg(windows)]
             window_manager: std::sync::Arc::new(std::sync::Mutex::new(WindowManager::new())),
             yolo: std::sync::Arc::new(YoloDetector::new()),
+            captures: Default::default(),
         }
     }
 
@@ -54,42 +57,138 @@ impl DesktopClient {
         Ok(serde_json::json!({ "success": false, "error": msg.into() }))
     }
 
+    pub async fn window_snapshot(&self, hwnd: i32) -> Result<WindowSnapshot> {
+        WindowSnapshot::from_info(hwnd, &self.window_info(hwnd).await?)
+            .map_err(crate::NuphusError::Tool)
+    }
+
+    pub fn resolve_capture_element(
+        &self,
+        capture_id: &str,
+        element_id: u32,
+    ) -> Result<(CaptureContext, (i32, i32))> {
+        self.captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .resolve(capture_id, element_id)
+            .map_err(crate::NuphusError::Tool)
+    }
+
+    pub async fn validate_capture_context(&self, context: &CaptureContext) -> Result<()> {
+        let current = match &context.target {
+            Some(target) => Some(self.window_snapshot(target.hwnd).await?),
+            None => None,
+        };
+        self.captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .validate(&context.capture_id)
+            .map_err(crate::NuphusError::Tool)?;
+        context
+            .validate_window(current.as_ref())
+            .map_err(crate::NuphusError::Tool)
+    }
+
+    pub fn consume_capture(&self, capture_id: &str) -> Result<()> {
+        self.captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .consume(capture_id)
+            .map_err(crate::NuphusError::Tool)
+    }
+
+    /// Retire image candidates when another execution path mutates the desktop.
+    pub fn invalidate_captures(&self) -> Result<()> {
+        self.captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .invalidate();
+        Ok(())
+    }
+
+    fn remember_capture(
+        &self,
+        path: &std::path::Path,
+        frame: &Frame,
+        geometry: capture::CaptureGeometry,
+        scope: &'static str,
+        target: Option<WindowSnapshot>,
+    ) -> Result<CaptureContext> {
+        let context = CaptureContext::new(
+            path,
+            Bounds {
+                x: geometry.x,
+                y: geometry.y,
+                width: geometry.width,
+                height: geometry.height,
+            },
+            (frame.width, frame.height),
+            scope,
+            target,
+        )
+        .map_err(crate::NuphusError::Tool)?;
+        self.captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .insert(context.clone());
+        Ok(context)
+    }
+
     // ══════════════════════════════════════════════
     //  Methods below use Rust native desktop-api implementation
     // ══════════════════════════════════════════════
 
-    /// Mouse click — cross-platform (Win32 native / macOS enigo)
+    /// Mouse click — cross-platform (Win32 / macOS CoreGraphics / Linux enigo).
     pub async fn mouse_click(&self, x: i32, y: i32, button: &str, clicks: i32) -> Result<Value> {
-        input::mouse::move_to(x, y).await?;
+        if !(1..=2).contains(&clicks) {
+            return Self::result_err("clicks must be 1 or 2");
+        }
+        if !matches!(button, "left" | "right" | "middle") {
+            return Self::result_err("unsupported mouse button");
+        }
+        self.invalidate_captures()?;
+        #[cfg(target_os = "macos")]
+        input::mouse::click_at(x, y, button, clicks).await?;
+        #[cfg(not(target_os = "macos"))]
         for _ in 0..clicks {
             match button {
                 "right" => input::mouse::right_click(x, y).await?,
-                _ => input::mouse::click(x, y).await?,
+                "left" => input::mouse::click(x, y).await?,
+                "middle" => input::mouse::middle_click(x, y).await?,
+                _ => return Self::result_err("unsupported mouse button"),
             }
             if clicks > 1 {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         }
-        Self::result_ok(serde_json::json!({ "x": x, "y": y, "button": button, "clicks": clicks }))
+        Self::result_ok(
+            serde_json::json!({ "status": "dispatched", "x": x, "y": y, "coordinate_space": "screen", "coordinate_units": super::capture_context::screen_coordinate_units(), "button": button, "clicks": clicks, "verified": false }),
+        )
     }
 
     /// Mouse hover — cross-platform (Win32 native / macOS enigo)
     pub async fn mouse_hover(&self, x: i32, y: i32) -> Result<Value> {
         input::mouse::move_to(x, y).await?;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        Self::result_ok(serde_json::json!({ "x": x, "y": y, "action": "hover" }))
+        Self::result_ok(
+            serde_json::json!({ "status": "dispatched", "verified": false, "x": x, "y": y, "action": "hover" }),
+        )
     }
 
     /// Mouse move — cross-platform (Win32 native / macOS enigo)
     pub async fn mouse_move(&self, x: i32, y: i32, _duration: f64) -> Result<Value> {
         input::mouse::move_to(x, y).await?;
-        Self::result_ok(serde_json::json!({ "x": x, "y": y }))
+        Self::result_ok(
+            serde_json::json!({ "status": "dispatched", "verified": false, "x": x, "y": y }),
+        )
     }
 
     /// Get mouse position — cross-platform (Win32 native / macOS enigo)
     pub async fn mouse_position(&self) -> Result<Value> {
         let pt = input::mouse::position().await?;
-        Self::result_ok(serde_json::json!({ "x": pt.x, "y": pt.y }))
+        Self::result_ok(
+            serde_json::json!({ "x": pt.x, "y": pt.y, "coordinate_space": "screen", "coordinate_units": super::capture_context::screen_coordinate_units() }),
+        )
     }
 
     /// Mouse drag — cross-platform (Win32 native / macOS enigo)
@@ -100,6 +199,7 @@ impl DesktopClient {
         end_x: i32,
         end_y: i32,
     ) -> Result<Value> {
+        self.invalidate_captures()?;
         let start = desktop_api::Point {
             x: start_x,
             y: start_y,
@@ -107,6 +207,7 @@ impl DesktopClient {
         let end = desktop_api::Point { x: end_x, y: end_y };
         input::mouse::drag(start, end).await?;
         Self::result_ok(serde_json::json!({
+            "status": "dispatched", "verified": false,
             "start": { "x": start_x, "y": start_y },
             "end": { "x": end_x, "y": end_y }
         }))
@@ -114,12 +215,16 @@ impl DesktopClient {
 
     /// Mouse scroll — Win32 SendInput / macOS & Linux enigo
     pub async fn mouse_scroll(&self, direction: &str, amount: i32) -> Result<Value> {
+        self.invalidate_captures()?;
         input::mouse::scroll(direction, amount).await?;
-        Self::result_ok(serde_json::json!({ "direction": direction, "amount": amount }))
+        Self::result_ok(
+            serde_json::json!({ "status": "dispatched", "verified": false, "direction": direction, "amount": amount }),
+        )
     }
 
     /// Keyboard text input — Windows: IME native / macOS: enigo
     pub async fn keyboard_type_unicode(&self, text: &str) -> Result<Value> {
+        self.invalidate_captures()?;
         #[cfg(windows)]
         {
             sendinput::nuphus_input(text, &sendinput::InputSession::default())?;
@@ -141,12 +246,14 @@ impl DesktopClient {
 
     /// Keyboard key press — cross-platform via input::keyboard
     pub async fn keyboard_press(&self, key: &str) -> Result<Value> {
+        self.invalidate_captures()?;
         input::keyboard::press(key).await?;
         Self::result_ok(serde_json::json!({ "key": key }))
     }
 
     /// Keyboard hotkey — cross-platform via input::keyboard
     pub async fn keyboard_hotkey(&self, keys: Vec<String>) -> Result<Value> {
+        self.invalidate_captures()?;
         let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
         input::keyboard::hotkey(&key_refs).await?;
         Self::result_ok(serde_json::json!({ "keys": keys }))
@@ -156,6 +263,7 @@ impl DesktopClient {
     /// Caller must ensure the target window is foreground first (ensure_foreground).
     #[cfg_attr(not(windows), allow(unused_variables))] // hwnd 仅 Windows 使用
     pub async fn input_send(&self, text: &str, hwnd: i32, press_enter: bool) -> Result<Value> {
+        self.invalidate_captures()?;
         #[cfg(windows)]
         {
             // Attach to target window's thread to prevent input from going to wrong window
@@ -234,7 +342,23 @@ impl DesktopClient {
             hwnd: 0,
             title: String::new(),
         };
-        let frame = capture::capture(&dummy_target, scope).await?;
+        let target = match self
+            .foreground_hwnd()
+            .await
+            .ok()
+            .and_then(|value| value["result"]["hwnd"].as_i64())
+            .and_then(|hwnd| i32::try_from(hwnd).ok())
+            .filter(|hwnd| *hwnd != 0)
+        {
+            Some(hwnd) => self.window_snapshot(hwnd).await.ok(),
+            None => None,
+        };
+        let (frame, geometry) = capture::capture_with_geometry(&dummy_target, scope).await?;
+        if let Some(target) = &target {
+            if self.window_snapshot(target.hwnd).await? != *target {
+                return Self::result_err("窗口在截图期间发生变化，请重新截图");
+            }
+        }
 
         // Determine save path — force .bmp extension
         let save_path = if let Some(p) = path {
@@ -256,19 +380,25 @@ impl DesktopClient {
         // Save as BMP
         Self::save_frame_as_bmp(&frame, &save_path)?;
 
-        let (screen_x, screen_y) = match &region {
-            Some(r) => (
-                r.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                r.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            ),
-            None => (0, 0),
-        };
+        let context = self.remember_capture(
+            &save_path,
+            &frame,
+            geometry,
+            if region.is_some() {
+                "region"
+            } else {
+                "primary_display"
+            },
+            target,
+        )?;
 
         Self::result_ok(serde_json::json!({
             "width": frame.width,
             "height": frame.height,
-            "screen_x": screen_x,
-            "screen_y": screen_y,
+            "screen_x": geometry.x,
+            "screen_y": geometry.y,
+            "capture_id": context.capture_id,
+            "capture": context,
             "path": save_path.display().to_string(),
         }))
     }
@@ -318,6 +448,7 @@ impl DesktopClient {
             (None, None) => return Self::result_err("hwnd or title required"),
         };
 
+        let window_before = self.window_snapshot(hwnd_val as i32).await?;
         #[cfg(windows)]
         let target = desktop_api::Target::Window {
             hwnd: hwnd_val,
@@ -338,7 +469,10 @@ impl DesktopClient {
             hwnd: capture_id,
             title: String::new(),
         };
-        let frame = capture::capture(&target, Scope::Window).await?;
+        let (frame, geometry) = capture::capture_with_geometry(&target, Scope::Window).await?;
+        if self.window_snapshot(hwnd_val as i32).await? != window_before {
+            return Self::result_err("窗口在截图期间发生变化，请重新截图");
+        }
 
         // Determine save path — force .bmp extension
         let save_path = if let Some(p) = path {
@@ -357,42 +491,16 @@ impl DesktopClient {
 
         Self::save_frame_as_bmp(&frame, &save_path)?;
 
-        // 获取窗口屏幕坐标（ClientToScreen 得到客户区左上角屏幕位置）
-        let (screen_x, screen_y) = {
-            #[cfg(windows)]
-            {
-                use windows::Win32::Foundation::{HWND, POINT, RECT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
-                let hwnd_ptr = HWND(hwnd_val);
-                let mut client = RECT::default();
-                let mut origin = POINT { x: 0, y: 0 };
-                unsafe {
-                    _ = GetClientRect(hwnd_ptr, &mut client);
-                }
-                unsafe {
-                    _ = ClientToScreen(hwnd_ptr, &mut origin);
-                }
-                (origin.x, origin.y)
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let info = self.window_info(hwnd_val as i32).await?;
-                let bounds = &info["result"]["window"];
-                (
-                    bounds["x"].as_i64().unwrap_or(0) as i32,
-                    bounds["y"].as_i64().unwrap_or(0) as i32,
-                )
-            }
-            #[cfg(all(not(windows), not(target_os = "macos")))]
-            (0, 0)
-        };
+        let context =
+            self.remember_capture(&save_path, &frame, geometry, "window", Some(window_before))?;
 
         Self::result_ok(serde_json::json!({
             "width": frame.width,
             "height": frame.height,
-            "screen_x": screen_x,
-            "screen_y": screen_y,
+            "screen_x": geometry.x,
+            "screen_y": geometry.y,
+            "capture_id": context.capture_id,
+            "capture": context,
             "path": save_path.display().to_string(),
             "format": "bmp",
             "hwnd": hwnd_val,
@@ -950,6 +1058,15 @@ impl DesktopClient {
     /// 加载截图文件，并行执行 PaddleOCR（文字检测）和 YOLO（元素检测），
     /// 通过 ui_perception::merge() 合并去重后返回统一 JSON。
     pub async fn perceive(&self, image_path: &str) -> Result<Value> {
+        let capture = self
+            .captures
+            .lock()
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
+            .for_path(std::path::Path::new(image_path))
+            .map_err(crate::NuphusError::Tool)?;
+        if let Some(context) = &capture {
+            self.validate_capture_context(context).await?;
+        }
         let img_path_ocr = image_path.to_string();
         let img_path_yolo = image_path.to_string();
         let yolo = self.yolo.clone();
@@ -997,16 +1114,50 @@ impl DesktopClient {
         // 合并
         let elements = crate::desktop::ui_perception::merge(&ocr_blocks, &yolo_elements);
 
+        if let Some(context) = &capture {
+            self.validate_capture_context(context).await?;
+            let mut cache = self
+                .captures
+                .lock()
+                .map_err(|e| crate::NuphusError::Tool(e.to_string()))?;
+            let current = cache
+                .for_path(std::path::Path::new(image_path))
+                .map_err(crate::NuphusError::Tool)?;
+            if current.as_ref().map(|item| &item.capture_id) != Some(&context.capture_id) {
+                return Self::result_err("截图在感知期间被替换，请重新感知");
+            }
+            cache
+                .set_elements(
+                    &context.capture_id,
+                    elements.iter().filter_map(|element| {
+                        let point = element.rect.center();
+                        context
+                            .screen_point(point.x, point.y)
+                            .ok()
+                            .map(|_| (element.id, point.x, point.y))
+                    }),
+                )
+                .map_err(crate::NuphusError::Tool)?;
+        }
+
         let json_elements: Vec<Value> = elements
             .iter()
             .map(|el| {
                 let center = el.rect.center();
+                let screen_center = capture
+                    .as_ref()
+                    .and_then(|context| context.screen_point(center.x, center.y).ok())
+                    .map(|(x, y)| serde_json::json!({"x":x,"y":y}));
                 serde_json::json!({
                     "id": el.id,
+                    "element_id": el.id,
+                    "capture_id": capture.as_ref().map(|context| &context.capture_id),
                     "kind": format!("{:?}", el.kind).to_lowercase(),
                     "text": el.text,
                     "rect": { "x": el.rect.x, "y": el.rect.y, "w": el.rect.w, "h": el.rect.h },
                     "center": { "x": center.x, "y": center.y },
+                    "image_center": { "x": center.x, "y": center.y },
+                    "screen_center": screen_center,
                     "confidence": el.confidence,
                     "source": format!("{:?}", el.source).to_lowercase(),
                 })
@@ -1015,6 +1166,9 @@ impl DesktopClient {
 
         Self::result_ok(serde_json::json!({
             "elements": json_elements,
+            "capture_id": capture.as_ref().map(|context| &context.capture_id),
+            "capture": capture,
+            "center_coordinate_space": "image",
             "count": json_elements.len(),
             "ocr_count": ocr_blocks.len(),
             "yolo_count": yolo_elements.len(),

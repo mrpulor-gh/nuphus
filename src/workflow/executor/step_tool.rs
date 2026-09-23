@@ -70,6 +70,17 @@ impl Executor {
                 }
                 Err(e) => {
                     last_error = e;
+                    // Native desktop dispatch may already have caused a side
+                    // effect even if its postcondition cannot be established.
+                    // A retry would repeat a click/send/submit with a fresh token.
+                    if tool == "desktop_semantic_action"
+                        && last_error.contains("desktop_needs_observation:")
+                    {
+                        return Err(crate::NuphusError::agent(format!(
+                            "Tool '{}' ({}): {}",
+                            tool, step.name, last_error
+                        )));
+                    }
 
                     // AllowCodes: 检查退出码，白名单码视为成功
                     if let OnError::AllowCodes { codes } = &step.on_error {

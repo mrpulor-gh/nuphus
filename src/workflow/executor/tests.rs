@@ -29,6 +29,36 @@ async fn fail_tool_exec(_tool: String, _params: serde_json::Value) -> StdResult<
 }
 
 #[tokio::test]
+async fn desktop_unknown_postcondition_is_not_automatically_replayed() {
+    let attempts = std::sync::atomic::AtomicUsize::new(0);
+    let executor = Executor::new();
+    let step = make_tool_step(
+        "send once",
+        "desktop_semantic_action",
+        serde_json::json!({}),
+    );
+    let tool_exec = |_: String, _: serde_json::Value| {
+        attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async { Err("desktop_needs_observation: dispatch outcome unknown".to_string()) }
+    };
+    let result = executor
+        .execute_tool_step(
+            &step,
+            "desktop_semantic_action",
+            &serde_json::json!({}),
+            &tool_exec,
+            &mut HashMap::new(),
+            "test-no-replay",
+            &EventBus::new(),
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn test_executor_linear_single_step() {
     let tmp = std::env::temp_dir().join("nuphus_test_exec");
     let _ = std::fs::create_dir_all(&tmp);
