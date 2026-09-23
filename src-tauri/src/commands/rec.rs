@@ -13,7 +13,7 @@
 //
 // 录制会话状态机：
 //   idle（None） ←→ active（Some(RecSession)）
-//   - rec_set_workflow  → active（覆盖重置）
+//   - rec_set_workflow  → active（已有会话时拒绝，须先结束当前会话）
 //   - rec_abort/rec_complete/rec_save_pending → idle
 //   - 捕获期间置 REC_CAPTURING=true（AtomicBool 防重入，rec_hook 内部共享全局
 //     statics，并发 capture_once 会互相污染结果通道，必须串行化）
@@ -54,6 +54,31 @@ struct RecSession {
 static REC_SESSION: Mutex<Option<RecSession>> = Mutex::new(None);
 /// 捕获防重入守卫（true = 有一个 capture_once 在跑）
 static REC_CAPTURING: AtomicBool = AtomicBool::new(false);
+
+fn activate_recording_session(
+    slot: &Mutex<Option<RecSession>>,
+    gate: &std::sync::Arc<nuphus::automation_gate::AutomationGate>,
+    workflow_id: String,
+    workflow_dir: PathBuf,
+    screenshots_dir: PathBuf,
+) -> Result<(), String> {
+    // 检查、获取租约、安装会话必须处于同一临界区。录制使用固定 owner，若先在
+    // 锁外获取，两个并发初始化会把第二个误判成重入；旧会话随后 drop 会释放唯一
+    // 的真实租约，留下仍 active 却未占资源门的新会话。
+    let mut guard = slot.lock().expect("rec session lock poisoned");
+    if guard.is_some() {
+        return Err("已有录制会话，请先完成或放弃当前录制后再切换工作流".to_string());
+    }
+    let lease = crate::resource_gate::acquire_recording_session(gate)?;
+    *guard = Some(RecSession {
+        workflow_id,
+        workflow_dir,
+        screenshots_dir,
+        started_at_ms: now_ms(),
+        lease,
+    });
+    Ok(())
+}
 
 /// RAII：无论成功/取消/超时/join 异常都复位捕获标志
 struct CaptureGuard;
@@ -164,7 +189,7 @@ pub(crate) fn rec_session_ensure_active() -> Result<(), String> {
 // ═════════════════════════════════════════════════════════════
 
 /// 初始化录制会话：创建 {workflow}/screenshots/，会话进入 active。
-/// 重复调用 = 切换到新 workflow 并重置会话（幂等语义）。
+/// 已有会话时明确拒绝；切换 workflow 前须先完成或放弃当前录制。
 ///
 /// 全局执行闸门：录制 = 系统操作（低层 hook 捕获真实桌面事件），与 Agent 任务 /
 /// 进行中的 workflow 禁并行 —— busy 或 active workflow 存在时拒绝进入。
@@ -186,29 +211,21 @@ pub async fn rec_set_workflow(
 
     validate_workflow_id(&workflow_id)?;
 
-    // ── 资源门：录制会话独占系统资源（低层 hook + 浏览器单例）──
-    // 会话期间一直持有，直到 rec_abort/rec_complete/rec_save_pending 结束会话（随
-    // RecSession drop 释放）。反向同样成立：会话持有期间 Agent 轮次 / 手动工具被拒 ——
-    // 低层 hook 会把 agent 的合成输入一并录成「用户步骤」，且浏览器单例会被并发访问。
-    let lease = crate::resource_gate::acquire_recording_session(&state.automation_gate)?;
-
     let workflow_dir = workflows_root().join(&workflow_id);
     let screenshots_dir = workflow_dir.join("screenshots");
     std::fs::create_dir_all(&screenshots_dir).map_err(|e| format!("创建录制截图目录失败: {e}"))?;
 
-    let session = RecSession {
-        workflow_id: workflow_id.clone(),
+    // ── 资源门：录制会话独占系统资源（低层 hook + 浏览器单例）──
+    // 会话期间一直持有，直到 rec_abort/rec_complete/rec_save_pending 结束会话（随
+    // RecSession drop 释放）。activate_recording_session 将状态检查、租约获取与会话
+    // 安装原子化，避免重复初始化生成仅重入、不真正占槽位的租约。
+    activate_recording_session(
+        &REC_SESSION,
+        &state.automation_gate,
+        workflow_id.clone(),
         workflow_dir,
         screenshots_dir,
-        started_at_ms: now_ms(),
-        lease,
-    };
-    {
-        // 锁必须在块作用域内释放——snapshot() 会再次 lock 同一 Mutex，
-        // std Mutex 非重入，若 guard 存活到函数尾则同线程二次 lock 死锁（曾致点击录制整窗卡死）。
-        let mut guard = REC_SESSION.lock().expect("rec session lock poisoned");
-        *guard = Some(session);
-    }
+    )?;
 
     tracing::info!("[rec] rec_set_workflow: active for '{}'", workflow_id);
     Ok(snapshot())
@@ -532,5 +549,44 @@ mod tests {
             PathBuf::from("plugin/workflows/wf-2026-09-02_abc/record-draft.pending.json")
         );
         assert_eq!(PENDING_FILE, "record-draft.pending.json");
+    }
+
+    #[test]
+    fn repeated_activation_keeps_the_real_recording_lease() {
+        let gate = std::sync::Arc::new(nuphus::automation_gate::AutomationGate::new());
+        let slot = Mutex::new(None);
+
+        activate_recording_session(
+            &slot,
+            &gate,
+            "workflow-one".into(),
+            PathBuf::from("workflow-one"),
+            PathBuf::from("workflow-one/screenshots"),
+        )
+        .expect("first recording session should acquire the real lease");
+
+        let error = activate_recording_session(
+            &slot,
+            &gate,
+            "workflow-two".into(),
+            PathBuf::from("workflow-two"),
+            PathBuf::from("workflow-two/screenshots"),
+        )
+        .expect_err("an active recording session must reject replacement");
+        assert!(error.contains("已有录制会话"));
+        assert!(
+            gate.holder().is_some(),
+            "the original real lease must remain held"
+        );
+        assert!(
+            crate::resource_gate::acquire_execution_body(&gate, "concurrent-agent").is_err(),
+            "agent execution must remain blocked while recording is active"
+        );
+
+        *slot.lock().unwrap() = None;
+        assert!(
+            gate.is_free(),
+            "ending the session must release the real lease"
+        );
     }
 }
