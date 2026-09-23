@@ -103,6 +103,10 @@ jobs:
         run: |
           codesign --force --deep --sign - target/debug/bundle/macos/Nuphus.app
           codesign --verify --deep --strict target/debug/bundle/macos/Nuphus.app
+      - name: Verify bundled vision runtime
+        run: |
+          cargo build -p desktop-api --example macos_runtime_smoke
+          env -u ORT_DYLIB_PATH target/debug/examples/macos_runtime_smoke "$PWD/target/debug/bundle/macos/Nuphus.app"
       - name: Launch smoke test
         run: |
           ./target/debug/bundle/macos/Nuphus.app/Contents/MacOS/nuphus > /tmp/nuphus_smoke.log 2>&1 &
