@@ -512,6 +512,7 @@ mod tests {
             },
             nodes: vec![],
             captured_at_ms: 0,
+            truncated: false,
         }
     }
 

@@ -12,6 +12,40 @@ pub use mouse::*;
 #[cfg(windows)]
 pub use sendinput::*;
 
+/// Serialize native input, retrying initialization after a missing permission/display is fixed.
+#[cfg(not(windows))]
+pub fn with_enigo<T>(operation: impl FnOnce(&mut enigo::Enigo) -> Result<T>) -> Result<T> {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> u8;
+        }
+        // CGEventPost can silently discard events after permission is revoked.
+        // Check even when an input engine was initialized earlier.
+        if unsafe { AXIsProcessTrusted() } == 0 {
+            return Err(DesktopError::InputFailed(
+                "请在系统设置→隐私与安全性→辅助功能中授权 Nuphus 后重试".into(),
+            ));
+        }
+    }
+    static INSTANCE: std::sync::Mutex<Option<SendEnigo>> = std::sync::Mutex::new(None);
+    let mut instance = INSTANCE
+        .lock()
+        .map_err(|e| DesktopError::InputFailed(format!("input lock: {e}")))?;
+    if instance.is_none() {
+        let engine = enigo::Enigo::new(&enigo::Settings::default())
+            .map_err(|e| DesktopError::InputFailed(format!("input initialization failed: {e}")))?;
+        *instance = Some(SendEnigo(engine));
+    }
+    operation(
+        &mut instance
+            .as_mut()
+            .ok_or_else(|| DesktopError::InputFailed("input initialization unavailable".into()))?
+            .0,
+    )
+}
+
 /// enigo 0.2 在 macOS 上 `Enigo` 内部持有 `NonNull<CGEventSource>`（core-graphics 指针），
 /// 编译器推断为非 Send/Sync，导致 `OnceLock<Mutex<Enigo>>` 静态变量无法编译
 /// （`shared static variables must have a type that implements Sync`）。

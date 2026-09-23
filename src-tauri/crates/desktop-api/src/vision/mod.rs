@@ -11,6 +11,7 @@ pub mod models;
 pub mod ocr;
 pub mod paddle_ocr;
 pub mod perceive;
+pub mod runtime;
 pub mod yolo;
 
 pub use capture::*;

@@ -1,23 +1,6 @@
 //! 鼠标控制 — Win32 原生 / macOS enigo / Linux PlatformNotSupported
 
-#[cfg(not(windows))]
-use super::SendEnigo;
 use crate::core::*;
-
-/// 创建共享 enigo 实例 (macOS / Linux)
-/// 返回 `&'static Mutex`：OnceLock 保证单例且 'static，调用方 `enigo().lock()` 自动解引用。
-#[cfg(not(windows))]
-fn enigo() -> &'static std::sync::Mutex<SendEnigo> {
-    static INST: std::sync::OnceLock<std::sync::Mutex<SendEnigo>> = std::sync::OnceLock::new();
-    INST.get_or_init(|| {
-        // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
-        // 平台输入初始化不可用（无显示服务器等），与后续调用失败语义一致。
-        // SendEnigo: macOS 上 Enigo 非 Send（CGEventSource 指针），经 Mutex 串行化后包装为 Send+Sync。
-        std::sync::Mutex::new(SendEnigo(
-            enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-        ))
-    })
-}
 
 /// 移动鼠标到指定坐标
 pub async fn move_to(x: i32, y: i32) -> Result<()> {
@@ -47,11 +30,11 @@ pub async fn move_to(x: i32, y: i32) -> Result<()> {
     #[cfg(not(windows))]
     {
         use enigo::{Coordinate, Mouse};
-        enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .move_mouse(x, y, Coordinate::Abs)
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        super::with_enigo(|engine| {
+            engine
+                .move_mouse(x, y, Coordinate::Abs)
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
@@ -76,11 +59,11 @@ pub async fn position() -> Result<Point> {
     #[cfg(not(windows))]
     {
         use enigo::Mouse;
-        let pos = enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .location()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
+        let pos = super::with_enigo(|engine| {
+            engine
+                .location()
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })?;
         Ok(Point { x: pos.0, y: pos.1 })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -109,11 +92,11 @@ pub async fn click(x: i32, y: i32) -> Result<()> {
     #[cfg(not(windows))]
     {
         use enigo::{Button, Direction, Mouse};
-        enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .button(Button::Left, Direction::Click)
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        super::with_enigo(|engine| {
+            engine
+                .button(Button::Left, Direction::Click)
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
@@ -141,11 +124,11 @@ pub async fn right_click(x: i32, y: i32) -> Result<()> {
     #[cfg(not(windows))]
     {
         use enigo::{Button, Direction, Mouse};
-        enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .button(Button::Right, Direction::Click)
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        super::with_enigo(|engine| {
+            engine
+                .button(Button::Right, Direction::Click)
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
@@ -157,6 +140,7 @@ pub async fn right_click(x: i32, y: i32) -> Result<()> {
 ///
 /// `direction`: "up" / "down"；`amount`: 滚轮格数（每格 120 delta）。
 pub async fn scroll(direction: &str, amount: i32) -> Result<()> {
+    let _ = scroll_delta(direction, amount)?;
     #[cfg(windows)]
     {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{mouse_event, MOUSEEVENTF_WHEEL};
@@ -171,8 +155,13 @@ pub async fn scroll(direction: &str, amount: i32) -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        let _ = (direction, amount);
-        Err(DesktopError::PlatformNotSupported)
+        use enigo::{Axis, Mouse};
+        let delta = scroll_delta(direction, amount)?;
+        super::with_enigo(|engine| {
+            engine
+                .scroll(delta, Axis::Vertical)
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })
     }
 }
 
@@ -192,7 +181,12 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
             let t = i as f32 / steps as f32;
             let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
             let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
-            move_to(x, y).await?;
+            if let Err(error) = move_to(x, y).await {
+                unsafe {
+                    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                }
+                return Err(error);
+            }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         unsafe {
@@ -207,29 +201,66 @@ pub async fn drag(start: Point, end: Point) -> Result<()> {
         // 对显式 drop(e) 仍告警（版本差异），作用域块是跨 clippy 版本稳定的写法。
         use enigo::{Button, Direction, Mouse};
         {
-            let mut e = enigo()
-                .lock()
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
-            e.button(Button::Left, Direction::Press)
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
+            super::with_enigo(|engine| {
+                engine
+                    .button(Button::Left, Direction::Press)
+                    .map_err(|e| DesktopError::InputFailed(e.to_string()))
+            })?;
         }
         for i in 1..=20 {
             let t = i as f32 / 20.0;
             let x = (start.x as f32 + (end.x as f32 - start.x as f32) * t) as i32;
             let y = (start.y as f32 + (end.y as f32 - start.y as f32) * t) as i32;
-            move_to(x, y).await?;
+            if let Err(error) = move_to(x, y).await {
+                let _ = super::with_enigo(|engine| {
+                    engine
+                        .button(Button::Left, Direction::Release)
+                        .map_err(|e| DesktopError::InputFailed(e.to_string()))
+                });
+                return Err(error);
+            }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         {
-            let mut e = enigo()
-                .lock()
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
-            e.button(Button::Left, Direction::Release)
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+            super::with_enigo(|engine| {
+                engine
+                    .button(Button::Left, Direction::Release)
+                    .map_err(|e| DesktopError::InputFailed(e.to_string()))
+            })
         }
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
         Err(DesktopError::PlatformNotSupported)
+    }
+}
+
+// Enigo defines positive vertical lengths as down and negative lengths as up.
+fn scroll_delta(direction: &str, amount: i32) -> Result<i32> {
+    if amount < 0 {
+        return Err(DesktopError::InputFailed(
+            "scroll amount must be non-negative".into(),
+        ));
+    }
+    match direction {
+        "up" => Ok(-amount),
+        "down" => Ok(amount),
+        _ => Err(DesktopError::InputFailed(format!(
+            "unknown scroll direction: {direction}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_direction_matches_native_input_contract() {
+        assert_eq!(scroll_delta("up", 3).unwrap(), -3);
+        assert_eq!(scroll_delta("down", 3).unwrap(), 3);
+        assert_eq!(scroll_delta("down", 0).unwrap(), 0);
+        assert!(scroll_delta("up", -1).is_err());
+        assert!(scroll_delta("sideways", 3).is_err());
     }
 }

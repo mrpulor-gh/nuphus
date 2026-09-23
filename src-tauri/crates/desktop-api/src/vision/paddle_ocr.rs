@@ -40,6 +40,7 @@ impl PaddleOcr {
         let dict_path = models_dir.join(PADDLE_DICT);
 
         // 加载 ONNX 会话
+        super::runtime::ensure_onnx_runtime()?;
         let det_session = ort::session::Session::builder()
             .map_err(|e| format!("创建检测会话构建器失败: {e}"))?
             .commit_from_file(det_path)

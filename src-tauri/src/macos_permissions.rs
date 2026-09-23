@@ -2,8 +2,8 @@
 //!
 //! TCC does not expose one universal "all files" or "all automation" check.
 //! Those capabilities are therefore reported as on-demand and are never used
-//! to block workflow mode. Screen recording and Accessibility have concrete
-//! probes and are treated as required workflow permissions. Microphone status
+//! to block workflow mode. Accessibility is required for desktop control;
+//! screen recording is only required when capturing or inspecting screenshots. Microphone status
 //! is read passively through AVFoundation and only serves chat-side voice input,
 //! so it never gates workflow mode.
 
@@ -75,10 +75,16 @@ fn microphone_permission_granted() -> bool {
     microphone_status_granted(status)
 }
 
+/// Read Accessibility trust without prompting or opening a device.
+#[cfg(target_os = "macos")]
+pub(crate) fn accessibility_permission_granted() -> bool {
+    unsafe { AXIsProcessTrusted() }
+}
+
 #[cfg(target_os = "macos")]
 fn report() -> MacosPermissionReport {
     let screen_recording = unsafe { CGPreflightScreenCaptureAccess() };
-    let accessibility = unsafe { AXIsProcessTrusted() };
+    let accessibility = accessibility_permission_granted();
     let microphone = microphone_permission_granted();
 
     MacosPermissionReport {
@@ -91,9 +97,9 @@ fn report() -> MacosPermissionReport {
                 } else {
                     "missing"
                 },
-                required_for_workflow: true,
+                required_for_workflow: false,
                 title: "录屏",
-                description: "桌面截图、视觉识别和工作流录制需要此权限。",
+                description: "桌面截图和视觉识别需要此权限；仅使用辅助功能控件的工作流无需授权。",
                 settings_url: Some(SCREEN_RECORDING_SETTINGS),
             },
             MacosPermissionItem {
@@ -255,6 +261,19 @@ mod tests {
             .find(|permission| permission.id == "microphone")
             .expect("microphone permission must be present");
         assert!(!microphone.required_for_workflow);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn semantic_workflow_only_requires_accessibility() {
+        let value = report();
+        let required: Vec<_> = value
+            .permissions
+            .iter()
+            .filter(|permission| permission.required_for_workflow)
+            .map(|permission| permission.id.as_str())
+            .collect();
+        assert_eq!(required, ["accessibility"]);
     }
 
     #[cfg(target_os = "macos")]

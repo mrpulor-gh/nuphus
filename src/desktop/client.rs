@@ -7,8 +7,6 @@ use crate::Result;
 use serde_json::Value;
 use std::path::PathBuf;
 
-#[cfg(not(windows))]
-use desktop_api::SendEnigo;
 use desktop_api::{
     capture, clipboard as desk_clip, input, FindResult, Frame, FrameSource, Locator, Query, Scope,
     Target,
@@ -21,7 +19,7 @@ use crate::desktop::YoloDetector;
 // enigo 0.2: text/key/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
 // Direction 用全路径 enigo::Direction（避免 unused import）
 #[cfg(not(windows))]
-use enigo::{Keyboard, Mouse};
+use enigo::Keyboard;
 
 /// Desktop client — native Rust desktop control
 #[derive(Clone)]
@@ -50,30 +48,6 @@ impl DesktopClient {
 
     fn result_ok(value: impl serde::Serialize) -> Result<Value> {
         Ok(serde_json::json!({ "success": true, "result": value }))
-    }
-
-    /// Execute osascript and return stdout (macOS), prompt for accessibility permission on failure
-    #[cfg(target_os = "macos")]
-    fn osascript(script: &str) -> Result<String> {
-        let output = std::process::Command::new("osascript")
-            .args(["-e", script])
-            .output()
-            .map_err(|e| {
-                desktop_api::DesktopError::InputFailed(format!(
-                    "osascript failed: {}. 请检查 系统设置→隐私与安全性→辅助功能 中是否已授权。",
-                    e
-                ))
-            })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let msg = if stderr.contains("not allowed") || stderr.contains("permission") {
-                format!("macOS 辅助功能权限不足：{}. 请在 系统设置→隐私与安全性→辅助功能 中授权后重试。", stderr.trim())
-            } else {
-                format!("osascript error: {}", stderr.trim())
-            };
-            return Err(desktop_api::DesktopError::InputFailed(msg).into());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     fn result_err(msg: impl Into<String>) -> Result<Value> {
@@ -140,63 +114,7 @@ impl DesktopClient {
 
     /// Mouse scroll — Win32 SendInput / macOS & Linux enigo
     pub async fn mouse_scroll(&self, direction: &str, amount: i32) -> Result<Value> {
-        #[cfg(windows)]
-        {
-            use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-                SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT,
-            };
-            let delta: u32 = match direction {
-                "up" => (amount * 120) as u32,
-                _ => ((-amount) * 120) as u32,
-            };
-            let scroll_input = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: 0,
-                        dy: 0,
-                        mouseData: delta,
-                        dwFlags: MOUSEEVENTF_WHEEL,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            };
-            unsafe {
-                SendInput(&[scroll_input], std::mem::size_of::<INPUT>() as i32);
-            }
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let mut e = Self::enigo_handle()
-                .lock()
-                .map_err(|e| format!("enigo: {e}"))?;
-            let len = match direction {
-                "up" => amount,
-                _ => amount,
-            };
-            e.scroll(len, enigo::Axis::Vertical)
-                .map_err(|e| format!("scroll: {e}"))?;
-        }
-        #[cfg(target_os = "linux")]
-        {
-            // Linux: 使用 enigo XTest 模拟滚轮 (X11 only, Wayland 不可用)
-            // enigo 0.2 的 scroll 方向由 Axis::Vertical 正负决定
-            let mut e = Self::enigo_handle()
-                .lock()
-                .map_err(|e| format!("enigo: {e}"))?;
-            let len = match direction {
-                "up" => amount,
-                _ => -amount,
-            };
-            // XTest scroll 使用 button 4/5 (up/down), enigo 封装了此逻辑
-            e.scroll(len, enigo::Axis::Vertical)
-                .map_err(|e| format!("scroll: {e}"))?;
-        }
-        #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
-        {
-            return Err(DesktopError::PlatformNotSupported.into());
-        }
+        input::mouse::scroll(direction, amount).await?;
         Self::result_ok(serde_json::json!({ "direction": direction, "amount": amount }))
     }
 
@@ -208,10 +126,11 @@ impl DesktopClient {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let mut e = Self::enigo_handle()
-                .lock()
-                .map_err(|e| format!("enigo: {e}"))?;
-            e.text(text).map_err(|e| format!("text: {e}"))?;
+            input::with_enigo(|engine| {
+                engine
+                    .text(text)
+                    .map_err(|e| desktop_api::DesktopError::InputFailed(e.to_string()))
+            })?;
         }
         #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
         {
@@ -273,20 +192,17 @@ impl DesktopClient {
             // 不能持有 MutexGuard 跨 await（future 需 Send）：text 完成后立即释放锁，
             // sleep 后再重新取锁执行 key。
             {
-                let mut e = Self::enigo_handle()
-                    .lock()
-                    .map_err(|e| format!("enigo: {e}"))?;
                 if !text.is_empty() {
-                    e.text(text).map_err(|e| format!("text: {e}"))?;
+                    input::with_enigo(|engine| {
+                        engine
+                            .text(text)
+                            .map_err(|e| desktop_api::DesktopError::InputFailed(e.to_string()))
+                    })?;
                 }
             }
             if press_enter {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                let mut e = Self::enigo_handle()
-                    .lock()
-                    .map_err(|e| format!("enigo: {e}"))?;
-                e.key(enigo::Key::Return, enigo::Direction::Click)
-                    .map_err(|e| format!("enter: {e}"))?;
+                input::keyboard::press("enter").await?;
             }
         }
         #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
@@ -294,20 +210,6 @@ impl DesktopClient {
             return Err(DesktopError::PlatformNotSupported.into());
         }
         Self::result_ok(serde_json::json!({ "chars": text.len(), "enter": press_enter }))
-    }
-
-    /// macOS / Linux enigo helper
-    /// （命名为 enigo_handle 避免与 enigo crate 同名遮蔽；返回 &'static Mutex 供 .lock() 借用，
-    ///  不可返回 Arc——临时 Arc 会在语句结束 drop 导致 MutexGuard 悬垂 E0716）
-    #[cfg(not(windows))]
-    fn enigo_handle() -> &'static std::sync::Mutex<SendEnigo> {
-        static INST: std::sync::OnceLock<std::sync::Mutex<SendEnigo>> = std::sync::OnceLock::new();
-        INST.get_or_init(|| {
-            // SendEnigo: macOS 上 Enigo 非 Send（CGEventSource 指针），经 Mutex 串行化后包装为 Send+Sync。
-            std::sync::Mutex::new(SendEnigo(
-                enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-            ))
-        })
     }
 
     /// Screenshot - save as BMP format to unified directory
@@ -392,7 +294,24 @@ impl DesktopClient {
                     _ => return Self::result_err("target is not a window"),
                 }
             }
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            (_, Some(title)) => {
+                let listed = self.windows_list().await?;
+                let matches: Vec<_> = listed["result"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|window| window["title"].as_str() == Some(title))
+                    .collect();
+                if matches.len() != 1 {
+                    return Self::result_err("窗口标题不唯一或不存在，请刷新列表并使用 hwnd");
+                }
+                matches[0]["hwnd"]
+                    .as_i64()
+                    .ok_or_else(|| crate::NuphusError::Tool("invalid window handle".into()))?
+                    as isize
+            }
+            #[cfg(all(not(windows), not(target_os = "macos")))]
             (_, Some(_t)) => {
                 return Self::result_err("按标题查找窗口仅支持 Windows，请传入 hwnd");
             }
@@ -406,10 +325,17 @@ impl DesktopClient {
             verified: false,
             gfx_backend: desktop_api::GfxBackend::Unknown,
         };
-        // 非 Windows：Target::Window 变体不存在（cfg(windows)），capture 会忽略 target 回退全屏
+        #[cfg(target_os = "macos")]
+        let capture_id = tokio::task::spawn_blocking(move || {
+            crate::desktop::macos_window::capture_window_id(hwnd_val as i32)
+        })
+        .await
+        .map_err(|e| crate::NuphusError::Tool(e.to_string()))?? as isize;
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        let capture_id = hwnd_val;
         #[cfg(not(windows))]
         let target = desktop_api::Target::Tui {
-            hwnd: hwnd_val,
+            hwnd: capture_id,
             title: String::new(),
         };
         let frame = capture::capture(&target, Scope::Window).await?;
@@ -449,7 +375,16 @@ impl DesktopClient {
                 }
                 (origin.x, origin.y)
             }
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            {
+                let info = self.window_info(hwnd_val as i32).await?;
+                let bounds = &info["result"]["window"];
+                (
+                    bounds["x"].as_i64().unwrap_or(0) as i32,
+                    bounds["y"].as_i64().unwrap_or(0) as i32,
+                )
+            }
+            #[cfg(all(not(windows), not(target_os = "macos")))]
             (0, 0)
         };
 
@@ -580,7 +515,7 @@ impl DesktopClient {
             .map_err(|e| crate::NuphusError::Tool(format!("monitor query failed: {}", e)))?;
         let primary = monitors
             .into_iter()
-            .next()
+            .find(|monitor| monitor.is_primary().unwrap_or(false))
             .ok_or_else(|| crate::NuphusError::Tool("no monitor found".to_string()))?;
         // xcap 0.9: width()/height() 返回 Result（0.0.14 直接返回 u32）
         let width = primary
@@ -759,46 +694,9 @@ impl DesktopClient {
         }
         #[cfg(target_os = "macos")]
         {
-            // 单次 osascript 调用获取所有窗口信息，替代逐窗口多次调用
-            let script = r#"tell app "System Events"
-    set output to ""
-    repeat with proc in every process whose background only is false
-        repeat with w in every window of proc
-            try
-                set wid to id of w
-                set ttl to title of w
-                set {px, py} to position of w
-                set {pw, ph} to size of w
-                set output to output & wid & "|||" & ttl & "|||" & px & "|||" & py & "|||" & pw & "|||" & ph & "|||" & (name of proc) & "\n"
-            end try
-        end repeat
-    end repeat
-    return output
-end tell"#;
-            let output = Self::osascript(script)?;
-            let mut windows = Vec::new();
-            for line in output.lines() {
-                let parts: Vec<&str> = line.split("|||").collect();
-                if parts.len() >= 7 {
-                    if let (Ok(hwnd), Ok(x), Ok(y), Ok(w), Ok(h)) = (
-                        parts[0].trim().parse::<i64>(),
-                        parts[2].trim().parse::<i32>(),
-                        parts[3].trim().parse::<i32>(),
-                        parts[4].trim().parse::<i32>(),
-                        parts[5].trim().parse::<i32>(),
-                    ) {
-                        let title = parts[1].trim().to_string();
-                        let process_name = parts[6].trim().to_string();
-                        windows.push(serde_json::json!({
-                            "hwnd": hwnd, "title": title,
-                            "x": x, "y": y,
-                            "width": w, "height": h,
-                            "process_name": process_name,
-                        }));
-                    }
-                }
-            }
-            Self::result_ok(windows)
+            tokio::task::spawn_blocking(move || crate::desktop::macos_window::windows_list())
+                .await
+                .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -871,27 +769,9 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            // 最多重试 3 次激活 + 验证
-            let mut fg = false;
-            for i in 0..3 {
-                if i > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                }
-                let _ = Self::osascript(&format!(
-                    r#"tell app "System Events" to set frontmost of window id {} to true"#,
-                    hwnd
-                ));
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                // 验证：查询该窗口是否在最前
-                let check = Self::osascript(&format!(
-                    r#"tell app "System Events" to get value of attribute "AXMain" of window id {}"#, hwnd
-                )).unwrap_or_default();
-                if check == "true" || check == "1" {
-                    fg = true;
-                    break;
-                }
-            }
-            Self::result_ok(serde_json::json!({ "hwnd": hwnd, "foreground": fg }))
+            tokio::task::spawn_blocking(move || crate::desktop::macos_window::window_activate(hwnd))
+                .await
+                .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -916,13 +796,11 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            let check = Self::osascript(&format!(
-                r#"tell app "System Events" to get value of attribute "AXMain" of window id {}"#,
-                hwnd
-            ))
-            .unwrap_or_default();
-            let fg = check == "true" || check == "1";
-            Self::result_ok(serde_json::json!({ "hwnd": hwnd, "foreground": fg }))
+            tokio::task::spawn_blocking(move || {
+                crate::desktop::macos_window::window_is_foreground(hwnd)
+            })
+            .await
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -945,22 +823,9 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            // macOS: osascript 查询当前最前窗口
-            let script = r#"tell app "System Events" to get id of first window of (first process whose frontmost is true)"#;
-            match Self::osascript(script) {
-                Ok(id) => {
-                    if let Ok(hwnd) = id.trim().parse::<i64>() {
-                        return Self::result_ok(serde_json::json!({ "hwnd": hwnd as isize }));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("[desktop] macOS foreground_hwnd 查询失败: {e}");
-                }
-            }
-            Self::result_ok(serde_json::json!({
-                "hwnd": 0,
-                "note": "macOS 前台窗口查询未成功，已返回 0 降级。请确认 系统设置→隐私与安全性→辅助功能 中已授权 Nuphus。"
-            }))
+            tokio::task::spawn_blocking(move || crate::desktop::macos_window::foreground_hwnd())
+                .await
+                .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -1178,11 +1043,11 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            Self::osascript(&format!(
-                r#"tell app "System Events" to set position of window id {} to {{{}, {}}}"#,
-                hwnd, x, y
-            ))?;
-            Self::result_ok(serde_json::json!({ "hwnd": hwnd, "x": x, "y": y }))
+            tokio::task::spawn_blocking(move || {
+                crate::desktop::macos_window::window_move(hwnd, x, y)
+            })
+            .await
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -1217,11 +1082,11 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            Self::osascript(&format!(
-                r#"tell app "System Events" to set size of window id {} to {{{}, {}}}"#,
-                hwnd, width, height
-            ))?;
-            Self::result_ok(serde_json::json!({ "hwnd": hwnd, "width": width, "height": height }))
+            tokio::task::spawn_blocking(move || {
+                crate::desktop::macos_window::window_resize(hwnd, width, height)
+            })
+            .await
+            .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {
@@ -1307,61 +1172,9 @@ end tell"#;
         }
         #[cfg(target_os = "macos")]
         {
-            // 单次 osascript 获取全部窗口信息
-            let script = format!(
-                r#"tell app "System Events"
-    try
-        set w to window id {}
-        set ttl to title of w
-        set {{px, py}} to position of w
-        set {{pw, ph}} to size of w
-        -- 检查最小化/隐藏状态 (AXMinimized, role 非空 = visible)
-        set isMin to false
-        try
-            set attrs to attributes of w
-            repeat with a in attrs
-                if name of a is "AXMinimized" then
-                    if value of a is true then set isMin to true
-                    exit repeat
-                end if
-            end repeat
-        end try
-        return ttl & "|||" & px & "|||" & py & "|||" & pw & "|||" & ph & "|||" & isMin
-    on error
-        return ""
-    end try
-end tell"#,
-                hwnd
-            );
-            let output = Self::osascript(&script)?;
-            if output.is_empty() {
-                return Ok(serde_json::json!({
-                    "hwnd": hwnd, "title": "",
-                    "visible": false, "minimized": false, "maximized": false,
-                    "window": { "x": 0, "y": 0, "width": 0, "height": 0 },
-                }));
-            }
-            let parts: Vec<&str> = output.split("|||").collect();
-            let (title, x, y, w, h, minimized) = if parts.len() >= 6 {
-                (
-                    parts[0].to_string(),
-                    parts[1].trim().parse::<i32>().unwrap_or(0),
-                    parts[2].trim().parse::<i32>().unwrap_or(0),
-                    parts[3].trim().parse::<i32>().unwrap_or(0),
-                    parts[4].trim().parse::<i32>().unwrap_or(0),
-                    parts[5].trim() == "true",
-                )
-            } else {
-                (String::new(), 0, 0, 0, 0, false)
-            };
-            Self::result_ok(serde_json::json!({
-                "hwnd": hwnd, "title": title,
-                "visible": true,
-                "minimized": minimized,
-                "maximized": false,
-                "window": { "x": x, "y": y, "width": w, "height": h },
-                "note": "maximized detection limited on macOS"
-            }))
+            tokio::task::spawn_blocking(move || crate::desktop::macos_window::window_info(hwnd))
+                .await
+                .map_err(|e| crate::NuphusError::Tool(e.to_string()))?
         }
         #[cfg(target_os = "linux")]
         {

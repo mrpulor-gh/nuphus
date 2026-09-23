@@ -1388,7 +1388,7 @@ const zh: Record<string, string> = {
   'macosPermission.status.on_demand': '按需授权',
   'macosPermission.status.unsupported': '不支持',
   'macosPermission.screen_recording': '录屏权限',
-  'macosPermission.screen_recordingDesc': '用于桌面截图、视觉识别和工作流录制。',
+  'macosPermission.screen_recordingDesc': '用于桌面截图和视觉识别；仅操作辅助功能控件时无需授权。',
   'macosPermission.accessibility': '辅助功能权限',
   'macosPermission.accessibilityDesc': '用于控制鼠标键盘、窗口和桌面应用。',
   'macosPermission.microphone': '麦克风权限',

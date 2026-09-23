@@ -519,6 +519,7 @@ async fn execute_candidate(
         backend.clear_space().await;
         return Err("前台应用或窗口已变化，候选动作已过期；请重新观察后再选择".into());
     }
+    let verification_candidate = rebind_verification_target(before, &fresh, candidate)?;
     let receipt = backend
         .executor
         .execute(&fresh, candidate, input)
@@ -527,7 +528,8 @@ async fn execute_candidate(
     if receipt.candidate_id != candidate.id {
         return Err("执行回执与候选动作不一致".into());
     }
-    let (after, verification) = verify_with_settle(backend, &fresh, candidate).await?;
+    let (after, verification) =
+        verify_with_settle(backend, &fresh, &verification_candidate, input).await?;
     backend.clear_space().await;
     Ok(json!({
         "status": "executed",
@@ -540,6 +542,26 @@ async fn execute_candidate(
         "after_window": after.window,
         "decision": decision,
     }))
+}
+
+fn rebind_verification_target(
+    before: &Observation,
+    fresh: &Observation,
+    candidate: &ActionCandidate,
+) -> Result<ActionCandidate, String> {
+    let mut rebound = candidate.clone();
+    if let Some(target_id) = candidate.target.as_deref() {
+        let original = before
+            .nodes
+            .iter()
+            .find(|node| node.opaque_id == target_id)
+            .ok_or_else(|| "候选动作目标不属于原始观察".to_string())?;
+        let TargetResolution::Unique(target) = resolve_target(fresh, original) else {
+            return Err("目标控件已消失或匹配不唯一，请重新观察".into());
+        };
+        rebound.target = Some(target.opaque_id.clone());
+    }
+    Ok(rebound)
 }
 
 async fn execute_persistent_action(
@@ -588,6 +610,7 @@ async fn verify_with_settle(
     backend: &SemanticDesktopBackend,
     before: &Observation,
     candidate: &ActionCandidate,
+    input: &ExecutionInput,
 ) -> Result<(Observation, Verification), String> {
     const ATTEMPTS: usize = 6;
     const SETTLE_MS: u64 = 125;
@@ -598,7 +621,8 @@ async fn verify_with_settle(
         .await
         .map_err(|error| error.to_string())?;
     for attempt in 0..ATTEMPTS {
-        let verification = verify_observation(before, candidate, &last);
+        let verification =
+            verify_observation_with_value(before, candidate, &last, input.value.as_deref());
         if verification != Verification::NoChange || attempt + 1 == ATTEMPTS {
             return Ok((last, verification));
         }
@@ -612,11 +636,26 @@ async fn verify_with_settle(
     unreachable!("bounded verification loop always returns")
 }
 
+#[cfg(test)]
 fn verify_observation(
     before: &Observation,
     candidate: &ActionCandidate,
     after: &Observation,
 ) -> Verification {
+    verify_observation_with_value(before, candidate, after, None)
+}
+
+fn verify_observation_with_value(
+    before: &Observation,
+    candidate: &ActionCandidate,
+    after: &Observation,
+    expected_value: Option<&str>,
+) -> Verification {
+    // The foreground can change while an application processes an action.
+    // A similarly named control in another app is not evidence of success.
+    if before.app.id != after.app.id {
+        return Verification::Unexpected;
+    }
     let target_before = candidate
         .target
         .as_deref()
@@ -635,6 +674,7 @@ fn verify_observation(
         }
         (CandidateKind::Invoke, Some(old), Some(TargetResolution::Missing)) => {
             invoke_expected(candidate)
+                && !after.truncated
                 && target_is_unique(before, old)
                 && before.app.id == after.app.id
         }
@@ -659,9 +699,11 @@ fn verify_observation(
             new.expanded == Some(false)
         }
         (CandidateKind::Focus, _, Some(TargetResolution::Unique(new))) => new.focused,
-        (CandidateKind::SetValue { .. }, Some(old), Some(TargetResolution::Unique(new))) => {
-            old.value_fingerprint != new.value_fingerprint
-        }
+        (CandidateKind::SetValue { .. }, _, Some(TargetResolution::Unique(new))) => expected_value
+            .is_some_and(|value| {
+                new.value_fingerprint.as_deref()
+                    == Some(crate::desktop_automation::value_fingerprint(value).as_str())
+            }),
         _ => false,
     };
     if achieved {
@@ -711,12 +753,16 @@ fn same_public_semantics(
     left: &crate::desktop_automation::UiNode,
     right: &crate::desktop_automation::UiNode,
 ) -> bool {
-    let identity_matches = match (
-        uia_semantic_key(&left.opaque_id),
-        uia_semantic_key(&right.opaque_id),
-    ) {
+    let identity_matches = match (&left.semantic_key, &right.semantic_key) {
         (Some(left), Some(right)) => left == right,
-        _ => true,
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => match (
+            uia_semantic_key(&left.opaque_id),
+            uia_semantic_key(&right.opaque_id),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => true,
+        },
     };
     identity_matches
         && left.role == right.role
@@ -791,6 +837,7 @@ fn action_space_json(space: &ActionSpace) -> serde_json::Value {
             "window": space.observation.window,
             "element_count": space.observation.nodes.len(),
             "captured_at_ms": space.observation.captured_at_ms,
+            "truncated": space.observation.truncated,
         },
         "candidates": space.candidates.iter().map(|candidate| {
             let workflow_step = space.persistent_locators.get(&candidate.id).and_then(|locator| {
@@ -843,6 +890,7 @@ mod tests {
             },
             nodes: vec![],
             captured_at_ms: 1,
+            truncated: false,
         }
     }
 
@@ -868,6 +916,7 @@ mod tests {
             if matches!(self.candidate_kind, CandidateKind::SetValue { .. }) {
                 current.nodes.push(crate::desktop_automation::UiNode {
                     opaque_id: "fake-target".into(),
+                    semantic_key: None,
                     role: crate::desktop_automation::UiRole::TextField,
                     name: Some("Fake input".into()),
                     short_value: None,
@@ -879,15 +928,29 @@ mod tests {
                     selected: None,
                     expanded: None,
                     value_fingerprint: Some(if executed {
-                        "value:after".into()
+                        crate::desktop_automation::value_fingerprint(
+                            self.received_value
+                                .lock()
+                                .unwrap()
+                                .as_deref()
+                                .unwrap_or_default(),
+                        )
                     } else {
-                        "value:before".into()
+                        crate::desktop_automation::value_fingerprint("before")
                     }),
                     supported_actions: vec![NativeAction::SetValue],
                 });
+            } else if matches!(self.candidate_kind, CandidateKind::Toggle) {
+                // This fixture changes the window fingerprint, but deliberately
+                // leaves the target checkbox unchanged after dispatch.
+                let mut node = stateful_observation("checkbox", false).nodes.remove(0);
+                node.opaque_id = "fake-target".into();
+                node.name = Some("Fake checkbox".into());
+                current.nodes.push(node);
             } else if matches!(self.candidate_kind, CandidateKind::Invoke) && !executed {
                 current.nodes.push(crate::desktop_automation::UiNode {
                     opaque_id: "fake-target".into(),
+                    semantic_key: None,
                     role: crate::desktop_automation::UiRole::Button,
                     name: Some("Fake Button".into()),
                     short_value: None,
@@ -966,6 +1029,7 @@ mod tests {
                     NativeAction::SetValue => CandidateKind::SetValue {
                         slot_id: "value".into(),
                     },
+                    NativeAction::Toggle => CandidateKind::Toggle,
                     _ => CandidateKind::Invoke,
                 },
                 public_description: "Rebuilt fake action".into(),
@@ -1226,6 +1290,7 @@ mod tests {
         observation.fingerprint = fingerprint.into();
         observation.nodes = vec![crate::desktop_automation::UiNode {
             opaque_id: "target".into(),
+            semantic_key: None,
             role: crate::desktop_automation::UiRole::CheckBox,
             name: Some("Option".into()),
             short_value: None,
@@ -1248,6 +1313,7 @@ mod tests {
         observation.nodes = (0..target_count)
             .map(|index| crate::desktop_automation::UiNode {
                 opaque_id: format!("invoke-target-{index}"),
+                semantic_key: None,
                 role: crate::desktop_automation::UiRole::Button,
                 name: Some("Open".into()),
                 short_value: None,
@@ -1279,6 +1345,138 @@ mod tests {
                 arguments: Default::default(),
             }],
         }
+    }
+
+    #[test]
+    fn stable_semantic_identity_verifies_only_the_target_container_after_reorder() {
+        let mut before = invoke_observation("before", 2);
+        before.nodes[0].semantic_key = Some("ax:row-a:open".into());
+        before.nodes[1].semantic_key = Some("ax:row-b:open".into());
+        let candidate = invoke_candidate("invoke-target-0");
+        let mut after = before.clone();
+        after.nodes.reverse();
+        // A redraw replaces runtime ids; another row's change is not success.
+        after.nodes[0].opaque_id = "new-runtime-b".into();
+        after.nodes[1].opaque_id = "new-runtime-a".into();
+        after.nodes[0].focused = true;
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::NoChange
+        );
+        after.nodes[1].focused = true;
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn verification_target_is_rebound_when_runtime_ids_change_before_dispatch() {
+        let mut before = invoke_observation("before", 1);
+        before.nodes[0].semantic_key = Some("ax:document:open".into());
+        let candidate = invoke_candidate("invoke-target-0");
+        let mut fresh = before.clone();
+        fresh.nodes[0].opaque_id = "new-runtime-id".into();
+        let rebound = rebind_verification_target(&before, &fresh, &candidate).unwrap();
+        assert_eq!(rebound.target.as_deref(), Some("new-runtime-id"));
+        assert_eq!(candidate.target.as_deref(), Some("invoke-target-0"));
+        let mut after = fresh.clone();
+        after.nodes[0].focused = true;
+        assert_eq!(
+            verify_observation(&fresh, &rebound, &after),
+            Verification::Achieved
+        );
+        fresh.nodes.clear();
+        assert!(rebind_verification_target(&before, &fresh, &candidate).is_err());
+    }
+
+    #[test]
+    fn missing_or_ambiguous_semantic_identity_never_guesses_a_target() {
+        let mut snapshot = invoke_observation("before", 2);
+        let mut target = snapshot.nodes[0].clone();
+        target.semantic_key = Some("ax:row-a:open".into());
+        assert!(matches!(
+            resolve_target(&snapshot, &target),
+            TargetResolution::Missing
+        ));
+        for node in &mut snapshot.nodes {
+            node.semantic_key = target.semantic_key.clone();
+        }
+        assert!(matches!(
+            resolve_target(&snapshot, &target),
+            TargetResolution::Ambiguous
+        ));
+    }
+
+    #[test]
+    fn foreground_app_switch_cannot_verify_an_unrelated_control() {
+        let before = invoke_observation("before", 1);
+        let mut after = before.clone();
+        after.app.id = "other-application".into();
+        after.nodes[0].focused = true;
+        let candidate = invoke_candidate("invoke-target-0");
+        assert_eq!(
+            verify_observation(&before, &candidate, &after),
+            Verification::Unexpected
+        );
+    }
+
+    #[test]
+    fn observations_without_semantic_key_remain_deserializable() {
+        let node = invoke_observation("before", 1).nodes.remove(0);
+        let serialized = serde_json::to_value(&node).unwrap();
+        assert!(serialized.get("semantic_key").is_none());
+        let restored: crate::desktop_automation::UiNode =
+            serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored, node);
+    }
+
+    #[test]
+    fn partial_observation_does_not_prove_target_disappearance() {
+        let before = invoke_observation("before", 1);
+        let mut after = invoke_observation("partial", 0);
+        after.truncated = true;
+        assert_eq!(
+            verify_observation(&before, &invoke_candidate("invoke-target-0"), &after),
+            Verification::NoChange
+        );
+        after.truncated = false;
+        assert_eq!(
+            verify_observation(&before, &invoke_candidate("invoke-target-0"), &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn set_value_verifies_expected_content_and_accepts_idempotent_replay() {
+        let mut before = invoke_observation("before", 1);
+        before.nodes[0].role = crate::desktop_automation::UiRole::TextField;
+        before.nodes[0].value_fingerprint =
+            Some(crate::desktop_automation::value_fingerprint("  目标文字  "));
+        let mut candidate = invoke_candidate("invoke-target-0");
+        candidate.kind = CandidateKind::SetValue {
+            slot_id: "value".into(),
+        };
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &before, Some("  目标文字  ")),
+            Verification::Achieved
+        );
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &before, None),
+            Verification::NoChange
+        );
+        let mut after = before.clone();
+        after.nodes[0].value_fingerprint =
+            Some(crate::desktop_automation::value_fingerprint("目标文字"));
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
+            Verification::NoChange
+        );
+        after.nodes[0].value_fingerprint = None;
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
+            Verification::NoChange
+        );
     }
 
     #[tokio::test]
@@ -1593,7 +1791,7 @@ mod tests {
 
         assert_eq!(
             verify_observation(&before, &candidate, &after),
-            Verification::NoChange
+            Verification::Unexpected
         );
     }
 

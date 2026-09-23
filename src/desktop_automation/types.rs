@@ -48,6 +48,11 @@ pub struct WindowIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiNode {
     pub opaque_id: String,
+    /// Stable, platform-neutral identity derived from the control's semantic
+    /// locator, not its mutable value or traversal index. Native handles remain
+    /// local. Older observations may omit this and use the legacy resolver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_key: Option<String>,
     pub role: UiRole,
     pub name: Option<String>,
     pub short_value: Option<String>,
@@ -77,6 +82,17 @@ pub struct Observation {
     pub window: WindowIdentity,
     pub nodes: Vec<UiNode>,
     pub captured_at_ms: u64,
+    /// Missing nodes in a bounded/partial tree are not proof of disappearance.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// Local-only comparison of an input slot against a freshly observed value.
+pub(crate) fn value_fingerprint(value: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("value:{:016x}", hasher.finish())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -1073,6 +1073,10 @@ impl ToolRegistry {
         self.set_semantic_desktop_adapter(Arc::new(
             crate::desktop_automation::WindowsUiaAdapter::default(),
         ));
+        #[cfg(target_os = "macos")]
+        self.set_semantic_desktop_adapter(Arc::new(
+            crate::desktop_automation::MacosAccessibilityAdapter::default(),
+        ));
     }
 }
 
@@ -1130,7 +1134,7 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn workflow_semantic_tools_are_available_in_normal_mode() {
         let registry = ToolRegistry::work_agent();
@@ -1145,7 +1149,7 @@ mod tests {
         assert!(!names.contains("desktop_agent_step"));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn enhanced_mode_only_adds_the_bounded_decision_tool() {
         let mut registry = ToolRegistry::work_agent();

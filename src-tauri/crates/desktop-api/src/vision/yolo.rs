@@ -50,6 +50,8 @@ impl YoloDetector {
 
         tracing::info!("[yolo] 加载 ONNX 模型: {}", model_path.display());
 
+        super::runtime::ensure_onnx_runtime()
+            .map_err(|error| DesktopError::Other(anyhow::anyhow!(error)))?;
         let session = ort::session::Session::builder()
             .map_err(|e| {
                 DesktopError::Other(anyhow::anyhow!("[yolo] 创建 session builder 失败: {e}"))

@@ -1062,14 +1062,14 @@ Explore → Solidify → Design → Verify → Decide
 
 | 场景 | 执行标准 |
 |------|----------|
-| 桌面元素定位 | UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe。保存工作流时使用候选附带的 `desktop_semantic_action` / `workflow_step` 稳定 locator，禁止固化 token、candidate ID 或坐标 |
+| 桌面元素定位 | 当前工具列表提供语义工具时，UIA/Accessibility 语义候选是首选；候选 ID 只用于当前观察，界面变化后必须重新 observe。保存工作流时使用候选附带的 `desktop_semantic_action` / `workflow_step` 稳定 locator，禁止固化 token、candidate ID 或坐标。未提供的工具不可调用或反复重试 |
 | 增强模式 | 工具列表存在 `desktop_agent_step` 时，它是每个新桌面动作选择的首选入口；增强判断模型未配置、明确转交主模型、不可用，或 UIA/Accessibility 不适用时，才走普通语义、视觉或鼠标路径。增强判断模型不生成坐标、脚本、选择器或输入内容。返回 `needs_input_value` 时，由当前主模型把业务文本作为 `value` 调用返回的 semantic_execute 候选；该文本不会发送给增强判断模型 |
 | 启动桌面应用 | 需要通过 `system_shell` 启动 GUI 应用时必须使用平台对应的非阻塞启动方式（Windows `Start-Process`、macOS `open`、Linux 后台启动），禁止直接运行会一直等待窗口退出的前台进程 |
-| 视觉回退 | 仅在当前应用无可用语义树/原生 Pattern 时使用 vision→perceive；坐标必须来自最新本地观察 |
+| 视觉回退 | 当前平台未提供语义工具，或目标应用无可用语义树/原生动作时，使用当前实际提供的视觉和鼠标工具；坐标必须来自最新本地观察。macOS 截图需要录屏权限，纯 Accessibility 操作不需要 |
 | 定位不精确 | `request_user_input(region)` 是首选方案，非降级 |
 | 同坐标连续失败 ≥2 次 | 先怀疑功能约束（锁死/权限/状态），`request_user_input` 确认，不反复调坐标 |
 | 定位信息不确定 | 标记「未识别」并请求用户确认；猜错位置的代价远大于承认不知道 |
-| 坐标空间 | 截图/OCR/鼠标操作一律以客户区为基准，`client_offset` 是布局解析必须固化的第一参数 |
+| 坐标空间 | 以工具返回的坐标单位和窗口/屏幕原点为准；截图像素不能直接当作桌面逻辑坐标，尤其是 macOS Retina 和多屏。由本地工具转换比例与偏移，不凭模型估算 |
 | 用户描述 | 用对方能直接理解的表述（「左侧列表里一个联系人」而非「会话列表中的条目」） |
 | 提问粒度 | 每次 `request_user_input` / `wait` 只问一件事，不塞复合问题；**step_form 例外**：需要用户补录同一阶段的多个子步骤时，用 `request_user_input(input_type="step_form")` 一次收齐（多行专用表单），并把当前阶段名填进 `default_stage`；提交返回 JSON `{"stage": "...", "steps": ["..."]}` |
 
@@ -1247,6 +1247,27 @@ Phase 3 提交前逐项勾选：
 - [ ] 无敏感数据写入任何文件
 - [ ] 子工作流文件与主工作流同目录"#;
 
+fn workflow_desktop_capabilities(tool_schemas: &str) -> String {
+    // Inspect actual function names, not descriptions that may mention unavailable tools.
+    let schemas =
+        serde_json::from_str::<Vec<crate::api::ToolDefinition>>(tool_schemas).unwrap_or_default();
+    let has = |name: &str| schemas.iter().any(|tool| tool.function.name == name);
+    let semantics = has("desktop_semantic_observe") && has("desktop_semantic_execute");
+    let route = if semantics && has("desktop_agent_step") {
+        "当前桌面入口：desktop_agent_step。每轮先使用增强判断入口，再按返回结果补充业务文本或接手候选判断。"
+    } else if semantics {
+        "当前桌面入口：desktop_semantic_observe → desktop_semantic_execute。由主模型从候选中选择；当前未提供增强判断入口，不要尝试调用。"
+    } else {
+        "当前未提供完整桌面语义工具链；跳过语义观察与增强判断调用，按当前实际工具列表选择可用路径。不要循环请求缺失工具。"
+    };
+    let replay = if semantics && has("desktop_semantic_action") {
+        "语义动作可通过候选返回的 workflow_step 保存并重放。"
+    } else {
+        "当前未提供语义动作重放，不要在工作流中保存不存在的语义调用。"
+    };
+    format!("## 当前桌面能力\n{route}\n{replay}\nmacOS 辅助功能权限缺失时说明授权入口；返回应用后可重试。不要以无权限为由反复调用或改用同样依赖该权限的输入工具。\n")
+}
+
 /// Build WorkflowAgent system prompt
 ///
 /// L0 (WORKAGENT_L0) + L1 (tools + env + tenets) + L2 (methodology).
@@ -1282,6 +1303,7 @@ pub fn build_workagent_prompt(
 
     // L1: Tools + Environment + Tenets
     parts.push(tool_schemas_section(tool_schemas));
+    parts.push(workflow_desktop_capabilities(tool_schemas));
     // 内置工具感知：工具页内部机制命令不进 agent 工具列表，仅用户手动调用；详见 skill
     parts.push(
         "## 内置工具感知\n\
@@ -1463,5 +1485,40 @@ mod tests {
         assert!(prompt.contains("用户执行中追加的新指令代表最新最高优先级意图"));
         assert!(prompt.contains("核心路径跑通却继续研究旁支会阻碍交付"));
         assert!(!prompt.contains("干净环境连续 3 次成功"));
+    }
+
+    #[test]
+    fn workflow_desktop_routing_uses_registered_function_names() {
+        let render = |names: &[&str]| {
+            let schemas: Vec<_> = names
+                .iter()
+                .map(|name| crate::api::ToolDefinition::new(*name, serde_json::json!({})))
+                .collect();
+            workflow_desktop_capabilities(&serde_json::to_string(&schemas).unwrap())
+        };
+        let ordinary = render(&[
+            "desktop_semantic_observe",
+            "desktop_semantic_execute",
+            "desktop_semantic_action",
+        ]);
+        assert!(ordinary.contains("当前桌面入口：desktop_semantic_observe"));
+        assert!(ordinary.contains("当前未提供增强判断入口"));
+        assert!(ordinary.contains("保存并重放"));
+        let enhanced = render(&[
+            "desktop_agent_step",
+            "desktop_semantic_observe",
+            "desktop_semantic_execute",
+        ]);
+        assert!(enhanced.contains("当前桌面入口：desktop_agent_step"));
+        assert!(enhanced.contains("当前未提供语义动作重放"));
+
+        let mut mouse = crate::api::ToolDefinition::new("desktop_mouse", serde_json::json!({}));
+        mouse.function.description = Some(
+            "fallback for desktop_agent_step desktop_semantic_observe desktop_semantic_execute"
+                .into(),
+        );
+        let missing = workflow_desktop_capabilities(&serde_json::to_string(&[mouse]).unwrap());
+        assert!(missing.contains("当前未提供完整桌面语义工具链"));
+        assert!(!missing.contains("当前桌面入口："));
     }
 }

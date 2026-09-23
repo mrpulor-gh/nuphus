@@ -60,19 +60,36 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check compilation
         run: cargo check --workspace
 
+      - name: Test macOS RPA contracts
+        run: |
+          cargo test -p nuphus --lib desktop_automation::
+          cargo test -p nuphus --lib tools::semantic_desktop::
+          cargo test -p nuphus --lib tools::registry::tests::
+          cargo test -p nuphus --lib desktop::
+          cargo test -p desktop-api --lib
+          cargo test -p nuphus-desktop --bin nuphus macos_permissions::
+          cargo test -p nuphus-desktop --bin nuphus commands::config::jev::tests::
+      - name: Report interactive validation boundary
+        run: |
+          echo 'AX contract tests do not grant macOS Accessibility permission.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Real application actions and model-driven workflows require the separately authorized Mac acceptance run.' >> "$GITHUB_STEP_SUMMARY"
+
   smoke-macos:
     name: Smoke (macOS launch)
     # 无 Mac 硬件的启动验证：macOS runner 有 WindowServer，可运行 GUI 程序。
-    # tauri build --debug --no-bundle 产出可独立运行的 debug 二进制（内置前端资源），
-    # 启动后检查进程存活（未崩溃）即通过。
-    runs-on: macos-14
+    # 检查实际 .app 启动并提供 ARM64 试用包；进程存活不代表 AX 实机验收通过。
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
@@ -84,11 +101,19 @@ jobs:
         run: |
           npm ci
           cd frontend && npm ci
-      - name: Build (debug, no-bundle)
-        run: npx tauri build --debug --no-bundle
+      - name: Build macOS test app
+        run: npx tauri build --debug --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Sign test app and verify embedded libraries
+        run: |
+          codesign --force --deep --sign - target/debug/bundle/macos/Nuphus.app
+          codesign --verify --deep --strict target/debug/bundle/macos/Nuphus.app
+      - name: Verify bundled vision runtime
+        run: |
+          cargo build -p desktop-api --example macos_runtime_smoke
+          env -u ORT_DYLIB_PATH target/debug/examples/macos_runtime_smoke "$PWD/target/debug/bundle/macos/Nuphus.app"
       - name: Launch smoke test
         run: |
-          ./target/debug/nuphus > /tmp/nuphus_smoke.log 2>&1 &
+          ./target/debug/bundle/macos/Nuphus.app/Contents/MacOS/nuphus > /tmp/nuphus_smoke.log 2>&1 &
           APP_PID=$!
           sleep 12
           if kill -0 $APP_PID 2>/dev/null; then
@@ -99,6 +124,42 @@ jobs:
             tail -30 /tmp/nuphus_smoke.log || true
             exit 1
           fi
+      - name: Package macOS test app
+        run: ditto -c -k --sequesterRsrc --keepParent target/debug/bundle/macos/Nuphus.app nuphus-macos-arm64-rpa.zip
+      - name: Build and verify macOS test DMG
+        run: |
+          stage_dir=$(mktemp -d)
+          ditto target/debug/bundle/macos/Nuphus.app "$stage_dir/Nuphus.app"
+          ln -s /Applications "$stage_dir/Applications"
+          hdiutil create -volname Nuphus -srcfolder "$stage_dir" -format UDZO nuphus-macos-arm64-rpa.dmg
+          hdiutil verify nuphus-macos-arm64-rpa.dmg
+          mount_dir=$(mktemp -d)
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" nuphus-macos-arm64-rpa.dmg
+          trap 'hdiutil detach "$mount_dir" || true' EXIT
+          codesign --verify --deep --strict "$mount_dir/Nuphus.app"
+          lipo "$mount_dir/Nuphus.app/Contents/MacOS/nuphus" -verify_arch arm64
+          test "$(readlink "$mount_dir/Applications")" = /Applications
+          env -u ORT_DYLIB_PATH target/debug/examples/macos_runtime_smoke "$mount_dir/Nuphus.app"
+          shasum -a 256 nuphus-macos-arm64-rpa.dmg > nuphus-macos-arm64-rpa.dmg.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuphus-macos-arm64-rpa-dmg-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            nuphus-macos-arm64-rpa.dmg
+            nuphus-macos-arm64-rpa.dmg.sha256
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuphus-macos-arm64-rpa-${{ github.event.pull_request.head.sha || github.sha }}
+          path: nuphus-macos-arm64-rpa.zip
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-log
+          path: /tmp/nuphus_smoke.log
+          retention-days: 7
 
   frontend:
     name: Frontend Check
