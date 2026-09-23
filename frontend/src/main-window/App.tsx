@@ -69,6 +69,7 @@ const KnowledgePage = lazy(() =>
 )
 const SkillsPage = lazy(() => import('./pages/SkillsPage').then(m => ({ default: m.SkillsPage })))
 const ModelsPage = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.ModelsPage })))
+type ModelsInitialView = 'provider' | 'jev'
 const ThemesPage = lazy(() => import('./pages/ThemesPage').then(m => ({ default: m.ThemesPage })))
 const SecurityPage = lazy(() =>
   import('./pages/SecurityPage').then(m => ({ default: m.SecurityPage })),
@@ -127,6 +128,7 @@ export default function App() {
   const s = useSession()
   /** +号菜单记忆弹窗：'tenets' | 'annotations' | null */
   const [memoryDialog, setMemoryDialog] = useState<'tenets' | 'annotations' | null>(null)
+  const [modelsInitialView, setModelsInitialView] = useState<ModelsInitialView>('provider')
 
   // ── Workflow 权限确认弹窗出现时播放提示音 ──
   useEffect(() => {
@@ -156,7 +158,11 @@ export default function App() {
 
   // ── Voice button navigates to /models ──
   useEffect(() => {
-    const handler = () => s.setShowModels(true)
+    const handler = (event: Event) => {
+      const requestedView = (event as CustomEvent<{ view?: string }>).detail?.view
+      setModelsInitialView(requestedView === 'jev' ? 'jev' : 'provider')
+      s.setShowModels(true)
+    }
     window.addEventListener('nuphus-nav-models', handler)
     return () => window.removeEventListener('nuphus-nav-models', handler)
   }, [s.setShowModels])
@@ -782,6 +788,7 @@ export default function App() {
                     className="models-page-close"
                     onClick={() => {
                       s.setShowModels(false)
+                      setModelsInitialView('provider')
                       s.refreshModelInfo()
                     }}
                   >
@@ -797,8 +804,10 @@ export default function App() {
                 </div>
                 <div className="models-page-body">
                   <ModelsPage
+                    initialView={modelsInitialView}
                     onClose={() => {
                       s.setShowModels(false)
+                      setModelsInitialView('provider')
                       s.refreshModelInfo()
                     }}
                     onModelChanged={() => s.refreshModelInfo()}

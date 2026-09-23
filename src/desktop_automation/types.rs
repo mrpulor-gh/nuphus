@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -292,6 +293,44 @@ pub struct PlatformCapabilities {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionInput {
+    pub goal: String,
+    pub observation: Observation,
+    pub candidates: Vec<ActionCandidate>,
+    #[serde(default)]
+    pub recent_actions: Vec<RecentAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentAction {
+    pub action_class: ActionClass,
+    pub target_summary: String,
+    pub verification: Verification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Decision {
+    /// The only executable value a decision provider may emit.
+    pub candidate_id: String,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub probabilities: BTreeMap<String, f64>,
+    pub actual_model: Option<String>,
+    pub usage: Option<DecisionUsage>,
+}
+
+#[async_trait]
+pub trait DecisionProvider: Send + Sync {
+    async fn choose(&self, input: DecisionInput) -> Result<Decision, AutomationError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionReceipt {
     pub candidate_id: String,
     pub dispatched: bool,
@@ -384,12 +423,87 @@ impl Policy for LocalPolicy {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceEventKind {
+    Observed,
+    CandidatesBuilt,
+    DecisionMade,
+    PolicyAllowed,
+    Executed,
+    Verified,
+    Reconciled,
+    SoftBudgetReached,
+    StaleObservation,
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceEvent {
+    pub kind: TraceEventKind,
+    pub observation_revision: Option<u64>,
+    pub candidate_id: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Completed,
+    WaitingForUser,
+    NeedsAttention,
+    FailedSafely,
+    BudgetExceeded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunOutcome {
+    pub status: RunStatus,
+    pub executed_steps: u32,
+    pub trace: Vec<TraceEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunLimits {
+    pub soft_max_steps: u32,
+    pub hard_max_steps: u32,
+    pub soft_max_elapsed_ms: u64,
+    pub hard_max_elapsed_ms: u64,
+    pub max_stall_count: u32,
+}
+
+impl Default for RunLimits {
+    fn default() -> Self {
+        Self {
+            soft_max_steps: 20,
+            hard_max_steps: 100,
+            soft_max_elapsed_ms: 180_000,
+            hard_max_elapsed_ms: 900_000,
+            max_stall_count: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunRequest {
+    pub goal: String,
+    pub scope: ObservationScope,
+    pub grant: ExecutionGrant,
+    pub enhanced_mode: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AutomationError {
     #[error("observation failed: {0}")]
     Observation(String),
     #[error("candidate construction failed: {0}")]
     Candidates(String),
+    #[error("decision failed: {0}")]
+    Decision(String),
+    #[error("decision selected unknown candidate id '{0}'")]
+    UnknownCandidate(String),
+    #[error("enhanced mode is unavailable: {0}")]
+    EnhancedUnavailable(String),
     #[error("execution failed: {0}")]
     Execution(String),
     #[error("verification failed: {0}")]

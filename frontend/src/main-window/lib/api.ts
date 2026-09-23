@@ -146,6 +146,64 @@ export function isLlmConfigured() {
   return invoke<boolean>('is_llm_configured')
 }
 
+// ── Jev enhanced workflow mode ──
+
+/** Jev 使用独立配置，不属于聊天模型 Provider。后端永不返回 API Key 原文。 */
+export interface JevConfig {
+  enabled: boolean
+  base_url: string
+  model: string
+  has_key: boolean
+  timeout_ms: number
+  max_retries: number
+  fallback_to_primary_model: boolean
+}
+
+export interface SaveJevConfigInput {
+  apiKey?: string
+  baseUrl: string
+  model: string
+  timeoutMs: number
+  maxRetries: number
+  fallbackToPrimaryModel: boolean
+}
+
+export interface JevConnectionStatus {
+  status: string
+  message?: string
+  model?: string
+}
+
+export interface WorkflowEnhancedMode {
+  enabled: boolean
+  configured: boolean
+  status?: string
+}
+
+export function getJevConfig() {
+  return invoke<JevConfig>('get_jev_config')
+}
+
+export function saveJevConfig(input: SaveJevConfigInput) {
+  return invoke<JevConfig>('save_jev_config', { ...input })
+}
+
+export function clearJevApiKey() {
+  return invoke<void>('clear_jev_api_key')
+}
+
+export function testJevConnection() {
+  return invoke<JevConnectionStatus | string>('test_jev_connection')
+}
+
+export function getWorkflowEnhancedMode() {
+  return invoke<WorkflowEnhancedMode>('get_workflow_enhanced_mode')
+}
+
+export function setWorkflowEnhancedMode(enabled: boolean) {
+  return invoke<WorkflowEnhancedMode>('set_workflow_enhanced_mode', { enabled })
+}
+
 // ── History ──
 
 export function getSessionHistory() {

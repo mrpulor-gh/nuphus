@@ -60,6 +60,9 @@ pub struct ToolRegistry {
     /// Accessibility/UIA-first desktop backend. Unlike `DesktopClient`, this
     /// backend never exposes coordinates or native handles to the model.
     pub(super) semantic_desktop: Option<SemanticDesktopBackend>,
+    /// Whether WorkflowAgent may delegate one bounded semantic choice to the
+    /// optional enhanced decision model. Ordinary semantic tools stay enabled.
+    pub(super) enhanced_mode: bool,
     /// Browser client (Rust native CDP)
     pub(super) browser_client: Arc<tokio::sync::Mutex<Option<BrowserClient>>>,
     /// Rendered prompt cache (cleared on register, lazy-built on render)
@@ -88,6 +91,7 @@ impl Default for ToolRegistry {
             tools: HashMap::new(),
             desktop_client: Arc::new(RwLock::new(None)),
             semantic_desktop: None,
+            enhanced_mode: false,
             browser_client: crate::browser::shared_client(),
             prompt_cache: Arc::new(RwLock::new(None)),
             canonical_map: HashMap::new(),
@@ -105,6 +109,7 @@ impl Clone for ToolRegistry {
             tools: self.tools.clone(),
             desktop_client: self.desktop_client.clone(),
             semantic_desktop: self.semantic_desktop.clone(),
+            enhanced_mode: self.enhanced_mode,
             browser_client: self.browser_client.clone(),
             prompt_cache: self.prompt_cache.clone(),
             canonical_map: self.canonical_map.clone(),
@@ -679,6 +684,21 @@ impl ToolRegistry {
         }
     }
 
+    /// Switch only the optional enhanced decision layer. UIA observation and
+    /// candidate-id execution remain available in both modes.
+    pub fn set_enhanced_mode(&mut self, enabled: bool) {
+        if self.enhanced_mode != enabled {
+            self.enhanced_mode = enabled;
+            if let Ok(mut guard) = self.prompt_cache.write() {
+                *guard = None;
+            }
+        }
+    }
+
+    pub fn enhanced_mode(&self) -> bool {
+        self.enhanced_mode
+    }
+
     /// Get DesktopClient clone (preserves original reference)
     pub fn desktop_client(&self) -> Option<DesktopClient> {
         self.desktop_client
@@ -695,7 +715,10 @@ impl ToolRegistry {
     pub fn is_semantic_desktop_tool(name: &str) -> bool {
         matches!(
             name,
-            "desktop_semantic_observe" | "desktop_semantic_execute" | "desktop_semantic_action"
+            "desktop_semantic_observe"
+                | "desktop_semantic_execute"
+                | "desktop_semantic_action"
+                | "desktop_agent_step"
         )
     }
 
@@ -760,6 +783,9 @@ pub const WORKFLOW_TOOL_EXCLUDE: &[&str] = &[
     "workflow_run",
     "workflow_validate",
     "schedule_cron",
+    // WorkflowAgent exploration helper. Saved workflows use ordinary semantic
+    // actions and must not depend on a per-session enhanced-mode toggle.
+    "desktop_agent_step",
     // 会话内人机交互（暂停等待输入，步骤语境无意义）
     "request_user_input",
 ];
@@ -1116,6 +1142,27 @@ mod tests {
         assert!(names.contains("desktop_semantic_observe"));
         assert!(names.contains("desktop_semantic_execute"));
         assert!(names.contains("desktop_semantic_action"));
+        assert!(!names.contains("desktop_agent_step"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn enhanced_mode_only_adds_the_bounded_decision_tool() {
+        let mut registry = ToolRegistry::work_agent();
+        let normal: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        registry.set_enhanced_mode(true);
+        let enhanced: std::collections::HashSet<_> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|schema| schema.function.name)
+            .collect();
+        let added: Vec<_> = enhanced.difference(&normal).cloned().collect();
+        assert_eq!(added, vec!["desktop_agent_step".to_string()]);
+        assert!(normal.is_subset(&enhanced));
     }
 
     /// 自动化开关必须在「存在性判定」与「执行」两端同时生效。

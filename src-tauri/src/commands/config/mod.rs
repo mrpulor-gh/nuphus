@@ -11,6 +11,7 @@
 
 pub mod capabilities;
 pub mod handoff;
+pub mod jev;
 pub mod llm;
 pub mod oauth;
 pub mod preferences;
@@ -23,6 +24,7 @@ pub mod toml_ops;
 // exactly like they did when everything lived in a single `config.rs`.
 pub use self::capabilities::*;
 pub use self::handoff::*;
+pub use self::jev::*;
 pub use self::llm::*;
 pub use self::oauth::*;
 pub use self::preferences::*;

@@ -841,6 +841,12 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     refine_threshold2,
                 );
                 new_wa.set_workflow_engine(state.workflow_engine.clone());
+                let new_session_id = new_wa.session().id.clone();
+                let restored_session_id = if force_new {
+                    None
+                } else {
+                    crate::commands::config::workflow_backup_session_id(state.inner())
+                };
                 // ── 会话诞生点（workflow）：无留存 agent → WorkflowAgent::new 铸造全新 Session。
                 // 仅在 force_new（欢迎页直发 / 切 mode 新建 / 空态判据）时登记归属 +
                 // 应用「新建对话」弹窗记录的标题（只消费一次，无记录则不写）。
@@ -853,9 +859,21 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                         new_wa.session(),
                     );
                 }
+                crate::commands::config::bind_workflow_enhanced_mode_to_session(
+                    state.inner(),
+                    &new_session_id,
+                    restored_session_id.as_deref(),
+                );
                 new_wa
             };
 
+            // AppState 保存当前 Workflow 会话的偏好；在构建本轮 schema 和提示词缓存前
+            // 同步到新建或恢复的 WorkflowAgent。
+            wa.set_enhanced_mode(
+                state
+                    .workflow_enhanced_mode
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
             wa.set_source(&source2);
             wa.sync_before_run(
                 Some(Arc::new(emitter.clone())),

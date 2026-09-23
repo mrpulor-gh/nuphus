@@ -19,6 +19,7 @@ import type { MoodState } from '../ui/MoodFace'
 import { playUiSound } from '../ui/sound'
 import { showAppFeedbackByHudPhase } from '../ui/islandChannel'
 import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
+import { requestWorkflowEnhancedModeRefresh } from '../main-window/workflow-canvas/enhancedModeEvents'
 
 type RegionPickerMode = 'picker' | 'capture' | 'ocr' | null
 type TokenUsageState = {
@@ -395,6 +396,12 @@ export function useEvents(h: EventHandlers) {
       }
 
       switch (event.type) {
+        case 'session_changed':
+        case 'new_chat_broadcast':
+          // 会话增强偏好由后端按 Workflow session 保存。会话切换或新建后让所有
+          // 已挂载的入口重新读取权威状态，避免按钮仍展示上一会话的开关与配置徽标。
+          requestWorkflowEnhancedModeRefresh()
+          break
         case 'direct_response': {
           finishWithMessage((event.message || '').trim(), 'success')
           break

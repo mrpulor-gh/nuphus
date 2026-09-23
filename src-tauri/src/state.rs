@@ -3,6 +3,7 @@ use nuphus::runtime::Runtime;
 use nuphus::runtime::WorkflowAgent;
 use nuphus_index::IndexEngine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -103,6 +104,12 @@ pub struct AppState {
     /// 后端权威当前运行模式（"leader" | "workflow" | "custom"），chat_history 按此选择 agent 会话。
     /// 由 set_mode_impl（显式切换）与 submit_user_message（发送确认）维护；默认 "leader"。
     pub current_mode: Arc<std::sync::RwLock<String>>,
+    /// 当前 Workflow 开发会话是否启用 Jev 增强判断。
+    /// 只控制 Jev 决策层；UIA/语义桌面基础能力不依赖此开关。
+    pub workflow_enhanced_mode: AtomicBool,
+    /// Workflow session id -> enhanced-mode preference. The atomic above is
+    /// only the active-session cache consumed by the runtime hot path.
+    pub workflow_enhanced_modes: Mutex<HashMap<String, bool>>,
     /// 执行态句柄（终止按钮权威源 / guard_switch 守卫）。
     /// 字段名沿用历史 `busy`；类型见 [`ExecutionStageHandle`]——唯一存储是 core 内
     /// 共享信号的 `execution_stage`，`busy` 只是它的二值投影（`stage != Idle`）。
@@ -207,6 +214,11 @@ pub struct SessionState {
     /// 走 session_backup 回退路径时，append_last_turn_user 用它补回当前轮带图消息。
     pub last_message_images: Vec<String>,
     pub session_backup: Option<String>,
+    /// Workflow 欢迎页尚无真实会话时预先选择的 Jev 增强模式。
+    ///
+    /// 该值只供下一次 Workflow 会话诞生消费一次；绑定到真实 session id 后立即清空，
+    /// 因而不会让后续新会话继承上一会话的增强状态。
+    pub pending_workflow_enhanced_mode: Option<bool>,
     /// 「新建对话」弹窗确认时填写的标题——**只记录，不创建会话**。
     ///
     /// 与 session_backup 同类：会话边界的一次性意图，活在内存里。会话仍只在欢迎页
@@ -296,6 +308,8 @@ impl Default for AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             pause_flag: Arc::new(AtomicBool::new(false)),
             current_mode: Arc::new(std::sync::RwLock::new("leader".to_string())),
+            workflow_enhanced_mode: AtomicBool::new(false),
+            workflow_enhanced_modes: Mutex::new(HashMap::new()),
             busy: ExecutionStageHandle::new(signals.clone()),
             last_process_time: AtomicI64::new(0),
             last_completion_time: AtomicI64::new(0),

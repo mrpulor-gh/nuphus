@@ -185,6 +185,91 @@ pub(crate) fn decrypt_credential_three_state(field: &mut String, provider: &str,
     }
 }
 
+fn default_jev_base_url() -> String {
+    "https://api.typesafe.ai".to_string()
+}
+
+fn default_jev_model() -> String {
+    "jev-latest".to_string()
+}
+
+fn default_jev_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_jev_max_retries() -> u32 {
+    2
+}
+
+fn default_jev_fallback() -> bool {
+    true
+}
+
+/// TypeSafe System One configuration.
+///
+/// Jev is a bounded decision layer, not an LLM provider, so it deliberately
+/// lives outside `providers` and `agent_models`. Backend serialization keeps
+/// the key so whole-registry rewrites do not silently erase it; UI callers only
+/// receive the key-free [`JevConfigStatus`] projection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JevConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_jev_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_jev_model")]
+    pub model: String,
+    #[serde(default = "default_jev_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_jev_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_jev_fallback")]
+    pub fallback_to_primary_model: bool,
+}
+
+impl Default for JevConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            base_url: default_jev_base_url(),
+            model: default_jev_model(),
+            timeout_ms: default_jev_timeout_ms(),
+            max_retries: default_jev_max_retries(),
+            fallback_to_primary_model: default_jev_fallback(),
+        }
+    }
+}
+
+/// Safe projection for UI/application state. It intentionally cannot expose
+/// the API key, even if a caller serializes the whole value.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct JevConfigStatus {
+    pub enabled: bool,
+    pub has_key: bool,
+    pub base_url: String,
+    pub model: String,
+    pub timeout_ms: u64,
+    pub max_retries: u32,
+    pub fallback_to_primary_model: bool,
+}
+
+impl JevConfig {
+    pub fn status(&self) -> JevConfigStatus {
+        JevConfigStatus {
+            enabled: self.enabled,
+            has_key: !self.api_key.trim().is_empty(),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            timeout_ms: self.timeout_ms,
+            max_retries: self.max_retries,
+            fallback_to_primary_model: self.fallback_to_primary_model,
+        }
+    }
+}
+
 /// 按能力独立配置模型（不配则使用 model）
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Capabilities {
@@ -235,6 +320,9 @@ pub struct ModelRegistry {
     /// 按能力独立配置模型
     #[serde(default)]
     pub capabilities: Capabilities,
+    /// Optional Jev structured decision layer (independent of LLM providers).
+    #[serde(default)]
+    pub jev: JevConfig,
     /// Model alias mapping: alias -> (provider_name, model_id)
     #[serde(skip)]
     alias_map: HashMap<String, (String, String)>,
@@ -296,6 +384,7 @@ impl ModelRegistry {
                 );
             }
         }
+        decrypt_credential_three_state(&mut registry.jev.api_key, "Jev", "api_key");
         // 模型真值 = [agent_models].leader（主模型，mode 绑定单一数据源）。
         // providers.toml 顶层 model 字段已退役：不构成覆盖层。leader 可用时以 leader
         // 为准（覆盖 serde 读入的顶层旧值）；leader 空（旧文件未迁移绑定）→ 保留顶层
@@ -530,6 +619,7 @@ impl ModelRegistry {
             model: default_model,
             providers,
             capabilities: Capabilities::default(),
+            jev: JevConfig::default(),
             alias_map: Default::default(),
             // env 来源没有配置文件：OAuth 令牌注入路径据此跳过（无盘可刷新）
             source_path: None,
@@ -775,6 +865,7 @@ impl ModelRegistry {
                 oauth: None,
             }],
             capabilities: Capabilities::default(),
+            jev: JevConfig::default(),
             alias_map: HashMap::new(),
             // from_single 无文件来源（内存构造）：OAuth 刷新链路自然跳过。
             source_path: None,
@@ -807,6 +898,57 @@ impl ModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_registry_gets_safe_jev_defaults() {
+        let registry: ModelRegistry = toml::from_str(
+            r#"
+[[providers]]
+name = "custom"
+provider_type = "custom"
+api_key = ""
+
+[[providers.models]]
+id = "m"
+"#,
+        )
+        .unwrap();
+
+        assert!(!registry.jev.enabled);
+        assert!(registry.jev.api_key.is_empty());
+        assert_eq!(registry.jev.base_url, "https://api.typesafe.ai");
+        assert_eq!(registry.jev.model, "jev-latest");
+        assert_eq!(registry.jev.timeout_ms, 10_000);
+        assert_eq!(registry.jev.max_retries, 2);
+        assert!(registry.jev.fallback_to_primary_model);
+    }
+
+    #[test]
+    fn jev_status_never_serializes_the_key() {
+        let config = JevConfig {
+            api_key: "jev-test-placeholder".into(),
+            ..JevConfig::default()
+        };
+        let value = serde_json::to_value(config.status()).unwrap();
+        assert_eq!(value["has_key"], true);
+        assert!(value.get("confidence_floor").is_none());
+        assert!(value.get("api_key").is_none());
+        assert!(!value.to_string().contains("jev-test-placeholder"));
+    }
+
+    #[test]
+    fn legacy_confidence_floor_is_ignored() {
+        let registry: ModelRegistry = toml::from_str(
+            r#"
+[jev]
+confidence_floor = 0.85
+"#,
+        )
+        .unwrap();
+
+        let value = serde_json::to_value(registry.jev.status()).unwrap();
+        assert!(value.get("confidence_floor").is_none());
+    }
 
     /// 兼容：早期写入路径可能把实例名写进 provider_type（应为协议类型 custom）。
     /// 该值无对应 ProviderKind 变体，若不归一化整份 providers.toml 会反序列化失败。
@@ -962,6 +1104,7 @@ id = "m1"
                 oauth: None,
             }],
             capabilities: Capabilities::default(),
+            jev: JevConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };
@@ -1133,6 +1276,7 @@ vision_provider = "custom"
             model,
             providers,
             capabilities: Capabilities::default(),
+            jev: JevConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };
@@ -1317,7 +1461,11 @@ vision_provider = "custom"
     fn test_resolve_capability_provider_exact_and_scan() {
         let registry = registry_with(vec![
             // Segment-order first: declares NO vision.
-            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            provider_with_caps(
+                "deepseek",
+                KnownProvider::DeepSeek,
+                &[("m", false, false, None)],
+            ),
             // Later segment: declares vision.
             provider_with_caps("custom", KnownProvider::Custom, &[("m", true, false, None)]),
         ]);
@@ -1364,7 +1512,11 @@ vision_provider = "custom"
     fn test_get_max_output_tokens_provider_aware() {
         let registry = registry_with(vec![
             // Segment-order first: no max_tokens.
-            provider_with_caps("deepseek", KnownProvider::DeepSeek, &[("m", false, false, None)]),
+            provider_with_caps(
+                "deepseek",
+                KnownProvider::DeepSeek,
+                &[("m", false, false, None)],
+            ),
             // Later segment: declares max_tokens.
             provider_with_caps(
                 "custom",

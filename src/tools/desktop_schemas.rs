@@ -55,7 +55,7 @@ impl ToolRegistry {
     }
 
     fn semantic_desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
-        vec![
+        let mut schemas = vec![
             tool_def(
                 "desktop_semantic_observe",
                 "读取当前前台应用的 Accessibility/UIA 语义元素并返回本次可执行的候选动作 ID。可持久化候选同时返回 workflow_step，保存工作流时应使用该稳定语义步骤，禁止保存临时 candidate_id 或 observation_token。普通模式首选；不返回坐标、原生句柄或任意脚本能力。",
@@ -66,11 +66,11 @@ impl ToolRegistry {
             ),
             tool_def(
                 "desktop_semantic_execute",
-                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；SetValue 候选可附带 value，该文本只交给本地执行器。执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
+                "执行 desktop_semantic_observe 最近一次返回的一个 candidate_id。必须回传同次 observation_token；SetValue 候选可附带 value，该文本只交给本地执行器且不会发送给增强判断模型。执行前会重新读取 UI 并拒绝过期动作，不得传坐标、选择器或脚本。",
                 json_props! {
                     "observation_token" => obj!("type"="string","description"="最近一次语义观察返回的不可预测短期令牌"),
                     "candidate_id" => obj!("type"="string","description"="最近一次语义观察返回的候选动作 ID"),
-                    "value" => obj!("type"="string","description"="仅用于 SetValue 候选的本地文本；保持原始空白并仅供本地执行","maxLength"=16384)
+                    "value" => obj!("type"="string","description"="仅用于 SetValue 候选的本地文本；保持原始空白，不会发送给增强判断模型","maxLength"=16384)
                 },
                 &["observation_token", "candidate_id"],
             ),
@@ -110,7 +110,18 @@ impl ToolRegistry {
                 },
                 &["locator", "action"],
             ),
-        ]
+        ];
+        if self.enhanced_mode {
+            schemas.push(tool_def(
+                "desktop_agent_step",
+                "增强模式下新桌面动作选择的首选入口：本地读取 UIA、构造候选动作，增强判断模型只能选择一个 candidate_id，本地复核后执行并重新观察验证。一次调用最多执行一个原生动作；未配置、服务不可用或语义树不适用时，由主模型从同一有限候选空间继续判断。",
+                json_props! {
+                    "goal" => obj!("type"="string","description"="当前桌面任务目标；增强判断模型仅据此从本地候选集合中选择")
+                },
+                &["goal"],
+            ));
+        }
+        schemas
     }
 
     fn desktop_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
