@@ -2950,6 +2950,28 @@ mod windows_smoke_tests {
         assert_background_unchanged(sentinel, mouse);
 
         let text = "Nuphus 后台输入 🧪";
+        let offered = adapter.build("Fixture text", &initial).unwrap();
+        let candidate = offered
+            .iter()
+            .find(|candidate| matches!(candidate.kind, CandidateKind::SetValue { .. }))
+            .unwrap();
+        let rejected = adapter
+            .execute(
+                &initial,
+                candidate,
+                &ExecutionInput {
+                    value: Some("must not be sent".into()),
+                    delivery: DeliveryMode::Background,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("background_unavailable"));
+        fixture
+            .json_when("state.json", |state| state["text"] == "initial value")
+            .await;
+        assert_background_unchanged(sentinel, mouse);
         fixture_action(
             &adapter,
             &scope,

@@ -130,7 +130,7 @@ impl ToolRegistry {
                 properties.get_mut("locator").unwrap()["properties"]["supported_action"]["enum"] =
                     actions.clone();
                 properties.insert("completion_policy".into(), obj!("type"="string","enum"=["auto","verified","dispatched"],"default"="auto",
-                    "description"="auto 允许普通导航的已发送未验证结果继续；关键提交仍需验证。expectation 存在时始终验证，不重发动作"));
+                    "description"="auto 允许普通动作的已发送但不可验证结果继续；已观察到目标状态未满足时不冒充成功，关键提交仍需验证。expectation 存在时始终验证，不重发动作"));
                 properties.insert("expectation".into(), expectation.clone());
             }
         }

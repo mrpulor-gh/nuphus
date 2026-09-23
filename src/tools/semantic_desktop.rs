@@ -973,7 +973,8 @@ async fn execute_candidate(
         Err(error) => {
             return Ok(json!({
                 "status": "needs_observation", "candidate_id": candidate.id,
-                "receipt": receipt, "verification": Verification::Unknown, "dispatch_state":DispatchState::Sent,
+                "receipt": receipt, "verification": Verification::Unknown,
+                "dispatch_state": if receipt.dispatched { DispatchState::Sent } else { DispatchState::NotSent },
                 "effect":ActionEffect::Unverifiable,
                 "reason": error, "retry_action": false, "decision": decision,
             }))
@@ -1058,17 +1059,20 @@ async fn execute_persistent_action_with_options(
         .map_err(|error| error.to_string())?;
     let mut result = execute_candidate(backend, &before, &candidate, &input, None).await?;
     if let Some(expectation) = &options.expectation {
-        let checked =
-            verify_expected_state(backend, expectation, &scope, targets.as_deref()).await?;
+        let dispatch = serde_json::from_value(result["dispatch_state"].clone())
+            .unwrap_or(DispatchState::Unknown);
+        let checked = verify_expected_state(backend, expectation, &scope, targets.as_deref())
+            .await
+            .map_err(|error| DesktopActionError::encode(dispatch, error))?;
         if checked["status"] != "satisfied" {
-            let dispatch = serde_json::from_value(result["dispatch_state"].clone())
-                .unwrap_or(DispatchState::Unknown);
             return Err(DesktopActionError::encode(
                 dispatch,
                 format!("后置条件尚未满足，不重发原动作: {}", checked),
             ));
         }
         result["postcondition"] = checked;
+        result["effect"] = json!(ActionEffect::Confirmed);
+        result["verification"] = json!(Verification::Achieved);
         result["status"] = json!("executed");
         return Ok(result);
     }
@@ -1089,11 +1093,7 @@ async fn execute_persistent_action_with_options(
             && ordinary
             && (options.completion == CompletionPolicy::Dispatched
                 || (options.completion == CompletionPolicy::Auto
-                    && ordinary
-                    && matches!(
-                        candidate.kind,
-                        CandidateKind::Invoke | CandidateKind::Scroll { .. }
-                    )))
+                    && verification == Verification::Unknown))
         {
             result["status"] = json!("dispatched_unverified");
             result["note"] = json!("已发送，效果未验证；可继续后续定位，不代表业务目标完成");
@@ -1355,14 +1355,15 @@ fn verify_observation_with_value(
         // target closed. Explicit window postconditions verify such transitions.
         return Verification::Unknown;
     }
-    if matches!(candidate.kind, CandidateKind::SetValue { .. })
-        && candidate.expected_effects.iter().any(|predicate| {
-            predicate
-                .arguments
-                .get("readback_trust")
-                .is_some_and(|v| v == "web_content")
-        })
-    {
+    if matches!(
+        candidate.kind,
+        CandidateKind::SetValue { .. } | CandidateKind::SetRangeValue { .. }
+    ) && candidate.expected_effects.iter().any(|predicate| {
+        predicate
+            .arguments
+            .get("readback_trust")
+            .is_some_and(|v| v == "web_content")
+    }) {
         // Web AX setters may change the accessibility value without dispatching
         // framework input/change events. Require independent application state.
         return Verification::Unknown;
@@ -1431,10 +1432,39 @@ fn verify_observation_with_value(
     ) {
         Verification::Unknown
     } else {
-        // A clock, notification badge, spinner or unrelated control may alter
-        // the window fingerprint. That is not evidence that this target's
-        // action succeeded and must never authorize replay continuation.
-        Verification::NoChange
+        let readable = match (&candidate.kind, target_before, target_after) {
+            (CandidateKind::Toggle, Some(old), Some(TargetResolution::Unique(new))) => {
+                old.toggled.is_some() && new.toggled.is_some()
+            }
+            (CandidateKind::SetChecked { .. }, _, Some(TargetResolution::Unique(new))) => {
+                new.toggled.is_some()
+            }
+            (CandidateKind::Select, _, Some(TargetResolution::Unique(new))) => {
+                new.selected.is_some()
+            }
+            (
+                CandidateKind::Expand | CandidateKind::Collapse,
+                _,
+                Some(TargetResolution::Unique(new)),
+            ) => new.expanded.is_some(),
+            (
+                CandidateKind::Focus | CandidateKind::ScrollIntoView,
+                _,
+                Some(TargetResolution::Unique(_)),
+            ) => true,
+            (
+                CandidateKind::SetValue { .. } | CandidateKind::SetRangeValue { .. },
+                _,
+                Some(TargetResolution::Unique(new)),
+            ) => expected_value.is_some() && new.value_fingerprint.is_some(),
+            _ => false,
+        };
+        // Unavailable readback is not evidence of a no-op or a stalled task.
+        if readable {
+            Verification::NoChange
+        } else {
+            Verification::Unknown
+        }
     }
 }
 
@@ -2597,7 +2627,7 @@ mod tests {
         );
         assert_eq!(
             verify_observation_with_value(&before, &candidate, &before, None),
-            Verification::NoChange
+            Verification::Unknown
         );
         let mut after = before.clone();
         after.nodes[0].value_fingerprint =
@@ -2609,7 +2639,7 @@ mod tests {
         after.nodes[0].value_fingerprint = None;
         assert_eq!(
             verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
-            Verification::NoChange
+            Verification::Unknown
         );
     }
 
