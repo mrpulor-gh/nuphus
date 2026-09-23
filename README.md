@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.18 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.19 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -282,6 +282,16 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v0.2.19 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@yuansui486](https://github.com/yuansui486) | [#52](https://github.com/mrpulor-gh/nuphus/pull/52) | UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核 |
+| [@yuansui486](https://github.com/yuansui486) | [#54](https://github.com/mrpulor-gh/nuphus/pull/54) | 增强判断模型：独立配置 + 从本地有限候选中做结构化选择 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#50](https://github.com/mrpulor-gh/nuphus/pull/50) | 日志轮转加固：改名失败不再丢历史 |
 
 ### v0.2.18 贡献者
 
