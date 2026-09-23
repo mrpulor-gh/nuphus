@@ -48,6 +48,10 @@ vi.mock('../lib/api', () => ({
   sttStatus: vi.fn(),
 }))
 
+vi.mock('./JevSettings', () => ({
+  JevSettings: () => <div data-testid="enhanced-judgment-settings">增强判断模型配置内容</div>,
+}))
+
 // 授权结果事件由后端推送：桩住 Tauri 事件 API。listen 返回的退订函数要能断言
 // （组件卸载必须退订，否则监听泄漏）→ 用 vi.hoisted 让 mock 工厂拿到同一个桩。
 const { unlistenMock } = vi.hoisted(() => ({ unlistenMock: vi.fn() }))
@@ -162,6 +166,16 @@ async function openCreateForm() {
   fireEvent.click(trigger)
   await screen.findByLabelText('自定义名称')
 }
+
+describe('ModelsPage 增强判断模型导航', () => {
+  it('支持从增强模式提示直接打开对应子页', async () => {
+    render(<ModelsPage onClose={() => {}} initialView="jev" />)
+
+    const entry = await screen.findByRole('button', { name: '增强判断模型' })
+    expect(entry).toHaveClass('active')
+    expect(screen.getByTestId('enhanced-judgment-settings')).toBeInTheDocument()
+  })
+})
 
 describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实例）', () => {
   it('Custom 入口展开创建态表单，且预填旧 custom 段的地址与协议', async () => {

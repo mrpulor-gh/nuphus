@@ -91,6 +91,7 @@ import { skeletonFromSchema } from './toolSkeleton'
 import { ProblemsPanel } from './ProblemsPanel'
 import { OutlinePanel } from './OutlinePanel'
 import { IntentFormPanel } from './IntentFormPanel'
+import { EnhancedModeToggle } from './EnhancedModeToggle'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
@@ -1690,6 +1691,8 @@ function CanvasInner({
         >
           <ListChecks size={13} /> 意图表单
         </button>
+
+        <EnhancedModeToggle disabled={readOnly} onNotice={setNotice} />
 
         <button
           type="button"

@@ -1310,6 +1310,16 @@ pub(crate) fn switch_session_inner_mode(
             None => return Err("not_found".to_string()),
         },
     };
+    let target_enhanced_mode = if target_kind == "workflow" {
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|modes| modes.get(&entry.id).copied())
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     // 跨 mode：先切换 current_mode（在归档/安装之前，确保此后 get_chat_history
     // 与后续命令按目标 mode 路由）
@@ -1319,6 +1329,9 @@ pub(crate) fn switch_session_inner_mode(
         }
     }
 
+    if target_kind == "workflow" {
+        crate::commands::config::clear_pending_workflow_enhanced_mode(state);
+    }
     let mut ctx = state.runtime.lock().map_err(|e| e.to_string())?;
 
     // 归档**当前（原）**mode 的 active 会话——跨 mode 时必须归档用户正在离开的
@@ -1350,10 +1363,21 @@ pub(crate) fn switch_session_inner_mode(
         );
         // 切走了：草稿对话（若有）不再是当前对话
         clear_draft_session(state);
+        state
+            .workflow_enhanced_mode
+            .store(target_enhanced_mode, std::sync::atomic::Ordering::SeqCst);
         broadcast_session_changed_mobile(state, &sid);
         return Ok(());
     };
     *slot = target_session;
+    state
+        .workflow_enhanced_mode
+        .store(target_enhanced_mode, std::sync::atomic::Ordering::SeqCst);
+    if target_kind == "workflow" {
+        if let Some(agent) = ctx.workflow_agent.as_mut() {
+            agent.set_enhanced_mode(target_enhanced_mode);
+        }
+    }
 
     tracing::info!(
         "[Shelf] 切换到会话 {} ({current_kind} -> {target_kind})",
@@ -1410,7 +1434,13 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     // 新会话只在下一次欢迎页直发消息时由 process.rs 空态判据创建。
     let new_id = uuid::Uuid::new_v4().to_string(); // SessionChanged 事件 token，非真实会话 id
     match kind {
-        "workflow" => ctx.workflow_agent = None,
+        "workflow" => {
+            ctx.workflow_agent = None;
+            // 增强模式是 Workflow 开发会话状态，不跨新会话继承。
+            state
+                .workflow_enhanced_mode
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         _ => ctx.leader_agent = None,
     }
     drop(ctx);
@@ -1420,6 +1450,9 @@ pub(crate) fn new_chat_session_with_event<R: tauri::Runtime>(
     // 仍可被「重试」复活进新会话。
     if let Ok(mut sb) = state.session.lock() {
         sb.session_backup = None;
+        if kind == "workflow" {
+            sb.pending_workflow_enhanced_mode = None;
+        }
         sb.last_message.clear();
         sb.last_send_id = None;
         sb.last_message_images.clear();
@@ -1564,6 +1597,18 @@ pub fn resume_latest_session(
     // 镜像 mode 同步为当前权威（跨 mode 恢复：workflow/custom 会话不再被强制归 leader）
     if let Ok(mut cm) = state.current_mode.write() {
         *cm = mode.clone();
+    }
+    if mode == "workflow" {
+        crate::commands::config::clear_pending_workflow_enhanced_mode(&state);
+        let enabled = state
+            .workflow_enhanced_modes
+            .lock()
+            .ok()
+            .and_then(|modes| modes.get(&sess.id).copied())
+            .unwrap_or(false);
+        state
+            .workflow_enhanced_mode
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
     crate::commands::process::session::chat_history(&state)
 }
@@ -2732,6 +2777,52 @@ mod tests {
         // 目标放回展示台，rail 不丢条目
         let shelf = state.shelf.lock().unwrap();
         assert!(shelf.contains(&target_id), "目标应放回展示台");
+    }
+
+    #[test]
+    fn workflow_enhanced_mode_follows_the_selected_session() {
+        let state = AppState::default();
+        let first = session_with_user(&["增强会话"]);
+        let first_id = first.id.clone();
+        let second = session_with_user(&["普通会话"]);
+        let second_id = second.id.clone();
+        {
+            let mut shelf = state.shelf.lock().unwrap();
+            shelf.put(
+                build_entry(first_id.clone(), "workflow", &first, Some("增强会话")),
+                first,
+            );
+            shelf.put(
+                build_entry(second_id.clone(), "workflow", &second, Some("普通会话")),
+                second,
+            );
+        }
+        state
+            .workflow_enhanced_modes
+            .lock()
+            .unwrap()
+            .insert(first_id.clone(), true);
+        state.session.lock().unwrap().pending_workflow_enhanced_mode = Some(true);
+
+        switch_session_inner_mode(&state, first_id.clone(), Some("workflow".into())).unwrap();
+        assert!(state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            state.session.lock().unwrap().pending_workflow_enhanced_mode,
+            None,
+            "切换到真实 Workflow 会话后不得保留欢迎页的一次性偏好"
+        );
+
+        switch_session_inner_mode(&state, second_id, Some("workflow".into())).unwrap();
+        assert!(!state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
+
+        switch_session_inner_mode(&state, first_id, Some("workflow".into())).unwrap();
+        assert!(state
+            .workflow_enhanced_mode
+            .load(std::sync::atomic::Ordering::SeqCst));
     }
 
     // ── 「新建对话」弹窗：确认只记录标题，会话仍在发消息时诞生 ──

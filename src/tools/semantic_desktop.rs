@@ -6,8 +6,9 @@
 use super::registry::ToolRegistry;
 use crate::desktop_automation::{
     ActionCandidate, ActionClass, CandidateBuilder, CandidateKind, ComputerExecutor,
-    ComputerObserver, ExecutionGrant, ExecutionInput, LocalPolicy, NativeAction, Observation,
-    ObservationScope, Policy, PolicyDecision, SemanticLocator, Verification,
+    ComputerObserver, DecisionInput, DecisionProvider, ExecutionGrant, ExecutionInput, JevClient,
+    LocalPolicy, NativeAction, Observation, ObservationScope, Policy, PolicyDecision, RecentAction,
+    SemanticLocator, Verification,
 };
 use crate::ToolResult;
 use serde_json::json;
@@ -16,6 +17,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const ACTION_SPACE_TTL: Duration = Duration::from_secs(120);
+const HARD_STEP_LIMIT: u32 = 100;
+const STALL_LIMIT: u32 = 3;
 
 #[derive(Clone)]
 pub(super) struct SemanticDesktopBackend {
@@ -23,6 +26,7 @@ pub(super) struct SemanticDesktopBackend {
     candidates: Arc<dyn CandidateBuilder>,
     executor: Arc<dyn ComputerExecutor>,
     last_space: Arc<tokio::sync::Mutex<Option<ActionSpace>>>,
+    loop_state: Arc<tokio::sync::Mutex<EnhancedLoopState>>,
 }
 
 #[derive(Clone)]
@@ -32,6 +36,15 @@ struct ActionSpace {
     observation: Observation,
     candidates: Vec<ActionCandidate>,
     persistent_locators: std::collections::HashMap<String, SemanticLocator>,
+    enhanced_goal_key: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct EnhancedLoopState {
+    goal_key: String,
+    steps: u32,
+    consecutive_stalls: u32,
+    recent_actions: Vec<RecentAction>,
 }
 
 impl SemanticDesktopBackend {
@@ -44,10 +57,15 @@ impl SemanticDesktopBackend {
             candidates: adapter.clone(),
             executor: adapter,
             last_space: Arc::new(tokio::sync::Mutex::new(None)),
+            loop_state: Arc::new(tokio::sync::Mutex::new(EnhancedLoopState::default())),
         }
     }
 
-    async fn observe(&self, goal: &str) -> Result<ActionSpace, String> {
+    async fn observe(
+        &self,
+        goal: &str,
+        enhanced_goal_key: Option<String>,
+    ) -> Result<ActionSpace, String> {
         let observation = self
             .observer
             .observe(&ObservationScope::default())
@@ -72,6 +90,7 @@ impl SemanticDesktopBackend {
             observation,
             candidates,
             persistent_locators,
+            enhanced_goal_key,
         };
         *self.last_space.lock().await = Some(space.clone());
         Ok(space)
@@ -80,6 +99,125 @@ impl SemanticDesktopBackend {
     async fn clear_space(&self) {
         *self.last_space.lock().await = None;
     }
+
+    async fn begin_enhanced_step(&self, goal: &str) -> Result<(String, Vec<RecentAction>), String> {
+        let goal_key = normalize_goal_key(goal);
+        let mut state = self.loop_state.lock().await;
+        if state.goal_key.is_empty() || !same_bounded_goal(&state.goal_key, &goal_key) {
+            *state = EnhancedLoopState {
+                goal_key: goal_key.clone(),
+                ..Default::default()
+            };
+        }
+        if state.steps >= HARD_STEP_LIMIT {
+            return Err(format!(
+                "增强桌面任务已达到 {HARD_STEP_LIMIT} 步硬上限，请检查目标或重新开始"
+            ));
+        }
+        if state.consecutive_stalls >= STALL_LIMIT {
+            return Err(format!(
+                "连续 {STALL_LIMIT} 个语义动作未产生界面变化，已停止自动重试"
+            ));
+        }
+        // Count every enhanced decision attempt, including Jev protocol/network
+        // failures and attempts that hand the same action space back to the
+        // primary model. Delayed local execution records its outcome below but
+        // must not consume a second decision step.
+        state.steps = state.steps.saturating_add(1);
+        Ok((state.goal_key.clone(), state.recent_actions.clone()))
+    }
+
+    async fn record_enhanced_result(
+        &self,
+        goal_key: &str,
+        candidate: &ActionCandidate,
+        verification: Verification,
+    ) {
+        let mut state = self.loop_state.lock().await;
+        if state.goal_key != goal_key {
+            return;
+        }
+        if verification == Verification::NoChange {
+            state.consecutive_stalls = state.consecutive_stalls.saturating_add(1);
+        } else {
+            state.consecutive_stalls = 0;
+        }
+        state.recent_actions.push(RecentAction {
+            action_class: candidate.action_class(),
+            target_summary: candidate.public_description.clone(),
+            verification,
+        });
+        if state.recent_actions.len() > 8 {
+            state.recent_actions.remove(0);
+        }
+    }
+}
+
+fn normalize_goal_key(goal: &str) -> String {
+    let mut normalized = String::new();
+    let mut pending_separator = false;
+    for ch in goal.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            if pending_separator && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(ch);
+            pending_separator = false;
+        } else {
+            pending_separator = true;
+        }
+    }
+    if normalized.is_empty() {
+        "__nonsemantic_goal__".into()
+    } else {
+        normalized
+    }
+}
+
+fn same_bounded_goal(existing: &str, incoming: &str) -> bool {
+    if existing == incoming {
+        return true;
+    }
+    if existing.is_empty() || incoming.is_empty() {
+        return false;
+    }
+
+    let existing_chars: Vec<char> = existing.chars().collect();
+    let incoming_chars: Vec<char> = incoming.chars().collect();
+    let max_len = existing_chars.len().max(incoming_chars.len());
+    let min_len = existing_chars.len().min(incoming_chars.len());
+    if (existing.contains(incoming) || incoming.contains(existing))
+        && min_len.saturating_mul(4) >= max_len.saturating_mul(3)
+    {
+        return true;
+    }
+
+    let allowed_edits = 3_usize.max(max_len / 10);
+    bounded_edit_distance(&existing_chars, &incoming_chars, allowed_edits)
+        .is_some_and(|distance| distance <= allowed_edits)
+}
+
+fn bounded_edit_distance(left: &[char], right: &[char], limit: usize) -> Option<usize> {
+    if left.len().abs_diff(right.len()) > limit {
+        return None;
+    }
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_char) in left.iter().enumerate() {
+        current[0] = left_index + 1;
+        let mut row_min = current[0];
+        for (right_index, right_char) in right.iter().enumerate() {
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + usize::from(left_char != right_char));
+            row_min = row_min.min(current[right_index + 1]);
+        }
+        if row_min > limit {
+            return None;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    Some(previous[right.len()])
 }
 
 impl ToolRegistry {
@@ -100,7 +238,7 @@ impl ToolRegistry {
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
                 backend
-                    .observe(goal)
+                    .observe(goal, None)
                     .await
                     .map(|space| action_space_json(&space))
             }
@@ -129,6 +267,17 @@ impl ToolRegistry {
                     })?;
                 let input = execution_input(params)?;
                 execute_persistent_action(&backend, locator, action, input).await
+            }
+            "desktop_agent_step" => {
+                if !self.enhanced_mode {
+                    Err(
+                        "增强模式未启用；请使用 desktop_semantic_observe/desktop_semantic_execute"
+                            .into(),
+                    )
+                } else {
+                    let goal = required_string(params, "goal")?;
+                    execute_jev_step(&backend, goal).await
+                }
             }
             _ => Err(format!("未知语义桌面工具: {tool_name}")),
         };
@@ -189,6 +338,115 @@ async fn execute_cached_candidate(
         .cloned()
         .ok_or_else(|| "candidate_id 不属于最近一次语义观察".to_string())?;
     let result = execute_candidate(backend, &space.observation, &candidate, &input, None).await?;
+    if let (Some(goal_key), Some(verification)) = (
+        space.enhanced_goal_key.as_deref(),
+        result
+            .get("verification")
+            .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok()),
+    ) {
+        backend
+            .record_enhanced_result(goal_key, &candidate, verification)
+            .await;
+    }
+    Ok(result)
+}
+
+async fn execute_jev_step(
+    backend: &SemanticDesktopBackend,
+    goal: &str,
+) -> Result<serde_json::Value, String> {
+    let (goal_key, recent_actions) = backend.begin_enhanced_step(goal).await?;
+    let space = backend.observe(goal, Some(goal_key.clone())).await?;
+    let mut config = crate::config::load_registry()
+        .map_err(|error| format!("读取增强判断模型配置失败: {error}"))?
+        .jev;
+    if config.api_key.trim().is_empty() {
+        return Ok(json!({
+            "status": "needs_primary_decision",
+            "reason": "增强判断模型未配置，当前由主模型从同一候选动作空间选择；效果可能较差并消耗更多 Token",
+            "action_space": action_space_json(&space),
+        }));
+    }
+    let fallback_to_primary_model = config.fallback_to_primary_model;
+    config.enabled = true;
+    let client = JevClient::from_config(config).map_err(|error| error.to_string())?;
+    let decision_input = DecisionInput {
+        goal: goal.to_string(),
+        observation: space.observation.clone(),
+        candidates: space.candidates.clone(),
+        recent_actions,
+    };
+    let decision = match client.choose(decision_input).await {
+        Ok(decision) => decision,
+        Err(error) if fallback_to_primary_model => {
+            tracing::warn!(error = %error, "Jev semantic choice failed; falling back to primary model");
+            return Ok(json!({
+                "status": "needs_primary_decision",
+                "reason": "增强判断模型暂时不可用，已回退当前主模型选择；详细网络或协议错误仅记录在本地诊断中",
+                "action_space": action_space_json(&space),
+            }));
+        }
+        Err(error) => return Err(format!("增强判断模型决策失败: {error}")),
+    };
+    let candidate = space
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == decision.candidate_id)
+        .cloned()
+        .ok_or_else(|| "增强判断模型返回了候选集合之外的 ID".to_string())?;
+    if matches!(candidate.kind, CandidateKind::Done) {
+        backend.clear_space().await;
+        return Ok(json!({
+            "status": "needs_primary_completion_check",
+            "reason": "增强判断模型只提出任务可能已完成；请由当前主模型结合业务目标确认是否结束，不会把该判断直接当作本地完成事实",
+            "candidate_id": candidate.id,
+            "decision": {
+                "provider": "jev",
+                "model": decision.actual_model,
+                "confidence": decision.confidence,
+                "usage": decision.usage,
+            },
+        }));
+    }
+    if matches!(
+        candidate.kind,
+        CandidateKind::SetValue { .. } | CandidateKind::SetSecret { .. }
+    ) {
+        return Ok(json!({
+            "status": "needs_input_value",
+            "reason": "增强判断模型已选择文本目标；请由当前主模型提供业务文本并调用 desktop_semantic_execute。文本不会发送给增强判断模型",
+            "observation_token": space.token,
+            "candidate_id": candidate.id,
+            "description": candidate.public_description,
+            "decision": {
+                "provider": "jev",
+                "model": decision.actual_model,
+                "confidence": decision.confidence,
+                "usage": decision.usage,
+            },
+        }));
+    }
+    let result = execute_candidate(
+        backend,
+        &space.observation,
+        &candidate,
+        &ExecutionInput::default(),
+        Some(json!({
+            "provider": "jev",
+            "model": decision.actual_model,
+            "confidence": decision.confidence,
+            "usage": decision.usage,
+        })),
+    )
+    .await?;
+    let verification = result
+        .get("verification")
+        .and_then(|value| serde_json::from_value::<Verification>(value.clone()).ok());
+    if let Some(verification) = verification {
+        backend
+            .record_enhanced_result(&goal_key, &candidate, verification)
+            .await;
+    }
     Ok(result)
 }
 
@@ -509,7 +767,7 @@ fn validate_action_space(
         return Err("语义适配器没有生成候选动作".into());
     }
     if candidates.len() > 255 {
-        return Err("语义候选动作超过单次观察的 255 项上限".into());
+        return Err("候选动作超过增强判断模型单次选择的 255 项上限".into());
     }
     let mut ids = std::collections::HashSet::new();
     for candidate in candidates {
@@ -1099,6 +1357,159 @@ mod tests {
 
         assert_eq!(output["status"], "needs_primary_completion_check");
         assert_eq!(adapter.executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn jev_step_is_rejected_when_enhanced_mode_is_off() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let mut registry = ToolRegistry::new();
+        registry.set_semantic_desktop_adapter(adapter);
+        let result = registry
+            .execute_semantic_desktop_tool("desktop_agent_step", &json!({ "goal": "test" }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("未启用"));
+    }
+
+    #[tokio::test]
+    async fn enhanced_budget_counts_every_decision_attempt_across_minor_goal_edits() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+
+        for index in 0..HARD_STEP_LIMIT {
+            let goal = if index % 2 == 0 {
+                "Open the report"
+            } else {
+                "  OPEN   the report!!!  "
+            };
+            backend.begin_enhanced_step(goal).await.unwrap();
+        }
+
+        let rejected = backend
+            .begin_enhanced_step("open the report.")
+            .await
+            .unwrap_err();
+        assert!(rejected.contains("100 步硬上限"));
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, HARD_STEP_LIMIT);
+        assert_eq!(state.goal_key, "open the report");
+    }
+
+    #[tokio::test]
+    async fn enhanced_fallback_execution_records_stall_and_recent_action_without_double_counting() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::SetValue {
+                slot_id: "value".into(),
+            },
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        for _ in 0..STALL_LIMIT {
+            let (goal_key, _) = backend.begin_enhanced_step("Fill field").await.unwrap();
+            let space = backend.observe("Fill field", Some(goal_key)).await.unwrap();
+            let result = execute_cached_candidate(
+                &backend,
+                &space.token,
+                "fake-candidate",
+                ExecutionInput {
+                    value: Some("local text".into()),
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["verification"], "no_change");
+        }
+
+        let state = backend.loop_state.lock().await;
+        assert_eq!(
+            state.steps, STALL_LIMIT,
+            "delayed execution is not a new decision"
+        );
+        assert_eq!(state.consecutive_stalls, STALL_LIMIT);
+        assert_eq!(state.recent_actions.len(), STALL_LIMIT as usize);
+        assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
+        drop(state);
+
+        let rejected = backend
+            .begin_enhanced_step(" fill field! ")
+            .await
+            .unwrap_err();
+        assert!(rejected.contains("未产生界面变化"));
+    }
+
+    #[tokio::test]
+    async fn enhanced_primary_fallback_execution_records_recent_action() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: false,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        let (goal_key, _) = backend.begin_enhanced_step("Open report").await.unwrap();
+        let space = backend
+            .observe("Open report", Some(goal_key))
+            .await
+            .unwrap();
+
+        let result = execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["verification"], "no_change");
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, 1);
+        assert_eq!(state.consecutive_stalls, 1);
+        assert_eq!(state.recent_actions.len(), 1);
+        assert_eq!(state.recent_actions[0].verification, Verification::NoChange);
+    }
+
+    #[tokio::test]
+    async fn ordinary_semantic_execution_does_not_join_enhanced_budget() {
+        let adapter = Arc::new(FakeAdapter {
+            executions: AtomicUsize::new(0),
+            candidate_kind: CandidateKind::Invoke,
+            received_value: Mutex::new(None),
+            changes_after_execute: true,
+        });
+        let backend = SemanticDesktopBackend::new(adapter);
+        let space = backend.observe("Open", None).await.unwrap();
+
+        execute_cached_candidate(
+            &backend,
+            &space.token,
+            "fake-candidate",
+            ExecutionInput::default(),
+        )
+        .await
+        .unwrap();
+
+        let state = backend.loop_state.lock().await;
+        assert_eq!(state.steps, 0);
+        assert_eq!(state.consecutive_stalls, 0);
+        assert!(state.recent_actions.is_empty());
     }
 
     #[test]

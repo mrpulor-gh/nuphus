@@ -4,8 +4,8 @@
 //! inside this module. Callers receive only redacted semantic observations and
 //! may execute only candidate ids created from the latest observation.
 
+use super::runner::{CandidateBuilder, ComputerExecutor, ComputerObserver};
 use super::types::*;
-use super::{CandidateBuilder, ComputerExecutor, ComputerObserver};
 
 const DEFAULT_MAX_ELEMENTS: usize = 200;
 #[cfg(windows)]
@@ -1169,7 +1169,7 @@ mod platform {
     }
 
     /// The image path is consumed only as local hash input for AppIdentity.
-    /// Neither the path nor PID is exposed in the public Observation.
+    /// Neither the path nor PID is exposed in Observation or sent to Jev.
     fn process_image_path(hwnd: HWND) -> Option<String> {
         let mut pid = 0_u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };

@@ -1,0 +1,117 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EnhancedModeToggle } from './EnhancedModeToggle'
+import { getWorkflowEnhancedMode, setWorkflowEnhancedMode } from '../lib/api'
+
+vi.mock('../lib/api', () => ({
+  getWorkflowEnhancedMode: vi.fn(),
+  setWorkflowEnhancedMode: vi.fn(),
+}))
+
+describe('EnhancedModeToggle', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('未配置时提示影响，确认后由主模型继续增强模式', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: false,
+      configured: false,
+      status: 'unconfigured',
+    })
+    vi.mocked(setWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: false,
+      status: 'primary_fallback',
+    })
+    render(<EnhancedModeToggle compact />)
+
+    const button = await screen.findByRole('button', { name: /增强模式，未配置/ })
+    fireEvent.click(button)
+
+    expect(await screen.findByRole('dialog', { name: '未配置增强判断模型' })).toBeInTheDocument()
+    expect(screen.getByText(/效果可能较差，并会消耗更多 Token/)).toBeInTheDocument()
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '仍然开启' }))
+
+    await waitFor(() => expect(setWorkflowEnhancedMode).toHaveBeenCalledWith(true))
+    expect(await screen.findByRole('button', { name: /增强模式，主模型/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('未配置时可直达增强判断模型配置页', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: false,
+      configured: false,
+      status: 'unconfigured',
+    })
+    const navigation = vi.fn()
+    window.addEventListener('nuphus-nav-models', navigation)
+
+    render(<EnhancedModeToggle />)
+    fireEvent.click(await screen.findByRole('button', { name: /增强模式，未配置/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '前往配置' }))
+
+    expect(navigation).toHaveBeenCalledTimes(1)
+    expect((navigation.mock.calls[0][0] as CustomEvent).detail).toEqual({ view: 'jev' })
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+    window.removeEventListener('nuphus-nav-models', navigation)
+  })
+
+  it('通过结构化 IPC 切换并展示返回状态', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: false,
+      configured: true,
+      status: 'ready',
+    })
+    vi.mocked(setWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+    render(<EnhancedModeToggle />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /增强模式，已关闭/ }))
+
+    await waitFor(() => expect(setWorkflowEnhancedMode).toHaveBeenCalledWith(true))
+    expect(await screen.findByRole('button', { name: /增强模式，可用/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('聊天与画布入口共享切换结果', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: false,
+      configured: true,
+      status: 'disabled',
+    })
+    vi.mocked(setWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+
+    render(
+      <>
+        <EnhancedModeToggle compact />
+        <EnhancedModeToggle />
+      </>,
+    )
+
+    const buttons = await screen.findAllByRole('button', { name: /增强模式，已关闭/ })
+    expect(buttons[0]).toHaveClass('is-compact')
+    fireEvent.click(buttons[0])
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /增强模式，可用/ })).toHaveLength(2),
+    )
+    for (const button of screen.getAllByRole('button', { name: /增强模式，可用/ })) {
+      expect(button).toHaveAttribute('aria-pressed', 'true')
+    }
+    expect(setWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+  })
+})

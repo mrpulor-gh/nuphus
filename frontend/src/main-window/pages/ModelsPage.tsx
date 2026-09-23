@@ -74,6 +74,7 @@ import {
 } from '../lib/customProvider'
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
+import { JevSettings } from './JevSettings'
 // 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
 import { AppPill } from '../../ui/AppPill'
 import '../../styles/models.css'
@@ -1210,12 +1211,16 @@ export function CustomModelForm({
 // ════════════════════════════════════════════════════════════════
 // 页面主体
 // ════════════════════════════════════════════════════════════════
+type ModelsView = 'provider' | 'capabilities' | 'agents' | 'jev'
+
 export function ModelsPage({
   onClose,
   onModelChanged,
+  initialView = 'provider',
 }: {
   onClose: () => void
   onModelChanged?: () => void
+  initialView?: ModelsView
 }) {
   const { t } = useLanguage()
   const [currentModel, setCurrentModel] = useState('')
@@ -1283,7 +1288,7 @@ export function ModelsPage({
       m.id === leaderVisionModelId &&
       (!agentModels.leader_provider || m.provider === agentModels.leader_provider),
   )?.supports_vision
-  const [activeView, setActiveView] = useState<'provider' | 'capabilities' | 'agents'>('provider')
+  const [activeView, setActiveView] = useState<ModelsView>(initialView)
   const [hasKey, setHasKey] = useState(false)
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -1303,6 +1308,10 @@ export function ModelsPage({
   const [clearingModels, setClearingModels] = useState(false)
   /** 显式「刷新」后的落盘同步摘要（新增/更新/移除）；null = 不展示 */
   const [syncSummary, setSyncSummary] = useState<SyncReport | null>(null)
+
+  useEffect(() => {
+    setActiveView(initialView)
+  }, [initialView])
 
   // 本地 STT 探测（一次性，不轮询；调用失败静默降级）
   const probeStt = useCallback(() => {
@@ -2325,6 +2334,25 @@ export function ModelsPage({
               </div>
             </div>
           )}
+
+          <div className="models-rail-group">
+            <div className="models-rail-group-title">自动化增强</div>
+            <div className="models-rail-list">
+              <button
+                type="button"
+                className={[
+                  'models-rail-item',
+                  'models-rail-item--sub',
+                  activeView === 'jev' ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => setActiveView('jev')}
+              >
+                <span className="models-rail-name">增强判断模型</span>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -3399,6 +3427,8 @@ export function ModelsPage({
                   </Section>
                 </>
               )}
+
+              {activeView === 'jev' && <JevSettings />}
             </div>
           </>
         )}
