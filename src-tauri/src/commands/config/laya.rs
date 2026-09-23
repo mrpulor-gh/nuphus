@@ -16,7 +16,7 @@ use nuphus::desktop_automation::{
     ActionCandidate, AppIdentity, CandidateKind, DecisionInput, DecisionProvider, LayaClient,
     LayaConfig, Observation, RiskClass, WindowIdentity,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::State;
 
 /// Result of a Laya connectivity probe. Reports the routed checkpoint when the
@@ -139,16 +139,6 @@ pub fn get_laya_config(state: State<'_, AppState>) -> Result<LayaConfigStatus, S
     Ok(load_laya(&state)?.status())
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct SaveLayaConfigInput {
-    pub base_url: String,
-    pub model: Option<String>,
-    pub enabled: bool,
-    pub timeout_ms: Option<u64>,
-    pub fallback_to_primary_model: Option<bool>,
-    pub api_key: Option<String>,
-}
-
 #[tauri::command]
 pub fn save_laya_config(
     state: State<'_, AppState>,
@@ -233,14 +223,18 @@ pub async fn test_laya_connection(
                 kind: CandidateKind::Done,
                 public_description: "The connection test request is valid and can finish".into(),
                 local_risk: RiskClass::ReadOnly,
+                preconditions: vec![],
+                expected_effects: vec![],
             },
             ActionCandidate {
-                id: "handoff".into(),
+                id: "cannot_proceed".into(),
                 observation_revision: 1,
                 target: None,
-                kind: CandidateKind::Handoff,
+                kind: CandidateKind::CannotProceed,
                 public_description: "The request is malformed and should be re-examined".into(),
                 local_risk: RiskClass::ReadOnly,
+                preconditions: vec![],
+                expected_effects: vec![],
             },
         ],
         recent_actions: vec![],

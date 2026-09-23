@@ -471,9 +471,13 @@ mod tests {
                     id: "control:primary-decision".into(),
                     observation_revision: 1,
                     target: None,
-                    kind: CandidateKind::Handoff,
+                    // 主模型交接走 CannotProceed：与语义权威定义一致
+                    // （见 src/tools/semantic_desktop.rs:1249-1255）
+                    kind: CandidateKind::CannotProceed,
                     public_description: "ask the primary model".into(),
                     local_risk: RiskClass::ReadOnly,
+                    preconditions: vec![],
+                    expected_effects: vec![],
                 },
                 ActionCandidate {
                     id: "region:1".into(),
@@ -482,6 +486,8 @@ mod tests {
                     kind: CandidateKind::Invoke,
                     public_description: "click into the editor".into(),
                     local_risk: RiskClass::ReadOnly,
+                    preconditions: vec![],
+                    expected_effects: vec![],
                 },
             ],
             recent_actions: vec![],

@@ -750,6 +750,7 @@ impl ModelRegistry {
             providers,
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             // env 来源没有配置文件：OAuth 令牌注入路径据此跳过（无盘可刷新）
             source_path: None,
@@ -996,6 +997,7 @@ impl ModelRegistry {
             }],
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: HashMap::new(),
             // from_single 无文件来源（内存构造）：OAuth 刷新链路自然跳过。
             source_path: None,
@@ -1051,6 +1053,40 @@ id = "m"
         assert_eq!(registry.jev.timeout_ms, 10_000);
         assert_eq!(registry.jev.max_retries, 2);
         assert!(registry.jev.fallback_to_primary_model);
+    }
+
+    /// 内存构造路径（from_single）必须补齐 `laya` 字段，且取值与 `jev`
+    /// 同源——都取 `*_default()`。此处锁定「无配置文件 → 两后端均为默认值」
+    /// 的行为，防止将来新增内存构造点时再漏字段而改变决策后端选择。
+    #[test]
+    fn from_single_memory_construction_includes_laya_default() {
+        let registry = ModelRegistry::from_single(
+            "m1".to_string(),
+            "custom".to_string(),
+            "k".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            None,
+        );
+
+        // 无配置文件来源：两个可选决策后端都落在默认值上。
+        assert_eq!(
+            registry.laya.base_url,
+            LayaConfig::default().base_url,
+            "from_single 必须补齐 laya，取值须与 LayaConfig::default() 一致"
+        );
+        assert_eq!(registry.laya.model, LayaConfig::default().model);
+        assert_eq!(registry.laya.timeout_ms, LayaConfig::default().timeout_ms);
+        assert_eq!(registry.laya.max_retries, LayaConfig::default().max_retries);
+        assert_eq!(registry.laya.api_key, LayaConfig::default().api_key);
+        assert_eq!(
+            registry.laya.fallback_to_primary_model,
+            LayaConfig::default().fallback_to_primary_model
+        );
+        assert!(registry.source_path.is_none(), "内存构造无盘来源");
+
+        // 与 jev 对称：两条内存构造路径的后端默认值语义保持一致。
+        assert!(!registry.jev.enabled);
+        assert!(!registry.laya.enabled);
     }
 
     #[test]
@@ -1235,6 +1271,7 @@ id = "m1"
             }],
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };
@@ -1407,6 +1444,7 @@ vision_provider = "custom"
             providers,
             capabilities: Capabilities::default(),
             jev: JevConfig::default(),
+            laya: LayaConfig::default(),
             alias_map: Default::default(),
             source_path: None,
         };

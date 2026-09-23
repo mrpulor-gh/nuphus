@@ -1465,6 +1465,7 @@ mod tests {
                 actual_model: None,
                 usage: None,
             },
+            "laya",
         )
         .await
         .unwrap();
@@ -1503,6 +1504,7 @@ mod tests {
                 actual_model: None,
                 usage: None,
             },
+            "laya",
         )
         .await
         .unwrap();
