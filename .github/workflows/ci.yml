@@ -60,6 +60,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check compilation
@@ -83,9 +85,11 @@ jobs:
     name: Smoke (macOS launch)
     # 无 Mac 硬件的启动验证：macOS runner 有 WindowServer，可运行 GUI 程序。
     # 检查实际 .app 启动并提供 ARM64 试用包；进程存活不代表 AX 实机验收通过。
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
