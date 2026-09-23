@@ -7,7 +7,8 @@
 //
 // 本地应用的图片没有理由受浏览器配额约束：这里改为写入数据目录
 // `{data_dir}/Nuphus/user-images/{kind}/{uuid}.{ext}`，localStorage 只存
-// `{kind}/{uuid}.{ext}` 形式的文件名；展示时由 `read_user_image` 读回 dataURL
+// `{kind}/{uuid}.{ext}` 形式的文件名；展示时由 `read_user_image` 返回磁盘路径，
+// 前端 convertFileSrc 转 asset:// URL 交由 WebView 直接读文件渲染（不经 base64）。
 // （仅在内存/CSS 中使用，不经过任何配额层）。保存即替换：写新文件、删旧文件。
 
 use std::path::{Path, PathBuf};
@@ -25,11 +26,13 @@ const ALLOWED_EXTENSIONS: [(&str, &str); 5] = [
 /// 避免任意字符串拼出未预期的目录。
 const ALLOWED_KINDS: [&str; 3] = ["skin", "avatar", "nuphus-avatar"];
 
-/// 保存结果：文件名（写回 localStorage）+ 即时展示用的 dataURL。
+/// 保存结果：绝对路径（前端经 convertFileSrc 直接加载，无需 base64 中转）+ 文件名（写回 localStorage）。
 #[derive(serde::Serialize)]
 pub struct SavedUserImage {
+    /// localStorage 只存这个短标识；避免绝对路径随用户目录变化而失效。
     pub name: String,
-    pub url: String,
+    /// 磁盘绝对路径：前端 convertFileSrc(path) → asset:// URL，由 WebView 原生读文件渲染。
+    pub path: String,
 }
 
 /// 保存用户图片（dataURL）到 `{kind}/` 目录并替换旧图片。
@@ -104,31 +107,11 @@ fn decode_data_url(data_url: &str, mime: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn encode_base64(bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
 fn encode_base64_decode(encoded: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD
         .decode(encoded.trim())
         .map_err(|e| format!("图片数据解码失败：{}", e))
-}
-
-fn extension_of(name: &str) -> Option<String> {
-    Path::new(name)
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-}
-
-fn mime_for_extension(extension: Option<&str>) -> Result<&'static str, String> {
-    let extension = extension.ok_or_else(|| "图片文件名缺少扩展名".to_string())?;
-    ALLOWED_EXTENSIONS
-        .iter()
-        .find(|(_, ext)| *ext == extension)
-        .map(|(mime, _)| *mime)
-        .ok_or_else(|| format!("不支持的图片格式：{extension}"))
 }
 
 /// 把 `{kind}/{file}` 形式的文件名解析到磁盘路径。
@@ -193,19 +176,17 @@ fn save_user_image_at(
 
     Ok(SavedUserImage {
         name: format!("{kind}/{file_name}"),
-        url: format!("data:{mime};base64,{}", encode_base64(&bytes)),
+        path: path.to_string_lossy().into_owned(),
     })
 }
 
-/// 读回逻辑主体。
+/// 读回逻辑主体：返回图片在磁盘上的绝对路径（前端 convertFileSrc 直接加载）。
 fn read_user_image_at(base: &Path, name: &str) -> Result<String, String> {
     let path = resolve_image_path(base, name)?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("读取图片失败：{}", e))?;
-    if bytes.is_empty() {
-        return Err("图片文件为空".into());
+    if !path.is_file() {
+        return Err("图片文件不存在".into());
     }
-    let mime = mime_for_extension(extension_of(name).as_deref())?;
-    Ok(format!("data:{mime};base64,{}", encode_base64(&bytes)))
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 删除逻辑主体：文件不存在视为成功（幂等，重复清除不报错）。
@@ -248,16 +229,21 @@ mod tests {
         let saved = save_user_image_at(&root, "skin", "", &tiny_png_data_url()).unwrap();
         assert!(saved.name.starts_with("skin/"));
         assert!(saved.name.ends_with(".png"));
-        assert!(saved.url.starts_with("data:image/png;base64,"));
+        assert!(
+            std::path::Path::new(&saved.path).is_file(),
+            "返回的 path 必须是真实文件：{}",
+            saved.path
+        );
 
-        let path = resolve_image_path(&root, &saved.name).unwrap();
-        assert!(path.is_file(), "文件必须真实落盘：{}", path.display());
-
-        let url = read_user_image_at(&root, &saved.name).unwrap();
-        assert_eq!(url, saved.url, "读回的 dataURL 应与保存时一致");
+        // 读回返回同一磁盘路径（前端据此 convertFileSrc 直接加载，不经 base64）
+        let read = read_user_image_at(&root, &saved.name).unwrap();
+        assert_eq!(read, saved.path, "读回应返回同一文件路径");
 
         delete_user_image_at(&root, &saved.name).unwrap();
-        assert!(!path.exists(), "删除后文件必须不存在");
+        assert!(
+            !std::path::Path::new(&saved.path).exists(),
+            "删除后文件必须不存在"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -5,18 +5,22 @@
 // CSS 变量注入），且同源配额共享，一次大图写入失败会连带影响其它 key 的后续写入。
 //
 // 现在：图片落盘 {data_dir}/Nuphus/user-images/{kind}/{uuid}.{ext}（save_user_image），
-// localStorage 只存 "{kind}/{uuid}.{ext}" 文件名；展示时经 read_user_image 取回 dataURL，
-// 仅在内存 / CSS 中使用，不经过任何配额层。本地图片大小不受限制。
+// localStorage 只存 "{kind}/{uuid}.{ext}" 短标识。展示时由 read_user_image 返回磁盘
+// 绝对路径，经 convertFileSrc 转 asset:// URL —— 由 WebView 原生读文件渲染。
+//
+// 关键：**不做 base64 中转**。图片就在本地磁盘，走 asset:// 让浏览器直接读文件，
+// 零额外内存拷贝、零大小限制；早先「读回 base64 → dataURL → CSS 变量」的实现对大图
+// （数 MB）会生成更大的 base64 串，注入与解码都极慢甚至失败，小图能过、大图出不来。
 //
 // 兼容：读取时识别历史遗留的 dataURL 值，经 migrateLegacyImage 转存为文件。
 
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 
 export type UserImageKind = 'skin' | 'avatar' | 'nuphus-avatar'
 
 interface SavedUserImage {
   name: string
-  url: string
+  path: string
 }
 
 const LEGACY_PREFIX = 'data:image'
@@ -38,8 +42,13 @@ export function isLegacyDataUrl(stored: string): boolean {
   return stored.startsWith(LEGACY_PREFIX)
 }
 
+/** 磁盘路径 → WebView 可直接加载的 asset:// URL（图片渲染的唯一出口）。 */
+export function toImageUrl(path: string): string {
+  return convertFileSrc(path)
+}
+
 /**
- * 保存：落盘 + localStorage 只留文件名（替换旧文件）。返回即时展示 dataURL。
+ * 保存：落盘 + localStorage 只留文件名（替换旧文件）。返回可直接用于 CSS/图片的 asset URL。
  * 保存失败（磁盘不可写等）时抛出，由调用方提示用户。
  */
 export async function saveStoredImage(
@@ -57,16 +66,17 @@ export async function saveStoredImage(
   })
   localStorage.setItem(storageKey, saved.name)
   notifyChanged()
-  return saved.url
+  return toImageUrl(saved.path)
 }
 
-/** 展示：文件名 → dataURL；历史 dataURL 原样返回；读失败返回空串（无图态）。 */
+/** 展示：文件名 → asset URL；历史 dataURL 原样返回；读失败返回空串（无图态）。 */
 export async function loadStoredImage(storageKey: string): Promise<string> {
   const stored = localStorage.getItem(storageKey) || ''
   if (!stored) return ''
   if (isLegacyDataUrl(stored)) return stored
   try {
-    return await invoke<string>('read_user_image', { name: stored })
+    const path = await invoke<string>('read_user_image', { name: stored })
+    return toImageUrl(path)
   } catch {
     return ''
   }
@@ -74,7 +84,7 @@ export async function loadStoredImage(storageKey: string): Promise<string> {
 
 /**
  * 迁移：把历史 dataURL 值转存为文件，localStorage 改写为文件名；已是文件名则原样。
- * 返回迁移后可展示的 dataURL（无需迁移时为空串）。
+ * 返回迁移后的 asset URL（无需迁移时为空串）。
  */
 export async function migrateLegacyImage(kind: UserImageKind, storageKey: string): Promise<string> {
   const stored = localStorage.getItem(storageKey) || ''
@@ -87,7 +97,7 @@ export async function migrateLegacyImage(kind: UserImageKind, storageKey: string
     })
     localStorage.setItem(storageKey, saved.name)
     notifyChanged()
-    return saved.url
+    return toImageUrl(saved.path)
   } catch {
     return ''
   }
