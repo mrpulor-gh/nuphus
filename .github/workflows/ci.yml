@@ -126,6 +126,29 @@ jobs:
           fi
       - name: Package macOS test app
         run: ditto -c -k --sequesterRsrc --keepParent target/debug/bundle/macos/Nuphus.app nuphus-macos-arm64-rpa.zip
+      - name: Build and verify macOS test DMG
+        run: |
+          stage_dir=$(mktemp -d)
+          ditto target/debug/bundle/macos/Nuphus.app "$stage_dir/Nuphus.app"
+          ln -s /Applications "$stage_dir/Applications"
+          hdiutil create -volname Nuphus -srcfolder "$stage_dir" -format UDZO nuphus-macos-arm64-rpa.dmg
+          hdiutil verify nuphus-macos-arm64-rpa.dmg
+          mount_dir=$(mktemp -d)
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" nuphus-macos-arm64-rpa.dmg
+          trap 'hdiutil detach "$mount_dir" || true' EXIT
+          codesign --verify --deep --strict "$mount_dir/Nuphus.app"
+          lipo -verify_arch arm64 "$mount_dir/Nuphus.app/Contents/MacOS/nuphus"
+          test "$(readlink "$mount_dir/Applications")" = /Applications
+          env -u ORT_DYLIB_PATH target/debug/examples/macos_runtime_smoke "$mount_dir/Nuphus.app"
+          shasum -a 256 nuphus-macos-arm64-rpa.dmg > nuphus-macos-arm64-rpa.dmg.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuphus-macos-arm64-rpa-dmg-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            nuphus-macos-arm64-rpa.dmg
+            nuphus-macos-arm64-rpa.dmg.sha256
+          compression-level: 0
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: nuphus-macos-arm64-rpa-${{ github.event.pull_request.head.sha || github.sha }}
