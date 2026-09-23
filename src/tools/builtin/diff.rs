@@ -16,9 +16,11 @@ pub fn file_diff(
     modified_path: &str,
     context_lines: usize,
 ) -> Result<String, String> {
-    let original = fs::read_to_string(original_path)
+    // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）：
+    // 基准必须与 Write/Edit 一致，否则「写进项目目录、按 cwd 对比」会读不到。
+    let original = fs::read_to_string(crate::utils::resolve_user_path(original_path))
         .map_err(|e| format!("无法读取源文件 '{}': {}", original_path, e))?;
-    let modified = fs::read_to_string(modified_path)
+    let modified = fs::read_to_string(crate::utils::resolve_user_path(modified_path))
         .map_err(|e| format!("无法读取修改后文件 '{}': {}", modified_path, e))?;
 
     if original == modified {

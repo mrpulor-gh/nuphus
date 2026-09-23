@@ -758,7 +758,12 @@ impl ToolRegistry {
                 if from.is_empty() || to.is_empty() {
                     return Ok(ToolResult::failure("both 'from' and 'to' are required"));
                 }
-                match std::fs::rename(from, to) {
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）
+                let (src, dst) = (
+                    crate::utils::resolve_user_path(from),
+                    crate::utils::resolve_user_path(to),
+                );
+                match std::fs::rename(&src, &dst) {
                     Ok(_) => Ok(ToolResult::success(format!("Renamed: {} -> {}", from, to))),
                     Err(e) => Ok(ToolResult::failure(format!("Rename failed: {}", e))),
                 }
@@ -785,7 +790,12 @@ impl ToolRegistry {
                 if from.is_empty() || to.is_empty() {
                     return Ok(ToolResult::failure("both 'from' and 'to' are required"));
                 }
-                match std::fs::copy(from, to) {
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）
+                let (src, dst) = (
+                    crate::utils::resolve_user_path(from),
+                    crate::utils::resolve_user_path(to),
+                );
+                match std::fs::copy(&src, &dst) {
                     Ok(bytes) => Ok(ToolResult::success(format!(
                         "Copied: {} -> {} ({} bytes)",
                         from, to, bytes
@@ -813,8 +823,13 @@ impl ToolRegistry {
                 if path.is_empty() {
                     return Ok(ToolResult::failure("path is required"));
                 }
-                match std::fs::create_dir_all(path) {
-                    Ok(_) => Ok(ToolResult::success(format!("Created directory: {}", path))),
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）
+                let p = crate::utils::resolve_user_path(path);
+                match std::fs::create_dir_all(&p) {
+                    Ok(_) => Ok(ToolResult::success(format!(
+                        "Created directory: {}",
+                        p.display()
+                    ))),
                     Err(e) => Ok(ToolResult::failure(format!("Mkdir failed: {}", e))),
                 }
             },
@@ -879,7 +894,7 @@ impl ToolRegistry {
                     },
                     "path": {
                         "type": "string",
-                        "description": "Root directory to search (default: current directory)"
+                        "description": "Root directory to search (default: current work root; absolute paths unaffected)"
                     }
                 },
                 "required": ["patterns"]
@@ -901,15 +916,17 @@ impl ToolRegistry {
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|e| format!("invalid glob pattern: {}", e))?;
 
-                let root_path = std::path::Path::new(root);
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）：
+                // 与 Write/Read 同基准，否则「写进项目目录、在 cwd 里搜」会搜不到。
+                let root_path = crate::utils::resolve_user_path(root);
                 let mut paths = Vec::new();
-                let walk = ignore::WalkBuilder::new(root)
+                let walk = ignore::WalkBuilder::new(&root_path)
                     .max_depth(Some(10))
                     .build();
 
                 for entry in walk.filter_map(|e| e.ok()) {
                     let file_name = entry.file_name().to_str().unwrap_or("");
-                    let rel_path = entry.path().strip_prefix(root_path)
+                    let rel_path = entry.path().strip_prefix(&root_path)
                         .unwrap_or(entry.path())
                         .to_str()
                         .unwrap_or("");
@@ -940,7 +957,7 @@ impl ToolRegistry {
                 "type": "object",
                 "properties": {
                     "pattern": { "type": "string", "description": "Regex pattern to search for" },
-                    "path": { "type": "string", "description": "Root directory to search (default: current directory)" },
+                    "path": { "type": "string", "description": "Root directory to search (default: current work root; absolute paths unaffected)" },
                     "-n": { "type": "boolean", "description": "Show line numbers in results" },
                     "-i": { "type": "boolean", "description": "Case-insensitive search" },
                     "head_limit": { "type": "integer", "description": "Max matches to return (default: 50)" }
@@ -964,8 +981,11 @@ impl ToolRegistry {
                 let regex = regex::Regex::new(&pattern)
                     .map_err(|e| format!("invalid regex: {}", e))?;
 
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）：
+                // 与 Write/Read 同基准，否则「写进项目目录、在 cwd 里搜」会搜不到。
+                let root_path = crate::utils::resolve_user_path(path);
                 let mut matches = Vec::new();
-                let walk = ignore::WalkBuilder::new(path)
+                let walk = ignore::WalkBuilder::new(&root_path)
                     .hidden(false)
                     .git_ignore(true)
                     .build();
@@ -1151,6 +1171,107 @@ mod edit_contract_tests {
         assert!(edit.success, "edit failed: {:?}", edit.error);
         let after = std::fs::read_to_string(project.join(rel_name)).unwrap();
         assert!(after.contains("line-A"), "Edit 应改到项目目录下的同一文件");
+
+        match previous_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// issue #53 补齐：目录创建 / 复制 / 改名 / 搜索 / 对比 的入口必须与 Write/Read/Edit
+    /// 同一基准（当前工作根）。此前这些入口各自按进程 cwd 解析，出现「写进项目目录、
+    /// 却在 cwd 里搜 / 移动 / 对比」的断链——本用例把六个入口串起来守护同一基准。
+    #[test]
+    fn directory_copy_rename_search_and_diff_entrypoints_share_the_write_base() {
+        let _guard = crate::utils::path_base_tests::HOME_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+
+        // 隔离 HOME：把项目目录指向一个干净临时目录（同 relative_paths_resolve_against_work_root）
+        let home = std::env::temp_dir().join(format!("nuphus-entry-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".nuphus")).unwrap();
+        let project = home.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            home.join(".nuphus").join("preferences.json"),
+            format!(
+                "{{\"language\":\"zh-CN\",\"project_dir\":{:?}}}",
+                project.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &home);
+
+        let registry = ToolRegistry::builtin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let run = |name: &str, params: serde_json::Value| {
+            let result = rt
+                .block_on(registry.execute(name, &params))
+                .expect("execute should not Err");
+            assert!(result.success, "{} failed: {:?}", name, result.error);
+            result.output.unwrap_or_default()
+        };
+
+        // 六个入口全部使用相对路径，落点应与 Write 完全一致
+        run(
+            "Write",
+            serde_json::json!({ "path": "probe/entry.txt", "content": "alpha line\nbeta line\n" }),
+        );
+        run("CreateDir", serde_json::json!({ "path": "made_by_tool" }));
+        run(
+            "Copy",
+            serde_json::json!({ "from": "probe/entry.txt", "to": "probe/copy.txt" }),
+        );
+        run(
+            "Rename",
+            serde_json::json!({ "from": "probe/copy.txt", "to": "probe/renamed.txt" }),
+        );
+        run(
+            "Write",
+            serde_json::json!({ "path": "probe/renamed.txt", "content": "gamma line\n" }),
+        );
+
+        // 落点必须在项目目录，进程 cwd 下不能留下任何痕迹
+        let cwd = std::env::current_dir().unwrap();
+        assert!(
+            project.join("made_by_tool").is_dir(),
+            "CreateDir 必须落在项目目录"
+        );
+        assert!(
+            !cwd.join("made_by_tool").exists(),
+            "CreateDir 不得落在进程 cwd"
+        );
+        assert!(
+            project.join("probe/renamed.txt").exists(),
+            "Rename 必须落在项目目录"
+        );
+        assert!(!cwd.join("probe").exists(), "相对路径不得在 cwd 建出目录");
+
+        // 搜索与对比默认 root 即工作根：项目目录内文件可被命中
+        let glob = run("Glob", serde_json::json!({ "patterns": ["renamed.txt"] }));
+        assert!(
+            glob.contains("renamed.txt"),
+            "Glob 应命中项目目录内文件：{glob}"
+        );
+        let grep = run("Grep", serde_json::json!({ "pattern": "gamma" }));
+        assert!(
+            grep.contains("renamed.txt"),
+            "Grep 应命中项目目录内文件：{grep}"
+        );
+        let diff = run(
+            "Diff",
+            serde_json::json!({
+                "original_path": "probe/entry.txt",
+                "modified_path": "probe/renamed.txt"
+            }),
+        );
+        assert!(
+            diff.contains("gamma"),
+            "Diff 应按工作根读取并产出差异：{diff}"
+        );
 
         match previous_home {
             Some(v) => std::env::set_var("HOME", v),
