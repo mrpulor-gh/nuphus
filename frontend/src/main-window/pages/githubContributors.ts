@@ -62,6 +62,25 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.2.19',
+    date: '2026-09-23',
+    contributors: [
+      {
+        user: 'yuansui486',
+        contributions: [
+          { pr: 52, summary: 'UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核' },
+          { pr: 54, summary: '增强判断模型：独立配置 + 从本地有限候选中做结构化选择' },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          { pr: 50, summary: '日志轮转加固：改名失败不再丢历史' },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.18',
     date: '2026-09-22',
     contributors: [
