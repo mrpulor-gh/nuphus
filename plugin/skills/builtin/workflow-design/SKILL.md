@@ -318,9 +318,9 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 | 验证状态 | snapshot + chat 语义判断 | extract 文本匹配 |
 | 查经验 | ui_maps_search 两级检索 | Read ui-maps JSON |
 
-**桌面语义动作**：探索时先调用 `desktop_semantic_observe`，从有限候选中执行并验证；写入工作流时只保存返回的稳定 `workflow_step`，禁止保存临时 `candidate_id` 或 `observation_token`。只有目标应用不暴露有效 UIA/Accessibility 控件时，才使用截图、OCR、YOLO 和鼠标坐标路径。
+**桌面语义动作**：先检查当前实际工具列表。存在 `desktop_agent_step` 时以它作为新的桌面动作选择入口；普通模式有语义工具时先调用 `desktop_semantic_observe`，从有限候选中执行并验证。写入工作流时只保存返回的稳定 `workflow_step`，禁止保存临时 `candidate_id` 或 `observation_token`。当前平台未提供语义工具或目标应用不暴露有效 UIA/Accessibility 控件时，使用实际可用的截图、OCR、YOLO 和鼠标路径；不要调用或重试不存在的工具。macOS 的纯 Accessibility 操作仅需辅助功能权限，截图和视觉识别才需要录屏权限；权限缺失时说明授权位置，返回后重试，不循环调用。
 
-**坐标体系**：确需使用 `desktop_mouse` 时一律用**屏幕绝对坐标**；perceive 结果为客户区坐标时手动加 `screen_x/screen_y` 偏移。
+**坐标体系**：确需使用 `desktop_mouse` 时采用该工具声明的桌面坐标；以本地截图工具返回的比例和原点完成像素转换，不由模型估算。macOS Retina 截图像素不等于桌面逻辑坐标，外接屏也可能具有负坐标原点。
 
 **输入**：`desktop_input` 输入+发送一次调用；普通文本直接输入，>500 字用 clipboard 并事后 clean；敏感内容禁用 clipboard。
 

@@ -122,6 +122,7 @@ mod platform {
         window: WindowIdentity,
         nodes: Vec<NativeNode>,
         fingerprint: String,
+        truncated: bool,
         // Keep COM initialized until every UIAutomation interface above has
         // been released. This field must remain last so it drops last.
         _com: ComApartment,
@@ -193,6 +194,7 @@ mod platform {
                     .map(|node| node.metadata.public_node())
                     .collect(),
                 captured_at_ms: now_ms(),
+                truncated: snapshot.truncated,
             })
         }
 
@@ -590,6 +592,7 @@ mod platform {
                 .map_err(|error| uia_observation_error("create UIA control-view walker", error))?
         };
         let mut nodes = Vec::with_capacity(max_elements);
+        let mut truncated = max_elements <= 1;
         nodes.push(native_node(root.clone(), 0, vec![])?);
         if nodes.len() < max_elements {
             let condition = unsafe {
@@ -605,13 +608,17 @@ mod platform {
             };
             let count = unsafe { elements.Length() }
                 .map_err(|error| uia_observation_error("read UIA element count", error))?;
+            truncated = count > (max_elements - 1) as i32;
             for index in 0..count.min((max_elements - 1) as i32) {
                 let Ok(element) = (unsafe { elements.GetElement(index) }) else {
+                    truncated = true;
                     continue;
                 };
                 let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
                 if let Ok(node) = native_node(element, index as usize + 1, ancestors) {
                     nodes.push(node);
+                } else {
+                    truncated = true;
                 }
             }
         }
@@ -622,6 +629,7 @@ mod platform {
             window,
             nodes,
             fingerprint,
+            truncated,
             _com: com,
         })
     }
@@ -1317,6 +1325,7 @@ mod platform {
                 },
                 nodes: nodes.iter().map(NodeMetadata::public_node).collect(),
                 captured_at_ms: 1,
+                truncated: false,
             }
         }
 

@@ -175,8 +175,10 @@ export interface JevConnectionStatus {
 }
 
 export interface WorkflowEnhancedMode {
+  /** Session preference; may remain enabled while desktop permissions are missing. */
   enabled: boolean
   configured: boolean
+  /** Includes unsupported_platform and needs_accessibility; neither is ready. */
   status?: string
 }
 

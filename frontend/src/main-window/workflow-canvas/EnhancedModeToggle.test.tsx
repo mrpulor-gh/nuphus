@@ -143,4 +143,65 @@ describe('EnhancedModeToggle', () => {
     )
     expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(2)
   })
+
+  it.each([
+    ['needs_accessibility', '需辅助功能权限'],
+    ['unsupported_platform', '当前平台未支持'],
+  ])('配置存在但 %s 时不显示可用，也不丢失开启偏好', async (status, label) => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status,
+    })
+    render(<EnhancedModeToggle />)
+    expect(await screen.findByRole('button', { name: `增强模式，${label}` })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.queryByRole('button', { name: /增强模式，可用/ })).not.toBeInTheDocument()
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+  })
+
+  it('从系统设置返回时刷新授权状态，撤销授权后也刷新', async () => {
+    vi.mocked(getWorkflowEnhancedMode)
+      .mockResolvedValueOnce({ enabled: true, configured: true, status: 'needs_accessibility' })
+      .mockResolvedValueOnce({ enabled: true, configured: true, status: 'ready' })
+      .mockResolvedValueOnce({ enabled: true, configured: true, status: 'needs_accessibility' })
+    const { unmount } = render(<EnhancedModeToggle />)
+    await screen.findByRole('button', { name: /增强模式，需辅助功能权限/ })
+
+    fireEvent(window, new Event('focus'))
+    await screen.findByRole('button', { name: /增强模式，可用/ })
+
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    fireEvent(document, new Event('visibilitychange'))
+    expect(await screen.findByRole('button', { name: /增强模式，需辅助功能权限/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+    unmount()
+    fireEvent(window, new Event('focus'))
+    expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(3)
+    visibility.mockRestore()
+  })
+
+  it('返回应用后忽略较早请求的过期权限状态', async () => {
+    let resolveOld!: (value: { enabled: boolean; configured: boolean; status: string }) => void
+    vi.mocked(getWorkflowEnhancedMode)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ enabled: true, configured: true, status: 'ready' })
+    render(<EnhancedModeToggle />)
+    fireEvent(window, new Event('focus'))
+    await screen.findByRole('button', { name: /增强模式，可用/ })
+    await act(async () => {
+      resolveOld({ enabled: true, configured: true, status: 'needs_accessibility' })
+    })
+    expect(screen.getByRole('button', { name: /增强模式，可用/ })).toBeInTheDocument()
+  })
 })

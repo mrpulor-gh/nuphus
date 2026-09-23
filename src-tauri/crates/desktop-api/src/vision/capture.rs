@@ -7,6 +7,20 @@ use xcap::Window as XcapWindow;
 
 /// 截图 - 根据目标和范围
 pub async fn capture(target: &Target, scope: Scope) -> Result<Frame> {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        // A denied capture may otherwise return an image with private windows
+        // omitted, which is not a valid observation of the requested target.
+        if !unsafe { CGPreflightScreenCaptureAccess() } {
+            return Err(DesktopError::CaptureFailed(
+                "截图需要录屏权限，请在系统设置→隐私与安全性→录屏中授权 Nuphus 后重试".into(),
+            ));
+        }
+    }
     match scope {
         Scope::Fullscreen => capture_fullscreen().await,
         Scope::Window => capture_window(target).await,

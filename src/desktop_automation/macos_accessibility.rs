@@ -26,6 +26,49 @@ mod semantic {
         format!("{:016x}", hasher.finish())
     }
 
+    pub(super) fn check_window_binding(expected: u64, current: u64) -> Result<(), AutomationError> {
+        if expected == current && expected != 0 {
+            Ok(())
+        } else {
+            Err(AutomationError::Execution(
+                "foreground AX window changed since the candidate was created".into(),
+            ))
+        }
+    }
+
+    pub(super) fn window_is_unique(
+        enumeration_complete: bool,
+        focused_enumerated: bool,
+        matches: usize,
+    ) -> bool {
+        enumeration_complete && focused_enumerated && matches == 1
+    }
+
+    pub(super) fn check_deadline(deadline: std::time::Instant) -> Result<(), AutomationError> {
+        if std::time::Instant::now() >= deadline {
+            Err(AutomationError::Observation(
+                "Accessibility observation timed out; partial tree discarded".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn child_capacity(
+        limit: usize,
+        visited: usize,
+        queued: usize,
+        depth: usize,
+    ) -> usize {
+        if depth >= 24 {
+            0
+        } else {
+            limit
+                .saturating_sub(visited.saturating_add(queued).saturating_add(1))
+                .min(200)
+        }
+    }
+
     pub(super) fn redact(value: &str) -> String {
         let lower = value.to_lowercase();
         if value.contains('@')
@@ -229,6 +272,8 @@ mod platform {
         candidate: ActionCandidate,
         locator: SemanticLocator,
         action: NativeAction,
+        window_token: u64,
+        require_unique_window: bool,
     }
 
     #[derive(Default)]
@@ -238,6 +283,8 @@ mod platform {
         observation: Option<Observation>,
         metadata: Vec<Metadata>,
         actions: HashMap<String, BoundAction>,
+        window_token: u64,
+        window_unique: bool,
     }
 
     enum Request {
@@ -273,11 +320,12 @@ mod platform {
             let _ = std::thread::Builder::new()
                 .name("nuphus-ax".into())
                 .spawn(move || {
+                    let mut session = native::Session::default();
                     while let Ok(request) = receiver.recv() {
                         match request {
                             Request::Observe(scope, deadline, reply) => {
                                 if !reply.is_closed() {
-                                    let result = native::capture(
+                                    let result = session.capture(
                                         max_elements.clamp(1, 200),
                                         &scope,
                                         deadline,
@@ -287,21 +335,24 @@ mod platform {
                             }
                             Request::Execute(bound, input, deadline, reply) => {
                                 if !reply.is_closed() {
-                                    let result = native::execute(
-                                        max_elements.clamp(1, 200),
-                                        &bound.locator,
-                                        &bound.action,
-                                        &input,
-                                        deadline,
-                                        || reply.is_closed(),
-                                    )
-                                    .map(|()| ActionReceipt {
-                                        candidate_id: bound.candidate.id,
-                                        dispatched: true,
-                                        detail: Some(
-                                            "macOS Accessibility action dispatched".into(),
-                                        ),
-                                    });
+                                    let result = session
+                                        .execute(
+                                            max_elements.clamp(1, 200),
+                                            bound.window_token,
+                                            bound.require_unique_window,
+                                            &bound.locator,
+                                            &bound.action,
+                                            &input,
+                                            deadline,
+                                            || reply.is_closed(),
+                                        )
+                                        .map(|()| ActionReceipt {
+                                            candidate_id: bound.candidate.id,
+                                            dispatched: true,
+                                            detail: Some(
+                                                "macOS Accessibility action dispatched".into(),
+                                            ),
+                                        });
                                     let _ = reply.send(result);
                                 }
                             }
@@ -354,6 +405,8 @@ mod platform {
                     candidate: candidate.clone(),
                     locator,
                     action,
+                    window_token: state.window_token,
+                    require_unique_window: false,
                 },
             );
             Ok(candidate)
@@ -411,12 +464,15 @@ mod platform {
                 app: snapshot.app,
                 window: snapshot.window,
                 nodes: snapshot.metadata.iter().map(|m| m.node.clone()).collect(),
+                truncated: snapshot.truncated,
                 captured_at_ms: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64,
             };
             state.metadata = snapshot.metadata;
+            state.window_token = snapshot.window_token;
+            state.window_unique = snapshot.window_unique;
             state.observation = Some(observation.clone());
             Ok(observation)
         }
@@ -530,6 +586,9 @@ mod platform {
                 .lock()
                 .map_err(|_| AutomationError::Candidates("AX state unavailable".into()))?;
             Self::current(&state, observation)?;
+            if !state.window_unique {
+                return Err(AutomationError::Candidates("saved AX window identity is ambiguous; give the windows distinct titles or close the duplicate before replay".into()));
+            }
             let found: Vec<_> = state
                 .metadata
                 .iter()
@@ -539,7 +598,11 @@ mod platform {
             let [meta] = found.as_slice() else {
                 return Err(AutomationError::Candidates("AX locator is missing or ambiguous; refresh the observation or specify ancestor context".into()));
             };
-            Self::bind(&mut state, observation, meta, action)
+            let candidate = Self::bind(&mut state, observation, meta, action)?;
+            if let Some(bound) = state.actions.get_mut(&candidate.id) {
+                bound.require_unique_window = true;
+            }
+            Ok(candidate)
         }
     }
 
@@ -566,6 +629,7 @@ mod platform {
                             "candidate was not created by this AX adapter or was modified".into(),
                         )
                     })?;
+                check_window_binding(bound.window_token, state.window_token)?;
                 bound.clone()
             };
             let (reply, receive) = oneshot::channel();
@@ -855,5 +919,27 @@ mod tests {
             RiskClass::DestructiveCritical
         );
         assert_eq!(risk(&NativeAction::SetValue, None), RiskClass::BoundedWrite);
+    }
+
+    #[test]
+    fn same_named_windows_do_not_share_ephemeral_action_authority() {
+        assert!(check_window_binding(17, 17).is_ok());
+        assert!(check_window_binding(17, 18).is_err());
+        assert!(check_window_binding(0, 0).is_err());
+        assert!(window_is_unique(true, true, 1));
+        assert!(!window_is_unique(true, true, 2));
+        assert!(!window_is_unique(false, true, 1));
+        assert!(!window_is_unique(true, false, 1));
+    }
+
+    #[test]
+    fn timed_out_observation_is_an_error_and_traversal_keeps_node_and_depth_bounds() {
+        use std::time::{Duration, Instant};
+        assert!(check_deadline(Instant::now() - Duration::from_millis(1)).is_err());
+        assert!(check_deadline(Instant::now() + Duration::from_secs(60)).is_ok());
+        assert_eq!(child_capacity(200, 20, 30, 5), 149);
+        assert_eq!(child_capacity(200, 199, 0, 5), 0);
+        assert_eq!(child_capacity(200, 0, 0, 24), 0);
+        assert_eq!(child_capacity(200, 0, 0, 23), 199);
     }
 }

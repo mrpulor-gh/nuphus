@@ -529,7 +529,7 @@ async fn execute_candidate(
         return Err("执行回执与候选动作不一致".into());
     }
     let (after, verification) =
-        verify_with_settle(backend, &fresh, &verification_candidate).await?;
+        verify_with_settle(backend, &fresh, &verification_candidate, input).await?;
     backend.clear_space().await;
     Ok(json!({
         "status": "executed",
@@ -610,6 +610,7 @@ async fn verify_with_settle(
     backend: &SemanticDesktopBackend,
     before: &Observation,
     candidate: &ActionCandidate,
+    input: &ExecutionInput,
 ) -> Result<(Observation, Verification), String> {
     const ATTEMPTS: usize = 6;
     const SETTLE_MS: u64 = 125;
@@ -620,7 +621,8 @@ async fn verify_with_settle(
         .await
         .map_err(|error| error.to_string())?;
     for attempt in 0..ATTEMPTS {
-        let verification = verify_observation(before, candidate, &last);
+        let verification =
+            verify_observation_with_value(before, candidate, &last, input.value.as_deref());
         if verification != Verification::NoChange || attempt + 1 == ATTEMPTS {
             return Ok((last, verification));
         }
@@ -634,10 +636,20 @@ async fn verify_with_settle(
     unreachable!("bounded verification loop always returns")
 }
 
+#[cfg(test)]
 fn verify_observation(
     before: &Observation,
     candidate: &ActionCandidate,
     after: &Observation,
+) -> Verification {
+    verify_observation_with_value(before, candidate, after, None)
+}
+
+fn verify_observation_with_value(
+    before: &Observation,
+    candidate: &ActionCandidate,
+    after: &Observation,
+    expected_value: Option<&str>,
 ) -> Verification {
     // The foreground can change while an application processes an action.
     // A similarly named control in another app is not evidence of success.
@@ -662,6 +674,7 @@ fn verify_observation(
         }
         (CandidateKind::Invoke, Some(old), Some(TargetResolution::Missing)) => {
             invoke_expected(candidate)
+                && !after.truncated
                 && target_is_unique(before, old)
                 && before.app.id == after.app.id
         }
@@ -686,9 +699,11 @@ fn verify_observation(
             new.expanded == Some(false)
         }
         (CandidateKind::Focus, _, Some(TargetResolution::Unique(new))) => new.focused,
-        (CandidateKind::SetValue { .. }, Some(old), Some(TargetResolution::Unique(new))) => {
-            old.value_fingerprint != new.value_fingerprint
-        }
+        (CandidateKind::SetValue { .. }, _, Some(TargetResolution::Unique(new))) => expected_value
+            .is_some_and(|value| {
+                new.value_fingerprint.as_deref()
+                    == Some(crate::desktop_automation::value_fingerprint(value).as_str())
+            }),
         _ => false,
     };
     if achieved {
@@ -822,6 +837,7 @@ fn action_space_json(space: &ActionSpace) -> serde_json::Value {
             "window": space.observation.window,
             "element_count": space.observation.nodes.len(),
             "captured_at_ms": space.observation.captured_at_ms,
+            "truncated": space.observation.truncated,
         },
         "candidates": space.candidates.iter().map(|candidate| {
             let workflow_step = space.persistent_locators.get(&candidate.id).and_then(|locator| {
@@ -874,6 +890,7 @@ mod tests {
             },
             nodes: vec![],
             captured_at_ms: 1,
+            truncated: false,
         }
     }
 
@@ -911,9 +928,15 @@ mod tests {
                     selected: None,
                     expanded: None,
                     value_fingerprint: Some(if executed {
-                        "value:after".into()
+                        crate::desktop_automation::value_fingerprint(
+                            self.received_value
+                                .lock()
+                                .unwrap()
+                                .as_deref()
+                                .unwrap_or_default(),
+                        )
                     } else {
-                        "value:before".into()
+                        crate::desktop_automation::value_fingerprint("before")
                     }),
                     supported_actions: vec![NativeAction::SetValue],
                 });
@@ -1406,6 +1429,54 @@ mod tests {
         let restored: crate::desktop_automation::UiNode =
             serde_json::from_value(serialized).unwrap();
         assert_eq!(restored, node);
+    }
+
+    #[test]
+    fn partial_observation_does_not_prove_target_disappearance() {
+        let before = invoke_observation("before", 1);
+        let mut after = invoke_observation("partial", 0);
+        after.truncated = true;
+        assert_eq!(
+            verify_observation(&before, &invoke_candidate("invoke-target-0"), &after),
+            Verification::NoChange
+        );
+        after.truncated = false;
+        assert_eq!(
+            verify_observation(&before, &invoke_candidate("invoke-target-0"), &after),
+            Verification::Achieved
+        );
+    }
+
+    #[test]
+    fn set_value_verifies_expected_content_and_accepts_idempotent_replay() {
+        let mut before = invoke_observation("before", 1);
+        before.nodes[0].role = crate::desktop_automation::UiRole::TextField;
+        before.nodes[0].value_fingerprint =
+            Some(crate::desktop_automation::value_fingerprint("  目标文字  "));
+        let mut candidate = invoke_candidate("invoke-target-0");
+        candidate.kind = CandidateKind::SetValue {
+            slot_id: "value".into(),
+        };
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &before, Some("  目标文字  ")),
+            Verification::Achieved
+        );
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &before, None),
+            Verification::NoChange
+        );
+        let mut after = before.clone();
+        after.nodes[0].value_fingerprint =
+            Some(crate::desktop_automation::value_fingerprint("目标文字"));
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
+            Verification::NoChange
+        );
+        after.nodes[0].value_fingerprint = None;
+        assert_eq!(
+            verify_observation_with_value(&before, &candidate, &after, Some("  目标文字  ")),
+            Verification::NoChange
+        );
     }
 
     #[tokio::test]

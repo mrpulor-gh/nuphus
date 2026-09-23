@@ -82,6 +82,17 @@ pub struct Observation {
     pub window: WindowIdentity,
     pub nodes: Vec<UiNode>,
     pub captured_at_ms: u64,
+    /// Missing nodes in a bounded/partial tree are not proof of disappearance.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// Local-only comparison of an input slot against a freshly observed value.
+pub(crate) fn value_fingerprint(value: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("value:{:016x}", hasher.finish())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

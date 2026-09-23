@@ -15,6 +15,20 @@ pub use sendinput::*;
 /// Serialize native input, retrying initialization after a missing permission/display is fixed.
 #[cfg(not(windows))]
 pub fn with_enigo<T>(operation: impl FnOnce(&mut enigo::Enigo) -> Result<T>) -> Result<T> {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> u8;
+        }
+        // CGEventPost can silently discard events after permission is revoked.
+        // Check even when an input engine was initialized earlier.
+        if unsafe { AXIsProcessTrusted() } == 0 {
+            return Err(DesktopError::InputFailed(
+                "请在系统设置→隐私与安全性→辅助功能中授权 Nuphus 后重试".into(),
+            ));
+        }
+    }
     static INSTANCE: std::sync::Mutex<Option<SendEnigo>> = std::sync::Mutex::new(None);
     let mut instance = INSTANCE
         .lock()

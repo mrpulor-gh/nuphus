@@ -28,11 +28,20 @@ pub struct WorkflowEnhancedModeStatus {
     pub status: &'static str,
 }
 
-fn workflow_enhanced_status(enabled: bool, configured: bool) -> WorkflowEnhancedModeStatus {
+fn workflow_enhanced_status(
+    enabled: bool,
+    configured: bool,
+    platform_supported: bool,
+    accessibility_granted: bool,
+) -> WorkflowEnhancedModeStatus {
     WorkflowEnhancedModeStatus {
         enabled,
         configured,
-        status: if enabled && !configured {
+        status: if !platform_supported {
+            "unsupported_platform"
+        } else if !accessibility_granted {
+            "needs_accessibility"
+        } else if enabled && !configured {
             "primary_fallback"
         } else if enabled {
             "ready"
@@ -42,6 +51,20 @@ fn workflow_enhanced_status(enabled: bool, configured: bool) -> WorkflowEnhanced
             "disabled"
         },
     }
+}
+
+fn current_workflow_enhanced_status(enabled: bool, configured: bool) -> WorkflowEnhancedModeStatus {
+    let platform_supported = cfg!(any(target_os = "windows", target_os = "macos"));
+    #[cfg(target_os = "macos")]
+    let accessibility_granted = crate::macos_permissions::accessibility_permission_granted();
+    #[cfg(not(target_os = "macos"))]
+    let accessibility_granted = true;
+    workflow_enhanced_status(
+        enabled,
+        configured,
+        platform_supported,
+        accessibility_granted,
+    )
 }
 
 fn active_workflow_session_id(state: &AppState) -> Option<String> {
@@ -359,6 +382,7 @@ pub async fn test_jev_connection(
             },
             nodes: vec![],
             captured_at_ms: 0,
+            truncated: false,
         },
         candidates: vec![
             ActionCandidate {
@@ -405,7 +429,7 @@ pub fn get_workflow_enhanced_mode(
     state
         .workflow_enhanced_mode
         .store(enabled, Ordering::SeqCst);
-    Ok(workflow_enhanced_status(enabled, configured))
+    Ok(current_workflow_enhanced_status(enabled, configured))
 }
 
 #[tauri::command]
@@ -419,7 +443,7 @@ pub fn set_workflow_enhanced_mode(
         return Err("任务执行中，停止后才能切换增强模式".to_string());
     }
     set_workflow_enhanced_preference(&state, enabled)?;
-    Ok(workflow_enhanced_status(enabled, configured))
+    Ok(current_workflow_enhanced_status(enabled, configured))
 }
 
 #[cfg(test)]
@@ -573,13 +597,37 @@ mod tests {
 
     #[test]
     fn unconfigured_enhanced_mode_uses_primary_model_status() {
-        let status = workflow_enhanced_status(true, false);
+        let status = workflow_enhanced_status(true, false, true, true);
         assert!(status.enabled);
         assert!(!status.configured);
         assert_eq!(status.status, "primary_fallback");
 
-        let status = workflow_enhanced_status(false, false);
+        let status = workflow_enhanced_status(false, false, true, true);
         assert!(!status.enabled);
         assert_eq!(status.status, "unconfigured");
+    }
+
+    #[test]
+    fn unavailable_desktop_capabilities_never_report_ready_or_erase_preference() {
+        for enabled in [false, true] {
+            for configured in [false, true] {
+                let unsupported = workflow_enhanced_status(enabled, configured, false, true);
+                assert_eq!(unsupported.status, "unsupported_platform");
+                assert_eq!(unsupported.enabled, enabled);
+                assert_eq!(unsupported.configured, configured);
+                let missing = workflow_enhanced_status(enabled, configured, true, false);
+                assert_eq!(missing.status, "needs_accessibility");
+                assert_eq!(missing.enabled, enabled);
+                assert_eq!(missing.configured, configured);
+            }
+        }
+        assert_eq!(
+            workflow_enhanced_status(true, true, true, true).status,
+            "ready"
+        );
+        assert_eq!(
+            workflow_enhanced_status(false, true, true, true).status,
+            "disabled"
+        );
     }
 }

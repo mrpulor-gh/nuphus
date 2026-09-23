@@ -1446,7 +1446,7 @@ const en: Record<string, string> = {
   'macosPermission.status.unsupported': 'Unsupported',
   'macosPermission.screen_recording': 'Screen Recording',
   'macosPermission.screen_recordingDesc':
-    'Used for desktop capture, visual recognition, and workflow recording.',
+    'Used for desktop capture and visual recognition; not needed for Accessibility-only actions.',
   'macosPermission.accessibility': 'Accessibility',
   'macosPermission.accessibilityDesc':
     'Used to control the pointer, keyboard, windows, and desktop apps.',

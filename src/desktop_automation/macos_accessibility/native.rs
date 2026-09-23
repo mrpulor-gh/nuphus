@@ -160,6 +160,12 @@ impl Owned {
                 .collect()
         }
     }
+
+    fn array_len(&self) -> Option<usize> {
+        unsafe {
+            (CFGetTypeID(self.0) == CFArrayGetTypeID()).then(|| CFArrayGetCount(self.0) as usize)
+        }
+    }
 }
 impl Drop for Owned {
     fn drop(&mut self) {
@@ -175,6 +181,9 @@ impl Drop for Owned {
 /// the owning thread; re-acquire by application/window identity for each call.
 pub(crate) struct Element(Owned);
 impl Element {
+    fn retained(&self) -> Self {
+        Self(Owned(unsafe { CFRetain(self.0 .0) }, PhantomData))
+    }
     fn from_owned(value: Owned) -> Option<Self> {
         if unsafe { CFGetTypeID(value.0) } != unsafe { AXUIElementGetTypeID() } {
             return None;
@@ -218,15 +227,46 @@ impl Element {
     pub(crate) fn child(&self, name: &str, deadline: Instant) -> Option<Self> {
         Self::from_owned(self.attribute(name, deadline)?)
     }
-    pub(crate) fn children(&self, name: &str, limit: usize, deadline: Instant) -> Vec<Self> {
-        self.attribute(name, deadline)
-            .map(|a| {
-                a.array(limit)
-                    .into_iter()
-                    .filter_map(Self::from_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+    fn children_page(
+        &self,
+        name: &str,
+        limit: usize,
+        deadline: Instant,
+    ) -> Result<(Vec<Self>, bool), AutomationError> {
+        check_deadline(deadline)?;
+        let key = Owned::string(name);
+        if key.0.is_null() {
+            return Err(AutomationError::Observation(
+                "AX attribute allocation failed".into(),
+            ));
+        }
+        let mut result = std::ptr::null();
+        let status = unsafe { AXUIElementCopyAttributeValue(self.0 .0, key.0, &mut result) };
+        let owned = unsafe { Owned::take(result) };
+        check_deadline(deadline)?;
+        // Unsupported/absent children are normal on leaf controls. Messaging
+        // failures must not masquerade as an empty, complete subtree.
+        if matches!(status, -25205 | -25208 | -25212) {
+            return Ok((vec![], false));
+        }
+        if status != 0 {
+            return Err(AutomationError::Observation(format!(
+                "AX tree enumeration failed (AXError {status}); partial tree discarded"
+            )));
+        }
+        let Some(array) = owned else {
+            return Ok((vec![], true));
+        };
+        let Some(count) = array.array_len() else {
+            return Ok((vec![], true));
+        };
+        let children: Vec<_> = array
+            .array(limit)
+            .into_iter()
+            .filter_map(Self::from_owned)
+            .collect();
+        let omitted = count > children.len();
+        Ok((children, omitted))
     }
     pub(crate) fn pid(&self) -> Option<i32> {
         let mut pid = 0;
@@ -351,6 +391,9 @@ pub(super) struct Snapshot {
     pub window: WindowIdentity,
     pub metadata: Vec<Metadata>,
     pub fingerprint: String,
+    pub truncated: bool,
+    pub window_token: u64,
+    pub window_unique: bool,
 }
 struct NativeSnapshot {
     snapshot: Snapshot,
@@ -358,12 +401,75 @@ struct NativeSnapshot {
     app: Element,
 }
 
-pub(super) fn capture(
-    limit: usize,
-    scope: &ObservationScope,
-    deadline: Instant,
-) -> Result<Snapshot, AutomationError> {
-    Ok(capture_native(limit, scope, deadline)?.snapshot)
+/// Ephemeral references stay on the worker. Tokens are never serialized into
+/// observations or saved locators. Evicted bindings fail instead of rebinding.
+#[derive(Default)]
+pub(super) struct Session {
+    windows: std::collections::VecDeque<(u64, Element)>,
+    next_token: u64,
+}
+
+impl Session {
+    pub(super) fn capture(
+        &mut self,
+        limit: usize,
+        scope: &ObservationScope,
+        deadline: Instant,
+    ) -> Result<Snapshot, AutomationError> {
+        let mut native = capture_native(limit, scope, deadline)?;
+        let window = &native.elements[0];
+        let token = match self
+            .windows
+            .iter()
+            .find(|(_, retained)| retained.same(window))
+        {
+            Some((token, _)) => *token,
+            None => {
+                self.next_token = self.next_token.checked_add(1).ok_or_else(|| {
+                    AutomationError::Observation("AX window token space exhausted".into())
+                })?;
+                self.windows.push_back((self.next_token, window.retained()));
+                if self.windows.len() > 16 {
+                    self.windows.pop_front();
+                }
+                self.next_token
+            }
+        };
+        native.snapshot.window_token = token;
+        Ok(native.snapshot)
+    }
+
+    pub(super) fn execute(
+        &self,
+        limit: usize,
+        token: u64,
+        require_unique: bool,
+        locator: &SemanticLocator,
+        action: &NativeAction,
+        input: &ExecutionInput,
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), AutomationError> {
+        let (_, window) = self
+            .windows
+            .iter()
+            .find(|(retained, _)| *retained == token)
+            .ok_or_else(|| {
+                AutomationError::Execution(
+                    "AX window binding expired; refresh the candidate".into(),
+                )
+            })?;
+        execute(
+            limit,
+            window,
+            require_unique,
+            locator,
+            action,
+            input,
+            deadline,
+            cancelled,
+        )
+    }
 }
 
 fn capture_native(
@@ -371,6 +477,7 @@ fn capture_native(
     scope: &ObservationScope,
     deadline: Instant,
 ) -> Result<NativeSnapshot, AutomationError> {
+    check_deadline(deadline)?;
     if !trusted() {
         return Err(AutomationError::Observation("macOS Accessibility permission is required; enable Nuphus in System Settings > Privacy & Security > Accessibility".into()));
     }
@@ -405,16 +512,41 @@ fn capture_native(
         })?;
     let title = window.text("AXTitle", deadline).unwrap_or_default();
     let identifier = window.text("AXIdentifier", deadline);
-    // Window titles are the fallback only when the provider has no stable AX
-    // identifier. Never persist a pid, CGWindowID or AX object address.
-    let window_id = format!(
-        "axw:{}",
-        hash(&format!(
-            "{}|{}",
-            identity.id,
-            identifier.as_deref().unwrap_or(&title)
-        ))
-    );
+    // Inspect sibling windows before deriving the persisted identity. Some
+    // apps reuse one AXIdentifier for every document window; add the title in
+    // that case, while genuinely unique identifiers remain title-independent.
+    let (siblings, windows_truncated) = app.children_page("AXWindows", 128, deadline)?;
+    let mut sibling_keys = Vec::new();
+    let mut focused_enumerated = false;
+    for sibling in &siblings {
+        sibling_keys.push((
+            sibling.text("AXIdentifier", deadline),
+            sibling.text("AXTitle", deadline).unwrap_or_default(),
+        ));
+        focused_enumerated |= sibling.same(&window);
+    }
+    let repeated_identifier = identifier.is_some()
+        && sibling_keys
+            .iter()
+            .filter(|(id, _)| id == &identifier)
+            .count()
+            > 1;
+    let key = |id: Option<&str>, title: &str| {
+        if repeated_identifier {
+            format!("{}|{title}", id.unwrap_or_default())
+        } else {
+            id.unwrap_or(title).to_owned()
+        }
+    };
+    let target_key = key(identifier.as_deref(), &title);
+    let matching_windows = sibling_keys
+        .iter()
+        .filter(|(id, title)| key(id.as_deref(), title) == target_key)
+        .count();
+    let window_unique = window_is_unique(!windows_truncated, focused_enumerated, matching_windows);
+    check_deadline(deadline)?;
+    // Never persist a pid, CGWindowID or AX object address.
+    let window_id = format!("axw:{}", hash(&format!("{}|{}", identity.id, target_key)));
     if scope.app_id.as_ref().is_some_and(|id| id != &identity.id)
         || scope.window_id.as_ref().is_some_and(|id| id != &window_id)
     {
@@ -426,6 +558,9 @@ fn capture_native(
         id: window_id,
         title: redact(&title),
     };
+    // A title/AXIdentifier identifies a saved window only if exactly one open
+    // window has it. Ephemeral candidates still work in either duplicate window
+    // because Session binds those candidates to its retained native reference.
     let mut pending =
         std::collections::VecDeque::from([(window, Vec::<SemanticContext>::new(), false, 0_usize)]);
     // The menu bar is outside AXWindow. Include it so native application menus
@@ -435,8 +570,11 @@ fn capture_native(
     }
     let mut metadata = Vec::new();
     let mut elements: Vec<Element> = Vec::new();
+    let mut truncated = false;
     while let Some((element, ancestors, secure_parent, depth)) = pending.pop_front() {
-        if metadata.len() >= limit || Instant::now() >= deadline {
+        check_deadline(deadline)?;
+        if metadata.len() >= limit {
+            truncated = true;
             break;
         }
         if elements.iter().any(|old| old.same(&element)) {
@@ -450,7 +588,7 @@ fn capture_native(
                 .boolean("AXProtectedContent", deadline)
                 .unwrap_or(false);
         let identifier = element.text("AXIdentifier", deadline);
-        let raw_name = if secure {
+        let mut raw_name = if secure {
             None
         } else {
             element
@@ -464,6 +602,12 @@ fn capture_native(
         } else {
             element.attribute("AXValue", deadline)
         };
+        if raw_name.is_none() && raw_role == "AXStaticText" && !secure {
+            raw_name = value
+                .as_ref()
+                .and_then(Owned::text)
+                .map(|text| text.chars().take(256).collect());
+        }
         let expanded = element.boolean("AXExpanded", deadline);
         let toggled = if role == UiRole::CheckBox {
             value.as_ref().and_then(Owned::boolean)
@@ -522,14 +666,15 @@ fn capture_native(
                 child_ancestors.remove(0);
             }
         }
-        if depth < 24 && !secure {
-            let remaining = limit
-                .saturating_sub(metadata.len() + pending.len())
-                .min(200);
-            for child in element.children("AXChildren", remaining, deadline) {
+        if !secure {
+            let capacity = child_capacity(limit, metadata.len(), pending.len(), depth);
+            let (children, omitted) = element.children_page("AXChildren", capacity, deadline)?;
+            truncated |= omitted;
+            for child in children {
                 pending.push_back((child, child_ancestors.clone(), secure, depth + 1));
             }
         }
+        check_deadline(deadline)?;
         metadata.push(Metadata {
             node,
             identifier,
@@ -538,13 +683,14 @@ fn capture_native(
         });
         elements.push(element);
     }
+    check_deadline(deadline)?;
     if metadata.is_empty() {
         return Err(AutomationError::Observation(
             "Accessibility tree was empty or timed out".into(),
         ));
     }
     let fingerprint = hash(&format!(
-        "{}|{}|{:?}",
+        "{}|{}|{:?}|{truncated}",
         identity.id, window_identity.id, metadata
     ));
     Ok(NativeSnapshot {
@@ -553,6 +699,9 @@ fn capture_native(
             window: window_identity,
             metadata,
             fingerprint,
+            truncated,
+            window_token: 0,
+            window_unique,
         },
         elements,
         app,
@@ -582,8 +731,10 @@ pub(super) fn validate_locator_window(
     Ok(())
 }
 
-pub(super) fn execute(
+fn execute(
     limit: usize,
+    expected_window: &Element,
+    require_unique_window: bool,
     locator: &SemanticLocator,
     action: &NativeAction,
     input: &ExecutionInput,
@@ -599,6 +750,16 @@ pub(super) fn execute(
         },
         deadline,
     )?;
+    if !snapshot.elements[0].same(expected_window) {
+        return Err(AutomationError::Execution(
+            "AX window changed since the candidate was created".into(),
+        ));
+    }
+    if require_unique_window && !snapshot.snapshot.window_unique {
+        return Err(AutomationError::Execution(
+            "saved AX window identity became ambiguous before dispatch".into(),
+        ));
+    }
     let found: Vec<_> = snapshot
         .snapshot
         .metadata
@@ -679,7 +840,7 @@ mod tests {
         if trusted() {
             return;
         }
-        let result = capture(
+        let result = Session::default().capture(
             10,
             &ObservationScope::default(),
             Instant::now() + std::time::Duration::from_secs(1),
@@ -692,12 +853,13 @@ mod tests {
     #[test]
     #[ignore = "requires a logged-in macOS desktop, Accessibility permission, and a foreground test application"]
     fn live_accessibility_observation_reports_semantics_without_document_values() {
-        let snapshot = capture(
-            200,
-            &ObservationScope::default(),
-            Instant::now() + std::time::Duration::from_secs(5),
-        )
-        .unwrap();
+        let snapshot = Session::default()
+            .capture(
+                200,
+                &ObservationScope::default(),
+                Instant::now() + std::time::Duration::from_secs(5),
+            )
+            .unwrap();
         assert!(!snapshot.app.id.is_empty());
         assert!(!snapshot.metadata.is_empty());
         assert!(snapshot
