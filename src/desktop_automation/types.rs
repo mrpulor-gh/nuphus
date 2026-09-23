@@ -48,6 +48,11 @@ pub struct WindowIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiNode {
     pub opaque_id: String,
+    /// Stable, platform-neutral identity derived from the control's semantic
+    /// locator, not its mutable value or traversal index. Native handles remain
+    /// local. Older observations may omit this and use the legacy resolver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_key: Option<String>,
     pub role: UiRole,
     pub name: Option<String>,
     pub short_value: Option<String>,

@@ -70,6 +70,11 @@ mod platform {
         fn public_node(&self) -> UiNode {
             UiNode {
                 opaque_id: self.opaque_id.clone(),
+                semantic_key: self
+                    .opaque_id
+                    .strip_prefix("uie:")
+                    .and_then(|suffix| suffix.rsplit_once(':'))
+                    .map(|(key, _)| format!("uia:{key}")),
                 role: self.role.clone(),
                 // Password controls may expose provider-specific labels or
                 // values through Name. Keep the raw locator local, but never

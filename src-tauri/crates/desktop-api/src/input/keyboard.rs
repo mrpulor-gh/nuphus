@@ -1,21 +1,6 @@
 //! 键盘控制 — Win32 原生 / macOS enigo / Linux PlatformNotSupported
 
-#[cfg(not(windows))]
-use super::SendEnigo;
 use crate::core::*;
-
-#[cfg(not(windows))]
-fn enigo() -> &'static std::sync::Mutex<SendEnigo> {
-    static INST: std::sync::OnceLock<std::sync::Mutex<SendEnigo>> = std::sync::OnceLock::new();
-    INST.get_or_init(|| {
-        // enigo 0.2: `Enigo::new` 返回 Result（构造可能失败），此处 panic 仅发生在
-        // 平台输入初始化不可用（无显示服务器等），与后续调用失败语义一致。
-        // SendEnigo: macOS 上 Enigo 非 Send（CGEventSource 指针），经 Mutex 串行化后包装为 Send+Sync。
-        std::sync::Mutex::new(SendEnigo(
-            enigo::Enigo::new(&enigo::Settings::default()).expect("enigo init failed"),
-        ))
-    })
-}
 
 /// 发送按键
 pub async fn press(key: &str) -> Result<()> {
@@ -36,11 +21,11 @@ pub async fn press(key: &str) -> Result<()> {
     {
         use enigo::{Direction, Keyboard};
         let ek = vk_to_enigo(vk)?;
-        enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?
-            .key(ek, Direction::Click)
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        super::with_enigo(|engine| {
+            engine
+                .key(ek, Direction::Click)
+                .map_err(|e| DesktopError::InputFailed(e.to_string()))
+        })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
@@ -74,22 +59,31 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
     #[cfg(not(windows))]
     {
         use enigo::{Direction, Keyboard};
-        let mut e = enigo()
-            .lock()
-            .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
         let ekeys: Vec<enigo::Key> = vks
             .iter()
             .map(|&v| vk_to_enigo(v))
             .collect::<Result<Vec<_>>>()?;
-        for k in &ekeys {
-            e.key(*k, Direction::Press)
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
-        }
-        for k in ekeys.iter().rev() {
-            e.key(*k, Direction::Release)
-                .map_err(|e| DesktopError::InputFailed(e.to_string()))?;
-        }
-        Ok(())
+        super::with_enigo(|engine| {
+            let mut pressed = Vec::new();
+            let mut failure = None;
+            for &key in &ekeys {
+                // Also release the failed key: an OS error can occur after key-down.
+                pressed.push(key);
+                if let Err(error) = engine.key(key, Direction::Press) {
+                    failure = Some(error.to_string());
+                    break;
+                }
+            }
+            for key in pressed.into_iter().rev() {
+                if let Err(error) = engine.key(key, Direction::Release) {
+                    failure.get_or_insert_with(|| error.to_string());
+                }
+            }
+            match failure {
+                Some(error) => Err(DesktopError::InputFailed(error)),
+                None => Ok(()),
+            }
+        })
     }
     #[cfg(all(not(windows), not(any(target_os = "macos", target_os = "linux"))))]
     {
@@ -115,8 +109,8 @@ fn key_to_vk(key: &str) -> Result<u16> {
         "pagedown" => Ok(0x22),
         "ctrl" | "control" => Ok(0x11),
         "shift" => Ok(0x10),
-        "alt" => Ok(0x12),
-        "win" | "command" | "meta" => Ok(0x5B),
+        "alt" | "option" | "opt" => Ok(0x12),
+        "win" | "command" | "cmd" | "meta" | "super" => Ok(0x5B),
         "f1" => Ok(0x70),
         "f2" => Ok(0x71),
         "f3" => Ok(0x72),
@@ -166,6 +160,18 @@ fn key_to_vk(key: &str) -> Result<u16> {
         "8" => Ok(0x38),
         "9" => Ok(0x39),
         _ => Err(DesktopError::InputFailed(format!("unknown key: {}", key))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_modifier_aliases_are_equivalent() {
+        assert_eq!(key_to_vk("Cmd").unwrap(), key_to_vk("command").unwrap());
+        assert_eq!(key_to_vk("Option").unwrap(), key_to_vk("alt").unwrap());
+        assert!(key_to_vk("invented_key").is_err());
     }
 }
 

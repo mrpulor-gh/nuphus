@@ -2,7 +2,7 @@
 
 use crate::core::*;
 use xcap::Monitor;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use xcap::Window as XcapWindow;
 
 /// 截图 - 根据目标和范围
@@ -24,18 +24,53 @@ async fn capture_fullscreen() -> Result<Frame> {
     let monitors = Monitor::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
     let primary = monitors
         .into_iter()
-        .next()
+        .find(|monitor| monitor.is_primary().unwrap_or(false))
         .ok_or_else(|| DesktopError::CaptureFailed("no monitor found".to_string()))?;
 
     let image = primary
         .capture_image()
         .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let image = logical_image(
+        image,
+        primary
+            .width()
+            .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?,
+        primary
+            .height()
+            .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?,
+    )?;
     convert_to_frame(image, Scope::Fullscreen, FrameSource::Screenshot)
 }
 
 /// 窗口截图 - 根据图形后端分派策略
 #[cfg_attr(not(windows), allow(unused_variables))]
 async fn capture_window(target: &Target) -> Result<Frame> {
+    #[cfg(target_os = "macos")]
+    if let Target::Tui { hwnd, .. } = target {
+        let windows = XcapWindow::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+        let window = windows
+            .into_iter()
+            .find(|window| window.id().ok().map(|id| id as isize) == Some(*hwnd))
+            .ok_or_else(|| {
+                DesktopError::CaptureFailed(format!(
+                    "window {hwnd} unavailable; check Screen Recording permission"
+                ))
+            })?;
+        let image = window
+            .capture_image()
+            .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+        let image = logical_image(
+            image,
+            window
+                .width()
+                .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?,
+            window
+                .height()
+                .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?,
+        )?;
+        return convert_to_frame(image, Scope::Window, FrameSource::WindowCapture);
+    }
     #[cfg(windows)]
     {
         if let Target::Window {
@@ -163,33 +198,151 @@ async fn capture_client_area(target: &Target) -> Result<Frame> {
 
 /// 区域截图
 async fn capture_region(x: i32, y: i32, w: u32, h: u32) -> Result<Frame> {
-    let monitors = Monitor::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
-    let primary = monitors
-        .into_iter()
-        .next()
-        .ok_or_else(|| DesktopError::CaptureFailed("no monitor".to_string()))?;
-
-    let image = primary
-        .capture_image()
-        .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
-    let frame = convert_to_frame(image, Scope::Fullscreen, FrameSource::Screenshot)?;
-
-    let x = x.max(0) as u32;
-    let y = y.max(0) as u32;
-    // 越界坐标直接报错，避免 `frame.width - x` u32 下溢：debug 构建 panic 崩溃、
-    // release 构建回绕成巨值。宁可失败也不产生错误截图。
-    if x >= frame.width || y >= frame.height {
-        return Err(DesktopError::CaptureFailed(format!(
-            "capture region out of bounds: x={x}, y={y}, screen={}x{}",
-            frame.width, frame.height
-        )));
+    #[cfg(target_os = "macos")]
+    {
+        capture_macos_region(x, y, w, h)
     }
-    let w = w.min(frame.width - x);
-    let h = h.min(frame.height - y);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let monitors = Monitor::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+        let primary = monitors
+            .into_iter()
+            .next()
+            .ok_or_else(|| DesktopError::CaptureFailed("no monitor".to_string()))?;
 
-    frame
-        .crop(x, y, w, h)
-        .ok_or_else(|| DesktopError::CaptureFailed("crop failed".to_string()))
+        let image = primary
+            .capture_image()
+            .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+        let frame = convert_to_frame(image, Scope::Fullscreen, FrameSource::Screenshot)?;
+
+        let x = x.max(0) as u32;
+        let y = y.max(0) as u32;
+        // 越界坐标直接报错，避免 `frame.width - x` u32 下溢：debug 构建 panic 崩溃、
+        // release 构建回绕成巨值。宁可失败也不产生错误截图。
+        if x >= frame.width || y >= frame.height {
+            return Err(DesktopError::CaptureFailed(format!(
+                "capture region out of bounds: x={x}, y={y}, screen={}x{}",
+                frame.width, frame.height
+            )));
+        }
+        let w = w.min(frame.width - x);
+        let h = h.min(frame.height - y);
+
+        frame
+            .crop(x, y, w, h)
+            .ok_or_else(|| DesktopError::CaptureFailed("crop failed".to_string()))
+    }
+}
+
+/// Normalize physical capture pixels to the logical desktop grid used by AX and Enigo.
+/// This keeps all existing OCR/YOLO/template offsets correct without asking models to scale.
+#[cfg(any(target_os = "macos", test))]
+fn logical_image(
+    image: xcap::image::RgbaImage,
+    width: u32,
+    height: u32,
+) -> Result<xcap::image::RgbaImage> {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 64_000_000 {
+        return Err(DesktopError::CaptureFailed(
+            "invalid logical capture dimensions".into(),
+        ));
+    }
+    if image.width() == width && image.height() == height {
+        return Ok(image);
+    }
+    Ok(xcap::image::imageops::resize(
+        &image,
+        width,
+        height,
+        xcap::image::imageops::FilterType::Triangle,
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn intersection(
+    region: (i32, i32, u32, u32),
+    monitor: (i32, i32, u32, u32),
+) -> Option<(u32, u32, u32, u32, u32, u32)> {
+    let (x, y, w, h) = region;
+    let (mx, my, mw, mh) = monitor;
+    let left = i64::from(x).max(i64::from(mx));
+    let top = i64::from(y).max(i64::from(my));
+    let right = (i64::from(x) + i64::from(w)).min(i64::from(mx) + i64::from(mw));
+    let bottom = (i64::from(y) + i64::from(h)).min(i64::from(my) + i64::from(mh));
+    (right > left && bottom > top).then_some((
+        (left - i64::from(mx)) as u32,
+        (top - i64::from(my)) as u32,
+        (right - left) as u32,
+        (bottom - top) as u32,
+        (left - i64::from(x)) as u32,
+        (top - i64::from(y)) as u32,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_region(x: i32, y: i32, w: u32, h: u32) -> Result<Frame> {
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 64_000_000 {
+        return Err(DesktopError::CaptureFailed(
+            "invalid capture region dimensions".into(),
+        ));
+    }
+    let monitors = Monitor::all().map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+    let mut result = xcap::image::RgbaImage::new(w, h);
+    let mut captured = false;
+    for monitor in monitors {
+        let geometry = (monitor.x(), monitor.y(), monitor.width(), monitor.height());
+        let (Ok(mx), Ok(my), Ok(mw), Ok(mh)) = geometry else {
+            continue;
+        };
+        let Some((sx, sy, cw, ch, dx, dy)) = intersection((x, y, w, h), (mx, my, mw, mh)) else {
+            continue;
+        };
+        let image = monitor
+            .capture_image()
+            .map_err(|e| DesktopError::CaptureFailed(e.to_string()))?;
+        let image = logical_image(image, mw, mh)?;
+        let crop = xcap::image::imageops::crop_imm(&image, sx, sy, cw, ch).to_image();
+        xcap::image::imageops::overlay(&mut result, &crop, i64::from(dx), i64::from(dy));
+        captured = true;
+    }
+    if !captured {
+        return Err(DesktopError::CaptureFailed(
+            "capture region outside connected displays".into(),
+        ));
+    }
+    convert_to_frame(
+        result,
+        Scope::Element { x, y, w, h },
+        FrameSource::Screenshot,
+    )
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn retina_pixels_are_normalized_before_vision_coordinates() {
+        let image =
+            xcap::image::RgbaImage::from_pixel(200, 100, xcap::image::Rgba([10, 20, 30, 255]));
+        let image = logical_image(image, 100, 50).unwrap();
+        assert_eq!(image.dimensions(), (100, 50));
+        assert_eq!(image.get_pixel(50, 25).0, [10, 20, 30, 255]);
+        assert!(logical_image(image, 0, 50).is_err());
+    }
+
+    #[test]
+    fn negative_origin_and_cross_display_regions_keep_offsets() {
+        assert_eq!(
+            intersection((-100, 20, 200, 100), (-1920, 0, 1920, 1080)),
+            Some((1820, 20, 100, 100, 0, 0))
+        );
+        assert_eq!(
+            intersection((-100, 20, 200, 100), (0, 0, 1920, 1080)),
+            Some((0, 20, 100, 100, 100, 0))
+        );
+        assert_eq!(intersection((4000, 0, 50, 50), (0, 0, 1920, 1080)), None);
+    }
 }
 
 /// 将 xcap 图像转换为 Frame

@@ -6,6 +6,8 @@
 pub mod client;
 pub mod dict_ocr;
 pub mod linux_window;
+#[cfg(target_os = "macos")]
+pub mod macos_window;
 pub mod paddle_ocr;
 // 桌面操作录制（低层 hook 捕获）仅 Windows 平台实现（WH_MOUSE_LL/KEYBOARD_LL）。
 // 其余平台提供同名 stub：命令层 rec.rs 引用 rec_hook:: 符号时无需逐处 cfg，

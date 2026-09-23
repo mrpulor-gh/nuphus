@@ -160,6 +160,9 @@ impl ToolRegistry {
                             .and_then(|v| v.as_str())
                             .unwrap_or("left");
                         let click_result = client.mouse_click(x, y, button, clicks).await;
+                        if let Err(error) = &click_result {
+                            return Err(error.to_string());
+                        }
                         if let Some(hwnd) = hwnd_opt {
                             let mut msg = format!(
                                 "已完成对 HWND({}) 窗口的点击操作！hwnd: {}, 参数: x={}, y={}, button={}, clicks={}",
@@ -200,6 +203,9 @@ impl ToolRegistry {
                             }
                         }
                         let _hover_result = client.mouse_hover(x, y).await;
+                        if let Err(error) = &_hover_result {
+                            return Err(error.to_string());
+                        }
                         if let Some(hwnd) = hwnd_opt {
                             let mut msg = format!(
                                 "已完成对 HWND({}) 窗口的悬停操作！hwnd: {}, 参数: x={}, y={}",
@@ -226,6 +232,9 @@ impl ToolRegistry {
                             activated = ensure_foreground(client, hwnd).await;
                         }
                         let _scroll_result = client.mouse_scroll(direction, amount).await;
+                        if let Err(error) = &_scroll_result {
+                            return Err(error.to_string());
+                        }
                         if let Some(hwnd) = hwnd_opt {
                             let mut msg = format!(
                                 "已完成对 HWND({}) 窗口的滚轮操作！hwnd: {}, 参数: direction={}, amount={}",
@@ -266,6 +275,9 @@ impl ToolRegistry {
                             }
                         }
                         let _move_result = client.mouse_move(x, y, 0.0).await;
+                        if let Err(error) = &_move_result {
+                            return Err(error.to_string());
+                        }
                         if let Some(hwnd) = hwnd_opt {
                             let mut msg = format!(
                                 "已完成对 HWND({}) 窗口的鼠标移动！hwnd: {}, 参数: x={}, y={}",
@@ -315,7 +327,10 @@ impl ToolRegistry {
                             })
                             .unwrap_or_default();
                         let keys_display = keys.join("+");
-                        let _hk_result = client.keyboard_hotkey(keys).await;
+                        client
+                            .keyboard_hotkey(keys)
+                            .await
+                            .map_err(|e| e.to_string())?;
                         let mut msg = format!(
                             "已完成对 HWND({}) 窗口的热键操作！hwnd: {}, 参数: keys={}",
                             hwnd, hwnd, keys_display
@@ -338,9 +353,15 @@ impl ToolRegistry {
                                 .filter(|s| !s.is_empty())
                                 .collect()
                         };
-                        let _result = client.input_send(text, hwnd, false).await;
+                        client
+                            .input_send(text, hwnd, false)
+                            .await
+                            .map_err(|e| e.to_string())?;
                         if !send_keys.is_empty() {
-                            let _ = client.keyboard_hotkey(send_keys).await;
+                            client
+                                .keyboard_hotkey(send_keys)
+                                .await
+                                .map_err(|e| e.to_string())?;
                         }
                         let mut msg = format!(
                             "已完成对 HWND({}) 窗口的输入操作！hwnd: {}, 参数: text={}, send={}",
