@@ -45,6 +45,12 @@ describe('extractImagePaths', () => {
     for (const text of texts) expect(pick(text)).toEqual([])
   })
 
+  it('无图片扩展名的目录候选不会借用正文里的扩展名', () => {
+    expect(pick(String.raw`目录 C:\out\shots（含 a.png 等截图）`)).toEqual([])
+    const text = String.raw`目录 C:\out\shots 与截图 C:\out\a.png`
+    expect(pick(text)).toEqual([String.raw`C:\out\a.png`])
+  })
+
   it('markdown 链接与行内代码中的路径不误伤', () => {
     expect(pick('[截图](https://example.com/a.png)')).toEqual([])
     expect(pick('见 `E:\\NUS\\a.png` 已保存')).toEqual([])
