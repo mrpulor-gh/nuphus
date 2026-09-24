@@ -67,6 +67,8 @@ function Pill({ p, children }: { p: Palette; children: React.ReactNode }) {
 
 export function Toolbar({
   p,
+  dark,
+  onDarkChange,
   mode,
   onMode,
   frame,
@@ -100,6 +102,8 @@ export function Toolbar({
   quickUndo,
 }: {
   p: Palette
+  dark: boolean
+  onDarkChange: (dark: boolean) => void
   mode: Mode
   onMode: (m: Mode) => void
   frame: FrameMode
@@ -142,6 +146,36 @@ export function Toolbar({
   quickUndo?: boolean
 }) {
   const lang = useLang()
+  const themeToggle = (
+    <button
+      type="button"
+      className="m3-press prototype-theme-toggle"
+      aria-label={t('toggleBrightness', lang)}
+      aria-pressed={dark}
+      title={t('toggleBrightness', lang)}
+      onClick={() => onDarkChange(!dark)}
+      style={{
+        height: mobile ? 42 : 40,
+        borderRadius: 22,
+        border: 'none',
+        background: p.secondaryContainer,
+        color: p.onSecondaryContainer,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        padding: '0 10px',
+        flexShrink: 0,
+        font: 'inherit',
+        fontSize: 13,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Icon name={dark ? 'dark_mode' : 'light_mode'} size={22} />
+      <span className="prototype-theme-label">{t(dark ? 'dark' : 'light', lang)}</span>
+    </button>
+  )
   if (mobile) {
     const S = 42
     return (
@@ -183,6 +217,7 @@ export function Toolbar({
             size={S}
           />
           <IconBtn icon="palette" p={p} onClick={onSettings} title={t('settings', lang)} size={S} />
+          {themeToggle}
           <GitHubLink p={p} size={S} />
           <button
             onClick={onPrompt}
@@ -431,6 +466,7 @@ export function Toolbar({
             title={t('clearAll', lang)}
             size={40}
           />
+          {themeToggle}
           {onSaveProject && onOpenProject && (
             <Popover p={p} icon="folder_open" title={t('project', lang)} size={40}>
               {close => (

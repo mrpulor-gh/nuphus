@@ -8,6 +8,7 @@ import { scheduleIdle } from './lib/idle'
 import { TenetsDialog } from './dialogs/TenetsDialog'
 import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
+import { CanvasWorkbenchLoading } from './workflow/CanvasWorkbenchLoading'
 import { TitleBar } from './layout/TitleBar'
 import { ChatPanel } from './chat/ChatPanel'
 import AppContextMenu from '../ui/AppContextMenu'
@@ -975,13 +976,7 @@ export default function App() {
             </Suspense>
           </CompactModal>
           {s.showCanvas && (
-            <Suspense
-              fallback={
-                <div className="canvas-workbench-host">
-                  <div className="page-loading">{t('common.loading')}</div>
-                </div>
-              }
-            >
+            <Suspense fallback={<CanvasWorkbenchLoading />}>
               <div className="canvas-workbench-host">
                 <CanvasWorkbenchPage
                   workflowId={s.canvasWorkflowId}

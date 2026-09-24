@@ -253,7 +253,7 @@ const UI_KEY = 'nuphus.ui_proto.ui.v2'
 
 /** Nuphus 默认画布主题：进入即暗色商务（不再 M3 浅色全白）。
  *  lib DEFAULT_THEME 保持上游默认（prompt/导出语义与测试基线不动），
- *  仅在画布应用层把入口默认翻暗；浅色可由 ColorPanel/Mobile 亮度开关切回。 */
+ *  仅在画布应用层把入口默认翻暗；顶部工具栏与颜色面板共享明暗设置。 */
 const DEFAULT_CANVAS_THEME: Theme = { ...DEFAULT_THEME, dark: true }
 /** Nuphus 默认主题色：指向 PALETTES 中 seed=#3B82F6 的 brand 预设 */
 const DEFAULT_PALETTE_KEY = 'brand'
@@ -3687,6 +3687,7 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
             display: 'flex',
             overflow: 'hidden',
             background: p.surfaceContainer,
+            colorScheme: theme.dark ? 'dark' : 'light',
             cursor: resizing ? 'col-resize' : undefined,
             userSelect: resizing ? 'none' : undefined,
             ['--sb' as string]: p.outlineVariant,
@@ -4304,6 +4305,8 @@ export function UiPrototypeCanvas({ onSent }: { onSent?: () => void } = {}) {
             )}
             <Toolbar
               p={p}
+              dark={theme.dark}
+              onDarkChange={dark => patchTheme({ dark })}
               mode={mode}
               onMode={setMode}
               frame={frame}

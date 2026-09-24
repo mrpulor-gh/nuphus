@@ -21,6 +21,18 @@
   height: 100%;
 }
 
+/* Keep the theme shortcut visible without crowding the compact toolbar. */
+@media (max-width: 1100px) {
+  .app-root .prototype-theme-label {
+    display: none;
+  }
+}
+
+.app-root .prototype-theme-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 /* Material Symbols Rounded (variable font) */
 .msr {
   font-family: 'Material Symbols Rounded';

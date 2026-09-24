@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasWorkbenchPage } from './CanvasWorkbenchPage'
+import { CanvasWorkbenchLoading } from './CanvasWorkbenchLoading'
 
 // 三个 tab 页面均改为 lazy 拆包：测试中用轻量桩替换真实模块，
 // 避免把工作流画布 / UI 原型画布的依赖（@xyflow/react、motion 等）拖进 jsdom。
@@ -24,6 +25,34 @@ vi.mock('../canvases/ui-prototype/UiPrototypeCanvas', () => ({
 describe('CanvasWorkbenchPage 首帧反馈与 tab 拆包', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('懒加载外壳期间保留顶部原生拖动区', () => {
+    const { container } = render(<CanvasWorkbenchLoading />)
+    expect(screen.getByText('加载中...')).toBeInTheDocument()
+    expect(container.querySelector('header [data-tauri-drag-region]')).not.toBeNull()
+    expect(container.querySelector('.page-loading')).not.toHaveAttribute('data-tauri-drag-region')
+  })
+
+  it('加载中及三个标签页始终保留独立拖动区，不覆盖按钮或页面内容', async () => {
+    const onClose = vi.fn()
+    const { container } = render(<CanvasWorkbenchPage onClose={onClose} />)
+    const drag = container.querySelector('header [data-tauri-drag-region]')
+    expect(drag).not.toBeNull()
+    expect(drag?.childElementCount).toBe(0)
+    for (const [label, testId] of [
+      ['工作流编辑', 'canvas-page'],
+      ['UI 原型', 'prototype-canvas'],
+      ['工具', 'tools-page'],
+    ]) {
+      if (testId !== 'canvas-page') fireEvent.click(screen.getByRole('button', { name: label }))
+      await screen.findByTestId(testId)
+      expect(container.querySelector('header [data-tauri-drag-region]')).toBe(drag)
+      expect(container.querySelector('[data-tauri-drag-region] button')).toBeNull()
+      expect(screen.getByTestId(testId).closest('[data-tauri-drag-region]')).toBeNull()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('外壳与加载态在首帧同步可见，不等待 IPC / 子页面 chunk', async () => {

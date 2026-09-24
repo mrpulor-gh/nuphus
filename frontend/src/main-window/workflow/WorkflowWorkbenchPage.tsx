@@ -58,6 +58,7 @@ export function WorkflowWorkbenchPage({
             <span>{t('workflow.workType.tools')}</span>
           </button>
         </nav>
+        <span className="workflow-workbench-drag" data-tauri-drag-region />
         <button type="button" className="workflow-workbench-close" onClick={onClose}>
           ×
         </button>
