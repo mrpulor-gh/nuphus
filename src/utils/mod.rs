@@ -934,7 +934,7 @@ pub fn bundled_plugin_assets() -> &'static [(&'static str, &'static [u8])] {
 pub struct SeedReport {
     /// 新写入的文件数
     pub copied: usize,
-    /// 因版本变化覆盖的文件数
+    /// 原样安装的资产因内容变化而刷新的文件数
     pub refreshed: usize,
     /// 已存在且无需改动而跳过的文件数
     pub skipped: usize,
@@ -951,11 +951,11 @@ impl SeedReport {
 
 /// 把内嵌的只读资产落盘到当前 plugin 根，使其成为磁盘上真实、可查看的文件。
 ///
-/// 语义（`plugin/.assets-version` 记录上次落盘的应用版本）：
+/// 语义（`.assets-version` 记录应用版本，`.assets-manifest.json` 记录已安装内容）：
 /// - 文件不存在 → 写入（**copied**）
-/// - 已存在且版本未变 → 跳过（**skipped**）——绝不碰用户在数据目录里的改动
-/// - 已存在但应用版本变了 → 覆盖（**refreshed**）——只覆盖资产清单内的路径，
-///   升级时能拿到修好的内置技能；用户自己造的 workflows/community 等不在清单内，永远不动
+/// - 内容仍等于上次安装版本 → 按包内内容更新，包括同版本测试包（**refreshed**）
+/// - 用户修改过或无法确认来源 → 保留（**skipped**），不因应用升级覆盖自定义内容
+/// - workflows/community 等不在随包清单内的用户文件永远不动
 ///
 /// 开发检出内直接跳过：仓库里资产本来就在位，落盘只会往 git 工作区塞 `.assets-version`。
 pub fn seed_plugin_assets(app_version: &str) -> SeedReport {
@@ -969,20 +969,84 @@ pub fn seed_plugin_assets(app_version: &str) -> SeedReport {
 
 /// `seed_plugin_assets` 的显式目标版本，便于测试。
 pub fn seed_plugin_assets_into(target: &std::path::Path, app_version: &str) -> SeedReport {
+    seed_plugin_assets_with(target, app_version, bundled_plugin_assets())
+}
+
+/// Stable content identity, not a security signature. Normalize text line
+/// endings so assets installed from Windows and macOS packages compare alike.
+fn asset_fingerprint(bytes: &[u8]) -> String {
+    let normalized = std::str::from_utf8(bytes)
+        .ok()
+        .map(|s| s.replace("\r\n", "\n"));
+    let bytes = normalized
+        .as_ref()
+        .map(|s| s.trim_end().as_bytes())
+        .unwrap_or(bytes);
+    let hash = bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("fnv1a-text-v1:{hash:016x}")
+}
+
+fn legacy_builtin_fingerprint(path: &str) -> Option<&'static str> {
+    // Known pristine assets from the pre-manifest release (b51ed715). This
+    // permits its stale RPA instructions to upgrade without overwriting an
+    // edited skill. Unknown legacy contents are deliberately preserved.
+    match path {
+        "skills/builtin/workflow-design/SKILL.md" => Some("fnv1a-text-v1:072fe0d5ec47de1f"),
+        "skills/builtin/agent-orchestration/SKILL.md" => Some("fnv1a-text-v1:4a84b01094c53dad"),
+        _ => None,
+    }
+}
+
+fn seed_plugin_assets_with(
+    target: &std::path::Path,
+    app_version: &str,
+    assets: &[(&str, &[u8])],
+) -> SeedReport {
     let mut report = SeedReport::default();
     let version_file = target.join(".assets-version");
-    let seeded_version = std::fs::read_to_string(&version_file)
+    let manifest_file = target.join(".assets-manifest.json");
+    let mut installed: std::collections::BTreeMap<String, String> = std::fs::read(&manifest_file)
         .ok()
-        .map(|s| s.trim().to_string());
-    // 版本没变就不覆盖已有文件；变了才刷新清单内路径
-    let refresh = seeded_version.as_deref() != Some(app_version);
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
 
-    for (rel, bytes) in bundled_plugin_assets() {
+    for (rel, bytes) in assets {
         let dest = target.join(rel);
-        let exists = dest.is_file();
-        if exists && !refresh {
-            report.skipped += 1;
-            continue;
+        let next = asset_fingerprint(bytes);
+        let exists = match std::fs::read(&dest) {
+            Ok(current) => {
+                let current = asset_fingerprint(&current);
+                if current == next {
+                    installed.insert((*rel).into(), next);
+                    report.skipped += 1;
+                    continue;
+                }
+                let previous = installed
+                    .get(*rel)
+                    .map(String::as_str)
+                    .or_else(|| legacy_builtin_fingerprint(rel));
+                if previous != Some(current.as_str()) {
+                    // Do not bless a local edit as an installed baseline: a
+                    // later upgrade must keep preserving that same edit.
+                    report.skipped += 1;
+                    continue;
+                }
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => {
+                tracing::warn!("[plugin] 读取资产失败 {}: {error}", dest.display());
+                report.failed += 1;
+                continue;
+            }
+        };
+        if let Ok(metadata) = std::fs::symlink_metadata(&dest) {
+            if metadata.file_type().is_symlink() {
+                report.skipped += 1;
+                continue;
+            }
         }
         if let Some(parent) = dest.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -993,6 +1057,7 @@ pub fn seed_plugin_assets_into(target: &std::path::Path, app_version: &str) -> S
         }
         match std::fs::write(&dest, bytes) {
             Ok(()) => {
+                installed.insert((*rel).into(), next);
                 if exists {
                     report.refreshed += 1;
                 } else {
@@ -1006,8 +1071,13 @@ pub fn seed_plugin_assets_into(target: &std::path::Path, app_version: &str) -> S
         }
     }
 
-    // 全部成功才记版本：有失败则下次启动重试，不会因为一次半途而废就永久跳过
-    if report.failed == 0 {
+    // Persist successful entries even after a partial failure; the remaining
+    // files are retried by their content identity at the next startup.
+    let manifest = serde_json::to_vec_pretty(&installed).expect("string map is serializable");
+    if let Err(error) = std::fs::write(&manifest_file, manifest) {
+        tracing::warn!("[plugin] 写入资产清单失败: {error}");
+        report.failed += 1;
+    } else if report.failed == 0 {
         if let Err(e) = std::fs::write(&version_file, app_version) {
             tracing::warn!("[plugin] 写入 .assets-version 失败: {e}");
         }
@@ -2195,7 +2265,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 版本升级：刷新清单内资产（拿到修好的内置技能），但仍不碰用户状态。
+    /// 版本升级同样保留用户修改过的内置文件与自建技能。
     #[test]
     fn seed_refreshes_on_version_change_without_touching_user_state() {
         let dir = seed_test_dir("bump");
@@ -2215,13 +2285,14 @@ mod tests {
         std::fs::write(dir.join(victim), b"stale").unwrap();
 
         let report = seed_plugin_assets_into(&dir, "2.0.0");
-        assert_eq!(report.refreshed, total, "版本变化应覆盖全部清单内资产");
+        assert_eq!(report.refreshed, 0, "应用版本变化不覆盖本地自定义内容");
+        assert_eq!(report.skipped, total);
         assert_eq!(report.copied, 0);
         assert_eq!(report.failed, 0);
         assert_eq!(
             std::fs::read(dir.join(victim)).unwrap(),
-            bundled_plugin_assets()[0].1,
-            "版本升级后资产应被刷新"
+            b"stale",
+            "版本升级不能覆盖用户改过的内置资产"
         );
         assert_eq!(
             std::fs::read(&user_file).unwrap(),
@@ -2235,6 +2306,52 @@ mod tests {
             "2.0.0"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_refreshes_changed_content_even_when_app_version_does_not_change() {
+        let dir = seed_test_dir("same-version-new-assets");
+        let old: &[(&str, &[u8])] = &[("skills/builtin/demo/SKILL.md", b"old instruction")];
+        let new: &[(&str, &[u8])] = &[("skills/builtin/demo/SKILL.md", b"semantic first")];
+        assert_eq!(seed_plugin_assets_with(&dir, "1.0.0", old).copied, 1);
+        let report = seed_plugin_assets_with(&dir, "1.0.0", new);
+        assert_eq!(report.refreshed, 1);
+        assert_eq!(std::fs::read(dir.join(new[0].0)).unwrap(), new[0].1);
+        assert_eq!(seed_plugin_assets_with(&dir, "1.0.0", new).skipped, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_never_adopts_local_edits_as_a_replaceable_baseline() {
+        let dir = seed_test_dir("custom-asset");
+        let old: &[(&str, &[u8])] = &[("skills/builtin/demo/SKILL.md", b"original")];
+        let new: &[(&str, &[u8])] = &[("skills/builtin/demo/SKILL.md", b"updated")];
+        seed_plugin_assets_with(&dir, "1", old);
+        let path = dir.join(old[0].0);
+        std::fs::write(&path, b"my customization").unwrap();
+        for version in ["1", "2", "3"] {
+            assert_eq!(seed_plugin_assets_with(&dir, version, new).skipped, 1);
+            assert_eq!(std::fs::read(&path).unwrap(), b"my customization");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn asset_identity_is_portable_and_unknown_legacy_files_are_preserved() {
+        assert_eq!(
+            asset_fingerprint(b"line 1\r\nline 2\r\n"),
+            asset_fingerprint(b"line 1\nline 2\n")
+        );
+        let dir = seed_test_dir("legacy-custom");
+        let asset: &[(&str, &[u8])] = &[("unknown.txt", b"bundled")];
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("unknown.txt"), b"existing customization").unwrap();
+        assert_eq!(seed_plugin_assets_with(&dir, "2", asset).skipped, 1);
+        assert_eq!(
+            std::fs::read(dir.join("unknown.txt")).unwrap(),
+            b"existing customization"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

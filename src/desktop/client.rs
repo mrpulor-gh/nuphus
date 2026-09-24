@@ -16,6 +16,14 @@ use desktop_api::{sendinput, WindowManager};
 
 use super::capture_context::{Bounds, CaptureCache, CaptureContext, WindowSnapshot};
 use crate::desktop::YoloDetector;
+use crate::desktop_automation::{DesktopActionError, DispatchState};
+
+fn input_not_sent(error: impl std::fmt::Display) -> crate::NuphusError {
+    crate::NuphusError::Tool(DesktopActionError::encode(
+        DispatchState::NotSent,
+        error.to_string(),
+    ))
+}
 
 // enigo 0.2: text/key/scroll 是 Keyboard/Mouse trait 方法，调用需 import（Linux/macOS）
 // Direction 用全路径 enigo::Direction（避免 unused import）
@@ -207,7 +215,7 @@ impl DesktopClient {
         let end = desktop_api::Point { x: end_x, y: end_y };
         input::mouse::drag(start, end).await?;
         Self::result_ok(serde_json::json!({
-            "status": "dispatched", "verified": false,
+            "status": "dispatched", "dispatch_state": "sent", "effect": "unverifiable", "verified": false,
             "start": { "x": start_x, "y": start_y },
             "end": { "x": end_x, "y": end_y }
         }))
@@ -253,8 +261,9 @@ impl DesktopClient {
 
     /// Keyboard hotkey — cross-platform via input::keyboard
     pub async fn keyboard_hotkey(&self, keys: Vec<String>) -> Result<Value> {
-        self.invalidate_captures()?;
         let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        input::keyboard::validate_keys(&key_refs).map_err(input_not_sent)?;
+        self.invalidate_captures()?;
         input::keyboard::hotkey(&key_refs).await?;
         Self::result_ok(serde_json::json!({ "keys": keys }))
     }
@@ -266,34 +275,24 @@ impl DesktopClient {
         self.invalidate_captures()?;
         #[cfg(windows)]
         {
-            // Attach to target window's thread to prevent input from going to wrong window
-            // (defends against focus-stealing by notifications, IME popups, etc.)
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-            use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-            let handle = HWND(hwnd as isize);
-            let target_tid = unsafe { GetWindowThreadProcessId(handle, None) };
-            let current_tid = unsafe { GetCurrentThreadId() };
-            unsafe {
-                _ = AttachThreadInput(current_tid, target_tid, true);
+            // The synchronous input session owns any thread attachment. Never
+            // hold AttachThreadInput across await: Tokio may resume elsewhere,
+            // or cancellation may skip a handwritten detach/key-up sequence.
+            if !self.window_is_foreground(hwnd).await?["result"]["foreground"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                return Err(input_not_sent("目标窗口已失去前台；尚未输入文本"));
             }
-
-            sendinput::nuphus_input(text, &sendinput::InputSession::default())?;
-            if press_enter {
-                use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-                    keybd_event, KEYEVENTF_KEYUP, VK_RETURN,
-                };
-                unsafe {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    keybd_event(VK_RETURN.0 as u8, 0, Default::default(), 0);
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    keybd_event(VK_RETURN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
-                }
-            }
-
-            unsafe {
-                _ = AttachThreadInput(current_tid, target_tid, false);
-            }
+            sendinput::nuphus_input(
+                text,
+                &sendinput::InputSession {
+                    target_hwnd: Some(hwnd as isize),
+                    press_enter,
+                    verify_foreground: true,
+                    ..Default::default()
+                },
+            )?;
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
@@ -317,7 +316,9 @@ impl DesktopClient {
         {
             return Err(DesktopError::PlatformNotSupported.into());
         }
-        Self::result_ok(serde_json::json!({ "chars": text.len(), "enter": press_enter }))
+        Self::result_ok(
+            serde_json::json!({ "chars": text.len(), "enter": press_enter, "dispatch_state": "sent", "effect": "unverifiable" }),
+        )
     }
 
     /// Screenshot - save as BMP format to unified directory

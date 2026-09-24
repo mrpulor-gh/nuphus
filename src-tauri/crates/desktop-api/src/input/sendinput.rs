@@ -63,16 +63,14 @@ pub fn nuphus_input(text: &str, session: &InputSession) -> Result<usize> {
             session.force_activate,
             session.verify_foreground,
         )?;
-        if session.verify_foreground && !target.verified {
+        let _attach_guard = target.attachment;
+        if !target.verified {
             return Err(DesktopError::InputFailed(
                 "Target window is not in foreground, input rejected".to_string(),
             ));
         }
         // RAII guard：任何退出路径（成功或中途 SendInput 失败）都会 detach
         // 线程输入附属，避免错误路径泄漏 AttachThreadInput 连接。
-        let _attach_guard = ThreadInputGuard {
-            target_tid: target.attached_hwnd,
-        };
 
         // ── 2. 编码转换：UTF-8 → UTF-16 码点序列 ──
         let codepoints = encode_utf16_codepoints(text);
@@ -80,14 +78,16 @@ pub fn nuphus_input(text: &str, session: &InputSession) -> Result<usize> {
         // ── 3. 逐字注入 ──
         let mut total_sent = 0;
         for cp in &codepoints {
-            let inputs = make_unicode_inputs(*cp);
-            let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-            if sent == 0 {
+            if session
+                .target_hwnd
+                .is_some_and(|hwnd| unsafe { !is_foreground_window(hwnd) })
+            {
                 return Err(DesktopError::InputFailed(format!(
-                    "SendInput failed for codepoint U+{:04X}",
-                    cp
+                    "Target window lost foreground after {total_sent} input events; input stopped"
                 )));
             }
+            let inputs = make_unicode_inputs(*cp);
+            let sent = send_complete_pair(&inputs, native_send)?;
             total_sent += sent as usize;
 
             // 字符间延迟
@@ -98,13 +98,17 @@ pub fn nuphus_input(text: &str, session: &InputSession) -> Result<usize> {
 
         // ── 4. 可选提交（Enter）──
         if session.press_enter {
-            let enter_inputs = make_enter_inputs();
-            let sent = unsafe { SendInput(&enter_inputs, std::mem::size_of::<INPUT>() as i32) };
-            if sent == 0 {
+            if session
+                .target_hwnd
+                .is_some_and(|hwnd| unsafe { !is_foreground_window(hwnd) })
+            {
                 return Err(DesktopError::InputFailed(
-                    "SendInput Enter failed".to_string(),
+                    "Target window lost foreground before Enter; text may already be entered"
+                        .into(),
                 ));
             }
+            let enter_inputs = make_enter_inputs();
+            let sent = send_complete_pair(&enter_inputs, native_send)?;
             total_sent += sent as usize;
         }
 
@@ -152,13 +156,14 @@ pub fn input_to_focus(text: &str, press_enter: bool) -> Result<usize> {
 // ============================================================================
 
 struct FocusResult {
-    attached_hwnd: Option<u32>,
+    attachment: ThreadInputGuard,
     verified: bool,
 }
 
 /// RAII guard：Drop 时 detach 线程输入附属，确保成功、错误、提前返回等
 /// 所有退出路径都释放连接（而不只是成功路径）。
 struct ThreadInputGuard {
+    source_tid: u32,
     target_tid: Option<u32>,
 }
 
@@ -166,7 +171,7 @@ impl Drop for ThreadInputGuard {
     fn drop(&mut self) {
         if let Some(tid) = self.target_tid {
             unsafe {
-                let _ = AttachThreadInput(GetCurrentThreadId(), tid, false);
+                let _ = AttachThreadInput(self.source_tid, tid, false);
             }
         }
     }
@@ -174,6 +179,10 @@ impl Drop for ThreadInputGuard {
 
 /// 准备窗口焦点，返回需要 detach 的线程 ID
 fn prepare_focus(target_hwnd: Option<isize>, force: bool, verify: bool) -> Result<FocusResult> {
+    let mut attachment = ThreadInputGuard {
+        source_tid: unsafe { GetCurrentThreadId() },
+        target_tid: None,
+    };
     unsafe {
         if let Some(hwnd_val) = target_hwnd {
             let hwnd = HWND(hwnd_val);
@@ -188,7 +197,7 @@ fn prepare_focus(target_hwnd: Option<isize>, force: bool, verify: bool) -> Resul
             if verify {
                 let is_fg = is_foreground_window(hwnd_val);
                 return Ok(FocusResult {
-                    attached_hwnd: None,
+                    attachment,
                     verified: is_fg,
                 });
             }
@@ -196,11 +205,13 @@ fn prepare_focus(target_hwnd: Option<isize>, force: bool, verify: bool) -> Resul
             // 跨线程焦点：AttachThreadInput
             let target_tid = GetWindowThreadProcessId(hwnd, None);
             let current_tid = GetCurrentThreadId();
-            let mut attached = None;
-
-            if target_tid != current_tid {
-                let _ = AttachThreadInput(current_tid, target_tid, true);
-                attached = Some(target_tid);
+            if target_tid != 0 && target_tid != current_tid {
+                if !AttachThreadInput(current_tid, target_tid, true).as_bool() {
+                    return Err(DesktopError::InputFailed(
+                        "AttachThreadInput failed before text input".into(),
+                    ));
+                }
+                attachment.target_tid = Some(target_tid);
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
 
@@ -211,16 +222,70 @@ fn prepare_focus(target_hwnd: Option<isize>, force: bool, verify: bool) -> Resul
             }
 
             Ok(FocusResult {
-                attached_hwnd: attached,
-                verified: true,
+                attachment,
+                verified: is_foreground_window(hwnd_val),
             })
         } else {
             // 无目标窗口，使用当前焦点
             Ok(FocusResult {
-                attached_hwnd: None,
+                attachment,
                 verified: true,
             })
         }
+    }
+}
+
+fn native_send(inputs: &[INPUT]) -> u32 {
+    unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) }
+}
+
+/// SendInput may accept only the key-down part of a pair. Release it before
+/// reporting partial delivery; never replay the down event to make up a count.
+fn send_complete_pair(inputs: &[INPUT; 2], mut send: impl FnMut(&[INPUT]) -> u32) -> Result<u32> {
+    let sent = send(inputs);
+    if sent != inputs.len() as u32 {
+        if sent > 0 {
+            let _ = send(&inputs[1..]);
+        }
+        return Err(DesktopError::InputFailed(format!(
+            "SendInput delivered {sent}/2 events; outcome requires observation"
+        )));
+    }
+    Ok(sent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_unicode_pair_releases_without_replaying_key_down() {
+        let pair = make_unicode_inputs('测' as u16);
+        let mut lengths = Vec::new();
+        let result = send_complete_pair(&pair, |events| {
+            lengths.push(events.len());
+            if events.len() == 1 {
+                assert_ne!(
+                    unsafe { events[0].Anonymous.ki.dwFlags.0 } & KEYEVENTF_KEYUP,
+                    0
+                );
+            }
+            1
+        });
+        assert!(result.is_err());
+        assert_eq!(lengths, [2, 1]);
+    }
+
+    #[test]
+    fn rejected_pair_does_not_release_a_key_that_was_not_pressed() {
+        let mut calls = 0;
+        assert!(send_complete_pair(&make_enter_inputs(), |_| {
+            calls += 1;
+            0
+        })
+        .is_err());
+        assert_eq!(calls, 1);
+        assert_eq!(send_complete_pair(&make_enter_inputs(), |_| 2).unwrap(), 2);
     }
 }
 

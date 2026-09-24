@@ -10,6 +10,15 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
 > 完整工作流编排能力：步骤 schema、变量语法、条件表达式、params 固化、外部输入声明、设计模式、验证闭环、经验闭环。
 > L2 提示词只给阶段门禁与交互纪律；本文档是可执行的方法论全集。
 
+## 执行过程沟通
+
+目标明确时直接推进，不必重新确认表单；但开始实际操作前先用
+`workflow_report_progress(message)` 简述打算，随后继续执行。重要发现、进入运行或验证、
+遇到问题或改变方法时主动说明已确认的现状和下一步；长任务约 30 秒或连续 6 次业务调用
+没有正文时补一次简短说明，不逐工具播报。汇报不等待用户确认，不替代最终回复；
+关键信息缺失才使用 `request_user_input`。使用用户的语言，不复制 reasoning 或工具日志。
+`workflow_report_progress` 只用于开发会话交流，不能写入保存工作流的执行步骤。
+
 ---
 
 ## 〇、编排闭环总览
@@ -26,7 +35,7 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
 **任务输入形态（先识别再走闭环）**：
 - 用户输入带 `[意图表单→工作流]` 前缀，或来自 `request_user_input(step_form)` 的 `{stage, steps}`：这些阶段/子步骤是**用户确认的意图骨架**。表单阶段 = 流程主线分组（写入 workflow.json 保留为用户心智的阶段注释）；**每个子步骤 = 一条探索任务**，逐条走 [探]→[固]→[设]→[验]；骨架为权威输入，不得重新向用户收集流程、整体重构或丢弃补录 steps。
 - 自由对话描述：目标、应用和预期结果已足够明确时直接探索，不为了形式完整强制询问意图表单；只有关键业务意图确实缺失时才询问。用户主动选择表单时使用 `request_user_input(input_type="step_form", default_stage=当前阶段名)`。
-- 表单行意图是纯文本，无工具参数；工具参数（selector/坐标/窗口等）由你探索后固化进 `params.json` / `with` 字段。
+- 表单行意图是纯文本，无工具参数；稳定的语义定位器、窗口身份和视觉锚点规则由你探索后固化进 `params.json` / `with`，不保存本次捕获 ID 或绝对坐标常量。
 
 ---
 
@@ -108,7 +117,7 @@ seq / loop / if 容器同样支持 on_error；子步骤失败且容器设置了 
 | 字段 | 内容 |
 |------|------|
 | `workflow_id` | 工作流唯一标识 |
-| `window` | 尺寸 / URL / 标题模式（**窗口尺寸必须固化**，W2） |
+| `window` | 稳定应用/窗口身份、URL 或标题提示；尺寸仅作诊断，不要求还原用户窗口 |
 | `login_detection` | 登录态判定特征 |
 | `regions` | 区域定义 + 定位特征（每参数有界面证据） |
 | `navigation_graph` | 屏间跳转关系 |
@@ -177,7 +186,7 @@ seq / loop / if 容器同样支持 on_error；子步骤失败且容器设置了 
 |---|---|---|
 | 谁在何时写 | 你：探索后设计期固化，随工作流文件走 | 使用者：运行前在启动表单填 |
 | 是否随运行变化 | 否 | 是（同一工作流可多套输入） |
-| 典型内容 | 窗口尺寸、区域坐标、登录特征、跳转图 | 主题、目录、条数、开关、凭据 |
+| 典型内容 | 稳定窗口身份、语义定位器、视觉锚点规则、登录特征、跳转图 | 主题、目录、条数、开关、凭据 |
 | 判定原则 | 有界面证据的固定事实一律固化 | **只有必须由人现填的才声明**（声明越多，启动越繁琐） |
 
 ### 校验规则
@@ -236,8 +245,8 @@ seq / loop / if 容器同样支持 on_error；子步骤失败且容器设置了 
 { "id": "tour", "name": "遍历", "do": { "loop": {
   "for_each": { "items": { "var": "panels" }, "as": "p" },
   "max": 100,
-  "do": [ { "id": "hit", "name": "点击", "do": { "tool": "desktop_mouse",
-    "with": { "action": "click", "x": "{{p | get \"ix\"}}", "y": "{{p | get \"iy\"}}" } } } ]
+  "do": [ { "id": "hit", "name": "打开目标", "do": { "tool": "desktop_semantic_action",
+    "with": { "action": "invoke", "locator": "{{p | get \"locator\"}}" } } } ]
 } } }
 ```
 
@@ -245,15 +254,16 @@ seq / loop / if 容器同样支持 on_error；子步骤失败且容器设置了 
 
 ```
 seq: 提交
-├─ 填写 + 提交（desktop_input 输入+发送一次调用，不拆分）
-├─ browser_wait_for(结果页元素)
+├─ 填写（语义 SetValue；键盘补充时显式 send="none"）
+├─ 提交（仅在任务要求时调用已确认的按钮或快捷键）
+├─ 等待目标状态（桌面用当前可用的状态等待工具；网页用 browser_wait_for）
 ├─ assert: 成功标志存在
 └─ if: 失败 → screenshot → chat 分析 → 重试或终止
 ```
 
 ### 模式 D：多窗口操作
 
-每次操作前 `desktop_windows_list` 重取 hwnd（hwnd 会变）→ activate → 操作。
+使用 `desktop_targets_list` / `desktop_target_bind` 绑定目标；保存稳定 locator，运行时重定位。旧 hwnd 接口需要每次枚举确认；不保存缓存句柄，不为方便坐标主动移动窗口。
 
 ### 模式 E：大工作流拆分
 
@@ -311,7 +321,7 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 |------|------|------|
 | 定位网页元素 | `browser_snapshot` → @eN ref | screenshot + OCR |
 | 定位桌面控件 | `desktop_semantic_observe` 读取 UIA/Accessibility 候选 | Vision → perceive 精确坐标 |
-| 固化桌面动作 | 保存候选返回的 `workflow_step`，运行时调用 `desktop_semantic_action` | 无稳定语义定位器时再固化坐标方案 |
+| 固化桌面动作 | 保存候选返回的 `workflow_step`，运行时调用 `desktop_semantic_action` | 保存视觉锚点/重新识别流程，每次捕获后由本地解析当前目标，不固化旧坐标 |
 | 桌面布局解析 | UIA/Accessibility 语义树 | Vision 全窗口语义分析 |
 | 定位桌面文字 | UIA/Accessibility 控件名称 | Vision 划定功能区 → `desktop_find_text`（需字库） |
 | 等待加载 | `browser_wait_for(selector)` | system_sleep（不得已） |
@@ -322,7 +332,9 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 
 **坐标体系**：确需使用 `desktop_mouse` 时采用该工具声明的桌面坐标；以本地截图工具返回的比例和原点完成像素转换，不由模型估算。macOS Retina 截图像素不等于桌面逻辑坐标，外接屏也可能具有负坐标原点。
 
-**输入**：`desktop_input` 输入+发送一次调用；普通文本直接输入，>500 字用 clipboard 并事后 clean；敏感内容禁用 clipboard。
+**输入**：普通填写显式 `desktop_input(send="none")`，不依赖旧接口默认的 enter。只有任务明确要求提交并已核实发送方式时才指定 enter/快捷键；长文本可用 clipboard 并事后 clean，敏感内容禁用 clipboard。
+
+**状态与验证**：开启/关闭控件用 `set_checked` 及目标 checked 状态，不把“开启”保存为每次反转的 toggle。调用成功、事件已发送和业务目标完成分开判断。`dispatch_state=sent/partial/unknown` 时先观察，不能自动重发；无直接反馈的 Invoke 可添加相关控件/窗口后置条件及有界等待，不为了同一个未知结果不停点击。普通导航、填写和已授权业务动作不逐步重复询问用户。
 
 ---
 
@@ -331,7 +343,7 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 | 陷阱 | 正确做法 |
 |------|---------|
 | 跳过语义观察直接猜坐标（W1） | 先 UIA/Accessibility 观察；不可用时再逐屏 vision+perceive，保存 ui-maps |
-| 窗口尺寸未固化（W2） | params.json window 字段固化 |
+| 依靠恢复窗口尺寸复用旧坐标（W2） | 稳定 locator 重新定位，或新捕获后本地解析视觉锚点 |
 | 探索阶段写步骤（W3） | 核心路径手动跑通后才设计 |
 | if contains 文案做登录检测 | chat 语义判断 + screenshot |
 | 忘记 SPA 状态残留 | 新流程前重置（about:blank / resize 固化尺寸） |

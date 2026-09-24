@@ -109,6 +109,18 @@ fn bundle(path: &Path) -> Option<Application> {
     })
 }
 
+pub(super) fn selected(path: &Path) -> Option<Application> {
+    if path.is_dir()
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+    {
+        bundle(path)
+    } else {
+        None
+    }
+}
+
 pub(super) fn running(pid: u32) -> Option<Application> {
     let identity = crate::desktop_automation::macos_accessibility::native::application_identity(
         i32::try_from(pid).ok()?,

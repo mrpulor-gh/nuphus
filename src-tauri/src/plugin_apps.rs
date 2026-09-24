@@ -2396,6 +2396,8 @@ mod tests {
         let mk = |role: &str, content: &str| HistoryMessage {
             role: role.to_string(),
             content: content.to_string(),
+            kind: None,
+            message_id: None,
             images: vec![],
             audio: vec![],
             timestamp: None,

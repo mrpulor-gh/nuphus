@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
 import { debugEnabled } from '../core/debug'
+import { continueReplyAfterUser } from '../core/progressMessages'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -175,6 +176,8 @@ export function useEvents(h: EventHandlers) {
   const refineOutputRef = useRef('')
   const refineStartTimeRef = useRef(0)
   const refineMsgIdRef = useRef<string | null>(null)
+  const progressTurnRef = useRef<{ session_id: string; turn_id: string } | null>(null)
+  const progressIdsRef = useRef(new Set<string>())
 
   // ── 提炼状态统一复位（四个出口共用，勿在各处复制）──
   // 出口：refine_failed 事件 / forced invoke 失败兜底 / 超时 guard / 手动关闭弹窗。
@@ -383,7 +386,9 @@ export function useEvents(h: EventHandlers) {
         // Update existing streaming message, never create new
         if (s && content) {
           h.setMessages(prev =>
-            prev.map(m => (m.id === s ? { ...m, content, runtime: 'done' } : m)),
+            continueReplyAfterUser(prev, s).map(m =>
+              m.id === s ? { ...m, content, runtime: 'done' } : m,
+            ),
           )
         }
         h.refs.streamingMsgId.current = null
@@ -398,6 +403,8 @@ export function useEvents(h: EventHandlers) {
       switch (event.type) {
         case 'session_changed':
         case 'new_chat_broadcast':
+          progressTurnRef.current = null
+          progressIdsRef.current.clear()
           // 会话增强偏好由后端按 Workflow session 保存。会话切换或新建后让所有
           // 已挂载的入口重新读取权威状态，避免按钮仍展示上一会话的开关与配置徽标。
           requestWorkflowEnhancedModeRefresh()
@@ -496,6 +503,11 @@ export function useEvents(h: EventHandlers) {
           if (h.refs.executionActiveRef.current) {
             break
           }
+          progressTurnRef.current =
+            event.session_id && event.turn_id
+              ? { session_id: event.session_id, turn_id: event.turn_id }
+              : null
+          progressIdsRef.current.clear()
           // Refine mode: set execution state but don't create a message bubble
           // Keep refineState intact — the modal should stay open until SessionRefined
           if (refineActiveRef.current) {
@@ -739,6 +751,51 @@ export function useEvents(h: EventHandlers) {
           }
           break
         }
+        case 'assistant_progress': {
+          const turn = progressTurnRef.current
+          if (
+            refineActiveRef.current ||
+            !h.refs.executionActiveRef.current ||
+            h.refs.interruptedRef.current ||
+            !turn ||
+            turn.session_id !== event.session_id ||
+            turn.turn_id !== event.turn_id ||
+            progressIdsRef.current.has(event.message_id) ||
+            !event.text.trim()
+          )
+            break
+          progressIdsRef.current.add(event.message_id)
+          const draftId = h.refs.streamingMsgId.current
+          if (!draftId) break
+          h.setMessages(prev => {
+            if (prev.some(m => m.message_id === event.message_id)) return prev
+            prev = continueReplyAfterUser(prev, draftId)
+            const index = prev.findIndex(m => m.id === draftId)
+            if (index < 0) return prev
+            const draft = prev[index]
+            const progress: ChatMessage = {
+              id: event.message_id,
+              reply_id: draft.reply_id ?? draft.id,
+              message_id: event.message_id,
+              kind: 'progress',
+              role: 'assistant',
+              content: event.text,
+              timestamp: event.timestamp,
+              runtime: 'done',
+            }
+            return [
+              ...prev.slice(0, index),
+              progress,
+              event.replaces_draft
+                ? { ...draft, content: '', timestamp: event.timestamp }
+                : draft.content
+                  ? draft
+                  : { ...draft, timestamp: event.timestamp },
+              ...prev.slice(index + 1),
+            ]
+          })
+          break
+        }
         case 'llm_text_delta':
           // 暂停菜单打开期间收到 LLM 流式文本 = agent 已越过暂停检查点恢复执行
           // （如手机端追加后先思考再调工具），自动关闭桌面暂停菜单
@@ -764,7 +821,9 @@ export function useEvents(h: EventHandlers) {
             const s = h.refs.streamingMsgId.current
             if (!event.is_thinking && !event.from_task && s) {
               h.setMessages((prev: ChatMessage[]) =>
-                prev.map(m => (m.id === s ? { ...m, content: m.content + event.text } : m)),
+                continueReplyAfterUser(prev, s).map(m =>
+                  m.id === s ? { ...m, content: m.content + event.text } : m,
+                ),
               )
             }
             const kind = event.is_thinking ? ('thinking' as const) : ('text' as const)
@@ -810,7 +869,7 @@ export function useEvents(h: EventHandlers) {
             // finalMsg 非空时无条件覆盖，避免"中间的空格都是 thinking 的 chars"。
             const content = finalMsg.trim() ? finalMsg : '（已执行完成，未产出回复）'
             h.setMessages((prev: ChatMessage[]) =>
-              prev.map(m =>
+              continueReplyAfterUser(prev, s).map(m =>
                 m.id === s
                   ? {
                       ...m,
@@ -860,6 +919,24 @@ export function useEvents(h: EventHandlers) {
           break
         }
         case 'security_check':
+          if (event.tool === 'desktop_action_approval') {
+            let details: { title?: string; content?: string } = {}
+            try {
+              const parsed = JSON.parse(event.params)
+              if (parsed && typeof parsed === 'object') details = parsed
+            } catch {
+              // The trusted host normally sends a compact display payload.
+            }
+            h.setApprovalState({
+              open: true,
+              kind: 'desktop_action',
+              title: typeof details.title === 'string' ? details.title : event.reason,
+              content: typeof details.content === 'string' ? details.content : event.reason,
+              actionId: event.action_id,
+              tenetCount: 0,
+            })
+            break
+          }
           h.setSecurity({
             actionId: event.action_id,
             tool: event.tool,
@@ -887,6 +964,9 @@ export function useEvents(h: EventHandlers) {
         case 'prompt_timeout':
           // 后端等待超时/取消 → 清除对应 action_id 的安全弹窗与输入请求弹窗
           h.setSecurity(prev => (prev && prev.actionId === event.action_id ? null : prev))
+          h.setApprovalState(prev =>
+            prev.actionId === event.action_id ? { ...prev, open: false } : prev,
+          )
           if (
             userInputRequestRef.current &&
             userInputRequestRef.current.actionId === event.action_id

@@ -62,7 +62,19 @@ impl Executor {
                 self.check_cancel(workflow_id).await?;
             }
 
-            match tool_exec(tool.to_string(), resolved_params.clone()).await {
+            let cancel = self
+                .cancel_flags
+                .read()
+                .await
+                .get(workflow_id)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+            match crate::tools::desktop_approval::with_cancellation(
+                cancel,
+                tool_exec(tool.to_string(), resolved_params.clone()),
+            )
+            .await
+            {
                 Ok(output) => {
                     // ── 变量捕获 ──
                     super::variables::capture_output(&step.capture, &output, variables)?;
@@ -73,9 +85,13 @@ impl Executor {
                     // Native desktop dispatch may already have caused a side
                     // effect even if its postcondition cannot be established.
                     // A retry would repeat a click/send/submit with a fresh token.
-                    if matches!(tool, "desktop_semantic_action" | "desktop_input")
-                        && last_error.contains("desktop_needs_observation:")
-                    {
+                    let delivery =
+                        crate::desktop_automation::DesktopActionError::decode(&last_error);
+                    let uncertain_dispatch =
+                        delivery.as_ref().is_some_and(|result| !result.may_retry())
+                            || (tool.starts_with("desktop_")
+                                && last_error.contains("desktop_needs_observation:"));
+                    if uncertain_dispatch {
                         return Err(crate::NuphusError::agent(format!(
                             "Tool '{}' ({}): {}",
                             tool, step.name, last_error

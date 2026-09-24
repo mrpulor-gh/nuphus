@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { foldAssistantHistory } from '../core/progressMessages'
 import { initToken, clearToken, saveToken } from './auth'
 import {
   fetchHistory,
@@ -364,36 +365,17 @@ export default function App() {
    *  此前每次 rid() 随机 id → 全部 key 变化 → 整列表重渲染 + 滚动丢失 → 页面
    *  间隔几秒轻微闪动（大王 2026-08-14 反馈）。 */
   function stableHistoryId(m: HistoryMessage): string {
+    if (m.message_id) return m.message_id
     let h = 5381
     const s = `${m.role}\u0000${m.content ?? ''}`
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0
     return `h-${h.toString(36)}-${m.timestamp ?? 0}`
   }
 
-  /** 历史粒度对齐（P0 修复）：实时流式把一次执行（多轮 agent 循环）累积为一条
-   *  assistant 气泡（store.ts llm_text_delta 无条件累积到 last.streaming，工具/文本
-   *  全进 traceItems，execution_completed 才置 streaming=false + 填最终回复）；
-   *  但后端 session 每轮 push_assistant 一条（react_loop.rs:757）→ 历史按轮次返回
-   *  多条 → 刷新后一个 agent 回复被拆成多个气泡（每个 text 段一个，大王实测）。
-   *  折叠连续 assistant（中间无 user 间隔）为一条，content 取组内最后非空
-   *  content（最终回复）；追加指令段 [APPEND] 已由后端 extract_history 过滤
-   *  （session.rs:61），不会出现在历史里打断折叠。
-   *  按大王指示「只拉取最终回复」：历史 assistant 统一不带执行过程
-   *  （traceItems 清空）——刷新后显示对话记录（user 问题 + agent 最终回复），
-   *  执行状态行/过程弹窗仅实时可见。仅影响手机端，桌面端不受影响。 */
+  /** 与桌面端一致保留面向用户的过程说明；旧 assistant 轮次兼容折叠。
+   *  手机历史仍不加载工具/思考详情，避免重连时重复挂载大型执行面板。 */
   function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
-    const out: HistoryMessage[] = []
-    for (const m of msgs) {
-      const prev = out[out.length - 1]
-      if (m.role === 'assistant' && prev && prev.role === 'assistant') {
-        out[out.length - 1] = {
-          ...prev,
-          content: m.content && m.content.trim() ? m.content : prev.content,
-        }
-      } else {
-        out.push(m)
-      }
-    }
+    const out = foldAssistantHistory(msgs)
     // 只拉取最终回复：历史 assistant 不带执行过程（traceItems 清空）
     return out.map(m => (m.role === 'assistant' ? { ...m, traceItems: [] } : m))
   }
@@ -415,6 +397,8 @@ export default function App() {
           )
           .map((m: HistoryMessage) => ({
             id: stableHistoryId(m),
+            kind: m.kind,
+            message_id: m.message_id,
             role: m.role as 'user' | 'assistant' | 'refine',
             content: m.content,
             images: m.images && m.images.length > 0 ? m.images : undefined,

@@ -15,6 +15,30 @@ use crate::state::AppState;
 use nuphus::automation_gate::{HoldKind, ResourceClass};
 use tauri::State;
 
+/// Select a local native application on the user's desktop. No caller-provided
+/// launch path or command line enters this endpoint.
+#[tauri::command]
+pub async fn desktop_register_application(
+    app: tauri::AppHandle,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        let selection = app
+            .dialog()
+            .file()
+            .set_title("登记桌面应用")
+            .add_filter("Desktop application", &["exe", "lnk", "app"])
+            .blocking_pick_file();
+        let Some(selection) = selection else {
+            return Ok(None);
+        };
+        let path = selection.into_path().map_err(|e| e.to_string())?;
+        nuphus::desktop::targets::register_user_application(&path).map(Some)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Extract raw data from DesktopClient's { success, result/error } wrapper
 fn unwrap_result(value: serde_json::Value) -> Result<serde_json::Value, String> {
     if value

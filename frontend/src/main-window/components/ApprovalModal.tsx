@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '../../core/bridge'
 import { Button } from '../../ui/Button'
@@ -26,13 +26,18 @@ export function ApprovalModal({
   onClose,
 }: ApprovalModalProps) {
   const { t } = useLanguage()
+  const desktop = kind === 'desktop_action'
   const [visible, setVisible] = useState(false)
   const [animating, setAnimating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<'approved' | 'rejected' | null>(null)
+  const activeAction = useRef(actionId)
+  activeAction.current = actionId
 
   useEffect(() => {
     if (open) {
+      setResult(null)
+      setBusy(false)
       playPopupSound('approval')
       setVisible(true)
       requestAnimationFrame(() => setAnimating(true))
@@ -44,29 +49,32 @@ export function ApprovalModal({
       }, 300)
       return () => clearTimeout(t)
     }
-  }, [open])
+  }, [open, actionId])
 
-  // 审批项后端 TTL 600s 自动过期；前端同步兜底关闭，避免弹窗无限挂起
+  // Desktop requests expire after 5 minutes; tenet proposals after 10 minutes.
   useEffect(() => {
     if (!open) return
-    const timer = setTimeout(() => {
-      onClose()
-    }, 600_000)
+    const timer = setTimeout(
+      () => {
+        onClose()
+      },
+      desktop ? 300_000 : 600_000,
+    )
     return () => clearTimeout(timer)
-  }, [open, onClose])
+  }, [open, onClose, desktop, actionId])
 
   const handleApprove = useCallback(async () => {
     if (busy) return
     setBusy(true)
     try {
       await invoke('approve_pending', { actionId })
-      setResult('approved')
+      if (activeAction.current === actionId) setResult('approved')
     } catch (e) {
       // 审批项已过期/不存在（后端 TTL 600s 清理）→ 弹窗已无意义，直接关闭避免卡死
       console.error('Approve failed:', e)
-      onClose()
+      if (activeAction.current === actionId) onClose()
     } finally {
-      setBusy(false)
+      if (activeAction.current === actionId) setBusy(false)
     }
   }, [actionId, busy, onClose])
 
@@ -75,19 +83,22 @@ export function ApprovalModal({
     setBusy(true)
     try {
       await invoke('reject_pending', { actionId })
-      setResult('rejected')
+      if (activeAction.current === actionId) setResult('rejected')
     } catch (e) {
       console.error('Reject failed:', e)
-      onClose()
+      if (activeAction.current === actionId) onClose()
     } finally {
-      setBusy(false)
+      if (activeAction.current === actionId) setBusy(false)
     }
   }, [actionId, busy, onClose])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (busy || result) return
-      if (e.key === 'Enter') {
+      // A desktop approval may appear while the user is typing in another app.
+      // Require an intentional button activation; do not treat an incidental
+      // Enter key as approval of an irreversible action.
+      if (e.key === 'Enter' && !desktop) {
         e.preventDefault()
         handleApprove()
       }
@@ -96,7 +107,7 @@ export function ApprovalModal({
         handleReject()
       }
     },
-    [busy, result, handleApprove, handleReject],
+    [busy, result, desktop, handleApprove, handleReject],
   )
 
   useEffect(() => {
@@ -156,10 +167,14 @@ export function ApprovalModal({
               )}
             </div>
             <div className="approval-result-title">
-              {result === 'approved' ? t('approval.saved') : t('approval.rejected')}
+              {result === 'approved'
+                ? t(desktop ? 'approval.desktopApproved' : 'approval.saved')
+                : t('approval.rejected')}
             </div>
             <div className="approval-result-desc">
-              {result === 'approved' ? t('approval.savedDesc') : t('approval.rejectedDesc')}
+              {result === 'approved'
+                ? t(desktop ? 'approval.desktopApprovedDesc' : 'approval.savedDesc')
+                : t(desktop ? 'approval.desktopRejectedDesc' : 'approval.rejectedDesc')}
             </div>
             <Button variant="default" className="approval-close-btn" onClick={onClose}>
               {t('approval.close')}
@@ -168,12 +183,16 @@ export function ApprovalModal({
         ) : (
           <>
             <div className="compact-header compact-header--stacked">
-              <div className="approval-eyebrow">{t('approval.title')}</div>
+              <div className="approval-eyebrow">
+                {t(desktop ? 'approval.desktopTitle' : 'approval.title')}
+              </div>
               <div className="approval-title">{title}</div>
             </div>
-            <div className="approval-desc">{t('approval.desc')}</div>
+            <div className="approval-desc">
+              {t(desktop ? 'approval.desktopDesc' : 'approval.desc')}
+            </div>
             <div className="approval-content">{content}</div>
-            {tenetCount !== undefined && (
+            {!desktop && tenetCount !== undefined && (
               <div className="approval-tenet">
                 <span className="approval-tenet-dot" aria-hidden="true" />
                 <span>{t('approval.count', String(tenetCount))}</span>
@@ -184,13 +203,17 @@ export function ApprovalModal({
                 {t('approval.reject')}
               </Button>
               <Button variant="primary" onClick={handleApprove} disabled={busy} loading={busy}>
-                {busy ? t('common.processing') : t('approval.approve')}
+                {busy
+                  ? t('common.processing')
+                  : t(desktop ? 'approval.desktopApprove' : 'approval.approve')}
               </Button>
             </div>
             <div className="approval-hints">
-              <span>
-                <kbd className="kbd">↵</kbd> {t('approval.hintApprove')}
-              </span>
+              {!desktop && (
+                <span>
+                  <kbd className="kbd">↵</kbd> {t('approval.hintApprove')}
+                </span>
+              )}
               <span>
                 <kbd className="kbd">Esc</kbd> {t('approval.hintReject')}
               </span>

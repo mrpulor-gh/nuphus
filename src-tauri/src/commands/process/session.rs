@@ -25,22 +25,55 @@ pub fn get_chat_history(
 /// 从 session 消息过滤出 UI 可见历史。
 /// 追加指令段 [APPEND]：LLM 上下文保留完整指令语义，但 UI 历史需还原为用户原文
 /// ——否则执行中发送的消息在刷新/重连后消失（用户看不到自己发过的内容）。
-fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::HistoryMessage> {
+fn extract_history_for_mode(
+    session: &nuphus::session::Session,
+    is_workflow: bool,
+) -> Vec<crate::state::HistoryMessage> {
     use nuphus::session::ContentBlock;
     let messages = session.messages();
     // 第一遍：收集 ToolResult（call_id → is_error），供 assistant 消息的 ToolUse 补完成状态。
     // Session 完整存储工具调用与结果；历史拉取时据此还原「执行过程」供手机端显示完成状态。
     let mut tool_results: std::collections::HashMap<String, bool> =
         std::collections::HashMap::new();
+    let report_call_ids: std::collections::HashSet<&str> = messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, name, .. } if name == "workflow_report_progress" => {
+                Some(id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut delivered_reports = std::collections::HashMap::new();
     for m in messages.iter() {
         for block in &m.content {
             if let ContentBlock::ToolResult {
                 tool_use_id,
                 is_error,
-                ..
+                content,
             } = block
             {
                 tool_results.insert(tool_use_id.clone(), *is_error);
+                if !is_error && report_call_ids.contains(tool_use_id.as_str()) {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
+                        if value["delivered"] == true
+                            && value["message_id"].as_str() == Some(tool_use_id.as_str())
+                        {
+                            if let Some(text) =
+                                value["message"].as_str().filter(|s| !s.trim().is_empty())
+                            {
+                                delivered_reports.insert(
+                                    tool_use_id.clone(),
+                                    (
+                                        text.to_string(),
+                                        value["timestamp"].as_u64().or(m.timestamp),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -53,7 +86,8 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
 
     messages
         .iter()
-        .filter_map(|m| {
+        .enumerate()
+        .flat_map(|(message_index, m)| {
             let role = match m.role {
                 nuphus::session::MessageRole::User => "user",
                 nuphus::session::MessageRole::Assistant => "assistant",
@@ -68,7 +102,7 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
             // 前缀匹配固定模板，不模糊——真实用户消息不会以「开始进行上下文提炼」开头。
             if role == "user" && content.starts_with("开始进行上下文提炼") {
                 prev_was_refine_prompt = true;
-                return None;
+                return Vec::new();
             }
             // 提炼输出摘要：紧跟 REFINE_PROMPT 的第一条消息若是 assistant → 以独立
             // refine 角色输出（内容保留）。flag 只在紧随消息上消费、不悬空（提炼失败后
@@ -78,16 +112,18 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
                 prev_was_refine_prompt = false;
                 if role == "assistant" {
                     if content.trim().is_empty() {
-                        return None;
+                        return Vec::new();
                     }
-                    return Some(crate::state::HistoryMessage {
+                    return vec![crate::state::HistoryMessage {
                         role: "refine".to_string(),
                         content,
+                        kind: None,
+                        message_id: None,
                         images,
                         audio,
                         timestamp: m.timestamp,
                         trace_items: Vec::new(),
-                    });
+                    }];
                 }
             }
 
@@ -97,7 +133,7 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
             // agent 消息被分割、接收不到完整回复）。旧数据 internal=false 的
             // [APPEND] 段也在此统一过滤（不泄漏系统说明格式）。
             if role == "user" && nuphus::mobile_append::is_append_section(&content) {
-                return None;
+                return Vec::new();
             }
 
             // 提炼摘要（replace_with_distill / accumulate_distill 写入基础层）：
@@ -115,17 +151,48 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
                     .trim()
                     .to_string();
                 if body.is_empty() {
-                    return None;
+                    return Vec::new();
                 }
-                return Some(crate::state::HistoryMessage {
+                return vec![crate::state::HistoryMessage {
                     role: "refine".to_string(),
                     content: body,
+                    kind: None,
+                    message_id: None,
                     images,
                     audio,
                     timestamp: m.timestamp,
                     trace_items: Vec::new(),
-                });
+                }];
             }
+
+            // 仅从成功投递的汇报结果恢复正文，不能从模型参数或 reasoning 补造。
+            let reports: Vec<_> = if role == "assistant" && !m.internal {
+                m.content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolUse { id, name, .. }
+                            if name == "workflow_report_progress" =>
+                        {
+                            delivered_reports
+                                .get(id)
+                                .filter(|(text, _)| text.trim() != content.trim())
+                                .map(|(text, timestamp)| crate::state::HistoryMessage {
+                                    role: "assistant".to_string(),
+                                    content: text.clone(),
+                                    kind: Some("progress".to_string()),
+                                    message_id: Some(id.clone()),
+                                    images: Vec::new(),
+                                    audio: Vec::new(),
+                                    timestamp: *timestamp,
+                                    trace_items: Vec::new(),
+                                })
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             // 跳过空内容、系统内部消息（internal 标记——reminders/门铃/安全检查警告等
             // 只进 LLM 上下文，不显示在前端历史）、以及 system 前缀 [ 的内部提示。
@@ -133,7 +200,7 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
                 || m.internal
                 || (role == "system" && content.starts_with('['))
             {
-                return None;
+                return reports;
             }
             // 系统收尾提示（后端行为，用户不可见）：旧数据 internal=false 兜底过滤。
             // 精确匹配固定模板，不模糊——真实 agent 输出不会被误伤。
@@ -142,20 +209,20 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
                 if t == "达到最大迭代次数"
                     || (t.starts_with("任务完成（共执行 ") && t.ends_with(" 步）"))
                 {
-                    return None;
+                    return reports;
                 }
             }
             // 提炼系统提示词（distill::REFINE_PROMPT）：旧数据 internal=false 兜底过滤。
             // 提炼是内部流程，提示词不应以「用户消息」形式显示在桌面/手机历史。
             // 精确前缀匹配固定模板，不模糊——真实用户消息不会被误伤。
             if role == "user" && content.starts_with("开始进行上下文提炼") {
-                return None;
+                return reports;
             }
             // 上下文用量系统提示（react_loop 每 ~100K tokens 注入的 leader_memory_update
             // 提醒）：旧数据 internal=false 兜底过滤。内部行为提示，不应显示在前端历史。
             // 前缀匹配固定模板，不模糊——真实用户消息不会以「[系统提示词]」开头。
             if role == "user" && content.starts_with("[系统提示词]") {
-                return None;
+                return reports;
             }
             // 组装执行过程 trace_items（思考/流式文本/工具调用，按实际顺序）。
             // Session 完整存储 ToolUse/ToolResult——历史拉取还原真实执行过程，
@@ -207,14 +274,24 @@ fn extract_history(session: &nuphus::session::Session) -> Vec<crate::state::Hist
                     _ => {}
                 }
             }
-            Some(crate::state::HistoryMessage {
+            // 只有 WorkflowAgent 发布原生正文进度事件，Leader 保持既有历史合并语义。
+            let is_progress = is_workflow
+                && role == "assistant"
+                && m.content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
+            let mut visible = vec![crate::state::HistoryMessage {
                 role: role.to_string(),
                 content,
+                kind: is_progress.then(|| "progress".to_string()),
+                message_id: is_progress.then(|| format!("{}:text:{}", session.id, message_index)),
                 images,
                 audio,
                 timestamp: m.timestamp,
                 trace_items,
-            })
+            }];
+            visible.extend(reports);
+            visible
         })
         .collect()
 }
@@ -241,6 +318,8 @@ fn append_last_turn_user(
     msgs.push(crate::state::HistoryMessage {
         role: "user".to_string(),
         content: text.to_string(),
+        kind: None,
+        message_id: None,
         images: last_images.to_vec(),
         audio: Vec::new(),
         timestamp: None,
@@ -279,13 +358,13 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
         guard
             .workflow_agent
             .as_ref()
-            .map(|a| extract_history(a.session()))
+            .map(|a| extract_history_for_mode(a.session(), is_workflow))
             .unwrap_or_default()
     } else {
         guard
             .leader_agent
             .as_ref()
-            .map(|a| extract_history(a.session()))
+            .map(|a| extract_history_for_mode(a.session(), is_workflow))
             .unwrap_or_default()
     };
     if !primary.is_empty() {
@@ -309,7 +388,7 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
         if let Ok(sb) = state.session.lock() {
             if let Some(ref json) = sb.session_backup {
                 if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
-                    let messages = extract_history(&sess);
+                    let messages = extract_history_for_mode(&sess, is_workflow);
                     if !messages.is_empty() {
                         let messages = append_last_turn_user(
                             messages,
@@ -335,7 +414,7 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
     if let Ok(sb) = state.session.lock() {
         if let Some(ref json) = sb.session_backup {
             if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
-                let messages = extract_history(&sess);
+                let messages = extract_history_for_mode(&sess, is_workflow);
                 if !messages.is_empty() {
                     // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息（含图）
                     let messages =
@@ -354,6 +433,8 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
             return Ok(vec![crate::state::HistoryMessage {
                 role: "user".to_string(),
                 content: sb.last_message.trim().to_string(),
+                kind: None,
+                message_id: None,
                 images: Vec::new(),
                 audio: Vec::new(),
                 timestamp: None,
@@ -371,11 +452,179 @@ mod tests {
     use super::*;
     use nuphus::session::{ContentBlock, Session};
 
+    fn extract_history(session: &Session) -> Vec<crate::state::HistoryMessage> {
+        extract_history_for_mode(session, true)
+    }
+
     fn assistant(text: &str) -> Vec<ContentBlock> {
         vec![ContentBlock::Text {
             text: text.to_string(),
             reasoning: None,
         }]
+    }
+
+    fn progress_call(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.to_string(),
+            name: "workflow_report_progress".to_string(),
+            input: serde_json::json!({"message": "不能从调用参数恢复正文"}),
+        }
+    }
+
+    fn delivered_progress(session: &mut Session, id: &str, text: &str) {
+        session.push_tool_result(
+            id.to_string(),
+            serde_json::json!({
+                "delivered": true,
+                "message": text,
+                "message_id": id,
+                "timestamp": 1234,
+            })
+            .to_string(),
+            false,
+        );
+    }
+
+    #[test]
+    fn extract_history_retains_delivered_progress_separately_from_final() {
+        let mut session = Session::new();
+        session.push_user("整理临时文件".to_string());
+        session.push_assistant(vec![progress_call("report-1")]);
+        delivered_progress(&mut session, "report-1", "正在检查临时目录。");
+        session.push_assistant(vec![progress_call("report-2")]);
+        delivered_progress(&mut session, "report-2", "检查完成，准备写入结果。");
+        session.push_assistant(assistant("已经完成。"));
+        // 真正经过序列化恢复后仍可从已投递工具结果重建。
+        let restored =
+            serde_json::from_str::<Session>(&serde_json::to_string(&session).unwrap()).unwrap();
+        let hist = extract_history(&restored);
+        assert_eq!(hist.len(), 4);
+        assert_eq!(hist[1].kind.as_deref(), Some("progress"));
+        assert_eq!(hist[1].message_id.as_deref(), Some("report-1"));
+        assert_eq!(hist[1].content, "正在检查临时目录。");
+        assert_eq!(hist[1].timestamp, Some(1234));
+        assert_eq!(hist[2].message_id.as_deref(), Some("report-2"));
+        assert_eq!(hist[3].content, "已经完成。");
+        assert!(hist[3].kind.is_none());
+    }
+
+    #[test]
+    fn extract_history_does_not_invent_failed_or_unexecuted_progress() {
+        let mut session = Session::new();
+        for id in ["failed", "undelivered", "unexecuted", "wrong-id"] {
+            session.push_assistant(vec![progress_call(id)]);
+        }
+        session.push_tool_result(
+            "failed".to_string(),
+            serde_json::json!({
+                "delivered": true, "message_id": "failed", "message": "失败内容",
+            })
+            .to_string(),
+            true,
+        );
+        session.push_tool_result(
+            "undelivered".to_string(),
+            serde_json::json!({
+                "delivered": false, "message_id": "undelivered", "message": "未投递",
+            })
+            .to_string(),
+            false,
+        );
+        session.push_tool_result(
+            "wrong-id".to_string(),
+            serde_json::json!({
+                "delivered": true, "message_id": "other", "message": "错误关联",
+            })
+            .to_string(),
+            false,
+        );
+        assert!(extract_history(&session).is_empty());
+    }
+
+    #[test]
+    fn extract_history_native_progress_uses_persisted_index_and_keeps_trace() {
+        let mut session = Session::new();
+        session.push_user_internal("内部上下文".to_string());
+        let mut blocks = assistant("先检查现有配置。");
+        blocks.push(ContentBlock::ToolUse {
+            id: "read-1".to_string(),
+            name: "read".to_string(),
+            input: serde_json::json!({"path": "example.json"}),
+        });
+        session.push_assistant(blocks);
+        session.push_tool_result("read-1".to_string(), "{}".to_string(), false);
+        session.push_assistant(assistant("检查完成。"));
+        let hist = extract_history(&session);
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0].kind.as_deref(), Some("progress"));
+        assert_eq!(hist[0].message_id, Some(format!("{}:text:1", session.id)));
+        assert_eq!(hist[0].trace_items.len(), 2);
+        assert_eq!(hist[0].trace_items[1].status.as_deref(), Some("ok"));
+        assert!(hist[1].kind.is_none());
+    }
+
+    #[test]
+    fn chat_history_leader_native_tool_text_keeps_legacy_merge_semantics() {
+        let state = AppState::default();
+        set_current_mode(&state, "leader");
+        let mut session = Session::new();
+        session.push_user("检查配置".to_string());
+        let mut blocks = assistant("正在检查配置。");
+        blocks.push(ContentBlock::ToolUse {
+            id: "leader-read".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "example.json"}),
+        });
+        session.push_assistant(blocks);
+        session.push_tool_result("leader-read".into(), "{}".into(), false);
+        session.push_assistant(assistant("检查完成。"));
+        state.runtime.lock().unwrap().leader_agent = Some(leader_runtime_with(session));
+        let history = chat_history(&state).unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[1].content, "正在检查配置。");
+        assert!(history[1].kind.is_none());
+        assert!(history[1].message_id.is_none());
+        assert_eq!(history[1].trace_items[1].status.as_deref(), Some("ok"));
+        assert_eq!(history[2].content, "检查完成。");
+    }
+
+    #[test]
+    fn extract_history_deduplicates_native_and_report_text_in_same_response() {
+        let mut session = Session::new();
+        let mut blocks = assistant("正在检查。");
+        blocks.push(progress_call("report-1"));
+        session.push_assistant(blocks);
+        delivered_progress(&mut session, "report-1", "正在检查。");
+        let hist = extract_history(&session);
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].content, "正在检查。");
+        assert_eq!(hist[0].message_id, Some(format!("{}:text:0", session.id)));
+    }
+
+    #[test]
+    fn extract_history_never_exposes_internal_or_refine_progress_calls() {
+        let mut session = Session::new();
+        session.push_user_internal(nuphus::agent::distill::REFINE_PROMPT.to_string());
+        let mut blocks = assistant("提炼摘要");
+        blocks.push(progress_call("refine-report"));
+        session.push_assistant(blocks);
+        delivered_progress(&mut session, "refine-report", "不应出现在主对话");
+        let hist = extract_history(&session);
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].role, "refine");
+        assert!(hist[0].kind.is_none());
+    }
+
+    #[test]
+    fn history_message_metadata_is_optional_for_old_payloads() {
+        let old: crate::state::HistoryMessage =
+            serde_json::from_value(serde_json::json!({"role": "assistant", "content": "旧回复"}))
+                .unwrap();
+        assert!(old.kind.is_none());
+        assert!(old.message_id.is_none());
+        let value = serde_json::to_value(old).unwrap();
+        assert!(value.get("kind").is_none());
+        assert!(value.get("message_id").is_none());
     }
 
     /// 旧数据（internal=false）残留的 REFINE_PROMPT user 消息必须被过滤（前缀兜底），

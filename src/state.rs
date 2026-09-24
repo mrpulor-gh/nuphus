@@ -133,6 +133,7 @@ pub struct SignalState {
 /// 安全子系统状态
 #[derive(Debug, Default)]
 pub struct SecurityState {
+    pub desktop_approvals: crate::tools::desktop_approval::DesktopApprovalState,
     /// 安全确认结果 (action_id → (approved, timestamp))
     pub security_results: HashMap<String, (bool, Instant)>,
     /// 会话级授权工具集

@@ -39,6 +39,8 @@ function resolveApi(path: string): string {
 
 /** 与后端 HistoryMessage 对齐（commands/process/session.rs chat_history 返回） */
 export interface HistoryMessage {
+  kind?: 'progress'
+  message_id?: string
   role: string // "user" | "assistant" | "system" | "tool"
   content: string
   images?: string[]

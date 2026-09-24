@@ -17,6 +17,9 @@ pub mod sub_task;
 pub mod sub_task_loop;
 pub mod sub_task_shell;
 pub mod workflow_agent;
+mod workflow_progress;
+#[cfg(test)]
+mod workflow_progress_tests;
 
 pub use mode::Mode;
 pub use r#loop::{Runtime, RuntimeBuilder, RuntimeConfig, RuntimeEvent};

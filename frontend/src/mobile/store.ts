@@ -11,6 +11,7 @@
 
 import type { NuphusEvent, WorkflowRunStep } from '../core/types'
 import { t } from './i18n'
+import { projectExecutionActivity, type ExecutionActivity } from '../core/executionActivity'
 
 /** 执行过程条目：思考 / agent 流式文本 / 工具调用，按实际发生顺序排列 */
 export type TraceItem =
@@ -28,6 +29,9 @@ export type TraceItem =
 
 export interface ChatMessage {
   id: string
+  kind?: 'progress'
+  message_id?: string
+  reply_id?: string
   role: 'user' | 'assistant' | 'system' | 'refine'
   content: string
   /** 图片 data URL 列表（桌面端发的图在手机端可见） */
@@ -56,6 +60,12 @@ export interface ToolActivity {
 }
 
 export interface ActivityState {
+  detail?: ExecutionActivity | null
+  session_id?: string
+  turn_id?: string
+  /** Missing execution_started on reconnect: one event may bind the scope only
+   * after authoritative sync_running. An explicit session change closes this gate. */
+  progressScopeRecovery?: 'awaiting' | 'blocked'
   /**
    * 桌面端是否在执行（= 后端执行态 `stage != "idle"` 的派生投影）。
    *
@@ -219,6 +229,21 @@ function finalizeStreaming(messages: ChatMessage[]): ChatMessage[] {
 
 function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
   switch (ev.type) {
+    case 'session_changed':
+    case 'new_chat_broadcast':
+      return {
+        ...state,
+        activity: {
+          ...state.activity,
+          running: false,
+          session_id: undefined,
+          turn_id: undefined,
+          progressScopeRecovery: 'blocked',
+          detail: null,
+          startedAt: undefined,
+        },
+        messages: finalizeStreaming(state.messages),
+      }
     case 'user_message_received': {
       // 乐观回显确认：本端刚发出的消息经广播回来，内容匹配即确认
       const idx = state.messages.findIndex(
@@ -248,7 +273,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       return {
         ...state,
         messages: [
-          ...state.messages,
+          ...finalizeStreaming(state.messages),
           {
             id: rid(),
             role: 'user',
@@ -273,6 +298,8 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         pendingRefine: null,
         activity: {
           running: true,
+          session_id: ev.session_id,
+          turn_id: ev.turn_id,
           goal: ev.goal,
           mode: ev.mode ?? 'leader',
           tools: [],
@@ -306,6 +333,66 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         },
       }
 
+    case 'assistant_progress': {
+      if (
+        !state.activity.running ||
+        state.refining ||
+        !ev.text.trim() ||
+        !ev.session_id ||
+        !ev.turn_id
+      )
+        return state
+      const canRecover =
+        state.activity.progressScopeRecovery === 'awaiting' &&
+        !state.activity.session_id &&
+        !state.activity.turn_id
+      if (
+        !canRecover &&
+        (state.activity.session_id !== ev.session_id || state.activity.turn_id !== ev.turn_id)
+      )
+        return state
+      const activity = canRecover
+        ? {
+            ...state.activity,
+            session_id: ev.session_id,
+            turn_id: ev.turn_id,
+            progressScopeRecovery: undefined,
+          }
+        : state.activity
+      // A history replay can establish the scope too, without duplicating its bubble.
+      if (state.messages.some(m => m.message_id === ev.message_id)) return { ...state, activity }
+      const messages = state.messages.slice()
+      const last = messages[messages.length - 1]
+      const draft =
+        last?.role === 'assistant' && last.streaming
+          ? messages.pop()!
+          : {
+              id: rid(),
+              role: 'assistant' as const,
+              content: '',
+              streaming: true,
+              timestamp: ev.timestamp,
+            }
+      messages.push(
+        {
+          id: ev.message_id,
+          reply_id: draft.id,
+          message_id: ev.message_id,
+          kind: 'progress',
+          role: 'assistant',
+          content: ev.text,
+          timestamp: ev.timestamp,
+          streaming: false,
+        },
+        ev.replaces_draft
+          ? { ...draft, content: '', timestamp: ev.timestamp }
+          : draft.content
+            ? draft
+            : { ...draft, timestamp: ev.timestamp },
+      )
+      return { ...state, activity, messages }
+    }
+
     case 'llm_text_delta': {
       // 非执行中忽略：息屏/切应用返回后积压的旧轮次 delta 重放时，
       // running 已为 false（execution_completed 先到）→ 忽略，防创建孤立空气泡。
@@ -324,7 +411,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       if (last && last.role === 'assistant' && last.streaming) {
         messages[messages.length - 1] = {
           ...last,
-          content: kind === 'text' ? (last.content ?? '') + ev.text : last.content,
+          content: kind === 'text' && !ev.from_task ? (last.content ?? '') + ev.text : last.content,
           thinking: kind === 'thinking' ? (last.thinking ?? '') + ev.text : last.thinking,
           traceItems: appendTraceItem(last.traceItems, kind, ev.text),
         }
@@ -332,7 +419,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         messages.push({
           id: rid(),
           role: 'assistant',
-          content: kind === 'text' ? ev.text : '',
+          content: kind === 'text' && !ev.from_task ? ev.text : '',
           thinking: kind === 'thinking' ? ev.text : undefined,
           traceItems: [{ kind, text: ev.text }],
           streaming: true,
@@ -450,7 +537,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       if (!state.refining && result) {
         const lastIdx = messages.length - 1
         const last = messages[lastIdx]
-        if (last && last.role === 'assistant') {
+        if (last && last.role === 'assistant' && last.kind !== 'progress') {
           messages[lastIdx] = { ...last, content: result, streaming: false }
         } else {
           messages.push({
@@ -779,6 +866,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // 新会话：清空前端消息与待处理卡片（历史仍在后端，刷新可恢复）
       return {
         ...state,
+        activity: {
+          ...initialChatState.activity,
+          mode: state.activity.mode,
+          progressScopeRecovery: 'blocked',
+        },
         messages: [],
         pendingConfirm: null,
         pendingRefine: null,
@@ -793,7 +885,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // （执行前快照）→ 后端历史缺当前轮 user/agent；若本地完成态消息被历史替换
       // 则最后气泡消失（用户实测：息屏重开/切换应用返回后最后消息不见）。
       // 仅执行中启用保护：空闲/完成态历史完整，不保护避免 refine 后旧消息残留。
-      const historyKeys = new Set(action.messages.map(h => `${h.role}|${h.content ?? ''}`))
+      const messageKey = (m: ChatMessage) =>
+        m.message_id ? `id:${m.message_id}` : `${m.role}|${m.content ?? ''}`
+      const historyKeys = new Set(action.messages.map(messageKey))
       // 长尾对账（P2 修复）：空闲态下 pending 超 60s 且历史无同 content
       // = 请求从未到达后端（隧道半死/断网瞬间 POST 挂起 15s 超时）→
       // 转失败提示，不再永久挂灰。执行中/历史已含的 pending 不动
@@ -811,7 +905,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             !state.activity.running &&
             typeof m.timestamp === 'number' &&
             now - m.timestamp > 60_000 &&
-            !historyKeys.has(`${m.role}|${m.content ?? ''}`)
+            !historyKeys.has(messageKey(m))
           if (stale) {
             stalePending.push(m)
             return false
@@ -819,9 +913,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           return true
         }
         return (
-          m.pending ||
-          m.streaming ||
-          (state.activity.running && !historyKeys.has(`${m.role}|${m.content ?? ''}`))
+          m.pending || m.streaming || (state.activity.running && !historyKeys.has(messageKey(m)))
         )
       })
       const merged = [...action.messages, ...live]
@@ -834,8 +926,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const seen = new Set<string>()
       const out: typeof state.messages = []
       for (const m of merged) {
-        const key = `${m.role}|${m.content ?? ''}`
-        const idx = out.findIndex(o => `${o.role}|${o.content ?? ''}` === key)
+        const key = messageKey(m)
+        const idx = out.findIndex(o => messageKey(o) === key)
         if (idx < 0) {
           seen.add(key)
           out.push(m)
@@ -895,7 +987,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const merged = [...action.messages, ...live]
       const seen = new Set<string>()
       const out = merged.filter(m => {
-        const k = `${m.role}|${m.content ?? ''}`
+        const k = m.message_id ? `id:${m.message_id}` : `${m.role}|${m.content ?? ''}`
         if (seen.has(k)) return false
         seen.add(k)
         return true
@@ -910,11 +1002,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         },
       }
     }
-    case 'event':
-      return applyEvent(state, action.event)
+    case 'event': {
+      const next = applyEvent(state, action.event)
+      return {
+        ...next,
+        activity: {
+          ...next.activity,
+          detail: projectExecutionActivity(state.activity.detail ?? null, action.event),
+        },
+      }
+    }
     case 'sync_running': {
       // 刷新/重连后同步执行状态（broadcast 不为迟到订阅者补发，间隙事件会丢失）。
-      if (action.running && !state.activity.running) {
+      if (action.running) {
         // 后端仍在执行 → 恢复 running，后续 delta 正常累积 streaming 气泡
         return {
           ...state,
@@ -922,6 +1022,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ...state.activity,
             running: true,
             startedAt: state.activity.startedAt ?? Date.now(),
+            progressScopeRecovery:
+              !state.activity.session_id &&
+              !state.activity.turn_id &&
+              state.activity.progressScopeRecovery !== 'blocked'
+                ? 'awaiting'
+                : state.activity.progressScopeRecovery,
           },
         }
       }
@@ -930,14 +1036,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         // 最终结果由本次 onReady 的 loadHistory 拉取落地
         return {
           ...state,
-          activity: { ...state.activity, running: false, startedAt: undefined },
+          activity: {
+            ...state.activity,
+            running: false,
+            startedAt: undefined,
+            progressScopeRecovery:
+              state.activity.progressScopeRecovery === 'blocked' ? 'blocked' : undefined,
+          },
           messages: finalizeStreaming(state.messages),
         }
       }
       return state
     }
     case 'optimistic':
-      return { ...state, messages: [...state.messages, action.message] }
+      return { ...state, messages: [...finalizeStreaming(state.messages), action.message] }
     case 'send_failed':
       // 发送未被接受（busy/错误）：撤掉乐观气泡，以系统消息说明原因
       return {

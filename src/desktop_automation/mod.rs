@@ -7,6 +7,9 @@
 mod jev;
 mod laya;
 pub(crate) mod macos_accessibility;
+mod outcome;
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+mod risk;
 mod runner;
 mod types;
 mod windows_uia;
@@ -20,6 +23,9 @@ pub use laya::{
     LayaResponse, LayaTransport, LayaUsage, ReqwestLayaTransport,
 };
 pub use macos_accessibility::MacosAccessibilityAdapter;
+pub use outcome::{ActionEffect, DesktopActionError, DispatchState};
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) use risk::classify_desktop_risk;
 pub use runner::{
     AutomationRunner, CandidateBuilder, ComputerExecutor, ComputerObserver, Verifier,
 };

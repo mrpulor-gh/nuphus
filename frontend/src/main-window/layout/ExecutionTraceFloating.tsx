@@ -6,6 +6,8 @@ import { IconX, IconTerminal } from '../../ui/Icons'
 import { NuphusAvatar } from '../../ui/NuphusAvatar'
 import MarkdownContent from '../chat/MarkdownContent'
 import type { TimelineEntry } from '../../core/types'
+import { desktopActionResult } from '../lib/desktopActionResult'
+import { DesktopActionStatus } from './DesktopActionStatus'
 
 interface ExecutionTraceProps {
   timeline: TimelineEntry[]
@@ -1060,15 +1062,32 @@ export function ExecutionTraceFloating({
                     const isOk = entry.status === 'success'
                     const isErr = entry.status === 'error'
                     const isRunning = entry.status === 'running'
+                    const desktopResult = isRunning
+                      ? null
+                      : desktopActionResult(entry.toolName, entry.output)
                     lines.push(
                       <div
                         key="status"
-                        className={`term-status ${isOk ? 'term-ok' : isErr ? 'term-err' : isRunning ? 'term-running' : ''}`}
+                        className={`term-status ${desktopResult ? '' : isOk ? 'term-ok' : isErr ? 'term-err' : isRunning ? 'term-running' : ''}`}
                       >
-                        <span className={`term-status-icon ${isRunning ? 'running' : ''}`} />
-                        <span className={`term-exit-code ${isRunning ? 'term-running-text' : ''}`}>
-                          {isOk ? 'exit 0' : isErr ? 'exit 1' : isRunning ? 'running…' : 'pending'}
-                        </span>
+                        {desktopResult ? (
+                          <DesktopActionStatus result={desktopResult} />
+                        ) : (
+                          <>
+                            <span className={`term-status-icon ${isRunning ? 'running' : ''}`} />
+                            <span
+                              className={`term-exit-code ${isRunning ? 'term-running-text' : ''}`}
+                            >
+                              {isOk
+                                ? 'exit 0'
+                                : isErr
+                                  ? 'exit 1'
+                                  : isRunning
+                                    ? 'running…'
+                                    : 'pending'}
+                            </span>
+                          </>
+                        )}
                       </div>,
                     )
 
@@ -1286,6 +1305,10 @@ export function ExecutionTraceFloating({
                     (typeof p === 'object' && p ? JSON.stringify(p).slice(0, 120) : '')
                   // Cleanup: remove extra quotes
                   const displayPath = path.replace(/^["']|["']$/g, '')
+                  const desktopResult =
+                    entry.status === 'running'
+                      ? null
+                      : desktopActionResult(entry.toolName, entry.output)
 
                   return (
                     <Fragment key={entry.id}>
@@ -1305,8 +1328,12 @@ export function ExecutionTraceFloating({
                             </div>
                           )}
                         </div>
-                        <StatusIcon status={entry.status} />
-                        {entry.status && (
+                        {desktopResult ? (
+                          <DesktopActionStatus result={desktopResult} />
+                        ) : (
+                          <StatusIcon status={entry.status} />
+                        )}
+                        {!desktopResult && entry.status && (
                           <span className={`tc-status-chip ${entry.status}`}>
                             {toolStatusLabel(entry.status)}
                           </span>

@@ -417,6 +417,11 @@ pub struct HistoryTraceItem {
 pub struct HistoryMessage {
     pub role: String,
     pub content: String,
+    /// 面向用户的过程说明，与最终回复分开保留；旧历史缺省为普通消息。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

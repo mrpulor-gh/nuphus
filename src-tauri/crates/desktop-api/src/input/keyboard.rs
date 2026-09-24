@@ -8,13 +8,14 @@ pub async fn press(key: &str) -> Result<()> {
     #[cfg(windows)]
     {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP};
+        let mut held =
+            super::HeldInput::new(|key| unsafe { keybd_event(key, 0, KEYEVENTF_KEYUP, 0) });
+        held.hold(vk as u8);
         unsafe {
             keybd_event(vk as u8, 0, Default::default(), 0);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        unsafe {
-            keybd_event(vk as u8, 0, KEYEVENTF_KEYUP, 0);
-        }
+        held.release_last();
         Ok(())
     }
     #[cfg(not(windows))]
@@ -35,6 +36,7 @@ pub async fn press(key: &str) -> Result<()> {
 
 /// 组合键
 pub async fn hotkey(keys: &[&str]) -> Result<()> {
+    validate_keys(keys)?;
     let vks: Vec<u16> = keys
         .iter()
         .map(|k| key_to_vk(k))
@@ -42,16 +44,16 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
     #[cfg(windows)]
     {
         use ::windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP};
+        let mut held =
+            super::HeldInput::new(|key| unsafe { keybd_event(key, 0, KEYEVENTF_KEYUP, 0) });
         for &vk in &vks {
+            held.hold(vk as u8);
             unsafe {
                 keybd_event(vk as u8, 0, Default::default(), 0);
             }
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
-        for &vk in vks.iter().rev() {
-            unsafe {
-                keybd_event(vk as u8, 0, KEYEVENTF_KEYUP, 0);
-            }
+        while held.release_last() {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
         Ok(())
@@ -89,6 +91,20 @@ pub async fn hotkey(keys: &[&str]) -> Result<()> {
     {
         Err(DesktopError::PlatformNotSupported)
     }
+}
+
+/// Validate a full chord before pressing anything. Exposed for local callers
+/// to distinguish malformed input (not sent) from ambiguous native failures.
+pub fn validate_keys(keys: &[&str]) -> Result<()> {
+    if keys.is_empty() {
+        return Err(DesktopError::InputFailed(
+            "hotkey requires at least one key".into(),
+        ));
+    }
+    for key in keys {
+        key_to_vk(key)?;
+    }
+    Ok(())
 }
 
 fn key_to_vk(key: &str) -> Result<u16> {
@@ -172,6 +188,9 @@ mod tests {
         assert_eq!(key_to_vk("Cmd").unwrap(), key_to_vk("command").unwrap());
         assert_eq!(key_to_vk("Option").unwrap(), key_to_vk("alt").unwrap());
         assert!(key_to_vk("invented_key").is_err());
+        assert!(validate_keys(&[]).is_err());
+        assert!(validate_keys(&["ctrl", "invented_key"]).is_err());
+        assert!(validate_keys(&["cmd", "s"]).is_ok());
     }
 }
 

@@ -753,7 +753,9 @@ export function useSession(): SessionAPI {
       const folded = foldHistoryAssistants(history)
       setMessages(
         folded.map(h => ({
-          id: crypto.randomUUID(),
+          id: h.message_id ?? crypto.randomUUID(),
+          kind: h.kind,
+          message_id: h.message_id,
           role: h.role as ChatMessage['role'],
           content: h.content,
           images: h.images && h.images.length > 0 ? h.images : undefined,

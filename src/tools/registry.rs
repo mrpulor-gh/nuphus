@@ -340,6 +340,15 @@ impl ToolRegistry {
                 "desktop_screenshot" | "desktop_window_screenshot" | "desktop_perceive"
             ) || (tool_name == "desktop_mouse"
                 && (params.get("capture_id").is_some() || params.get("element_id").is_some()))
+                || (tool_name == "desktop_mouse_drag"
+                    && [
+                        "start_capture_id",
+                        "start_element_id",
+                        "end_capture_id",
+                        "end_element_id",
+                    ]
+                    .iter()
+                    .any(|key| params.get(*key).is_some()))
                 || (tool_name == "desktop_input" && params.get("target_locator").is_some())
             {
                 let _lease = self.acquire_semantic_desktop_lease()?;
@@ -757,6 +766,7 @@ impl ToolRegistry {
                 | "desktop_target_bind"
                 | "desktop_semantic_execute"
                 | "desktop_semantic_action"
+                | "desktop_verify_state"
                 | "desktop_agent_step"
         )
     }
@@ -821,6 +831,7 @@ pub const WORKFLOW_TOOL_EXCLUDE: &[&str] = &[
     // 工作流管理（WorkflowAgent 编排自身，步骤不可执行）
     "workflow_run",
     "workflow_validate",
+    "workflow_report_progress",
     "schedule_cron",
     // WorkflowAgent exploration helper. Saved workflows use ordinary semantic
     // actions and must not depend on a per-session enhanced-mode toggle.
@@ -956,6 +967,18 @@ impl ToolRegistry {
 
     /// WorkflowAgent 独占工具
     pub(crate) fn register_workflow_only_tools(&mut self) {
+        self.register(ToolDef {
+            name: "workflow_report_progress".into(),
+            description: "向用户简短说明打算、重要进展或遇到的问题，然后继续执行。首次实际操作前先说明打算；无需用户回复。不是最终总结，不应复制思考过程。".into(),
+            parameters: serde_json::json!({
+                "type":"object", "properties":{
+                    "message":{"type":"string","description":"面向用户的简短自然语言说明，使用用户的语言"}
+                }, "required":["message"], "additionalProperties":false
+            }),
+            category: crate::permissions::ToolCategory::Core,
+            executor: |_, _| Err("workflow_report_progress 仅由 WorkflowAgent 投递".into()),
+            depends_on: vec![],
+        });
         self.register_workflow_run();
         self.register_workflow_validate();
         self.register_schedule_cron();

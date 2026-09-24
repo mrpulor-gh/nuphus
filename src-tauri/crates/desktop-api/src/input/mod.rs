@@ -12,6 +12,79 @@ pub use mouse::*;
 #[cfg(windows)]
 pub use sendinput::*;
 
+/// Release only inputs pressed by this operation, including on cancelled
+/// futures and early native errors. Reverse order keeps modifiers balanced.
+#[cfg(any(windows, target_os = "linux", test))]
+pub(crate) struct HeldInput<T, F: FnMut(T)> {
+    held: Vec<T>,
+    release: F,
+}
+
+#[cfg(any(windows, target_os = "linux", test))]
+impl<T, F: FnMut(T)> HeldInput<T, F> {
+    pub(crate) fn new(release: F) -> Self {
+        Self {
+            held: Vec::new(),
+            release,
+        }
+    }
+
+    pub(crate) fn hold(&mut self, input: T) {
+        self.held.push(input);
+    }
+
+    pub(crate) fn release_last(&mut self) -> bool {
+        if let Some(input) = self.held.pop() {
+            (self.release)(input);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", test))]
+impl<T, F: FnMut(T)> Drop for HeldInput<T, F> {
+    fn drop(&mut self) {
+        while self.release_last() {}
+    }
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::HeldInput;
+    use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn cancelling_input_releases_only_held_inputs_in_reverse_order() {
+        let released = Arc::new(Mutex::new(Vec::new()));
+        let recorded = released.clone();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut guard = HeldInput::new(move |key| recorded.lock().unwrap().push(key));
+            guard.hold("ctrl");
+            guard.hold("s");
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(*released.lock().unwrap(), ["s", "ctrl"]);
+    }
+
+    #[test]
+    fn explicitly_released_input_is_not_released_twice() {
+        let mut released = Vec::new();
+        {
+            let mut guard = HeldInput::new(|key| released.push(key));
+            guard.hold("left-button");
+            assert!(guard.release_last());
+        }
+        assert_eq!(released, ["left-button"]);
+    }
+}
+
 /// Serialize native input, retrying initialization after a missing permission/display is fixed.
 #[cfg(not(windows))]
 pub fn with_enigo<T>(operation: impl FnOnce(&mut enigo::Enigo) -> Result<T>) -> Result<T> {

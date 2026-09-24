@@ -11,6 +11,7 @@ import type {
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
+import { composeAssistantReplies } from '../../core/progressMessages'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
@@ -97,6 +98,7 @@ import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { Button, IconButton } from '../../ui/Button'
 import MarkdownContent from './MarkdownContent'
 import { PreviewOverlay } from './PreviewOverlay'
+import { LiveExecutionActivity } from './LiveExecutionActivity'
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
@@ -254,7 +256,7 @@ function migrateLegacyProjectBookmarks(existing: ProjectBookmark[]): ProjectBook
 }
 
 export function ChatPanel({
-  messages,
+  messages: messageRecords,
   executionStage,
   onSend,
   onGracefulStop,
@@ -312,6 +314,7 @@ export function ChatPanel({
   onRate,
   onShowExecTrace,
 }: ChatPanelProps) {
+  const messages = useMemo(() => composeAssistantReplies(messageRecords), [messageRecords])
   const { t } = useLanguage()
   // ── 执行态谓词（同一来源 executionStage 的两个派生，禁止再引入第二个来源）──
   // isProcessing：主循环在迭代中 —— 气泡光标 / 思考条呼吸 / 「发送=追加」提示。
@@ -1782,9 +1785,9 @@ export function ChatPanel({
                                   title="点评"
                                   onClick={() => {
                                     const userMsg =
-                                      idx > 0 && messages[idx - 1]?.role === 'user'
-                                        ? messages[idx - 1].content
-                                        : ''
+                                      [...messages.slice(0, idx)]
+                                        .reverse()
+                                        .find(m => m.role === 'user')?.content ?? ''
                                     setRatingMsg({
                                       id: msg.id,
                                       content: msg.content,
@@ -1846,6 +1849,9 @@ export function ChatPanel({
                       </React.Fragment>
                     )
                   })}
+                  <LiveExecutionActivity
+                    active={isProcessing && mode === 'workflow' && !refining}
+                  />
                 </>
               )
             })()}

@@ -59,6 +59,8 @@ impl super::SubTaskRunner {
                 tools: self.tools.tool_names(),
                 source: "cli".to_string(),
                 mode: "leader".to_string(),
+                session_id: None,
+                turn_id: None,
             });
         }
 

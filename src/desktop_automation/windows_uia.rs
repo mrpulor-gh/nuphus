@@ -31,19 +31,21 @@ mod platform {
     use windows::Win32::UI::Accessibility::{
         CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
         IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+        IUIAutomationRangeValuePattern, IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
         IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
         IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
         UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
         UIA_ExpandCollapsePatternId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
         UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId,
         UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
+        UIA_RangeValuePatternId, UIA_ScrollItemPatternId, UIA_ScrollPatternId,
         UIA_SelectionItemPatternId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
         UIA_TextControlTypeId, UIA_TogglePatternId, UIA_TreeControlTypeId,
         UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId,
+        EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId, IsWindow, IsWindowVisible, SetForegroundWindow,
     };
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +64,8 @@ mod platform {
         expanded: Option<bool>,
         ancestor_chain: Vec<SemanticContext>,
         supported_actions: Vec<NativeAction>,
+        horizontal_scroll: bool,
+        vertical_scroll: bool,
     }
 
     impl NodeMetadata {
@@ -106,6 +110,8 @@ mod platform {
         automation_id: Option<String>,
         accessible_name: Option<String>,
         action: NativeAction,
+        kind: CandidateKind,
+        persistent: bool,
         risk: RiskClass,
         ancestor_chain: Vec<SemanticContext>,
         scope: ObservationScope,
@@ -142,7 +148,7 @@ mod platform {
         scope_root: Option<NodeMetadata>,
     }
 
-    /// UIA-first adapter for the current Windows foreground window.
+    /// UIA-first adapter for a locally bound window, with foreground compatibility.
     pub struct WindowsUiaAdapter {
         max_elements: usize,
         state: Mutex<AdapterState>,
@@ -239,6 +245,7 @@ mod platform {
             observation: &Observation,
             node: &UiNode,
             action: NativeAction,
+            kind: CandidateKind,
         ) -> Result<Option<InternalLocator>, AutomationError> {
             let state = self
                 .state
@@ -257,6 +264,8 @@ mod platform {
                 accessible_name: metadata.name.clone(),
                 risk: classify_risk(&action, metadata.name.as_deref()),
                 action,
+                kind,
+                persistent: false,
                 ancestor_chain: metadata.ancestor_chain.clone(),
                 scope: state.scope.clone(),
                 scope_root: state.scope_root.clone(),
@@ -278,7 +287,7 @@ mod platform {
             action: &ActionCandidate,
             input: &ExecutionInput,
         ) -> Result<ActionReceipt, AutomationError> {
-            let locator = self
+            let mut locator = self
                 .state
                 .lock()
                 .map_err(|_| AutomationError::Execution("UIA state lock was poisoned".into()))?
@@ -291,7 +300,7 @@ mod platform {
                     )
                 })?;
             if action.target.as_deref() != Some(locator.target_opaque_id.as_str())
-                || action.kind != candidate_kind(&locator.action)
+                || action.kind != locator.kind
                 || action.local_risk != locator.risk
             {
                 return Err(AutomationError::Execution(
@@ -299,31 +308,115 @@ mod platform {
                 ));
             }
 
-            // Re-read the foreground tree immediately before dispatch. No COM
+            // Re-read the bound window tree immediately before dispatch. No COM
             // element or HWND from a previous observation is ever reused.
-            let snapshot = capture_native(
+            locator.scope.delivery = input.delivery;
+            if input.delivery == DeliveryMode::Background && locator.action == NativeAction::Focus {
+                return Err(AutomationError::Execution(
+                    "Focus requires foreground delivery".into(),
+                ));
+            }
+            let mut snapshot = capture_native(
                 self.max_elements,
                 &locator.scope,
                 locator.scope_root.as_ref(),
             )?;
             if snapshot.app.id != locator.app_id || snapshot.window.id != locator.window_id {
                 return Err(AutomationError::Execution(
-                    "foreground UI changed before native dispatch".into(),
+                    "bound UI changed before native dispatch".into(),
+                ));
+            }
+            let hwnd = snapshot
+                .scope
+                .window_handle
+                .map(|value| HWND(value as isize))
+                .ok_or_else(|| {
+                    AutomationError::Execution("UIA window binding is missing".into())
+                })?;
+            let initial_element = resolve_unique(&snapshot.nodes, &locator)?;
+            let prepared_input = input_for_candidate(&locator, input)?;
+            if let CandidateKind::SetChecked { checked } = action.kind {
+                if unsafe {
+                    initial_element
+                        .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                        .and_then(|pattern| pattern.CurrentToggleState())
+                }
+                .ok()
+                .and_then(toggle_boolean)
+                    == Some(checked)
+                {
+                    return Ok(ActionReceipt {
+                        candidate_id: action.id.clone(),
+                        dispatched: false,
+                        delivery_mode: None,
+                        detail: Some("Target already has the requested checked state".into()),
+                    });
+                }
+            }
+            // WPF value/toggle providers focus their owning window.
+            // Treat that provider requirement explicitly instead of promising
+            // background input just because the transport is UIA.
+            let framework =
+                unsafe { resolve_unique(&snapshot.nodes, &locator)?.CurrentFrameworkId() }
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+            let provider_foreground = provider_requires_foreground(&framework, &locator.action);
+            if provider_foreground && input.delivery == DeliveryMode::Background {
+                return Err(AutomationError::Execution(crate::desktop_automation::DesktopActionError::refused(
+                    "background_unavailable: this WPF provider requires foreground delivery; no action sent")));
+            }
+            let needs_foreground = requires_foreground(snapshot.scope.delivery, &locator.action)
+                || provider_foreground;
+            if needs_foreground && unsafe { GetForegroundWindow() } != hwnd {
+                let _ = unsafe { SetForegroundWindow(hwnd) };
+                // Activation may open a modal or rebuild controls. Re-resolve
+                // rather than dispatching an element read before activation.
+                snapshot = capture_native(
+                    self.max_elements,
+                    &locator.scope,
+                    locator.scope_root.as_ref(),
+                )?;
+                if snapshot.app.id != locator.app_id || snapshot.window.id != locator.window_id {
+                    return Err(AutomationError::Execution(
+                        "bound UI changed during activation".into(),
+                    ));
+                }
+            }
+            if needs_foreground && unsafe { GetForegroundWindow() } != hwnd {
+                return Err(AutomationError::Execution(
+                    "this UIA action requires foreground delivery; target activation failed".into(),
+                ));
+            }
+            if !unsafe { IsWindow(hwnd) }.as_bool()
+                || live_window_id(&snapshot.stable_window_id, hwnd) != snapshot.window.id
+            {
+                return Err(AutomationError::Execution(
+                    "bound UIA window expired before dispatch".into(),
                 ));
             }
             let element = resolve_unique(&snapshot.nodes, &locator)?;
-            if live_window_id(&snapshot.stable_window_id, unsafe { GetForegroundWindow() })
-                != snapshot.window.id
-            {
-                return Err(AutomationError::Execution(
-                    "foreground window changed immediately before UIA dispatch".into(),
-                ));
-            }
-            dispatch(element, &locator.action, input)?;
+            let input = prepared_input;
+            let foreground_before = unsafe { GetForegroundWindow() };
+            dispatch(element, &locator.action, &input)?;
+            let provider_activated =
+                foreground_before != hwnd && unsafe { GetForegroundWindow() } == hwnd;
             Ok(ActionReceipt {
                 candidate_id: action.id.clone(),
                 dispatched: true,
-                detail: Some(format!("Windows UIA {:?} dispatched", locator.action)),
+                delivery_mode: Some(if needs_foreground || provider_activated {
+                    DeliveryMode::Foreground
+                } else {
+                    DeliveryMode::Background
+                }),
+                detail: Some(format!(
+                    "Windows UIA {:?} dispatched{}",
+                    locator.action,
+                    if provider_activated {
+                        "; native provider activated the target"
+                    } else {
+                        ""
+                    }
+                )),
             })
         }
     }
@@ -349,14 +442,32 @@ mod platform {
             &self,
             locator: &SemanticLocator,
         ) -> Result<(Observation, ObservationScope), AutomationError> {
+            self.observe_locator_scoped(locator, &ObservationScope::default())
+                .await
+        }
+
+        async fn observe_locator_scoped(
+            &self,
+            locator: &SemanticLocator,
+            requested: &ObservationScope,
+        ) -> Result<(Observation, ObservationScope), AutomationError> {
             let mut scope = ObservationScope {
                 app_id: Some(locator.app_id.clone()),
                 window_id: locator.window_id.clone(),
                 subtree_id: None,
+                tree_offset: 0,
+                ..requested.clone()
             };
+            if scope.window_handle.is_none() {
+                if let Ok(state) = self.state.lock() {
+                    if state.scope.app_id.as_deref() == Some(locator.app_id.as_str()) {
+                        scope.window_handle = state.scope.window_handle;
+                    }
+                }
+            }
             let deadline = Instant::now() + Duration::from_secs(15);
             let mut visited = std::collections::HashSet::new();
-            for _ in 0..locator.ancestor_chain.len().saturating_add(2).min(12) {
+            for _ in 0..64 {
                 if Instant::now() >= deadline {
                     return Err(AutomationError::Observation(
                         "Saved UIA region resolution timed out".into(),
@@ -370,12 +481,25 @@ mod platform {
                     replay_region(
                         &state.metadata_by_node.values().collect::<Vec<_>>(),
                         locator,
-                    )?
+                    )
                 };
                 match next {
-                    None => return Ok((observation, scope)),
-                    Some(id) if visited.insert(id.clone()) => scope.subtree_id = Some(id),
-                    Some(_) => return Err(AutomationError::Observation(
+                    Ok(None) => {
+                        if let Ok(state) = self.state.lock() {
+                            scope.window_handle = state.scope.window_handle;
+                        }
+                        return Ok((observation, scope));
+                    }
+                    Ok(Some(id)) if visited.insert(id.clone()) => {
+                        scope.subtree_id = Some(id);
+                        scope.tree_offset = 0;
+                    }
+                    Err(error) if error.to_string().contains("ambiguous") => return Err(error),
+                    _ if observation.truncated && observation.nodes.len() == self.max_elements => {
+                        scope.tree_offset =
+                            page_traversal_limit(scope.tree_offset, observation.nodes.len())?;
+                    }
+                    _ => return Err(AutomationError::Observation(
                         "Saved UIA target is missing from its ancestor region; refresh the locator"
                             .into(),
                     )),
@@ -451,6 +575,83 @@ mod platform {
     }
 
     impl CandidateBuilder for WindowsUiaAdapter {
+        fn node_locator(
+            &self,
+            observation: &Observation,
+            node: &UiNode,
+        ) -> Option<SemanticLocator> {
+            let state = self.state.lock().ok()?;
+            let meta = state.metadata_by_node.get(&node.opaque_id)?;
+            Some(SemanticLocator {
+                app_id: observation.app.id.clone(),
+                window_id: state
+                    .stable_window_id
+                    .clone()
+                    .or_else(|| Some(observation.window.id.clone())),
+                window_title: Some(observation.window.title.clone()),
+                role: Some(meta.role.clone()),
+                automation_id: meta.automation_id.clone(),
+                accessible_name: meta.name.clone(),
+                ancestor_chain: meta.ancestor_chain.clone(),
+                supported_action: None,
+                ordinal_hint: None,
+            })
+        }
+
+        fn matches_window(&self, locator: &SemanticLocator, observation: &Observation) -> bool {
+            locator.app_id == observation.app.id
+                && locator
+                    .window_id
+                    .as_ref()
+                    .map(|id| {
+                        id == &observation.window.id
+                            || self
+                                .state
+                                .lock()
+                                .ok()
+                                .is_some_and(|state| state.stable_window_id.as_ref() == Some(id))
+                    })
+                    .unwrap_or_else(|| {
+                        locator
+                            .window_title
+                            .as_ref()
+                            .is_none_or(|title| title == &observation.window.title)
+                    })
+        }
+
+        fn rebuild_semantic_candidate_with_input(
+            &self,
+            locator: &SemanticLocator,
+            action: NativeAction,
+            observation: &Observation,
+            input: &ExecutionInput,
+        ) -> Result<ActionCandidate, AutomationError> {
+            let mut candidate =
+                self.rebuild_semantic_candidate(locator, action.clone(), observation)?;
+            candidate.kind = match action {
+                NativeAction::SetChecked => CandidateKind::SetChecked {
+                    checked: input.checked.ok_or_else(|| {
+                        AutomationError::Candidates("SetChecked requires checked".into())
+                    })?,
+                },
+                NativeAction::Scroll => CandidateKind::Scroll {
+                    direction: input.direction.ok_or_else(|| {
+                        AutomationError::Candidates("Scroll requires direction".into())
+                    })?,
+                    amount: input.amount.unwrap_or(ScrollAmount::Small),
+                },
+                _ => candidate.kind,
+            };
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| AutomationError::Candidates("UIA state unavailable".into()))?;
+            if let Some(bound) = state.locators_by_candidate.get_mut(&candidate.id) {
+                bound.kind = candidate.kind.clone();
+            }
+            Ok(candidate)
+        }
+
         fn build(
             &self,
             goal: &str,
@@ -459,39 +660,61 @@ mod platform {
             let mut ranked = Vec::new();
 
             for node in &observation.nodes {
-                if !node.enabled || !node.visible {
+                if !node.enabled {
                     continue;
                 }
                 for native_action in &node.supported_actions {
-                    let Some(locator) =
-                        self.locator_for(observation, node, native_action.clone())?
-                    else {
+                    if !node.visible && *native_action != NativeAction::ScrollIntoView {
                         continue;
+                    }
+                    let kinds = {
+                        let state = self.state.lock().map_err(|_| {
+                            AutomationError::Candidates("UIA state unavailable".into())
+                        })?;
+                        let Some(meta) = state.metadata_by_node.get(&node.opaque_id) else {
+                            continue;
+                        };
+                        candidate_kinds(native_action, meta)
                     };
-                    let id = format!("uia:{}", Uuid::new_v4().simple());
-                    let kind = candidate_kind(native_action);
-                    let candidate = ActionCandidate {
-                        id: id.clone(),
-                        observation_revision: observation.revision,
-                        target: Some(node.opaque_id.clone()),
-                        kind,
-                        public_description: describe_action_with_context(
-                            native_action,
+                    for kind in kinds {
+                        let Some(locator) = self.locator_for(
+                            observation,
                             node,
-                            &locator.ancestor_chain,
-                        ),
-                        local_risk: classify_risk(native_action, node.name.as_deref()),
-                        preconditions: vec![predicate(
-                            "semantic_element_exists",
-                            [("target", node.opaque_id.as_str())],
-                        )],
-                        expected_effects: expected_effects(native_action, node),
-                    };
-                    ranked.push((
-                        candidate_relevance(goal, node, native_action),
-                        candidate,
-                        locator,
-                    ));
+                            native_action.clone(),
+                            kind.clone(),
+                        )?
+                        else {
+                            continue;
+                        };
+                        let id = format!("uia:{}", Uuid::new_v4().simple());
+                        let candidate = ActionCandidate {
+                            id: id.clone(),
+                            observation_revision: observation.revision,
+                            target: Some(node.opaque_id.clone()),
+                            public_description: format!(
+                                "{} [{}]",
+                                describe_action_with_context(
+                                    native_action,
+                                    node,
+                                    &locator.ancestor_chain,
+                                ),
+                                parameter_description(&kind)
+                            ),
+                            kind,
+                            local_risk: classify_risk(native_action, node.name.as_deref()),
+                            preconditions: vec![predicate(
+                                "semantic_element_exists",
+                                [("target", node.opaque_id.as_str())],
+                            )],
+                            expected_effects: expected_effects(native_action, node),
+                        };
+                        ranked.push((
+                            candidate_relevance(goal, node, native_action)
+                                + parameter_relevance(goal, &candidate.kind),
+                            candidate,
+                            locator,
+                        ));
+                    }
                 }
             }
             ranked.sort_by_key(|item| std::cmp::Reverse(item.0));
@@ -602,6 +825,10 @@ mod platform {
                     | NativeAction::Collapse
                     | NativeAction::Focus
                     | NativeAction::SetValue
+                    | NativeAction::SetChecked
+                    | NativeAction::Scroll
+                    | NativeAction::ScrollIntoView
+                    | NativeAction::SetRangeValue
             ) {
                 return Err(AutomationError::Candidates(format!(
                     "Windows UIA persistent action {action:?} is unsupported"
@@ -659,6 +886,8 @@ mod platform {
                 automation_id: metadata.automation_id.clone(),
                 accessible_name: metadata.name.clone(),
                 action: action.clone(),
+                kind: candidate_kind(&action),
+                persistent: true,
                 risk: classify_risk(&action, metadata.name.as_deref()),
                 ancestor_chain: metadata.ancestor_chain.clone(),
                 scope: state.scope.clone(),
@@ -704,6 +933,93 @@ mod platform {
         }
     }
 
+    fn requires_foreground(delivery: DeliveryMode, action: &NativeAction) -> bool {
+        delivery == DeliveryMode::Foreground || *action == NativeAction::Focus
+    }
+
+    fn provider_requires_foreground(framework: &str, action: &NativeAction) -> bool {
+        // Standard WPF peers activate their window for these patterns (covered
+        // by the opt-in real WPF fixture). ScrollItem remains target-addressed.
+        framework.eq_ignore_ascii_case("WPF")
+            && matches!(
+                action,
+                NativeAction::SetValue
+                    | NativeAction::Toggle
+                    | NativeAction::SetChecked
+                    | NativeAction::SetRangeValue
+                    | NativeAction::Scroll
+                    | NativeAction::Invoke
+            )
+    }
+
+    fn page_traversal_limit(offset: usize, page_size: usize) -> Result<usize, AutomationError> {
+        offset
+            .checked_add(page_size)
+            .filter(|limit| *limit <= 10_000)
+            .ok_or_else(|| {
+                AutomationError::Observation(
+                    "UIA tree offset exceeds the bounded search budget; select a smaller subtree"
+                        .into(),
+                )
+            })
+    }
+
+    fn resolve_window(scope: &ObservationScope) -> Result<HWND, AutomationError> {
+        if let Some(handle) = scope.window_handle {
+            let window = HWND(handle as isize);
+            return if unsafe { IsWindow(window) }.as_bool() {
+                Ok(window)
+            } else {
+                Err(AutomationError::Observation(
+                    "Bound UIA window no longer exists".into(),
+                ))
+            };
+        }
+        let foreground = unsafe { GetForegroundWindow() };
+        let Some(app_id) = scope.app_id.as_deref() else {
+            return Ok(foreground);
+        };
+        unsafe extern "system" fn collect(
+            hwnd: HWND,
+            data: windows::Win32::Foundation::LPARAM,
+        ) -> BOOL {
+            if IsWindowVisible(hwnd).as_bool() {
+                // EnumWindows invokes this callback synchronously with the live vector.
+                (*(data.0 as *mut Vec<HWND>)).push(hwnd);
+            }
+            BOOL(1)
+        }
+        let mut windows = Vec::<HWND>::new();
+        unsafe {
+            EnumWindows(
+                Some(collect),
+                windows::Win32::Foundation::LPARAM((&mut windows as *mut Vec<HWND>) as isize),
+            )
+        }
+        .map_err(|error| uia_observation_error("discover bound windows", error))?;
+        let matching: Vec<_> = windows
+            .into_iter()
+            .filter(|hwnd| {
+                process_image_path(*hwnd).is_some_and(|path| {
+                    let seed = app_identity_seed(None, &window_class(*hwnd), &path.to_lowercase());
+                    format!("windows-app:{:016x}", stable_hash(&seed)) == app_id
+                })
+            })
+            .collect();
+        match matching.as_slice() {
+            [window] => Ok(*window),
+            _ if matching.contains(&foreground) && scope.delivery == DeliveryMode::Foreground => {
+                Ok(foreground)
+            }
+            [] => Err(AutomationError::Observation(
+                "Requested UIA application has no available window".into(),
+            )),
+            _ => Err(AutomationError::Observation(
+                "Requested UIA application has multiple windows; bind a specific window".into(),
+            )),
+        }
+    }
+
     fn capture_native(
         max_elements: usize,
         scope: &ObservationScope,
@@ -711,10 +1027,10 @@ mod platform {
     ) -> Result<NativeSnapshot, AutomationError> {
         let deadline = Instant::now() + Duration::from_secs(5);
         let com = ComApartment::initialize()?;
-        let hwnd = unsafe { GetForegroundWindow() };
+        let hwnd = resolve_window(scope)?;
         if hwnd.0 == 0 {
             return Err(AutomationError::Observation(
-                "Windows has no foreground window".into(),
+                "Windows has no available target window".into(),
             ));
         }
         let title = window_title(hwnd);
@@ -846,29 +1162,32 @@ mod platform {
         };
         let mut nodes = Vec::with_capacity(max_elements);
         let mut pending = VecDeque::from([(scoped_root, 0usize)]);
-        let mut truncated = false;
+        let traversal_limit = page_traversal_limit(scope.tree_offset, max_elements)?;
+        let mut visited = 0usize;
+        let mut truncated = scope.tree_offset > 0;
+        let mut captured_root = None;
         while let Some((element, depth)) = pending.pop_front() {
             if nodes.len() >= max_elements || Instant::now() >= deadline {
                 truncated = true;
                 break;
             }
             let ancestors = semantic_ancestor_chain(&automation, &walker, &element, &root);
-            let index = nodes.len();
-            match native_node(element.clone(), index, ancestors) {
-                Ok(node) => nodes.push(node),
-                Err(_) => {
-                    truncated = true;
-                    continue;
-                }
+            let index = visited;
+            visited += 1;
+            // A stale provider must not shift the continuation offset by silently
+            // dropping a node; refresh the observation instead.
+            let node = native_node(element.clone(), index, ancestors)?;
+            if captured_root.is_none() {
+                captured_root = Some(node.metadata.clone());
+            }
+            let is_menu = node.metadata.role == UiRole::Menu;
+            if index >= scope.tree_offset {
+                nodes.push(node);
             }
             // The window-content pass retains the menu entry itself but does
             // not spend its body budget traversing the full menu hierarchy.
             // Explicit @menu or region observations expand that hierarchy.
-            if scope.subtree_id.as_deref().is_none_or(|id| id == "@window")
-                && nodes
-                    .last()
-                    .is_some_and(|node| node.metadata.role == UiRole::Menu)
-            {
+            if scope.subtree_id.as_deref().is_none_or(|id| id == "@window") && is_menu {
                 continue;
             }
             truncated |= enqueue_children(
@@ -876,11 +1195,11 @@ mod platform {
                 &element,
                 depth,
                 &mut pending,
-                max_elements - nodes.len(),
+                traversal_limit.saturating_sub(visited),
                 deadline,
             );
         }
-        if nodes.is_empty() || Instant::now() >= deadline {
+        if Instant::now() >= deadline {
             return Err(AutomationError::Observation(
                 "UIA observation exceeded its time budget".into(),
             ));
@@ -889,7 +1208,18 @@ mod platform {
             .subtree_id
             .as_ref()
             .filter(|id| id.as_str() != "@window")
-            .and_then(|_| nodes.first().map(|node| node.metadata.clone()));
+            .and_then(|id| {
+                captured_root.map(|mut root| {
+                    // Keep the original region alias across a fresh traversal whose
+                    // local index starts at zero (and across later native pages).
+                    root.opaque_id = id.clone();
+                    root
+                })
+            });
+
+        let mut bound_scope = scope.clone();
+        bound_scope.window_handle = Some(hwnd.0 as i32);
+        bound_scope.app_id = Some(app.id.clone());
 
         let fingerprint = fingerprint(&app, &window, &nodes);
         Ok(NativeSnapshot {
@@ -899,7 +1229,7 @@ mod platform {
             fingerprint,
             truncated,
             stable_window_id,
-            scope: scope.clone(),
+            scope: bound_scope,
             scope_root,
             _com: com,
         })
@@ -1006,6 +1336,34 @@ mod platform {
         .ok();
         if toggle_pattern.is_some() {
             supported_actions.push(NativeAction::Toggle);
+            supported_actions.push(NativeAction::SetChecked);
+        }
+        let scroll_pattern = unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationScrollPattern>(UIA_ScrollPatternId)
+        }
+        .ok();
+        let horizontal_scroll = scroll_pattern.as_ref().is_some_and(|pattern| {
+            bool_or(unsafe { pattern.CurrentHorizontallyScrollable() }, false)
+        });
+        let vertical_scroll = scroll_pattern.as_ref().is_some_and(|pattern| {
+            bool_or(unsafe { pattern.CurrentVerticallyScrollable() }, false)
+        });
+        if horizontal_scroll || vertical_scroll {
+            supported_actions.push(NativeAction::Scroll);
+        }
+        if supports_pattern::<IUIAutomationScrollItemPattern>(&element, UIA_ScrollItemPatternId) {
+            supported_actions.push(NativeAction::ScrollIntoView);
+        }
+        let range_pattern = unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationRangeValuePattern>(UIA_RangeValuePatternId)
+        }
+        .ok();
+        if range_pattern
+            .as_ref()
+            .is_some_and(|pattern| !bool_or(unsafe { pattern.CurrentIsReadOnly() }, true))
+            && !secure
+        {
+            supported_actions.push(NativeAction::SetRangeValue);
         }
         let selection_pattern = unsafe {
             element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
@@ -1066,11 +1424,17 @@ mod platform {
                 .as_ref()
                 .and_then(|pattern| unsafe { pattern.CurrentValue() }.ok())
                 .map(|value| stable_hash(&value.to_string()))
+                .or_else(|| {
+                    range_pattern
+                        .as_ref()
+                        .and_then(|pattern| unsafe { pattern.CurrentValue() }.ok())
+                        .map(|value| stable_hash(&value.to_string()))
+                })
         };
         let toggled = toggle_pattern
             .as_ref()
             .and_then(|pattern| unsafe { pattern.CurrentToggleState() }.ok())
-            .map(|state| state == windows::Win32::UI::Accessibility::ToggleState_On);
+            .and_then(toggle_boolean);
         if bool_or(unsafe { element.CurrentIsKeyboardFocusable() }, false) {
             supported_actions.push(NativeAction::Focus);
         }
@@ -1100,6 +1464,8 @@ mod platform {
                 expanded,
                 ancestor_chain,
                 supported_actions,
+                horizontal_scroll,
+                vertical_scroll,
             },
             element,
         })
@@ -1202,6 +1568,75 @@ mod platform {
                 NativeAction::Toggle => element
                     .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
                     .and_then(|pattern| pattern.Toggle()),
+                NativeAction::SetChecked => {
+                    let checked = input.checked.ok_or_else(|| {
+                        AutomationError::Execution(
+                            "SetChecked requires an explicit checked value".into(),
+                        )
+                    })?;
+                    let pattern = element
+                        .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                        .map_err(|error| uia_observation_error("read toggle capability", error))?;
+                    // Three-state controls may need two transitions. Read every state;
+                    // mixed is unknown, never an alias for unchecked.
+                    let mut seen = Vec::new();
+                    for _ in 0..2 {
+                        let current = pattern
+                            .CurrentToggleState()
+                            .map_err(|error| uia_observation_error("read toggle state", error))?;
+                        if toggle_boolean(current) == Some(checked) {
+                            return Ok(());
+                        }
+                        if seen.contains(&current) {
+                            return Err(AutomationError::Execution(
+                                "UIA checkbox state did not settle; reobserve before retrying"
+                                    .into(),
+                            ));
+                        }
+                        seen.push(current);
+                        pattern.Toggle().map_err(|error| {
+                            AutomationError::Execution(format!("UIA SetChecked failed: {error}"))
+                        })?;
+                    }
+                    if pattern.CurrentToggleState().ok().and_then(toggle_boolean) == Some(checked) {
+                        Ok(())
+                    } else {
+                        return Err(AutomationError::Execution("UIA checkbox did not reach the requested state; reobserve before retrying".into()));
+                    }
+                }
+                NativeAction::Scroll => {
+                    let direction = input.direction.ok_or_else(|| {
+                        AutomationError::Execution("Scroll requires a direction".into())
+                    })?;
+                    let amount = input.amount.unwrap_or(ScrollAmount::Small);
+                    let (horizontal, vertical) = native_scroll_amounts(direction, amount);
+                    element
+                        .GetCurrentPatternAs::<IUIAutomationScrollPattern>(UIA_ScrollPatternId)
+                        .and_then(|pattern| pattern.Scroll(horizontal, vertical))
+                }
+                NativeAction::ScrollIntoView => element
+                    .GetCurrentPatternAs::<IUIAutomationScrollItemPattern>(UIA_ScrollItemPatternId)
+                    .and_then(|pattern| pattern.ScrollIntoView()),
+                NativeAction::SetRangeValue => {
+                    let value = parse_range_value(input.value.as_deref())?;
+                    let pattern = element
+                        .GetCurrentPatternAs::<IUIAutomationRangeValuePattern>(
+                            UIA_RangeValuePatternId,
+                        )
+                        .map_err(|error| uia_observation_error("read range capability", error))?;
+                    let minimum = pattern
+                        .CurrentMinimum()
+                        .map_err(|error| uia_observation_error("read range minimum", error))?;
+                    let maximum = pattern
+                        .CurrentMaximum()
+                        .map_err(|error| uia_observation_error("read range maximum", error))?;
+                    if value < minimum || value > maximum {
+                        return Err(AutomationError::Execution(format!(
+                            "Range value must be within {minimum}..={maximum}"
+                        )));
+                    }
+                    pattern.SetValue(value)
+                }
                 NativeAction::Select => element
                     .GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
                         UIA_SelectionItemPatternId,
@@ -1239,10 +1674,133 @@ mod platform {
         result.map_err(|error| AutomationError::Execution(format!("UIA dispatch failed: {error}")))
     }
 
+    fn toggle_boolean(state: windows::Win32::UI::Accessibility::ToggleState) -> Option<bool> {
+        use windows::Win32::UI::Accessibility::{ToggleState_Off, ToggleState_On};
+        if state == ToggleState_On {
+            Some(true)
+        } else if state == ToggleState_Off {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn parse_range_value(value: Option<&str>) -> Result<f64, AutomationError> {
+        value
+            .and_then(|text| text.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| {
+                AutomationError::Execution("SetRangeValue requires a finite numeric value".into())
+            })
+    }
+
+    fn native_scroll_amounts(
+        direction: ScrollDirection,
+        amount: ScrollAmount,
+    ) -> (
+        windows::Win32::UI::Accessibility::ScrollAmount,
+        windows::Win32::UI::Accessibility::ScrollAmount,
+    ) {
+        use windows::Win32::UI::Accessibility::{
+            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement,
+        };
+        let increment = matches!(direction, ScrollDirection::Right | ScrollDirection::Down);
+        let amount = match (increment, amount) {
+            (true, ScrollAmount::Small) => ScrollAmount_SmallIncrement,
+            (true, ScrollAmount::Page) => ScrollAmount_LargeIncrement,
+            (false, ScrollAmount::Small) => ScrollAmount_SmallDecrement,
+            (false, ScrollAmount::Page) => ScrollAmount_LargeDecrement,
+        };
+        if matches!(direction, ScrollDirection::Left | ScrollDirection::Right) {
+            (amount, ScrollAmount_NoAmount)
+        } else {
+            (ScrollAmount_NoAmount, amount)
+        }
+    }
+
+    fn candidate_kinds(action: &NativeAction, metadata: &NodeMetadata) -> Vec<CandidateKind> {
+        match action {
+            NativeAction::SetChecked => vec![
+                CandidateKind::SetChecked { checked: true },
+                CandidateKind::SetChecked { checked: false },
+            ],
+            NativeAction::Scroll => [
+                ScrollDirection::Up,
+                ScrollDirection::Down,
+                ScrollDirection::Left,
+                ScrollDirection::Right,
+            ]
+            .into_iter()
+            .filter(|direction| {
+                if matches!(direction, ScrollDirection::Up | ScrollDirection::Down) {
+                    metadata.vertical_scroll
+                } else {
+                    metadata.horizontal_scroll
+                }
+            })
+            .flat_map(|direction| {
+                [ScrollAmount::Small, ScrollAmount::Page]
+                    .into_iter()
+                    .map(move |amount| CandidateKind::Scroll { direction, amount })
+            })
+            .collect(),
+            _ => vec![candidate_kind(action)],
+        }
+    }
+
+    fn parameter_description(kind: &CandidateKind) -> String {
+        match kind {
+            CandidateKind::SetChecked { checked } => format!("checked={checked}"),
+            CandidateKind::Scroll { direction, amount } => format!("{direction:?} {amount:?}"),
+            CandidateKind::SetRangeValue { .. } => "finite numeric value".into(),
+            _ => "native".into(),
+        }
+    }
+
+    fn input_for_candidate(
+        locator: &InternalLocator,
+        input: &ExecutionInput,
+    ) -> Result<ExecutionInput, AutomationError> {
+        let mut result = input.clone();
+        match locator.kind {
+            CandidateKind::SetChecked { checked } if !locator.persistent => {
+                if input.checked.is_some_and(|value| value != checked) {
+                    return Err(AutomationError::Execution(
+                        "checked parameter does not match the selected candidate".into(),
+                    ));
+                }
+                result.checked = Some(checked);
+            }
+            CandidateKind::Scroll { direction, amount } if !locator.persistent => {
+                if input.direction.is_some_and(|value| value != direction)
+                    || input.amount.is_some_and(|value| value != amount)
+                {
+                    return Err(AutomationError::Execution(
+                        "scroll parameters do not match the selected candidate".into(),
+                    ));
+                }
+                result.direction = Some(direction);
+                result.amount = Some(amount);
+            }
+            _ => {}
+        }
+        Ok(result)
+    }
+
     fn candidate_kind(action: &NativeAction) -> CandidateKind {
         match action {
             NativeAction::Invoke => CandidateKind::Invoke,
             NativeAction::Toggle => CandidateKind::Toggle,
+            NativeAction::SetChecked => CandidateKind::SetChecked { checked: true },
+            NativeAction::Scroll => CandidateKind::Scroll {
+                direction: ScrollDirection::Down,
+                amount: ScrollAmount::Small,
+            },
+            NativeAction::ScrollIntoView => CandidateKind::ScrollIntoView,
+            NativeAction::SetRangeValue => CandidateKind::SetRangeValue {
+                slot_id: "value".into(),
+            },
             NativeAction::Select => CandidateKind::Select,
             NativeAction::Expand => CandidateKind::Expand,
             NativeAction::Collapse => CandidateKind::Collapse,
@@ -1303,18 +1861,77 @@ mod platform {
                     score += 35;
                 }
             }
+            // Chinese UI labels do not have whitespace-delimited words. Match
+            // short character n-grams, bounded to avoid rewarding long labels.
+            let chars: Vec<_> = goal
+                .chars()
+                .filter(|ch| ('\u{3400}'..='\u{9fff}').contains(ch))
+                .take(128)
+                .collect();
+            score += chars
+                .windows(2)
+                .filter(|pair| name.contains(&pair.iter().collect::<String>()))
+                .take(6)
+                .count() as i32
+                * 20;
+            // "Settings" is not "Open System Settings" when no system scope
+            // was requested. Extra label qualifiers should lower its rank.
+            for qualifier in ["system", "permission", "系统", "权限"] {
+                if name.contains(qualifier) && !goal.contains(qualifier) {
+                    score -= 45;
+                }
+            }
         }
         if node.focused {
             score += 30;
         }
         score += match action {
-            NativeAction::Invoke | NativeAction::SetValue => 18,
-            NativeAction::Toggle | NativeAction::Select => 14,
+            NativeAction::Invoke | NativeAction::SetValue | NativeAction::SetRangeValue => 18,
+            NativeAction::SetChecked | NativeAction::Select => 16,
+            NativeAction::Toggle => 8,
             NativeAction::Expand | NativeAction::Collapse => 10,
             NativeAction::Focus => 2,
             _ => 0,
         };
         score
+    }
+
+    fn parameter_relevance(goal: &str, kind: &CandidateKind) -> i32 {
+        let goal = goal.to_lowercase();
+        match kind {
+            CandidateKind::SetChecked { checked } => {
+                let disable = [
+                    "uncheck",
+                    "disable",
+                    "turn off",
+                    "取消勾选",
+                    "取消选中",
+                    "关闭",
+                    "禁用",
+                ]
+                .iter()
+                .any(|word| goal.contains(word));
+                if *checked != disable {
+                    15
+                } else {
+                    0
+                }
+            }
+            CandidateKind::Scroll { direction, .. } => {
+                let words = match direction {
+                    ScrollDirection::Up => ["up", "上"],
+                    ScrollDirection::Down => ["down", "下"],
+                    ScrollDirection::Left => ["left", "左"],
+                    ScrollDirection::Right => ["right", "右"],
+                };
+                if words.iter().any(|word| goal.contains(word)) {
+                    15
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
     }
 
     fn redact_public_name(value: &str) -> String {
@@ -1337,73 +1954,7 @@ mod platform {
     }
 
     fn classify_risk(action: &NativeAction, name: Option<&str>) -> RiskClass {
-        if matches!(action, NativeAction::SetValue) {
-            return RiskClass::BoundedWrite;
-        }
-        if !matches!(action, NativeAction::Invoke) {
-            return RiskClass::Reversible;
-        }
-        let name = name.unwrap_or_default().to_lowercase();
-        if [
-            "permanently delete",
-            "永久删除",
-            "delete account",
-            "remove account",
-            "close account",
-            "注销账户",
-            "注销账号",
-            "删除账户",
-            "删除账号",
-            "delete all data",
-            "erase all data",
-            "wipe all data",
-            "清除所有数据",
-            "删除所有数据",
-            "factory reset",
-            "restore factory settings",
-            "恢复出厂设置",
-            "format drive",
-            "format disk",
-            "格式化磁盘",
-            "格式化驱动器",
-            "purchase",
-            "confirm purchase",
-            "place order",
-            "confirm order",
-            "支付",
-            "确认支付",
-            "立即付款",
-            "提交订单",
-            "buy now",
-            "transfer funds",
-            "wire transfer",
-            "confirm transfer",
-            "转账",
-            "确认转账",
-            "grant permission",
-            "allow access",
-            "授予权限",
-            "允许访问",
-            "security settings",
-            "安全设置",
-        ]
-        .iter()
-        .any(|keyword| name.contains(keyword))
-        {
-            RiskClass::DestructiveCritical
-        } else if ["send", "发送", "publish", "发布", "submit", "提交"]
-            .iter()
-            .any(|keyword| name.contains(keyword))
-        {
-            RiskClass::ExternalCommit
-        } else if ["save", "保存", "apply", "应用"]
-            .iter()
-            .any(|keyword| name.contains(keyword))
-        {
-            RiskClass::BoundedWrite
-        } else {
-            RiskClass::Reversible
-        }
+        crate::desktop_automation::classify_desktop_risk(action, name)
     }
 
     fn predicate<'a>(
@@ -1423,6 +1974,10 @@ mod platform {
         let effect = match action {
             NativeAction::Invoke => "invoke_target_changed_or_disappeared",
             NativeAction::Toggle => "target_toggle_changed",
+            NativeAction::SetChecked => "target_checked",
+            NativeAction::Scroll => "target_scroll_changed",
+            NativeAction::ScrollIntoView => "target_visible",
+            NativeAction::SetRangeValue => "target_value_changed",
             NativeAction::Select => "target_selected",
             NativeAction::Expand => "target_expanded",
             NativeAction::Collapse => "target_collapsed",
@@ -1434,7 +1989,9 @@ mod platform {
     }
 
     fn internal_locator_matches(metadata: &NodeMetadata, locator: &InternalLocator) -> bool {
-        metadata.role == locator.role
+        metadata.enabled
+            && (metadata.visible || locator.action == NativeAction::ScrollIntoView)
+            && metadata.role == locator.role
             && metadata.automation_id == locator.automation_id
             && metadata.name == locator.accessible_name
             && metadata.ancestor_chain == locator.ancestor_chain
@@ -1678,6 +2235,8 @@ mod platform {
                 expanded: None,
                 ancestor_chain: ancestors,
                 supported_actions: vec![NativeAction::Invoke],
+                horizontal_scroll: false,
+                vertical_scroll: false,
             }
         }
 
@@ -1882,6 +2441,165 @@ mod platform {
         }
 
         #[test]
+        fn settings_navigation_is_not_a_payment_or_permission_commit() {
+            for label in [
+                "Security Settings",
+                "安全设置",
+                "打开系统设置",
+                "Payment history",
+                "支付设置",
+                "购买记录",
+                "权限说明",
+            ] {
+                assert_eq!(
+                    classify_risk(&NativeAction::Invoke, Some(label)),
+                    RiskClass::Reversible,
+                    "{label}"
+                );
+            }
+            for label in [
+                "Confirm purchase",
+                "确认支付",
+                "Grant permission",
+                "恢复出厂设置",
+                "Restore factory settings",
+                "Delete all data settings",
+                "永久删除历史记录",
+                "删除账户设置",
+            ] {
+                assert_eq!(
+                    classify_risk(&NativeAction::Invoke, Some(label)),
+                    RiskClass::DestructiveCritical,
+                    "{label}"
+                );
+            }
+        }
+
+        #[test]
+        fn mixed_toggle_is_unknown_and_idempotent_choices_include_both_states() {
+            use windows::Win32::UI::Accessibility::{
+                ToggleState_Indeterminate, ToggleState_Off, ToggleState_On,
+            };
+            assert_eq!(toggle_boolean(ToggleState_Indeterminate), None);
+            assert_eq!(toggle_boolean(ToggleState_On), Some(true));
+            assert_eq!(toggle_boolean(ToggleState_Off), Some(false));
+            let mut node = metadata("check", vec![]);
+            node.supported_actions = vec![NativeAction::SetChecked];
+            let adapter = adapter_with(std::slice::from_ref(&node));
+            let candidates = adapter.build("取消勾选", &observation(&[node])).unwrap();
+            assert!(candidates
+                .iter()
+                .any(|c| c.kind == CandidateKind::SetChecked { checked: true }));
+            assert_eq!(
+                candidates[0].kind,
+                CandidateKind::SetChecked { checked: false }
+            );
+            let state = adapter.state.lock().unwrap();
+            let bound = state.locators_by_candidate.get(&candidates[0].id).unwrap();
+            assert_eq!(
+                input_for_candidate(bound, &ExecutionInput::default())
+                    .unwrap()
+                    .checked,
+                Some(false)
+            );
+            assert!(input_for_candidate(
+                bound,
+                &ExecutionInput {
+                    checked: Some(true),
+                    ..Default::default()
+                }
+            )
+            .is_err());
+        }
+
+        #[test]
+        fn scroll_candidates_follow_reported_axes_and_range_rejects_non_finite_values() {
+            let mut node = metadata("list", vec![]);
+            node.vertical_scroll = true;
+            let vertical = candidate_kinds(&NativeAction::Scroll, &node);
+            assert_eq!(vertical.len(), 4);
+            assert!(vertical.iter().all(|kind| matches!(
+                kind,
+                CandidateKind::Scroll {
+                    direction: ScrollDirection::Up | ScrollDirection::Down,
+                    ..
+                }
+            )));
+            node.horizontal_scroll = true;
+            assert_eq!(candidate_kinds(&NativeAction::Scroll, &node).len(), 8);
+            assert_eq!(parse_range_value(Some("3.5")).unwrap(), 3.5);
+            for value in [None, Some("NaN"), Some("inf"), Some("five")] {
+                assert!(parse_range_value(value).is_err());
+            }
+            let (horizontal, vertical) =
+                native_scroll_amounts(ScrollDirection::Left, ScrollAmount::Page);
+            assert_eq!(
+                horizontal,
+                windows::Win32::UI::Accessibility::ScrollAmount_LargeDecrement
+            );
+            assert_eq!(
+                vertical,
+                windows::Win32::UI::Accessibility::ScrollAmount_NoAmount
+            );
+        }
+
+        #[test]
+        fn background_native_actions_do_not_require_foreground_but_focus_does() {
+            for action in [
+                NativeAction::SetValue,
+                NativeAction::SetChecked,
+                NativeAction::SetRangeValue,
+                NativeAction::Scroll,
+                NativeAction::Invoke,
+            ] {
+                assert!(provider_requires_foreground("WPF", &action));
+                assert!(!provider_requires_foreground("Win32", &action));
+            }
+            assert!(!provider_requires_foreground(
+                "WPF",
+                &NativeAction::ScrollIntoView
+            ));
+            for action in [
+                NativeAction::Invoke,
+                NativeAction::SetValue,
+                NativeAction::SetChecked,
+                NativeAction::Scroll,
+            ] {
+                assert!(!requires_foreground(DeliveryMode::Auto, &action));
+                assert!(requires_foreground(DeliveryMode::Foreground, &action));
+            }
+            assert!(requires_foreground(
+                DeliveryMode::Auto,
+                &NativeAction::Focus
+            ));
+        }
+
+        #[test]
+        fn native_page_budget_includes_skipped_nodes_instead_of_repeating_first_page() {
+            assert_eq!(page_traversal_limit(200, 200).unwrap(), 400);
+            assert_eq!(page_traversal_limit(400, 200).unwrap(), 600);
+            assert!(page_traversal_limit(usize::MAX, 200).is_err());
+            assert!(page_traversal_limit(10_000, 200).is_err());
+        }
+
+        #[test]
+        fn chinese_and_english_intents_rank_app_settings_above_system_settings() {
+            for (goal, exact, system) in [
+                ("打开应用中的设置", "设置", "打开系统设置"),
+                ("open app settings", "Settings", "Open System Settings"),
+            ] {
+                let mut desired = metadata("desired", vec![]).public_node();
+                desired.name = Some(exact.into());
+                let mut other = desired.clone();
+                other.name = Some(system.into());
+                assert!(
+                    candidate_relevance(goal, &desired, &NativeAction::Invoke)
+                        > candidate_relevance(goal, &other, &NativeAction::Invoke)
+                );
+            }
+        }
+
+        #[test]
         fn application_identity_survives_owned_dialog_window_classes() {
             let executable = r"c:\windows\system32\notepad.exe";
             assert_eq!(
@@ -1984,6 +2702,181 @@ pub use platform::WindowsUiaAdapter;
 #[cfg(all(test, windows))]
 mod windows_smoke_tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+    use windows::Win32::Foundation::{HWND, POINT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetForegroundWindow, SetForegroundWindow,
+    };
+
+    struct WpfFixture {
+        child: Child,
+        artifacts: PathBuf,
+    }
+
+    impl WpfFixture {
+        fn start() -> Self {
+            use std::os::windows::process::CommandExt;
+            let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("core crate belongs to a repository");
+            let artifacts = repository
+                .join("target/desktop-uia-fixtures")
+                .join(uuid::Uuid::new_v4().simple().to_string());
+            std::fs::create_dir_all(&artifacts).expect("create isolated fixture artifacts");
+            let output =
+                std::fs::File::create(artifacts.join("fixture.log")).expect("create fixture log");
+            let errors = output.try_clone().expect("clone fixture log handle");
+            let child = Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-STA",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
+                .arg(repository.join("scripts/tests/windows-uia-fixture.ps1"))
+                .arg("-ArtifactDirectory")
+                .arg(&artifacts)
+                // Hide only the console; the two controlled WPF windows are
+                // intentionally visible during this opt-in acceptance test.
+                .creation_flags(0x0800_0000)
+                .stdout(Stdio::from(output))
+                .stderr(Stdio::from(errors))
+                .spawn()
+                .expect("launch the isolated WPF fixture");
+            eprintln!("UIA fixture artifacts: {}", artifacts.display());
+            Self { child, artifacts }
+        }
+
+        async fn json_when(
+            &self,
+            name: &str,
+            predicate: impl Fn(&serde_json::Value) -> bool,
+        ) -> serde_json::Value {
+            let path = self.artifacts.join(name);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut last = serde_json::Value::Null;
+            loop {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if predicate(&value) {
+                            return value;
+                        }
+                        last = value;
+                    }
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture state did not satisfy the assertion: {}; last={last}; inspect {}",
+                    path.display(),
+                    self.artifacts.join("fixture.log").display()
+                );
+                tokio::time::sleep(Duration::from_millis(80)).await;
+            }
+        }
+    }
+
+    impl Drop for WpfFixture {
+        fn drop(&mut self) {
+            // Close only our child and preserve JSON/logs for diagnosis. A panic
+            // cannot leave this test application running on the user's desktop.
+            let _ = std::fs::write(self.artifacts.join("stop"), b"stop");
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if self.child.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn mouse_position() -> (i32, i32) {
+        let mut point = POINT::default();
+        unsafe { GetCursorPos(&mut point) }.expect("read mouse position without moving it");
+        (point.x, point.y)
+    }
+
+    fn assert_background_unchanged(sentinel: HWND, mouse: (i32, i32)) {
+        assert_eq!(
+            unsafe { GetForegroundWindow() },
+            sentinel,
+            "native UIA action stole foreground focus"
+        );
+        assert_eq!(
+            mouse_position(),
+            mouse,
+            "native UIA action moved the system mouse"
+        );
+    }
+
+    async fn fixture_action(
+        adapter: &WindowsUiaAdapter,
+        scope: &ObservationScope,
+        label: &str,
+        kind: impl Fn(&CandidateKind) -> bool,
+        input: ExecutionInput,
+    ) {
+        let observation = adapter
+            .observe(scope)
+            .await
+            .expect("observe the explicit background fixture window");
+        let candidates = adapter
+            .build(label, &observation)
+            .expect("build real UIA candidates");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| {
+                kind(&candidate.kind)
+                    && candidate.target.as_ref().is_some_and(|id| {
+                        observation.nodes.iter().any(|node| {
+                            &node.opaque_id == id && node.name.as_deref() == Some(label)
+                        })
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!("fixture candidate missing for {label}; candidates={candidates:?}")
+            });
+        let foreground_before = unsafe { GetForegroundWindow() };
+        let mouse_before = mouse_position();
+        let receipt = adapter
+            .execute(&observation, candidate, &input)
+            .await
+            .expect("execute real native UIA action");
+        if receipt.dispatched {
+            let foreground_after = unsafe { GetForegroundWindow() };
+            let target = HWND(scope.window_handle.unwrap() as isize);
+            assert!(
+                foreground_after == foreground_before || foreground_after == target,
+                "provider focused an unrelated window"
+            );
+            assert_eq!(
+                receipt.delivery_mode,
+                Some(if foreground_after == target {
+                    DeliveryMode::Foreground
+                } else {
+                    DeliveryMode::Background
+                }),
+                "reported delivery must match real foreground behavior for {label}"
+            );
+            eprintln!("{label}: {:?}", receipt.delivery_mode);
+            assert_eq!(mouse_position(), mouse_before, "UIA must not move mouse");
+            if foreground_after != foreground_before {
+                // Test setup only: restore our disposable sentinel, never an
+                // arbitrary business application. No production focus masking.
+                let _ = unsafe { SetForegroundWindow(foreground_before) };
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        } else {
+            assert!(matches!(candidate.kind, CandidateKind::SetChecked { .. }));
+        }
+    }
 
     /// Manual machine-level smoke test. It reads whichever application is in
     /// the foreground, but deliberately does not dispatch an action.
@@ -2003,6 +2896,233 @@ mod windows_smoke_tests {
         assert!(!observation.window.id.is_empty());
         assert!(!observation.nodes.is_empty());
         assert!(!candidates.is_empty());
-        assert!(candidates.len() <= 255);
+        assert!(candidates.len() <= 4096);
+    }
+
+    /// The fixture is an actual WPF application with an independent state JSON.
+    /// Start only after notifying the user; never run this by default in CI.
+    #[tokio::test]
+    #[ignore = "opens two disposable WPF windows; requires an announced interactive Windows acceptance run"]
+    #[serial_test::serial(windows_live_desktop)]
+    async fn controlled_wpf_actions_report_real_delivery_and_update_application_state() {
+        let fixture = WpfFixture::start();
+        let ready = fixture
+            .json_when("ready.json", |value| {
+                value["target_hwnd"].as_i64().is_some()
+            })
+            .await;
+        assert_eq!(
+            ready["process_id"].as_u64(),
+            Some(u64::from(fixture.child.id()))
+        );
+        let target =
+            i32::try_from(ready["target_hwnd"].as_i64().unwrap()).expect("fixture target handle");
+        let sentinel = HWND(ready["sentinel_hwnd"].as_i64().expect("sentinel handle") as isize);
+        let foreground_deadline = Instant::now() + Duration::from_secs(5);
+        while unsafe { GetForegroundWindow() } != sentinel && Instant::now() < foreground_deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            unsafe { GetForegroundWindow() },
+            sentinel,
+            "fixture sentinel could not acquire foreground; no desktop actions sent"
+        );
+        let mouse = mouse_position();
+        let scope = ObservationScope {
+            window_handle: Some(target),
+            delivery: DeliveryMode::Auto,
+            ..Default::default()
+        };
+        let adapter = WindowsUiaAdapter::default();
+        let initial = adapter
+            .observe(&scope)
+            .await
+            .expect("initial fixture observation");
+        let mixed = initial
+            .nodes
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Fixture checkbox"))
+            .expect("three-state checkbox observed");
+        assert_eq!(
+            mixed.toggled, None,
+            "mixed checkbox must not be reported as unchecked"
+        );
+        assert_background_unchanged(sentinel, mouse);
+
+        let text = "Nuphus 后台输入 🧪";
+        let offered = adapter.build("Fixture text", &initial).unwrap();
+        let candidate = offered
+            .iter()
+            .find(|candidate| matches!(candidate.kind, CandidateKind::SetValue { .. }))
+            .unwrap();
+        let rejected = adapter
+            .execute(
+                &initial,
+                candidate,
+                &ExecutionInput {
+                    value: Some("must not be sent".into()),
+                    delivery: DeliveryMode::Background,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("background_unavailable"));
+        fixture
+            .json_when("state.json", |state| state["text"] == "initial value")
+            .await;
+        assert_background_unchanged(sentinel, mouse);
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture text",
+            |kind| matches!(kind, CandidateKind::SetValue { .. }),
+            ExecutionInput {
+                value: Some(text.into()),
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        fixture
+            .json_when("state.json", |state| state["text"] == text)
+            .await;
+        assert_eq!(
+            mouse_position(),
+            mouse,
+            "native text input must not move mouse"
+        );
+        assert_background_unchanged(sentinel, mouse);
+
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture checkbox",
+            |kind| *kind == CandidateKind::SetChecked { checked: true },
+            ExecutionInput {
+                checked: Some(true),
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        let checked = fixture
+            .json_when("state.json", |state| state["checked"] == true)
+            .await;
+        let change_count = checked["checkbox_changes"].as_u64().unwrap();
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture checkbox",
+            |kind| *kind == CandidateKind::SetChecked { checked: true },
+            ExecutionInput {
+                checked: Some(true),
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let unchanged = fixture
+            .json_when("state.json", |state| state["checked"] == true)
+            .await;
+        assert_eq!(
+            unchanged["checkbox_changes"].as_u64(),
+            Some(change_count),
+            "desired checkbox replay should not emit another toggle"
+        );
+        assert_background_unchanged(sentinel, mouse);
+
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture range",
+            |kind| matches!(kind, CandidateKind::SetRangeValue { .. }),
+            ExecutionInput {
+                value: Some("37.5".into()),
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        fixture
+            .json_when("state.json", |state| state["range"].as_f64() == Some(37.5))
+            .await;
+        assert_background_unchanged(sentinel, mouse);
+
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture items",
+            |kind| {
+                *kind
+                    == CandidateKind::Scroll {
+                        direction: ScrollDirection::Down,
+                        amount: ScrollAmount::Page,
+                    }
+            },
+            ExecutionInput {
+                direction: Some(ScrollDirection::Down),
+                amount: Some(ScrollAmount::Page),
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        let scrolled = fixture
+            .json_when("state.json", |state| {
+                state["scroll_offset"]
+                    .as_f64()
+                    .is_some_and(|offset| offset > 0.0)
+            })
+            .await;
+        assert_background_unchanged(sentinel, mouse);
+
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture row 47",
+            |kind| *kind == CandidateKind::ScrollIntoView,
+            ExecutionInput {
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        fixture
+            .json_when("state.json", |state| {
+                state["last_row_fully_visible"] == true
+                    && state["scroll_offset"].as_f64() > scrolled["scroll_offset"].as_f64()
+            })
+            .await;
+        assert_background_unchanged(sentinel, mouse);
+
+        fixture_action(
+            &adapter,
+            &scope,
+            "Fixture apply",
+            |kind| *kind == CandidateKind::Invoke,
+            ExecutionInput {
+                delivery: DeliveryMode::Auto,
+                ..Default::default()
+            },
+        )
+        .await;
+        let final_state = fixture
+            .json_when("state.json", |state| state["apply_count"] == 1)
+            .await;
+        assert_eq!(final_state["text"], text);
+        assert_eq!(final_state["checked"], true);
+        assert_eq!(final_state["range"].as_f64(), Some(37.5));
+        assert_eq!(
+            final_state["selected_index"], -1,
+            "scroll must not silently select an item"
+        );
+        assert_background_unchanged(sentinel, mouse);
+        std::fs::write(
+            fixture.artifacts.join("passed.json"),
+            serde_json::to_vec_pretty(&final_state).unwrap(),
+        )
+        .expect("persist acceptance evidence");
     }
 }

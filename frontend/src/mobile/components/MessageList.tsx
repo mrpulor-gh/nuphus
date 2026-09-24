@@ -4,11 +4,13 @@
  * 执行状态由消息内状态行承载（轻量一行），不再有独立活动卡
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { ChatMessage, ActivityState } from '../store'
 import MessageBubble from './MessageBubble'
 import { t } from '../i18n'
+import { ExecutionActivityLine } from '../../ui/ExecutionActivityLine'
+import { composeAssistantReplies } from '../../core/progressMessages'
 
 interface Props {
   messages: ChatMessage[]
@@ -27,12 +29,13 @@ const INITIAL_VISIBLE = 50
 const PAGE_STEP = 50
 
 export default function MessageList({
-  messages,
+  messages: messageRecords,
   activity,
   assistantName,
   tokenUsage,
   onRateMessage,
 }: Props) {
+  const messages = useMemo(() => composeAssistantReplies(messageRecords), [messageRecords])
   const listRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
   // 从尾部可见条数（新消息追加时保持，只增不减；点「查看更早」步进展开）
@@ -99,6 +102,9 @@ export default function MessageList({
           onRateMessage={onRateMessage}
         />
       ))}
+      {activity.mode === 'workflow' && (
+        <ExecutionActivityLine activity={activity.running ? (activity.detail ?? null) : null} />
+      )}
       {/* 执行刚启动、尚无 assistant 消息时的轻量状态行（短暂过渡） */}
       {activity.running && messages.length === 0 && (
         <div className="mobile-exec-line mobile-exec-line--global">

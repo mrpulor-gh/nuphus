@@ -72,6 +72,7 @@ pub(crate) const CHAT_AGENT_ALLOWED_TOOLS: &[&str] = &[
     "desktop_semantic_candidate",
     "desktop_semantic_execute",
     "desktop_semantic_action",
+    "desktop_verify_state",
     "desktop_agent_step",
     "desktop_window_info",
     "desktop_window_activate",
