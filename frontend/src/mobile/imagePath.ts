@@ -19,7 +19,8 @@
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp)(?![A-Za-z0-9_.-])/i
 
 /** 绝对路径候选：Windows 盘符 / UNC / Unix 根。与桌面端 ABSOLUTE_PATH_RE 同源 */
-const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/\r\n<>:"|?*]+(?:[ \t]+[^\s\\/\r\n<>:"|?*]+)*[\\/])*[^\s\\/\r\n<>:"|?*]*/g
+const ABSOLUTE_PATH_RE =
+  /(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/\r\n<>:"|?*]+(?:[ \t]+[^\s\\/\r\n<>:"|?*]+)*[\\/])*[^\s\\/\r\n<>:"|?*]*/g
 
 /** 裸域名 / IPv4 开头（github.com/a.png、192.168.1.1/a.png）不是本机路径 */
 const BARE_DOMAIN_RE = /^(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})[\\/]/

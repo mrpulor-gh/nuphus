@@ -110,8 +110,8 @@ describe('MarkdownContent 文件引用', () => {
 
   it('路径后的中文说明不会被吞入链接', () => {
     const text = String.raw`文件在 C:\a\b.txt 请查看该文件`
-    expect(
-      extractFilePaths(text).map(range => text.slice(range.start, range.end)),
-    ).toEqual([String.raw`C:\a\b.txt`])
+    expect(extractFilePaths(text).map(range => text.slice(range.start, range.end))).toEqual([
+      String.raw`C:\a\b.txt`,
+    ])
   })
 })
