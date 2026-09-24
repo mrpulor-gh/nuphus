@@ -84,7 +84,7 @@ export function VariablePicker({
     <div className="wfc-variable-picker">
       <input
         ref={input}
-        className="wfc-inspector-input"
+        className="wfc-input wfc-input--mono"
         value={value}
         readOnly={readOnly}
         role="combobox"

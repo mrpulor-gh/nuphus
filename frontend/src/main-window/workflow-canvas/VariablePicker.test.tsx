@@ -12,6 +12,10 @@ const catalog: VariableCatalog = {
 }
 
 describe('VariablePicker', () => {
+  it.each(['capture', 'reference'] as const)('uses themed canvas input styles for %s', mode => {
+    render(<VariablePicker value="" onChange={vi.fn()} mode={mode} catalog={catalog} />)
+    expect(screen.getByRole('combobox')).toHaveClass('wfc-input', 'wfc-input--mono')
+  })
   it('opens a portal on click and selects a bare namespaced reference', () => {
     const onChange = vi.fn()
     const { container } = render(
