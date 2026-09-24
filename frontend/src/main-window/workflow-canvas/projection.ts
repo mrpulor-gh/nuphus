@@ -19,7 +19,8 @@ import type {
   Swimlane,
 } from './types'
 import { SYNTH } from './types'
-import { profileStep, walkSteps, type StepVarProfile } from './dataEdges'
+import { profileStep, walkSteps, type StepVarProfile, type VarConsumption } from './dataEdges'
+import { buildVariableCatalogIndex } from './variableCatalog'
 
 // ── kind 判定（对齐 types.rs kind_str；无法识别的 Action → custom）──
 
@@ -124,6 +125,7 @@ function conditionSummary(cond: Condition | undefined): string {
     const v = c[key]
     if (Array.isArray(v))
       return `${varRefText(v[0] as VarRef)} ${sym} ${varRefText(v[1] as VarRef)}`.trim()
+    if (key === 'always') return v === false ? '恒假' : '恒真'
     return `${varRefText(v as VarRef)} ${sym}`.trim()
   }
   return ''
@@ -164,10 +166,10 @@ function containerSummary(step: WorkflowStep, kind: StepKind): string | undefine
 function onErrorLabel(step: WorkflowStep): string | undefined {
   const oe = step.on_error
   if (!oe || oe === 'abort') return undefined
-  if (typeof oe === 'string') return oe
+  if (typeof oe === 'string') return oe === 'skip' ? '失败跳过' : oe
   if (typeof oe === 'object') {
-    if ('retry' in oe) return 'retry'
-    if ('allow_codes' in oe) return 'allow_codes'
+    if ('retry' in oe) return '失败重试'
+    if ('allow_codes' in oe) return '允许退出码'
   }
   return undefined
 }
@@ -192,6 +194,12 @@ function buildTreeProfile(rootSteps: WorkflowStep[]): TreeProfile {
   const producers = new Map<string, string[]>()
   walkSteps(rootSteps, (step, parentId) => {
     const p = profileStep(step)
+    if (
+      !step.do ||
+      typeof step.do !== 'object' ||
+      !['tool', 'script', 'chat', 'mcp'].some(key => key in step.do)
+    )
+      p.produces = undefined
     indexOf.set(step.id, order.length)
     order.push(p)
     parentOf.set(step.id, parentId)
@@ -202,19 +210,6 @@ function buildTreeProfile(rootSteps: WorkflowStep[]): TreeProfile {
     }
   })
   return { order, indexOf, parentOf, producers }
-}
-
-/** 遍历序最近的前序生产者（严格先于消费者） */
-function nearestProducer(tree: TreeProfile, varName: string, consumerId: string): string | null {
-  const list = tree.producers.get(varName)
-  if (!list) return null
-  const ci = tree.indexOf.get(consumerId) ?? -1
-  let best: string | null = null
-  for (const pid of list) {
-    const pi = tree.indexOf.get(pid) ?? -1
-    if (pi >= 0 && pi < ci) best = pid
-  }
-  return best
 }
 
 /** 遮蔽标记（1.4b/V10）：同一变量被多次 capture 时，除最后生产者外全部标记 */
@@ -233,33 +228,22 @@ function shadowedMap(tree: TreeProfile): Map<string, string> {
 interface LoopScope {
   loopStepId: string
   layerId: string
-  itemVar: string
+  itemVar?: string
 }
 
 function loopScopeOf(step: WorkflowStep): LoopScope | null {
   const d = step.do as Record<string, unknown> | undefined
-  const loop = d?.loop as { for_each?: { as?: string } } | undefined
+  const loop = d?.loop as { for_each?: { as?: string }; repeat?: number } | undefined
   if (!loop) return null
-  return { loopStepId: step.id, layerId: step.id, itemVar: loop.for_each?.as || 'item' }
-}
-
-/** var 是否由 consumer 的某个外层 loop 提供（item_var / _index） */
-function enclosingLoopVar(
-  consumerId: string,
-  varName: string,
-  parentOf: Map<string, string | null>,
-  stepById: Map<string, WorkflowStep>,
-): LoopScope | null {
-  let cur = parentOf.get(consumerId) ?? null
-  while (cur !== null) {
-    const step = stepById.get(cur)
-    if (step) {
-      const scope = loopScopeOf(step)
-      if (scope && (scope.itemVar === varName || varName === '_index')) return scope
-    }
-    cur = parentOf.get(cur) ?? null
+  return {
+    loopStepId: step.id,
+    layerId: step.id,
+    itemVar: loop.for_each
+      ? loop.for_each.as || 'item'
+      : loop.repeat !== undefined
+        ? '_index'
+        : undefined,
   }
-  return null
 }
 
 // ── 投影主流程 ──
@@ -288,10 +272,26 @@ export function projectWorkflow(ir: {
   inputs?: WorkflowInputSpec[]
 }): Projection {
   const tree = buildTreeProfile(ir.steps)
+  const variableIndex = buildVariableCatalogIndex(ir.steps, ir.inputs)
+  const resolveSource = (consumerId: string, reference: VarConsumption) => {
+    const scope = variableIndex.beforeStep.get(consumerId)
+    return reference.input
+      ? scope?.get(`inputs.${reference.varName}`)
+      : (scope?.get(reference.varName) ?? scope?.get(`inputs.${reference.varName}`))
+  }
+  // Build reverse use lists once; avoid scanning every consumer for every producer/layer.
+  const consumersOf = new Map<string, Set<string>>()
+  for (const profile of tree.order) {
+    for (const reference of profile.consumes) {
+      for (const producerId of resolveSource(profile.stepId, reference)?.producerStepIds ?? []) {
+        const consumers = consumersOf.get(producerId) ?? new Set<string>()
+        consumers.add(profile.stepId)
+        consumersOf.set(producerId, consumers)
+      }
+    }
+  }
   const declaredInputs = new Set((ir.inputs ?? []).map(input => input.name))
   const shadowed = shadowedMap(tree)
-  const stepById = new Map<string, WorkflowStep>()
-  walkSteps(ir.steps, s => stepById.set(s.id, s))
 
   const layers = new Map<string, CanvasLayer>()
   const nodeById = new Map<string, CanvasNode>()
@@ -364,7 +364,7 @@ export function projectWorkflow(ir: {
         id: entryId,
         kind: 'loop',
         category: 'leaf',
-        name: scope ? `入口 · ${scope.itemVar}` : '入口',
+        name: scope?.itemVar ? `入口 · ${scope.itemVar}` : '入口',
         lane: 'main',
         synthetic: 'entry',
         containerSummary: containerSummary(hostStep, 'loop'),
@@ -420,32 +420,41 @@ export function projectWorkflow(ir: {
       edges.push(e)
     }
     const externalAnchors = new Map<string, CanvasNode>()
-    const anchorFor = (varName: string, producerId: string | null): CanvasNode => {
-      let anchor = externalAnchors.get(varName)
+    const anchorFor = (
+      varName: string,
+      producerId: string | null,
+      declared = false,
+      inputNamespace = false,
+    ): CanvasNode => {
+      // Different incoming producer paths and the input namespace must never share an anchor.
+      const key = producerId
+        ? `${varName}:from:${producerId}`
+        : declared || inputNamespace
+          ? `inputs.${varName}`
+          : varName
+      let anchor = externalAnchors.get(key)
       if (!anchor) {
         anchor = {
-          id: SYNTH.external(layerId, varName),
+          id: SYNTH.external(layerId, key),
           kind: 'tool',
           category: 'leaf',
-          name: `外部 · ${varName}`,
+          name: `${producerId ? '层外来源' : declared ? '工作流输入' : '未找到来源'} · ${varName}`,
           lane: lanes[0].id,
           synthetic: 'external',
           externalVar: varName,
           externalProducerId: producerId ?? undefined,
           externalInput: producerId === null,
-          externalInputDeclared: declaredInputs.has(varName),
+          externalInputDeclared: producerId ? undefined : declared,
         }
-        externalAnchors.set(varName, anchor)
+        externalAnchors.set(key, anchor)
         nodes.push(anchor)
-      } else if (producerId && !anchor.externalProducerId) {
-        anchor.externalProducerId = producerId
       }
       return anchor
     }
 
     // 工作流声明本身就是根画布的输入契约。即使尚未被步骤引用，也要作为明确起点出现。
     if (layerId === 'root') {
-      for (const input of ir.inputs ?? []) anchorFor(input.name, null)
+      for (const input of ir.inputs ?? []) anchorFor(input.name, null, true)
     }
 
     for (const profile of tree.order) {
@@ -453,9 +462,9 @@ export function projectWorkflow(ir: {
       if (!consumerNode) continue // 不属于本层视野
       for (const cons of profile.consumes) {
         // 循环 item_var：仅在该 loop 自己的子层画入口锚点边
-        const loopScope = enclosingLoopVar(profile.stepId, cons.varName, tree.parentOf, stepById)
-        if (loopScope) {
-          if (loopScope.layerId === layerId) {
+        const source = resolveSource(profile.stepId, cons)
+        if (source?.source === 'loop' && !source.producerStepIds?.length) {
+          if (source.stepId === layerId) {
             pushDataEdge({
               id: `data:${SYNTH.entry(layerId)}->${consumerNode}:${cons.varName}`,
               source: SYNTH.entry(layerId),
@@ -467,54 +476,61 @@ export function projectWorkflow(ir: {
           }
           continue
         }
-        const producerId = nearestProducer(tree, cons.varName, profile.stepId)
-        if (!producerId) {
-          // 悬空引用 → 外部注入锚点黄虚边（warning 由校验层落 V4）
-          const anchor = anchorFor(cons.varName, null)
+        const producerIds = source?.producerStepIds ?? []
+        if (producerIds.length === 0) {
+          const declared = source?.source === 'input' && declaredInputs.has(cons.varName)
+          const anchor = anchorFor(cons.varName, null, declared, cons.input)
           if (anchor.id !== consumerNode) {
             pushDataEdge({
               id: `data:${anchor.id}->${consumerNode}:${cons.varName}`,
               source: anchor.id,
               target: consumerNode,
               kind: 'external',
-              label: cons.varName,
+              label: declared || cons.input ? `inputs.${cons.varName}` : cons.varName,
               pipes: cons.pipes,
-              dangling: true,
+              dangling: !declared,
+              maybeUnset: source?.maybeUnset,
             })
             const cn = nodeById.get(consumerNode)
-            if (cn && cn.id === profile.stepId) {
-              cn.danglingVars = [...(cn.danglingVars ?? []), cons.varName]
+            if (!declared && cn && cn.id === profile.stepId) {
+              cn.danglingVars = [...new Set([...(cn.danglingVars ?? []), cons.varName])]
             }
           }
           continue
         }
-        const producerNode = aggregateTo(producerId, directIds, tree.parentOf)
-        if (!producerNode) {
-          // 生产者在本层视野之外 → 层外来源锚点（2.4，点击跳转到生产者所在层）
-          const anchor = anchorFor(cons.varName, producerId)
-          if (anchor.id !== consumerNode) {
-            pushDataEdge({
-              id: `data:${anchor.id}->${consumerNode}:${cons.varName}`,
-              source: anchor.id,
-              target: consumerNode,
-              kind: 'external',
-              label: cons.varName,
-              pipes: cons.pipes,
-              producerStepId: producerId,
-            })
+        for (const producerId of producerIds) {
+          const producerNode = aggregateTo(producerId, directIds, tree.parentOf)
+          if (!producerNode) {
+            // 生产者在本层视野之外 → 层外来源锚点（2.4，点击跳转到生产者所在层）
+            const anchor = anchorFor(cons.varName, producerId)
+            if (anchor.id !== consumerNode) {
+              pushDataEdge({
+                id: `data:${anchor.id}->${consumerNode}:${cons.varName}`,
+                source: anchor.id,
+                target: consumerNode,
+                kind: 'external',
+                label: cons.varName,
+                pipes: cons.pipes,
+                producerStepId: producerId,
+                maybeUnset: source?.maybeUnset,
+                sourceSummary: source?.sourceLabel,
+              })
+            }
+            continue
           }
-          continue
+          if (producerNode === consumerNode) continue // 同容器内部，属于其子层视野
+          pushDataEdge({
+            id: `data:${producerNode}->${consumerNode}:${cons.varName}`,
+            source: producerNode,
+            target: consumerNode,
+            kind: 'data',
+            label: cons.varName,
+            pipes: cons.pipes,
+            producerStepId: producerId,
+            maybeUnset: source?.maybeUnset,
+            sourceSummary: source?.sourceLabel,
+          })
         }
-        if (producerNode === consumerNode) continue // 同容器内部，属于其子层视野
-        pushDataEdge({
-          id: `data:${producerNode}->${consumerNode}:${cons.varName}`,
-          source: producerNode,
-          target: consumerNode,
-          kind: 'data',
-          label: cons.varName,
-          pipes: cons.pipes,
-          producerStepId: producerId,
-        })
       }
     }
 
@@ -544,11 +560,8 @@ export function projectWorkflow(ir: {
         const producerNode = aggregateTo(profile.stepId, directIds, tree.parentOf)
         if (!producerNode) continue // 生产者不在本层视野
         // 是否存在层外消费者（其最近前序生产者正是本步骤）
-        const hasOutsideConsumer = tree.order.some(
-          p2 =>
-            p2.consumes.some(c => c.varName === profile.produces) &&
-            nearestProducer(tree, profile.produces!, p2.stepId) === profile.stepId &&
-            !aggregateTo(p2.stepId, directIds, tree.parentOf),
+        const hasOutsideConsumer = [...(consumersOf.get(profile.stepId) ?? [])].some(
+          consumerId => !aggregateTo(consumerId, directIds, tree.parentOf),
         )
         if (hasOutsideConsumer) {
           const anchor = outAnchorFor(profile.produces)

@@ -8,26 +8,26 @@
  */
 
 import dagre from '@dagrejs/dagre'
-import type { CanvasLayer, CanvasLayoutSidecar, CanvasNode, LaneId } from './types'
+import type { CanvasLayer, CanvasLayoutSidecar, CanvasNode } from './types'
 
 export interface NodePos {
   x: number
   y: number
 }
 
-/** 节点尺寸（与 workflow-canvas.css 卡片宽度对齐） */
-const SIZE = {
-  leaf: { width: 200, height: 56 },
-  container: { width: 220, height: 64 },
-  unknown: { width: 200, height: 56 },
+/** Canonical border-box sizes, mirrored by workflow-node-layout.css. */
+export const NODE_SIZE = {
+  leaf: { width: 200, height: 64 },
+  container: { width: 220, height: 88 },
+  unknown: { width: 200, height: 64 },
   anchor: { width: 150, height: 40 },
 }
 
 function nodeSize(n: CanvasNode): { width: number; height: number } {
   // 必须返回新对象：dagre.layout 会把 x/y/rank 原地写入 setNode 的值对象，
   // 共享 SIZE 常量引用会导致同类节点坐标互相覆盖（实测两容器节点重叠同坐标）
-  if (n.synthetic) return { ...SIZE.anchor }
-  return { ...SIZE[n.category] }
+  if (n.synthetic) return { ...NODE_SIZE.anchor }
+  return { ...NODE_SIZE[n.category] }
 }
 
 const LANE_GAP = 80

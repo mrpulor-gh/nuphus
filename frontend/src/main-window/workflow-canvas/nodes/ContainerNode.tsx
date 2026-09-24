@@ -105,9 +105,15 @@ export const ContainerNode = memo(function ContainerNode({
       )}
       <div className="wfc-node-foot">
         <span className="wfc-node-kind">{node.kind}</span>
-        {node.capture && <span className="wfc-badge wfc-badge--capture">→ {node.capture}</span>}
+        {node.capture && (
+          <span className="wfc-badge wfc-badge--capture" title={`保存输出到 ${node.capture}`}>
+            → {node.capture}
+          </span>
+        )}
         {node.onErrorLabel && (
-          <span className="wfc-badge wfc-badge--onerror">{node.onErrorLabel}</span>
+          <span className="wfc-badge wfc-badge--onerror" title={node.onErrorLabel}>
+            {node.onErrorLabel}
+          </span>
         )}
       </div>
       <Handle type="source" position={sourcePos} className="wfc-handle" />

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
+import '../workflow-node-layout.css'
 
 /** 节点 hover 操作（阶段 4：编辑/复制/删除快捷入口） */
 export interface NodeActions {
@@ -90,7 +91,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
         <Handle type="target" position={targetPos} className="wfc-handle" />
         <AnchorIcon size={12} aria-hidden="true" />
         <span className="wfc-anchor-name">{node.name}</span>
-        {node.externalInputDeclared === false && <span className="wfc-anchor-sub">未声明</span>}
+        {node.externalInputDeclared === false && <span className="wfc-anchor-sub">未找到来源</span>}
         {node.containerSummary && <span className="wfc-anchor-sub">{node.containerSummary}</span>}
         {node.externalInput && node.externalVar && inputActions && (
           <button
@@ -161,19 +162,32 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
           {node.name}
         </span>
         {node.onErrorLabel && (
-          <span className="wfc-badge wfc-badge--onerror">{node.onErrorLabel}</span>
+          <span className="wfc-badge wfc-badge--onerror" title={node.onErrorLabel}>
+            {node.onErrorLabel}
+          </span>
         )}
       </div>
       <div className="wfc-node-foot">
         <span className="wfc-node-kind">{node.kind}</span>
-        {node.capture && <span className="wfc-badge wfc-badge--capture">→ {node.capture}</span>}
-        {node.shadowedBy && <span className="wfc-badge wfc-badge--shadowed">已遮蔽</span>}
+        {node.capture && (
+          <span className="wfc-badge wfc-badge--capture" title={`保存输出到 ${node.capture}`}>
+            → {node.capture}
+          </span>
+        )}
+        {node.shadowedBy && (
+          <span
+            className="wfc-badge wfc-badge--shadowed"
+            title={`变量也由步骤 ${node.shadowedBy} 写入，实际值取决于执行路径`}
+          >
+            同名
+          </span>
+        )}
         {node.danglingVars && node.danglingVars.length > 0 && (
           <span
             className="wfc-badge wfc-badge--dangling"
-            title={`未捕获: ${node.danglingVars.join(', ')}`}
+            title={`未找到来源：${node.danglingVars.join(', ')}；可检查前序步骤或配置工作流输入`}
           >
-            外部注入
+            <AlertTriangle size={11} aria-label="未找到来源" />
           </span>
         )}
       </div>
