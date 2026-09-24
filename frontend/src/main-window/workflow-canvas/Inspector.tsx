@@ -21,6 +21,9 @@ import './inspector.css'
 import { useInspectorDraft } from './inspectorDrafts'
 import { VariablePicker } from './VariablePicker'
 import { isVariableName, type VariableCatalog } from './variableCatalog'
+import { useLanguage } from '../../locales'
+import { NodeKindBadge } from './NodeKindBadge'
+import { variableSourceLabel } from './presentation'
 
 const VariableContext = createContext<{
   catalog: VariableCatalog
@@ -118,6 +121,7 @@ function TextField({
   validate?: (value: string) => string | null
   references?: boolean
 }) {
+  const { t } = useLanguage()
   const variables = useContext(VariableContext)
   const fieldId = useId()
   const textRef = useRef<HTMLTextAreaElement>(null)
@@ -177,7 +181,7 @@ function TextField({
           value={variableQuery}
           mode="reference"
           catalog={variables.catalog}
-          label={`插入变量到${label}`}
+          label={t('workflowCanvas.variable.insert', label)}
           onConfigureInput={variables.onConfigureInput}
           onChange={name => {
             setVariableQuery(name)
@@ -691,6 +695,7 @@ export function Inspector({
   onPatchAction,
   onClose,
 }: InspectorProps) {
+  const { t } = useLanguage()
   const kind = stepKind(step)
   const [parameterReset, setParameterReset] = useState(0)
   const d = step.do as Record<string, unknown>
@@ -815,7 +820,7 @@ export function Inspector({
         />
         <div className="wfc-inspector-head">
           <span className="wfc-inspector-title">{step.name || step.id}</span>
-          <span className="wfc-badge">{kind}</span>
+          <NodeKindBadge kind={kind} />
           <button type="button" className="wfc-icon-btn" onClick={onClose} title="关闭（Esc）">
             <IconX size={14} />
           </button>
@@ -1006,7 +1011,7 @@ export function Inspector({
                 onChange={v => patchActionKey('with', v)}
                 variables={variableCatalog.references.map(v => ({
                   name: v.name,
-                  label: `${v.sourceLabel}${v.maybeUnset ? ' · 可能未赋值' : ''}`,
+                  label: `${t('workflowCanvas.variable.name')}: ${v.name} · ${t('workflowCanvas.variable.source')}: ${variableSourceLabel(v, t)}${v.maybeUnset ? ` · ${t('workflowCanvas.variable.maybeUnset')}` : ''}`,
                 }))}
               />
             </>
@@ -1232,7 +1237,9 @@ export function Inspector({
 
           {(['tool', 'script', 'chat', 'mcp'].includes(kind) || step.capture) && (
             <>
-              <div className="wfc-inspector-section">输出变量</div>
+              <div className="wfc-inspector-section">
+                {t('workflowCanvas.variable.outputSection')}
+              </div>
               <CaptureField
                 value={step.capture ?? ''}
                 readOnly={readOnly}
@@ -1240,7 +1247,7 @@ export function Inspector({
               />
               {!!captureConsumers?.length && (
                 <div className="wfc-inspector-hint">
-                  引用此输出的步骤（重命名后需手动更新引用）：
+                  {t('workflowCanvas.variable.consumers')}
                   {captureConsumers.map(consumer => (
                     <button
                       key={consumer.id}
@@ -1283,10 +1290,11 @@ function CaptureField({
   readOnly: boolean
   onCommit: (v: string) => unknown
 }) {
+  const { t } = useLanguage()
   const { catalog } = useContext(VariableContext)
   const draft = useInspectorDraft('保存输出到变量', value, {
     onCommit,
-    validate: v => (!v || isVariableName(v) ? null : '请输入合法的变量名'),
+    validate: v => (!v || isVariableName(v) ? null : t('workflowCanvas.variable.invalid')),
   })
   return (
     <div
@@ -1296,7 +1304,7 @@ function CaptureField({
         void draft.commit()
       }}
     >
-      <span className="wfc-field-label">保存输出到变量</span>
+      <span className="wfc-field-label">{t('workflowCanvas.variable.capture')}</span>
       <VariablePicker
         value={draft.text}
         onChange={draft.setText}
@@ -1305,9 +1313,7 @@ function CaptureField({
         readOnly={readOnly}
       />
       {draft.text !== value && value && (
-        <span className="wfc-inspector-hint">
-          修改名称不会自动替换其他步骤的引用，请同时检查引用此变量的步骤。
-        </span>
+        <span className="wfc-inspector-hint">{t('workflowCanvas.variable.renameHint')}</span>
       )}
       {draft.error && <span className="wfc-field-error">{draft.error}</span>}
     </div>

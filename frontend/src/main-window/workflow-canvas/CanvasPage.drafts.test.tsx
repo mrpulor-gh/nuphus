@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkflowIR } from './types'
 import type { CanvasLeaveGuard } from './useCanvasLeaveGuard'
+import { LangProvider, useLanguage } from '../../locales'
 
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock('@xyflow/react', () => ({
   applyNodeChanges: (_: unknown, nodes: unknown) => nodes,
 }))
 vi.mock('../lib/api', () => ({
+  getLanguage: async () => '',
   wfGetRaw: async () => structuredClone(workflow),
   wfLayoutGet: async () => null,
   wfLayoutSave: async () => null,
@@ -113,6 +115,43 @@ function shortcut() {
 }
 
 describe('Canvas save coordination', () => {
+  it('switches menu and inspector types without losing or saving uncommitted drafts', async () => {
+    localStorage.setItem('nuphus_language', 'zh')
+    function LanguageControl() {
+      const { setLang } = useLanguage()
+      return <button onClick={() => setLang('en')}>Switch English</button>
+    }
+    const view = render(
+      <LangProvider>
+        <LanguageControl />
+        <CanvasPage workflowId="wf" onClose={() => {}} />
+      </LangProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: '打开 first' }))
+    fireEvent.change(panel('first').getByRole('combobox', { name: '保存输出到变量' }), {
+      target: { value: 'unsaved_result' },
+    })
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '用户草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Switch English' }))
+    expect(panel('first').getByText('Run script')).toBeInTheDocument()
+    expect(panel('first').getByRole('combobox', { name: 'Save output to variable' })).toHaveValue(
+      'unsaved_result',
+    )
+    expect(panel('first').getByLabelText(/^名称/)).toHaveValue('用户草稿')
+    expect(mocks.save).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByRole('button', { name: 'Tool call' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delay' })).toBeInTheDocument()
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+    expect(mocks.save.mock.calls[0][0].steps[0]).toMatchObject({
+      name: '用户草稿',
+      capture: 'unsaved_result',
+      do: { script: { runtime: 'python' } },
+    })
+    view.unmount()
+    localStorage.removeItem('nuphus_language')
+  })
   it('saves inputs edited while awaiting the runtime gate from the latest IR', async () => {
     let resolve!: (value: unknown) => void
     mocks.refresh.mockReturnValue(

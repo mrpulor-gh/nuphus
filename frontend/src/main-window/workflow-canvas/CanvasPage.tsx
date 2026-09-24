@@ -104,25 +104,11 @@ import { WorkflowInputsEditor } from './WorkflowInputsEditor'
 import { WorkflowScheduleDialog } from '../workflow/WorkflowScheduleDialog'
 import { WorkflowSwitcher } from './WorkflowSwitcher'
 import './workflow-canvas.css'
+import { useLanguage } from '../../locales'
+import { ADDABLE_KINDS, nodeKindDescription, nodeKindLabel } from './presentation'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
 const edgeTypes = { sequence: SequenceEdge, data: DataEdge }
-
-const ADDABLE_KINDS: { kind: string; desc: string }[] = [
-  { kind: 'tool', desc: '调用工具（桌面/浏览器/文件等）' },
-  { kind: 'seq', desc: '顺序容器，子步骤依次执行' },
-  { kind: 'loop', desc: '循环容器，遍历或按次数重复' },
-  { kind: 'if', desc: '条件分支（then/else 双泳道）' },
-  { kind: 'call', desc: '调用另一个工作流' },
-  { kind: 'wait', desc: '等待人工确认后继续' },
-  { kind: 'chat', desc: 'Chat Agent 对话步骤' },
-  { kind: 'script', desc: '执行脚本（Python 等）' },
-  { kind: 'assert', desc: '断言校验，失败即中断' },
-  { kind: 'mcp', desc: '调用 MCP server 工具' },
-  { kind: 'sleep', desc: '延时等待指定秒数' },
-  { kind: 'break', desc: '立即跳出当前循环' },
-  { kind: 'continue', desc: '跳过本次循环进入下一轮' },
-]
 
 interface CanvasPageProps {
   workflowId: string
@@ -209,6 +195,7 @@ function CanvasInner({
   onSwitchWorkflow,
   registerLeaveGuard,
 }: CanvasPageProps) {
+  const { t } = useLanguage()
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -414,8 +401,8 @@ function CanvasInner({
 
   // ── 投影（IR → 图层）──
   const projection = useMemo(
-    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }) : null),
-    [steps, ir?.inputs],
+    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }, t) : null),
+    [steps, ir?.inputs, t],
   )
   const layer = projection?.layers.get(layerId) ?? null
   const variableIndex = useMemo(
@@ -1770,22 +1757,23 @@ function CanvasInner({
             className="wfc-btn"
             onClick={() => setAddMenuOpen(o => !o)}
             disabled={readOnly}
-            title="添加节点（N）"
+            title={t('workflowCanvas.add.hint')}
           >
-            <Plus size={13} /> 添加
+            <Plus size={13} /> {t('common.add')}
           </button>
           {addMenuOpen && (
             <div className="wfc-add-menu">
-              {ADDABLE_KINDS.map(({ kind, desc }) => (
+              {ADDABLE_KINDS.map(kind => (
                 <button
                   type="button"
                   key={kind}
                   className="wfc-add-item"
-                  title={desc}
+                  aria-label={nodeKindLabel(kind, t)}
+                  title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
                   onClick={() => void addStep(kind)}
                 >
-                  <span className="wfc-add-item-kind">{kind}</span>
-                  <span className="wfc-add-item-desc">{desc}</span>
+                  <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+                  <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
                 </button>
               ))}
             </div>
@@ -2084,18 +2072,21 @@ function CanvasInner({
           }}
         >
           <div className="wfc-edge-add-title">
-            {edgeTargetName ? `在此插入（插到「${edgeTargetName}」之前）` : '在此插入'}
+            {edgeTargetName
+              ? t('workflowCanvas.add.before', edgeTargetName)
+              : t('workflowCanvas.add.insert')}
           </div>
-          {ADDABLE_KINDS.map(({ kind, desc }) => (
+          {ADDABLE_KINDS.map(kind => (
             <button
               type="button"
               key={kind}
               className="wfc-add-item"
-              title={desc}
+              aria-label={nodeKindLabel(kind, t)}
+              title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
               onClick={() => void insertAtEdge(kind)}
             >
-              <span className="wfc-add-item-kind">{kind}</span>
-              <span className="wfc-add-item-desc">{desc}</span>
+              <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+              <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
             </button>
           ))}
         </div>

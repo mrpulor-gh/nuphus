@@ -24,6 +24,7 @@
 .wfc-variable-menu > button {
   display: flex;
   flex-direction: column;
+  gap: 4px;
   align-items: stretch;
   width: 100%;
   padding: 8px;
@@ -41,8 +42,34 @@
 .wfc-variable-menu small {
   color: var(--fg-3);
 }
-.wfc-variable-menu > button > span {
+.wfc-variable-name-row,
+.wfc-variable-source-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.wfc-variable-label {
+  flex: 0 0 auto;
+  color: var(--fg-3);
+  font-weight: var(--fw-normal);
+}
+.wfc-variable-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+}
+.wfc-variable-source-row {
+  font-size: var(--fz-xs);
+  line-height: 1.5;
+}
+.wfc-variable-source {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }

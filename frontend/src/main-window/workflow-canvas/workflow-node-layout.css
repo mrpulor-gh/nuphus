@@ -28,6 +28,9 @@
 .wfc-node--container .wfc-node-foot {
   margin-top: auto;
 }
+.wfc-node .wfc-node-foot .wfc-badge {
+  padding-inline: var(--space-1);
+}
 .wfc-node .wfc-node-kind,
 .wfc-node .wfc-badge--count,
 .wfc-node .wfc-badge--shadowed,

@@ -699,9 +699,20 @@
   margin-top: var(--space-1);
 }
 .wfc-node-kind {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-inset);
   font-size: var(--fz-xs);
-  color: var(--fg-5);
-  font-family: var(--font-mono);
+  line-height: 16px;
+  font-weight: var(--fw-medium);
+  color: var(--fg-2);
+  font-family: var(--font-ui);
+  white-space: nowrap;
 }
 
 /* 执行状态环（执行=环，校验=角标，互不冲突） */
@@ -991,6 +1002,14 @@
   font-family: var(--font-ui);
   font-size: var(--fz-xs);
   color: var(--fg-3);
+}
+.wfc-add-item-kind {
+  font-family: var(--font-ui);
+  font-weight: var(--fw-medium);
+}
+.wfc-add-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .wfc-add-item:hover {
   background: var(--accent-dim);

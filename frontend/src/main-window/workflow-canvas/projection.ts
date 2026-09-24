@@ -21,6 +21,7 @@ import type {
 import { SYNTH } from './types'
 import { profileStep, walkSteps, type StepVarProfile, type VarConsumption } from './dataEdges'
 import { buildVariableCatalogIndex } from './variableCatalog'
+import { defaultCanvasTranslate, variableSourceLabel, type CanvasTranslate } from './presentation'
 
 // ── kind 判定（对齐 types.rs kind_str；无法识别的 Action → custom）──
 
@@ -52,12 +53,14 @@ export function stepKind(step: WorkflowStep): StepKind {
 /** 容器判定：seq/loop/if 恒为容器；wait 带非空 auto 为容器（1.2 表） */
 export function containerLanes(
   step: WorkflowStep,
+  t: CanvasTranslate = defaultCanvasTranslate,
 ): { kind: 'seq' | 'loop' | 'if' | 'wait'; lanes: Swimlane[] } | null {
   const d = step.do as Record<string, unknown> | undefined
   if (!d || typeof d !== 'object') return null
-  if (Array.isArray(d.seq)) return { kind: 'seq', lanes: [{ id: 'main', title: '顺序' }] }
+  if (Array.isArray(d.seq))
+    return { kind: 'seq', lanes: [{ id: 'main', title: t('workflowCanvas.lane.seq') }] }
   if (d.loop && typeof d.loop === 'object')
-    return { kind: 'loop', lanes: [{ id: 'main', title: '循环体' }] }
+    return { kind: 'loop', lanes: [{ id: 'main', title: t('workflowCanvas.lane.loop') }] }
   if (d.if && typeof d.if === 'object')
     return {
       kind: 'if',
@@ -67,7 +70,7 @@ export function containerLanes(
       ],
     }
   if (Array.isArray(d.auto) && (d.auto as unknown[]).length > 0)
-    return { kind: 'wait', lanes: [{ id: 'main', title: '自动操作' }] }
+    return { kind: 'wait', lanes: [{ id: 'main', title: t('workflowCanvas.lane.auto') }] }
   return null
 }
 
@@ -103,35 +106,40 @@ function varRefText(r: VarRef | undefined): string {
   return ''
 }
 
-function conditionSummary(cond: Condition | undefined): string {
+function conditionSummary(cond: Condition | undefined, t: CanvasTranslate): string {
   if (!cond || typeof cond !== 'object') return ''
   const c = cond as Record<string, unknown>
   const ops: [string, string][] = [
     ['equals', '='],
     ['not_equals', '≠'],
-    ['contains', '包含'],
-    ['starts_with', '前缀'],
-    ['regex', '正则'],
-    ['not_empty', '非空'],
-    ['empty', '为空'],
+    ['contains', t('workflowCanvas.summary.contains')],
+    ['starts_with', t('workflowCanvas.summary.startsWith')],
+    ['regex', t('workflowCanvas.summary.regex')],
+    ['not_empty', t('workflowCanvas.summary.notEmpty')],
+    ['empty', t('workflowCanvas.summary.empty')],
     ['gt', '>'],
     ['lt', '<'],
     ['gte', '≥'],
     ['lte', '≤'],
-    ['always', '恒'],
+    ['always', t('workflowCanvas.summary.always')],
   ]
   for (const [key, sym] of ops) {
     if (!(key in c)) continue
     const v = c[key]
     if (Array.isArray(v))
       return `${varRefText(v[0] as VarRef)} ${sym} ${varRefText(v[1] as VarRef)}`.trim()
-    if (key === 'always') return v === false ? '恒假' : '恒真'
+    if (key === 'always')
+      return t(v === false ? 'workflowCanvas.summary.false' : 'workflowCanvas.summary.true')
     return `${varRefText(v as VarRef)} ${sym}`.trim()
   }
   return ''
 }
 
-function containerSummary(step: WorkflowStep, kind: StepKind): string | undefined {
+function containerSummary(
+  step: WorkflowStep,
+  kind: StepKind,
+  t: CanvasTranslate,
+): string | undefined {
   const d = step.do as Record<string, unknown> | undefined
   if (!d) return undefined
   if (kind === 'loop') {
@@ -143,33 +151,35 @@ function containerSummary(step: WorkflowStep, kind: StepKind): string | undefine
     }
     const parts: string[] = []
     if (def.for_each) {
-      parts.push(`遍历 ${varRefText(def.for_each.items)} 作为 ${def.for_each.as || 'item'}`)
+      parts.push(
+        t('workflowCanvas.summary.each', varRefText(def.for_each.items), def.for_each.as || 'item'),
+      )
     } else if (def.repeat != null) {
-      parts.push(`重复 ${def.repeat} 次`)
+      parts.push(t('workflowCanvas.summary.repeat', String(def.repeat)))
     } else if (def.until) {
-      parts.push(`直到 ${conditionSummary(def.until)}`)
+      parts.push(t('workflowCanvas.summary.until', conditionSummary(def.until, t)))
     }
     parts.push(`max ${def.max ?? 100}`)
     return parts.join(' · ')
   }
   if (kind === 'if') {
     const def = d.if as { condition?: Condition }
-    const s = conditionSummary(def.condition)
-    return s ? `条件 ${s}` : undefined
+    const s = conditionSummary(def.condition, t)
+    return s ? t('workflowCanvas.summary.condition', s) : undefined
   }
   if (kind === 'wait') {
-    return typeof d.wait === 'string' ? `等待 ${d.wait}` : undefined
+    return typeof d.wait === 'string' ? t('workflowCanvas.summary.wait', d.wait) : undefined
   }
   return undefined
 }
 
-function onErrorLabel(step: WorkflowStep): string | undefined {
+function onErrorLabel(step: WorkflowStep, t: CanvasTranslate): string | undefined {
   const oe = step.on_error
   if (!oe || oe === 'abort') return undefined
-  if (typeof oe === 'string') return oe === 'skip' ? '失败跳过' : oe
+  if (typeof oe === 'string') return oe === 'skip' ? t('workflowCanvas.node.onError.skip') : oe
   if (typeof oe === 'object') {
-    if ('retry' in oe) return '失败重试'
-    if ('allow_codes' in oe) return '允许退出码'
+    if ('retry' in oe) return t('workflowCanvas.node.onError.retry')
+    if ('allow_codes' in oe) return t('workflowCanvas.node.onError.allowCodes')
   }
   return undefined
 }
@@ -267,10 +277,13 @@ function aggregateTo(
   return null
 }
 
-export function projectWorkflow(ir: {
-  steps: WorkflowStep[]
-  inputs?: WorkflowInputSpec[]
-}): Projection {
+export function projectWorkflow(
+  ir: {
+    steps: WorkflowStep[]
+    inputs?: WorkflowInputSpec[]
+  },
+  t: CanvasTranslate = defaultCanvasTranslate,
+): Projection {
   const tree = buildTreeProfile(ir.steps)
   const variableIndex = buildVariableCatalogIndex(ir.steps, ir.inputs)
   const resolveSource = (consumerId: string, reference: VarConsumption) => {
@@ -312,11 +325,11 @@ export function projectWorkflow(ir: {
       name: step.name || step.id,
       lane,
       capture: typeof step.capture === 'string' && step.capture ? step.capture : undefined,
-      onErrorLabel: onErrorLabel(step),
+      onErrorLabel: onErrorLabel(step, t),
     }
     if (container) {
       node.childCount = childCount(step)
-      node.containerSummary = containerSummary(step, kind)
+      node.containerSummary = containerSummary(step, kind, t)
       containerIds.add(step.id)
     }
     const shadow = shadowed.get(step.id)
@@ -364,10 +377,12 @@ export function projectWorkflow(ir: {
         id: entryId,
         kind: 'loop',
         category: 'leaf',
-        name: scope?.itemVar ? `入口 · ${scope.itemVar}` : '入口',
+        name: scope?.itemVar
+          ? `${t('workflowCanvas.anchor.entry')} · ${scope.itemVar}`
+          : t('workflowCanvas.anchor.entry'),
         lane: 'main',
         synthetic: 'entry',
-        containerSummary: containerSummary(hostStep, 'loop'),
+        containerSummary: containerSummary(hostStep, 'loop', t),
       })
       const mainChildren = childrenOf('main')
       if (mainChildren.length > 0) {
@@ -394,7 +409,7 @@ export function projectWorkflow(ir: {
         id: condId,
         kind: 'if',
         category: 'leaf',
-        name: containerSummary(hostStep, 'if') || '条件',
+        name: containerSummary(hostStep, 'if', t) || t('workflowCanvas.anchor.condition'),
         lane: 'then',
         synthetic: 'cond',
       })
@@ -438,7 +453,7 @@ export function projectWorkflow(ir: {
           id: SYNTH.external(layerId, key),
           kind: 'tool',
           category: 'leaf',
-          name: `${producerId ? '层外来源' : declared ? '工作流输入' : '未找到来源'} · ${varName}`,
+          name: `${t(producerId ? 'workflowCanvas.anchor.external' : declared ? 'workflowCanvas.anchor.input' : 'workflowCanvas.node.missingSource')} · ${varName}`,
           lane: lanes[0].id,
           synthetic: 'external',
           externalVar: varName,
@@ -513,7 +528,7 @@ export function projectWorkflow(ir: {
                 pipes: cons.pipes,
                 producerStepId: producerId,
                 maybeUnset: source?.maybeUnset,
-                sourceSummary: source?.sourceLabel,
+                sourceSummary: source ? variableSourceLabel(source, t) : undefined,
               })
             }
             continue
@@ -528,7 +543,7 @@ export function projectWorkflow(ir: {
             pipes: cons.pipes,
             producerStepId: producerId,
             maybeUnset: source?.maybeUnset,
-            sourceSummary: source?.sourceLabel,
+            sourceSummary: source ? variableSourceLabel(source, t) : undefined,
           })
         }
       }
@@ -544,7 +559,7 @@ export function projectWorkflow(ir: {
           id: `${layerId}::out::${varName}`,
           kind: 'tool',
           category: 'leaf',
-          name: `去向 · ${varName}`,
+          name: `${t('workflowCanvas.anchor.destination')} · ${varName}`,
           lane: lanes[lanes.length - 1].id,
           synthetic: 'external',
           externalVar: varName,
@@ -582,7 +597,7 @@ export function projectWorkflow(ir: {
     // 递归下钻容器子层
     for (const lane of lanes) {
       for (const child of childrenOf(lane.id)) {
-        const c = containerLanes(child)
+        const c = containerLanes(child, t)
         if (!c) continue
         projectLayer(
           child.id,
@@ -596,7 +611,14 @@ export function projectWorkflow(ir: {
     }
   }
 
-  projectLayer('root', [], 'root', [{ id: 'main', title: '主流程' }], () => ir.steps, null)
+  projectLayer(
+    'root',
+    [],
+    'root',
+    [{ id: 'main', title: t('workflowCanvas.lane.main') }],
+    () => ir.steps,
+    null,
+  )
 
   const index: ProjectionIndex = {
     parentOf: tree.parentOf,

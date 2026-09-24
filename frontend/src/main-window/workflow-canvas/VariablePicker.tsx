@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useLanguage } from '../../locales'
 import { isVariableName, type VariableCatalog } from './variableCatalog'
+import { variableSourceLabel } from './presentation'
 import './variable-picker.css'
 
 export interface VariablePickerProps {
@@ -22,6 +24,7 @@ export function VariablePicker({
   onConfigureInput,
   label,
 }: VariablePickerProps) {
+  const { t, lang } = useLanguage()
   const id = useId()
   const input = useRef<HTMLInputElement>(null)
   const popup = useRef<HTMLDivElement>(null)
@@ -29,15 +32,19 @@ export function VariablePicker({
   const [active, setActive] = useState(0)
   const [searching, setSearching] = useState(false)
   const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxHeight: 240 })
-  const entries = mode === 'capture' ? catalog.captures : catalog.references
+  const entries = (mode === 'capture' ? catalog.captures : catalog.references).map(entry => ({
+    ...entry,
+    displaySource: variableSourceLabel(entry, t),
+  }))
   const matches = entries.filter(
     entry =>
       !searching ||
-      `${entry.name} ${entry.sourceLabel}`.toLowerCase().includes(value.toLowerCase()),
+      `${entry.name} ${entry.displaySource}`.toLowerCase().includes(value.toLowerCase()),
   )
   const exact = entries.find(entry => entry.name === value)
   const canCreate = mode === 'capture' && !!value && isVariableName(value) && !exact
   const count = matches.length + (canCreate ? 1 : 0)
+  const activeIndex = Math.max(0, Math.min(active, count - 1))
   const choose = (index: number) => {
     const name = matches[index]?.name ?? (canCreate ? value : undefined)
     if (name !== undefined) onChange(name)
@@ -78,8 +85,9 @@ export function VariablePicker({
     }
   }, [open])
   useEffect(() => {
-    if (open) document.getElementById(`${id}-${active}`)?.scrollIntoView?.({ block: 'nearest' })
-  }, [active, id, open])
+    if (open)
+      document.getElementById(`${id}-${activeIndex}`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeIndex, id, open, lang])
   return (
     <div className="wfc-variable-picker">
       <input
@@ -88,16 +96,12 @@ export function VariablePicker({
         value={value}
         readOnly={readOnly}
         role="combobox"
-        aria-label={label ?? (mode === 'capture' ? '保存输出到变量' : '引用已有变量')}
+        aria-label={label ?? t(`workflowCanvas.variable.${mode}`)}
         aria-expanded={open}
         aria-controls={open ? `${id}-list` : undefined}
         aria-autocomplete="list"
-        aria-activedescendant={
-          open && count > 0 ? `${id}-${Math.min(active, count - 1)}` : undefined
-        }
-        placeholder={
-          mode === 'capture' ? '选择或输入新变量名；留空不保存' : '选择已有变量，也可手动输入表达式'
-        }
+        aria-activedescendant={open && count > 0 ? `${id}-${activeIndex}` : undefined}
+        placeholder={t(`workflowCanvas.variable.${mode}Placeholder`)}
         onClick={() => {
           if (!readOnly) {
             setSearching(false)
@@ -120,31 +124,33 @@ export function VariablePicker({
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault()
             setOpen(true)
-            setActive(current =>
-              Math.max(0, Math.min(count - 1, current + (event.key === 'ArrowDown' ? 1 : -1))),
+            setActive(
+              Math.max(0, Math.min(count - 1, activeIndex + (event.key === 'ArrowDown' ? 1 : -1))),
             )
           } else if (event.key === 'Enter' && open) {
             event.preventDefault()
-            choose(active)
+            choose(activeIndex)
           } else if (event.key === 'Escape') {
             event.stopPropagation()
             setOpen(false)
           }
         }}
       />
-      {mode === 'capture' && exact && <small>将更新已有变量 · {exact.sourceLabel}</small>}
+      {mode === 'capture' && exact && (
+        <small>{t('workflowCanvas.variable.update', exact.displaySource)}</small>
+      )}
       {mode === 'capture' && value && !isVariableName(value) && (
-        <small role="alert">变量名以字母或下划线开头，可包含数字和点。</small>
+        <small role="alert">{t('workflowCanvas.variable.invalid')}</small>
       )}
       {mode === 'reference' && exact?.maybeUnset && (
-        <small>可能未赋值，请检查分支、循环或输入默认值。</small>
+        <small>{t('workflowCanvas.variable.maybeUnsetHint')}</small>
       )}
       {mode === 'reference' && value && !exact && (
         <small>
-          未找到来源；保留手动表达式。
+          {t('workflowCanvas.variable.missing')}
           {onConfigureInput && isVariableName(value) && (
             <button type="button" onClick={() => onConfigureInput(value.replace(/^inputs\./, ''))}>
-              设置工作流输入
+              {t('workflowCanvas.variable.configure')}
             </button>
           )}
         </small>
@@ -156,7 +162,7 @@ export function VariablePicker({
             ref={popup}
             id={`${id}-list`}
             role="listbox"
-            aria-label="变量候选"
+            aria-label={t('workflowCanvas.variable.candidates')}
             className="wfc-variable-menu"
             style={position}
           >
@@ -166,15 +172,21 @@ export function VariablePicker({
                 type="button"
                 role="option"
                 id={`${id}-${index}`}
-                aria-selected={index === active}
+                aria-selected={index === activeIndex}
                 onMouseDown={event => event.preventDefault()}
                 onClick={() => choose(index)}
               >
-                <span title={entry.name}>{entry.name}</span>
-                <small>
-                  {entry.sourceLabel}
-                  {entry.maybeUnset ? ' · 可能未赋值' : ''}
-                </small>
+                <span className="wfc-variable-name-row">
+                  <span className="wfc-variable-label">{t('workflowCanvas.variable.name')}:</span>
+                  <span className="wfc-variable-name" title={entry.name}>
+                    {entry.name}
+                  </span>
+                </span>
+                <span className="wfc-variable-source-row" title={entry.displaySource}>
+                  <span className="wfc-variable-label">{t('workflowCanvas.variable.source')}:</span>
+                  <span className="wfc-variable-source">{entry.displaySource}</span>
+                </span>
+                {entry.maybeUnset && <small>{t('workflowCanvas.variable.maybeUnset')}</small>}
               </button>
             ))}
             {canCreate && (
@@ -182,14 +194,14 @@ export function VariablePicker({
                 type="button"
                 role="option"
                 id={`${id}-${matches.length}`}
-                aria-selected={active === matches.length}
+                aria-selected={activeIndex === matches.length}
                 onMouseDown={event => event.preventDefault()}
                 onClick={() => choose(matches.length)}
               >
-                ＋新建变量 {value}
+                {t('workflowCanvas.variable.create', value)}
               </button>
             )}
-            {count === 0 && <small>没有匹配的变量，可继续手动输入。</small>}
+            {count === 0 && <small>{t('workflowCanvas.variable.empty')}</small>}
           </div>,
           document.body,
         )}

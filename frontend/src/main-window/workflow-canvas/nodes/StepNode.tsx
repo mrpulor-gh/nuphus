@@ -27,6 +27,9 @@ import {
 } from 'lucide-react'
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
+import { useLanguage } from '../../../locales'
+import { NodeKindBadge } from '../NodeKindBadge'
+import { nodeKindLabel } from '../presentation'
 import '../workflow-node-layout.css'
 
 /** 节点 hover 操作（阶段 4：编辑/复制/删除快捷入口） */
@@ -70,6 +73,7 @@ function statusClass(status?: StepVisualStatus): string {
 }
 
 export const StepNode = memo(function StepNode({ data, selected }: NodeProps<StepNodeFlow>) {
+  const { t } = useLanguage()
   const { canvas: node, status, problem } = data
   const actions = useContext(NodeActionsContext)
   const inputActions = useContext(InputAnchorActionsContext)
@@ -86,19 +90,25 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
     return (
       <div
         className={`wfc-node wfc-anchor wfc-anchor--${node.synthetic}${node.externalInputDeclared === false ? ' is-undeclared' : ''}`}
-        title={node.externalProducerId ? `生产者：${node.externalProducerId}` : node.name}
+        title={
+          node.externalProducerId
+            ? t('workflowCanvas.node.producer', node.externalProducerId)
+            : node.name
+        }
       >
         <Handle type="target" position={targetPos} className="wfc-handle" />
         <AnchorIcon size={12} aria-hidden="true" />
         <span className="wfc-anchor-name">{node.name}</span>
-        {node.externalInputDeclared === false && <span className="wfc-anchor-sub">未找到来源</span>}
+        {node.externalInputDeclared === false && (
+          <span className="wfc-anchor-sub">{t('workflowCanvas.node.missingSource')}</span>
+        )}
         {node.containerSummary && <span className="wfc-anchor-sub">{node.containerSummary}</span>}
         {node.externalInput && node.externalVar && inputActions && (
           <button
             type="button"
             className="wfc-anchor-settings"
-            title={`设置外部输入 ${node.externalVar}`}
-            aria-label={`设置外部输入 ${node.externalVar}`}
+            title={t('workflowCanvas.node.configureInput', node.externalVar)}
+            aria-label={t('workflowCanvas.node.configureInput', node.externalVar)}
             onClick={event => {
               event.stopPropagation()
               inputActions.onConfigure(node.externalVar!)
@@ -131,7 +141,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
           <button
             type="button"
             className="wfc-node-act"
-            title="编辑"
+            title={t('common.edit')}
             onClick={() => actions.onEdit(node.id)}
           >
             <Pencil size={11} aria-hidden="true" />
@@ -139,7 +149,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
           <button
             type="button"
             className="wfc-node-act"
-            title="复制"
+            title={t('common.copy')}
             onClick={() => actions.onDuplicate(node.id)}
           >
             <Copy size={11} aria-hidden="true" />
@@ -147,7 +157,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
           <button
             type="button"
             className="wfc-node-act wfc-node-act--danger"
-            title="删除"
+            title={t('common.delete')}
             onClick={() => actions.onDelete(node.id)}
           >
             <Trash2 size={11} aria-hidden="true" />
@@ -155,7 +165,11 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
         </div>
       )}
       <div className="wfc-node-head">
-        <span className="wfc-node-icon" data-kind={node.kind}>
+        <span
+          className="wfc-node-icon"
+          data-kind={node.kind}
+          title={t('workflowCanvas.node.type', nodeKindLabel(node.kind, t))}
+        >
           <Icon size={13} aria-hidden="true" />
         </span>
         <span className="wfc-node-name" title={node.name}>
@@ -168,31 +182,36 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
         )}
       </div>
       <div className="wfc-node-foot">
-        <span className="wfc-node-kind">{node.kind}</span>
+        <NodeKindBadge kind={node.kind} />
         {node.capture && (
-          <span className="wfc-badge wfc-badge--capture" title={`保存输出到 ${node.capture}`}>
+          <span
+            className="wfc-badge wfc-badge--capture"
+            title={t('workflowCanvas.node.output', node.capture)}
+          >
             → {node.capture}
           </span>
         )}
         {node.shadowedBy && (
           <span
             className="wfc-badge wfc-badge--shadowed"
-            title={`变量也由步骤 ${node.shadowedBy} 写入，实际值取决于执行路径`}
+            title={t('workflowCanvas.node.sameNameHint', node.shadowedBy)}
           >
-            同名
+            {t('workflowCanvas.node.sameName')}
           </span>
         )}
         {node.danglingVars && node.danglingVars.length > 0 && (
           <span
             className="wfc-badge wfc-badge--dangling"
-            title={`未找到来源：${node.danglingVars.join(', ')}；可检查前序步骤或配置工作流输入`}
+            title={t('workflowCanvas.node.missingSourceHint', node.danglingVars.join(', '))}
           >
-            <AlertTriangle size={11} aria-label="未找到来源" />
+            <AlertTriangle size={11} aria-label={t('workflowCanvas.node.missingSource')} />
           </span>
         )}
       </div>
       {status?.state === 'retrying' && (
-        <span className="wfc-retry-badge">第 {status.attempt} 次重试</span>
+        <span className="wfc-retry-badge">
+          {t('workflowCanvas.node.retry', String(status.attempt))}
+        </span>
       )}
       {status?.state === 'error' && status.message && (
         <span className="wfc-error-tip" title={status.message}>

@@ -14,6 +14,8 @@ import { containerLanes, laneSteps, stepKind } from './projection'
 import { KIND_ICONS } from './nodes/StepNode'
 import { CONTAINER_ICONS } from './nodes/ContainerNode'
 import type { StepVisualStatus } from './types'
+import { useLanguage } from '../../locales'
+import { nodeKindLabel } from './presentation'
 
 /** 大纲状态点取值 = 节点视觉状态全集（snapshot/run_history 合成 + 容器聚合在 CanvasPage 完成） */
 export type OutlineDotState = StepVisualStatus['state']
@@ -66,6 +68,7 @@ interface OutlineRowProps {
 }
 
 function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowProps) {
+  const { t } = useLanguage()
   const kind = stepKind(step)
   const container = containerLanes(step)
   const Icon = container ? CONTAINER_ICONS[container.kind] : (KIND_ICONS[kind] ?? KIND_ICONS.custom)
@@ -80,7 +83,11 @@ function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowP
         title={step.name || step.id}
         onClick={() => onLocate(step.id)}
       >
-        <span className="wfc-outline-icon" data-kind={kind}>
+        <span
+          className="wfc-outline-icon"
+          data-kind={kind}
+          title={t('workflowCanvas.node.type', nodeKindLabel(kind, t))}
+        >
           <Icon size={12} aria-hidden="true" />
         </span>
         <span className="wfc-outline-name">{step.name || step.id}</span>

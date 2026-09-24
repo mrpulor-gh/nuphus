@@ -1,5 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { InspectorDraftContext, useInspectorDraft } from './inspectorDrafts'
+import { useLanguage } from '../../locales'
 import './tool-parameter-form.css'
 
 type Schema = Record<string, unknown>
@@ -208,6 +209,7 @@ function ParameterEditor({
   onDraftChange,
   variables = [],
 }: ToolParameterFormProps) {
+  const { t } = useLanguage()
   const properties = parameterProperties(schema)
   const parameters = record(value) ? value : {}
   const [localDraft, setDraft] = useState<ToolParameterDraft>(
@@ -465,7 +467,7 @@ function ParameterEditor({
                   )}
                   {variables.length > 0 && (
                     <select
-                      aria-label={`为 ${label} 插入变量`}
+                      aria-label={t('workflowCanvas.variable.insert', label)}
                       className="wfc-input"
                       disabled={readOnly}
                       value=""
@@ -482,7 +484,7 @@ function ParameterEditor({
                         update({ ...next, raw: JSON.stringify(nextValue, null, 2) }, nextValue)
                       }}
                     >
-                      <option value="">选择已有变量…</option>
+                      <option value="">{t('workflowCanvas.variable.insertPlaceholder')}</option>
                       {variables.map(v => (
                         <option key={v.name} value={v.expression ?? `{{${v.name}}}`}>
                           {v.label ?? v.name}

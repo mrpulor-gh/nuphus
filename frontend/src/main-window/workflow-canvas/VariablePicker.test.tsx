@@ -66,4 +66,23 @@ describe('VariablePicker', () => {
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith('reply')
   })
+  it('keeps keyboard selection valid when the visible candidate list shrinks', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <VariablePicker value="" onChange={onChange} mode="reference" catalog={catalog} />,
+    )
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' })
+    rerender(
+      <VariablePicker
+        value=""
+        onChange={onChange}
+        mode="reference"
+        catalog={{ ...catalog, references: catalog.references.slice(0, 1) }}
+      />,
+    )
+    expect(screen.getByRole('option')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('inputs.topic')
+  })
 })

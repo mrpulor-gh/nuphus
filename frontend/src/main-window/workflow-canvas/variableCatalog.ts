@@ -1,11 +1,19 @@
 import type { WorkflowInputSpec, WorkflowStep, LoopDef, IfDef } from '../../core/types'
 import { walkSteps } from './dataEdges'
 
+export interface VariableSource {
+  kind: 'capture' | 'input' | 'item' | 'index'
+  name: string
+  stepId?: string
+}
+
 export interface VariableCandidate {
   /** Bare reference; declared inputs deliberately keep the inputs. namespace. */
   name: string
   source: 'capture' | 'input' | 'loop'
   sourceLabel: string
+  /** Language-neutral provenance; formatted only when displayed. No runtime values. */
+  sources?: VariableSource[]
   stepId?: string
   /** Every possible producer after control-flow joins (not merely the last DFS producer). */
   producerStepIds?: string[]
@@ -32,6 +40,7 @@ function captureOf(step: WorkflowStep): VariableCandidate | undefined {
     name: step.capture,
     source: 'capture',
     sourceLabel: step.name || step.id,
+    sources: [{ kind: 'capture', name: step.name || step.id, stepId: step.id }],
     stepId: step.id,
     producerStepIds: [step.id],
     maybeUnset: false,
@@ -39,6 +48,11 @@ function captureOf(step: WorkflowStep): VariableCandidate | undefined {
 }
 
 type Scope = Map<string, VariableCandidate>
+
+function mergeSources(candidates: (VariableCandidate | undefined)[]): VariableSource[] {
+  const sources = candidates.flatMap(candidate => candidate?.sources ?? [])
+  return [...new Map(sources.map(source => [JSON.stringify(source), source])).values()]
+}
 
 /** Join execution paths, not DFS order: a producer in one branch cannot leak into its sibling. */
 function joinScopes(paths: Scope[]): Scope {
@@ -50,6 +64,7 @@ function joinScopes(paths: Scope[]): Scope {
         ...candidate,
         maybeUnset: producers.some(p => !p || p.maybeUnset),
         sourceLabel: [...new Set(producers.flatMap(p => (p ? [p.sourceLabel] : [])))].join(' / '),
+        sources: mergeSources(producers),
         producerStepIds: [...new Set(producers.flatMap(p => p?.producerStepIds ?? []))],
       })
     }
@@ -76,6 +91,8 @@ export function buildVariableCatalogIndex(
         sourceLabel: prior
           ? `${prior.sourceLabel} / ${candidate.sourceLabel}`
           : candidate.sourceLabel,
+        sources: mergeSources([prior, candidate]),
+        producerStepIds: [...new Set([...(prior?.producerStepIds ?? []), step.id])],
       })
     }
   })
@@ -86,6 +103,7 @@ export function buildVariableCatalogIndex(
         name: `inputs.${input.name}`,
         source: 'input',
         sourceLabel: `工作流输入 · ${input.name}`,
+        sources: [{ kind: 'input', name: input.name }],
         maybeUnset: !input.required && input.default === undefined,
       },
     ]),
@@ -113,6 +131,7 @@ export function buildVariableCatalogIndex(
             name,
             source: 'loop',
             sourceLabel: `${step.name} · 当前项`,
+            sources: [{ kind: 'item', name: step.name || step.id, stepId: step.id }],
             stepId: step.id,
             maybeUnset: false,
           })
@@ -122,6 +141,7 @@ export function buildVariableCatalogIndex(
             name: '_index',
             source: 'loop',
             sourceLabel: `${step.name} · 从 0 开始的序号`,
+            sources: [{ kind: 'index', name: step.name || step.id, stepId: step.id }],
             stepId: step.id,
             maybeUnset: false,
           })
