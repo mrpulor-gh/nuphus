@@ -400,7 +400,7 @@ function TableRenderer({
  *  是「下载完成但打不开」的前端放大因素之一 */
 const FILE_EXT_WHITELIST =
   /\.(?:md|mdx|html?|rs|tsx?|jsx?|py|json|toml|css|scss|less|ya?ml|sh|bash|zsh|ps1|bat|cmd|c|cc|cpp|h|hpp|go|java|kt|swift|sql|vue|svelte|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_.-])/i
-const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n<>:"|?*]*/g
+const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/\r\n<>:"|?*]+(?:[ \t]+[^\s\\/\r\n<>:"|?*]+)*[\\/])*[^\s\\/\r\n<>:"|?*]*/g
 const RELATIVE_PATH_RE = /(?:\.\.?[\\/]|(?:[A-Za-z0-9_.-]+[\\/])+)[^\s\r\n<>:"'|?*]*/g
 const BARE_DOMAIN_RE = /^(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})[\\/]/
 

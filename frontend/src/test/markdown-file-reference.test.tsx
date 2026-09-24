@@ -90,4 +90,28 @@ describe('MarkdownContent 文件引用', () => {
       expect(extractFilePaths(path, true)).toEqual([{ start: 0, end: path.length }])
     }
   })
+
+  it('无扩展名的目录候选不会借用正文里的扩展名', () => {
+    const text = String.raw`参考目录 C:\work\src（含 App.tsx 等文件）`
+    expect(extractFilePaths(text)).toEqual([])
+  })
+
+  it('目录候选与同行后续绝对路径互不串扰', () => {
+    const text = String.raw`目录 C:\work\src 与文件 C:\x\y.rs`
+    expect(extractFilePaths(text).map(range => text.slice(range.start, range.end))).toEqual([
+      String.raw`C:\x\y.rs`,
+    ])
+  })
+
+  it('含空格的合法路径仍可识别', () => {
+    const text = String.raw`C:\Program Files\Nuphus\nuphus.exe`
+    expect(extractFilePaths(text).map(range => text.slice(range.start, range.end))).toEqual([text])
+  })
+
+  it('路径后的中文说明不会被吞入链接', () => {
+    const text = String.raw`文件在 C:\a\b.txt 请查看该文件`
+    expect(
+      extractFilePaths(text).map(range => text.slice(range.start, range.end)),
+    ).toEqual([String.raw`C:\a\b.txt`])
+  })
 })
