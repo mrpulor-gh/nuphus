@@ -716,7 +716,12 @@ export function useSession(): SessionAPI {
     execUI.setPendingRefine(null)
     streamingMsgId.current = null
     lastStreamingMsgId.current = null
-  }, [setExecutionStage])
+    // 主上下文用量是**上一会话**的快照（分子来自回合后的 estimate_token_usage），
+    // 换会话后它已无意义。置 null 而非 0：指示器据此走「--」未知态
+    // （ChatInputBar 的 ctxLimit>0 分支与 title 兜底），不把「未知」伪装成「确实是 0」。
+    // 新会话跑过一轮后由 source="main" 的快照重新填上。
+    execUI.setMainTokenUsage(null)
+  }, [setExecutionStage, execUI.setMainTokenUsage])
 
   const handleNewChat = useCallback(
     async (title?: string): Promise<boolean> => {

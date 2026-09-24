@@ -1053,8 +1053,11 @@ export function useEvents(h: EventHandlers) {
                   ttftMs: event.ttft_ms ?? prev?.ttftMs,
                 }
               })
+            // 三分类，不是二分类：`main` 归主指示器；`exec` 归 ctx 弹窗（dispatch / 子任务
+            // 执行）；leader / workflow 等其它源都不吸收。此前是「非 main 即 exec」的兜底，
+            // 会把 Profile/Workflow 的会话规模也塞进 exec 槽，污染 ctx 弹窗那套整组指标。
             if (event.source === 'main') update(h.setMainTokenUsage)
-            else update(h.setExecTokenUsage)
+            else if (event.source === 'exec') update(h.setExecTokenUsage)
           })()
           break
         case 'refine_prompt':
