@@ -194,4 +194,23 @@ describe('JevSettings', () => {
     })
     window.removeEventListener('nuphus:workflow-enhanced-mode-changed', changed)
   })
+
+  it('API Key 行提供直达 TypeSafe 控制台的外链', async () => {
+    vi.mocked(getJevConfig).mockResolvedValue({
+      enabled: false,
+      base_url: 'https://api.typesafe.ai',
+      model: 'jev-latest',
+      has_key: false,
+      timeout_ms: 10000,
+      max_retries: 2,
+      fallback_to_primary_model: true,
+    })
+    render(<JevSettings />)
+
+    // 未配置时也需要能立刻拿到 Key：链接常驻 API Key 行，不随 has_key 变化
+    const link = await screen.findByRole('link', { name: /获取 API Key/ })
+    expect(link).toHaveAttribute('href', 'https://console.typesafe.ai/')
+    // 桌面端 WebView 不处理 target：真实跳转由 App 层 externalLink 捕获接管
+    expect(link).toHaveAttribute('target', '_blank')
+  })
 })
