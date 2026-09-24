@@ -78,6 +78,7 @@ export interface CanvasNode {
   childCount?: number
   /** 容器摘要：loop=for_each/repeat/until + max；if=条件摘要 */
   containerSummary?: string
+  actionSummary?: string
   /** 同名变量被后序 capture 遮蔽（1.4b 多生产者规则） */
   shadowedBy?: string
   /** 引用未捕获变量的悬空前缀列表（warning 黄点） */

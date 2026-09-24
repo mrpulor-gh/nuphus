@@ -137,7 +137,7 @@ describe('Canvas save coordination', () => {
     expect(panel('first').getByRole('combobox', { name: 'Save output to variable' })).toHaveValue(
       'unsaved_result',
     )
-    expect(panel('first').getByLabelText(/^名称/)).toHaveValue('用户草稿')
+    expect(panel('first').getByLabelText(/^Name/)).toHaveValue('用户草稿')
     expect(mocks.save).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(screen.getByRole('button', { name: 'Tool call' })).toBeInTheDocument()

@@ -49,7 +49,13 @@ export interface InputAnchorActions {
 export const InputAnchorActionsContext = createContext<InputAnchorActions | null>(null)
 
 export type StepNodeFlow = Node<
-  { canvas: CanvasNode; status?: StepVisualStatus; problem?: 'error' | 'warning'; dir?: LayoutDir },
+  {
+    canvas: CanvasNode
+    status?: StepVisualStatus
+    problem?: 'error' | 'warning'
+    dir?: LayoutDir
+    detailed?: boolean
+  },
   'step'
 >
 
@@ -125,6 +131,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
   const classes = [
     'wfc-node',
     'wfc-node--leaf',
+    data.detailed ? 'wfc-node--detailed' : '',
     node.category === 'unknown' ? 'wfc-node--unknown' : '',
     selected ? 'is-selected' : '',
     statusClass(status),
@@ -134,7 +141,7 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
     .join(' ')
 
   return (
-    <div className={classes}>
+    <div className={classes} title={node.actionSummary}>
       <Handle type="target" position={targetPos} className="wfc-handle" />
       {actions && (
         <div className="wfc-node-actions" onClick={e => e.stopPropagation()}>
@@ -208,6 +215,9 @@ export const StepNode = memo(function StepNode({ data, selected }: NodeProps<Ste
           </span>
         )}
       </div>
+      {data.detailed && node.actionSummary && (
+        <div className="wfc-node-action-summary">{node.actionSummary}</div>
+      )}
       {status?.state === 'retrying' && (
         <span className="wfc-retry-badge">
           {t('workflowCanvas.node.retry', String(status.attempt))}

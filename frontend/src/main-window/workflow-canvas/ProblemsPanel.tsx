@@ -11,15 +11,22 @@ import {
 import type { RunRecord, StepRunRecord } from '../../core/types'
 import type { RunLogEntry } from './runStatus'
 import type { Problem } from './validate'
+import type { ValidationDiagnostic } from '../lib/api'
+import { useLanguage } from '../../locales'
+import { mergeEditorProblems, type EditorProblem, type ProblemCategory } from './editorProblems'
 
 interface ProblemsPanelProps {
   problems: Problem[]
-  backendReport: { errors: string[]; warnings: string[] } | null
+  backendReport: {
+    errors: string[]
+    warnings: string[]
+    diagnostics?: ValidationDiagnostic[]
+  } | null
   timeline: RunLogEntry[]
   running: boolean
   runHistory: RunRecord[]
   replay?: boolean
-  onLocate: (stepId: string) => void
+  onLocate: (stepId: string, fieldPath?: string) => void
   nameOf: (stepId: string) => string
 }
 
@@ -49,9 +56,10 @@ export function ProblemsPanel({
   onLocate,
   nameOf,
 }: ProblemsPanelProps) {
+  const { t } = useLanguage()
   const [collapsed, setCollapsed] = useState(false)
   const [mainTab, setMainTab] = useState<'problems' | 'logs'>('problems')
-  const [problemTab, setProblemTab] = useState<'local' | 'backend'>('local')
+  const [problemTab, setProblemTab] = useState<ProblemCategory | 'all'>('all')
   const [historyIndex, setHistoryIndex] = useState(0)
   const wasRunning = useRef(false)
 
@@ -71,15 +79,25 @@ export function ProblemsPanel({
     setHistoryIndex(0)
   }, [replay])
 
-  const errorCount = useMemo(
-    () => problems.filter(p => p.level === 'error').length + (backendReport?.errors.length ?? 0),
-    [problems, backendReport],
-  )
-  const warnCount = useMemo(
-    () =>
-      problems.filter(p => p.level === 'warning').length + (backendReport?.warnings.length ?? 0),
-    [problems, backendReport],
-  )
+  const issues = useMemo(() => {
+    const merged = mergeEditorProblems(problems, backendReport)
+    const latest = runHistory[0]
+    for (const step of latest?.steps ?? []) {
+      if (typeof step.status !== 'object') continue
+      merged.push({
+        code: 'execution',
+        category: 'runtime',
+        level: 'error',
+        stepId: step.step_id,
+        details: [step.status.Error],
+        sources: [latest.run_id],
+      } satisfies EditorProblem)
+    }
+    return merged
+  }, [problems, backendReport, runHistory])
+  const errorCount = issues.filter(issue => issue.level === 'error').length
+  const warnCount = issues.filter(issue => issue.level === 'warning').length
+
   const historyOffset = timeline.length > 0 ? 0 : 1
   const selectedRun =
     historyIndex === 0 ? runHistory[0] : runHistory[historyIndex - 1 + historyOffset]
@@ -104,7 +122,7 @@ export function ProblemsPanel({
               setCollapsed(false)
             }}
           >
-            <ListChecks size={13} /> 问题
+            <ListChecks size={13} /> {t('workflowEditor.problem.title')}
             {errorCount > 0 && (
               <span className="wfc-problems-count wfc-problems-count--error">{errorCount}</span>
             )}
@@ -120,39 +138,43 @@ export function ProblemsPanel({
               setCollapsed(false)
             }}
           >
-            <ScrollText size={13} /> 运行日志
-            {running && <span className="wfc-log-running">运行中</span>}
+            <ScrollText size={13} /> {t('workflowEditor.problem.logs')}
+            {running && (
+              <span className="wfc-log-running">{t('workflowEditor.problem.running')}</span>
+            )}
           </button>
         </div>
 
         {mainTab === 'problems' ? (
-          <div className="wfc-problems-tabs">
-            <button
-              type="button"
-              className={`wfc-chip${problemTab === 'local' ? ' is-active' : ''}`}
-              onClick={() => setProblemTab('local')}
-            >
-              前端校验
-            </button>
-            <button
-              type="button"
-              className={`wfc-chip${problemTab === 'backend' ? ' is-active' : ''}`}
-              onClick={() => setProblemTab('backend')}
-            >
-              后端校验
-              {backendReport
-                ? `（${backendReport.errors.length + backendReport.warnings.length}）`
-                : ''}
-            </button>
-          </div>
+          <select
+            className="wfc-input"
+            style={{ width: 'auto' }}
+            aria-label={t('workflowEditor.problem.all')}
+            value={problemTab}
+            onChange={event => setProblemTab(event.target.value as ProblemCategory | 'all')}
+          >
+            {(['all', 'missing', 'variable', 'invalid', 'runtime', 'structure'] as const).map(
+              category => (
+                <option key={category} value={category}>
+                  {t(`workflowEditor.problem.${category}`)}
+                </option>
+              ),
+            )}
+          </select>
         ) : (
           <select
             className="wfc-log-history-select"
             value={historyIndex}
             onChange={event => setHistoryIndex(Number(event.target.value))}
-            aria-label="选择运行记录"
+            aria-label={t('workflowEditor.problem.history')}
           >
-            <option value={0}>{timeline.length > 0 ? '本次运行' : '最近一次运行'}</option>
+            <option value={0}>
+              {t(
+                timeline.length > 0
+                  ? 'workflowEditor.problem.current'
+                  : 'workflowEditor.problem.recent',
+              )}
+            </option>
             {runHistory.slice(historyOffset).map((run, index) => (
               <option key={run.run_id} value={index + 1}>
                 {formatClock(run.started_at)} · {statusText(run.status)}
@@ -164,74 +186,56 @@ export function ProblemsPanel({
 
       {!collapsed && mainTab === 'problems' && (
         <div className="wfc-problems-list">
-          {problemTab === 'local' && problems.length === 0 && (
-            <div className="wfc-problems-empty">结构校验通过（保存时将由后端做权威校验）</div>
+          {issues.length === 0 && (
+            <div className="wfc-problems-empty">{t('workflowEditor.problem.clear')}</div>
           )}
-          {problemTab === 'local' &&
-            problems.map((problem, index) => (
+          {issues
+            .filter(issue => problemTab === 'all' || issue.category === problemTab)
+            .map((issue, index) => (
               <div
-                className={`wfc-problem wfc-problem--${problem.level}`}
-                key={`${problem.rule}-${problem.stepId ?? ''}-${index}`}
+                className={`wfc-problem wfc-problem--${issue.level}`}
+                key={`${issue.code}-${issue.stepId}-${issue.fieldPath}-${index}`}
               >
                 <span className="wfc-problem-icon">
-                  {problem.level === 'error' ? (
+                  {issue.level === 'error' ? (
                     <CircleAlert size={12} />
                   ) : (
                     <TriangleAlert size={12} />
                   )}
                 </span>
-                <span className="wfc-problem-rule">{problem.rule}</span>
                 <span className="wfc-problem-node">
-                  {problem.stepId ? nameOf(problem.stepId) : '-'}
+                  {issue.stepId ? nameOf(issue.stepId) : '-'}
                 </span>
-                <span className="wfc-problem-msg" title={problem.message}>
-                  {problem.message}
-                </span>
-                {problem.stepId && (
+                <div className="wfc-problem-content">
+                  <div>
+                    {t(`workflowEditor.problem.${issue.category}`)}
+                    {issue.fieldPath && <code> · {issue.fieldPath}</code>}
+                  </div>
+                  <div>
+                    {t(`workflowEditor.diagnostic.${issue.code}`) ===
+                    `workflowEditor.diagnostic.${issue.code}`
+                      ? t('workflowEditor.diagnostic.validation')
+                      : t(`workflowEditor.diagnostic.${issue.code}`)}
+                  </div>
+                  <details>
+                    <summary>{t('workflowEditor.problem.details')}</summary>
+                    <small>{issue.sources.join(' · ')}</small>
+                    {issue.details.map((detail, i) => (
+                      <pre key={i}>{detail}</pre>
+                    ))}
+                  </details>
+                </div>
+                {issue.stepId && (
                   <button
                     type="button"
                     className="wfc-icon-btn"
-                    title="定位到节点"
-                    onClick={() => onLocate(problem.stepId!)}
+                    title={t('workflowEditor.problem.locate')}
+                    onClick={() => onLocate(issue.stepId!, issue.fieldPath)}
                   >
                     <Crosshair size={12} />
                   </button>
                 )}
               </div>
-            ))}
-          {problemTab === 'backend' &&
-            (!backendReport ? (
-              <div className="wfc-problems-empty">尚未运行过后端校验（保存或点击“检查”触发）</div>
-            ) : (
-              <>
-                {[
-                  ...backendReport.errors.map(message => ({ message, level: 'error' as const })),
-                  ...backendReport.warnings.map(message => ({
-                    message,
-                    level: 'warning' as const,
-                  })),
-                ].map((item, index) => (
-                  <div
-                    className={`wfc-problem wfc-problem--${item.level}`}
-                    key={`${item.level}-${index}`}
-                  >
-                    <span className="wfc-problem-icon">
-                      {item.level === 'error' ? (
-                        <CircleAlert size={12} />
-                      ) : (
-                        <TriangleAlert size={12} />
-                      )}
-                    </span>
-                    <span className="wfc-problem-rule">L3</span>
-                    <span className="wfc-problem-msg" title={item.message}>
-                      {item.message}
-                    </span>
-                  </div>
-                ))}
-                {backendReport.errors.length === 0 && backendReport.warnings.length === 0 && (
-                  <div className="wfc-problems-empty">后端权威校验通过</div>
-                )}
-              </>
             ))}
         </div>
       )}
@@ -253,7 +257,7 @@ export function ProblemsPanel({
                   <button
                     type="button"
                     className="wfc-icon-btn"
-                    title="定位到节点"
+                    title={t('workflowEditor.problem.locate')}
                     onClick={() => onLocate(entry.stepId!)}
                   >
                     <Crosshair size={12} />
@@ -285,7 +289,7 @@ export function ProblemsPanel({
                   <button
                     type="button"
                     className="wfc-icon-btn"
-                    title="定位到节点"
+                    title={t('workflowEditor.problem.locate')}
                     onClick={() => onLocate(step.step_id)}
                   >
                     <Crosshair size={12} />
@@ -294,7 +298,7 @@ export function ProblemsPanel({
               ))}
             </>
           ) : (
-            <div className="wfc-problems-empty">尚无运行记录</div>
+            <div className="wfc-problems-empty">{t('workflowEditor.problem.noRuns')}</div>
           )}
         </div>
       )}

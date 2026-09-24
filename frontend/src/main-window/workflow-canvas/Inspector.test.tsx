@@ -63,7 +63,7 @@ describe('Inspector manual workflow editing', () => {
     expect(current().name).toBe('等待应用')
     fireEvent.change(screen.getByLabelText('时长（秒）'), { target: { value: 'abc' } })
     await act(async () => {
-      expect((await store.flush())?.field).toBe('时长（秒）')
+      expect((await store.flush())?.field).toBe('/do/sleep')
     })
     expect(current().do).toEqual({ sleep: 1 })
     expect(screen.getByText('请输入有效数值')).toBeInTheDocument()

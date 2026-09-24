@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { InspectorDraftContext, InspectorDraftStore } from './inspectorDrafts'
 import { buildVariableCatalogIndex } from './variableCatalog'
+import { actionSummary } from './actionSummary'
+import { focusEditorField } from './editorFields'
 import { profileStep, walkSteps } from './dataEdges'
 import type { CanvasLeaveGuard } from './useCanvasLeaveGuard'
 import { useSyncExternalStore } from 'react'
@@ -245,6 +247,20 @@ function CanvasInner({
   /** 声明式外部输入（IR 唯一真源；未声明 → 稳定空数组，运行路径与旧行为一致） */
   const declaredInputs = ir?.inputs?.length ? ir.inputs : NO_INPUT_SPECS
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [problemFocus, setProblemFocus] = useState<{ stepId: string; fieldPath: string } | null>(
+    null,
+  )
+  useEffect(() => {
+    if (!problemFocus) return
+    const frame = requestAnimationFrame(() => {
+      const panel = document.querySelector(
+        `[data-inspector-node="${CSS.escape(problemFocus.stepId)}"]`,
+      )
+      if (panel) focusEditorField(panel, problemFocus.fieldPath)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [problemFocus])
+  const [detailedNodes, setDetailedNodes] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   /** 新建 tool 节点后待聚焦的工具输入框（Inspector 消费一次） */
   const [toolFocusId, setToolFocusId] = useState<string | null>(null)
@@ -625,7 +641,14 @@ function CanvasInner({
         type: n.category === 'container' ? 'container' : 'step',
         position: p,
         data: {
-          canvas: n,
+          canvas: {
+            ...n,
+            actionSummary:
+              steps && locateStep(steps, n.id)
+                ? actionSummary(locateStep(steps, n.id)!.step, t)
+                : undefined,
+          },
+          detailed: detailedNodes,
           status,
           problem: problemByStep.get(n.id),
           badge: badges.get(n.id),
@@ -652,6 +675,9 @@ function CanvasInner({
     laneFrames,
     flashId,
     projection,
+    steps,
+    t,
+    detailedNodes,
   ])
 
   // ── 加载完成视口适配 ──
@@ -1413,18 +1439,18 @@ function CanvasInner({
    *  先保存画布（如有 dirty）→ 关画布 → 不启动任何后端执行
    *  （由用户在聊天发送后进 WorkflowAgent） */
   const submitIntentForm = useCallback(
-    (form: IntentForm) => {
+    async (form: IntentForm) => {
+      const saved = await save()
+      if (!saved) return false
       setIntentFormOpen(false)
-      void save().then(saved => {
-        if (!saved) return
-        onClose()
-        const text = buildIntentTextTemplate(form, workflowId, ir?.name)
-        window.dispatchEvent(
-          new CustomEvent('nuphus:append-to-chat', {
-            detail: { text, mode: 'workflow' },
-          }),
-        )
-      })
+      onClose()
+      const text = buildIntentTextTemplate(form, workflowId, ir?.name)
+      window.dispatchEvent(
+        new CustomEvent('nuphus:append-to-chat', {
+          detail: { text, mode: 'workflow' },
+        }),
+      )
+      return true
     },
     [save, onClose, workflowId, ir?.name],
   )
@@ -1558,11 +1584,13 @@ function CanvasInner({
 
   // ── ProblemsPanel 定位（3.3：下钻 + 居中闪烁）──
   const locateNode = useCallback(
-    (stepId: string) => {
+    (stepId: string, fieldPath?: string) => {
       if (!projection) return
       const targetLayer = projection.index.layerOf.get(stepId)
       if (targetLayer && targetLayer !== layerId) switchLayer(targetLayer)
       setSelectedId(stepId)
+      setInspectorOpen(true)
+      if (fieldPath) setProblemFocus({ stepId, fieldPath })
       setFlashId(stepId)
       setTimeout(() => setFlashId(null), 1500)
       focusStepFlow(stepId)
@@ -1749,6 +1777,14 @@ function CanvasInner({
         )}
 
         <div className="wfc-toolbar-spacer" />
+        <button
+          type="button"
+          className="wfc-btn"
+          aria-pressed={detailedNodes}
+          onClick={() => setDetailedNodes(value => !value)}
+        >
+          {t(detailedNodes ? 'workflowEditor.summary.compact' : 'workflowEditor.summary.detail')}
+        </button>
 
         {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
         <div className="wfc-add-wrap" ref={addWrapRef}>
@@ -2118,6 +2154,8 @@ function CanvasInner({
       {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}
       {intentFormOpen && (
         <IntentFormPanel
+          key={workflowId}
+          workflowId={workflowId}
           initialName={ir.name}
           onSubmit={submitIntentForm}
           onClose={() => setIntentFormOpen(false)}

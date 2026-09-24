@@ -72,3 +72,25 @@
 .wfc-edge-label {
   pointer-events: auto;
 }
+.wfc-node.wfc-node--detailed {
+  height: 86px;
+}
+.wfc-node-action-summary {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+.wfc-problem-content {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.wfc-problem-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}

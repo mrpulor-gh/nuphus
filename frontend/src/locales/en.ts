@@ -1,4 +1,7 @@
+import { editorEn } from './workflowEditor'
+
 const en: Record<string, string> = {
+  ...editorEn,
   'workflowCanvas.variable.outputSection': 'Output variable',
   'workflowCanvas.variable.consumers':
     'Steps referencing this output (update references after renaming):',

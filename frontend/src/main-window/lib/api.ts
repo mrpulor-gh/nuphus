@@ -1434,6 +1434,16 @@ export interface ValidationReport {
   passed: boolean
   warnings: string[]
   errors: string[]
+  diagnostics?: ValidationDiagnostic[]
+}
+
+export interface ValidationDiagnostic {
+  code: string
+  severity: 'error' | 'warning'
+  category: string
+  step_id?: string | null
+  field_path?: string | null
+  detail: string
 }
 
 export interface WfSaveResponse {

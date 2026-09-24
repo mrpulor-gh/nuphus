@@ -103,7 +103,7 @@ describe('ToolParameterForm', () => {
     expect(onChange).toHaveBeenLastCalledWith({ count: 123 })
     fireEvent.change(screen.getByLabelText('数量'), { target: { value: 'invalid' } })
     await act(async () => {
-      expect(await store.flush()).toMatchObject({ nodeId: 'tool-1', field: '动作参数' })
+      expect(await store.flush()).toMatchObject({ nodeId: 'tool-1', field: '/do/with' })
     })
     expect(onChange).toHaveBeenCalledTimes(1)
   })

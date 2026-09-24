@@ -19,6 +19,7 @@ export interface Problem {
   message: string
   /** 关联步骤（ProblemsPanel 定位用） */
   stepId?: string
+  fieldPath?: string
 }
 
 const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
@@ -126,6 +127,7 @@ function checkCondition(cond: Condition, owner: string, stepId: string, ctx: Mir
 }
 
 function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
+  const issueStart = ctx.problems.length
   const kind = stepKind(step)
   const owner = step.name || step.id || '(未命名)'
 
@@ -283,6 +285,12 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
   }
 
   // 递归子树（loop 上下文携带 item_var）
+  for (const issue of ctx.problems.slice(issueStart)) {
+    if (issue.rule === 'V4')
+      issue.fieldPath = kind === 'tool' || kind === 'call' ? '/do/with' : `/do/${kind}`
+    if (issue.rule === 'V6' || issue.rule === 'V7')
+      issue.fieldPath = kind === 'loop' ? '/do/loop/until' : `/do/${kind}/condition`
+  }
   if (c) {
     const wasInLoop = ctx.inLoop
     const prevLoopVars = ctx.loopVars

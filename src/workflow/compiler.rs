@@ -26,6 +26,111 @@ pub struct ValidationReport {
     pub passed: bool,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<ValidationDiagnostic>,
+}
+
+/// Machine-readable editor locations, emitted where a rule is checked (never
+/// recovered by parsing a translated error message).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValidationDiagnostic {
+    pub code: String,
+    pub severity: String,
+    pub category: String,
+    pub step_id: Option<String>,
+    pub field_path: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Default)]
+struct DiagnosticMessages {
+    messages: Vec<String>,
+    diagnostics: Vec<ValidationDiagnostic>,
+    site: ValidationDiagnostic,
+}
+
+impl DiagnosticMessages {
+    fn at(&mut self, step: Option<&str>, path: Option<&str>, code: &str, category: &str) {
+        self.site.step_id = step.map(str::to_owned);
+        self.site.field_path = path.map(str::to_owned);
+        self.site.code = code.into();
+        self.site.category = category.into();
+    }
+
+    fn push(&mut self, message: String) {
+        let mut issue = self.site.clone();
+        if issue.code.is_empty() {
+            issue.code = "validation".into();
+        }
+        if issue.category.is_empty() {
+            issue.category = "structure".into();
+        }
+        issue.detail = message.clone();
+        self.diagnostics.push(issue);
+        self.messages.push(message);
+    }
+
+    fn extend(&mut self, messages: impl IntoIterator<Item = String>) {
+        for message in messages {
+            self.push(message);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+}
+
+fn report(errors: DiagnosticMessages, warnings: DiagnosticMessages) -> ValidationReport {
+    let passed = errors.is_empty();
+    let diagnostics = errors
+        .diagnostics
+        .into_iter()
+        .map(|mut issue| {
+            issue.severity = "error".into();
+            issue
+        })
+        .chain(warnings.diagnostics.into_iter().map(|mut issue| {
+            issue.severity = "warning".into();
+            issue
+        }))
+        .collect();
+    ValidationReport {
+        passed,
+        errors: errors.messages,
+        warnings: warnings.messages,
+        diagnostics,
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn required_parameter_retains_exact_escaped_location_and_legacy_message() {
+        let mut errors = DiagnosticMessages::default();
+        errors.at(
+            Some("node"),
+            Some("/do/with/a~1b~0c"),
+            "required",
+            "missing",
+        );
+        errors.push("original error".into());
+        let report = report(errors, DiagnosticMessages::default());
+        assert!(!report.passed);
+        assert_eq!(report.errors, vec!["original error"]);
+        assert_eq!(
+            report.diagnostics[0].field_path.as_deref(),
+            Some("/do/with/a~1b~0c")
+        );
+        assert_eq!(report.diagnostics[0].severity, "error");
+        let old: ValidationReport = serde_json::from_value(
+            serde_json::json!({"passed": true, "errors": [], "warnings": []}),
+        )
+        .unwrap();
+        assert!(old.diagnostics.is_empty());
+    }
 }
 
 /// 编译器（无状态，仅提供静态方法）
@@ -33,8 +138,8 @@ pub struct Compiler;
 
 /// 校验上下文（递归遍历时携带）
 struct Ctx<'a> {
-    errors: Vec<String>,
-    warnings: Vec<String>,
+    errors: DiagnosticMessages,
+    warnings: DiagnosticMessages,
     /// 已出现的步骤 ID（查重）
     seen_ids: HashSet<String>,
     /// 按遍历顺序已被捕获的变量名
@@ -54,6 +159,10 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    fn site(&mut self, step: &Step, path: &str, code: &str, category: &str) {
+        self.errors.at(Some(&step.id), Some(path), code, category);
+        self.warnings.at(Some(&step.id), Some(path), code, category);
+    }
     /// 登记步骤 ID，重复即错误（断点续连按 ID 跳过，重复 ID 会误跳未执行步骤）
     fn register_id(&mut self, step: &Step) {
         let id = step.id();
@@ -81,6 +190,10 @@ impl Ctx<'_> {
 
     /// 汇总 inputs 校验：未声明引用 → error；声明但全程未被引用 → warning
     fn finalize_inputs(&mut self) {
+        self.errors
+            .at(None, Some("/inputs"), "input_reference", "variable");
+        self.warnings
+            .at(None, Some("/inputs"), "unused_input", "variable");
         for name in &self.missing_inputs {
             self.errors.push(format!(
                 "未声明的输入引用 {{{{inputs.{}}}}}（请在 workflow.inputs 声明）",
@@ -281,8 +394,8 @@ impl Compiler {
             .ok()
             .filter(|r| !r.providers.is_empty());
         let mut ctx = Ctx {
-            errors: Vec::new(),
-            warnings: Vec::new(),
+            errors: DiagnosticMessages::default(),
+            warnings: DiagnosticMessages::default(),
             seen_ids: HashSet::new(),
             captured: HashSet::new(),
             tools: if tools.is_empty() { None } else { Some(tools) },
@@ -306,11 +419,7 @@ impl Compiler {
         if workflow.steps.is_empty() {
             ctx.warnings.push("工作流没有任何步骤".to_string());
             ctx.finalize_inputs();
-            return ValidationReport {
-                passed: ctx.errors.is_empty(),
-                warnings: ctx.warnings,
-                errors: ctx.errors,
-            };
+            return report(ctx.errors, ctx.warnings);
         }
 
         for step in &workflow.steps {
@@ -318,17 +427,15 @@ impl Compiler {
         }
         ctx.finalize_inputs();
 
-        ValidationReport {
-            passed: ctx.errors.is_empty(),
-            warnings: ctx.warnings,
-            errors: ctx.errors,
-        }
+        report(ctx.errors, ctx.warnings)
     }
 
     fn validate_step(step: &Step, ctx: &mut Ctx) {
+        ctx.site(step, "/id", "step_id", "structure");
         ctx.register_id(step);
 
         if step.name.is_empty() {
+            ctx.site(step, "/name", "required", "missing");
             ctx.errors
                 .push(format!("步骤 '{}': name 不能为空", step.id()));
             return;
@@ -336,11 +443,14 @@ impl Compiler {
 
         match &step.action {
             Action::Tool { tool, with } => {
+                ctx.site(step, "/do/tool", "tool", "structure");
                 if tool.is_empty() {
+                    ctx.site(step, "/do/tool", "required", "missing");
                     ctx.errors
                         .push(format!("Tool step '{}': tool is empty", step.name));
                 }
                 if with.is_null() {
+                    ctx.site(step, "/do/with", "object", "invalid");
                     ctx.errors
                         .push(format!("Tool step '{}': params 不能为 null", step.name));
                 } else if let Some(tools) = ctx.tools {
@@ -361,6 +471,16 @@ impl Compiler {
                                         for r in required {
                                             if let Some(key) = r.as_str() {
                                                 if !obj.contains_key(key) {
+                                                    ctx.errors.at(
+                                                        Some(&step.id),
+                                                        Some(&format!(
+                                                            "/do/with/{}",
+                                                            key.replace('~', "~0")
+                                                                .replace('/', "~1")
+                                                        )),
+                                                        "required",
+                                                        "missing",
+                                                    );
                                                     ctx.errors.push(format!(
                                                         "Tool step '{}' ({}): 缺少必填参数 '{}'",
                                                         step.name, tool, key
@@ -371,6 +491,12 @@ impl Compiler {
                                     }
                                     None => {
                                         if !required.is_empty() {
+                                            ctx.errors.at(
+                                                Some(&step.id),
+                                                Some("/do/with"),
+                                                "object",
+                                                "invalid",
+                                            );
                                             ctx.errors.push(format!(
                                                 "Tool step '{}' ({}): params 必须是对象（需要 {:?}）",
                                                 step.name, tool, required
@@ -382,9 +508,11 @@ impl Compiler {
                         }
                     }
                 }
+                ctx.site(step, "/do/with", "variable", "variable");
                 ctx.scan_refs(with, &step.name);
             }
             Action::Seq { seq } => {
+                ctx.site(step, "/do/seq", "children", "structure");
                 if seq.is_empty() {
                     ctx.warnings.push(format!(
                         "Seq step '{}' ({}): 无子步骤",
@@ -397,6 +525,7 @@ impl Compiler {
                 }
             }
             Action::Loop { def } => {
+                ctx.site(step, "/do/loop", "loop", "invalid");
                 if def.for_each.is_none() && def.repeat.is_none() && def.until.is_none() {
                     ctx.errors.push(format!(
                         "Loop step '{}' ({}): 缺少 for_each / repeat / until",
@@ -405,15 +534,18 @@ impl Compiler {
                     ));
                 }
                 if let Some(ref fe) = def.for_each {
+                    ctx.site(step, "/do/loop/for_each/as", "required", "missing");
                     if fe.item_var.is_empty() {
                         ctx.errors.push(format!(
                             "Loop step '{}': for_each 的 item_var 不能为空",
                             step.name
                         ));
                     }
+                    ctx.site(step, "/do/loop/for_each/items", "variable", "variable");
                     ctx.check_var_ref(&fe.items, &step.name);
                 }
                 if let Some(ref until) = def.until {
+                    ctx.site(step, "/do/loop/until", "condition", "invalid");
                     ctx.validate_condition(until, &step.name);
                 }
                 let was_loop = ctx.in_loop;
@@ -424,6 +556,7 @@ impl Compiler {
                 ctx.in_loop = was_loop;
             }
             Action::If { def } => {
+                ctx.site(step, "/do/if/condition", "condition", "invalid");
                 ctx.validate_condition(&def.condition, &step.name);
                 for sub in &def.then {
                     Self::validate_step(sub, ctx);
@@ -433,6 +566,7 @@ impl Compiler {
                 }
             }
             Action::Call { call, with } => {
+                ctx.site(step, "/do/call", "required", "missing");
                 if call.is_empty() {
                     ctx.errors.push(format!(
                         "Call step '{}' ({}): workflow_id 不能为空",
@@ -440,9 +574,11 @@ impl Compiler {
                         step.id()
                     ));
                 }
+                ctx.site(step, "/do/with", "variable", "variable");
                 ctx.scan_refs(with, &step.name);
             }
             Action::Wait { wait, auto } => {
+                ctx.site(step, "/do/wait", "wait", "invalid");
                 if wait.is_empty() && auto.is_empty() {
                     ctx.warnings.push(format!(
                         "Wait step '{}': prompt 和 auto 均为空，将立即通过",
@@ -454,11 +590,13 @@ impl Compiler {
                 }
             }
             Action::Chat { chat, with: opts } => {
+                ctx.site(step, "/do/chat", "required", "missing");
                 if chat.is_empty() {
                     ctx.errors
                         .push(format!("Chat step '{}': message 不能为空", step.name));
                 }
                 // 显式 provider+model 必须存在；旧数据无 provider 时仅允许唯一候选。
+                ctx.site(step, "/do/with/model", "model", "structure");
                 if let (Some(model_id), Some(registry)) = (&opts.model, ctx.models) {
                     if let Some(provider) = &opts.provider {
                         if registry
@@ -485,6 +623,7 @@ impl Compiler {
                     }
                 }
                 if let Some(ref knowledge) = opts.knowledge {
+                    ctx.site(step, "/do/with/knowledge", "knowledge", "structure");
                     for path in knowledge {
                         if !std::path::Path::new(path).exists() {
                             ctx.warnings.push(format!(
@@ -496,11 +635,13 @@ impl Compiler {
                 }
             }
             Action::Script { script } => {
+                ctx.site(step, "/do/script/code", "required", "missing");
                 if script.code.is_empty() {
                     ctx.errors
                         .push(format!("Script step '{}': code 不能为空", step.name));
                 }
                 const VALID_RUNTIMES: &[&str] = &["python", "node", "ahk", "pwsh"];
+                ctx.site(step, "/do/script/runtime", "runtime", "invalid");
                 if !VALID_RUNTIMES.contains(&script.runtime.as_str()) {
                     ctx.errors.push(format!(
                         "Script step '{}': 不支持的 runtime '{}'（支持: {:?}）",
@@ -509,19 +650,23 @@ impl Compiler {
                 }
             }
             Action::Assert { assert } => {
+                ctx.site(step, "/do/assert/condition", "condition", "invalid");
                 ctx.validate_condition(&assert.condition, &step.name);
             }
             Action::Mcp { mcp } => {
+                ctx.site(step, "/do/mcp/server", "required", "missing");
                 if mcp.server.is_empty() {
                     ctx.errors
                         .push(format!("Mcp step '{}': server 不能为空", step.name));
                 }
                 if mcp.tool.is_empty() {
+                    ctx.site(step, "/do/mcp/tool", "required", "missing");
                     ctx.errors
                         .push(format!("Mcp step '{}': tool 不能为空", step.name));
                 }
             }
             Action::Sleep { sleep } => {
+                ctx.site(step, "/do/sleep", "positive", "invalid");
                 if *sleep <= 0.0 {
                     ctx.errors.push(format!(
                         "Sleep step '{}': sleep 必须 > 0 (got {})",
@@ -530,6 +675,7 @@ impl Compiler {
                 }
             }
             Action::Break { .. } | Action::Continue { .. } => {
+                ctx.site(step, "/do", "loop_control", "structure");
                 if !ctx.in_loop {
                     ctx.errors.push(format!(
                         "步骤 '{}': break/continue 只能在 loop 内部使用",
@@ -538,6 +684,7 @@ impl Compiler {
                 }
             }
             Action::Custom(_) => {
+                ctx.site(step, "/do", "legacy", "structure");
                 ctx.warnings
                     .push(format!("步骤 '{}': custom 类型，跳过类型校验", step.name));
             }

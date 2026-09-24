@@ -1,3 +1,4 @@
+import { editorText, editorValidationText } from './editorText'
 import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { InspectorDraftContext, useInspectorDraft } from './inspectorDrafts'
 import { useLanguage } from '../../locales'
@@ -144,11 +145,12 @@ function initialDraft(value: unknown, schema?: Schema): ToolParameterDraft {
 
 /** In the canvas, text/validation belong to its draft coordinator, including hidden nodes. */
 function ManagedToolParameterForm(props: ToolParameterFormProps) {
+  const { t } = useLanguage()
   const baseline = JSON.stringify({
     parameters: props.value ?? {},
     draft: initialDraft(props.value, props.schema),
   })
-  const buffer = useInspectorDraft('动作参数', baseline, {
+  const buffer = useInspectorDraft('/do/with', baseline, {
     onCommit: text => props.onChange(JSON.parse(text).parameters),
     validate: text => {
       const payload = JSON.parse(text) as { parameters: Parameters; draft: ToolParameterDraft }
@@ -171,7 +173,7 @@ function ManagedToolParameterForm(props: ToolParameterFormProps) {
   latest.current = payload
   return (
     <div
-      data-draft-field="动作参数"
+      data-draft-field="/do/with"
       onBlur={() => {
         void buffer.commit()
       }}
@@ -190,7 +192,9 @@ function ManagedToolParameterForm(props: ToolParameterFormProps) {
           buffer.setText(JSON.stringify(latest.current))
         }}
       />
-      {buffer.error && <span className="wfc-field-error">{buffer.error}</span>}
+      {buffer.error && (
+        <span className="wfc-field-error">{editorValidationText(buffer.error, t)}</span>
+      )}
     </div>
   )
 }
@@ -247,12 +251,12 @@ function ParameterEditor({
     let parsed: unknown = text
     let error: string | null = null
     if (isExpression) {
-      if (!expression(text)) error = '请填写完整表达式，例如 {{count}}'
+      if (!expression(text)) error = editorText('请填写完整表达式，例如 {{count}}', t)
     } else if (fieldType(property) !== 'string') {
       try {
         parsed = JSON.parse(text)
       } catch {
-        error = '请输入有效 JSON 值；空白不等于 0 或未设置'
+        error = editorText('请输入有效 JSON 值；空白不等于 0 或未设置', t)
       }
     }
     if (!error) error = fieldError(parsed, property)
@@ -284,7 +288,7 @@ function ParameterEditor({
   return (
     <div className="wfc-parameter-form">
       <div className="wfc-parameter-toolbar">
-        <span className="wfc-field-label">动作参数</span>
+        <span className="wfc-field-label">{editorText('动作参数', t)}</span>
         {properties && (
           <button
             type="button"
@@ -301,21 +305,21 @@ function ParameterEditor({
               })
             }
           >
-            {jsonMode ? '表单编辑' : 'JSON 编辑'}
+            {jsonMode ? editorText('表单编辑', t) : editorText('JSON 编辑', t)}
           </button>
         )}
       </div>
       {jsonMode ? (
-        <div className="wfc-field">
+        <div className="wfc-field" data-field-path="/do/with">
           <span className="wfc-field-label">
-            参数 JSON
+            {editorText('参数 JSON', t)}
             <button type="button" onClick={() => setExpanded(v => !v)}>
-              {expanded ? '收起编辑器' : '展开编辑器'}
+              {expanded ? editorText('收起编辑器', t) : editorText('展开编辑器', t)}
             </button>
           </span>
           <textarea
             className="wfc-input wfc-input--mono"
-            aria-label="参数 JSON"
+            aria-label={editorText('参数 JSON', t)}
             aria-invalid={!!draft.errors.$json}
             value={draft.raw}
             readOnly={readOnly}
@@ -324,25 +328,29 @@ function ParameterEditor({
               const next = { ...draft, raw: e.target.value, fields: {}, errors: {} }
               try {
                 const parsed: unknown = JSON.parse(next.raw)
-                if (!record(parsed)) throw new Error('参数必须是 JSON 对象')
+                if (!record(parsed)) throw new Error(editorText('参数必须是 JSON 对象', t))
                 update(next, parsed)
               } catch (error) {
                 update({
                   ...next,
-                  errors: { $json: error instanceof Error ? error.message : 'JSON 无效' },
+                  errors: {
+                    $json: error instanceof Error ? error.message : editorText('JSON 无效', t),
+                  },
                 })
               }
             }}
           />
-          {draft.errors.$json && <span className="wfc-field-error">{draft.errors.$json}</span>}
+          {draft.errors.$json && (
+            <span className="wfc-field-error">{editorValidationText(draft.errors.$json, t)}</span>
+          )}
           {!properties && (
             <span className="wfc-parameter-hint">
-              此工具未提供可生成表单的参数结构，使用 JSON 编辑。
+              {editorText('此工具未提供可生成表单的参数结构，使用 JSON 编辑。', t)}
             </span>
           )}
           {variables.length > 0 && (
             <span className="wfc-parameter-hint">
-              变量表达式需放在 JSON 字符串中，例如：
+              {editorText('变量表达式需放在 JSON 字符串中，例如：', t)}
               {JSON.stringify(variables[0].expression ?? `{{${variables[0].name}}}`)}
             </span>
           )}
@@ -367,11 +375,15 @@ function ParameterEditor({
             const inputId = `${id}-${key}`
             const error = errors[key]
             return (
-              <div className="wfc-field" key={key}>
+              <div
+                className="wfc-field"
+                key={key}
+                data-field-path={`/do/with/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`}
+              >
                 <div className="wfc-parameter-label">
                   <label htmlFor={inputId} className="wfc-field-label">
                     {label}
-                    {required && <em className="wfc-required-mark">（必填）</em>}
+                    {required && <em className="wfc-required-mark">{editorText('（必填）', t)}</em>}
                     {label !== key && <small> {key}</small>}
                   </label>
                   <button
@@ -379,7 +391,7 @@ function ParameterEditor({
                     disabled={readOnly || (!present && !(key in draft.fields))}
                     onClick={() => unset(key)}
                   >
-                    设为未设置
+                    {editorText('设为未设置', t)}
                   </button>
                 </div>
                 {typeof property.description === 'string' && (
@@ -399,7 +411,7 @@ function ParameterEditor({
                         : setField(key, e.target.value, { ...property, type: 'json' }, false)
                     }
                   >
-                    <option value="">未设置</option>
+                    <option value="">{editorText('未设置', t)}</option>
                     {present &&
                       !options.some(v => JSON.stringify(v) === JSON.stringify(parameters[key])) && (
                         <option value={JSON.stringify(parameters[key])}>
@@ -408,7 +420,11 @@ function ParameterEditor({
                       )}
                     {options.map(v => (
                       <option key={JSON.stringify(v)} value={JSON.stringify(v)}>
-                        {typeof v === 'boolean' ? (v ? '是' : '否') : String(v)}
+                        {typeof v === 'boolean'
+                          ? v
+                            ? editorText('是', t)
+                            : editorText('否', t)
+                          : String(v)}
                       </option>
                     ))}
                   </select>
@@ -420,7 +436,7 @@ function ParameterEditor({
                     value={text}
                     readOnly={readOnly}
                     rows={4}
-                    placeholder="未设置"
+                    placeholder={editorText('未设置', t)}
                     aria-invalid={!!error}
                     onChange={e => setField(key, e.target.value, property, false)}
                   />
@@ -432,12 +448,12 @@ function ParameterEditor({
                     type="text"
                     value={text}
                     readOnly={readOnly}
-                    placeholder={isExpression ? '{{变量名}}' : '未设置'}
+                    placeholder={isExpression ? '{{variable}}' : editorText('未设置', t)}
                     aria-invalid={!!error}
                     onChange={e => setField(key, e.target.value, property, isExpression)}
                   />
                 )}
-                {error && <span className="wfc-field-error">{error}</span>}
+                {error && <span className="wfc-field-error">{editorValidationText(error, t)}</span>}
                 <div className="wfc-parameter-tools">
                   {allowsExpressionMode && (
                     <button
@@ -451,7 +467,9 @@ function ParameterEditor({
                         })
                       }
                     >
-                      {isExpression ? '使用固定值' : '使用变量/表达式'}
+                      {isExpression
+                        ? editorText('使用固定值', t)
+                        : editorText('使用变量/表达式', t)}
                     </button>
                   )}
                   {hasOwn(property, 'default') && (
@@ -498,11 +516,14 @@ function ParameterEditor({
           })}
           {unknownKeys.length > 0 && (
             <p className="wfc-parameter-hint">
-              保留未识别参数：{unknownKeys.join('、')}。可在 JSON 编辑中修改。
+              保留未识别参数：{unknownKeys.join(', ')}
+              {editorText('。可在 JSON 编辑中修改。', t)}
             </p>
           )}
           {Object.keys(properties).length === 0 && (
-            <p className="wfc-parameter-hint">此工具未声明参数，可在 JSON 编辑中添加。</p>
+            <p className="wfc-parameter-hint">
+              {editorText('此工具未声明参数，可在 JSON 编辑中添加。', t)}
+            </p>
           )}
         </>
       )}
