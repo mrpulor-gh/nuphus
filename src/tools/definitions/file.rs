@@ -628,7 +628,14 @@ impl ToolRegistry {
                     result_lines.splice(start..end, synced_lines);
                 }
 
-                let new_content = result_lines.join("\n");
+                let mut new_content = result_lines.join("\n");
+                // `str::lines()` 丢弃末尾换行（`"a\n".lines()` → `["a"]`），join 不会补回。
+                // 不还原的话每次编辑都会静默吃掉文件原有的 EOF 换行，触发 fmt / prettier /
+                // editorconfig 报错。EOF 换行跟随原文件：原来有则保留，原来无则不加。
+                // （CRLF 文件在此补 `\n`，由下方还原逻辑统一转回 `\r\n`。）
+                if content.ends_with('\n') {
+                    new_content.push('\n');
+                }
                 // 若原文件使用 \r\n，写回时保留原格式，避免整文件 diff 变动
                 let write_content = if needs_normalize && raw_content.contains("\r\n") {
                     new_content.replace('\n', "\r\n")
@@ -1401,7 +1408,7 @@ mod edit_contract_tests {
         assert!(r.success, "fuzzy edit failed: {:?}", r.error);
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            content, "{\n  \"version\": \"0.2.8\",\n  \"build\": {}\n}",
+            content, "{\n  \"version\": \"0.2.8\",\n  \"build\": {}\n}\n",
             "original indent must survive fuzzy replacement"
         );
     }
@@ -1416,7 +1423,7 @@ mod edit_contract_tests {
             "new_string": "    key: new;"
         }));
         assert!(r.success, "trailing-whitespace edit failed: {:?}", r.error);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "    key: new;");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "    key: new;\n");
     }
 
     #[test]
@@ -1431,7 +1438,7 @@ mod edit_contract_tests {
         assert!(r.success, "tab multiline edit failed: {:?}", r.error);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "root:\n\titem: new\n\t  child: value\nend"
+            "root:\n\titem: new\n\t  child: value\nend\n"
         );
     }
 
@@ -1447,7 +1454,7 @@ mod edit_contract_tests {
         assert!(r.success, "multiline fuzzy edit failed: {:?}", r.error);
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            content, "a:\n  b: 10\n    c: 20\n    d: 30\nd: 3",
+            content, "a:\n  b: 10\n    c: 20\n    d: 30\nd: 3\n",
             "first line aligned to block indent, relative indent preserved"
         );
     }
@@ -1461,7 +1468,7 @@ mod edit_contract_tests {
         }));
         assert!(r.success, "range edit failed: {:?}", r.error);
         let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "a\nneedle\nb\nchanged\nc");
+        assert_eq!(content, "a\nneedle\nb\nchanged\nc\n");
         assert!(r.output.unwrap().contains("L4"));
     }
 
@@ -1505,5 +1512,39 @@ mod edit_contract_tests {
         }));
         assert!(!r.success, "out-of-bounds range must not find earlier line");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn edit_preserves_trailing_newline() {
+        // `str::lines()` 丢弃末尾换行：原文件有 EOF 换行时，编辑后必须保留，
+        // 否则每次编辑都静默吃掉末尾换行（触发 fmt / prettier / editorconfig 报错）。
+        let path = setup_file("t14-eof-newline.txt", "a\nb\nc\n");
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "b", "new_string": "B"
+        }));
+        assert!(r.success, "edit failed: {:?}", r.error);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nB\nc\n");
+    }
+
+    #[test]
+    fn edit_does_not_add_trailing_newline_when_absent() {
+        // 反向契约：原文件无 EOF 换行时不得凭空添加（EOF 换行跟随原文件）。
+        let path = setup_file("t15-no-eof-newline.txt", "a\nb\nc");
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "b", "new_string": "B"
+        }));
+        assert!(r.success, "edit failed: {:?}", r.error);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nB\nc");
+    }
+
+    #[test]
+    fn edit_preserves_trailing_newline_for_crlf_file() {
+        // CRLF 文件：补回的 `\n` 由写回时的 CRLF 还原逻辑统一转回 `\r\n`。
+        let path = setup_file("t16-crlf-eof.txt", "a\r\nb\r\nc\r\n");
+        let r = run_edit(serde_json::json!({
+            "path": path, "old_string": "b", "new_string": "B"
+        }));
+        assert!(r.success, "edit failed: {:?}", r.error);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\r\nB\r\nc\r\n");
     }
 }

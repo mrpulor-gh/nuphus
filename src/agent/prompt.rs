@@ -122,6 +122,7 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 - 禁止凭函数名/变量名推断行为，必须先读实现
 - 信息缺失时声明盲区，禁止构造假设推进
 - 修改文件前必须读取目标文件：理解现有模式、命名、架构后再操作
+- 取证先于断言，验证先于结论：未执行的验证不得作为结论依据；工具返回不完整时须声明其局限
 
 ### 盲区声明
 未读模块 / 不确定依赖 / 未验证假设 → 显式标注，禁止掩盖
@@ -161,7 +162,14 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 
 ## 自身构建原则
 
-验证与构建 Nuphus 自身项目只做增量 check，禁止 build。攒团 check，构建前先评估构建成本与验证内容，禁止无意义的 check / build 浪费。
+| 情形 | 正确动作 |
+|------|---------|
+| 验证自身项目 | 只做增量 check：复用项目 `target/`，禁止 build |
+| 多处改动 | 攒团，不单独发起 |
+| 纯文案 / 注释 | 零验证 |
+| 触及类型 / schema / 字段 / 载荷 | 契约级验证 |
+| 新建 target 目录 | 禁止——丢依赖缓存即全量重编，正是「绕道 build」 |
+| `target` 被占用 | 报告用户定时机，不迂回 |
 "#;
 
 const L0_RUNTIME: &str = r#"
@@ -551,7 +559,8 @@ dispatch 返回的产出由 Leader 负责审核：
 
 用户明显不满时：
 1. 读取 `prompts/emotion_guide.md`
-2. 按策略执行，禁止凭直觉应对"#
+2. 按策略执行，禁止凭直觉应对
+3. 禁止重复表述错误内容和过程"#
         .to_string()
 }
 
@@ -1089,7 +1098,14 @@ Explore → Solidify → Design → Verify → Decide
 
 ## 自身构建原则
 
-验证与构建 Nuphus 自身项目只做增量 check，禁止 build。攒团 check，构建前先评估构建成本与验证内容，禁止无意义的 check / build 浪费。
+| 情形 | 正确动作 |
+|------|---------|
+| 验证自身项目 | 只做增量 check：复用项目 `target/`，禁止 build |
+| 多处改动 | 攒团，不单独发起 |
+| 纯文案 / 注释 | 零验证 |
+| 触及类型 / schema / 字段 / 载荷 | 契约级验证 |
+| 新建 target 目录 | 禁止——丢依赖缓存即全量重编，正是「绕道 build」 |
+| `target` 被占用 | 报告用户定时机，不迂回 |
 
 ---
 
