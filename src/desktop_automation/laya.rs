@@ -431,8 +431,6 @@ mod tests {
     /// rather than assumed.
     struct RawLayaTransport {
         payload: Mutex<String>,
-        endpoint_seen: Mutex<Option<String>>,
-        bearer_seen: Mutex<Option<String>>,
     }
 
     #[async_trait]
@@ -497,8 +495,6 @@ mod tests {
     fn client(payload: &str) -> (LayaClient, std::sync::Arc<RawLayaTransport>) {
         let transport = std::sync::Arc::new(RawLayaTransport {
             payload: Mutex::new(payload.to_string()),
-            endpoint_seen: Mutex::new(None),
-            bearer_seen: Mutex::new(None),
         });
         struct Shared(std::sync::Arc<RawLayaTransport>);
         #[async_trait]
