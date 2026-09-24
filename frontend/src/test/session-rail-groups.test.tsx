@@ -135,15 +135,32 @@ describe('SessionRail 项目文件夹分组渲染', () => {
       }))
   })
 
-  it('抽屉头部只有标题、零按钮（文件夹管理入口已全部迁至项目中心）', async () => {
+  it('抽屉头部只有标题与收起按钮（文件夹管理入口已全部迁至项目中心）', async () => {
     renderRail()
     await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
 
     const head = document.querySelector('.sr-drawer-head') as HTMLElement
     expect(within(head).getByText('会话工作台')).toBeInTheDocument()
-    expect(head.querySelectorAll('button')).toHaveLength(0)
+    // 头部恰有一个按钮：右侧收起入口（其余管理入口已迁至项目中心）
+    const buttons = head.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].classList.contains('sr-drawer-close')).toBe(true)
+    expect(buttons[0].getAttribute('aria-label')).toBe('关闭')
     // 「项目」不再是头部标题，已下移为下方列表的分组标题
     expect(within(head).queryByText('项目')).not.toBeInTheDocument()
+  })
+
+  it('点头部收起按钮关闭抽屉', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    // 先打开抽屉
+    fireEvent.click(document.querySelector('.session-rail-chip') as HTMLElement)
+    const drawer = document.querySelector('.session-rail-drawer') as HTMLElement
+    await waitFor(() => expect(drawer.classList.contains('is-open')).toBe(true))
+
+    fireEvent.click(document.querySelector('.sr-drawer-close') as HTMLElement)
+    await waitFor(() => expect(drawer.classList.contains('is-open')).toBe(false))
   })
 
   it('「项目」标签位于「新建对话」按钮之后、首个分组之前（DOM 顺序）', async () => {

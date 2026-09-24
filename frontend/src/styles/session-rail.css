@@ -93,36 +93,47 @@
   pointer-events: auto;
 }
 
-/* ── 左侧滑动栏（抽屉）本体 ──
-   默认整体平移出面板左缘外（overflow:hidden 裁掉），点击色块后滑入。
-   背景用 --surface-0（窗口基底）实色：抽屉压住消息流，半透明会与正文叠影。
+/* ── 左侧工作台面板（浮层弹窗）──
+   与右侧 WorkflowTaskPanel(.wfst-panel) 同款外观：玻璃底 + 10px 圆角 + 抬升阴影，
+   作为「浮在消息流之上的卡片」而非贴边抽屉（四边留白，左 20 / 上 20 / 下 150）。
+   背景改 --glass-bg 半透明玻璃，与 task 面板统一；backdrop-filter 提供毛玻璃。
    visibility 负责关闭态的焦点/命中隔离（贴合过渡结束时才断）。 */
 .session-rail-drawer {
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
+  left: 20px;
+  top: 20px;
+  bottom: 150px;
   z-index: 56;
   display: flex;
   flex-direction: column;
   width: 300px;
   max-width: 82%;
-  background: var(--surface-0);
-  /* 无边框：右缘分界完全交给外阴影（近处接触影 + 远处柔和扩散，避免 1px 描边的「线」感） */
-  box-shadow:
-    2px 0 8px rgba(0, 0, 0, 0.35),
-    12px 0 32px rgba(0, 0, 0, 0.35);
-  transform: translateX(-100%);
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: var(--border-divider);
+  border-radius: 10px;
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  /* 浮层收起态：整体淡出并向左下微缩（同 .wfst-panel 的 wfstIn 观感）。
+     不再用 translateX(-100%) 左滑——那是贴边抽屉的语义，浮层移到面板外会露在留白区。 */
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  pointer-events: none;
   visibility: hidden;
   transition:
-    transform var(--dur-slow) var(--ease-out),
-    visibility 0s linear var(--dur-slow);
+    opacity var(--dur-med) var(--ease-out),
+    transform var(--dur-med) var(--ease-out),
+    visibility 0s linear var(--dur-med);
 }
 .session-rail-drawer.is-open {
-  transform: translateX(0);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
   visibility: visible;
   transition:
-    transform var(--dur-slow) var(--ease-out),
+    opacity var(--dur-med) var(--ease-out),
+    transform var(--dur-med) var(--ease-out),
     visibility 0s;
 }
 
@@ -144,12 +155,36 @@
   letter-spacing: 0.02em;
   color: var(--fg-2);
 }
+/* 头部右侧收起按钮：与 .sr-edit-btn 同款克制风格（透明底、fg-4 → hover fg-2 + line-1 底） */
+.sr-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sr-drawer-close:hover {
+  color: var(--fg-2);
+  background: var(--line-1);
+}
+.sr-drawer-close:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 /* ── 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（虚线描边 + 弱文字，
    把「动作」与上方「数据」区分开；高度 42 与数据行天然分档）。
    文字**居中**：居中的动作按钮 + 下方左对齐的数据列表，层级一眼分明。 ── */
 .sr-new-chat-wrap {
   padding: 0 var(--space-2) var(--space-2);
-  margin-bottom: 20px;
+  margin: 10px;
 }
 .sr-new-chat-btn {
   display: flex;
@@ -527,10 +562,10 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 10px;
+  height: 10px;
   border-radius: var(--radius-1);
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 600;
   line-height: 1;
   color: var(--fg-3);
