@@ -7,6 +7,7 @@ import { ToolsPage } from '../tools/ToolsPage'
 import { UiPrototypeCanvas } from '../canvases/ui-prototype/UiPrototypeCanvas'
 import type { WorkflowItem } from '../../core/types'
 import './workflow-workbench.css'
+import { useCanvasLeaveGuard } from '../workflow-canvas/useCanvasLeaveGuard'
 
 type WorkType = 'workflow' | 'prototype' | 'tools'
 
@@ -24,6 +25,7 @@ export function WorkflowWorkbenchPage({
   const { t } = useLanguage()
   const [workType, setWorkType] = useState<WorkType>('workflow')
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null)
+  const navigation = useCanvasLeaveGuard()
 
   return (
     <div className="workflow-workbench">
@@ -44,7 +46,7 @@ export function WorkflowWorkbenchPage({
           <button
             type="button"
             className={workType === 'prototype' ? 'is-active' : ''}
-            onClick={() => setWorkType('prototype')}
+            onClick={() => void navigation.leave(() => setWorkType('prototype'))}
           >
             <IconPalette size={14} />
             <span>{t('workflow.workType.prototype')}</span>
@@ -52,14 +54,18 @@ export function WorkflowWorkbenchPage({
           <button
             type="button"
             className={workType === 'tools' ? 'is-active' : ''}
-            onClick={() => setWorkType('tools')}
+            onClick={() => void navigation.leave(() => setWorkType('tools'))}
           >
             <IconWrench size={14} />
             <span>{t('workflow.workType.tools')}</span>
           </button>
         </nav>
         <span className="workflow-workbench-drag" data-tauri-drag-region />
-        <button type="button" className="workflow-workbench-close" onClick={onClose}>
+        <button
+          type="button"
+          className="workflow-workbench-close"
+          onClick={() => void navigation.leave(onClose)}
+        >
           ×
         </button>
       </header>
@@ -76,7 +82,12 @@ export function WorkflowWorkbenchPage({
           />
         )}
         {workType === 'workflow' && editingWorkflowId && (
-          <CanvasPage workflowId={editingWorkflowId} onClose={() => setEditingWorkflowId(null)} />
+          <CanvasPage
+            key={editingWorkflowId}
+            registerLeaveGuard={navigation.register}
+            workflowId={editingWorkflowId}
+            onClose={() => setEditingWorkflowId(null)}
+          />
         )}
         {workType === 'prototype' && (
           <div className="workflow-workbench-prototype">
