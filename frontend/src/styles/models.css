@@ -748,6 +748,35 @@
   }
 }
 
+/* ── 增强判断模型 · API Key 行右端的「获取 API Key」外链 ──
+   .models-field-label 本身不带布局，这里补一层 flex 让链接贴到行右端；
+   悬停 / 聚焦态与站内其余外链保持一致（accent 变色 + focus 环）。 */
+.decision-key-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.decision-key-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-medium);
+  text-decoration: none;
+  border-radius: var(--radius-1);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.decision-key-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+.decision-key-link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
 /* ── API 密钥输入行：输入框与操作按钮同一行，眼睛图标内嵌输入框 ── */
 .models-key-row {
   display: flex;
