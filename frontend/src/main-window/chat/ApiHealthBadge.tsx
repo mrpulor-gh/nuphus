@@ -43,7 +43,14 @@ function relTime(ts: number): string {
  *  · degraded          → 同心双弧（外圈满弧淡 + 内圈短弧波动）＝「不稳但在通」
  *  · stable / unknown  → 同心细环 + 实心微芯（静态，仅弹窗内可见；rail 上因 label 为 null 不渲染）
  *
- *  颜色 = currentColor，由 .api-health-{status} 注入 var token；动画由 CSS 驱动（尊重 reduced-motion）。 */
+ *  颜色 = currentColor，由 .api-health-{status} 注入 var token；动画由 CSS 驱动（尊重 reduced-motion）。
+ *
+ *  ⚠ 保留手写 <svg>（不迁 lucide）：本图标是「状态形变」图形而非语义图标——
+ *  ① 16×16 视口（lucide 固定 0 0 24 24，缩放会破坏 strokeOpacity/radius 的视觉配比）；
+ *  ② 结构由 status 动态组合（底衬满环 + dasharray 弧 + 断裂环），lucide 无对应单形；
+ *  ③ CSS 按 `transform-origin: 8px 8px; transform-box: view-box` 在**运行时改写**
+ *     子元素（.api-health-arc / -arc-inner / -break，见 api-health.css:75），
+ *     lucide 的 iconNode 无法承载可被外部 CSS 选中的稳定类名。 */
 export function ApiSignalIcon({ status, size = 13 }: { status: ApiHealthStatus; size?: number }) {
   return (
     <svg

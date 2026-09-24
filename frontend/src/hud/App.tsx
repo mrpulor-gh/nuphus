@@ -1,6 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { listen, invoke } from '../core/bridge'
 import type { NuphusEvent } from '../core/types'
+import {
+  CircleCheck,
+  CircleX,
+  TriangleAlert,
+  Info,
+  Sun,
+  Clock,
+  MessageSquare,
+  CornerUpRight,
+  FileCode,
+  List,
+  RotateCcw,
+  Pause,
+  Play,
+  Square,
+  X,
+} from 'lucide-react'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Types
@@ -173,55 +190,22 @@ function IconSpinner({ color, trackColor }: { color: string; trackColor: string 
 }
 
 function IconCheck({ color }: { color: string }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.2" opacity={0.25} />
-      <path
-        d="M4.5 7l2 2 3-3.5"
-        stroke={color}
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
+  return <CircleCheck size={14} color={color} absoluteStrokeWidth strokeWidth={1.4} />
 }
 
 function IconError({ color }: { color: string }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.2" opacity={0.25} />
-      <path d="M5 5l4 4M9 5l-4 4" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  )
+  return <CircleX size={14} color={color} absoluteStrokeWidth strokeWidth={1.4} />
 }
 
 function IconWarning({ color }: { color: string }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path
-        d="M7 1.5l5.5 10h-11L7 1.5z"
-        stroke={color}
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-        opacity={0.25}
-      />
-      <rect x="6.3" y="5.5" width="1.4" height="3" rx="0.7" fill={color} />
-      <circle cx="7" cy="10.5" r="0.8" fill={color} />
-    </svg>
-  )
+  return <TriangleAlert size={14} color={color} absoluteStrokeWidth strokeWidth={1.4} />
 }
 
 function IconInfo({ color }: { color: string }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.2" opacity={0.25} />
-      <rect x="6.3" y="4" width="1.4" height="4" rx="0.7" fill={color} />
-      <circle cx="7" cy="10" r="0.8" fill={color} />
-    </svg>
-  )
+  return <Info size={14} color={color} absoluteStrokeWidth strokeWidth={1.4} />
 }
 
+/** Nuphus-proprietary workflow glyph (three nodes + connectors) — no lucide equivalent, kept hand-rolled. */
 function IconWorkflow({ color }: { color: string }) {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -234,127 +218,30 @@ function IconWorkflow({ color }: { color: string }) {
 }
 
 function IconPause({ color }: { color: string }) {
-  return (
-    <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-      <rect x="1.5" y="1" width="2" height="7" rx="0.6" fill={color} />
-      <rect x="5.5" y="1" width="2" height="7" rx="0.6" fill={color} />
-    </svg>
-  )
+  return <Pause size={9} color={color} fill="currentColor" strokeWidth={1.1} />
 }
 
 function IconPlay({ color }: { color: string }) {
-  return (
-    <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-      <path d="M1.5 1l6 3.5-6 3.5V1z" fill={color} />
-    </svg>
-  )
+  return <Play size={9} color={color} fill="currentColor" strokeWidth={1.1} />
 }
 
 function IconStop({ color }: { color: string }) {
-  return (
-    <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-      <rect x="1.3" y="1.3" width="6.4" height="6.4" rx="1" stroke={color} strokeWidth="1.1" />
-    </svg>
-  )
+  return <Square size={9} color={color} absoluteStrokeWidth strokeWidth={1.1} />
 }
 
 function IconClose({ color }: { color: string }) {
-  return (
-    <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-      <path d="M1.5 1.5l6 6M7.5 1.5l-6 6" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
-    </svg>
-  )
+  return <X size={9} color={color} absoluteStrokeWidth strokeWidth={1.1} />
 }
 
 // ── Step kind icons (used when step_kind is present) ──
 const STEP_ICONS: Record<string, (color: string) => React.ReactNode> = {
-  tool: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="2" stroke={c} strokeWidth="1.1" />
-      <path
-        d="M7 1v3M7 10v3M2.5 2.5l2 2M9.5 9.5l2 2M1 7h3M10 7h3M2.5 11.5l2-2M9.5 4.5l2-2"
-        stroke={c}
-        strokeWidth="0.8"
-        opacity={0.4}
-      />
-    </svg>
-  ),
-  wait: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="5.5" stroke={c} strokeWidth="1.1" />
-      <polyline
-        points="7 4 7 7 9.5 8.5"
-        stroke={c}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  chat_agent: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path
-        d="M11 9a1.5 1.5 0 0 1-1.5 1.5H5L2.5 12.5V3.5A1.5 1.5 0 0 1 4 2h5.5A1.5 1.5 0 0 1 11 3.5V9z"
-        stroke={c}
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-      <circle cx="5.5" cy="5.5" r="0.6" fill={c} />
-      <circle cx="8.5" cy="5.5" r="0.6" fill={c} />
-    </svg>
-  ),
-  call: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <line x1="4" y1="10" x2="10" y2="4" stroke={c} strokeWidth="1.1" strokeLinecap="round" />
-      <polyline
-        points="4 4 10 4 10 10"
-        stroke={c}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  script: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path
-        d="M4 1h5l3 3v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"
-        stroke={c}
-        strokeWidth="1.1"
-      />
-      <polyline points="9 1 9 4 12 4" stroke={c} strokeWidth="1.1" strokeLinejoin="round" />
-      <line x1="5" y1="7" x2="9" y2="7" stroke={c} strokeWidth="0.8" opacity={0.5} />
-      <line x1="5" y1="9" x2="8" y2="9" stroke={c} strokeWidth="0.8" opacity={0.5} />
-    </svg>
-  ),
-  seq: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <line x1="4" y1="3" x2="11" y2="3" stroke={c} strokeWidth="1.1" strokeLinecap="round" />
-      <line x1="2" y1="3" x2="3" y2="3" stroke={c} strokeWidth="0.8" opacity={0.4} />
-      <line x1="4" y1="7" x2="11" y2="7" stroke={c} strokeWidth="1.1" strokeLinecap="round" />
-      <line x1="2" y1="7" x2="3" y2="7" stroke={c} strokeWidth="0.8" opacity={0.4} />
-      <line x1="4" y1="11" x2="11" y2="11" stroke={c} strokeWidth="1.1" strokeLinecap="round" />
-      <line x1="2" y1="11" x2="3" y2="11" stroke={c} strokeWidth="0.8" opacity={0.4} />
-    </svg>
-  ),
-  loop: c => (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <polyline
-        points="13 3 13 7 9 7"
-        stroke={c}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M11.5 8.5a4.5 4.5 0 1 1-1-7.3L13 7"
-        stroke={c}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
+  tool: c => <Sun size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  wait: c => <Clock size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  chat_agent: c => <MessageSquare size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  call: c => <CornerUpRight size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  script: c => <FileCode size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  seq: c => <List size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
+  loop: c => <RotateCcw size={14} color={c} absoluteStrokeWidth strokeWidth={1.1} />,
 }
 
 // ═══════════════════════════════════════════════════════════════════

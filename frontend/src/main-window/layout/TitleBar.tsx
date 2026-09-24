@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window'
 import { NuphusAvatar, type NuphusAvatarState } from '../../ui/NuphusAvatar'
 import { IconButton } from '../../ui/Button'
+import { IconMinus, IconSquare, IconX, IconMenu, IconPlus } from '../../ui/Icons'
 import { useLanguage } from '../../locales'
 
 interface TitleBarProps {
@@ -47,45 +48,13 @@ export function TitleBar({ onNewChat, agentState = 'idle' }: TitleBarProps) {
       {/* 桌面端：窗口控制按钮 */}
       <div className="title-bar-right title-bar-desktop-controls">
         <IconButton variant="win-btn" label={t('titleBar.minimize')} onClick={minimize}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          >
-            <line x1="3" y1="7" x2="11" y2="7" />
-          </svg>
+          <IconMinus size={14} strokeWidth={1.5} />
         </IconButton>
         <IconButton variant="win-btn" label={t('titleBar.maximize')} onClick={toggleMaximize}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="2.5" y="2.5" width="9" height="9" rx="1.5" />
-          </svg>
+          <IconSquare size={14} strokeWidth={1.5} />
         </IconButton>
         <IconButton variant="win-close" label={t('titleBar.close')} onClick={closeWindow}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          >
-            <line x1="3.5" y1="3.5" x2="10.5" y2="10.5" />
-            <line x1="10.5" y1="3.5" x2="3.5" y2="10.5" />
-          </svg>
+          <IconX size={14} strokeWidth={1.5} />
         </IconButton>
       </div>
       {/* 移动端：汉堡菜单 */}
@@ -95,19 +64,7 @@ export function TitleBar({ onNewChat, agentState = 'idle' }: TitleBarProps) {
           label={t('titleBar.menu')}
           onClick={() => setMenuOpen(v => !v)}
         >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <line x1="4" y1="6" x2="20" y2="6" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-            <line x1="4" y1="18" x2="20" y2="18" />
-          </svg>
+          <IconMenu size={18} />
         </IconButton>
         {menuOpen && (
           <>
@@ -120,18 +77,7 @@ export function TitleBar({ onNewChat, agentState = 'idle' }: TitleBarProps) {
                   setMenuOpen(false)
                 }}
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
+                <IconPlus size={16} />
                 <span>{t('titleBar.newChat')}</span>
               </button>
             </div>

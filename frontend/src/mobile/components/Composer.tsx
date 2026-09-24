@@ -17,7 +17,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Send, Plus, Camera, Image as ImageIcon, Mic, Square, X, Loader2 } from 'lucide-react'
+import { Send as SendIcon, Square as SquareIcon } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
+import { Plus, Camera, Image as ImageIcon, Mic, X, Loader2 } from 'lucide-react'
 import { t } from '../i18n'
 
 /**
@@ -344,27 +346,27 @@ export default function Composer({
           </button>
           {/* 发送 / 终止三态（与桌面端一致）：
               执行中 + 输入框空 → 终止按钮（实色红底白方块，点击终止）；
-              否则 → 发送按钮（执行中+有内容 = 追加指令；空闲+空 = 待命灰显） */}
-          {isProcessing && !hasText && !sending ? (
-            <button
-              type="button"
-              className="mobile-composer-stop"
-              onClick={onStopExecution}
-              aria-label="终止"
-            >
-              <Square size={14} fill="currentColor" aria-hidden="true" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="mobile-composer-send"
-              disabled={!canSend}
-              onClick={handleSend}
-              aria-label="发送"
-            >
-              <Send size={20} aria-hidden="true" />
-            </button>
-          )}
+              否则 → 发送按钮（执行中+有内容 = 追加指令；空闲+空 = 待命灰显）。
+              同一 MorphIcon 常驻（分支条件渲染会重挂导致形变失效），仅切换 icon/尺寸。 */}
+          {(() => {
+            const isStop = isProcessing && !hasText && !sending
+            return (
+              <button
+                type="button"
+                className={isStop ? 'mobile-composer-stop' : 'mobile-composer-send'}
+                disabled={!isStop && !canSend}
+                onClick={isStop ? onStopExecution : handleSend}
+                aria-label={isStop ? '终止' : '发送'}
+              >
+                <MorphIcon
+                  icon={isStop ? SquareIcon : SendIcon}
+                  size={isStop ? 14 : 20}
+                  spring="snappy"
+                  aria-hidden="true"
+                />
+              </button>
+            )
+          })()}
         </div>
 
         {/* ── 「+」扩展面板：iOS 原生 Action Sheet（固定底部弹出 + 毛玻璃 + 取消按钮） ── */}

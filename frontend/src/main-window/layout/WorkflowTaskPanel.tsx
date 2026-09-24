@@ -2,6 +2,23 @@
 // Windows 11 inspired design: acrylic background, rounded corners, tree indentation
 
 import { useState, useRef, useEffect } from 'react'
+import {
+  Sun,
+  List,
+  RotateCcw,
+  DiamondPlus,
+  CornerUpRight,
+  Clock,
+  MessageSquare,
+  Circle,
+  LoaderCircle,
+  Check,
+  X,
+  Pause,
+  Play,
+  LayoutGrid,
+  Zap,
+} from 'lucide-react'
 import { IconSquare } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 import { CompactModal } from './CompactModal'
@@ -87,182 +104,26 @@ function ParamValue({ value }: { value: unknown }) {
   return <pre className="wfst-param-json">{JSON.stringify(value, null, 2)}</pre>
 }
 
-// ── Step kind icons (SVG) ──
+// ── Step kind icons — lucide components sized to 12px ──
 const KIND_ICONS: Record<string, React.ReactNode> = {
-  tool: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
-    </svg>
-  ),
-  seq: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
-      <line x1="8" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="6" x2="5" y2="6" />
-      <line x1="8" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="12" x2="5" y2="12" />
-      <line x1="8" y1="18" x2="21" y2="18" />
-      <line x1="3" y1="18" x2="5" y2="18" />
-    </svg>
-  ),
-  loop: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="23 4 23 10 17 10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-    </svg>
-  ),
-  if: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 2L2 12l10 10 10-10L12 2z" />
-      <line x1="8" y1="12" x2="16" y2="12" />
-      <line x1="12" y1="8" x2="12" y2="16" />
-    </svg>
-  ),
-  call: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="7" y1="17" x2="17" y2="7" />
-      <polyline points="7 7 17 7 17 17" />
-    </svg>
-  ),
-  wait: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  ),
-  chat_agent: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  ),
+  tool: <Sun size={12} />,
+  seq: <List size={12} />,
+  loop: <RotateCcw size={12} />,
+  if: <DiamondPlus size={12} />,
+  call: <CornerUpRight size={12} />,
+  wait: <Clock size={12} />,
+  chat_agent: <MessageSquare size={12} />,
 }
 
 // ── Status icon ──
 function StatusBadge({ status }: { status: string }) {
   const dot = {
-    pending: (
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <circle cx="12" cy="12" r="8" />
-      </svg>
-    ),
-    running: (
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="12" cy="12" r="8" />
-      </svg>
-    ),
-    completed: (
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polyline points="20 6 9 17 4 12" />
-      </svg>
-    ),
-    failed: (
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-      >
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    ),
-    paused: (
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-        <rect x="6" y="4" width="4" height="16" rx="1" />
-        <rect x="14" y="4" width="4" height="16" rx="1" />
-      </svg>
-    ),
-  }[status] || (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
-      <circle cx="12" cy="12" r="8" />
-    </svg>
-  )
+    pending: <Circle size={10} />,
+    running: <LoaderCircle size={10} />,
+    completed: <Check size={10} strokeWidth={3} />,
+    failed: <X size={10} strokeWidth={3} />,
+    paused: <Pause size={10} />,
+  }[status] || <Circle size={10} />
 
   return <span className={`wfst-status wfst-status-${status}`}>{dot}</span>
 }
@@ -370,22 +231,7 @@ export function WorkflowTaskPanel({
       {/* ── Header ── */}
       <div className="wfst-header">
         <div className="wfst-header-left">
-          <svg
-            className="wfst-header-icon"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="3" width="7" height="7" />
-            <rect x="14" y="3" width="7" height="7" />
-            <rect x="3" y="14" width="7" height="7" />
-            <rect x="14" y="14" width="7" height="7" />
-          </svg>
+          <LayoutGrid className="wfst-header-icon" size={14} />
           <span className="wfst-title">工作流</span>
         </div>
         {onClose && (
@@ -397,18 +243,7 @@ export function WorkflowTaskPanel({
             aria-label="收起"
             title="收起 (Ctrl+Shift+W)"
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X size={12} />
           </button>
         )}
       </div>
@@ -516,34 +351,17 @@ export function WorkflowTaskPanel({
         <div className="wfst-footer">
           {isPaused ? (
             <button className="wfst-btn wfst-btn-primary" onClick={onResume}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
+              <Play size={12} fill="currentColor" />
               继续
             </button>
           ) : allDone ? (
             <button className="wfst-btn wfst-btn-secondary" onClick={onReRun}>
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="23 4 23 10 17 10" />
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-              </svg>
+              <RotateCcw size={12} />
               重新执行
             </button>
           ) : (
             <button className="wfst-btn wfst-btn-secondary" onClick={onPause}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
+              <Pause size={12} fill="currentColor" />
               暂停
             </button>
           )}
@@ -557,18 +375,7 @@ export function WorkflowTaskPanel({
               onClick={() => setConfirmAction('reset')}
               title="紧急停止 — 重置整个会话状态"
             >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
+              <Zap size={12} fill="currentColor" />
               紧急停止
             </button>
           )}

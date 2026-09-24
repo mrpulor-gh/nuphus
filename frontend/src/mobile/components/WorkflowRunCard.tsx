@@ -11,7 +11,15 @@
  */
 
 import { useEffect, useState } from 'react'
-import { Check, ChevronDown, Circle, Loader2, Pause, Play, Square, X } from 'lucide-react'
+import {
+  Check as CheckIcon,
+  Circle as CircleIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  X as XIcon,
+} from 'lucide'
+import { ChevronDown, Loader2, Square, X } from 'lucide-react'
+import { MorphIcon } from 'morphicons/react'
 import type { WorkflowRunStep } from '../../core/types'
 import { t } from '../i18n'
 
@@ -35,20 +43,24 @@ interface Props {
   onDismiss?: () => void
 }
 
-/** 步骤状态图标映射（running 呼吸 / completed 绿 / failed 红） */
+/** 步骤状态图标映射（running 呼吸 / completed 绿 / failed 红）。
+ *  状态切换位用 MorphIcon：换图标即形变（spring snappy），
+ *  running 保留 Loader2 + CSS 旋转（帧动画，非形态变换）。 */
 function StatusIcon({ status }: { status: WorkflowRunStep['status'] }) {
-  switch (status) {
-    case 'running':
-      return <Loader2 size={14} className="mobile-wf-step-icon is-running" aria-hidden="true" />
-    case 'completed':
-      return <Check size={14} className="mobile-wf-step-icon is-completed" aria-hidden="true" />
-    case 'failed':
-      return <X size={14} className="mobile-wf-step-icon is-failed" aria-hidden="true" />
-    case 'paused':
-      return <Pause size={14} className="mobile-wf-step-icon is-paused" aria-hidden="true" />
-    default:
-      return <Circle size={12} className="mobile-wf-step-icon is-pending" aria-hidden="true" />
+  if (status === 'running') {
+    return <Loader2 size={14} className="mobile-wf-step-icon is-running" aria-hidden="true" />
   }
+  const [icon, tone, size] =
+    status === 'paused'
+      ? [PauseIcon, 'is-paused', 14]
+      : status === 'completed'
+        ? [CheckIcon, 'is-completed', 14]
+        : status === 'failed'
+          ? [XIcon, 'is-failed', 14]
+          : [CircleIcon, 'is-pending', 12]
+  return (
+    <MorphIcon icon={icon} size={size} spring="snappy" className={`mobile-wf-step-icon ${tone}`} />
+  )
 }
 
 export default function WorkflowRunCard({
@@ -70,13 +82,23 @@ export default function WorkflowRunCard({
   // 展开/收起时无需额外副作用；纯 CSS 面板显隐
   const toggle = () => setExpanded(v => !v)
 
-  // 主状态图标：失败 > 完成 > 暂停 > 运行
-  const headIcon = done ? (
-    <Check size={16} className="mobile-wf-pill-icon is-completed" aria-hidden="true" />
-  ) : hasFailed ? (
-    <X size={16} className="mobile-wf-pill-icon is-failed" aria-hidden="true" />
-  ) : isPaused ? (
-    <Pause size={16} className="mobile-wf-pill-icon is-paused" aria-hidden="true" />
+  // 主状态图标：失败 > 完成 > 暂停 > 运行（切换位走 MorphIcon 形变；
+  // running 保留 Loader2 + CSS 旋转——帧动画，非形态变换）
+  const headIconData = done ? CheckIcon : hasFailed ? XIcon : isPaused ? PauseIcon : null
+  const headTone = done
+    ? 'is-completed'
+    : hasFailed
+      ? 'is-failed'
+      : isPaused
+        ? 'is-paused'
+        : 'is-running'
+  const headIcon = headIconData ? (
+    <MorphIcon
+      icon={headIconData}
+      size={16}
+      spring="snappy"
+      className={`mobile-wf-pill-icon ${headTone}`}
+    />
   ) : (
     <Loader2 size={16} className="mobile-wf-pill-icon is-running" aria-hidden="true" />
   )
@@ -165,7 +187,7 @@ export default function WorkflowRunCard({
                   disabled={busy}
                   onClick={onResume}
                 >
-                  <Play size={14} aria-hidden="true" />
+                  <MorphIcon icon={PlayIcon} size={14} spring="snappy" />
                   {t('mobile.wfResume')}
                 </button>
               ) : (
@@ -175,7 +197,7 @@ export default function WorkflowRunCard({
                   disabled={busy}
                   onClick={onPause}
                 >
-                  <Pause size={14} aria-hidden="true" />
+                  <MorphIcon icon={PauseIcon} size={14} spring="snappy" />
                   {t('mobile.wfPause')}
                 </button>
               )}

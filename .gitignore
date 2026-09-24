@@ -177,3 +177,6 @@ projects/
 
 # 绕道编译/检查目录（cargo CARGO_TARGET_DIR 独立产物，不提交）
 target-test/
+
+# 本机专用的构建/启动脚本（内含本机绝对路径，不入库）
+rebuild-and-run.bat

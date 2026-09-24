@@ -62,6 +62,38 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.2.21',
+    date: '2026-09-25',
+    contributors: [
+      {
+        user: 'yuansui486',
+        contributions: [
+          {
+            pr: 58,
+            summary: '完善跨平台桌面执行可靠性与工作流进度沟通',
+          },
+          {
+            pr: 59,
+            summary: '修复画布工作台窗口拖动并增加原型明暗切换',
+          },
+          {
+            pr: 61,
+            summary: '优化工作流节点表单、变量选择与画布布局',
+          },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 63,
+            summary: '增强判断模型 API Key 行增加 TypeSafe 控制台外链',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.20',
     date: '2026-09-24',
     contributors: [
@@ -216,7 +248,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
  */
 export const REPO_COMMITTERS: string[] = [
-  'yuansui486', // 48 commits
+  'yuansui486', // 70 commits
   'fouyzjl', // 12 commits
   'mrpulor-gh', // 3 commits（仓库所有者）
   'jiangdingwei123-afk', // 1 commit

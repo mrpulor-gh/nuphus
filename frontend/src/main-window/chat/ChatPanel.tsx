@@ -82,6 +82,8 @@ import {
   IconImage,
   IconRadio,
   IconSettings,
+  IconStar,
+  IconChartColumn,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -1573,16 +1575,7 @@ export function ChatPanel({
             onClick={() => setShowRefineConfirm(true)}
             title={`${t('refine.pendingBtn')} (${pendingRefine.usagePercent}%)`}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M12 20V10M18 20V4M6 20v-4" strokeLinecap="round" />
-            </svg>
+            <IconChartColumn size={14} />
             <span className="refine-pending-pct">{pendingRefine.usagePercent}%</span>
             {pendingRefine.skippedTurns > 0 && (
               <span className="refine-pending-badge">
@@ -1833,18 +1826,7 @@ export function ChatPanel({
                                     })
                                   }}
                                 >
-                                  <svg
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                                  </svg>
+                                  <IconStar size={14} />
                                 </IconButton>
                                 {msg.traceItems && msg.traceItems.length > 0 && (
                                   <IconButton
@@ -1853,20 +1835,7 @@ export function ChatPanel({
                                     title="查看该轮执行过程"
                                     onClick={() => onShowExecTrace?.(msg.traceItems!)}
                                   >
-                                    <svg
-                                      width="14"
-                                      height="14"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    >
-                                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                                      <path d="M3 3v5h5" />
-                                      <path d="M12 7v5l4 2" />
-                                    </svg>
+                                    <IconHistory size={14} />
                                   </IconButton>
                                 )}
                               </div>
@@ -1930,18 +1899,7 @@ export function ChatPanel({
                     aria-label={t('refine.dismissHint')}
                     onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
                   >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
+                    <IconX size={14} strokeWidth={2} />
                   </button>
                 )}
               </div>
@@ -2132,18 +2090,7 @@ export function ChatPanel({
                   aria-label={t('refine.dismissHint')}
                   onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
+                  <IconX size={14} strokeWidth={2} />
                 </button>
               </div>
               <div className="compact-divider" />
