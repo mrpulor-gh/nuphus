@@ -107,6 +107,8 @@ impl RuntimeEvent {
                     tools: vec![],
                     source,
                     mode: mode.to_string(),
+                    session_id: None,
+                    turn_id: None,
                 }
             }
             RuntimeEvent::LlmTextDelta {

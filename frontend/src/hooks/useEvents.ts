@@ -175,6 +175,8 @@ export function useEvents(h: EventHandlers) {
   const refineOutputRef = useRef('')
   const refineStartTimeRef = useRef(0)
   const refineMsgIdRef = useRef<string | null>(null)
+  const progressTurnRef = useRef<{ session_id: string; turn_id: string } | null>(null)
+  const progressIdsRef = useRef(new Set<string>())
 
   // ── 提炼状态统一复位（四个出口共用，勿在各处复制）──
   // 出口：refine_failed 事件 / forced invoke 失败兜底 / 超时 guard / 手动关闭弹窗。
@@ -398,6 +400,8 @@ export function useEvents(h: EventHandlers) {
       switch (event.type) {
         case 'session_changed':
         case 'new_chat_broadcast':
+          progressTurnRef.current = null
+          progressIdsRef.current.clear()
           // 会话增强偏好由后端按 Workflow session 保存。会话切换或新建后让所有
           // 已挂载的入口重新读取权威状态，避免按钮仍展示上一会话的开关与配置徽标。
           requestWorkflowEnhancedModeRefresh()
@@ -496,6 +500,11 @@ export function useEvents(h: EventHandlers) {
           if (h.refs.executionActiveRef.current) {
             break
           }
+          progressTurnRef.current =
+            event.session_id && event.turn_id
+              ? { session_id: event.session_id, turn_id: event.turn_id }
+              : null
+          progressIdsRef.current.clear()
           // Refine mode: set execution state but don't create a message bubble
           // Keep refineState intact — the modal should stay open until SessionRefined
           if (refineActiveRef.current) {
@@ -737,6 +746,49 @@ export function useEvents(h: EventHandlers) {
             if (!errorTimeoutsRef.current) errorTimeoutsRef.current = []
             errorTimeoutsRef.current.push(tid)
           }
+          break
+        }
+        case 'assistant_progress': {
+          const turn = progressTurnRef.current
+          if (
+            refineActiveRef.current ||
+            !h.refs.executionActiveRef.current ||
+            h.refs.interruptedRef.current ||
+            !turn ||
+            turn.session_id !== event.session_id ||
+            turn.turn_id !== event.turn_id ||
+            progressIdsRef.current.has(event.message_id) ||
+            !event.text.trim()
+          )
+            break
+          progressIdsRef.current.add(event.message_id)
+          const draftId = h.refs.streamingMsgId.current
+          if (!draftId) break
+          h.setMessages(prev => {
+            if (prev.some(m => m.message_id === event.message_id)) return prev
+            const index = prev.findIndex(m => m.id === draftId)
+            if (index < 0) return prev
+            const draft = prev[index]
+            const progress: ChatMessage = {
+              id: event.message_id,
+              message_id: event.message_id,
+              kind: 'progress',
+              role: 'assistant',
+              content: event.text,
+              timestamp: event.timestamp,
+              runtime: 'done',
+            }
+            return [
+              ...prev.slice(0, index),
+              progress,
+              event.replaces_draft
+                ? { ...draft, content: '', timestamp: event.timestamp }
+                : draft.content
+                  ? draft
+                  : { ...draft, timestamp: event.timestamp },
+              ...prev.slice(index + 1),
+            ]
+          })
           break
         }
         case 'llm_text_delta':

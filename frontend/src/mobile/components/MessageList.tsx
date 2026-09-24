@@ -9,6 +9,7 @@ import { Loader2 } from 'lucide-react'
 import type { ChatMessage, ActivityState } from '../store'
 import MessageBubble from './MessageBubble'
 import { t } from '../i18n'
+import { ExecutionActivityLine } from '../../ui/ExecutionActivityLine'
 
 interface Props {
   messages: ChatMessage[]
@@ -99,6 +100,9 @@ export default function MessageList({
           onRateMessage={onRateMessage}
         />
       ))}
+      {activity.mode === 'workflow' && (
+        <ExecutionActivityLine activity={activity.running ? (activity.detail ?? null) : null} />
+      )}
       {/* 执行刚启动、尚无 assistant 消息时的轻量状态行（短暂过渡） */}
       {activity.running && messages.length === 0 && (
         <div className="mobile-exec-line mobile-exec-line--global">

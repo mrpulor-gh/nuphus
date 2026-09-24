@@ -97,6 +97,7 @@ import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { Button, IconButton } from '../../ui/Button'
 import MarkdownContent from './MarkdownContent'
 import { PreviewOverlay } from './PreviewOverlay'
+import { LiveExecutionActivity } from './LiveExecutionActivity'
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
@@ -1782,9 +1783,9 @@ export function ChatPanel({
                                   title="点评"
                                   onClick={() => {
                                     const userMsg =
-                                      idx > 0 && messages[idx - 1]?.role === 'user'
-                                        ? messages[idx - 1].content
-                                        : ''
+                                      [...messages.slice(0, idx)]
+                                        .reverse()
+                                        .find(m => m.role === 'user')?.content ?? ''
                                     setRatingMsg({
                                       id: msg.id,
                                       content: msg.content,
@@ -1846,6 +1847,9 @@ export function ChatPanel({
                       </React.Fragment>
                     )
                   })}
+                  <LiveExecutionActivity
+                    active={isProcessing && mode === 'workflow' && !refining}
+                  />
                 </>
               )
             })()}

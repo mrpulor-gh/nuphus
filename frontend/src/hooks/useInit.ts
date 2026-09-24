@@ -12,6 +12,7 @@ import {
   type HistoryTraceItem,
 } from '../main-window/lib/api'
 import { showAppFeedback } from '../ui/islandChannel'
+import { foldAssistantHistory } from '../core/progressMessages'
 
 type InitStatus = 'pending' | 'loading' | 'done' | 'error'
 
@@ -32,29 +33,12 @@ export interface InitDeps {
 }
 
 /**
- * 历史粒度对齐（对齐手机端 foldHistoryAssistants）：后端 session 每轮
- * push_assistant 一条 → 一次执行的多轮 agent 循环返回多条 → 刷新后一个
- * agent 回复被拆成多个气泡。折叠连续 assistant（中间无 user 间隔）为一条，
- * content 取组内最后非空 content（最终回复）。
- * 与手机端差异：桌面端保留 traceItems（折叠时合并）——气泡执行回溯入口需要
- * 展示对应轮次的完整执行过程（思考/文本/工具调用）。
+ * 已标记的过程说明逐条保留；旧数据继续折叠连续 assistant 轮次。
+ * 空工具轮次不生成气泡，traceItems 合并供执行回溯使用。
  */
 /** 导出供 useSession.reloadChatFromBackend 复用（Session Shelf 切换后刷新） */
 export function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
-  const out: HistoryMessage[] = []
-  for (const m of msgs) {
-    const prev = out[out.length - 1]
-    if (m.role === 'assistant' && prev && prev.role === 'assistant') {
-      out[out.length - 1] = {
-        ...prev,
-        content: m.content && m.content.trim() ? m.content : prev.content,
-        traceItems: [...(prev.traceItems || []), ...(m.traceItems || [])],
-      }
-    } else {
-      out.push(m)
-    }
-  }
-  return out
+  return foldAssistantHistory(msgs)
 }
 
 /** 后端 HistoryTraceItem → 前端 TimelineEntry（执行回溯面板渲染用） */
@@ -142,13 +126,13 @@ export function useInit(deps: InitDeps) {
       try {
         const history = await getChatHistory()
         if (history && history.length > 0) {
-          // 折叠连续 assistant（一次执行的多轮循环）为一条，只显示最终回复
-          // （对齐手机端 foldHistoryAssistants）；桌面端保留 traceItems 供气泡
-          // 执行回溯入口展示该轮完整执行过程。
+          // 保留过程说明，并兼容旧版连续 assistant 历史的折叠行为。
           const folded = foldHistoryAssistants(history)
           setMessages(
             folded.map(h => ({
-              id: crypto.randomUUID(),
+              id: h.message_id ?? crypto.randomUUID(),
+              kind: h.kind,
+              message_id: h.message_id,
               role: h.role as ChatMessage['role'],
               content: h.content,
               images: h.images && h.images.length > 0 ? h.images : undefined,

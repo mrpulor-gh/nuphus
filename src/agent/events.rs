@@ -21,6 +21,21 @@ pub enum NuphusEvent {
         /// Current running mode: "leader" | "workflow"
         #[serde(default)]
         mode: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+    },
+
+    /// User-facing workflow commentary, never raw model reasoning.
+    AssistantProgress {
+        session_id: String,
+        turn_id: String,
+        message_id: String,
+        text: String,
+        timestamp: u64,
+        /// Commit the currently streamed native text rather than duplicate it.
+        replaces_draft: bool,
     },
 
     /// Tool call start (from_task: true when executed by ExecuteAgent, for frontend to distinguish)
@@ -549,6 +564,8 @@ mod tests {
                 tools: vec![],
                 source: "desktop".into(),
                 mode: "leader".into(),
+                session_id: None,
+                turn_id: None,
             })
             .unwrap(),
             serde_json::to_value(NuphusEvent::ExecutionCompleted {

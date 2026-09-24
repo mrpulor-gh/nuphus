@@ -128,6 +128,8 @@ export interface ApiHealthState {
 
 export interface ChatMessage {
   id: string
+  kind?: 'progress'
+  message_id?: string
   role: 'user' | 'assistant' | 'system' | 'refine'
   content: string
   /** 图片附件（base64 data URL） */
@@ -527,6 +529,17 @@ export type NuphusEvent =
       tools: string[]
       source: string
       mode?: string
+      session_id?: string
+      turn_id?: string
+    }
+  | {
+      type: 'assistant_progress'
+      session_id: string
+      turn_id: string
+      message_id: string
+      text: string
+      timestamp: number
+      replaces_draft: boolean
     }
   | {
       type: 'tool_call_start'

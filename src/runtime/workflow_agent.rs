@@ -475,7 +475,11 @@ impl WorkflowAgent {
             tools: self.tools.tool_names(),
             source: self.source.clone(),
             mode: "workflow".to_string(),
+            session_id: Some(self.session.id.clone()),
+            turn_id: Some(self.session.turn_count.to_string()),
         });
+        let mut progress_cadence =
+            super::workflow_progress::ProgressCadence::new(std::time::Instant::now());
 
         let mut user_requested_stop = false;
 
@@ -580,6 +584,11 @@ impl WorkflowAgent {
             }
 
             self.inject_delivery_warning();
+            if !self.internal_input && progress_cadence.take_reminder(std::time::Instant::now()) {
+                self.session.push_user_internal(
+                    "[沟通提醒] 用户已有一段时间没有收到过程说明。下一步操作前请用 workflow_report_progress 简短说明已确认的进展、当前问题或下一步，然后继续执行；不要复述思考，不为汇报暂停等待，也不要把未知结果说成完成。若已完成则直接输出最终结果。".into()
+                );
+            }
 
             // ── Context watermark warning (WorkflowAgent 无压缩机制) ──
             if self.inject_context_warning() {
@@ -591,6 +600,9 @@ impl WorkflowAgent {
 
             // ── LLM call with real-time streaming ──
             let events = self.llm_stream_with_streaming(cancel_flag).await?;
+            if cancel_flag.load(Ordering::SeqCst) {
+                continue; // Report cancellation at the next loop boundary; do not dispatch.
+            }
 
             let assistant_blocks = self.process_events(events);
 
@@ -603,6 +615,9 @@ impl WorkflowAgent {
                 max_iterations: self.config.max_iterations as u32,
                 tool_calls_so_far: self.tool_call_count,
             });
+            if cancel_flag.load(Ordering::SeqCst) {
+                continue;
+            }
 
             if assistant_blocks.is_empty() {
                 continue;
@@ -708,12 +723,70 @@ impl WorkflowAgent {
             }
 
             // ── Has tool calls: push to session, then execute ──
+            let native_index = self.session.len();
             self.session.push_assistant(assistant_blocks);
+            let native_progress = self.session.messages()[native_index].text_content();
+            if !native_progress.trim().is_empty() && !self.internal_input {
+                self.emit_progress(
+                    format!("{}:text:{}", self.session.id, native_index),
+                    native_progress.clone(),
+                    true,
+                );
+                progress_cadence.reported(std::time::Instant::now());
+            }
 
             // ── Sequential tool execution (workflow design is deliberation-heavy) ──
             let mut protection_warnings: Vec<String> = Vec::new();
 
             for call in &tool_calls {
+                if cancel_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                // Commentary is local UI delivery, not a business action or approval.
+                // Keeping it in the tool loop allows reasoning-only providers to speak
+                // without a text-only response prematurely completing the task.
+                if call.tool == "workflow_report_progress" {
+                    let message = call
+                        .params
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let valid = !message.is_empty()
+                        && message.chars().count() <= 4000
+                        && !self.internal_input
+                        && self.emitter.is_some();
+                    if valid {
+                        // Same-round duplicate native text is already visible.
+                        let duplicate = message == native_progress.trim();
+                        let timestamp = if !duplicate {
+                            self.emit_progress(call.id.clone(), message.to_string(), false)
+                        } else {
+                            self.session.messages()[native_index]
+                                .timestamp
+                                .unwrap_or_default()
+                        };
+                        self.session.push_tool_result(
+                            call.id.clone(),
+                            serde_json::json!({
+                                "delivered":true, "message":message, "message_id":call.id,
+                                "duplicate":duplicate, "timestamp":timestamp
+                            })
+                            .to_string(),
+                            false,
+                        );
+                        progress_cadence.reported(std::time::Instant::now());
+                    } else {
+                        self.session.push_tool_result(
+                            call.id.clone(),
+                            "无法投递进度：需要消息接收器及非空、不超过 4000 字符的正文；内部提炼流程不能汇报进度"
+                                .into(),
+                            true,
+                        );
+                    }
+                    continue;
+                }
+                progress_cadence.business_call();
                 self.tool_call_count += 1;
                 self.emit(NuphusEvent::ToolCallStart {
                     call_id: call.id.clone(),
@@ -1222,7 +1295,32 @@ impl WorkflowAgent {
         }
     }
 
-    /// LLM call with real-time streaming to frontend + network retry
+    /// Publish public commentary and return the timestamp persisted in its receipt.
+    fn emit_progress(&self, message_id: String, text: String, replaces_draft: bool) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let timestamp = if replaces_draft {
+            self.session
+                .messages()
+                .last()
+                .and_then(|m| m.timestamp)
+                .unwrap_or(now)
+        } else {
+            now
+        };
+        self.emit(NuphusEvent::AssistantProgress {
+            session_id: self.session.id.clone(),
+            turn_id: self.session.turn_count.to_string(),
+            message_id,
+            text,
+            timestamp,
+            replaces_draft,
+        });
+        timestamp
+    }
+    /// LLM call with real-time streaming to frontend + network retry.
     async fn llm_stream_with_streaming(
         &mut self,
         cancel_flag: &AtomicBool,

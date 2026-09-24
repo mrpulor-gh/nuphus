@@ -115,6 +115,8 @@ export interface HistoryTraceItem {
 }
 
 export interface HistoryMessage {
+  kind?: 'progress'
+  message_id?: string
   role: string
   content: string
   images: string[]
