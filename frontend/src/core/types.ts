@@ -130,6 +130,8 @@ export interface ChatMessage {
   id: string
   kind?: 'progress'
   message_id?: string
+  /** Stable presentation container; atomic receipts remain independently addressable. */
+  reply_id?: string
   role: 'user' | 'assistant' | 'system' | 'refine'
   content: string
   /** 图片附件（base64 data URL） */

@@ -11,6 +11,7 @@ import type {
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
+import { composeAssistantReplies } from '../../core/progressMessages'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
@@ -255,7 +256,7 @@ function migrateLegacyProjectBookmarks(existing: ProjectBookmark[]): ProjectBook
 }
 
 export function ChatPanel({
-  messages,
+  messages: messageRecords,
   executionStage,
   onSend,
   onGracefulStop,
@@ -313,6 +314,7 @@ export function ChatPanel({
   onRate,
   onShowExecTrace,
 }: ChatPanelProps) {
+  const messages = useMemo(() => composeAssistantReplies(messageRecords), [messageRecords])
   const { t } = useLanguage()
   // ── 执行态谓词（同一来源 executionStage 的两个派生，禁止再引入第二个来源）──
   // isProcessing：主循环在迭代中 —— 气泡光标 / 思考条呼吸 / 「发送=追加」提示。

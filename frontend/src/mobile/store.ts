@@ -31,6 +31,7 @@ export interface ChatMessage {
   id: string
   kind?: 'progress'
   message_id?: string
+  reply_id?: string
   role: 'user' | 'assistant' | 'system' | 'refine'
   content: string
   /** 图片 data URL 列表（桌面端发的图在手机端可见） */
@@ -272,7 +273,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       return {
         ...state,
         messages: [
-          ...state.messages,
+          ...finalizeStreaming(state.messages),
           {
             id: rid(),
             role: 'user',
@@ -375,6 +376,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       messages.push(
         {
           id: ev.message_id,
+          reply_id: draft.id,
           message_id: ev.message_id,
           kind: 'progress',
           role: 'assistant',
@@ -1047,7 +1049,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return state
     }
     case 'optimistic':
-      return { ...state, messages: [...state.messages, action.message] }
+      return { ...state, messages: [...finalizeStreaming(state.messages), action.message] }
     case 'send_failed':
       // 发送未被接受（busy/错误）：撤掉乐观气泡，以系统消息说明原因
       return {

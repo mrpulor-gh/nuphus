@@ -1,6 +1,6 @@
 import { act, render, renderHook, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { foldAssistantHistory } from '../core/progressMessages'
+import { composeAssistantReplies, foldAssistantHistory } from '../core/progressMessages'
 import { chatReducer, initialChatState } from '../mobile/store'
 import { useEvents, type EventHandlers } from '../hooks/useEvents'
 import type { ChatMessage, NuphusEvent } from '../core/types'
@@ -83,7 +83,7 @@ function desktop() {
   const send = (event: NuphusEvent) =>
     act(() => callbacks.get('nuphus-event')?.({ seq: ++seq, event }))
   send(started)
-  return { send, messages: () => messages, refs }
+  return { send, messages: () => composeAssistantReplies(messages), records: () => messages, refs }
 }
 
 describe('workflow progress narration', () => {
@@ -91,12 +91,12 @@ describe('workflow progress narration', () => {
     callbacks.clear()
     vi.useRealTimers()
   })
-  it('desktop keeps report tool narration before a separate final message', () => {
+  it('desktop keeps narration and final in the same reply', () => {
     const h = desktop()
     h.send(progress())
     h.send(completed)
-    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。', '完成了。'])
-    expect(h.messages()[0].kind).toBe('progress')
+    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。\n\n完成了。'])
+    expect(h.messages()[0].runtime).toBe('done')
   })
   it('desktop converts streamed text once and ignores duplicate/old turn events', () => {
     const h = desktop()
@@ -104,10 +104,10 @@ describe('workflow progress narration', () => {
     h.send(progress({ replaces_draft: true }))
     h.send(progress({ replaces_draft: true }))
     h.send(progress({ turn_id: 'old', message_id: 'old' }))
-    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。', ''])
+    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。'])
     h.send(completed)
     h.send(progress({ message_id: 'late' }))
-    expect(h.messages()).toHaveLength(2)
+    expect(h.messages()).toHaveLength(1)
   })
   it('desktop preserves progress on errors and rejects switched-session events', () => {
     const h = desktop()
@@ -116,7 +116,113 @@ describe('workflow progress narration', () => {
     expect(h.messages()[0].content).toBe('先检查已有流程。')
     h.send({ type: 'new_chat_broadcast' })
     h.send(progress({ message_id: 'late' }))
-    expect(h.messages()).toHaveLength(2)
+    expect(h.messages()).toHaveLength(1)
+  })
+  it('desktop appends final streaming text and keeps one stable presentation container', () => {
+    const h = desktop()
+    h.send(text)
+    const id = h.messages()[0].id
+    h.send(progress({ replaces_draft: true }))
+    h.send(progress({ message_id: 'p2', text: '正在验证。' }))
+    h.send({ ...text, text: '完成' })
+    expect(h.messages()).toHaveLength(1)
+    expect(h.messages()[0].id).toBe(id)
+    expect(h.messages()[0].content).toBe('先检查已有流程。\n\n正在验证。\n\n完成')
+    h.send(completed)
+    expect(h.messages()[0].content).toBe('先检查已有流程。\n\n正在验证。\n\n完成了。')
+  })
+  it('desktop output after an appended user message stays after that message', () => {
+    const h = desktop()
+    h.send(progress())
+    h.send({ type: 'user_message_received', source: 'mobile', content: '改用新目录' })
+    h.send(progress({ message_id: 'p2', text: '按新目录继续。' }))
+    h.send(completed)
+    expect(h.messages().map(m => m.content)).toEqual([
+      '先检查已有流程。',
+      '改用新目录',
+      '按新目录继续。\n\n完成了。',
+    ])
+    expect(new Set(h.messages().map(m => m.id)).size).toBe(3)
+  })
+  it('desktop does not leave an empty bubble when stopped before any public text', () => {
+    const h = desktop()
+    h.send({ type: 'execution_error', step_index: 0, error: 'Stopped' })
+    expect(h.messages()).toHaveLength(0)
+  })
+  it('mobile preserves a progress-only reply on pause and interruption without placeholders', () => {
+    let state = chatReducer(initialChatState, { type: 'event', event: started })
+    state = chatReducer(state, { type: 'event', event: progress() })
+    state = chatReducer(state, {
+      type: 'event',
+      event: { type: 'execution_paused', action_id: 'a' },
+    })
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。',
+    ])
+    state = chatReducer(state, { type: 'sync_running', running: false })
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。',
+    ])
+  })
+  it('mobile keeps subsequent output after the user append', () => {
+    let state = chatReducer(initialChatState, { type: 'event', event: started })
+    state = chatReducer(state, { type: 'event', event: progress() })
+    state = chatReducer(state, {
+      type: 'optimistic',
+      message: { id: 'u2', role: 'user', content: '追加' },
+    })
+    state = chatReducer(state, {
+      type: 'event',
+      event: progress({ message_id: 'p2', text: '收到。' }),
+    })
+    state = chatReducer(state, { type: 'event', event: completed })
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。',
+      '追加',
+      '收到。\n\n完成了。',
+    ])
+  })
+  it('history composition respects user and refine boundaries and preserves media', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'p1',
+        message_id: 'p1',
+        kind: 'progress',
+        role: 'assistant',
+        content: '检查。',
+        timestamp: 1,
+      },
+      {
+        id: 'p2',
+        message_id: 'p2',
+        kind: 'progress',
+        role: 'assistant',
+        content: '检查。',
+        timestamp: 2,
+      },
+      {
+        id: 'f1',
+        role: 'assistant',
+        content: '完成。',
+        images: ['image'],
+        audio: ['audio'],
+        timestamp: 3,
+      },
+      { id: 'r', role: 'refine', content: '提炼', timestamp: 4 },
+      { id: 'p3', kind: 'progress', role: 'assistant', content: '新阶段', timestamp: 5 },
+      { id: 'u', role: 'user', content: '新问题', timestamp: 6 },
+      { id: 'f2', role: 'assistant', content: '新回复', timestamp: 7 },
+    ]
+    const visible = composeAssistantReplies(foldAssistantHistory(messages))
+    expect(visible.map(m => m.content)).toEqual([
+      '检查。\n\n检查。\n\n完成。',
+      '提炼',
+      '新阶段',
+      '新问题',
+      '新回复',
+    ])
+    expect(visible[0]).toMatchObject({ timestamp: 1, images: ['image'], audio: ['audio'] })
+    expect(composeAssistantReplies(visible)).toEqual(visible)
   })
   it('mobile preserves converted text, standalone reports and final response', () => {
     let state = chatReducer(initialChatState, { type: 'event', event: started })
@@ -129,10 +235,8 @@ describe('workflow progress narration', () => {
     ]) {
       state = chatReducer(state, { type: 'event', event })
     }
-    expect(state.messages.map(m => m.content)).toEqual([
-      '先检查已有流程。',
-      '正在验证结果。',
-      '完成了。',
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。\n\n正在验证结果。\n\n完成了。',
     ])
   })
   it('mobile ignores stale progress and does not expose subtask text as narration', () => {
@@ -150,6 +254,9 @@ describe('workflow progress narration', () => {
       messages: state.messages.filter(m => m.kind === 'progress'),
     })
     expect(state.messages.filter(m => m.kind === 'progress')).toHaveLength(2)
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。\n\n先检查已有流程。',
+    ])
   })
   it('mobile reconnect binds missing scope only after authoritative running recovery', () => {
     let state = chatReducer(initialChatState, {
@@ -176,7 +283,9 @@ describe('workflow progress narration', () => {
     state = chatReducer(state, { type: 'event', event: text })
     state = chatReducer(state, { type: 'event', event: progress({ replaces_draft: true }) })
     state = chatReducer(state, { type: 'event', event: completed })
-    expect(state.messages.map(m => m.content)).toEqual(['先检查已有流程。', '完成了。'])
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
+      '先检查已有流程。\n\n完成了。',
+    ])
   })
   it('mobile reconnect binds a history duplicate without duplicating or losing later progress', () => {
     let state = chatReducer(initialChatState, {
@@ -196,6 +305,7 @@ describe('workflow progress narration', () => {
     state = chatReducer(state, { type: 'event', event: progress({ message_id: 'p2' }) })
     expect(state.messages.filter(m => m.kind === 'progress')).toHaveLength(2)
     expect(state.activity.progressScopeRecovery).toBeUndefined()
+    expect(composeAssistantReplies(state.messages)).toHaveLength(1)
   })
   it('explicit new chat blocks stale recovery even if a late running response arrives', () => {
     let state = chatReducer(initialChatState, { type: 'sync_running', running: true })
@@ -220,7 +330,7 @@ describe('workflow progress narration', () => {
     state = chatReducer(state, { type: 'event', event: progress() })
     expect(state.messages).toHaveLength(0)
   })
-  it('history keeps progress separated and never mutates source traces', () => {
+  it('history preserves receipt IDs internally but renders one reply without mutating traces', () => {
     const history = [
       { role: 'user', content: 'go' },
       { role: 'assistant', content: '', traceItems: ['tool'] },
@@ -233,6 +343,9 @@ describe('workflow progress narration', () => {
     expect(folded.map(m => m.content)).toEqual(['go', 'checking', 'done'])
     expect(folded[1].traceItems).toEqual(['tool'])
     expect(history[2].traceItems).toBeUndefined()
+    const visible = composeAssistantReplies(folded.map((m, i) => ({ ...m, id: String(i) })))
+    expect(visible.map(m => m.content)).toEqual(['go', 'checking\n\ndone'])
+    expect(visible[1].traceItems).toEqual(['tool', 'another tool'])
   })
   it('old history still folds consecutive assistant rounds', () => {
     expect(

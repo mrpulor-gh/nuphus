@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
 import { debugEnabled } from '../core/debug'
+import { continueReplyAfterUser } from '../core/progressMessages'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -385,7 +386,9 @@ export function useEvents(h: EventHandlers) {
         // Update existing streaming message, never create new
         if (s && content) {
           h.setMessages(prev =>
-            prev.map(m => (m.id === s ? { ...m, content, runtime: 'done' } : m)),
+            continueReplyAfterUser(prev, s).map(m =>
+              m.id === s ? { ...m, content, runtime: 'done' } : m,
+            ),
           )
         }
         h.refs.streamingMsgId.current = null
@@ -766,11 +769,13 @@ export function useEvents(h: EventHandlers) {
           if (!draftId) break
           h.setMessages(prev => {
             if (prev.some(m => m.message_id === event.message_id)) return prev
+            prev = continueReplyAfterUser(prev, draftId)
             const index = prev.findIndex(m => m.id === draftId)
             if (index < 0) return prev
             const draft = prev[index]
             const progress: ChatMessage = {
               id: event.message_id,
+              reply_id: draft.reply_id ?? draft.id,
               message_id: event.message_id,
               kind: 'progress',
               role: 'assistant',
@@ -816,7 +821,9 @@ export function useEvents(h: EventHandlers) {
             const s = h.refs.streamingMsgId.current
             if (!event.is_thinking && !event.from_task && s) {
               h.setMessages((prev: ChatMessage[]) =>
-                prev.map(m => (m.id === s ? { ...m, content: m.content + event.text } : m)),
+                continueReplyAfterUser(prev, s).map(m =>
+                  m.id === s ? { ...m, content: m.content + event.text } : m,
+                ),
               )
             }
             const kind = event.is_thinking ? ('thinking' as const) : ('text' as const)
@@ -862,7 +869,7 @@ export function useEvents(h: EventHandlers) {
             // finalMsg 非空时无条件覆盖，避免"中间的空格都是 thinking 的 chars"。
             const content = finalMsg.trim() ? finalMsg : '（已执行完成，未产出回复）'
             h.setMessages((prev: ChatMessage[]) =>
-              prev.map(m =>
+              continueReplyAfterUser(prev, s).map(m =>
                 m.id === s
                   ? {
                       ...m,
