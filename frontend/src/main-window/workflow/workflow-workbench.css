@@ -29,9 +29,18 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+.workflow-workbench-drag {
+  flex: 1 0 48px;
+  align-self: stretch;
+  user-select: none;
 }
 .workflow-workbench-types button {
+  flex-shrink: 0;
+  white-space: nowrap;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 6px 9px;

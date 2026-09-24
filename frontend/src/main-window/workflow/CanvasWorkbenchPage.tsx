@@ -134,6 +134,7 @@ export function CanvasWorkbenchPage({
             <span>{t('workflow.workType.tools')}</span>
           </button>
         </nav>
+        <span className="workflow-workbench-drag" data-tauri-drag-region />
       </header>
       <main className={`workflow-workbench-body workflow-workbench-body--${canvasType}`}>
         {canvasType === 'workflow-editor' && (
