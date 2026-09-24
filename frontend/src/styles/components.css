@@ -860,14 +860,13 @@
 }
 .model-provider-models {
   position: fixed;
-  top: auto;
-  left: auto;
   z-index: 3;
   display: flex;
-  flex: 1;
   flex-direction: column;
   width: 236px;
   min-width: 0;
+  /* 高度上限（内联 maxHeight 会按弹窗一半覆盖）；实际高度随内容自适应，
+     1 个模型就只占 1 行，不留空白 */
   max-height: min(320px, 48vh);
   overflow-y: auto;
   gap: 2px;
