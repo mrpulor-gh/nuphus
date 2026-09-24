@@ -10,7 +10,7 @@ describe('workflow input anchors', () => {
       name: 'Consume',
       do: { tool: 'Read', with: { path: '{{inputs.topic}}' } },
     }
-    expect(profileStep(step).consumes).toEqual([{ varName: 'topic', pipes: [] }])
+    expect(profileStep(step).consumes).toEqual([{ varName: 'topic', pipes: [], input: true }])
   })
 
   it('renders declared inputs even when they are unused', () => {
@@ -20,7 +20,7 @@ describe('workflow input anchors', () => {
     })
     const anchor = projection.layers.get('root')?.nodes.find(node => node.externalVar === 'topic')
     expect(anchor).toMatchObject({
-      name: '外部 · topic',
+      name: '工作流输入 · topic',
       externalInput: true,
       externalInputDeclared: true,
     })

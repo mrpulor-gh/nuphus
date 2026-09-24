@@ -9,6 +9,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { InspectorDraftContext, InspectorDraftStore } from './inspectorDrafts'
+import { buildVariableCatalogIndex } from './variableCatalog'
+import { profileStep, walkSteps } from './dataEdges'
+import type { CanvasLeaveGuard } from './useCanvasLeaveGuard'
+import { useSyncExternalStore } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -99,25 +104,11 @@ import { WorkflowInputsEditor } from './WorkflowInputsEditor'
 import { WorkflowScheduleDialog } from '../workflow/WorkflowScheduleDialog'
 import { WorkflowSwitcher } from './WorkflowSwitcher'
 import './workflow-canvas.css'
+import { useLanguage } from '../../locales'
+import { ADDABLE_KINDS, nodeKindDescription, nodeKindLabel } from './presentation'
 
 const nodeTypes = { step: StepNode, container: ContainerNode, lane: LaneFrame }
 const edgeTypes = { sequence: SequenceEdge, data: DataEdge }
-
-const ADDABLE_KINDS: { kind: string; desc: string }[] = [
-  { kind: 'tool', desc: '调用工具（桌面/浏览器/文件等）' },
-  { kind: 'seq', desc: '顺序容器，子步骤依次执行' },
-  { kind: 'loop', desc: '循环容器，遍历或按次数重复' },
-  { kind: 'if', desc: '条件分支（then/else 双泳道）' },
-  { kind: 'call', desc: '调用另一个工作流' },
-  { kind: 'wait', desc: '等待人工确认后继续' },
-  { kind: 'chat', desc: 'Chat Agent 对话步骤' },
-  { kind: 'script', desc: '执行脚本（Python 等）' },
-  { kind: 'assert', desc: '断言校验，失败即中断' },
-  { kind: 'mcp', desc: '调用 MCP server 工具' },
-  { kind: 'sleep', desc: '延时等待指定秒数' },
-  { kind: 'break', desc: '立即跳出当前循环' },
-  { kind: 'continue', desc: '跳过本次循环进入下一轮' },
-]
 
 interface CanvasPageProps {
   workflowId: string
@@ -126,6 +117,7 @@ interface CanvasPageProps {
   onClose: () => void
   /** 切换到另一个工作流画布（工作台注入：换 id 即整页换成目标工作流） */
   onSwitchWorkflow?: (id: string) => void
+  registerLeaveGuard?: (guard: CanvasLeaveGuard | null) => void
 }
 
 /**
@@ -201,7 +193,9 @@ function CanvasInner({
   onExitReplay,
   onClose,
   onSwitchWorkflow,
+  registerLeaveGuard,
 }: CanvasPageProps) {
+  const { t } = useLanguage()
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -212,8 +206,17 @@ function CanvasInner({
   const gateLockNotice =
     gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
   const [ir, setIr] = useState<WorkflowIR | null>(null)
+  const irRef = useRef<WorkflowIR | null>(null)
+  irRef.current = ir
   const [steps, setSteps] = useState<WorkflowStep[] | null>(null)
-  const [dirty, setDirty] = useState(false)
+  const [committedDirty, setDirty] = useState(false)
+  const [draftStore] = useState(() => new InspectorDraftStore())
+  useSyncExternalStore(draftStore.subscribe, draftStore.snapshot)
+  const dirty = committedDirty || draftStore.dirty
+  const editRevision = useRef(0)
+  const saving = useRef(false)
+  const visitedInspectors = useRef(new Set<string>())
+  const fieldEditPositions = useRef(new Map<string, Record<string, NodePos>>())
   /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
   const [inputsOpen, setInputsOpen] = useState(false)
   const [inputsEditorOpen, setInputsEditorOpen] = useState(false)
@@ -335,6 +338,9 @@ function CanvasInner({
   const sidecarSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stepsRef = useRef<WorkflowStep[] | null>(null)
   stepsRef.current = steps
+  useEffect(() => {
+    if (steps) draftStore.prune(collectIds(steps))
+  }, [steps, draftStore])
 
   // ── 加载 ──
   useEffect(() => {
@@ -395,10 +401,30 @@ function CanvasInner({
 
   // ── 投影（IR → 图层）──
   const projection = useMemo(
-    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }) : null),
-    [steps, ir?.inputs],
+    () => (steps ? projectWorkflow({ steps, inputs: ir?.inputs }, t) : null),
+    [steps, ir?.inputs, t],
   )
   const layer = projection?.layers.get(layerId) ?? null
+  const variableIndex = useMemo(
+    () => buildVariableCatalogIndex(steps ?? [], declaredInputs),
+    [steps, declaredInputs],
+  )
+  const captureConsumers = useMemo(() => {
+    const uses = new Map<string, { id: string; name: string }[]>()
+    walkSteps(steps ?? [], step => {
+      for (const reference of profileStep(step).consumes) {
+        if (reference.input) continue
+        const source = variableIndex.beforeStep.get(step.id)?.get(reference.varName)
+        for (const producer of source?.producerStepIds ?? []) {
+          const consumers = uses.get(producer) ?? []
+          if (!consumers.some(c => c.id === step.id))
+            consumers.push({ id: step.id, name: step.name || step.id })
+          uses.set(producer, consumers)
+        }
+      }
+    })
+    return uses
+  }, [steps, variableIndex])
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
   const readOnly = snapshot.running || !!projection?.index.hasCustomNodes || !!replayRunId
@@ -491,9 +517,19 @@ function CanvasInner({
   }, [steps, snapshot.steps, historyStatus])
 
   // ── 层 → React Flow 图 ──
+  const layoutOverrides = useMemo(
+    () =>
+      layer
+        ? {
+            ...fieldEditPositions.current.get(layer.layerId),
+            ...layerPosFromSidecar(sidecar, layer.layerId),
+          }
+        : undefined,
+    [layer, sidecar],
+  )
   const laneFrames = useMemo(() => {
     if (!layer || layer.swimlanes.length < 2) return []
-    const pos = layoutLayer(layer, layerPosFromSidecar(sidecar, layer.layerId))
+    const pos = layoutLayer(layer, layoutOverrides)
     const frames: {
       id: string
       title: string
@@ -549,14 +585,14 @@ function CanvasInner({
       })
     }
     return frames
-  }, [layer, sidecar])
+  }, [layer, layoutOverrides])
 
   useEffect(() => {
     if (!layer) {
       setFlowNodes([])
       return
     }
-    const pos = layoutLayer(layer, layerPosFromSidecar(sidecar, layer.layerId))
+    const pos = layoutLayer(layer, layoutOverrides)
     const dir = layerDir(layer.layerId)
     const nodes: FlowNode[] = []
     for (const f of laneFrames) {
@@ -606,6 +642,7 @@ function CanvasInner({
   }, [
     layer,
     sidecar,
+    layoutOverrides,
     snapshot.steps,
     historyStatus,
     problemByStep,
@@ -646,6 +683,8 @@ function CanvasInner({
             dangling: e.dangling,
             external: e.kind === 'external',
             producerStepId: e.producerStepId,
+            maybeUnset: e.maybeUnset,
+            sourceSummary: e.sourceSummary,
           },
           selectable: false,
         }
@@ -691,35 +730,28 @@ function CanvasInner({
     [],
   )
 
-  // D4：关闭 Inspector 时若有空名/必填缺失字段给确认提醒（不推翻即时提交模型）
+  // Closing a panel does not discard its canvas-owned drafts.
   const closeInspector = useCallback(() => {
-    // 已有确认弹窗在等待用户决定时不重复弹（Esc 连按/点击竞争场景）
     if (confirm) return
-    const cur = stepsRef.current
-    const step = selectedId && cur ? locateStep(cur, selectedId)?.step : null
-    if (step && !readOnly && !step.name.trim()) {
-      void askConfirm('该步骤尚未命名，空名称将无法通过保存/运行校验。仍要关闭编辑？').then(ok => {
-        if (ok) setInspectorOpen(false)
-      })
-      return
-    }
     setInspectorOpen(false)
-  }, [selectedId, readOnly, askConfirm, confirm])
+  }, [confirm])
 
   // ── 关闭守卫：有未保存修改时二次确认（复用 askConfirm 弹窗）──
-  const handleClose = useCallback(() => {
-    if (!dirty) {
-      onClose()
-      return
-    }
-    void askConfirm('有未保存的修改，关闭将丢弃（如需保留请先点「保存」）。确认关闭？').then(ok => {
-      if (ok) onClose()
-    })
-  }, [dirty, askConfirm, onClose])
+  const canLeave = useCallback(async () => {
+    if (confirm) return false
+    return (
+      !dirty ||
+      (await askConfirm('有未保存的修改，离开将丢弃（如需保留请先点「保存」）。确认离开？'))
+    )
+  }, [dirty, askConfirm, confirm])
+  useEffect(() => {
+    registerLeaveGuard?.(canLeave)
+    return () => registerLeaveGuard?.(null)
+  }, [registerLeaveGuard, canLeave])
 
   const applyEdit = useCallback(
     async (op: Parameters<typeof applyOp>[1]) => {
-      const cur = stepsRef.current
+      let cur = stepsRef.current
       if (!cur || readOnly) return false
       const check = checkOp(cur, op, { runHistory: ir?.run_history })
       if (!check.ok) {
@@ -729,14 +761,36 @@ function CanvasInner({
       if (check.confirm) {
         const ok = await askConfirm(check.confirm)
         if (!ok) return false
+        cur = stepsRef.current
+        if (!cur || !checkOp(cur, op, { runHistory: ir?.run_history }).ok) return false
       }
       historyRef.current.push(cur)
-      setSteps(applyOp(cur, op))
+      if (op.op === 'update_fields') {
+        const positions: Record<string, NodePos> = {}
+        for (const node of rf.getNodes()) {
+          if (node.type !== 'lane') positions[node.id] = { ...node.position }
+        }
+        if (op.patch.id && positions[op.stepId]) {
+          positions[op.patch.id] = positions[op.stepId]
+          delete positions[op.stepId]
+        }
+        fieldEditPositions.current.set(layerId, positions)
+      } else fieldEditPositions.current.clear()
+      const next = applyOp(cur, op)
+      if (op.op === 'update_fields' && op.patch.id && op.patch.id !== op.stepId) {
+        draftStore.renameNode(op.stepId, op.patch.id)
+        visitedInspectors.current.delete(op.stepId)
+        visitedInspectors.current.add(op.patch.id)
+        setSelectedId(id => (id === op.stepId ? op.patch.id! : id))
+      }
+      stepsRef.current = next
+      setSteps(next)
+      editRevision.current++
       setDirty(true)
       setNotice(null)
       return true
     },
-    [readOnly, ir?.run_history, askConfirm],
+    [readOnly, ir?.run_history, askConfirm, draftStore, rf, layerId],
   )
 
   const undo = useCallback(() => {
@@ -744,7 +798,10 @@ function CanvasInner({
     if (!cur || readOnly) return
     const prev = historyRef.current.undo(cur)
     if (prev) {
+      fieldEditPositions.current.clear()
+      stepsRef.current = prev
       setSteps(prev)
+      editRevision.current++
       setDirty(true)
     }
   }, [readOnly])
@@ -754,55 +811,112 @@ function CanvasInner({
     if (!cur || readOnly) return
     const next = historyRef.current.redo(cur)
     if (next) {
+      fieldEditPositions.current.clear()
+      stepsRef.current = next
       setSteps(next)
+      editRevision.current++
       setDirty(true)
     }
   }, [readOnly])
+
+  const flushDrafts = useCallback(async () => {
+    const failure = await draftStore.flush()
+    if (!failure) return true
+    const location = stepsRef.current && locateStep(stepsRef.current, failure.nodeId)
+    if (location) {
+      setLayerId(location.layerId)
+      setSelectedId(failure.nodeId)
+      setInspectorOpen(true)
+      requestAnimationFrame(() => {
+        const panel = document.querySelector(
+          `[data-inspector-node="${CSS.escape(failure.nodeId)}"]`,
+        )
+        const field = [
+          ...(panel?.querySelectorAll<HTMLElement>('[data-draft-field], label') ?? []),
+        ].find(
+          el =>
+            el.dataset.draftField === failure.field ||
+            (el.tagName === 'LABEL' && el.textContent?.includes(failure.field)),
+        )
+        let details = field?.closest('details')
+        while (details) {
+          details.open = true
+          details = details.parentElement?.closest('details') ?? null
+        }
+        field?.querySelector<HTMLElement>('input, textarea, select')?.focus()
+      })
+    }
+    setNotice(`请先修正「${failure.field}」：${failure.error}`)
+    return false
+  }, [draftStore])
 
   // ── 保存（1.6：wf_save 后端强制校验，errors 阻断回 ProblemsPanel）
   // nameOverride：重命名时传入新名（与当前步骤编辑一并保存；空/省略则沿用原名）──
   const save = useCallback(
     async (nameOverride?: string) => {
-      const cur = stepsRef.current
-      if (!cur || !ir) return
-      // ── 执行期拒绝落盘（B5）──
-      // 执行器运行期间会对同一份文档做 read-modify-write（run 进度节流落盘），子工作流
-      // 更是**在调用点**才重新读取 IR——执行中保存会与执行器互相覆盖、并改变后续子调用
-      // 实际执行的 IR。故不改「只落内存」：内存改动本来就在画布上，落盘才是危险动作。
-      // 判定与「运行」入口同源（useWorkflowGate → wf_gate_status），后端 wf_save 兜底。
-      const gateNow = await gateRefresh()
-      if (gateNow.locked) {
-        setNotice(
-          gateNow.reason === 'workflow'
-            ? '工作流执行中，暂不可保存（编辑仍在画布上，执行结束后按 Ctrl+S 保存）'
-            : '当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后按 Ctrl+S 保存）',
-        )
-        return
-      }
-      const name = nameOverride?.trim()
-      const payload = { ...ir, steps: cur, ...(name ? { name } : {}) }
+      if (saving.current || !irRef.current) return
+      saving.current = true
       try {
-        const resp = await wfSave(payload)
-        if (!resp) {
-          setNotice('保存失败：后端无响应')
+        if (!(await flushDrafts())) return
+        // ── 执行期拒绝落盘（B5）──
+        // 执行器运行期间会对同一份文档做 read-modify-write（run 进度节流落盘），子工作流
+        // 更是**在调用点**才重新读取 IR——执行中保存会与执行器互相覆盖、并改变后续子调用
+        // 实际执行的 IR。故不改「只落内存」：内存改动本来就在画布上，落盘才是危险动作。
+        // 判定与「运行」入口同源（useWorkflowGate → wf_gate_status），后端 wf_save 兜底。
+        const gateNow = await gateRefresh()
+        if (gateNow.locked) {
+          setNotice(
+            gateNow.reason === 'workflow'
+              ? '工作流执行中，暂不可保存（编辑仍在画布上，执行结束后按 Ctrl+S 保存）'
+              : '当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后按 Ctrl+S 保存）',
+          )
           return
         }
-        setBackendReport(resp.report)
-        if (resp.saved) {
-          setDirty(false)
-          setNotice(name ? `已保存，工作流已重命名为「${name}」` : '已保存')
-          setIr(payload)
-        } else {
-          setNotice('保存被阻断：存在校验错误，详见问题面板「后端校验」')
+        // A user can keep typing while the gate request is in flight.
+        if (!(await flushDrafts())) return
+        const cur = stepsRef.current
+        if (!cur) return
+        const revision = editRevision.current
+        const draftsAtSave = draftStore.snapshot()
+        const name = nameOverride?.trim()
+        const currentIr = irRef.current
+        if (!currentIr) return
+        const payload = { ...currentIr, steps: cur, ...(name ? { name } : {}) }
+        try {
+          const resp = await wfSave(payload)
+          if (!resp) {
+            setNotice('保存失败：后端无响应')
+            return
+          }
+          setBackendReport(resp.report)
+          if (resp.saved) {
+            const unchanged =
+              revision === editRevision.current && draftsAtSave === draftStore.snapshot()
+            setDirty(!unchanged)
+            setNotice(
+              !unchanged
+                ? '已保存提交时的版本；后续编辑尚未保存'
+                : name
+                  ? `已保存，工作流已重命名为「${name}」`
+                  : '已保存',
+            )
+            setIr(current => (current ? { ...current, ...(name ? { name } : {}) } : payload))
+            return unchanged
+          } else {
+            setNotice('保存被阻断：存在校验错误，详见问题面板「后端校验」')
+          }
+        } catch (e) {
+          setNotice(`保存失败：${String(e)}`)
         }
-      } catch (e) {
-        setNotice(`保存失败：${String(e)}`)
+      } finally {
+        saving.current = false
       }
     },
-    [ir, gateRefresh],
+    [gateRefresh, flushDrafts, draftStore],
   )
 
   const runCheck = useCallback(async () => {
+    if (!(await flushDrafts())) return
     const cur = stepsRef.current
     if (!cur || !ir) return
     try {
@@ -816,20 +930,27 @@ function CanvasInner({
     } catch (e) {
       setNotice(`校验失败：${String(e)}`)
     }
-  }, [ir])
+  }, [ir, flushDrafts])
 
   const runWorkflow = useCallback(async () => {
     if (snapshot.running) return
-    if (dirty) {
+    const hadDrafts = draftStore.dirty
+    if (!(await flushDrafts())) return
+    if (dirty || hadDrafts) {
       setNotice('有未保存的编辑，请先保存（Ctrl+S）再运行')
       return
     }
     // 闸门点击级复核（轮询窗口内竞态收口；后端 execute_workflow 另有兜底）
+    const revisionAtRun = editRevision.current
     const cur = await gateRefresh()
     if (cur.locked) {
       setNotice(
         cur.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！',
       )
+      return
+    }
+    if (draftStore.dirty || revisionAtRun !== editRevision.current) {
+      setNotice('启动检查期间有新的编辑，请先保存再运行')
       return
     }
     // 声明了外部输入 → 必须先收集（与运行确认弹窗共用同一表单实现，不得绕过必填校验）
@@ -844,7 +965,16 @@ function CanvasInner({
     } catch (e) {
       setNotice(`启动失败：${String(e)}`)
     }
-  }, [workflowId, dirty, snapshot.running, gateRefresh, lastRunError, declaredInputs])
+  }, [
+    workflowId,
+    dirty,
+    snapshot.running,
+    gateRefresh,
+    lastRunError,
+    declaredInputs,
+    flushDrafts,
+    draftStore,
+  ])
 
   /** 输入收集完成 → 确定性启动（fresh 语义与直接运行一致） */
   const runWithInputs = useCallback(
@@ -1285,7 +1415,8 @@ function CanvasInner({
   const submitIntentForm = useCallback(
     (form: IntentForm) => {
       setIntentFormOpen(false)
-      void save().finally(() => {
+      void save().then(saved => {
+        if (!saved) return
         onClose()
         const text = buildIntentTextTemplate(form, workflowId, ir?.name)
         window.dispatchEvent(
@@ -1540,6 +1671,12 @@ function CanvasInner({
     if (!selectedId || !steps) return null
     return locateStep(steps, selectedId)?.step ?? null
   }, [selectedId, steps])
+  if (inspectorOpen && selectedStep) visitedInspectors.current.add(selectedStep.id)
+  const inspectorSteps = steps
+    ? [...visitedInspectors.current]
+        .map(id => locateStep(steps, id)?.step)
+        .filter((step): step is WorkflowStep => !!step)
+    : []
 
   if (!ir || !steps || !projection) {
     return (
@@ -1598,7 +1735,11 @@ function CanvasInner({
             不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
         <WorkflowSwitcher
           currentId={workflowId}
-          onSwitch={id => onSwitchWorkflow?.(id)}
+          onSwitch={id => {
+            void canLeave().then(ok => {
+              if (ok) onSwitchWorkflow?.(id)
+            })
+          }}
           disabled={readOnly || !!replayRunId}
           disabledHint={replayRunId ? '历史回放中不可切换工作流' : '运行中 · 画布只读'}
         />
@@ -1616,22 +1757,23 @@ function CanvasInner({
             className="wfc-btn"
             onClick={() => setAddMenuOpen(o => !o)}
             disabled={readOnly}
-            title="添加节点（N）"
+            title={t('workflowCanvas.add.hint')}
           >
-            <Plus size={13} /> 添加
+            <Plus size={13} /> {t('common.add')}
           </button>
           {addMenuOpen && (
             <div className="wfc-add-menu">
-              {ADDABLE_KINDS.map(({ kind, desc }) => (
+              {ADDABLE_KINDS.map(kind => (
                 <button
                   type="button"
                   key={kind}
                   className="wfc-add-item"
-                  title={desc}
+                  aria-label={nodeKindLabel(kind, t)}
+                  title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
                   onClick={() => void addStep(kind)}
                 >
-                  <span className="wfc-add-item-kind">{kind}</span>
-                  <span className="wfc-add-item-desc">{desc}</span>
+                  <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+                  <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
                 </button>
               ))}
             </div>
@@ -1875,30 +2017,48 @@ function CanvasInner({
           onLocate={locateNode}
         />
 
-        {inspectorOpen && selectedStep && (
-          <Inspector
-            step={selectedStep}
-            readOnly={readOnly}
-            idReferenced={(ir.run_history ?? []).some(r =>
-              (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(
-                s => s.step_id === selectedStep.id,
-              ),
-            )}
-            lastOutput={snapshot.outputs.get(selectedStep.id)}
-            focusToolId={toolFocusId}
-            onPatch={patch =>
-              void applyEdit({ op: 'update_fields', stepId: selectedStep.id, patch })
-            }
-            onPatchAction={action =>
-              void applyEdit({
-                op: 'update_fields',
-                stepId: selectedStep.id,
-                patch: { do: action },
-              })
-            }
-            onClose={closeInspector}
-          />
-        )}
+        {inspectorSteps.map(inspectorStep => (
+          <div
+            key={inspectorStep.id}
+            data-inspector-node={inspectorStep.id}
+            hidden={!inspectorOpen || inspectorStep.id !== selectedId}
+          >
+            <InspectorDraftContext.Provider value={{ store: draftStore, nodeId: inspectorStep.id }}>
+              <Inspector
+                step={inspectorStep}
+                variableCatalog={{
+                  references: [...(variableIndex.beforeStep.get(inspectorStep.id)?.values() ?? [])],
+                  captures: variableIndex.captures,
+                }}
+                captureConsumers={captureConsumers.get(inspectorStep.id)}
+                onLocateReference={locateNode}
+                onConfigureInput={name => {
+                  setInputsEditorFocus(name.replace(/^inputs\./, ''))
+                  setInputsEditorOpen(true)
+                }}
+                readOnly={readOnly}
+                idReferenced={(ir.run_history ?? []).some(r =>
+                  (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(
+                    s => s.step_id === inspectorStep.id,
+                  ),
+                )}
+                lastOutput={snapshot.outputs.get(inspectorStep.id)}
+                focusToolId={toolFocusId}
+                onPatch={patch =>
+                  applyEdit({ op: 'update_fields', stepId: inspectorStep.id, patch })
+                }
+                onPatchAction={action =>
+                  applyEdit({
+                    op: 'update_fields',
+                    stepId: inspectorStep.id,
+                    patch: { do: action },
+                  })
+                }
+                onClose={closeInspector}
+              />
+            </InspectorDraftContext.Provider>
+          </div>
+        ))}
       </div>
 
       {/* ── 连线中点「在此插入」菜单（fixed 定位在圆点屏幕坐标旁；复用 wfc-add-item 项样式）── */}
@@ -1912,18 +2072,21 @@ function CanvasInner({
           }}
         >
           <div className="wfc-edge-add-title">
-            {edgeTargetName ? `在此插入（插到「${edgeTargetName}」之前）` : '在此插入'}
+            {edgeTargetName
+              ? t('workflowCanvas.add.before', edgeTargetName)
+              : t('workflowCanvas.add.insert')}
           </div>
-          {ADDABLE_KINDS.map(({ kind, desc }) => (
+          {ADDABLE_KINDS.map(kind => (
             <button
               type="button"
               key={kind}
               className="wfc-add-item"
-              title={desc}
+              aria-label={nodeKindLabel(kind, t)}
+              title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
               onClick={() => void insertAtEdge(kind)}
             >
-              <span className="wfc-add-item-kind">{kind}</span>
-              <span className="wfc-add-item-desc">{desc}</span>
+              <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+              <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
             </button>
           ))}
         </div>
@@ -1977,6 +2140,8 @@ function CanvasInner({
         readOnly={readOnly}
         focusName={inputsEditorFocus}
         onApply={inputs => {
+          editRevision.current++
+          if (irRef.current) irRef.current = { ...irRef.current, inputs }
           setIr(current => (current ? { ...current, inputs } : current))
           setDirty(true)
           setInputsEditorOpen(false)

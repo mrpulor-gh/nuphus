@@ -9,6 +9,9 @@ import { ListOrdered, Repeat, GitFork, Hourglass, Pencil, Copy, Trash2 } from 'l
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
 import { NodeActionsContext } from './StepNode'
+import { useLanguage } from '../../../locales'
+import { NodeKindBadge } from '../NodeKindBadge'
+import { nodeKindLabel } from '../presentation'
 
 export type ContainerNodeFlow = Node<
   {
@@ -34,6 +37,7 @@ export const ContainerNode = memo(function ContainerNode({
   data,
   selected,
 }: NodeProps<ContainerNodeFlow>) {
+  const { t } = useLanguage()
   const { canvas: node, status, problem, badge, childrenPreview } = data
   const actions = useContext(NodeActionsContext)
   const Icon = CONTAINER_ICONS[node.kind as keyof typeof CONTAINER_ICONS] ?? ListOrdered
@@ -53,14 +57,14 @@ export const ContainerNode = memo(function ContainerNode({
     .join(' ')
 
   return (
-    <div className={classes} title="双击进入子层">
+    <div className={classes} title={t('workflowCanvas.node.enter')}>
       <Handle type="target" position={targetPos} className="wfc-handle" />
       {actions && (
         <div className="wfc-node-actions" onClick={e => e.stopPropagation()}>
           <button
             type="button"
             className="wfc-node-act"
-            title="编辑"
+            title={t('common.edit')}
             onClick={() => actions.onEdit(node.id)}
           >
             <Pencil size={11} aria-hidden="true" />
@@ -68,7 +72,7 @@ export const ContainerNode = memo(function ContainerNode({
           <button
             type="button"
             className="wfc-node-act"
-            title="复制"
+            title={t('common.copy')}
             onClick={() => actions.onDuplicate(node.id)}
           >
             <Copy size={11} aria-hidden="true" />
@@ -76,7 +80,7 @@ export const ContainerNode = memo(function ContainerNode({
           <button
             type="button"
             className="wfc-node-act wfc-node-act--danger"
-            title="删除"
+            title={t('common.delete')}
             onClick={() => actions.onDelete(node.id)}
           >
             <Trash2 size={11} aria-hidden="true" />
@@ -84,18 +88,30 @@ export const ContainerNode = memo(function ContainerNode({
         </div>
       )}
       <div className="wfc-node-head">
-        <span className="wfc-node-icon" data-kind={node.kind}>
+        <span
+          className="wfc-node-icon"
+          data-kind={node.kind}
+          title={t('workflowCanvas.node.type', nodeKindLabel(node.kind, t))}
+        >
           <Icon size={13} aria-hidden="true" />
         </span>
         <span className="wfc-node-name" title={node.name}>
           {node.name}
         </span>
-        <span className="wfc-badge wfc-badge--count">{node.childCount ?? 0} 步</span>
+        <span className="wfc-badge wfc-badge--count">
+          {t('workflowCanvas.node.count', String(node.childCount ?? 0))}
+        </span>
         {badge && badge.error > 0 && (
-          <span className="wfc-dot wfc-dot--error" title={`子层 ${badge.error} 个失败`} />
+          <span
+            className="wfc-dot wfc-dot--error"
+            title={t('workflowCanvas.node.childErrors', String(badge.error))}
+          />
         )}
         {badge && badge.error === 0 && badge.running > 0 && (
-          <span className="wfc-dot wfc-dot--running" title={`子层 ${badge.running} 个运行中`} />
+          <span
+            className="wfc-dot wfc-dot--running"
+            title={t('workflowCanvas.node.childRunning', String(badge.running))}
+          />
         )}
       </div>
       {node.containerSummary && (
@@ -104,23 +120,34 @@ export const ContainerNode = memo(function ContainerNode({
         </div>
       )}
       <div className="wfc-node-foot">
-        <span className="wfc-node-kind">{node.kind}</span>
-        {node.capture && <span className="wfc-badge wfc-badge--capture">→ {node.capture}</span>}
+        <NodeKindBadge kind={node.kind} />
+        {node.capture && (
+          <span
+            className="wfc-badge wfc-badge--capture"
+            title={t('workflowCanvas.node.output', node.capture)}
+          >
+            → {node.capture}
+          </span>
+        )}
         {node.onErrorLabel && (
-          <span className="wfc-badge wfc-badge--onerror">{node.onErrorLabel}</span>
+          <span className="wfc-badge wfc-badge--onerror" title={node.onErrorLabel}>
+            {node.onErrorLabel}
+          </span>
         )}
       </div>
       <Handle type="source" position={sourcePos} className="wfc-handle" />
       {childrenPreview && (
         <div className="wfc-children-preview" aria-hidden="true">
-          <div className="wfc-children-preview-title">子步骤 · {childrenPreview.total}</div>
+          <div className="wfc-children-preview-title">
+            {t('workflowCanvas.node.children', String(childrenPreview.total))}
+          </div>
           <ul className="wfc-children-preview-list">
             {childrenPreview.items.map((c, i) => (
               <li key={`${c.name}-${i}`} className="wfc-children-preview-item">
                 <span className="wfc-children-preview-name" title={c.name}>
                   {c.name}
                 </span>
-                <span className="wfc-children-preview-kind">{c.kind}</span>
+                <NodeKindBadge kind={c.kind} />
               </li>
             ))}
           </ul>

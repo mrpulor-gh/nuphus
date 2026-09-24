@@ -17,6 +17,8 @@ export interface VarConsumption {
   varName: string
   /** 管道名列表（如 ["get"] / ["json","len"]） */
   pipes: string[]
+  /** inputs.name must never resolve to a same-named capture. */
+  input?: boolean
 }
 
 /** 步骤级扫描结果 */
@@ -57,8 +59,12 @@ export function scanTemplateRefs(text: string, out: VarConsumption[]): void {
   let m: RegExpExecArray | null
   while ((m = VAR_REF_RE.exec(text)) !== null) {
     const varName = m[1] === 'inputs' && m[2] ? m[2] : m[1]
-    if (isExternalVar(varName)) continue
-    out.push({ varName, pipes: parsePipes(m[3] || '') })
+    if (isExternalVar(m[1])) continue
+    out.push({
+      varName,
+      pipes: parsePipes(m[3] || ''),
+      ...(m[1] === 'inputs' && m[2] ? { input: true } : {}),
+    })
   }
 }
 
@@ -83,8 +89,12 @@ function scanVarRef(r: VarRef | undefined, out: VarConsumption[]): void {
   if (typeof r === 'object' && 'var' in r && typeof r.var === 'string') {
     const parts = r.var.split('.')
     const root = parts[0] === 'inputs' && parts[1] ? parts[1] : parts[0]
-    if (root && !isExternalVar(root) && !root.startsWith('ENV:')) {
-      out.push({ varName: root, pipes: [] })
+    if (root && !isExternalVar(parts[0]) && !root.startsWith('ENV:')) {
+      out.push({
+        varName: root,
+        pipes: [],
+        ...(parts[0] === 'inputs' && parts[1] ? { input: true } : {}),
+      })
     }
   }
 }

@@ -1,0 +1,74 @@
+/* Keep handles, hover actions and validation rings visible: clip individual text, not the card. */
+.wfc-node.wfc-node--leaf,
+.wfc-node.wfc-node--unknown {
+  box-sizing: border-box;
+  width: 200px;
+  height: 64px;
+}
+.wfc-node.wfc-node--container {
+  box-sizing: border-box;
+  width: 220px;
+  height: 88px;
+  display: flex;
+  flex-direction: column;
+}
+.wfc-node.wfc-anchor {
+  box-sizing: border-box;
+  width: 150px;
+  height: 40px;
+}
+.wfc-node .wfc-node-head {
+  min-height: 20px;
+}
+.wfc-node .wfc-node-foot {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 18px;
+}
+.wfc-node--container .wfc-node-foot {
+  margin-top: auto;
+}
+.wfc-node .wfc-node-foot .wfc-badge {
+  padding-inline: var(--space-1);
+}
+.wfc-node .wfc-node-kind,
+.wfc-node .wfc-badge--count,
+.wfc-node .wfc-badge--shadowed,
+.wfc-node .wfc-badge--dangling {
+  flex: 0 0 auto;
+}
+.wfc-node .wfc-badge--capture {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wfc-node .wfc-badge--onerror {
+  min-width: 0;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wfc-node .wfc-badge--dangling {
+  display: inline-flex;
+  align-items: center;
+}
+.wfc-anchor .wfc-anchor-name {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.wfc-anchor .wfc-anchor-sub {
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+.wfc-anchor > svg {
+  flex: 0 0 auto;
+}
+.wfc-edge-label {
+  pointer-events: auto;
+}

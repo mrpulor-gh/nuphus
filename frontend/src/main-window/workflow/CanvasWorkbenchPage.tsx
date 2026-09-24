@@ -5,6 +5,7 @@ import { listWorkflows, wfSave } from '../lib/api'
 import { scheduleIdle } from '../lib/idle'
 import type { WorkflowItem } from '../../core/types'
 import './workflow-workbench.css'
+import { useCanvasLeaveGuard } from '../workflow-canvas/useCanvasLeaveGuard'
 
 // ── 按 tab 拆包 ──
 // 三个页面体量差异极大（UI 原型画布自身 4600+ 行且静态引入 motion / html-to-image），
@@ -39,6 +40,7 @@ export function CanvasWorkbenchPage({
   const [workflowId, setWorkflowId] = useState<string | null>(initialWorkflowId)
   const [loading, setLoading] = useState(!initialWorkflowId)
   const [error, setError] = useState('')
+  const navigation = useCanvasLeaveGuard()
 
   useEffect(() => {
     // 指定了目标工作流 → 直接编辑它，跳过「自选草稿」逻辑
@@ -99,7 +101,7 @@ export function CanvasWorkbenchPage({
         <button
           type="button"
           className="workflow-workbench-close"
-          onClick={onClose}
+          onClick={() => void navigation.leave(onClose)}
           aria-label={t('common.close')}
         >
           <IconX size={16} />
@@ -120,7 +122,7 @@ export function CanvasWorkbenchPage({
           <button
             type="button"
             className={canvasType === 'prototype' ? 'is-active' : ''}
-            onClick={() => setCanvasType('prototype')}
+            onClick={() => void navigation.leave(() => setCanvasType('prototype'))}
           >
             <IconPalette size={14} />
             <span>{t('workflow.workType.prototype')}</span>
@@ -128,7 +130,7 @@ export function CanvasWorkbenchPage({
           <button
             type="button"
             className={canvasType === 'tools' ? 'is-active' : ''}
-            onClick={() => setCanvasType('tools')}
+            onClick={() => void navigation.leave(() => setCanvasType('tools'))}
           >
             <IconWrench size={14} />
             <span>{t('workflow.workType.tools')}</span>
@@ -144,6 +146,8 @@ export function CanvasWorkbenchPage({
             {!loading && workflowId && (
               <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
                 <CanvasPage
+                  key={workflowId}
+                  registerLeaveGuard={navigation.register}
                   workflowId={workflowId}
                   replayRunId={replayRunId}
                   onExitReplay={onExitReplay}

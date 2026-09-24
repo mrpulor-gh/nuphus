@@ -109,6 +109,9 @@ export interface CanvasEdge {
   producerStepId?: string
   /** 悬空引用：连到「外部注入」锚点的黄色虚边 */
   dangling?: boolean
+  /** Source exists only on some execution paths. Distinct from a missing source. */
+  maybeUnset?: boolean
+  sourceSummary?: string
 }
 
 export interface CanvasLayer {

@@ -1,0 +1,75 @@
+.wfc-variable-picker {
+  min-width: 0;
+}
+.wfc-variable-picker > input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.wfc-variable-picker small {
+  display: block;
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+}
+.wfc-variable-menu {
+  position: fixed;
+  z-index: 10000;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 4px;
+  background: var(--surface-1, var(--bg-1));
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: var(--shadow-surface);
+}
+.wfc-variable-menu > button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--fg-1);
+  background: transparent;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.wfc-variable-menu > button[aria-selected='true'],
+.wfc-variable-menu > button:hover {
+  background: var(--accent-dim);
+}
+.wfc-variable-menu small {
+  color: var(--fg-3);
+}
+.wfc-variable-name-row,
+.wfc-variable-source-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.wfc-variable-label {
+  flex: 0 0 auto;
+  color: var(--fg-3);
+  font-weight: var(--fw-normal);
+}
+.wfc-variable-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+}
+.wfc-variable-source-row {
+  font-size: var(--fz-xs);
+  line-height: 1.5;
+}
+.wfc-variable-source {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}

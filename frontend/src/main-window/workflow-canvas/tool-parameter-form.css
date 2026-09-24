@@ -1,0 +1,57 @@
+.wfc-parameter-form {
+  min-width: 0;
+}
+.wfc-parameter-toolbar,
+.wfc-parameter-label,
+.wfc-parameter-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.wfc-parameter-toolbar,
+.wfc-parameter-label {
+  justify-content: space-between;
+}
+.wfc-parameter-toolbar {
+  margin-bottom: 10px;
+}
+.wfc-parameter-form button {
+  font-size: 11px;
+  border: 1px solid var(--border-color, #8885);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.wfc-parameter-form button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.wfc-parameter-form .wfc-field {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+.wfc-parameter-form .wfc-input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.wfc-parameter-form [aria-invalid='true'] {
+  border-color: var(--error-color, #e05c5c);
+}
+.wfc-parameter-hint {
+  display: block;
+  color: var(--text-secondary, #888);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.wfc-parameter-tools {
+  margin-top: 4px;
+}
+.wfc-parameter-label label {
+  overflow-wrap: anywhere;
+}

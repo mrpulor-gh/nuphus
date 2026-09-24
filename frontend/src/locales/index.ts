@@ -1,5 +1,6 @@
 import {
   useState,
+  useCallback,
   useEffect,
   createContext,
   useContext,
@@ -47,32 +48,36 @@ export function LangProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('nuphus_language', id)
   }
 
-  const t = (key: string, ...args: string[]): string => {
-    const pack = packs[lang] || zh
-    let text = pack[key]
-    if (text === undefined) {
-      text = zh[key] || key
-    }
-    args.forEach((arg, i) => {
-      text = text.replace(`{${i}}`, arg)
-    })
-    return text
-  }
+  const t = useCallback(
+    (key: string, ...args: string[]): string => {
+      const pack = packs[lang] || zh
+      let text = pack[key]
+      if (text === undefined) {
+        text = zh[key] || key
+      }
+      args.forEach((arg, i) => {
+        text = text.replace(`{${i}}`, () => arg)
+      })
+      return text
+    },
+    [lang],
+  )
 
   return createElement(LangContext.Provider, { value: { lang, t, setLang } }, children)
 }
 
+const fallbackLanguage: LangContextType = {
+  lang: 'zh',
+  setLang: () => {},
+  t: (key: string, ...args: string[]): string => {
+    let text = zh[key] || key
+    args.forEach((arg, i) => {
+      text = text.replace(`{${i}}`, () => arg)
+    })
+    return text
+  },
+}
+
 export function useLanguage() {
-  const ctx = useContext(LangContext)
-  if (!ctx) {
-    const t = (key: string, ...args: string[]): string => {
-      let text = zh[key] || key
-      args.forEach((arg, i) => {
-        text = text.replace(`{${i}}`, arg)
-      })
-      return text
-    }
-    return { lang: 'zh', t, setLang: () => {} }
-  }
-  return ctx
+  return useContext(LangContext) ?? fallbackLanguage
 }

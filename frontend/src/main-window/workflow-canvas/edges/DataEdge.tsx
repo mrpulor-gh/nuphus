@@ -14,9 +14,23 @@ export type DataFlowEdge = Edge<
     dangling?: boolean
     external?: boolean
     producerStepId?: string
+    maybeUnset?: boolean
+    sourceSummary?: string
   },
   'data'
 >
+
+/** CJK glyphs are roughly twice as wide as ASCII; keep labels inside the edge gutter. */
+export function compactEdgeLabel(label: string, maxUnits = 18): string {
+  let result = ''
+  let units = 0
+  for (const char of label) {
+    units += char.charCodeAt(0) > 255 ? 2 : 1
+    if (units > maxUnits) return `${result}…`
+    result += char
+  }
+  return result
+}
 
 export const DataEdge = memo(function DataEdge({
   id,
@@ -38,14 +52,16 @@ export const DataEdge = memo(function DataEdge({
   })
   const tip = [
     data?.producerStepId ? `生产者: ${data.producerStepId}` : null,
+    data?.sourceSummary ? `可能来源: ${data.sourceSummary}` : null,
+    data?.maybeUnset ? '可能未赋值：请检查分支、循环或输入默认值' : null,
     data?.pipes?.length ? `管道: ${data.pipes.join(' → ')}` : null,
-    data?.dangling ? '未捕获引用（运行时由 inputs/params 注入）' : null,
+    data?.dangling ? '未找到前序来源；请检查变量或配置工作流输入' : null,
   ]
     .filter(Boolean)
     .join('\n')
   const cls = [
     'wfc-edge-data',
-    data?.dangling ? 'wfc-edge-data--dangling' : '',
+    data?.dangling || data?.maybeUnset ? 'wfc-edge-data--dangling' : '',
     data?.external ? 'wfc-edge-data--external' : '',
   ]
     .filter(Boolean)
@@ -59,10 +75,11 @@ export const DataEdge = memo(function DataEdge({
         <text
           x={labelX}
           y={labelY - 4}
-          className={`wfc-edge-label${data?.dangling ? ' wfc-edge-label--dangling' : ''}`}
+          className={`wfc-edge-label${data?.dangling || data?.maybeUnset ? ' wfc-edge-label--dangling' : ''}`}
           textAnchor="middle"
         >
-          {data.label}
+          <title>{[data.label, tip].filter(Boolean).join('\n')}</title>
+          {compactEdgeLabel(data.label)}
         </text>
       )}
     </>
