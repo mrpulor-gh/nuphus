@@ -40,6 +40,8 @@ pub struct ValidationDiagnostic {
     pub step_id: Option<String>,
     pub field_path: Option<String>,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 #[derive(Default)]
@@ -55,6 +57,7 @@ impl DiagnosticMessages {
         self.site.field_path = path.map(str::to_owned);
         self.site.code = code.into();
         self.site.category = category.into();
+        self.site.subject = None;
     }
 
     fn push(&mut self, message: String) {
@@ -106,6 +109,51 @@ fn report(errors: DiagnosticMessages, warnings: DiagnosticMessages) -> Validatio
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn declared_input_aliases_and_empty_success_guards_are_valid() {
+        let mut workflow = Workflow::new("Input regression");
+        workflow.inputs = serde_json::from_value(serde_json::json!([
+            {"name":"contact", "type":"string", "required":true},
+            {"name":"message", "type":"string", "required":true}
+        ]))
+        .unwrap();
+        workflow.steps = serde_json::from_value(serde_json::json!([
+            {"id":"alias", "name":"Alias", "do":{"tool":"test", "with":{"text":"{{contact}} {{message[\"text\"]}}"}}},
+            {"id":"guard", "name":"Guard", "do":{"if":{"condition":{"not_empty":{"var":"contact"}}, "then":[], "else":[
+                {"id":"failure", "name":"Failure", "do":{"tool":"test", "with":{"text":"{{inputs.contact}} {{inputs[\"message\"]}}"}}}
+            ]}}}
+        ])).unwrap();
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        // Same-named captures must not satisfy an explicit input namespace reference.
+        workflow.inputs.clear();
+        workflow.steps[0].capture = Some("contact".into());
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|issue| issue.code == "input_reference"
+                && issue.subject.as_deref() == Some("contact")));
+    }
+
+    #[test]
+    fn alias_only_usage_is_not_reported_as_unused() {
+        let mut workflow = Workflow::new("Aliases");
+        workflow.inputs = serde_json::from_value(serde_json::json!([
+            {"name":"text", "type":"string", "required":true},
+            {"name":"flag", "type":"boolean", "required":true}
+        ]))
+        .unwrap();
+        workflow.steps = serde_json::from_value(serde_json::json!([
+            {"id":"use", "name":"Use", "do":{"tool":"test", "with":{"text":"{{text}}"}}},
+            {"id":"guard", "name":"Guard", "do":{"if":{"condition":{"not_empty":{"var":"flag"}},"then":[]}}}
+        ])).unwrap();
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
 
     #[test]
     fn required_parameter_retains_exact_escaped_location_and_legacy_message() {
@@ -195,6 +243,7 @@ impl Ctx<'_> {
         self.warnings
             .at(None, Some("/inputs"), "unused_input", "variable");
         for name in &self.missing_inputs {
+            self.errors.site.subject = Some(name.clone());
             self.errors.push(format!(
                 "未声明的输入引用 {{{{inputs.{}}}}}（请在 workflow.inputs 声明）",
                 name
@@ -202,6 +251,7 @@ impl Ctx<'_> {
         }
         for name in &self.declared_inputs {
             if !self.referenced_inputs.contains(name) {
+                self.warnings.site.subject = Some(name.clone());
                 self.warnings
                     .push(format!("输入 {} 已声明但未被任何步骤引用", name));
             }
@@ -236,7 +286,12 @@ impl Ctx<'_> {
                 }
                 return;
             }
+            if self.declared_inputs.contains(var) && !self.captured.contains(var) {
+                self.referenced_inputs.insert(var.clone());
+                return;
+            }
             if !self.captured.contains(var) && var != "_index" && !var.starts_with("ENV:") {
+                self.warnings.site.subject = Some(var.clone());
                 self.warnings.push(format!(
                     "条件步骤 '{}': 变量 '{}' 尚未被先前步骤捕获，求值将为 false（运行时可能由 inputs 注入）",
                     owner, var
@@ -328,6 +383,11 @@ impl Ctx<'_> {
                     })
                     .collect();
                 for name in found {
+                    if self.declared_inputs.contains(&name) {
+                        self.referenced_inputs.insert(name);
+                        continue;
+                    }
+                    self.warnings.site.subject = Some(name.clone());
                     self.warnings.push(format!(
                         "步骤 '{}': 引用变量 '{}' 尚未被先前步骤捕获（运行时可能由 inputs 注入）",
                         owner, name

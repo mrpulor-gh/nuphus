@@ -3,6 +3,33 @@ import { mergeEditorProblems } from './editorProblems'
 import { editorFieldId, focusEditorField } from './editorFields'
 
 describe('actionable diagnostics', () => {
+  it('keeps different variables separate and merges aggregate compiler input diagnostics', () => {
+    const local = ['a', 'b'].map(subject => ({
+      rule: 'input_reference',
+      subject,
+      level: 'error' as const,
+      message: subject,
+      stepId: 's',
+      fieldPath: '/do/with/text',
+    }))
+    const issues = mergeEditorProblems(local, {
+      errors: [],
+      warnings: [],
+      diagnostics: [
+        {
+          code: 'input_reference',
+          subject: 'a',
+          category: 'variable',
+          severity: 'error',
+          field_path: '/inputs',
+          detail: 'backend',
+        },
+      ],
+    })
+    expect(issues).toHaveLength(2)
+    expect(issues[0].details).toEqual(['a', 'backend'])
+    expect(issues[0].fieldPath).toBe('/do/with/text')
+  })
   it('merges the same rule and location, retaining raw details', () => {
     const issues = mergeEditorProblems(
       [{ rule: 'V12', level: 'error', message: 'local', stepId: 'call' }],

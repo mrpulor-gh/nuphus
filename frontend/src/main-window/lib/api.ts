@@ -1444,6 +1444,7 @@ export interface ValidationDiagnostic {
   step_id?: string | null
   field_path?: string | null
   detail: string
+  subject?: string | null
 }
 
 export interface WfSaveResponse {

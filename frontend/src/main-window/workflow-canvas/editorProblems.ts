@@ -10,6 +10,7 @@ export interface EditorProblem {
   fieldPath?: string
   details: string[]
   sources: string[]
+  subject?: string
 }
 
 const rules: Record<string, [string, ProblemCategory, string?]> = {
@@ -26,6 +27,18 @@ const rules: Record<string, [string, ProblemCategory, string?]> = {
   V12: ['required', 'missing', '/do/call'],
   V13: ['legacy', 'structure', '/do'],
   V14: ['history', 'structure'],
+  input_reference: ['input_reference', 'variable'],
+  empty_wait: ['wait', 'structure', '/do/wait'],
+}
+
+export function problemIdentity(issue: EditorProblem): string {
+  return JSON.stringify([
+    issue.code,
+    issue.stepId,
+    issue.fieldPath,
+    issue.subject,
+    issue.code === 'validation' || issue.code === 'execution' ? issue.details[0] : null,
+  ])
 }
 
 export function mergeEditorProblems(
@@ -39,6 +52,7 @@ export function mergeEditorProblems(
         other.stepId === issue.stepId &&
         other.fieldPath === issue.fieldPath &&
         other.code === issue.code &&
+        other.subject === issue.subject &&
         (issue.code !== 'validation' || other.details[0] === issue.details[0]),
     )
     if (same) {
@@ -57,9 +71,28 @@ export function mergeEditorProblems(
       level: problem.level,
       details: [problem.message],
       sources: [problem.rule],
+      subject: problem.subject,
     })
   }
   for (const diagnostic of report?.diagnostics ?? []) {
+    // The compiler also reports undeclared inputs at workflow scope; keep the
+    // more useful local occurrence locations without counting the aggregate twice.
+    const occurrences =
+      ['input_reference', 'variable'].includes(diagnostic.code) && diagnostic.subject
+        ? result.filter(
+            issue =>
+              issue.code === diagnostic.code &&
+              issue.subject === diagnostic.subject &&
+              (diagnostic.code === 'input_reference' || issue.stepId === diagnostic.step_id),
+          )
+        : []
+    if (occurrences.length) {
+      for (const issue of occurrences) {
+        issue.sources = [...new Set([...issue.sources, 'compiler'])]
+        issue.details = [...new Set([...issue.details, diagnostic.detail])]
+      }
+      continue
+    }
     add({
       code: diagnostic.code,
       category: ['missing', 'variable', 'invalid', 'runtime', 'structure'].includes(
@@ -72,6 +105,7 @@ export function mergeEditorProblems(
       fieldPath: diagnostic.field_path ?? undefined,
       details: [diagnostic.detail],
       sources: ['compiler'],
+      subject: diagnostic.subject ?? undefined,
     })
   }
   for (const [level, messages] of [

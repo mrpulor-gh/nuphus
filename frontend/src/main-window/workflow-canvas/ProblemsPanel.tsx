@@ -13,7 +13,13 @@ import type { RunLogEntry } from './runStatus'
 import type { Problem } from './validate'
 import type { ValidationDiagnostic } from '../lib/api'
 import { useLanguage } from '../../locales'
-import { mergeEditorProblems, type EditorProblem, type ProblemCategory } from './editorProblems'
+import {
+  mergeEditorProblems,
+  problemIdentity,
+  type EditorProblem,
+  type ProblemCategory,
+} from './editorProblems'
+import { useProblemsResize } from './useProblemsResize'
 
 interface ProblemsPanelProps {
   problems: Problem[]
@@ -62,6 +68,8 @@ export function ProblemsPanel({
   const [problemTab, setProblemTab] = useState<ProblemCategory | 'all'>('all')
   const [historyIndex, setHistoryIndex] = useState(0)
   const wasRunning = useRef(false)
+  const { panelRef, height, separatorProps } = useProblemsResize()
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     if (!wasRunning.current && running) {
@@ -104,11 +112,29 @@ export function ProblemsPanel({
   const showLive = timeline.length > 0 && historyIndex === 0
 
   return (
-    <div className={`wfc-problems${collapsed ? ' is-collapsed' : ''}`}>
+    <div
+      ref={panelRef}
+      style={collapsed ? undefined : { height }}
+      className={`wfc-problems${collapsed ? ' is-collapsed' : ''}`}
+    >
+      {!collapsed && (
+        <div
+          className="wfc-problems-resizer"
+          {...separatorProps}
+          aria-label={t('workflowEditor.problem.resize')}
+          title={t('workflowEditor.problem.resizeHint')}
+        />
+      )}
       <div className="wfc-problems-bar">
         <button
           type="button"
           className="wfc-problems-toggle"
+          aria-label={t(
+            collapsed
+              ? 'workflowEditor.problem.expandPanel'
+              : 'workflowEditor.problem.collapsePanel',
+          )}
+          aria-expanded={!collapsed}
           onClick={() => setCollapsed(value => !value)}
         >
           {collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -191,52 +217,86 @@ export function ProblemsPanel({
           )}
           {issues
             .filter(issue => problemTab === 'all' || issue.category === problemTab)
-            .map((issue, index) => (
-              <div
-                className={`wfc-problem wfc-problem--${issue.level}`}
-                key={`${issue.code}-${issue.stepId}-${issue.fieldPath}-${index}`}
-              >
-                <span className="wfc-problem-icon">
-                  {issue.level === 'error' ? (
-                    <CircleAlert size={12} />
-                  ) : (
-                    <TriangleAlert size={12} />
+            .map(issue => {
+              const id = problemIdentity(issue)
+              const isExpanded = expanded.has(id)
+              const summaryKey = `workflowEditor.problem.summary.${issue.code}`
+              const hintKey = `workflowEditor.diagnostic.${issue.code}`
+              const hint =
+                t(hintKey) === hintKey ? t('workflowEditor.diagnostic.validation') : t(hintKey)
+              const summary =
+                t(summaryKey, issue.subject ?? '') === summaryKey ||
+                (!issue.subject &&
+                  ['variable', 'input_reference', 'unused_input'].includes(issue.code))
+                  ? hint
+                  : t(summaryKey, issue.subject ?? '')
+              return (
+                <div className={`wfc-problem wfc-problem--${issue.level}`} key={id}>
+                  <div className="wfc-problem-row">
+                    <span className="wfc-problem-icon">
+                      {issue.level === 'error' ? (
+                        <CircleAlert size={12} />
+                      ) : (
+                        <TriangleAlert size={12} />
+                      )}
+                    </span>
+                    <span
+                      className="wfc-problem-node"
+                      title={issue.stepId ? nameOf(issue.stepId) : ''}
+                    >
+                      {issue.stepId ? nameOf(issue.stepId) : '-'}
+                    </span>
+                    <span className="wfc-problem-msg" title={summary}>
+                      {summary}
+                    </span>
+                    <button
+                      type="button"
+                      className="wfc-icon-btn"
+                      aria-expanded={isExpanded}
+                      aria-label={t(
+                        isExpanded
+                          ? 'workflowEditor.problem.collapseIssue'
+                          : 'workflowEditor.problem.expandIssue',
+                      )}
+                      onClick={() =>
+                        setExpanded(previous => {
+                          const next = new Set(previous)
+                          if (next.has(id)) next.delete(id)
+                          else next.add(id)
+                          return next
+                        })
+                      }
+                    >
+                      {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                    {(issue.stepId || issue.fieldPath?.startsWith('/inputs')) && (
+                      <button
+                        type="button"
+                        className="wfc-icon-btn"
+                        title={t('workflowEditor.problem.locate')}
+                        onClick={() => onLocate(issue.stepId ?? '', issue.fieldPath)}
+                      >
+                        <Crosshair size={12} />
+                      </button>
+                    )}
+                  </div>
+                  {isExpanded && (
+                    <div className="wfc-problem-content">
+                      <div>{hint}</div>
+                      {issue.fieldPath && <code>{issue.fieldPath}</code>}
+                      <div>
+                        <small>
+                          {t('workflowEditor.problem.details')} · {issue.sources.join(' · ')}
+                        </small>
+                      </div>
+                      {issue.details.map((detail, i) => (
+                        <pre key={i}>{detail}</pre>
+                      ))}
+                    </div>
                   )}
-                </span>
-                <span className="wfc-problem-node">
-                  {issue.stepId ? nameOf(issue.stepId) : '-'}
-                </span>
-                <div className="wfc-problem-content">
-                  <div>
-                    {t(`workflowEditor.problem.${issue.category}`)}
-                    {issue.fieldPath && <code> · {issue.fieldPath}</code>}
-                  </div>
-                  <div>
-                    {t(`workflowEditor.diagnostic.${issue.code}`) ===
-                    `workflowEditor.diagnostic.${issue.code}`
-                      ? t('workflowEditor.diagnostic.validation')
-                      : t(`workflowEditor.diagnostic.${issue.code}`)}
-                  </div>
-                  <details>
-                    <summary>{t('workflowEditor.problem.details')}</summary>
-                    <small>{issue.sources.join(' · ')}</small>
-                    {issue.details.map((detail, i) => (
-                      <pre key={i}>{detail}</pre>
-                    ))}
-                  </details>
                 </div>
-                {(issue.stepId || issue.fieldPath?.startsWith('/inputs')) && (
-                  <button
-                    type="button"
-                    className="wfc-icon-btn"
-                    title={t('workflowEditor.problem.locate')}
-                    onClick={() => onLocate(issue.stepId ?? '', issue.fieldPath)}
-                  >
-                    <Crosshair size={12} />
-                  </button>
-                )}
-              </div>
-            ))}
+              )
+            })}
         </div>
       )}
 

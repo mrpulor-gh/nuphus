@@ -208,7 +208,7 @@ export function WorkflowDebugPanel({
       })
     }
     const debugSteps = mode === 'node' ? [selected] : steps
-    const issue = debugPreflight(debugSteps)
+    const issue = debugPreflight(debugSteps, inputs)
     if (issue) {
       showIssue(issue)
       return

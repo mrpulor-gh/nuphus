@@ -79,8 +79,11 @@ vi.mock('./runStatus', () => ({
 }))
 vi.mock('./ToolPalette', () => ({ ToolPalette: () => null, TOOL_DRAG_MIME: 'tool' }))
 vi.mock('./ProblemsPanel', () => ({
-  ProblemsPanel: ({ backendReport }: { backendReport: unknown }) => (
-    <output data-testid="backend-check">{JSON.stringify(backendReport)}</output>
+  ProblemsPanel: ({ backendReport, problems }: { backendReport: unknown; problems: unknown }) => (
+    <>
+      <output data-testid="backend-check">{JSON.stringify(backendReport)}</output>
+      <output data-testid="local-check">{JSON.stringify(problems)}</output>
+    </>
   ),
 }))
 vi.mock('./OutlinePanel', () => ({ OutlinePanel: () => null }))
@@ -151,10 +154,34 @@ function shortcut() {
 }
 
 describe('Canvas save coordination', () => {
-  it('groups primary and editing actions into separate rows and provides a localized new-node name', async () => {
+  it('revalidates references when an input declaration changes without editing nodes', async () => {
+    const original = workflow.steps
+    workflow.steps = [
+      {
+        id: 'first',
+        name: 'Input consumer',
+        do: { tool: 'test', with: { text: '{{inputs.new_input}}' } },
+      },
+    ]
+    try {
+      await open()
+      await waitFor(() =>
+        expect(screen.getByTestId('local-check')).toHaveTextContent('input_reference'),
+      )
+      fireEvent.click(screen.getByText('更多'))
+      fireEvent.click(screen.getByRole('button', { name: '外部输入' }))
+      fireEvent.click(screen.getByRole('button', { name: '应用测试输入' }))
+      await waitFor(() => expect(screen.getByTestId('local-check')).toHaveTextContent('[]'))
+    } finally {
+      workflow.steps = original
+    }
+  })
+  it('groups primary and editing actions in the toolbar without a session enhancement toggle', async () => {
     await open()
     const primary = document.querySelector('.wfc-toolbar-row--primary') as HTMLElement
     const actions = screen.getByLabelText('画布操作')
+    expect(primary.parentElement).toBe(actions.parentElement)
+    expect(screen.queryByText('增强模式')).not.toBeInTheDocument()
     expect(within(primary).getByRole('button', { name: '保存' })).toBeInTheDocument()
     expect(within(primary).getByRole('button', { name: '运行' })).toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: '节点调试' })).toBeInTheDocument()

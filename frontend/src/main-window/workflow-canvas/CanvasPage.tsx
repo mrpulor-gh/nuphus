@@ -103,9 +103,9 @@ import { Inspector, loadToolsOnce } from './Inspector'
 import { ToolPalette, TOOL_DRAG_MIME } from './ToolPalette'
 import { skeletonFromSchema } from './toolSkeleton'
 import { ProblemsPanel } from './ProblemsPanel'
+import { ToolbarOverflow } from './ToolbarOverflow'
 import { OutlinePanel } from './OutlinePanel'
 import { IntentFormPanel } from './IntentFormPanel'
-import { EnhancedModeToggle } from './EnhancedModeToggle'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
@@ -513,10 +513,10 @@ function CanvasInner({
   useEffect(() => {
     if (!steps) return
     const timer = setTimeout(() => {
-      setProblems(validateIR(steps, { runHistory: ir?.run_history }))
+      setProblems(validateIR(steps, { runHistory: ir?.run_history, inputs: declaredInputs }))
     }, 300)
     return () => clearTimeout(timer)
-  }, [steps, ir?.run_history])
+  }, [steps, ir?.run_history, declaredInputs])
 
   // ── 节点问题级别映射（error 优先）──
   const problemByStep = useMemo(() => {
@@ -1921,7 +1921,6 @@ function CanvasInner({
             )}
 
             <div className="wfc-toolbar-spacer" />
-            <EnhancedModeToggle disabled={readOnly} onNotice={setNotice} />
             <button
               type="button"
               className="wfc-btn"
@@ -2001,151 +2000,137 @@ function CanvasInner({
             >
               {ui('节点调试', 'Debug node')}
             </button>
-            <button className="wfc-btn" onClick={() => setTraceOpen(true)}>
-              {ui('运行详情', 'Execution details')}
-            </button>
-            <button
-              className="wfc-btn"
-              disabled={!selectedStep || readOnly || gateLocked}
-              title={ui(
-                '按住 Shift 多选节点；仅修改所选范围',
-                'Shift-click to select nodes; edits stay in the selected scope',
-              )}
-              onClick={() =>
-                void flushDrafts().then(ok => {
-                  if (ok) setScopedEditOpen(true)
-                })
-              }
-            >
-              {ui('AI 局部修改', 'AI scoped edit')}
-            </button>
-            <button
-              type="button"
-              className="wfc-btn"
-              onClick={undo}
-              disabled={readOnly}
-              aria-label={editorText('撤销（Ctrl+Z）', t)}
-              title={editorText('撤销（Ctrl+Z）', t)}
-            >
-              <Undo2 size={13} />
-            </button>
-            <button
-              type="button"
-              className="wfc-btn"
-              onClick={redo}
-              disabled={readOnly}
-              aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
-              title={editorText('重做（Ctrl+Shift+Z）', t)}
-            >
-              <Redo2 size={13} />
-            </button>
-
-            <details
-              className="wfc-more"
-              ref={moreMenuRef}
-              onKeyDown={e => {
-                if (e.key === 'Escape') {
-                  e.currentTarget.open = false
-                  e.currentTarget.querySelector('summary')?.focus()
-                }
-              }}
-            >
-              <summary className="wfc-btn">{ui('更多', 'More')}</summary>
-              <div
-                className="wfc-more-menu"
-                onClick={e => {
-                  if ((e.target as HTMLElement).closest('button')) {
-                    const details = e.currentTarget.closest('details')
-                    if (details) details.open = false
-                  }
-                }}
-              >
+            <ToolbarOverflow
+              menuRef={moreMenuRef}
+              actions={[
+                <button key="trace" className="wfc-btn" onClick={() => setTraceOpen(true)}>
+                  {ui('运行详情', 'Execution details')}
+                </button>,
                 <button
-                  type="button"
+                  key="ai"
                   className="wfc-btn"
-                  onClick={() => void runCheck()}
-                  title={editorText('后端权威校验', t)}
-                >
-                  <CircleCheckBig size={13} /> {editorText('检查', t)}
-                </button>
-                <button
-                  type="button"
-                  className="wfc-btn"
-                  aria-pressed={detailedNodes}
-                  onClick={() => setDetailedNodes(value => !value)}
-                >
-                  {t(
-                    detailedNodes
-                      ? 'workflowEditor.summary.compact'
-                      : 'workflowEditor.summary.detail',
+                  disabled={!selectedStep || readOnly || gateLocked}
+                  title={ui(
+                    '按住 Shift 多选节点；仅修改所选范围',
+                    'Shift-click to select nodes; edits stay in the selected scope',
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  className="wfc-btn"
-                  onClick={() => {
-                    setInputsEditorFocus(null)
-                    setInputsEditorOpen(true)
-                  }}
-                  title={
-                    readOnly
-                      ? editorText('运行中 · 画布只读', t)
-                      : editorText('编辑工作流外部输入声明', t)
+                  onClick={() =>
+                    void flushDrafts().then(ok => {
+                      if (ok) setScopedEditOpen(true)
+                    })
                   }
                 >
-                  <Braces size={13} /> {editorText('外部输入', t)}
-                </button>
-
-                {replayRunId && onExitReplay && (
-                  <button
-                    type="button"
-                    className="wfc-btn wfc-btn--primary"
-                    onClick={onExitReplay}
-                    title={editorText('返回当前工作流画布', t)}
-                  >
-                    {editorText('返回当前画布', t)}
-                  </button>
-                )}
-
+                  {ui('AI 局部修改', 'AI scoped edit')}
+                </button>,
                 <button
+                  key="undo"
                   type="button"
                   className="wfc-btn"
-                  onClick={() => setScheduleOpen(true)}
-                  title={
-                    ir.schedule?.enabled
-                      ? editorText('定时运行已启用', t)
-                      : editorText('设置定时运行', t)
-                  }
-                >
-                  <Clock3 size={13} /> {editorText('定时', t)}
-                  {ir.schedule && (
-                    <span
-                      className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`}
-                    />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  className="wfc-btn"
-                  onClick={() => {
-                    playUiSound('switch')
-                    setIntentFormOpen(true)
-                  }}
+                  onClick={undo}
                   disabled={readOnly}
-                  title={
-                    readOnly
-                      ? snapshot.running
-                        ? editorText('运行中 · 画布只读', t)
-                        : editorText('只读画布，不可发起意图', t)
-                      : editorText('用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流', t)
-                  }
+                  aria-label={editorText('撤销（Ctrl+Z）', t)}
+                  title={editorText('撤销（Ctrl+Z）', t)}
                 >
-                  <ListChecks size={13} /> {editorText('意图表单', t)}
+                  <Undo2 size={13} />
+                  <span className="wfc-overflow-label">{ui('撤销', 'Undo')}</span>
+                </button>,
+                <button
+                  key="redo"
+                  type="button"
+                  className="wfc-btn"
+                  onClick={redo}
+                  disabled={readOnly}
+                  aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
+                  title={editorText('重做（Ctrl+Shift+Z）', t)}
+                >
+                  <Redo2 size={13} />
+                  <span className="wfc-overflow-label">{ui('重做', 'Redo')}</span>
+                </button>,
+              ]}
+            >
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => void runCheck()}
+                title={editorText('后端权威校验', t)}
+              >
+                <CircleCheckBig size={13} /> {editorText('检查', t)}
+              </button>
+              <button
+                type="button"
+                className="wfc-btn"
+                aria-pressed={detailedNodes}
+                onClick={() => setDetailedNodes(value => !value)}
+              >
+                {t(
+                  detailedNodes
+                    ? 'workflowEditor.summary.compact'
+                    : 'workflowEditor.summary.detail',
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => {
+                  setInputsEditorFocus(null)
+                  setInputsEditorOpen(true)
+                }}
+                title={
+                  readOnly
+                    ? editorText('运行中 · 画布只读', t)
+                    : editorText('编辑工作流外部输入声明', t)
+                }
+              >
+                <Braces size={13} /> {editorText('外部输入', t)}
+              </button>
+
+              {replayRunId && onExitReplay && (
+                <button
+                  type="button"
+                  className="wfc-btn wfc-btn--primary"
+                  onClick={onExitReplay}
+                  title={editorText('返回当前工作流画布', t)}
+                >
+                  {editorText('返回当前画布', t)}
                 </button>
-              </div>
-            </details>
+              )}
+
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => setScheduleOpen(true)}
+                title={
+                  ir.schedule?.enabled
+                    ? editorText('定时运行已启用', t)
+                    : editorText('设置定时运行', t)
+                }
+              >
+                <Clock3 size={13} /> {editorText('定时', t)}
+                {ir.schedule && (
+                  <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => {
+                  playUiSound('switch')
+                  setIntentFormOpen(true)
+                }}
+                disabled={readOnly}
+                title={
+                  readOnly
+                    ? snapshot.running
+                      ? editorText('运行中 · 画布只读', t)
+                      : editorText('只读画布，不可发起意图', t)
+                    : editorText('用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流', t)
+                }
+              >
+                <ListChecks size={13} /> {editorText('意图表单', t)}
+              </button>
+            </ToolbarOverflow>
           </div>
         </div>
 

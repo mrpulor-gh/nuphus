@@ -34,7 +34,8 @@
   position: relative;
   z-index: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-1);
@@ -43,15 +44,35 @@
 
 .wfc-toolbar-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
 }
 
 .wfc-toolbar-row--primary {
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--line-1);
+  display: contents;
+}
+.wfc-toolbar-row--primary > .wfc-btn {
+  order: 2;
+}
+.wfc-toolbar > .wfc-toolbar-row:not(.wfc-toolbar-row--primary) {
+  order: 1;
+  flex: 1;
+}
+.wfc-toolbar .wfc-toolbar-spacer {
+  display: none;
+}
+.wfc-toolbar .wfc-title,
+.wfc-toolbar .wfc-title-input {
+  max-width: min(20vw, 240px);
+  flex-shrink: 1;
+}
+.wfc-overflow-label {
+  display: none;
+}
+.wfc-more-menu .wfc-overflow-label {
+  display: inline;
 }
 
 .wfc-toolbar .wfc-btn,
@@ -1490,14 +1511,28 @@ textarea.wfc-input {
 
 /* ── 问题面板 ── */
 .wfc-problems {
+  position: relative;
+  flex-shrink: 0;
+  min-height: 0;
   border-top: 1px solid var(--line-1);
   background: var(--surface-1);
-  max-height: 220px;
   display: flex;
   flex-direction: column;
 }
 .wfc-problems.is-collapsed {
-  max-height: none;
+  height: auto;
+}
+.wfc-problems-resizer {
+  height: 8px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.wfc-problems-resizer:hover,
+.wfc-problems-resizer:focus-visible {
+  background: var(--accent);
+  outline: none;
 }
 .wfc-problems-bar {
   display: flex;
@@ -1608,10 +1643,12 @@ textarea.wfc-input {
 }
 
 .wfc-problems-list {
+  min-height: 0;
   overflow-y: auto;
   padding: 0 var(--space-3) var(--space-2);
 }
 .wfc-run-log {
+  min-height: 0;
   overflow-y: auto;
   padding: 0 var(--space-3) var(--space-2);
   font-family: var(--font-mono);
@@ -1661,12 +1698,26 @@ textarea.wfc-input {
   text-align: center;
 }
 .wfc-problem {
-  display: flex;
+  border-bottom: 1px solid var(--line-1);
+  font-size: var(--fz-sm);
+}
+.wfc-problem-row {
+  display: grid;
+  grid-template-columns: 16px minmax(80px, 140px) minmax(0, 1fr) 28px 28px;
+  min-height: 28px;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
   border-radius: var(--radius-1);
-  font-size: var(--fz-sm);
+}
+.wfc-problem-content {
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+}
+.wfc-problem-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .wfc-problem:hover {
   background: var(--surface-2);

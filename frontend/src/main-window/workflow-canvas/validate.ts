@@ -6,10 +6,15 @@
  * 仅 L3 后端可做（wf_validate / wf_save）。
  */
 
-import type { WorkflowStep, Condition, VarRef, RunRecord } from '../../core/types'
+import type {
+  WorkflowStep,
+  WorkflowInputSpec,
+  Condition,
+  VarRef,
+  RunRecord,
+} from '../../core/types'
 import { stepKind, containerLanes, laneSteps } from './projection'
-import { walkSteps, profileStep } from './dataEdges'
-import { referenceRoot } from './fieldReferences'
+import { referenceSites } from './variableRename'
 
 export type ProblemLevel = 'error' | 'warning'
 
@@ -21,6 +26,7 @@ export interface Problem {
   /** 关联步骤（ProblemsPanel 定位用） */
   stepId?: string
   fieldPath?: string
+  subject?: string
 }
 
 const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
@@ -29,6 +35,7 @@ const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
 interface MirrorCtx {
   ids: Map<string, number>
   captured: Set<string>
+  inputs: Set<string>
   problems: Problem[]
   inLoop: boolean
   loopVars: string[]
@@ -104,29 +111,7 @@ function checkCondition(cond: Condition, owner: string, stepId: string, ctx: Mir
       }
     }
   }
-  // V4：VarRef 前向引用（warning）
-  for (const r of operands) {
-    if (r && typeof r === 'object' && 'var' in r) {
-      const reference = referenceRoot(r.var)
-      if (reference?.input) continue
-      const root = reference?.name
-      if (
-        root &&
-        !ctx.captured.has(root) &&
-        !ctx.loopVars.includes(root) &&
-        root !== '_index' &&
-        root !== 'params' &&
-        root !== 'ENV'
-      ) {
-        ctx.problems.push({
-          level: 'warning',
-          rule: 'V4',
-          message: `步骤「${owner}」条件变量「${root}」尚未被先前步骤捕获（运行时可能由 inputs 注入）`,
-          stepId,
-        })
-      }
-    }
-  }
+  // Variable references are checked once via referenceSites, including condition operands.
 }
 
 function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
@@ -214,25 +199,6 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
         stepId: step.id,
       })
     }
-    // V5：for_each items 已被捕获
-    if (def?.for_each) {
-      const items = def.for_each.items
-      if (!def.for_each.as) {
-        // ForEachDef.as 为空（运行时默认 item）——不报错，仅 V5 检查 items
-      }
-      if (items && typeof items === 'object' && 'var' in items) {
-        const reference = referenceRoot(items.var)
-        const root = reference?.input ? undefined : reference?.name
-        if (root && !ctx.captured.has(root) && root !== 'params' && root !== 'ENV') {
-          ctx.problems.push({
-            level: 'warning',
-            rule: 'V5',
-            message: `步骤「${owner}」for_each 引用的「${root}」尚未被捕获（运行时缺失将静默空循环）`,
-            stepId: step.id,
-          })
-        }
-      }
-    }
     if (def?.until) checkCondition(def.until, owner, step.id, ctx)
   }
   if (kind === 'call') {
@@ -248,31 +214,48 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
   }
 
   // V4：模板 {{var}} 前向引用（warning；params/ENV/loop item_var 除外）
-  for (const cons of profileStep(step).consumes) {
-    if (ctx.captured.has(cons.varName)) continue
-    if (ctx.loopVars.includes(cons.varName) || cons.varName === '_index') continue
+  for (const cons of referenceSites(step)) {
+    if (cons.input) {
+      if (!ctx.inputs.has(cons.name))
+        ctx.problems.push({
+          level: 'error',
+          rule: 'input_reference',
+          subject: cons.name,
+          message: `外部输入 ${cons.name} 尚未声明`,
+          stepId: step.id,
+          fieldPath: cons.fieldPath,
+        })
+      continue
+    }
+    if (ctx.inputs.has(cons.name)) continue
+    if (ctx.captured.has(cons.name)) continue
+    if (ctx.loopVars.includes(cons.name) || cons.name === '_index') continue
     ctx.problems.push({
       level: 'warning',
       rule: 'V4',
-      message: `步骤「${owner}」引用变量「${cons.varName}」尚未被先前步骤捕获（运行时可能由 inputs 注入）`,
+      subject: cons.name,
+      fieldPath: cons.fieldPath,
+      message: `步骤「${owner}」引用变量「${cons.name}」尚未被先前步骤捕获（运行时可能由 inputs 注入）`,
       stepId: step.id,
     })
   }
 
-  // V2：容器子步骤非空（else 允许为空）
+  // Mirror the compiler: empty branches/loops are valid, empty seq/wait are warnings.
   const c = containerLanes(step)
-  if (c) {
-    for (const lane of c.lanes) {
-      if (lane.id === 'else') continue
-      if (laneSteps(step, lane.id).length === 0) {
-        ctx.problems.push({
-          level: 'error',
-          rule: 'V2',
-          message: `容器「${owner}」的${lane.id === 'main' ? '子步骤' : 'THEN 分支'}为空（至少保留一个步骤）`,
-          stepId: step.id,
-        })
-      }
-    }
+  if (
+    (kind === 'seq' && Array.isArray(d.seq) && d.seq.length === 0) ||
+    (kind === 'wait' && !d.wait && (!Array.isArray(d.auto) || d.auto.length === 0))
+  ) {
+    ctx.problems.push({
+      level: 'warning',
+      rule: kind === 'seq' ? 'V2' : 'empty_wait',
+      message:
+        kind === 'seq'
+          ? `容器「${owner}」没有子步骤`
+          : `等待「${owner}」没有提示或自动步骤，将立即通过`,
+      stepId: step.id,
+      fieldPath: kind === 'seq' ? '/do/seq' : '/do/wait',
+    })
   }
 
   // capture 登记（遍历序前向）+ V10 遮蔽
@@ -290,8 +273,6 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
 
   // 递归子树（loop 上下文携带 item_var）
   for (const issue of ctx.problems.slice(issueStart)) {
-    if (issue.rule === 'V4')
-      issue.fieldPath = kind === 'tool' || kind === 'call' ? '/do/with' : `/do/${kind}`
     if (issue.rule === 'V6' || issue.rule === 'V7')
       issue.fieldPath = kind === 'loop' ? '/do/loop/until' : `/do/${kind}/condition`
   }
@@ -313,6 +294,7 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
 
 export interface ValidateOptions {
   runHistory?: RunRecord[]
+  inputs?: WorkflowInputSpec[]
 }
 
 /** L2 全量镜像校验（防抖由调用方控制） */
@@ -320,6 +302,7 @@ export function validateIR(steps: WorkflowStep[], opts: ValidateOptions = {}): P
   const ctx: MirrorCtx = {
     ids: new Map(),
     captured: new Set(),
+    inputs: new Set(opts.inputs?.map(input => input.name)),
     problems: [],
     inLoop: false,
     loopVars: [],

@@ -31,8 +31,11 @@ export function parseTestValues(text: string): Record<string, unknown> {
 }
 
 /** Structural preflight only; environment and actual data remain runtime-validated. */
-export function debugPreflight(steps: WorkflowStep[]): EditorProblem | undefined {
-  const issues = mergeEditorProblems(validateIR(steps), null)
+export function debugPreflight(
+  steps: WorkflowStep[],
+  inputs: WorkflowInputSpec[] = [],
+): EditorProblem | undefined {
+  const issues = mergeEditorProblems(validateIR(steps, { inputs }), null)
   walkSteps(steps, step => {
     if (!step.name?.trim())
       issues.push({

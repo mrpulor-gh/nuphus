@@ -1,6 +1,27 @@
 import { workflowCanvasCopy } from './workflowCanvasCopy'
 /** Workflow editing messages; identifiers never depend on the display language. */
 const messages: Record<string, [string, string]> = {
+  'toolbar.more': ['更多', 'More'],
+  'problem.resize': ['调整底部面板高度', 'Resize bottom panel'],
+  'problem.resizeHint': [
+    '拖动或按上下方向键调整高度；双击恢复默认',
+    'Drag or use arrow keys to resize; double-click to reset',
+  ],
+  'problem.expandPanel': ['展开底部面板', 'Expand bottom panel'],
+  'problem.collapsePanel': ['收起底部面板', 'Collapse bottom panel'],
+  'problem.expandIssue': ['展开问题详情', 'Expand issue details'],
+  'problem.collapseIssue': ['收起问题详情', 'Collapse issue details'],
+  'problem.summary.variable': ['变量 {0} 尚无已知来源', 'Variable {0} has no known source'],
+  'problem.summary.input_reference': [
+    '外部输入 {0} 尚未声明',
+    'External input {0} is not declared',
+  ],
+  'problem.summary.unused_input': ['外部输入 {0} 尚未使用', 'External input {0} is not used'],
+  'problem.summary.children': ['顺序容器没有子步骤', 'Sequence has no steps'],
+  'problem.summary.wait': ['等待提示和自动步骤均为空', 'No confirmation prompt or automatic steps'],
+  'problem.summary.required': ['缺少必填值', 'Required value is missing'],
+  'problem.summary.condition': ['条件配置不完整或不合法', 'Condition is incomplete or invalid'],
+  'problem.summary.execution': ['此步骤上次运行失败', 'This step failed in the last run'],
   'run.started': ['工作流开始运行', 'Workflow started'],
   'run.stepStarted': ['开始 · {0}', 'Started · {0}'],
   'run.retry': ['第 {0} 次重试', 'Retry {0}'],
