@@ -5,6 +5,7 @@ import type { WorkflowItem } from '../core/types'
 import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, openExternal } from './lib/api'
 import { handleExternalAnchorClick } from './lib/externalLink'
 import { scheduleIdle } from './lib/idle'
+import { applySkinBg, readSkinBg } from '../ui/skinBg'
 import { TenetsDialog } from './dialogs/TenetsDialog'
 import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
@@ -188,6 +189,25 @@ export default function App() {
   // ── Keyboard shortcuts (Ctrl+K opens cmd palette from s.cmdItems) ──
   const [runWorkflow, setRunWorkflow] = useState<WorkflowItem | null>(null)
   const [wfRunning, setWfRunning] = useState(false)
+
+  /**
+   * 皮肤背景恢复（必须在 App 层做）。
+   *
+   * ThemesPage 被 `<CompactModal open={s.showThemes}>` 包着，而 CompactModal 在
+   * open=false 时 `return null` —— 关闭状态下 ThemesPage 根本不在组件树上。
+   * 把恢复写在它的挂载 effect 里，等价于「只有打开过主题弹窗的人才配有背景」：
+   * 在聊天界面刷新 / Vite HMR 时没人恢复 `--app-skin-bg`，变量回落默认 `none`，
+   * 背景必丢（偶尔又出现，正是因为打开过弹窗）。
+   *
+   * App 常驻且 `.chat-area`（:399）就在本组件内，是唯一可靠的恢复位置。
+   * 详见 `ui/skinBg.ts` 的模块说明。
+   */
+  useEffect(() => {
+    // 异步：解析本机路径可能要经 Rust 读文件；忽略 Promise（失败已在内部报告并保留现状）
+    void applySkinBg(readSkinBg())
+    // 仅挂载时恢复一次；此后由 ThemesPage 的保存/清除路径即时写入
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // ── 输入栏 workflow 扳手菜单「工作流画布」直达（2026-09-03 大王定稿）：
   //    有未完成（draft）工作流 → 续编最近草稿；否则新建空白工作流并进入画布。
   //    闸门铁律同 WorkflowPage：任意执行态禁止进入画布（点击级 gate 复核）。──

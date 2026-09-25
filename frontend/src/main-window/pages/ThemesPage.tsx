@@ -16,7 +16,9 @@ import {
   type CustomTheme,
 } from '../../hooks/customTheme'
 import { Save, RotateCcw, Download, Upload, X } from 'lucide-react'
-import { NuphusLogo } from '../../ui/NuphusLogo'
+import { LetterAvatar } from '../../ui/LetterAvatar'
+import { applySkinBg, readSkinBg } from '../../ui/skinBg'
+import { toAssetUrl } from '../../ui/assetUrl'
 import { Button } from '../../ui/Button'
 import { Section, FormRow } from '../../ui/PageLayout'
 import { setLanguage as apiSetLanguage, getLanguage } from '../lib/api'
@@ -501,7 +503,9 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
         setLanguage(raw.startsWith('zh') ? 'zh' : 'en')
       })
     setShowAvatar(localStorage.getItem(LS_SHOW_AVATAR) === 'true')
-    setSkinBg(localStorage.getItem(LS_SKIN) || '')
+    // 只恢复本页预览所需的 state；CSS 变量由 App 层挂载时统一恢复
+    // （本页关闭态不在组件树上，不能承担恢复职责 —— 见 ui/skinBg.ts）
+    setSkinBg(readSkinBg())
     setUserAvatar(localStorage.getItem(LS_USER_AVATAR) || '')
     setNuphusAvatar(localStorage.getItem(LS_NUPHUS_AVATAR) || '')
   }, [])
@@ -513,51 +517,71 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     apiSetLanguage(id === 'zh' ? 'zh-CN' : 'en-US')
   }
 
-  const handleSkinSelect = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/*'
-    input.onchange = e => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (file) {
-        const reader = new FileReader()
-        reader.onload = ev => {
-          const dataUrl = ev.target?.result as string
-          setSkinBg(dataUrl)
-          localStorage.setItem(LS_SKIN, dataUrl)
-          document.documentElement.style.setProperty('--app-skin-bg', `url(${dataUrl})`)
-        }
-        reader.readAsDataURL(file)
-      }
+  /**
+   * 选一张本地图片并**入库**（复制进应用数据目录），返回本地方径。
+   *
+   * 本地应用架构：图片本来就落在本地磁盘上，这里不是「读成 base64 塞进
+   * localStorage」，而是把文件复制进 `nuphus_data_dir()/images/` 后只记路径，
+   * 渲染侧用 `toAssetUrl(path)` 走 asset:// 读出来。由此同时消掉三件事：
+   * localStorage 5MB 配额被大图占满导致后续写入（含主题）静默失败、
+   * 数 MB base64 刷新后常驻内存、以及「用户移动/删除原文件 → 背景失效」。
+   *
+   * 走 `plugin-dialog` 的 open() 而非 `<input type=file>`：后者只给 File 对象，
+   * 拿不到可靠的绝对路径（本项目前端历来只用 FileReader 读 dataURL）。
+   */
+  const pickAndImportImage = async (): Promise<string | null> => {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+    })
+    if (!selected || typeof selected !== 'string') return null
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke<string>('save_user_image', { sourcePath: selected })
+  }
+
+  /**
+   * 皮肤背景的应用入口（保存 / 清除 → 本页；恢复 → App 层挂载时）。
+   *
+   * 实现收敛在 `ui/skinBg.ts`，本页不再持有私有副本：早先「保存 setProperty、
+   * 清除 removeProperty、恢复只 setState」三路各写一半，恢复路径还写在了一个
+   * 关闭态根本不挂载的组件里（见 skinBg.ts 模块说明）。现在只有一套语义。
+   */
+  const handleSkinSelect = async () => {
+    try {
+      const path = await pickAndImportImage()
+      if (!path) return
+      setSkinBg(path)
+      localStorage.setItem(LS_SKIN, path)
+      await applySkinBg(path)
+      // 运行时链路与启动路径（App 层 effect）行为不一致时，这一行是唯一能分辨
+      // 「卡在入库 / 写变量 / 还是渲染」的线索。真机复现时看 Console 即可定位。
+      console.info('[skin] 已应用背景：', path)
+    } catch (e) {
+      console.error('皮肤背景入库失败:', e)
+      alert(t('themes.skinImportFailed'))
     }
-    input.click()
   }
 
   const clearSkin = () => {
     setSkinBg('')
     localStorage.removeItem(LS_SKIN)
-    document.documentElement.style.removeProperty('--app-skin-bg')
+    void applySkinBg('')
   }
 
-  const handleAvatarSelect = (type: 'user' | 'nuphus') => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/*'
-    input.onchange = e => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (file) {
-        const reader = new FileReader()
-        reader.onload = ev => {
-          const dataUrl = ev.target?.result as string
-          const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
-          const setter = type === 'user' ? setUserAvatar : setNuphusAvatar
-          setter(dataUrl)
-          localStorage.setItem(key, dataUrl)
-        }
-        reader.readAsDataURL(file)
-      }
+  const handleAvatarSelect = async (type: 'user' | 'nuphus') => {
+    // 与皮肤背景同一套本地架构：入库到磁盘、只存路径（见 pickAndImportImage）
+    try {
+      const path = await pickAndImportImage()
+      if (!path) return
+      const key = type === 'user' ? LS_USER_AVATAR : LS_NUPHUS_AVATAR
+      const setter = type === 'user' ? setUserAvatar : setNuphusAvatar
+      setter(path)
+      localStorage.setItem(key, path)
+    } catch (e) {
+      console.error('头像入库失败:', e)
+      alert(t('themes.avatarImportFailed'))
     }
-    input.click()
   }
 
   const clearAvatar = (type: 'user' | 'nuphus') => {
@@ -572,16 +596,14 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     localStorage.setItem(LS_SHOW_AVATAR, String(next))
   }
 
+  // 默认头像 = 字母头像：用户侧 U、智能体侧 A（LetterAvatar 尺寸即容器尺寸，铺满）。
+  // 自定义头像存的是本地方径，经 toAssetUrl 转 asset:// 渲染（存量 dataURL 亦兼容）。
   const renderAvatar = (src: string, fallback: 'user' | 'nuphus') => (
     <span className="avatar-preview">
       {src ? (
-        <img src={src} alt="" />
-      ) : fallback === 'nuphus' ? (
-        <NuphusLogo size={20} variant="mark" />
+        <img src={toAssetUrl(src) ?? undefined} alt="" />
       ) : (
-        <span className="avatar-preview--flip">
-          <NuphusLogo size={20} variant="mark" />
-        </span>
+        <LetterAvatar letter={fallback === 'user' ? 'U' : 'A'} size={34} />
       )}
     </span>
   )

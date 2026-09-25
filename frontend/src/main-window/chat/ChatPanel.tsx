@@ -16,18 +16,7 @@ import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
 import { setIslandAnchor } from '../../ui/islandChannel'
-import { convertFileSrc } from '@tauri-apps/api/core'
-
-/// 文件系统路径 → 浏览器可访问 URL（Tauri asset protocol；截图等本地文件用）
-function toAssetUrl(path: string | null | undefined): string | null {
-  if (!path) return null
-  if (/^(https?:\/\/|data:|asset:\/\/|tauri:\/\/)/i.test(path)) return path
-  try {
-    return convertFileSrc(path)
-  } catch {
-    return null
-  }
-}
+import { toAssetUrl, resolveLocalImageUrl } from '../../ui/assetUrl'
 import {
   getCurrentConfig,
   configureLlm,
@@ -88,7 +77,7 @@ import {
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
-import { NuphusLogo } from '../../ui/NuphusLogo'
+import { LetterAvatar } from '../../ui/LetterAvatar'
 import { playUiSound } from '../../ui/sound'
 import { useWheelSelection } from '../../ui/wheelSelection'
 import { formatPrimaryShortcut } from '../../ui/platformShortcut'
@@ -333,8 +322,50 @@ export function ChatPanel({
 
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  /**
+   * 自定义头像的**可渲染 URL**（用户侧 / 智能体侧）。
+   *
+   * 持久化存的是本机文件路径，而路径→URL 是异步的（`resolveLocalImageUrl` 可能
+   * 要经 Rust 读文件；dev server 下 asset:// 通道根本不可用，见 assetUrl.ts），
+   * 因此在这里预解析一次存 state，供消息渲染热路径同步取用。
+   * 依赖是两个路径字符串：用户在设置页换头像后值变化 → 自动重新解析。
+   */
+  const [avatarUrls, setAvatarUrls] = useState<{ user: string | null; nuphus: string | null }>({
+    user: null,
+    nuphus: null,
+  })
 
   const [pauseActionBusy, setPauseActionBusy] = useState(false)
+
+  /**
+   * 自定义头像的持久化路径（顶层读一次每次渲染都读）。
+   *
+   * localStorage 不是响应式的：把它作为 effect 依赖，「用户在设置页换头像」
+   * 体现为这两个字符串变化 → effect 重跑 → 重新解析 URL。比自建版本号可靠。
+   */
+  const userAvatarPath = localStorage.getItem('nuphus_user_avatar') || ''
+  const nuphusAvatarPath = localStorage.getItem('nuphus_nuphus_avatar') || ''
+
+  /**
+   * 预解析自定义头像：本地路径 → 可渲染 URL。
+   *
+   * 路径→URL 是异步的（`resolveLocalImageUrl` 可能要经 Rust 读文件；dev server 下
+   * asset:// 通道根本不可用，见 assetUrl.ts），所以不能在消息渲染的热路径里同步取。
+   * 解析失败（文件被删等）返回 null → 回落到字母头像，而不是留一个破图。
+   */
+  useEffect(() => {
+    let alive = true
+    void Promise.all([
+      resolveLocalImageUrl(userAvatarPath),
+      resolveLocalImageUrl(nuphusAvatarPath),
+    ]).then(([user, nuphus]) => {
+      if (alive) setAvatarUrls({ user, nuphus })
+    })
+    return () => {
+      alive = false
+    }
+  }, [userAvatarPath, nuphusAvatarPath])
+
   // ── 点评弹窗 ──
   const [ratingMsg, setRatingMsg] = useState<{
     id: string
@@ -1653,22 +1684,21 @@ export function ChatPanel({
                     const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1
                     // Avatar settings
                     const showAvatar = localStorage.getItem('nuphus_show_avatar') === 'true'
-                    const userAvatar = localStorage.getItem('nuphus_user_avatar') || ''
-                    const nuphusAvatar = localStorage.getItem('nuphus_nuphus_avatar') || ''
                     const skinBg = localStorage.getItem('nuphus_skin_bg') || ''
 
-                    // Default avatar — NuphusLogo (窗口 N)
+                    // 自定义头像的**可渲染 URL** 由顶层预解析（avatarUrls）—— 异步，
+                    // 不能在消息渲染热路径里同步取；无自定义头像时用字母头像
                     const AvatarComp =
                       msg.role === 'user' ? (
-                        userAvatar ? (
-                          <img src={userAvatar} alt="" className="msg-avatar-img" />
+                        avatarUrls.user ? (
+                          <img src={avatarUrls.user} alt="" className="msg-avatar-img" />
                         ) : (
-                          <NuphusLogo size={22} variant="mark" />
+                          <LetterAvatar letter="U" size={36} />
                         )
-                      ) : nuphusAvatar ? (
-                        <img src={nuphusAvatar} alt="" className="msg-avatar-img" />
+                      ) : avatarUrls.nuphus ? (
+                        <img src={avatarUrls.nuphus} alt="" className="msg-avatar-img" />
                       ) : (
-                        <NuphusLogo size={22} variant="mark" />
+                        <LetterAvatar letter="A" size={36} />
                       )
 
                     return (

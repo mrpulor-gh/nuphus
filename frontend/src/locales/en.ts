@@ -1011,6 +1011,10 @@ const en: Record<string, string> = {
   'themes.appearance': 'Appearance',
   'themes.language': 'Language',
   'themes.skinBg': 'Background Skin',
+  'themes.skinImportFailed':
+    'Failed to set background: could not copy the selected image into the app data directory.',
+  'themes.avatarImportFailed':
+    'Failed to set avatar: could not copy the selected image into the app data directory.',
   'themes.changeBg': 'Change',
   'themes.selectBg': 'Select Image',
   'themes.clearBg': 'Clear',

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { createPortal } from 'react-dom'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { submitUserInput, rejectUserInput } from '../lib/api'
 import MarkdownContent from '../chat/MarkdownContent'
 import { IconX, IconShield } from '../../ui/Icons'
@@ -14,19 +13,8 @@ import {
   inputTypeToCaptureMode,
 } from '../tools/useToolCapture'
 import { playPopupSound } from '../../ui/sound'
+import { toAssetUrl } from '../../ui/assetUrl'
 import { INTENT_FORM_LIMITS } from '../workflow-canvas/intentTypes'
-
-/// 将文件系统路径转为浏览器可访问的 URL（Tauri asset protocol）
-function toAssetUrl(path: string | null | undefined): string | null {
-  if (!path) return null
-  // 已经是 http/https/data/asset URL 则直接返回
-  if (/^(https?:\/\/|data:|asset:\/\/|tauri:\/\/)/i.test(path)) return path
-  try {
-    return convertFileSrc(path)
-  } catch {
-    return null
-  }
-}
 
 interface UserInputPromptProps {
   title: string

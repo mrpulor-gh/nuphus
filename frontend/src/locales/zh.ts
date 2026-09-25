@@ -956,6 +956,8 @@ const zh: Record<string, string> = {
   'themes.appearance': '主题外观',
   'themes.language': '界面语言',
   'themes.skinBg': '皮肤背景',
+  'themes.skinImportFailed': '背景图入库失败：无法把所选图片复制到应用数据目录。',
+  'themes.avatarImportFailed': '头像入库失败：无法把所选图片复制到应用数据目录。',
   'themes.changeBg': '更换背景',
   'themes.selectBg': '选择背景图片',
   'themes.clearBg': '清除',

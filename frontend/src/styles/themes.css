@@ -74,11 +74,10 @@
   object-fit: cover;
 }
 
-/* 用户头像占位符（logo 旋转 180° 拟人形） */
-.avatar-preview--flip {
-  display: flex;
-  transform: rotate(180deg);
-}
+/* 头像默认态为字母头像（LetterAvatar：用户侧 U / 智能体侧 A），
+   与用户上传自定义图片同样是铺满容器，默认态与自定义态视觉统一。
+   （2026-09-25 移除 .avatar-preview--flip —— 原实现把 NuphusLogo 旋转
+   180°「拟人形」来区分用户侧，既不成人形也无法稳定区分。） */
 
 /* ═══════════════════════════════════════════
    自定义主题（ThemesPage 自定义区）
