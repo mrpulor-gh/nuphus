@@ -376,8 +376,8 @@ pub fn env_info_section(
         EnvAudience::SubAgent => String::new(),
     };
 
-    // 自我认知文档随安装包分发（plugin/knowledge/nuphus-self/，不在源码仓库中——
-    // 内部设计不公开）。目录存在才注入该行，避免开源克隆后提示词指向不存在的路径。
+    // 自我认知文档随仓库分发（plugin/knowledge/nuphus-self/）。
+    // 目录存在才注入该行，避免老版本/裁剪包缺失该目录时提示词指向不存在的路径。
     let self_knowledge_line = if root.join("plugin/knowledge/nuphus-self").is_dir() {
         format!("自我认知: {}/plugin/knowledge/nuphus-self\n", root_str)
     } else {

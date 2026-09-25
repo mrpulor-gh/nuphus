@@ -84,8 +84,6 @@ plugin/experiences/workflow/
 src-tauri/tasks/nuphus/
 src-tauri/tasks/*/plans/
 
-# Agent 自我认知文档（内部设计，不公开；运行时随安装包分发）
-plugin/knowledge/nuphus-self/
 src-tauri/tasks/*/archive/
 !src-tauri/tasks/TEMPLATE.plan.md
 
@@ -139,8 +137,6 @@ plugin/workflows/chatagent-opencode-verify/
 plugin/workflows/nuphus-tour-v4/
 # 本地工作流注册表（UUID 实例，用户数据）
 plugin/workflows/index.json
-# 内部自我认知知识库（含安全架构/中继安全，不公开）
-plugin/knowledge/nuphus-self/
 # 市场仓聚合脚本（供独立 nuphus-market 仓使用，开源版不含市场）
 scripts/build-market-index.mjs
 
