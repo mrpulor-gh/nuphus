@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button } from './Button'
+import { IconKeyRound, IconServerOff, IconFileX, IconServer, IconCircleX } from './Icons'
 import '../styles/error.css'
 
 export type ErrorKind =
@@ -64,105 +65,19 @@ function ErrorIcon({ kind, size = 40 }: { kind: ErrorKind; size?: number }) {
 
   switch (kind) {
     case 'api_key_invalid':
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path
-            d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"
-            opacity=".4"
-          />
-          <circle cx="12" cy="9" r="2" />
-          <line x1="3" y1="3" x2="21" y2="21" />
-        </svg>
-      )
+      return <IconKeyRound size={s} strokeWidth={1.5} />
 
     case 'backend_unavailable':
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5" opacity=".3" />
-          <path d="M5 15a7 7 0 0 0 7 7" opacity=".5" />
-          <path d="M5 15a7 7 0 0 1 7-7" opacity=".5" />
-          <line x1="3" y1="3" x2="21" y2="21" />
-          <circle cx="12" cy="12" r="2" opacity=".4" />
-        </svg>
-      )
+      return <IconServerOff size={s} strokeWidth={1.5} />
 
     case 'config_corrupted':
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" opacity=".3" />
-          <polyline points="14 2 14 8 20 8" opacity=".3" />
-          <line x1="9" y1="13" x2="15" y2="13" />
-          <line x1="9" y1="17" x2="13" y2="17" />
-          <line x1="3" y1="3" x2="21" y2="21" />
-        </svg>
-      )
+      return <IconFileX size={s} strokeWidth={1.5} />
 
     case 'port_in_use':
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="2" y="2" width="20" height="8" rx="2" ry="2" opacity=".3" />
-          <rect x="2" y="14" width="20" height="8" rx="2" ry="2" opacity=".3" />
-          <line x1="6" y1="6" x2="6.01" y2="6" />
-          <line x1="6" y1="18" x2="6.01" y2="18" />
-          <line x1="3" y1="10" x2="3" y2="14" />
-          <line x1="21" y1="10" x2="21" y2="14" />
-          <line x1="3" y1="3" x2="21" y2="21" />
-        </svg>
-      )
+      return <IconServer size={s} strokeWidth={1.5} />
 
     default:
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" opacity=".4" />
-          <line x1="15" y1="9" x2="9" y2="15" />
-          <line x1="9" y1="9" x2="15" y2="15" />
-        </svg>
-      )
+      return <IconCircleX size={s} strokeWidth={1.5} />
   }
 }
 

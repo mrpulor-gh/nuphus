@@ -1408,8 +1408,19 @@ export default function SessionRail({
         aria-hidden={open ? undefined : true}
       >
         <div className="sr-drawer-head">
-          {/* 头部只有标题：文件夹管理入口已全部迁至项目中心，收起走 Esc / 面板外点击 / 再点色块 */}
           <span className="sr-drawer-title">{t('sessionRail.title')}</span>
+          {/* 收起按钮：面板右上角（与右侧各模块浮层的「唯一关闭按钮」位置对齐）。
+              原设计刻意不在头部放按钮、只靠 Esc / 面板外点击 / 色块收起；
+              现按需补上，为收起提供可见入口。 */}
+          <button
+            type="button"
+            className="sr-drawer-close"
+            onClick={closeDrawer}
+            title={t('common.close')}
+            aria-label={t('common.close')}
+          >
+            <IconX size={14} />
+          </button>
         </div>
         {/* 新建对话入口 = 列表首位的**动作行**：复用会话行骨架（文字左缘与会话标题对齐），
             虚线描边 + 弱文字把「动作」与上方「数据」区分开。
@@ -1510,15 +1521,17 @@ export default function SessionRail({
                         <span className={`sr-group-name${ungrouped ? ' is-ungrouped' : ''}`}>
                           {group.name || t('sessionRail.ungrouped')}
                         </span>
+                        {/* 组内会话计数：紧贴项目名称之后（原在 toggle 之外，被 flex:1 推到右侧，
+                            与「名称—计数」的语义关联脱节） */}
+                        <span className="sr-group-count" aria-hidden="true">
+                          {group.sessions.length}
+                        </span>
                         {group.auto && (
                           <span className="sr-group-tag" title={t('sessionRail.autoGroupHint')}>
                             {t('sessionRail.autoTag')}
                           </span>
                         )}
                       </button>
-                      <span className="sr-group-count" aria-hidden="true">
-                        {group.sessions.length}
-                      </span>
                       <span className="sr-group-actions">
                         {/* 组内新建对话：先切该文件夹再新建（无路径的「未分组」组不提供） */}
                         {group.path && onNewChat && onSwitchProjectDir && (

@@ -18,6 +18,20 @@ pub const KIND: &str = "desktop_action";
 pub const EVENT_TOOL: &str = "desktop_action_approval";
 const TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Whether an instant recorded at `created_at` has outlived `timeout`.
+///
+/// Uses `elapsed()` (i.e. `now - created_at`, never negative) so it can never
+/// panic with "overflow when subtracting duration from instant"; the timeout is
+/// a parameter rather than the `TIMEOUT` constant so tests can expire a ticket
+/// without fabricating an `Instant` in the past. Building a past instant with
+/// `Instant::now() - TIMEOUT` overflows as soon as it crosses that instance's
+/// zero point, which is platform/runtime dependent — a freshly booted Windows CI
+/// runner sits less than `TIMEOUT` away from it, so it panicked there while
+/// passing on long-running dev machines.
+fn expired_since(created_at: Instant, timeout: Duration) -> bool {
+    created_at.elapsed() >= timeout
+}
+
 tokio::task_local! {
     static CALL_CANCEL: Arc<AtomicBool>;
 }
@@ -115,18 +129,29 @@ pub fn install_host(
 /// A pending request is only resolvable by a host UI action with its opaque ID.
 /// Ordinary security result flags and session-level allowances are ignored.
 pub fn resolve(signals: &SharedSignals, action_id: &str, approved: bool) -> Result<(), String> {
+    resolve_with_timeout(signals, action_id, approved, TIMEOUT)
+}
+
+/// `resolve`, with the expiry timeout injectable so tests can expire a ticket
+/// without constructing an `Instant` in the past (see `expired_since`).
+fn resolve_with_timeout(
+    signals: &SharedSignals,
+    action_id: &str,
+    approved: bool,
+    timeout: Duration,
+) -> Result<(), String> {
     let mut state = SignalState::write(signals);
     let valid_pending = state
         .security
         .pending_approvals
         .get(action_id)
-        .is_some_and(|(pending, at)| pending.kind == KIND && at.elapsed() < TIMEOUT);
+        .is_some_and(|(pending, at)| pending.kind == KIND && !expired_since(*at, timeout));
     let valid_ticket = state
         .security
         .desktop_approvals
         .tickets
         .get(action_id)
-        .is_some_and(|ticket| ticket.created_at.elapsed() < TIMEOUT);
+        .is_some_and(|ticket| !expired_since(ticket.created_at, timeout));
     if !valid_pending || !valid_ticket {
         if state
             .security
@@ -377,16 +402,25 @@ mod tests {
         let (signals, _, mut events) = setup();
         let task = start(&signals);
         let id = next_id(&mut events).await;
-        SignalState::write(&signals)
-            .security
-            .desktop_approvals
-            .tickets
-            .get_mut(&id)
-            .unwrap()
-            .created_at = Instant::now() - TIMEOUT;
-        assert!(resolve(&signals, &id, true).is_err());
+        // 注入 timeout = 0：任何已存在的票据都算过期。
+        // 不再用 `Instant::now() - TIMEOUT` 造过去时刻：该减法一旦越过本实例零点就 panic
+        // （CI 实测 `overflow when subtracting duration from instant`），而零点与平台/运行时
+        // 相关——CI 的 Windows runner 开机不足 TIMEOUT，故必炸；本机开机久则不炸。
+        assert!(resolve_with_timeout(&signals, &id, true, Duration::ZERO).is_err());
         assert!(task.await.unwrap().is_err());
         assert!(approval::get(&signals, &id).is_none());
+    }
+
+    #[tokio::test]
+    async fn non_expired_ticket_still_resolves_and_expiry_ignores_timeout_origin() {
+        let (signals, _, mut events) = setup();
+        let task = start(&signals);
+        let id = next_id(&mut events).await;
+        // 同一张票据：timeout 极大 → 未过期，可正常放行。
+        // 与上一个用例合起来证明 `expired_since` 的判定确实随时间参数变化，
+        // 而不是恒真/恒假（否则旧的过去时刻构造法即使不 panic 也测不出东西）。
+        resolve_with_timeout(&signals, &id, true, Duration::from_secs(3600)).unwrap();
+        assert!(task.await.unwrap().is_ok());
     }
 
     #[tokio::test]

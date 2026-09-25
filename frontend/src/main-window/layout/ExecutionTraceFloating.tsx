@@ -2,7 +2,18 @@
 // Desktop app style: center floating, not web popup, with material depth
 
 import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react'
-import { IconX, IconTerminal } from '../../ui/Icons'
+import {
+  IconX,
+  IconTerminal,
+  IconSearch,
+  IconCheck,
+  IconPlay,
+  IconCircle,
+  IconChevronUp,
+  IconChevronDown,
+  IconStar,
+  IconRefresh,
+} from '../../ui/Icons'
 import { NuphusAvatar } from '../../ui/NuphusAvatar'
 import MarkdownContent from '../chat/MarkdownContent'
 import type { TimelineEntry } from '../../core/types'
@@ -418,19 +429,11 @@ function ToolDetail({ entry }: { entry: TimelineEntry }) {
       <div className="tc-expanded">
         {pattern && (
           <div className="tc-expanded-path">
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
+            <IconSearch
+              size={11}
+              strokeWidth={2.5}
               style={{ marginRight: 5, opacity: 0.5, flexShrink: 0 }}
-            >
-              <circle cx="10.5" cy="10.5" r="7.5" />
-              <line x1="16" y1="16" x2="22" y2="22" />
-            </svg>
+            />
             {pattern}
           </div>
         )}
@@ -474,46 +477,13 @@ function StatusIcon({ status }: { status?: string }) {
   return (
     <span className={`tc-status-icon ${status || 'pending'}`}>
       {status === 'success' ? (
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        <IconCheck size={12} strokeWidth={3} />
       ) : status === 'running' ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3" />
-        </svg>
+        <IconPlay size={12} fill="currentColor" strokeWidth={0} />
       ) : status === 'error' ? (
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-        >
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
+        <IconX size={12} strokeWidth={3} />
       ) : (
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <circle cx="12" cy="12" r="10" />
-        </svg>
+        <IconCircle size={10} />
       )}
     </span>
   )
@@ -1342,22 +1312,7 @@ export function ExecutionTraceFloating({
                           {entry.durationMs ? formatMs(entry.durationMs) : ''}
                         </span>
                         <span className="tc-chevron">
-                          <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            {isExpanded ? (
-                              <polyline points="18 15 12 9 6 15" />
-                            ) : (
-                              <polyline points="6 9 12 15 18 9" />
-                            )}
-                          </svg>
+                          {isExpanded ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
                         </span>
                       </div>
                       {isExpanded && <ToolDetail entry={entry} />}
@@ -1445,35 +1400,12 @@ export function ExecutionTraceFloating({
             {!hasRated && onRate && (
               <>
                 <button className="exec-footer-btn primary" onClick={() => setShowRating(true)}>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                  </svg>
+                  <IconStar size={14} />
                   <span>点评</span>
                 </button>
                 {onRegenerate && (
                   <button className="exec-footer-btn" onClick={onRegenerate}>
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="23 4 23 10 17 10" />
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                    </svg>
+                    <IconRefresh size={14} />
                     <span>重新生成</span>
                   </button>
                 )}

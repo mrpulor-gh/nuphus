@@ -9,20 +9,19 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ALargeSmall as ALargeSmallIcon, Moon as MoonIcon, Sun as SunIcon } from 'lucide'
 import {
-  ALargeSmall,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Moon,
   Plus,
   RefreshCw,
-  Sun,
   Wifi,
   Wrench,
   X,
 } from 'lucide-react'
+import { MorphIcon } from 'morphicons/react'
 import { getTheme, toggleTheme, type MobileTheme } from '../theme'
 import { getCachedLanUrl, getCachedRelayUrl, type ConnectionMode } from '../connection'
 import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
@@ -102,7 +101,9 @@ function formatElapsed(ms: number): string {
 
 /** Nuphus 眨眼 logo（与桌面端 NuphusAvatar 同款 SVG 结构）：
  *  框 = 颅，双竖 = 目（眨眼动画），右下开口 = 嘴。
- *  stroke=currentColor 跟随主题（.mobile-nav-logo color） */
+ *  stroke=currentColor 跟随主题（.mobile-nav-logo color）
+ *
+ *  ⚠ 品牌图形，非语义图标 → 保留手写 SVG，不迁 lucide（lucide 无此形状）。 */
 const SHELL_1 = 'M64 20 H192 A44 44 0 0 1 236 64 V156'
 const SHELL_2 = 'M200 236 H64 A44 44 0 0 1 20 192 V64 A44 44 0 0 1 64 20'
 
@@ -1088,7 +1089,7 @@ export default function NavBar({
           aria-expanded={fsOpen}
           onClick={() => setFsOpen(o => !o)}
         >
-          <ALargeSmall size={16} aria-hidden="true" />
+          <MorphIcon icon={ALargeSmallIcon} size={16} spring="snappy" aria-hidden="true" />
         </button>
         {fsOpen && (
           <div className="mobile-nav-fs-pop" role="menu" aria-label={t('mobile.fontSize')}>
@@ -1136,11 +1137,12 @@ export default function NavBar({
         aria-label={theme === 'dark' ? t('mobile.switchToLight') : t('mobile.switchToDark')}
         onClick={() => setTheme(toggleTheme())}
       >
-        {theme === 'dark' ? (
-          <Sun size={16} aria-hidden="true" />
-        ) : (
-          <Moon size={16} aria-hidden="true" />
-        )}
+        <MorphIcon
+          icon={theme === 'dark' ? SunIcon : MoonIcon}
+          size={16}
+          spring="snappy"
+          aria-hidden="true"
+        />
       </button>
     </div>
   )

@@ -283,6 +283,17 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 ## 致谢
 
+### v0.2.21 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@yuansui486](https://github.com/yuansui486) | [#58](https://github.com/mrpulor-gh/nuphus/pull/58) | 完善跨平台桌面执行可靠性与工作流进度沟通 |
+| [@yuansui486](https://github.com/yuansui486) | [#59](https://github.com/mrpulor-gh/nuphus/pull/59) | 修复画布工作台窗口拖动并增加原型明暗切换 |
+| [@yuansui486](https://github.com/yuansui486) | [#61](https://github.com/mrpulor-gh/nuphus/pull/61) | 优化工作流节点表单、变量选择与画布布局 |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#63](https://github.com/mrpulor-gh/nuphus/pull/63) | 增强判断模型 API Key 行增加 TypeSafe 控制台外链 |
+
 ### v0.2.20 贡献者
 
 感谢本版本提交 Pull Request 的社区贡献者：
@@ -301,21 +312,6 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 | [@yuansui486](https://github.com/yuansui486) | [#52](https://github.com/mrpulor-gh/nuphus/pull/52) | UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核 |
 | [@yuansui486](https://github.com/yuansui486) | [#54](https://github.com/mrpulor-gh/nuphus/pull/54) | 增强判断模型：独立配置 + 从本地有限候选中做结构化选择 |
 | [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#50](https://github.com/mrpulor-gh/nuphus/pull/50) | 日志轮转加固：改名失败不再丢历史 |
-
-### v0.2.18 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#40](https://github.com/mrpulor-gh/nuphus/pull/40) | 修复未初始化工作流会话的当前状态显示 |
-| [@yuansui486](https://github.com/yuansui486) | [#42](https://github.com/mrpulor-gh/nuphus/pull/42) | 工作流外部输入、定时任务与运行回放 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#43](https://github.com/mrpulor-gh/nuphus/pull/43) | 会话台「当前」标记归位、新建对话入口调整 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#44](https://github.com/mrpulor-gh/nuphus/pull/44) | 创建项目弹窗：在目标文件夹下生成草稿对话 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#45](https://github.com/mrpulor-gh/nuphus/pull/45) | 历史会话按项目标签精确匹配，回填归属路径 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#46](https://github.com/mrpulor-gh/nuphus/pull/46) | Ctrl/Cmd+Enter 改为换行，发送只保留 Enter |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#47](https://github.com/mrpulor-gh/nuphus/pull/47) | 主窗口与启动窗口四角改用系统圆角 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#48](https://github.com/mrpulor-gh/nuphus/pull/48) | 菜单 / 抽屉「外点关闭」改捕获阶段 pointerdown |
 
 更早版本的贡献者记录见 [CHANGELOG.md](CHANGELOG.md)。
 

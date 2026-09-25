@@ -32,8 +32,24 @@ pub struct PendingApproval {
 
 /// Clean up expired entries
 fn cleanup_expired(map: &mut std::collections::HashMap<String, (PendingApproval, Instant)>) {
+    cleanup_expired_with_ttl(map, APPROVAL_TTL);
+}
+
+/// Clean up entries older than `ttl`.
+///
+/// TTL is injectable so tests never need an `Instant` in the past: `Instant - Duration`
+/// panics (`overflow when subtracting duration from instant`, std
+/// `impl Sub<Duration> for Instant`) as soon as the result would precede that instance's
+/// zero point, and the zero point is platform/runtime-dependent — on a fresh Windows CI
+/// runner it sat less than `APPROVAL_TTL` away from `now`, so `Instant::now() - APPROVAL_TTL`
+/// overflowed there while passing on dev machines. Never subtract time: inject the TTL, and
+/// let `saturating_duration_since` absorb any (impossible in practice) future timestamp.
+fn cleanup_expired_with_ttl(
+    map: &mut std::collections::HashMap<String, (PendingApproval, Instant)>,
+    ttl: std::time::Duration,
+) {
     let now = Instant::now();
-    map.retain(|_, &mut (_, timestamp)| now.duration_since(timestamp) < APPROVAL_TTL);
+    map.retain(|_, &mut (_, timestamp)| now.saturating_duration_since(timestamp) < ttl);
 }
 
 /// Add pending approval item, returns action_id
@@ -82,12 +98,18 @@ mod tests {
     fn get_does_not_return_expired_approval() {
         let signals = crate::state::new_shared_signals();
         let id = add(&signals, "tenet", "title", "content", serde_json::json!({}));
-        crate::state::SignalState::write(&signals)
-            .security
-            .pending_approvals
-            .get_mut(&id)
-            .unwrap()
-            .1 = Instant::now() - APPROVAL_TTL;
+        // TTL 注入为 0：任何已存在的条目都视为过期。
+        // 不再用 `Instant::now() - APPROVAL_TTL` 造过期时间戳：该减法一旦越过本实例零点就
+        // panic（CI 实测 `overflow when subtracting duration from instant`，std time.rs
+        // `impl Sub<Duration> for Instant` 的 expect）。零点与平台/运行时相关——本机实测零点
+        // 在 146 年前（减 600s 安全），而 CI 的 Windows runner 零点距 now 不足 600s，故必炸。
+        {
+            let mut state = crate::state::SignalState::write(&signals);
+            cleanup_expired_with_ttl(
+                &mut state.security.pending_approvals,
+                std::time::Duration::ZERO,
+            );
+        }
         assert!(get(&signals, &id).is_none());
         assert!(remove(&signals, &id).is_none());
     }

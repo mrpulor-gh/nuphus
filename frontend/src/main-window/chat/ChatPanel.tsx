@@ -82,6 +82,8 @@ import {
   IconImage,
   IconRadio,
   IconSettings,
+  IconStar,
+  IconChartColumn,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -567,10 +569,14 @@ export function ChatPanel({
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null)
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null)
   const [providerMenuPosition, setProviderMenuPosition] = useState<{
-    top: number
+    top?: number
+    bottom?: number
     left: number
+    maxHeight?: number
   } | null>(null)
   const providerHoverTimer = useRef<number | null>(null)
+  /** 模型管理弹窗（.cmd-modal-sm）容器：模型列表浮层以它为对齐基准与高度上限 */
+  const modelModalRef = useRef<HTMLDivElement | null>(null)
 
   // ── Slash Commands ──
   const SLASH_ITEMS = useMemo(
@@ -800,15 +806,49 @@ export function ChatPanel({
     if (providerHoverTimer.current) window.clearTimeout(providerHoverTimer.current)
     if (anchor) {
       const rect = anchor.getBoundingClientRect()
-      const menuHeight = Math.min(320, window.innerHeight * 0.48)
-      const menuWidth = 236
       const gap = 8
+      const menuWidth = 236
+
+      // 以「models 弹窗」为基准，而非 window：列表浮层是弹窗的附属层，
+      // 上限与对齐都应相对弹窗。
+      const modalEl = modelModalRef.current
+      const modal = modalEl?.getBoundingClientRect()
+      const boundTop = modal ? modal.top : 8
+      const boundBottom = modal ? modal.bottom : window.innerHeight - 8
+      const boundHeight = boundBottom - boundTop
+
+      // 高度上限 = 弹窗高度的一半。这是**上限**，不是定高：
+      // 浮层实际高度仍由内容决定（CSS max-height），1 个模型就只占 1 行高，
+      // 不留空白。
+      const maxHeight = Math.max(120, Math.floor(boundHeight / 2))
+
+      // 横向：优先贴 provider 行右侧；右侧不够则翻到左侧
       const left =
         rect.right + gap + menuWidth <= window.innerWidth
           ? rect.right + gap
           : Math.max(8, rect.left - gap - menuWidth)
-      const top = Math.min(Math.max(8, rect.top), Math.max(8, window.innerHeight - menuHeight - 8))
-      setProviderMenuPosition({ top, left })
+
+      // 纵向对齐规则：以弹窗中线为界
+      //  - 行在**上半部** → 浮层顶部与行顶部对齐（top）
+      //  - 行在**下半部** → 浮层底部与行底部对齐（bottom）
+      //
+      // 下半部必须用 bottom 定位而不是 top = rect.bottom - maxHeight：
+      // 后者假定「浮层高度 = 上限」，模型只有 1-2 个时浮层远短于上限，
+      // 按上限反推的 top 会让浮层**悬空**、脱离触发它那一行。
+      // 用 bottom 则恒定让浮层底边贴住行底边，高度随内容自适应向上生长。
+      const modalMid = boundTop + boundHeight / 2
+      const alignTop = rect.top + rect.height / 2 <= modalMid
+
+      if (alignTop) {
+        setProviderMenuPosition({ top: rect.top, left, maxHeight })
+      } else {
+        // bottom 语义 = 距视口底的距离（fixed 定位）
+        setProviderMenuPosition({
+          bottom: window.innerHeight - rect.bottom,
+          left,
+          maxHeight,
+        })
+      }
     }
     setHoveredProvider(provider)
   }, [])
@@ -1535,16 +1575,7 @@ export function ChatPanel({
             onClick={() => setShowRefineConfirm(true)}
             title={`${t('refine.pendingBtn')} (${pendingRefine.usagePercent}%)`}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M12 20V10M18 20V4M6 20v-4" strokeLinecap="round" />
-            </svg>
+            <IconChartColumn size={14} />
             <span className="refine-pending-pct">{pendingRefine.usagePercent}%</span>
             {pendingRefine.skippedTurns > 0 && (
               <span className="refine-pending-badge">
@@ -1795,18 +1826,7 @@ export function ChatPanel({
                                     })
                                   }}
                                 >
-                                  <svg
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                                  </svg>
+                                  <IconStar size={14} />
                                 </IconButton>
                                 {msg.traceItems && msg.traceItems.length > 0 && (
                                   <IconButton
@@ -1815,20 +1835,7 @@ export function ChatPanel({
                                     title="查看该轮执行过程"
                                     onClick={() => onShowExecTrace?.(msg.traceItems!)}
                                   >
-                                    <svg
-                                      width="14"
-                                      height="14"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    >
-                                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                                      <path d="M3 3v5h5" />
-                                      <path d="M12 7v5l4 2" />
-                                    </svg>
+                                    <IconHistory size={14} />
                                   </IconButton>
                                 )}
                               </div>
@@ -1892,18 +1899,7 @@ export function ChatPanel({
                     aria-label={t('refine.dismissHint')}
                     onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
                   >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
+                    <IconX size={14} strokeWidth={2} />
                   </button>
                 )}
               </div>
@@ -2094,18 +2090,7 @@ export function ChatPanel({
                   aria-label={t('refine.dismissHint')}
                   onClick={() => (onDismissRefine ? onDismissRefine() : setRefining?.(false))}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
+                  <IconX size={14} strokeWidth={2} />
                 </button>
               </div>
               <div className="compact-divider" />
@@ -2253,7 +2238,11 @@ export function ChatPanel({
       {modelOpen &&
         createPortal(
           <div className="cmd-modal-overlay" onClick={() => setModelOpen(false)}>
-            <div className="cmd-modal cmd-modal-sm" onClick={e => e.stopPropagation()}>
+            <div
+              ref={modelModalRef}
+              className="cmd-modal cmd-modal-sm"
+              onClick={e => e.stopPropagation()}
+            >
               <div className="cmd-modal-header">
                 <span className="cmd-modal-icon">⚙</span>
                 <span className="cmd-modal-title">{t('modelManager.title')}</span>
@@ -2332,8 +2321,12 @@ export function ChatPanel({
                                   style={
                                     providerMenuPosition
                                       ? {
-                                          top: providerMenuPosition.top,
+                                          // top / bottom 二选一：同时设会把浮层拉成固定高度
+                                          ...(providerMenuPosition.top != null
+                                            ? { top: providerMenuPosition.top }
+                                            : { bottom: providerMenuPosition.bottom }),
                                           left: providerMenuPosition.left,
+                                          maxHeight: providerMenuPosition.maxHeight,
                                         }
                                       : undefined
                                   }

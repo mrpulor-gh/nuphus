@@ -1,13 +1,20 @@
 import { useState, useRef, useEffect, useCallback, type RefObject } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { Send as SendIcon, Square as SquareIcon } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import {
-  IconSend,
-  IconSquare,
   IconBrain,
   IconWorkflow,
   IconSparkles,
   IconWrench,
   IconFolder,
+  IconPlus,
+  IconPaperclip,
+  IconImage,
+  IconShield,
+  IconPin,
+  IconList,
+  IconChevronDown,
 } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
@@ -865,19 +872,7 @@ export function ChatInputBar({
               title={t('input.tools')}
               onClick={() => setToolMenuOpen(o => !o)}
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 5v14" />
-                <path d="M5 12h14" />
-              </svg>
+              <IconPlus size={16} />
             </IconButton>
             {toolMenuOpen && (
               <div className="input-tool-menu" role="menu">
@@ -905,18 +900,7 @@ export function ChatInputBar({
                     }
                   }}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M15 3v11a5 5 0 1 1-10 0V7a2 2 0 1 1 4 0v5.5" />
-                  </svg>
+                  <IconPaperclip size={14} />
                   <span className="input-tool-menu-label">{t('input.attach')}</span>
                 </button>
                 <button
@@ -929,20 +913,7 @@ export function ChatInputBar({
                     imageInputRef.current?.click()
                   }}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="4" width="18" height="16" rx="3" />
-                    <circle cx="8.5" cy="10" r="2.5" />
-                    <path d="M3 16c4-3 6-2 8.5.5s5-3 9.5-1.5" />
-                  </svg>
+                  <IconImage size={14} />
                   <span className="input-tool-menu-label">{t('input.image')}</span>
                 </button>
                 <div className="input-tool-menu-divider" />
@@ -956,18 +927,7 @@ export function ChatInputBar({
                     onOpenPrinciples?.()
                   }}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" />
-                  </svg>
+                  <IconShield size={14} />
                   <span className="input-tool-menu-label">{t('memory.settings.subTenets')}</span>
                 </button>
                 <button
@@ -979,18 +939,7 @@ export function ChatInputBar({
                     onOpenAnnotations?.()
                   }}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 17v5M9 10h6M10 3h4v7h-4z" />
-                  </svg>
+                  <IconPin size={14} />
                   <span className="input-tool-menu-label">
                     {t('memory.settings.subAnnotations')}
                   </span>
@@ -1013,56 +962,64 @@ export function ChatInputBar({
                   finalizing → 发送按钮：主循环已结束、收尾不可中断，故不显示终止；
                               此时提交会被后端拒收并退回输入框（见 handleSubmit 回填）；
                   idle + 空内容 → 发送按钮灰显（待命）；idle + 有内容 → 高亮 */}
-          {executionStage === 'running' && !input.trim() && !voicePartial ? (
-            <IconButton
-              variant="input-send"
-              className="interrupt"
-              label={t('input.interrupt')}
-              title={t('input.interruptTitle')}
-              onClick={() => {
-                // 中断提示音：注意（即将终止当前执行）
-                playPopupSound('confirm')
-                // 应用内确认弹窗（window.confirm 在 Tauri WebView 中被屏蔽，用模态防误触）
-                setStopConfirmOpen(true)
-              }}
-            >
-              <IconSquare size={14} />
-            </IconButton>
-          ) : (
-            <IconButton
-              variant={!isProcessing && input.trim() ? 'input-send-active' : 'input-send'}
-              className={isProcessing && !pauseState ? 'processing' : ''}
-              label={
-                isProcessing
-                  ? input.trim() || voicePartial
-                    ? '发送（追加指令）'
-                    : t('input.send')
-                  : t('input.send')
-              }
-              onClick={() => {
-                // 单一发送语义（Leader 与 Workflow 一致）：空闲 = 新执行；执行中 = 追加指令（下一轮生效）。
-                // 无暂停按钮/暂停弹窗——执行控制已从输入栏移除（与手机端一致）。
-                // workflow 执行中也不禁用：发送 = 追加指令插入队列，由 workflow_agent 迭代边界注入。
-                if (!isProcessing) flushThenSend()
-                else if (input.trim() || voicePartial) flushThenSend()
-              }}
-              disabled={workflowLocked || !input.trim() || !!pauseState}
-              title={
-                workflowLocked
-                  ? 'WORKFLOW 需要打开全部安全权限'
-                  : isProcessing
-                    ? input.trim() || voicePartial
-                      ? '执行中发送 = 追加指令，立即纳入当前任务'
-                      : '执行中请先输入内容，发送 = 追加指令'
-                    : executionStage === 'finalizing'
-                      ? // 收尾期：主循环已退出，追加无消费方 → 后端会拒收并把原文退回输入框
-                        t('toast.finalizingPleaseResend')
+          {/* 停止 ↔ 发送：同一 MorphIcon 常驻，仅切换 icon prop → 触发形变
+              （分支条件渲染会导致组件重挂、动画失效，故用单实例 + 动态属性） */}
+          {(() => {
+            const isStop = executionStage === 'running' && !input.trim() && !voicePartial
+            const canSend = !workflowLocked && !!input.trim() && !pauseState
+            return (
+              <IconButton
+                variant={
+                  isStop
+                    ? 'input-send'
+                    : !isProcessing && input.trim()
+                      ? 'input-send-active'
+                      : 'input-send'
+                }
+                className={isStop ? 'interrupt' : isProcessing && !pauseState ? 'processing' : ''}
+                label={
+                  isStop
+                    ? t('input.interrupt')
+                    : isProcessing
+                      ? input.trim() || voicePartial
+                        ? '发送（追加指令）'
+                        : t('input.send')
                       : t('input.send')
-              }
-            >
-              <IconSend size={14} />
-            </IconButton>
-          )}
+                }
+                title={
+                  isStop
+                    ? t('input.interruptTitle')
+                    : workflowLocked
+                      ? 'WORKFLOW 需要打开全部安全权限'
+                      : isProcessing
+                        ? input.trim() || voicePartial
+                          ? '执行中发送 = 追加指令，立即纳入当前任务'
+                          : '执行中请先输入内容，发送 = 追加指令'
+                        : executionStage === 'finalizing'
+                          ? // 收尾期：主循环已退出，追加无消费方 → 后端会拒收并把原文退回输入框
+                            t('toast.finalizingPleaseResend')
+                          : t('input.send')
+                }
+                onClick={() => {
+                  if (isStop) {
+                    // 中断提示音：注意（即将终止当前执行）
+                    playPopupSound('confirm')
+                    // 应用内确认弹窗（window.confirm 在 Tauri WebView 中被屏蔽，用模态防误触）
+                    setStopConfirmOpen(true)
+                    return
+                  }
+                  // 单一发送语义（Leader 与 Workflow 一致）：空闲 = 新执行；执行中 = 追加指令（下一轮生效）。
+                  // 无暂停按钮/暂停弹窗——执行控制已从输入栏移除（与手机端一致）。
+                  // workflow 执行中也不禁用：发送 = 追加指令插入队列，由 workflow_agent 迭代边界注入。
+                  if (!isProcessing) flushThenSend()
+                  else if (input.trim() || voicePartial) flushThenSend()
+                }}
+                disabled={isStop ? false : !canSend}
+              >
+                <MorphIcon icon={isStop ? SquareIcon : SendIcon} size={14} spring="snappy" />
+              </IconButton>
+            )
+          })()}
         </div>
 
         {/* ── 统一底栏：全部 flat 文字 + flat 图标，同一视觉语言 ── */}
@@ -1265,20 +1222,12 @@ export function ChatInputBar({
               <span className="input-bar-text input-bar-chip" onClick={onModelSwitch}>
                 {modelLabel || modelName || '—'}
                 {effortAvailable && (
-                  <svg
+                  <IconChevronDown
                     className="input-bar-effort-caret"
                     aria-hidden
-                    width="9"
-                    height="9"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
+                    size={9}
+                    strokeWidth={2.5}
+                  />
                 )}
               </span>
               {effortAvailable && modelEffortOpen && (
@@ -1388,24 +1337,7 @@ export function ChatInputBar({
               title="查看追加消息队列"
               aria-label="查看追加消息队列"
             >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M8 6h13" />
-                <path d="M8 12h13" />
-                <path d="M8 18h13" />
-                <path d="M3 6h.01" />
-                <path d="M3 12h.01" />
-                <path d="M3 18h.01" />
-              </svg>
+              <IconList size={17} aria-hidden="true" />
             </IconButton>
             <span className="input-append-queue-badge">
               {visibleAppendQueue.length > 99 ? '99+' : visibleAppendQueue.length}

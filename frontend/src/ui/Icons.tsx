@@ -1,8 +1,13 @@
-/// Shared SVG icons — re-exported from lucide-react
+/// Shared icon single source of truth — prefer re-exporting from lucide-react.
+/// Only write a hand-rolled SVG fallback when lucide has no equivalent shape
+/// (brand / Nuphus-proprietary glyphs). Icons never own colour: stroke uses
+/// `currentColor` and size comes from the `size` prop (or CSS) at the call site.
 
 import React from 'react'
+import { CircleX } from 'lucide-react'
 
 export {
+  CircleX as IconCircleX,
   Copy as IconCopy,
   Check as IconCheck,
   Folder as IconFolder,
@@ -75,25 +80,23 @@ export {
   Pencil as IconPencil,
   CircleAlert as IconAlertCircle,
   Info as IconInfo,
+  ChartColumn as IconChartColumn,
+  ChevronUp as IconChevronUp,
+  Circle as IconCircle,
+  Menu as IconMenu,
+  KeyRound as IconKeyRound,
+  ServerOff as IconServerOff,
+  FileX as IconFileX,
+  Server as IconServer,
+  Paperclip as IconPaperclip,
+  List as IconList,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="15" y1="9" x2="9" y2="15" />
-      <line x1="9" y1="9" x2="15" y2="15" />
-    </svg>
-  )
+  return <CircleX size={size} strokeWidth={1.5} />
 }
 
+/** Nuphus-proprietary workflow glyph (three nodes + connectors) — no lucide equivalent, kept hand-rolled. */
 export function IconWorkflow({
   size = 14,
   style,
@@ -125,7 +128,7 @@ export function IconWorkflow({
   )
 }
 
-/** 终端图标 — 简洁窗口+提示符，适配小尺寸，与 lucide 风格一致 */
+/** Terminal glyph — window frame + prompt. lucide's `Terminal` is a bare `>_` without the frame, so kept hand-rolled for parity. */
 export function IconTerminal({ size = 14 }: { size?: number }) {
   return (
     <svg

@@ -63,6 +63,7 @@ export default function PairingGuide({ invalid, onPair }: Props) {
 
   return (
     <div className="mobile-pair">
+      {/* Nuphus 品牌字标（与桌面端 NuphusAvatar 同款 shell 结构），非语义图标 → 保留手写 SVG */}
       <svg
         className="mobile-pair-logo"
         viewBox="0 0 256 256"

@@ -1,7 +1,7 @@
 // OcrDictionary.tsx — Dictionary OCR
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button, IconButton } from '../../ui/Button'
-import { IconX } from '../../ui/Icons'
+import { IconX, IconSearch, IconInfo } from '../../ui/Icons'
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core')
   return (await invoke(cmd, args)) as T
@@ -831,20 +831,7 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
                         }
                       }}
                     >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        style={{ opacity: 0.8, flexShrink: 0 }}
-                      >
-                        <circle cx="11" cy="11" r="8" />
-                        <path d="m21 21-4.35-4.35" />
-                      </svg>
+                      <IconSearch size={14} style={{ opacity: 0.8, flexShrink: 0 }} />
                       自动识别
                       <span
                         style={{
@@ -918,21 +905,7 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
                   gap: 6,
                 }}
               >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0, opacity: 0.6 }}
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 16v-4" />
-                  <path d="M12 8h.01" />
-                </svg>
+                <IconInfo size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
                 在「添加字库」选项卡从屏幕上截取文字制作字库
               </div>
             </div>
@@ -1640,16 +1613,7 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
               <div className="modal-header">
                 <span className="modal-title">字体渲染生成点阵</span>
                 <IconButton variant="ghost" label="关闭" onClick={() => setShowFontDialog(false)}>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
+                  <IconX size={16} />
                 </IconButton>
               </div>
               <div

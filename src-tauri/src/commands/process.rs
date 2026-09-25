@@ -1200,8 +1200,13 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             };
             if let Some(ref mut rt) = runtime_opt {
                 let session_usage = rt.session().estimate_token_usage() as u32;
+                // source="main"：这是**主会话上下文**的真实规模（estimate_token_usage 量的就是
+                // 当前会话），归 main 槽。此前写 "leader" 会按前端「非 main 即 exec」的兜底
+                // 落进 exec 槽——那个槽专供 exec 执行（dispatch/子任务），由 ctx 弹窗整组消费，
+                // 混入 Leader 的会话规模会让弹窗与主指示器互相污染。Leader 回合本就属于主会话，
+                // 与 exec 执行不是一类东西。
                 emitter.emit(NuphusEvent::TokenUsage {
-                    source: "leader".to_string(),
+                    source: "main".to_string(),
                     input_tokens: session_usage,
                     output_tokens: 0,
                     cache_hit_tokens: u32::MAX,

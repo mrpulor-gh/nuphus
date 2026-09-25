@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IconBrushCleaning, IconEye, IconEyeOff, IconPlug } from '../../ui/Icons'
+import { IconBrushCleaning, IconExternalLink, IconEye, IconEyeOff, IconPlug } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 import { FormRow, Section } from '../../ui/PageLayout'
 import { CompactModal } from '../layout/CompactModal'
@@ -19,6 +19,8 @@ const DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 const DEFAULT_MODEL = 'jev-latest'
 const DEFAULT_TIMEOUT_MS = 10_000
 const DEFAULT_MAX_RETRIES = 2
+/** TypeSafe 控制台：API Key 的唯一获取入口，在 API Key 行给出直达链接。 */
+const TYPESAFE_CONSOLE_URL = 'https://console.typesafe.ai/'
 
 function connectionMessage(result: JevConnectionStatus | string): string {
   if (typeof result === 'string') return result
@@ -268,9 +270,19 @@ export function JevSettings() {
             <FormRow
               stacked
               label={
-                <span className="models-field-label">
+                <span className="models-field-label decision-key-label">
                   <IconPlug size={12} className="icon-prefix" /> API Key
                   {hasKey && <span className="model-badge label-badge">已配置</span>}
+                  {/* 外链由 App 层捕获阶段接管并交系统浏览器（WebView 不处理 _blank） */}
+                  <a
+                    className="decision-key-link"
+                    href={TYPESAFE_CONSOLE_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    获取 API Key
+                    <IconExternalLink size={11} />
+                  </a>
                 </span>
               }
               hint="密钥仅由本机后端安全保存；页面只读取是否已配置，不会回显原文。"

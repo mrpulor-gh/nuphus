@@ -16,7 +16,7 @@
  * - 文案按平台区分：iOS Safari / Android Chrome。
  */
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { X, Share } from 'lucide-react'
 import { isPrivateHost, isStandalone } from '../connection'
 import { t } from '../i18n'
 
@@ -72,20 +72,7 @@ export default function AddToHomeScreen({ visible }: { visible: boolean }) {
   return (
     <div className="mobile-a2hs" role="note">
       <div className="mobile-a2hs-icon" aria-hidden="true">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M12 3v10" />
-          <path d="M8 8l4-4 4 4" />
-          <rect x="4" y="14" width="16" height="7" rx="2" />
-        </svg>
+        <Share size={18} strokeWidth={2} aria-hidden="true" />
       </div>
       <div className="mobile-a2hs-body">
         <div className="mobile-a2hs-title">{titleText}</div>

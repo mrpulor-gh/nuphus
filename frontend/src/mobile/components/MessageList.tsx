@@ -58,6 +58,7 @@ export default function MessageList({
   if (messages.length === 0 && !activity.running) {
     return (
       <div className="mobile-empty" ref={listRef}>
+        {/* Nuphus 品牌字标（shell 框 + 双竖目），非语义图标 → 保留手写 SVG，不迁 lucide */}
         <svg
           className="mobile-empty-logo"
           viewBox="0 0 256 256"
