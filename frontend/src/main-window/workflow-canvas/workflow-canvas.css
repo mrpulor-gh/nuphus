@@ -31,15 +31,75 @@
 
 /* ── 工具栏 ── */
 .wfc-toolbar {
+  position: relative;
+  z-index: 1;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-1);
   border-bottom: 1px solid var(--line-1);
 }
 
+.wfc-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.wfc-toolbar-row--primary {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.wfc-toolbar .wfc-btn,
+.wfc-toolbar .wfc-badge,
+.wfc-toolbar .wfc-wf-switch {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.wfc-more {
+  position: relative;
+}
+
+.wfc-more > summary {
+  list-style: none;
+}
+
+.wfc-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.wfc-more > summary::after {
+  content: '▾';
+}
+
+.wfc-more-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 180px;
+  max-width: calc(100vw - 24px);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-elevated);
+}
+
 .wfc-title {
+  min-width: 0;
+  max-width: min(32vw, 440px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: var(--fz-lg);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--ls-tight);
@@ -129,6 +189,7 @@
 
 /* 重命名输入：与 wfc-title 同尺寸，输入态替代标题 */
 .wfc-title-input {
+  max-width: 32vw;
   font-size: var(--fz-lg);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--ls-tight);
@@ -423,6 +484,8 @@
 /* ── 画布区 ── */
 .wfc-canvas-wrap {
   position: relative;
+  /* Keep canvas overlays below toolbar menus, including in the embedded workbench. */
+  z-index: 0;
   flex: 1;
   min-height: 0;
 }
@@ -969,12 +1032,15 @@
 .wfc-add-menu {
   position: absolute;
   top: calc(100% + var(--space-1));
-  right: 0;
+  left: 0;
   z-index: 20;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 2px;
   width: 280px;
+  max-width: calc(100vw - 24px);
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
   padding: var(--space-1);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-3);

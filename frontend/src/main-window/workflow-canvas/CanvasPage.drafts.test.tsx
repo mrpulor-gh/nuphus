@@ -78,7 +78,11 @@ vi.mock('./runStatus', () => ({
   aggregateContainerBadges: () => new Map(),
 }))
 vi.mock('./ToolPalette', () => ({ ToolPalette: () => null, TOOL_DRAG_MIME: 'tool' }))
-vi.mock('./ProblemsPanel', () => ({ ProblemsPanel: () => null }))
+vi.mock('./ProblemsPanel', () => ({
+  ProblemsPanel: ({ backendReport }: { backendReport: unknown }) => (
+    <output data-testid="backend-check">{JSON.stringify(backendReport)}</output>
+  ),
+}))
 vi.mock('./OutlinePanel', () => ({ OutlinePanel: () => null }))
 vi.mock('./IntentFormPanel', () => ({ IntentFormPanel: () => null }))
 vi.mock('./ScopedEditDialog', () => ({
@@ -147,6 +151,64 @@ function shortcut() {
 }
 
 describe('Canvas save coordination', () => {
+  it('groups primary and editing actions into separate rows and provides a localized new-node name', async () => {
+    await open()
+    const primary = document.querySelector('.wfc-toolbar-row--primary') as HTMLElement
+    const actions = screen.getByLabelText('画布操作')
+    expect(within(primary).getByRole('button', { name: '保存' })).toBeInTheDocument()
+    expect(within(primary).getByRole('button', { name: '运行' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: '节点调试' })).toBeInTheDocument()
+    expect(document.querySelector('.wfc-title')).toHaveAttribute(
+      'title',
+      expect.stringContaining(workflow.name),
+    )
+    fireEvent.click(within(actions).getByRole('button', { name: '添加' }))
+    fireEvent.click(screen.getByRole('button', { name: '延时等待' }))
+    expect(await screen.findByDisplayValue('等待 1 秒')).toBeInTheDocument()
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+    expect(
+      mocks.save.mock.calls[0][0].steps.find((step: { name: string }) => step.name === '等待 1 秒'),
+    ).toMatchObject({ do: { sleep: 1 } })
+    expect(mocks.save.mock.calls[0][0].steps[0].name).toBe(workflow.steps[0].name)
+  })
+  it('clears a saved notice as soon as another field is edited', async () => {
+    await open()
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '保存一次' } })
+    shortcut()
+    expect(await screen.findByText('已保存')).toBeInTheDocument()
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '继续编辑' } })
+    await waitFor(() => expect(screen.queryByText('已保存')).not.toBeInTheDocument())
+  })
+  it('ignores validation responses for a definition edited while checking', async () => {
+    let resolve!: (value: unknown) => void
+    mocks.validate.mockReturnValue(
+      new Promise(r => {
+        resolve = r
+      }),
+    )
+    await open()
+    fireEvent.click(screen.getByText('更多'))
+    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    await waitFor(() => expect(mocks.validate).toHaveBeenCalledTimes(1))
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '检查后修改' } })
+    await act(async () => {
+      resolve({ passed: false, issues: [] })
+    })
+    expect(screen.queryByText('后端校验发现错误，详见问题面板')).not.toBeInTheDocument()
+    expect(screen.getByTestId('backend-check')).toHaveTextContent('null')
+  })
+  it('invalidates an existing check as soon as a draft changes', async () => {
+    mocks.validate.mockResolvedValue({ passed: false, issues: ['old failure'] })
+    await open()
+    fireEvent.click(screen.getByText('更多'))
+    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('backend-check')).toHaveTextContent('old failure'),
+    )
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '已修正' } })
+    await waitFor(() => expect(screen.getByTestId('backend-check')).toHaveTextContent('null'))
+  })
   it('applies selected-group AI edits as one undoable transaction', async () => {
     await open()
     fireEvent.click(screen.getByRole('button', { name: 'Select first' }))

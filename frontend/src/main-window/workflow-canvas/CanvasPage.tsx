@@ -223,7 +223,7 @@ function CanvasInner({
   const [steps, setSteps] = useState<WorkflowStep[] | null>(null)
   const [committedDirty, setDirty] = useState(false)
   const [draftStore] = useState(() => new InspectorDraftStore())
-  useSyncExternalStore(draftStore.subscribe, draftStore.snapshot)
+  const draftVersion = useSyncExternalStore(draftStore.subscribe, draftStore.snapshot)
   const dirty = committedDirty || draftStore.dirty
   const editRevision = useRef(0)
   const saving = useRef(false)
@@ -283,12 +283,16 @@ function CanvasInner({
   )
   useEffect(() => {
     if (!problemFocus) return
-    const frame = requestAnimationFrame(() => {
+    let frame = 0
+    const focus = (attempt = 0) => {
       const panel = document.querySelector(
         `[data-inspector-node="${CSS.escape(problemFocus.stepId)}"]`,
       )
-      if (panel) focusEditorField(panel, problemFocus.fieldPath)
-    })
+      if (panel && focusEditorField(panel, problemFocus.fieldPath)) return
+      // Changing a layer mounts the inspector after ReactFlow has reprojected it.
+      if (attempt < 12) frame = requestAnimationFrame(() => focus(attempt + 1))
+    }
+    frame = requestAnimationFrame(() => focus())
     return () => cancelAnimationFrame(frame)
   }, [problemFocus])
   const [detailedNodes, setDetailedNodes] = useState(false)
@@ -298,6 +302,11 @@ function CanvasInner({
   const [problems, setProblems] = useState<Problem[]>([])
   const [backendReport, setBackendReport] = useState<ValidationReport | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Reports describe a specific definition, never a later edit or uncommitted draft.
+  useEffect(() => {
+    setBackendReport(null)
+    setNotice(null)
+  }, [steps, draftVersion, ir?.inputs])
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
   /** 意图表单弹层（画布顶部「意图表单」入口；不启动任何录制会话） */
   const [intentFormOpen, setIntentFormOpen] = useState(false)
@@ -313,6 +322,15 @@ function CanvasInner({
     horizontal: boolean
   } | null>(null)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const moreMenuRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const closeMore = (event: PointerEvent) => {
+      const menu = moreMenuRef.current
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false
+    }
+    window.addEventListener('pointerdown', closeMore, true)
+    return () => window.removeEventListener('pointerdown', closeMore, true)
+  }, [])
   // 添加菜单：点击外部收起（Escape 见键盘表；项内点击见 addStep）
   const addWrapRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -995,10 +1013,10 @@ function CanvasInner({
             setNotice(editorText('保存失败：后端无响应', t))
             return
           }
-          setBackendReport(resp.report)
+          const unchanged =
+            revision === editRevision.current && draftsAtSave === draftStore.snapshot()
+          if (unchanged) setBackendReport(resp.report)
           if (resp.saved) {
-            const unchanged =
-              revision === editRevision.current && draftsAtSave === draftStore.snapshot()
             setDirty(!unchanged)
             setNotice(
               !unchanged
@@ -1009,7 +1027,7 @@ function CanvasInner({
             )
             setIr(current => (current ? { ...current, ...(name ? { name } : {}) } : payload))
             return unchanged
-          } else {
+          } else if (unchanged) {
             setNotice(editorText('保存被阻断：存在校验错误，详见问题面板「后端校验」', t))
           }
         } catch (e) {
@@ -1026,8 +1044,11 @@ function CanvasInner({
     if (!(await flushDrafts())) return
     const cur = stepsRef.current
     if (!cur || !ir) return
+    const revision = editRevision.current
+    const draftsAtCheck = draftStore.snapshot()
     try {
       const report = await wfValidate({ ...ir, steps: cur })
+      if (revision !== editRevision.current || draftsAtCheck !== draftStore.snapshot()) return
       if (!report) {
         setNotice(editorText('校验失败：后端无响应', t))
         return
@@ -1039,9 +1060,10 @@ function CanvasInner({
           : editorText('后端校验发现错误，详见问题面板', t),
       )
     } catch (e) {
+      if (revision !== editRevision.current || draftsAtCheck !== draftStore.snapshot()) return
       setNotice(`${ui('校验失败', 'Check failed')}: ${String(e)}`)
     }
-  }, [ir, flushDrafts])
+  }, [ir, flushDrafts, draftStore])
 
   const runWorkflow = useCallback(async () => {
     if (snapshot.running) return
@@ -1444,6 +1466,7 @@ function CanvasInner({
       const cur = stepsRef.current
       if (!cur || !layer || readOnly) return
       const step = newStep(kind, collectIds(cur))
+      step.name = kind === 'sleep' ? ui('等待 1 秒', 'Wait 1 second') : nodeKindLabel(kind, t)
       const { lane, index } = clickInsertion(cur, layer, selectedId)
       const ok = await applyEdit({
         op: 'add_step',
@@ -1460,7 +1483,7 @@ function CanvasInner({
         flashStep(step.id) // D1/D7：普通添加后闪光高亮，与连线插入/录制入画布一致
       }
     },
-    [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow, flashStep],
+    [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow, flashStep, lang, t],
   )
 
   // ── 工具面板：点击/拖拽创建 tool 步骤（with 按 input_schema required 预填骨架）──
@@ -1469,6 +1492,7 @@ function CanvasInner({
       const cur = stepsRef.current
       if (!cur || !layer || readOnly) return
       const step = newStep('tool', collectIds(cur))
+      step.name = `${nodeKindLabel('tool', t)}: ${tool.name}`
       step.do = { tool: tool.name, with: skeletonFromSchema(tool.input_schema) }
       let lane: LaneId
       let index: number
@@ -1511,7 +1535,7 @@ function CanvasInner({
         flashStep(step.id) // D1/D7：工具面板添加后闪光高亮
       }
     },
-    [layer, readOnly, selectedId, laneFrames, applyEdit, rf, focusStepFlow, flashStep],
+    [layer, readOnly, selectedId, laneFrames, applyEdit, rf, focusStepFlow, flashStep, t],
   )
 
   // 工具注册表（与 Inspector/ToolPalette 共享模块级缓存）：拖拽 drop 时按名查 schema 预填骨架
@@ -1756,6 +1780,7 @@ function CanvasInner({
         return
       }
       const step = newStep(kind, collectIds(cur))
+      step.name = kind === 'sleep' ? ui('等待 1 秒', 'Wait 1 second') : nodeKindLabel(kind, t)
       const ok = await applyEdit({
         op: 'add_step',
         parent: { layerId: tLoc.layerId },
@@ -1769,7 +1794,7 @@ function CanvasInner({
       flashStep(step.id)
       focusStepFlow(step.id)
     },
-    [edgeInsert, layer, readOnly, applyEdit, rf, flashStep, focusStepFlow],
+    [edgeInsert, layer, readOnly, applyEdit, rf, flashStep, focusStepFlow, lang, t],
   )
 
   // ── 面包屑 ──
@@ -1842,248 +1867,286 @@ function CanvasInner({
       <div className="wfc-page">
         {/* ── 工具栏 ── */}
         <div className="wfc-toolbar">
-          {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
-          {nameEditing && ir && !readOnly ? (
-            <input
-              className="wfc-title-input"
-              autoFocus
-              value={nameInput}
-              onChange={e => setNameInput(e.target.value)}
-              onBlur={commitNameRename}
-              onKeyDown={e => {
-                if (e.key === 'Enter') commitNameRename()
-                else if (e.key === 'Escape') {
+          <div className="wfc-toolbar-row wfc-toolbar-row--primary">
+            {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
+            {nameEditing && ir && !readOnly ? (
+              <input
+                className="wfc-title-input"
+                autoFocus
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onBlur={commitNameRename}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitNameRename()
+                  else if (e.key === 'Escape') {
+                    setNameInput(ir?.name ?? '')
+                    setNameEditing(false)
+                  }
+                }}
+              />
+            ) : (
+              <span
+                className="wfc-title"
+                title={`${ir.name}${readOnly ? '' : ` — ${editorText('双击重命名工作流', t)}`}`}
+                onDoubleClick={() => {
+                  if (readOnly) return
                   setNameInput(ir?.name ?? '')
-                  setNameEditing(false)
-                }
-              }}
-            />
-          ) : (
-            <span
-              className="wfc-title"
-              title={readOnly ? undefined : editorText('双击重命名工作流', t)}
-              onDoubleClick={() => {
-                if (readOnly) return
-                setNameInput(ir?.name ?? '')
-                setNameEditing(true)
-              }}
-            >
-              {ir.name}
-            </span>
-          )}
-          {/* 工作流切换：标题即当前工作流名，紧跟一个下拉 —— 直接跳到另一张画布，
-            不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
-          <WorkflowSwitcher
-            currentId={workflowId}
-            onSwitch={id => {
-              void canLeave().then(ok => {
-                if (ok) onSwitchWorkflow?.(id)
-              })
-            }}
-            disabled={readOnly || !!replayRunId}
-            disabledHint={
-              replayRunId
-                ? editorText('历史回放中不可切换工作流', t)
-                : editorText('运行中 · 画布只读', t)
-            }
-          />
-          {dirty && <span className="wfc-badge wfc-badge--dirty">{editorText('未保存', t)}</span>}
-          {readOnly && (
-            <span className="wfc-badge">
-              {snapshot.running ? editorText('运行中 · 只读', t) : editorText('只读', t)}
-            </span>
-          )}
-
-          <div className="wfc-toolbar-spacer" />
-          <button
-            className="wfc-btn"
-            disabled={(!selectedStep && !debugTarget) || !!replayRunId || (readOnly && !debugRunId)}
-            onClick={() => {
-              if (debugRunId) {
-                setDebugOpen(true)
-                return
-              }
-              void flushDrafts().then(ok => {
-                if (ok && selectedId) {
-                  setDebugTarget(selectedId)
-                  setDebugOpen(true)
-                }
-              })
-            }}
-          >
-            {ui('节点调试', 'Debug node')}
-          </button>
-          <button className="wfc-btn" onClick={() => setTraceOpen(true)}>
-            {ui('运行详情', 'Execution details')}
-          </button>
-          <button
-            className="wfc-btn"
-            disabled={!selectedStep || readOnly || gateLocked}
-            title={ui(
-              '按住 Shift 多选节点；仅修改所选范围',
-              'Shift-click to select nodes; edits stay in the selected scope',
+                  setNameEditing(true)
+                }}
+              >
+                {ir.name}
+              </span>
             )}
-            onClick={() =>
-              void flushDrafts().then(ok => {
-                if (ok) setScopedEditOpen(true)
-              })
-            }
-          >
-            {ui('AI 局部修改', 'AI scoped edit')}
-          </button>
-          <button
-            type="button"
-            className="wfc-btn"
-            aria-pressed={detailedNodes}
-            onClick={() => setDetailedNodes(value => !value)}
-          >
-            {t(detailedNodes ? 'workflowEditor.summary.compact' : 'workflowEditor.summary.detail')}
-          </button>
+            {/* 工作流切换：标题即当前工作流名，紧跟一个下拉 —— 直接跳到另一张画布，
+            不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
+            <WorkflowSwitcher
+              currentId={workflowId}
+              onSwitch={id => {
+                void canLeave().then(ok => {
+                  if (ok) onSwitchWorkflow?.(id)
+                })
+              }}
+              disabled={readOnly || !!replayRunId}
+              disabledHint={
+                replayRunId
+                  ? editorText('历史回放中不可切换工作流', t)
+                  : editorText('运行中 · 画布只读', t)
+              }
+            />
+            {dirty && <span className="wfc-badge wfc-badge--dirty">{editorText('未保存', t)}</span>}
+            {readOnly && (
+              <span className="wfc-badge">
+                {snapshot.running ? editorText('运行中 · 只读', t) : editorText('只读', t)}
+              </span>
+            )}
 
-          {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
-          <div className="wfc-add-wrap" ref={addWrapRef}>
+            <div className="wfc-toolbar-spacer" />
+            <EnhancedModeToggle disabled={readOnly} onNotice={setNotice} />
             <button
               type="button"
               className="wfc-btn"
-              onClick={() => setAddMenuOpen(o => !o)}
-              disabled={readOnly}
-              title={t('workflowCanvas.add.hint')}
+              onClick={() => void save()}
+              disabled={!dirty || snapshot.running}
+              title={editorText('保存（Ctrl+S，保存前强制校验）', t)}
             >
-              <Plus size={13} /> {t('common.add')}
+              <Save size={13} /> {editorText('保存', t)}
             </button>
-            {addMenuOpen && (
-              <div className="wfc-add-menu">
-                {ADDABLE_KINDS.map(kind => (
-                  <button
-                    type="button"
-                    key={kind}
-                    className="wfc-add-item"
-                    aria-label={nodeKindLabel(kind, t)}
-                    title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
-                    onClick={() => void addStep(kind)}
-                  >
-                    <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
-                    <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => {
-              setInputsEditorFocus(null)
-              setInputsEditorOpen(true)
-            }}
-            title={
-              readOnly
-                ? editorText('运行中 · 画布只读', t)
-                : editorText('编辑工作流外部输入声明', t)
-            }
-          >
-            <Braces size={13} /> {editorText('外部输入', t)}
-          </button>
-
-          {replayRunId && onExitReplay && (
             <button
               type="button"
               className="wfc-btn wfc-btn--primary"
-              onClick={onExitReplay}
-              title={editorText('返回当前工作流画布', t)}
+              onClick={() => void runWorkflow()}
+              disabled={snapshot.running || gateLocked || !!replayRunId}
+              title={
+                gateLocked && !snapshot.running
+                  ? gateLockNotice
+                  : lastRunError
+                    ? editorText('运行（R）：上次运行失败，从头完整执行（不再续连）', t)
+                    : lastRunPaused
+                      ? editorText('续跑（R）：自动跳过已完成步骤，从暂停处继续', t)
+                      : editorText('运行（R）：执行工作流', t)
+              }
             >
-              {editorText('返回当前画布', t)}
+              <Play size={13} /> {lastRunPaused ? editorText('续跑', t) : editorText('运行', t)}
             </button>
-          )}
+          </div>
+          <div className="wfc-toolbar-row" aria-label={ui('画布操作', 'Canvas actions')}>
+            {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
+            <div className="wfc-add-wrap" ref={addWrapRef}>
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => setAddMenuOpen(o => !o)}
+                aria-expanded={addMenuOpen}
+                disabled={readOnly}
+                title={t('workflowCanvas.add.hint')}
+              >
+                <Plus size={13} /> {t('common.add')}
+              </button>
+              {addMenuOpen && (
+                <div className="wfc-add-menu">
+                  {ADDABLE_KINDS.map(kind => (
+                    <button
+                      type="button"
+                      key={kind}
+                      className="wfc-add-item"
+                      aria-label={nodeKindLabel(kind, t)}
+                      title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
+                      onClick={() => void addStep(kind)}
+                    >
+                      <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+                      <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => setScheduleOpen(true)}
-            title={
-              ir.schedule?.enabled ? editorText('定时运行已启用', t) : editorText('设置定时运行', t)
-            }
-          >
-            <Clock3 size={13} /> {editorText('定时', t)}
-            {ir.schedule && (
-              <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
-            )}
-          </button>
+            <button
+              className="wfc-btn"
+              disabled={
+                (!selectedStep && !debugTarget) || !!replayRunId || (readOnly && !debugRunId)
+              }
+              onClick={() => {
+                if (debugRunId) {
+                  setDebugOpen(true)
+                  return
+                }
+                void flushDrafts().then(ok => {
+                  if (ok && selectedId) {
+                    setDebugTarget(selectedId)
+                    setDebugOpen(true)
+                  }
+                })
+              }}
+            >
+              {ui('节点调试', 'Debug node')}
+            </button>
+            <button className="wfc-btn" onClick={() => setTraceOpen(true)}>
+              {ui('运行详情', 'Execution details')}
+            </button>
+            <button
+              className="wfc-btn"
+              disabled={!selectedStep || readOnly || gateLocked}
+              title={ui(
+                '按住 Shift 多选节点；仅修改所选范围',
+                'Shift-click to select nodes; edits stay in the selected scope',
+              )}
+              onClick={() =>
+                void flushDrafts().then(ok => {
+                  if (ok) setScopedEditOpen(true)
+                })
+              }
+            >
+              {ui('AI 局部修改', 'AI scoped edit')}
+            </button>
+            <button
+              type="button"
+              className="wfc-btn"
+              onClick={undo}
+              disabled={readOnly}
+              aria-label={editorText('撤销（Ctrl+Z）', t)}
+              title={editorText('撤销（Ctrl+Z）', t)}
+            >
+              <Undo2 size={13} />
+            </button>
+            <button
+              type="button"
+              className="wfc-btn"
+              onClick={redo}
+              disabled={readOnly}
+              aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
+              title={editorText('重做（Ctrl+Shift+Z）', t)}
+            >
+              <Redo2 size={13} />
+            </button>
 
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => {
-              playUiSound('switch')
-              setIntentFormOpen(true)
-            }}
-            disabled={readOnly}
-            title={
-              readOnly
-                ? snapshot.running
-                  ? editorText('运行中 · 画布只读', t)
-                  : editorText('只读画布，不可发起意图', t)
-                : editorText('用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流', t)
-            }
-          >
-            <ListChecks size={13} /> {editorText('意图表单', t)}
-          </button>
+            <details
+              className="wfc-more"
+              ref={moreMenuRef}
+              onKeyDown={e => {
+                if (e.key === 'Escape') {
+                  e.currentTarget.open = false
+                  e.currentTarget.querySelector('summary')?.focus()
+                }
+              }}
+            >
+              <summary className="wfc-btn">{ui('更多', 'More')}</summary>
+              <div
+                className="wfc-more-menu"
+                onClick={e => {
+                  if ((e.target as HTMLElement).closest('button')) {
+                    const details = e.currentTarget.closest('details')
+                    if (details) details.open = false
+                  }
+                }}
+              >
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  onClick={() => void runCheck()}
+                  title={editorText('后端权威校验', t)}
+                >
+                  <CircleCheckBig size={13} /> {editorText('检查', t)}
+                </button>
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  aria-pressed={detailedNodes}
+                  onClick={() => setDetailedNodes(value => !value)}
+                >
+                  {t(
+                    detailedNodes
+                      ? 'workflowEditor.summary.compact'
+                      : 'workflowEditor.summary.detail',
+                  )}
+                </button>
 
-          <EnhancedModeToggle disabled={readOnly} onNotice={setNotice} />
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  onClick={() => {
+                    setInputsEditorFocus(null)
+                    setInputsEditorOpen(true)
+                  }}
+                  title={
+                    readOnly
+                      ? editorText('运行中 · 画布只读', t)
+                      : editorText('编辑工作流外部输入声明', t)
+                  }
+                >
+                  <Braces size={13} /> {editorText('外部输入', t)}
+                </button>
 
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={undo}
-            disabled={readOnly}
-            title={editorText('撤销（Ctrl+Z）', t)}
-          >
-            <Undo2 size={13} />
-          </button>
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={redo}
-            disabled={readOnly}
-            title={editorText('重做（Ctrl+Shift+Z）', t)}
-          >
-            <Redo2 size={13} />
-          </button>
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => void runCheck()}
-            title={editorText('后端权威校验', t)}
-          >
-            <CircleCheckBig size={13} /> {editorText('检查', t)}
-          </button>
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => void save()}
-            disabled={!dirty || snapshot.running}
-            title={editorText('保存（Ctrl+S，保存前强制校验）', t)}
-          >
-            <Save size={13} /> {editorText('保存', t)}
-          </button>
-          <button
-            type="button"
-            className="wfc-btn wfc-btn--primary"
-            onClick={() => void runWorkflow()}
-            disabled={snapshot.running || gateLocked || !!replayRunId}
-            title={
-              gateLocked && !snapshot.running
-                ? gateLockNotice
-                : lastRunError
-                  ? editorText('运行（R）：上次运行失败，从头完整执行（不再续连）', t)
-                  : lastRunPaused
-                    ? editorText('续跑（R）：自动跳过已完成步骤，从暂停处继续', t)
-                    : editorText('运行（R）：执行工作流', t)
-            }
-          >
-            <Play size={13} /> {lastRunPaused ? editorText('续跑', t) : editorText('运行', t)}
-          </button>
+                {replayRunId && onExitReplay && (
+                  <button
+                    type="button"
+                    className="wfc-btn wfc-btn--primary"
+                    onClick={onExitReplay}
+                    title={editorText('返回当前工作流画布', t)}
+                  >
+                    {editorText('返回当前画布', t)}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  onClick={() => setScheduleOpen(true)}
+                  title={
+                    ir.schedule?.enabled
+                      ? editorText('定时运行已启用', t)
+                      : editorText('设置定时运行', t)
+                  }
+                >
+                  <Clock3 size={13} /> {editorText('定时', t)}
+                  {ir.schedule && (
+                    <span
+                      className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`}
+                    />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  onClick={() => {
+                    playUiSound('switch')
+                    setIntentFormOpen(true)
+                  }}
+                  disabled={readOnly}
+                  title={
+                    readOnly
+                      ? snapshot.running
+                        ? editorText('运行中 · 画布只读', t)
+                        : editorText('只读画布，不可发起意图', t)
+                      : editorText('用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流', t)
+                  }
+                >
+                  <ListChecks size={13} /> {editorText('意图表单', t)}
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
 
         {/* ── 横幅区 ── */}
@@ -2358,6 +2421,10 @@ function CanvasInner({
             onRunStarted={id => {
               setDebugRunId(id)
               void gateRefresh()
+            }}
+            onLocateIssue={(stepId, fieldPath) => {
+              setDebugOpen(false)
+              locateNode(stepId, fieldPath)
             }}
             onClose={keepRunning => {
               setDebugOpen(false)

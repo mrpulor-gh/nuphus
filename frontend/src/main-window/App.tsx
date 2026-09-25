@@ -971,7 +971,10 @@ export default function App() {
               <WorkflowPage
                 onClose={() => s.setShowWorkflow(false)}
                 onRunClick={wf => setRunWorkflow(wf)}
-                onCanvasClick={wf => s.openCanvas(wf.id)}
+                onCanvasClick={wf => {
+                  s.setShowWorkflow(false)
+                  s.openCanvas(wf.id)
+                }}
               />
             </Suspense>
           </CompactModal>

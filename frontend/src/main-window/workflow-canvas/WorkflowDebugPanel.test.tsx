@@ -1,23 +1,33 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LangProvider } from '../../locales'
 import type { WorkflowStep } from '../../core/types'
 import { WorkflowDebugPanel } from './WorkflowDebugPanel'
-import { parseTestValues } from './debugSession'
+import { debugPreflight, parseTestValues } from './debugSession'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), runs: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  runs: vi.fn(),
+  read: vi.fn(),
+  validate: vi.fn(),
+}))
 vi.mock('../../core/bridge', () => ({ invoke: (...args: unknown[]) => mocks.invoke(...args) }))
 vi.mock('../lib/api', () => ({
   getLanguage: async () => '',
   wfTraceList: (...args: unknown[]) => mocks.runs(...args),
+  wfTraceRead: (...args: unknown[]) => mocks.read(...args),
+  wfValidate: (...args: unknown[]) => mocks.validate(...args),
 }))
 vi.mock('./ExecutionTraceViewer', () => ({
   ExecutionTraceViewer: ({
     onInvocationSelected,
+    pinnedRunId,
   }: {
     onInvocationSelected?: (run: unknown, invocation: unknown) => void
+    pinnedRunId?: string
   }) => (
     <button
+      data-testid={pinnedRunId ? `trace-${pinnedRunId}` : 'history-picker'}
       onClick={() =>
         onInvocationSelected?.(
           { run_id: 'history', revision: 'v1' },
@@ -53,6 +63,8 @@ beforeEach(() => {
   localStorage.setItem('nuphus_language', 'en')
   mocks.invoke.mockResolvedValue({ run_id: 'debug-run' })
   mocks.runs.mockResolvedValue([])
+  mocks.read.mockResolvedValue({ output: 'slept 1s', error: null })
+  mocks.validate.mockResolvedValue({ passed: true, errors: [], warnings: [] })
 })
 const mount = (overrides = {}) =>
   render(
@@ -86,14 +98,17 @@ describe('node debug controls', () => {
       target: { value: '[]' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Test selected node' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('JSON object required')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Test variables must be a JSON object',
+    )
+    expect(screen.getByLabelText('Test variables (JSON object)')).toHaveFocus()
     expect(mocks.invoke).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Test variables (JSON object)'), {
       target: { value: '{}' },
     })
     fireEvent.change(screen.getByLabelText('Execution scope'), { target: { value: 'through' } })
     expect(screen.getByRole('dialog')).toHaveTextContent('may repeat sends or writes')
-    fireEvent.click(screen.getByRole('button', { name: 'Run through selected node' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restart from beginning' }))
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith('wf_debug_run', {
         request: expect.objectContaining({ mode: 'through' }),
@@ -146,5 +161,143 @@ describe('node debug controls', () => {
   it('preserves JSON nulls, arrays and string values without guessing types', () => {
     expect(parseTestValues('{"n":null,"s":"003","a":[1]}')).toEqual({ n: null, s: '003', a: [1] })
     expect(() => parseTestValues('null')).toThrow()
+  })
+  it('keeps the complete form visible and focuses invalid workflow inputs', async () => {
+    mount()
+    expect(screen.getByLabelText('Execution scope')).toBeVisible()
+    expect(screen.getByLabelText('Test variables (JSON object)')).toBeVisible()
+    expect(screen.getByLabelText('Workflow inputs (JSON object)')).toBeVisible()
+    expect(screen.getByLabelText(/Use node retry policies/)).toBeVisible()
+    fireEvent.change(screen.getByLabelText('Workflow inputs (JSON object)'), {
+      target: { value: 'null' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Test selected node' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Workflow inputs must be a JSON object',
+    )
+    expect(screen.getByLabelText('Workflow inputs (JSON object)')).toHaveFocus()
+    expect(mocks.invoke).not.toHaveBeenCalled()
+  })
+  it('puts completion evidence before the full form and pins details to the exact debug run', async () => {
+    mocks.runs.mockResolvedValue([
+      { run_id: 'unrelated-newest', status: 'error', invocations: [] },
+      {
+        run_id: 'debug-run',
+        status: 'success',
+        started_at: '2026-09-25T10:00:00Z',
+        finished_at: '2026-09-25T10:00:01.004Z',
+        invocations: [{ id: 1, step_id: 'target', step_name: 'Selected' }],
+      },
+    ])
+    mount({ runId: 'debug-run' })
+    const summary = screen.getByRole('region', { name: 'Current debug summary' })
+    expect(await within(summary).findByText(/slept 1s/)).toBeVisible()
+    expect(within(summary).getByRole('status')).toHaveTextContent('Completed')
+    expect(summary).toHaveTextContent('1004 ms')
+    expect(
+      summary.compareDocumentPosition(screen.getByLabelText('Test variables (JSON object)')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByTestId('trace-debug-run')).toBeInTheDocument()
+    expect(screen.queryByTestId('trace-unrelated-newest')).not.toBeInTheDocument()
+    expect(mocks.read).toHaveBeenCalledWith('wf', 'debug-run', true, 1)
+    expect(screen.getByRole('button', { name: 'Retry selected node' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Close panel' })).toBeEnabled()
+    expect(
+      screen.queryByRole('button', { name: 'Close panel (keep running)' }),
+    ).not.toBeInTheDocument()
+  })
+  it('does not display an earlier success as the result of a failed restart', async () => {
+    mocks.runs.mockResolvedValue([
+      { run_id: 'debug-run', status: 'success', invocations: [{ id: 1, step_id: 'target' }] },
+    ])
+    mocks.invoke.mockRejectedValue(new Error('IPC invoke wf_debug_run failed: runtime unavailable'))
+    mount({ runId: 'debug-run' })
+    expect(await screen.findByText(/slept 1s/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry selected node' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('This debug run could not start')
+    expect(screen.queryByText(/slept 1s/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('trace-debug-run')).not.toBeInTheDocument()
+    const alert = screen.getByRole('alert')
+    expect(alert.querySelector('details')).not.toHaveAttribute('open')
+    expect(
+      within(screen.getByRole('region', { name: 'Current debug summary' })).getByRole('status'),
+    ).toHaveTextContent('Not started')
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
+  })
+  it('offers a precise edit target for invalid node settings without executing', async () => {
+    const onLocateIssue = vi.fn()
+    const invalid = { id: 'target', name: 'Wait', do: { sleep: 0 } }
+    mount({ selected: invalid, steps: [invalid], onLocateIssue })
+    fireEvent.click(screen.getByRole('button', { name: 'Test selected node' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/duration|greater than|positive/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit node settings' }))
+    expect(onLocateIssue).toHaveBeenCalledWith('target', '/do/sleep')
+    expect(mocks.invoke).not.toHaveBeenCalled()
+  })
+  it('preflights only the supplied execution scope and does not treat historical variables as errors', () => {
+    expect(debugPreflight([steps[1]])).toBeUndefined()
+    expect(debugPreflight([{ id: 'sleep', name: 'Wait', do: { sleep: 0 } }])).toMatchObject({
+      stepId: 'sleep',
+      fieldPath: '/do/sleep',
+    })
+    expect(debugPreflight([{ id: 'sleep', name: '', do: { sleep: 1 } }])).toMatchObject({
+      stepId: 'sleep',
+      fieldPath: '/name',
+    })
+  })
+  it('uses structured validation for tool parameters and links to the exact field', async () => {
+    const onLocateIssue = vi.fn()
+    mocks.validate.mockResolvedValue({
+      passed: false,
+      errors: ['missing path'],
+      warnings: [],
+      diagnostics: [
+        {
+          code: 'required',
+          severity: 'error',
+          category: 'missing',
+          step_id: 'target',
+          field_path: '/do/with/path',
+          detail: 'missing path',
+        },
+      ],
+    })
+    mount({ onLocateIssue })
+    fireEvent.click(screen.getByRole('button', { name: 'Test selected node' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/required/i)
+    expect(mocks.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'wf', status: 'Draft', steps: [steps[1]], inputs: [] }),
+    )
+    expect(mocks.invoke).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit node settings' }))
+    expect(onLocateIssue).toHaveBeenCalledWith('target', '/do/with/path')
+  })
+  it('does not block debug data on warnings and does not re-label a completed run when scope changes', async () => {
+    mocks.validate.mockResolvedValue({
+      passed: true,
+      errors: [],
+      warnings: ['external variable'],
+      diagnostics: [
+        {
+          code: 'variable',
+          severity: 'warning',
+          category: 'variable',
+          detail: 'external variable',
+        },
+      ],
+    })
+    mocks.runs.mockResolvedValue([
+      { run_id: 'debug-run', status: 'success', source: { mode: 'through' }, invocations: [] },
+    ])
+    mount({ runId: 'debug-run' })
+    const summary = screen.getByRole('region', { name: 'Current debug summary' })
+    await waitFor(() => expect(summary).toHaveTextContent('From start through selected node'))
+    fireEvent.change(screen.getByLabelText('Execution scope'), { target: { value: 'node' } })
+    expect(summary).toHaveTextContent('From start through selected node')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry selected node' }))
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith('wf_debug_run', expect.anything()),
+    )
   })
 })

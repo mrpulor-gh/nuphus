@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { WorkflowItem } from '../../core/types'
 import { listWorkflows } from '../lib/api'
+import { useLanguage } from '../../locales'
 
 /**
  * 工作流切换器 —— 画布标题右侧的下拉，直接跳到另一张画布，不必退回列表页重新找。
@@ -14,13 +15,15 @@ export function WorkflowSwitcher({
   currentId,
   onSwitch,
   disabled = false,
-  disabledHint = '当前不可切换工作流',
+  disabledHint,
 }: {
   currentId: string
   onSwitch: (id: string) => void
   disabled?: boolean
   disabledHint?: string
 }) {
+  const { lang } = useLanguage()
+  const ui = (zh: string, en: string) => (lang === 'zh' ? zh : en)
   const [open, setOpen] = useState(false)
   const [list, setList] = useState<WorkflowItem[] | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -54,14 +57,21 @@ export function WorkflowSwitcher({
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={disabled ? disabledHint : '切换工作流'}
+        title={
+          disabled
+            ? (disabledHint ?? ui('当前不可切换工作流', 'Cannot switch workflows now'))
+            : ui('切换工作流', 'Switch workflow')
+        }
+        aria-label={ui('切换工作流', 'Switch workflow')}
       >
         <ChevronDown size={13} />
       </button>
       {open && (
         <div className="wfc-wf-menu" role="menu">
-          {list === null && <div className="wfc-wf-menu-hint">正在加载…</div>}
-          {list?.length === 0 && <div className="wfc-wf-menu-hint">没有其它工作流</div>}
+          {list === null && <div className="wfc-wf-menu-hint">{ui('正在加载…', 'Loading…')}</div>}
+          {list?.length === 0 && (
+            <div className="wfc-wf-menu-hint">{ui('没有其它工作流', 'No other workflows')}</div>
+          )}
           {list?.map(w => (
             <button
               key={w.id}
@@ -75,7 +85,9 @@ export function WorkflowSwitcher({
               }}
             >
               <span className="wfc-wf-menu-name">{w.title}</span>
-              {w.id === currentId && <span className="wfc-wf-menu-tag">当前</span>}
+              {w.id === currentId && (
+                <span className="wfc-wf-menu-tag">{ui('当前', 'Current')}</span>
+              )}
             </button>
           ))}
         </div>

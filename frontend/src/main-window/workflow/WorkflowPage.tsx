@@ -62,7 +62,7 @@ export function WorkflowPage({
   onCanvasClick,
   scheduleDialogLayer = 'default',
 }: WorkflowPageProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   // 工作流列表只锁定工作流自身的运行/编辑操作；统一工作台的类型切换不受执行态影响。
   const gate = useWorkflowGate()
   const gateLocked = gate.reason === 'workflow' && gate.locked
@@ -218,7 +218,7 @@ export function WorkflowPage({
       const id = crypto.randomUUID()
       const resp = await wfSave({
         id,
-        name: '未命名工作流',
+        name: lang === 'zh' ? '未命名工作流' : 'Untitled workflow',
         status: 'Draft',
         steps: [],
         doc: null,
@@ -237,7 +237,7 @@ export function WorkflowPage({
       const now = Math.floor(Date.now() / 1000)
       const item: WorkflowItem = {
         id,
-        title: '未命名工作流',
+        title: lang === 'zh' ? '未命名工作流' : 'Untitled workflow',
         description: '',
         steps: [],
         tags: [],
@@ -258,7 +258,7 @@ export function WorkflowPage({
     } finally {
       setCanvasCreating(false)
     }
-  }, [canvasCreating, gateRefresh, onCanvasClick])
+  }, [canvasCreating, gateRefresh, onCanvasClick, lang])
 
   // ── Chat Agent 配置模式 ──
   if (showChatAgent) {
@@ -285,9 +285,15 @@ export function WorkflowPage({
           onClick={() => void handleCanvasNew()}
           loading={canvasCreating}
           disabled={gateLocked}
-          title={gateLocked ? gateLockNotice : '新建空白工作流并直接在画布中编排'}
+          title={
+            gateLocked
+              ? gateLockNotice
+              : lang === 'zh'
+                ? '新建空白工作流并直接在画布中编排'
+                : 'Create a blank workflow in the canvas'
+          }
         >
-          <IconLayoutDashboard size={12} /> 画布新建
+          <IconLayoutDashboard size={12} /> {lang === 'zh' ? '画布新建' : 'New canvas'}
         </Button>
       </div>
 
@@ -317,7 +323,11 @@ export function WorkflowPage({
           <IconWorkflow size={32} />
           <div>{searchQuery ? t('workflow.noResults') : t('workflow.empty')}</div>
           <div className="page-empty-hint">
-            {searchQuery ? t('workflow.tryOtherKeywords') : t('workflow.clickToCreate')}
+            {searchQuery
+              ? t('workflow.tryOtherKeywords')
+              : lang === 'zh'
+                ? '点击「画布新建」开始创建工作流'
+                : 'Select “New canvas” to create your first workflow'}
           </div>
         </div>
       )}

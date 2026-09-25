@@ -33,3 +33,37 @@
   color: var(--fg-2);
   line-height: 1.5;
 }
+.wfc-debug-summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 8%);
+}
+.wfc-debug-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+.wfc-debug-summary p {
+  margin: 6px 0;
+}
+.wfc-debug-output {
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.wfc-debug-error {
+  border-inline-start: 3px solid var(--error, #cf4444);
+  padding-inline-start: 12px;
+  margin-block: 12px;
+}
+.wfc-debug-details {
+  scroll-margin-top: 240px;
+}

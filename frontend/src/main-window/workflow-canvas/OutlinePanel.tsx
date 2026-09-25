@@ -32,13 +32,13 @@ interface OutlinePanelProps {
 /** 每级缩进（px） */
 const INDENT = 12
 
-const DOT_TITLES: Record<OutlineDotState, string> = {
-  running: '运行中',
-  retrying: '重试中',
-  success: '上次运行成功',
-  skipped: '上次运行跳过',
-  error: '失败',
-  paused: '已暂停',
+const DOT_TITLES: Record<OutlineDotState, [string, string]> = {
+  running: ['运行中', 'Running'],
+  retrying: ['重试中', 'Retrying'],
+  success: ['上次运行成功', 'Previous run succeeded'],
+  skipped: ['上次运行跳过', 'Skipped in previous run'],
+  error: ['失败', 'Failed'],
+  paused: ['已暂停', 'Paused'],
 }
 
 /** 容器直接子步骤数（所有泳道合计，对齐 projection.childCount / ContainerNode 徽章） */
@@ -68,9 +68,9 @@ interface OutlineRowProps {
 }
 
 function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   const kind = stepKind(step)
-  const container = containerLanes(step)
+  const container = containerLanes(step, t)
   const Icon = container ? CONTAINER_ICONS[container.kind] : (KIND_ICONS[kind] ?? KIND_ICONS.custom)
   const state = statuses.get(step.id)
   const multiLane = !!container && container.lanes.length > 1
@@ -91,8 +91,17 @@ function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowP
           <Icon size={12} aria-hidden="true" />
         </span>
         <span className="wfc-outline-name">{step.name || step.id}</span>
-        {container && <span className="wfc-badge wfc-badge--count">{childCount(step)} 步</span>}
-        {state && <span className={`wfc-dot wfc-dot--${state}`} title={DOT_TITLES[state]} />}
+        {container && (
+          <span className="wfc-badge wfc-badge--count">
+            {childCount(step)} {lang === 'zh' ? '步' : childCount(step) === 1 ? 'step' : 'steps'}
+          </span>
+        )}
+        {state && (
+          <span
+            className={`wfc-dot wfc-dot--${state}`}
+            title={DOT_TITLES[state][lang === 'zh' ? 0 : 1]}
+          />
+        )}
       </button>
       {container?.lanes.map(lane => (
         <div key={lane.id}>
@@ -121,33 +130,35 @@ function OutlineRow({ step, depth, selectedId, statuses, onLocate }: OutlineRowP
 }
 
 /** 空工作流向导（与 CanvasPage 键盘表/面包屑 hint 一一对应） */
-const GUIDE: { keys: string[]; desc: string }[] = [
-  { keys: ['双击'], desc: '容器进入子层' },
-  { keys: ['Alt', '←'], desc: '返回父层' },
-  { keys: ['N'], desc: '添加步骤' },
-  { keys: ['Enter'], desc: '编辑选中节点' },
-  { keys: ['Delete'], desc: '删除选中' },
-  { keys: ['Ctrl', 'S'], desc: '保存' },
-  { keys: ['Ctrl', 'Z'], desc: '撤销 / 重做' },
-  { keys: ['R'], desc: '运行' },
+const GUIDE: { keys: string[]; desc: [string, string] }[] = [
+  { keys: ['双击'], desc: ['容器进入子层', 'Open a container'] },
+  { keys: ['Alt', '←'], desc: ['返回父层', 'Go to parent layer'] },
+  { keys: ['N'], desc: ['添加步骤', 'Add a step'] },
+  { keys: ['Enter'], desc: ['编辑选中节点', 'Edit selected node'] },
+  { keys: ['Delete'], desc: ['删除选中', 'Delete selection'] },
+  { keys: ['Ctrl', 'S'], desc: ['保存', 'Save'] },
+  { keys: ['Ctrl', 'Z'], desc: ['撤销 / 重做', 'Undo / redo'] },
+  { keys: ['R'], desc: ['运行', 'Run'] },
 ]
 
 export function OutlinePanel({ steps, selectedId, statuses, onLocate }: OutlinePanelProps) {
+  const { lang } = useLanguage()
+  const languageIndex = lang === 'zh' ? 0 : 1
   if (steps.length === 0) {
     return (
       <div className="wfc-outline">
-        <div className="wfc-outline-head">画布操作</div>
+        <div className="wfc-outline-head">{lang === 'zh' ? '画布操作' : 'Canvas shortcuts'}</div>
         <div className="wfc-outline-guide">
           {GUIDE.map(g => (
-            <div key={g.desc} className="wfc-outline-guide-row">
+            <div key={g.desc[0]} className="wfc-outline-guide-row">
               <span className="wfc-outline-guide-keys">
                 {g.keys.map(k => (
                   <kbd key={k} className="kbd">
-                    {k}
+                    {k === '双击' && lang !== 'zh' ? 'Double-click' : k}
                   </kbd>
                 ))}
               </span>
-              <span className="wfc-outline-guide-desc">{g.desc}</span>
+              <span className="wfc-outline-guide-desc">{g.desc[languageIndex]}</span>
             </div>
           ))}
         </div>
@@ -156,7 +167,11 @@ export function OutlinePanel({ steps, selectedId, statuses, onLocate }: OutlineP
   }
   return (
     <div className="wfc-outline">
-      <div className="wfc-outline-head">结构 · {countAll(steps)} 步</div>
+      <div className="wfc-outline-head">
+        {lang === 'zh'
+          ? `结构 · ${countAll(steps)} 步`
+          : `Outline · ${countAll(steps)} ${countAll(steps) === 1 ? 'step' : 'steps'}`}
+      </div>
       <div className="wfc-outline-tree">
         {steps.map(s => (
           <OutlineRow

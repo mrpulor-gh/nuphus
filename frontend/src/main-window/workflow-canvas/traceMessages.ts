@@ -8,6 +8,19 @@ const messages = {
     'Fields come from the selected past run; future values may differ.',
   ],
   mode: ['运行类型', 'Run type'],
+  all: ['全部运行', 'All runs'],
+  missingSelection: [
+    '当前列表中未找到所选运行，未自动切换到其他记录。',
+    'The selected run is not in this list. No other run was selected automatically.',
+  ],
+  chooseLatest: ['查看最新运行', 'View latest run'],
+  technicalDetails: ['运行技术详情', 'Run technical details'],
+  invocationDetails: ['步骤技术详情', 'Invocation technical details'],
+  startedAt: ['开始时间', 'Started at'],
+  pendingRun: [
+    '正在等待本次运行的记录，可稍后刷新。',
+    'Waiting for this run’s evidence. Refresh shortly.',
+  ],
   debug: ['调试运行', 'Debug runs'],
   normal: ['正式运行', 'Normal runs'],
   run: ['运行', 'Run'],
@@ -64,4 +77,14 @@ const messages = {
 export function useTraceText() {
   const { lang } = useLanguage()
   return (key: keyof typeof messages) => messages[key][lang.startsWith('zh') ? 0 : 1]
+}
+
+export function useTraceTime() {
+  const { lang } = useLanguage()
+  return (timestamp: string) => {
+    const date = new Date(timestamp)
+    return Number.isNaN(date.getTime())
+      ? timestamp
+      : date.toLocaleString(lang.startsWith('zh') ? 'zh-CN' : 'en-US')
+  }
 }

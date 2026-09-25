@@ -1,6 +1,8 @@
 import { invoke } from '../../core/bridge'
 import type { WorkflowInputSpec, WorkflowStep } from '../../core/types'
 import { profileStep, walkSteps } from './dataEdges'
+import { mergeEditorProblems, type EditorProblem } from './editorProblems'
+import { validateIR } from './validate'
 
 export interface DebugRequest {
   workflow_id: string
@@ -26,6 +28,37 @@ export function parseTestValues(text: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('JSON object required')
   return value as Record<string, unknown>
+}
+
+/** Structural preflight only; environment and actual data remain runtime-validated. */
+export function debugPreflight(steps: WorkflowStep[]): EditorProblem | undefined {
+  const issues = mergeEditorProblems(validateIR(steps), null)
+  walkSteps(steps, step => {
+    if (!step.name?.trim())
+      issues.push({
+        code: 'required',
+        category: 'missing',
+        level: 'error',
+        stepId: step.id,
+        fieldPath: '/name',
+        details: [],
+        sources: ['debug_preflight'],
+      })
+    if (
+      'sleep' in step.do &&
+      (typeof step.do.sleep !== 'number' || !Number.isFinite(step.do.sleep) || step.do.sleep <= 0)
+    )
+      issues.push({
+        code: 'positive',
+        category: 'invalid',
+        level: 'error',
+        stepId: step.id,
+        fieldPath: '/do/sleep',
+        details: [],
+        sources: ['debug_preflight'],
+      })
+  })
+  return issues.find(issue => issue.level === 'error')
 }
 
 /** Hints only: runtime resolves branch/loop values using the real execution path. */

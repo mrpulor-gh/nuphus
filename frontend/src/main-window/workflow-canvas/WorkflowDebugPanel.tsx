@@ -1,11 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkflowInputSpec, WorkflowStep } from '../../core/types'
 import { useLanguage } from '../../locales'
 import { CompactModal } from '../layout/CompactModal'
-import { wfTraceList, type WorkflowInvocationTrace, type WorkflowRunTrace } from '../lib/api'
+import {
+  wfTraceList,
+  wfTraceRead,
+  wfValidate,
+  type WorkflowInvocationTrace,
+  type WorkflowRunTrace,
+} from '../lib/api'
 import { ExecutionTraceViewer } from './ExecutionTraceViewer'
-import { debugDependencies, parseTestValues, wfDebugControl, wfDebugRun } from './debugSession'
+import {
+  debugDependencies,
+  debugPreflight,
+  parseTestValues,
+  wfDebugControl,
+  wfDebugRun,
+} from './debugSession'
 import { walkSteps } from './dataEdges'
+import { mergeEditorProblems, type EditorProblem } from './editorProblems'
 import './workflow-debug.css'
 
 interface Props {
@@ -17,6 +30,21 @@ interface Props {
   runId: string | null
   onRunStarted: (id: string) => void
   onClose: (keepRunning: boolean) => void
+  onLocateIssue?: (stepId: string, fieldPath?: string) => void
+}
+
+interface DebugError {
+  message: string
+  detail?: string
+  field?: 'variables' | 'inputs'
+  stepId?: string
+  fieldPath?: string
+}
+
+function durationOf(started?: string, finished?: string | null): string | null {
+  if (!started || !finished) return null
+  const ms = Date.parse(finished) - Date.parse(started)
+  return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : null
 }
 
 export function WorkflowDebugPanel({
@@ -28,8 +56,9 @@ export function WorkflowDebugPanel({
   runId,
   onRunStarted,
   onClose,
+  onLocateIssue,
 }: Props) {
-  const { lang } = useLanguage()
+  const { lang, t } = useLanguage()
   const text = useCallback((zh: string, en: string) => (lang === 'zh' ? zh : en), [lang])
   const [mode, setMode] = useState<'node' | 'through'>('node')
   const [variables, setVariables] = useState('{}')
@@ -41,7 +70,21 @@ export function WorkflowDebugPanel({
   } | null>(null)
   const [useRetry, setUseRetry] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<DebugError | null>(null)
+  const [attempted, setAttempted] = useState(false)
+  const [hiddenRunId, setHiddenRunId] = useState<string | null>(null)
+  const [startedScope, setStartedScope] = useState<{
+    runId: string
+    mode: 'node' | 'through'
+  } | null>(null)
+  const [evidence, setEvidence] = useState<{
+    runId: string
+    trace: WorkflowInvocationTrace
+  } | null>(null)
+  const [evidenceError, setEvidenceError] = useState('')
+  const variablesRef = useRef<HTMLTextAreaElement>(null)
+  const inputsRef = useRef<HTMLTextAreaElement>(null)
+  const detailsRef = useRef<HTMLElement>(null)
   const [refresh, setRefresh] = useState(0)
   const [active, setActive] = useState<WorkflowRunTrace | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -51,19 +94,44 @@ export function WorkflowDebugPanel({
     walkSteps(mode === 'node' ? [selected] : steps, node => rows.push(node))
     return rows
   }, [mode, steps, selected])
-  const inFlight = !!runId && (!active || ['running', 'paused'].includes(active.status))
+  const currentRunId = runId !== hiddenRunId ? runId : null
+  const current = active?.run_id === currentRunId ? active : null
+  const currentEvidence = evidence?.runId === currentRunId ? evidence.trace : null
+  const inFlight = !!currentRunId && (!current || ['running', 'paused'].includes(current.status))
+  const terminal = !!current && !inFlight
   useEffect(() => {
-    if (!runId) return
+    if (busy || !error?.field) return
+    ;(error.field === 'variables' ? variablesRef : inputsRef).current?.focus()
+  }, [error, busy])
+  useEffect(() => {
+    if (!currentRunId) return
     let mounted = true
+    let polling = false
     const poll = async () => {
+      if (polling) return
+      polling = true
       try {
         const runs = await wfTraceList(workflowId, true)
         if (mounted) {
-          setActive(runs?.find(run => run.run_id === runId) ?? null)
+          const run = runs?.find(run => run.run_id === currentRunId) ?? null
+          setActive(run)
           setRefresh(value => value + 1)
+          setEvidenceError('')
+          const invocations = run?.invocations ?? []
+          const invocation =
+            run?.status === 'success'
+              ? ([...invocations].reverse().find(item => item.step_id === selected.id) ??
+                invocations[invocations.length - 1])
+              : invocations[invocations.length - 1]
+          if (invocation) {
+            const trace = await wfTraceRead(workflowId, currentRunId, true, invocation.id)
+            if (mounted && trace) setEvidence({ runId: currentRunId, trace })
+          }
         }
       } catch (reason) {
-        if (mounted) setError(String(reason))
+        if (mounted) setEvidenceError(String(reason))
+      } finally {
+        polling = false
       }
     }
     void poll()
@@ -72,7 +140,7 @@ export function WorkflowDebugPanel({
       mounted = false
       clearInterval(timer)
     }
-  }, [workflowId, runId])
+  }, [workflowId, currentRunId, selected.id])
   const selectHistory = useCallback(
     (run: WorkflowRunTrace, invocation: WorkflowInvocationTrace) => setHistory({ run, invocation }),
     [],
@@ -96,17 +164,91 @@ export function WorkflowDebugPanel({
     })
   }
   const start = async () => {
-    setError('')
+    setError(null)
+    setAttempted(true)
+    setHiddenRunId(runId)
+    setActive(null)
+    setEvidence(null)
+    setEvidenceError('')
+    let testVariables: Record<string, unknown>
+    let testInputs: Record<string, unknown>
+    try {
+      testVariables = parseTestValues(variables)
+    } catch (reason) {
+      setError({
+        message: text(
+          '变量测试值格式不正确，请填写 JSON 对象，例如 {"wn": 123}。',
+          'Test variables must be a JSON object, for example {"wn": 123}.',
+        ),
+        detail: String(reason),
+        field: 'variables',
+      })
+      return
+    }
+    try {
+      testInputs = parseTestValues(runtimeInputs)
+    } catch (reason) {
+      setError({
+        message: text(
+          '外部输入格式不正确，请填写 JSON 对象，例如 {"name": "测试"}。',
+          'Workflow inputs must be a JSON object, for example {"name": "Test"}.',
+        ),
+        detail: String(reason),
+        field: 'inputs',
+      })
+      return
+    }
+    const showIssue = (issue: EditorProblem) => {
+      const key = `workflowEditor.diagnostic.${issue.code}`
+      setError({
+        message: t(key) === key ? t('workflowEditor.diagnostic.validation') : t(key),
+        detail: issue.details.join('\n'),
+        stepId: issue.stepId ?? (issue.fieldPath?.startsWith('/inputs') ? '' : undefined),
+        fieldPath: issue.fieldPath,
+      })
+    }
+    const debugSteps = mode === 'node' ? [selected] : steps
+    const issue = debugPreflight(debugSteps)
+    if (issue) {
+      showIssue(issue)
+      return
+    }
     setBusy(true)
     try {
+      const report = await wfValidate({
+        id: workflowId,
+        name: selected.name || workflowId,
+        status: 'Draft',
+        steps: debugSteps,
+        inputs,
+      })
+      if (!report)
+        throw new Error(
+          text(
+            '未收到参数检查结果，未启动执行。',
+            'No validation response; execution was not started.',
+          ),
+        )
+      const validationIssue = mergeEditorProblems([], report).find(item => item.level === 'error')
+      if (validationIssue) {
+        showIssue(validationIssue)
+        return
+      }
+      if (!report.passed)
+        throw new Error(
+          text(
+            '参数检查未通过，未启动执行。',
+            'Validation did not pass; execution was not started.',
+          ),
+        )
       const response = await wfDebugRun({
         workflow_id: workflowId,
         steps,
         inputs,
         selected_step_id: selected.id,
         mode,
-        variables: parseTestValues(variables),
-        runtime_inputs: parseTestValues(runtimeInputs),
+        variables: testVariables,
+        runtime_inputs: testInputs,
         use_retry_policy: useRetry,
         source,
       })
@@ -115,46 +257,94 @@ export function WorkflowDebugPanel({
           text('未收到运行 ID，未确认启动成功。', 'No run ID returned; start not confirmed.'),
         )
       setActive(null)
+      setStartedScope({ runId: response.run_id, mode })
       onRunStarted(response.run_id)
     } catch (reason) {
-      setError(String(reason))
+      setError({
+        message: text(
+          '本次调试未能启动。请检查节点参数、测试数据及是否有其他任务正在运行，再手动重试。',
+          'This debug run could not start. Check node settings, test values and any other running task, then retry manually.',
+        ),
+        detail: String(reason),
+      })
     } finally {
       setBusy(false)
     }
   }
   const control = async (action: 'pause' | 'resume' | 'cancel') => {
-    if (!runId) return
+    if (!currentRunId) return
     setBusy(true)
-    setError('')
+    setError(null)
     try {
-      await wfDebugControl(workflowId, runId, action)
+      await wfDebugControl(workflowId, currentRunId, action)
       setRefresh(value => value + 1)
     } catch (reason) {
-      setError(String(reason))
+      setError({
+        message: text(
+          '操作未确认成功，请查看本次运行状态后再操作。',
+          'The control action was not confirmed. Check the current run status before trying again.',
+        ),
+        detail: String(reason),
+      })
     } finally {
       setBusy(false)
     }
   }
+  const lifecycle: Record<string, string> = {
+    running: text('执行中', 'Running'),
+    paused: text('已暂停', 'Paused'),
+    success: text('执行完成', 'Completed'),
+    error: text('执行失败', 'Failed'),
+    cancelled: text('已停止', 'Stopped'),
+    interrupted: text('已中断', 'Interrupted'),
+    completed_with_skips: text('执行结束，存在跳过步骤', 'Completed with skipped steps'),
+  }
+  const status = current
+    ? (lifecycle[current.status] ?? current.status)
+    : busy
+      ? text('启动中…', 'Starting…')
+      : error && !currentRunId
+        ? text('未启动，请修正后重试', 'Not started; review and retry')
+        : currentRunId
+          ? text('正在等待运行记录', 'Waiting for run evidence')
+          : text('待运行', 'Ready')
+  const elapsed = durationOf(current?.started_at, current?.finished_at)
+  const output = currentEvidence?.error || current?.error || currentEvidence?.output
+  const currentNode = current?.invocations?.[current.invocations.length - 1]
+  const recordedMode =
+    current?.source && typeof current.source === 'object' && 'mode' in current.source
+      ? current.source.mode
+      : null
+  const summaryMode =
+    recordedMode === 'node' || recordedMode === 'through'
+      ? recordedMode
+      : startedScope?.runId === currentRunId
+        ? startedScope.mode
+        : mode
   return (
     <CompactModal
       open
-      onClose={() => onClose(inFlight)}
+      onClose={() => {
+        if (!busy) onClose(inFlight)
+      }}
       title={text('节点调试', 'Node debugging')}
       size="xl"
       className="wfc-debug-modal"
       footer={
         <>
-          <button className="wfc-btn" onClick={() => onClose(inFlight)}>
-            {text('关闭面板（不终止运行）', 'Close panel (keep running)')}
+          <button className="wfc-btn" disabled={busy} onClick={() => onClose(inFlight)}>
+            {inFlight
+              ? text('关闭面板（不终止运行）', 'Close panel (keep running)')
+              : text('关闭面板', 'Close panel')}
           </button>
           {inFlight ? (
             <>
               <button
                 className="wfc-btn"
                 disabled={busy}
-                onClick={() => void control(active?.status === 'paused' ? 'resume' : 'pause')}
+                onClick={() => void control(current?.status === 'paused' ? 'resume' : 'pause')}
               >
-                {active?.status === 'paused'
+                {current?.status === 'paused'
                   ? text('继续后续步骤', 'Continue remaining steps')
                   : text('暂停', 'Pause')}
               </button>
@@ -171,18 +361,112 @@ export function WorkflowDebugPanel({
               {busy
                 ? text('启动中…', 'Starting…')
                 : mode === 'node'
-                  ? text('试运行当前节点', 'Test selected node')
-                  : text('运行到选中节点（含）', 'Run through selected node')}
+                  ? terminal || attempted
+                    ? text('重新试运行', 'Retry selected node')
+                    : text('试运行当前节点', 'Test selected node')
+                  : terminal || attempted
+                    ? text('重新从开头运行', 'Restart from beginning')
+                    : text('运行到选中节点（含）', 'Run through selected node')}
             </button>
           )}
         </>
       }
     >
       <div className="wfc-debug">
-        <p>
-          <strong>{selected.name || selected.id}</strong> <code>{selected.id}</code>
-        </p>
-        {error && <p role="alert">{error}</p>}
+        <section
+          className="wfc-debug-summary"
+          aria-label={text('本次调试概览', 'Current debug summary')}
+        >
+          <div className="wfc-debug-summary-row">
+            <strong>{selected.name || selected.id}</strong>
+            <span role="status" aria-live="polite">
+              {status}
+            </span>
+          </div>
+          <p>
+            {text('执行范围：', 'Scope: ')}
+            {summaryMode === 'node'
+              ? text('仅当前节点 / 容器子树', 'Selected node / container subtree')
+              : text('从开头运行至选中节点（含）', 'From start through selected node')}
+          </p>
+          {inFlight && currentNode && (
+            <p>
+              {text('当前步骤：', 'Current step: ')}
+              {currentNode.step_name || currentNode.step_id}
+            </p>
+          )}
+          {elapsed && (
+            <p>
+              {text('耗时：', 'Duration: ')}
+              {elapsed}
+            </p>
+          )}
+          {output && (
+            <p className="wfc-debug-output">
+              {text(
+                currentEvidence?.error || current?.error ? '错误：' : '输出：',
+                currentEvidence?.error || current?.error ? 'Error: ' : 'Output: ',
+              )}
+              {output.slice(0, 240)}
+              {output.length > 240 ? '…' : ''}
+            </p>
+          )}
+          {terminal && !output && (
+            <p>
+              {text('未记录输出，可查看完整详情。', 'No output recorded. Check execution details.')}
+            </p>
+          )}
+          {currentRunId && (
+            <button
+              className="wfc-btn"
+              onClick={() => {
+                detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                detailsRef.current?.focus({ preventScroll: true })
+              }}
+            >
+              {text('查看完整详情', 'View execution details')}
+            </button>
+          )}
+        </section>
+        {error && (
+          <div className="wfc-debug-error" role="alert">
+            <p>{error.message}</p>
+            {error.stepId && (
+              <p>
+                {text('节点：', 'Node: ')}
+                {scope.find(node => node.id === error.stepId)?.name || error.stepId}
+              </p>
+            )}
+            {error.stepId !== undefined && onLocateIssue && (
+              <button
+                className="wfc-btn"
+                onClick={() => onLocateIssue(error.stepId!, error.fieldPath)}
+              >
+                {text('返回节点修正', 'Edit node settings')}
+              </button>
+            )}
+            {error.detail && (
+              <details>
+                <summary>{text('技术详情', 'Technical details')}</summary>
+                <pre>{error.detail}</pre>
+              </details>
+            )}
+          </div>
+        )}
+        {evidenceError && (
+          <div className="wfc-debug-error" role="alert">
+            <p>
+              {text(
+                '无法读取本次运行记录，正在重试读取；不会重跑节点。',
+                'Could not read this run’s evidence. Retrying the read only; the node will not run again.',
+              )}
+            </p>
+            <details>
+              <summary>{text('技术详情', 'Technical details')}</summary>
+              <pre>{evidenceError}</pre>
+            </details>
+          </div>
+        )}
         <fieldset disabled={busy || inFlight}>
           <label>
             {text('执行范围', 'Execution scope')}
@@ -263,6 +547,8 @@ export function WorkflowDebugPanel({
           <label>
             {text('变量测试值（JSON 对象）', 'Test variables (JSON object)')}
             <textarea
+              ref={variablesRef}
+              aria-invalid={error?.field === 'variables'}
               className="wfc-input wfc-input--mono"
               rows={5}
               value={variables}
@@ -275,6 +561,8 @@ export function WorkflowDebugPanel({
           <label>
             {text('外部输入（JSON 对象）', 'Workflow inputs (JSON object)')}
             <textarea
+              ref={inputsRef}
+              aria-invalid={error?.field === 'inputs'}
               className="wfc-input wfc-input--mono"
               rows={4}
               value={runtimeInputs}
@@ -289,13 +577,20 @@ export function WorkflowDebugPanel({
           </p>
         </fieldset>
         {!inFlight && (
-          <details open={historyOpen} onToggle={event => setHistoryOpen(event.currentTarget.open)}>
+          <details
+            open={historyOpen}
+            onToggle={event => {
+              setHistoryOpen(event.currentTarget.open)
+              if (!event.currentTarget.open) setHistory(null)
+            }}
+          >
             <summary>{text('从已有运行中选择数据', 'Choose existing execution data')}</summary>
             {historyOpen && (
               <>
                 <ExecutionTraceViewer
                   workflowId={workflowId}
                   onInvocationSelected={selectHistory}
+                  onSelectionUnavailable={() => setHistory(null)}
                 />
                 <button
                   className="wfc-btn"
@@ -315,13 +610,20 @@ export function WorkflowDebugPanel({
             )}
           </details>
         )}
-        {runId && (
-          <section>
-            <p>
-              {text('本次调试', 'Current debug run')}: <code>{runId}</code> ·{' '}
-              {active?.status ?? text('启动中', 'Starting')}
-            </p>
-            <ExecutionTraceViewer workflowId={workflowId} debug refreshKey={refresh} />
+        {currentRunId && (
+          <section
+            ref={detailsRef}
+            tabIndex={-1}
+            className="wfc-debug-details"
+            aria-label={text('本次调试完整详情', 'Current debug execution details')}
+          >
+            <h3>{text('本次调试', 'Current debug run')}</h3>
+            <ExecutionTraceViewer
+              workflowId={workflowId}
+              debug
+              pinnedRunId={currentRunId}
+              refreshKey={refresh}
+            />
           </section>
         )}
       </div>
