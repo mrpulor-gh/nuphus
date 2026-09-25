@@ -23,6 +23,16 @@
 .markdown-paragraph:last-child {
   margin-bottom: 0;
 }
+/* 块内单 `\n`（软换行）→ 行级断点（issue #66：过程性 text 逐行分行，
+   行间无视觉间隔会塌成连续文字流）。display:block 让行占独立盒子，
+   行间距用 margin 而非 line-height，与段落 margin(10px) 形成层次：
+   段间距 > 行间距，扫读时先见段、再见行。 */
+.markdown-paragraph > .md-line {
+  display: block;
+}
+.markdown-paragraph > .md-line + .md-line {
+  margin-top: 6px;
+}
 .markdown-paragraph + .markdown-h {
   margin-top: 24px;
 }

@@ -327,9 +327,27 @@ function BlockRenderer({
   }
 
   // ▸ Default: paragraph
+  // 块内单 `\n` 是「软换行」（行级分隔），Markdown 规范不产生新段落。
+  // 但 Agent 的过程性 text 惯用单 `\n` 分行（issue #66），若整体塞进一个
+  // 文本节点则行间无任何视觉断点 → 塌成连续文字流。此处把每行拆成
+  // `span.md-line`（display:block + 行间距），外层仍复用同一 `<p>` 语义，
+  // 既保住 `\n\n` 的段落分块，也让单 `\n` 获得行级呼吸感。
+  // 单行（无 `\n`）走原路径，零回归。
+  const paraLines = block.split('\n')
+  if (paraLines.length === 1) {
+    return (
+      <p className="markdown-paragraph">
+        <MarkdownInline text={block} onFileClick={onFileClick} />
+      </p>
+    )
+  }
   return (
     <p className="markdown-paragraph">
-      <MarkdownInline text={block} onFileClick={onFileClick} />
+      {paraLines.map((line, i) => (
+        <span className="md-line" key={i}>
+          <MarkdownInline text={line} onFileClick={onFileClick} />
+        </span>
+      ))}
     </p>
   )
 }
