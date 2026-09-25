@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WorkflowInputSpec, WorkflowStep } from '../../core/types'
 import { useLanguage } from '../../locales'
+import { walkSteps } from './dataEdges'
 import {
   applyScopedEdit,
   createScopedEditRequest,
@@ -29,6 +30,9 @@ const words = {
     placeholder: '例如：完善这几个步骤的提示词，保持输入输出变量不变。',
     generate: '生成修改提案',
     generating: '正在生成提案…',
+    correcting: '正在修正提案格式（最多一次）…',
+    failed: '未能生成可用提案。请重试；若仍失败，请检查工作流模型配置。',
+    technical: '技术详情',
     apply: '应用修改',
     close: '取消',
     regenerate: '重新生成',
@@ -50,6 +54,10 @@ const words = {
     placeholder: 'For example: improve these prompts while preserving input and output variables.',
     generate: 'Generate proposal',
     generating: 'Generating proposal…',
+    correcting: 'Correcting proposal format (one attempt maximum)…',
+    failed:
+      'Could not generate a usable proposal. Try again; if it persists, check the workflow model settings.',
+    technical: 'Technical details',
     apply: 'Apply changes',
     close: 'Cancel',
     regenerate: 'Generate again',
@@ -77,12 +85,71 @@ export function ScopedEditDialog({
   const ids = [...selectedIds]
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
+  const [correcting, setCorrecting] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<{
     request: ScopedEditRequest
     proposal: ScopedEditProposal
   } | null>(null)
   const generation = useRef(0)
+  const names = new Map<string, string>()
+  walkSteps(steps, step => names.set(step.id, step.name || step.id))
+  const fields: Record<string, string> = lang.startsWith('en')
+    ? {
+        name: 'Name',
+        description: 'Description',
+        on_error: 'On failure',
+        capture: 'Output variable',
+        timeout_secs: 'Timeout',
+        do: 'Action',
+        'do.sleep': 'Wait duration (seconds)',
+        'do.tool': 'Tool',
+        'do.with': 'Parameters',
+        'do.script': 'Script',
+        'do.script.code': 'Script code',
+        'do.script.runtime': 'Script runtime',
+        'do.script.cwd': 'Working directory',
+        'do.wait': 'Confirmation prompt',
+        'do.chat': 'AI task',
+        'do.call': 'Target workflow',
+        'do.loop.repeat': 'Repeat count',
+        'do.loop.max': 'Maximum iterations',
+        'do.if.condition': 'Condition',
+        'do.assert.condition': 'Assertion condition',
+        'do.assert.message': 'Failure message',
+      }
+    : {
+        name: '名称',
+        description: '说明',
+        on_error: '失败时',
+        capture: '输出变量',
+        timeout_secs: '超时时间',
+        do: '动作',
+        'do.sleep': '等待时长（秒）',
+        'do.tool': '调用工具',
+        'do.with': '动作参数',
+        'do.script': '脚本',
+        'do.script.code': '脚本代码',
+        'do.script.runtime': '脚本运行环境',
+        'do.script.cwd': '工作目录',
+        'do.wait': '确认提示',
+        'do.chat': 'AI 任务',
+        'do.call': '目标工作流',
+        'do.loop.repeat': '重复次数',
+        'do.loop.max': '最多循环次数',
+        'do.if.condition': '条件',
+        'do.assert.condition': '断言条件',
+        'do.assert.message': '失败消息',
+      }
+  const fieldLabel = (field: string) => {
+    const prefix = Object.keys(fields)
+      .filter(key => field === key || field.startsWith(`${key}.`))
+      .sort((a, b) => b.length - a.length)[0]
+    return prefix
+      ? fields[prefix] +
+          (field.length > prefix.length ? ` · ${field.slice(prefix.length + 1)}` : '')
+      : field
+  }
   useEffect(
     () => () => {
       generation.current += 1
@@ -110,11 +177,14 @@ export function ScopedEditDialog({
   const generate = async () => {
     const token = ++generation.current
     setBusy(true)
+    setCorrecting(false)
     setError('')
     setResult(null)
     try {
       const request = createScopedEditRequest(steps, ids, instruction.trim(), inputs)
-      const proposal = await requestScopedEdit(request)
+      const proposal = await requestScopedEdit(request, () => {
+        if (generation.current === token) setCorrecting(true)
+      })
       if (generation.current !== token) return
       // Validate against the captured snapshot first. A later editor change is surfaced as stale.
       scopedEditDiff(request.steps, request.selected_ids, proposal, inputs)
@@ -162,12 +232,15 @@ export function ScopedEditDialog({
         <div className="wfc-intent-body">
           <p>{text.scope.replace('{count}', String(ids.length))}</p>
           <p>{text.hint}</p>
-          <p aria-label={text.selected}>
+          <p aria-label={text.selected}>{ids.map(id => names.get(id) ?? id).join(', ')}</p>
+          <details>
+            <summary>{text.technical}</summary>
             <code>{ids.join(', ')}</code>
-          </p>
+          </details>
           <label htmlFor="wfc-scoped-edit-instruction">{text.instruction}</label>
           <textarea
             id="wfc-scoped-edit-instruction"
+            className="wfc-input"
             autoFocus
             rows={4}
             maxLength={16000}
@@ -180,15 +253,19 @@ export function ScopedEditDialog({
               setResult(null)
             }}
           />
-          {busy && <p role="status">{text.generating}</p>}
+          {busy && <p role="status">{correcting ? text.correcting : text.generating}</p>}
           {error && (
-            <p role="alert">
+            <div role="alert">
               {['outside_scope', 'invalid_proposal', 'invalid_selection'].includes(error)
                 ? text.invalid
                 : error === 'stale_revision'
                   ? text.stale
-                  : error}
-            </p>
+                  : text.failed}
+              <details>
+                <summary>{text.technical}</summary>
+                <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{error}</pre>
+              </details>
+            </div>
           )}
           {stale && <p role="alert">{text.stale}</p>}
           {preview.invalid && <p role="alert">{text.invalid}</p>}
@@ -198,8 +275,8 @@ export function ScopedEditDialog({
               {!preview.changes.length && <p>{text.empty}</p>}
               {preview.changes.map(change => (
                 <section key={`${change.stepId}:${change.field}`}>
-                  <strong>
-                    {change.stepId} · {change.field}
+                  <strong title={change.field}>
+                    {names.get(change.stepId) ?? change.stepId} · {fieldLabel(change.field)}
                   </strong>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div>

@@ -4,8 +4,11 @@ import type { WorkflowStep } from '../../core/types'
 import { ScopedEditDialog } from './ScopedEditDialog'
 import { scopedRevision, type ScopedEditProposal, type ScopedEditRequest } from './scopedEdit'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }))
-vi.mock('../../core/bridge', () => ({ invoke: (...args: unknown[]) => mocks.invoke(...args) }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), unlisten: vi.fn() }))
+vi.mock('../../core/bridge', () => ({
+  invoke: (...args: unknown[]) => mocks.invoke(...args),
+  listen: (...args: unknown[]) => mocks.listen(...args),
+}))
 vi.mock('../../locales', () => ({ useLanguage: () => ({ lang: 'en' }) }))
 const steps: WorkflowStep[] = [
   { id: 'selected', name: 'Before', do: { sleep: 1 } },
@@ -24,6 +27,9 @@ const generate = () => {
 }
 beforeEach(() => {
   mocks.invoke.mockReset()
+  mocks.listen.mockReset()
+  mocks.listen.mockResolvedValue(mocks.unlisten)
+  mocks.unlisten.mockClear()
 })
 
 describe('ScopedEditDialog', () => {
@@ -41,7 +47,7 @@ describe('ScopedEditDialog', () => {
     )
     generate()
     await screen.findByText('Updated name')
-    expect(screen.getByText('selected · name')).toBeTruthy()
+    expect(screen.getByText('Before · Name')).toBeTruthy()
     expect(onApply).not.toHaveBeenCalled()
     expect(mocks.invoke.mock.calls[0][0]).toBe('wf_propose_scoped_edit')
     const request = mocks.invoke.mock.calls[0][1].request as ScopedEditRequest
@@ -68,6 +74,7 @@ describe('ScopedEditDialog', () => {
         steps={[steps[0], { ...steps[1], name: 'Changed outside scope' }]}
       />,
     )
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalled())
     await act(async () => resolve(p()))
     expect(screen.getByRole('alert').textContent).toContain('stale')
     expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled()
@@ -116,8 +123,55 @@ describe('ScopedEditDialog', () => {
     )
     generate()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalled())
     await act(async () => resolve(p()))
     await waitFor(() => expect(screen.queryByText('Updated name')).toBeNull())
     expect(onApply).not.toHaveBeenCalled()
+  })
+
+  it('shows correction progress for this request only and cleans up the listener', async () => {
+    let resolve!: (value: ScopedEditProposal) => void
+    mocks.invoke.mockImplementation(
+      () =>
+        new Promise(done => {
+          resolve = done
+        }),
+    )
+    render(
+      <ScopedEditDialog
+        steps={steps}
+        selectedIds={['selected']}
+        onApply={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    generate()
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalled())
+    const requestId = mocks.invoke.mock.calls[0][1].request.request_id
+    const handler = mocks.listen.mock.calls[0][1]
+    act(() => handler({ request_id: 'other', phase: 'correcting' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Generating')
+    act(() => handler({ request_id: requestId, phase: 'correcting' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Correcting proposal format')
+    await act(async () => resolve(p()))
+    expect(mocks.unlisten).toHaveBeenCalledOnce()
+  })
+
+  it('labels action fields in the active language while retaining the technical path as a tooltip', async () => {
+    mocks.invoke.mockResolvedValue({
+      ...p(),
+      updates: [{ step_id: 'selected', step: { ...steps[0], do: { sleep: 2 } } }],
+    })
+    render(
+      <ScopedEditDialog
+        steps={steps}
+        selectedIds={['selected']}
+        onApply={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    generate()
+    const heading = await screen.findByText('Before · Wait duration (seconds)')
+    expect(heading).toHaveAttribute('title', 'do.sleep')
   })
 })

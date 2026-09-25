@@ -1,4 +1,4 @@
-import { invoke } from '../../core/bridge'
+import { invoke, listen } from '../../core/bridge'
 import type { WorkflowInputSpec, WorkflowStep } from '../../core/types'
 import { buildVariableCatalogIndex } from './variableCatalog'
 
@@ -12,6 +12,7 @@ export interface ScopedEditProposal {
   updates: ScopedUpdate[]
 }
 export interface ScopedEditRequest {
+  request_id?: string
   base_revision: string
   steps: WorkflowStep[]
   selected_ids: string[]
@@ -166,10 +167,25 @@ export function createScopedEditRequest(
     })),
   }
 }
-export async function requestScopedEdit(request: ScopedEditRequest): Promise<ScopedEditProposal> {
-  const proposal = await invoke<ScopedEditProposal>('wf_propose_scoped_edit', { request })
-  if (!proposal) throw new Error('invalid_proposal')
-  return proposal
+export async function requestScopedEdit(
+  request: ScopedEditRequest,
+  onCorrecting?: () => void,
+): Promise<ScopedEditProposal> {
+  const requestId = crypto.randomUUID()
+  const unlisten = onCorrecting
+    ? await listen<{ request_id: string; phase: string }>('workflow-edit-progress', event => {
+        if (event.request_id === requestId && event.phase === 'correcting') onCorrecting()
+      })
+    : undefined
+  try {
+    const proposal = await invoke<ScopedEditProposal>('wf_propose_scoped_edit', {
+      request: { ...request, request_id: requestId },
+    })
+    if (!proposal) throw new Error('invalid_proposal')
+    return proposal
+  } finally {
+    unlisten?.()
+  }
 }
 
 /** Recheck the current editor revision and scope at apply time, independently of the backend. */
