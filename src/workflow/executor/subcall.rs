@@ -65,6 +65,15 @@ impl Executor {
             .into_iter()
             .collect();
         let declared = crate::workflow::inputs::resolve_declared_inputs(&sub_wf.inputs, &provided)?;
+        if let Some(trace) = crate::workflow::trace::current() {
+            trace.add_sensitive(
+                sub_wf
+                    .inputs
+                    .iter()
+                    .filter(|spec| spec.sensitive)
+                    .filter_map(|spec| declared.get(&spec.name).cloned()),
+            );
+        }
 
         let mut sub_vars = variables.clone();
         if !sub_wf.inputs.is_empty() {

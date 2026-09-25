@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { WorkflowStep } from '../../core/types'
 import { Inspector } from './Inspector'
 import { InspectorDraftContext, InspectorDraftStore } from './inspectorDrafts'
+import { WorkflowTraceContext } from './WorkflowTraceContext'
 
 vi.mock('../lib/api', () => ({
   wfTools: vi.fn(async () => [
@@ -17,6 +18,37 @@ vi.mock('../lib/api', () => ({
     },
   ]),
   listModels: vi.fn(async () => []),
+  wfTraceList: vi.fn(async () => [
+    {
+      run_id: 'run',
+      workflow_id: 'flow',
+      debug: false,
+      revision: 'revision',
+      started_at: 'now',
+      status: 'success',
+      invocations: [
+        {
+          id: 1,
+          workflow_id: 'flow',
+          step_id: 'producer',
+          step_name: 'producer',
+          status: 'success',
+        },
+      ],
+    },
+  ]),
+  wfTraceRead: vi.fn(async () => ({
+    id: 1,
+    workflow_id: 'flow',
+    step_id: 'producer',
+    status: 'success',
+    output: '',
+    error: null,
+    variables_before: {},
+    variables_after: { previous: { 'a.b': [4] } },
+    verification: null,
+    attempts: [],
+  })),
 }))
 
 function mount(step: WorkflowStep) {
@@ -27,25 +59,27 @@ function mount(step: WorkflowStep) {
     const [value, setValue] = useState(step)
     current = value
     return (
-      <InspectorDraftContext.Provider value={{ store, nodeId: step.id }}>
-        <Inspector
-          step={value}
-          readOnly={false}
-          idReferenced={false}
-          onClose={vi.fn()}
-          onPatch={patch => {
-            patched(patch)
-            setValue(old => ({ ...old, ...patch }))
-          }}
-          onPatchAction={action => setValue(old => ({ ...old, do: action }))}
-          variableCatalog={{
-            references: [
-              { name: 'previous', source: 'capture', sourceLabel: '前一步', maybeUnset: false },
-            ],
-            captures: [],
-          }}
-        />
-      </InspectorDraftContext.Provider>
+      <WorkflowTraceContext.Provider value={{ workflowId: 'flow' }}>
+        <InspectorDraftContext.Provider value={{ store, nodeId: step.id }}>
+          <Inspector
+            step={value}
+            readOnly={false}
+            idReferenced={false}
+            onClose={vi.fn()}
+            onPatch={patch => {
+              patched(patch)
+              setValue(old => ({ ...old, ...patch }))
+            }}
+            onPatchAction={action => setValue(old => ({ ...old, do: action }))}
+            variableCatalog={{
+              references: [
+                { name: 'previous', source: 'capture', sourceLabel: '前一步', maybeUnset: false },
+              ],
+              captures: [],
+            }}
+          />
+        </InspectorDraftContext.Provider>
+      </WorkflowTraceContext.Provider>
     )
   }
   render(<Harness />)
@@ -63,7 +97,7 @@ describe('Inspector manual workflow editing', () => {
     expect(current().name).toBe('等待应用')
     fireEvent.change(screen.getByLabelText('时长（秒）'), { target: { value: 'abc' } })
     await act(async () => {
-      expect((await store.flush())?.field).toBe('时长（秒）')
+      expect((await store.flush())?.field).toBe('/do/sleep')
     })
     expect(current().do).toEqual({ sleep: 1 })
     expect(screen.getByText('请输入有效数值')).toBeInTheDocument()
@@ -128,5 +162,40 @@ describe('Inspector manual workflow editing', () => {
     fireEvent.change(input, { target: { value: '输入中' } })
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
     expect(patched).not.toHaveBeenCalled()
+  })
+
+  it('commits a selected historical field as a typed loop variable reference', async () => {
+    const { store, current } = mount({
+      id: 'loop',
+      name: 'loop',
+      do: { loop: { for_each: { items: { var: '' }, as: 'item' }, do: [] } },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '从历史运行选择字段' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'previous', expanded: false }))
+    fireEvent.click(screen.getByRole('button', { name: '插入引用: previous["a.b"]' }))
+    await act(async () => {
+      expect(await store.flush()).toBeNull()
+    })
+    expect(current().do).toMatchObject({
+      loop: { for_each: { items: { var: 'previous["a.b"]' } } },
+    })
+    expect(screen.queryByText(/未找到来源/)).not.toBeInTheDocument()
+  })
+
+  it('inserts historical fields into text templates without losing the surrounding draft', async () => {
+    const { store, current } = mount({
+      id: 'script',
+      name: 'script',
+      do: { script: { runtime: 'pwsh', code: 'prefix ' } },
+    })
+    const code = screen.getByRole('textbox', { name: /脚本代码 code/ }) as HTMLTextAreaElement
+    code.setSelectionRange(code.value.length, code.value.length)
+    fireEvent.click(screen.getByRole('button', { name: '从历史运行选择字段' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'previous', expanded: false }))
+    fireEvent.click(screen.getByRole('button', { name: '插入引用: previous["a.b"]' }))
+    await act(async () => {
+      expect(await store.flush()).toBeNull()
+    })
+    expect(current().do).toMatchObject({ script: { code: 'prefix {{previous["a.b"]}}' } })
   })
 })

@@ -65,7 +65,9 @@ function joinScopes(paths: Scope[]): Scope {
         maybeUnset: producers.some(p => !p || p.maybeUnset),
         sourceLabel: [...new Set(producers.flatMap(p => (p ? [p.sourceLabel] : [])))].join(' / '),
         sources: mergeSources(producers),
-        producerStepIds: [...new Set(producers.flatMap(p => p?.producerStepIds ?? []))],
+        producerStepIds: [
+          ...new Set(producers.flatMap(p => p?.producerStepIds ?? (p?.stepId ? [p.stepId] : []))),
+        ],
       })
     }
   }
@@ -78,6 +80,7 @@ export function buildVariableCatalogIndex(
   inputs: WorkflowInputSpec[] = [],
 ): {
   beforeStep: Map<string, ReadonlyMap<string, VariableCandidate>>
+  loopConditionScope: Map<string, ReadonlyMap<string, VariableCandidate>>
   captures: VariableCandidate[]
   inputs: VariableCandidate[]
 } {
@@ -109,6 +112,7 @@ export function buildVariableCatalogIndex(
     ]),
   )
   const beforeStep = new Map<string, ReadonlyMap<string, VariableCandidate>>()
+  const loopConditionScope = new Map<string, ReadonlyMap<string, VariableCandidate>>()
   function visit(list: WorkflowStep[], incoming: Scope): Scope {
     let scope = new Map(incoming)
     let conditionalTail = false
@@ -147,6 +151,7 @@ export function buildVariableCatalogIndex(
           })
         }
         const after = visit(loop.do, body)
+        loopConditionScope.set(step.id, new Map(after))
         // Loop locals are recommended only inside their lexical body, even if runtime leaks them.
         for (const [name, value] of after) {
           if (value.source === 'loop' && value.stepId === step.id) {
@@ -166,7 +171,12 @@ export function buildVariableCatalogIndex(
     return scope
   }
   visit(steps, initial)
-  return { beforeStep, captures: [...captures.values()], inputs: [...initial.values()] }
+  return {
+    beforeStep,
+    loopConditionScope,
+    captures: [...captures.values()],
+    inputs: [...initial.values()],
+  }
 }
 
 export function buildVariableCatalog(

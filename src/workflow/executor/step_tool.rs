@@ -25,7 +25,7 @@ impl Executor {
         let resolved_params = Self::resolve_vars(params, variables);
 
         // ── 根据 on_error 决定重试策略 ──
-        let (max_retries, backoff_ms) = match &step.on_error {
+        let (mut max_retries, backoff_ms) = match &step.on_error {
             OnError::Retry {
                 max, backoff_ms, ..
             } => (*max, *backoff_ms),
@@ -34,6 +34,9 @@ impl Executor {
             // AllowCodes: 不重试，单次执行后由退出码决定
             OnError::AllowCodes { .. } => (0, 0),
         };
+        if crate::workflow::debug::current().is_some_and(|session| !session.use_retry_policy) {
+            max_retries = 0;
+        }
 
         let mut last_error = String::new();
 
@@ -62,19 +65,31 @@ impl Executor {
                 self.check_cancel(workflow_id).await?;
             }
 
+            let root_id = crate::workflow::trace::current()
+                .map(|trace| trace.workflow_id.clone())
+                .unwrap_or_else(|| workflow_id.to_string());
             let cancel = self
                 .cancel_flags
                 .read()
                 .await
-                .get(workflow_id)
+                .get(&root_id)
                 .cloned()
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-            match crate::tools::desktop_approval::with_cancellation(
+            let result = crate::tools::desktop_approval::with_cancellation(
                 cancel,
                 tool_exec(tool.to_string(), resolved_params.clone()),
             )
-            .await
-            {
+            .await;
+            if let Some(trace) = crate::workflow::trace::current() {
+                trace
+                    .attempt(
+                        attempt + 1,
+                        &resolved_params,
+                        result.as_deref().map_err(|error| error.as_str()),
+                    )
+                    .await;
+            }
+            match result {
                 Ok(output) => {
                     // ── 变量捕获 ──
                     super::variables::capture_output(&step.capture, &output, variables)?;

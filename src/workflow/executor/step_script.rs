@@ -1,9 +1,6 @@
 //! 脚本步骤执行
 use super::*;
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 impl Executor {
     /// 执行脚本步骤（内联代码写入临时文件，调用对应 runtime 执行，带超时保护）
     pub(super) async fn execute_script_step(
@@ -12,7 +9,7 @@ impl Executor {
         script: &ScriptDef,
         variables: &mut HashMap<String, serde_json::Value>,
     ) -> crate::Result<String> {
-        use std::process::Command;
+        use tokio::process::Command;
 
         let interpreter = match script.runtime.as_str() {
             "python" => "python",
@@ -40,36 +37,34 @@ impl Executor {
         let resolved_code = super::variables::resolve_vars_str(&script.code, variables);
         std::fs::write(&tmp_path, &resolved_code)
             .map_err(|e| crate::NuphusError::agent(format!("写入临时脚本失败: {}", e)))?;
+        struct ScriptFile(std::path::PathBuf);
+        impl Drop for ScriptFile {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _script_file = ScriptFile(tmp_path.clone());
 
         const SCRIPT_TIMEOUT_SECS: u64 = 120;
-        let (tx, rx) = std::sync::mpsc::channel();
-        let interpreter = interpreter.to_string();
-        let tmp_path_clone = tmp_path.clone();
-        let cwd = script.cwd.clone();
-        std::thread::spawn(move || {
-            let mut cmd = Command::new(&interpreter);
-            cmd.arg(&tmp_path_clone);
-            #[cfg(windows)]
-            {
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            if let Some(ref dir) = cwd {
-                cmd.current_dir(dir);
-            }
-            let result = cmd.output();
-            let _ = tx.send(result);
-        });
+        let mut cmd = Command::new(interpreter);
+        cmd.arg(&tmp_path).kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        if let Some(ref dir) = script.cwd {
+            cmd.current_dir(super::variables::resolve_vars_str(dir, variables));
+        }
 
         // 带超时等待
-        let output_result = rx
-            .recv_timeout(std::time::Duration::from_secs(SCRIPT_TIMEOUT_SECS))
-            .map_err(|_| {
-                crate::NuphusError::agent(format!("脚本执行超时 ({}s)", SCRIPT_TIMEOUT_SECS))
-            });
-
-        // 清理临时文件
-        let _ = std::fs::remove_file(&tmp_path);
+        let timeout_secs = step.timeout_secs.unwrap_or(SCRIPT_TIMEOUT_SECS);
+        let output_result =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output())
+                .await
+                .map_err(|_| {
+                    crate::NuphusError::agent(format!("脚本执行超时 ({}s)", timeout_secs))
+                });
 
         match output_result {
             Ok(Ok(output)) => {

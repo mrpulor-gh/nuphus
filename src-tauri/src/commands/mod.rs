@@ -26,6 +26,8 @@ pub mod tools;
 pub mod user_assets;
 pub mod user_input;
 pub mod workflow;
+pub mod workflow_debug;
+pub mod workflow_edit;
 
 pub use self::annotations::*;
 pub use self::approval::*;
@@ -52,3 +54,4 @@ pub use self::tools::*;
 pub use self::user_assets::*;
 pub use self::user_input::*;
 pub use self::workflow::*;
+pub use self::workflow_debug::*;

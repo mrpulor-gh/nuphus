@@ -35,6 +35,7 @@ base64 = "0.22"
 # 序列化
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
 
 # URL编码
 urlencoding = "2"

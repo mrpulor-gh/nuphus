@@ -1434,6 +1434,17 @@ export interface ValidationReport {
   passed: boolean
   warnings: string[]
   errors: string[]
+  diagnostics?: ValidationDiagnostic[]
+}
+
+export interface ValidationDiagnostic {
+  code: string
+  severity: 'error' | 'warning'
+  category: string
+  step_id?: string | null
+  field_path?: string | null
+  detail: string
+  subject?: string | null
 }
 
 export interface WfSaveResponse {
@@ -2208,4 +2219,60 @@ export async function getChangelog() {
  */
 export function openExternal(url: string) {
   return invoke<void>('open_external', { url })
+}
+
+// Local workflow execution evidence. Summaries stay separate from full invocation values.
+export interface WorkflowInvocationSummary {
+  id: number
+  parent_id: number | null
+  workflow_id: string
+  step_id: string
+  step_name: string
+  started_at: string
+  finished_at: string | null
+  status: string
+}
+
+export interface WorkflowInvocationTrace extends WorkflowInvocationSummary {
+  definition: unknown
+  variables_before: Record<string, unknown>
+  variables_after: Record<string, unknown>
+  inputs: unknown
+  output: string | null
+  error: string | null
+  attempts: unknown[]
+  verification: unknown | null
+}
+
+export interface WorkflowRunTrace {
+  version: number
+  run_id: string
+  workflow_id: string
+  debug: boolean
+  revision: string
+  started_at: string
+  finished_at: string | null
+  status: string
+  invocations: WorkflowInvocationSummary[]
+  storage_error: string | null
+  source?: unknown
+  error?: string | null
+}
+
+export function wfTraceList(workflowId: string, debug: boolean) {
+  return invoke<WorkflowRunTrace[]>('wf_trace_list', { workflowId, debug })
+}
+
+export function wfTraceRead(
+  workflowId: string,
+  runId: string,
+  debug: boolean,
+  invocationId: number,
+) {
+  return invoke<WorkflowInvocationTrace>('wf_trace_read', {
+    workflowId,
+    runId,
+    debug,
+    invocationId,
+  })
 }

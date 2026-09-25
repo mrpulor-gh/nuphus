@@ -33,17 +33,20 @@ vi.mock('@xyflow/react', () => ({
   ReactFlow: ({
     nodes,
     onNodeDoubleClick,
+    onNodeClick,
     children,
   }: {
     nodes: { id: string }[]
     onNodeDoubleClick: (e: unknown, n: unknown) => void
+    onNodeClick: (e: unknown, n: unknown) => void
     children: React.ReactNode
   }) => (
     <div>
       {nodes.map(node => (
-        <button key={node.id} onClick={e => onNodeDoubleClick(e, node)}>
-          打开 {node.id}
-        </button>
+        <span key={node.id}>
+          <button onClick={e => onNodeDoubleClick(e, node)}>打开 {node.id}</button>
+          <button onClick={e => onNodeClick(e, node)}>Select {node.id}</button>
+        </span>
       ))}
       {children}
     </div>
@@ -75,9 +78,45 @@ vi.mock('./runStatus', () => ({
   aggregateContainerBadges: () => new Map(),
 }))
 vi.mock('./ToolPalette', () => ({ ToolPalette: () => null, TOOL_DRAG_MIME: 'tool' }))
-vi.mock('./ProblemsPanel', () => ({ ProblemsPanel: () => null }))
+vi.mock('./ProblemsPanel', () => ({
+  ProblemsPanel: ({ backendReport, problems }: { backendReport: unknown; problems: unknown }) => (
+    <>
+      <output data-testid="backend-check">{JSON.stringify(backendReport)}</output>
+      <output data-testid="local-check">{JSON.stringify(problems)}</output>
+    </>
+  ),
+}))
 vi.mock('./OutlinePanel', () => ({ OutlinePanel: () => null }))
 vi.mock('./IntentFormPanel', () => ({ IntentFormPanel: () => null }))
+vi.mock('./ScopedEditDialog', () => ({
+  ScopedEditDialog: ({
+    selectedIds,
+    steps,
+    onApply,
+    onClose,
+  }: {
+    selectedIds: string[]
+    steps: WorkflowIR['steps']
+    onApply: (steps: WorkflowIR['steps']) => void
+    onClose: () => void
+  }) => (
+    <div role="dialog">
+      Selected: {selectedIds.join(',')}
+      <button
+        onClick={() => {
+          onApply(
+            steps.map(step =>
+              selectedIds.includes(step.id) ? { ...step, name: `Changed ${step.id}` } : step,
+            ),
+          )
+          onClose()
+        }}
+      >
+        Apply scoped proposal
+      </button>
+    </div>
+  ),
+}))
 vi.mock('./EnhancedModeToggle', () => ({ EnhancedModeToggle: () => null }))
 vi.mock('./WorkflowSwitcher', () => ({ WorkflowSwitcher: () => null }))
 vi.mock('./WorkflowInputsEditor', () => ({
@@ -115,6 +154,130 @@ function shortcut() {
 }
 
 describe('Canvas save coordination', () => {
+  it('revalidates references when an input declaration changes without editing nodes', async () => {
+    const original = workflow.steps
+    workflow.steps = [
+      {
+        id: 'first',
+        name: 'Input consumer',
+        do: { tool: 'test', with: { text: '{{inputs.new_input}}' } },
+      },
+    ]
+    try {
+      await open()
+      await waitFor(() =>
+        expect(screen.getByTestId('local-check')).toHaveTextContent('input_reference'),
+      )
+      fireEvent.click(screen.getByText('更多'))
+      fireEvent.click(screen.getByRole('button', { name: '外部输入' }))
+      fireEvent.click(screen.getByRole('button', { name: '应用测试输入' }))
+      await waitFor(() => expect(screen.getByTestId('local-check')).toHaveTextContent('[]'))
+    } finally {
+      workflow.steps = original
+    }
+  })
+  it('groups primary and editing actions in the toolbar without a session enhancement toggle', async () => {
+    await open()
+    const primary = document.querySelector('.wfc-toolbar-row--primary') as HTMLElement
+    const actions = screen.getByLabelText('画布操作')
+    expect(primary.parentElement).toBe(actions.parentElement)
+    expect(screen.queryByText('增强模式')).not.toBeInTheDocument()
+    expect(within(primary).getByRole('button', { name: '保存' })).toBeInTheDocument()
+    expect(within(primary).getByRole('button', { name: '运行' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: '节点调试' })).toBeInTheDocument()
+    expect(document.querySelector('.wfc-title')).toHaveAttribute(
+      'title',
+      expect.stringContaining(workflow.name),
+    )
+    fireEvent.click(within(actions).getByRole('button', { name: '添加' }))
+    fireEvent.click(screen.getByRole('button', { name: '延时等待' }))
+    expect(await screen.findByDisplayValue('等待 1 秒')).toBeInTheDocument()
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+    expect(
+      mocks.save.mock.calls[0][0].steps.find((step: { name: string }) => step.name === '等待 1 秒'),
+    ).toMatchObject({ do: { sleep: 1 } })
+    expect(mocks.save.mock.calls[0][0].steps[0].name).toBe(workflow.steps[0].name)
+  })
+  it('clears a saved notice as soon as another field is edited', async () => {
+    await open()
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '保存一次' } })
+    shortcut()
+    expect(await screen.findByText('已保存')).toBeInTheDocument()
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '继续编辑' } })
+    await waitFor(() => expect(screen.queryByText('已保存')).not.toBeInTheDocument())
+  })
+  it('ignores validation responses for a definition edited while checking', async () => {
+    let resolve!: (value: unknown) => void
+    mocks.validate.mockReturnValue(
+      new Promise(r => {
+        resolve = r
+      }),
+    )
+    await open()
+    fireEvent.click(screen.getByText('更多'))
+    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    await waitFor(() => expect(mocks.validate).toHaveBeenCalledTimes(1))
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '检查后修改' } })
+    await act(async () => {
+      resolve({ passed: false, issues: [] })
+    })
+    expect(screen.queryByText('后端校验发现错误，详见问题面板')).not.toBeInTheDocument()
+    expect(screen.getByTestId('backend-check')).toHaveTextContent('null')
+  })
+  it('invalidates an existing check as soon as a draft changes', async () => {
+    mocks.validate.mockResolvedValue({ passed: false, issues: ['old failure'] })
+    await open()
+    fireEvent.click(screen.getByText('更多'))
+    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('backend-check')).toHaveTextContent('old failure'),
+    )
+    fireEvent.change(panel('first').getByLabelText(/^名称/), { target: { value: '已修正' } })
+    await waitFor(() => expect(screen.getByTestId('backend-check')).toHaveTextContent('null'))
+  })
+  it('applies selected-group AI edits as one undoable transaction', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: 'Select first' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select second' }), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'AI 局部修改' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Selected: first,second')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply scoped proposal' }))
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+    expect(mocks.save.mock.calls[0][0].steps.map((step: { name: string }) => step.name)).toEqual([
+      'Changed first',
+      'Changed second',
+    ])
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+    expect(mocks.save.mock.calls[1][0].steps).toEqual(workflow.steps)
+  })
+  it('previews capture renaming and updates expressions together, including undo', async () => {
+    const original = structuredClone(workflow.steps)
+    workflow.steps[0].capture = 'result'
+    workflow.steps[1].do = { tool: 'echo', with: { value: '{{result["title"]}}' } }
+    try {
+      await open()
+      fireEvent.change(panel('first').getByRole('combobox', { name: '保存输出到变量' }), {
+        target: { value: 'renamed' },
+      })
+      shortcut()
+      expect(await screen.findByRole('dialog')).toHaveTextContent('{{renamed["title"]}}')
+      expect(mocks.save).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: '一次应用全部修改' }))
+      await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+      expect(mocks.save.mock.calls[0][0].steps[0].capture).toBe('renamed')
+      expect(mocks.save.mock.calls[0][0].steps[1].do.with.value).toBe('{{renamed["title"]}}')
+      fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+      shortcut()
+      await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+      expect(mocks.save.mock.calls[1][0].steps).toEqual(workflow.steps)
+    } finally {
+      workflow.steps = original
+    }
+  })
   it('switches menu and inspector types without losing or saving uncommitted drafts', async () => {
     localStorage.setItem('nuphus_language', 'zh')
     function LanguageControl() {
@@ -137,7 +300,7 @@ describe('Canvas save coordination', () => {
     expect(panel('first').getByRole('combobox', { name: 'Save output to variable' })).toHaveValue(
       'unsaved_result',
     )
-    expect(panel('first').getByLabelText(/^名称/)).toHaveValue('用户草稿')
+    expect(panel('first').getByLabelText(/^Name/)).toHaveValue('用户草稿')
     expect(mocks.save).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(screen.getByRole('button', { name: 'Tool call' })).toBeInTheDocument()

@@ -2,6 +2,7 @@ import { ReactNode, ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { IconX } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
+import { useLanguage } from '../../locales'
 
 interface CompactModalProps {
   open: boolean
@@ -32,6 +33,7 @@ export function CompactModal({
   footer,
   children,
 }: CompactModalProps) {
+  const { t } = useLanguage()
   const [closing, setClosing] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -79,7 +81,11 @@ export function CompactModal({
         <div className="compact-header">
           {icon && <div className="compact-header-icon">{icon}</div>}
           <span className="compact-header-title">{title}</span>
-          <IconButton variant="compact-header-close" label="关闭" onClick={requestClose}>
+          <IconButton
+            variant="compact-header-close"
+            label={t('common.close')}
+            onClick={requestClose}
+          >
             <IconX size={14} />
           </IconButton>
         </div>

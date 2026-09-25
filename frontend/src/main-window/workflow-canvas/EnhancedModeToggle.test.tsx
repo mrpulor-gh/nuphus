@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EnhancedModeToggle } from './EnhancedModeToggle'
 import { getWorkflowEnhancedMode, setWorkflowEnhancedMode } from '../lib/api'
 import { requestWorkflowEnhancedModeRefresh } from './enhancedModeEvents'
+import { LangProvider, useLanguage } from '../../locales'
 
 vi.mock('../lib/api', () => ({
+  getLanguage: async () => '',
   getWorkflowEnhancedMode: vi.fn(),
   setWorkflowEnhancedMode: vi.fn(),
 }))
@@ -12,6 +14,106 @@ vi.mock('../lib/api', () => ({
 describe('EnhancedModeToggle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.removeItem('nuphus_language')
+  })
+
+  it('localizes the warning and fallback flow using the actual language provider', async () => {
+    localStorage.setItem('nuphus_language', 'en')
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({ enabled: false, configured: false })
+    vi.mocked(setWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: false,
+      status: 'primary_fallback',
+    })
+    render(
+      <LangProvider>
+        <EnhancedModeToggle compact />
+      </LangProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Enhanced mode, Not configured' }))
+    expect(
+      screen.getByRole('dialog', { name: 'Enhanced decision model not configured' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/token usage may be higher/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Configure model' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Enable anyway' }))
+    expect(
+      await screen.findByRole('button', { name: 'Enhanced mode, Primary model' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(setWorkflowEnhancedMode).toHaveBeenCalledWith(true)
+  })
+
+  it.each([
+    ['needs_accessibility', 'Accessibility required'],
+    ['unsupported_platform', 'Unsupported platform'],
+    ['offline', 'Unavailable'],
+    ['preview', 'Preview'],
+    ['needs_incremental_authorization', 'Additional approval needed'],
+    ['executing', 'Running'],
+    ['cancelled', 'Stopped'],
+    ['ready', 'Ready'],
+  ])('renders %s in English without altering its state', async (status, label) => {
+    localStorage.setItem('nuphus_language', 'en')
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status,
+    })
+    render(
+      <LangProvider>
+        <EnhancedModeToggle />
+      </LangProvider>,
+    )
+    expect(await screen.findByRole('button', { name: `Enhanced mode, ${label}` })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+  })
+
+  it('updates language without reloading or changing the enhanced preference', async () => {
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      status: 'ready',
+    })
+    function ChangeLanguage() {
+      const { setLang } = useLanguage()
+      return <button onClick={() => setLang('en')}>English</button>
+    }
+    render(
+      <LangProvider>
+        <ChangeLanguage />
+        <EnhancedModeToggle />
+      </LangProvider>,
+    )
+    await screen.findByRole('button', { name: '增强模式，可用' })
+    fireEvent.click(screen.getByRole('button', { name: 'English' }))
+    expect(screen.getByRole('button', { name: 'Enhanced mode, Ready' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(getWorkflowEnhancedMode).toHaveBeenCalledTimes(1)
+    expect(setWorkflowEnhancedMode).not.toHaveBeenCalled()
+  })
+
+  it('localizes errors when toggling fails', async () => {
+    localStorage.setItem('nuphus_language', 'en')
+    vi.mocked(getWorkflowEnhancedMode).mockResolvedValue({ enabled: false, configured: true })
+    vi.mocked(setWorkflowEnhancedMode).mockRejectedValue(new Error('network unavailable'))
+    const onNotice = vi.fn()
+    render(
+      <LangProvider>
+        <EnhancedModeToggle onNotice={onNotice} />
+      </LangProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Enhanced mode, Off' }))
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        'Could not change enhanced mode: Error: network unavailable',
+      ),
+    )
   })
 
   it('未配置时提示影响，确认后由主模型继续增强模式', async () => {

@@ -135,7 +135,7 @@ function conditionSummary(cond: Condition | undefined, t: CanvasTranslate): stri
   return ''
 }
 
-function containerSummary(
+export function containerSummary(
   step: WorkflowStep,
   kind: StepKind,
   t: CanvasTranslate,

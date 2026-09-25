@@ -148,7 +148,11 @@ impl Executor {
             .unwrap_or_default();
 
         // 5. 构建消息历史（同 step 多次调用时恢复上下文，支持循环对话）
-        let session_key = format!("{}:{}", workflow_id, step.id);
+        let session_key = if let Some(session) = crate::workflow::debug::current() {
+            format!("debug:{}:{}:{}", session.run_id, workflow_id, step.id)
+        } else {
+            format!("{}:{}", workflow_id, step.id)
+        };
         let mut messages: Vec<serde_json::Value> = {
             let sessions = self.chat_sessions.read().await;
             if let Some(history) = sessions.get(&session_key) {
@@ -281,7 +285,32 @@ impl Executor {
                     }
 
                     // Execute tool
-                    match tool_exec(fn_name.to_string(), fn_args.clone()).await {
+                    self.check_cancel(workflow_id).await?;
+                    let root_id = crate::workflow::trace::current()
+                        .map(|trace| trace.workflow_id.clone())
+                        .unwrap_or_else(|| workflow_id.to_string());
+                    let cancel = self
+                        .cancel_flags
+                        .read()
+                        .await
+                        .get(&root_id)
+                        .cloned()
+                        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+                    let result = crate::tools::desktop_approval::with_cancellation(
+                        cancel,
+                        tool_exec(fn_name.to_string(), fn_args.clone()),
+                    )
+                    .await;
+                    if let Some(trace) = crate::workflow::trace::current() {
+                        trace
+                            .attempt(
+                                0,
+                                &serde_json::json!({"tool":fn_name,"with":fn_args}),
+                                result.as_deref().map_err(|error| error.as_str()),
+                            )
+                            .await;
+                    }
+                    match result {
                         Ok(output) => {
                             messages.push(serde_json::json!({
                                 "role": "tool",
@@ -290,6 +319,13 @@ impl Executor {
                             }));
                         }
                         Err(e) => {
+                            if crate::workflow::debug::current()
+                                .is_some_and(|session| !session.use_retry_policy)
+                            {
+                                return Err(crate::NuphusError::agent(format!(
+                                    "Chat tool '{fn_name}' failed: {e}"
+                                )));
+                            }
                             messages.push(serde_json::json!({
                                 "role": "tool",
                                 "tool_call_id": tc.get("id").and_then(|i| i.as_str()).unwrap_or(""),

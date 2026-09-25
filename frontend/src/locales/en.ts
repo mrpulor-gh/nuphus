@@ -1,9 +1,11 @@
+import { editorEn } from './workflowEditor'
+
 const en: Record<string, string> = {
+  ...editorEn,
   'workflowCanvas.variable.outputSection': 'Output variable',
-  'workflowCanvas.variable.consumers':
-    'Steps referencing this output (update references after renaming):',
+  'workflowCanvas.variable.consumers': 'Steps referencing this output:',
   'workflowCanvas.variable.renameHint':
-    'Renaming does not update other steps automatically. Check all references to this variable.',
+    'Confirm the new name to preview affected references. Apply and undo them together.',
   'workflowCanvas.kind.tool': 'Tool call',
   'workflowCanvas.kind.tool.description': 'Call a desktop, browser, file or other tool',
   'workflowCanvas.kind.seq': 'Sequence',

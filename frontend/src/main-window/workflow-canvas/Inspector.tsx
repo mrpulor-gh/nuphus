@@ -1,3 +1,4 @@
+import { editorText, editorValidationText } from './editorText'
 /**
  * Inspector.tsx — 右侧参数面板（设计文档 2.5/3.3）
  * 按 kind 生成表单；字段级编辑一律经 onPatch → update_fields IrEditOp 写回。
@@ -24,6 +25,10 @@ import { isVariableName, type VariableCatalog } from './variableCatalog'
 import { useLanguage } from '../../locales'
 import { NodeKindBadge } from './NodeKindBadge'
 import { variableSourceLabel } from './presentation'
+import { actionSummary } from './actionSummary'
+import { editorFieldId, editorFieldLabel } from './editorFields'
+import { WorkflowTraceContext } from './WorkflowTraceContext'
+import { ExecutionTraceViewer } from './ExecutionTraceViewer'
 
 const VariableContext = createContext<{
   catalog: VariableCatalog
@@ -40,6 +45,7 @@ interface InspectorProps {
   /** 新建节点待聚焦的工具输入框（step.id 匹配时 autofocus，消费一次） */
   focusToolId?: string | null
   variableCatalog?: VariableCatalog
+  loopConditionCatalog?: VariableCatalog
   onConfigureInput?: (name: string) => void
   captureConsumers?: { id: string; name: string }[]
   onLocateReference?: (stepId: string) => void
@@ -130,21 +136,28 @@ function TextField({
     setText: setDraft,
     commit,
     error: draftError,
-  } = useInspectorDraft(label, value, {
+  } = useInspectorDraft(editorFieldId(label), value, {
     onCommit,
-    validate: validate ?? (required ? v => (v.trim() ? null : '此项必填') : undefined),
+    validate:
+      validate ??
+      (required ? v => (v.trim() ? null : t('workflowEditor.field.requiredError')) : undefined),
   })
   const [expanded, setExpanded] = useState(false)
   const [variableQuery, setVariableQuery] = useState('')
   const validationError = draftError ?? validate?.(draft) ?? (draft === value ? error : null)
   return (
-    <label className="wfc-field" title={title} data-draft-field={label} htmlFor={fieldId}>
+    <label
+      className="wfc-field"
+      title={title}
+      data-draft-field={editorFieldId(label)}
+      htmlFor={fieldId}
+    >
       <span className="wfc-field-label">
-        {label}
-        {required && <em className="wfc-required-mark">（必填）</em>}
+        {editorFieldLabel(label, t)}
+        {required && <em className="wfc-required-mark">{t('workflowEditor.field.required')}</em>}
         {multiline && (
           <button type="button" className="wfc-expand-editor" onClick={() => setExpanded(v => !v)}>
-            {expanded ? '收起编辑器' : '展开编辑器'}
+            {t(expanded ? 'workflowEditor.field.collapse' : 'workflowEditor.field.expand')}
           </button>
         )}
       </span>
@@ -175,7 +188,9 @@ function TextField({
           }}
         />
       )}
-      {validationError && <span className="wfc-field-error">{validationError}</span>}
+      {validationError && (
+        <span className="wfc-field-error">{editorValidationText(validationError, t)}</span>
+      )}
       {references && !readOnly && (
         <VariablePicker
           value={variableQuery}
@@ -183,6 +198,17 @@ function TextField({
           catalog={variables.catalog}
           label={t('workflowCanvas.variable.insert', label)}
           onConfigureInput={variables.onConfigureInput}
+          onSelectReference={name => {
+            const start = textRef.current?.selectionStart ?? draft.length
+            const end = textRef.current?.selectionEnd ?? start
+            const token = `{{${name}}}`
+            setDraft(draft.slice(0, start) + token + draft.slice(end))
+            setVariableQuery('')
+            requestAnimationFrame(() => {
+              textRef.current?.focus()
+              textRef.current?.setSelectionRange(start + token.length, start + token.length)
+            })
+          }}
           onChange={name => {
             setVariableQuery(name)
             if (!variables.catalog.references.some(v => v.name === name)) return
@@ -221,13 +247,14 @@ function ToolCombobox({
   /** 语法必填字段：label 追加「（必填）」标记 */
   required?: boolean
 }) {
+  const { t } = useLanguage()
   const {
     text: draft,
     setText: setDraft,
     commit,
-  } = useInspectorDraft(label, value, {
+  } = useInspectorDraft(editorFieldId(label), value, {
     onCommit,
-    validate: required ? v => (v.trim() ? null : '请选择或输入工具名') : undefined,
+    validate: required ? v => (v.trim() ? null : editorText('请选择或输入工具名', t)) : undefined,
   })
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -306,18 +333,18 @@ function ToolCombobox({
   }
 
   return (
-    <div className="wfc-field wfc-combo" ref={wrapRef}>
+    <div className="wfc-field wfc-combo" data-draft-field={editorFieldId(label)} ref={wrapRef}>
       <span className="wfc-field-label">
-        {label}
-        {required && <em className="wfc-required-mark">（必填）</em>}
+        {editorFieldLabel(label, t)}
+        {required && <em className="wfc-required-mark">{t('workflowEditor.field.required')}</em>}
       </span>
       <input
         ref={inputRef}
         className="wfc-input wfc-input--mono"
         value={draft}
-        placeholder="搜索或输入工具名"
+        placeholder={editorText('搜索或输入工具名', t)}
         role="combobox"
-        aria-label={label}
+        aria-label={editorFieldLabel(label, t)}
         aria-controls={listId}
         aria-expanded={open}
         aria-activedescendant={open && items.length ? `${listId}-${activeIdx}` : undefined}
@@ -369,7 +396,7 @@ function ToolCombobox({
             style={menuRect}
           >
             {items.length === 0 ? (
-              <div className="wfc-combo-empty">无匹配工具</div>
+              <div className="wfc-combo-empty">{editorText('无匹配工具', t)}</div>
             ) : (
               items.map((it, i) => (
                 <button
@@ -384,7 +411,9 @@ function ToolCombobox({
                   onClick={() => pick(it)}
                 >
                   {it.kind === 'custom' ? (
-                    <span className="wfc-combo-name">使用输入值 {it.text}</span>
+                    <span className="wfc-combo-name">
+                      {editorText('使用输入值', t)} {it.text}
+                    </span>
                   ) : (
                     <>
                       <span className="wfc-combo-name">{it.tool.name}</span>
@@ -426,15 +455,16 @@ function parseRequired(
 }
 
 function RequiredHint({ schema }: { schema?: Record<string, unknown> }) {
+  const { t } = useLanguage()
   if (!schema) return null
   const items = parseRequired(schema)
   return (
     <div className="wfc-required-hint">
       {items.length === 0 ? (
-        <span>无必填参数</span>
+        <span>{editorText('无必填参数', t)}</span>
       ) : (
         <>
-          <span>必填:</span>
+          <span>{editorText('必填:', t)}</span>
           {items.map(it => (
             <span key={it.name} className="wfc-required-chip" title={it.desc}>
               {it.name}
@@ -508,30 +538,31 @@ function JsonField({
   onCommit: (v: unknown) => void
   readOnly?: boolean
 }) {
+  const { t } = useLanguage()
   const text = JSON.stringify(value ?? {}, null, 2)
   const {
     text: draft,
     setText: setDraft,
     commit,
     error: err,
-  } = useInspectorDraft(label, text, {
+  } = useInspectorDraft(editorFieldId(label), text, {
     validate: v => {
       try {
         JSON.parse(v)
         return null
       } catch {
-        return 'JSON 格式不正确，请检查引号、逗号和括号'
+        return t('workflowEditor.field.jsonError')
       }
     },
     onCommit: v => onCommit(JSON.parse(v)),
   })
   const [expanded, setExpanded] = useState(false)
   return (
-    <label className="wfc-field" data-draft-field={label}>
+    <label className="wfc-field" data-draft-field={editorFieldId(label)}>
       <span className="wfc-field-label">
-        {label}
+        {editorFieldLabel(label, t)}
         <button type="button" className="wfc-expand-editor" onClick={() => setExpanded(v => !v)}>
-          {expanded ? '收起编辑器' : '展开编辑器'}
+          {t(expanded ? 'workflowEditor.field.collapse' : 'workflowEditor.field.expand')}
         </button>
       </span>
       <textarea
@@ -542,7 +573,7 @@ function JsonField({
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
       />
-      {err && <span className="wfc-field-error">{err}</span>}
+      {err && <span className="wfc-field-error">{editorValidationText(err, t)}</span>}
     </label>
   )
 }
@@ -580,14 +611,17 @@ function condOperandsOf(cond: Condition | undefined): VarRef[] {
 }
 
 function ConditionEditor({
+  fieldPath,
   value,
   onChange,
   readOnly,
 }: {
+  fieldPath: string
   value: Condition | undefined
   onChange: (c: Condition) => void
   readOnly?: boolean
 }) {
+  const { t } = useLanguage()
   const op = condOpOf(value)
   const operands = condOperandsOf(value)
   const setOp = (nextOp: string) => {
@@ -602,9 +636,9 @@ function ConditionEditor({
   const unary = op === 'not_empty' || op === 'empty'
   const count = op === 'always' ? 0 : unary ? 1 : 2
   return (
-    <div className="wfc-cond">
+    <div className="wfc-cond" data-field-path={fieldPath}>
       <label className="wfc-field">
-        <span className="wfc-field-label">条件</span>
+        <span className="wfc-field-label">{editorText('条件', t)}</span>
         <select
           className="wfc-input"
           value={op}
@@ -613,22 +647,22 @@ function ConditionEditor({
         >
           {COND_OPS.map(([k, label]) => (
             <option key={k} value={k}>
-              {label}（{k}）
+              {editorText(label, t)} ({k})
             </option>
           ))}
         </select>
       </label>
       {op === 'always' && (
         <label className="wfc-field">
-          <span className="wfc-field-label">固定结果</span>
+          <span className="wfc-field-label">{editorText('固定结果', t)}</span>
           <select
             className="wfc-input"
             disabled={readOnly}
             value={String((value as { always?: boolean })?.always ?? true)}
             onChange={e => onChange({ always: e.target.value === 'true' })}
           >
-            <option value="true">真（满足条件）</option>
-            <option value="false">假（不满足条件）</option>
+            <option value="true">{editorText('真（满足条件）', t)}</option>
+            <option value="false">{editorText('假（不满足条件）', t)}</option>
           </select>
         </label>
       )}
@@ -643,10 +677,10 @@ function ConditionEditor({
               value={isVar ? 'var' : 'lit'}
               disabled={readOnly}
               onChange={e => setOperand(i, e.target.value === 'var' ? { var: text } : text)}
-              aria-label={i === 0 ? '左侧值类型' : '右侧值类型'}
+              aria-label={i === 0 ? editorText('左侧值类型', t) : editorText('右侧值类型', t)}
             >
-              <option value="lit">固定值</option>
-              <option value="var">变量</option>
+              <option value="lit">{editorText('固定值', t)}</option>
+              <option value="var">{editorText('变量', t)}</option>
             </select>
             {isVar ? (
               <ReferenceField
@@ -660,7 +694,7 @@ function ConditionEditor({
                 label={i === 0 ? '左侧固定值' : '右侧固定值'}
                 value={text}
                 readOnly={readOnly}
-                placeholder="字面量值"
+                placeholder={editorText('字面量值', t)}
                 onCommit={v => setOperand(i, v)}
               />
             )}
@@ -688,6 +722,7 @@ export function Inspector({
   lastOutput,
   focusToolId,
   variableCatalog = { references: [], captures: [] },
+  loopConditionCatalog,
   onConfigureInput,
   captureConsumers,
   onLocateReference,
@@ -696,6 +731,8 @@ export function Inspector({
   onClose,
 }: InspectorProps) {
   const { t } = useLanguage()
+  const traceContext = useContext(WorkflowTraceContext)
+  const [traceOpen, setTraceOpen] = useState(false)
   const kind = stepKind(step)
   const [parameterReset, setParameterReset] = useState(0)
   const d = step.do as Record<string, unknown>
@@ -790,7 +827,7 @@ export function Inspector({
           className="wfc-inspector-resize"
           role="separator"
           aria-orientation="vertical"
-          aria-label="调整参数面板宽度"
+          aria-label={editorText('调整参数面板宽度', t)}
           aria-valuemin={360}
           aria-valuemax={720}
           aria-valuenow={panelWidth}
@@ -821,13 +858,21 @@ export function Inspector({
         <div className="wfc-inspector-head">
           <span className="wfc-inspector-title">{step.name || step.id}</span>
           <NodeKindBadge kind={kind} />
-          <button type="button" className="wfc-icon-btn" onClick={onClose} title="关闭（Esc）">
+          <button
+            type="button"
+            className="wfc-icon-btn"
+            onClick={onClose}
+            title={editorText('关闭（Esc）', t)}
+          >
             <IconX size={14} />
           </button>
         </div>
 
         <div className="wfc-inspector-body">
-          <div className="wfc-inspector-section">基本信息</div>
+          <div className="wfc-inspector-hint" title={t('workflowEditor.summary.label')}>
+            {actionSummary(step, t)}
+          </div>
+          <div className="wfc-inspector-section">{editorText('基本信息', t)}</div>
           <TextField
             label="名称"
             value={step.name}
@@ -835,13 +880,17 @@ export function Inspector({
             onCommit={v => onPatch({ name: v })}
             required
             error={
-              !readOnly && !step.name.trim() ? '名称必填：尚未命名无法保存/通过校验' : undefined
+              !readOnly && !step.name.trim()
+                ? editorText('名称必填：尚未命名无法保存/通过校验', t)
+                : undefined
             }
           />
           <details className="wfc-inspector-advanced">
             <summary>
-              高级设置
-              {oeMode !== 'abort' || step.timeout_secs != null ? '（已自定义失败处理或超时）' : ''}
+              {editorText('高级设置', t)}
+              {oeMode !== 'abort' || step.timeout_secs != null
+                ? editorText('（已自定义失败处理或超时）', t)
+                : ''}
             </summary>
             <TextField
               label={idReferenced ? '步骤标识 ID（有历史记录，修改需确认）' : '步骤标识 ID'}
@@ -867,20 +916,25 @@ export function Inspector({
                 return onPatch({ timeout_secs: v.trim() ? Number(v) : undefined })
               }}
             />
-            {!['seq', 'if', 'mcp'].includes(kind) && (
+            {kind === 'script' && (
               <div className="wfc-inspector-hint">
-                此类步骤暂不使用上述超时字段。
+                {editorText('脚本默认超时为 120 秒，可在上方修改。', t)}
+              </div>
+            )}
+            {!['seq', 'if', 'mcp', 'script'].includes(kind) && (
+              <div className="wfc-inspector-hint">
+                {editorText('此类步骤暂不使用上述超时字段。', t)}
                 {kind === 'script'
-                  ? '脚本执行器固定超时为 120 秒。'
+                  ? editorText('脚本执行器固定超时为 120 秒。', t)
                   : kind === 'tool'
-                    ? '工具的超时由具体工具决定。'
-                    : '已保留历史配置，执行时使用对应动作的行为。'}
+                    ? editorText('工具的超时由具体工具决定。', t)
+                    : editorText('已保留历史配置，执行时使用对应动作的行为。', t)}
               </div>
             )}
 
             <label className="wfc-field">
               <span className="wfc-field-label">
-                失败后怎么办 <small>on_error</small>
+                {editorText('失败后怎么办', t)} <small>on_error</small>
               </span>
               <select
                 className="wfc-input"
@@ -894,22 +948,24 @@ export function Inspector({
                   else onPatch({ on_error: m as OnErrorValue })
                 }}
               >
-                <option value="abort">终止工作流（默认）</option>
-                <option value="skip">跳过失败步骤，继续执行</option>
+                <option value="abort">{editorText('终止工作流（默认）', t)}</option>
+                <option value="skip">{editorText('跳过失败步骤，继续执行', t)}</option>
                 <option value="retry" disabled={kind !== 'tool'}>
-                  重试（工具步骤）
+                  {editorText('重试（工具步骤）', t)}
                 </option>
                 <option value="allow_codes" disabled={kind !== 'tool'}>
-                  允许指定退出码（工具步骤）
+                  {editorText('允许指定退出码（工具步骤）', t)}
                 </option>
               </select>
             </label>
             {kind === 'tool' && oeMode === 'abort' && (
-              <div className="wfc-inspector-hint">工具执行器仍可能先自动重试，再终止工作流。</div>
+              <div className="wfc-inspector-hint">
+                {editorText('工具执行器仍可能先自动重试，再终止工作流。', t)}
+              </div>
             )}
             {kind !== 'tool' && (oeMode === 'retry' || oeMode === 'allow_codes') && (
               <div className="wfc-inspector-hint wfc-inspector-hint--warn">
-                已保留历史配置；当前步骤执行器不支持此失败处理设置。
+                {editorText('已保留历史配置；当前步骤执行器不支持此失败处理设置。', t)}
               </div>
             )}
             {oeMode === 'retry' && retryCfg && (
@@ -938,7 +994,7 @@ export function Inspector({
             )}
             {oeMode === 'retry' && retryCfg?.backoff_ms === 0 && (
               <div className="wfc-inspector-hint">
-                当前工具执行器会将 0 毫秒按默认 500 毫秒处理。
+                {editorText('当前工具执行器会将 0 毫秒按默认 500 毫秒处理。', t)}
               </div>
             )}
             {oeMode === 'allow_codes' && allowCfg && (
@@ -947,7 +1003,9 @@ export function Inspector({
                 value={(allowCfg.codes ?? []).join(',')}
                 readOnly={readOnly}
                 validate={v =>
-                  parseExitCodes(v) ? null : '请输入完整整数，用英文逗号分隔；末尾不要加逗号'
+                  parseExitCodes(v)
+                    ? null
+                    : editorText('请输入完整整数，用英文逗号分隔；末尾不要加逗号', t)
                 }
                 onCommit={v => {
                   const codes = parseExitCodes(v)
@@ -957,7 +1015,7 @@ export function Inspector({
             )}
           </details>
 
-          <div className="wfc-inspector-section">动作参数</div>
+          <div className="wfc-inspector-section">{editorText('动作参数', t)}</div>
 
           {kind === 'tool' && (
             <>
@@ -975,7 +1033,7 @@ export function Inspector({
               />
               {tools === null && (
                 <div className="wfc-inspector-hint" role="status">
-                  工具信息加载失败，仍可手动编辑。
+                  {editorText('工具信息加载失败，仍可手动编辑。', t)}
                   <button
                     type="button"
                     onClick={() => {
@@ -983,13 +1041,13 @@ export function Inspector({
                       void loadToolsOnce().then(setTools)
                     }}
                   >
-                    重试加载
+                    {editorText('重试加载', t)}
                   </button>
                 </div>
               )}
               {toolChanged && (
                 <div className="wfc-inspector-hint">
-                  已保留原工具参数，请检查是否适用于新工具。
+                  {editorText('已保留原工具参数，请检查是否适用于新工具。', t)}
                   <button
                     type="button"
                     disabled={readOnly}
@@ -999,7 +1057,7 @@ export function Inspector({
                       setToolChanged(false)
                     }}
                   >
-                    清空参数重新填写
+                    {editorText('清空参数重新填写', t)}
                   </button>
                 </div>
               )}
@@ -1047,7 +1105,9 @@ export function Inspector({
               />
               {models != null && models.length > 0 && (
                 <label className="wfc-field">
-                  <span className="wfc-field-label">模型（registry 模型 ID）</span>
+                  <span className="wfc-field-label">
+                    {editorText('模型（registry 模型 ID）', t)}
+                  </span>
                   <select
                     className="wfc-input"
                     value={
@@ -1067,7 +1127,7 @@ export function Inspector({
                       patchActionKey('with', next)
                     }}
                   >
-                    <option value="">默认（主模型）</option>
+                    <option value="">{editorText('默认（主模型）', t)}</option>
                     {models.map(m => (
                       <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
                         {m.id} · {m.provider}
@@ -1079,7 +1139,8 @@ export function Inspector({
                         <option
                           value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
                         >
-                          {chatWith.model}（不在 registry）
+                          {chatWith.model}
+                          {editorText('（不在 registry）', t)}
                         </option>
                       )}
                   </select>
@@ -1119,7 +1180,7 @@ export function Inspector({
           {kind === 'script' && (
             <>
               <label className="wfc-field">
-                <span className="wfc-field-label">运行环境 runtime</span>
+                <span className="wfc-field-label">{editorText('运行环境 runtime', t)}</span>
                 <select
                   className="wfc-input"
                   value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
@@ -1130,14 +1191,14 @@ export function Inspector({
                 >
                   <option value="python">Python</option>
                   <option value="node">Node.js</option>
-                  <option value="ahk">AutoHotkey（仅 Windows）</option>
+                  <option value="ahk">{editorText('AutoHotkey（仅 Windows）', t)}</option>
                   <option value="pwsh">PowerShell（pwsh）</option>
                   {!['python', 'node', 'ahk', 'pwsh'].includes(
                     String((d.script as Record<string, unknown>)?.runtime ?? 'python'),
                   ) && (
                     <option value={String((d.script as Record<string, unknown>)?.runtime)}>
                       {String((d.script as Record<string, unknown>)?.runtime)}
-                      （当前执行器不支持，已保留）
+                      {editorText('（当前执行器不支持，已保留）', t)}
                     </option>
                   )}
                 </select>
@@ -1156,6 +1217,7 @@ export function Inspector({
           )}
           {kind === 'if' && (
             <ConditionEditor
+              fieldPath="/do/if/condition"
               value={(d.if as { condition?: Condition })?.condition}
               readOnly={readOnly}
               onChange={c => patchActionKey('if', { ...(d.if as object), condition: c })}
@@ -1164,6 +1226,7 @@ export function Inspector({
           {kind === 'assert' && (
             <>
               <ConditionEditor
+                fieldPath="/do/assert/condition"
                 value={(d.assert as { condition?: Condition })?.condition}
                 readOnly={readOnly}
                 onChange={c => patchActionKey('assert', { ...(d.assert as object), condition: c })}
@@ -1178,7 +1241,14 @@ export function Inspector({
               />
             </>
           )}
-          {kind === 'loop' && <LoopEditor d={d} readOnly={readOnly} onPatch={patchActionKey} />}
+          {kind === 'loop' && (
+            <LoopEditor
+              d={d}
+              readOnly={readOnly}
+              onPatch={patchActionKey}
+              conditionCatalog={loopConditionCatalog}
+            />
+          )}
           {kind === 'wait' && (
             <TextField
               label="等待目标"
@@ -1226,12 +1296,14 @@ export function Inspector({
           )}
           {(kind === 'seq' || kind === 'break' || kind === 'continue') && (
             <div className="wfc-inspector-hint">
-              {kind === 'seq' ? '顺序容器：子步骤在画布子层编辑（双击节点进入）' : '无参数'}
+              {kind === 'seq'
+                ? editorText('顺序容器：子步骤在画布子层编辑（双击节点进入）', t)
+                : editorText('无参数', t)}
             </div>
           )}
           {kind === 'custom' && (
             <div className="wfc-inspector-hint wfc-inspector-hint--warn">
-              旧格式节点（不兼容 V2），画布只读。请通过 AI 通道重建为 V2 工作流。
+              {editorText('旧格式节点（不兼容 V2），画布只读。请通过 AI 通道重建为 V2 工作流。', t)}
             </div>
           )}
 
@@ -1263,7 +1335,7 @@ export function Inspector({
               )}
               {!['tool', 'script', 'chat', 'mcp'].includes(kind) && (
                 <div className="wfc-inspector-hint">
-                  已保留历史变量设置；此类步骤不直接产生输出。
+                  {editorText('已保留历史变量设置；此类步骤不直接产生输出。', t)}
                 </div>
               )}
             </>
@@ -1271,9 +1343,15 @@ export function Inspector({
 
           {lastOutput && lastOutput.length > 0 && (
             <>
-              <div className="wfc-inspector-section">最近输出</div>
+              <div className="wfc-inspector-section">{editorText('最近输出', t)}</div>
               <pre className="wfc-output-preview">{lastOutput.join('\n')}</pre>
             </>
+          )}
+          {traceContext && (
+            <details open={traceOpen} onToggle={event => setTraceOpen(event.currentTarget.open)}>
+              <summary>{t('workflowEditor.problem.history')}</summary>
+              {traceOpen && <ExecutionTraceViewer stepId={step.id} />}
+            </details>
           )}
         </div>
       </aside>
@@ -1292,14 +1370,14 @@ function CaptureField({
 }) {
   const { t } = useLanguage()
   const { catalog } = useContext(VariableContext)
-  const draft = useInspectorDraft('保存输出到变量', value, {
+  const draft = useInspectorDraft('/capture', value, {
     onCommit,
     validate: v => (!v || isVariableName(v) ? null : t('workflowCanvas.variable.invalid')),
   })
   return (
     <div
       className="wfc-field"
-      data-draft-field="保存输出到变量"
+      data-draft-field="/capture"
       onBlur={() => {
         void draft.commit()
       }}
@@ -1331,18 +1409,19 @@ function ReferenceField({
   label: string
   onCommit: (value: string) => unknown
 }) {
+  const { t } = useLanguage()
   const variables = useContext(VariableContext)
-  const draft = useInspectorDraft(label, value, { onCommit })
+  const draft = useInspectorDraft(editorFieldId(label), value, { onCommit })
   return (
     <div
       className="wfc-field"
-      data-draft-field={label}
+      data-draft-field={editorFieldId(label)}
       onBlur={() => {
         void draft.commit()
       }}
     >
       <VariablePicker
-        label={label}
+        label={editorFieldLabel(label, t)}
         value={draft.text}
         readOnly={readOnly}
         onChange={draft.setText}
@@ -1358,11 +1437,15 @@ function LoopEditor({
   d,
   readOnly,
   onPatch,
+  conditionCatalog,
 }: {
   d: Record<string, unknown>
   readOnly: boolean
   onPatch: (key: string, v: unknown) => void
+  conditionCatalog?: VariableCatalog
 }) {
+  const { t } = useLanguage()
+  const variables = useContext(VariableContext)
   const def = (d.loop ?? {}) as Record<string, unknown>
   const mode = def.for_each
     ? 'for_each'
@@ -1380,22 +1463,22 @@ function LoopEditor({
   return (
     <>
       <label className="wfc-field">
-        <span className="wfc-field-label">循环方式</span>
+        <span className="wfc-field-label">{editorText('循环方式', t)}</span>
         <select
           className="wfc-input"
           value={mode}
           disabled={readOnly}
           onChange={e => setMode(e.target.value)}
         >
-          <option value="for_each">遍历列表</option>
-          <option value="repeat">固定次数</option>
-          <option value="until">直到条件满足</option>
+          <option value="for_each">{editorText('遍历列表', t)}</option>
+          <option value="repeat">{editorText('固定次数', t)}</option>
+          <option value="until">{editorText('直到条件满足', t)}</option>
         </select>
       </label>
       {mode === 'for_each' && (
         <>
           <div className="wfc-field">
-            <span className="wfc-field-label">遍历列表 items（变量名）</span>
+            <span className="wfc-field-label">{editorText('遍历列表 items（变量名）', t)}</span>
             <ReferenceField
               label="遍历列表"
               value={(() => {
@@ -1441,11 +1524,16 @@ function LoopEditor({
         />
       )}
       {mode === 'until' && (
-        <ConditionEditor
-          value={def.until as Condition}
-          readOnly={readOnly}
-          onChange={c => onPatch('loop', { ...def, until: c })}
-        />
+        <VariableContext.Provider
+          value={{ ...variables, catalog: conditionCatalog ?? variables.catalog }}
+        >
+          <ConditionEditor
+            fieldPath="/do/loop/until"
+            value={def.until as Condition}
+            readOnly={readOnly}
+            onChange={c => onPatch('loop', { ...def, until: c })}
+          />
+        </VariableContext.Provider>
       )}
       <TextField
         label="最多循环次数 max（默认 100）"

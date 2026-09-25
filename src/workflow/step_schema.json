@@ -9,7 +9,7 @@
       "description": "变量引用或字面量。{\"var\": \"name\"} 引用变量（name 支持点号路径，如 {\"var\": \"coords.need_scroll\"}）；纯字符串为字面量。",
       "oneOf": [
         { "type": "object", "required": ["var"], "properties": {
-          "var": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z_][a-zA-Z0-9_.]*$", "description": "变量名，支持点号路径下钻" }
+          "var": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z_][a-zA-Z0-9_.]*(?:\\[(?:\"(?:[^\"\\\\]|\\\\.)*\"|0|[1-9][0-9]*)\\])*$", "description": "变量名；兼容旧点号路径，字段选择使用 JSON 方括号路径，例如 wn[\"window_id\"]、items[0][\"title\"]。字符串键与数组索引不混用。" }
         }, "additionalProperties": false },
         { "type": "string", "description": "字符串字面量（非变量引用）" }
       ]

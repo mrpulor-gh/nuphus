@@ -5,12 +5,16 @@
 
 pub mod chat_agent;
 pub mod compiler;
+pub mod debug;
 pub mod events;
 pub mod executor;
 pub mod hud_control;
 pub mod inputs;
+pub mod references;
 pub mod scheduler;
+pub mod scoped_edit;
 pub mod store;
+pub mod trace;
 pub mod types;
 
 #[cfg(test)]
@@ -98,6 +102,8 @@ pub struct WorkflowEngine {
     pub events: EventBus,
     pub executor: Executor,
     pub scheduler: SchedulerEngine,
+    pub debug_sessions:
+        tokio::sync::RwLock<std::collections::HashMap<String, Arc<debug::DebugSession>>>,
     llm_client: Option<Arc<dyn ApiClient>>,
     /// Global tool registry — used by ChatAgent steps to build tool definitions
     /// when no explicit tool_schemas are passed. Injected via set_tools().
@@ -157,7 +163,9 @@ impl<'a> ActiveRunGuard<'a> {
         }
         *slot = Some(ActiveRunInfo {
             workflow_id: workflow_id.to_string(),
-            run_id: uuid::Uuid::new_v4().to_string(),
+            run_id: debug::current()
+                .map(|session| session.run_id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             owner: source.owner_label().to_string(),
             started_at_ms: gate_now_ms(),
         });
@@ -178,6 +186,7 @@ impl WorkflowEngine {
             events: EventBus::new(),
             executor: Executor::new(),
             scheduler: SchedulerEngine::new(),
+            debug_sessions: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             llm_client: None,
             tools: None,
             schedule_exec: std::sync::Mutex::new(None),
@@ -312,18 +321,23 @@ impl WorkflowEngine {
         // validation 之前：资源校验不必要先跑；guard 持有期间本 run 独占执行权，
         // guard drop（含 validation 失败早退 / Ok / Err / panic / future 被 drop）自动释放。
         let _gate = ActiveRunGuard::acquire(self, workflow_id, &source)?;
+        let debug_session = debug::current();
+        let store = debug_session
+            .as_ref()
+            .map(|session| &session.store)
+            .unwrap_or(&self.store);
 
         // ── Pre-execution validation（与 execute_v2 内部校验同源）──
         // tool_schemas 提前构建，供校验与执行共用
         let tool_schemas = tool_schemas.or_else(|| self.tools.as_ref().map(|t| t.get_schemas()));
-        if let Some(wf) = self.store.get(workflow_id).await {
+        if let Some(wf) = store.get(workflow_id).await {
             let report = match tool_schemas.as_deref() {
                 Some(schemas) => Compiler::validate_workflow_with_tools(&wf, schemas),
                 None => Compiler::validate_workflow(&wf),
             };
             // Call 目标存在性 + 循环调用链静态检测
             let mut errors = report.errors;
-            errors.extend(Compiler::validate_calls(&wf, &self.store).await);
+            errors.extend(Compiler::validate_calls(&wf, store).await);
             for w in &report.warnings {
                 tracing::warn!("Workflow validation warning: {}", w);
             }
@@ -340,7 +354,7 @@ impl WorkflowEngine {
             .executor
             .execute_v2(
                 workflow_id,
-                &self.store,
+                store,
                 &self.events,
                 tool_exec,
                 llm,
@@ -352,7 +366,7 @@ impl WorkflowEngine {
             .await;
 
         // ── Auto-export dual artifacts after successful execution ──
-        if result.is_ok() {
+        if result.is_ok() && debug_session.is_none() {
             if let Err(e) = self.export_workflow(workflow_id).await {
                 tracing::warn!("Auto-export failed for workflow '{}': {e}", workflow_id);
             }
@@ -364,6 +378,18 @@ impl WorkflowEngine {
 
     /// Cancel execution
     pub async fn cancel_workflow(&self, id: &str) {
+        for session in self
+            .debug_sessions
+            .read()
+            .await
+            .values()
+            .filter(|session| session.workflow_id == id)
+        {
+            session
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            session.cancel_notify.notify_one();
+        }
         self.executor.cancel(id).await;
     }
 

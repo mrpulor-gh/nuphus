@@ -26,6 +26,159 @@ pub struct ValidationReport {
     pub passed: bool,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<ValidationDiagnostic>,
+}
+
+/// Machine-readable editor locations, emitted where a rule is checked (never
+/// recovered by parsing a translated error message).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValidationDiagnostic {
+    pub code: String,
+    pub severity: String,
+    pub category: String,
+    pub step_id: Option<String>,
+    pub field_path: Option<String>,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+}
+
+#[derive(Default)]
+struct DiagnosticMessages {
+    messages: Vec<String>,
+    diagnostics: Vec<ValidationDiagnostic>,
+    site: ValidationDiagnostic,
+}
+
+impl DiagnosticMessages {
+    fn at(&mut self, step: Option<&str>, path: Option<&str>, code: &str, category: &str) {
+        self.site.step_id = step.map(str::to_owned);
+        self.site.field_path = path.map(str::to_owned);
+        self.site.code = code.into();
+        self.site.category = category.into();
+        self.site.subject = None;
+    }
+
+    fn push(&mut self, message: String) {
+        let mut issue = self.site.clone();
+        if issue.code.is_empty() {
+            issue.code = "validation".into();
+        }
+        if issue.category.is_empty() {
+            issue.category = "structure".into();
+        }
+        issue.detail = message.clone();
+        self.diagnostics.push(issue);
+        self.messages.push(message);
+    }
+
+    fn extend(&mut self, messages: impl IntoIterator<Item = String>) {
+        for message in messages {
+            self.push(message);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+}
+
+fn report(errors: DiagnosticMessages, warnings: DiagnosticMessages) -> ValidationReport {
+    let passed = errors.is_empty();
+    let diagnostics = errors
+        .diagnostics
+        .into_iter()
+        .map(|mut issue| {
+            issue.severity = "error".into();
+            issue
+        })
+        .chain(warnings.diagnostics.into_iter().map(|mut issue| {
+            issue.severity = "warning".into();
+            issue
+        }))
+        .collect();
+    ValidationReport {
+        passed,
+        errors: errors.messages,
+        warnings: warnings.messages,
+        diagnostics,
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn declared_input_aliases_and_empty_success_guards_are_valid() {
+        let mut workflow = Workflow::new("Input regression");
+        workflow.inputs = serde_json::from_value(serde_json::json!([
+            {"name":"contact", "type":"string", "required":true},
+            {"name":"message", "type":"string", "required":true}
+        ]))
+        .unwrap();
+        workflow.steps = serde_json::from_value(serde_json::json!([
+            {"id":"alias", "name":"Alias", "do":{"tool":"test", "with":{"text":"{{contact}} {{message[\"text\"]}}"}}},
+            {"id":"guard", "name":"Guard", "do":{"if":{"condition":{"not_empty":{"var":"contact"}}, "then":[], "else":[
+                {"id":"failure", "name":"Failure", "do":{"tool":"test", "with":{"text":"{{inputs.contact}} {{inputs[\"message\"]}}"}}}
+            ]}}}
+        ])).unwrap();
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        // Same-named captures must not satisfy an explicit input namespace reference.
+        workflow.inputs.clear();
+        workflow.steps[0].capture = Some("contact".into());
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|issue| issue.code == "input_reference"
+                && issue.subject.as_deref() == Some("contact")));
+    }
+
+    #[test]
+    fn alias_only_usage_is_not_reported_as_unused() {
+        let mut workflow = Workflow::new("Aliases");
+        workflow.inputs = serde_json::from_value(serde_json::json!([
+            {"name":"text", "type":"string", "required":true},
+            {"name":"flag", "type":"boolean", "required":true}
+        ]))
+        .unwrap();
+        workflow.steps = serde_json::from_value(serde_json::json!([
+            {"id":"use", "name":"Use", "do":{"tool":"test", "with":{"text":"{{text}}"}}},
+            {"id":"guard", "name":"Guard", "do":{"if":{"condition":{"not_empty":{"var":"flag"}},"then":[]}}}
+        ])).unwrap();
+        let report = Compiler::validate_workflow(&workflow);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    #[test]
+    fn required_parameter_retains_exact_escaped_location_and_legacy_message() {
+        let mut errors = DiagnosticMessages::default();
+        errors.at(
+            Some("node"),
+            Some("/do/with/a~1b~0c"),
+            "required",
+            "missing",
+        );
+        errors.push("original error".into());
+        let report = report(errors, DiagnosticMessages::default());
+        assert!(!report.passed);
+        assert_eq!(report.errors, vec!["original error"]);
+        assert_eq!(
+            report.diagnostics[0].field_path.as_deref(),
+            Some("/do/with/a~1b~0c")
+        );
+        assert_eq!(report.diagnostics[0].severity, "error");
+        let old: ValidationReport = serde_json::from_value(
+            serde_json::json!({"passed": true, "errors": [], "warnings": []}),
+        )
+        .unwrap();
+        assert!(old.diagnostics.is_empty());
+    }
 }
 
 /// 编译器（无状态，仅提供静态方法）
@@ -33,8 +186,8 @@ pub struct Compiler;
 
 /// 校验上下文（递归遍历时携带）
 struct Ctx<'a> {
-    errors: Vec<String>,
-    warnings: Vec<String>,
+    errors: DiagnosticMessages,
+    warnings: DiagnosticMessages,
     /// 已出现的步骤 ID（查重）
     seen_ids: HashSet<String>,
     /// 按遍历顺序已被捕获的变量名
@@ -54,6 +207,10 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    fn site(&mut self, step: &Step, path: &str, code: &str, category: &str) {
+        self.errors.at(Some(&step.id), Some(path), code, category);
+        self.warnings.at(Some(&step.id), Some(path), code, category);
+    }
     /// 登记步骤 ID，重复即错误（断点续连按 ID 跳过，重复 ID 会误跳未执行步骤）
     fn register_id(&mut self, step: &Step) {
         let id = step.id();
@@ -81,7 +238,12 @@ impl Ctx<'_> {
 
     /// 汇总 inputs 校验：未声明引用 → error；声明但全程未被引用 → warning
     fn finalize_inputs(&mut self) {
+        self.errors
+            .at(None, Some("/inputs"), "input_reference", "variable");
+        self.warnings
+            .at(None, Some("/inputs"), "unused_input", "variable");
         for name in &self.missing_inputs {
+            self.errors.site.subject = Some(name.clone());
             self.errors.push(format!(
                 "未声明的输入引用 {{{{inputs.{}}}}}（请在 workflow.inputs 声明）",
                 name
@@ -89,6 +251,7 @@ impl Ctx<'_> {
         }
         for name in &self.declared_inputs {
             if !self.referenced_inputs.contains(name) {
+                self.warnings.site.subject = Some(name.clone());
                 self.warnings
                     .push(format!("输入 {} 已声明但未被任何步骤引用", name));
             }
@@ -100,13 +263,35 @@ impl Ctx<'_> {
     /// 其余变量沿用前向引用 warning 语义。
     fn check_var_ref(&mut self, r: &crate::workflow::types::VarRef, owner: &str) {
         if let crate::workflow::types::VarRef::Var { var } = r {
+            if let Some(reference) = crate::workflow::references::parse_field_reference(var) {
+                if reference.root == "inputs" {
+                    if let Some(crate::workflow::references::Segment::Key(name)) =
+                        reference.segments.first()
+                    {
+                        self.note_input_ref(name);
+                    }
+                } else {
+                    self.check_var_ref(
+                        &crate::workflow::types::VarRef::Var {
+                            var: reference.root,
+                        },
+                        owner,
+                    );
+                }
+                return;
+            }
             if let Some(name) = var.strip_prefix("inputs.") {
                 if let Some(first) = name.split('.').next() {
                     self.note_input_ref(first);
                 }
                 return;
             }
+            if self.declared_inputs.contains(var) && !self.captured.contains(var) {
+                self.referenced_inputs.insert(var.clone());
+                return;
+            }
             if !self.captured.contains(var) && var != "_index" && !var.starts_with("ENV:") {
+                self.warnings.site.subject = Some(var.clone());
                 self.warnings.push(format!(
                     "条件步骤 '{}': 变量 '{}' 尚未被先前步骤捕获，求值将为 false（运行时可能由 inputs 注入）",
                     owner, var
@@ -173,22 +358,36 @@ impl Ctx<'_> {
                     return;
                 }
                 let re = VAR_REF_RE.get_or_init(|| {
-                    regex::Regex::new(r"\{\{\s*([A-Za-z_]\w*)")
+                    regex::Regex::new(r"^\s*([A-Za-z_]\w*)")
                         .expect("var ref regex is statically valid")
                 });
-                let found: Vec<String> = re
-                    .captures_iter(s)
-                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                let found: Vec<String> = crate::workflow::references::template_spans(s)
+                    .into_iter()
+                    .filter(|(_, _, body)| !body.trim().starts_with("ENV:"))
+                    .filter_map(|(_, _, body)| {
+                        crate::workflow::references::parse_field_reference(body)
+                            .map(|reference| reference.root)
+                            .or_else(|| {
+                                re.captures(body)
+                                    .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                            })
+                    })
                     .filter(|name| {
                         // params / inputs 为运行时注入的命名空间，前向引用 warning 不适用
                         // （inputs 的声明一致性由 finalize_inputs 单独校验）
                         !self.captured.contains(name)
                             && name != "params"
                             && name != "inputs"
+                            && !name.starts_with("inputs.")
                             && !name.starts_with("ENV:")
                     })
                     .collect();
                 for name in found {
+                    if self.declared_inputs.contains(&name) {
+                        self.referenced_inputs.insert(name);
+                        continue;
+                    }
+                    self.warnings.site.subject = Some(name.clone());
                     self.warnings.push(format!(
                         "步骤 '{}': 引用变量 '{}' 尚未被先前步骤捕获（运行时可能由 inputs 注入）",
                         owner, name
@@ -236,6 +435,17 @@ fn collect_input_refs_in_value(
 ) {
     match v {
         serde_json::Value::String(s) => {
+            for (_, _, body) in crate::workflow::references::template_spans(s) {
+                if let Some(reference) = crate::workflow::references::parse_field_reference(body) {
+                    if reference.root == "inputs" {
+                        if let Some(crate::workflow::references::Segment::Key(name)) =
+                            reference.segments.first()
+                        {
+                            out.insert(name.clone());
+                        }
+                    }
+                }
+            }
             for cap in re.captures_iter(s) {
                 if let Some(m) = cap.get(1) {
                     out.insert(m.as_str().to_string());
@@ -281,8 +491,8 @@ impl Compiler {
             .ok()
             .filter(|r| !r.providers.is_empty());
         let mut ctx = Ctx {
-            errors: Vec::new(),
-            warnings: Vec::new(),
+            errors: DiagnosticMessages::default(),
+            warnings: DiagnosticMessages::default(),
             seen_ids: HashSet::new(),
             captured: HashSet::new(),
             tools: if tools.is_empty() { None } else { Some(tools) },
@@ -306,11 +516,7 @@ impl Compiler {
         if workflow.steps.is_empty() {
             ctx.warnings.push("工作流没有任何步骤".to_string());
             ctx.finalize_inputs();
-            return ValidationReport {
-                passed: ctx.errors.is_empty(),
-                warnings: ctx.warnings,
-                errors: ctx.errors,
-            };
+            return report(ctx.errors, ctx.warnings);
         }
 
         for step in &workflow.steps {
@@ -318,17 +524,15 @@ impl Compiler {
         }
         ctx.finalize_inputs();
 
-        ValidationReport {
-            passed: ctx.errors.is_empty(),
-            warnings: ctx.warnings,
-            errors: ctx.errors,
-        }
+        report(ctx.errors, ctx.warnings)
     }
 
     fn validate_step(step: &Step, ctx: &mut Ctx) {
+        ctx.site(step, "/id", "step_id", "structure");
         ctx.register_id(step);
 
         if step.name.is_empty() {
+            ctx.site(step, "/name", "required", "missing");
             ctx.errors
                 .push(format!("步骤 '{}': name 不能为空", step.id()));
             return;
@@ -336,11 +540,14 @@ impl Compiler {
 
         match &step.action {
             Action::Tool { tool, with } => {
+                ctx.site(step, "/do/tool", "tool", "structure");
                 if tool.is_empty() {
+                    ctx.site(step, "/do/tool", "required", "missing");
                     ctx.errors
                         .push(format!("Tool step '{}': tool is empty", step.name));
                 }
                 if with.is_null() {
+                    ctx.site(step, "/do/with", "object", "invalid");
                     ctx.errors
                         .push(format!("Tool step '{}': params 不能为 null", step.name));
                 } else if let Some(tools) = ctx.tools {
@@ -361,6 +568,16 @@ impl Compiler {
                                         for r in required {
                                             if let Some(key) = r.as_str() {
                                                 if !obj.contains_key(key) {
+                                                    ctx.errors.at(
+                                                        Some(&step.id),
+                                                        Some(&format!(
+                                                            "/do/with/{}",
+                                                            key.replace('~', "~0")
+                                                                .replace('/', "~1")
+                                                        )),
+                                                        "required",
+                                                        "missing",
+                                                    );
                                                     ctx.errors.push(format!(
                                                         "Tool step '{}' ({}): 缺少必填参数 '{}'",
                                                         step.name, tool, key
@@ -371,6 +588,12 @@ impl Compiler {
                                     }
                                     None => {
                                         if !required.is_empty() {
+                                            ctx.errors.at(
+                                                Some(&step.id),
+                                                Some("/do/with"),
+                                                "object",
+                                                "invalid",
+                                            );
                                             ctx.errors.push(format!(
                                                 "Tool step '{}' ({}): params 必须是对象（需要 {:?}）",
                                                 step.name, tool, required
@@ -382,9 +605,11 @@ impl Compiler {
                         }
                     }
                 }
+                ctx.site(step, "/do/with", "variable", "variable");
                 ctx.scan_refs(with, &step.name);
             }
             Action::Seq { seq } => {
+                ctx.site(step, "/do/seq", "children", "structure");
                 if seq.is_empty() {
                     ctx.warnings.push(format!(
                         "Seq step '{}' ({}): 无子步骤",
@@ -397,6 +622,7 @@ impl Compiler {
                 }
             }
             Action::Loop { def } => {
+                ctx.site(step, "/do/loop", "loop", "invalid");
                 if def.for_each.is_none() && def.repeat.is_none() && def.until.is_none() {
                     ctx.errors.push(format!(
                         "Loop step '{}' ({}): 缺少 for_each / repeat / until",
@@ -405,15 +631,18 @@ impl Compiler {
                     ));
                 }
                 if let Some(ref fe) = def.for_each {
+                    ctx.site(step, "/do/loop/for_each/as", "required", "missing");
                     if fe.item_var.is_empty() {
                         ctx.errors.push(format!(
                             "Loop step '{}': for_each 的 item_var 不能为空",
                             step.name
                         ));
                     }
+                    ctx.site(step, "/do/loop/for_each/items", "variable", "variable");
                     ctx.check_var_ref(&fe.items, &step.name);
                 }
                 if let Some(ref until) = def.until {
+                    ctx.site(step, "/do/loop/until", "condition", "invalid");
                     ctx.validate_condition(until, &step.name);
                 }
                 let was_loop = ctx.in_loop;
@@ -424,6 +653,7 @@ impl Compiler {
                 ctx.in_loop = was_loop;
             }
             Action::If { def } => {
+                ctx.site(step, "/do/if/condition", "condition", "invalid");
                 ctx.validate_condition(&def.condition, &step.name);
                 for sub in &def.then {
                     Self::validate_step(sub, ctx);
@@ -433,6 +663,7 @@ impl Compiler {
                 }
             }
             Action::Call { call, with } => {
+                ctx.site(step, "/do/call", "required", "missing");
                 if call.is_empty() {
                     ctx.errors.push(format!(
                         "Call step '{}' ({}): workflow_id 不能为空",
@@ -440,9 +671,11 @@ impl Compiler {
                         step.id()
                     ));
                 }
+                ctx.site(step, "/do/with", "variable", "variable");
                 ctx.scan_refs(with, &step.name);
             }
             Action::Wait { wait, auto } => {
+                ctx.site(step, "/do/wait", "wait", "invalid");
                 if wait.is_empty() && auto.is_empty() {
                     ctx.warnings.push(format!(
                         "Wait step '{}': prompt 和 auto 均为空，将立即通过",
@@ -454,11 +687,13 @@ impl Compiler {
                 }
             }
             Action::Chat { chat, with: opts } => {
+                ctx.site(step, "/do/chat", "required", "missing");
                 if chat.is_empty() {
                     ctx.errors
                         .push(format!("Chat step '{}': message 不能为空", step.name));
                 }
                 // 显式 provider+model 必须存在；旧数据无 provider 时仅允许唯一候选。
+                ctx.site(step, "/do/with/model", "model", "structure");
                 if let (Some(model_id), Some(registry)) = (&opts.model, ctx.models) {
                     if let Some(provider) = &opts.provider {
                         if registry
@@ -485,6 +720,7 @@ impl Compiler {
                     }
                 }
                 if let Some(ref knowledge) = opts.knowledge {
+                    ctx.site(step, "/do/with/knowledge", "knowledge", "structure");
                     for path in knowledge {
                         if !std::path::Path::new(path).exists() {
                             ctx.warnings.push(format!(
@@ -496,11 +732,13 @@ impl Compiler {
                 }
             }
             Action::Script { script } => {
+                ctx.site(step, "/do/script/code", "required", "missing");
                 if script.code.is_empty() {
                     ctx.errors
                         .push(format!("Script step '{}': code 不能为空", step.name));
                 }
                 const VALID_RUNTIMES: &[&str] = &["python", "node", "ahk", "pwsh"];
+                ctx.site(step, "/do/script/runtime", "runtime", "invalid");
                 if !VALID_RUNTIMES.contains(&script.runtime.as_str()) {
                     ctx.errors.push(format!(
                         "Script step '{}': 不支持的 runtime '{}'（支持: {:?}）",
@@ -509,19 +747,23 @@ impl Compiler {
                 }
             }
             Action::Assert { assert } => {
+                ctx.site(step, "/do/assert/condition", "condition", "invalid");
                 ctx.validate_condition(&assert.condition, &step.name);
             }
             Action::Mcp { mcp } => {
+                ctx.site(step, "/do/mcp/server", "required", "missing");
                 if mcp.server.is_empty() {
                     ctx.errors
                         .push(format!("Mcp step '{}': server 不能为空", step.name));
                 }
                 if mcp.tool.is_empty() {
+                    ctx.site(step, "/do/mcp/tool", "required", "missing");
                     ctx.errors
                         .push(format!("Mcp step '{}': tool 不能为空", step.name));
                 }
             }
             Action::Sleep { sleep } => {
+                ctx.site(step, "/do/sleep", "positive", "invalid");
                 if *sleep <= 0.0 {
                     ctx.errors.push(format!(
                         "Sleep step '{}': sleep 必须 > 0 (got {})",
@@ -530,6 +772,7 @@ impl Compiler {
                 }
             }
             Action::Break { .. } | Action::Continue { .. } => {
+                ctx.site(step, "/do", "loop_control", "structure");
                 if !ctx.in_loop {
                     ctx.errors.push(format!(
                         "步骤 '{}': break/continue 只能在 loop 内部使用",
@@ -538,6 +781,7 @@ impl Compiler {
                 }
             }
             Action::Custom(_) => {
+                ctx.site(step, "/do", "legacy", "structure");
                 ctx.warnings
                     .push(format!("步骤 '{}': custom 类型，跳过类型校验", step.name));
             }
@@ -553,8 +797,16 @@ impl Compiler {
 
     /// Claim: chained call detection → static deadlock prevention
     pub async fn validate_calls(workflow: &Workflow, store: &WorkflowStore) -> Vec<String> {
+        Self::validate_call_report(workflow, store).await.errors
+    }
+
+    pub async fn validate_call_report(
+        workflow: &Workflow,
+        store: &WorkflowStore,
+    ) -> ValidationReport {
         #[derive(Clone)]
         struct CallSite {
+            step_id: String,
             target: String,
             owner: String,
             with: serde_json::Value,
@@ -565,6 +817,7 @@ impl Compiler {
                 match &step.action {
                     Action::Call { call, with } => {
                         calls.push(CallSite {
+                            step_id: step.id.clone(),
                             target: call.clone(),
                             owner: step.name.clone(),
                             with: with.clone(),
@@ -586,7 +839,7 @@ impl Compiler {
             wf_id: &str,
             store: &WorkflowStore,
             path: &mut Vec<String>,
-            errors: &mut Vec<String>,
+            errors: &mut DiagnosticMessages,
             depth: u32,
         ) {
             const MAX_CALL_DEPTH: u32 = 10;
@@ -614,10 +867,16 @@ impl Compiler {
             }
         }
 
-        let mut errors = Vec::new();
+        let mut errors = DiagnosticMessages::default();
         let mut sites = Vec::new();
         collect_calls(&workflow.steps, &mut sites);
         for site in &sites {
+            errors.at(
+                Some(&site.step_id),
+                Some("/do/call"),
+                "call_target",
+                "invalid",
+            );
             let Some(target) = store.get(&site.target).await else {
                 errors.push(format!(
                     "Call step '{}': 目标工作流 '{}' 不存在",
@@ -630,6 +889,12 @@ impl Compiler {
             } else if let Some(with) = site.with.as_object() {
                 with.clone()
             } else {
+                errors.at(
+                    Some(&site.step_id),
+                    Some("/do/with"),
+                    "parameters",
+                    "invalid",
+                );
                 errors.push(format!("Call step '{}': with 必须是对象", site.owner));
                 continue;
             };
@@ -637,6 +902,12 @@ impl Compiler {
                 None => serde_json::Map::new(),
                 Some(value) if value.is_object() => value.as_object().cloned().unwrap_or_default(),
                 Some(_) => {
+                    errors.at(
+                        Some(&site.step_id),
+                        Some("/do/with/inputs"),
+                        "parameters",
+                        "invalid",
+                    );
                     errors.push(format!(
                         "Call step '{}': with.inputs 必须是对象",
                         site.owner
@@ -645,6 +916,12 @@ impl Compiler {
                 }
             };
             if let Some(outputs) = with.get("outputs") {
+                errors.at(
+                    Some(&site.step_id),
+                    Some("/do/with/outputs"),
+                    "parameters",
+                    "invalid",
+                );
                 match outputs.as_object() {
                     None => errors.push(format!(
                         "Call step '{}': with.outputs 必须是对象",
@@ -653,6 +930,15 @@ impl Compiler {
                     Some(map) => {
                         for (name, parent) in map {
                             if !parent.is_string() {
+                                errors.at(
+                                    Some(&site.step_id),
+                                    Some(&format!(
+                                        "/do/with/outputs/{}",
+                                        name.replace('~', "~0").replace('/', "~1")
+                                    )),
+                                    "parameters",
+                                    "invalid",
+                                );
                                 errors.push(format!(
                                     "Call step '{}': with.outputs.{} 必须映射到父变量名字符串",
                                     site.owner, name
@@ -663,6 +949,19 @@ impl Compiler {
                 }
             }
             for spec in &target.inputs {
+                errors.at(
+                    Some(&site.step_id),
+                    Some(&format!(
+                        "/do/with/inputs/{}",
+                        spec.name.replace('~', "~0").replace('/', "~1")
+                    )),
+                    "call_input",
+                    if input_map.contains_key(&spec.name) {
+                        "invalid"
+                    } else {
+                        "missing"
+                    },
+                );
                 match input_map.get(&spec.name) {
                     None if spec.required && spec.default.is_none() => errors.push(format!(
                         "Call step '{}': 子工作流 '{}' 缺少必填输入映射 '{}'",
@@ -681,8 +980,23 @@ impl Compiler {
                 }
             }
         }
-        let mut path = vec![workflow.id.clone()];
-        dfs(&workflow.id, store, &mut path, &mut errors, 0).await;
-        errors
+        for site in &sites {
+            errors.at(
+                Some(&site.step_id),
+                Some("/do/call"),
+                "call_cycle",
+                "structure",
+            );
+            if site.target == workflow.id {
+                errors.push(format!(
+                    "检测到循环调用链: {} → {}",
+                    workflow.id, site.target
+                ));
+            } else {
+                let mut path = vec![workflow.id.clone(), site.target.clone()];
+                dfs(&site.target, store, &mut path, &mut errors, 1).await;
+            }
+        }
+        report(errors, DiagnosticMessages::default())
     }
 }

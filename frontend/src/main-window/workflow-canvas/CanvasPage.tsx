@@ -1,3 +1,4 @@
+import { editorText } from './editorText'
 /**
  * CanvasPage.tsx — 工作流画布页面壳（设计文档 2.2）
  *
@@ -11,6 +12,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { InspectorDraftContext, InspectorDraftStore } from './inspectorDrafts'
 import { buildVariableCatalogIndex } from './variableCatalog'
+import { actionSummary } from './actionSummary'
+import { focusEditorField } from './editorFields'
+import { previewVariableRename, applyVariableRename, type RenamePreview } from './variableRename'
+import { VariableRenameDialog } from './VariableRenameDialog'
+import { WorkflowTraceContext } from './WorkflowTraceContext'
+import { ExecutionTraceViewer } from './ExecutionTraceViewer'
+import { WorkflowDebugPanel } from './WorkflowDebugPanel'
+import { ScopedEditDialog } from './ScopedEditDialog'
 import { profileStep, walkSteps } from './dataEdges'
 import type { CanvasLeaveGuard } from './useCanvasLeaveGuard'
 import { useSyncExternalStore } from 'react'
@@ -94,9 +103,9 @@ import { Inspector, loadToolsOnce } from './Inspector'
 import { ToolPalette, TOOL_DRAG_MIME } from './ToolPalette'
 import { skeletonFromSchema } from './toolSkeleton'
 import { ProblemsPanel } from './ProblemsPanel'
+import { ToolbarOverflow } from './ToolbarOverflow'
 import { OutlinePanel } from './OutlinePanel'
 import { IntentFormPanel } from './IntentFormPanel'
-import { EnhancedModeToggle } from './EnhancedModeToggle'
 import type { IntentForm } from './intentTypes'
 import { buildIntentTextTemplate } from './intentText'
 import { WorkflowInputsDialog, NO_INPUT_SPECS } from '../workflow/WorkflowInputsForm'
@@ -195,7 +204,8 @@ function CanvasInner({
   onSwitchWorkflow,
   registerLeaveGuard,
 }: CanvasPageProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
+  const ui = (zh: string, en: string) => (lang === 'zh' ? zh : en)
   const rf = useReactFlow()
   // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
   // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
@@ -204,14 +214,16 @@ function CanvasInner({
   const gateLocked = gate.locked
   const gateRefresh = gate.refresh
   const gateLockNotice =
-    gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
+    gate.reason === 'workflow'
+      ? editorText('工作流正在执行中，暂不可用！', t)
+      : editorText('当前有任务执行中，暂不可用！', t)
   const [ir, setIr] = useState<WorkflowIR | null>(null)
   const irRef = useRef<WorkflowIR | null>(null)
   irRef.current = ir
   const [steps, setSteps] = useState<WorkflowStep[] | null>(null)
   const [committedDirty, setDirty] = useState(false)
   const [draftStore] = useState(() => new InspectorDraftStore())
-  useSyncExternalStore(draftStore.subscribe, draftStore.snapshot)
+  const draftVersion = useSyncExternalStore(draftStore.subscribe, draftStore.snapshot)
   const dirty = committedDirty || draftStore.dirty
   const editRevision = useRef(0)
   const saving = useRef(false)
@@ -245,12 +257,56 @@ function CanvasInner({
   /** 声明式外部输入（IR 唯一真源；未声明 → 稳定空数组，运行路径与旧行为一致） */
   const declaredInputs = ir?.inputs?.length ? ir.inputs : NO_INPUT_SPECS
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  useEffect(() => {
+    if (selectedId && !selectedIds.includes(selectedId)) setSelectedIds([selectedId])
+  }, [selectedId, selectedIds])
+  const [debugOpen, setDebugOpen] = useState(false)
+  const [debugTarget, setDebugTarget] = useState<string | null>(null)
+  const [debugRunId, setDebugRunId] = useState<string | null>(null)
+  const [traceOpen, setTraceOpen] = useState(false)
+  const [scopedEditOpen, setScopedEditOpen] = useState(false)
+  const [renameDialog, setRenameDialog] = useState<{
+    preview: RenamePreview
+    resolve: (ok: boolean) => void
+  } | null>(null)
+  const renamePending = useRef(false)
+  const renameResolver = useRef<((ok: boolean) => void) | null>(null)
+  useEffect(
+    () => () => {
+      renameResolver.current?.(false)
+    },
+    [],
+  )
+  const [problemFocus, setProblemFocus] = useState<{ stepId: string; fieldPath: string } | null>(
+    null,
+  )
+  useEffect(() => {
+    if (!problemFocus) return
+    let frame = 0
+    const focus = (attempt = 0) => {
+      const panel = document.querySelector(
+        `[data-inspector-node="${CSS.escape(problemFocus.stepId)}"]`,
+      )
+      if (panel && focusEditorField(panel, problemFocus.fieldPath)) return
+      // Changing a layer mounts the inspector after ReactFlow has reprojected it.
+      if (attempt < 12) frame = requestAnimationFrame(() => focus(attempt + 1))
+    }
+    frame = requestAnimationFrame(() => focus())
+    return () => cancelAnimationFrame(frame)
+  }, [problemFocus])
+  const [detailedNodes, setDetailedNodes] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   /** 新建 tool 节点后待聚焦的工具输入框（Inspector 消费一次） */
   const [toolFocusId, setToolFocusId] = useState<string | null>(null)
   const [problems, setProblems] = useState<Problem[]>([])
   const [backendReport, setBackendReport] = useState<ValidationReport | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Reports describe a specific definition, never a later edit or uncommitted draft.
+  useEffect(() => {
+    setBackendReport(null)
+    setNotice(null)
+  }, [steps, draftVersion, ir?.inputs])
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
   /** 意图表单弹层（画布顶部「意图表单」入口；不启动任何录制会话） */
   const [intentFormOpen, setIntentFormOpen] = useState(false)
@@ -266,6 +322,15 @@ function CanvasInner({
     horizontal: boolean
   } | null>(null)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const moreMenuRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const closeMore = (event: PointerEvent) => {
+      const menu = moreMenuRef.current
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false
+    }
+    window.addEventListener('pointerdown', closeMore, true)
+    return () => window.removeEventListener('pointerdown', closeMore, true)
+  }, [])
   // 添加菜单：点击外部收起（Escape 见键盘表；项内点击见 addStep）
   const addWrapRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -349,7 +414,7 @@ function CanvasInner({
       const raw = (await wfGetRaw(workflowId)) as unknown as WorkflowIR | null
       if (!alive) return
       if (!raw) {
-        setNotice('工作流不存在或已被删除')
+        setNotice(editorText('工作流不存在或已被删除', t))
         return
       }
       setIr(raw)
@@ -377,7 +442,10 @@ function CanvasInner({
         if (alive) setReplayRecord(record)
       })
       .catch(reason => {
-        if (alive) setNotice(`读取历史运行记录失败：${String(reason)}`)
+        if (alive)
+          setNotice(
+            `${ui('读取历史运行记录失败', 'Could not load run history')}: ${String(reason)}`,
+          )
       })
       .finally(() => alive && setReplayLoading(false))
     return () => {
@@ -386,7 +454,15 @@ function CanvasInner({
   }, [replayRunId])
 
   // ── 执行状态订阅（2.3：独立 listener，会话边界由 tracker 保证）──
-  useEffect(() => subscribeRunStatus(workflowId, setSnapshot), [workflowId])
+  const runTranslation = useRef(t)
+  runTranslation.current = t
+  useEffect(
+    () =>
+      subscribeRunStatus(workflowId, setSnapshot, (key, ...args) =>
+        runTranslation.current(key, ...args),
+      ),
+    [workflowId],
+  )
 
   // ── 终态对账：RunCompleted 后重拉 run_history 作权威回放源 ──
   const wasRunning = useRef(false)
@@ -437,10 +513,10 @@ function CanvasInner({
   useEffect(() => {
     if (!steps) return
     const timer = setTimeout(() => {
-      setProblems(validateIR(steps, { runHistory: ir?.run_history }))
+      setProblems(validateIR(steps, { runHistory: ir?.run_history, inputs: declaredInputs }))
     }, 300)
     return () => clearTimeout(timer)
-  }, [steps, ir?.run_history])
+  }, [steps, ir?.run_history, declaredInputs])
 
   // ── 节点问题级别映射（error 优先）──
   const problemByStep = useMemo(() => {
@@ -625,14 +701,21 @@ function CanvasInner({
         type: n.category === 'container' ? 'container' : 'step',
         position: p,
         data: {
-          canvas: n,
+          canvas: {
+            ...n,
+            actionSummary:
+              steps && locateStep(steps, n.id)
+                ? actionSummary(locateStep(steps, n.id)!.step, t)
+                : undefined,
+          },
+          detailed: detailedNodes,
           status,
           problem: problemByStep.get(n.id),
           badge: badges.get(n.id),
           dir,
           childrenPreview,
         },
-        selected: selectedId === n.id,
+        selected: selectedId === n.id || selectedIds.includes(n.id),
         draggable: !readOnly && !n.synthetic,
         selectable: true,
         className: flashId === n.id ? 'wfc-flash' : undefined,
@@ -648,10 +731,14 @@ function CanvasInner({
     problemByStep,
     badges,
     selectedId,
+    selectedIds,
     readOnly,
     laneFrames,
     flashId,
     projection,
+    steps,
+    t,
+    detailedNodes,
   ])
 
   // ── 加载完成视口适配 ──
@@ -741,7 +828,9 @@ function CanvasInner({
     if (confirm) return false
     return (
       !dirty ||
-      (await askConfirm('有未保存的修改，离开将丢弃（如需保留请先点「保存」）。确认离开？'))
+      (await askConfirm(
+        editorText('有未保存的修改，离开将丢弃（如需保留请先点「保存」）。确认离开？', t),
+      ))
     )
   }, [dirty, askConfirm, confirm])
   useEffect(() => {
@@ -755,7 +844,7 @@ function CanvasInner({
       if (!cur || readOnly) return false
       const check = checkOp(cur, op, { runHistory: ir?.run_history })
       if (!check.ok) {
-        setNotice(check.reason ?? '操作被拒绝')
+        setNotice(check.reason ?? editorText('操作被拒绝', t))
         return false
       }
       if (check.confirm) {
@@ -846,11 +935,41 @@ function CanvasInner({
         field?.querySelector<HTMLElement>('input, textarea, select')?.focus()
       })
     }
-    setNotice(`请先修正「${failure.field}」：${failure.error}`)
+    setNotice(`${ui('请先修正', 'Please correct')} ${failure.field}: ${failure.error}`)
     return false
   }, [draftStore])
 
   // ── 保存（1.6：wf_save 后端强制校验，errors 阻断回 ProblemsPanel）
+  const requestVariableRename = async (
+    producerId: string,
+    newName: string,
+    kind: 'capture' | 'item' = 'capture',
+  ) => {
+    if (renamePending.current || readOnly) return false
+    renamePending.current = true
+    try {
+      const failure = await draftStore.flush({
+        nodeId: producerId,
+        field: kind === 'capture' ? '/capture' : '/do/loop/for_each/as',
+      })
+      if (failure || !stepsRef.current) return false
+      const preview = previewVariableRename(
+        stepsRef.current,
+        irRef.current?.inputs ?? [],
+        producerId,
+        newName,
+        kind,
+      )
+      return await new Promise<boolean>(resolve => {
+        renameResolver.current = resolve
+        setRenameDialog({ preview, resolve })
+      })
+    } finally {
+      renamePending.current = false
+      renameResolver.current = null
+    }
+  }
+
   // nameOverride：重命名时传入新名（与当前步骤编辑一并保存；空/省略则沿用原名）──
   const save = useCallback(
     async (nameOverride?: string) => {
@@ -867,8 +986,14 @@ function CanvasInner({
         if (gateNow.locked) {
           setNotice(
             gateNow.reason === 'workflow'
-              ? '工作流执行中，暂不可保存（编辑仍在画布上，执行结束后按 Ctrl+S 保存）'
-              : '当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后按 Ctrl+S 保存）',
+              ? editorText(
+                  '工作流执行中，暂不可保存（编辑仍在画布上，执行结束后按 Ctrl+S 保存）',
+                  t,
+                )
+              : editorText(
+                  '当前有任务执行中，暂不可保存（编辑仍在画布上，任务结束后按 Ctrl+S 保存）',
+                  t,
+                ),
           )
           return
         }
@@ -885,28 +1010,28 @@ function CanvasInner({
         try {
           const resp = await wfSave(payload)
           if (!resp) {
-            setNotice('保存失败：后端无响应')
+            setNotice(editorText('保存失败：后端无响应', t))
             return
           }
-          setBackendReport(resp.report)
+          const unchanged =
+            revision === editRevision.current && draftsAtSave === draftStore.snapshot()
+          if (unchanged) setBackendReport(resp.report)
           if (resp.saved) {
-            const unchanged =
-              revision === editRevision.current && draftsAtSave === draftStore.snapshot()
             setDirty(!unchanged)
             setNotice(
               !unchanged
-                ? '已保存提交时的版本；后续编辑尚未保存'
+                ? editorText('已保存提交时的版本；后续编辑尚未保存', t)
                 : name
-                  ? `已保存，工作流已重命名为「${name}」`
-                  : '已保存',
+                  ? `${ui('已保存，工作流已重命名为', 'Saved and renamed to')} ${name}`
+                  : editorText('已保存', t),
             )
             setIr(current => (current ? { ...current, ...(name ? { name } : {}) } : payload))
             return unchanged
-          } else {
-            setNotice('保存被阻断：存在校验错误，详见问题面板「后端校验」')
+          } else if (unchanged) {
+            setNotice(editorText('保存被阻断：存在校验错误，详见问题面板「后端校验」', t))
           }
         } catch (e) {
-          setNotice(`保存失败：${String(e)}`)
+          setNotice(`${ui('保存失败', 'Save failed')}: ${String(e)}`)
         }
       } finally {
         saving.current = false
@@ -919,25 +1044,33 @@ function CanvasInner({
     if (!(await flushDrafts())) return
     const cur = stepsRef.current
     if (!cur || !ir) return
+    const revision = editRevision.current
+    const draftsAtCheck = draftStore.snapshot()
     try {
       const report = await wfValidate({ ...ir, steps: cur })
+      if (revision !== editRevision.current || draftsAtCheck !== draftStore.snapshot()) return
       if (!report) {
-        setNotice('校验失败：后端无响应')
+        setNotice(editorText('校验失败：后端无响应', t))
         return
       }
       setBackendReport(report)
-      setNotice(report.passed ? '后端校验通过' : '后端校验发现错误，详见问题面板')
+      setNotice(
+        report.passed
+          ? editorText('后端校验通过', t)
+          : editorText('后端校验发现错误，详见问题面板', t),
+      )
     } catch (e) {
-      setNotice(`校验失败：${String(e)}`)
+      if (revision !== editRevision.current || draftsAtCheck !== draftStore.snapshot()) return
+      setNotice(`${ui('校验失败', 'Check failed')}: ${String(e)}`)
     }
-  }, [ir, flushDrafts])
+  }, [ir, flushDrafts, draftStore])
 
   const runWorkflow = useCallback(async () => {
     if (snapshot.running) return
     const hadDrafts = draftStore.dirty
     if (!(await flushDrafts())) return
     if (dirty || hadDrafts) {
-      setNotice('有未保存的编辑，请先保存（Ctrl+S）再运行')
+      setNotice(editorText('有未保存的编辑，请先保存（Ctrl+S）再运行', t))
       return
     }
     // 闸门点击级复核（轮询窗口内竞态收口；后端 execute_workflow 另有兜底）
@@ -945,12 +1078,14 @@ function CanvasInner({
     const cur = await gateRefresh()
     if (cur.locked) {
       setNotice(
-        cur.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！',
+        cur.reason === 'workflow'
+          ? editorText('工作流正在执行中，暂不可用！', t)
+          : editorText('当前有任务执行中，暂不可用！', t),
       )
       return
     }
     if (draftStore.dirty || revisionAtRun !== editRevision.current) {
-      setNotice('启动检查期间有新的编辑，请先保存再运行')
+      setNotice(editorText('启动检查期间有新的编辑，请先保存再运行', t))
       return
     }
     // 声明了外部输入 → 必须先收集（与运行确认弹窗共用同一表单实现，不得绕过必填校验）
@@ -963,7 +1098,7 @@ function CanvasInner({
       // Paused / 无历史 → fresh=false 断点续连（completed_ids 为空时从头等价）。
       await wfRun(workflowId, lastRunError)
     } catch (e) {
-      setNotice(`启动失败：${String(e)}`)
+      setNotice(`${ui('启动失败', 'Could not start')}: ${String(e)}`)
     }
   }, [
     workflowId,
@@ -989,7 +1124,7 @@ function CanvasInner({
       try {
         await wfRun(workflowId, lastRunError, inputs)
       } catch (e) {
-        setNotice(`启动失败：${String(e)}`)
+        setNotice(`${ui('启动失败', 'Could not start')}: ${String(e)}`)
       }
     },
     [workflowId, lastRunError, gateRefresh, gateLockNotice],
@@ -1012,10 +1147,6 @@ function CanvasInner({
   // ── 拖拽：重排 / 跨泳道 / 入容器 / 到面包屑（2.5）──
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setFlowNodes(ns => applyNodeChanges(changes, ns))
-    if (changes.some(c => c.type === 'select')) {
-      const sel = changes.find(c => c.type === 'select' && c.selected)
-      if (sel && sel.type === 'select') setSelectedId(sel.id)
-    }
   }, [])
 
   // ── 拖拽中：检测同层插入目标（阶段 3：顺序重排改为「明确越过节点中心」才插入）──
@@ -1207,7 +1338,7 @@ function CanvasInner({
 
   // ── 节点选择 / 下钻 / 锚点跳转 ──
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: FlowNode) => {
+    (event: React.MouseEvent, node: FlowNode) => {
       if (node.type === 'lane') return
       const canvasNode = node.data.canvas as CanvasNode | undefined
       if (canvasNode?.synthetic === 'external' && canvasNode.externalProducerId && projection) {
@@ -1220,9 +1351,18 @@ function CanvasInner({
         }
         return
       }
-      setSelectedId(node.id)
+      if (event.shiftKey || event.ctrlKey || event.metaKey) {
+        const next = selectedIds.includes(node.id)
+          ? selectedIds.filter(id => id !== node.id)
+          : [...selectedIds, node.id]
+        setSelectedIds(next)
+        setSelectedId(next.includes(node.id) ? node.id : (next[next.length - 1] ?? null))
+      } else {
+        setSelectedId(node.id)
+        setSelectedIds([node.id])
+      }
     },
-    [projection, switchLayer],
+    [projection, switchLayer, selectedIds],
   )
 
   const onNodeDoubleClick = useCallback(
@@ -1249,7 +1389,7 @@ function CanvasInner({
       if (!loc) return
       if (containerLanes(loc.step)) {
         const ok = await askConfirm(
-          `「${loc.step.name || loc.step.id}」是容器，删除将级联删除全部子步骤。确认删除？`,
+          `${loc.step.name || loc.step.id}: ${ui('删除容器会删除全部子步骤。确认删除？', 'Deleting this container also deletes all its children. Continue?')}`,
         )
         if (!ok) return
       }
@@ -1258,7 +1398,7 @@ function CanvasInner({
       setInspectorOpen(false)
       // D3：叶子/容器删除成功给结果反馈（不引入二次确认；Ctrl+Z 可撤销）
       if (ok && !containerLanes(loc.step)) {
-        setNotice('已删除（可 Ctrl+Z 撤销）')
+        setNotice(editorText('已删除（可 Ctrl+Z 撤销）', t))
       }
     },
     [selectedId, readOnly, applyEdit, askConfirm],
@@ -1273,7 +1413,7 @@ function CanvasInner({
       if (!loc) return
       const ids = collectIds(cur)
       const copy = cloneStepWithNewIds(loc.step, ids)
-      copy.name = `${copy.name || copy.id} 副本`
+      copy.name = `${copy.name || copy.id} ${ui('副本', 'copy')}`
       const ok = await applyEdit({
         op: 'add_step',
         parent: { layerId: loc.layerId },
@@ -1326,6 +1466,7 @@ function CanvasInner({
       const cur = stepsRef.current
       if (!cur || !layer || readOnly) return
       const step = newStep(kind, collectIds(cur))
+      step.name = kind === 'sleep' ? ui('等待 1 秒', 'Wait 1 second') : nodeKindLabel(kind, t)
       const { lane, index } = clickInsertion(cur, layer, selectedId)
       const ok = await applyEdit({
         op: 'add_step',
@@ -1342,7 +1483,7 @@ function CanvasInner({
         flashStep(step.id) // D1/D7：普通添加后闪光高亮，与连线插入/录制入画布一致
       }
     },
-    [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow, flashStep],
+    [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow, flashStep, lang, t],
   )
 
   // ── 工具面板：点击/拖拽创建 tool 步骤（with 按 input_schema required 预填骨架）──
@@ -1351,6 +1492,7 @@ function CanvasInner({
       const cur = stepsRef.current
       if (!cur || !layer || readOnly) return
       const step = newStep('tool', collectIds(cur))
+      step.name = `${nodeKindLabel('tool', t)}: ${tool.name}`
       step.do = { tool: tool.name, with: skeletonFromSchema(tool.input_schema) }
       let lane: LaneId
       let index: number
@@ -1393,7 +1535,7 @@ function CanvasInner({
         flashStep(step.id) // D1/D7：工具面板添加后闪光高亮
       }
     },
-    [layer, readOnly, selectedId, laneFrames, applyEdit, rf, focusStepFlow, flashStep],
+    [layer, readOnly, selectedId, laneFrames, applyEdit, rf, focusStepFlow, flashStep, t],
   )
 
   // 工具注册表（与 Inspector/ToolPalette 共享模块级缓存）：拖拽 drop 时按名查 schema 预填骨架
@@ -1413,18 +1555,18 @@ function CanvasInner({
    *  先保存画布（如有 dirty）→ 关画布 → 不启动任何后端执行
    *  （由用户在聊天发送后进 WorkflowAgent） */
   const submitIntentForm = useCallback(
-    (form: IntentForm) => {
+    async (form: IntentForm) => {
+      const saved = await save()
+      if (!saved) return false
       setIntentFormOpen(false)
-      void save().then(saved => {
-        if (!saved) return
-        onClose()
-        const text = buildIntentTextTemplate(form, workflowId, ir?.name)
-        window.dispatchEvent(
-          new CustomEvent('nuphus:append-to-chat', {
-            detail: { text, mode: 'workflow' },
-          }),
-        )
-      })
+      onClose()
+      const text = buildIntentTextTemplate(form, workflowId, ir?.name)
+      window.dispatchEvent(
+        new CustomEvent('nuphus:append-to-chat', {
+          detail: { text, mode: 'workflow' },
+        }),
+      )
+      return true
     },
     [save, onClose, workflowId, ir?.name],
   )
@@ -1462,7 +1604,16 @@ function CanvasInner({
   // ── 键盘表（2.5）──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (debugOpen || traceOpen || scopedEditOpen) return
       // 意图表单打开时：画布快捷键全部隔离，仅 Escape 可关闭弹层（防止误触 Delete/复制等）
+      if (renameDialog) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          renameDialog.resolve(false)
+          setRenameDialog(null)
+        }
+        return
+      }
       if (intentFormOpen) {
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -1492,6 +1643,7 @@ function CanvasInner({
         }
         return
       }
+      if ((e.target as HTMLElement)?.closest?.('[role="dialog"][aria-modal="true"]')) return
       const tag = (e.target as HTMLElement)?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -1549,6 +1701,10 @@ function CanvasInner({
     inspectorOpen,
     closeInspector,
     intentFormOpen,
+    renameDialog,
+    debugOpen,
+    traceOpen,
+    scopedEditOpen,
     inputsOpen,
     inputsEditorOpen,
     scheduleOpen,
@@ -1558,11 +1714,18 @@ function CanvasInner({
 
   // ── ProblemsPanel 定位（3.3：下钻 + 居中闪烁）──
   const locateNode = useCallback(
-    (stepId: string) => {
+    (stepId: string, fieldPath?: string) => {
+      if (!stepId && fieldPath?.startsWith('/inputs')) {
+        setInputsEditorFocus(null)
+        setInputsEditorOpen(true)
+        return
+      }
       if (!projection) return
       const targetLayer = projection.index.layerOf.get(stepId)
       if (targetLayer && targetLayer !== layerId) switchLayer(targetLayer)
       setSelectedId(stepId)
+      setInspectorOpen(true)
+      if (fieldPath) setProblemFocus({ stepId, fieldPath })
       setFlashId(stepId)
       setTimeout(() => setFlashId(null), 1500)
       focusStepFlow(stepId)
@@ -1604,19 +1767,20 @@ function CanvasInner({
       if (!cur || !layer || readOnly || !target) return
       const ce = layer.edges.find(e => e.id === target.edgeId && e.kind === 'sequence')
       if (!ce) {
-        setNotice('插入位置已失效（边结构已变化），请重新点击连线中点')
+        setNotice(editorText('插入位置已失效（边结构已变化），请重新点击连线中点', t))
         return
       }
       const tLoc = locateStep(cur, ce.target)
       if (!tLoc) {
-        setNotice('无法定位该连线终点节点，未插入')
+        setNotice(editorText('无法定位该连线终点节点，未插入', t))
         return
       }
       if (tLoc.layerId !== layer.layerId) {
-        setNotice('跨层连线暂不支持插入，请进入对应子层操作')
+        setNotice(editorText('跨层连线暂不支持插入，请进入对应子层操作', t))
         return
       }
       const step = newStep(kind, collectIds(cur))
+      step.name = kind === 'sleep' ? ui('等待 1 秒', 'Wait 1 second') : nodeKindLabel(kind, t)
       const ok = await applyEdit({
         op: 'add_step',
         parent: { layerId: tLoc.layerId },
@@ -1630,7 +1794,7 @@ function CanvasInner({
       flashStep(step.id)
       focusStepFlow(step.id)
     },
-    [edgeInsert, layer, readOnly, applyEdit, rf, flashStep, focusStepFlow],
+    [edgeInsert, layer, readOnly, applyEdit, rf, flashStep, focusStepFlow, lang, t],
   )
 
   // ── 面包屑 ──
@@ -1681,7 +1845,7 @@ function CanvasInner({
   if (!ir || !steps || !projection) {
     return (
       <div className="wfc-page">
-        <div className="wfc-loading">{notice ?? '加载画布中…'}</div>
+        <div className="wfc-loading">{notice ?? editorText('加载画布中…', t)}</div>
       </div>
     )
   }
@@ -1699,499 +1863,718 @@ function CanvasInner({
   }
 
   return (
-    <div className="wfc-page">
-      {/* ── 工具栏 ── */}
-      <div className="wfc-toolbar">
-        {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
-        {nameEditing && ir && !readOnly ? (
-          <input
-            className="wfc-title-input"
-            autoFocus
-            value={nameInput}
-            onChange={e => setNameInput(e.target.value)}
-            onBlur={commitNameRename}
-            onKeyDown={e => {
-              if (e.key === 'Enter') commitNameRename()
-              else if (e.key === 'Escape') {
-                setNameInput(ir?.name ?? '')
-                setNameEditing(false)
-              }
-            }}
-          />
-        ) : (
-          <span
-            className="wfc-title"
-            title={readOnly ? undefined : '双击重命名工作流'}
-            onDoubleClick={() => {
-              if (readOnly) return
-              setNameInput(ir?.name ?? '')
-              setNameEditing(true)
-            }}
-          >
-            {ir.name}
-          </span>
-        )}
-        {/* 工作流切换：标题即当前工作流名，紧跟一个下拉 —— 直接跳到另一张画布，
-            不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
-        <WorkflowSwitcher
-          currentId={workflowId}
-          onSwitch={id => {
-            void canLeave().then(ok => {
-              if (ok) onSwitchWorkflow?.(id)
-            })
-          }}
-          disabled={readOnly || !!replayRunId}
-          disabledHint={replayRunId ? '历史回放中不可切换工作流' : '运行中 · 画布只读'}
-        />
-        {dirty && <span className="wfc-badge wfc-badge--dirty">未保存</span>}
-        {readOnly && (
-          <span className="wfc-badge">{snapshot.running ? '运行中 · 只读' : '只读'}</span>
-        )}
-
-        <div className="wfc-toolbar-spacer" />
-
-        {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
-        <div className="wfc-add-wrap" ref={addWrapRef}>
-          <button
-            type="button"
-            className="wfc-btn"
-            onClick={() => setAddMenuOpen(o => !o)}
-            disabled={readOnly}
-            title={t('workflowCanvas.add.hint')}
-          >
-            <Plus size={13} /> {t('common.add')}
-          </button>
-          {addMenuOpen && (
-            <div className="wfc-add-menu">
-              {ADDABLE_KINDS.map(kind => (
-                <button
-                  type="button"
-                  key={kind}
-                  className="wfc-add-item"
-                  aria-label={nodeKindLabel(kind, t)}
-                  title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
-                  onClick={() => void addStep(kind)}
-                >
-                  <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
-                  <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={() => {
-            setInputsEditorFocus(null)
-            setInputsEditorOpen(true)
-          }}
-          title={readOnly ? '运行中 · 画布只读' : '编辑工作流外部输入声明'}
-        >
-          <Braces size={13} /> 外部输入
-        </button>
-
-        {replayRunId && onExitReplay && (
-          <button
-            type="button"
-            className="wfc-btn wfc-btn--primary"
-            onClick={onExitReplay}
-            title="返回当前工作流画布"
-          >
-            返回当前画布
-          </button>
-        )}
-
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={() => setScheduleOpen(true)}
-          title={ir.schedule?.enabled ? '定时运行已启用' : '设置定时运行'}
-        >
-          <Clock3 size={13} /> 定时
-          {ir.schedule && (
-            <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
-          )}
-        </button>
-
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={() => {
-            playUiSound('switch')
-            setIntentFormOpen(true)
-          }}
-          disabled={readOnly}
-          title={
-            readOnly
-              ? snapshot.running
-                ? '运行中 · 画布只读'
-                : '只读画布，不可发起意图'
-              : '用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流'
-          }
-        >
-          <ListChecks size={13} /> 意图表单
-        </button>
-
-        <EnhancedModeToggle disabled={readOnly} onNotice={setNotice} />
-
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={undo}
-          disabled={readOnly}
-          title="撤销（Ctrl+Z）"
-        >
-          <Undo2 size={13} />
-        </button>
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={redo}
-          disabled={readOnly}
-          title="重做（Ctrl+Shift+Z）"
-        >
-          <Redo2 size={13} />
-        </button>
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={() => void runCheck()}
-          title="后端权威校验"
-        >
-          <CircleCheckBig size={13} /> 检查
-        </button>
-        <button
-          type="button"
-          className="wfc-btn"
-          onClick={() => void save()}
-          disabled={!dirty || snapshot.running}
-          title="保存（Ctrl+S，保存前强制校验）"
-        >
-          <Save size={13} /> 保存
-        </button>
-        <button
-          type="button"
-          className="wfc-btn wfc-btn--primary"
-          onClick={() => void runWorkflow()}
-          disabled={snapshot.running || gateLocked || !!replayRunId}
-          title={
-            gateLocked && !snapshot.running
-              ? gateLockNotice
-              : lastRunError
-                ? '运行（R）：上次运行失败，从头完整执行（不再续连）'
-                : lastRunPaused
-                  ? '续跑（R）：自动跳过已完成步骤，从暂停处继续'
-                  : '运行（R）：执行工作流'
-          }
-        >
-          <Play size={13} /> {lastRunPaused ? '续跑' : '运行'}
-        </button>
-      </div>
-
-      {/* ── 横幅区 ── */}
-      {projection.index.hasCustomNodes && (
-        <div className="wfc-banner wfc-banner--error">
-          <strong>格式不兼容：</strong>本工作流包含旧格式节点，画布已切换为只读。 可通过 AI
-          对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。
-        </div>
-      )}
-      {(lastRunError || lastRunPaused) && !projection.index.hasCustomNodes && (
-        <div className="wfc-banner wfc-banner--warning">
-          {lastRunError
-            ? `上次运行失败${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「运行」将从头完整执行，不再续连上次进度。`
-            : `上次运行已暂停${anchorStepName ? `于「${anchorStepName}」` : ''}，点击「续跑」将自动跳过已完成步骤，从暂停处继续。`}
-        </div>
-      )}
-      {replayRunId && (
-        <div className="wfc-banner wfc-banner--info">
-          {replayLoading
-            ? '正在加载定时运行历史…'
-            : `历史回放 · ${replayRecord ? new Date(replayRecord.started_at).toLocaleString() : '记录不可用'} · ${replayRecord ? (typeof replayRecord.status === 'string' ? replayRecord.status : '失败') : ''}`}
-          <span className="wfc-replay-hint">当前为只读状态，返回后可继续编辑当前画布。</span>
-        </div>
-      )}
-      {notice && (
-        <div className="wfc-banner wfc-banner--info">
-          {notice}
-          <button type="button" className="wfc-icon-btn" onClick={() => setNotice(null)}>
-            <X size={12} />
-          </button>
-        </div>
-      )}
-      {snapshot.running && (
-        <div className="wfc-banner wfc-banner--running">
-          运行中 —— 画布已锁定为只读，防止编辑-执行竞态
-        </div>
-      )}
-
-      {/* ── 面包屑 ── */}
-      <div className="wfc-breadcrumb" ref={breadcrumbRef}>
-        {layer && layer.parentChain.length > 0 && (
-          <button
-            type="button"
-            className="wfc-icon-btn"
-            title="返回父层（Alt+←）"
-            onClick={() => switchLayer(layer.parentChain[layer.parentChain.length - 1])}
-          >
-            <CornerUpLeft size={14} />
-          </button>
-        )}
-        {breadcrumb.map((b, i) => (
-          <span key={b.id} className="wfc-crumb-wrap">
-            {i > 0 && <span className="wfc-crumb-sep">/</span>}
-            <button
-              type="button"
-              data-layer-id={b.id}
-              className={`wfc-crumb${b.id === layerId ? ' is-active' : ''}`}
-              onClick={() => switchLayer(b.id)}
-              title={readOnly ? b.label : `${b.label}（可拖拽节点到此移入该层）`}
-            >
-              {b.label}
-            </button>
-          </span>
-        ))}
-        <span className="wfc-crumb-hint">双击容器进入子层 · Alt+← 返回父层</span>
-      </div>
-
-      {/* ── 画布主体 ── */}
-      <div className="wfc-canvas-wrap">
-        {/* NodeActionsContext：节点 hover 操作（阶段 4）；readOnly 时注入 null 隐藏操作条 */}
-        <InputAnchorActionsContext.Provider value={inputAnchorActions}>
-          <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
-            <ReactFlow
-              nodes={flowNodes}
-              edges={flowEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              onNodesChange={onNodesChange}
-              onNodeDrag={onNodeDrag}
-              onNodeDragStop={onNodeDragStop}
-              onNodeClick={onNodeClick}
-              onNodeDoubleClick={onNodeDoubleClick}
-              onPaneClick={() => {
-                setSelectedId(null)
-                setInspectorOpen(false)
-              }}
-              onDragOver={onToolDragOver}
-              onDrop={onToolDrop}
-              nodesConnectable={false}
-              edgesFocusable={false}
-              deleteKeyCode={null}
-              fitView
-              minZoom={0.2}
-              maxZoom={2}
-              proOptions={{ hideAttribution: false }}
-            >
-              <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
-              <Controls showInteractive={false} />
-            </ReactFlow>
-          </NodeActionsContext.Provider>
-        </InputAnchorActionsContext.Provider>
-
-        {/* ── 拖拽插入指示线（阶段 3：重排前视觉反馈；松手后按 dragInsertRef 决定是否重排）── */}
-        {dragInsertScreen && (
-          <div
-            className="wfc-insert-hint"
-            style={{
-              left: dragInsertScreen.x,
-              top: dragInsertScreen.y,
-              width: dragInsertScreen.horizontal ? 2 : 96,
-              height: dragInsertScreen.horizontal ? 96 : 2,
-              transform: dragInsertScreen.horizontal
-                ? 'translate(-1px, -48px)'
-                : 'translate(-48px, -1px)',
-            }}
-          />
-        )}
-
-        {/* ── 工具面板（左侧分类竖条；只读时禁用，定位/增步均走 applyEdit 管线）── */}
-        <ToolPalette disabled={readOnly} onAdd={tool => void addToolStep(tool)} />
-
-        {/* ── 结构大纲（右下角，替代 MiniMap；定位是纯视图操作，readOnly/运行中均可用）── */}
-        <OutlinePanel
-          steps={steps}
-          selectedId={selectedId}
-          statuses={outlineStatus}
-          onLocate={locateNode}
-        />
-
-        {inspectorSteps.map(inspectorStep => (
-          <div
-            key={inspectorStep.id}
-            data-inspector-node={inspectorStep.id}
-            hidden={!inspectorOpen || inspectorStep.id !== selectedId}
-          >
-            <InspectorDraftContext.Provider value={{ store: draftStore, nodeId: inspectorStep.id }}>
-              <Inspector
-                step={inspectorStep}
-                variableCatalog={{
-                  references: [...(variableIndex.beforeStep.get(inspectorStep.id)?.values() ?? [])],
-                  captures: variableIndex.captures,
+    <WorkflowTraceContext.Provider value={{ workflowId, refreshKey: snapshot.timeline.length }}>
+      <div className="wfc-page">
+        {/* ── 工具栏 ── */}
+        <div className="wfc-toolbar">
+          <div className="wfc-toolbar-row wfc-toolbar-row--primary">
+            {/* 工作流名称：双击/失焦提交改名（readOnly 禁改；提交走 save(name) 连同当前步骤保存） */}
+            {nameEditing && ir && !readOnly ? (
+              <input
+                className="wfc-title-input"
+                autoFocus
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onBlur={commitNameRename}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitNameRename()
+                  else if (e.key === 'Escape') {
+                    setNameInput(ir?.name ?? '')
+                    setNameEditing(false)
+                  }
                 }}
-                captureConsumers={captureConsumers.get(inspectorStep.id)}
-                onLocateReference={locateNode}
-                onConfigureInput={name => {
-                  setInputsEditorFocus(name.replace(/^inputs\./, ''))
-                  setInputsEditorOpen(true)
-                }}
-                readOnly={readOnly}
-                idReferenced={(ir.run_history ?? []).some(r =>
-                  (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(
-                    s => s.step_id === inspectorStep.id,
-                  ),
-                )}
-                lastOutput={snapshot.outputs.get(inspectorStep.id)}
-                focusToolId={toolFocusId}
-                onPatch={patch =>
-                  applyEdit({ op: 'update_fields', stepId: inspectorStep.id, patch })
-                }
-                onPatchAction={action =>
-                  applyEdit({
-                    op: 'update_fields',
-                    stepId: inspectorStep.id,
-                    patch: { do: action },
-                  })
-                }
-                onClose={closeInspector}
               />
-            </InspectorDraftContext.Provider>
-          </div>
-        ))}
-      </div>
+            ) : (
+              <span
+                className="wfc-title"
+                title={`${ir.name}${readOnly ? '' : ` — ${editorText('双击重命名工作流', t)}`}`}
+                onDoubleClick={() => {
+                  if (readOnly) return
+                  setNameInput(ir?.name ?? '')
+                  setNameEditing(true)
+                }}
+              >
+                {ir.name}
+              </span>
+            )}
+            {/* 工作流切换：标题即当前工作流名，紧跟一个下拉 —— 直接跳到另一张画布，
+            不必退回列表页重新找。运行中 / 历史回放中禁用（离开会丢运行上下文）。 */}
+            <WorkflowSwitcher
+              currentId={workflowId}
+              onSwitch={id => {
+                void canLeave().then(ok => {
+                  if (ok) onSwitchWorkflow?.(id)
+                })
+              }}
+              disabled={readOnly || !!replayRunId}
+              disabledHint={
+                replayRunId
+                  ? editorText('历史回放中不可切换工作流', t)
+                  : editorText('运行中 · 画布只读', t)
+              }
+            />
+            {dirty && <span className="wfc-badge wfc-badge--dirty">{editorText('未保存', t)}</span>}
+            {readOnly && (
+              <span className="wfc-badge">
+                {snapshot.running ? editorText('运行中 · 只读', t) : editorText('只读', t)}
+              </span>
+            )}
 
-      {/* ── 连线中点「在此插入」菜单（fixed 定位在圆点屏幕坐标旁；复用 wfc-add-item 项样式）── */}
-      {edgeInsert && (
-        <div
-          ref={edgeMenuWrapRef}
-          className="wfc-add-menu wfc-edge-add-menu"
-          style={{
-            left: Math.max(8, Math.min(edgeInsert.x + 12, window.innerWidth - 296)),
-            top: Math.max(8, Math.min(edgeInsert.y + 12, window.innerHeight - 400)),
-          }}
-        >
-          <div className="wfc-edge-add-title">
-            {edgeTargetName
-              ? t('workflowCanvas.add.before', edgeTargetName)
-              : t('workflowCanvas.add.insert')}
-          </div>
-          {ADDABLE_KINDS.map(kind => (
+            <div className="wfc-toolbar-spacer" />
             <button
               type="button"
-              key={kind}
-              className="wfc-add-item"
-              aria-label={nodeKindLabel(kind, t)}
-              title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
-              onClick={() => void insertAtEdge(kind)}
+              className="wfc-btn"
+              onClick={() => void save()}
+              disabled={!dirty || snapshot.running}
+              title={editorText('保存（Ctrl+S，保存前强制校验）', t)}
             >
-              <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
-              <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
+              <Save size={13} /> {editorText('保存', t)}
             </button>
-          ))}
-        </div>
-      )}
+            <button
+              type="button"
+              className="wfc-btn wfc-btn--primary"
+              onClick={() => void runWorkflow()}
+              disabled={snapshot.running || gateLocked || !!replayRunId}
+              title={
+                gateLocked && !snapshot.running
+                  ? gateLockNotice
+                  : lastRunError
+                    ? editorText('运行（R）：上次运行失败，从头完整执行（不再续连）', t)
+                    : lastRunPaused
+                      ? editorText('续跑（R）：自动跳过已完成步骤，从暂停处继续', t)
+                      : editorText('运行（R）：执行工作流', t)
+              }
+            >
+              <Play size={13} /> {lastRunPaused ? editorText('续跑', t) : editorText('运行', t)}
+            </button>
+          </div>
+          <div className="wfc-toolbar-row" aria-label={ui('画布操作', 'Canvas actions')}>
+            {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
+            <div className="wfc-add-wrap" ref={addWrapRef}>
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => setAddMenuOpen(o => !o)}
+                aria-expanded={addMenuOpen}
+                disabled={readOnly}
+                title={t('workflowCanvas.add.hint')}
+              >
+                <Plus size={13} /> {t('common.add')}
+              </button>
+              {addMenuOpen && (
+                <div className="wfc-add-menu">
+                  {ADDABLE_KINDS.map(kind => (
+                    <button
+                      type="button"
+                      key={kind}
+                      className="wfc-add-item"
+                      aria-label={nodeKindLabel(kind, t)}
+                      title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
+                      onClick={() => void addStep(kind)}
+                    >
+                      <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+                      <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-      {/* ── 问题面板 ── */}
-      <ProblemsPanel
-        problems={problems}
-        backendReport={backendReport}
-        timeline={snapshot.timeline}
-        running={snapshot.running}
-        runHistory={
-          replayRecord
-            ? [
-                {
-                  ...replayRecord,
-                  variables_snapshot: {},
-                } as RunRecord,
-              ]
-            : (ir.run_history ?? [])
-        }
-        replay={!!replayRunId}
-        onLocate={locateNode}
-        nameOf={id =>
-          replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id
-        }
-      />
+            <button
+              className="wfc-btn"
+              disabled={
+                (!selectedStep && !debugTarget) || !!replayRunId || (readOnly && !debugRunId)
+              }
+              onClick={() => {
+                if (debugRunId) {
+                  setDebugOpen(true)
+                  return
+                }
+                void flushDrafts().then(ok => {
+                  if (ok && selectedId) {
+                    setDebugTarget(selectedId)
+                    setDebugOpen(true)
+                  }
+                })
+              }}
+            >
+              {ui('节点调试', 'Debug node')}
+            </button>
+            <ToolbarOverflow
+              menuRef={moreMenuRef}
+              actions={[
+                <button key="trace" className="wfc-btn" onClick={() => setTraceOpen(true)}>
+                  {ui('运行详情', 'Execution details')}
+                </button>,
+                <button
+                  key="ai"
+                  className="wfc-btn"
+                  disabled={!selectedStep || readOnly || gateLocked}
+                  title={ui(
+                    '按住 Shift 多选节点；仅修改所选范围',
+                    'Shift-click to select nodes; edits stay in the selected scope',
+                  )}
+                  onClick={() =>
+                    void flushDrafts().then(ok => {
+                      if (ok) setScopedEditOpen(true)
+                    })
+                  }
+                >
+                  {ui('AI 局部修改', 'AI scoped edit')}
+                </button>,
+                <button
+                  key="undo"
+                  type="button"
+                  className="wfc-btn"
+                  onClick={undo}
+                  disabled={readOnly}
+                  aria-label={editorText('撤销（Ctrl+Z）', t)}
+                  title={editorText('撤销（Ctrl+Z）', t)}
+                >
+                  <Undo2 size={13} />
+                  <span className="wfc-overflow-label">{ui('撤销', 'Undo')}</span>
+                </button>,
+                <button
+                  key="redo"
+                  type="button"
+                  className="wfc-btn"
+                  onClick={redo}
+                  disabled={readOnly}
+                  aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
+                  title={editorText('重做（Ctrl+Shift+Z）', t)}
+                >
+                  <Redo2 size={13} />
+                  <span className="wfc-overflow-label">{ui('重做', 'Redo')}</span>
+                </button>,
+              ]}
+            >
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => void runCheck()}
+                title={editorText('后端权威校验', t)}
+              >
+                <CircleCheckBig size={13} /> {editorText('检查', t)}
+              </button>
+              <button
+                type="button"
+                className="wfc-btn"
+                aria-pressed={detailedNodes}
+                onClick={() => setDetailedNodes(value => !value)}
+              >
+                {t(
+                  detailedNodes
+                    ? 'workflowEditor.summary.compact'
+                    : 'workflowEditor.summary.detail',
+                )}
+              </button>
 
-      {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}
-      {intentFormOpen && (
-        <IntentFormPanel
-          initialName={ir.name}
-          onSubmit={submitIntentForm}
-          onClose={() => setIntentFormOpen(false)}
-        />
-      )}
-
-      {/* ── 外部输入收集弹层（声明了 inputs 时运行前必填收集；表单实现与运行确认弹窗同源） ── */}
-      <WorkflowInputsDialog
-        open={inputsOpen}
-        specs={declaredInputs}
-        resetToken={workflowId}
-        title={ir ? `启动工作流 · ${ir.name}` : '启动工作流 · 外部输入'}
-        running={snapshot.running}
-        onConfirm={inputs => void runWithInputs(inputs)}
-        onCancel={() => setInputsOpen(false)}
-      />
-      <WorkflowInputsEditor
-        open={inputsEditorOpen}
-        specs={ir.inputs ?? NO_INPUT_SPECS}
-        readOnly={readOnly}
-        focusName={inputsEditorFocus}
-        onApply={inputs => {
-          editRevision.current++
-          if (irRef.current) irRef.current = { ...irRef.current, inputs }
-          setIr(current => (current ? { ...current, inputs } : current))
-          setDirty(true)
-          setInputsEditorOpen(false)
-        }}
-        onCancel={() => setInputsEditorOpen(false)}
-      />
-      <WorkflowScheduleDialog
-        open={scheduleOpen}
-        workflow={{
-          id: ir.id,
-          title: ir.name,
-          inputs: ir.inputs,
-          schedule: ir.schedule ?? null,
-        }}
-        readOnly={snapshot.running || gateLocked}
-        onClose={() => setScheduleOpen(false)}
-        onChanged={schedule => setIr(current => (current ? { ...current, schedule } : current))}
-      />
-
-      {/* ── 确认弹窗 ── */}
-      {confirm && (
-        <div className="wfc-confirm-mask">
-          <div className="wfc-confirm">
-            <div className="wfc-confirm-msg">{confirm.message}</div>
-            <div className="wfc-confirm-actions">
               <button
                 type="button"
                 className="wfc-btn"
                 onClick={() => {
-                  confirm.resolve(false)
-                  setConfirm(null)
+                  setInputsEditorFocus(null)
+                  setInputsEditorOpen(true)
                 }}
+                title={
+                  readOnly
+                    ? editorText('运行中 · 画布只读', t)
+                    : editorText('编辑工作流外部输入声明', t)
+                }
               >
-                取消
+                <Braces size={13} /> {editorText('外部输入', t)}
               </button>
+
+              {replayRunId && onExitReplay && (
+                <button
+                  type="button"
+                  className="wfc-btn wfc-btn--primary"
+                  onClick={onExitReplay}
+                  title={editorText('返回当前工作流画布', t)}
+                >
+                  {editorText('返回当前画布', t)}
+                </button>
+              )}
+
               <button
                 type="button"
-                className="wfc-btn wfc-btn--primary"
-                onClick={() => {
-                  confirm.resolve(true)
-                  setConfirm(null)
-                }}
+                className="wfc-btn"
+                onClick={() => setScheduleOpen(true)}
+                title={
+                  ir.schedule?.enabled
+                    ? editorText('定时运行已启用', t)
+                    : editorText('设置定时运行', t)
+                }
               >
-                确认
+                <Clock3 size={13} /> {editorText('定时', t)}
+                {ir.schedule && (
+                  <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
+                )}
               </button>
-            </div>
+
+              <button
+                type="button"
+                className="wfc-btn"
+                onClick={() => {
+                  playUiSound('switch')
+                  setIntentFormOpen(true)
+                }}
+                disabled={readOnly}
+                title={
+                  readOnly
+                    ? snapshot.running
+                      ? editorText('运行中 · 画布只读', t)
+                      : editorText('只读画布，不可发起意图', t)
+                    : editorText('用阶段 + 子步骤描述要做的事，交给 AI 整理为工作流', t)
+                }
+              >
+                <ListChecks size={13} /> {editorText('意图表单', t)}
+              </button>
+            </ToolbarOverflow>
           </div>
         </div>
-      )}
-    </div>
+
+        {/* ── 横幅区 ── */}
+        {projection.index.hasCustomNodes && (
+          <div className="wfc-banner wfc-banner--error">
+            <strong>{editorText('格式不兼容：', t)}</strong>
+            {editorText(
+              '本工作流包含旧格式节点，画布已切换为只读。 可通过 AI\n          对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。',
+              t,
+            )}
+          </div>
+        )}
+        {(lastRunError || lastRunPaused) && !projection.index.hasCustomNodes && (
+          <div className="wfc-banner wfc-banner--warning">
+            {lastRunError
+              ? `${ui('上次运行失败', 'Previous run failed')} ${anchorStepName ?? ''}. ${ui('点击「运行」将从头完整执行，不再续连上次进度。', 'Run will restart the entire workflow, including previously completed steps.')}`
+              : `${ui('上次运行已暂停', 'Previous run paused')} ${anchorStepName ?? ''}. ${ui('点击「续跑」将跳过已完成步骤，从暂停处继续。', 'Resume will skip completed steps and continue from the pause.')}`}
+          </div>
+        )}
+        {replayRunId && (
+          <div className="wfc-banner wfc-banner--info">
+            {replayLoading
+              ? editorText('正在加载定时运行历史…', t)
+              : `${ui('历史回放', 'History replay')} · ${replayRecord ? new Date(replayRecord.started_at).toLocaleString() : editorText('记录不可用', t)} · ${replayRecord ? (typeof replayRecord.status === 'string' ? replayRecord.status : editorText('失败', t)) : ''}`}
+            <span className="wfc-replay-hint">
+              {editorText('当前为只读状态，返回后可继续编辑当前画布。', t)}
+            </span>
+          </div>
+        )}
+        {notice && (
+          <div className="wfc-banner wfc-banner--info">
+            {notice}
+            <button type="button" className="wfc-icon-btn" onClick={() => setNotice(null)}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        {snapshot.running && (
+          <div className="wfc-banner wfc-banner--running">
+            {editorText('运行中 —— 画布已锁定为只读，防止编辑-执行竞态', t)}
+          </div>
+        )}
+
+        {/* ── 面包屑 ── */}
+        <div className="wfc-breadcrumb" ref={breadcrumbRef}>
+          {layer && layer.parentChain.length > 0 && (
+            <button
+              type="button"
+              className="wfc-icon-btn"
+              title={editorText('返回父层（Alt+←）', t)}
+              onClick={() => switchLayer(layer.parentChain[layer.parentChain.length - 1])}
+            >
+              <CornerUpLeft size={14} />
+            </button>
+          )}
+          {breadcrumb.map((b, i) => (
+            <span key={b.id} className="wfc-crumb-wrap">
+              {i > 0 && <span className="wfc-crumb-sep">/</span>}
+              <button
+                type="button"
+                data-layer-id={b.id}
+                className={`wfc-crumb${b.id === layerId ? ' is-active' : ''}`}
+                onClick={() => switchLayer(b.id)}
+                title={
+                  readOnly
+                    ? b.label
+                    : `${b.label} (${ui('可拖拽节点到此移入该层', 'Drop a node here to move it to this layer')})`
+                }
+              >
+                {b.label}
+              </button>
+            </span>
+          ))}
+          <span className="wfc-crumb-hint">
+            {editorText('双击容器进入子层 · Alt+← 返回父层', t)}
+          </span>
+        </div>
+
+        {/* ── 画布主体 ── */}
+        <div className="wfc-canvas-wrap">
+          {/* NodeActionsContext：节点 hover 操作（阶段 4）；readOnly 时注入 null 隐藏操作条 */}
+          <InputAnchorActionsContext.Provider value={inputAnchorActions}>
+            <NodeActionsContext.Provider value={readOnly ? null : nodeActions}>
+              <ReactFlow
+                nodes={flowNodes}
+                edges={flowEdges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
+                onNodeDrag={onNodeDrag}
+                onNodeDragStop={onNodeDragStop}
+                onNodeClick={onNodeClick}
+                onNodeDoubleClick={onNodeDoubleClick}
+                onPaneClick={() => {
+                  setSelectedId(null)
+                  setSelectedIds([])
+                  setInspectorOpen(false)
+                }}
+                onDragOver={onToolDragOver}
+                onDrop={onToolDrop}
+                nodesConnectable={false}
+                multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
+                edgesFocusable={false}
+                deleteKeyCode={null}
+                fitView
+                minZoom={0.2}
+                maxZoom={2}
+                proOptions={{ hideAttribution: false }}
+              >
+                <Background variant={BackgroundVariant.Lines} gap={24} color="var(--line-1)" />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </NodeActionsContext.Provider>
+          </InputAnchorActionsContext.Provider>
+
+          {/* ── 拖拽插入指示线（阶段 3：重排前视觉反馈；松手后按 dragInsertRef 决定是否重排）── */}
+          {dragInsertScreen && (
+            <div
+              className="wfc-insert-hint"
+              style={{
+                left: dragInsertScreen.x,
+                top: dragInsertScreen.y,
+                width: dragInsertScreen.horizontal ? 2 : 96,
+                height: dragInsertScreen.horizontal ? 96 : 2,
+                transform: dragInsertScreen.horizontal
+                  ? 'translate(-1px, -48px)'
+                  : 'translate(-48px, -1px)',
+              }}
+            />
+          )}
+
+          {/* ── 工具面板（左侧分类竖条；只读时禁用，定位/增步均走 applyEdit 管线）── */}
+          <ToolPalette disabled={readOnly} onAdd={tool => void addToolStep(tool)} />
+
+          {/* ── 结构大纲（右下角，替代 MiniMap；定位是纯视图操作，readOnly/运行中均可用）── */}
+          <OutlinePanel
+            steps={steps}
+            selectedId={selectedId}
+            statuses={outlineStatus}
+            onLocate={locateNode}
+          />
+
+          {inspectorSteps.map(inspectorStep => (
+            <div
+              key={inspectorStep.id}
+              data-inspector-node={inspectorStep.id}
+              hidden={!inspectorOpen || inspectorStep.id !== selectedId}
+            >
+              <InspectorDraftContext.Provider
+                value={{ store: draftStore, nodeId: inspectorStep.id }}
+              >
+                <Inspector
+                  step={inspectorStep}
+                  variableCatalog={{
+                    references: [
+                      ...(variableIndex.beforeStep.get(inspectorStep.id)?.values() ?? []),
+                    ],
+                    captures: variableIndex.captures,
+                  }}
+                  captureConsumers={captureConsumers.get(inspectorStep.id)}
+                  loopConditionCatalog={{
+                    references: [
+                      ...(variableIndex.loopConditionScope.get(inspectorStep.id)?.values() ?? []),
+                    ],
+                    captures: variableIndex.captures,
+                  }}
+                  onLocateReference={locateNode}
+                  onConfigureInput={name => {
+                    setInputsEditorFocus(name.replace(/^inputs\./, ''))
+                    setInputsEditorOpen(true)
+                  }}
+                  readOnly={readOnly}
+                  idReferenced={(ir.run_history ?? []).some(r =>
+                    (Array.isArray(r.steps) ? (r.steps as { step_id?: string }[]) : []).some(
+                      s => s.step_id === inspectorStep.id,
+                    ),
+                  )}
+                  lastOutput={snapshot.outputs.get(inspectorStep.id)}
+                  focusToolId={toolFocusId}
+                  onPatch={patch => {
+                    if (
+                      patch.capture &&
+                      inspectorStep.capture &&
+                      patch.capture !== inspectorStep.capture
+                    )
+                      return requestVariableRename(inspectorStep.id, patch.capture)
+                    return applyEdit({ op: 'update_fields', stepId: inspectorStep.id, patch })
+                  }}
+                  onPatchAction={action => {
+                    const before = (inspectorStep.do as { loop?: { for_each?: { as?: string } } })
+                      .loop?.for_each
+                    const after = (action as { loop?: { for_each?: { as?: string } } }).loop
+                      ?.for_each
+                    if (before && after && (after.as || 'item') !== (before.as || 'item'))
+                      return requestVariableRename(inspectorStep.id, after.as || 'item', 'item')
+                    return applyEdit({
+                      op: 'update_fields',
+                      stepId: inspectorStep.id,
+                      patch: { do: action },
+                    })
+                  }}
+                  onClose={closeInspector}
+                />
+              </InspectorDraftContext.Provider>
+            </div>
+          ))}
+        </div>
+
+        {/* ── 连线中点「在此插入」菜单（fixed 定位在圆点屏幕坐标旁；复用 wfc-add-item 项样式）── */}
+        {edgeInsert && (
+          <div
+            ref={edgeMenuWrapRef}
+            className="wfc-add-menu wfc-edge-add-menu"
+            style={{
+              left: Math.max(8, Math.min(edgeInsert.x + 12, window.innerWidth - 296)),
+              top: Math.max(8, Math.min(edgeInsert.y + 12, window.innerHeight - 400)),
+            }}
+          >
+            <div className="wfc-edge-add-title">
+              {edgeTargetName
+                ? t('workflowCanvas.add.before', edgeTargetName)
+                : t('workflowCanvas.add.insert')}
+            </div>
+            {ADDABLE_KINDS.map(kind => (
+              <button
+                type="button"
+                key={kind}
+                className="wfc-add-item"
+                aria-label={nodeKindLabel(kind, t)}
+                title={`${nodeKindLabel(kind, t)} (${kind}) — ${nodeKindDescription(kind, t)}`}
+                onClick={() => void insertAtEdge(kind)}
+              >
+                <span className="wfc-add-item-kind">{nodeKindLabel(kind, t)}</span>
+                <span className="wfc-add-item-desc">{nodeKindDescription(kind, t)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── 问题面板 ── */}
+        <ProblemsPanel
+          problems={problems}
+          backendReport={backendReport}
+          timeline={snapshot.timeline}
+          running={snapshot.running}
+          runHistory={
+            replayRecord
+              ? [
+                  {
+                    ...replayRecord,
+                    variables_snapshot: {},
+                  } as RunRecord,
+                ]
+              : (ir.run_history ?? [])
+          }
+          replay={!!replayRunId}
+          onLocate={locateNode}
+          nameOf={id =>
+            replayRecord?.step_names?.[id] ?? projection.index.nodeById.get(id)?.name ?? id
+          }
+        />
+
+        {/* ── 意图表单弹层（画布顶部「意图表单」入口；不启动录制、不改画布 dirty） ── */}
+        {debugOpen && (debugTarget || selectedId) && (
+          <WorkflowDebugPanel
+            workflowId={workflowId}
+            steps={steps}
+            inputs={declaredInputs}
+            selected={locateStep(steps, debugTarget || selectedId!)?.step ?? selectedStep!}
+            blocked={gateLocked}
+            runId={debugRunId}
+            onRunStarted={id => {
+              setDebugRunId(id)
+              void gateRefresh()
+            }}
+            onLocateIssue={(stepId, fieldPath) => {
+              setDebugOpen(false)
+              locateNode(stepId, fieldPath)
+            }}
+            onClose={keepRunning => {
+              setDebugOpen(false)
+              if (!keepRunning) {
+                setDebugRunId(null)
+                setDebugTarget(null)
+              }
+            }}
+          />
+        )}
+        {traceOpen && (
+          <div className="wfc-intent-mask" onClick={() => setTraceOpen(false)}>
+            <div
+              className="wfc-intent"
+              role="dialog"
+              aria-modal="true"
+              aria-label={ui('运行详情', 'Execution details')}
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="wfc-intent-head">
+                <h3>{ui('运行详情', 'Execution details')}</h3>
+                <button className="wfc-btn" onClick={() => setTraceOpen(false)}>
+                  {t('common.close')}
+                </button>
+              </div>
+              <div className="wfc-intent-body">
+                <ExecutionTraceViewer
+                  workflowId={workflowId}
+                  stepId={selectedId ?? undefined}
+                  refreshKey={snapshot.timeline.length}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        {scopedEditOpen && (
+          <ScopedEditDialog
+            steps={steps}
+            inputs={declaredInputs}
+            selectedIds={
+              selectedIds.length
+                ? selectedIds.filter(id => !!locateStep(steps, id))
+                : selectedId
+                  ? [selectedId]
+                  : []
+            }
+            disabled={readOnly || gateLocked}
+            onClose={() => setScopedEditOpen(false)}
+            onApply={next => {
+              if (readOnly || gateLocked || !stepsRef.current) return
+              historyRef.current.push(stepsRef.current)
+              stepsRef.current = next
+              setSteps(next)
+              editRevision.current++
+              setDirty(true)
+            }}
+          />
+        )}
+        {renameDialog && (
+          <VariableRenameDialog
+            preview={renameDialog.preview}
+            onCancel={() => {
+              renameDialog.resolve(false)
+              setRenameDialog(null)
+            }}
+            onApply={choices => {
+              try {
+                if (!stepsRef.current || readOnly) return
+                const next = applyVariableRename(stepsRef.current, renameDialog.preview, choices)
+                historyRef.current.push(stepsRef.current)
+                stepsRef.current = next
+                setSteps(next)
+                editRevision.current++
+                setDirty(true)
+                renameDialog.resolve(true)
+                setRenameDialog(null)
+              } catch {
+                setNotice(t('workflowEditor.rename.stale'))
+              }
+            }}
+          />
+        )}
+        {intentFormOpen && (
+          <IntentFormPanel
+            key={workflowId}
+            workflowId={workflowId}
+            initialName={ir.name}
+            onSubmit={submitIntentForm}
+            onClose={() => setIntentFormOpen(false)}
+          />
+        )}
+
+        {/* ── 外部输入收集弹层（声明了 inputs 时运行前必填收集；表单实现与运行确认弹窗同源） ── */}
+        <WorkflowInputsDialog
+          open={inputsOpen}
+          specs={declaredInputs}
+          resetToken={workflowId}
+          title={
+            ir
+              ? `${ui('启动工作流', 'Run workflow')} · ${ir.name}`
+              : editorText('启动工作流 · 外部输入', t)
+          }
+          running={snapshot.running}
+          onConfirm={inputs => void runWithInputs(inputs)}
+          onCancel={() => setInputsOpen(false)}
+        />
+        <WorkflowInputsEditor
+          open={inputsEditorOpen}
+          specs={ir.inputs ?? NO_INPUT_SPECS}
+          readOnly={readOnly}
+          focusName={inputsEditorFocus}
+          onApply={inputs => {
+            editRevision.current++
+            if (irRef.current) irRef.current = { ...irRef.current, inputs }
+            setIr(current => (current ? { ...current, inputs } : current))
+            setDirty(true)
+            setInputsEditorOpen(false)
+          }}
+          onCancel={() => setInputsEditorOpen(false)}
+        />
+        <WorkflowScheduleDialog
+          open={scheduleOpen}
+          workflow={{
+            id: ir.id,
+            title: ir.name,
+            inputs: ir.inputs,
+            schedule: ir.schedule ?? null,
+          }}
+          readOnly={snapshot.running || gateLocked}
+          onClose={() => setScheduleOpen(false)}
+          onChanged={schedule => setIr(current => (current ? { ...current, schedule } : current))}
+        />
+
+        {/* ── 确认弹窗 ── */}
+        {confirm && (
+          <div className="wfc-confirm-mask">
+            <div className="wfc-confirm">
+              <div className="wfc-confirm-msg">{confirm.message}</div>
+              <div className="wfc-confirm-actions">
+                <button
+                  type="button"
+                  className="wfc-btn"
+                  onClick={() => {
+                    confirm.resolve(false)
+                    setConfirm(null)
+                  }}
+                >
+                  {editorText('取消', t)}
+                </button>
+                <button
+                  type="button"
+                  className="wfc-btn wfc-btn--primary"
+                  onClick={() => {
+                    confirm.resolve(true)
+                    setConfirm(null)
+                  }}
+                >
+                  {editorText('确认', t)}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </WorkflowTraceContext.Provider>
   )
 }
 
