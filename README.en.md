@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.18 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.21 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -272,20 +272,35 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 
 ## Acknowledgements
 
-### v0.2.18 Contributors
+### v0.2.21 Contributors
 
 Thanks to the community contributors who submitted pull requests in this release:
 
 | Contributor | PR | Summary |
 |-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#40](https://github.com/mrpulor-gh/nuphus/pull/40) | Fix current-state display of uninitialized workflow sessions |
-| [@yuansui486](https://github.com/yuansui486) | [#42](https://github.com/mrpulor-gh/nuphus/pull/42) | Workflow external inputs, scheduled runs and run replay |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#43](https://github.com/mrpulor-gh/nuphus/pull/43) | Move the "current" marker to the session row; adjust the new-chat entry |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#44](https://github.com/mrpulor-gh/nuphus/pull/44) | Create-project dialog: generate a draft chat inside the target folder |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#45](https://github.com/mrpulor-gh/nuphus/pull/45) | Backfill project paths for history sessions by exact tag matching |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#46](https://github.com/mrpulor-gh/nuphus/pull/46) | Ctrl/Cmd+Enter inserts a newline; only Enter sends |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#47](https://github.com/mrpulor-gh/nuphus/pull/47) | Main and splash window corners use the system rounding |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#48](https://github.com/mrpulor-gh/nuphus/pull/48) | Menu / drawer "click-outside" uses capture-phase pointerdown |
+| [@yuansui486](https://github.com/yuansui486) | [#58](https://github.com/mrpulor-gh/nuphus/pull/58) | Improve cross-platform desktop execution reliability and workflow progress reporting |
+| [@yuansui486](https://github.com/yuansui486) | [#59](https://github.com/mrpulor-gh/nuphus/pull/59) | Fix canvas workstation window dragging; add a prototype light/dark toggle |
+| [@yuansui486](https://github.com/yuansui486) | [#61](https://github.com/mrpulor-gh/nuphus/pull/61) | Refine workflow node forms, variable selection and canvas layout |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#63](https://github.com/mrpulor-gh/nuphus/pull/63) | Add a TypeSafe console link to the enhanced-judgement model API key row |
+
+### v0.2.20 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@yuansui486](https://github.com/yuansui486) | [#56](https://github.com/mrpulor-gh/nuphus/pull/56) | Improve cross-platform target binding, semantic observation and stable replay |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#57](https://github.com/mrpulor-gh/nuphus/pull/57) | View desktop-local images on mobile: new /file endpoint with inline rendering |
+
+### v0.2.19 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@yuansui486](https://github.com/yuansui486) | [#52](https://github.com/mrpulor-gh/nuphus/pull/52) | Semantic desktop automation foundation (UIA/Accessibility): observation, bounded candidates, pre/post execution verification |
+| [@yuansui486](https://github.com/yuansui486) | [#54](https://github.com/mrpulor-gh/nuphus/pull/54) | Enhanced judgement model: standalone configuration with structured selection from local bounded candidates |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#50](https://github.com/mrpulor-gh/nuphus/pull/50) | Harden log rotation: rename failures no longer lose history |
 
 Contributors of earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
 
