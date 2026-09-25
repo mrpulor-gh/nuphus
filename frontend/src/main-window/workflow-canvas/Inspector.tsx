@@ -27,6 +27,8 @@ import { NodeKindBadge } from './NodeKindBadge'
 import { variableSourceLabel } from './presentation'
 import { actionSummary } from './actionSummary'
 import { editorFieldId, editorFieldLabel } from './editorFields'
+import { WorkflowTraceContext } from './WorkflowTraceContext'
+import { ExecutionTraceViewer } from './ExecutionTraceViewer'
 
 const VariableContext = createContext<{
   catalog: VariableCatalog
@@ -43,6 +45,7 @@ interface InspectorProps {
   /** 新建节点待聚焦的工具输入框（step.id 匹配时 autofocus，消费一次） */
   focusToolId?: string | null
   variableCatalog?: VariableCatalog
+  loopConditionCatalog?: VariableCatalog
   onConfigureInput?: (name: string) => void
   captureConsumers?: { id: string; name: string }[]
   onLocateReference?: (stepId: string) => void
@@ -195,6 +198,17 @@ function TextField({
           catalog={variables.catalog}
           label={t('workflowCanvas.variable.insert', label)}
           onConfigureInput={variables.onConfigureInput}
+          onSelectReference={name => {
+            const start = textRef.current?.selectionStart ?? draft.length
+            const end = textRef.current?.selectionEnd ?? start
+            const token = `{{${name}}}`
+            setDraft(draft.slice(0, start) + token + draft.slice(end))
+            setVariableQuery('')
+            requestAnimationFrame(() => {
+              textRef.current?.focus()
+              textRef.current?.setSelectionRange(start + token.length, start + token.length)
+            })
+          }}
           onChange={name => {
             setVariableQuery(name)
             if (!variables.catalog.references.some(v => v.name === name)) return
@@ -708,6 +722,7 @@ export function Inspector({
   lastOutput,
   focusToolId,
   variableCatalog = { references: [], captures: [] },
+  loopConditionCatalog,
   onConfigureInput,
   captureConsumers,
   onLocateReference,
@@ -716,6 +731,8 @@ export function Inspector({
   onClose,
 }: InspectorProps) {
   const { t } = useLanguage()
+  const traceContext = useContext(WorkflowTraceContext)
+  const [traceOpen, setTraceOpen] = useState(false)
   const kind = stepKind(step)
   const [parameterReset, setParameterReset] = useState(0)
   const d = step.do as Record<string, unknown>
@@ -899,7 +916,12 @@ export function Inspector({
                 return onPatch({ timeout_secs: v.trim() ? Number(v) : undefined })
               }}
             />
-            {!['seq', 'if', 'mcp'].includes(kind) && (
+            {kind === 'script' && (
+              <div className="wfc-inspector-hint">
+                {editorText('脚本默认超时为 120 秒，可在上方修改。', t)}
+              </div>
+            )}
+            {!['seq', 'if', 'mcp', 'script'].includes(kind) && (
               <div className="wfc-inspector-hint">
                 {editorText('此类步骤暂不使用上述超时字段。', t)}
                 {kind === 'script'
@@ -1219,7 +1241,14 @@ export function Inspector({
               />
             </>
           )}
-          {kind === 'loop' && <LoopEditor d={d} readOnly={readOnly} onPatch={patchActionKey} />}
+          {kind === 'loop' && (
+            <LoopEditor
+              d={d}
+              readOnly={readOnly}
+              onPatch={patchActionKey}
+              conditionCatalog={loopConditionCatalog}
+            />
+          )}
           {kind === 'wait' && (
             <TextField
               label="等待目标"
@@ -1318,6 +1347,12 @@ export function Inspector({
               <pre className="wfc-output-preview">{lastOutput.join('\n')}</pre>
             </>
           )}
+          {traceContext && (
+            <details open={traceOpen} onToggle={event => setTraceOpen(event.currentTarget.open)}>
+              <summary>{t('workflowEditor.problem.history')}</summary>
+              {traceOpen && <ExecutionTraceViewer stepId={step.id} />}
+            </details>
+          )}
         </div>
       </aside>
     </VariableContext.Provider>
@@ -1402,12 +1437,15 @@ function LoopEditor({
   d,
   readOnly,
   onPatch,
+  conditionCatalog,
 }: {
   d: Record<string, unknown>
   readOnly: boolean
   onPatch: (key: string, v: unknown) => void
+  conditionCatalog?: VariableCatalog
 }) {
   const { t } = useLanguage()
+  const variables = useContext(VariableContext)
   const def = (d.loop ?? {}) as Record<string, unknown>
   const mode = def.for_each
     ? 'for_each'
@@ -1486,12 +1524,16 @@ function LoopEditor({
         />
       )}
       {mode === 'until' && (
-        <ConditionEditor
-          fieldPath="/do/loop/until"
-          value={def.until as Condition}
-          readOnly={readOnly}
-          onChange={c => onPatch('loop', { ...def, until: c })}
-        />
+        <VariableContext.Provider
+          value={{ ...variables, catalog: conditionCatalog ?? variables.catalog }}
+        >
+          <ConditionEditor
+            fieldPath="/do/loop/until"
+            value={def.until as Condition}
+            readOnly={readOnly}
+            onChange={c => onPatch('loop', { ...def, until: c })}
+          />
+        </VariableContext.Provider>
       )}
       <TextField
         label="最多循环次数 max（默认 100）"

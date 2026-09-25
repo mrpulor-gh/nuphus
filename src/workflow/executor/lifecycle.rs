@@ -36,6 +36,13 @@ impl Executor {
 
     /// 检查取消标志，被取消时返回 Err
     pub(super) async fn check_cancel(&self, workflow_id: &str) -> crate::Result<()> {
+        if let Some(session) = crate::workflow::debug::current() {
+            session.check_budget()?;
+            // Empty loops must yield too, otherwise the wall-clock timeout cannot be polled.
+            tokio::task::yield_now().await;
+        }
+        let root = crate::workflow::trace::current().map(|trace| trace.workflow_id.clone());
+        let workflow_id = root.as_deref().unwrap_or(workflow_id);
         if let Some(flag) = self.cancel_flags.read().await.get(workflow_id) {
             if flag.load(Ordering::Relaxed) {
                 return Err(crate::NuphusError::Agent(crate::AgentError::Other(
@@ -61,6 +68,8 @@ impl Executor {
         store: Option<&WorkflowStore>,
         variables: Option<&HashMap<String, serde_json::Value>>,
     ) -> crate::Result<()> {
+        let root = crate::workflow::trace::current().map(|trace| trace.workflow_id.clone());
+        let workflow_id = root.as_deref().unwrap_or(workflow_id);
         let notifies = self.pause_notifies.read().await;
         if let Some(notify) = notifies.get(workflow_id) {
             let notify = notify.clone();
@@ -85,7 +94,14 @@ impl Executor {
                 step_name: step_name.to_string(),
                 reason: "用户暂停".to_string(),
             });
+            if let Some(trace) = crate::workflow::trace::current() {
+                trace.status("paused").await;
+            }
             notify.notified().await;
+            self.check_cancel(workflow_id).await?;
+            if let Some(trace) = crate::workflow::trace::current() {
+                trace.status("running").await;
+            }
             // 唤醒后检查：是否因取消而唤醒（cancel 会移除通知器并 notify_one）
             if let Some(flag) = self.cancel_flags.read().await.get(workflow_id) {
                 if flag.load(Ordering::Relaxed) {

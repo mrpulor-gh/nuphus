@@ -65,12 +65,6 @@ impl Executor {
                 scope.insert("_index".to_string(), serde_json::Value::from(i as i64));
 
                 for sub in &def.steps {
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-                    if sub.kind_str() == "continue" {
-                        break;
-                    }
                     self.execute_step(
                         sub,
                         depth + 1,
@@ -86,6 +80,14 @@ impl Executor {
                         run_record,
                     )
                     .await?;
+
+                    if sub.kind_str() == "break" {
+                        return Ok("loop_broken".to_string());
+                    }
+
+                    if sub.kind_str() == "continue" {
+                        break;
+                    }
                 }
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
@@ -114,12 +116,6 @@ impl Executor {
                 scope.insert("_index".to_string(), serde_json::Value::from(i as i64));
 
                 for sub in &def.steps {
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-                    if sub.kind_str() == "continue" {
-                        break;
-                    }
                     self.execute_step(
                         sub,
                         depth + 1,
@@ -135,6 +131,14 @@ impl Executor {
                         run_record,
                     )
                     .await?;
+
+                    if sub.kind_str() == "break" {
+                        return Ok("loop_broken".to_string());
+                    }
+
+                    if sub.kind_str() == "continue" {
+                        break;
+                    }
                 }
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
@@ -162,12 +166,6 @@ impl Executor {
 
                 let mut scope = variables.clone();
                 for sub in &def.steps {
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-                    if sub.kind_str() == "continue" {
-                        break;
-                    }
                     self.execute_step(
                         sub,
                         depth + 1,
@@ -183,12 +181,22 @@ impl Executor {
                         run_record,
                     )
                     .await?;
+
+                    if sub.kind_str() == "break" {
+                        return Ok("loop_broken".to_string());
+                    }
+
+                    if sub.kind_str() == "continue" {
+                        break;
+                    }
                 }
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
                 }
 
                 // 检查终止条件
+                crate::workflow::references::validate_until(until_cond, variables)
+                    .map_err(crate::NuphusError::agent)?;
                 if super::variables::eval_condition(until_cond, variables) {
                     return Ok("loop_until_met".to_string());
                 }
@@ -199,12 +207,6 @@ impl Executor {
         // No loop mode specified → single pass
         let mut scope = variables.clone();
         for sub in &def.steps {
-            if sub.kind_str() == "break" {
-                return Ok("loop_broken".to_string());
-            }
-            if sub.kind_str() == "continue" {
-                break;
-            }
             self.execute_step(
                 sub,
                 depth + 1,
@@ -220,6 +222,14 @@ impl Executor {
                 run_record,
             )
             .await?;
+
+            if sub.kind_str() == "break" {
+                return Ok("loop_broken".to_string());
+            }
+
+            if sub.kind_str() == "continue" {
+                break;
+            }
         }
         for (k, v) in &scope {
             variables.insert(k.clone(), v.clone());

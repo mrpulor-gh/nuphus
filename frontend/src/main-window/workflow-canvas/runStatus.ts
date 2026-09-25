@@ -77,7 +77,11 @@ function terminalText(raw: unknown): string {
  * 订阅指定 workflow 的执行事件。
  * 返回 dispose；onChange 在 rAF 合帧后以新快照回调（不可变语义）。
  */
-export function subscribeRunStatus(workflowId: string, onChange: Listener): () => void {
+export function subscribeRunStatus(
+  workflowId: string,
+  onChange: Listener,
+  t: (key: string, ...args: string[]) => string,
+): () => void {
   let steps = new Map<string, StepVisualStatus>()
   let outputs = new Map<string, string[]>()
   let running = false
@@ -161,7 +165,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         running = true
         lastTerminal = undefined
         dirtyMeta = true
-        appendLog('run_started', 'info', '工作流开始运行', payload)
+        appendLog('run_started', 'info', t('workflowEditor.run.started'), payload)
         schedule()
         break
       }
@@ -174,7 +178,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         appendLog(
           type,
           'info',
-          `开始 · ${String(payload.step_name ?? payload.step_id ?? '')}`,
+          t('workflowEditor.run.stepStarted', String(payload.step_name ?? payload.step_id ?? '')),
           payload,
         )
         schedule()
@@ -187,7 +191,12 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           ...pending.get(id),
           status: { state: 'retrying', attempt: Number(payload.attempt ?? 0) },
         })
-        appendLog(type, 'warning', `第 ${Number(payload.attempt ?? 0)} 次重试`, payload)
+        appendLog(
+          type,
+          'warning',
+          t('workflowEditor.run.retry', String(payload.attempt ?? 0)),
+          payload,
+        )
         schedule()
         break
       }
@@ -212,8 +221,11 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
           type,
           st.state === 'error' ? 'error' : st.state === 'skipped' ? 'warning' : 'success',
           st.state === 'error'
-            ? `失败 · ${String(payload.step_name ?? id)} · ${st.message ?? ''}`
-            : `${st.state === 'skipped' ? '跳过' : '完成'} · ${String(payload.step_name ?? id)}`,
+            ? t('workflowEditor.run.stepFailed', String(payload.step_name ?? id), st.message ?? '')
+            : t(
+                `workflowEditor.run.${st.state === 'skipped' ? 'skipped' : 'completed'}`,
+                String(payload.step_name ?? id),
+              ),
           payload,
         )
         schedule()
@@ -222,11 +234,23 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
       case 'step_run_paused': {
         if (!running) return
         const id = String(payload.step_id)
-        pending.set(id, {
-          ...pending.get(id),
-          status: { state: 'paused', reason: String(payload.reason ?? '') },
-        })
-        appendLog(type, 'warning', `暂停 · ${String(payload.reason ?? '')}`, payload)
+        if (payload.reason !== 'debug_after_step') {
+          pending.set(id, {
+            ...pending.get(id),
+            status: { state: 'paused', reason: String(payload.reason ?? '') },
+          })
+        }
+        appendLog(
+          type,
+          'warning',
+          t(
+            'workflowEditor.run.paused',
+            payload.reason === 'debug_after_step'
+              ? t('workflowEditor.run.breakpoint')
+              : String(payload.reason ?? ''),
+          ),
+          payload,
+        )
         schedule()
         break
       }
@@ -238,7 +262,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         appendLog(
           type,
           lastTerminal.startsWith('Error') ? 'error' : 'success',
-          `运行结束 · ${lastTerminal}`,
+          t('workflowEditor.run.finished', lastTerminal),
           payload,
         )
         dirtyMeta = true
@@ -247,7 +271,7 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
       }
       case 'error': {
         if (!running) return
-        appendLog(type, 'error', String(payload.message ?? '执行失败'), payload)
+        appendLog(type, 'error', String(payload.message ?? t('workflowEditor.run.failed')), payload)
         schedule()
         break
       }
@@ -258,7 +282,10 @@ export function subscribeRunStatus(workflowId: string, onChange: Listener): () =
         appendLog(
           type,
           started ? 'info' : payload.success === false ? 'error' : 'success',
-          `${started ? '进入' : '结束'}子工作流 · ${String(payload.workflow_name ?? payload.workflow_id ?? '')}`,
+          t(
+            `workflowEditor.run.${started ? 'childStarted' : 'childCompleted'}`,
+            String(payload.workflow_name ?? payload.workflow_id ?? ''),
+          ),
           payload,
         )
         schedule()

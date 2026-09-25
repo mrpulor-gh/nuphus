@@ -213,6 +213,23 @@ impl Ctx<'_> {
     /// 其余变量沿用前向引用 warning 语义。
     fn check_var_ref(&mut self, r: &crate::workflow::types::VarRef, owner: &str) {
         if let crate::workflow::types::VarRef::Var { var } = r {
+            if let Some(reference) = crate::workflow::references::parse_field_reference(var) {
+                if reference.root == "inputs" {
+                    if let Some(crate::workflow::references::Segment::Key(name)) =
+                        reference.segments.first()
+                    {
+                        self.note_input_ref(name);
+                    }
+                } else {
+                    self.check_var_ref(
+                        &crate::workflow::types::VarRef::Var {
+                            var: reference.root,
+                        },
+                        owner,
+                    );
+                }
+                return;
+            }
             if let Some(name) = var.strip_prefix("inputs.") {
                 if let Some(first) = name.split('.').next() {
                     self.note_input_ref(first);
@@ -286,18 +303,27 @@ impl Ctx<'_> {
                     return;
                 }
                 let re = VAR_REF_RE.get_or_init(|| {
-                    regex::Regex::new(r"\{\{\s*([A-Za-z_]\w*)")
+                    regex::Regex::new(r"^\s*([A-Za-z_]\w*)")
                         .expect("var ref regex is statically valid")
                 });
-                let found: Vec<String> = re
-                    .captures_iter(s)
-                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                let found: Vec<String> = crate::workflow::references::template_spans(s)
+                    .into_iter()
+                    .filter(|(_, _, body)| !body.trim().starts_with("ENV:"))
+                    .filter_map(|(_, _, body)| {
+                        crate::workflow::references::parse_field_reference(body)
+                            .map(|reference| reference.root)
+                            .or_else(|| {
+                                re.captures(body)
+                                    .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                            })
+                    })
                     .filter(|name| {
                         // params / inputs 为运行时注入的命名空间，前向引用 warning 不适用
                         // （inputs 的声明一致性由 finalize_inputs 单独校验）
                         !self.captured.contains(name)
                             && name != "params"
                             && name != "inputs"
+                            && !name.starts_with("inputs.")
                             && !name.starts_with("ENV:")
                     })
                     .collect();
@@ -349,6 +375,17 @@ fn collect_input_refs_in_value(
 ) {
     match v {
         serde_json::Value::String(s) => {
+            for (_, _, body) in crate::workflow::references::template_spans(s) {
+                if let Some(reference) = crate::workflow::references::parse_field_reference(body) {
+                    if reference.root == "inputs" {
+                        if let Some(crate::workflow::references::Segment::Key(name)) =
+                            reference.segments.first()
+                        {
+                            out.insert(name.clone());
+                        }
+                    }
+                }
+            }
             for cap in re.captures_iter(s) {
                 if let Some(m) = cap.get(1) {
                     out.insert(m.as_str().to_string());
@@ -700,8 +737,16 @@ impl Compiler {
 
     /// Claim: chained call detection → static deadlock prevention
     pub async fn validate_calls(workflow: &Workflow, store: &WorkflowStore) -> Vec<String> {
+        Self::validate_call_report(workflow, store).await.errors
+    }
+
+    pub async fn validate_call_report(
+        workflow: &Workflow,
+        store: &WorkflowStore,
+    ) -> ValidationReport {
         #[derive(Clone)]
         struct CallSite {
+            step_id: String,
             target: String,
             owner: String,
             with: serde_json::Value,
@@ -712,6 +757,7 @@ impl Compiler {
                 match &step.action {
                     Action::Call { call, with } => {
                         calls.push(CallSite {
+                            step_id: step.id.clone(),
                             target: call.clone(),
                             owner: step.name.clone(),
                             with: with.clone(),
@@ -733,7 +779,7 @@ impl Compiler {
             wf_id: &str,
             store: &WorkflowStore,
             path: &mut Vec<String>,
-            errors: &mut Vec<String>,
+            errors: &mut DiagnosticMessages,
             depth: u32,
         ) {
             const MAX_CALL_DEPTH: u32 = 10;
@@ -761,10 +807,16 @@ impl Compiler {
             }
         }
 
-        let mut errors = Vec::new();
+        let mut errors = DiagnosticMessages::default();
         let mut sites = Vec::new();
         collect_calls(&workflow.steps, &mut sites);
         for site in &sites {
+            errors.at(
+                Some(&site.step_id),
+                Some("/do/call"),
+                "call_target",
+                "invalid",
+            );
             let Some(target) = store.get(&site.target).await else {
                 errors.push(format!(
                     "Call step '{}': 目标工作流 '{}' 不存在",
@@ -777,6 +829,12 @@ impl Compiler {
             } else if let Some(with) = site.with.as_object() {
                 with.clone()
             } else {
+                errors.at(
+                    Some(&site.step_id),
+                    Some("/do/with"),
+                    "parameters",
+                    "invalid",
+                );
                 errors.push(format!("Call step '{}': with 必须是对象", site.owner));
                 continue;
             };
@@ -784,6 +842,12 @@ impl Compiler {
                 None => serde_json::Map::new(),
                 Some(value) if value.is_object() => value.as_object().cloned().unwrap_or_default(),
                 Some(_) => {
+                    errors.at(
+                        Some(&site.step_id),
+                        Some("/do/with/inputs"),
+                        "parameters",
+                        "invalid",
+                    );
                     errors.push(format!(
                         "Call step '{}': with.inputs 必须是对象",
                         site.owner
@@ -792,6 +856,12 @@ impl Compiler {
                 }
             };
             if let Some(outputs) = with.get("outputs") {
+                errors.at(
+                    Some(&site.step_id),
+                    Some("/do/with/outputs"),
+                    "parameters",
+                    "invalid",
+                );
                 match outputs.as_object() {
                     None => errors.push(format!(
                         "Call step '{}': with.outputs 必须是对象",
@@ -800,6 +870,15 @@ impl Compiler {
                     Some(map) => {
                         for (name, parent) in map {
                             if !parent.is_string() {
+                                errors.at(
+                                    Some(&site.step_id),
+                                    Some(&format!(
+                                        "/do/with/outputs/{}",
+                                        name.replace('~', "~0").replace('/', "~1")
+                                    )),
+                                    "parameters",
+                                    "invalid",
+                                );
                                 errors.push(format!(
                                     "Call step '{}': with.outputs.{} 必须映射到父变量名字符串",
                                     site.owner, name
@@ -810,6 +889,19 @@ impl Compiler {
                 }
             }
             for spec in &target.inputs {
+                errors.at(
+                    Some(&site.step_id),
+                    Some(&format!(
+                        "/do/with/inputs/{}",
+                        spec.name.replace('~', "~0").replace('/', "~1")
+                    )),
+                    "call_input",
+                    if input_map.contains_key(&spec.name) {
+                        "invalid"
+                    } else {
+                        "missing"
+                    },
+                );
                 match input_map.get(&spec.name) {
                     None if spec.required && spec.default.is_none() => errors.push(format!(
                         "Call step '{}': 子工作流 '{}' 缺少必填输入映射 '{}'",
@@ -828,8 +920,23 @@ impl Compiler {
                 }
             }
         }
-        let mut path = vec![workflow.id.clone()];
-        dfs(&workflow.id, store, &mut path, &mut errors, 0).await;
-        errors
+        for site in &sites {
+            errors.at(
+                Some(&site.step_id),
+                Some("/do/call"),
+                "call_cycle",
+                "structure",
+            );
+            if site.target == workflow.id {
+                errors.push(format!(
+                    "检测到循环调用链: {} → {}",
+                    workflow.id, site.target
+                ));
+            } else {
+                let mut path = vec![workflow.id.clone(), site.target.clone()];
+                dfs(&site.target, store, &mut path, &mut errors, 1).await;
+            }
+        }
+        report(errors, DiagnosticMessages::default())
     }
 }

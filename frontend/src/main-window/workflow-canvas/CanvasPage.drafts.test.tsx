@@ -33,17 +33,20 @@ vi.mock('@xyflow/react', () => ({
   ReactFlow: ({
     nodes,
     onNodeDoubleClick,
+    onNodeClick,
     children,
   }: {
     nodes: { id: string }[]
     onNodeDoubleClick: (e: unknown, n: unknown) => void
+    onNodeClick: (e: unknown, n: unknown) => void
     children: React.ReactNode
   }) => (
     <div>
       {nodes.map(node => (
-        <button key={node.id} onClick={e => onNodeDoubleClick(e, node)}>
-          打开 {node.id}
-        </button>
+        <span key={node.id}>
+          <button onClick={e => onNodeDoubleClick(e, node)}>打开 {node.id}</button>
+          <button onClick={e => onNodeClick(e, node)}>Select {node.id}</button>
+        </span>
       ))}
       {children}
     </div>
@@ -78,6 +81,35 @@ vi.mock('./ToolPalette', () => ({ ToolPalette: () => null, TOOL_DRAG_MIME: 'tool
 vi.mock('./ProblemsPanel', () => ({ ProblemsPanel: () => null }))
 vi.mock('./OutlinePanel', () => ({ OutlinePanel: () => null }))
 vi.mock('./IntentFormPanel', () => ({ IntentFormPanel: () => null }))
+vi.mock('./ScopedEditDialog', () => ({
+  ScopedEditDialog: ({
+    selectedIds,
+    steps,
+    onApply,
+    onClose,
+  }: {
+    selectedIds: string[]
+    steps: WorkflowIR['steps']
+    onApply: (steps: WorkflowIR['steps']) => void
+    onClose: () => void
+  }) => (
+    <div role="dialog">
+      Selected: {selectedIds.join(',')}
+      <button
+        onClick={() => {
+          onApply(
+            steps.map(step =>
+              selectedIds.includes(step.id) ? { ...step, name: `Changed ${step.id}` } : step,
+            ),
+          )
+          onClose()
+        }}
+      >
+        Apply scoped proposal
+      </button>
+    </div>
+  ),
+}))
 vi.mock('./EnhancedModeToggle', () => ({ EnhancedModeToggle: () => null }))
 vi.mock('./WorkflowSwitcher', () => ({ WorkflowSwitcher: () => null }))
 vi.mock('./WorkflowInputsEditor', () => ({
@@ -115,6 +147,48 @@ function shortcut() {
 }
 
 describe('Canvas save coordination', () => {
+  it('applies selected-group AI edits as one undoable transaction', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: 'Select first' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select second' }), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'AI 局部修改' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Selected: first,second')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply scoped proposal' }))
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+    expect(mocks.save.mock.calls[0][0].steps.map((step: { name: string }) => step.name)).toEqual([
+      'Changed first',
+      'Changed second',
+    ])
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    shortcut()
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+    expect(mocks.save.mock.calls[1][0].steps).toEqual(workflow.steps)
+  })
+  it('previews capture renaming and updates expressions together, including undo', async () => {
+    const original = structuredClone(workflow.steps)
+    workflow.steps[0].capture = 'result'
+    workflow.steps[1].do = { tool: 'echo', with: { value: '{{result["title"]}}' } }
+    try {
+      await open()
+      fireEvent.change(panel('first').getByRole('combobox', { name: '保存输出到变量' }), {
+        target: { value: 'renamed' },
+      })
+      shortcut()
+      expect(await screen.findByRole('dialog')).toHaveTextContent('{{renamed["title"]}}')
+      expect(mocks.save).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: '一次应用全部修改' }))
+      await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+      expect(mocks.save.mock.calls[0][0].steps[0].capture).toBe('renamed')
+      expect(mocks.save.mock.calls[0][0].steps[1].do.with.value).toBe('{{renamed["title"]}}')
+      fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+      shortcut()
+      await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+      expect(mocks.save.mock.calls[1][0].steps).toEqual(workflow.steps)
+    } finally {
+      workflow.steps = original
+    }
+  })
   it('switches menu and inspector types without losing or saving uncommitted drafts', async () => {
     localStorage.setItem('nuphus_language', 'zh')
     function LanguageControl() {

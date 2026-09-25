@@ -57,7 +57,12 @@ impl Executor {
         {
             let mut flags = self.cancel_flags.write().await;
             if !flags.contains_key(workflow_id) {
-                flags.insert(workflow_id.to_string(), Arc::new(AtomicBool::new(false)));
+                flags.insert(
+                    workflow_id.to_string(),
+                    crate::workflow::debug::current()
+                        .map(|session| session.cancelled.clone())
+                        .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+                );
             }
         }
 
@@ -96,7 +101,7 @@ impl Executor {
         self.sensitive_values
             .write()
             .await
-            .insert(workflow_id.to_string(), sensitive_values);
+            .insert(workflow_id.to_string(), sensitive_values.clone());
 
         // ── 断点续连：跳过已完成步骤（Success + Skipped）──
         // force_fresh=true（画布失败后「运行」从头执行）→ completed_ids 置空，跳过逻辑整体失效
@@ -152,13 +157,36 @@ impl Executor {
         }
 
         let mut run_record = RunRecord {
-            run_id: uuid::Uuid::new_v4().to_string(),
+            run_id: crate::workflow::debug::current()
+                .map(|session| session.run_id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             started_at: chrono::Utc::now(),
             finished_at: None,
             status: RunStatus::Running,
             steps: seed_steps,
             error: None,
             variables_snapshot: std::collections::HashMap::new(),
+        };
+
+        let debug_session = crate::workflow::debug::current();
+        let recorder = if let Some(session) = &debug_session {
+            Some(session.recorder.clone())
+        } else {
+            match crate::workflow::trace::TraceRecorder::create(
+                store.root(),
+                &wf,
+                &run_record.run_id,
+                false,
+                sensitive_values,
+            )
+            .await
+            {
+                Ok(recorder) => Some(recorder),
+                Err(error) => {
+                    tracing::warn!("Workflow evidence storage unavailable: {error}");
+                    None
+                }
+            }
         };
 
         // Emit workflow-event: run_started — 前端据此设置 workflowRunId
@@ -187,7 +215,7 @@ impl Executor {
 
         // ── 加载 params.json 固化参数到变量池（兑现 {params.xxx} 引用）──
         // 路径约定：plugin/workflows/{wf.id}/params.json
-        {
+        if debug_session.is_none() {
             let params_path = crate::utils::workspace_root()
                 .join("plugin")
                 .join("workflows")
@@ -238,6 +266,18 @@ impl Executor {
                 snapshot.len()
             );
         }
+        if let Some(session) = &debug_session {
+            variables.extend(session.variables.clone());
+            // Runtime input form values have precedence over historical/manual snapshots.
+            if !declared_inputs.is_empty() {
+                variables.insert(
+                    "inputs".into(),
+                    serde_json::Value::Object(declared_inputs.clone()),
+                );
+                variables.extend(declared_inputs.clone());
+            }
+            variables.extend(provided_inputs.clone());
+        }
 
         // ── HUD: register active workflow ──
         crate::workflow::hud_control::set_active(&self.signals, workflow_id);
@@ -273,24 +313,80 @@ impl Executor {
             &completed_ids,
             &mut run_record,
         );
-        let result = if let Some(timeout) = wf.timeout_secs {
-            match tokio::time::timeout(std::time::Duration::from_secs(timeout), exec_future).await {
-                Ok(r) => r,
-                Err(_) => {
-                    // 超时：清理 chat_sessions 避免残留
-                    {
-                        let mut sessions = self.chat_sessions.write().await;
-                        sessions.retain(|k, _| !k.starts_with(&format!("{}:", workflow_id)));
-                    }
-                    Err(crate::NuphusError::agent(format!(
-                        "工作流 '{}' 超时（{}秒）",
-                        wf.name, timeout
-                    )))
+        let cancellable = async {
+            if let Some(session) = &debug_session {
+                tokio::select! {
+                    biased;
+                    _ = session.cancelled() => Err(crate::NuphusError::agent("debug_cancelled")),
+                    result = exec_future => result,
                 }
+            } else {
+                exec_future.await
             }
-        } else {
-            exec_future.await
         };
+        let execution = async {
+            if let Some(timeout) = wf.timeout_secs {
+                match tokio::time::timeout(std::time::Duration::from_secs(timeout), cancellable)
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(_) => {
+                        // 超时：清理 chat_sessions 避免残留
+                        {
+                            let mut sessions = self.chat_sessions.write().await;
+                            sessions.retain(|k, _| !k.starts_with(&format!("{}:", workflow_id)));
+                        }
+                        Err(crate::NuphusError::agent(format!(
+                            "工作流 '{}' 超时（{}秒）",
+                            wf.name, timeout
+                        )))
+                    }
+                }
+            } else {
+                cancellable.await
+            }
+        };
+        let result = if let Some(recorder) = &recorder {
+            crate::workflow::trace::CURRENT
+                .scope(recorder.clone(), execution)
+                .await
+        } else {
+            execution.await
+        };
+        let result = if result.is_ok()
+            && debug_session.as_ref().is_some_and(|session| {
+                session.mode == crate::workflow::debug::DebugMode::Through
+                    && !session.target_reached()
+            }) {
+            Err(crate::NuphusError::agent(
+                "debug_target_not_reached: the execution path did not reach the selected node",
+            ))
+        } else {
+            result
+        };
+        if let Some(recorder) = &recorder {
+            let cancelled = debug_session
+                .as_ref()
+                .is_some_and(|session| session.cancelled.load(Ordering::Relaxed));
+            if let Err(error) = &result {
+                recorder.error(error.to_string()).await;
+            }
+            let skipped = run_record
+                .steps
+                .iter()
+                .any(|step| step.status == StepRunStatus::Skipped);
+            recorder
+                .complete(if cancelled {
+                    "cancelled"
+                } else if result.is_err() {
+                    "error"
+                } else if skipped {
+                    "completed_with_skips"
+                } else {
+                    "success"
+                })
+                .await;
+        }
 
         // Emit HUD: workflow done/error
         if let Some(emitter) = emitter {
@@ -390,7 +486,15 @@ impl Executor {
         };
 
         // ── 清理取消标志与本轮脱敏材料 ──
+        if let Some(session) = &debug_session {
+            let prefix = format!("debug:{}:", session.run_id);
+            self.chat_sessions
+                .write()
+                .await
+                .retain(|key, _| !key.starts_with(&prefix));
+        }
         self.cancel_flags.write().await.remove(workflow_id);
+        self.pause_notifies.write().await.remove(workflow_id);
         self.sensitive_values.write().await.remove(workflow_id);
 
         let completed_on_error: Vec<String> = if result.is_err() {

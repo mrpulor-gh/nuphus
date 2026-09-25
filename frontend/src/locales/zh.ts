@@ -3,9 +3,8 @@ import { editorZh } from './workflowEditor'
 const zh: Record<string, string> = {
   ...editorZh,
   'workflowCanvas.variable.outputSection': '输出变量',
-  'workflowCanvas.variable.consumers': '引用此输出的步骤（重命名后需手动更新引用）：',
-  'workflowCanvas.variable.renameHint':
-    '修改名称不会自动替换其他步骤的引用，请同时检查引用此变量的步骤。',
+  'workflowCanvas.variable.consumers': '引用此输出的步骤：',
+  'workflowCanvas.variable.renameHint': '确认新名称后将预览受影响引用，可一次应用并撤销。',
   'workflowCanvas.kind.tool': '工具调用',
   'workflowCanvas.kind.tool.description': '调用工具（桌面、浏览器、文件等）',
   'workflowCanvas.kind.seq': '顺序执行',

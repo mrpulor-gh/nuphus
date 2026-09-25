@@ -192,6 +192,9 @@ impl Executor {
     }
 
     async fn redact_run_text(&self, workflow_id: &str, text: &str) -> String {
+        if let Some(trace) = crate::workflow::trace::current() {
+            return trace.redacted_text(text);
+        }
         let values = self.sensitive_values.read().await;
         redact_text(
             text,

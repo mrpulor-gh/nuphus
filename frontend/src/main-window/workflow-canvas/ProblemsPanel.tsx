@@ -225,12 +225,12 @@ export function ProblemsPanel({
                     ))}
                   </details>
                 </div>
-                {issue.stepId && (
+                {(issue.stepId || issue.fieldPath?.startsWith('/inputs')) && (
                   <button
                     type="button"
                     className="wfc-icon-btn"
                     title={t('workflowEditor.problem.locate')}
-                    onClick={() => onLocate(issue.stepId!, issue.fieldPath)}
+                    onClick={() => onLocate(issue.stepId ?? '', issue.fieldPath)}
                   >
                     <Crosshair size={12} />
                   </button>

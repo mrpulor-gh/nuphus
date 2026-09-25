@@ -10,6 +10,7 @@
  */
 
 import type { WorkflowStep, Condition, VarRef } from '../../core/types'
+import { templateSpans, referenceRoot, parseFieldReference } from './fieldReferences'
 
 /** 一次变量消费 */
 export interface VarConsumption {
@@ -31,12 +32,8 @@ export interface StepVarProfile {
 }
 
 // 额外保留首个点号字段，使 {{inputs.topic}} 在画布上显示为具体输入 topic。
-const VAR_REF_RE = /\{\{\s*([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?((?:[^}]*)?)\}\}/g
 
 /** 被排除的外部注入根名：params.* 由 params.json 注入；ENV:* 正则只捕获到根名 ENV */
-function isExternalVar(name: string): boolean {
-  return name === 'params' || name === 'ENV'
-}
 
 /** 解析管道段：'| get "h" | len' → ['get', 'len'] */
 function parsePipes(rest: string): string[] {
@@ -54,16 +51,17 @@ function parsePipes(rest: string): string[] {
 
 /** 扫描单个字符串中的 {{var}} 引用（外部环境变量 ENV:* 不会被正则捕获） */
 export function scanTemplateRefs(text: string, out: VarConsumption[]): void {
-  if (!text.includes('{{')) return
-  VAR_REF_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = VAR_REF_RE.exec(text)) !== null) {
-    const varName = m[1] === 'inputs' && m[2] ? m[2] : m[1]
-    if (isExternalVar(m[1])) continue
+  for (const span of templateSpans(text)) {
+    const root = referenceRoot(span.body)
+    if (!root) continue
     out.push({
-      varName,
-      pipes: parsePipes(m[3] || ''),
-      ...(m[1] === 'inputs' && m[2] ? { input: true } : {}),
+      varName: root.name,
+      pipes: parsePipes(
+        !parseFieldReference(span.body) && span.body.includes('|')
+          ? span.body.slice(span.body.indexOf('|'))
+          : '',
+      ),
+      ...(root.input ? { input: true } : {}),
     })
   }
 }
@@ -87,13 +85,12 @@ function scanVarRef(r: VarRef | undefined, out: VarConsumption[]): void {
     return
   }
   if (typeof r === 'object' && 'var' in r && typeof r.var === 'string') {
-    const parts = r.var.split('.')
-    const root = parts[0] === 'inputs' && parts[1] ? parts[1] : parts[0]
-    if (root && !isExternalVar(parts[0]) && !root.startsWith('ENV:')) {
+    const root = referenceRoot(r.var)
+    if (root) {
       out.push({
-        varName: root,
+        varName: root.name,
         pipes: [],
-        ...(parts[0] === 'inputs' && parts[1] ? { input: true } : {}),
+        ...(root.input ? { input: true } : {}),
       })
     }
   }

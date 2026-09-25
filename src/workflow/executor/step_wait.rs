@@ -27,14 +27,17 @@ impl Executor {
         // Wait for user confirmation (HUD pause/resume)
         // 如果 prompt 非空，则暂停执行直到用户通过 HUD 点击"继续"
         if !prompt.is_empty() {
+            let control_id = crate::workflow::trace::current()
+                .map(|trace| trace.workflow_id.clone())
+                .unwrap_or_else(|| workflow_id.to_string());
             // 如果尚未暂停（HUD 未主动暂停），则创建暂停通知器
-            let already_paused = self.pause_notifies.read().await.contains_key(workflow_id);
+            let already_paused = self.pause_notifies.read().await.contains_key(&control_id);
             if !already_paused {
                 let notify = Arc::new(tokio::sync::Notify::new());
                 self.pause_notifies
                     .write()
                     .await
-                    .insert(workflow_id.to_string(), notify);
+                    .insert(control_id.clone(), notify);
             }
 
             // Emit HUD: 显示等待提示
@@ -50,6 +53,9 @@ impl Executor {
                 step_name: step.name.clone(),
                 reason: prompt.to_string(),
             });
+            if let Some(trace) = crate::workflow::trace::current() {
+                trace.status("paused").await;
+            }
 
             // 轮询等待：直到用户点击 HUD"继续"（resume 移除通知器）或取消
             let start = std::time::Instant::now();
@@ -58,7 +64,7 @@ impl Executor {
                 self.check_cancel(workflow_id).await?;
 
                 // 检查是否恢复
-                if !self.pause_notifies.read().await.contains_key(workflow_id) {
+                if !self.pause_notifies.read().await.contains_key(&control_id) {
                     break;
                 }
 
@@ -71,6 +77,9 @@ impl Executor {
                 }
 
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            if let Some(trace) = crate::workflow::trace::current() {
+                trace.status("running").await;
             }
 
             // 恢复后重新发送 started 事件

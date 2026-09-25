@@ -9,6 +9,7 @@
 import type { WorkflowStep, Condition, VarRef, RunRecord } from '../../core/types'
 import { stepKind, containerLanes, laneSteps } from './projection'
 import { walkSteps, profileStep } from './dataEdges'
+import { referenceRoot } from './fieldReferences'
 
 export type ProblemLevel = 'error' | 'warning'
 
@@ -106,7 +107,9 @@ function checkCondition(cond: Condition, owner: string, stepId: string, ctx: Mir
   // V4：VarRef 前向引用（warning）
   for (const r of operands) {
     if (r && typeof r === 'object' && 'var' in r) {
-      const root = r.var.split('.')[0]
+      const reference = referenceRoot(r.var)
+      if (reference?.input) continue
+      const root = reference?.name
       if (
         root &&
         !ctx.captured.has(root) &&
@@ -218,7 +221,8 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
         // ForEachDef.as 为空（运行时默认 item）——不报错，仅 V5 检查 items
       }
       if (items && typeof items === 'object' && 'var' in items) {
-        const root = items.var.split('.')[0]
+        const reference = referenceRoot(items.var)
+        const root = reference?.input ? undefined : reference?.name
         if (root && !ctx.captured.has(root) && root !== 'params' && root !== 'ENV') {
           ctx.problems.push({
             level: 'warning',

@@ -18,7 +18,7 @@
  *
  * 纯文本意图：单条子步骤字符不设硬上限（不 maxLength 截断），自然输入。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLanguage } from '../../locales'
 import { listDataDirs } from '../lib/api'
 import { intentDraftKey, readIntentDraft, writeIntentDraft } from './intentDraft'
@@ -60,6 +60,7 @@ export function IntentFormPanel({
   const { t } = useLanguage()
   const [stages, setStages] = useState<IntentStage[]>(() => [newStage()])
   const [draftKey, setDraftKey] = useState<string | null>(null)
+  const recoverableKey = useRef<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [storageError, setStorageError] = useState('')
   const [submitError, setSubmitError] = useState('')
@@ -72,6 +73,8 @@ export function IntentFormPanel({
         const workspace = dirs?.find(dir => dir.key === 'plugin')?.path
         if (!workspace) throw new Error('Workspace unavailable')
         const key = intentDraftKey(workspace, workflowId)
+        if (!alive) return
+        recoverableKey.current = key
         const saved = readIntentDraft(localStorage, key)
         if (!alive) return
         if (saved) setStages(saved)
@@ -327,6 +330,7 @@ export function IntentFormPanel({
                 return
               }
               setStages([newStage()])
+              if (recoverableKey.current) setDraftKey(recoverableKey.current)
               setConfirmClear(false)
             }}
           >

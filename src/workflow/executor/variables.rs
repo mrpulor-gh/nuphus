@@ -1,6 +1,33 @@
 //! 变量解析：模板替换与管道变换
 use super::*;
 
+fn replace_json_templates(text: &str, vars: &HashMap<String, serde_json::Value>) -> String {
+    // Do not reinterpret legacy templates or evaluate text produced by a replacement.
+    let mut result = String::new();
+    let mut offset = 0;
+    for (start, end, body) in crate::workflow::references::template_spans(text) {
+        result.push_str(&Executor::replace_params_refs(&text[offset..start], vars));
+        let body = body.trim();
+        let value = crate::workflow::references::resolve(body, vars)
+            .cloned()
+            .or_else(|| vars.get(body).cloned())
+            .or_else(|| Executor::lookup_inputs_ref(body, vars));
+        if let Some(value) = value {
+            result.push_str(
+                &value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string()),
+            );
+        } else {
+            result.push_str(&text[start..end]);
+        }
+        offset = end;
+    }
+    result.push_str(&Executor::replace_params_refs(&text[offset..], vars));
+    result
+}
+
 impl Executor {
     // ── Helpers ──
 
@@ -43,6 +70,9 @@ impl Executor {
             serde_json::Value::String(s) => {
                 if s.starts_with("{{") && s.ends_with("}}") {
                     let inner = &s[2..s.len() - 2].trim();
+                    if let Some(value) = crate::workflow::references::resolve(inner, vars) {
+                        return value.clone();
+                    }
                     // 管道表达式：{{var | op arg}}
                     if inner.contains('|') {
                         let mut parts = inner.splitn(2, '|');
@@ -94,20 +124,7 @@ impl Executor {
                     }
                 }
                 // 部分替换：文本中含 {{var}}
-                let mut result = s.clone();
-                for (k, v) in vars {
-                    let placeholder = format!("{{{{{}}}}}", k);
-                    let replacement = match v {
-                        serde_json::Value::String(sv) => sv.clone(),
-                        other => other.to_string(),
-                    };
-                    result = result.replace(&placeholder, &replacement);
-                }
-                // 部分替换：文本中含 {params.xxx}（params.json 固化参数）
-                let result = Self::replace_params_refs(&result, vars);
-                // 部分替换：文本中含 {{inputs.x}}（声明式外部输入命名空间）
-                let result = Self::replace_inputs_refs(&result, vars);
-                serde_json::Value::String(result)
+                serde_json::Value::String(replace_json_templates(s, vars))
             }
             serde_json::Value::Object(map) => {
                 let mut new_map = serde_json::Map::new();
@@ -211,40 +228,10 @@ impl Executor {
         name: &str,
         vars: &HashMap<String, serde_json::Value>,
     ) -> Option<serde_json::Value> {
-        Self::lookup_inputs_ref(name, vars).or_else(|| vars.get(name).cloned())
-    }
-
-    /// 文本内嵌 {{inputs.xxx}} 替换（未解析的保留原文，由编译期校验发现）
-    pub(super) fn replace_inputs_refs(
-        s: &str,
-        vars: &HashMap<String, serde_json::Value>,
-    ) -> String {
-        if !s.contains("{{inputs.") {
-            return s.to_string();
-        }
-        let mut out = String::with_capacity(s.len());
-        let mut rest = s;
-        while let Some(start) = rest.find("{{inputs.") {
-            out.push_str(&rest[..start]);
-            let after = &rest[start..];
-            match after.find("}}") {
-                Some(end) => {
-                    // 后缀已去掉 `inputs.` 前缀 → 走 path 入口（勿再走 ref 入口二次剥离）
-                    match Self::lookup_inputs_path(&after[9..end], vars) {
-                        Some(serde_json::Value::String(sv)) => out.push_str(&sv),
-                        Some(other) => out.push_str(&other.to_string()),
-                        None => out.push_str(&after[..end + 2]), // 未解析保留原文
-                    }
-                    rest = &after[end + 2..];
-                }
-                None => {
-                    out.push_str(after);
-                    rest = "";
-                }
-            }
-        }
-        out.push_str(rest);
-        out
+        crate::workflow::references::resolve(name, vars)
+            .cloned()
+            .or_else(|| Self::lookup_inputs_ref(name, vars))
+            .or_else(|| vars.get(name).cloned())
     }
 
     /// 管道变换：default / get / json key / len
@@ -300,70 +287,39 @@ impl Executor {
 /// 字符串变量替换：{{var}} → value，支持管道 {{var | get "field"}}、{{var | default "x"}}、{{ENV:VAR}}。
 /// 未解析的 {{...}} 清理为空。
 pub(super) fn resolve_vars_str(s: &str, vars: &HashMap<String, serde_json::Value>) -> String {
-    let mut result = s.to_string();
-
-    // 1. ENV: 引用
-    let re_env =
-        regex::Regex::new(r"\{\{\s*ENV:([A-Za-z_][\w]*)\s*\}\}").expect("env ref regex valid");
-    result = re_env
-        .replace_all(&result, |caps: &regex::Captures| {
-            std::env::var(&caps[1]).unwrap_or_default()
-        })
-        .to_string();
-
-    // 2. 解析所有 {{...}} 模板（支持管道：{{var | get "field"}}、{{var | default "x"}}）
-    let re_template = regex::Regex::new(r"\{\{(.+?)\}\}").expect("template regex valid");
-    result = re_template
-        .replace_all(&result, |caps: &regex::Captures| {
-            let inner = caps[1].trim();
-            if inner.is_empty() {
-                return String::new();
+    let mut result = String::new();
+    let mut offset = 0;
+    for (start, end, body) in crate::workflow::references::template_spans(s) {
+        result.push_str(&Executor::replace_params_refs(&s[offset..start], vars));
+        let inner = body.trim();
+        let resolved = if let Some(value) = crate::workflow::references::resolve(inner, vars) {
+            Some(value.clone())
+        } else if let Some((name, pipe)) = inner.split_once('|') {
+            let name = name.trim();
+            let value = if let Some(env) = name.strip_prefix("ENV:") {
+                std::env::var(env).ok().map(serde_json::Value::String)
+            } else {
+                Executor::lookup_value(name, vars)
+            };
+            Some(Executor::apply_pipe(value, pipe.trim()))
+        } else if let Some(env) = inner.strip_prefix("ENV:") {
+            std::env::var(env).ok().map(serde_json::Value::String)
+        } else if inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            vars.get(inner).cloned()
+        } else {
+            Executor::lookup_inputs_ref(inner, vars)
+        };
+        if let Some(value) = resolved {
+            match value {
+                serde_json::Value::String(value) => result.push_str(&value),
+                serde_json::Value::Null if !inner.contains('[') => {}
+                other => result.push_str(&other.to_string()),
             }
-            // ENV: 前缀（已在步骤1处理，但防御）
-            if inner.starts_with("ENV:") {
-                return String::new();
-            }
-            // 管道表达式：{{var | op arg}}
-            if inner.contains('|') {
-                let mut parts = inner.splitn(2, '|');
-                let var_name = parts.next().unwrap_or("").trim();
-                let pipe_expr = parts.next().unwrap_or("").trim();
-                let val = Executor::lookup_value(var_name, vars);
-                let resolved = Executor::apply_pipe(val, pipe_expr);
-                return match resolved {
-                    serde_json::Value::String(s) => s,
-                    serde_json::Value::Null => String::new(),
-                    other => other.to_string(),
-                };
-            }
-            // 纯变量名
-            if inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                if let Some(val) = vars.get(inner) {
-                    return match val {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Null => String::new(),
-                        other => other.to_string(),
-                    };
-                }
-            }
-            // 命名空间引用：{{inputs.x}} → variables["inputs"]["x"]
-            if let Some(val) = Executor::lookup_inputs_ref(inner, vars) {
-                return match val {
-                    serde_json::Value::String(s) => s,
-                    serde_json::Value::Null => String::new(),
-                    other => other.to_string(),
-                };
-            }
-            String::new()
-        })
-        .to_string();
-
-    // 3. 清理仍未解析的 {{var}} 简单模板
-    let re_simple = regex::Regex::new(r"\{\{[@\w_]+\}\}").expect("simple template regex valid");
-    result = re_simple.replace_all(&result, "").to_string();
-
-    // 4. {params.xxx} 内嵌引用
-    Executor::replace_params_refs(&result, vars)
+        }
+        offset = end;
+    }
+    result.push_str(&Executor::replace_params_refs(&s[offset..], vars));
+    result
 }
 
 /// 按变量名或点号路径从变量表中取值。
@@ -373,6 +329,9 @@ pub(super) fn resolve_var_by_path<'a>(
     var_path: &str,
     vars: &'a HashMap<String, serde_json::Value>,
 ) -> Option<&'a serde_json::Value> {
+    if var_path.contains('[') {
+        return crate::workflow::references::resolve(var_path, vars);
+    }
     if let Some(dot_pos) = var_path.find('.') {
         let root_name = &var_path[..dot_pos];
         let field_path = &var_path[dot_pos + 1..];
@@ -400,6 +359,16 @@ pub(super) fn eval_condition(
     ) -> String {
         match r {
             crate::workflow::types::VarRef::Var { var } => {
+                if var.contains('[') {
+                    return crate::workflow::references::resolve(var, vars)
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| value.to_string())
+                        })
+                        .unwrap_or_default();
+                }
                 if let Some(dot_pos) = var.find('.') {
                     let root = &var[..dot_pos];
                     let field = &var[dot_pos + 1..];

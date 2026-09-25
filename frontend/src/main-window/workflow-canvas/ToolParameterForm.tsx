@@ -415,7 +415,8 @@ function ParameterEditor({
                     {present &&
                       !options.some(v => JSON.stringify(v) === JSON.stringify(parameters[key])) && (
                         <option value={JSON.stringify(parameters[key])}>
-                          原值：{JSON.stringify(parameters[key])}
+                          {editorText('原值：', t)}
+                          {JSON.stringify(parameters[key])}
                         </option>
                       )}
                     {options.map(v => (
@@ -480,7 +481,8 @@ function ParameterEditor({
                         setField(key, display(property.default, type), property, false)
                       }
                     >
-                      使用默认值：{JSON.stringify(property.default)}
+                      {editorText('使用默认值：', t)}
+                      {JSON.stringify(property.default)}
                     </button>
                   )}
                   {variables.length > 0 && (
@@ -516,7 +518,8 @@ function ParameterEditor({
           })}
           {unknownKeys.length > 0 && (
             <p className="wfc-parameter-hint">
-              保留未识别参数：{unknownKeys.join(', ')}
+              {editorText('保留未识别参数：', t)}
+              {unknownKeys.join(', ')}
               {editorText('。可在 JSON 编辑中修改。', t)}
             </p>
           )}

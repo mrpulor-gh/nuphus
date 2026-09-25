@@ -83,9 +83,13 @@ export class InspectorDraftStore {
     this.changed()
     return true
   }
-  async flush(): Promise<{ nodeId: string; field: string; error: string } | null> {
+  async flush(exclude?: {
+    nodeId: string
+    field: string
+  }): Promise<{ nodeId: string; field: string; error: string } | null> {
     // Validate the entire batch before applying any of it.
     for (const entry of this.entries.values()) {
+      if (entry.nodeId === exclude?.nodeId && entry.field === exclude.field) continue
       if (!entry.active || entry.text === entry.baseline) continue
       entry.error = entry.validate?.(entry.text) ?? null
       if (entry.error) {
@@ -94,6 +98,7 @@ export class InspectorDraftStore {
       }
     }
     for (const [key, entry] of this.entries) {
+      if (entry.nodeId === exclude?.nodeId && entry.field === exclude.field) continue
       if (!(await this.commit(key)))
         return { ...entry, error: entry.error ?? '该修改尚未确认或不允许保存' }
     }

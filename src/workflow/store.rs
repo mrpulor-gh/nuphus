@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 pub struct WorkflowStore {
     /// 根目录 plugin/workflows/
     root: PathBuf,
+    transient: bool,
     /// 内存缓存：workflow_id → Arc<Workflow>
     cache: RwLock<HashMap<String, Arc<Workflow>>>,
     /// 摘要缓存（列表用）
@@ -35,6 +36,7 @@ impl WorkflowStore {
 
         Self {
             root,
+            transient: false,
             cache: RwLock::new(HashMap::new()),
             summary_cache: RwLock::new(Vec::new()),
             run_has_backup: Mutex::new(false),
@@ -54,6 +56,7 @@ impl WorkflowStore {
     pub fn with_root(root: PathBuf) -> Self {
         Self {
             root,
+            transient: false,
             cache: RwLock::new(HashMap::new()),
             summary_cache: RwLock::new(Vec::new()),
             run_has_backup: Mutex::new(false),
@@ -63,6 +66,24 @@ impl WorkflowStore {
     /// 工作流存储根目录
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Frozen definitions and run records for an editor debug session. No disk writes
+    /// or lazy reads are permitted, so neither normal history nor child definitions drift.
+    pub fn frozen(root: PathBuf, workflows: Vec<Workflow>) -> Self {
+        let summaries = workflows.iter().map(WorkflowSummary::from).collect();
+        Self {
+            root,
+            transient: true,
+            cache: RwLock::new(
+                workflows
+                    .into_iter()
+                    .map(|wf| (wf.id.clone(), Arc::new(wf)))
+                    .collect(),
+            ),
+            summary_cache: RwLock::new(summaries),
+            run_has_backup: Mutex::new(false),
+        }
     }
 
     /// 工作流专属目录
@@ -597,6 +618,9 @@ impl WorkflowStore {
 
     /// 列出所有工作流摘要（从缓存读；缓存为空时自动 load）
     pub async fn list(&self) -> Vec<WorkflowSummary> {
+        if self.transient {
+            return self.summary_cache.read().await.clone();
+        }
         {
             let cache = self.summary_cache.read().await;
             if !cache.is_empty() {
@@ -613,6 +637,9 @@ impl WorkflowStore {
         // 先查缓存
         if let Some(wf) = self.cache.read().await.get(id) {
             return Some(wf.as_ref().clone());
+        }
+        if self.transient {
+            return None;
         }
 
         // 缓存未命中，从磁盘加载
@@ -664,6 +691,19 @@ impl WorkflowStore {
 
     /// 保存工作流（写锁 → 序列化 → 写磁盘 → 更新缓存）
     pub async fn save(&self, wf: &Workflow) -> Result<()> {
+        if self.transient {
+            self.cache
+                .write()
+                .await
+                .insert(wf.id.clone(), Arc::new(wf.clone()));
+            let mut summaries = self.summary_cache.write().await;
+            if let Some(summary) = summaries.iter_mut().find(|summary| summary.id == wf.id) {
+                *summary = WorkflowSummary::from(wf);
+            } else {
+                summaries.push(WorkflowSummary::from(wf));
+            }
+            return Ok(());
+        }
         let id = wf.id.clone();
         let wf_dir = self.root.join(&id);
         tokio::fs::create_dir_all(&wf_dir).await?;

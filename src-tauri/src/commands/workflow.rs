@@ -408,9 +408,9 @@ pub async fn wf_validate(
         Some(schemas) => Compiler::validate_workflow_with_tools(&workflow, schemas),
         None => Compiler::validate_workflow(&workflow),
     };
-    report
-        .errors
-        .extend(Compiler::validate_calls(&workflow, &engine.store).await);
+    let calls = Compiler::validate_call_report(&workflow, &engine.store).await;
+    report.errors.extend(calls.errors);
+    report.diagnostics.extend(calls.diagnostics);
     report.passed = report.errors.is_empty();
     Ok(report)
 }
@@ -446,9 +446,9 @@ pub async fn wf_save(
         Some(schemas) => Compiler::validate_workflow_with_tools(&workflow, schemas),
         None => Compiler::validate_workflow(&workflow),
     };
-    report
-        .errors
-        .extend(Compiler::validate_calls(&workflow, &engine.store).await);
+    let calls = Compiler::validate_call_report(&workflow, &engine.store).await;
+    report.errors.extend(calls.errors);
+    report.diagnostics.extend(calls.diagnostics);
     report.passed = report.errors.is_empty();
 
     if !report.passed {

@@ -1,0 +1,155 @@
+.wfc-trace {
+  min-width: 0;
+  font-size: var(--fz-sm, 13px);
+  color: var(--fg-1);
+}
+.wfc-trace button,
+.wfc-trace-open,
+.wfc-trace-dialog-head button {
+  border: 1px solid var(--line-2);
+  background: var(--surface-1, var(--bg-1));
+  color: var(--fg-1);
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.wfc-trace button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.wfc-trace-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wfc-trace-toolbar label {
+  flex: 1;
+  min-width: 0;
+}
+.wfc-trace select {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  margin-top: 4px;
+  background: var(--surface-1, var(--bg-1));
+  color: var(--fg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+}
+.wfc-trace-selector {
+  display: block;
+  margin: 8px 0;
+}
+.wfc-trace-provenance {
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.6;
+}
+.wfc-trace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 12px 0;
+}
+.wfc-trace-tabs [aria-selected='true'] {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.wfc-trace-value pre {
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  margin: 6px 0 12px;
+  background: var(--surface-2, var(--bg-2));
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs, 12px);
+  user-select: text;
+}
+.wfc-trace-value small {
+  margin-left: 8px;
+}
+.wfc-trace-fields {
+  margin: 10px 0;
+}
+.wfc-trace-fields p {
+  color: var(--fg-3);
+}
+.wfc-trace-fields ul {
+  list-style: none;
+  padding-left: 14px;
+  margin: 0;
+}
+.wfc-trace-fields > ul {
+  padding-left: 0;
+}
+.wfc-trace-field-row {
+  display: flex;
+  align-items: start;
+  gap: 3px;
+  margin: 3px 0;
+}
+.wfc-trace .wfc-trace-expand {
+  flex: 0 0 25px;
+  width: 25px;
+  border-color: transparent;
+  padding: 5px 0;
+}
+.wfc-trace .wfc-trace-reference {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.wfc-trace-reference code,
+.wfc-trace-reference span {
+  display: block;
+}
+.wfc-trace-reference span {
+  color: var(--fg-3);
+  font-size: var(--fz-xs, 12px);
+  margin-top: 3px;
+}
+.wfc-trace-open {
+  margin-top: 5px;
+  font-size: var(--fz-xs, 12px);
+}
+.wfc-trace-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.35);
+  padding: 20px;
+}
+.wfc-trace-dialog {
+  box-sizing: border-box;
+  width: min(850px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-1, var(--bg-1));
+  color: var(--fg-1);
+  padding: 18px;
+  box-shadow: var(--shadow-surface);
+}
+.wfc-trace-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.wfc-trace-dialog-head h3 {
+  margin: 0;
+  font-size: 16px;
+}

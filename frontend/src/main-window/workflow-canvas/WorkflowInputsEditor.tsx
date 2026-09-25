@@ -1,3 +1,5 @@
+import { useLanguage } from '../../locales'
+import { editorText } from './editorText'
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react'
 import type { WorkflowInputKind, WorkflowInputSpec } from '../../core/types'
@@ -113,6 +115,7 @@ export function WorkflowInputsEditor({
   onApply,
   onCancel,
 }: WorkflowInputsEditorProps) {
+  const { t } = useLanguage()
   const [drafts, setDrafts] = useState<DraftInput[]>([])
 
   useEffect(() => {
@@ -153,7 +156,7 @@ export function WorkflowInputsEditor({
     <CompactModal
       open={open}
       onClose={onCancel}
-      title="外部输入"
+      title={editorText('外部输入', t)}
       icon={<Braces size={14} />}
       size="xl"
       className="wfc-input-editor-modal"
@@ -161,7 +164,7 @@ export function WorkflowInputsEditor({
         <>
           <div className="wcf-footer-left">
             <Button variant="ghost" size="sm" onClick={onCancel}>
-              取消
+              {editorText('取消', t)}
             </Button>
           </div>
           <div className="wcf-footer-right">
@@ -171,7 +174,7 @@ export function WorkflowInputsEditor({
               disabled={readOnly || errors.some(Boolean)}
               onClick={() => onApply(drafts.map(fromDraft))}
             >
-              应用
+              {editorText('应用', t)}
             </Button>
           </div>
         </>
@@ -179,7 +182,7 @@ export function WorkflowInputsEditor({
     >
       <div className="wfc-input-editor">
         <div className="wfc-input-editor-head">
-          <span>输入声明</span>
+          <span>{editorText('输入声明', t)}</span>
           <button
             type="button"
             className="wfc-btn"
@@ -200,17 +203,19 @@ export function WorkflowInputsEditor({
               ])
             }
           >
-            <Plus size={13} /> 新增
+            <Plus size={13} /> {editorText('新增', t)}
           </button>
         </div>
-        {drafts.length === 0 && <div className="wfc-input-editor-empty">暂无外部输入声明</div>}
+        {drafts.length === 0 && (
+          <div className="wfc-input-editor-empty">{editorText('暂无外部输入声明', t)}</div>
+        )}
         {drafts.map((draft, index) => (
           <div className="wfc-input-editor-row" key={index}>
             <div className="wfc-input-editor-order">
               <button
                 type="button"
                 className="wfc-icon-btn"
-                title="上移"
+                title={editorText('上移', t)}
                 disabled={readOnly || index === 0}
                 onClick={() => move(index, -1)}
               >
@@ -219,7 +224,7 @@ export function WorkflowInputsEditor({
               <button
                 type="button"
                 className="wfc-icon-btn"
-                title="下移"
+                title={editorText('下移', t)}
                 disabled={readOnly || index === drafts.length - 1}
                 onClick={() => move(index, 1)}
               >
@@ -228,7 +233,7 @@ export function WorkflowInputsEditor({
             </div>
             <div className="wfc-input-editor-fields">
               <label>
-                名称
+                {editorText('名称', t)}
                 <input
                   id={`wfc-input-name-${index}`}
                   className="wfc-input wfc-input--mono"
@@ -238,7 +243,7 @@ export function WorkflowInputsEditor({
                 />
               </label>
               <label>
-                类型
+                {editorText('类型', t)}
                 <select
                   className="wfc-input"
                   disabled={readOnly}
@@ -273,7 +278,7 @@ export function WorkflowInputsEditor({
                 </select>
               </label>
               <label className="wfc-input-editor-wide">
-                说明
+                {editorText('说明', t)}
                 <input
                   className="wfc-input"
                   disabled={readOnly}
@@ -288,7 +293,7 @@ export function WorkflowInputsEditor({
                   checked={!!draft.required}
                   onChange={e => update(index, { required: e.target.checked })}
                 />
-                必填
+                {editorText('必填', t)}
               </label>
               <label className="wfc-input-editor-check">
                 <input
@@ -297,7 +302,7 @@ export function WorkflowInputsEditor({
                   checked={!!draft.sensitive}
                   onChange={e => update(index, { sensitive: e.target.checked })}
                 />
-                敏感
+                {editorText('敏感', t)}
               </label>
               <label className="wfc-input-editor-check">
                 <input
@@ -306,7 +311,7 @@ export function WorkflowInputsEditor({
                   checked={draft.hasDefault}
                   onChange={e => update(index, { hasDefault: e.target.checked })}
                 />
-                默认值
+                {editorText('默认值', t)}
               </label>
               {draft.hasDefault &&
                 (draft.type === 'boolean' ? (
@@ -317,11 +322,11 @@ export function WorkflowInputsEditor({
                       checked={draft.defaultBoolean}
                       onChange={e => update(index, { defaultBoolean: e.target.checked })}
                     />
-                    启用
+                    {editorText('启用', t)}
                   </label>
                 ) : (
                   <label className="wfc-input-editor-default">
-                    默认值
+                    {editorText('默认值', t)}
                     {draft.type === 'json' ? (
                       <textarea
                         className="wfc-input wfc-input--mono"
@@ -341,12 +346,14 @@ export function WorkflowInputsEditor({
                     )}
                   </label>
                 ))}
-              {errors[index] && <div className="wfc-input-editor-error">{errors[index]}</div>}
+              {errors[index] && (
+                <div className="wfc-input-editor-error">{editorText(errors[index]!, t)}</div>
+              )}
             </div>
             <button
               type="button"
               className="wfc-icon-btn"
-              title="删除"
+              title={editorText('删除', t)}
               disabled={readOnly}
               onClick={() => setDrafts(items => items.filter((_, i) => i !== index))}
             >

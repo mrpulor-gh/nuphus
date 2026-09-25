@@ -1,5 +1,60 @@
+import { workflowCanvasCopy } from './workflowCanvasCopy'
 /** Workflow editing messages; identifiers never depend on the display language. */
 const messages: Record<string, [string, string]> = {
+  'run.started': ['工作流开始运行', 'Workflow started'],
+  'run.stepStarted': ['开始 · {0}', 'Started · {0}'],
+  'run.retry': ['第 {0} 次重试', 'Retry {0}'],
+  'run.stepFailed': ['失败 · {0} · {1}', 'Failed · {0} · {1}'],
+  'run.skipped': ['跳过 · {0}', 'Skipped · {0}'],
+  'run.completed': ['完成 · {0}', 'Completed · {0}'],
+  'run.paused': ['暂停 · {0}', 'Paused · {0}'],
+  'run.breakpoint': ['选中节点已执行完毕', 'Selected node completed'],
+  'run.finished': ['运行结束 · {0}', 'Run finished · {0}'],
+  'run.failed': ['执行失败', 'Execution failed'],
+  'run.childStarted': ['进入子工作流 · {0}', 'Sub-workflow started · {0}'],
+  'run.childCompleted': ['结束子工作流 · {0}', 'Sub-workflow finished · {0}'],
+  'summary.findWindow': ['查找应用 / 窗口：{0}', 'Find app / window: {0}'],
+  'summary.activateWindow': ['激活窗口：{0}', 'Activate window: {0}'],
+  'summary.captureWindow': ['窗口截图：{0}', 'Capture window: {0}'],
+  'diagnostic.call_target': ['请选择存在的目标工作流。', 'Choose an existing target workflow.'],
+  'diagnostic.call_input': [
+    '补充或修正子工作流所需的输入映射。',
+    'Supply or correct the inputs required by the called workflow.',
+  ],
+  'diagnostic.call_cycle': [
+    '调用形成了循环，请改为不会调用回当前工作流的目标。',
+    'This call forms a cycle. Choose a target that does not call back into this workflow.',
+  ],
+  'rename.title': ['重命名变量并更新引用', 'Rename variable and update references'],
+  'rename.hint': [
+    '仅修改工作流表达式；脚本中的普通代码和文字不替换。全部修改可一次撤销。',
+    'Only workflow expressions change, not ordinary script code or text. Undo restores the entire edit.',
+  ],
+  'rename.invalid': ['请输入不同且有效的新变量名。', 'Enter a different, valid variable name.'],
+  'rename.missing': [
+    '变量来源已改变，请重新选择节点。',
+    'The variable source changed. Select the node again.',
+  ],
+  'rename.collision': [
+    '新名称与已有变量冲突，请换一个名称。',
+    'This name conflicts with an existing binding. Choose another name.',
+  ],
+  'rename.noReferences': [
+    '没有可确认的工作流表达式引用。',
+    'No matching workflow expression references.',
+  ],
+  'rename.ambiguous': [
+    '此引用存在多个可能来源；只改一个分支可能导致另一分支缺少变量。',
+    'This reference has multiple possible sources. Renaming only one branch may leave another branch without a value.',
+  ],
+  'rename.choose': ['请选择如何处理', 'Choose how to handle this reference'],
+  'rename.update': ['更新此引用', 'Update this reference'],
+  'rename.keep': ['保留此引用，稍后手工处理', 'Keep this reference for manual editing'],
+  'rename.apply': ['一次应用全部修改', 'Apply changes together'],
+  'rename.stale': [
+    '画布已变化，请重新预览后再应用。',
+    'The canvas changed. Review a new preview before applying.',
+  ],
   'validation.minimum': ['不能小于 {0}', 'Must be at least {0}'],
   'validation.maximum': ['不能大于 {0}', 'Must be at most {0}'],
   'validation.exclusiveMinimum': ['必须大于 {0}', 'Must be greater than {0}'],
@@ -161,7 +216,6 @@ const messages: Record<string, [string, string]> = {
   'summary.compact': ['简洁视图', 'Compact view'],
   'summary.detail': ['详细视图', 'Detailed view'],
   'summary.sleep': ['等待 {0} 秒', 'Wait {0} seconds'],
-  'summary.findWindow': ['查找窗口：{0}', 'Find window: {0}'],
   'summary.call': ['调用工作流：{0}', 'Call workflow: {0}'],
   'summary.script': ['执行 {0} 脚本', 'Run {0} script'],
   'summary.wait': ['等待人工确认', 'Wait for confirmation'],
@@ -305,7 +359,7 @@ const editorText: Record<string, string> = {
   请填写数值: 'Enter a number.',
   请输入有效数值: 'Enter a valid number.',
 }
-for (const [source, english] of Object.entries(editorText))
+for (const [source, english] of Object.entries({ ...editorText, ...workflowCanvasCopy }))
   messages[`text.${source}`] = [source, english]
 
 export const editorZh = Object.fromEntries(

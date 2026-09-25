@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { useLanguage } from '../../locales'
 import { isVariableName, type VariableCatalog } from './variableCatalog'
 import { variableSourceLabel } from './presentation'
+import { HistoricalVariablePicker } from './HistoricalVariablePicker'
+import { parseFieldReference } from './fieldReferences'
 import './variable-picker.css'
 
 export interface VariablePickerProps {
@@ -13,6 +15,8 @@ export interface VariablePickerProps {
   readOnly?: boolean
   onConfigureInput?: (name: string) => void
   label?: string
+  /** An explicit historical field choice; text insertion need not treat typing as selection. */
+  onSelectReference?: (expression: string) => void
 }
 
 export function VariablePicker({
@@ -23,6 +27,7 @@ export function VariablePicker({
   readOnly,
   onConfigureInput,
   label,
+  onSelectReference,
 }: VariablePickerProps) {
   const { t, lang } = useLanguage()
   const id = useId()
@@ -42,6 +47,15 @@ export function VariablePicker({
       `${entry.name} ${entry.displaySource}`.toLowerCase().includes(value.toLowerCase()),
   )
   const exact = entries.find(entry => entry.name === value)
+  const parsed = mode === 'reference' ? parseFieldReference(value) : null
+  const referenceSource =
+    exact ??
+    (parsed &&
+      entries.find(entry =>
+        entry.source === 'input'
+          ? parsed.root === 'inputs' && parsed.segments[0] === entry.name.slice(7)
+          : entry.name === parsed.root,
+      ))
   const canCreate = mode === 'capture' && !!value && isVariableName(value) && !exact
   const count = matches.length + (canCreate ? 1 : 0)
   const activeIndex = Math.max(0, Math.min(active, count - 1))
@@ -142,10 +156,10 @@ export function VariablePicker({
       {mode === 'capture' && value && !isVariableName(value) && (
         <small role="alert">{t('workflowCanvas.variable.invalid')}</small>
       )}
-      {mode === 'reference' && exact?.maybeUnset && (
+      {mode === 'reference' && referenceSource?.maybeUnset && (
         <small>{t('workflowCanvas.variable.maybeUnsetHint')}</small>
       )}
-      {mode === 'reference' && value && !exact && (
+      {mode === 'reference' && value && !referenceSource && (
         <small>
           {t('workflowCanvas.variable.missing')}
           {onConfigureInput && isVariableName(value) && (
@@ -154,6 +168,15 @@ export function VariablePicker({
             </button>
           )}
         </small>
+      )}
+      {mode === 'reference' && !readOnly && (
+        <HistoricalVariablePicker
+          catalog={catalog}
+          onSelect={expression => {
+            setOpen(false)
+            ;(onSelectReference ?? onChange)(expression)
+          }}
+        />
       )}
       {open &&
         !readOnly &&

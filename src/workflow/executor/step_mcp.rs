@@ -21,14 +21,28 @@ impl Executor {
         // 3. 调用 MCP 工具（call_tool 已是 async，直接 await）
         let server = mcp.server.clone();
         let tool = mcp.tool.clone();
-        let result = crate::mcp::client::call_tool(&server, &tool, resolved_params, timeout_ms)
-            .await
-            .map_err(|e| {
-                crate::NuphusError::agent(format!(
-                    "MCP step '{}' ({}::{}): {}",
-                    step.name, mcp.server, mcp.tool, e
-                ))
-            })?;
+        let result =
+            crate::mcp::client::call_tool(&server, &tool, resolved_params.clone(), timeout_ms)
+                .await;
+        if let Some(trace) = crate::workflow::trace::current() {
+            let output = result
+                .as_ref()
+                .map(|value| value.to_string())
+                .map_err(|error| error.to_string());
+            trace
+                .attempt(
+                    1,
+                    &resolved_params,
+                    output.as_deref().map_err(|error| error.as_str()),
+                )
+                .await;
+        }
+        let result = result.map_err(|e| {
+            crate::NuphusError::agent(format!(
+                "MCP step '{}' ({}::{}): {}",
+                step.name, mcp.server, mcp.tool, e
+            ))
+        })?;
 
         // 4. 从 MCP 响应中提取文本内容
         let output = extract_mcp_content(&result)?;

@@ -28,6 +28,45 @@ async fn fail_tool_exec(_tool: String, _params: serde_json::Value) -> StdResult<
     Err("simulated tool failure".to_string())
 }
 
+#[test]
+fn bracket_fields_keep_types_and_work_in_all_consuming_contexts() {
+    let vars = HashMap::from([(
+        "wn".into(),
+        serde_json::json!({"window_id":123,"title":"微信","a.b":[null,"003"],"x}}y":true}),
+    )]);
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{wn[\"window_id\"]}}"), &vars),
+        serde_json::json!(123)
+    );
+    assert_eq!(
+        Executor::resolve_vars(&serde_json::json!("{{wn[\"a.b\"][1]}}"), &vars),
+        serde_json::json!("003")
+    );
+    assert_eq!(
+        variables::resolve_vars_str("窗口：{{wn[\"title\"]}}", &vars),
+        "窗口：微信"
+    );
+    assert_eq!(
+        variables::resolve_vars_str("{{wn[\"x}}y\"]}}", &vars),
+        "true"
+    );
+    assert_eq!(
+        variables::resolve_var_by_path("wn[\"a.b\"][0]", &vars),
+        Some(&serde_json::Value::Null)
+    );
+    assert!(variables::eval_condition(
+        &Condition::Equals {
+            equals: vec![
+                VarRef::Var {
+                    var: "wn[\"window_id\"]".into()
+                },
+                VarRef::Lit("123".into())
+            ]
+        },
+        &vars
+    ));
+}
+
 #[tokio::test]
 async fn desktop_unknown_postcondition_is_not_automatically_replayed() {
     for tool in ["desktop_semantic_action", "desktop_input"] {

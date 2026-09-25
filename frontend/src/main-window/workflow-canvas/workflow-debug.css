@@ -1,0 +1,35 @@
+.wfc-debug-modal {
+  max-height: min(90dvh, 960px);
+}
+.wfc-debug {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wfc-debug fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.wfc-debug label {
+  display: block;
+  margin-block: 12px;
+}
+.wfc-debug label > textarea,
+.wfc-debug label > select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+.wfc-debug pre,
+.wfc-debug code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wfc-debug details {
+  margin-block: 12px;
+}
+.wfc-debug p {
+  color: var(--fg-2);
+  line-height: 1.5;
+}
