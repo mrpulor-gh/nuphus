@@ -62,6 +62,21 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.2.22',
+    date: '2026-09-26',
+    contributors: [
+      {
+        user: 'yuansui486',
+        contributions: [
+          {
+            pr: 65,
+            summary: '完善工作流节点调试、运行证据与画布编辑体验',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.21',
     date: '2026-09-25',
     contributors: [
@@ -237,7 +252,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
 ]
 
 /**
- * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-24 拉取，按提交数降序）。
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-26 拉取，按提交数降序）。
  *
  * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
  *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人，如 zhoupeiyu515-ui）；
@@ -248,7 +263,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
  */
 export const REPO_COMMITTERS: string[] = [
-  'yuansui486', // 70 commits
+  'yuansui486', // 76 commits
   'fouyzjl', // 12 commits
   'mrpulor-gh', // 3 commits（仓库所有者）
   'jiangdingwei123-afk', // 1 commit

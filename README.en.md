@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.21 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.22 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -271,6 +271,14 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v0.2.22 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@yuansui486](https://github.com/yuansui486) | [#65](https://github.com/mrpulor-gh/nuphus/pull/65) | Improve workflow node debugging, run evidence and canvas editing |
 
 ### v0.2.21 Contributors
 

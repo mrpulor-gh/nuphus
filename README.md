@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.21 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.22 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -282,6 +282,14 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v0.2.22 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@yuansui486](https://github.com/yuansui486) | [#65](https://github.com/mrpulor-gh/nuphus/pull/65) | 完善工作流节点调试、运行证据与画布编辑体验 |
 
 ### v0.2.21 贡献者
 
