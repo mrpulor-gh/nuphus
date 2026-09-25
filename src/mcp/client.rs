@@ -285,8 +285,7 @@ pub async fn get_or_create(server_name: &str) -> Result<Arc<Mutex<McpClient>>, S
 }
 
 /// Get or create an McpClient using an explicit [`ServerConfig`] (bypasses
-/// servers.yaml lookup). Used by the dual-channel (dogfooding) path where the
-/// nuphus-mcp binary is auto-discovered rather than pre-configured.
+/// servers.yaml lookup — for callers that supply a config directly).
 pub async fn get_or_create_with_config(
     server_name: &str,
     server_cfg: super::config::ServerConfig,
@@ -321,24 +320,6 @@ pub async fn call_tool(
     timeout_ms: u64,
 ) -> Result<serde_json::Value, String> {
     call_tool_with_config_opt(server_name, None, tool_name, arguments, timeout_ms).await
-}
-
-/// Call a tool with an explicit [`ServerConfig`] (dual-channel dogfooding path).
-pub async fn call_tool_with_config(
-    server_name: &str,
-    server_cfg: super::config::ServerConfig,
-    tool_name: &str,
-    arguments: serde_json::Value,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    call_tool_with_config_opt(
-        server_name,
-        Some(server_cfg),
-        tool_name,
-        arguments,
-        timeout_ms,
-    )
-    .await
 }
 
 /// Shared implementation: `server_cfg_opt = None` → servers.yaml lookup.

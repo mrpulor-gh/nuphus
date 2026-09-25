@@ -105,17 +105,13 @@ pub async fn apply_browser_cdp_url(
         }
     }
 
-    // MCP channel: force respawn so the child process picks up the new env.
-    crate::mcp::client::drop_server(crate::mcp::dual::NUPHUS_MCP_SERVER).await;
-
     Ok(())
 }
 
 /// Reconcile after a successful browser op: `attach_external` self-healing may
 /// have switched the client to a re-resolved endpoint (fingerprint window
 /// reopened on a new port). Persist the live endpoint back to env +
-/// preferences.json and drop the pooled MCP child so its next respawn picks up
-/// the new value — otherwise the next app restart would attach to the stale port.
+/// preferences.json — otherwise the next app restart would attach to the stale port.
 async fn reconcile_external_cdp_url(client: &BrowserClient) {
     let Some(current) = client.external_cdp_url().map(|s| s.to_string()) else {
         return; // managed-Chrome mode: nothing to reconcile
@@ -134,7 +130,6 @@ async fn reconcile_external_cdp_url(client: &BrowserClient) {
     if let Err(e) = prefs.save() {
         tracing::warn!("[browser] failed to persist self-healed endpoint: {e}");
     }
-    crate::mcp::client::drop_server(crate::mcp::dual::NUPHUS_MCP_SERVER).await;
 }
 
 impl ToolRegistry {
@@ -162,8 +157,7 @@ impl ToolRegistry {
         tool_name: &str,
         params: &serde_json::Value,
     ) -> std::result::Result<ToolResult, String> {
-        // 自动化开关（ExecAgent 关闭）——必须置于 MCP 双通道之前：
-        // route_tool 会把调用转发给 nuphus-mcp 进程执行，拦在后面等于没拦。
+        // 自动化开关（ExecAgent 关闭）——必须置于任何工具执行路径之前。
         if !self.automation_tools_enabled {
             return Ok(ToolResult::failure(format!(
                 "Tool '{}' is unavailable for this agent role (automation tools disabled).",
@@ -172,21 +166,7 @@ impl ToolRegistry {
         }
         register_cookie_source();
 
-        // 双通道（dogfooding）：MCP 优先，失败回退直连
-        match crate::mcp::dual::route_tool(tool_name, params).await {
-            crate::mcp::dual::RouteOutcome::Handled(result) => return Ok(result),
-            crate::mcp::dual::RouteOutcome::Fallback(reason) => {
-                tracing::debug!(
-                    "[dual] browser '{}' falls back to direct: {}",
-                    tool_name,
-                    reason
-                );
-            }
-        }
-
-        // 跨进程自动化锁：MCP 通道不可用而回退直连时，与各 nuphus-mcp 实例
-        // （其他 Agent）通过同一锁文件互斥。MCP 可用时锁已在 nuphus-mcp 进程内
-        // 获取/释放，这里不重复获取（否则会与 MCP 进程的锁自锁）。
+        // 跨进程自动化锁：与其它 Agent 实例通过同一锁文件互斥，防止并发操作同一浏览器。
         let lock = crate::utils::automation_lock::AutomationLock::new();
         let _lock_guard = match lock.acquire(tool_name) {
             Ok(guard) => guard,
@@ -227,6 +207,9 @@ impl ToolRegistry {
         let timeout_secs: u64 = match tool_name {
             "browser_navigate" | "browser_back" | "browser_forward" => 30,
             "browser_exec" => 15, // internal 10s eval timeout + buffer
+            // 效果验证会给 click/type 追加等待窗口——工具超时必须在其之上，否则验证
+            // 窗口会把整个调用拖进超时（而超时对写工具等于"可能已执行"的模糊错误）。
+            "browser_click" | "browser_type" => effect_verify_ms() / 1000 + 15,
             "browser_wait_for" => {
                 params
                     .get("timeout_ms")
@@ -265,6 +248,33 @@ const READ_ONLY_BROWSER_TOOLS: &[&str] = &[
 
 fn is_read_only_browser_tool(name: &str) -> bool {
     READ_ONLY_BROWSER_TOOLS.contains(&name)
+}
+
+/// 动作后效果验证窗口（毫秒）。0 = 关闭验证。
+///
+/// 默认 15000ms，**刻意给足**：页面有反应时检测器立即返回（正常点击几乎零额外
+/// 等待），窗口只在"完全没反应"时才被走满；把窗口设窄会让慢页面/慢网络下本已
+/// 生效的动作被误判为无效果，反而制造噪声。环境变量 `NUPHUS_EFFECT_VERIFY_MS`
+/// 可覆盖（设为 0 即关闭）。
+fn effect_verify_ms() -> u64 {
+    std::env::var("NUPHUS_EFFECT_VERIFY_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(15_000)
+}
+
+/// 动作已下发但页面毫无反应时的提示段。
+///
+/// 刻意**不**把动作判为失败：合法场景（打开新标签页、触发下载、纯后端请求）本就
+/// 不改变当前页面，直接判失败会把正常操作变成错误。这里给出可操作提示，让调用方
+/// 自行决定是否先验证页面状态再继续。
+fn no_change_note(action: &str, window_ms: u64, causes: &str) -> String {
+    format!(
+        "\n\n── Note: no page change detected within {window_ms}ms after {action} ──\n\
+         The action was dispatched, but the page did not react (no DOM mutation, no URL \
+         change, no focused-field value change). Likely causes: {causes}. Verify the real \
+         state with browser_snapshot / browser_list_tabs before the next step."
+    )
 }
 
 /// 执行单个浏览器操作（连接级自愈编排）。
@@ -401,18 +411,54 @@ async fn run_browser_op(
                 .get("trusted")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let result = if trusted {
+            let button = params
+                .get("button")
+                .and_then(|v| v.as_str())
+                .unwrap_or("left");
+            if !matches!(button, "left" | "right" | "middle") {
+                return Err(format!(
+                    "browser_click: unsupported button '{button}' (expected left, right, or middle)"
+                ));
+            }
+            // 效果验证只覆盖左键：右键/中键打开的上下文菜单与辅助面板本身就是
+            // "不改变当前页面"的预期语义，等它变化只会白等一个窗口。
+            let verify_ms = effect_verify_ms();
+            let verify_effect = button == "left" && verify_ms > 0;
+            if verify_effect {
+                // 布防失败不阻断点击：验证是增强手段，不是动作的前置条件。
+                if let Err(e) = client.arm_change_detector().await {
+                    tracing::debug!("[browser_click] arm_change_detector failed: {}", e);
+                }
+            }
+            let result = if trusted || button != "left" {
                 client
-                    .click_trusted(selector)
+                    .click_trusted(selector, button)
                     .await
                     .map_err(|e| e.to_string())?
             } else {
                 client.click(selector).await.map_err(|e| e.to_string())?
             };
+            let mut output = result;
+            if verify_effect && !client.wait_for_change(verify_ms).await.unwrap_or(true) {
+                output.push_str(&no_change_note(
+                    &format!("click on '{selector}'"),
+                    verify_ms,
+                    "dead or covered element, wrong selector, or an action that does not mutate \
+                     this page (opening a new tab, starting a download)",
+                ));
+            }
+            // 左键默认附带快照；右键/中键默认不附带——快照会打断刚打开的上下文菜单。
+            let include_snapshot = params
+                .get("snapshot")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(button == "left");
+            if !include_snapshot {
+                return Ok(output);
+            }
             // Auto snapshot after click
             match client.snapshot(false, None).await {
-                Ok(snap) => Ok(format!("{}\n\n── Page state ──\n{}", result, snap)),
-                Err(_) => Ok(result),
+                Ok(snap) => Ok(format!("{}\n\n── Page state ──\n{}", output, snap)),
+                Err(_) => Ok(output),
             }
         }
         "browser_type" => {
@@ -422,14 +468,29 @@ async fn run_browser_op(
                 .or_else(|| params.get("ref").and_then(|v| v.as_str()))
                 .unwrap_or("");
             let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let verify_ms = effect_verify_ms();
+            if verify_ms > 0 {
+                if let Err(e) = client.arm_change_detector().await {
+                    tracing::debug!("[browser_type] arm_change_detector failed: {}", e);
+                }
+            }
             let result = client
                 .type_text(selector, text)
                 .await
                 .map_err(|e| e.to_string())?;
+            let mut output = result;
+            if verify_ms > 0 && !client.wait_for_change(verify_ms).await.unwrap_or(true) {
+                output.push_str(&no_change_note(
+                    &format!("typing into '{selector}'"),
+                    verify_ms,
+                    "covered or read-only input, wrong selector, or a page that did not accept \
+                     the input",
+                ));
+            }
             // Auto snapshot after type
             match client.snapshot(false, None).await {
-                Ok(snap) => Ok(format!("{}\n\n── Page state ──\n{}", result, snap)),
-                Err(_) => Ok(result),
+                Ok(snap) => Ok(format!("{}\n\n── Page state ──\n{}", output, snap)),
+                Err(_) => Ok(output),
             }
         }
         "browser_press" => {

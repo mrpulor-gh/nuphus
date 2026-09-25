@@ -423,20 +423,38 @@ impl ToolRegistry {
                     "script" => obj!("type"="string","description"="JS using window.__nuphus helpers (alias 'h'). e.g. await h.click('@1'); await h.fill('@2', 'test@example.com'); await h.click('#submit');")
                 },
                 &["script"]),
-            tool_def("browser_click",
-                "Click element by CSS selector or ref ID (@N). Auto-waits for visibility (5s). Default JS click ignores overlays but lacks user activation; trusted=true sends real CDP mouse events (for autoplay-gated media / gesture-gated features).",
+            {
+                let mut click = tool_def("browser_click",
+                "Click element by CSS selector or ref ID (@N). Auto-waits for visibility (5s). Left clicks default to a JS click (ignores overlays but lacks user activation); trusted=true sends real CDP mouse events at the element center. Right/middle clicks are always trusted. After a left click the page is checked for a reaction — a note is appended when nothing changes within 3s.",
                 json_props! {
                     "selector" => obj!("type"="string","description"="CSS selector or ref ID (e.g. @1, @e0, 'button')"),
-                    "trusted" => obj!("type"="boolean","description"="Real trusted CDP mouse events at element center (user activation). For autoplay-gated media. Default false (JS click).")
+                    "ref" => obj!("type"="string","description"="Ref ID from snapshot (e.g. @1, @e0); alias of selector — provide either one"),
+                    "trusted" => obj!("type"="boolean","description"="Real trusted CDP mouse events at the element center (user activation). For autoplay-gated media. Default false for left clicks; right and middle clicks are always trusted."),
+                    "button" => obj!("type"="string","enum"=["left","right","middle"],"default"="left","description"="Mouse button. Right and middle clicks use trusted CDP events automatically."),
+                    "snapshot" => obj!("type"="boolean","description"="Include a post-click page snapshot. Defaults to true for left clicks and false for right/middle clicks so transient context menus stay open.")
                 },
-                &["selector"]),
-            tool_def("browser_type",
-                "Type text into input by CSS selector or @N ref. Auto-waits for visibility (5s).",
+                &[]);
+                click.function.parameters["anyOf"] = serde_json::json!([
+                    { "required": ["selector"] },
+                    { "required": ["ref"] }
+                ]);
+                click
+            },
+            {
+                let mut typed = tool_def("browser_type",
+                "Type text into input by CSS selector or ref ID (@N). Auto-waits for visibility (5s). After typing the page is checked for a reaction — a note is appended when the field neither mutates the DOM nor changes its value.",
                 json_props! {
-                    "selector" => obj!("type"="string","description"="CSS selector or @N ref of input field"),
+                    "selector" => obj!("type"="string","description"="CSS selector or ref ID of input field (e.g. @1, @e0)"),
+                    "ref" => obj!("type"="string","description"="Ref ID from snapshot (e.g. @1, @e0); alias of selector — provide either one"),
                     "text" => obj!("type"="string","description"="Text to type")
                 },
-                &["selector","text"]),
+                &["text"]);
+                typed.function.parameters["anyOf"] = serde_json::json!([
+                    { "required": ["selector"] },
+                    { "required": ["ref"] }
+                ]);
+                typed
+            },
             tool_def("browser_press",
                 "Press physical key or chord on focused element (click/type first to focus). Supports named keys, single chars, chords (Control+c, Shift+Tab, Meta+ArrowLeft). Does not verify DOM change (terminal/canvas may update outside DOM).",
                 json_props! {

@@ -20,16 +20,3 @@ servers:
     args: ["-y", "vscode-mcp-server"]
     timeout_ms: 30000
     auto_start: false
-
-  # ── Nuphus 自用 MCP server（双通道 / dogfooding）──
-  # 显式配置是可选的：未配置时 Nuphus 会尝试自动发现与自身同 target 目录的
-  # nuphus-mcp 二进制（cargo build -p nuphus-mcp 后即存在）。
-  # 如需固定使用某个路径/参数/超时，可取消注释并修改：
-  # nuphus-mcp:
-  #   command: "C:\\path\\to\\nuphus-mcp.exe"
-  #   args: []
-  #   env: {}
-  #   timeout_ms: 60000
-  #   auto_start: false
-  #
-  # 整体关闭双通道（总是直连）：环境变量 NUPHUS_MCP_DUAL=off

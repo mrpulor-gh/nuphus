@@ -41,7 +41,9 @@ servers.yaml 配置了新 server 但不确定其工具签名时，运行时自�
 
 以下列表来自 `plugin/mcp/servers.yaml`。配置变更后需同步更新本文档。
 
-> 暂无已配置的 MCP server。在 `plugin/mcp/servers.yaml` 配置后更新本段。
+| Server | 用途 | 启动方式 |
+|--------|------|---------|
+| `vscode` | 编辑器集成（vscode-mcp-server） | `npx -y vscode-mcp-server`，首次调用时惰性启动 |
 
 ## 常用 Server 速查
 

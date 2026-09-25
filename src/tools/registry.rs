@@ -357,20 +357,7 @@ impl ToolRegistry {
                 let client = self.desktop_client().ok_or("本地桌面服务尚未连接")?;
                 return self.execute_desktop_tool(&client, tool_name, params).await;
             }
-            // 双通道（dogfooding）：MCP 优先，失败回退直连
-            match crate::mcp::dual::route_tool(tool_name, params).await {
-                crate::mcp::dual::RouteOutcome::Handled(result) => return Ok(result),
-                crate::mcp::dual::RouteOutcome::Fallback(reason) => {
-                    tracing::debug!(
-                        "[dual] desktop '{}' falls back to direct: {}",
-                        tool_name,
-                        reason
-                    );
-                }
-            }
-            // 跨进程自动化锁：MCP 通道不可用而回退直连时，与各 nuphus-mcp 实例
-            // （其他 Agent）通过同一锁文件互斥。MCP 可用时锁已在 nuphus-mcp 进程内
-            // 获取/释放，这里不重复获取（否则会与 MCP 进程的锁自锁）。
+            // 跨进程自动化锁：与其它 Agent 实例通过同一锁文件互斥，防止并发操作同一桌面。
             let lock = crate::utils::automation_lock::AutomationLock::new();
             let _lock_guard = match lock.acquire(tool_name) {
                 Ok(guard) => guard,

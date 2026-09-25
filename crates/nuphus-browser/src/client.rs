@@ -1834,9 +1834,26 @@ impl BrowserClient {
     /// Trade-off: coordinate-based dispatch hits whatever is topmost at the point,
     /// so an element covered by an overlay will NOT receive the click. The default
     /// `click` (JS path) ignores overlays; use trusted only when activation is needed.
-    pub async fn click_trusted(&self, selector: &str) -> Result<String, BrowserError> {
+    pub async fn click_trusted(
+        &self,
+        selector: &str,
+        button: &str,
+    ) -> Result<String, BrowserError> {
         use chromiumoxide::cdp::browser_protocol::input::{
             DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
+        };
+
+        // The press carries the button mask so context-menu / auxiliary-click
+        // handlers see a consistent gesture; the release clears it (buttons: 0).
+        let (mouse_button, button_mask) = match button {
+            "left" => (MouseButton::Left, 1),
+            "right" => (MouseButton::Right, 2),
+            "middle" => (MouseButton::Middle, 4),
+            other => {
+                return Err(BrowserError::Execution(format!(
+                    "unsupported mouse button '{other}' (expected left, right, or middle)"
+                )))
+            }
         };
 
         let page = self.get_page().await?;
@@ -1856,12 +1873,13 @@ impl BrowserClient {
         let cmd = DispatchMouseEventParams::builder()
             .x(x)
             .y(y)
-            .button(MouseButton::Left)
+            .button(mouse_button)
             .click_count(1);
         page_guard
             .execute(
                 cmd.clone()
                     .r#type(DispatchMouseEventType::MousePressed)
+                    .buttons(button_mask)
                     .build()
                     .map_err(|e| BrowserError::Execution(format!("mousePressed build: {e}")))?,
             )
@@ -1870,13 +1888,93 @@ impl BrowserClient {
         page_guard
             .execute(
                 cmd.r#type(DispatchMouseEventType::MouseReleased)
+                    .buttons(0)
                     .build()
                     .map_err(|e| BrowserError::Execution(format!("mouseReleased build: {e}")))?,
             )
             .await
             .map_err(|e| cdp_err_ctx("trusted click: mouseReleased failed", e))?;
 
-        Ok(format!("Clicked (trusted): {}", selector))
+        Ok(format!("Clicked (trusted, {}): {}", button, selector))
+    }
+
+    /// Arm a page-side change detector before dispatching an action.
+    ///
+    /// Baseline captured: (1) a `MutationObserver` on the document subtree — any
+    /// childList / attribute / characterData mutation sets the flag; (2) the
+    /// current URL (a navigation counts as a change); (3) the focused element's
+    /// value/text (typing into a field counts as a change even on vanilla inputs
+    /// that never mutate the DOM tree). Any of the three differing from its
+    /// baseline within the wait window means the page reacted to the action.
+    pub async fn arm_change_detector(&self) -> Result<(), BrowserError> {
+        let page = self.get_page().await?;
+        let page_guard = page.lock().await;
+        const JS: &str = r#"(function() {
+            try { if (window.__nuphus_mut_obs) window.__nuphus_mut_obs.disconnect(); } catch (e) {}
+            window.__nuphus_mut_seen = false;
+            window.__nuphus_mut_url = location.href;
+            var ae = document.activeElement;
+            window.__nuphus_mut_val = ae ? (ae.value !== undefined ? ae.value : ae.textContent) : null;
+            window.__nuphus_mut_obs = new MutationObserver(function() { window.__nuphus_mut_seen = true; });
+            window.__nuphus_mut_obs.observe(document.documentElement, {
+                childList: true, subtree: true, attributes: true, characterData: true
+            });
+            return true;
+        })()"#;
+        page_guard.evaluate(JS).await.map_err(cdp_err)?;
+        Ok(())
+    }
+
+    /// Wait up to `timeout_ms` for the armed detector to observe a page change
+    /// (DOM mutation, URL change, or focused-element value change). Returns
+    /// `true` if a change was seen within the window, `false` if the page stayed
+    /// quiet the whole window.
+    ///
+    /// Post-action effect verification: a change within the window means the
+    /// action took effect; a quiet page strongly suggests it did not (dead or
+    /// covered element, wrong selector). A full navigation destroys the page
+    /// context mid-wait — that itself is a change, so it reports `true` rather
+    /// than a false "no effect".
+    pub async fn wait_for_change(&self, timeout_ms: u64) -> Result<bool, BrowserError> {
+        let page = self.get_page().await?;
+        let page_guard = page.lock().await;
+        let js = r#"(async function() {
+            var deadline = Date.now() + __TIMEOUT_MS__;
+            for (;;) {
+                if (window.__nuphus_mut_seen) return true;
+                if (location.href !== window.__nuphus_mut_url) return true;
+                var ae = document.activeElement;
+                var v = ae ? (ae.value !== undefined ? ae.value : ae.textContent) : null;
+                if (v !== window.__nuphus_mut_val) return true;
+                if (Date.now() >= deadline) return false;
+                await new Promise(function(r) { setTimeout(r, 100); });
+            }
+        })()"#
+            .replace("__TIMEOUT_MS__", &timeout_ms.to_string());
+        // Budget sits above the JS-side poll window: on a healthy page the JS
+        // resolves (true/false) inside its own deadline, and only a wedged CDP
+        // call (frozen renderer) hits the outer budget.
+        let budget = std::time::Duration::from_millis(timeout_ms + 2000);
+        match tokio::time::timeout(budget, page_guard.evaluate(js)).await {
+            Ok(Ok(res)) => Ok(res.into_value::<bool>().unwrap_or(false)),
+            Ok(Err(e)) => {
+                // Execution context destroyed mid-wait (full navigation) or a
+                // transport error: the page changed (or is gone), so treat the
+                // action as effective rather than reporting a false "no effect".
+                tracing::warn!(
+                    "[Browser] effect-change wait failed, treating as page changed: {}",
+                    cdp_err(e)
+                );
+                Ok(true)
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "[Browser] effect-change wait hit the CDP budget ({}ms), treating as page changed",
+                    timeout_ms + 2000
+                );
+                Ok(true)
+            }
+        }
     }
 
     /// Resolve an element's center point in viewport CSS pixels, scrolling it into
