@@ -1050,6 +1050,7 @@ const en: Record<string, string> = {
   'themes.opacity': 'Opacity',
   'themes.opacityBubbles': 'Bubble Opacity',
   'themes.opacityInput': 'Input Opacity',
+  'themes.opacityPanel': 'Control Panel Opacity',
   'themes.opacitySkin': 'Skin Opacity',
   'themes.opacityModal': 'Dialog Opacity',
   'themes.customSave': 'Save as My Theme',

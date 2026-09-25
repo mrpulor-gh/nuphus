@@ -114,16 +114,92 @@ export function applyCoreColor(
 
 /* ── 不透明度覆盖（气泡 / 输入框 / 皮肤背景图）── */
 
-/** 不透明度滑块覆盖的颜色 token：气泡 ×2 + 输入框 + 弹窗（走 rgba 派生） */
+/**
+ * 不透明度滑块覆盖的颜色 token：气泡 ×2 + 输入框 + 面板 + 弹窗（走 rgba 派生）。
+ *
+ * `--panel-bg` 是设置中心面板底（语义上属弹窗族，与 `--modal-bg` 同值但独立成键）：
+ * 面板原先用不透明硬色 `--surface-0`，滑块遍历不到它 → 面板永远是一块盖死皮肤的
+ * 白板。并入本集合后，滑块与「切主题后按新基底重派」两条链路同时覆盖它。
+ */
 export const OPACITY_COLOR_KEYS = [
   '--msg-user-bg',
   '--msg-assistant-bg',
   '--input-bg',
+  '--panel-bg',
   '--modal-bg',
 ] as const
 
 /** 皮肤背景图不透明度 token（数值型覆盖，非 rgba 派生） */
 export const SKIN_OPACITY_KEY = '--skin-bg-opacity'
+
+/** 不透明度滑块的通道名（与 ThemesPage 的 OpacityAlphas 一一对应） */
+export type OpacityChannel = 'bubbles' | 'input' | 'panel' | 'modal' | 'skin'
+
+/**
+ * 通道的规范顺序（与滑块在设置页的排列一致）：前四项是 rgba 派生颜色通道，
+ * 与 `OPACITY_COLOR_KEYS` 一一对应；末项 `skin` 是数值型（背景图不透明度）。
+ *
+ * 存在的意义是让「加了颜色键却忘了加 intent 通道」这类漏配在测试里立刻暴露，
+ * 而不是等用户反馈「某个滑块重开页面后失效」。
+ */
+export const OPACITY_INTENT_KEY_ORDER: readonly OpacityChannel[] = [
+  'bubbles',
+  'input',
+  'panel',
+  'modal',
+  'skin',
+]
+
+/**
+ * 用户「显式拖过的滑块通道」的持久化位置。
+ *
+ * 为什么必须持久化而不是只放组件 ref：`ThemesPage` 被
+ * `<CompactModal open={s.showThemes}>` 包裹，而 CompactModal 在 open=false 时
+ * `return null`（见 ui/skinBg.ts 的同一条注释）—— 关闭主题弹窗即卸载 ThemesPage，
+ * 组件内 ref 随之归零。归零后切主题，`:dirty` 门槛判定「用户没拖过」，
+ * 于是把 `--input-bg` 等派生色整个丢弃、回落基底实色 → 用户设定的透明度丢失，
+ * 而滑块读数仍显示旧值（读数来自 overrides），画面与滑块彻底脱钩。
+ * 这正是「输入框背景不跟透明度变化」的确定性成因。
+ */
+export const LS_OPACITY_INTENT = 'nuphus_opacity_intent'
+
+const EMPTY_INTENT: Record<OpacityChannel, boolean> = {
+  bubbles: false,
+  input: false,
+  panel: false,
+  modal: false,
+  skin: false,
+}
+
+/** 读取用户拖过的滑块通道（缺省/损坏 → 全 false） */
+export function readOpacityIntent(): Record<OpacityChannel, boolean> {
+  try {
+    const raw = localStorage.getItem(LS_OPACITY_INTENT)
+    if (!raw) return { ...EMPTY_INTENT }
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ...EMPTY_INTENT }
+    }
+    const obj = parsed as Record<string, unknown>
+    const out = { ...EMPTY_INTENT }
+    for (const key of Object.keys(EMPTY_INTENT) as OpacityChannel[]) {
+      if (obj[key] === true) out[key] = true
+    }
+    return out
+  } catch {
+    return { ...EMPTY_INTENT }
+  }
+}
+
+/** 记录某通道被用户显式拖动过（只写 true，不清除 —— 意图是单调累积的用户声明） */
+export function markOpacityIntent(channel: OpacityChannel): void {
+  try {
+    const current = readOpacityIntent()
+    if (current[channel]) return
+    current[channel] = true
+    localStorage.setItem(LS_OPACITY_INTENT, JSON.stringify(current))
+  } catch {}
+}
 
 /** 解析 hex / rgb() / rgba() 颜色字符串 → {r,g,b}；非法返回 null */
 export function parseColorValue(value: string): { r: number; g: number; b: number } | null {

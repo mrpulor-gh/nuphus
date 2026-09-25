@@ -18,6 +18,14 @@ html.theme-transitioning *:after {
   margin: 0;
   padding: 0;
 }
+/* 根层（html / body / #root）是**全应用唯一的底色来源**：
+   三者同色，标题栏与聊天区都只透传，因此不存在"某一段背景对不上"的可能。
+   设计约束（2026-09-26 大王定稿）：标题栏与 body 必须同色同图 —— 无分割、无边。
+   - `background` 是**不透明底色**（不是 transparent）：它给皮肤绘制层
+     （.app-skin-backdrop，z-index: 0）兜底，也让"没配皮肤"时整屏是原来的 --void-deepest。
+     spread 语法让高度不被子元素撑破（原有行为，保留）。
+   - 皮肤图**不写在这里**：html 背景图配 `background-attachment: fixed` 会在 WebView2
+     触发整屏重绘（性能回退），故由根层的 .app-skin-backdrop 承担（见 SkinBackdrop.tsx）。 */
 html,
 body,
 #root {

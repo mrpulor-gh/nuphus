@@ -9,6 +9,13 @@
   height: 100dvh !important;
 }
 
+/* 【已删除】此处原有一条 `.app-shell > .mobile-notice { grid-row: 1/3 }`。
+   它是我在 grid 化时按**不存在的类名**写的推测规则：全仓无任何组件渲染
+   `.mobile-notice`（唯一疑似对象是 MacosPermissionNotice，其真实类是
+   `.macos-permission-notice`，且 position: fixed —— 不参与 grid 行放置，
+   本就不需要跨行）。grid 化不影响它，故整条删除，不做替换。
+   （.app-shell 改 grid 后各直接子元素的行放置已逐条核实，见 components.css） */
+
 /* ── 桌面端默认隐藏移动端控件 ── */
 .title-bar-right.title-bar-mobile-controls {
   display: none !important;

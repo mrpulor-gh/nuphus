@@ -992,6 +992,7 @@ const zh: Record<string, string> = {
   'themes.opacity': '不透明度',
   'themes.opacityBubbles': '气泡不透明度',
   'themes.opacityInput': '输入框不透明度',
+  'themes.opacityPanel': '控制面板不透明度',
   'themes.opacitySkin': '皮肤背景不透明度',
   'themes.opacityModal': '弹窗不透明度',
   'themes.customSave': '保存为我的主题',

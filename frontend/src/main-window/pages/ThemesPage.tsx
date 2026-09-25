@@ -6,18 +6,21 @@ import {
   OPACITY_COLOR_KEYS,
   SKIN_OPACITY_KEY,
   applyCoreColor,
+  markOpacityIntent,
   normalizeHexInput,
   parseColorAlpha,
   parseColorValue,
   parseCustomThemeJSON,
+  readOpacityIntent,
   stripOpacityColorKeys,
   toRgba,
   type CoreTokenKey,
   type CustomTheme,
+  type OpacityChannel,
 } from '../../hooks/customTheme'
 import { Save, RotateCcw, Download, Upload, X } from 'lucide-react'
 import { LetterAvatar } from '../../ui/LetterAvatar'
-import { applySkinBg, readSkinBg } from '../../ui/skinBg'
+import { applySkinBg, readSkinBg, releaseSkinBg, SKIN_CHANGE_EVENT } from '../../ui/skinBg'
 import { toAssetUrl } from '../../ui/assetUrl'
 import { Button } from '../../ui/Button'
 import { Section, FormRow } from '../../ui/PageLayout'
@@ -121,6 +124,7 @@ function ColorTokenRow({
 interface OpacityAlphas {
   bubbles: number // 0-100（%）
   input: number // 0-100（%）
+  panel: number // 0-100（%）
   skin: number // 0-100（%）
   modal: number // 0-100（%）
 }
@@ -133,25 +137,43 @@ function readSkinOpacityPercent(): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 35
 }
 
-/** 读当前生效的弹窗不透明度（%）——无覆盖时读 computed --modal-bg（三主题默认 0.8） */
-function readModalOpacityPercent(): number {
+/**
+ * 读某个颜色 token 当前生效的 α（%）：
+ * 有覆盖 → 直接读覆盖值；无覆盖 → 读 **computed** 值（tokens.css 里它就可能是半透明，
+ * 如 --modal-bg 默认 0.8 / --panel-bg 默认 0.9），拿不到才回落 100%。
+ *
+ * 早先只有 --modal-bg 做了 computed 兜底，输入框/气泡走 `colorPercent` 直接返回 100 ——
+ * 于是「滑块读数」与「画面实际 α」在无覆盖时必然脱钩（例如输入框已因覆盖变淡，
+ * 但一旦覆盖被切主题流程剥掉，读数仍是旧值，用户看到的却是实色）。
+ */
+function readColorOpacityPercent(key: string): number {
   const cs = getComputedStyle(document.documentElement)
-  const raw = cs.getPropertyValue('--modal-bg').trim()
-  const alpha = raw ? parseColorAlpha(raw) : null
-  return alpha === null ? 80 : Math.round(alpha * 100)
+  const computed = parseColorAlpha(cs.getPropertyValue(key).trim())
+  return computed === null ? 100 : Math.round(computed * 100)
 }
 
-/** 从 overrides 反向初始化滑块：rgba → α；无覆盖 → 颜色 100%、皮肤读当前计算值、弹窗读当前计算值 */
+/** 读当前生效的面板不透明度（%）——无覆盖时读 computed --panel-bg（三主题默认 0.9） */
+function readPanelOpacityPercent(): number {
+  return readColorOpacityPercent('--panel-bg')
+}
+
+/** 读当前生效的弹窗不透明度（%）——无覆盖时读 computed --modal-bg（三主题默认 0.8） */
+function readModalOpacityPercent(): number {
+  return readColorOpacityPercent('--modal-bg')
+}
+
+/** 从 overrides 反向初始化滑块：rgba → α；无覆盖 → 读该键当前 computed α */
 function readOpacityAlphas(overrides: Record<string, string>, skinDefault: number): OpacityAlphas {
   const colorPercent = (keys: readonly string[]): number => {
     for (const key of keys) {
       const raw = overrides[key]
-      if (raw) {
+      if (raw !== undefined) {
         const alpha = parseColorAlpha(raw)
         return alpha === null ? 100 : Math.round(alpha * 100)
       }
     }
-    return 100
+    // 无覆盖 → 按该键的实际生效值（基底可能是半透明玻璃，如弹窗/面板族）
+    return keys.length > 0 ? readColorOpacityPercent(keys[0]) : 100
   }
   const rawSkin = overrides[SKIN_OPACITY_KEY]
   const skin =
@@ -161,9 +183,13 @@ function readOpacityAlphas(overrides: Record<string, string>, skinDefault: numbe
   const modalOverride = overrides['--modal-bg']
   const modal =
     modalOverride !== undefined ? colorPercent(['--modal-bg']) : readModalOpacityPercent()
+  const panelOverride = overrides['--panel-bg']
+  const panel =
+    panelOverride !== undefined ? colorPercent(['--panel-bg']) : readPanelOpacityPercent()
   return {
     bubbles: colorPercent(['--msg-user-bg', '--msg-assistant-bg']),
     input: colorPercent(['--input-bg']),
+    panel,
     skin,
     modal,
   }
@@ -222,8 +248,39 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   const [language, setLanguage] = useState('zh')
   const [showAvatar, setShowAvatar] = useState(false)
   const [skinBg, setSkinBg] = useState('')
+  /**
+   * 皮肤预览用的**可渲染 URL**（`resolveSkinImageUrl` 的结果），不是持久化路径。
+   *
+   * 预览区必须显示"应用里实际生效的那张图"，而生效值走的是 asset:// 或 blob:
+   * （见 assetUrl.ts），裸路径直接塞进 `backgroundImage` 必然什么都不显示 ——
+   * 这正是 814 行那个坏点。这里与应用层共用同一个解析函数，预览和真实背景同源。
+   */
+  const [skinPreviewUrl, setSkinPreviewUrl] = useState('')
   const [userAvatar, setUserAvatar] = useState('')
   const [nuphusAvatar, setNuphusAvatar] = useState('')
+
+  /**
+   * 预览 URL 变更订阅：与应用层共用同一份解析结果（`skinBg` 广播），
+   * 而不是各自再解析一遍 —— 两处解析必然漂移（预览显示一张、应用里是另一张）。
+   */
+  const skinPreviewUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    const onSkinChange = (e: Event) => {
+      const next = (e as CustomEvent<{ url: string | null }>).detail?.url ?? null
+      const prev = skinPreviewUrlRef.current
+      if (prev === next) return
+      skinPreviewUrlRef.current = next
+      setSkinPreviewUrl(next ?? '')
+      // 旧值是 blob URL → 释放（生命周期契约见 assetUrl.ts）
+      releaseSkinBg(prev)
+    }
+    window.addEventListener(SKIN_CHANGE_EVENT, onSkinChange)
+    return () => {
+      window.removeEventListener(SKIN_CHANGE_EVENT, onSkinChange)
+      releaseSkinBg(skinPreviewUrlRef.current)
+      skinPreviewUrlRef.current = null
+    }
+  }, [])
 
   /* ── 自定义主题 ── */
   const [customName, setCustomName] = useState(
@@ -239,12 +296,13 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   const activeOverrides = previewOverrides ?? customTheme?.overrides ?? EMPTY_OVERRIDES
   // 无覆盖时各核心 token 的基底有效值（读自 computed style，避免与 tokens.css 重复维护）
   const [baseDefaults, setBaseDefaults] = useState<Record<string, string>>({})
-  // 四个不透明度滑块的当前值（%）；覆盖存在时由 rgba/数值反向解析，无覆盖时回退默认
+  // 五个不透明度滑块的当前值（%）；覆盖存在时由 rgba/数值反向解析，无覆盖时回退 computed α
   const [opacityAlphas, setOpacityAlphas] = useState<OpacityAlphas>({
     bubbles: 100,
     input: 100,
+    panel: 80,
     skin: 35,
-    modal: 60,
+    modal: 80,
   })
 
   // 基底变化 / 覆盖变化后，重新读取 5 个核心 token 的当前有效值。
@@ -286,15 +344,22 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   // 此时按当前 α 重新派生 rgba 覆盖。用 ref 记住已处理过的基底，避免拖动等渲染重复执行。
   //
   // dirty 语义：只有用户**显式拖过**的滑块通道才在基底切换后重派覆盖。
-  // 否则内置主题卡片切换（无自定义意图）会因「旧基底滑块读数 ≠ 新基底默认 α」
+  // 若不做这层约束，切换内置主题卡片就会因「旧基底滑块读数 ≠ 新基底默认 α」
   // 误写 --modal-bg 覆盖 → 预览态/落盘被标记为「用户自定义」且刷新后回不来纯主题。
+  //
+  // dirty 的**来源必须是持久的**（localStorage，见 customTheme.readOpacityIntent）：
+  // 本组件被 CompactModal 包裹，弹窗关闭即卸载，组件内 ref 归零；若以 ref 为准，
+  // 用户「拖滑块 → 关弹窗 → 重开 → 切主题」这条最常见的路径会让 dirty 判为 false，
+  // 于是 --input-bg 等派生色被 strip 后不再重派 → 回落基底实色，
+  // 用户设定的透明度被静默丢弃（滑块读数仍显示旧值）。这是输入框/气泡不跟透明度
+  // 变化的确定性根因。
   const lastDerivedBaseRef = useRef(theme)
-  const dirtyOpacityRef = useRef({ bubbles: false, input: false, modal: false, skin: false })
+  const dirtyOpacityRef = useRef<Record<OpacityChannel, boolean>>(readOpacityIntent())
   useEffect(() => {
     if (lastDerivedBaseRef.current === theme) return
     lastDerivedBaseRef.current = theme
     const dirty = dirtyOpacityRef.current
-    const { bubbles, input, modal } = opacityAlphas
+    const { bubbles, input, panel, modal } = opacityAlphas
     const cs = getComputedStyle(document.documentElement)
     const colors: Record<string, { r: number; g: number; b: number } | null> = {}
     for (const key of OPACITY_COLOR_KEYS) {
@@ -303,6 +368,7 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     const user = colors['--msg-user-bg']
     const assistant = colors['--msg-assistant-bg']
     const inputColor = colors['--input-bg']
+    const panelColor = colors['--panel-bg']
     const modalColor = colors['--modal-bg']
     const next = stripOpacityColorKeys(activeOverrides)
     if (dirty.bubbles && bubbles < 100 && user && assistant) {
@@ -312,21 +378,33 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     if (dirty.input && input < 100 && inputColor) {
       next['--input-bg'] = toRgba(inputColor, input / 100)
     }
+    // 面板与弹窗同族：基底即半透明玻璃，仅当滑块值 ≠ 新基底默认 α 时才写覆盖
+    // （100% 写 α=1 实色，否则回落基底仍是玻璃）
+    if (dirty.panel && panelColor) {
+      const computedPct = Math.round(
+        (parseColorAlpha(cs.getPropertyValue('--panel-bg').trim()) ?? 0.8) * 100,
+      )
+      if (panel !== computedPct) {
+        next['--panel-bg'] = toRgba(panelColor, panel / 100)
+      }
+    }
     if (dirty.modal && modalColor) {
-      // 弹窗基底即半透明玻璃：仅当滑块值 ≠ 新基底默认 α 时才写覆盖（100% 写 α=1 实色）
-      const computedAlpha = parseColorAlpha(cs.getPropertyValue('--modal-bg').trim())
-      const computedPct = computedAlpha === null ? 60 : Math.round(computedAlpha * 100)
+      const computedPct = Math.round(
+        (parseColorAlpha(cs.getPropertyValue('--modal-bg').trim()) ?? 0.8) * 100,
+      )
       if (modal !== computedPct) {
         next['--modal-bg'] = toRgba(modalColor, modal / 100)
       }
     }
-    // 基底已生效：滑块读数按新基底重读显示，dirty 清零（新一轮编辑从新基底开始）
-    dirtyOpacityRef.current = { bubbles: false, input: false, modal: false, skin: false }
+    // 基底已生效：滑块读数按新基底重读显示。
+    // dirty **不清零** —— 用户「拖过这个通道」是一个持久的用户声明（已落 localStorage），
+    // 后续每次切基底都应继续按新基底重派，而不是只生效一次。
     setOpacityAlphas(readOpacityAlphas(next, readSkinOpacityPercent()))
     // 无任何 dirty 通道 → 用户只是切换内置主题：不产生预览/落盘，保持纯主题
     const hasDerived =
       next['--msg-user-bg'] !== undefined ||
       next['--input-bg'] !== undefined ||
+      next['--panel-bg'] !== undefined ||
       next['--modal-bg'] !== undefined
     if (!hasDerived && Object.keys(next).length === 0) return
     const nextTheme = buildTheme(theme, next)
@@ -342,8 +420,18 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   /* ── 不透明度滑块 ── */
   // 取当前生效色（computed style，兼容 hex/rgb/rgba）→ 转 rgba(color, α) 写入覆盖通道。
   // 拖动时读到的 rgb 即基底色（α 不改变 rgb 分量），后续拖动可继续以此派生。
+  //
+  // 每个 handler 都调 markOpacityIntent：把「用户拖过这个通道」落成持久声明。
+  // 只写组件内 ref 是不够的 —— 弹窗关一次就归零，切主题时该通道的覆盖会被
+  // strip 掉且不再重派（详见 dirtyOpacityRef 处注释）。mark 写 ref 供本次会话立即生效，
+  // 写 localStorage 供重开 / 重启后仍然生效。
+  const markDirty = (channel: OpacityChannel) => {
+    dirtyOpacityRef.current[channel] = true
+    markOpacityIntent(channel)
+  }
+
   const handleBubbleOpacity = (percent: number) => {
-    dirtyOpacityRef.current.bubbles = true
+    markDirty('bubbles')
     setOpacityAlphas(prev => ({ ...prev, bubbles: percent }))
     const cs = getComputedStyle(document.documentElement)
     const user = parseColorValue(cs.getPropertyValue('--msg-user-bg').trim())
@@ -361,7 +449,7 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
   }
 
   const handleInputOpacity = (percent: number) => {
-    dirtyOpacityRef.current.input = true
+    markDirty('input')
     setOpacityAlphas(prev => ({ ...prev, input: percent }))
     const cs = getComputedStyle(document.documentElement)
     const inputColor = parseColorValue(cs.getPropertyValue('--input-bg').trim())
@@ -372,8 +460,21 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
     applyCustomPreview(nextTheme)
   }
 
+  // 设置中心面板：语义上属弹窗族（--panel-bg），与弹窗同规则 ——
+  // 基底即半透明玻璃，100% 需写 α=1 实色覆盖（不能 delete 回落基底，否则仍是玻璃）
+  const handlePanelOpacity = (percent: number) => {
+    markDirty('panel')
+    setOpacityAlphas(prev => ({ ...prev, panel: percent }))
+    const cs = getComputedStyle(document.documentElement)
+    const panelColor = parseColorValue(cs.getPropertyValue('--panel-bg').trim())
+    const next = { ...activeOverrides }
+    if (panelColor) next['--panel-bg'] = toRgba(panelColor, percent / 100)
+    const nextTheme = buildTheme(theme, next)
+    applyCustomPreview(nextTheme)
+  }
+
   const handleModalOpacity = (percent: number) => {
-    dirtyOpacityRef.current.modal = true
+    markDirty('modal')
     setOpacityAlphas(prev => ({ ...prev, modal: percent }))
     const cs = getComputedStyle(document.documentElement)
     const modalColor = parseColorValue(cs.getPropertyValue('--modal-bg').trim())
@@ -386,7 +487,7 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
 
   // 皮肤背景图为数值直写（非 rgba 派生），0% 即隐藏背景图
   const handleSkinOpacity = (percent: number) => {
-    dirtyOpacityRef.current.skin = true
+    markDirty('skin')
     setOpacityAlphas(prev => ({ ...prev, skin: percent }))
     const next = { ...activeOverrides }
     next[SKIN_OPACITY_KEY] = String(percent / 100)
@@ -503,9 +604,12 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
         setLanguage(raw.startsWith('zh') ? 'zh' : 'en')
       })
     setShowAvatar(localStorage.getItem(LS_SHOW_AVATAR) === 'true')
-    // 只恢复本页预览所需的 state；CSS 变量由 App 层挂载时统一恢复
+    // 只恢复本页预览所需的 state；背景广播的恢复由 App 层挂载时统一负责
     // （本页关闭态不在组件树上，不能承担恢复职责 —— 见 ui/skinBg.ts）
     setSkinBg(readSkinBg())
+    // 预览区同样在挂载时同步读一次：App 层已广播过的那一次本组件多半没听到
+    // （本页按需挂载，晚于 App 层 effect），只订阅事件会一直空到用户重新选图。
+    void applySkinBg(readSkinBg())
     setUserAvatar(localStorage.getItem(LS_USER_AVATAR) || '')
     setNuphusAvatar(localStorage.getItem(LS_NUPHUS_AVATAR) || '')
   }, [])
@@ -545,7 +649,8 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
    *
    * 实现收敛在 `ui/skinBg.ts`，本页不再持有私有副本：早先「保存 setProperty、
    * 清除 removeProperty、恢复只 setState」三路各写一半，恢复路径还写在了一个
-   * 关闭态根本不挂载的组件里（见 skinBg.ts 模块说明）。现在只有一套语义。
+   * 关闭态根本不挂载的组件里（见 skinBg.ts 模块说明）。现在只有一套语义 ——
+   * 且写的是「广播可渲染 URL」，不再有把图片字节塞进 CSS 值的路径。
    */
   const handleSkinSelect = async () => {
     try {
@@ -555,7 +660,7 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
       localStorage.setItem(LS_SKIN, path)
       await applySkinBg(path)
       // 运行时链路与启动路径（App 层 effect）行为不一致时，这一行是唯一能分辨
-      // 「卡在入库 / 写变量 / 还是渲染」的线索。真机复现时看 Console 即可定位。
+      // 「卡在入库 / 解析 URL / 还是渲染」的线索。真机复现时看 Console 即可定位。
       console.info('[skin] 已应用背景：', path)
     } catch (e) {
       console.error('皮肤背景入库失败:', e)
@@ -755,6 +860,11 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
           onChange={handleInputOpacity}
         />
         <OpacitySliderRow
+          label={t('themes.opacityPanel')}
+          value={opacityAlphas.panel}
+          onChange={handlePanelOpacity}
+        />
+        <OpacitySliderRow
           label={t('themes.opacityModal')}
           value={opacityAlphas.modal}
           onChange={handleModalOpacity}
@@ -810,8 +920,14 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
       {/* ── 皮肤背景 ── */}
       <Section title={t('themes.skinBg')}>
         {skinBg && (
-          /* 预览图为用户上传数据（动态值），保留内联 */
-          <div className="skin-preview" style={{ backgroundImage: skinBg }}>
+          /* 预览图为用户上传数据（动态值），保留内联。
+             值必须是 `resolveSkinImageUrl` 解析出的**可渲染 URL**（asset:// 或 blob:），
+             并包成 `url(...)` —— 早先传的是裸文件路径，CSS 把它当无效值整条丢弃，
+             预览区必然空白（2026-09-26 修复）。 */
+          <div
+            className="skin-preview"
+            style={skinPreviewUrl ? { backgroundImage: `url("${skinPreviewUrl}")` } : undefined}
+          >
             <div className="skin-preview-overlay">
               <span className="skin-preview-badge">{t('themes.applied')}</span>
             </div>

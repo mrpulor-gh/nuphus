@@ -12,6 +12,14 @@
   gap: 10px;
   height: 100%;
   overflow: auto;
+  /* 页面骨架自适应：容器查询绑「本页可用宽度」。
+     本骨架被装进控制面板（面板宽 = 视口 90%）等不同宽度的宿主，
+     视口断点在这里会说谎（窗口大 ≠ 容器宽），容器查询才反映实况。
+     min-width:0 必加 —— flex 子项默认 min-width:auto，内部宽内容（表格/长标题）
+     会把整页顶宽并触发横向溢出，这是工作流页「右侧栏不跟窗口收」的直接原因。 */
+  min-width: 0;
+  container-type: inline-size;
+  container-name: page;
 }
 
 /* ── 搜索栏 ── */
@@ -58,6 +66,8 @@
   gap: 6px;
   flex: 1;
   overflow-y: auto;
+  /* 同 .page：缺 min-width:0 时列表项内的长标题/元信息会把容器撑宽 */
+  min-width: 0;
 }
 .page-list-item {
   display: flex;
@@ -72,6 +82,8 @@
     background var(--transition-fast),
     border-color var(--transition-fast);
   cursor: pointer;
+  /* 列表项自身可收缩：长工作流标题改为省略而非撑宽卡片 */
+  min-width: 0;
 }
 .page-list-item:hover {
   background: var(--glass-1);
@@ -336,7 +348,10 @@
   border-radius: var(--radius-2);
   padding: 1px 8px;
   min-width: 0;
-  width: 240px;
+  /* 固定 240px → 相对容器收缩：窄容器（如控制面板内）里 240px + 状态徽标 +
+     右侧操作组会把 .item-head 顶破，标题被挤出可视区。
+     clamp 下限 120px 保证仍可编辑，上限 240px 保持宽屏观感。 */
+  width: clamp(120px, 22cqw, 240px);
   outline: none;
 }
 .wf-rename-input:focus {
@@ -384,6 +399,25 @@
   gap: 4px;
   flex-shrink: 0;
   align-items: center;
+}
+
+/* ── 条目的容器自适应 ──
+   `.page` 已声明 container-name: page（见文件顶部），此处按容器宽度分档。
+   窄容器（控制面板内 / 窗口收窄）时右侧操作组从「并排」改为「折到下一行」，
+   避免它把 .item-main 挤到只剩几像素、标题全被省略号吃掉。 */
+@container page (max-width: 720px) {
+  .item-row {
+    /* 操作组折到下一行，占满宽度右对齐 */
+    flex-wrap: wrap;
+  }
+  .item-main {
+    /* 折行后正文占整行，操作组另起一行 */
+    flex-basis: 100%;
+  }
+  .item-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
 }
 
 /* ── 错误提示条 ── */

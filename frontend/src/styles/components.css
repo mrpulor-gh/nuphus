@@ -13,14 +13,83 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--spark-muted);
 }
+/* 两行 grid：标题栏 / 其余内容。之所以是 grid 而不是原来的 column-flex ——
+   皮肤背景层要**同时**覆盖标题栏与聊天区，就必须与它们共享同一个 grid area：
+   `inset: 0` 的绝对定位层在这里取值于整个 .app-shell。若沿用 flex，背景层成为
+   普通 flex item 会被排进列流，"整屏覆盖"只能靠离开文档流硬凑，反而更脆。
+   改 grid 后各直接子元素统一落在 content 行（标题栏另行覆盖），
+   布局结果与 flex 版逐条等价：标题栏 48px、其余占满剩余高度。
+   【行名而非行号】行用 `[titlebar] / [content]` 命名，子元素按**名字**放置 ——
+   早先写 `grid-row: 1` / `grid-row: 2` 时，`.app-shell > *` 与
+   `.app-shell > header.title-bar` 的 specificity 完全相同（0,1,1），
+   `grid-row:1` 只靠源码顺序胜出；任何 CSS 载入顺序变化（打包器重排、
+   code-splitting 顺序变化）都会静默把标题栏推进内容行。命名行让两条规则
+   落到**互不相干**的目标上，不再存在胜出关系。 */
 .app-shell {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: [titlebar] var(--titlebar-h) [content] 1fr;
+  min-height: 0;
   height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(var(--accent-rgb), 0.02) 0%, transparent 60%),
-    var(--void-deepest);
+  position: relative;
+  /* 本元素**不画背景**（无分割无边设计）：底色统一由 #root / html 提供，
+     皮肤图由 .app-skin-backdrop（根层、BodyPortal）铺在底下。
+     原先是 `radial-gradient(...), var(--void-deepest)`，与 body 的 --void-deepest
+     并不一致（多一层强调色径向渐变），这正是"应用 head 和 body 背景不同步"的来源。
+     底色上移到 #root 后，标题栏、聊天区、body 三段必然同色。 */
+  background: transparent;
+}
+/* 标题栏：落在命名行 titlebar（按名字定位，与源码顺序无关）。 */
+.app-shell > header.title-bar {
+  grid-row: titlebar;
+}
+/* 内容层：除标题栏外的一切直接子元素都落在 content 行，与背景层同层叠上下文。
+   注意 grid-row / grid-column 的简写会重置跨行跨度，故此处只写名字（不写 "content / span 1"）。
+   【逐条核实：为什么"其余所有直接子元素都进 content 行"正确】
+   下面按 App.tsx 真实的 .app-shell 直接子元素列全（非推断）：
+   - header.title-bar（TitleBar.tsx:40）        → 显式落 titlebar 行（上一条）
+   - div.chat-area（App.tsx:426）               → 需占满剩余高度，必须落 content 行 ✔
+   - SplashScreen（App.tsx:405；splash.css:2）  → position: fixed，行放置对其无影响 ✔
+   - ErrorScreen（App.tsx:410；error.css:10）   → position: fixed，同上 ✔
+   - DesktopToolbar（App.tsx:1126）             → position: fixed，同上 ✔
+   - MacosPermissionNotice（App.tsx:425）       → position: fixed，同上 ✔
+   以下在 React 树里位于 .app-shell 内，但**渲染到 body**，DOM 上不是 grid item：
+   - SkinBackdrop（portal → body）、AppContextMenu（portal → body）、
+     AppIsland（portal → 锚点/body）、CommandPalette / WorkflowTaskPanel /
+     TenetsDialog / AnnotationsDialog / ExecutionTraceFloating（均 fixed 或 portal）
+  结论：进 content 行的实质只有 chat-area 一项；其余要么是标题栏，要么是
+   fixed/portal（行放置对其布局无任何影响，给它们 content 行只是保证它们不被
+   "auto 放置"丢进 titlebar 行所占的第一行）。故本条规则不需要任何排除项 ——
+   这正是删掉那条按不存在类名写的 `.mobile-notice{grid-row:1/3}` 的原因。 */
+.app-shell > * {
+  grid-column: 1;
+  grid-row: content;
+  z-index: 1;
+}
+/* ── 皮肤背景（唯一渲染点，见 ui/SkinBackdrop.tsx）──
+   经 portal 挂在 document.body 上，是**根层**的整屏覆盖层：
+   `inset: 0` 取值于整个视口，标题栏那 48px 是视口的一部分，天然被覆盖，
+   与"是否落在 grid/flex 行里"彻底无关。
+   外层只负责铺满；**不设 opacity**（设了会与绘制层叠成双重衰减）。
+   层级：低于一切应用内容（内容层 z-index ≥ 1），高于 #root 的底色。 */
+.app-skin-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: transparent;
+}
+/* 唯一的绘制层：图片与不透明度都只在这一处声明 ——
+   标题栏与聊天区同源同透明度，是结构保证而非约定。
+   背景色兜底：万一 --skin-bg-opacity 被主题改成 0（滑块可到 0%），
+   绘制层整体（含容器）不可见，露出 #root 的 --void-deepest，不会留白。 */
+.app-skin-backdrop-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  opacity: var(--skin-bg-opacity, 0.35);
 }
 .title-bar {
   display: flex;
@@ -28,21 +97,19 @@
   justify-content: space-between;
   height: var(--titlebar-h);
   padding: 0 14px;
-  background: var(--void-deepest);
+  /* 背景**透明**：一幅背景图（或一个底色）必须无接缝地贯穿标题栏与聊天区。
+     原先这里是实色 var(--void-deepest)，叠加在皮肤背景层之上把整条标题栏
+     盖死 —— 表现正是「标题栏没有皮肤、与正文之间一条明显分界」。
+     现在底色由 #root 提供（与 body 同源），标题栏只透传：
+     没配皮肤时露出的是原来的 --void-deepest，配了皮肤时透出背景图，两种状态都无分界线。 */
+  background: transparent;
   -webkit-user-select: none;
   -moz-user-select: none;
   user-select: none;
   flex-shrink: 0;
+  /* position: relative 保留 —— 标题栏内的绝对定位后代（如 island 落点）依赖它；
+     皮肤背景已不由本元素绘制（见上方 .app-skin-backdrop）。 */
   position: relative;
-}
-.title-bar::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--app-skin-bg) center/cover fixed no-repeat;
-  opacity: 0.35;
-  pointer-events: none;
-  z-index: 0;
 }
 .title-bar-left {
   display: flex;

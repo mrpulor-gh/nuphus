@@ -16,6 +16,19 @@
    面板宽随窗口收缩 → 右侧内容区同步收窄。内容区上限 = 面板 1080 − 导航 236 = 844px；
    「画布 / 模型」两类分区在该上限内结构性不可用，已由 SettingsCenter 分流到 App 层
    全屏宿主（.canvas-workbench-host / .models-page-host），不在本文件渲染。── */
+/* ── 宿主 = 遮罩层：铺满视口 + 居中承载面板（非全屏弹窗）──────
+   面板四周留 32px；点空白处（mousedown target 命中自身）关闭，与命令面板同一手感。
+   面板宽随窗口收缩 → 右侧内容区同步收窄。内容区上限 = 面板 1080 − 导航 236 = 844px；
+   「画布 / 模型」两类分区在该上限内结构性不可用，已由 SettingsCenter 分流到 App 层
+   全屏宿主（.canvas-workbench-host / .models-page-host），不在本文件渲染。
+
+   ⚠️ 遮罩（本层）**不参与面板不透明度**：它铺满视口，是「点空白关闭」的命中区，
+   也是弹窗与聊天界面的视觉隔离层，属于 modal 语义的独立职责。
+   面板透明度滑块管的是 .settings-center-panel（--panel-bg），
+   若把遮罩也接进同一个键，调低面板透明度会连带把整屏压暗、退化成一个纯色滤镜，
+   反而看不见皮肤背景（这正是上一轮把面板调到全透明仍「毫无变化」的原因之一：
+   遮罩 α=0.55 把底下一切先糊黑，面板怎么调都被压住）。
+   遮罩自身的浓淡应由 --overlay-bg 单独表达，不与面板共用开关。── */
 .settings-center-host {
   position: fixed;
   inset: 0;
@@ -32,11 +45,26 @@
   display: flex;
   min-height: 0;
   flex-direction: column;
-  width: min(1080px, 100%);
-  height: min(760px, 100%);
-  border: 1px solid var(--line-2);
+  /* 面板尺寸由固定像素上限改为视口百分比（90%）：
+     原先 min(1080×760, 100%) 在小窗口下顶满、大屏上又只有 1080 宽，
+     与「控制面板」这类需要展开阅读的设置页不匹配。90% 跟随窗口缩放。 */
+  width: 90%;
+  height: 90%;
+  /* 容器上下文：左导航宽度按面板实际宽度分档收缩（见文件末尾 @container）。
+     必须声明在这里而不是 .settings-center-nav 上 —— 容器查询只能查「祖先容器」，
+     自身声明无法参与自己的宽度判断。 */
+  container-type: inline-size;
+  container-name: settings-panel;
   border-radius: var(--radius-4);
-  background: var(--surface-0);
+  /* 面板底走弹窗族语义键 --panel-bg（与 --modal-bg 同值、同受滑块控制）：
+     原先用不透明硬色 --surface-0，把皮肤背景整块盖死，且滑块遍历不到该键。 */
+  background: var(--panel-bg);
+  /* 取消 backdrop-filter（原 blur(24px)）——
+     这一层模糊是「面板拖到全透明仍看不出变化」的第二个原因：
+     它把背后内容糊成一片均匀灰，α 再低也只看到「糊」而不是「透」，
+     滑块位移无法转成可感知的视觉变化。
+     去掉后 α 的变化直接表现为背后皮肤/正文的清晰度与亮度，滑块手感成立。
+     面板文字可读性由 --panel-bg 的 α 自身保证（默认 0.8 足够）。 */
   box-shadow: var(--shadow-modal);
   overflow: hidden;
   color: var(--fg-1);
@@ -52,7 +80,11 @@
   min-height: 48px;
   padding: 0 var(--space-5);
   border-bottom: 1px solid var(--line-1);
-  background: var(--surface-1);
+  /* 不透明底 → transparent：面板整体已走 --panel-bg（可调透明度），
+     栏内再压一层 --surface-1（#12121a，α=1）会把面板拖到透明后仍留一条实心条，
+     用户看到「面板变透了但顶栏没变」= 又一次透明度不同步。
+     现在顶栏与面板同透，分隔只由 border-bottom 表达。 */
+  background: transparent;
   flex-shrink: 0;
 }
 .settings-center-bar-icon {
@@ -85,10 +117,15 @@
 .settings-center-nav {
   display: flex;
   min-height: 0;
+  /* 固定 236px → 跟容器收（见文件末尾的容器查询）：
+     窗口/面板变窄时固定宽会让左栏占比不降反升（面板 90%，窗口越小左栏越"抢"），
+     故改为宽度可用 clamp 微调 + 窄档整体收窄/折叠。 */
   width: 236px;
+  flex-shrink: 0;
   flex-direction: column;
   border-right: 1px solid var(--line-1);
-  background: var(--surface-1);
+  /* 同顶栏：不在面板内部再压不透明底，否则面板调透明后被这一栏整块吃掉 */
+  background: transparent;
 }
 .settings-center-nav-scroll {
   min-height: 0;
@@ -326,4 +363,65 @@
   text-align: center;
   font-size: var(--fz-xs);
   color: var(--fg-3);
+}
+
+/* ═══════════════════════════════════════════
+   左导航随面板宽度自适应
+   容器 = .settings-center-panel（container-name: settings-panel）
+
+   为什么必须这么做：面板宽 = 视口 90%，而左栏曾是固定 236px。
+   窗口 1400 → 面板 1260，左栏占比 18.7%；窗口缩到 800 → 面板 720，
+   左栏仍是 236，占比涨到 32.8% —— 越窄越挤内容区，这就是要修的现象。
+
+   分档策略（按面板宽度）：
+     ≥960            → 236px（原值，宽屏观感不变）
+     720 ~ 960       → 196px（收 40px，标签仍完整）
+     560 ~ 720       → 64px（只留图标列，文字隐藏，右侧内容区优先）
+   ═══════════════════════════════════════════ */
+@container settings-panel (max-width: 960px) {
+  .settings-center-nav {
+    width: 196px;
+  }
+}
+@container settings-panel (max-width: 720px) {
+  .settings-center-nav {
+    /* 只留图标：图标本身宽 14px + 左右 padding，64px 足够居中 */
+    width: 64px;
+  }
+  .settings-center-nav-scroll {
+    padding: var(--space-4) var(--space-2);
+  }
+  /* 分组标题纯文字，窄栏放不下 → 隐藏（视觉上由图标分组间距代替） */
+  .settings-center-nav-group-title {
+    display: none;
+  }
+  /* 标签隐藏，图标居中对齐 */
+  .settings-center-nav-label {
+    display: none;
+  }
+  .settings-center-nav-item {
+    justify-content: center;
+    padding: 7px 0;
+  }
+}
+/* 老引擎兜底：不支持容器查询时按视口近似（面板 = 视口 90%，误差可接受） */
+@supports not (container-type: inline-size) {
+  @media (max-width: 1060px) {
+    .settings-center-nav {
+      width: 196px;
+    }
+  }
+  @media (max-width: 800px) {
+    .settings-center-nav {
+      width: 64px;
+    }
+    .settings-center-nav-group-title,
+    .settings-center-nav-label {
+      display: none;
+    }
+    .settings-center-nav-item {
+      justify-content: center;
+      padding: 7px 0;
+    }
+  }
 }

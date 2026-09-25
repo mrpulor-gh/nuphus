@@ -10,30 +10,37 @@
    后续拆分需按选择器提取（类交错分布，勿按行区间切割）。
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── 皮肤背景支持 ── */
-:root {
-  --app-skin-bg: none;
-}
+/* ── 聊天区 ──
+   皮肤背景不再由本区域绘制：整个应用的背景统一由**根层**的
+   .app-skin-backdrop（ui/SkinBackdrop.tsx，经 portal 挂到 body）承担，
+   一图无接缝地贯穿标题栏与聊天区；内部 DOM 一律不画背景。
+   本区域的底色走 .app-shell → #root → body 的 var(--void-deepest)，透明透传。
+   早先的 `.chat-area::before{background:var(--app-skin-bg)}` 与 :root 默认值已一并删除，
+   原因与替换方案见 ui/skinBg.ts 模块说明。 */
 .chat-area {
+  /* `flex: 1` 保留：.app-shell 已是 grid，本元素的高度由 content 行（1fr）给定，
+     flex 属性在 grid item 上确实不生效 —— 但 .chat-area 同时是**本层 flex 容器的
+     起点**（display: flex 见下），且它在别处（移动端覆写）仍可能作为 flex item 存在，
+     删掉只会引入不必要的分支。保留为"高度可被父级压缩"的声明，无副作用。 */
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* min-height: 0 —— 必需：grid/flex item 的 min-height 默认是 auto，
+     内容再高也会把轨道撑破而不是内部滚动。content 行是 1fr，缺这条则
+     .chat-area 会被长会话撑高、把 .app-shell 的 overflow:hidden 当裁剪用。 */
+  min-height: 0;
   overflow: hidden;
+  background: transparent;
   position: relative;
-}
-.chat-area::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--app-skin-bg) center/cover fixed no-repeat;
-  opacity: var(--skin-bg-opacity);
-  pointer-events: none;
-  z-index: 0;
 }
 .chat-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* min-height: 0 —— 同一条规则的第二环：.chat-area 是 flex 容器（纵向），
+     本元素作为其 flex item 同样需要它，否则 .chat-messages 的 overflow-y:auto
+     拿不到一个确定的可滚动高度。 */
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -85,6 +92,12 @@
 }
 .chat-messages {
   flex: 1;
+  /* min-height: 0 —— 滚动链的最后一环。本元素是 .chat-panel（纵向 flex）的 item，
+     默认 min-height:auto 会让它的高度随内容无限增长，overflow-y:auto 永远不会
+     触发（界面表现为"整页被撑高、看不到滚动条"）。补齐后链路完整：
+     .app-shell(content 行 1fr) → .chat-area(min-height:0) →
+     .chat-panel(min-height:0) → .chat-messages(本处，overflow-y:auto)。 */
+  min-height: 0;
   overflow-y: auto;
   padding: 0;
 }
@@ -179,7 +192,6 @@
   margin-top: 20px;
   margin-bottom: 0;
   border-radius: 14px 14px 0px;
-  border: 1px solid var(--border-secondary);
   background: var(--msg-user-bg);
 }
 .message-row.assistant {
@@ -191,7 +203,6 @@
   margin-left: 0;
   border-radius: 0 16px 16px;
   background: var(--msg-assistant-bg);
-  border: 1px solid var(--border-secondary);
 }
 
 /* ── 头像容器 ── */

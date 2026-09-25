@@ -6,6 +6,7 @@ import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, openExternal } fr
 import { handleExternalAnchorClick } from './lib/externalLink'
 import { scheduleIdle } from './lib/idle'
 import { applySkinBg, readSkinBg } from '../ui/skinBg'
+import { SkinBackdrop } from '../ui/SkinBackdrop'
 import { TenetsDialog } from './dialogs/TenetsDialog'
 import { AnnotationsDialog } from './dialogs/AnnotationsDialog'
 import { WorkflowRunModal } from './workflow/WorkflowRunModal'
@@ -196,10 +197,10 @@ export default function App() {
    * ThemesPage 被 `<CompactModal open={s.showThemes}>` 包着，而 CompactModal 在
    * open=false 时 `return null` —— 关闭状态下 ThemesPage 根本不在组件树上。
    * 把恢复写在它的挂载 effect 里，等价于「只有打开过主题弹窗的人才配有背景」：
-   * 在聊天界面刷新 / Vite HMR 时没人恢复 `--app-skin-bg`，变量回落默认 `none`，
-   * 背景必丢（偶尔又出现，正是因为打开过弹窗）。
+   * 在聊天界面刷新 / Vite HMR 时没人恢复，背景必丢（偶尔又出现，正是因为打开过弹窗）。
    *
-   * App 常驻且 `.chat-area`（:399）就在本组件内，是唯一可靠的恢复位置。
+   * App 常驻，是唯一可靠的恢复位置：这里解析出可渲染 URL 并广播，
+   * 由 `<SkinBackdrop>`（:397，根层的唯一背景绘制点）消费。
    * 详见 `ui/skinBg.ts` 的模块说明。
    */
   useEffect(() => {
@@ -388,6 +389,12 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {/* 皮肤背景：唯一背景绘制点，一图无接缝地贯穿标题栏与聊天区
+          （同源同透明度由结构保证，不再是两个 ::before 各自的约定）。
+          经 portal 挂到 body（根层），**不产生任何 DOM 容器** ——
+          .app-island 经 el.closest('.app-shell') 定位宿主
+          （test/app-island-anchor.test.tsx），加容器会截断这条链。 */}
+      <SkinBackdrop />
       {/* 自绘右键复制菜单（拦截浏览器原生导航菜单，防误点刷新/检查中断运行） */}
       <AppContextMenu />
       {/* 页头 island：应用在前台时的轻反馈（非前台仍走 HUD，见 ui/islandChannel.ts）。

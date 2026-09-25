@@ -6,7 +6,12 @@
   width: 80%;
   min-width: 800px;
   max-width: 1280px;
-  background: var(--input-bg);
+  /* 背景**不由本层绘制**：输入框底统一由内层 .chat-input-body 提供
+     （ref-bar.css 顶部注释即此约定）。本层只负责定位几何 + 阴影 + 边框。
+     此前这里也画了一层 var(--input-bg)，与 .chat-input-body 的
+     var(--glass-bg) 叠成两层 —— 「输入框不透明度」滑块只改了本层，
+     内层不透明的 --glass-bg（α=0.9）把效果整个吃掉，用户拖滑块毫无反应。 */
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
@@ -473,7 +478,11 @@
   flex-direction: column;
   gap: 0;
   padding: 6px;
-  background: var(--glass-bg);
+  /* 输入框底 = 唯一绘制层，绑「输入框不透明度」滑块（--input-bg）。
+     此处原为 var(--glass-bg)（α 固定 0.9，滑块碰不到），是「拖滑块没反应」的
+     直接原因：外层 .chat-input-area 那层被滑块改了，却被本层盖死。
+     现在全应用只有这一层画输入框底，滑块改的就是用户看到的那一层。 */
+  background: var(--input-bg);
   border: 1px solid var(--glass-2);
   border-radius: 10px;
   position: relative;
