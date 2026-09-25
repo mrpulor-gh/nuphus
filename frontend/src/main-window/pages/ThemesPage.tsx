@@ -763,6 +763,90 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
         </div>
       </Section>
 
+      {/* ── 皮肤背景 ── */}
+      <Section title={t('themes.skinBg')}>
+        {skinBg && (
+          /* 预览图为用户上传数据（动态值），保留内联。
+             值必须是 `resolveSkinImageUrl` 解析出的**可渲染 URL**（asset:// 或 blob:），
+             并包成 `url(...)` —— 早先传的是裸文件路径，CSS 把它当无效值整条丢弃，
+             预览区必然空白（2026-09-26 修复）。 */
+          <div
+            className="skin-preview"
+            style={skinPreviewUrl ? { backgroundImage: `url("${skinPreviewUrl}")` } : undefined}
+          >
+            <div className="skin-preview-overlay">
+              <span className="skin-preview-badge">{t('themes.applied')}</span>
+            </div>
+          </div>
+        )}
+        <div className="btn-row">
+          <Button variant="default" size="sm" onClick={handleSkinSelect}>
+            {skinBg ? t('themes.changeBg') : t('themes.selectBg')}
+          </Button>
+          {skinBg && (
+            <Button variant="danger" size="sm" onClick={clearSkin}>
+              {t('themes.clearBg')}
+            </Button>
+          )}
+        </div>
+      </Section>
+
+      {/* ── 头像 ── */}
+      <Section title={t('themes.avatarSettings')}>
+        <FormRow
+          label={t('themes.showAvatar')}
+          control={
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showAvatar}
+              className="switch"
+              onClick={handleToggleAvatar}
+            />
+          }
+        />
+        <FormRow
+          label={
+            <span className="avatar-label">
+              {renderAvatar(userAvatar, 'user')}
+              <span>{t('themes.userAvatar')}</span>
+            </span>
+          }
+          control={
+            <>
+              <Button variant="default" size="sm" onClick={() => handleAvatarSelect('user')}>
+                {userAvatar ? t('themes.changeBg') : t('themes.upload')}
+              </Button>
+              {userAvatar && (
+                <Button variant="danger" size="sm" onClick={() => clearAvatar('user')}>
+                  {t('themes.clearBg')}
+                </Button>
+              )}
+            </>
+          }
+        />
+        <FormRow
+          label={
+            <span className="avatar-label">
+              {renderAvatar(nuphusAvatar, 'nuphus')}
+              <span>{t('themes.nuphusAvatar')}</span>
+            </span>
+          }
+          control={
+            <>
+              <Button variant="default" size="sm" onClick={() => handleAvatarSelect('nuphus')}>
+                {nuphusAvatar ? '更换' : '上传'}
+              </Button>
+              {nuphusAvatar && (
+                <Button variant="danger" size="sm" onClick={() => clearAvatar('nuphus')}>
+                  清除
+                </Button>
+              )}
+            </>
+          }
+        />
+      </Section>
+
       {/* ── 自定义主题 ── */}
       <Section title={t('themes.custom')} description={t('themes.customDesc')}>
         {/* 基底 = 当前使用的主题（只读跟随，不重复摆卡片再选一遍——大王：用户改
@@ -915,90 +999,6 @@ export function ThemesPage({ onClose, showToast }: { onClose: () => void; showTo
             {t('themes.customImport')}
           </Button>
         </div>
-      </Section>
-
-      {/* ── 皮肤背景 ── */}
-      <Section title={t('themes.skinBg')}>
-        {skinBg && (
-          /* 预览图为用户上传数据（动态值），保留内联。
-             值必须是 `resolveSkinImageUrl` 解析出的**可渲染 URL**（asset:// 或 blob:），
-             并包成 `url(...)` —— 早先传的是裸文件路径，CSS 把它当无效值整条丢弃，
-             预览区必然空白（2026-09-26 修复）。 */
-          <div
-            className="skin-preview"
-            style={skinPreviewUrl ? { backgroundImage: `url("${skinPreviewUrl}")` } : undefined}
-          >
-            <div className="skin-preview-overlay">
-              <span className="skin-preview-badge">{t('themes.applied')}</span>
-            </div>
-          </div>
-        )}
-        <div className="btn-row">
-          <Button variant="default" size="sm" onClick={handleSkinSelect}>
-            {skinBg ? t('themes.changeBg') : t('themes.selectBg')}
-          </Button>
-          {skinBg && (
-            <Button variant="danger" size="sm" onClick={clearSkin}>
-              {t('themes.clearBg')}
-            </Button>
-          )}
-        </div>
-      </Section>
-
-      {/* ── 头像 ── */}
-      <Section title={t('themes.avatarSettings')}>
-        <FormRow
-          label={t('themes.showAvatar')}
-          control={
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showAvatar}
-              className="switch"
-              onClick={handleToggleAvatar}
-            />
-          }
-        />
-        <FormRow
-          label={
-            <span className="avatar-label">
-              {renderAvatar(userAvatar, 'user')}
-              <span>{t('themes.userAvatar')}</span>
-            </span>
-          }
-          control={
-            <>
-              <Button variant="default" size="sm" onClick={() => handleAvatarSelect('user')}>
-                {userAvatar ? t('themes.changeBg') : t('themes.upload')}
-              </Button>
-              {userAvatar && (
-                <Button variant="danger" size="sm" onClick={() => clearAvatar('user')}>
-                  {t('themes.clearBg')}
-                </Button>
-              )}
-            </>
-          }
-        />
-        <FormRow
-          label={
-            <span className="avatar-label">
-              {renderAvatar(nuphusAvatar, 'nuphus')}
-              <span>{t('themes.nuphusAvatar')}</span>
-            </span>
-          }
-          control={
-            <>
-              <Button variant="default" size="sm" onClick={() => handleAvatarSelect('nuphus')}>
-                {nuphusAvatar ? '更换' : '上传'}
-              </Button>
-              {nuphusAvatar && (
-                <Button variant="danger" size="sm" onClick={() => clearAvatar('nuphus')}>
-                  清除
-                </Button>
-              )}
-            </>
-          }
-        />
       </Section>
     </div>
   )
