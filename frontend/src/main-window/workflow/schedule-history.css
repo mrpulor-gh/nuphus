@@ -4,6 +4,10 @@
   gap: var(--space-3);
   padding: var(--space-3);
   min-height: 0;
+  /* 自适应用容器查询而非视口断点：本页装在控制面板里（面板宽 = 视口 90%），
+     窗口大 ≠ 容器宽，@media 会给出错误结论。容器查询直接绑「这块地有多宽」。 */
+  container-type: inline-size;
+  container-name: schedule-page;
 }
 .schedule-history-toolbar {
   display: flex;
@@ -20,7 +24,9 @@
 }
 .schedule-history-filters {
   display: grid;
-  grid-template-columns: 1.5fr 1fr repeat(2, 1fr);
+  /* auto-fit + minmax：列数随容器宽度自动增减，不再固定四列被挤扁。
+     每列最小 150px（够放下「状态 / 触发方式」这类标签 + 30px 控件）。 */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-2);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--line-1);
@@ -68,6 +74,12 @@
   text-align: left;
   vertical-align: middle;
 }
+/* 表格自适应：容器不够宽时按优先级**逐列隐藏**（见下方容器查询），
+   而不是让表格横向溢出滚动 —— 定时任务页的信息优先级是
+   时间 > 工作流 > 状态 > 触发方式 > 结果摘要，故从右往左砍。 */
+.schedule-history-table {
+  table-layout: auto;
+}
 .schedule-history-table th {
   color: var(--fg-4);
   font-size: var(--fz-xs);
@@ -84,7 +96,8 @@
   font-size: 10px;
 }
 .schedule-history-result {
-  max-width: 260px;
+  /* 固定 260px → 相对容器：结果摘要在窄容器里跟着收，不撑破表格 */
+  max-width: min(260px, 30cqw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -116,14 +129,51 @@
   color: var(--fg-3);
   font-size: var(--fz-sm);
 }
-@media (max-width: 760px) {
-  .schedule-history-filters {
-    grid-template-columns: 1fr 1fr;
-  }
-  .schedule-history-table th:nth-child(3),
-  .schedule-history-table td:nth-child(3),
+/* ── 自适应：容器查询（非视口断点）──
+   面板宽 = 视口 90%，窗口 1280 时容器约 1150，@media(max-width:760px) 永不命中；
+   窗口缩到 900 时又会整体跳变。容器查询按「本页实际可用宽度」分档，逐列降级。
+
+   实际列序（ScheduleHistoryPage.tsx:200-205，已核对，勿凭猜）：
+     1 工作流 / 2 运行时间 / 3 耗时 / 4 状态 / 5 结果 / 6 操作
+   信息优先级：工作流 > 运行时间 > 状态 > 耗时 > 结果 > 操作（操作列保底，
+   否则窄容器里记录不可点开）。故隐藏顺序：结果 → 耗时。 */
+@container schedule-page (max-width: 900px) {
+  /* 先砍结果摘要（可点「查看回放」看详情） */
   .schedule-history-table th:nth-child(5),
   .schedule-history-table td:nth-child(5) {
     display: none;
+  }
+}
+@container schedule-page (max-width: 680px) {
+  /* 再砍耗时（可由起止时间推算，非必要信息） */
+  .schedule-history-table th:nth-child(3),
+  .schedule-history-table td:nth-child(3) {
+    display: none;
+  }
+}
+@container schedule-page (max-width: 520px) {
+  /* 极窄：只留 工作流 + 运行时间 + 状态 + 操作 */
+  .schedule-history-page {
+    padding: var(--space-2);
+  }
+  .schedule-history-table th,
+  .schedule-history-table td {
+    padding: var(--space-2);
+  }
+}
+
+/* 老引擎兜底：不支持容器查询时退回视口断点（行为与改造前一致，不更差） */
+@supports not (container-type: inline-size) {
+  @media (max-width: 900px) {
+    .schedule-history-table th:nth-child(5),
+    .schedule-history-table td:nth-child(5) {
+      display: none;
+    }
+  }
+  @media (max-width: 680px) {
+    .schedule-history-table th:nth-child(3),
+    .schedule-history-table td:nth-child(3) {
+      display: none;
+    }
   }
 }

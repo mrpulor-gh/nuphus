@@ -1684,6 +1684,9 @@ export function ChatPanel({
                     const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1
                     // Avatar settings
                     const showAvatar = localStorage.getItem('nuphus_show_avatar') === 'true'
+                    // 是否配了皮肤背景：气泡底色（--msg-*-bg）是不透明实色，背景图下
+                    // 会盖住图；`with-skin` 让气泡改用 glass-bg 半透明，让背景透出来
+                    // （见 chat-messages.css 的 .message-bubble.with-skin）。仅此一处消费。
                     const skinBg = localStorage.getItem('nuphus_skin_bg') || ''
 
                     // 自定义头像的**可渲染 URL** 由顶层预解析（avatarUrls）—— 异步，
