@@ -33,9 +33,19 @@ pub struct WorkflowAgentConfig {
 impl Default for WorkflowAgentConfig {
     fn default() -> Self {
         Self {
-            // Workflow 开发需要允许多步探索，但不应像通用 ExecAgent 一样把失控探索
-            // 放大到 1000 轮。180 轮仍可容纳复杂桌面流程，同时给停滞检测一个硬上界。
-            max_iterations: 180,
+            // 每轮对话（一次 run()）的迭代上限：**与 Leader / ExecAgent 同一来源**。
+            //
+            // 2026-09-25 修正：此前这里是独立的 `180`（由外部 PR 夹带引入，提交标题还是
+            // 「接入可选增强判断模型」），导致 WorkflowAgent 独自被压低 —— 一个长工作流
+            // 跑到一半就被静默掐断，且与其他执行体口径不一致。
+            //
+            // 为什么直接引用 GoalType::MAX_ITERATIONS 而不是再抄一个数字：上限必须只有
+            // 一个真相源。抄第二份就一定会再漂移一次（180 就是这么来的）。失控防护也不
+            // 依赖这个值 —— `runtime::protection::ProtectionGuard` 独立负责死循环检测
+            // （同工具+同参数连续 5 次、连续错误 2 次、同文件连续读 3/5/7 级），
+            // 它才是防失控的机制；max_iterations 只是失控保险丝（1000 轮对真实任务
+            // 实质等同不设限）。
+            max_iterations: crate::agent::goal_types::GoalType::MAX_ITERATIONS,
         }
     }
 }
@@ -1617,9 +1627,17 @@ mod convergence_tests {
     use super::{delivery_warning_level, WorkflowAgentConfig};
 
     #[test]
-    fn workflow_iteration_budget_is_bounded_but_supports_complex_flows() {
+    fn workflow_iteration_budget_matches_the_global_single_source() {
+        // 上限必须与 Leader / ExecAgent 同源（GoalType::MAX_ITERATIONS）。
+        // 这条断言是防回归的闸门：此前该值被外部 PR 夹带改成独立的 180，
+        // 原测试还写了 `assert!((160..=200).contains(&max))` 把低值锁死，
+        // 于是即使有人想改回去也会被 CI 拦下。改为同源相等断言，杜绝第二套数字。
         let max = WorkflowAgentConfig::default().max_iterations;
-        assert!((160..=200).contains(&max));
+        assert_eq!(
+            max,
+            crate::agent::goal_types::GoalType::MAX_ITERATIONS,
+            "WorkflowAgent 迭代上限必须与全局单一来源一致，不得出现第二套数字"
+        );
     }
 
     #[test]
