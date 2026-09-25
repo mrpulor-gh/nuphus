@@ -112,6 +112,10 @@
   align-items: center;
   gap: var(--space-2);
 }
+/* 非首个子元素时与上文分组拉开（首元素贴 Section 顶，避免多余空隙） */
+.custom-base-label:not(:first-child) {
+  margin-top: var(--space-4);
+}
 
 /* 未保存草稿徽标（预览激活≠已保存；保存才持久化） */
 .custom-unsaved-badge {
