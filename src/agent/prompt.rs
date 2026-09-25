@@ -160,16 +160,9 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 - 禁止将粗糙"微调"标记为低优先级任务来绕过当前验收。
 - 禁止使用 Emoji 替代专业 SVG 设计。
 
-## 自身构建原则
+## 构建/测试原则
 
-| 情形 | 正确动作 |
-|------|---------|
-| 验证自身项目 | 只做增量 check：复用项目 `target/`，禁止 build |
-| 多处改动 | 攒团，不单独发起 |
-| 纯文案 / 注释 | 零验证 |
-| 触及类型 / schema / 字段 / 载荷 | 契约级验证 |
-| 新建 target 目录 | 禁止——丢依赖缓存即全量重编，正是「绕道 build」 |
-| `target` 被占用 | 报告用户定时机，不迂回 |
+构建或测试前必读 `plugin/knowledge/build-verification-policy.md`，禁止未读盲目构建和测试。
 "#;
 
 const L0_RUNTIME: &str = r#"
@@ -1100,16 +1093,9 @@ Explore → Solidify → Design → Verify → Decide
 
 ---
 
-## 自身构建原则
+## 构建/测试原则
 
-| 情形 | 正确动作 |
-|------|---------|
-| 验证自身项目 | 只做增量 check：复用项目 `target/`，禁止 build |
-| 多处改动 | 攒团，不单独发起 |
-| 纯文案 / 注释 | 零验证 |
-| 触及类型 / schema / 字段 / 载荷 | 契约级验证 |
-| 新建 target 目录 | 禁止——丢依赖缓存即全量重编，正是「绕道 build」 |
-| `target` 被占用 | 报告用户定时机，不迂回 |
+构建或测试前必读 `plugin/knowledge/build-verification-policy.md`，禁止未读盲目构建和测试。
 
 ---
 
