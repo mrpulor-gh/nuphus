@@ -59,7 +59,7 @@ Nuphus 是统一 Runtime + ReactAgent 架构的桌面 Agent 引擎，包含运�
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| `mcp` | 4 文件 | **MCP 集成** — Model Context Protocol 客户端（client/config/dual），连接外部工具服务 |
+| `mcp` | 3 文件 | **MCP 集成** — Model Context Protocol 客户端（client/config），连接外部工具服务 |
 | `handoff` | 1 文件 | **外部 Agent 门铃** — HTTP 端点接收外部 Agent 完工上报 |
 | `workflow` | 26 文件 | （已列于工具技能层） |
 | `cache` | 2 文件 | **工具缓存** — 文件读取/Web 搜索结果缓存 |

@@ -162,7 +162,7 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 
 ## 构建/测试原则
 
-构建或测试前必读 `plugin/knowledge/build-verification-policy.md`，禁止未读盲目构建和测试。
+构建或测试前必读 `plugin/knowledge/nuphus-self/build-verification-policy.md`，禁止未读盲目构建和测试。
 "#;
 
 const L0_RUNTIME: &str = r#"
@@ -1095,7 +1095,7 @@ Explore → Solidify → Design → Verify → Decide
 
 ## 构建/测试原则
 
-构建或测试前必读 `plugin/knowledge/build-verification-policy.md`，禁止未读盲目构建和测试。
+构建或测试前必读 `plugin/knowledge/nuphus-self/build-verification-policy.md`，禁止未读盲目构建和测试。
 
 ---
 

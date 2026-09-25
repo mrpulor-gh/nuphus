@@ -12,7 +12,6 @@
 | 脚本 | 说明 |
 |------|------|
 | `dev-restart.bat` | 开发重启 — 重启前端 dev server |
-| `dogfood.ps1` | 自用（dogfooding）脚本 — 项目内自动化辅助 |
 
 ## 使用注意
 
