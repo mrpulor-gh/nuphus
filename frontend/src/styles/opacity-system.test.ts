@@ -133,7 +133,9 @@ describe('② 控制面板消费弹窗族语义键（而非不透明硬色）', 
   })
 
   it('宿主遮罩 --overlay-bg 未被本次改动波及（仍在宿主规则上）', () => {
-    expect(ruleBody(settingsCss, '.settings-center-host')).toMatch(/background:\s*var\(--overlay-bg\)/)
+    expect(ruleBody(settingsCss, '.settings-center-host')).toMatch(
+      /background:\s*var\(--overlay-bg\)/,
+    )
   })
 })
 

@@ -28,11 +28,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }))
 
-import {
-  resolveSkinImageUrl,
-  releaseSkinImageUrl,
-  __setSkinImageProbe,
-} from './assetUrl'
+import { resolveSkinImageUrl, releaseSkinImageUrl, __setSkinImageProbe } from './assetUrl'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 const revoked: string[] = []
