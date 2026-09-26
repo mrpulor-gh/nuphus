@@ -188,7 +188,10 @@ mod tests {
 
     #[test]
     fn sanitize_stem_drops_reserved_chars_and_dots() {
-        assert_eq!(sanitize_stem(Path::new(r"C:\x\a:b*c?d.jpg")), "abcd");
+        // 用当前平台的路径分隔符构造，避免把 Windows 风格字面量带到 Linux CI 上
+        // （`\` 在非 Windows 不是分隔符，file_stem() 会返回整串）。
+        let seps = std::path::MAIN_SEPARATOR;
+        assert_eq!(sanitize_stem(Path::new(&format!("x{seps}a:b*c?d.jpg"))), "abcd");
         assert_eq!(sanitize_stem(Path::new("  home.. .png")), "home");
         // 主名全是非法字符时不能写出隐藏文件
         assert_eq!(sanitize_stem(Path::new("... .png")), FALLBACK_STEM);
