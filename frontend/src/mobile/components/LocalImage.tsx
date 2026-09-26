@@ -116,6 +116,12 @@ export default function LocalImage({ path }: Props) {
     }
   }, [path])
 
+  /** 解码失败时关闭预览并降级，避免切换路径后旧预览状态重新出现。 */
+  const handleImageError = () => {
+    setPreview(false)
+    setFailed(true)
+  }
+
   // ▸ 降级：原始路径文本（可换行，不截断）
   if (failed) {
     return (
@@ -134,6 +140,7 @@ export default function LocalImage({ path }: Props) {
           alt={path}
           loading="lazy"
           onClick={() => setPreview(true)}
+          onError={handleImageError}
         />
       ) : (
         // 占位（保持版面稳定，避免图片到达时页面跳动）
@@ -146,7 +153,7 @@ export default function LocalImage({ path }: Props) {
           aria-label="图片预览"
           onClick={() => setPreview(false)}
         >
-          <img src={url} alt="图片预览" />
+          <img src={url} alt="图片预览" onError={handleImageError} />
           <button
             type="button"
             className="mobile-lightbox-close"
