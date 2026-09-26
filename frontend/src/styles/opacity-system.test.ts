@@ -10,7 +10,9 @@
  *    故断言必须包含：消费键在集合内、集合覆盖 `--panel-bg`、intent 是持久层。
  *
  * ② 控制面板（设置中心）是弹窗却用不透明硬色 `--surface-0` → 滑块看不见它。
- *    修法是让它消费弹窗族语义键，故这里同时断言 CSS 消费者与 tokens 定义。
+ *    修法是让它消费弹窗族语义键（`--panel-bg`），并**移除 backdrop-filter**：
+ *    那层毛玻璃会把背景糊成均匀灰，α 再低也只看到「糊」而非「透」，
+ *    滑块位移无法转成可感知变化。故这里断言面板走 `--panel-bg` 且无 blur。
  *
  * ③ user/assistant 气泡一律去 border。用 CSS 源码断言（jsdom 不做布局/级联计算）。
  *
@@ -102,20 +104,32 @@ describe('② 控制面板消费弹窗族语义键（而非不透明硬色）', 
     expect(body).not.toMatch(/background:\s*var\(--surface-0\)/)
   })
 
-  it('面板保留毛玻璃层（与 CompactModal 同范式，缺它则半透明底叠影）', () => {
+  it('面板不得启用 backdrop-filter（模糊会掩盖透明度滑块的可感知变化）', () => {
+    // 保留 backdrop-filter 是本体系的反模式：它把背后内容糊成均匀灰，
+    // --panel-bg 的 α 再低也只看到「糊」而非「透」，滑块拖到全透明亦无感。
+    // 面板文字可读性改由 --panel-bg 的 α 自身保证。
     const body = ruleBody(settingsCss, '.settings-center-panel')
-    expect(body).toMatch(/backdrop-filter:\s*blur\(24px\)/)
-    expect(body).toMatch(/-webkit-backdrop-filter:\s*blur\(24px\)/)
+    expect(body).not.toMatch(/backdrop-filter:\s*blur/)
+    expect(body).not.toMatch(/-webkit-backdrop-filter:\s*blur/)
   })
 
-  it('三主题都定义了 --panel-bg，且与各自 --modal-bg 同源', () => {
+  it('三主题都定义了 --panel-bg 与 --modal-bg，panel 不透明度不低于 modal', () => {
     const panelDefs = tokensCss.match(/--panel-bg:\s*[^;]+;/g) ?? []
     const modalDefs = tokensCss.match(/--modal-bg:\s*[^;]+;/g) ?? []
     // :root（dark）+ light + tech
     expect(panelDefs).toHaveLength(3)
     expect(modalDefs).toHaveLength(3)
-    const valueOf = (s: string) => s.replace(/^--[\w-]+:\s*/, '').replace(/;$/, '').trim()
-    expect(panelDefs.map(valueOf)).toEqual(modalDefs.map(valueOf))
+    // 面板是主要阅读面，α 应 ≥ 弹窗底（同色系下更实、更可读）
+    const alphaOf = (s: string) => {
+      const m = s.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)/)
+      return m ? Number(m[1]) : NaN
+    }
+    const panelA = panelDefs.map(alphaOf)
+    const modalA = modalDefs.map(alphaOf)
+    for (let i = 0; i < panelA.length; i++) {
+      expect(Number.isNaN(panelA[i])).toBe(false)
+      expect(panelA[i]).toBeGreaterThanOrEqual(modalA[i])
+    }
   })
 
   it('宿主遮罩 --overlay-bg 未被本次改动波及（仍在宿主规则上）', () => {
@@ -124,8 +138,12 @@ describe('② 控制面板消费弹窗族语义键（而非不透明硬色）', 
 })
 
 describe('① 消费端接得住变量', () => {
-  it('.chat-input-area 底走 --input-bg（滑块 → 变量 → 消费者贯通）', () => {
-    expect(ruleBody(chatInputCss, '.chat-input-area')).toMatch(/background:\s*var\(--input-bg\)/)
+  it('输入框底由 .chat-input-body 唯一绘制并绑 --input-bg（滑块 → 变量 → 消费者贯通）', () => {
+    // 外层 .chat-input-area 不再画背景：此前它与内层各画一层，
+    // 滑块只改外层、被内层不透明底吃掉，拖滑块无反应。
+    // 现由 .chat-input-body 单层绘制并绑 --input-bg。
+    expect(ruleBody(chatInputCss, '.chat-input-area')).toMatch(/background:\s*transparent/)
+    expect(ruleBody(chatInputCss, '.chat-input-body')).toMatch(/background:\s*var\(--input-bg\)/)
   })
 })
 

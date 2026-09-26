@@ -161,12 +161,11 @@ mod tests {
         for name in ["a.txt", "a.rs", "a.exe", "a.pdf", "noext"] {
             let p = Path::new(name);
             assert!(
-                p.extension()
+                !p.extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_ascii_lowercase())
                     .map(|e| IMAGE_EXTS.contains(&e.as_str()))
-                    .unwrap_or(false)
-                    == false,
+                    .unwrap_or(false),
                 "{} 不应被识别为允许的图片",
                 name
             );
