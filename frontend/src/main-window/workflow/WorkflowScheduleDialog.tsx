@@ -91,7 +91,8 @@ export function patternFromCron(cron: string): SchedulePattern {
     }
   }
   match = cron.match(/^(\d{1,2}) (\d{1,2}) (\d{1,2}) \* \*$/)
-  if (match) {
+  /** Keep dates outside the monthly preset's 1–28 range in custom mode to avoid clamping them. */
+  if (match && Number(match[3]) >= 1 && Number(match[3]) <= 28) {
     return {
       ...DEFAULT_PATTERN,
       mode: 'monthly',

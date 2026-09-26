@@ -36,12 +36,30 @@ describe('定时规则预设', () => {
     ['5 8 * * *', 'daily'],
     ['5 8 * * 1-5', 'weekdays'],
     ['5 8 * * 6', 'weekly'],
+    ['5 8 1 * *', 'monthly'],
     ['5 8 20 * *', 'monthly'],
+    ['5 8 28 * *', 'monthly'],
     ['1,15 8 * * *', 'custom'],
   ] as const)('识别已有 Cron 的可编辑模式', (cron, mode) => {
     const pattern = patternFromCron(cron)
     expect(pattern.mode).toBe(mode)
     expect(cronFromPattern(pattern)).toBe(cron)
+  })
+
+  it.each([29, 30, 31])('保留每月 %i 日的高级 Cron，重新编辑时不改成 28 日', day => {
+    const cron = `5 8 ${day} * *`
+    const pattern = patternFromCron(cron)
+
+    expect(cronFromPattern(pattern)).toBe(cron)
+    expect(pattern.mode).toBe('custom')
+  })
+
+  it('不把无效的每月 0 日转换为有效的 1 日预设', () => {
+    const cron = '5 8 0 * *'
+    const pattern = patternFromCron(cron)
+
+    expect(cronFromPattern(pattern)).toBe(cron)
+    expect(pattern.mode).toBe('custom')
   })
 })
 
