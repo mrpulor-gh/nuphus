@@ -18,6 +18,44 @@ use std::time::Duration;
 const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// finish_reason 之后等待 usage 尾帧的容差。
+///
+/// 协议依据（OpenAI 兼容 / 阿里云百炼文档，2026-09-18 版）：
+/// `stream_options.include_usage=true` 时「**最后一个**返回的数据块包含 Token 消耗信息」，
+/// 且该 chunk 的 **choices 字段为空列表**。据此可确定两件事：
+///   1. usage 块与携带 finish_reason 的内容块是**两个不同的块**（一个 choices 非空、
+///      一个为空），不是同一帧；
+///   2. usage 被协议定位为**最后一块**——内容在 finish_reason 时已生成完毕、token 数已确定，
+///      服务端只需写出统计数字，因此正常为毫秒级到达。
+///
+/// 所以这个容差的性质是「**协议尾帧的到达窗口**」，不是「流是否卡死」的判断。
+/// 后者由 `CHUNK_TIMEOUT`(60s) 承担——那需要覆盖慢上游的生成停顿，语义不同、
+/// 数值不可复用。正常路径在收到 usage 后**立即** break，永不触及此超时；
+/// 它只在「上游既不发 usage 也不断连」的异常路径兜底，且此时内容已完整，
+/// 损失的仅是 token 统计。
+const USAGE_GRACE: Duration = Duration::from_secs(3);
+
+/// 流终止原因——`send_chat_stream` 读循环的唯一收敛出口。
+///
+/// 之所以需要它：OpenAI 兼容协议有**三个**合法的正常结束点——
+/// `data: [DONE]`、`finish_reason`（任意非空值）、以及对端关闭连接。
+/// 原实现只把「连接关闭」当正常结束，`[DONE]` 被 `continue` 掉、
+/// `finish_reason` 只识别 `"length"`，于是上游只要**发完内容不断连**
+/// （中转网关的常见行为），Nuphus 就空等 idle 超时 → 误判「流卡死」
+/// → 走断流 salvage → 前端收到 `stream_truncated`、消息被标记为传输中断
+/// ⇒ 用户看到「句子没说完直接停止」，而内容其实早已完整。
+///
+/// 现在：三个协议事件一律收敛为 `Clean`，传输切断才收敛为 `Interrupted`。
+/// 超时 (`CHUNK_TIMEOUT`) 退回为纯诊断指标，不再承担「判断流是否结束」的职责。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StreamEnd {
+    /// 协议层面的正常结束，内容已完整，直接正常收尾。
+    Clean,
+    /// 传输被切断。`error` 供日志与重试兜底，`silent` 区分「上游无响应」
+    /// 与「读错误」——前端只在前者时提示正在重试。
+    Interrupted { error: String, silent: bool },
+}
+
 /// 整体请求超时（reqwest client 的 total timeout，覆盖到响应体读完为止）。
 ///
 /// 本地端点（本机 / 局域网推理服务）走**下限**语义：
@@ -665,39 +703,69 @@ impl ChatCompletionsTransport {
             // text/tool_calls behind the cut. Downstream must distinguish this from a
             // clean MessageStop (previously a fake-success / empty-delivery source).
             let mut finish_reason_length = false;
-            let mut stream_was_silent = false;
+            // 本 chunk 是否携带 finish_reason（内容生成完毕）。在此 chunk 的
+            // delta / tool_calls / usage 全部处理完之后，据此跳出读循环。
+            let mut saw_finish = false;
+            // 流终止原因——唯一真相源。协议事件（[DONE] / finish_reason / 对端关闭）
+            // 导出 Clean；读错误与「无 finish_reason 的 idle 超时」导出 Interrupted。
+            // 后续只按这个值分流：Clean → 正常收尾；Interrupted → salvage 决策。
+            // 取代原先「last_error 是否为空」+「stream_was_silent」两套隐式判断。
+            let mut stream_end = StreamEnd::Clean;
 
             {
                 use futures_util::StreamExt;
                 let mut stream = response.bytes_stream();
 
-                loop {
+                'sse: loop {
                     if let Some(flag) = cancel_flag {
                         if flag.load(Ordering::SeqCst) {
                             return Err(crate::NuphusError::LLM(crate::LLMError::Cancelled));
                         }
                     }
 
-                    let timed =
-                        tokio::time::timeout(self.idle_chunk_timeout(), stream.next()).await;
+                    // saw_finish 之后只需等协议指定的最后一个 usage 块，
+                    // 用短容差而非 60s idle（后者是「流卡死」判据，语义不同）。
+                    let idle = if saw_finish {
+                        USAGE_GRACE
+                    } else {
+                        self.idle_chunk_timeout()
+                    };
+                    let timed = tokio::time::timeout(idle, stream.next()).await;
                     let chunk = match timed {
                         Ok(Some(Ok(b))) => b,
                         Ok(Some(Err(e))) => {
-                            last_error = format!("Failed to read chunk: {}", e);
+                            stream_end = StreamEnd::Interrupted {
+                                error: format!("Failed to read chunk: {}", e),
+                                silent: false,
+                            };
                             tracing::error!(error = %e, "LLM stream read error");
                             break;
                         }
+                        // 对端关闭连接 = 协议允许的正常结束点之一
                         Ok(None) => break,
                         Err(_) => {
-                            last_error = format!(
-                                "Chunk read timeout after {}s",
-                                self.idle_chunk_timeout().as_secs()
-                            );
+                            // saw_finish 时内容已完整，仅 usage 尾帧未在容差内到达
+                            //（上游既不发 usage 也不断连的异常路径）
+                            // ⇒ 仍按正常结束收尾，损失的仅是 token 统计。
+                            if saw_finish {
+                                tracing::warn!(
+                                    "[STREAM] usage frame not received within {}s after finish_reason — token stats missing",
+                                    USAGE_GRACE.as_secs()
+                                );
+                                break;
+                            }
+                            // 无 finish_reason 的空闲才是真断流。
+                            stream_end = StreamEnd::Interrupted {
+                                error: format!(
+                                    "Chunk read timeout after {}s",
+                                    self.idle_chunk_timeout().as_secs()
+                                ),
+                                silent: true,
+                            };
                             tracing::error!(
                                 timeout_s = self.idle_chunk_timeout().as_secs(),
                                 "LLM stream chunk timeout"
                             );
-                            stream_was_silent = true;
                             break;
                         }
                     };
@@ -717,7 +785,10 @@ impl ChatCompletionsTransport {
                         };
 
                         if data == "[DONE]" {
-                            continue;
+                            // SSE 正式终止哨兵 = 协议正常结束点之一。
+                            // 注意：此处位于行解析循环内，必须带标签跳出读循环，
+                            // 否则会继续等下一个 chunk（正是原 bug 的成因）。
+                            break 'sse;
                         }
 
                         let json: serde_json::Value = match serde_json::from_str(data) {
@@ -725,13 +796,22 @@ impl ChatCompletionsTransport {
                             Err(_) => continue,
                         };
 
-                        // finish_reason detection — set flag, keep parsing (usage may still arrive)
-                        if json
+                        // finish_reason detection — 内容生成完毕 = 协议正常结束点之一。
+                        // 原先只识别 "length"，其余值（stop / tool_calls / ...）被忽略，
+                        // 导致读循环继续等下一个 chunk。
+                        //
+                        // 只置标志、不在此 break：本 chunk 的 delta / tool_calls / usage
+                        // 必须**先处理完**。模型常把最后一段内容与 finish_reason 打在同一个
+                        // chunk 里，提前 break 会直接丢弃那段内容（已实测踩坑）。
+                        if let Some(reason) = json
                             .pointer("/choices/0/finish_reason")
                             .and_then(|v| v.as_str())
-                            == Some("length")
+                            .filter(|r| !r.is_empty())
                         {
-                            finish_reason_length = true;
+                            if reason == "length" {
+                                finish_reason_length = true;
+                            }
+                            saw_finish = true;
                         }
 
                         // Parse delta
@@ -868,81 +948,99 @@ impl ChatCompletionsTransport {
                             });
                         }
                     }
+                    // 本 chunk 已带 finish_reason 且内容已全部处理。
+                    // 收尾判据：**usage 尾帧已到手**（协议规定的最后一块）⇒ 收；
+                    // 若尚未到手，继续读——它按协议是紧随其后的毫秒级帧，
+                    // 由 USAGE_GRACE 短容差兜底，不会退化成 60s 空等。
+                    if saw_finish && final_usage.is_some() {
+                        break 'sse;
+                    }
                 }
             }
 
-            if !last_error.is_empty() {
-                // ── 断流 salvage：传输中途被切断时抢救已接收内容 ──
-                // 背景：长流式响应易被中间链路掐断（实测 Retry×3 空转 25 分钟零产出）。
-                // 文本已实时推给 UI、工具调用已累积——全部丢弃从零重试的代价
-                // 远高于「部分内容 + 截断标记」，agent loop 下轮可基于现状继续。
-                let salvageable_tools: Vec<(String, String, String)> = tool_id_order
-                    .iter()
-                    .filter_map(|idx| tool_calls_map.get(idx))
-                    .filter(|t| {
-                        // 工具调用必须完整才可 salvage：name 非空且 args 是合法 JSON
-                        // （流可能在 arguments 字符串中间断掉，截断的 JSON 不可执行）
-                        !t.1.is_empty()
-                            && (t.2.is_empty()
-                                || serde_json::from_str::<serde_json::Value>(&t.2).is_ok())
-                    })
-                    .cloned()
-                    .collect();
-                let dropped_tools = tool_id_order.len() - salvageable_tools.len();
-                let text_len = current_text.chars().count();
+            match stream_end {
+                // 内容已完整 → 正常收尾，不进入 salvage 分支
+                StreamEnd::Clean => {}
+                // 传输被切断 → salvage 决策
+                StreamEnd::Interrupted { error, silent } => {
+                    last_error = error;
+                    let salvageable_tools: Vec<(String, String, String)> = tool_id_order
+                        .iter()
+                        .filter_map(|idx| tool_calls_map.get(idx))
+                        .filter(|t| {
+                            // 工具调用必须完整才可 salvage：name 非空且 args 是合法 JSON
+                            // （流可能在 arguments 字符串中间断掉，截断的 JSON 不可执行）
+                            !t.1.is_empty()
+                                && (t.2.is_empty()
+                                    || serde_json::from_str::<serde_json::Value>(&t.2).is_ok())
+                        })
+                        .cloned()
+                        .collect();
+                    let dropped_tools = tool_id_order.len() - salvageable_tools.len();
+                    let text_len = current_text.chars().count();
 
-                // 内容太少不值得抢救（重试成本低），否则立即 salvage 避免重复生成
-                if !salvageable_tools.is_empty() || text_len >= 100 {
-                    tracing::warn!(
-                        "[STREAM] Salvaging partial response after transport error \
+                    // 抢救判据：**有内容就保，没内容才重来**。
+                    //
+                    // 原判据是 `text_len >= 100`——一个 v0.1.0 初始提交里写死的字面量，
+                    // 无出处、无测试、不可配置。它把「空响应」和「有价值响应」混为一谈：
+                    // 模型只打算回「好的」两字却遇传输中断 → text_len=2 → 不满足 100 →
+                    // 已收到的可用内容被整体丢弃，重试若再中断则重复最多 4 次后才报错。
+                    //
+                    // salvage 机制存在的真正动机（见上方注释）是防「什么都没收到就重试」
+                    // 的空转，对应判据本就是「有没有内容」而非「内容够不够多」。
+                    // 故阈值取 0：保留一切已收到内容，只在零产出时才重试。
+                    if !salvageable_tools.is_empty() || text_len > 0 {
+                        tracing::warn!(
+                            "[STREAM] Salvaging partial response after transport error \
                          (text={} chars, tools={}, dropped_incomplete={}, err={})",
-                        text_len,
-                        salvageable_tools.len(),
-                        dropped_tools,
-                        last_error
-                    );
-                    let tools_salvaged = salvageable_tools.len();
-                    for (id, name, args) in salvageable_tools {
-                        let final_args = if args.is_empty() {
-                            "{}".to_string()
-                        } else {
-                            args
-                        };
-                        emitter(AssistantEvent::ToolUse {
-                            id,
-                            name,
-                            input: final_args,
+                            text_len,
+                            salvageable_tools.len(),
+                            dropped_tools,
+                            last_error
+                        );
+                        let tools_salvaged = salvageable_tools.len();
+                        for (id, name, args) in salvageable_tools {
+                            let final_args = if args.is_empty() {
+                                "{}".to_string()
+                            } else {
+                                args
+                            };
+                            emitter(AssistantEvent::ToolUse {
+                                id,
+                                name,
+                                input: final_args,
+                            });
+                        }
+                        emitter(AssistantEvent::StreamTruncated {
+                            text_chars: text_len,
+                            tools_salvaged,
                         });
-                    }
-                    emitter(AssistantEvent::StreamTruncated {
-                        text_chars: text_len,
-                        tools_salvaged,
-                    });
-                    if let Some(StreamEvent::Usage {
-                        input_tokens,
-                        output_tokens,
-                        cache_hit_tokens,
-                    }) = final_usage.take()
-                    {
-                        emitter(AssistantEvent::Usage {
+                        if let Some(StreamEvent::Usage {
                             input_tokens,
                             output_tokens,
                             cache_hit_tokens,
-                        });
+                        }) = final_usage.take()
+                        {
+                            emitter(AssistantEvent::Usage {
+                                input_tokens,
+                                output_tokens,
+                                cache_hit_tokens,
+                            });
+                        }
+                        emitter(AssistantEvent::MessageStop);
+                        return Ok(());
                     }
-                    emitter(AssistantEvent::MessageStop);
-                    return Ok(());
-                }
-                if stream_was_silent {
-                    last_error_was_silence = true;
-                    if will_retry {
-                        emitter(AssistantEvent::ConnectionStatus(silence_retry_notice(
-                            self.idle_chunk_timeout(),
-                            attempt,
-                        )));
+                    if silent {
+                        last_error_was_silence = true;
+                        if will_retry {
+                            emitter(AssistantEvent::ConnectionStatus(silence_retry_notice(
+                                self.idle_chunk_timeout(),
+                                attempt,
+                            )));
+                        }
                     }
+                    continue;
                 }
-                continue;
             }
 
             // Reasoning already emitted in real-time via delta path above.
@@ -1777,6 +1875,321 @@ mod salvage_tests {
         let emitter: Box<dyn Fn(AssistantEvent) + Send> =
             Box::new(move |e| events2.lock().unwrap().push(e));
         (events, emitter)
+    }
+
+    /// 已有完整用例覆盖半截流（见 salvaging_partial_text_on_transport_break）。
+    /// 这里补「**finish_reason 后上游不发 [DONE] 也不断连**」——生产里千问 3.8-max
+    /// 正是这个形态：内容早已完整，Nuphus 却用 60s idle 判成「流卡死」→ 走断流
+    /// salvage → 前端弹 `stream_truncated`、消息被标记为传输中断。
+    ///
+    /// 期望：宽限到期按**正常结束**收尾 —— Ok、MessageStop、文本完整、**没有**
+    /// StreamTruncated / 不重试。
+    #[tokio::test]
+    async fn test_finish_reason_then_silent_upstream_ends_cleanly() {
+        let text =
+            "这是一次已经完整生成的回复，上游正常发送 finish_reason 后保持连接不再推送任何数据。";
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":\"stop\"}}]}}\n\n",
+            text
+        );
+        // 上游把整个流写完，然后**真正挂起**：不发 [DONE]、chunked 不终止、不断连。
+        // 这正是中转网关（opencode-go 之类）的真实形态。
+        let (port, hits) = spawn_server_hang_no_end(payload).await;
+
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let started = std::time::Instant::now();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_ok(),
+            "clean end 应返回 Ok，实际: {:?}",
+            result.err()
+        );
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, text, "内容应完整保留");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::MessageStop)),
+            "应以 MessageStop 正常收尾"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::StreamTruncated { .. })),
+            "内容完整的流不得标记为传输截断（前端不会看到假中断）"
+        );
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 1, "不得重试（重复生成）");
+        // 关键：不得空等 idle 超时（60s）。协议事件一到就必须收敛。
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "不得空等 idle 超时，实际耗时 {:?}",
+            elapsed
+        );
+    }
+
+    /// `data: [DONE]` 到达后上游仍挂起不断连 → 必须立即收敛为正常结束。
+    /// （`[DONE]` 位于行解析循环内，只 `break` 不跳标签会继续等下一个 chunk。）
+    #[tokio::test]
+    async fn test_done_sentinel_then_silent_upstream_ends_cleanly() {
+        let text = "好的，这是完整回复。";
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\ndata: [DONE]\n\n",
+            text
+        );
+        let (port, hits) = spawn_server_hang_no_end(payload).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let started = std::time::Instant::now();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result.err());
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, text);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::MessageStop)),
+            "应以 MessageStop 正常收尾"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::StreamTruncated { .. })),
+            "[DONE] 后挂起不得标记为传输截断"
+        );
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 1, "不得重试");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "[DONE] 一到必须立即收敛，不得空等 idle 超时"
+        );
+    }
+
+    /// usage 是**独立于 finish_reason** 的最后一个块（文档：该 chunk choices 为空列表）。
+    /// 上游把它单独发出后挂起 → 必须收到 usage 再收尾，token 统计不丢，
+    /// 且不得退化成 60s 空等。
+    #[tokio::test]
+    async fn test_usage_frame_after_finish_reason_is_awaited_not_dropped() {
+        let text = "这是回复正文。";
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":\"stop\"}}]}}\n\n\
+             data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":42,\"completion_tokens\":87}}}}\n\n",
+            text
+        );
+        // 写完 content+finish_reason+usage 后挂起：不发 [DONE]、不终止 chunked、不断连
+        let (port, hits) = spawn_server_hang_no_end(payload).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let started = std::time::Instant::now();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result.err());
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, text, "与 finish_reason 同 chunk 的正文必须保留");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AssistantEvent::Usage {
+                    input_tokens: 42,
+                    output_tokens: 87,
+                    ..
+                }
+            )),
+            "独立成帧的 usage 必须被收到，不能丢 token 统计"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::MessageStop)),
+            "应以 MessageStop 正常收尾"
+        );
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 1, "不得重试");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "收到 usage 应立即收尾，不得空等，实际 {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// finish_reason 之后上游**既不发 usage 也不断连**：内容已完整，
+    /// 由 USAGE_GRACE 短容差兜底收敛 —— 不得伪装成断流、不得重试。
+    #[tokio::test]
+    async fn test_no_usage_frame_after_finish_reason_still_ends_clean() {
+        let text = "只有正文，没有 usage 尾帧。";
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":\"stop\"}}]}}\n\n",
+            text
+        );
+        let (port, hits) = spawn_server_hang_no_end(payload).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "内容完整时不得因缺 usage 就报错，实际: {:?}",
+            result.err()
+        );
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, text, "正文必须完整保留");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::StreamTruncated { .. })),
+            "不得标记为传输截断"
+        );
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 1, "不得重试");
+    }
+
+    /// 无 `finish_reason` 的上游静默 = 真实中断：idle 超时后进入 salvage。
+    /// 新判据「有内容就保」：短文本（<100 字符）也必须被保留 —— 原判据
+    /// `text_len >= 100` 会把这种合法短回复整体丢弃、返回零内容。
+    #[tokio::test]
+    async fn test_interrupted_short_text_is_salvaged_not_dropped() {
+        let short = "好的。";
+        assert!(
+            short.chars().count() < 100,
+            "本用例专测原 100 阈值丢弃的短回复"
+        );
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+            short
+        );
+        let (port, _hits) = spawn_server_hang_no_end(payload).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "有内容的断流必须 salvage 成功，不能因内容少就丢弃；实际: {:?}",
+            result.err()
+        );
+        let events = events.lock().unwrap();
+        let full_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(full_text, short, "短文本必须原样保留，不得被 100 阈值丢弃");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::StreamTruncated { .. })),
+            "真实中断仍须标记截断（前端可感知）"
+        );
+    }
+
+    /// 零内容的中断：什么都没收到 → 重试而非伪装成功。
+    ///
+    /// 注意：必须用「有字节但无 content」的 SSE 帧。若 payload 为空字符串，
+    /// chunked 编码会写成 `0\r\n\r\n`——那恰好是 chunked 的**合法终止块**，
+    /// reqwest 会视为 body 正常结束（Ok(None)），根本测不到中断。
+    #[tokio::test]
+    async fn test_interrupted_with_zero_content_retries() {
+        let payload = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n";
+        let (port, _hits) = spawn_server_hang_no_end(payload.to_string()).await;
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "零产出必须报错，不得伪装成功（不能把空响应当成功交付）"
+        );
+        // 注：helper 为一次性 listener，重试的第 2..N 次连接无人 accept，
+        // 故 hits 恒为 1。这里只钉「不得成功」这一契约，重试次数由
+        // MAX_STREAM_ATTEMPTS 与上方的 retry 逻辑覆盖。
+        let events = events.lock().unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::MessageStop)),
+            "零产出不得发 MessageStop"
+        );
+    }
+
+    /// 启动一次性假服务器：写完整 SSE 流后**真正挂起**——body 用 chunked 编码
+    /// 但**不写终止块**，也不关闭连接。
+    ///
+    /// 为什么必须这样：若用 `Content-Length: N`，reqwest 读到 N 字节即认为
+    /// body 读完并返回 `Ok(None)`，读循环会走「对端关闭」的 Clean 路径——
+    /// 那样**根本测不到「上游发完内容不断连」**（中转网关的真实形态），
+    /// 只是一次假绿。chunked 无终止块下，body 永不结束，读循环只能依赖
+    /// idle 超时或协议事件才能退出。
+    async fn spawn_server_hang_no_end(sse_payload: String) -> (u16, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits2 = hits.clone();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                hits2.fetch_add(1, AtomicOrdering::SeqCst);
+                let payload = sse_payload.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        sock.read(&mut buf),
+                    )
+                    .await;
+                    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    // chunked: <hex len>\r\n<data>\r\n —— 只写数据块，不写 0\r\n\r\n 终止块
+                    let body = format!("{:x}\r\n{}\r\n", payload.len(), payload);
+                    let _ = sock.write_all(body.as_bytes()).await;
+                    let _ = sock.flush().await;
+                    // 挂着：既不发 data: [DONE]，也不终止 chunked，也不关连接。
+                    // 直到测试进程退出前，客户端永远读不到 body 终点。
+                    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                });
+            }
+        });
+        (port, hits)
     }
 
     fn request_body() -> serde_json::Value {
