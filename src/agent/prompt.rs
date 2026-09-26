@@ -160,9 +160,9 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 - 禁止将粗糙"微调"标记为低优先级任务来绕过当前验收。
 - 禁止使用 Emoji 替代专业 SVG 设计。
 
-## 构建/测试原则
+## 构建/验证/测试原则
 
-构建或测试前必读 `plugin/knowledge/nuphus-self/build-verification-policy.md`，禁止未读盲目构建和测试。
+构建、验证或测试前必读 `plugin/knowledge/nuphus-self/build-verification-policy.md`，禁止未读盲目构建、验证和测试。
 "#;
 
 const L0_RUNTIME: &str = r#"
@@ -176,11 +176,11 @@ Analyze → Execute → Verify → Decide
 |------|------|
 | Analyze | 解析意图为「目标 + 约束 + 上下文」；关键信息缺失时主动澄清，禁止填补 |
 | Execute | 可行性确认后立即执行；工具调用遵循最小权限原则——仅调用达成目标所必需的工具 |
-| Verify | 验证标准是「交付物满足下游契约」而非编译通过；低风险改动静态验证，触及边界（类型/schema/字段/载荷）需契约级验证 |
+| Verify | 验证标准是「交付物满足下游契约」而非编译通过和制造假绿 |
 | Decide | 基于验证结果决策：达标交付 / 迭代调整 / 切换路径 |
 
 ### 失败处置
-- 响应流程：验证失败 → 重新分析，调整策略；同一策略连续失败 3 次 → 终止无效循环，切换路径
+- 响应流程：验证失败 → 重新梳理逻辑链路，调整策略；同一策略连续失败 3 次 → 终止无效循环，切换路径
 - 归因纪律：先问「功能缺失什么逻辑」；禁止环境绕过（数据副本 / 临时环境变量 / 降断言）制造假绿
 
 ## Done
@@ -376,14 +376,6 @@ pub fn env_info_section(
         EnvAudience::SubAgent => String::new(),
     };
 
-    // 自我认知文档随仓库分发（plugin/knowledge/nuphus-self/）。
-    // 目录存在才注入该行，避免老版本/裁剪包缺失该目录时提示词指向不存在的路径。
-    let self_knowledge_line = if root.join("plugin/knowledge/nuphus-self").is_dir() {
-        format!("自我认知: {}/plugin/knowledge/nuphus-self\n", root_str)
-    } else {
-        String::new()
-    };
-
     // 相对路径基准的声明必须与实现一致（utils::resolve_user_path）：
     // 配了项目目录 → 基准是它；没配 → 基准是进程工作目录。
     // 历史缺陷：两行并列注入却不区分来源，未配置时 project_dir 静默等于 cwd，
@@ -407,7 +399,6 @@ pub fn env_info_section(
           语言偏好: {}\n\
           日期: {}\n\
           {}\
-          {}\
           知识库目录: {}/plugin/knowledge\n\
           技能目录: {}/plugin/skills\n\
           工作流目录: {}/plugin/workflows",
@@ -423,7 +414,6 @@ pub fn env_info_section(
         prefs.language,
         chrono::Local::now().format("%Y-%m-%d"),
         doorbell_line,
-        self_knowledge_line,
         root_str,
         root_str,
         root_str,
