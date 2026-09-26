@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LocalImage from './LocalImage'
 import { fetchFileBlob } from '../api'
@@ -92,6 +92,55 @@ describe('LocalImage', () => {
     render(<LocalImage path={WINDOWS_PATH} />)
     expect(await screen.findByRole('img')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('下载成功但缩略图解码失败时降级为原始路径，卸载后回收 objectURL', async () => {
+    const path = String.raw`C:\截图\中文目录\损坏图片.png`
+    fetchMock.mockResolvedValue(new Blob(['invalid PNG bytes'], { type: 'image/png' }))
+    const { unmount } = render(<LocalImage path={path} />)
+
+    const img = await screen.findByRole('img')
+    expect(fetchMock).toHaveBeenCalledWith(path)
+    expect(img).toHaveAttribute('src', 'blob:nuphus-image')
+    fireEvent.error(img)
+
+    expect(screen.getByText(path)).toHaveClass('m-local-image-error')
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    unmount()
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:nuphus-image'))
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1)
+  })
+
+  it('预览图解码失败时关闭预览并降级，切换路径后恢复缩略图', async () => {
+    const nextPath = String.raw`C:\截图\新图片.png`
+    createObjectURL
+      .mockReturnValueOnce('blob:nuphus-broken')
+      .mockReturnValueOnce('blob:nuphus-recovered')
+    fetchMock.mockResolvedValue(new Blob([new Uint8Array([1])], { type: 'image/png' }))
+    const { rerender, unmount } = render(<LocalImage path={WINDOWS_PATH} />)
+
+    fireEvent.click(await screen.findByRole('img'))
+    const preview = within(screen.getByRole('dialog')).getByRole('img')
+    fireEvent.error(preview)
+
+    expect(screen.getByText(WINDOWS_PATH)).toHaveClass('m-local-image-error')
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    rerender(<LocalImage path={nextPath} />)
+
+    const recovered = await screen.findByRole('img', { name: nextPath })
+    expect(recovered).toHaveAttribute('src', 'blob:nuphus-recovered')
+    expect(fetchMock).toHaveBeenCalledWith(nextPath)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:nuphus-broken'))
+    expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:nuphus-recovered')
+
+    unmount()
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:nuphus-recovered'))
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2)
   })
 
   it('同一路径多处渲染只下载一次，最后一个使用者卸载才回收', async () => {
