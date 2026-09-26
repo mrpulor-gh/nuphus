@@ -105,18 +105,22 @@ function referencedVars(step: WorkflowStep): Set<string> {
   return vars
 }
 
-/** 外层 loop 的 item_var 列表（从叶向根） */
-function enclosingLoopItemVars(steps: WorkflowStep[], stepId: string): string[] {
+/** 外层 for_each 的 item_var 列表；检查目标容器体时也包含容器自身（从叶向根）。 */
+function enclosingLoopItemVars(
+  steps: WorkflowStep[],
+  stepId: string,
+  includeSelf = false,
+): string[] {
   const out: string[] = []
   const loc = locateStep(steps, stepId)
   if (!loc) return out
-  let cur: string | null = loc.parentId
+  let cur: string | null = includeSelf ? stepId : loc.parentId
   while (cur) {
     const p = locateStep(steps, cur)
     if (!p) break
     if (stepKind(p.step) === 'loop') {
       const def = (p.step.do as Record<string, unknown>).loop as { for_each?: { as?: string } }
-      out.push(def.for_each?.as || 'item')
+      if (def.for_each) out.push(def.for_each.as || 'item')
     }
     cur = p.parentId
   }
@@ -203,7 +207,7 @@ export function checkOp(steps: WorkflowStep[], op: IrEditOp, ctx: CheckContext =
             const targetItemVars =
               op.to.parent.layerId === 'root'
                 ? []
-                : enclosingLoopItemVars(steps, op.to.parent.layerId)
+                : enclosingLoopItemVars(steps, op.to.parent.layerId, true)
             const missing = used.filter(v => !targetItemVars.includes(v))
             if (missing.length > 0) {
               return {
