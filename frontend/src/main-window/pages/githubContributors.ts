@@ -17,12 +17,15 @@
  *   按「缺证不写」略去，宁缺勿造。2026-09-22 经 `/contributors` API 确认该账号真实存在
  *   且有 12 次提交，已并入头像墙（见 REPO_COMMITTERS）；轮次表内的贡献记录仍待
  *   CHANGELOG / README 出处再补，不凭印象回填。#79（0.2.23）已按同一出处补入。
+ *   （2026-09-29 重跑该 API：fouyzjl 已增至 13 次提交。）
  *
  * `Unreleased` 轮次（#87 / #88 / #84）取证：2026-09-29 经 `/compare/v0.2.23...main` API
  * 确认该区间 ahead=27 / behind=0，并用 `/pulls?state=closed` 核对三个 PR 的 merged_at
  * 与作者（#87 01:49 与 #88 10:48 均 yuansui486，#84 10:53 为 zhoupeiyu515-ui），
  * 三者均能在 git log 找到 `Merge PR #NN` 合并提交。两位作者均已在既有轮次出现，
  * 非新提交者，故头像墙无需新增。0.2.24 发版时把 version 改为 `0.2.24`、date 填实际日期。
+ * #91 同轮追加：2026-09-29 16:09 经 `/issues/91/events` 确认 merged，作者 Steooenwolf-666
+ * 已在 0.2.23 轮次出现（非新提交者），出处为 `Merge PR #91`（fb52f668）。
  *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
@@ -93,6 +96,15 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
           {
             pr: 84,
             summary: '补 mobile server / relay 威胁模型与已接受限制，写入 SECURITY.md',
+          },
+        ],
+      },
+      {
+        user: 'Steooenwolf-666',
+        contributions: [
+          {
+            pr: 91,
+            summary: '外部 Agent 投递序列正确传递桌面输入与提交快捷键的失败',
           },
         ],
       },
@@ -322,22 +334,25 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
 ]
 
 /**
- * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-28 拉取，按提交数降序）。
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-29 拉取，按提交数降序）。
  *
  * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
- *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人，如 zhoupeiyu515-ui）；
- *   - 本表按 **commit 作者**记录（覆盖没有 PR 记录的提交，如 fouyzjl 的 12 次提交）。
+ *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人）；
+ *   - 本表按 **commit 作者**记录（覆盖没有 PR 记录的提交，如 fouyzjl 的 13 次提交）。
+ *
+ * 两表可能重复（同一人既有 PR 也有直推 commit），头像墙去重由 ALL_CONTRIBUTORS 负责。
  *
  * ⛔ 更新本表必须重跑（禁止凭印象增删）：
  *   curl -H 'Accept: application/vnd.github+json' \
  *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
  */
 export const REPO_COMMITTERS: string[] = [
-  'yuansui486', // 76 commits
-  'Steooenwolf-666', // 21 commits
-  'fouyzjl', // 12 commits
+  'yuansui486', // 78 commits
+  'Steooenwolf-666', // 21 commits（#91 合并后 /contributors 计数尚未刷新）
+  'fouyzjl', // 13 commits
   'mrpulor-gh', // 3 commits（仓库所有者）
   'jiangdingwei123-afk', // 1 commit
+  'zhoupeiyu515-ui', // 1 commit
 ]
 
 /**
