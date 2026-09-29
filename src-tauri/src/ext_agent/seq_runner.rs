@@ -473,7 +473,11 @@ mod tests {
         assert_eq!(parse_send_keys(""), vec![""]);
         assert_eq!(parse_send_keys("+"), vec!["", ""]);
         assert_eq!(parse_send_keys(" + "), vec!["", ""]);
-        assert_eq!(parse_send_keys("ctrl+"), vec!["ctrl", ""], "不得退化成单独按 Ctrl");
+        assert_eq!(
+            parse_send_keys("ctrl+"),
+            vec!["ctrl", ""],
+            "不得退化成单独按 Ctrl"
+        );
     }
 
     #[test]
@@ -509,7 +513,10 @@ mod tests {
         let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_input", &with))
             .unwrap_err();
         assert!(err.contains("unknown key: windows"), "实际: {err}");
-        assert!(!err.contains("窗口自动置前失败"), "不得触达激活步骤，实际: {err}");
+        assert!(
+            !err.contains("窗口自动置前失败"),
+            "不得触达激活步骤，实际: {err}"
+        );
     }
 
     #[test]
@@ -527,7 +534,10 @@ mod tests {
                 .unwrap_err();
             let rejected = err.contains("requires at least one key") || err.contains("unknown key");
             assert!(rejected, "keys={keys} 应在预校验被拒，实际: {err}");
-            assert!(!err.contains("窗口自动置前失败"), "keys={keys} 不得触达激活步骤，实际: {err}");
+            assert!(
+                !err.contains("窗口自动置前失败"),
+                "keys={keys} 不得触达激活步骤，实际: {err}"
+            );
         }
     }
 
@@ -558,12 +568,8 @@ mod tests {
         // （旧实现 let _ = window_activate 会静默吞错后照点点）。
         let client = DesktopClient::new();
         let with = serde_json::json!({ "hwnd": 12345, "x": 600, "y": 750 });
-        let err = tokio_test::block_on(execute_desktop_step(
-            &client,
-            "desktop_mouse",
-            &with,
-        ))
-        .unwrap_err();
+        let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_mouse", &with))
+            .unwrap_err();
         assert!(
             err.contains("窗口激活失败，为避免误点其他窗口已中止"),
             "实际: {err}"
@@ -575,12 +581,8 @@ mod tests {
         // desktop_mouse_click 别名同路径（action 强制为 click）
         let client = DesktopClient::new();
         let with = serde_json::json!({ "hwnd": 12345, "x": 600, "y": 750 });
-        let err = tokio_test::block_on(execute_desktop_step(
-            &client,
-            "desktop_mouse_click",
-            &with,
-        ))
-        .unwrap_err();
+        let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_mouse_click", &with))
+            .unwrap_err();
         assert!(
             err.contains("窗口激活失败，为避免误点其他窗口已中止"),
             "实际: {err}"

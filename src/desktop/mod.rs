@@ -198,7 +198,9 @@ mod tests {
         // 大小写不敏感（key_to_vk 内部 to_lowercase）
         assert!(validate_hotkey(&["Ctrl".to_string(), "Enter".to_string()]).is_ok());
         // win 白名单别名（command/cmd/meta/super 同族）
-        assert!(validate_hotkey(&["win".to_string(), "shift".to_string(), "s".to_string()]).is_ok());
+        assert!(
+            validate_hotkey(&["win".to_string(), "shift".to_string(), "s".to_string()]).is_ok()
+        );
     }
 
     #[test]
@@ -210,6 +212,9 @@ mod tests {
         // 白名单只认 win/command/cmd/meta/super，"windows" 是未知键
         let err = validate_hotkey(&["windows".to_string(), "shift".to_string(), "s".to_string()])
             .unwrap_err();
-        assert!(err.contains("unknown key: windows"), "错误应透传底层原因: {err}");
+        assert!(
+            err.contains("unknown key: windows"),
+            "错误应透传底层原因: {err}"
+        );
     }
 }
