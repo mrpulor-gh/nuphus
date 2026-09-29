@@ -12,7 +12,7 @@
 //! （mod.rs dispatch_async）的职责。
 
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
-use nuphus::desktop::DesktopClient;
+use nuphus::desktop::{validate_hotkey, DesktopClient};
 use std::collections::HashMap;
 
 /// 单步失败错误（step_index 为 0-based 步序号）
@@ -143,13 +143,15 @@ fn unwrap(r: std::result::Result<serde_json::Value, nuphus::NuphusError>) -> Res
 }
 
 /// 输入成功后才轮询提交操作；分阶段校验结果，便于无桌面环境下注入失败。
+/// 提交失败必须标注「文本已输入」——调用方据此知道文本已进目标窗口，
+/// 只是提交快捷键结果不明（语义与 desktop_executors 的 Partial 分支对齐）。
 async fn type_and_submit(
     input: impl std::future::Future<Output = nuphus::Result<serde_json::Value>>,
     submit: Option<impl std::future::Future<Output = nuphus::Result<serde_json::Value>>>,
 ) -> Result<(), String> {
     unwrap(input.await).map_err(|e| format!("输入文本失败: {e}"))?;
     if let Some(submit) = submit {
-        unwrap(submit.await).map_err(|e| format!("发送提交快捷键失败: {e}"))?;
+        unwrap(submit.await).map_err(|e| format!("文本已输入，发送提交快捷键失败: {e}"))?;
     }
     Ok(())
 }
@@ -187,6 +189,31 @@ async fn ensure_foreground(client: &DesktopClient, hwnd: i32) -> bool {
                 .and_then(|b| b.as_bool())
                 .unwrap_or(false)
     )
+}
+
+/// 键盘输入前置保证的 Err 版本：激活失败即中止（错误文案与 desktop_executors::desktop_input 对齐）。
+async fn ensure_foreground_or_abort(client: &DesktopClient, hwnd: i32) -> Result<(), String> {
+    if !ensure_foreground(client, hwnd).await {
+        return Err(format!(
+            "HWND({hwnd}) 窗口自动置前失败，为避免输入误入其他窗口已中止"
+        ));
+    }
+    Ok(())
+}
+
+/// send 配置 → 提交键名序列（解析规则与 desktop_executors 的 send_raw 对齐）。
+/// `"none"` → 空（只输入不提交）；其余按 `+` 拆分后 trim + 小写化，
+/// **不过滤空段** —— `send=""` / `"+"` / `"ctrl+"` 会产出空键名，交由
+/// `validate_hotkey` 预校验拒绝，不得退化成「只打字不提交却返回成功」。
+fn parse_send_keys(send_raw: &str) -> Vec<String> {
+    if send_raw == "none" {
+        Vec::new()
+    } else {
+        send_raw
+            .split('+')
+            .map(|key| key.trim().to_lowercase())
+            .collect()
+    }
 }
 
 /// 桌面工具白名单分发。tool 名不在白名单 → Err（调用方中止整条序列）。
@@ -252,9 +279,14 @@ async fn execute_desktop_step(
                         .get("button")
                         .and_then(|v| v.as_str())
                         .unwrap_or("left");
-                    // 可选 hwnd：点击前先激活目标窗口（与 desktop_executors 同语义）
+                    // 可选 hwnd：点击前先激活目标窗口；激活失败即中止，不发出点击
+                    // （与 desktop_executors::desktop_mouse 同语义：失败不得静默吞掉）
                     if let Some(hwnd) = i32_at(with, "hwnd") {
-                        let _ = client.window_activate(hwnd).await;
+                        if !ensure_foreground(client, hwnd).await {
+                            return Err(format!(
+                                "HWND({hwnd}) 窗口激活失败，为避免误点其他窗口已中止"
+                            ));
+                        }
                     }
                     unwrap(client.mouse_click(x, y, button, clicks).await)
                 }
@@ -278,16 +310,13 @@ async fn execute_desktop_step(
         }
         "desktop_input" => {
             let hwnd = required_i32(with, "hwnd")?;
-            // 键盘输入必须前置：激活失败即中止，避免输入误入其他窗口
-            if !ensure_foreground(client, hwnd).await {
-                return Err(format!(
-                    "HWND({hwnd}) 窗口自动置前失败，为避免输入误入其他窗口已中止"
-                ));
-            }
             let mode = with
                 .get("mode")
                 .and_then(|v| v.as_str())
                 .unwrap_or("type");
+            // 先解析 + 预校验键名，再进入任何桌面副作用（抢焦点/敲字）：
+            // 配置写错（空 send / 纯加号 / 未知键 / hotkey 空数组）必须止步于激活之前。
+            // 预校验失败点与 hwnd 无关，因此顺序天然先于 ensure_foreground。
             match mode {
                 "hotkey" => {
                     let keys: Vec<String> = with
@@ -299,6 +328,8 @@ async fn execute_desktop_step(
                                 .collect()
                         })
                         .unwrap_or_default();
+                    validate_hotkey(&keys)?;
+                    ensure_foreground_or_abort(client, hwnd).await?;
                     unwrap(client.keyboard_hotkey(keys).await)
                 }
                 _ => {
@@ -310,15 +341,11 @@ async fn execute_desktop_step(
                         .get("send")
                         .and_then(|v| v.as_str())
                         .unwrap_or("enter");
-                    let send_keys: Vec<String> = if send_raw == "none" {
-                        vec![]
-                    } else {
-                        send_raw
-                            .split('+')
-                            .map(|s| s.trim().to_lowercase())
-                            .filter(|s| !s.is_empty())
-                            .collect()
-                    };
+                    let send_keys = parse_send_keys(send_raw);
+                    if !send_keys.is_empty() {
+                        validate_hotkey(&send_keys)?;
+                    }
+                    ensure_foreground_or_abort(client, hwnd).await?;
                     type_and_submit(
                         client.input_send(text, hwnd, false),
                         (!send_keys.is_empty()).then(|| client.keyboard_hotkey(send_keys)),
@@ -387,7 +414,7 @@ mod tests {
                 Some(ready(failure)),
             ))
             .unwrap_err();
-            assert!(err.starts_with("发送提交快捷键失败: "));
+            assert!(err.starts_with("文本已输入，发送提交快捷键失败: "));
             assert!(err.contains("injected failure"));
         }
     }
@@ -426,6 +453,138 @@ mod tests {
             assert!(err.starts_with("输入文本失败: "));
             assert!(err.contains("injected failure"));
         }
+    }
+
+    #[test]
+    fn test_parse_send_keys_matches_executor_semantics() {
+        // 缺省值由调用方传入 "enter"；此处只验证解析本身
+        assert_eq!(parse_send_keys("enter"), vec!["enter"]);
+        assert_eq!(parse_send_keys("ctrl+enter"), vec!["ctrl", "enter"]);
+        // 大小写与空白归一化（大小写不敏感由 key_to_vk 保证，此处先小写化）
+        assert_eq!(parse_send_keys(" Ctrl + Enter "), vec!["ctrl", "enter"]);
+        // none → 空序列：只输入不提交
+        assert_eq!(parse_send_keys("none"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_send_keys_keeps_empty_segments_for_prevalidation() {
+        // 不过滤空段：空段产出空键名，由 validate_hotkey 拒绝，
+        // 不得退化成「只打字不提交却 success」（旧实现的静默成功路径）
+        assert_eq!(parse_send_keys(""), vec![""]);
+        assert_eq!(parse_send_keys("+"), vec!["", ""]);
+        assert_eq!(parse_send_keys(" + "), vec!["", ""]);
+        assert_eq!(parse_send_keys("ctrl+"), vec!["ctrl", ""], "不得退化成单独按 Ctrl");
+    }
+
+    #[test]
+    fn test_desktop_input_type_rejects_malformed_send_before_foreground() {
+        // hwnd=12345 在无桌面测试环境下不可能被激活：若预校验缺失，err 会是
+        // 「窗口自动置前失败」；断言为 unknown key 即证明校验发生在副作用之前
+        // （不激活、不输入、不提交）。
+        for send in ["", "+", " + ", "ctrl+"] {
+            let client = DesktopClient::new();
+            let with = serde_json::json!({
+                "hwnd": 12345, "mode": "type", "send": send, "text": "hi"
+            });
+            let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_input", &with))
+                .unwrap_err();
+            assert!(
+                err.contains("unknown key"),
+                "send={send:?} 应因未知/空键名被预校验拒绝，实际: {err}"
+            );
+            assert!(
+                !err.contains("窗口自动置前失败"),
+                "send={send:?} 不得触达激活步骤，实际: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_desktop_input_type_rejects_unknown_send_key_before_foreground() {
+        // send="windows+shift+s"：白名单只认 win/command/cmd/meta/super
+        let client = DesktopClient::new();
+        let with = serde_json::json!({
+            "hwnd": 12345, "mode": "type", "send": "windows+shift+s", "text": "hi"
+        });
+        let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_input", &with))
+            .unwrap_err();
+        assert!(err.contains("unknown key: windows"), "实际: {err}");
+        assert!(!err.contains("窗口自动置前失败"), "不得触达激活步骤，实际: {err}");
+    }
+
+    #[test]
+    fn test_desktop_input_hotkey_rejects_empty_or_unknown_keys_before_foreground() {
+        for keys in [
+            serde_json::json!([]),
+            serde_json::json!(["nope"]),
+            serde_json::json!(["ctrl", ""]),
+        ] {
+            let client = DesktopClient::new();
+            let with = serde_json::json!({
+                "hwnd": 12345, "mode": "hotkey", "keys": keys
+            });
+            let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_input", &with))
+                .unwrap_err();
+            let rejected = err.contains("requires at least one key") || err.contains("unknown key");
+            assert!(rejected, "keys={keys} 应在预校验被拒，实际: {err}");
+            assert!(!err.contains("窗口自动置前失败"), "keys={keys} 不得触达激活步骤，实际: {err}");
+        }
+    }
+
+    #[test]
+    fn test_desktop_input_valid_configs_reach_foreground_stage() {
+        // 真实登记配置（plugin/team.toml opencode）：send="none" type / hotkey ["enter"]
+        // 以及缺省 "enter" / "ctrl+enter" 必须通过预校验走到激活阶段
+        // （无桌面环境下失败点是置前，而非键名校验）。
+        for with in [
+            serde_json::json!({ "hwnd": 12345, "mode": "type", "text": "hi" }),
+            serde_json::json!({ "hwnd": 12345, "mode": "type", "send": "none", "text": "hi" }),
+            serde_json::json!({ "hwnd": 12345, "mode": "type", "send": "ctrl+enter", "text": "hi" }),
+            serde_json::json!({ "hwnd": 12345, "mode": "hotkey", "keys": ["enter"] }),
+        ] {
+            let client = DesktopClient::new();
+            let err = tokio_test::block_on(execute_desktop_step(&client, "desktop_input", &with))
+                .unwrap_err();
+            assert!(
+                err.contains("窗口自动置前失败"),
+                "合法配置应走到激活阶段，实际: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_desktop_mouse_click_aborts_on_activation_failure() {
+        // hwnd=12345 无法激活：必须返回激活失败 Err 且不发出点击
+        // （旧实现 let _ = window_activate 会静默吞错后照点点）。
+        let client = DesktopClient::new();
+        let with = serde_json::json!({ "hwnd": 12345, "x": 600, "y": 750 });
+        let err = tokio_test::block_on(execute_desktop_step(
+            &client,
+            "desktop_mouse",
+            &with,
+        ))
+        .unwrap_err();
+        assert!(
+            err.contains("窗口激活失败，为避免误点其他窗口已中止"),
+            "实际: {err}"
+        );
+    }
+
+    #[test]
+    fn test_desktop_mouse_click_alias_aborts_on_activation_failure() {
+        // desktop_mouse_click 别名同路径（action 强制为 click）
+        let client = DesktopClient::new();
+        let with = serde_json::json!({ "hwnd": 12345, "x": 600, "y": 750 });
+        let err = tokio_test::block_on(execute_desktop_step(
+            &client,
+            "desktop_mouse_click",
+            &with,
+        ))
+        .unwrap_err();
+        assert!(
+            err.contains("窗口激活失败，为避免误点其他窗口已中止"),
+            "实际: {err}"
+        );
     }
 
     #[test]

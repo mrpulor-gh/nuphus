@@ -87,6 +87,17 @@ pub use desktop_api::vision::yolo::YoloDetector;
 pub use client::captures_dir_path;
 pub use client::DesktopClient;
 
+/// 组合键预校验薄转发：调用 desktop-api 的键名白名单，在发送任何按键前
+/// 拒绝空数组与未知键名（大小写不敏感）。
+///
+/// 键名语义归 desktop-api 单一实现（`input::keyboard::validate_keys`），此处只做
+/// `&[String]` → `&[&str]` 转换 + 错误透传，供 nuphus lib 之外的调用方
+/// （如 ext_agent/seq_runner 的桌面派发）复用同一套校验，避免双实现漂移。
+pub fn validate_hotkey(keys: &[String]) -> Result<(), String> {
+    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    desktop_api::input::keyboard::validate_keys(&key_refs).map_err(|e| e.to_string())
+}
+
 use std::path::PathBuf;
 
 /// 解析模型目录 — paddle_ocr 的入口（yolo 已收编至 desktop-api，用其自身 vision::models::resolve_models_dir）
@@ -174,4 +185,31 @@ pub fn resolve_models_dir() -> Option<PathBuf> {
 
     tracing::warn!("[models] 未找到模型目录");
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_hotkey_accepts_known_chords() {
+        assert!(validate_hotkey(&["enter".to_string()]).is_ok());
+        assert!(validate_hotkey(&["ctrl".to_string(), "enter".to_string()]).is_ok());
+        // 大小写不敏感（key_to_vk 内部 to_lowercase）
+        assert!(validate_hotkey(&["Ctrl".to_string(), "Enter".to_string()]).is_ok());
+        // win 白名单别名（command/cmd/meta/super 同族）
+        assert!(validate_hotkey(&["win".to_string(), "shift".to_string(), "s".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn validate_hotkey_rejects_empty_and_unknown_keys() {
+        assert!(validate_hotkey(&[]).is_err(), "空数组不得放行");
+        // 空段（send="" / "+" 的 split 产物）按未知键拒绝，不得退化成单键
+        assert!(validate_hotkey(&["".to_string()]).is_err());
+        assert!(validate_hotkey(&["ctrl".to_string(), "".to_string()]).is_err());
+        // 白名单只认 win/command/cmd/meta/super，"windows" 是未知键
+        let err = validate_hotkey(&["windows".to_string(), "shift".to_string(), "s".to_string()])
+            .unwrap_err();
+        assert!(err.contains("unknown key: windows"), "错误应透传底层原因: {err}");
+    }
 }
