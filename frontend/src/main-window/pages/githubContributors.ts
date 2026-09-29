@@ -18,6 +18,12 @@
  *   且有 12 次提交，已并入头像墙（见 REPO_COMMITTERS）；轮次表内的贡献记录仍待
  *   CHANGELOG / README 出处再补，不凭印象回填。#79（0.2.23）已按同一出处补入。
  *
+ * `Unreleased` 轮次（#87 / #88 / #84）取证：2026-09-29 经 `/compare/v0.2.23...main` API
+ * 确认该区间 ahead=27 / behind=0，并用 `/pulls?state=closed` 核对三个 PR 的 merged_at
+ * 与作者（#87 01:49 与 #88 10:48 均 yuansui486，#84 10:53 为 zhoupeiyu515-ui），
+ * 三者均能在 git log 找到 `Merge PR #NN` 合并提交。两位作者均已在既有轮次出现，
+ * 非新提交者，故头像墙无需新增。0.2.24 发版时把 version 改为 `0.2.24`、date 填实际日期。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -64,6 +70,34 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: 'Unreleased',
+    date: null,
+    contributors: [
+      {
+        user: 'yuansui486',
+        contributions: [
+          {
+            pr: 87,
+            summary: '修复外部数据点的 Markdown 渲染（MarkdownInline 导出供复用）',
+          },
+          {
+            pr: 88,
+            summary: '明确模型连接成功反馈，并把模型能力探测移到后台不再阻塞切换',
+          },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 84,
+            summary: '补 mobile server / relay 威胁模型与已接受限制，写入 SECURITY.md',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.23',
     date: '2026-09-28',
