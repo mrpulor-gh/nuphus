@@ -3303,43 +3303,35 @@ export function ModelsPage({
                   {/* ── 云端图像理解模型 ── */}
                   <Section
                     title="图像理解"
-                    description="配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型。"
+                    description="配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标，自定义 / 中转模型即使未探测到能力也可以手动选择。"
                   >
-                    <FormRow
-                      stacked
-                      className="models-form-row--dedup"
-                      label="图像理解模型"
-                      hint="已确认支持视觉输入的模型会显示图标；自定义/中转模型即使未探测到能力，也可以手动选择。"
-                      control={
-                        <VisionModelSelect
-                          value={visionModel}
-                          provider={visionProvider}
-                          models={allModels}
-                          filterCapability="vision"
-                          placeholder={TXT.visionNone}
-                          onChange={async (modelId, selectedProvider) => {
-                            setVisionSaving(true)
-                            setVisionFeedback(null)
-                            try {
-                              // 原子写入：model 与 provider 一起落盘，杜绝
-                              // 「新 model + 旧 provider」的半绑定中间态。
-                              await setCapabilityBinding('vision', modelId, selectedProvider)
-                              setVisionModel(modelId)
-                              setVisionProvider(selectedProvider)
-                              setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
-                              setTimeout(() => setVisionFeedback(null), 2000)
-                            } catch (e: any) {
-                              setVisionFeedback({
-                                ok: false,
-                                msg: friendlyIpcError(e, '保存失败'),
-                              })
-                            } finally {
-                              setVisionSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
+                    <VisionModelSelect
+                      value={visionModel}
+                      provider={visionProvider}
+                      models={allModels}
+                      filterCapability="vision"
+                      placeholder={TXT.visionNone}
+                      onChange={async (modelId, selectedProvider) => {
+                        setVisionSaving(true)
+                        setVisionFeedback(null)
+                        try {
+                          // 原子写入：model 与 provider 一起落盘，杜绝
+                          // 「新 model + 旧 provider」的半绑定中间态。
+                          await setCapabilityBinding('vision', modelId, selectedProvider)
+                          setVisionModel(modelId)
+                          setVisionProvider(selectedProvider)
+                          setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
+                          setTimeout(() => setVisionFeedback(null), 2000)
+                        } catch (e: any) {
+                          setVisionFeedback({
+                            ok: false,
+                            msg: friendlyIpcError(e, '保存失败'),
+                          })
+                        } finally {
+                          setVisionSaving(false)
+                        }
+                      }}
+                      t={t}
                     />
                     {visionFeedback && (
                       <div
@@ -3362,6 +3354,98 @@ export function ModelsPage({
                             : `⚠ 当前 Leader 模型 ${leaderVisionModelId} 不支持图像理解 —— 截图/图像识别类操作将不可用。请在此指定一个图像理解模型，或把 Leader 换成支持视觉的模型。`
                           : '跟随 Leader：图像由当前 Leader 模型直接理解（尚未检测到 Leader 模型信息）'}
                     </div>
+                  </Section>
+
+                  {/* ── 图片生成 ── */}
+                  <Section
+                    title={t('models.imageGenSection')}
+                    description={t('models.imageGenSectionDesc')}
+                  >
+                    <VisionModelSelect
+                      value={imageGenModel}
+                      provider={imageGenProvider}
+                      models={allModels}
+                      filterCapability="image_generation"
+                      placeholder={t('models.imageGenNone')}
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async (modelId, selectedProvider) => {
+                        setImageGenSaving(true)
+                        setImageGenFeedback(null)
+                        try {
+                          // 原子写入：model 与 provider 一起落盘，杜绝
+                          // 「新 model + 旧 provider」的半绑定中间态。
+                          await setCapabilityBinding('image_generation', modelId, selectedProvider)
+                          setImageGenModel(modelId)
+                          setImageGenProvider(selectedProvider)
+                          setImageGenFeedback({
+                            ok: true,
+                            msg: t('models.imageGenSaved'),
+                          })
+                          setTimeout(() => setImageGenFeedback(null), 2000)
+                        } catch (e: any) {
+                          setImageGenFeedback({
+                            ok: false,
+                            msg: friendlyIpcError(e, t('models.genSaveFailed')),
+                          })
+                        } finally {
+                          setImageGenSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                    {imageGenFeedback && (
+                      <div
+                        className={`text-caption${imageGenFeedback.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {imageGenFeedback.msg}
+                      </div>
+                    )}
+                  </Section>
+
+                  {/* ── 视频生成 ── */}
+                  <Section
+                    title={t('models.videoGenSection')}
+                    description={t('models.videoGenSectionDesc')}
+                  >
+                    <VisionModelSelect
+                      value={videoGenModel}
+                      provider={videoGenProvider}
+                      models={allModels}
+                      filterCapability="video_generation"
+                      placeholder={t('models.videoGenNone')}
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async (modelId, selectedProvider) => {
+                        setVideoGenSaving(true)
+                        setVideoGenFeedback(null)
+                        try {
+                          await setCapabilityBinding('video_generation', modelId, selectedProvider)
+                          setVideoGenModel(modelId)
+                          setVideoGenProvider(selectedProvider)
+                          setVideoGenFeedback({
+                            ok: true,
+                            msg: t('models.videoGenSaved'),
+                          })
+                          setTimeout(() => setVideoGenFeedback(null), 2000)
+                        } catch (e: any) {
+                          setVideoGenFeedback({
+                            ok: false,
+                            msg: friendlyIpcError(e, t('models.genSaveFailed')),
+                          })
+                        } finally {
+                          setVideoGenSaving(false)
+                        }
+                      }}
+                      t={t}
+                    />
+                    {videoGenFeedback && (
+                      <div
+                        className={`text-caption${videoGenFeedback.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {videoGenFeedback.msg}
+                      </div>
+                    )}
                   </Section>
 
                   {/* ── 本地视觉模型（OCR / UI 元素检测）：随应用自动下载 ── */}
@@ -3452,38 +3536,31 @@ export function ModelsPage({
                     title="语音输入"
                     description="在输入框用语音转文字。配置云端识别模型后优先使用云端识别；未配置则使用本地离线识别（中文优化，无需联网）。"
                   >
-                    <FormRow
-                      stacked
-                      label="云端识别模型"
-                      hint="配置后优先使用云端识别，清除则回退本地离线识别。"
-                      control={
-                        <VisionModelSelect
-                          value={sttModel}
-                          provider={sttProvider}
-                          models={allModels}
-                          filterCapability="audio"
-                          placeholder="未配置（使用本地识别）"
-                          showVisionIcons={false}
-                          menuUp
-                          onChange={async (modelId, selectedProvider) => {
-                            setSttSaving(true)
-                            setSttFeedback(null)
-                            try {
-                              await setCapabilityBinding('stt', modelId, selectedProvider)
-                              setSttModel(modelId)
-                              setSttProvider(selectedProvider)
-                              setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
-                              setTimeout(() => setSttFeedback(null), 2000)
-                              probeStt()
-                            } catch (e: any) {
-                              setSttFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
-                            } finally {
-                              setSttSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
+                    <VisionModelSelect
+                      value={sttModel}
+                      provider={sttProvider}
+                      models={allModels}
+                      filterCapability="audio"
+                      placeholder="未配置（使用本地识别）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async (modelId, selectedProvider) => {
+                        setSttSaving(true)
+                        setSttFeedback(null)
+                        try {
+                          await setCapabilityBinding('stt', modelId, selectedProvider)
+                          setSttModel(modelId)
+                          setSttProvider(selectedProvider)
+                          setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
+                          setTimeout(() => setSttFeedback(null), 2000)
+                          probeStt()
+                        } catch (e: any) {
+                          setSttFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                        } finally {
+                          setSttSaving(false)
+                        }
+                      }}
+                      t={t}
                     />
                     {sttFeedback && (
                       <div
@@ -3551,38 +3628,31 @@ export function ModelsPage({
                   {/* ── 文字转语音（TTS） ── */}
                   <Section
                     title="文字转语音（TTS）"
-                    description="配置文字转语音模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS 服务。"
+                    description="配置文字转语音模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS 服务；留空表示不使用朗读功能。"
                   >
-                    <FormRow
-                      stacked
-                      label="TTS 模型"
-                      hint="留空表示不使用朗读功能。"
-                      control={
-                        <VisionModelSelect
-                          value={ttsModel}
-                          provider={ttsProvider}
-                          models={allModels}
-                          placeholder="未配置（不使用朗读）"
-                          showVisionIcons={false}
-                          menuUp
-                          onChange={async (modelId, selectedProvider) => {
-                            setTtsSaving(true)
-                            setTtsFeedback(null)
-                            try {
-                              await setCapabilityBinding('tts', modelId, selectedProvider)
-                              setTtsModel(modelId)
-                              setTtsProvider(selectedProvider)
-                              setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
-                              setTimeout(() => setTtsFeedback(null), 2000)
-                            } catch (e: any) {
-                              setTtsFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
-                            } finally {
-                              setTtsSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
+                    <VisionModelSelect
+                      value={ttsModel}
+                      provider={ttsProvider}
+                      models={allModels}
+                      placeholder="未配置（不使用朗读）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async (modelId, selectedProvider) => {
+                        setTtsSaving(true)
+                        setTtsFeedback(null)
+                        try {
+                          await setCapabilityBinding('tts', modelId, selectedProvider)
+                          setTtsModel(modelId)
+                          setTtsProvider(selectedProvider)
+                          setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
+                          setTimeout(() => setTtsFeedback(null), 2000)
+                        } catch (e: any) {
+                          setTtsFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                        } finally {
+                          setTtsSaving(false)
+                        }
+                      }}
+                      t={t}
                     />
                     {ttsFeedback && (
                       <div
@@ -3596,158 +3666,37 @@ export function ModelsPage({
                   {/* ── 语音克隆 ── */}
                   <Section
                     title="语音克隆"
-                    description="配置语音克隆模型（云端克隆 API），配置后语音克隆工具可用。"
+                    description="配置语音克隆模型（云端克隆 API），配置后语音克隆工具可用；留空表示不使用语音克隆。"
                   >
-                    <FormRow
-                      stacked
-                      label="语音克隆模型"
-                      hint="留空表示不使用语音克隆。"
-                      control={
-                        <VisionModelSelect
-                          value={voiceModel}
-                          provider={voiceProvider}
-                          models={allModels}
-                          placeholder="未配置（不使用）"
-                          showVisionIcons={false}
-                          menuUp
-                          onChange={async (modelId, selectedProvider) => {
-                            setVoiceSaving(true)
-                            setVoiceFeedback(null)
-                            try {
-                              await setCapabilityBinding('voice', modelId, selectedProvider)
-                              setVoiceModel(modelId)
-                              setVoiceProvider(selectedProvider)
-                              setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
-                              setTimeout(() => setVoiceFeedback(null), 2000)
-                            } catch (e: any) {
-                              setVoiceFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
-                            } finally {
-                              setVoiceSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
+                    <VisionModelSelect
+                      value={voiceModel}
+                      provider={voiceProvider}
+                      models={allModels}
+                      placeholder="未配置（不使用）"
+                      showVisionIcons={false}
+                      menuUp
+                      onChange={async (modelId, selectedProvider) => {
+                        setVoiceSaving(true)
+                        setVoiceFeedback(null)
+                        try {
+                          await setCapabilityBinding('voice', modelId, selectedProvider)
+                          setVoiceModel(modelId)
+                          setVoiceProvider(selectedProvider)
+                          setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
+                          setTimeout(() => setVoiceFeedback(null), 2000)
+                        } catch (e: any) {
+                          setVoiceFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                        } finally {
+                          setVoiceSaving(false)
+                        }
+                      }}
+                      t={t}
                     />
                     {voiceFeedback && (
                       <div
                         className={`text-caption${voiceFeedback.ok ? ' text-success' : ' text-danger'}`}
                       >
                         {voiceFeedback.msg}
-                      </div>
-                    )}
-                  </Section>
-
-                  {/* ── 图片生成 ── */}
-                  <Section
-                    title={t('models.imageGenSection')}
-                    description={t('models.imageGenSectionDesc')}
-                  >
-                    <FormRow
-                      stacked
-                      label={t('models.imageGenLabel')}
-                      hint={t('models.imageGenHint')}
-                      control={
-                        <VisionModelSelect
-                          value={imageGenModel}
-                          provider={imageGenProvider}
-                          models={allModels}
-                          filterCapability="image_generation"
-                          placeholder={t('models.imageGenNone')}
-                          showVisionIcons={false}
-                          menuUp
-                          onChange={async (modelId, selectedProvider) => {
-                            setImageGenSaving(true)
-                            setImageGenFeedback(null)
-                            try {
-                              // 原子写入：model 与 provider 一起落盘，杜绝
-                              // 「新 model + 旧 provider」的半绑定中间态。
-                              await setCapabilityBinding(
-                                'image_generation',
-                                modelId,
-                                selectedProvider,
-                              )
-                              setImageGenModel(modelId)
-                              setImageGenProvider(selectedProvider)
-                              setImageGenFeedback({
-                                ok: true,
-                                msg: t('models.imageGenSaved'),
-                              })
-                              setTimeout(() => setImageGenFeedback(null), 2000)
-                            } catch (e: any) {
-                              setImageGenFeedback({
-                                ok: false,
-                                msg: friendlyIpcError(e, t('models.genSaveFailed')),
-                              })
-                            } finally {
-                              setImageGenSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
-                    />
-                    {imageGenFeedback && (
-                      <div
-                        className={`text-caption${imageGenFeedback.ok ? ' text-success' : ' text-danger'}`}
-                      >
-                        {imageGenFeedback.msg}
-                      </div>
-                    )}
-                  </Section>
-
-                  {/* ── 视频生成 ── */}
-                  <Section
-                    title={t('models.videoGenSection')}
-                    description={t('models.videoGenSectionDesc')}
-                  >
-                    <FormRow
-                      stacked
-                      label={t('models.videoGenLabel')}
-                      hint={t('models.videoGenHint')}
-                      control={
-                        <VisionModelSelect
-                          value={videoGenModel}
-                          provider={videoGenProvider}
-                          models={allModels}
-                          filterCapability="video_generation"
-                          placeholder={t('models.videoGenNone')}
-                          showVisionIcons={false}
-                          menuUp
-                          onChange={async (modelId, selectedProvider) => {
-                            setVideoGenSaving(true)
-                            setVideoGenFeedback(null)
-                            try {
-                              await setCapabilityBinding(
-                                'video_generation',
-                                modelId,
-                                selectedProvider,
-                              )
-                              setVideoGenModel(modelId)
-                              setVideoGenProvider(selectedProvider)
-                              setVideoGenFeedback({
-                                ok: true,
-                                msg: t('models.videoGenSaved'),
-                              })
-                              setTimeout(() => setVideoGenFeedback(null), 2000)
-                            } catch (e: any) {
-                              setVideoGenFeedback({
-                                ok: false,
-                                msg: friendlyIpcError(e, t('models.genSaveFailed')),
-                              })
-                            } finally {
-                              setVideoGenSaving(false)
-                            }
-                          }}
-                          t={t}
-                        />
-                      }
-                    />
-                    {videoGenFeedback && (
-                      <div
-                        className={`text-caption${videoGenFeedback.ok ? ' text-success' : ' text-danger'}`}
-                      >
-                        {videoGenFeedback.msg}
                       </div>
                     )}
                   </Section>
@@ -3761,20 +3710,12 @@ export function ModelsPage({
                     title="子任务执行模型（Exec）"
                     description="ExecAgent 由 Leader 模式下派发、执行子任务时使用的模型。留空则跟随全局默认模型。"
                   >
-                    <FormRow
-                      stacked
-                      className="models-form-row--dedup"
-                      label="Exec 模型"
-                      hint="留空表示跟随全局默认模型。"
-                      control={
-                        <VisionModelSelect
-                          value={agentModels.exec}
-                          models={allModels}
-                          onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
-                          t={t}
-                          placeholder="跟随默认模型"
-                        />
-                      }
+                    <VisionModelSelect
+                      value={agentModels.exec}
+                      models={allModels}
+                      onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
+                      t={t}
+                      placeholder="跟随默认模型"
                     />
                     {agentFeedback && (
                       <div

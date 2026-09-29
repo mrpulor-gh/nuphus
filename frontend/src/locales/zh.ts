@@ -940,21 +940,14 @@ const zh: Record<string, string> = {
   // 生成能力绑定（image_generate / video_generate 读这两个能力取模型与凭证）
   'models.imageGenSection': '图片生成',
   'models.imageGenSectionDesc':
-    '配置图片生成模型后，AI 可调用图像生成工具产出图片，产物保存在 ~/.nuphus/generated/。留空表示未绑定——此时工具会明确报错并列出候选，不会自行挑选服务商。',
-  'models.imageGenLabel': '图片生成模型',
-  'models.imageGenHint':
-    '仅列出已声明「图像生成」能力的模型；列表为空时请在模型行打开该声明后再绑定。',
+    'AI 调用图像生成工具时使用的模型与凭证：仅列出已声明「图像生成」能力的模型，列表为空时请在模型行打开该声明；未绑定则工具明确报错并列出候选，不会自行挑选服务商。产物保存在 ~/.nuphus/generated/。',
   'models.imageGenNone': '未绑定（未绑定时生成工具会报错）',
   'models.imageGenSaved': '图片生成模型已保存',
   'models.videoGenSection': '视频生成',
   'models.videoGenSectionDesc':
-    '配置视频生成模型后，AI 可调用视频生成工具产出 mp4，产物保存在 ~/.nuphus/generated/。留空表示未绑定——此时工具会明确报错并列出候选，不会自行挑选服务商。',
-  'models.videoGenLabel': '视频生成模型',
-  'models.videoGenHint':
-    '注册表只有一个「图像生成」能力声明字段，视频生成复用同一过滤；列表为空时请在模型行打开该声明后再绑定。',
+    'AI 调用视频生成工具时使用的模型与凭证：注册表只有一个「图像生成」能力声明字段，视频生成复用同一过滤；未绑定则工具明确报错并列出候选，不会自行挑选服务商。产物保存在 ~/.nuphus/generated/。',
   'models.videoGenNone': '未绑定（未绑定时生成工具会报错）',
   'models.videoGenSaved': '视频生成模型已保存',
-  'models.genSaveFailed': '保存失败',
   'models.genCapabilityEmpty':
     '暂无声明了「图像生成」能力的模型：在左侧服务商的模型列表里，为该模型打开「图像生成」声明。',
   'models.genBoundMissing':

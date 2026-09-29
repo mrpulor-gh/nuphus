@@ -989,21 +989,14 @@ const en: Record<string, string> = {
   // Generation capability bindings (image_generate / video_generate read these)
   'models.imageGenSection': 'Image Generation',
   'models.imageGenSectionDesc':
-    'Bind an image generation model so the AI can generate images; outputs are saved to ~/.nuphus/generated/. Leave empty for unbound — the tool then fails loudly and lists candidates instead of picking a provider on its own.',
-  'models.imageGenLabel': 'Image generation model',
-  'models.imageGenHint':
-    'Only models that declare "Image generation" are listed; if the list is empty, enable that declaration on the model row first.',
+    'Model and credentials used when the AI calls the image generation tool: only models that declare "Image generation" are listed — enable that declaration on the model row when the list is empty. Unbound fails loudly with a candidate list instead of silently picking a provider. Output is saved to ~/.nuphus/generated/.',
   'models.imageGenNone': 'Unbound (generation tools fail when unbound)',
   'models.imageGenSaved': 'Image generation model saved',
   'models.videoGenSection': 'Video Generation',
   'models.videoGenSectionDesc':
-    'Bind a video generation model so the AI can generate mp4 videos; outputs are saved to ~/.nuphus/generated/. Leave empty for unbound — the tool then fails loudly and lists candidates instead of picking a provider on its own.',
-  'models.videoGenLabel': 'Video generation model',
-  'models.videoGenHint':
-    'The registry has a single generation declaration field, so video generation reuses the same "Image generation" filter; if the list is empty, enable that declaration on the model row first.',
+    'Model and credentials used when the AI calls the video generation tool: the registry has a single generation declaration field, so video generation reuses the same "Image generation" filter. Unbound fails loudly with a candidate list instead of silently picking a provider. Output is saved to ~/.nuphus/generated/.',
   'models.videoGenNone': 'Unbound (generation tools fail when unbound)',
   'models.videoGenSaved': 'Video generation model saved',
-  'models.genSaveFailed': 'Save failed',
   'models.genCapabilityEmpty':
     'No model declares "Image generation" yet: open the provider model list on the left and enable the "Image generation" declaration for that model.',
   'models.genBoundMissing':

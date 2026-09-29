@@ -290,6 +290,10 @@
   background: var(--void-hover);
   color: var(--spark-secondary);
 }
+.compact-select-empty {
+  margin: 10px;
+  font-size: 12px;
+}
 .compact-select-wrap {
   position: relative;
   width: 100%;
