@@ -278,7 +278,7 @@ GET /handoff/health → 免令牌自检
 | 422 | JSON 缺必填字段（id/status/summary） | 补全四个字段：id/status/summary/report_path(可 null) |
 | 400 | status 非法值 或 id/summary 为空 | status 只允许 done/progress/blocked |
 
-语义细节：progress 同 id 折叠（只注入最新一条）；done/blocked 终态幂等且到达后清除同 id 陈旧 progress；summary 换行压平、500 字截断。上报形态两种等价：裸 POST（如上）或契约内置的 `nuphus-task.exe task ...` CLI（终端类 agent 实测在用）——以契约原文为准，不要求 agent 改换形态。
+语义细节：progress 同 id 折叠（只注入最新一条）；done/blocked 终态幂等且到达后清除同 id 陈旧 progress；summary 换行压平、500 字截断。上报形态两种等价：裸 POST（如上）或契约内置的 `<桌面壳 exe> task ...` CLI（终端类 agent 实测在用）——以契约原文为准，不要求 agent 改换形态。
 
 **task_id 一致性闸**：状态栏的 task_id 是「板上当前轮」、上板时写入。迟到的旧轮事件（事件 id 的 task_id 与板上不一致）只追加 last_event + 后台 warn——不动 state/task_id、不跑完工审计，但事件绝不丢弃（done/blocked 唤醒只认事件 status，与状态栏无关）。因此 agent 侧「上报返回 200 但状态栏没动」的正当成因之一是 task_id 不匹配：先核对事件 id 是否 `{agent}::{task_id}` 且 task_id 为本轮 brief 的值，再怀疑链路故障。
 

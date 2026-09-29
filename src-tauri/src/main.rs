@@ -55,6 +55,23 @@ fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<
 }
 
 fn main() {
+    // 外部 Agent 上报 CLI：`nuphus.exe task <verb> ...`（方案 A——旁车 bin nuphus-task
+    // 已废止，上报逻辑并入 lib 的 nuphus::handoff::cli，本进程以 `task` 子命令直接承载）。
+    // 必须位于一切 Tauri 初始化之前：CLI 形态只发一次门铃 POST 随即退出，不建窗口、
+    // 不拉第二个桌面实例（派发契约 [5] 红线：Agent 不得启动桌面主程序的 GUI 形态）。
+    // 注意：release 下 windows_subsystem="windows" 无控制台，CLI 的 stderr 输出不可见
+    // ——既有约束，保持现状（上报的退出码对调用方始终可见）。
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("task") {
+        let code = nuphus::handoff::run_task_cli(&argv[1..]);
+        // std 未提供 ExitCode → i32 的取值口（ExitCode 设计上只作 main 返回类型）；
+        // SUCCESS/FAILURE 即本入口仅有的两种返回，显式映射为 0/1，与并入前旁车 bin 的退出码逐一致。
+        std::process::exit(if code == std::process::ExitCode::SUCCESS {
+            0
+        } else {
+            1
+        });
+    }
     // Inject the persisted external-browser CDP endpoint into the process env so
     // future BrowserClient::new() picks it up; any MCP server child process
     // spawned later inherits it.

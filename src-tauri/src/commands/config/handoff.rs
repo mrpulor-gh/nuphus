@@ -969,19 +969,17 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
     let event_id = format!("{agent}::{task_id}");
     let projects_dir = dir.join("projects");
     let report_path = dir.join("briefs").join(format!("{task_id}-report.md"));
-    // 上报 CLI 自解析：与桌面壳同目录的 nuphus-task.exe（PATH 不可依赖——实测 target\debug 外启动即失联）；
-    // 解析不到时退回裸命令名，由 agent 按 read.md 的排障指引自查。
-    let cli_cmd = std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            let sibling = exe.parent()?.join("nuphus-task.exe");
-            if sibling.is_file() {
-                Some(sibling.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "nuphus task".to_string());
+    // 上报 CLI 自解析：桌面壳自身即上报入口（桌面主程序内置 `task` 子命令，方案 A）。
+    // 不再做 sibling 探测 / PATH 回退 / 平台文件名猜测——旧旁车 bin nuphus-task 从未
+    // 进入发布产物，安装版与 npm 用户的机器上它并不存在，探测必败、回退不可执行。
+    // 路径加双引号防空格撕裂；Windows 反斜杠原样保留：外部 Agent 在 PowerShell/cmd
+    // 里整行复制执行，反斜杠无需转义。
+    let cli_cmd = match std::env::current_exe() {
+        Ok(exe) => format!("\"{}\" task", exe.display()),
+        // current_exe() 仅在可执行文件运行中被删除等极端场景失败；此时退化为命令名
+        // 本体以保持契约命令形态完整（无任何探测逻辑）。
+        Err(_) => "\"nuphus\" task".to_string(),
+    };
 
     let mut s = String::new();
     s.push_str("外部 Agent 交接契约（handoff contract）\n");
@@ -998,16 +996,16 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
         s.push_str("令牌 token: 门铃不可用（见 [4] 降级说明）\n");
     }
     // [2] 上报命令：三态齐全、绝对路径、复制改参即可用（先给能直接跑的，再讲规则）
-    s.push_str("\n[2] 上报命令（CLI 与桌面主程序是两个东西；命令含绝对路径可整行复制执行；\n     事件 id 已拼好必须原样使用，门铃按其前缀归组更新状态栏）:\n");
+    s.push_str("\n[2] 上报命令（上报 CLI 即桌面主程序自带的 task 子命令，无需另装任何工具；命令含绝对路径可整行复制执行；\n     事件 id 已拼好必须原样使用，门铃按其前缀归组更新状态栏）:\n");
     s.push_str(&format!(
-        "  progress: {cli_cmd} task progress --id {event_id} --token <令牌见上> --summary \"开工确认：<一句话要点>\"\n",
+        "  progress: {cli_cmd} progress --id {event_id} --token <令牌见上> --summary \"开工确认：<一句话要点>\"\n",
     ));
     s.push_str(&format!(
-        "  done:     {cli_cmd} task done --id {event_id} --token <令牌见上> --summary \"任务完成\" --report \"{report_path}\"\n",
+        "  done:     {cli_cmd} done --id {event_id} --token <令牌见上> --summary \"任务完成\" --report \"{report_path}\"\n",
         report_path = report_path.to_string_lossy(),
     ));
     s.push_str(&format!(
-        "  blocked:  {cli_cmd} task blocked --id {event_id} --token <令牌见上> --reason \"等待确认\"\n"
+        "  blocked:  {cli_cmd} blocked --id {event_id} --token <令牌见上> --reason \"等待确认\"\n"
     ));
     // [3] 工作区路径约定
     s.push_str("\n[3] 工作区路径（均为绝对路径）:\n");
@@ -1027,7 +1025,7 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
     // [5] 红线：最高频踩坑反例，独立段落确保可见性
     s.push_str("\n[5] 红线:\n");
     s.push_str(&format!(
-        "  - 上报只用本契约给出的 CLI（{cli_cmd}）；Nuphus 桌面主程序 nuphus.exe 不是上报 CLI——运行它会拉起新的桌面实例；禁止自行搜索或启动任何 Nuphus 可执行文件。\n",
+        "  - 上报只用本契约给出的 CLI（{cli_cmd}）——该命令即桌面主程序的 task 子命令，不会拉起桌面窗口；禁止裸跑桌面主程序（无 task 子命令会拉起新桌面实例），也禁止自行搜索或启动其它 Nuphus 可执行文件。\n",
         cli_cmd = cli_cmd,
     ));
     s.push_str(

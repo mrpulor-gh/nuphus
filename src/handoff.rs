@@ -17,6 +17,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+/// 外部 Agent 上报 CLI（`桌面主程序 task <verb> ...`）——src-tauri 的 main() 在 argv
+/// 见到 `task` 时于任何 Tauri 初始化之前调用；放 lib 而非 src-tauri：main.rs 与未来
+/// 其它入口均可复用，单测随 lib 一起跑（方案 A，旁车 bin nuphus-task 已废止）。
+pub mod cli;
+pub use cli::run_task_cli;
+
 /// 门铃默认端口 —— 固定值便于外部 Agent 的 brief 模板复用；
 ///  bind 冲突时由 server 侧退化为 0（OS 分配），实际端口经 set_bound_port() 回写。
 pub const DEFAULT_DOORBELL_PORT: u16 = 18771;

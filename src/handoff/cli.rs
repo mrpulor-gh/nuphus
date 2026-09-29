@@ -1,16 +1,23 @@
-//! nuphus-task — 外部 Agent 完工/受阻上报 CLI（门铃回程通道，唯一化替代 curl）
+//! 外部 Agent 完工/受阻上报 CLI（门铃回程通道，唯一化替代 curl）——`桌面主程序 task <verb> ...`
 //!
-//! 用法：
-//!   nuphus task ready    --id <agent::task_id> --token <T> [--endpoint <url>]
-//!   nuphus task progress --id <...> --token <T> --summary "..." [--endpoint <url>]
-//!   nuphus task done     --id <...> --token <T> --summary "..." [--report <绝对路径>] [--endpoint <url>]
-//!   nuphus task blocked  --id <...> --token <T> --reason "..." [--endpoint <url>]
+//! 背景：本模块原是旁车 bin（src/bin/nuphus-task.rs，已废止删除）。旁车 bin 从未进入
+//! 任何发布产物（tauri bundle.resources 为空、CI 与 npm 包均不附带），安装版与 npm 用户
+//! 机器上桌面壳旁并不存在它，外部 Agent 上报静默失效；旧 build_contract 的 sibling 探测
+//! 与 `"nuphus task"` 回退同样不可用。方案 A 将上报能力并入桌面壳自身：src-tauri 的
+//! main() 在 argv 见到 `task` 时，于任何 Tauri 初始化之前调用 [`run_task_cli`] 并以
+//! 退出码终态进程——单个桌面可执行文件即唯一上报入口，契约命令用 current_exe() 自身
+//! 拼装，与 PATH / 平台文件名 / 安装形态彻底解耦。
 //!
-//! 设计取舍（方案 v8 四章）：
+//! 用法（「桌面主程序」即 Nuphus 桌面壳可执行文件，Windows 为 nuphus.exe）：
+//!   桌面主程序 task ready    --id <agent::task_id> --token <T> [--endpoint <url>]
+//!   桌面主程序 task progress --id <...> --token <T> --summary "..." [--endpoint <url>]
+//!   桌面主程序 task done     --id <...> --token <T> --summary "..." [--report <绝对路径>] [--endpoint <url>]
+//!   桌面主程序 task blocked  --id <...> --token <T> --reason "..." [--endpoint <url>]
+//!
+//! 设计取舍（方案 v8 四章，随迁不变）：
 //! - Rust reqwest blocking 直发 UTF-8 JSON —— 根除 cmd/PowerShell curl 的 GBK 编码坑；
 //! - stderr 友好化：403 → token 无效提示；连接失败 → 门铃不可达提示；200 → [ok]。
 //! - 零新依赖：reqwest 的 blocking feature 已在 src/Cargo.toml 启用，serde_json 同包已有。
-//! - 放在 src/bin/（lib crate 已有 src/main.rs 单例 bin），不触碰桌面壳构建面。
 
 use std::process::ExitCode;
 
@@ -40,10 +47,10 @@ fn parse_args(args: &[String]) -> std::collections::HashMap<String, String> {
 
 fn usage() -> &'static str {
     "用法:
-  nuphus task ready    --id <agent::task_id> --token <T> [--endpoint <url>]
-  nuphus task progress --id <...> --token <T> --summary \"...\" [--endpoint <url>]
-  nuphus task done     --id <...> --token <T> --summary \"...\" [--report <绝对路径>] [--endpoint <url>]
-  nuphus task blocked  --id <...> --token <T> --reason \"...\" [--endpoint <url>]
+  桌面主程序 task ready    --id <agent::task_id> --token <T> [--endpoint <url>]
+  桌面主程序 task progress --id <...> --token <T> --summary \"...\" [--endpoint <url>]
+  桌面主程序 task done     --id <...> --token <T> --summary \"...\" [--report <绝对路径>] [--endpoint <url>]
+  桌面主程序 task blocked  --id <...> --token <T> --reason \"...\" [--endpoint <url>]
 
 公共参数:
   --id       外部任务 id（必须为 {agent}::{task_id} 格式，门铃据此归组）
@@ -54,8 +61,13 @@ fn usage() -> &'static str {
   --reason   受阻原因（blocked 时必填）"
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+/// 外部 Agent 上报 CLI 入口（桌面壳以 `task` 子命令形态内置）。
+///
+/// `args` 为**去掉可执行文件路径后**的 argv，即 `["task", "<verb>", "--id", ...]`；
+/// 桌面壳 main() 见到 `argv[1] == "task"` 时立即调用本函数并以其返回的 ExitCode
+/// 终态进程（不再进入任何 Tauri 初始化）。语义与并入前的旁车 bin 完全一致：
+/// 参数、错误文案、退出码（SUCCESS→0 / FAILURE→1）、no_proxy、HTTP 状态码映射。
+pub fn run_task_cli(args: &[String]) -> ExitCode {
     if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("{}", usage());
         return if args.is_empty() {
