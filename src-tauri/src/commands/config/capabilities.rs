@@ -73,7 +73,7 @@ pub fn set_capability(
 /// provider + model 精确解析时找不到该组合，能力请求直接失败，而 UI 已经提示成功。
 /// 这里收敛为一次读写：要么两个字段都更新，要么都不动。
 ///
-/// `kind` ∈ { vision, stt, tts, voice, image_generation }。
+/// `kind` ∈ { vision, stt, tts, voice, image_generation, video_generation }。
 #[tauri::command]
 pub fn set_capability_binding(
     kind: String,
@@ -81,7 +81,14 @@ pub fn set_capability_binding(
     provider: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    const KINDS: [&str; 5] = ["vision", "stt", "tts", "voice", "image_generation"];
+    const KINDS: [&str; 6] = [
+        "vision",
+        "stt",
+        "tts",
+        "voice",
+        "image_generation",
+        "video_generation",
+    ];
     if !KINDS.contains(&kind.as_str()) {
         return Err(format!("未知能力类型: {kind}"));
     }

@@ -19,6 +19,7 @@ import {
   setAgentModel,
   setModelContextWindow,
   setModelSupportsVision,
+  setModelSupportsImageGeneration,
   setCapabilityBinding,
   createCustomProvider,
   updateCustomProvider,
@@ -410,7 +411,7 @@ function VisionModelSelect({
   t: (key: string, ...args: string[]) => string
   placeholder?: string
   showVisionIcons?: boolean
-  filterCapability?: 'vision' | 'audio'
+  filterCapability?: 'vision' | 'audio' | 'image_generation' | 'video_generation'
   /** true = 菜单向上展开（接近页面底部时避免溢出）；默认向下 */
   menuUp?: boolean
 }) {
@@ -428,8 +429,11 @@ function VisionModelSelect({
   }, [open, close])
 
   // 能力即过滤条件（见 lib/modelCapability.ts 的取舍说明）：视觉列表只列
-  // supports_vision=true 的模型，能力由用户在模型行内显式声明。
+  // supports_vision=true 的模型，能力由用户在模型行内显式声明；生成类列表只列
+  // supports_image_generation=true 的模型（注册表只有一个生成能力声明字段）。
   const filtered = selectableModels(models, filterCapability)
+  const isGeneration =
+    filterCapability === 'image_generation' || filterCapability === 'video_generation'
   // 触发器上的已保存值必须**脱离候选集**解析：若该模型的视觉开关当前是关的，
   // 它已不在候选集里，但用户实际配置就是它——显示成「未配置」会误导。
   const selected = Array.isArray(models)
@@ -475,12 +479,16 @@ function VisionModelSelect({
             <div className="compact-select-empty">
               {filterCapability === 'vision'
                 ? '暂无支持视觉的模型：在左侧服务商的模型列表里，为可输入图片的模型打开「视觉输入」'
-                : '暂无可选模型（先在上方连接并选择服务商）'}
+                : filterCapability === undefined
+                  ? '暂无可选模型（先在上方连接并选择服务商）'
+                  : t('models.genCapabilityEmpty')}
             </div>
           )}
           {selectedMissing && (
             <div className="compact-select-empty" role="status">
-              {`当前配置的 ${value} 未开启视觉能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「视觉输入」。`}
+              {isGeneration
+                ? t('models.genBoundMissing', value)
+                : `当前配置的 ${value} 未开启视觉能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「视觉输入」。`}
             </div>
           )}
           {filtered.map(m => (
@@ -1292,6 +1300,20 @@ export function ModelsPage({
   const [voiceProvider, setVoiceProvider] = useState('')
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [voiceFeedback, setVoiceFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  // 图片 / 视频生成：tools-internal 的 image_generate / video_generate 直接读这两个
+  // 绑定取凭证与模型，未绑定时工具明确报错（不静默发现 provider）。
+  const [imageGenModel, setImageGenModel] = useState('')
+  const [imageGenProvider, setImageGenProvider] = useState('')
+  const [imageGenSaving, setImageGenSaving] = useState(false)
+  const [imageGenFeedback, setImageGenFeedback] = useState<{ ok: boolean; msg: string } | null>(
+    null,
+  )
+  const [videoGenModel, setVideoGenModel] = useState('')
+  const [videoGenProvider, setVideoGenProvider] = useState('')
+  const [videoGenSaving, setVideoGenSaving] = useState(false)
+  const [videoGenFeedback, setVideoGenFeedback] = useState<{ ok: boolean; msg: string } | null>(
+    null,
+  )
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
   const [agentModels, setAgentModels] = useState<AgentModels>({
     leader: '',
@@ -1417,6 +1439,10 @@ export function ModelsPage({
           setSttProvider(m.stt_provider || '')
           setVoiceModel(m.voice)
           setVoiceProvider(m.voice_provider || '')
+          setImageGenModel(m.image_generation || '')
+          setImageGenProvider(m.image_generation_provider || '')
+          setVideoGenModel(m.video_generation || '')
+          setVideoGenProvider(m.video_generation_provider || '')
         }
       })
       .catch(() => {})
@@ -1615,6 +1641,8 @@ export function ModelsPage({
   const [ctxOverrides, setCtxOverrides] = useState<Record<string, number>>({})
   /** 正在保存视觉能力开关的模型名（行内 loading 态，避免重复点击） */
   const [visionToggling, setVisionToggling] = useState('')
+  /** 正在保存图像生成能力开关的模型名（与 visionToggling 同行内 loading 态） */
+  const [imageGenToggling, setImageGenToggling] = useState('')
   const [editingCtxModel, setEditingCtxModel] = useState<string | null>(null)
   const [editingCtxValue, setEditingCtxValue] = useState('')
   const editingCtxRef = useRef<string | null>(null)
@@ -2211,6 +2239,16 @@ export function ModelsPage({
     return allModels.find(m => m.provider === provider && m.id === name)?.supports_vision ?? false
   }
 
+  /** 模型当前生效的图像生成能力（本地行取值，与 rowVision 同源解析） */
+  const rowImageGen = (name: string): boolean => {
+    const brief = detectedModels.find(d => d.id === name)
+    if (brief) return brief.supports_image_generation
+    return (
+      allModels.find(m => m.provider === provider && m.id === name)?.supports_image_generation ??
+      false
+    )
+  }
+
   /** 该模型是否已有 per-model 显式 context_window */
   const hasExplicitCtx = (name: string): boolean =>
     ctxOverrides[name] !== undefined ||
@@ -2290,6 +2328,30 @@ export function ModelsPage({
       setFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
     } finally {
       setVisionToggling('')
+    }
+  }
+
+  /**
+   * 行内切换模型的图像生成能力 —— 与视觉开关同构的第二类模型元数据编辑。
+   *
+   * 这个开关是图片/视频生成绑定候选列表的来源：只有打开它的模型才会出现在
+   * 绑定下拉里（注册表只有这一个生成能力声明字段）。落盘时标记来源为 user，
+   * 此后自动探测不再覆盖（否则今天开、下次连接又被关掉）。
+   */
+  const toggleModelImageGen = async (name: string, next: boolean) => {
+    setImageGenToggling(name)
+    try {
+      await setModelSupportsImageGeneration(provider, name, next)
+      setFeedback({
+        ok: true,
+        msg: next ? t('models.imageGenMarkedOn', name) : t('models.imageGenMarkedOff', name),
+      })
+      const list = await listModels().catch(() => null)
+      if (Array.isArray(list)) setAllModels(list)
+    } catch (e: any) {
+      setFeedback({ ok: false, msg: friendlyIpcError(e, t('models.genSaveFailed')) })
+    } finally {
+      setImageGenToggling('')
     }
   }
 
@@ -3019,11 +3081,32 @@ export function ModelsPage({
                                         <IconMic size={12} />
                                       </span>
                                     )}
-                                    {caps.image && (
-                                      <span className="model-badge" title="支持图像生成">
-                                        <IconImage size={12} />
-                                      </span>
-                                    )}
+                                    {/* 图像生成能力开关：与「视觉输入」同为行内模型元数据
+                                        编辑，开关本身即状态（开启态 = 该模型进入图片/视频
+                                        生成绑定候选列表；关闭态 = 掉出候选）。 */}
+                                    <button
+                                      type="button"
+                                      className={`model-vision-toggle${caps.image ? ' is-on' : ''}`}
+                                      aria-pressed={caps.image}
+                                      aria-label={t(
+                                        'models.imageGenToggleAria',
+                                        caps.image
+                                          ? t('models.capStateOn')
+                                          : t('models.capStateOff'),
+                                      )}
+                                      title={
+                                        caps.image
+                                          ? t('models.imageGenToggleTitleOn')
+                                          : t('models.imageGenToggleTitleOff')
+                                      }
+                                      disabled={imageGenToggling === name}
+                                      onClick={e => {
+                                        e.stopPropagation()
+                                        void toggleModelImageGen(name, !caps.image)
+                                      }}
+                                    >
+                                      <IconImage size={12} />
+                                    </button>
                                     <RowCtxEditor
                                       ctx={ctx}
                                       isEditing={editingCtxModel === name}
@@ -3088,6 +3171,31 @@ export function ModelsPage({
                                   }}
                                 >
                                   <IconEye size={12} />
+                                </button>
+                                {/* 本地端点同样可挂图片生成模型（如本地多模态生成服务）：
+                                     打开后该模型才进入图片/视频生成绑定候选列表。 */}
+                                <button
+                                  type="button"
+                                  className={`model-vision-toggle${rowImageGen(m) ? ' is-on' : ''}`}
+                                  aria-pressed={rowImageGen(m)}
+                                  aria-label={t(
+                                    'models.imageGenToggleAria',
+                                    rowImageGen(m)
+                                      ? t('models.capStateOn')
+                                      : t('models.capStateOff'),
+                                  )}
+                                  title={
+                                    rowImageGen(m)
+                                      ? t('models.imageGenToggleTitleOn')
+                                      : t('models.imageGenToggleTitleOff')
+                                  }
+                                  disabled={imageGenToggling === m}
+                                  onClick={e => {
+                                    e.stopPropagation()
+                                    void toggleModelImageGen(m, !rowImageGen(m))
+                                  }}
+                                >
+                                  <IconImage size={12} />
                                 </button>
                                 <RowCtxEditor
                                   ctx={mctx}
@@ -3189,7 +3297,7 @@ export function ModelsPage({
                 </div>
               )}
 
-              {/* ═══════════ 图像音频模型：视觉 / 语音 / 朗读（原「自定义能力」tab 内容） ═══════════ */}
+              {/* ═══════════ 图像音频模型：视觉 / 语音 / 朗读 / 生成（原「自定义能力」tab 内容） ═══════════ */}
               {activeView === 'capabilities' && (
                 <>
                   {/* ── 云端图像理解模型 ── */}
@@ -3526,6 +3634,120 @@ export function ModelsPage({
                         className={`text-caption${voiceFeedback.ok ? ' text-success' : ' text-danger'}`}
                       >
                         {voiceFeedback.msg}
+                      </div>
+                    )}
+                  </Section>
+
+                  {/* ── 图片生成 ── */}
+                  <Section
+                    title={t('models.imageGenSection')}
+                    description={t('models.imageGenSectionDesc')}
+                  >
+                    <FormRow
+                      stacked
+                      label={t('models.imageGenLabel')}
+                      hint={t('models.imageGenHint')}
+                      control={
+                        <VisionModelSelect
+                          value={imageGenModel}
+                          provider={imageGenProvider}
+                          models={allModels}
+                          filterCapability="image_generation"
+                          placeholder={t('models.imageGenNone')}
+                          showVisionIcons={false}
+                          menuUp
+                          onChange={async (modelId, selectedProvider) => {
+                            setImageGenSaving(true)
+                            setImageGenFeedback(null)
+                            try {
+                              // 原子写入：model 与 provider 一起落盘，杜绝
+                              // 「新 model + 旧 provider」的半绑定中间态。
+                              await setCapabilityBinding(
+                                'image_generation',
+                                modelId,
+                                selectedProvider,
+                              )
+                              setImageGenModel(modelId)
+                              setImageGenProvider(selectedProvider)
+                              setImageGenFeedback({
+                                ok: true,
+                                msg: t('models.imageGenSaved'),
+                              })
+                              setTimeout(() => setImageGenFeedback(null), 2000)
+                            } catch (e: any) {
+                              setImageGenFeedback({
+                                ok: false,
+                                msg: friendlyIpcError(e, t('models.genSaveFailed')),
+                              })
+                            } finally {
+                              setImageGenSaving(false)
+                            }
+                          }}
+                          t={t}
+                        />
+                      }
+                    />
+                    {imageGenFeedback && (
+                      <div
+                        className={`text-caption${imageGenFeedback.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {imageGenFeedback.msg}
+                      </div>
+                    )}
+                  </Section>
+
+                  {/* ── 视频生成 ── */}
+                  <Section
+                    title={t('models.videoGenSection')}
+                    description={t('models.videoGenSectionDesc')}
+                  >
+                    <FormRow
+                      stacked
+                      label={t('models.videoGenLabel')}
+                      hint={t('models.videoGenHint')}
+                      control={
+                        <VisionModelSelect
+                          value={videoGenModel}
+                          provider={videoGenProvider}
+                          models={allModels}
+                          filterCapability="video_generation"
+                          placeholder={t('models.videoGenNone')}
+                          showVisionIcons={false}
+                          menuUp
+                          onChange={async (modelId, selectedProvider) => {
+                            setVideoGenSaving(true)
+                            setVideoGenFeedback(null)
+                            try {
+                              await setCapabilityBinding(
+                                'video_generation',
+                                modelId,
+                                selectedProvider,
+                              )
+                              setVideoGenModel(modelId)
+                              setVideoGenProvider(selectedProvider)
+                              setVideoGenFeedback({
+                                ok: true,
+                                msg: t('models.videoGenSaved'),
+                              })
+                              setTimeout(() => setVideoGenFeedback(null), 2000)
+                            } catch (e: any) {
+                              setVideoGenFeedback({
+                                ok: false,
+                                msg: friendlyIpcError(e, t('models.genSaveFailed')),
+                              })
+                            } finally {
+                              setVideoGenSaving(false)
+                            }
+                          }}
+                          t={t}
+                        />
+                      }
+                    />
+                    {videoGenFeedback && (
+                      <div
+                        className={`text-caption${videoGenFeedback.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {videoGenFeedback.msg}
                       </div>
                     )}
                   </Section>

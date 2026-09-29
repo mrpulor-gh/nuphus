@@ -42,6 +42,7 @@ vi.mock('../lib/api', () => ({
   setAgentModel: vi.fn(),
   setModelContextWindow: vi.fn(),
   setModelSupportsVision: vi.fn(),
+  setModelSupportsImageGeneration: vi.fn(),
   setCapabilityBinding: vi.fn(),
   createCustomProvider: vi.fn(),
   updateCustomProvider: vi.fn(),

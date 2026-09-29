@@ -937,6 +937,38 @@ const zh: Record<string, string> = {
   'models.capVision': '支持视觉理解',
   'models.capAudio': '支持语音',
   'models.capImageGen': '支持图像生成',
+  // 生成能力绑定（image_generate / video_generate 读这两个能力取模型与凭证）
+  'models.imageGenSection': '图片生成',
+  'models.imageGenSectionDesc':
+    '配置图片生成模型后，AI 可调用图像生成工具产出图片，产物保存在 ~/.nuphus/generated/。留空表示未绑定——此时工具会明确报错并列出候选，不会自行挑选服务商。',
+  'models.imageGenLabel': '图片生成模型',
+  'models.imageGenHint':
+    '仅列出已声明「图像生成」能力的模型；列表为空时请在模型行打开该声明后再绑定。',
+  'models.imageGenNone': '未绑定（未绑定时生成工具会报错）',
+  'models.imageGenSaved': '图片生成模型已保存',
+  'models.videoGenSection': '视频生成',
+  'models.videoGenSectionDesc':
+    '配置视频生成模型后，AI 可调用视频生成工具产出 mp4，产物保存在 ~/.nuphus/generated/。留空表示未绑定——此时工具会明确报错并列出候选，不会自行挑选服务商。',
+  'models.videoGenLabel': '视频生成模型',
+  'models.videoGenHint':
+    '注册表只有一个「图像生成」能力声明字段，视频生成复用同一过滤；列表为空时请在模型行打开该声明后再绑定。',
+  'models.videoGenNone': '未绑定（未绑定时生成工具会报错）',
+  'models.videoGenSaved': '视频生成模型已保存',
+  'models.genSaveFailed': '保存失败',
+  'models.genCapabilityEmpty':
+    '暂无声明了「图像生成」能力的模型：在左侧服务商的模型列表里，为该模型打开「图像生成」声明。',
+  'models.genBoundMissing':
+    '当前配置的 {0} 未声明图像生成能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「图像生成」。',
+  // 模型行内「图像生成」开关（aria/title/反馈三类文案，与视觉开关同位置）
+  'models.capStateOn': '已开启',
+  'models.capStateOff': '未开启',
+  'models.imageGenToggleAria': '图像生成能力：{0}',
+  'models.imageGenToggleTitleOn':
+    '已声明支持图像生成（点击关闭后，该模型不再出现在图片生成绑定候选列表）',
+  'models.imageGenToggleTitleOff':
+    '点击标记为支持图像生成（开启后，该模型才会出现在图片生成绑定候选列表）',
+  'models.imageGenMarkedOn': '{0} 已标记为支持图像生成',
+  'models.imageGenMarkedOff': '{0} 已标记为不支持图像生成',
   'models.capContext': '上下文窗口',
   'models.capContextUnknown': '上下文窗口未知',
   'models.editContext': '编辑上下文窗口',

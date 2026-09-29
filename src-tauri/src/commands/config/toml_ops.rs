@@ -243,8 +243,99 @@ pub fn update_model_supports_vision(
     Ok(())
 }
 
+/// Update model supports_image_generation in config.toml model entry.
+///
+/// 与 `update_model_supports_vision` 同构：`source` 记录值的来源，
+/// `Some("user")` = 用户在模型行内手动设定，探测链路（内置 metadata /
+/// OpenRouter 聚合库经 apply_capabilities 落盘）必须让位——否则用户在
+/// 自定义中转站上手动打开的生成能力，会在下次「连接/刷新」时被抹掉，
+/// 图片/视频生成绑定列表随之重新变空。`None` = 自动探测结果，不改动
+/// 已有的来源标记。
+pub fn update_model_supports_image_generation(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+    supports_image_generation: bool,
+    source: Option<&str>,
+) -> Result<(), String> {
+    let _config_write = nuphus::config::lock_provider_config();
+    // If file doesn't exist yet, silently skip
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+    let mut doc: toml::Value = match content.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+
+    let providers = match doc.get_mut("providers").and_then(|p| p.as_array_mut()) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    for provider in providers.iter_mut() {
+        if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
+            if name == provider_name {
+                if let Some(map) = provider.as_table_mut() {
+                    if let Some(models) = map.get_mut("models").and_then(|m| m.as_array_mut()) {
+                        for model in models.iter_mut() {
+                            if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                                if id == model_id {
+                                    if let Some(map) = model.as_table_mut() {
+                                        if source != Some("user")
+                                            && map
+                                                .get(IMAGE_GENERATION_SOURCE_KEY)
+                                                .and_then(|v| v.as_str())
+                                                == Some("user")
+                                        {
+                                            return Ok(());
+                                        }
+                                        map.insert(
+                                            "supports_image_generation".to_string(),
+                                            toml::Value::Boolean(supports_image_generation),
+                                        );
+                                        if let Some(src) = source {
+                                            map.insert(
+                                                IMAGE_GENERATION_SOURCE_KEY.to_string(),
+                                                toml::Value::String(src.to_string()),
+                                            );
+                                        }
+                                        nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+                                        let new_content =
+                                            toml::to_string_pretty(&doc).map_err(|e| {
+                                                format!("serialize config.toml failed: {}", e)
+                                            })?;
+                                        nuphus::config::write_provider_config(
+                                            config_path,
+                                            &new_content,
+                                        )
+                                        .map_err(|e| format!("write config.toml failed: {}", e))?;
+                                        tracing::info!(
+                                            "Updated supports_image_generation for {}/{}: {}",
+                                            provider_name,
+                                            model_id,
+                                            supports_image_generation
+                                        );
+                                    }
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `supports_vision` 的来源标记键：值 `user` = 用户手动设定，探测链路不得覆盖。
 pub const VISION_SOURCE_KEY: &str = "supports_vision_source";
+
+/// `supports_image_generation` 的来源标记键：值 `user` = 用户手动设定，
+/// 探测链路不得覆盖（与 VISION_SOURCE_KEY 同一契约）。
+pub const IMAGE_GENERATION_SOURCE_KEY: &str = "supports_image_generation_source";
 
 /// 读取模型条目里的来源标记（仅认 `user`；其它/缺失 = 非用户设定）。
 pub fn read_model_vision_source(
@@ -275,6 +366,21 @@ pub fn read_model_supports_vision(
         .and_then(|v| v.as_bool())
 }
 
+/// 读取模型条目的 `supports_image_generation`（用于写入后回读校验）。
+pub fn read_model_supports_image_generation(
+    config_path: &std::path::Path,
+    provider_name: &str,
+    model_id: &str,
+) -> Option<bool> {
+    read_model_field(
+        config_path,
+        provider_name,
+        model_id,
+        "supports_image_generation",
+    )
+    .and_then(|v| v.as_bool())
+}
+
 /// 读取 `providers[provider].models[id]` 下的单个字段。
 fn read_model_field(
     config_path: &std::path::Path,
@@ -302,7 +408,8 @@ fn read_model_field(
 /// 分两次写会出现「新 model + 旧 provider」的中间态：后端按 provider+model 精确
 /// 解析时找不到该组合，能力请求直接失败（用户看到的是「保存成功但用不了」）。
 ///
-/// `kind` 为能力字段名（`vision` / `stt` / `tts` / `voice` / `image_generation`）。
+/// `kind` 为能力字段名（`vision` / `stt` / `tts` / `voice` / `image_generation` /
+/// `video_generation`）。
 pub fn set_capability_in_config_toml(
     config_path: &std::path::Path,
     kind: &str,
@@ -693,6 +800,9 @@ fn reconcile_segment(
 ///   (never guessed).
 /// * `supports_vision_source = "user"` shields `supports_vision` — a manual
 ///   toggle outranks the authority chain (same contract as the probe path).
+/// * `supports_image_generation_source = "user"` shields
+///   `supports_image_generation` the same way — the image-generation row
+///   toggle must survive the next connect/refresh.
 ///
 /// `alias` / `max_tokens` / `cost_per_million_in|out` are user-authored and are
 /// never touched here. Returns whether any field changed.
@@ -713,8 +823,14 @@ fn apply_capabilities(
     if let Some(v) = cap.supports_audio {
         changed |= set_bool(entry, "supports_audio", v);
     }
-    if let Some(v) = cap.supports_image_generation {
-        changed |= set_bool(entry, "supports_image_generation", v);
+    if entry
+        .get(IMAGE_GENERATION_SOURCE_KEY)
+        .and_then(|v| v.as_str())
+        != Some("user")
+    {
+        if let Some(v) = cap.supports_image_generation {
+            changed |= set_bool(entry, "supports_image_generation", v);
+        }
     }
     if let Some(v) = cap.context_window {
         changed |= set_int(entry, "context_window", v as i64);
@@ -1239,8 +1355,8 @@ fn take_legacy_custom_segment(
 
 /// 旧 `custom` 段已删除后的引用同步：[last_model] 全表值 + [capabilities] 的
 /// provider 归属字段，值 == "custom" → 新段名。`vision`/`stt`/`tts`/`voice`/
-/// `image_generation` 承载模型 id（不是段名），显式排除，白名单与 `Capabilities`
-/// struct 的 provider 归属字段一一对应。
+/// `image_generation`/`video_generation` 承载模型 id（不是段名），显式排除，
+/// 白名单与 `Capabilities` struct 的 provider 归属字段一一对应。
 fn rebind_legacy_custom_refs(doc: &mut toml::Value, new_name: &str) {
     if let Some(last_model) = doc.get_mut("last_model").and_then(|t| t.as_table_mut()) {
         for (_key, value) in last_model.iter_mut() {
@@ -1249,12 +1365,13 @@ fn rebind_legacy_custom_refs(doc: &mut toml::Value, new_name: &str) {
             }
         }
     }
-    const PROVIDER_CAPABILITY_FIELDS: [&str; 5] = [
+    const PROVIDER_CAPABILITY_FIELDS: [&str; 6] = [
         "vision_provider",
         "stt_provider",
         "tts_provider",
         "voice_provider",
         "image_generation_provider",
+        "video_generation_provider",
     ];
     if let Some(caps) = doc.get_mut("capabilities").and_then(|t| t.as_table_mut()) {
         for field in PROVIDER_CAPABILITY_FIELDS {
@@ -2440,6 +2557,69 @@ supports_vision_source = "user"
         );
         assert_eq!(
             entry.get("supports_vision_source").and_then(|v| v.as_str()),
+            Some("user")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 行内图像生成开关（`supports_image_generation_source = "user"`）同样
+    /// 让位于用户意图：内置权威对 deepseek-flash 声明 image_generation=false，
+    /// 不得把用户在自定义中转站上打开的生成声明覆写回去——否则下次刷新后
+    /// 该模型掉出图片/视频生成绑定候选，用户视角是「保存成功但用不了」。
+    #[test]
+    fn sync_respects_user_image_generation_override() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "deepseek"
+provider_type = "deepseek"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "deepseek-flash"
+context_window = 1000000
+reasoning_efforts = ["high", "max"]
+default_effort = "high"
+supports_streaming = true
+supports_audio = false
+supports_image_generation = true
+supports_image_generation_source = "user"
+supports_vision = false
+supports_vision_source = "user"
+"#,
+        );
+
+        let report = sync_provider_models(
+            &path,
+            "deepseek",
+            &["deepseek-flash".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "deepseek",
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.updated, 0, "用户显式设定不得被覆写");
+        assert_eq!(report.removed, 0);
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let entry = doc.get("providers").unwrap().as_array().unwrap()[0]
+            .get("models")
+            .unwrap()
+            .as_array()
+            .unwrap()[0]
+            .clone();
+        assert_eq!(
+            entry
+                .get("supports_image_generation")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            entry
+                .get("supports_image_generation_source")
+                .and_then(|v| v.as_str()),
             Some("user")
         );
 

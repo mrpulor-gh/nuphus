@@ -986,6 +986,39 @@ const en: Record<string, string> = {
   'models.capVision': 'Vision',
   'models.capAudio': 'Audio',
   'models.capImageGen': 'Image generation',
+  // Generation capability bindings (image_generate / video_generate read these)
+  'models.imageGenSection': 'Image Generation',
+  'models.imageGenSectionDesc':
+    'Bind an image generation model so the AI can generate images; outputs are saved to ~/.nuphus/generated/. Leave empty for unbound — the tool then fails loudly and lists candidates instead of picking a provider on its own.',
+  'models.imageGenLabel': 'Image generation model',
+  'models.imageGenHint':
+    'Only models that declare "Image generation" are listed; if the list is empty, enable that declaration on the model row first.',
+  'models.imageGenNone': 'Unbound (generation tools fail when unbound)',
+  'models.imageGenSaved': 'Image generation model saved',
+  'models.videoGenSection': 'Video Generation',
+  'models.videoGenSectionDesc':
+    'Bind a video generation model so the AI can generate mp4 videos; outputs are saved to ~/.nuphus/generated/. Leave empty for unbound — the tool then fails loudly and lists candidates instead of picking a provider on its own.',
+  'models.videoGenLabel': 'Video generation model',
+  'models.videoGenHint':
+    'The registry has a single generation declaration field, so video generation reuses the same "Image generation" filter; if the list is empty, enable that declaration on the model row first.',
+  'models.videoGenNone': 'Unbound (generation tools fail when unbound)',
+  'models.videoGenSaved': 'Video generation model saved',
+  'models.genSaveFailed': 'Save failed',
+  'models.genCapabilityEmpty':
+    'No model declares "Image generation" yet: open the provider model list on the left and enable the "Image generation" declaration for that model.',
+  'models.genBoundMissing':
+    'The bound model {0} does not declare image generation and is no longer in the candidate list; enable its "Image generation" declaration in the model list to keep using it.',
+  // Model-row "Image generation" toggle (aria / title / feedback copy —
+  // same position as the vision toggle).
+  'models.capStateOn': 'On',
+  'models.capStateOff': 'Off',
+  'models.imageGenToggleAria': 'Image generation: {0}',
+  'models.imageGenToggleTitleOn':
+    'Image generation declared (click to disable; the model leaves the image generation binding candidates)',
+  'models.imageGenToggleTitleOff':
+    'Click to declare image generation (only declared models appear in the image generation binding candidates)',
+  'models.imageGenMarkedOn': '{0} marked as supporting image generation',
+  'models.imageGenMarkedOff': '{0} marked as not supporting image generation',
   'models.capContext': 'Context window',
   'models.capContextUnknown': 'Context window unknown',
   'models.editContext': 'Edit context window',

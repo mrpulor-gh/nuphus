@@ -295,6 +295,7 @@ fn main() {
             commands::set_capability,
             commands::set_capability_binding,
             commands::set_model_supports_vision,
+            commands::set_model_supports_image_generation,
             commands::get_context_limit,
             commands::get_reasoning_effort,
             commands::set_reasoning_effort,

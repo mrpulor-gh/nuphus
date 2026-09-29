@@ -1122,6 +1122,8 @@ export interface Capabilities {
   voice_provider?: string
   image_generation?: string
   image_generation_provider?: string
+  video_generation?: string
+  video_generation_provider?: string
   chat_agent_max_iterations: number | null
 }
 
@@ -1136,7 +1138,7 @@ export function setCapability(key: string, value: string) {
 /** 原子设置能力模型绑定：model 与 provider 必须在同一次写入内落盘，
  *  否则会留下「新 model + 旧 provider」的半绑定（能力请求按 provider+model
  *  精确解析时找不到该组合，保存看似成功但实际用不了）。
- *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation'。 */
+ *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation' | 'video_generation'。 */
 export function setCapabilityBinding(kind: string, model: string, provider: string) {
   return invoke<void>('set_capability_binding', { kind, model, provider })
 }
@@ -1145,6 +1147,20 @@ export function setCapabilityBinding(kind: string, model: string, provider: stri
  *  落盘后在 providers.toml 标记来源 user，自动探测不再覆盖该值。 */
 export function setModelSupportsVision(provider: string, model: string, supportsVision: boolean) {
   return invoke<string>('set_model_supports_vision', { provider, model, supportsVision })
+}
+
+/** 手动设定某 provider 下某模型的图像生成能力（模型行内开关）。
+ *  与视觉开关同构：落盘后在 providers.toml 标记来源 user，自动探测不再覆盖该值。 */
+export function setModelSupportsImageGeneration(
+  provider: string,
+  model: string,
+  supportsImageGeneration: boolean,
+) {
+  return invoke<string>('set_model_supports_image_generation', {
+    provider,
+    model,
+    supportsImageGeneration,
+  })
 }
 
 export function getContextLimit() {

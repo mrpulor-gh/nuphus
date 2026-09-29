@@ -8,13 +8,13 @@ use super::toml_ops::{
     add_provider_model_entry, builtin_capability, clear_provider_api_key_in_config_toml,
     clear_provider_models_in_config_toml, create_custom_provider_segment, get_config_path,
     is_custom_segment_name, list_configured_providers, provider_segment_exists,
-    read_model_context_window, read_model_supports_vision, read_provider_api_key_from_config_toml,
-    read_provider_base_url_from_config_toml, read_provider_display_name,
-    read_provider_reasoning_effort_from_config_toml, remove_provider_segment,
-    sanitize_extra_headers, sync_provider_models, update_config_toml,
-    update_custom_provider_segment, update_model_context_window, update_model_supports_vision,
-    update_provider_base_url, update_reasoning_effort, CapabilityOverride, CapabilitySource,
-    SyncReport,
+    read_model_context_window, read_model_supports_image_generation, read_model_supports_vision,
+    read_provider_api_key_from_config_toml, read_provider_base_url_from_config_toml,
+    read_provider_display_name, read_provider_reasoning_effort_from_config_toml,
+    remove_provider_segment, sanitize_extra_headers, sync_provider_models, update_config_toml,
+    update_custom_provider_segment, update_model_context_window,
+    update_model_supports_image_generation, update_model_supports_vision, update_provider_base_url,
+    update_reasoning_effort, CapabilityOverride, CapabilitySource, SyncReport,
 };
 use crate::emitter::CompoundEmitter;
 use crate::models::aggregator as or_agg;
@@ -1060,6 +1060,66 @@ pub fn set_model_supports_vision(
         provider,
         model,
         if supports_vision {
+            "支持"
+        } else {
+            "不支持"
+        }
+    ))
+}
+
+/// 手动设置某 provider 下某模型的图像生成能力 —— 模型行内开关。
+///
+/// 与 `set_model_supports_vision` 逐条同构（差异仅函数名与字段名）：
+/// - 落盘 providers.toml 对应模型条目，并把来源标记为 `user`；
+///   此后自动探测（内置 metadata / OpenRouter 聚合库经 apply_capabilities
+///   落盘）一律让位，不再覆盖——否则用户在自定义中转站上手动打开的生成
+///   声明，会在下次「连接/刷新」时被抹掉，图片/视频生成绑定列表重新变空。
+/// - 回读校验：写盘原语对「找不到条目」是静默 Ok，这里把「没写进去」
+///   暴露给 UI，禁止假装保存成功。
+/// - 只改模型元数据，不动当前生成能力绑定（capabilities.image_generation）。
+#[tauri::command]
+pub fn set_model_supports_image_generation(
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+    supports_image_generation: bool,
+) -> Result<String, String> {
+    if provider.trim().is_empty() || model.trim().is_empty() {
+        return Err("provider 与 model 不能为空".to_string());
+    }
+
+    let toml_config_path =
+        get_config_path().unwrap_or_else(|| state.llm_config_path.with_file_name("providers.toml"));
+
+    update_model_supports_image_generation(
+        &toml_config_path,
+        &provider,
+        &model,
+        supports_image_generation,
+        Some("user"),
+    )?;
+
+    if read_model_supports_image_generation(&toml_config_path, &provider, &model)
+        != Some(supports_image_generation)
+    {
+        return Err(format!(
+            "未在配置中找到 {}/{} 模型条目，未写入（请先连接/配置该模型）",
+            provider, model
+        ));
+    }
+
+    tracing::info!(
+        "[set_model_supports_image_generation] {}/{} -> {} (source=user)",
+        provider,
+        model,
+        supports_image_generation
+    );
+
+    Ok(format!(
+        "{}/{} 图像生成能力已设为{}",
+        provider,
+        model,
+        if supports_image_generation {
             "支持"
         } else {
             "不支持"
@@ -2270,6 +2330,8 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
         "voice_provider": caps.voice_provider,
         "image_generation": caps.image_generation,
         "image_generation_provider": caps.image_generation_provider,
+        "video_generation": caps.video_generation,
+        "video_generation_provider": caps.video_generation_provider,
         "chat_agent_max_iterations": caps.chat_agent_max_iterations,
     });
 

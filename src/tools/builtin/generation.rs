@@ -15,11 +15,18 @@
 //! - 产出文件：`GET {base}/v1/files/retrieve?file_id=` → `file.download_url` → 下载
 //! - V1/V2 路由对齐官方 cli 的 isVideoV2Model：模型名含 "H3" 走 V2，其余走 V1
 //!
-//! 凭证：`config::load_registry()` 找 provider_type=minimax 且 api_key 非空的
-//! provider。api_key 只进 Authorization 头，永不写入输出/日志/工作流文件。
+//! 凭证：读模型界面的**能力绑定**（providers.toml `[capabilities]` 的
+//! `image_generation` / `video_generation` + 对应 `_provider` 归属）——用户在
+//! 模型界面绑定一次，工具默认读绑定；`provider` / `model` 参数只作当次覆盖。
+//! 未绑定且未覆盖 → 明确报错并列候选，绝不再自行遍历 provider 挑第一个
+//! （用户没选过的模型不该被静默使用）。
+//! api_key 只进 Authorization 头，永不写入输出/日志/工作流文件。
 //! 产出目录：`~/.nuphus/generated/`（自动创建），文件名带时间戳。
 
-use crate::config::{load_registry, ModelRegistry, ProviderKind};
+use crate::config::{
+    load_registry, resolve_generation_binding, GenerationKind, ModelEntry, ModelRegistry,
+    ProviderConfig, ProviderKind,
+};
 use crate::permissions::ToolCategory;
 use crate::tools::registry::{ToolDef, ToolRegistry};
 use crate::ToolResult;
@@ -28,13 +35,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// MiniMax 默认 base（registry provider 未配 base_url 时的兜底，与
-/// config::providers::minimax 保持一致）
+/// MiniMax 默认 base（仅当绑定的 provider 是 MiniMax 段且未配 base_url 时兜底，
+/// 与 config::providers::minimax 保持一致）；非 MiniMax 段缺 base_url 一律报错。
 const DEFAULT_BASE_URL: &str = "https://api.minimaxi.com/v1";
-/// image_generate 默认模型（仅便捷兜底，用户可填任意模型名）
-const DEFAULT_IMAGE_MODEL: &str = "image-01";
-/// video_generate 默认模型（仅便捷兜底，用户可填任意模型名）
-const DEFAULT_VIDEO_MODEL: &str = "MiniMax-H3";
 /// 视频轮询默认间隔 / 默认总超时
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 const DEFAULT_VIDEO_TIMEOUT_SECS: u64 = 300;
@@ -68,46 +71,186 @@ fn get_agent() -> reqwest::blocking::Client {
     agent
 }
 
-// ── 凭证解析 ──
+// ── 凭证解析（消费模型界面的能力绑定）──
 
-struct GenCredential {
+/// 生成请求目标：凭证 + 本次生效的模型名。
+///
+/// 含 api_key，刻意不实现 Debug / Display 防泄露（与旧 GenCredential 同口径）。
+struct GenTarget {
     api_key: String,
     base_url: String,
+    model: String,
 }
 
-/// 从 registry 解析 MiniMax 凭证。
-/// `provider` 为 Some 时按 provider 名过滤（多 MiniMax provider 场景指定）；
-/// 否则取第一个 provider_type=minimax 且 api_key 非空的 provider。
-fn find_minimax_credential(
-    registry: &ModelRegistry,
-    provider: Option<&str>,
-) -> Result<GenCredential, String> {
-    let cfg = registry
-        .providers
-        .iter()
-        .find(|p| {
-            p.provider_type == ProviderKind::MiniMax
-                && !p.api_key.trim().is_empty()
-                && provider.is_none_or(|name| p.name == name)
-        })
-        .ok_or_else(|| match provider {
-            Some(name) => format!(
-                "未找到名为 '{name}' 且配置了 api_key 的 MiniMax provider（检查 registry 配置）"
-            ),
-            None => {
-                "未配置 MiniMax provider：registry 中无 provider_type=minimax 且 api_key 非空的配置"
-                    .to_string()
-            }
-        })?;
-    let base_url = if cfg.base_url.trim().is_empty() {
-        DEFAULT_BASE_URL.to_string()
+/// 生成能力的候选谓词：注册表用哪个字段声明「这个模型能生成」。
+///
+/// 图像生成有独立的 `supports_image_generation` 声明；视频生成没有对应字段
+/// （模型条目里不存在 `supports_video_generation`），因此不谓词过滤——空口断言
+/// 「支持视频」比不过滤更坏，会挡住用户显式绑定的模型。
+fn generation_predicate(kind: GenerationKind) -> fn(&ModelEntry) -> bool {
+    match kind {
+        GenerationKind::Image => |m: &ModelEntry| m.supports_image_generation,
+        GenerationKind::Video => |_: &ModelEntry| true,
+    }
+}
+
+/// base_url：段内已配则用；未配时**只对 MiniMax 段**回落内置默认端点。
+/// 其他协议类型的段缺 base_url 一律报错——猜一个端点比报错更坏。
+fn base_url_for(cfg: &ProviderConfig) -> Result<String, String> {
+    let configured = cfg.base_url.trim().trim_end_matches('/');
+    if !configured.is_empty() {
+        return Ok(configured.to_string());
+    }
+    if cfg.provider_type == ProviderKind::MiniMax {
+        Ok(DEFAULT_BASE_URL.to_string())
     } else {
-        cfg.base_url.trim().trim_end_matches('/').to_string()
-    };
-    Ok(GenCredential {
+        Err(format!(
+            "服务商 '{}' 未配置 base_url，且其协议类型不是 MiniMax（无内置默认端点可回落）",
+            cfg.name
+        ))
+    }
+}
+
+fn target_from(cfg: &ProviderConfig, model: &str) -> Result<GenTarget, String> {
+    if cfg.api_key.trim().is_empty() {
+        return Err(format!(
+            "服务商 '{}' 未配置 api_key：请先在模型界面为该服务商填写密钥",
+            cfg.name
+        ));
+    }
+    Ok(GenTarget {
         api_key: cfg.api_key.clone(),
-        base_url,
+        base_url: base_url_for(cfg)?,
+        model: model.to_string(),
     })
+}
+
+/// 候选清单——**只用于报错文案**，不参与任何模型选择。
+///
+/// 枚举走既有的 `list_models` + `find_model_for_provider`（精确入口），不新写
+/// 一套遍历 providers 的查找：选择路径见 [`resolve_generation_target`]，这里仅把
+/// 「用户可以绑什么」摊平成可读清单，没有任何选择权。
+/// 空清单 = 注册表里还没有模型声明该能力，文案改为引导去模型行打开开关
+/// （与视觉能力同一个出口）。
+fn candidate_list(
+    registry: &ModelRegistry,
+    predicate: impl Fn(&ModelEntry) -> bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = registry
+        .list_models()
+        .into_iter()
+        .filter(|(provider, model_id)| {
+            registry
+                .find_model_for_provider(provider, model_id)
+                .is_some_and(|(_, entry)| predicate(entry))
+        })
+        .map(|(provider, model_id)| format!("{provider}/{model_id}"))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 未绑定时的报错：说清「去模型界面绑定」并列出可绑候选。
+fn unbound_error(registry: &ModelRegistry, kind: GenerationKind, model: Option<&str>) -> String {
+    let predicate = generation_predicate(kind);
+    let subject = match model {
+        Some(m) => format!("未找到{kind}模型 {m}"),
+        None => format!("未绑定{kind}能力"),
+    };
+    let mut msg = format!(
+        "{subject}。\n\
+         请去模型界面 → 图像音频模型 → {kind} 绑定一个生成模型（绑定会同时记录模型与服务商归属）。"
+    );
+    if let Some(m) = model {
+        msg.push_str(&format!(
+            "\n当前指定的模型 {m} 不在注册表中，或未声明生成能力。"
+        ));
+    }
+    let candidates = candidate_list(registry, predicate);
+    if candidates.is_empty() {
+        msg.push_str(&format!(
+            "\n当前注册表中还没有模型声明「{kind}」能力：请在模型列表里为可生成的模型\
+             打开「图像生成」声明后再绑定。"
+        ));
+    } else {
+        msg.push_str(&format!(
+            "\n可绑定的候选（{} 个）：{}",
+            candidates.len(),
+            candidates.join("、")
+        ));
+    }
+    msg
+}
+
+/// 解析生成工具的凭证与生效模型——消费能力绑定，参数只作当次覆盖。
+///
+/// 优先级：
+/// 1. 生效模型 = 当次 `model` 参数 > 绑定模型；两者都无 → [`unbound_error`]。
+/// 2. 生效 provider = 当次 `provider` 参数 > 绑定 provider。
+/// 3. provider 明确 → `find_model_for_provider` **精确**解析（同 id 跨段不串）。
+/// 4. provider 未知（旧配置没写归属 / 只传了模型名）→ `find_model_candidates`
+///    消歧：按能力谓词过滤，唯一命中即用；多个重名 → 报错列出候选让用户去绑定。
+///
+/// 全程不遍历 provider 找「第一个能用的」——那正是被删掉的
+/// `find_minimax_credential` 的静默发现行为。模型查找只走
+/// `find_model_for_provider` / `find_model_candidates` 两个既有入口
+/// （`find_model` 段序首触是 legacy，禁用于能力决策）。
+fn resolve_generation_target(
+    registry: &ModelRegistry,
+    kind: GenerationKind,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<GenTarget, String> {
+    let predicate = generation_predicate(kind);
+    let binding = resolve_generation_binding(registry, kind)?;
+
+    let model = model_override
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+        .or_else(|| (!binding.is_unbound()).then(|| binding.model.clone()))
+        .ok_or_else(|| unbound_error(registry, kind, None))?;
+
+    let provider = provider_override
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .or(binding.provider.clone());
+
+    if let Some(name) = provider.as_deref().filter(|p| !p.is_empty()) {
+        let (cfg, _entry) = registry
+            .find_model_for_provider(name, &model)
+            .ok_or_else(|| {
+                format!(
+                    "未找到{kind}模型 {name}/{model}：该服务商下没有这个模型条目。\n{}",
+                    unbound_error(registry, kind, Some(&model))
+                )
+            })?;
+        return target_from(cfg, &model);
+    }
+
+    // provider 未知 → 候选消歧（能力谓词过滤）
+    let mut candidates: Vec<&ProviderConfig> = Vec::new();
+    for (cfg, entry) in registry.find_model_candidates(&model) {
+        if predicate(entry) {
+            candidates.push(cfg);
+        }
+    }
+    match candidates.len() {
+        0 => Err(unbound_error(registry, kind, Some(&model))),
+        1 => target_from(candidates[0], &model),
+        _ => Err(format!(
+            "{kind}模型 {model} 在多个服务商下重名（{}），无法确定用哪个。\n\
+             请去模型界面 → 图像音频模型 → {kind} 重新绑定——绑定会同时记录服务商归属，\
+             之后不再有歧义。",
+            candidates
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>()
+                .join("、")
+        )),
+    }
 }
 
 // ── 请求体合并与路由判定 ──
@@ -239,7 +382,7 @@ fn parse_response(resp: reqwest::blocking::Response, endpoint: &str) -> Result<V
 
 fn post_json(
     agent: &reqwest::blocking::Client,
-    cred: &GenCredential,
+    cred: &GenTarget,
     url: &str,
     body: &Value,
 ) -> Result<Value, String> {
@@ -254,7 +397,7 @@ fn post_json(
 
 fn get_json(
     agent: &reqwest::blocking::Client,
-    cred: &GenCredential,
+    cred: &GenTarget,
     url: &str,
 ) -> Result<Value, String> {
     let resp = agent
@@ -341,20 +484,25 @@ fn save_base64_image(b64: &str, path: &std::path::Path) -> Result<u64, String> {
 
 fn run_image_generate(
     prompt: &str,
-    provider: Option<&str>,
-    model: &str,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
     params: Option<&Value>,
 ) -> Result<String, String> {
     let registry = load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
-    let cred = find_minimax_credential(&registry, provider)?;
-    let mut body = merge_request_body(params, model, prompt)?;
+    let target = resolve_generation_target(
+        &registry,
+        GenerationKind::Image,
+        provider_override,
+        model_override,
+    )?;
+    let mut body = merge_request_body(params, &target.model, prompt)?;
     // response_format 缺省 url（用户可在 params 中显式覆盖为 base64）
     body.entry("response_format".to_string())
         .or_insert_with(|| json!("url"));
 
     let agent = get_agent();
-    let url = format!("{}/image_generation", cred.base_url);
-    let resp = post_json(&agent, &cred, &url, &Value::Object(body))?;
+    let url = format!("{}/image_generation", target.base_url);
+    let resp = post_json(&agent, &target, &url, &Value::Object(body))?;
     let data = resp
         .get("data")
         .ok_or_else(|| "MiniMax 图像响应缺少 data 字段".to_string())?;
@@ -391,17 +539,23 @@ fn run_image_generate(
 
 fn run_video_generate(
     prompt: &str,
-    provider: Option<&str>,
-    model: &str,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
     params: Option<&Value>,
     poll_interval_secs: u64,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let registry = load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
-    let cred = find_minimax_credential(&registry, provider)?;
+    let target = resolve_generation_target(
+        &registry,
+        GenerationKind::Video,
+        provider_override,
+        model_override,
+    )?;
+    let model = target.model.as_str();
     let body = merge_request_body(params, model, prompt)?;
     let agent = get_agent();
-    let root = api_root(&cred.base_url).to_string();
+    let root = api_root(&target.base_url).to_string();
     let v2 = is_video_v2_model(model);
 
     // 1. 提交生成任务
@@ -409,11 +563,11 @@ fn run_video_generate(
         (format!("{root}/v2/video_generation"), Value::Object(body))
     } else {
         (
-            format!("{}/video_generation", cred.base_url),
+            format!("{}/video_generation", target.base_url),
             Value::Object(body),
         )
     };
-    let submit_resp = post_json(&agent, &cred, &submit_url, &body_value)?;
+    let submit_resp = post_json(&agent, &target, &submit_url, &body_value)?;
     let task_id = submit_resp
         .get("task_id")
         .and_then(|v| v.as_str())
@@ -425,7 +579,10 @@ fn run_video_generate(
     let query_url = if v2 {
         format!("{root}/v2/query/video_generation/{task_id}")
     } else {
-        format!("{}/query/video_generation?task_id={task_id}", cred.base_url)
+        format!(
+            "{}/query/video_generation?task_id={task_id}",
+            target.base_url
+        )
     };
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
@@ -438,7 +595,7 @@ fn run_video_generate(
                 timeout_secs
             ));
         }
-        let resp = get_json(&agent, &cred, &query_url)?;
+        let resp = get_json(&agent, &target, &query_url)?;
         let status = video_task_status(&resp)
             .ok_or_else(|| "MiniMax 视频轮询响应缺少状态字段".to_string())?;
         last_status = status.clone();
@@ -459,8 +616,8 @@ fn run_video_generate(
     };
 
     // 3. 取下载地址
-    let retrieve_url = format!("{}/files/retrieve?file_id={file_id}", cred.base_url);
-    let retrieve_resp = get_json(&agent, &cred, &retrieve_url)?;
+    let retrieve_url = format!("{}/files/retrieve?file_id={file_id}", target.base_url);
+    let retrieve_resp = get_json(&agent, &target, &retrieve_url)?;
     let download_url = retrieve_resp
         .pointer("/file/download_url")
         .and_then(|v| v.as_str())
@@ -484,7 +641,7 @@ impl ToolRegistry {
     pub(crate) fn register_image_generate(&mut self) {
         self.register(ToolDef {
             name: "image_generate".to_string(),
-            description: "生成图像（MiniMax image_generation API，同步返回）。产出为本地文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型可填任意 MiniMax 图像模型（默认 image-01，仅便捷兜底）；params 为可选 JSON 对象，原样透传合并进 API 请求体（如 aspect_ratio/width/height/n/response_format 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。宽高官方约束 512-2048 且 8 的倍数。凭证自动取 registry 中 MiniMax provider 的 api_key，无需也不应传入密钥。".to_string(),
+            description: "生成图像（MiniMax image_generation API，同步返回）。产出为本地文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「图片生成」能力（模型 → 图像音频模型 → 图片生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（典型值 image-01，可填任意已注册的生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。params 为可选 JSON 对象，原样透传合并进 API 请求体（如 aspect_ratio/width/height/n/response_format 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。宽高官方约束 512-2048 且 8 的倍数。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -494,12 +651,11 @@ impl ToolRegistry {
                     },
                     "provider": {
                         "type": "string",
-                        "description": "可选。registry 中的 provider 名；默认自动发现 provider_type=minimax 且已配置 api_key 的 provider"
+                        "description": "可选。当次覆盖绑定的服务商名（同模型名跨服务商时消歧）；不填则用模型界面绑定的服务商归属"
                     },
                     "model": {
                         "type": "string",
-                        "default": DEFAULT_IMAGE_MODEL,
-                        "description": "生成模型名，默认 image-01；可填任意 MiniMax 图像模型"
+                        "description": "可选。当次覆盖绑定的生成模型（典型值 image-01，可填任意已注册的生成模型）；不填则用模型界面绑定的模型"
                     },
                     "params": {
                         "type": "object",
@@ -524,17 +680,20 @@ impl ToolRegistry {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_string());
+                // model 只作当次覆盖：不填 → 读模型界面绑定的图片生成模型
                 let model = params
                     .get("model")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or(DEFAULT_IMAGE_MODEL)
-                    .trim()
-                    .to_string();
+                    .map(|s| s.trim().to_string());
                 let extra = params.get("params").cloned();
                 super::run_blocking(move || {
-                    match run_image_generate(&prompt, provider.as_deref(), &model, extra.as_ref())
-                    {
+                    match run_image_generate(
+                        &prompt,
+                        provider.as_deref(),
+                        model.as_deref(),
+                        extra.as_ref(),
+                    ) {
                         Ok(text) => Ok(ToolResult::success(text)),
                         Err(e) => Ok(ToolResult::failure(e)),
                     }
@@ -547,7 +706,7 @@ impl ToolRegistry {
     pub(crate) fn register_video_generate(&mut self) {
         self.register(ToolDef {
             name: "video_generate".to_string(),
-            description: "生成视频（MiniMax video_generation API，异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型可填任意 MiniMax 视频模型（默认 MiniMax-H3，仅便捷兜底）；V1/V2 端点按模型名自动路由（含 \"H3\" 走 V2，其余如 Hailuo-2.3/MiniMax-Hailuo-02/S2V-01 走 V1）。params 为可选 JSON 对象，原样透传合并进 API 请求体（duration/resolution/ratio/first_frame_image 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。图像输入按 MiniMax API 要求以 URL 或 data URI 形式写进 params。轮询有超时兜底（timeout_secs），超时/失败错误含 task_id 便于排查。凭证自动取 registry 中 MiniMax provider 的 api_key，无需也不应传入密钥。".to_string(),
+            description: "生成视频（MiniMax video_generation API，异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「视频生成」能力（模型 → 图像音频模型 → 视频生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（典型值 MiniMax-H3 / Hailuo-2.3 / MiniMax-Hailuo-02 / S2V-01）；V1/V2 端点按模型名自动路由（含 \"H3\" 走 V2，其余走 V1）。provider 参数为当次覆盖服务商归属。params 为可选 JSON 对象，原样透传合并进 API 请求体（duration/resolution/ratio/first_frame_image 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。图像输入按 MiniMax API 要求以 URL 或 data URI 形式写进 params。轮询有超时兜底（timeout_secs），超时/失败错误含 task_id 便于排查。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -557,12 +716,11 @@ impl ToolRegistry {
                     },
                     "provider": {
                         "type": "string",
-                        "description": "可选。registry 中的 provider 名；默认自动发现 provider_type=minimax 且已配置 api_key 的 provider"
+                        "description": "可选。当次覆盖绑定的服务商名（同模型名跨服务商时消歧）；不填则用模型界面绑定的服务商归属"
                     },
                     "model": {
                         "type": "string",
-                        "default": DEFAULT_VIDEO_MODEL,
-                        "description": "生成模型名，默认 MiniMax-H3；可填任意 MiniMax 视频模型（模型名含 H3 走 V2 端点，其余走 V1）"
+                        "description": "可选。当次覆盖绑定的视频模型（典型值 MiniMax-H3 / Hailuo-2.3；模型名含 H3 走 V2 端点，其余走 V1）；不填则用模型界面绑定的模型"
                     },
                     "params": {
                         "type": "object",
@@ -597,13 +755,12 @@ impl ToolRegistry {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_string());
+                // model 只作当次覆盖：不填 → 读模型界面绑定的视频生成模型
                 let model = params
                     .get("model")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or(DEFAULT_VIDEO_MODEL)
-                    .trim()
-                    .to_string();
+                    .map(|s| s.trim().to_string());
                 let extra = params.get("params").cloned();
                 let poll_interval_secs = params
                     .get("poll_interval_secs")
@@ -619,7 +776,7 @@ impl ToolRegistry {
                     match run_video_generate(
                         &prompt,
                         provider.as_deref(),
-                        &model,
+                        model.as_deref(),
                         extra.as_ref(),
                         poll_interval_secs,
                         timeout_secs,
@@ -640,35 +797,128 @@ impl ToolRegistry {
 mod tests {
     use super::*;
     use crate::config::model::{ModelEntry, ModelSource, ProviderConfig};
+    use crate::config::Capabilities;
 
-    fn minimax_provider(name: &str, api_key: &str) -> ProviderConfig {
+    // ── fixtures ──
+
+    fn model_entry(id: &str, supports_image_generation: bool) -> ModelEntry {
+        ModelEntry {
+            id: id.to_string(),
+            alias: vec![],
+            max_tokens: None,
+            context_window: None,
+            supports_streaming: true,
+            supports_vision: false,
+            supports_audio: false,
+            supports_image_generation,
+            reasoning_efforts: vec![],
+            default_effort: None,
+            cost_per_million_in: None,
+            cost_per_million_out: None,
+            source: ModelSource::Auto,
+        }
+    }
+
+    fn provider(
+        name: &str,
+        kind: ProviderKind,
+        api_key: &str,
+        base_url: &str,
+        models: Vec<ModelEntry>,
+    ) -> ProviderConfig {
         ProviderConfig {
             name: name.to_string(),
-            provider_type: ProviderKind::MiniMax,
+            provider_type: kind,
             api_key: api_key.to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
+            base_url: base_url.to_string(),
             auth_header: String::new(),
             auth_prefix: String::new(),
             timeout_secs: 300,
-            models: vec![ModelEntry {
-                id: "MiniMax-M3".to_string(),
-                alias: vec![],
-                max_tokens: None,
-                context_window: None,
-                supports_streaming: true,
-                supports_vision: true,
-                supports_audio: false,
-                supports_image_generation: false,
-                reasoning_efforts: vec![],
-                default_effort: None,
-                cost_per_million_in: None,
-                cost_per_million_out: None,
-                source: ModelSource::Auto,
-            }],
+            models,
             reasoning_effort: None,
             extra_headers: std::collections::BTreeMap::new(),
             oauth: None,
         }
+    }
+
+    fn minimax_provider(name: &str, api_key: &str, models: Vec<ModelEntry>) -> ProviderConfig {
+        provider(
+            name,
+            ProviderKind::MiniMax,
+            api_key,
+            DEFAULT_BASE_URL,
+            models,
+        )
+    }
+
+    fn registry_with(providers: Vec<ProviderConfig>, caps: Capabilities) -> ModelRegistry {
+        let mut registry = ModelRegistry::default();
+        registry.providers = providers;
+        registry.capabilities = caps;
+        registry
+    }
+
+    fn bound_caps(model: &str, provider: &str) -> Capabilities {
+        Capabilities {
+            image_generation: model.to_string(),
+            image_generation_provider: provider.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// 两个段都发布 `image-01`（同名跨段），绑定指向 custom-gw；
+    /// custom-gw 另有一个 `image-02` 供「当次覆盖模型」测试。
+    fn duplicate_id_registry() -> ModelRegistry {
+        registry_with(
+            vec![
+                minimax_provider(
+                    "minimax",
+                    "minimax-key",
+                    vec![model_entry("image-01", true)],
+                ),
+                provider(
+                    "custom-gw",
+                    ProviderKind::Custom,
+                    "gw-key",
+                    "https://gw.example/v1",
+                    vec![model_entry("image-01", true), model_entry("image-02", true)],
+                ),
+            ],
+            bound_caps("image-01", "custom-gw"),
+        )
+    }
+
+    /// 未绑定任何生成能力，但注册表里有声明了生成的模型（候选可列）。
+    fn unbound_image_registry() -> ModelRegistry {
+        registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "minimax-key",
+                vec![model_entry("image-01", true)],
+            )],
+            Capabilities::default(),
+        )
+    }
+
+    /// 未绑定 + 同模型名跨段：只给模型名时无法确定归属。
+    fn unbound_duplicate_id_registry() -> ModelRegistry {
+        registry_with(
+            vec![
+                minimax_provider(
+                    "minimax",
+                    "minimax-key",
+                    vec![model_entry("image-01", true)],
+                ),
+                provider(
+                    "custom-gw",
+                    ProviderKind::Custom,
+                    "gw-key",
+                    "https://gw.example/v1",
+                    vec![model_entry("image-01", true)],
+                ),
+            ],
+            Capabilities::default(),
+        )
     }
 
     // ── params 透传合并 ──
@@ -777,49 +1027,278 @@ mod tests {
         assert_eq!(video_file_id(&v1).unwrap(), "f-2");
     }
 
-    // ── 凭证解析错误路径 ──
+    // ── 凭证解析：消费能力绑定（不再自行发现 MiniMax provider）──
+
+    /// 不用 unwrap：GenTarget 含 api_key，刻意不实现 Debug 防泄露
+    fn resolve_err(
+        registry: &ModelRegistry,
+        kind: GenerationKind,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> String {
+        match resolve_generation_target(registry, kind, provider, model) {
+            Ok(_) => panic!("expected an error, got a credential — silent discovery is forbidden"),
+            Err(e) => e,
+        }
+    }
 
     #[test]
-    fn credential_missing_minimax_provider() {
-        let registry = ModelRegistry::default();
-        // 不用 unwrap_err：GenCredential 含 api_key，刻意不实现 Debug 防泄露
-        let err = match find_minimax_credential(&registry, None) {
+    fn credential_comes_from_the_capability_binding() {
+        let registry = duplicate_id_registry();
+        let target = resolve_generation_target(&registry, GenerationKind::Image, None, None)
+            .expect("binding should resolve");
+        // 凭证取自**绑定**的那个段，而不是段序第一个 MiniMax 段
+        assert_eq!(target.api_key, "gw-key");
+        assert_eq!(target.base_url, "https://gw.example/v1");
+        assert_eq!(target.model, "image-01");
+    }
+
+    #[test]
+    fn credential_resolves_the_exact_bound_provider_across_duplicate_ids() {
+        // 同名模型跨段：绑定点名 custom-gw → 必须用 gw-key，绝不能被 minimax 抢先
+        let registry = duplicate_id_registry();
+        let target =
+            resolve_generation_target(&registry, GenerationKind::Image, None, None).unwrap();
+        assert_eq!(target.api_key, "gw-key");
+
+        // 绑定改成 minimax → 换成 minimax-key（同一份注册表，绑定即真相）
+        let mut rebound = duplicate_id_registry();
+        rebound.capabilities.image_generation_provider = "minimax".to_string();
+        let target =
+            resolve_generation_target(&rebound, GenerationKind::Image, None, None).unwrap();
+        assert_eq!(target.api_key, "minimax-key");
+        assert_eq!(target.base_url, DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn credential_model_override_beats_binding() {
+        let registry = duplicate_id_registry();
+        let target =
+            resolve_generation_target(&registry, GenerationKind::Image, None, Some("image-02"))
+                .expect("override model should resolve");
+        assert_eq!(target.model, "image-02");
+        // 绑定 provider 仍是归属来源
+        assert_eq!(target.api_key, "gw-key");
+    }
+
+    #[test]
+    fn credential_provider_override_beats_binding() {
+        let registry = duplicate_id_registry();
+        let target =
+            resolve_generation_target(&registry, GenerationKind::Image, Some("minimax"), None)
+                .expect("provider override should resolve");
+        assert_eq!(target.api_key, "minimax-key");
+        assert_eq!(target.model, "image-01");
+    }
+
+    #[test]
+    fn credential_video_binding_is_independent_of_image() {
+        let registry = registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "minimax-key",
+                vec![model_entry("MiniMax-H3", false)],
+            )],
+            Capabilities {
+                image_generation: "image-01".to_string(),
+                image_generation_provider: "minimax".to_string(),
+                video_generation: "MiniMax-H3".to_string(),
+                video_generation_provider: "minimax".to_string(),
+                ..Default::default()
+            },
+        );
+        // 悬空绑定（模型不在该 provider 段里）必须报错，而不是拿 model id 去打请求。
+        // 不用 expect_err：GenTarget 含 api_key，刻意不实现 Debug 防泄露。
+        let image = match resolve_generation_target(&registry, GenerationKind::Image, None, None) {
+            Ok(_) => panic!("stale image binding must not resolve"),
             Err(e) => e,
-            Ok(_) => panic!("empty registry should yield no credential"),
         };
-        assert!(err.contains("MiniMax"), "error should name MiniMax: {err}");
+        assert!(
+            image.contains("image-01"),
+            "error should name the model: {image}"
+        );
+
+        let video = resolve_generation_target(&registry, GenerationKind::Video, None, None)
+            .expect("video binding should resolve");
+        assert_eq!(video.model, "MiniMax-H3");
+        assert_eq!(video.api_key, "minimax-key");
+    }
+
+    #[test]
+    fn credential_unbound_reports_binding_hint_and_candidates() {
+        let registry = unbound_image_registry();
+        let err = resolve_err(&registry, GenerationKind::Image, None, None);
+        assert!(
+            err.contains("模型界面"),
+            "error should point at the model UI: {err}"
+        );
+        assert!(
+            err.contains("图片生成"),
+            "error should name the capability: {err}"
+        );
+        assert!(
+            err.contains("minimax/image-01"),
+            "error should list the bindable candidate: {err}"
+        );
+    }
+
+    #[test]
+    fn credential_ambiguous_same_id_without_provider_is_reported() {
+        // 没绑定、又只给了模型名 → 重名必须报错并列候选，绝不挑段序第一个
+        let registry = unbound_duplicate_id_registry();
+        let err = resolve_err(&registry, GenerationKind::Image, None, Some("image-01"));
+        assert!(
+            err.contains("重名"),
+            "error should surface the ambiguity: {err}"
+        );
+        assert!(
+            err.contains("minimax"),
+            "error should list the first candidate: {err}"
+        );
+        assert!(
+            err.contains("custom-gw"),
+            "error should list the second candidate: {err}"
+        );
+        assert!(
+            err.contains("模型界面"),
+            "error should tell the user how to fix it: {err}"
+        );
+    }
+
+    #[test]
+    fn credential_unknown_provider_name_is_reported() {
+        let registry = duplicate_id_registry();
+        let err = resolve_err(&registry, GenerationKind::Image, Some("nope"), None);
+        assert!(
+            err.contains("nope"),
+            "error should name the provider: {err}"
+        );
+        assert!(
+            err.contains("没有这个模型条目"),
+            "error should say why it failed: {err}"
+        );
+    }
+
+    #[test]
+    fn credential_unbound_with_no_candidate_says_how_to_declare_one() {
+        // 注册表里没有任何模型声明生成能力 → 文案引导去模型行打开开关，
+        // 而不是静默退回某个 provider。
+        let registry = registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "minimax-key",
+                vec![model_entry("MiniMax-M3", false)],
+            )],
+            Capabilities::default(),
+        );
+        let err = resolve_err(&registry, GenerationKind::Image, None, None);
+        assert!(
+            err.contains("模型界面"),
+            "error should point at the model UI: {err}"
+        );
+        assert!(
+            err.contains("还没有模型声明"),
+            "error should explain the empty candidate set: {err}"
+        );
+    }
+
+    #[test]
+    fn credential_unbound_video_candidate_list_is_not_capability_gated() {
+        // 视频生成在注册表里没有能力声明字段 → 候选不按谓词过滤（不空口断言支持）
+        let registry = registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "minimax-key",
+                vec![model_entry("MiniMax-H3", false)],
+            )],
+            Capabilities::default(),
+        );
+        let target =
+            resolve_generation_target(&registry, GenerationKind::Video, None, Some("MiniMax-H3"))
+                .expect("explicit video model should resolve without a capability flag");
+        assert_eq!(target.model, "MiniMax-H3");
     }
 
     #[test]
     fn credential_empty_api_key_rejected() {
-        let mut registry = ModelRegistry::default();
-        registry.providers.push(minimax_provider("minimax", "  "));
-        assert!(find_minimax_credential(&registry, None).is_err());
+        let registry = registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "  ",
+                vec![model_entry("image-01", true)],
+            )],
+            Capabilities {
+                image_generation: "image-01".to_string(),
+                image_generation_provider: "minimax".to_string(),
+                ..Default::default()
+            },
+        );
+        assert!(resolve_generation_target(&registry, GenerationKind::Image, None, None).is_err());
     }
 
     #[test]
-    fn credential_provider_name_filter() {
-        let mut registry = ModelRegistry::default();
-        registry.providers.push(minimax_provider("minimax", "k1"));
-        // 指定不存在的 provider 名 → 报错且含名字
-        let err = match find_minimax_credential(&registry, Some("other")) {
-            Err(e) => e,
-            Ok(_) => panic!("unknown provider name should yield no credential"),
-        };
-        assert!(err.contains("other"));
-        // 指定存在的名 → 命中，base_url 去尾斜杠
-        let cred = find_minimax_credential(&registry, Some("minimax")).unwrap();
-        assert_eq!(cred.base_url, "https://api.minimaxi.com/v1");
+    fn credential_base_url_fallback_only_for_minimax() {
+        // MiniMax 段未配 base_url → 既定回落
+        let minimax = registry_with(
+            vec![{
+                let mut p = minimax_provider("minimax", "k1", vec![model_entry("image-01", true)]);
+                p.base_url = String::new();
+                p
+            }],
+            Capabilities {
+                image_generation: "image-01".to_string(),
+                image_generation_provider: "minimax".to_string(),
+                ..Default::default()
+            },
+        );
+        let target =
+            resolve_generation_target(&minimax, GenerationKind::Image, None, None).unwrap();
+        assert_eq!(target.base_url, DEFAULT_BASE_URL);
+
+        // 非 MiniMax 段未配 base_url → 不允许猜端点，直接报错
+        let custom = registry_with(
+            vec![provider(
+                "custom-gw",
+                ProviderKind::Custom,
+                "k1",
+                "",
+                vec![model_entry("image-01", true)],
+            )],
+            Capabilities {
+                image_generation: "image-01".to_string(),
+                image_generation_provider: "custom-gw".to_string(),
+                ..Default::default()
+            },
+        );
+        let err = resolve_err(&custom, GenerationKind::Image, None, None);
+        assert!(
+            err.contains("base_url"),
+            "error should name the missing field: {err}"
+        );
+        assert!(
+            err.contains("MiniMax"),
+            "error should explain why there is no fallback: {err}"
+        );
     }
 
     #[test]
-    fn credential_base_url_fallback() {
-        let mut registry = ModelRegistry::default();
-        let mut p = minimax_provider("minimax", "k1");
-        p.base_url = String::new();
-        registry.providers.push(p);
-        let cred = find_minimax_credential(&registry, None).unwrap();
-        assert_eq!(cred.base_url, DEFAULT_BASE_URL);
+    fn credential_base_url_trims_trailing_slash() {
+        let registry = registry_with(
+            vec![provider(
+                "custom-gw",
+                ProviderKind::Custom,
+                "k1",
+                "https://gw.example/v1/",
+                vec![model_entry("image-01", true)],
+            )],
+            Capabilities {
+                image_generation: "image-01".to_string(),
+                image_generation_provider: "custom-gw".to_string(),
+                ..Default::default()
+            },
+        );
+        let target = resolve_generation_target(&registry, GenerationKind::Image, None, None).unwrap();
+        assert_eq!(target.base_url, "https://gw.example/v1");
     }
 
     // ── wf_tools 包含性：注册表含两工具、prompt 必填、不在工作流排除名单 ──
@@ -844,6 +1323,48 @@ mod tests {
                 required.iter().any(|v| v.as_str() == Some("prompt")),
                 "{name} input_schema should require prompt"
             );
+        }
+    }
+
+    /// `provider` / `model` 都是**可选**参数：默认读模型界面的能力绑定，
+    /// 只有 LLM 想当次覆盖时才传。required 必须回到只有 `["prompt"]`。
+    #[test]
+    fn generation_schema_only_requires_prompt() {
+        let registry = ToolRegistry::builtin();
+        for name in ["image_generate", "video_generate"] {
+            let def = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} should be registered"));
+            let required = def
+                .parameters
+                .get("required")
+                .and_then(|v| v.as_array())
+                .expect("input_schema should declare required");
+            assert_eq!(
+                required
+                    .iter()
+                    .map(|v| v.as_str().unwrap_or_default())
+                    .collect::<Vec<_>>(),
+                vec!["prompt"],
+                "{name} input_schema should require prompt only (provider/model are overrides)"
+            );
+            for optional in ["provider", "model"] {
+                let prop = def
+                    .parameters
+                    .get("properties")
+                    .and_then(|p| p.get(optional))
+                    .unwrap_or_else(|| panic!("{name} should keep the {optional} property"));
+                assert!(
+                    prop.get("required").is_none(),
+                    "{name}.{optional} must not be required"
+                );
+                // 不得再带 schema 级 default：客户端会自动回填 default，从而
+                // 无声地覆盖模型界面的绑定。
+                assert!(
+                    prop.get("default").is_none(),
+                    "{name}.{optional} must not declare a default that would silently override the binding"
+                );
+            }
         }
     }
 

@@ -294,3 +294,342 @@ pub fn resolve_vision_provider() -> Option<String> {
         }
     })
 }
+
+// ── 生成能力（image_generation / video_generation）解析 ──
+
+/// 生成能力策略（图像 / 视频生成共用）。
+///
+/// 与 [`VisionStrategy`] 的关键差别：**没有 `Main` 分支**。视觉可以落到
+/// 「Leader 模型本身支持多模态」，生成端点（MiniMax 私有协议）与主模型是否
+/// 聪明毫不相干——回落主模型只会把用户的生成请求打到错的 API 上。因此未绑定
+/// 就是 `None`，由调用方明确报错并列出候选，绝不静默发现、绝不静默挑选。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenerationStrategy {
+    /// 使用 `capabilities.image_generation` / `capabilities.video_generation`
+    /// 显式绑定的生成模型
+    Capability(String),
+    /// 未绑定任何生成能力
+    None,
+}
+
+/// 生成能力种类（与 `capabilities` 的两个生成字段一一对应）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationKind {
+    Image,
+    Video,
+}
+
+impl GenerationKind {
+    /// 能力字段名（`capabilities.<key>`，与前端 `setCapabilityBinding` 的 kind 一致）
+    pub fn capability_key(self) -> &'static str {
+        match self {
+            GenerationKind::Image => "image_generation",
+            GenerationKind::Video => "video_generation",
+        }
+    }
+
+    /// 报错文案里的中文名
+    pub fn label(self) -> &'static str {
+        match self {
+            GenerationKind::Image => "图片生成",
+            GenerationKind::Video => "视频生成",
+        }
+    }
+
+    /// 该能力在 `Capabilities` 里的 (模型字段, provider 归属字段)。
+    fn fields(self, caps: &Capabilities) -> (&str, &str) {
+        match self {
+            GenerationKind::Image => (
+                caps.image_generation.as_str(),
+                caps.image_generation_provider.as_str(),
+            ),
+            GenerationKind::Video => (
+                caps.video_generation.as_str(),
+                caps.video_generation_provider.as_str(),
+            ),
+        }
+    }
+}
+
+/// 报错文案里直接写 `{kind}`（= label），不必在每个 format! 里重复中文名。
+impl std::fmt::Display for GenerationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// 生成能力绑定（模型 + provider 归属）。
+///
+/// `model` 为空 = 用户从未在模型界面绑定过这一能力；`provider` 为空 = 旧配置
+/// 只写了模型 id，由调用方走候选消歧。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerationBinding {
+    pub model: String,
+    pub provider: Option<String>,
+}
+
+impl GenerationBinding {
+    /// 未绑定（用户没在模型界面配过这一能力）
+    pub fn is_unbound(&self) -> bool {
+        self.model.is_empty()
+    }
+}
+
+/// 绑定非空 → Capability；空绑定 → None。不遍历 provider、不猜测、不回落主模型。
+fn bound_strategy(bound_model: &str) -> GenerationStrategy {
+    if bound_model.is_empty() {
+        GenerationStrategy::None
+    } else {
+        GenerationStrategy::Capability(bound_model.to_string())
+    }
+}
+
+fn resolve_generation_strategy(kind: GenerationKind) -> GenerationStrategy {
+    match load_registry() {
+        Ok(registry) => {
+            let (model, _provider) = kind.fields(&registry.capabilities);
+            bound_strategy(model)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "resolve_{}_strategy: load_registry failed: {e}",
+                kind.capability_key()
+            );
+            GenerationStrategy::None
+        }
+    }
+}
+
+/// 图片生成策略：`capabilities.image_generation` 显式绑定优先，未绑定 → None。
+///
+/// 与 [`resolve_vision_strategy`] 同构（显式绑定优先、未绑定 None、不静默发现），
+/// 区别仅在没有主模型回落——见 [`GenerationStrategy`]。
+pub fn resolve_image_generation_strategy() -> GenerationStrategy {
+    resolve_generation_strategy(GenerationKind::Image)
+}
+
+/// 视频生成策略：`capabilities.video_generation` 显式绑定优先，未绑定 → None。
+pub fn resolve_video_generation_strategy() -> GenerationStrategy {
+    resolve_generation_strategy(GenerationKind::Video)
+}
+
+fn resolve_generation_provider(kind: GenerationKind) -> Option<String> {
+    let registry = load_registry().ok()?;
+    let (model, provider) = kind.fields(&registry.capabilities);
+    if model.is_empty() || provider.is_empty() {
+        None
+    } else {
+        Some(provider.to_string())
+    }
+}
+
+/// 显式绑定的图片生成 provider。旧配置只有模型 id 没有归属时返回 None，
+/// 由调用方走候选消歧（与 [`resolve_vision_provider`] 同构）。
+pub fn resolve_image_generation_provider() -> Option<String> {
+    resolve_generation_provider(GenerationKind::Image)
+}
+
+/// 显式绑定的视频生成 provider（同上）。
+pub fn resolve_video_generation_provider() -> Option<String> {
+    resolve_generation_provider(GenerationKind::Video)
+}
+
+/// 从已加载的 registry 读某一生成能力的绑定，供工具层凭证解析使用。
+///
+/// 之所以不直接让工具层裸读 `registry.capabilities.*`：**绑定缺失**与
+/// **绑定已失效**（provider 段被删 / 模型条目被改名）是两种错误，前者要引导
+/// 去模型界面绑定，后者要指名哪个绑定坏了。分开返回，调用方的文案才能说准，
+/// 而不是让用户拿着一个悬空 model id 去打一个不存在的端点。
+///
+/// 与 [`resolve_image_generation_strategy`] / [`resolve_image_generation_provider`]
+/// （及 video 版）是同一份字段语义的两种取法：那四个函数自己读盘、给「只需要
+/// 模型名 / provider 名」的调用方；本函数接一个已加载的 registry，给需要
+/// 同一次加载里顺带做模型查找的工具层（避免读两次盘）。
+pub fn resolve_generation_binding(
+    registry: &ModelRegistry,
+    kind: GenerationKind,
+) -> Result<GenerationBinding, String> {
+    let (model, provider) = kind.fields(&registry.capabilities);
+    if model.is_empty() || provider.is_empty() {
+        // 未绑定（或只绑了半个）——交由调用方报「去模型界面绑定」。
+        return Ok(GenerationBinding::default());
+    }
+    // 绑定必须仍能在 registry 中解析，否则显式失败。
+    if registry.find_model_for_provider(provider, model).is_none() {
+        return Err(format!(
+            "已绑定的{}模型 {provider}/{model} 在模型配置中已不存在（provider 段被删除或模型条目被改名）。\n\
+             请去模型界面 → 图像音频模型 → {} 重新绑定。",
+            kind.label(),
+            kind.label()
+        ));
+    }
+    Ok(GenerationBinding {
+        model: model.to_string(),
+        provider: Some(provider.to_string()),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 双 provider 注册表：同 id 模型跨段重名（精确绑定的既有语义见 model.rs 测试）。
+    fn dual_provider_registry() -> ModelRegistry {
+        toml::from_str(
+            r#"
+model = "main-model"
+
+[[providers]]
+name = "seg-a"
+provider_type = "minimax"
+api_key = "key-a"
+base_url = "https://a.example/v1"
+
+[[providers.models]]
+id = "image-01"
+supports_image_generation = true
+
+[[providers]]
+name = "seg-b"
+provider_type = "custom"
+api_key = "key-b"
+base_url = "https://b.example/v1"
+
+[[providers.models]]
+id = "image-01"
+supports_image_generation = true
+
+[capabilities]
+image_generation = "image-01"
+image_generation_provider = "seg-b"
+"#,
+        )
+        .expect("registry toml should parse")
+    }
+
+    fn with_capabilities(caps: &str) -> ModelRegistry {
+        toml::from_str(&format!(
+            r#"
+[[providers]]
+name = "seg-a"
+provider_type = "minimax"
+api_key = "key-a"
+base_url = "https://a.example/v1"
+
+[[providers.models]]
+id = "image-01"
+supports_image_generation = true
+
+[capabilities]
+{caps}
+"#
+        ))
+        .expect("registry toml should parse")
+    }
+
+    #[test]
+    fn bound_strategy_maps_empty_to_none_without_guessing() {
+        // 未绑定 → None（不遍历、不猜、不回落主模型）
+        assert_eq!(bound_strategy(""), GenerationStrategy::None);
+        // 有绑定 → 原样带上绑定的模型 id
+        assert_eq!(
+            bound_strategy("image-01"),
+            GenerationStrategy::Capability("image-01".to_string())
+        );
+    }
+
+    #[test]
+    fn generation_binding_prefers_explicit_provider_binding() {
+        let registry = dual_provider_registry();
+        let binding =
+            resolve_generation_binding(&registry, GenerationKind::Image).expect("binding resolves");
+        assert_eq!(binding.model, "image-01");
+        // 同 id 跨段时必须取绑定的那段，而不是段序第一段
+        assert_eq!(binding.provider.as_deref(), Some("seg-b"));
+        assert!(!binding.is_unbound());
+    }
+
+    #[test]
+    fn generation_binding_unbound_is_none_not_a_guess() {
+        let registry = with_capabilities("");
+        assert!(registry.capabilities.image_generation.is_empty());
+        let binding = resolve_generation_binding(&registry, GenerationKind::Image)
+            .expect("unbound is a normal answer, not an error");
+        assert!(binding.is_unbound());
+        assert_eq!(binding, GenerationBinding::default());
+    }
+
+    #[test]
+    fn generation_binding_video_unbound_is_independent_of_image() {
+        // 绑了图片、没绑视频 → 视频仍为未绑定（两个能力互不隐含）
+        let registry = with_capabilities(
+            r#"image_generation = "image-01"
+image_generation_provider = "seg-a""#,
+        );
+        assert!(
+            !resolve_generation_binding(&registry, GenerationKind::Image)
+                .unwrap()
+                .is_unbound()
+        );
+        assert!(resolve_generation_binding(&registry, GenerationKind::Video)
+            .unwrap()
+            .is_unbound());
+    }
+
+    #[test]
+    fn generation_binding_half_bound_is_treated_as_unbound() {
+        // 旧配置只写了 model id，没有 provider 归属 → 不当成可用绑定
+        let registry = with_capabilities(r#"image_generation = "image-01""#);
+        assert!(resolve_generation_binding(&registry, GenerationKind::Image)
+            .unwrap()
+            .is_unbound());
+    }
+
+    #[test]
+    fn generation_binding_stale_provider_is_an_error() {
+        // provider 段被删/改名 → 明确报错，而不是拿悬空 model id 去打请求
+        let registry = with_capabilities(
+            r#"image_generation = "image-01"
+image_generation_provider = "gone-segment""#,
+        );
+        let err = match resolve_generation_binding(&registry, GenerationKind::Image) {
+            Err(e) => e,
+            Ok(_) => panic!("stale provider binding must not resolve"),
+        };
+        assert!(
+            err.contains("gone-segment"),
+            "error should name the segment: {err}"
+        );
+        assert!(
+            err.contains("重新绑定"),
+            "error should point at re-binding: {err}"
+        );
+    }
+
+    #[test]
+    fn generation_kind_capability_keys_match_capabilities_fields() {
+        assert_eq!(GenerationKind::Image.capability_key(), "image_generation");
+        assert_eq!(GenerationKind::Video.capability_key(), "video_generation");
+    }
+
+    /// resolve_*_strategy / resolve_*_provider 读的是不是各自字段：
+    /// 图片与视频两个能力必须互不串字段（绑了图片 ≠ 绑了视频）。
+    #[test]
+    fn generation_kind_fields_read_the_matching_capability_fields() {
+        let caps = Capabilities {
+            image_generation: "img-model".to_string(),
+            image_generation_provider: "img-seg".to_string(),
+            video_generation: "vid-model".to_string(),
+            video_generation_provider: "vid-seg".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            GenerationKind::Image.fields(&caps),
+            ("img-model", "img-seg")
+        );
+        assert_eq!(
+            GenerationKind::Video.fields(&caps),
+            ("vid-model", "vid-seg")
+        );
+    }
+}

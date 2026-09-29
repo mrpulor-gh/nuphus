@@ -430,6 +430,12 @@ pub struct Capabilities {
     /// 图片生成模型所属服务商（旧配置为空时按模型 ID 兼容解析）
     #[serde(default)]
     pub image_generation_provider: String,
+    /// 视频生成模型（空 = 未绑定，生成工具直接报错，不静默发现）
+    #[serde(default)]
+    pub video_generation: String,
+    /// 视频生成模型所属服务商（旧配置为空时按模型 ID 兼容解析）
+    #[serde(default)]
+    pub video_generation_provider: String,
     /// ChatAgent 默认最大推理轮数（不配则 15）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_agent_max_iterations: Option<u32>,
@@ -1722,6 +1728,8 @@ image_generation = "dall-e"
         assert!(registry.capabilities.tts_provider.is_empty());
         assert!(registry.capabilities.voice_provider.is_empty());
         assert!(registry.capabilities.image_generation_provider.is_empty());
+        assert!(registry.capabilities.video_generation.is_empty());
+        assert!(registry.capabilities.video_generation_provider.is_empty());
 
         let current = r#"
 [capabilities]
@@ -1735,11 +1743,15 @@ voice = "clone"
 voice_provider = "seg-d"
 image_generation = "dall-e"
 image_generation_provider = "seg-e"
+video_generation = "MiniMax-H3"
+video_generation_provider = "seg-f"
 "#;
         let registry: ModelRegistry = toml::from_str(current).unwrap();
         assert_eq!(registry.capabilities.stt_provider, "seg-b");
         assert_eq!(registry.capabilities.tts_provider, "seg-c");
         assert_eq!(registry.capabilities.voice_provider, "seg-d");
         assert_eq!(registry.capabilities.image_generation_provider, "seg-e");
+        assert_eq!(registry.capabilities.video_generation, "MiniMax-H3");
+        assert_eq!(registry.capabilities.video_generation_provider, "seg-f");
     }
 }
