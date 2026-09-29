@@ -3,25 +3,13 @@ import '../../styles/markdown.css'
 
 interface MarkdownContentProps {
   content: string
-  /** 可选：点击裸文件路径（绝对路径 + 白名单扩展名）时回调 */
+  /** 可选：点击裸文件路径（仅绝对路径 + 白名单扩展名）时回调 */
   onFileClick?: (path: string) => void
-  /** 可选：相对文件引用的项目基准路径；未提供时仅识别绝对路径。 */
-  projectBasePath?: string
 }
 
-const FilePathContext = React.createContext<{ projectBasePath?: string }>({})
-
-/**
- * Complete lightweight Markdown renderer (zero dependencies)
- * Supports: headings / bold / italic / strikethrough / inline code / code blocks / links / lists / tables / blockquotes / horizontal rules / task lists
- *
- * ⚠️ Key design: separate code blocks (```) first, then process inline markup in text.
- *    All characters inside code blocks are output as-is, not misinterpreted as Markdown syntax.
- */
 const MarkdownContent = React.memo(function MarkdownContent({
   content,
   onFileClick,
-  projectBasePath,
 }: MarkdownContentProps) {
   // Normalize line endings: \r\n / \r → \n, prevent Windows line endings from breaking split(/\n\n+/)
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -55,7 +43,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
   }
 
   return (
-    <FilePathContext.Provider value={{ projectBasePath }}>
+    <>
       {parts.map((part, i) => {
         const isDiff = part.type === 'code' && isDiffContent(part.code, part.lang)
         return part.type === 'code' ? (
@@ -72,7 +60,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
           <MarkdownText key={i} text={part.text} onFileClick={onFileClick} />
         )
       })}
-    </FilePathContext.Provider>
+    </>
   )
 })
 
@@ -420,7 +408,6 @@ const FILE_EXT_WHITELIST =
   /\.(?:md|mdx|html?|rs|tsx?|jsx?|py|json|toml|css|scss|less|ya?ml|sh|bash|zsh|ps1|bat|cmd|c|cc|cpp|h|hpp|go|java|kt|swift|sql|vue|svelte|pdf|png|jpe?g|svg|gif|webp|ico|txt|log|csv|xml|zip|rar|7z|gz|tgz|exe|msi|apk|docx?|xlsx?|pptx?|mp4|mov|mkv|mp3|wav|flac)(?![A-Za-z0-9_.-])/i
 const ABSOLUTE_PATH_RE =
   /(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/\r\n<>:"|?*]+(?:[ \t]+[^\s\\/\r\n<>:"|?*]+)*[\\/])*[^\s\\/\r\n<>:"|?*]*/g
-const RELATIVE_PATH_RE = /(?:\.\.?[\\/]|(?:[A-Za-z0-9_.-]+[\\/])+)[^\s\r\n<>:"'|?*]*/g
 const BARE_DOMAIN_RE = /^(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})[\\/]/
 
 export interface FilePathRange {
@@ -428,50 +415,48 @@ export interface FilePathRange {
   end: number
 }
 
-/** Extract conservative local path ranges. URLs and prose without a path separator are excluded. */
-export function extractFilePaths(text: string, allowRelative = false): FilePathRange[] {
+/**
+ * Extract conservative local path ranges. URLs and prose without a path separator are excluded.
+ *
+ * 只识别**绝对路径**（盘符 / UNC / POSIX 根），且必须命中扩展名白名单。
+ *
+ * 相对路径一律不当链接。理由：一个相对路径没有权威基准——模型输出它时心里的
+ * 参照是自己的 cwd，而用户在设置里填的是「项目目录」，两者不是同一个约定。
+ * 任何「拼一个基准再打开」的做法都会产出一个看似合理但不存在的路径，这比
+ * 「不给链接」更坏：用户点进去得到一个确定的错误，而不是一个明确的拒绝。
+ * 因此这里只认无歧义的绝对路径，相对路径按纯文本原样呈现。
+ *
+ * （曾经有一个「配了项目目录就把相对路径也拼成链接」的开关，它正是 issue #89
+ *  的根因；已移除。相对路径能力连同拼接函数一起删除，不再保留死分支。）
+ */
+export function extractFilePaths(text: string): FilePathRange[] {
   const out: Array<{ start: number; end: number }> = []
-  const patterns = allowRelative ? [ABSOLUTE_PATH_RE, RELATIVE_PATH_RE] : [ABSOLUTE_PATH_RE]
-  for (const pattern of patterns) {
-    const re = new RegExp(pattern.source, 'g')
-    let m: RegExpExecArray | null
-    while ((m = re.exec(text)) !== null) {
-      const candidate = m[0]
-      const schemeWindow = text.slice(Math.max(0, m.index - 40), m.index)
-      if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/$/.test(schemeWindow)) continue
-      if (m.index > 0 && /[A-Za-z0-9_:\\/]/.test(text[m.index - 1])) {
-        // A broad slash candidate may contain a later Windows path. Resume one
-        // character after its start so the drive letter remains discoverable.
-        re.lastIndex = m.index + 1
-        continue
-      }
-      if (BARE_DOMAIN_RE.test(candidate)) continue
-      const ext = FILE_EXT_WHITELIST.exec(candidate)
-      if (!ext || ext.index === undefined) continue
-      const end = m.index + ext.index + ext[0].length
-      out.push({ start: m.index, end })
-      re.lastIndex = end
+  const re = new RegExp(ABSOLUTE_PATH_RE.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const candidate = m[0]
+    const schemeWindow = text.slice(Math.max(0, m.index - 40), m.index)
+    if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/$/.test(schemeWindow)) continue
+    if (m.index > 0 && /[A-Za-z0-9_.:\\/]/.test(text[m.index - 1])) {
+      // A broad slash candidate may contain a later Windows path. Resume one
+      // character after its start so the drive letter remains discoverable.
+      //
+      // `.` 也在跳过字符类里：`../README.md` / `./a.md` 这类相对写法里的 `/`
+      // 不是 POSIX 根，只是相对路径的一段。不跳过就会把它们切成一条
+      // `/README.md`「绝对路径」——正是本次要消除的行为（issue #89）。
+      re.lastIndex = m.index + 1
+      continue
     }
+    if (BARE_DOMAIN_RE.test(candidate)) continue
+    const ext = FILE_EXT_WHITELIST.exec(candidate)
+    if (!ext || ext.index === undefined) continue
+    const end = m.index + ext.index + ext[0].length
+    out.push({ start: m.index, end })
+    re.lastIndex = end
   }
   return out
     .sort((a, b) => a.start - b.start || b.end - a.end)
     .filter((range, index, ranges) => index === 0 || range.start >= ranges[index - 1].end)
-}
-
-export function resolveProjectFilePath(path: string, projectBasePath?: string): string {
-  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path) || path.startsWith('/')) return path
-  if (!projectBasePath) return path
-  const separator = projectBasePath.includes('\\') ? '\\' : '/'
-  const root = projectBasePath.replace(/[\\/]+$/, '')
-  const parts = `${root}${separator}${path}`.split(/[\\/]+/)
-  const prefix = /^[A-Za-z]:$/.test(parts[0]) ? parts.shift() : ''
-  const normalized: string[] = []
-  for (const part of parts) {
-    if (!part || part === '.') continue
-    if (part === '..') normalized.pop()
-    else normalized.push(part)
-  }
-  return `${prefix ? `${prefix}${separator}` : projectBasePath.startsWith('/') ? '/' : ''}${normalized.join(separator)}`
 }
 
 function FileReference({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
@@ -505,21 +490,22 @@ function applyFilePaths(
   nodes: React.ReactNode[],
   onFileClick: ((path: string) => void) | undefined,
   prefix: string,
-  projectBasePath?: string,
 ): React.ReactNode[] {
   if (!onFileClick) return nodes
   return nodes.flatMap((n, idx) => {
     if (typeof n !== 'string') return [n]
-    const ranges = extractFilePaths(n, Boolean(projectBasePath))
+    const ranges = extractFilePaths(n)
     if (ranges.length === 0) return [n]
     const parts: React.ReactNode[] = []
     let cursor = 0
     ranges.forEach((r, ri) => {
       if (r.start > cursor) parts.push(n.slice(cursor, r.start))
+      // 命中范围直接取原文：extractFilePaths 只识别绝对路径（白名单扩展名 +
+      // 裸域名排除），不再把相对路径拼成项目目录下的猜测路径。相对路径按纯
+      // 文本呈现，不制造"能打开"的承诺。
       const path = n.slice(r.start, r.end)
-      const resolvedPath = resolveProjectFilePath(path, projectBasePath)
       parts.push(
-        <FileReference key={`p-${prefix}-${idx}-${ri}`} path={resolvedPath} onOpen={onFileClick} />,
+        <FileReference key={`p-${prefix}-${idx}-${ri}`} path={path} onOpen={onFileClick} />,
       )
       cursor = r.end
     })
@@ -535,7 +521,6 @@ export function MarkdownInline({
   text: string
   onFileClick?: (path: string) => void
 }) {
-  const { projectBasePath } = React.useContext(FilePathContext)
   const boldRegex = /\*\*(.+?)\*\*/g
   const italicRegex = /(?<!\w)\*(?!\*)(.+?)\*(?!\*)/g
   const delRegex = /~~(.+?)~~/g
@@ -566,14 +551,13 @@ export function MarkdownInline({
         // 行内代码若整体就是一条白名单绝对路径（Agent 习惯用反引号包文件路径），
         // 同样接入点击预览链路，不再作为纯代码不可点
         if (onFileClick) {
-          const ranges = extractFilePaths(seg.v, Boolean(projectBasePath))
+          const ranges = extractFilePaths(seg.v)
           const whole =
             ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === seg.v.length
           if (whole) {
-            const resolvedPath = resolveProjectFilePath(seg.v, projectBasePath)
-            nodes.push(
-              <FileReference key={`c-${i}-${seg.v}`} path={resolvedPath} onOpen={onFileClick} />,
-            )
+            // 行内代码整体是一条绝对路径时接入预览（Agent 习惯用反引号包路径）。
+            // 仍只认绝对路径：相对路径不拼项目目录，按纯代码呈现。
+            nodes.push(<FileReference key={`c-${i}-${seg.v}`} path={seg.v} onOpen={onFileClick} />)
             continue
           }
         }
@@ -646,7 +630,7 @@ export function MarkdownInline({
       )
 
       // 裸文件路径识别（link 之后；onFileClick 缺省时零回归）
-      layer = applyFilePaths(layer, onFileClick, `f-${i}`, projectBasePath)
+      layer = applyFilePaths(layer, onFileClick, `f-${i}`)
 
       nodes.push(...layer)
     }

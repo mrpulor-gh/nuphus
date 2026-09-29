@@ -1955,7 +1955,6 @@ export function ChatPanel({
                                           <MarkdownContent
                                             content={msg.content}
                                             onFileClick={setPreviewPath}
-                                            projectBasePath={projectDir}
                                           />
                                           <span className="message-thinking-cursor" />
                                         </>
@@ -1970,7 +1969,6 @@ export function ChatPanel({
                                       <MarkdownContent
                                         content={msg.content}
                                         onFileClick={setPreviewPath}
-                                        projectBasePath={projectDir}
                                       />
                                     )
                                   })()

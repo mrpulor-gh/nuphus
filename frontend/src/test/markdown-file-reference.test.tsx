@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import MarkdownContent, {
-  extractFilePaths,
-  resolveProjectFilePath,
-} from '../main-window/chat/MarkdownContent'
+import MarkdownContent, { extractFilePaths } from '../main-window/chat/MarkdownContent'
 
 describe('MarkdownContent 文件引用', () => {
   const onFileClick = vi.fn()
@@ -25,34 +22,25 @@ describe('MarkdownContent 文件引用', () => {
     expect(html).not.toContain(`>${windowsPath}<`)
   })
 
-  it('仅在提供项目基准路径时解析相对路径', () => {
+  // issue #89：相对路径没有权威基准，前端不得拼项目目录制造"可打开"的承诺。
+  // 这里锁死行为：无论是否配置项目目录，相对路径一律按纯文本呈现。
+  it('相对路径一律不渲染为文件条目（不再拼接项目目录）', () => {
     const relative = 'frontend/src/main.tsx'
-    const projectBasePath = String.raw`C:\repo`
-    const withoutBase = renderToString(
-      <MarkdownContent content={relative} onFileClick={onFileClick} />,
-    )
-    const withBase = renderToString(
-      <MarkdownContent
-        content={relative}
-        onFileClick={onFileClick}
-        projectBasePath={projectBasePath}
-      />,
-    )
-    expect(withoutBase).not.toContain('data-file-path')
-    expect(withBase).toContain(`data-file-path="${String.raw`C:\repo\frontend\src\main.tsx`}"`)
-    expect(resolveProjectFilePath('../README.md', '/Users/me/repo/app')).toBe(
-      '/Users/me/repo/README.md',
-    )
+    const html = renderToString(<MarkdownContent content={relative} onFileClick={onFileClick} />)
+    expect(html).not.toContain('data-file-path')
+    expect(html).toContain(relative)
+    expect(extractFilePaths(relative)).toEqual([])
+    // ../ 形式同样不识别
+    expect(extractFilePaths('../README.md')).toEqual([])
+    // 曾经的拼接结果（不存在的路径）绝不能再出现
+    expect(html).not.toContain('frontend\\src\\main.tsx')
   })
 
-  it('同行混排不会让相对路径候选吞掉后续绝对路径', () => {
+  it('绝对路径不受相对路径影响，同行混排只保留绝对路径', () => {
     const mixed = String.raw`改了 docs/a.md 和 C:\repo\c.rs`
-    const windowsOnly = extractFilePaths(mixed).map(range => mixed.slice(range.start, range.end))
-    const withRelative = extractFilePaths(mixed, true).map(range =>
-      mixed.slice(range.start, range.end),
-    )
-    expect(windowsOnly).toEqual([String.raw`C:\repo\c.rs`])
-    expect(withRelative).toEqual(['docs/a.md', String.raw`C:\repo\c.rs`])
+    expect(extractFilePaths(mixed).map(range => mixed.slice(range.start, range.end))).toEqual([
+      String.raw`C:\repo\c.rs`,
+    ])
 
     const absoluteMixed = String.raw`/opt/a/b.md + C:\out\c.rs + \\server\share\d.pdf`
     expect(
@@ -71,23 +59,22 @@ describe('MarkdownContent 文件引用', () => {
       '/tmp/hidden.rs',
       '```',
     ].join('\n')
-    const html = renderToString(
-      <MarkdownContent content={content} onFileClick={onFileClick} projectBasePath="/repo" />,
-    )
+    const html = renderToString(<MarkdownContent content={content} onFileClick={onFileClick} />)
     expect(html).not.toContain('data-file-path')
-    expect(extractFilePaths('https://example.com/a.pdf', true)).toEqual([])
-    expect(extractFilePaths('github.com/org/repo/README.md', true)).toEqual([])
+    expect(extractFilePaths('https://example.com/a.pdf')).toEqual([])
+    expect(extractFilePaths('github.com/org/repo/README.md')).toEqual([])
   })
 
-  it('排除嵌入 URL 和 IPv4 地址，但保留含数字点段的项目路径', () => {
+  it('排除嵌入 URL 和 IPv4 地址，但保留含数字点段的绝对路径', () => {
     const embeddedUrl = String.raw`见https://x.com/a.md结束，另有 C:\out\c.rs`
     expect(
-      extractFilePaths(embeddedUrl, true).map(range => embeddedUrl.slice(range.start, range.end)),
+      extractFilePaths(embeddedUrl).map(range => embeddedUrl.slice(range.start, range.end)),
     ).toEqual([String.raw`C:\out\c.rs`])
-    expect(extractFilePaths('192.168.1.1/api.md', true)).toEqual([])
+    expect(extractFilePaths('192.168.1.1/api.md')).toEqual([])
 
-    for (const path of ['docs.v2/notes.md', 'v1.2.3/notes.md']) {
-      expect(extractFilePaths(path, true)).toEqual([{ start: 0, end: path.length }])
+    // 含数字点段、但以盘符开头 → 仍是绝对路径
+    for (const path of [String.raw`C:\docs.v2\notes.md`, String.raw`C:\v1.2.3\notes.md`]) {
+      expect(extractFilePaths(path)).toEqual([{ start: 0, end: path.length }])
     }
   })
 
