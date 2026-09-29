@@ -142,6 +142,18 @@ fn unwrap(r: std::result::Result<serde_json::Value, nuphus::NuphusError>) -> Res
     }
 }
 
+/// 输入成功后才轮询提交操作；分阶段校验结果，便于无桌面环境下注入失败。
+async fn type_and_submit(
+    input: impl std::future::Future<Output = nuphus::Result<serde_json::Value>>,
+    submit: Option<impl std::future::Future<Output = nuphus::Result<serde_json::Value>>>,
+) -> Result<(), String> {
+    unwrap(input.await).map_err(|e| format!("输入文本失败: {e}"))?;
+    if let Some(submit) = submit {
+        unwrap(submit.await).map_err(|e| format!("发送提交快捷键失败: {e}"))?;
+    }
+    Ok(())
+}
+
 /// 参数提取：接受数值（12345）或占位符替换后的数字字符串（"{hwnd}" → "12345"）
 fn i32_at(with: &serde_json::Value, key: &str) -> Option<i32> {
     with.get(key)
@@ -307,14 +319,11 @@ async fn execute_desktop_step(
                             .filter(|s| !s.is_empty())
                             .collect()
                     };
-                    let _ = client
-                        .input_send(text, hwnd, false)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    if !send_keys.is_empty() {
-                        let _ = client.keyboard_hotkey(send_keys).await;
-                    }
-                    Ok(())
+                    type_and_submit(
+                        client.input_send(text, hwnd, false),
+                        (!send_keys.is_empty()).then(|| client.keyboard_hotkey(send_keys)),
+                    )
+                    .await
                 }
             }
         }
@@ -332,6 +341,8 @@ async fn execute_desktop_step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::future::{ready, Ready};
 
     fn vars() -> HashMap<String, String> {
         let mut m = HashMap::new();
@@ -340,6 +351,81 @@ mod tests {
         m.insert("brief_path".to_string(), "C:/handoff/brief.md".to_string());
         m.insert("message".to_string(), "你好，请重构页面".to_string());
         m
+    }
+
+    fn desktop_failures() -> [nuphus::Result<serde_json::Value>; 2] {
+        [
+            Err(nuphus::NuphusError::Tool("injected failure".to_string())),
+            Ok(serde_json::json!({
+                "success": false,
+                "error": "injected failure"
+            })),
+        ]
+    }
+
+    #[test]
+    fn test_type_and_submit_stops_before_submit_on_input_failure() {
+        for failure in desktop_failures() {
+            let submitted = Cell::new(false);
+            let submit = async {
+                submitted.set(true);
+                Ok(serde_json::json!({ "success": true }))
+            };
+            let err =
+                tokio_test::block_on(type_and_submit(ready(failure), Some(submit))).unwrap_err();
+            assert!(err.starts_with("输入文本失败: "));
+            assert!(err.contains("injected failure"));
+            assert!(!submitted.get(), "输入失败后不得发送提交快捷键");
+        }
+    }
+
+    #[test]
+    fn test_type_and_submit_propagates_submit_failure() {
+        for failure in desktop_failures() {
+            let err = tokio_test::block_on(type_and_submit(
+                ready(Ok(serde_json::json!({ "success": true }))),
+                Some(ready(failure)),
+            ))
+            .unwrap_err();
+            assert!(err.starts_with("发送提交快捷键失败: "));
+            assert!(err.contains("injected failure"));
+        }
+    }
+
+    #[test]
+    fn test_type_and_submit_preserves_order() {
+        let stage = Cell::new(0);
+        let input = async {
+            assert_eq!(stage.get(), 0);
+            stage.set(1);
+            Ok(serde_json::json!({ "success": true }))
+        };
+        let submit = async {
+            assert_eq!(stage.get(), 1, "输入成功后才可提交");
+            stage.set(2);
+            Ok(serde_json::json!({ "success": true }))
+        };
+        tokio_test::block_on(type_and_submit(input, Some(submit))).unwrap();
+        assert_eq!(stage.get(), 2);
+    }
+
+    #[test]
+    fn test_type_and_submit_without_submit_still_checks_input() {
+        let result = tokio_test::block_on(type_and_submit(
+            ready(Ok(serde_json::json!({ "success": true }))),
+            None::<Ready<nuphus::Result<serde_json::Value>>>,
+        ));
+        assert!(result.is_ok());
+
+        for failure in desktop_failures() {
+            let err = tokio_test::block_on(type_and_submit(
+                ready(failure),
+                None::<Ready<nuphus::Result<serde_json::Value>>>,
+            ))
+            .unwrap_err();
+            assert!(err.starts_with("输入文本失败: "));
+            assert!(err.contains("injected failure"));
+        }
     }
 
     #[test]
