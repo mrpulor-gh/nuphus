@@ -8,7 +8,15 @@
 @import './tokens.css';
 
 /* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 8×58 竖条，左缘贴边框、
-   右侧圆帽（上下椭圆角），实心 fg-5；hover 转 accent + 微光。
+   右侧圆帽（上下椭圆角）。
+   背景 = --fg-1（主题反色：前/背景对调 —— 暗主题亮条 / 亮主题暗条 / tech 近白条，
+   与窗口基底 --surface-0 恒成对比）。反色口径同 ui/LetterAvatar.tsx：那才是
+   「反色」，此前用的 --fg-5 只是前景最弱档（占位/禁用语义），亮主题下是
+   #bbbbbb 贴 #e8e8ea 的浅灰条、与窗口几乎同色，既看不见也不是反色。
+   hover 用 --accent-hover 而非 --accent：亮主题两者同为近黑（#111 vs #1a1a1a），
+   必须再退一档到 accent-hover（#333）才有可感知反馈；暗/tech 主题下
+   accent-hover 与 fg-1 亦均为高对比换色。微光同步从 accent-dim 升到 accent-glow
+   （三主题 25% / 8% / 26%，dim 在亮主题仅 4% 等于没有）。
    视觉 8px，但用 ::after 撑出 24×70 的透明热区（8px 直接点太窄） ── */
 .session-rail-chip {
   position: absolute;
@@ -20,11 +28,17 @@
   padding: 0;
   border: none;
   border-radius: 0 24px 24px 0;
-  background: var(--fg-5);
+  background: var(--fg-1);
+  /* 反色底本身很强（亮主题近黑条 / 暗主题近白条），静止态压到 0.65 退成「可见
+     但不抢戏」的常驻指示；大王 2026-09-29 实测值，勿凭感觉调。hover / 执行中
+     不另设 opacity：hover 靠换色 + 微光给反馈（仍是 0.65），执行中的 0.5 由
+     aria-disabled 规则覆盖（特异性更高，声明在后），层级 0.65 > 0.5 仍成立。 */
+  opacity: 0.65;
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
 }
 .session-rail-chip::after {
   content: '';
@@ -35,8 +49,8 @@
   width: 24px;
 }
 .session-rail-chip:hover {
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
+  background: var(--accent-hover);
+  box-shadow: 0 0 8px var(--accent-glow, rgba(59, 130, 246, 0.35));
 }
 /* 执行中（aria-disabled）：色块弱化、不响应 hover 高亮，点击改为浮出轻提示 */
 .session-rail-chip[aria-disabled='true'] {
@@ -44,7 +58,7 @@
   cursor: not-allowed;
 }
 .session-rail-chip[aria-disabled='true']:hover {
-  background: var(--fg-5);
+  background: var(--fg-1);
   box-shadow: none;
 }
 
@@ -543,13 +557,12 @@
 .sr-item:hover {
   background: var(--line-1);
 }
-/* 当前会话：整行圆角高亮块（不再用左缘 accent 竖条，对齐参考会话栏） */
+/* 当前会话：整行圆角高亮块（不再用左缘 accent 竖条，也不加 border——
+   曾同时用 inset 3px 左条 + 1px 边框，与圆角高亮底重复标注同一件事，
+   且 border 会改变盒尺寸（故当年要配 padding-left/right 9px 补偿），
+   2026-09-29 按大王指示移除两者，只留 accent-dim 底 + hover 加深）。 */
 .sr-item.active {
   background: var(--accent-dim);
-  box-shadow: inset 3px 0 0 var(--accent);
-  border: 1px solid rgba(var(--accent-rgb), 0.28);
-  padding-left: 9px;
-  padding-right: 9px;
 }
 .sr-item.active:hover {
   background: rgba(var(--accent-rgb), 0.18);

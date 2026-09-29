@@ -36,6 +36,10 @@ Nuphus's core engine is built in Rust; tool calls complete in milliseconds, so t
 
 **What is serial is thinking; what is parallel is execution.**
 
+<p align="center">
+  <img src="docs/readme-hero/appearance-panel.png" alt="Nuphus desktop: a conversation executing, with the Appearance panel open (three built-in themes / custom themes / interface opacity)" width="100%">
+</p>
+
 ### Workflow: Turning one exploration into deterministic execution
 
 Making an LLM spend tokens to solve 85%-identical tasks every time is a double waste of compute and time. Nuphus's answer — **let the LLM reason once, compile it into a workflow, then execute repeatedly with near-zero tokens**:

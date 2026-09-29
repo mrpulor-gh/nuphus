@@ -99,11 +99,14 @@
 
       /* ── 下载态：极简四段式（抬头 → 百分比 → 进度条 → 文件名），整体居中。
          黑白反色纪律：纸白底 + 墨色元素，不用彩色 ── */
+      /* 面板宽必须小于 splash 窗口宽（tauri.conf.json: splash 320×320，正方形）：
+         320 − 2×40 留白 = 240px。曾为 280px（配 400×460 旧窗口）——窗口缩成
+         正方形后 280 只剩两侧 20px，进度条与文件名贴边，故同步收窄。 */
       .dl-panel {
         display: none;
         flex-direction: column;
         align-items: center;
-        width: 280px;
+        width: 240px;
         gap: 14px;
       }
       body.downloading .dl-panel {

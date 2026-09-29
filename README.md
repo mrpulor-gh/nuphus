@@ -36,6 +36,10 @@ Nuphus 的核心引擎用 Rust 构建，工具调用在毫秒级完成，延迟�
 
 **串行的是思考，并行的是执行。**
 
+<p align="center">
+  <img src="docs/readme-hero/appearance-panel.png" alt="Nuphus 桌面端：对话执行中 + 右侧外观面板（三套内置主题 / 自定义主题 / 界面不透明度调节）" width="100%">
+</p>
+
 ### Workflow：把一次探索固化为确定性执行
 
 LLM 每次用 token 解决 85% 相同的任务，是对算力和时间的双重浪费。Nuphus 的解法——**让 LLM 推理一次，编译为工作流，之后极低 token 重复执行**：
