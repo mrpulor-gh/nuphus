@@ -1297,7 +1297,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let target = resolve_generation_target(&registry, GenerationKind::Image, None, None).unwrap();
+        let target =
+            resolve_generation_target(&registry, GenerationKind::Image, None, None).unwrap();
         assert_eq!(target.base_url, "https://gw.example/v1");
     }
 

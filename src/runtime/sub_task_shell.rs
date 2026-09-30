@@ -169,7 +169,10 @@ pub fn stream_shell_blocking(
                 return ToolResult {
                     success: false,
                     output: Some(full_stdout),
-                    error: Some(format!("命令超时 ({}s)，已终止。可增加 timeout 参数重试。", timeout_secs)),
+                    error: Some(format!(
+                        "命令超时 ({}s)，已终止。可增加 timeout 参数重试。",
+                        timeout_secs
+                    )),
                     exit_code: None,
                 };
             }
