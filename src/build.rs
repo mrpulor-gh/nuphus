@@ -27,7 +27,7 @@ const ASSET_SOURCES: &[&str] = &[
     // 内置技能：整目录都是跟踪内容，递归安全
     "plugin/skills/builtin",
     "plugin/skills/README.md",
-    // MCP 示例配置
+    // MCP 配置（默认 servers: {}，用户按需添加 server）
     "plugin/mcp/servers.yaml",
     // ui-maps：只收跟踪的这几个——同目录下 im/media/terminal 是运行时学出来的，绝不内嵌
     "plugin/ui-maps/OpenCode.json",

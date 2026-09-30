@@ -82,194 +82,440 @@ import { AppPill } from '../../ui/AppPill'
 import '../../styles/models.css'
 
 // ════════════════════════════════════════════════════════════════
-// 文案表（页面专用，硬编码中文；既有多语言字典仅保留仍在用 keys）
-// 说明：本页历史上大量 t('models.*') 引用并不存在于字典 → 界面泄漏 key。
-// 重构后统一为页内文案，可读中文；通用词条（provider/modelList/…）仍走字典。
+// 文案表：makeTXT(t) 按当前语言生成，键名与结构保持稳定。
+// 标题与按钮走 i18n 字典（models.* 命名空间，zh/en 双侧齐备）；
+// 尚未迁移的条目暂留中文兜底，后续按同一方式逐批迁移。
 // ════════════════════════════════════════════════════════════════
-const TXT = {
-  // ── 自定义模型四字段（名称 / 提供商 / API Key / API URL）──
-  // 表单、实例配置页共用同一套字段名，全流程一个说法，用户不用做同义词翻译。
-  nameLabel: '自定义名称',
-  namePlaceholder: '例如：公司网关',
-  providerTypeLabel: '模型提供商',
-  customKeyLabel: '模型 API Key',
-  customBaseUrlLabel: '模型 API URL',
-  providerTypes: [
-    { value: 'custom', label: 'OpenAI 兼容' },
-    { value: 'anthropic', label: 'Anthropic 兼容' },
-  ],
-  keyPlaceholderCustom: '无鉴权端点可留空',
-  /** 编辑模式留空 = 不改密钥（不是清空）：密钥已在后端，界面不回显 */
-  keyPlaceholderKeep: '留空则保持原密钥不变',
-  /** 由名称 slug 化来的段 id 只在 title 里作调试信息，界面不显示 */
-  instanceIdTitle: (id: string) => `实例标识：${id}`,
-  /** 左栏固定入口（custom 配置界面）显示名走 i18n：models.customEntry */
-  /** 创建态/编辑态标题：同一套表单，只有按钮语义不同（「创建」/「保存」） */
-  customSectionTitle: '自定义模型',
-  createBtn: '创建',
-  creating: '创建中…',
-  /** 编辑页主按钮（同一套表单，只有按钮语义不同） */
-  saveBtn: '保存',
-  savingBtn: '保存中…',
-  /** 「连接测试」：用当前填写的地址与密钥探测可用模型 */
-  testBtn: '连接测试',
-  createSuccess: '已创建',
-  saveSuccess: '已保存',
-  createFail: '创建失败',
-  needName: '请填写自定义名称',
-  needUrl: '请填写模型 API URL',
-  /** Anthropic 协议没有标准模型列表端点：如实告知，并把入口指向唯一的可行路径 */
-  anthropicNoModelList: 'Anthropic 协议不支持自动获取模型列表，请手动填写模型名',
-  apiKeyLabel: 'API 密钥',
-  keyInputPlaceholder: (name: string) => `输入 ${name} 的 API 密钥`,
-  keyOverwritePlaceholder: '输入新密钥覆盖现有配置',
-  keyShow: '显示',
-  keyHide: '隐藏',
-  connectBtn: '连接',
-  connecting: '连接中…',
-  connectTitle: '探测该接口下可用的模型',
-  clearKeyTitle: '清除已保存的密钥',
-  clearKeyConfirm:
-    '确定要清除该服务商的 API 密钥吗？\n模型与其它配置会保留，清除后需重新输入才能使用云端服务。',
-  keyHelp: '密钥仅存本机',
-  keyHelpLocal:
-    '本地服务通常无需密钥，可留空直接连接；若服务启用了鉴权（如 llama-swap、带 key 的网关/反向代理），在此填写后再连接。',
-  keyPlaceholderLocal: '可选：本地服务启用鉴权时填写密钥',
-  saveKeyBtn: '保存',
-  savingKey: '保存中…',
-  saveKeyTitle: '仅保存密钥（不检测模型）',
-  saveKeyNoModel: '请先点「连接测试」获取模型',
-  /** Anthropic 实例没有「连接」按钮，只能手动加模型名 */
-  saveKeyNoModelManual: '请先手动添加模型名',
-  saveKeySuccess: (m: string) => `密钥已保存（目标模型：${m}）`,
-  /** 无鉴权实例（key 留空）保存：只说实际发生了什么（地址与默认模型落盘） */
-  saveNoKeySuccess: (m: string) => `已保存（目标模型：${m}）`,
-  saveKeyFail: '保存密钥失败',
-  filterPlaceholder: '筛选模型…',
-  baseUrlLabel: '接口地址',
-  baseUrlPlaceholder: 'https://your-relay.com/v1',
-  baseUrlHelp: '中转站或网关的接口地址，通常以 /v1 结尾',
-  /** 自定义标头编辑区：中转站网关要求的附加请求头，逐字注入每个请求 */
-  headerSectionLabel: '自定义标头',
-  headerSectionHelp: '部分中转站要求附加请求头；留空则不发送',
-  headerNamePlaceholder: '头名称，如 X-Gateway',
-  headerValuePlaceholder: '值（可为空）',
-  addHeaderBtn: '+ 添加标头',
-  removeHeaderTitle: '删除此标头',
-  // ── 订阅账号（OAuth，可选路径）──
-  // 静态密钥与 OAuth 是同一实例的二选一凭证来源；区块默认折叠，避免给只用密钥的
-  // 用户增加六项 OAuth 字段的视觉负担（折叠态只留一行状态摘要）。
-  oauthSectionLabel: '订阅账号（OAuth）',
-  oauthSummaryOff: '未配置',
-  oauthSummaryNotLoggedIn: '已配置 · 未登录',
-  oauthSummaryLoggedIn: '已登录',
-  oauthSummaryNeedsLogin: '需重新授权',
-  /** 编辑态：OAuth 五项随 ProviderInfo.oauth 摘要回显可改；三态语义见 oauthToPayload */
-  oauthHelpEdit: '填写则覆盖更新；清空三项必填并保存 = 切回 API Key 模式（移除 OAuth 配置）。',
-  oauthHelpCreate: '填写三项必填即为该实例启用 OAuth；创建完成后可在此授权登录。',
-  /** 创建态：实例尚未落盘，后端 oauth_begin 找不到段 → 只能先说明可行路径 */
-  oauthCreateHint: '实例创建完成后，回到本页即可用「授权登录」绑定订阅账号。',
-  oauthAuthorizeLabel: '授权端点',
-  oauthAuthorizePlaceholder: 'https://sso.example.com/authorize',
-  oauthTokenLabel: '令牌端点',
-  oauthTokenPlaceholder: 'https://sso.example.com/token',
-  oauthClientIdLabel: 'Client ID',
-  oauthClientIdPlaceholder: 'OAuth 客户端标识',
-  oauthScopesLabel: 'Scopes',
-  oauthScopesPlaceholder: '空格分隔，可留空',
-  oauthScopesHelp: '空格分隔；留空则授权请求不带 scope',
-  oauthPkceLabel: 'PKCE',
-  oauthPkceHelp: '推荐开启（RFC 7636）；仅当授权服务器不支持时关闭',
-  oauthPkceOn: '开启',
-  oauthPkceOff: '关闭',
-  oauthRedirectPortLabel: '回调端口',
-  oauthRedirectPortPlaceholder: '留空由系统分配',
-  oauthRedirectPortHelp: '本地回调监听端口（http://127.0.0.1:<端口>/callback）',
-  oauthPortInvalid: '回调端口需为 1-65535 的整数',
-  oauthNeedRequired: '请先填写授权端点 / 令牌端点 / Client ID（三项必填）',
-  oauthLoginBtn: '授权登录',
-  oauthReauthorizeBtn: '重新授权',
-  oauthLogoutBtn: '退出登录',
-  oauthLoggingIn: '发起中…',
-  oauthLoggedIn: '已登录',
-  oauthExpiresAt: (time: string) => `有效期至 ${time}`,
-  oauthNotLoggedIn: '尚未登录：点「授权登录」在浏览器完成授权',
-  oauthNeedsLogin: '登录已失效：需重新授权',
-  oauthBrowserOpened: '已打开浏览器授权页，完成后本页自动更新登录状态',
-  oauthLoginSuccess: '授权成功',
-  oauthLogoutDone: '已退出登录',
-  oauthBeginFail: '发起授权失败',
-  oauthOpenFail: '打开浏览器失败',
-  oauthLogoutFail: '退出登录失败',
-  modelListTitle: '可用模型',
-  currentModelOf: (name: string) => `（当前使用：${name}）`,
-  refreshBtn: '刷新',
-  refreshing: '刷新中…',
-  refreshTitle: '用已保存密钥重新拉取最新模型列表',
-  addModelBtn: '+ 手动添加',
-  /** Anthropic 实例：这是唯一能拿到模型的入口，文案直接说清要填什么 */
-  addModelBtnManual: '+ 手动添加模型名',
-  addModelTitle: '手动添加模型代号',
-  addModelPlaceholder: '输入模型代号',
-  addModelConfirm: '添加',
-  addModelCancel: '取消',
-  addModelRequired: '请输入模型代号',
-  addModelSuccess: (id: string) => `已添加模型「${id}」，可在下方点击切换`,
-  addModelFail: '添加失败',
-  baseUrlChangedWarn:
-    '接口地址已变更：旧模型列表可能在新地址下不可用（模型代号不存在，或同名模型能力不同）。建议清理后重新拉取。',
-  /** Anthropic 实例无法重新拉取：提示改成手动重加 */
-  baseUrlChangedWarnManual:
-    '接口地址已变更：旧模型名可能在新地址下不可用。建议清理后手动重新添加模型名。',
-  clearModelsBtn: '清理旧模型',
-  clearModelsConfirm:
-    '确定清理该服务商的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请点「刷新」拉取新地址的模型。',
-  /** Anthropic 实例没有「刷新」：清理后只能手动重加模型名 */
-  clearModelsConfirmManual:
-    '确定清理该实例的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请手动重新添加模型名。',
-  clearModelsSuccess: (n: number) => `已清理 ${n} 个旧模型`,
-  clearModelsNone: '没有可清理的旧模型',
-  clearModelsFail: '清理失败',
-  emptyFiltered: (q: string) => `没有匹配「${q}」的模型`,
-  emptyNeedConnect: '尚未获取模型，点「连接测试」',
-  emptyNeedManual: '尚未添加模型，点「+ 手动添加模型名」',
-  modelsCount: (n: number) => `${n} 个模型`,
-  capVision: '支持图像理解',
-  capAudio: '支持语音',
-  capImageGen: '支持图像生成',
-  editContext: '设置上下文窗口（K tokens）',
-  ctxUnknown: '上下文窗口未知',
-  removeModelConfirm: (name: string) => `确定从本地列表移除模型「${name}」吗？`,
-  /** 删除自定义实例的二次确认：讲清后果（整段配置移除、不可撤销）。 */
-  removeInstanceConfirm: (name: string) =>
-    `确定删除自定义模型「${name}」吗？\n\n这将从本地配置中移除该实例的全部设置（地址、密钥、自定义模型列表），且无法撤销。`,
-  removeInstanceTitle: '删除自定义模型',
-  removeSuccess: (name: string) => `已删除「${name}」`,
-  removeFail: '删除失败',
-  removing: '删除中…',
-  cancel: '取消',
-  confirmDelete: '删除',
-  clearKeySuccess: '密钥已清除',
-  clearKeyFail: '清除失败',
-  savingModel: '切换中…',
-  saveOk: '保存成功',
-  saveFail: '保存失败',
-  apiKeyRequired: '请先输入 API 密钥',
-  ctxUnitHint: '单位 K（千 tokens），例如 128 = 128K',
-  ctxCap: '上下文窗口',
-  visionNone: '跟随 Leader 模型（需支持图像理解）（推荐）',
-  downloadReady: '已就绪',
-  downloadPaused: '下载已暂停',
-  /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被覆写与被移除的 id） */
-  syncSummary: (r: SyncReport) =>
-    `已与官方模型清单同步：新增 ${r.added} · 更新 ${r.updated} · 移除 ${r.removed}`,
-  syncSummaryUpdated: (ids: string[]) => `能力已更新：${ids.join('、')}`,
-  syncSummaryRemoved: (ids: string[]) => `移除：${ids.join('、')}`,
-  syncSummaryKeptManual: (n: number) => `保留手动添加 ${n} 条`,
-  syncSummaryDismiss: '关闭同步摘要',
-  /** 手动添加条目（不在官方 /v1/models 清单内）的行内标注 */
-  manualBadge: '官方清单外',
-  manualBadgeTitle: '手动添加的模型：不在官方 /v1/models 清单内，刷新时不会被移除',
+type TFunc = (key: string, ...args: string[]) => string
+
+/**
+ * 词条取值：字典命中 → 用字典文案；未命中 → 用中文兜底。
+ *
+ * 兜底存在的意义：本页词条分批迁移期，未补进 zh/en 字典的条目仍显示可读中文，
+ * 而不是泄漏 key。`t()` 本身在 miss 时返回原 key，故此处显式判等。
+ */
+const tr = (t: TFunc, key: string, fallback: string): string => {
+  const v = t(key)
+  return v === key ? fallback : v
+}
+
+function makeTXT(t: TFunc) {
+  return {
+    // ── 自定义模型四字段（名称 / 提供商 / API Key / API URL）──
+    // 表单、实例配置页共用同一套字段名，全流程一个说法，用户不用做同义词翻译。
+    nameLabel: tr(t, 'models.nameLabel', '自定义名称'),
+    namePlaceholder: tr(t, 'models.namePlaceholder', '例如：公司网关'),
+    providerTypeLabel: tr(t, 'models.providerTypeLabel', '模型提供商'),
+    customKeyLabel: tr(t, 'models.customKeyLabel', '模型 API Key'),
+    customBaseUrlLabel: tr(t, 'models.customBaseUrlLabel', '模型 API URL'),
+    providerTypes: [
+      { value: 'custom', label: tr(t, 'models.providerTypeOpenai', 'OpenAI 兼容') },
+      { value: 'anthropic', label: tr(t, 'models.providerTypeAnthropic', 'Anthropic 兼容') },
+    ],
+    keyPlaceholderCustom: tr(t, 'models.keyPlaceholderCustom', '无鉴权端点可留空'),
+    /** 编辑模式留空 = 不改密钥（不是清空）：密钥已在后端，界面不回显 */
+    keyPlaceholderKeep: tr(t, 'models.keyPlaceholderKeep', '留空则保持原密钥不变'),
+    /** 由名称 slug 化来的段 id 只在 title 里作调试信息，界面不显示 */
+    instanceIdTitle: (id: string) => `实例标识：${id}`,
+    /** 左栏固定入口（custom 配置界面）显示名走 i18n：models.customEntry */
+    /** 创建态/编辑态标题：同一套表单，只有按钮语义不同（「创建」/「保存」） */
+    customSectionTitle: tr(t, 'models.customSectionTitle', '自定义模型'),
+    createBtn: tr(t, 'models.createBtn', '创建'),
+    creating: tr(t, 'models.creating', '创建中…'),
+    /** 编辑页主按钮（同一套表单，只有按钮语义不同） */
+    saveBtn: tr(t, 'models.saveBtn', '保存'),
+    savingBtn: tr(t, 'models.savingBtn', '保存中…'),
+    /** 「连接测试」：用当前填写的地址与密钥探测可用模型 */
+    testBtn: tr(t, 'models.testBtn', '连接测试'),
+    createSuccess: tr(t, 'models.createSuccess', '已创建'),
+    saveSuccess: tr(t, 'models.saveSuccess', '已保存'),
+    createFail: tr(t, 'models.createFail', '创建失败'),
+    needName: tr(t, 'models.needName', '请填写自定义名称'),
+    needUrl: tr(t, 'models.needUrl', '请填写模型 API URL'),
+    /**
+     * Anthropic 兼容中转的模型列表说明。
+     *
+     * 历史上这里写「Anthropic 协议不支持自动获取模型列表，请手动填写模型名」，
+     * 并把「刷新」按钮对 anthropic 实例整体隐藏——该说法对中转站是假的：
+     * 后端 `fetch_provider_models` 与协议无关（GET {base}/models + 按段类型发
+     * x-api-key），实测主流中转两条路由均返回 200。保留手动添加作为兜底路径，
+     * 但入口必须给全，否则用户只能逐个手敲模型 id。
+     */
+    anthropicModelListHint: tr(
+      t,
+      'models.anthropicModelListHint',
+      '点「刷新」从中转站拉取模型列表；若该服务商不返回列表，再用「+ 手动添加模型名」。',
+    ),
+    apiKeyLabel: tr(t, 'models.apiKeyLabel', 'API 密钥'),
+    keyInputPlaceholder: (name: string) => t('models.keyInputPlaceholder', name),
+    keyOverwritePlaceholder: tr(t, 'models.keyOverwritePlaceholder', '输入新密钥覆盖现有配置'),
+    keyShow: tr(t, 'models.keyShow', '显示'),
+    keyHide: tr(t, 'models.keyHide', '隐藏'),
+    connectBtn: tr(t, 'models.connectBtn', '连接'),
+    connecting: tr(t, 'models.connecting', '连接中…'),
+    connectTitle: tr(t, 'models.connectTitle', '探测该接口下可用的模型'),
+    clearKeyTitle: tr(t, 'models.clearKeyTitle', '清除已保存的密钥'),
+    clearKeyConfirm: tr(
+      t,
+      'models.clearKeyConfirm',
+      '确定要清除该服务商的 API 密钥吗？\n模型与其它配置会保留，清除后需重新输入才能使用云端服务。',
+    ),
+    keyHelp: tr(t, 'models.keyHelp', '密钥仅存本机'),
+    keyHelpLocal: tr(
+      t,
+      'models.keyHelpLocal',
+      '本地服务通常无需密钥，可留空直接连接；若服务启用了鉴权（如 llama-swap、带 key 的网关/反向代理），在此填写后再连接。',
+    ),
+    keyPlaceholderLocal: tr(t, 'models.keyPlaceholderLocal', '可选：本地服务启用鉴权时填写密钥'),
+    saveKeyBtn: tr(t, 'models.saveKeyBtn', '保存'),
+    savingKey: tr(t, 'models.savingKey', '保存中…'),
+    saveKeyTitle: tr(t, 'models.saveKeyTitle', '仅保存密钥（不检测模型）'),
+    saveKeyNoModel: tr(t, 'models.saveKeyNoModel', '请先点「连接测试」获取模型'),
+    /** Anthropic 实例没有「连接」按钮，只能手动加模型名 */
+    saveKeyNoModelManual: tr(t, 'models.saveKeyNoModelManual', '请先手动添加模型名'),
+    saveKeySuccess: (m: string) => t('models.saveKeySuccess', m),
+    /** 无鉴权实例（key 留空）保存：只说实际发生了什么（地址与默认模型落盘） */
+    saveNoKeySuccess: (m: string) => t('models.saveNoKeySuccess', m),
+    saveKeyFail: tr(t, 'models.saveKeyFail', '保存密钥失败'),
+    filterPlaceholder: tr(t, 'models.filterPlaceholder', '筛选模型…'),
+    baseUrlLabel: tr(t, 'models.baseUrlLabel', '接口地址'),
+    baseUrlPlaceholder: 'https://your-relay.com/v1',
+    baseUrlHelp: tr(t, 'models.baseUrlHelp', '中转站或网关的接口地址，通常以 /v1 结尾'),
+    /** 自定义标头编辑区：中转站网关要求的附加请求头，逐字注入每个请求 */
+    headerSectionLabel: tr(t, 'models.headerSectionLabel', '自定义标头'),
+    headerSectionHelp: tr(t, 'models.headerSectionHelp', '部分中转站要求附加请求头；留空则不发送'),
+    headerNamePlaceholder: tr(t, 'models.headerNamePlaceholder', '头名称，如 X-Gateway'),
+    headerValuePlaceholder: tr(t, 'models.headerValuePlaceholder', '值（可为空）'),
+    addHeaderBtn: tr(t, 'models.addHeaderBtn', '+ 添加标头'),
+    removeHeaderTitle: tr(t, 'models.removeHeaderTitle', '删除此标头'),
+    // ── 订阅账号（OAuth，可选路径）──
+    // 静态密钥与 OAuth 是同一实例的二选一凭证来源；区块默认折叠，避免给只用密钥的
+    // 用户增加六项 OAuth 字段的视觉负担（折叠态只留一行状态摘要）。
+    oauthSectionLabel: tr(t, 'models.oauthSectionLabel', '订阅账号（OAuth）'),
+    oauthSummaryOff: tr(t, 'models.oauthSummaryOff', '未配置'),
+    oauthSummaryNotLoggedIn: tr(t, 'models.oauthSummaryNotLoggedIn', '已配置 · 未登录'),
+    oauthSummaryLoggedIn: tr(t, 'models.oauthSummaryLoggedIn', '已登录'),
+    oauthSummaryNeedsLogin: tr(t, 'models.oauthSummaryNeedsLogin', '需重新授权'),
+    /** 编辑态：OAuth 五项随 ProviderInfo.oauth 摘要回显可改；三态语义见 oauthToPayload */
+    oauthHelpEdit: tr(
+      t,
+      'models.oauthHelpEdit',
+      '填写则覆盖更新；清空三项必填并保存 = 切回 API Key 模式（移除 OAuth 配置）。',
+    ),
+    oauthHelpCreate: tr(
+      t,
+      'models.oauthHelpCreate',
+      '填写三项必填即为该实例启用 OAuth；创建完成后可在此授权登录。',
+    ),
+    /** 创建态：实例尚未落盘，后端 oauth_begin 找不到段 → 只能先说明可行路径 */
+    oauthCreateHint: tr(
+      t,
+      'models.oauthCreateHint',
+      '实例创建完成后，回到本页即可用「授权登录」绑定订阅账号。',
+    ),
+    oauthAuthorizeLabel: tr(t, 'models.oauthAuthorizeLabel', '授权端点'),
+    oauthAuthorizePlaceholder: 'https://sso.example.com/authorize',
+    oauthTokenLabel: tr(t, 'models.oauthTokenLabel', '令牌端点'),
+    oauthTokenPlaceholder: 'https://sso.example.com/token',
+    oauthClientIdLabel: tr(t, 'models.oauthClientIdLabel', 'Client ID'),
+    oauthClientIdPlaceholder: tr(t, 'models.oauthClientIdPlaceholder', 'OAuth 客户端标识'),
+    oauthScopesLabel: tr(t, 'models.oauthScopesLabel', 'Scopes'),
+    oauthScopesPlaceholder: tr(t, 'models.oauthScopesPlaceholder', '空格分隔，可留空'),
+    oauthScopesHelp: tr(t, 'models.oauthScopesHelp', '空格分隔；留空则授权请求不带 scope'),
+    oauthPkceLabel: tr(t, 'models.oauthPkceLabel', 'PKCE'),
+    oauthPkceHelp: tr(
+      t,
+      'models.oauthPkceHelp',
+      '推荐开启（RFC 7636）；仅当授权服务器不支持时关闭',
+    ),
+    oauthPkceOn: tr(t, 'models.oauthPkceOn', '开启'),
+    oauthPkceOff: tr(t, 'models.oauthPkceOff', '关闭'),
+    oauthRedirectPortLabel: tr(t, 'models.oauthRedirectPortLabel', '回调端口'),
+    oauthRedirectPortPlaceholder: tr(t, 'models.oauthRedirectPortPlaceholder', '留空由系统分配'),
+    oauthRedirectPortHelp: tr(
+      t,
+      'models.oauthRedirectPortHelp',
+      '本地回调监听端口（http://127.0.0.1:<端口>/callback）',
+    ),
+    oauthPortInvalid: tr(t, 'models.oauthPortInvalid', '回调端口需为 1-65535 的整数'),
+    oauthNeedRequired: tr(
+      t,
+      'models.oauthNeedRequired',
+      '请先填写授权端点 / 令牌端点 / Client ID（三项必填）',
+    ),
+    oauthLoginBtn: tr(t, 'models.oauthLoginBtn', '授权登录'),
+    oauthReauthorizeBtn: tr(t, 'models.oauthReauthorizeBtn', '重新授权'),
+    oauthLogoutBtn: tr(t, 'models.oauthLogoutBtn', '退出登录'),
+    oauthLoggingIn: tr(t, 'models.oauthLoggingIn', '发起中…'),
+    oauthLoggedIn: tr(t, 'models.oauthLoggedIn', '已登录'),
+    oauthExpiresAt: (time: string) => {
+      const k = 'models.oauthExpiresAtLabel'
+      return t(k, time) === k ? `有效期至 ${time}` : t(k, time)
+    },
+    oauthNotLoggedIn: tr(t, 'models.oauthNotLoggedIn', '尚未登录：点「授权登录」在浏览器完成授权'),
+    oauthNeedsLogin: tr(t, 'models.oauthNeedsLogin', '登录已失效：需重新授权'),
+    oauthBrowserOpened: tr(
+      t,
+      'models.oauthBrowserOpened',
+      '已打开浏览器授权页，完成后本页自动更新登录状态',
+    ),
+    oauthLoginSuccess: tr(t, 'models.oauthLoginSuccess', '授权成功'),
+    oauthLogoutDone: tr(t, 'models.oauthLogoutDone', '已退出登录'),
+    oauthBeginFail: tr(t, 'models.oauthBeginFail', '发起授权失败'),
+    oauthOpenFail: tr(t, 'models.oauthOpenFail', '打开浏览器失败'),
+    oauthLogoutFail: tr(t, 'models.oauthLogoutFail', '退出登录失败'),
+    modelListTitle: tr(t, 'models.modelListTitle', '可用模型'),
+    currentModelOf: (name: string) => t('models.currentModelOf', name),
+    refreshBtn: tr(t, 'models.refreshBtn', '刷新'),
+    refreshing: tr(t, 'models.refreshing', '刷新中…'),
+    refreshTitle: tr(t, 'models.refreshTitle', '用已保存密钥重新拉取最新模型列表'),
+    addModelBtn: tr(t, 'models.addModelBtn', '+ 手动添加'),
+    /** Anthropic 实例：这是唯一能拿到模型的入口，文案直接说清要填什么 */
+    addModelBtnManual: tr(t, 'models.addModelBtnManual', '+ 手动添加模型名'),
+    addModelTitle: tr(t, 'models.addModelTitle', '手动添加模型代号'),
+    addModelPlaceholder: tr(t, 'models.addModelPlaceholder', '输入模型代号'),
+    addModelConfirm: tr(t, 'models.addModelConfirm', '添加'),
+    addModelCancel: tr(t, 'models.addModelCancel', '取消'),
+    addModelRequired: tr(t, 'models.addModelRequired', '请输入模型代号'),
+    addModelSuccess: (id: string) => t('models.addModelSuccess', id),
+    addModelFail: tr(t, 'models.addModelFail', '添加失败'),
+    baseUrlChangedWarn: tr(
+      t,
+      'models.baseUrlChangedWarn',
+      '接口地址已变更：旧模型列表可能在新地址下不可用（模型代号不存在，或同名模型能力不同）。建议清理后重新拉取。',
+    ),
+    /** Anthropic 实例同样可刷新，仅文案区别（原为「无法重新拉取」） */
+    baseUrlChangedWarnManual: tr(
+      t,
+      'models.baseUrlChangedWarnManual',
+      '接口地址已变更：旧模型名可能在新地址下不可用。可点「刷新」重新拉取，或清理后手动添加模型名。',
+    ),
+    clearModelsBtn: tr(t, 'models.clearModelsBtn', '清理旧模型'),
+    clearModelsConfirm: tr(
+      t,
+      'models.clearModelsConfirm',
+      '确定清理该服务商的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后请点「刷新」拉取新地址的模型。',
+    ),
+    clearModelsConfirmManual: tr(
+      t,
+      'models.clearModelsConfirmManual',
+      '确定清理该实例的旧模型列表吗？\n仅清空模型条目（名称/地址/密钥保留），清理后可点「刷新」重新拉取，或手动添加模型名。',
+    ),
+    clearModelsSuccess: (n: number) => t('models.clearModelsSuccess', String(n)),
+    clearModelsNone: tr(t, 'models.clearModelsNone', '没有可清理的旧模型'),
+    clearModelsFail: tr(t, 'models.clearModelsFail', '清理失败'),
+    emptyFiltered: (q: string) => t('models.emptyFiltered', q),
+    emptyNeedConnect: tr(t, 'models.emptyNeedConnect', '尚未获取模型，点「连接测试」'),
+    emptyNeedManual: tr(t, 'models.emptyNeedManual', '尚未添加模型，点「+ 手动添加模型名」'),
+    modelsCount: (n: number) => t('models.modelsCount', String(n)),
+    capVision: tr(t, 'models.capVisionLabel', '支持图像理解'),
+    capAudio: tr(t, 'models.capAudioLabel', '支持语音'),
+    capImageGen: tr(t, 'models.capImageGenLabel', '支持图像生成'),
+    editContext: tr(t, 'models.editContext', '设置上下文窗口（K tokens）'),
+    ctxUnknown: tr(t, 'models.ctxUnknown', '上下文窗口未知'),
+    removeModelConfirm: (name: string) => t('models.removeModelConfirm', name),
+    /** 删除自定义实例的二次确认：讲清后果（整段配置移除、不可撤销）。 */
+    removeInstanceConfirm: (name: string) => t('models.removeInstanceConfirm', name),
+    removeInstanceTitle: tr(t, 'models.removeInstanceTitle', '删除自定义模型'),
+    removeSuccess: (name: string) => t('models.removeSuccess', name),
+    removeFail: tr(t, 'models.removeFail', '删除失败'),
+    removing: tr(t, 'models.removing', '删除中…'),
+    cancel: tr(t, 'models.cancel', '取消'),
+    confirmDelete: tr(t, 'models.confirmDelete', '删除'),
+    clearKeySuccess: tr(t, 'models.clearKeySuccess', '密钥已清除'),
+    clearKeyFail: tr(t, 'models.clearKeyFail', '清除失败'),
+    savingModel: tr(t, 'models.savingModel', '切换中…'),
+    saveOk: tr(t, 'models.saveOk', '保存成功'),
+    saveFail: tr(t, 'models.saveFail', '保存失败'),
+    apiKeyRequired: tr(t, 'models.apiKeyRequired', '请先输入 API 密钥'),
+    ctxUnitHint: tr(t, 'models.ctxUnitHint', '单位 K（千 tokens），例如 128 = 128K'),
+    ctxCap: tr(t, 'models.ctxCap', '上下文窗口'),
+    visionNone: tr(t, 'models.visionNone', '跟随 Leader 模型（需支持图像理解）（推荐）'),
+    downloadReady: tr(t, 'models.downloadReady', '已就绪'),
+    downloadPaused: tr(t, 'models.downloadPaused', '下载已暂停'),
+    /** 显式刷新后的同步摘要（新增 / 更新 / 移除，并列出被覆写与被移除的 id） */
+    syncSummary: (r: SyncReport) =>
+      t('models.syncSummary', String(r.added), String(r.updated), String(r.removed)) ===
+      'models.syncSummary'
+        ? `已与官方模型清单同步：新增 ${r.added} · 更新 ${r.updated} · 移除 ${r.removed}`
+        : t('models.syncSummary', String(r.added), String(r.updated), String(r.removed)),
+    syncSummaryUpdated: (ids: string[]) =>
+      t('models.syncSummaryUpdated', ids.join(', ')) === 'models.syncSummaryUpdated'
+        ? `能力已更新：${ids.join('、')}`
+        : t('models.syncSummaryUpdated', ids.join(', ')),
+    syncSummaryRemoved: (ids: string[]) =>
+      t('models.syncSummaryRemoved', ids.join(', ')) === 'models.syncSummaryRemoved'
+        ? `移除：${ids.join('、')}`
+        : t('models.syncSummaryRemoved', ids.join(', ')),
+    syncSummaryKeptManual: (n: number) =>
+      t('models.syncSummaryKeptManual', String(n)) === 'models.syncSummaryKeptManual'
+        ? `保留手动添加 ${n} 条`
+        : t('models.syncSummaryKeptManual', String(n)),
+    syncSummaryDismiss: tr(t, 'models.syncSummaryDismiss', '关闭同步摘要'),
+    /** 手动添加条目（不在官方 /v1/models 清单内）的行内标注 */
+    manualBadge: tr(t, 'models.manualBadge', '官方清单外'),
+    manualBadgeTitle: tr(
+      t,
+      'models.manualBadgeTitle',
+      '手动添加的模型：不在官方 /v1/models 清单内，刷新时不会被移除',
+    ),
+    providerSectionTitle: tr(t, 'models.providerSectionTitle', '模型服务商'),
+    // ── 左侧栏分组标题 ──
+    railGroupProviders: tr(t, 'models.railGroupProviders', '模型提供商'),
+    railGroupCustom: tr(t, 'models.railGroupCustom', '自定义模型'),
+    railGroupLocal: tr(t, 'models.railGroupLocal', '本地模型'),
+    railGroupAutomation: tr(t, 'models.railGroupAutomation', '自动化增强'),
+    railLoadingProviders: tr(t, 'models.railLoadingProviders', '正在加载服务商…'),
+    // ── 右上角工具栏 ──
+    toolbarCapabilities: tr(t, 'models.toolbarCapabilities', '图像音频模型'),
+    toolbarAgents: tr(t, 'models.toolbarAgents', '子智能体模型'),
+    // ── 图像理解 ──
+    visionSection: tr(t, 'models.visionSection', '图像理解'),
+    visionSectionDesc: tr(
+      t,
+      'models.visionSectionDesc',
+      '配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标，自定义 / 中转模型即使未探测到能力也可以手动选择。',
+    ),
+    visionSaved: tr(t, 'models.visionSaved', '已保存'),
+    saveFailed: tr(t, 'models.visionSaveFail', '保存失败'),
+    visionExplicitPath: (m: string) =>
+      t('models.visionExplicitPath', m) === 'models.visionExplicitPath'
+        ? `已显式指定：图像统一由 ${m} 理解（不再跟随 Leader；换 Leader 不会自动改这里）`
+        : t('models.visionExplicitPath', m),
+    visionFollowOk: (m: string) =>
+      t('models.visionFollowOk', m) === 'models.visionFollowOk'
+        ? `跟随 Leader：图像由当前 Leader 模型 ${m} 直接理解，无需额外配置`
+        : t('models.visionFollowOk', m),
+    visionFollowWarn: (m: string) =>
+      t('models.visionFollowWarn', m) === 'models.visionFollowWarn'
+        ? `⚠ 当前 Leader 模型 ${m} 不支持图像理解 —— 截图/图像识别类操作将不可用。请在此指定一个图像理解模型，或把 Leader 换成支持视觉的模型。`
+        : t('models.visionFollowWarn', m),
+    visionFollowUnknown: tr(
+      t,
+      'models.visionFollowUnknown',
+      '跟随 Leader：图像由当前 Leader 模型直接理解（尚未检测到 Leader 模型信息）',
+    ),
+    // ── 子智能体模型 ──
+    execSection: tr(t, 'models.execSection', '子任务执行模型（Exec）'),
+    execSectionDesc: tr(
+      t,
+      'models.execSectionDesc',
+      'ExecAgent 由 Leader 模式下派发、执行子任务时使用的模型。留空则跟随全局默认模型。',
+    ),
+    execFollowDefault: tr(t, 'models.execFollowDefault', '跟随默认模型'),
+    // ── 左栏：增强判断模型 ──
+    railGroupEnhancedJudge: tr(t, 'models.railGroupEnhancedJudge', '增强判断模型'),
+    // ── 本地视觉模型（OCR / UI 检测）──
+    localVisionSection: tr(t, 'models.localVisionSection', '本地视觉模型（OCR / UI 检测）'),
+    localVisionSectionDesc: tr(
+      t,
+      'models.localVisionSectionDesc',
+      '屏幕理解所需的本地 OCR 与界面元素检测模型。随应用自动下载，无需手动操作；仅当缺少文件时需要处理。',
+    ),
+    ocrReady: tr(t, 'models.ocrReady', 'OCR 已就绪'),
+    ocrNotReady: tr(t, 'models.ocrNotReady', 'OCR 未就绪'),
+    yoloReady: tr(t, 'models.yoloReady', 'UI 检测已就绪'),
+    yoloDisabled: tr(t, 'models.yoloDisabled', 'UI 检测未启用'),
+    modelDirLabel: tr(t, 'models.modelDirLabel', '模型目录：'),
+    downloadingHint: tr(t, 'models.downloadingHint', '正在后台自动下载，下载完成即可使用屏幕理解…'),
+    downloadFailed: tr(t, 'models.downloadFailed', '下载失败：'),
+    retryDownload: tr(t, 'models.retryDownload', '重试下载'),
+    downloadNow: tr(t, 'models.downloadNow', '立即下载'),
+    detecting: tr(t, 'models.detecting', '检测中…'),
+    screenReady: tr(t, 'models.screenReady', '屏幕理解（OCR + UI 元素检测）已就绪'),
+    missingOptional: (names: string) => {
+      const k = 'models.missingOptional'
+      return t(k, names) === k ? `缺少 ${names}（可选，仅影响 UI 元素检测）` : t(k, names)
+    },
+    missingRequired: (n: number) => {
+      const k = 'models.missingRequired'
+      return t(k, String(n)) === k
+        ? `缺少 ${n} 个模型文件，下载后即可使用屏幕理解`
+        : t(k, String(n))
+    },
+    // ── 语音输入（STT）──
+    sttSection: tr(t, 'models.sttSection', '语音输入'),
+    sttSectionDesc: tr(
+      t,
+      'models.sttSectionDesc',
+      '在输入框用语音转文字。配置云端识别模型后优先使用云端识别；未配置则使用本地离线识别（中文优化，无需联网）。',
+    ),
+    sttPlaceholder: tr(t, 'models.sttPlaceholder', '未配置（使用本地识别）'),
+    sttSaved: tr(t, 'models.sttSaved', '云端识别模型已保存'),
+    sttNoMic: tr(t, 'models.sttNoMic', '未检测到麦克风，连接麦克风后即可使用语音输入'),
+    sttLocalModelMissingCloudOk: tr(
+      t,
+      'models.sttLocalModelMissingCloudOk',
+      '本地模型未下载（云端识别已可用，仅离线识别时需要）',
+    ),
+    sttDownloadHint: tr(
+      t,
+      'models.sttDownloadHint',
+      '下载语音模型（约 250 MB）即可开始本地语音输入',
+    ),
+    downloadVoiceModel: tr(t, 'models.downloadVoiceModel', '下载语音模型'),
+    // ── 文字转语音（TTS）──
+    ttsSection: tr(t, 'models.ttsSection', '文字转语音（TTS）'),
+    ttsSectionDesc: tr(
+      t,
+      'models.ttsSectionDesc',
+      '配置文字转语音模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS 服务；留空表示不使用朗读功能。',
+    ),
+    ttsPlaceholder: tr(t, 'models.ttsPlaceholder', '未配置（不使用朗读）'),
+    ttsSaved: tr(t, 'models.ttsSaved', 'TTS 模型已保存'),
+    // ── 语音克隆 ──
+    voiceSection: tr(t, 'models.voiceSection', '语音克隆'),
+    voiceSectionDesc: tr(
+      t,
+      'models.voiceSectionDesc',
+      '配置语音克隆模型（云端克隆 API），配置后语音克隆工具可用；留空表示不使用语音克隆。',
+    ),
+    voicePlaceholder: tr(t, 'models.voicePlaceholder', '未配置（不使用）'),
+    voiceSaved: tr(t, 'models.voiceSaved', '语音克隆模型已保存'),
+    // ── 自定义实例条目（左栏）──
+    keyConfigured: tr(t, 'models.keyConfigured', '已配置密钥'),
+    keyNotConfigured: tr(t, 'models.keyNotConfigured', '未配置密钥（无鉴权端点可留空）'),
+    removeInstanceLabel: (name: string) => {
+      const k = 'models.removeInstanceLabel'
+      return t(k, name) === k ? `删除「${name}」` : t(k, name)
+    },
+    // ── provider 详情区 ──
+    keyNotConfiguredShort: tr(t, 'models.keyNotConfiguredShort', '尚未配置密钥'),
+    modelListDescEmpty: tr(
+      t,
+      'models.modelListDescEmpty',
+      '选择一个模型作为默认使用（点击行即可切换）。',
+    ),
+    detectingModels: tr(t, 'models.detectingModels', '正在连接并获取模型列表…'),
+    goGateway: tr(t, 'models.goGateway', 'OpenCode Go 网关'),
+    audioSupported: tr(t, 'models.audioSupported', '支持语音'),
+    visionToggleAria: (state: string) => t('models.visionToggleAria', state),
+    visionToggleTitleOn: tr(
+      t,
+      'models.visionToggleTitleOn',
+      '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）',
+    ),
+    visionToggleTitleOff: tr(
+      t,
+      'models.visionToggleTitleOff',
+      '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）',
+    ),
+    removeFromLocalList: tr(t, 'models.removeFromLocalList', '从本地列表移除'),
+    localCtxLabel: tr(t, 'models.localCtxLabel', '本地模型默认上下文（K tokens）'),
+    localCtxHint: tr(
+      t,
+      'models.localCtxHint',
+      '为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。',
+    ),
+    localCtxPlaceholder: tr(t, 'models.localCtxPlaceholder', '例如 128'),
+    addLocalModelLabel: tr(t, 'models.addLocalModelLabel', '添加本地模型'),
+    addLocalModelHint: tr(
+      t,
+      'models.addLocalModelHint',
+      '手动输入模型名称并回车，随后会在上方列表出现（可设置上下文并切换）。',
+    ),
+    addLocalModelPlaceholder: tr(t, 'models.addLocalModelPlaceholder', '例如 qwen2.5:7b'),
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -369,9 +615,10 @@ function isValidRedirectPort(port: number): boolean {
 }
 
 /** OAuth 到期时刻（unix 秒）→ 本地时间文本；无到期时间返回空串（只展示「已登录」） */
-function oauthExpiryText(expiresAt: number | null | undefined): string {
+function oauthExpiryText(expiresAt: number | null | undefined, t: TFunc): string {
   if (expiresAt == null) return ''
-  return TXT.oauthExpiresAt(new Date(expiresAt * 1000).toLocaleString())
+  const local = new Date(expiresAt * 1000).toLocaleString()
+  return tr(t, 'models.oauthExpiresAt', `有效期至 ${local}`).replace('{0}', local)
 }
 
 /**
@@ -440,7 +687,8 @@ function VisionModelSelect({
     ? models.find(m => m.id === value && (!provider || m.provider === provider))
     : undefined
   const selectedMissing = !!value && !!selected && !filtered.includes(selected)
-  const emptyText = placeholder || TXT.visionNone
+  const emptyText =
+    placeholder || tr(t, 'models.visionNone', '跟随 Leader 模型（需支持图像理解）（推荐）')
 
   return (
     <div className="models-select compact-select-wrap" ref={ref}>
@@ -582,6 +830,7 @@ function RowCtxEditor({
   onCancel: () => void
   t: (key: string, ...args: string[]) => string
 }) {
+  const TXT = makeTXT(t)
   if (isEditing) {
     return (
       <span className="ctx-inline-wrap" onClick={e => e.stopPropagation()}>
@@ -716,7 +965,7 @@ export function CustomModelForm({
    * 填入的地址与密钥；表单只做单向上报，不回灌，避免打字被打断。
    */
   onValuesChange?: (v: CustomModelFormValues) => void
-  /** 「连接测试」：用当前填写的地址与密钥探测可用模型。不传则不渲染（Anthropic 协议无 /v1/models） */
+  /** 「连接测试」：用当前填写的地址与密钥探测可用模型。不传则不渲染 */
   onTest?: () => void
   testing?: boolean
   /** 清除已保存的密钥（仅编辑态且已配置时传入）。不传则不渲染——清空输入框=保持原密钥，不是删除 */
@@ -728,6 +977,8 @@ export function CustomModelForm({
    */
   oauthLogin?: OauthLoginSection
 }) {
+  const { t } = useLanguage()
+  const TXT = makeTXT(t)
   const [displayName, setDisplayName] = useState(initial?.displayName ?? '')
   const [providerType, setProviderType] = useState(initial?.providerType || 'custom')
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
@@ -871,7 +1122,7 @@ export function CustomModelForm({
   const shownError = fieldError || error
 
   const oauthStatus = oauthLogin?.status ?? null
-  const oauthExpiry = oauthExpiryText(oauthStatus?.expires_at)
+  const oauthExpiry = oauthExpiryText(oauthStatus?.expires_at, t)
   /** 折叠态摘要：一眼看清该实例是否走 OAuth / 是否已登录（未配置时视觉负担最小） */
   const oauthSummary = oauthStatus?.logged_in
     ? TXT.oauthSummaryLoggedIn
@@ -1241,6 +1492,7 @@ export function ModelsPage({
   initialView?: ModelsView
 }) {
   const { t } = useLanguage()
+  const TXT = makeTXT(t)
   const [currentModel, setCurrentModel] = useState('')
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [providersLoading, setProvidersLoading] = useState(true)
@@ -1821,6 +2073,24 @@ export function ModelsPage({
       // 表单字段无需手工清空：进入实例后表单卸载（formOpen=false），下次展开是全新一份
       setFeedback({ ok: true, msg: TXT.createSuccess })
       openProviderView(created?.id || id, configured)
+      // 保存成功后自动拉一次模型列表（sync=false：静默合并，不删既有条目）。
+      // 此前自定义实例一律不自动拉取，用户建完中转站面对空列表，只能逐个手敲 id；
+      // 拉取失败不阻塞创建结果，手动「刷新」与「+ 手动添加」仍是兜底路径。
+      const newId = created?.id || id
+      refreshProviderModels(newId, v.baseUrl, false)
+        .then(res => {
+          const models = res?.models
+          if (!Array.isArray(models) || models.length === 0) return
+          setDetectedModels(models)
+          saveDetectedModels(newId, models)
+          setFeedback({
+            ok: true,
+            msg: `${TXT.createSuccess}，已拉取 ${models.length} 个模型（来自中转站目录，可能含不可用条目）`,
+          })
+        })
+        .catch(() => {
+          /* 静默：失败不打扰，手动「刷新」入口仍在 */
+        })
     } catch (e: any) {
       setFormError(friendlyIpcError(e, TXT.createFail))
     } finally {
@@ -2036,8 +2306,8 @@ export function ModelsPage({
         .catch(() => {})
       setFeedback({ ok: true, msg: n > 0 ? TXT.clearModelsSuccess(n) : TXT.clearModelsNone })
       // 清理后自动尝试拉取新地址的模型列表（key 有效时一步到位，失败由刷新区提示）。
-      // Anthropic 协议没有 /v1/models：不发起必然失败的拉取（该实例也不展示「刷新」）。
-      if (!isAnthropicInstance) refreshModels()
+      // 与协议无关：anthropic 兼容中转同样走 {base}/models，实测可用。
+      refreshModels()
     } catch (e: any) {
       setFeedback({ ok: false, msg: friendlyIpcError(e, TXT.clearModelsFail) })
     } finally {
@@ -2423,9 +2693,9 @@ export function ModelsPage({
       <aside className="models-rail">
         <div className="models-rail-scroll">
           <div className="models-rail-group">
-            <div className="models-rail-group-title">模型提供商</div>
+            <div className="models-rail-group-title">{TXT.railGroupProviders}</div>
             {providersLoading ? (
-              <div className="models-rail-note">正在加载服务商…</div>
+              <div className="models-rail-note">{TXT.railLoadingProviders}</div>
             ) : (
               <div className="models-rail-list">
                 {railProviders.map(p => {
@@ -2458,7 +2728,7 @@ export function ModelsPage({
               旧版 `custom` 段不单独占条目：创建实例时后端自动接管迁移，其配置作为
               创建态预填数据出现。条目只显示用户填写的名称（段 id 只作 title 调试信息）。 */}
           <div className="models-rail-group">
-            <div className="models-rail-group-title">自定义模型</div>
+            <div className="models-rail-group-title">{TXT.railGroupCustom}</div>
             <div className="models-rail-list">
               <button
                 type="button"
@@ -2497,7 +2767,7 @@ export function ModelsPage({
                     >
                       <span
                         className={`models-rail-dot${isConfigured ? ' is-on' : ''}`}
-                        title={isConfigured ? '已配置密钥' : '未配置密钥（无鉴权端点可留空）'}
+                        title={isConfigured ? TXT.keyConfigured : TXT.keyNotConfigured}
                         aria-hidden="true"
                       />
                       <span className="models-rail-name">{displayName}</span>
@@ -2509,8 +2779,8 @@ export function ModelsPage({
                         setRemoveError('')
                         setPendingRemove(p)
                       }}
-                      title={`删除「${displayName}」`}
-                      aria-label={`删除「${displayName}」`}
+                      title={TXT.removeInstanceLabel(displayName)}
+                      aria-label={TXT.removeInstanceLabel(displayName)}
                     >
                       <IconTrash2 size={13} />
                     </button>
@@ -2524,7 +2794,7 @@ export function ModelsPage({
               避免用户被引导到云厂商列表里找一个本机服务。 */}
           {!providersLoading && localProviders.length > 0 && (
             <div className="models-rail-group">
-              <div className="models-rail-group-title">本地模型</div>
+              <div className="models-rail-group-title">{TXT.railGroupLocal}</div>
               <div className="models-rail-list">
                 {localProviders.map(p => {
                   const isActive = activeView === 'provider' && p.id === provider
@@ -2557,7 +2827,7 @@ export function ModelsPage({
           )}
 
           <div className="models-rail-group">
-            <div className="models-rail-group-title">自动化增强</div>
+            <div className="models-rail-group-title">{TXT.railGroupAutomation}</div>
             <div className="models-rail-list">
               <button
                 type="button"
@@ -2570,7 +2840,7 @@ export function ModelsPage({
                   .join(' ')}
                 onClick={() => setActiveView('jev')}
               >
-                <span className="models-rail-name">增强判断模型</span>
+                <span className="models-rail-name">{TXT.railGroupEnhancedJudge}</span>
               </button>
             </div>
           </div>
@@ -2588,7 +2858,7 @@ export function ModelsPage({
               .join(' ')}
             onClick={() => setActiveView('capabilities')}
           >
-            图像音频模型
+            {TXT.toolbarCapabilities}
           </button>
           <button
             type="button"
@@ -2597,7 +2867,7 @@ export function ModelsPage({
               .join(' ')}
             onClick={() => setActiveView('agents')}
           >
-            子智能体模型
+            {TXT.toolbarAgents}
           </button>
         </div>
         {loadingView}
@@ -2628,7 +2898,7 @@ export function ModelsPage({
                 <>
                   {/* 自定义实例：名称 / 协议 / 密钥 / 地址由同一套表单编辑（CustomModelForm）；
                       官方与本地服务商保持原有只读展示与密钥栏 */}
-                  <Section title={isCustom ? TXT.customSectionTitle : '模型服务商'}>
+                  <Section title={isCustom ? TXT.customSectionTitle : TXT.providerSectionTitle}>
                     {/* 自定义模型：这一整行状态条不存在——名称/协议由下方表单承担（可编辑），
                         密钥状态由密钥字段自身的占位提示表达，动作（连接测试 / 清除密钥）也各自
                         归位到表单里。官方与本地服务商保留原有的「当前服务商」标题条。 */}
@@ -2639,7 +2909,7 @@ export function ModelsPage({
                         )}
                         <span className="models-provider-current-name">{providerLabel}</span>
                         <span className="models-provider-current-hint">
-                          {hasKey ? '已配置密钥' : '尚未配置密钥'}
+                          {hasKey ? TXT.keyConfigured : TXT.keyNotConfiguredShort}
                         </span>
                       </div>
                     )}
@@ -2667,8 +2937,10 @@ export function ModelsPage({
                           setApiKey(v.apiKey)
                           setBaseUrl(v.baseUrl)
                         }}
-                        /* Anthropic 协议没有 /v1/models：不提供「连接测试」（不给必然失败的入口） */
-                        onTest={isAnthropicInstance ? undefined : detectModels}
+                        /* 连接探测与协议无关：GET {base}/models + 按段类型发鉴权头。
+                           曾以「Anthropic 协议没有 /v1/models」为由对 anthropic 实例不传
+                           onTest，等于把入口关掉；实测中转站两条路由均返 200。 */
+                        onTest={detectModels}
                         testing={detecting}
                         onClearKey={hasKey ? handleClearKey : undefined}
                         clearingKey={clearingKey}
@@ -2724,7 +2996,9 @@ export function ModelsPage({
                                   {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                                 </button>
                               </div>
-                              {/* Anthropic 协议没有 /v1/models：不摆一个必然失败的按钮 */}
+                              {/* 注：本分支 isCustom 恒 false，isAnthropicInstance 永假——
+                                  官方/本地服务商的连接入口由 CustomModelForm 的 onTest 承担，
+                                  此处保留原有结构，不为官方服务商新增按钮 */}
                               {!isAnthropicInstance && (
                                 <Button
                                   variant="primary"
@@ -2800,7 +3074,7 @@ export function ModelsPage({
                     )}
 
                     {isAnthropicInstance && (
-                      <div className="text-caption hint-text">{TXT.anthropicNoModelList}</div>
+                      <div className="text-caption hint-text">{TXT.anthropicModelListHint}</div>
                     )}
 
                     {(isCustom || isLocal) && baseUrl.trim() !== loadedBaseUrl.trim() && (
@@ -2848,14 +3122,12 @@ export function ModelsPage({
                   <Section
                     title={TXT.modelListTitle}
                     description={
-                      currentModel
-                        ? TXT.currentModelOf(currentModel)
-                        : '选择一个模型作为默认使用（点击行即可切换）。'
+                      currentModel ? TXT.currentModelOf(currentModel) : TXT.modelListDescEmpty
                     }
                     actions={
                       <>
-                        {/* Anthropic 实例只能手动填模型名：这条入口是本页唯一的获取途径，
-                            因此用强调态呈现，文案也直说「模型名」 */}
+                        {/* 手动添加对所有自定义实例开放；anthropic 实例用强调态呈现，
+                             因为它的模型 id 多为中转自定义别名，未必在 /v1/models 里 */}
                         <button
                           type="button"
                           className={[
@@ -2872,18 +3144,19 @@ export function ModelsPage({
                         >
                           {isAnthropicInstance ? TXT.addModelBtnManual : TXT.addModelBtn}
                         </button>
-                        {!isAnthropicInstance && (
-                          <button
-                            type="button"
-                            className="models-refresh-btn"
-                            onClick={refreshModels}
-                            disabled={refreshing}
-                            title={TXT.refreshTitle}
-                          >
-                            <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
-                            {refreshing ? TXT.refreshing : TXT.refreshBtn}
-                          </button>
-                        )}
+                        {/* 刷新入口对所有自定义实例开放（含 anthropic 兼容中转）：
+                            后端 fetch_provider_models 与协议无关；曾按协议类型隐藏按钮，
+                            等于关掉唯一批量入口，用户只能逐个手敲模型 id */}
+                        <button
+                          type="button"
+                          className="models-refresh-btn"
+                          onClick={refreshModels}
+                          disabled={refreshing}
+                          title={TXT.refreshTitle}
+                        >
+                          <IconRefresh size={13} className={refreshing ? 'is-spinning' : ''} />
+                          {refreshing ? TXT.refreshing : TXT.refreshBtn}
+                        </button>
                       </>
                     }
                   >
@@ -2993,7 +3266,7 @@ export function ModelsPage({
                         )
                       }
                       if (detecting) {
-                        return <div className="models-empty">正在连接并获取模型列表…</div>
+                        return <div className="models-empty">{TXT.detectingModels}</div>
                       }
                       if (filtered.length === 0) {
                         return <div className="models-empty">{TXT.emptyFiltered(filterInput)}</div>
@@ -3041,7 +3314,7 @@ export function ModelsPage({
                                   <div className="model-list-name">
                                     {name}
                                     {provider === 'opencode-go' && (
-                                      <span className="model-go-badge" title="OpenCode Go 网关">
+                                      <span className="model-go-badge" title={TXT.goGateway}>
                                         GO
                                       </span>
                                     )}
@@ -3062,11 +3335,15 @@ export function ModelsPage({
                                       type="button"
                                       className={`model-vision-toggle${caps.vision ? ' is-on' : ''}`}
                                       aria-pressed={caps.vision}
-                                      aria-label={`视觉输入能力：${caps.vision ? '已开启' : '未开启'}`}
+                                      aria-label={TXT.visionToggleAria(
+                                        caps.vision
+                                          ? t('models.capStateOn')
+                                          : t('models.capStateOff'),
+                                      )}
                                       title={
                                         caps.vision
-                                          ? '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）'
-                                          : '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）'
+                                          ? TXT.visionToggleTitleOn
+                                          : TXT.visionToggleTitleOff
                                       }
                                       disabled={visionToggling === name}
                                       onClick={e => {
@@ -3077,7 +3354,7 @@ export function ModelsPage({
                                       <IconEye size={12} />
                                     </button>
                                     {caps.audio && (
-                                      <span className="model-badge" title="支持语音">
+                                      <span className="model-badge" title={TXT.audioSupported}>
                                         <IconMic size={12} />
                                       </span>
                                     )}
@@ -3158,11 +3435,13 @@ export function ModelsPage({
                                   type="button"
                                   className={`model-vision-toggle${rowVision(m) ? ' is-on' : ''}`}
                                   aria-pressed={rowVision(m)}
-                                  aria-label={`视觉输入能力：${rowVision(m) ? '已开启' : '未开启'}`}
+                                  aria-label={TXT.visionToggleAria(
+                                    rowVision(m) ? t('models.capStateOn') : t('models.capStateOff'),
+                                  )}
                                   title={
                                     rowVision(m)
-                                      ? '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）'
-                                      : '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）'
+                                      ? TXT.visionToggleTitleOn
+                                      : TXT.visionToggleTitleOff
                                   }
                                   disabled={visionToggling === m}
                                   onClick={e => {
@@ -3216,8 +3495,8 @@ export function ModelsPage({
                                   e.stopPropagation()
                                   removeModel(m)
                                 }}
-                                title="从本地列表移除"
-                                aria-label="从本地列表移除"
+                                title={TXT.removeFromLocalList}
+                                aria-label={TXT.removeFromLocalList}
                               >
                                 <IconTrash2 size={12} />
                               </button>
@@ -3231,8 +3510,8 @@ export function ModelsPage({
                       <div className="models-local-ctx">
                         <FormRow
                           stacked
-                          label="本地模型默认上下文（K tokens）"
-                          hint="为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。"
+                          label={TXT.localCtxLabel}
+                          hint={TXT.localCtxHint}
                           control={
                             <input
                               className="compact-input input-num"
@@ -3253,7 +3532,7 @@ export function ModelsPage({
                               min={1024}
                               max={10000000}
                               step={1024}
-                              placeholder="例如 128"
+                              placeholder={TXT.localCtxPlaceholder}
                             />
                           }
                         />
@@ -3270,15 +3549,15 @@ export function ModelsPage({
                 <div className="models-local-add">
                   <FormRow
                     stacked
-                    label="添加本地模型"
-                    hint="手动输入模型名称并回车，随后会在上方列表出现（可设置上下文并切换）。"
+                    label={TXT.addLocalModelLabel}
+                    hint={TXT.addLocalModelHint}
                     control={
                       <div className="compact-input-row input-row-spaced">
                         <input
                           className="compact-input input-flex"
                           value={inputVal}
                           onChange={e => setInputVal(e.target.value)}
-                          placeholder="例如 qwen2.5:7b"
+                          placeholder={TXT.addLocalModelPlaceholder}
                           onKeyDown={e => {
                             if (e.key === 'Enter') addModel()
                           }}
@@ -3289,7 +3568,7 @@ export function ModelsPage({
                           onClick={addModel}
                           disabled={!inputVal.trim()}
                         >
-                          添加
+                          {TXT.addModelConfirm}
                         </Button>
                       </div>
                     }
@@ -3301,10 +3580,7 @@ export function ModelsPage({
               {activeView === 'capabilities' && (
                 <>
                   {/* ── 云端图像理解模型 ── */}
-                  <Section
-                    title="图像理解"
-                    description="配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标，自定义 / 中转模型即使未探测到能力也可以手动选择。"
-                  >
+                  <Section title={TXT.visionSection} description={TXT.visionSectionDesc}>
                     <VisionModelSelect
                       value={visionModel}
                       provider={visionProvider}
@@ -3320,12 +3596,12 @@ export function ModelsPage({
                           await setCapabilityBinding('vision', modelId, selectedProvider)
                           setVisionModel(modelId)
                           setVisionProvider(selectedProvider)
-                          setVisionFeedback({ ok: true, msg: '图像理解模型已保存' })
+                          setVisionFeedback({ ok: true, msg: TXT.visionSaved })
                           setTimeout(() => setVisionFeedback(null), 2000)
                         } catch (e: any) {
                           setVisionFeedback({
                             ok: false,
-                            msg: friendlyIpcError(e, '保存失败'),
+                            msg: friendlyIpcError(e, TXT.saveFailed),
                           })
                         } finally {
                           setVisionSaving(false)
@@ -3347,12 +3623,12 @@ export function ModelsPage({
                       className={`text-caption${!visionModel && leaderVisionModelId && !leaderSupportsVision ? ' text-danger' : ''}`}
                     >
                       {visionModel
-                        ? `已显式指定：图像统一由 ${visionModel} 理解（不再跟随 Leader；换 Leader 不会自动改这里）`
+                        ? TXT.visionExplicitPath(visionModel)
                         : leaderVisionModelId
                           ? leaderSupportsVision
-                            ? `跟随 Leader：图像由当前 Leader 模型 ${leaderVisionModelId} 直接理解，无需额外配置`
-                            : `⚠ 当前 Leader 模型 ${leaderVisionModelId} 不支持图像理解 —— 截图/图像识别类操作将不可用。请在此指定一个图像理解模型，或把 Leader 换成支持视觉的模型。`
-                          : '跟随 Leader：图像由当前 Leader 模型直接理解（尚未检测到 Leader 模型信息）'}
+                            ? TXT.visionFollowOk(leaderVisionModelId)
+                            : TXT.visionFollowWarn(leaderVisionModelId)
+                          : TXT.visionFollowUnknown}
                     </div>
                   </Section>
 
@@ -3449,26 +3725,26 @@ export function ModelsPage({
                   </Section>
 
                   {/* ── 本地视觉模型（OCR / UI 元素检测）：随应用自动下载 ── */}
-                  <Section
-                    title="本地视觉模型（OCR / UI 检测）"
-                    description="屏幕理解所需的本地 OCR 与界面元素检测模型。随应用自动下载，无需手动操作；仅当缺少文件时需要处理。"
-                  >
+                  <Section title={TXT.localVisionSection} description={TXT.localVisionSectionDesc}>
                     {visionDl.status && (
                       <div className="models-dl-badges">
                         <span
                           className={`model-badge ${visionDl.status.ocrReady ? 'model-badge--ok' : ''}`}
                         >
-                          {visionDl.status.ocrReady ? 'OCR 已就绪' : 'OCR 未就绪'}
+                          {visionDl.status.ocrReady ? TXT.ocrReady : TXT.ocrNotReady}
                         </span>
                         <span
                           className={`model-badge ${visionDl.status.yoloReady ? 'model-badge--ok' : ''}`}
                         >
-                          {visionDl.status.yoloReady ? 'UI 检测已就绪' : 'UI 检测未启用'}
+                          {visionDl.status.yoloReady ? TXT.yoloReady : TXT.yoloDisabled}
                         </span>
                       </div>
                     )}
                     {visionDl.status?.dir && (
-                      <div className="text-caption hint-text">模型目录：{visionDl.status.dir}</div>
+                      <div className="text-caption hint-text">
+                        {TXT.modelDirLabel}
+                        {visionDl.status.dir}
+                      </div>
                     )}
 
                     {visionDl.downloading || visionDl.progress || visionDl.status?.downloading ? (
@@ -3490,30 +3766,31 @@ export function ModelsPage({
                             </div>
                           </>
                         )}
-                        <div className="text-caption hint-text">
-                          正在后台自动下载，下载完成即可使用屏幕理解…
-                        </div>
+                        <div className="text-caption hint-text">{TXT.downloadingHint}</div>
                       </>
                     ) : visionDl.error ? (
                       <>
-                        <div className="detect-error">下载失败：{visionDl.error}</div>
+                        <div className="detect-error">
+                          {TXT.downloadFailed}
+                          {visionDl.error}
+                        </div>
                         <Button
                           variant="primary"
                           size="sm"
                           style={{ marginTop: 8 }}
                           onClick={visionDl.retry}
                         >
-                          重试下载
+                          {TXT.retryDownload}
                         </Button>
                       </>
                     ) : visionDl.status === null ? (
-                      <div className="text-caption hint-text">检测中…</div>
+                      <div className="text-caption hint-text">{TXT.detecting}</div>
                     ) : visionDl.status.missing.length > 0 ? (
                       <>
                         <div className="text-caption hint-text">
                           {visionDl.status.ocrReady
-                            ? `缺少 ${visionDl.status.missing.join('、')}（可选，仅影响 UI 元素检测）`
-                            : `缺少 ${visionDl.status.missing.length} 个模型文件，下载后即可使用屏幕理解`}
+                            ? TXT.missingOptional(visionDl.status.missing.join('、'))
+                            : TXT.missingRequired(visionDl.status.missing.length)}
                         </div>
                         <Button
                           variant="primary"
@@ -3521,27 +3798,22 @@ export function ModelsPage({
                           style={{ marginTop: 8 }}
                           onClick={visionDl.retry}
                         >
-                          立即下载
+                          {TXT.downloadNow}
                         </Button>
                       </>
                     ) : (
-                      <div className="text-caption hint-text">
-                        屏幕理解（OCR + UI 元素检测）已就绪
-                      </div>
+                      <div className="text-caption hint-text">{TXT.screenReady}</div>
                     )}
                   </Section>
 
                   {/* ── 语音输入（STT）：云端优先，本地 sherpa-onnx 兜底 ── */}
-                  <Section
-                    title="语音输入"
-                    description="在输入框用语音转文字。配置云端识别模型后优先使用云端识别；未配置则使用本地离线识别（中文优化，无需联网）。"
-                  >
+                  <Section title={TXT.sttSection} description={TXT.sttSectionDesc}>
                     <VisionModelSelect
                       value={sttModel}
                       provider={sttProvider}
                       models={allModels}
                       filterCapability="audio"
-                      placeholder="未配置（使用本地识别）"
+                      placeholder={TXT.sttPlaceholder}
                       showVisionIcons={false}
                       menuUp
                       onChange={async (modelId, selectedProvider) => {
@@ -3551,11 +3823,11 @@ export function ModelsPage({
                           await setCapabilityBinding('stt', modelId, selectedProvider)
                           setSttModel(modelId)
                           setSttProvider(selectedProvider)
-                          setSttFeedback({ ok: true, msg: '云端识别模型已保存' })
+                          setSttFeedback({ ok: true, msg: TXT.sttSaved })
                           setTimeout(() => setSttFeedback(null), 2000)
                           probeStt()
                         } catch (e: any) {
-                          setSttFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                          setSttFeedback({ ok: false, msg: friendlyIpcError(e, TXT.saveFailed) })
                         } finally {
                           setSttSaving(false)
                         }
@@ -3575,25 +3847,23 @@ export function ModelsPage({
                           {!sttLocalStatus.available && (
                             <div className="text-caption hint-text models-warn">
                               <IconAlertTriangle size={12} className="icon-prefix" />
-                              未检测到麦克风，连接麦克风后即可使用语音输入
+                              {TXT.sttNoMic}
                             </div>
                           )}
                           {!sttLocalStatus.model_dir && (
                             <div className="text-caption hint-text">
-                              本地模型未下载（云端识别已可用，仅离线识别时需要）
+                              {TXT.sttLocalModelMissingCloudOk}
                             </div>
                           )}
                         </>
                       ) : sttLocalStatus.reason === 'no_microphone' ? (
                         <div className="text-caption hint-text models-warn">
                           <IconAlertTriangle size={12} className="icon-prefix" />
-                          未检测到麦克风，连接麦克风后即可使用语音输入
+                          {TXT.sttNoMic}
                         </div>
                       ) : sttLocalStatus.reason?.startsWith('model_missing') ? (
                         <div>
-                          <div className="text-caption hint-text">
-                            下载语音模型（约 250 MB）即可开始本地语音输入
-                          </div>
+                          <div className="text-caption hint-text">{TXT.sttDownloadHint}</div>
                           {sttDl.progress && (
                             <>
                               <div className="stt-dl-progress">
@@ -3610,7 +3880,10 @@ export function ModelsPage({
                             </>
                           )}
                           {sttDl.error && (
-                            <div className="detect-error">下载失败：{sttDl.error}</div>
+                            <div className="detect-error">
+                              {TXT.downloadFailed}
+                              {sttDl.error}
+                            </div>
                           )}
                           <Button
                             variant="primary"
@@ -3619,22 +3892,19 @@ export function ModelsPage({
                             loading={sttDl.downloading}
                             onClick={sttDl.start}
                           >
-                            {sttDl.error ? '重试下载' : '下载语音模型'}
+                            {sttDl.error ? TXT.retryDownload : TXT.downloadVoiceModel}
                           </Button>
                         </div>
                       ) : null)}
                   </Section>
 
                   {/* ── 文字转语音（TTS） ── */}
-                  <Section
-                    title="文字转语音（TTS）"
-                    description="配置文字转语音模型，用于 AI 回复的语音朗读，支持 OpenAI 兼容的 TTS 服务；留空表示不使用朗读功能。"
-                  >
+                  <Section title={TXT.ttsSection} description={TXT.ttsSectionDesc}>
                     <VisionModelSelect
                       value={ttsModel}
                       provider={ttsProvider}
                       models={allModels}
-                      placeholder="未配置（不使用朗读）"
+                      placeholder={TXT.ttsPlaceholder}
                       showVisionIcons={false}
                       menuUp
                       onChange={async (modelId, selectedProvider) => {
@@ -3644,10 +3914,10 @@ export function ModelsPage({
                           await setCapabilityBinding('tts', modelId, selectedProvider)
                           setTtsModel(modelId)
                           setTtsProvider(selectedProvider)
-                          setTtsFeedback({ ok: true, msg: 'TTS 模型已保存' })
+                          setTtsFeedback({ ok: true, msg: TXT.ttsSaved })
                           setTimeout(() => setTtsFeedback(null), 2000)
                         } catch (e: any) {
-                          setTtsFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                          setTtsFeedback({ ok: false, msg: friendlyIpcError(e, TXT.saveFailed) })
                         } finally {
                           setTtsSaving(false)
                         }
@@ -3664,15 +3934,12 @@ export function ModelsPage({
                   </Section>
 
                   {/* ── 语音克隆 ── */}
-                  <Section
-                    title="语音克隆"
-                    description="配置语音克隆模型（云端克隆 API），配置后语音克隆工具可用；留空表示不使用语音克隆。"
-                  >
+                  <Section title={TXT.voiceSection} description={TXT.voiceSectionDesc}>
                     <VisionModelSelect
                       value={voiceModel}
                       provider={voiceProvider}
                       models={allModels}
-                      placeholder="未配置（不使用）"
+                      placeholder={TXT.voicePlaceholder}
                       showVisionIcons={false}
                       menuUp
                       onChange={async (modelId, selectedProvider) => {
@@ -3682,10 +3949,10 @@ export function ModelsPage({
                           await setCapabilityBinding('voice', modelId, selectedProvider)
                           setVoiceModel(modelId)
                           setVoiceProvider(selectedProvider)
-                          setVoiceFeedback({ ok: true, msg: '语音克隆模型已保存' })
+                          setVoiceFeedback({ ok: true, msg: TXT.voiceSaved })
                           setTimeout(() => setVoiceFeedback(null), 2000)
                         } catch (e: any) {
-                          setVoiceFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
+                          setVoiceFeedback({ ok: false, msg: friendlyIpcError(e, TXT.saveFailed) })
                         } finally {
                           setVoiceSaving(false)
                         }
@@ -3706,16 +3973,13 @@ export function ModelsPage({
               {/* ═══════════ 子智能体模型：ExecAgent 子任务模型（原详情区 Exec 配置块迁移至此） ═══════════ */}
               {activeView === 'agents' && (
                 <>
-                  <Section
-                    title="子任务执行模型（Exec）"
-                    description="ExecAgent 由 Leader 模式下派发、执行子任务时使用的模型。留空则跟随全局默认模型。"
-                  >
+                  <Section title={TXT.execSection} description={TXT.execSectionDesc}>
                     <VisionModelSelect
                       value={agentModels.exec}
                       models={allModels}
                       onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
                       t={t}
-                      placeholder="跟随默认模型"
+                      placeholder={TXT.execFollowDefault}
                     />
                     {agentFeedback && (
                       <div

@@ -21,7 +21,7 @@ import { ModelsPage } from './ModelsPage'
  * - 「+ 新建」只有四个输入项：自定义名称 / 模型提供商 / 模型 API Key / 模型 API URL；
  * - 名称与 URL 为空必须当场拦下（不发 IPC），错误文案就是字段名本身；
  * - 保存走 create_custom_provider 真正落盘，成功后实例立刻出现在左栏（不是只改前端状态）；
- * - Anthropic 兼容实例没有 /v1/models：不出现「连接」，改为手动填模型名 + 一行如实说明。
+ * - Anthropic 兼容实例同样有「连接」/「刷新」入口（后端与协议无关），手动添加是兜底。
  */
 vi.mock('../lib/api', () => ({
   getCurrentConfig: vi.fn(),
@@ -397,7 +397,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     expect(customGroup?.items.some(i => i.includes('+ 新建'))).toBe(false)
   })
 
-  it('Anthropic 兼容实例：不出现「连接」，改为手动填模型名 + 一行如实说明', async () => {
+  it('Anthropic 兼容实例：连接/刷新入口齐全，手动添加作为兜底', async () => {
     providerList = [
       ...providerList,
       provider({
@@ -412,10 +412,12 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     render(<ModelsPage onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: /^Claude 中转$/ }))
 
-    expect(
-      await screen.findByText('Anthropic 协议不支持自动获取模型列表，请手动填写模型名'),
-    ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '连接测试' })).not.toBeInTheDocument()
+    // 曾以「Anthropic 协议没有 /v1/models」为由隐藏连接与刷新，只留手动填模型名；
+    // 后端 fetch_provider_models 与协议无关（{base}/models + x-api-key），实测可用，
+    // 故入口必须齐全。手动添加保留为兜底（中转自定义别名未必出现在列表里）。
+    expect(await screen.findByText(/点「刷新」从中转站拉取模型列表/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '连接测试' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '+ 手动添加模型名' })).toBeInTheDocument()
     // 名称不再是只读展示：同一套表单里是可编辑输入框，且预填当前实例名称
     const nameInput = screen.getByLabelText('自定义名称')

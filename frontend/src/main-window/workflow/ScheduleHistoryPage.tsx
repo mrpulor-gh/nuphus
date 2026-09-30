@@ -10,19 +10,70 @@ import {
   type ScheduleRunRecord,
 } from '../lib/api'
 import './schedule-history.css'
+import { useLanguage } from '../../locales'
 
 interface ScheduleHistoryPageProps {
   onOpenReplay: (workflowId: string, runId: string) => void
 }
 
-function statusText(status: ScheduleRunRecord['status']): string {
+type TFunc = (key: string, ...args: string[]) => string
+
+/** 词条取值：字典命中 → 用字典文案；未命中 → 用中文兜底。 */
+const tr = (t: TFunc, key: string, fallback: string): string => {
+  const v = t(key)
+  return v === key ? fallback : v
+}
+
+/** 页内文案表：按当前语言生成，键名稳定。 */
+function makeTXT(t: TFunc) {
+  return {
+    heading: tr(t, 'schedule.heading', '定时运行历史'),
+    refresh: tr(t, 'schedule.refresh', '刷新'),
+    clearHistory: tr(t, 'schedule.clearHistory', '清理历史'),
+    clearConfirm: tr(
+      t,
+      'schedule.clearConfirm',
+      '删除当前筛选条件下的全部定时运行历史？此操作不可撤销。',
+    ),
+    filterWorkflow: tr(t, 'schedule.filterWorkflow', '工作流'),
+    allWorkflows: tr(t, 'schedule.allWorkflows', '全部工作流'),
+    filterStatus: tr(t, 'schedule.filterStatus', '状态'),
+    allStatuses: tr(t, 'schedule.allStatuses', '全部状态'),
+    statusRunning: tr(t, 'schedule.statusRunning', '运行中'),
+    statusSuccess: tr(t, 'schedule.statusSuccess', '成功'),
+    statusError: tr(t, 'schedule.statusError', '失败'),
+    statusCancelled: tr(t, 'schedule.statusCancelled', '已取消'),
+    statusPaused: tr(t, 'schedule.statusPaused', '已暂停'),
+    fromDate: tr(t, 'schedule.fromDate', '开始日期'),
+    toDate: tr(t, 'schedule.toDate', '结束日期'),
+    loading: tr(t, 'schedule.loading', '加载中...'),
+    empty: tr(t, 'schedule.empty', '暂无符合条件的定时运行记录'),
+    colWorkflow: tr(t, 'schedule.colWorkflow', '工作流'),
+    colStartedAt: tr(t, 'schedule.colStartedAt', '运行时间'),
+    colDuration: tr(t, 'schedule.colDuration', '耗时'),
+    colStatus: tr(t, 'schedule.colStatus', '状态'),
+    colResult: tr(t, 'schedule.colResult', '结果'),
+    viewReplay: tr(t, 'schedule.viewReplay', '查看回放'),
+    prevPage: tr(t, 'schedule.prevPage', '上一页'),
+    nextPage: tr(t, 'schedule.nextPage', '下一页'),
+    errNoResponse: tr(t, 'schedule.errNoResponse', '读取定时运行历史失败：后端无响应'),
+    running: tr(t, 'schedule.running', '运行中'),
+    done: tr(t, 'schedule.done', '执行完成'),
+  }
+}
+
+function statusText(status: ScheduleRunRecord['status'], TXT: ReturnType<typeof makeTXT>): string {
   if (typeof status === 'string') {
     return (
-      { Running: '运行中', Success: '成功', Cancelled: '已取消', Paused: '已暂停' }[status] ??
-      status
+      {
+        Running: TXT.statusRunning,
+        Success: TXT.statusSuccess,
+        Cancelled: TXT.statusCancelled,
+        Paused: TXT.statusPaused,
+      }[status] ?? status
     )
   }
-  return '失败'
+  return TXT.statusError
 }
 
 function statusClass(status: ScheduleRunRecord['status']): string {
@@ -30,23 +81,25 @@ function statusClass(status: ScheduleRunRecord['status']): string {
   return status.toLowerCase()
 }
 
-function duration(record: ScheduleRunRecord): string {
-  if (!record.finished_at) return '运行中'
+function duration(record: ScheduleRunRecord, TXT: ReturnType<typeof makeTXT>): string {
+  if (!record.finished_at) return TXT.running
   const ms = new Date(record.finished_at).getTime() - new Date(record.started_at).getTime()
   if (!Number.isFinite(ms) || ms < 0) return '-'
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
 }
 
-function resultText(record: ScheduleRunRecord): string {
+function resultText(record: ScheduleRunRecord, TXT: ReturnType<typeof makeTXT>): string {
   if (record.error) return record.error
   const last = [...(record.steps ?? [])].reverse().find(step => step.output_summary)
   return (
     last?.output_summary ??
-    (typeof record.status === 'string' && record.status === 'Success' ? '执行完成' : '-')
+    (typeof record.status === 'string' && record.status === 'Success' ? TXT.done : '-')
   )
 }
 
 export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) {
+  const { t } = useLanguage()
+  const TXT = makeTXT(t)
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([])
   const [runs, setRuns] = useState<ScheduleRunRecord[]>([])
   const [total, setTotal] = useState(0)
@@ -75,7 +128,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
     setError(null)
     try {
       const result = await wfScheduleHistoryList(filter)
-      if (!result) throw new Error('读取定时运行历史失败：后端无响应')
+      if (!result) throw new Error(TXT.errNoResponse)
       setRuns(result.runs)
       setTotal(result.total)
     } catch (reason) {
@@ -96,8 +149,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
   }, [filter])
 
   const clearHistory = async () => {
-    if (total === 0 || !window.confirm('删除当前筛选条件下的全部定时运行历史？此操作不可撤销。'))
-      return
+    if (total === 0 || !window.confirm(TXT.clearConfirm)) return
     setError(null)
     try {
       await wfScheduleHistoryDelete(filter)
@@ -113,11 +165,11 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
       <div className="schedule-history-toolbar">
         <div className="schedule-history-heading">
           <IconClock3 size={16} />
-          <span>定时运行历史</span>
+          <span>{TXT.heading}</span>
         </div>
         <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading}>
           <IconRefresh size={13} />
-          刷新
+          {TXT.refresh}
         </Button>
         <Button
           variant="ghost"
@@ -126,12 +178,12 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
           disabled={loading || total === 0}
         >
           <IconTrash2 size={13} />
-          清理历史
+          {TXT.clearHistory}
         </Button>
       </div>
       <div className="schedule-history-filters">
         <label>
-          工作流
+          {TXT.filterWorkflow}
           <select
             value={workflowId}
             onChange={event => {
@@ -139,7 +191,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
               setPage(0)
             }}
           >
-            <option value="">全部工作流</option>
+            <option value="">{TXT.allWorkflows}</option>
             {workflows.map(item => (
               <option key={item.id} value={item.id}>
                 {item.title}
@@ -148,7 +200,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
           </select>
         </label>
         <label>
-          状态
+          {TXT.filterStatus}
           <select
             value={status}
             onChange={event => {
@@ -156,16 +208,16 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
               setPage(0)
             }}
           >
-            <option value="">全部状态</option>
-            <option value="success">成功</option>
-            <option value="error">失败</option>
-            <option value="running">运行中</option>
-            <option value="cancelled">已取消</option>
-            <option value="paused">已暂停</option>
+            <option value="">{TXT.allStatuses}</option>
+            <option value="success">{TXT.statusSuccess}</option>
+            <option value="error">{TXT.statusError}</option>
+            <option value="running">{TXT.statusRunning}</option>
+            <option value="cancelled">{TXT.statusCancelled}</option>
+            <option value="paused">{TXT.statusPaused}</option>
           </select>
         </label>
         <label>
-          开始日期
+          {TXT.fromDate}
           <input
             type="date"
             value={from}
@@ -176,7 +228,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
           />
         </label>
         <label>
-          结束日期
+          {TXT.toDate}
           <input
             type="date"
             value={to}
@@ -189,19 +241,19 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
       </div>
       {error && <div className="schedule-history-error">{error}</div>}
       {loading ? (
-        <div className="schedule-history-empty">加载中...</div>
+        <div className="schedule-history-empty">{TXT.loading}</div>
       ) : runs.length === 0 ? (
-        <div className="schedule-history-empty">暂无符合条件的定时运行记录</div>
+        <div className="schedule-history-empty">{TXT.empty}</div>
       ) : (
         <div className="schedule-history-table-wrap">
           <table className="schedule-history-table">
             <thead>
               <tr>
-                <th>工作流</th>
-                <th>运行时间</th>
-                <th>耗时</th>
-                <th>状态</th>
-                <th>结果</th>
+                <th>{TXT.colWorkflow}</th>
+                <th>{TXT.colStartedAt}</th>
+                <th>{TXT.colDuration}</th>
+                <th>{TXT.colStatus}</th>
+                <th>{TXT.colResult}</th>
                 <th />
               </tr>
             </thead>
@@ -213,14 +265,14 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
                     <small>{run.workflow_id}</small>
                   </td>
                   <td>{new Date(run.started_at).toLocaleString()}</td>
-                  <td>{duration(run)}</td>
+                  <td>{duration(run, TXT)}</td>
                   <td>
                     <span className={`schedule-history-status is-${statusClass(run.status)}`}>
-                      {statusText(run.status)}
+                      {statusText(run.status, TXT)}
                     </span>
                   </td>
-                  <td className="schedule-history-result" title={resultText(run)}>
-                    {resultText(run)}
+                  <td className="schedule-history-result" title={resultText(run, TXT)}>
+                    {resultText(run, TXT)}
                   </td>
                   <td>
                     <Button
@@ -229,7 +281,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
                       onClick={() => onOpenReplay(run.workflow_id, run.run_id)}
                     >
                       <IconExternalLink size={13} />
-                      查看回放
+                      {TXT.viewReplay}
                     </Button>
                   </td>
                 </tr>
@@ -246,7 +298,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
             disabled={page === 0}
             onClick={() => setPage(value => value - 1)}
           >
-            上一页
+            {TXT.prevPage}
           </Button>
           <span>
             {page + 1} / {Math.ceil(total / 50)}
@@ -257,7 +309,7 @@ export function ScheduleHistoryPage({ onOpenReplay }: ScheduleHistoryPageProps) 
             disabled={(page + 1) * 50 >= total}
             onClick={() => setPage(value => value + 1)}
           >
-            下一页
+            {TXT.nextPage}
           </Button>
         </div>
       )}

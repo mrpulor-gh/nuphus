@@ -10,13 +10,16 @@
 #         <VAR>: "<value>"
 #       timeout_ms: 30000       # per-call timeout (default 30s)
 #       auto_start: false       # start on Nuphus launch? (default false)
+#
+# Example:
+#   servers:
+#     github:
+#       command: "npx"
+#       args: ["-y", "@modelcontextprotocol/server-github"]
+#       env:
+#         GITHUB_PERSONAL_ACCESS_TOKEN: "<token>"
+#
+# 当前无已配置的 server。按需在 servers 下添加条目；
+# 接入方式见 skill: mcp-tools（skill_read mcp-tools）。
 
-servers:
-  vscode:
-    # 保持通用写法（不硬编码绝对路径）：代码层在 Windows 下会先直接 spawn，
-    # 找不到程序（如 npx 是 .cmd 非 .exe）时自动用 cmd.exe /c 兜底重试。
-    # 这样对全体用户生效，无论 Node.js 装在什么位置。
-    command: "npx"
-    args: ["-y", "vscode-mcp-server"]
-    timeout_ms: 30000
-    auto_start: false
+servers: {}
