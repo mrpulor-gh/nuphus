@@ -263,14 +263,15 @@ pub fn build_leader_base_prompt(ctx: &LeaderContext) -> String {
 // ═══════════════════════════════════════════════════════
 
 /// Tool schemas section (L1)
+///
+/// 契约：本节只列工具名称（表格）。每个工具的详细参数（入参 / 枚举值 /
+/// 默认值 / 嵌套结构）由同请求的 API `tools` 字段完整下发——prompt 内
+/// 不做任何参数级复制，残缺摘录只会扭曲模型对能力边界的判断。
 pub fn tool_schemas_section(schemas: &str) -> String {
     format!(
-        "## 可用工具\n\
-         调用格式：\n\
-         <tool_call>\n\
-         {{\"name\": \"工具名\", \"arguments\": {{\"参数名\": \"参数值\"}}}}\n\
-         </tool_call>\n\
-         工具列表（详细参数见 API tools 定义）：\n\
+        "## 可用工具\n\n\
+         以下仅列工具名称；每个工具的详细参数（入参 / 枚举值 / 默认值）\
+         由请求的 API tools 字段完整下发，以该字段为准。\n\n\
          {schemas}\n"
     )
 }

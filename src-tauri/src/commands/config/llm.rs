@@ -1831,7 +1831,9 @@ async fn fetch_provider_models(
     // （id/alias 均可命中）。builtin miss 的模型用 OpenRouter 聚合库补齐
     // （context_window + input_modalities → vision/audio/image_generation）。
     // 仍未知的模型保持缺省值，前端隐藏对应徽标（不做字符串启发式猜测）。
-    let agg_entries = if or_agg::has_vendor(provider) {
+    let agg_entries = if or_agg::has_vendor(provider) || is_custom_segment_name(provider) {
+        // 自定义中转 / 自建网关段同样需要目录：它们的 id 无法静态映射 vendor，
+        // 只能靠全目录基名匹配兜底（见 or_agg::lookup_generic）。官方段行为不变。
         or_agg::ensure_cache(&openrouter_cache_path()).await
     } else {
         Vec::new()
@@ -1844,7 +1846,12 @@ async fn fetch_provider_models(
             // 无限定的 find_model 会因迭代顺序命中另一段的元数据。
             let meta = registry
                 .find_model_for_provider(provider_kind.as_str(), &id)
-                .or_else(|| registry.find_model(&id).map(|(_, m)| m));
+                .or_else(|| registry.find_model(&id).map(|(_, m)| m))
+                // tier-2（仅在上面两级精确匹配全 miss 后走）：中转别名
+                // `Claude-Opus-4.6` / `claude_opus_4_6` 归一后命中内置表。
+                // 官方段 id 与内置逐字节相同，永远命中第一级，行为不变。
+                .or_else(|| registry.find_model_for_provider_fuzzy(provider_kind.as_str(), &id))
+                .or_else(|| registry.find_model_fuzzy(&id).map(|(_, m)| m));
             let mut brief = ProviderModelBrief {
                 id,
                 supports_streaming: meta.map(|m| m.supports_streaming).unwrap_or(true),
@@ -1858,6 +1865,22 @@ async fn fetch_provider_models(
             // builtin miss（context_window None）→ OpenRouter 权威库补齐能力
             if brief.context_window.is_none() {
                 if let Some(entry) = or_agg::lookup(&agg_entries, provider, &brief.id) {
+                    brief.context_window = entry.context_length;
+                    if !entry.input_modalities.is_empty() {
+                        brief.supports_vision = entry.input_modalities.iter().any(|m| m == "image");
+                        brief.supports_audio = entry.input_modalities.iter().any(|m| m == "audio");
+                    }
+                    if !entry.output_modalities.is_empty() {
+                        brief.supports_image_generation =
+                            entry.output_modalities.iter().any(|m| m == "image");
+                    }
+                }
+            }
+            // 自定义中转 / 自建网关段：id 无法静态映射 vendor，`lookup` 直接返回 None。
+            // 改走全目录基名匹配（lookup_generic：两侧归一 + 同 vendor 变体去重 +
+            // 跨厂商重名不采信）。官方段不进这条路径，行为不变。
+            if brief.context_window.is_none() && is_custom_segment_name(provider) {
+                if let Some(entry) = or_agg::lookup_generic(&agg_entries, &brief.id) {
                     brief.context_window = entry.context_length;
                     if !entry.input_modalities.is_empty() {
                         brief.supports_vision = entry.input_modalities.iter().any(|m| m == "image");

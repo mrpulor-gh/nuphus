@@ -19,6 +19,7 @@
 //! file, no split-bookkeeping). Network failures degrade silently to the
 //! stale cache / empty vec — never blocks the startup sync path.
 
+use nuphus::config::registry::normalize_model_id;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -328,6 +329,59 @@ pub fn lookup<'a>(
 /// 用模型 id 的基名段在全目录里做「唯一命中」匹配 —— 中转站转发的大多是
 /// 与官方同名同源的模型，能力数据可信；恰好一个命中才采信，零或多个
 /// → None（宁缺勿错，避免跨厂商重名误配出假能力值）。
+/// Catalog-wide **base-segment** match over an already-loaded entry list —
+/// the relay / self-hosted-gateway tier.
+///
+/// Why a separate function instead of extending [`lookup_generic_cached`]:
+/// that one is on the official-provider path and its hit set must stay
+/// byte-for-byte unchanged; relay ids need two extra tolerances plus one new
+/// guardrail, so they live here:
+///
+/// * tolerant — both sides go through
+///   [`nuphus::config::registry::normalize_model_id`], so a relay alias
+///   (`Claude-Opus-4.6`) matches an OpenRouter id (`anthropic/claude-opus-4.6`)
+///   despite capitals and dots;
+/// * variant-aware — `:batch` / `:free` variants of the same vendor are the
+///   *same* model, not a second one. Without collapsing them, every modern
+///   catalog entry double-counts and a unique-hit rule can never fire;
+/// * still 宁缺勿错 — a base segment published by **more than one vendor**
+///   resolves to `None` rather than attributing another vendor's capabilities.
+///
+/// Prefers the canonical (non-variant) entry when one exists.
+pub fn lookup_generic<'a>(
+    entries: &'a [OpenRouterEntry],
+    model_id: &str,
+) -> Option<&'a OpenRouterEntry> {
+    let needle = normalize_model_id(model_id);
+    if needle.is_empty() {
+        return None;
+    }
+    let mut canonical: Option<&'a OpenRouterEntry> = None;
+    let mut variant: Option<&'a OpenRouterEntry> = None;
+    let mut vendors: Vec<&str> = Vec::new();
+    for e in entries {
+        // normalize_base 保持原契约（点号保留），归一只在新路径上叠加
+        if normalize_model_id(&normalize_base(&e.id)) != needle {
+            continue;
+        }
+        let vendor = e.id.split('/').next().unwrap_or("");
+        if !vendors.contains(&vendor) {
+            vendors.push(vendor);
+        }
+        if e.id.contains(':') {
+            if variant.is_none() {
+                variant = Some(e);
+            }
+        } else if canonical.is_none() {
+            canonical = Some(e);
+        }
+    }
+    if vendors.len() != 1 {
+        return None;
+    }
+    canonical.or(variant)
+}
+
 pub fn lookup_generic_cached(
     config_dir: &Path,
     provider_id: &str,
@@ -420,6 +474,45 @@ mod tests {
         assert_eq!(normalize_base("moonshotai/kimi-k3"), "kimi-k3");
         assert_eq!(normalize_base("z-ai/glm-5.2-20250801"), "glm-5.2");
         assert_eq!(normalize_base("z-ai/glm-5.2:batch"), "glm-5.2");
+    }
+
+    #[test]
+    fn lookup_generic_matches_relay_alias_across_naming_styles() {
+        // 中转站 id（大写+点）vs OpenRouter id（vendor/ + 点）vs 内置（连字符）
+        let entries = vec![
+            entry("anthropic/claude-opus-4.6", Some(1_000_000)),
+            entry("anthropic/claude-opus-4.6:batch", Some(1_000_000)),
+        ];
+        let hit = lookup_generic(&entries, "Claude-Opus-4.6").expect("relay alias should hit");
+        assert_eq!(hit.id, "anthropic/claude-opus-4.6");
+        assert_eq!(hit.context_length, Some(1_000_000));
+        // 连字符写法同样命中（内置清单风格）
+        assert!(lookup_generic(&entries, "claude-opus-4-6").is_some());
+    }
+
+    #[test]
+    fn lookup_generic_variant_only_catalog_still_hits() {
+        // 只有 :batch 变体时不能因「同 vendor 去重」把唯一模型判成两个
+        let entries = vec![entry("z-ai/glm-5.2:batch", Some(131_072))];
+        let hit = lookup_generic(&entries, "glm-5.2").expect("variant-only should hit");
+        assert_eq!(hit.id, "z-ai/glm-5.2:batch");
+    }
+
+    #[test]
+    fn lookup_generic_ambiguous_vendor_is_none() {
+        // 同一基名段被两个 vendor 发布 → 宁缺勿错，不把别家能力配上来
+        let entries = vec![
+            entry("anthropic/claude-opus-4.6", Some(1_000_000)),
+            entry("some-relay/claude-opus-4.6", Some(200_000)),
+        ];
+        assert!(lookup_generic(&entries, "claude-opus-4.6").is_none());
+    }
+
+    #[test]
+    fn lookup_generic_rejects_empty_and_unknown() {
+        let entries = vec![entry("anthropic/claude-opus-4.6", Some(1_000_000))];
+        assert!(lookup_generic(&entries, "   ").is_none());
+        assert!(lookup_generic(&entries, "no-such-model").is_none());
     }
 
     #[test]
