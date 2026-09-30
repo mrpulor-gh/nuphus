@@ -2222,7 +2222,7 @@ mod tests {
 
         // 前提：latin1 无损头部能读到 meta 声明
         let head_len = bytes.len().min(2048);
-        let head: String = bytes[..head_len].iter().map(|b| *b as u8 as char).collect();
+        let head: String = bytes[..head_len].iter().map(|b| *b as char).collect();
         assert_eq!(
             charset_from_html_meta(&head),
             Some("gbk".to_string()),
