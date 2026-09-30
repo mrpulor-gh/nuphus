@@ -26,6 +26,9 @@ param(
     [switch]$SkipDownload,
     [switch]$SkipVerify,
     [switch]$DryRun,
+    # 续跑：前一轮已发布部分包（npm 上传成功但脚本被终止）时，
+    # 对「已发布」的包跳过而不是 throw，只发剩余包。
+    [switch]$Resume,
     # npm 风格开关经位置传入时的兜底收口（--skip-download --dry-run 等多标记）
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]]$ExtraFlags
@@ -40,6 +43,7 @@ if ($flagTokens.Count -gt 0) {
         if     ($t -match 'skip.download') { $SkipDownload = $true }
         elseif ($t -match 'skip.verify')   { $SkipVerify   = $true }
         elseif ($t -match 'dry')           { $DryRun       = $true }
+        elseif ($t -match 'resume')        { $Resume       = $true }
         else { throw "无法识别的参数 '$t'——开关用 -SkipDownload/-SkipVerify/-DryRun/--skip-download 等；显式版本号用 -Version x.y.z" }
     }
     if ($Version -match '^-') { $Version = "" }
@@ -134,6 +138,12 @@ function Get-PublishedVersion($pkgName) {
 function Test-NotPublished($pkgName, $version) {
     $published = Get-PublishedVersion $pkgName
     if ($published -eq $version) {
+        # registry 不可变：同版本重发必失败。默认仍 throw（防误重发），
+        # -Resume 下跳过已发完成的包，只发剩余包。
+        if ($Resume) {
+            Write-Ok "resume: $pkgName@$version already published, skipping (registry is immutable, republish would fail anyway)"
+            return $false
+        }
         throw "SKIP: $pkgName@$version already published. Bump the version or unpublish first (npm unpublish is discouraged)."
     }
     if ($published) {
@@ -141,6 +151,8 @@ function Test-NotPublished($pkgName, $version) {
     } else {
         Write-Ok "$pkgName not on registry yet (first publish)"
     }
+    # 需要发布才返回 $true；-Resume 下已发布返回 $false（供主流程跳过）
+    return $true
 }
 
 function Get-ReleaseDigest($assetName, $version) {
@@ -326,7 +338,18 @@ function Publish-Package($pkgName, $version) {
     Write-Step "npm publish $pkgName@$version"
     # 捕获输出：npm 的 `+ <pkg>@<version>` 行 + exit 0 才是「发布成功」的权威信号。
     # registry view 滞后不得推翻它（见下文 Registry verification）。
-    $out = & npm.cmd publish $dir --registry $Registry 2>&1
+    # npm 会把 notice / deprecation 打到 stderr；PS 5.1 用 2>&1 合并后这些行变成
+    # ErrorRecord，在全局 $ErrorActionPreference='Stop' 下会直接终止整条发布链——
+    # v0.2.24 实测在第一个包上就这样死掉（`npm.cmd : npm notice`，四包一个未发）。
+    # 因此仅本次调用把 EAP 降为 Continue，让 stderr 作为数据被捕获；
+    # 成功判定不变（下方仍要求确认行 + exit 0），不是「永不失败」。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & npm.cmd publish $dir --registry $Registry 2>&1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     $exit = $LASTEXITCODE
     if ($exit -ne 0) {
         $out | Select-Object -Last 20 | ForEach-Object { Write-Host "    $_" }
@@ -387,8 +410,11 @@ Write-Host ''
 
 Test-NpmAuth
 
-foreach ($p in $Platforms) { Test-NotPublished "@nuphus/$($p.Name)" $version }
-Test-NotPublished "@nuphus/$MetaName" $version
+# 返回值收进哈希，避免落到输出流；-Resume 下已发布的包在发布段整段跳过
+# （registry 不可变，重发只会拿到 E403）。不加 -Resume 时 Test-NotPublished 自己 throw。
+$needsPublish = @{}
+foreach ($p in $Platforms) { $needsPublish[$p.Name] = Test-NotPublished "@nuphus/$($p.Name)" $version }
+$needsPublish[$MetaName] = Test-NotPublished "@nuphus/$MetaName" $version
 
 $assetFiles = @{}
 foreach ($p in $Platforms) {
@@ -420,8 +446,12 @@ Write-Step 'Publishing (platform packages first, then meta)'
 # pkgName -> $true when npm itself printed `+ <pkg>@<version>` and exited 0.
 # Registry view lag must never override this (see Registry verification below).
 $script:PublishResults = @{}
-foreach ($p in $Platforms) { Publish-Package $p.Name $version }
-Publish-Package $MetaName $version
+foreach ($p in $Platforms) {
+    if ($needsPublish[$p.Name]) { Publish-Package $p.Name $version }
+    else { Write-Ok "skipping publish of @nuphus/$($p.Name)@$version (already on registry)" }
+}
+if ($needsPublish[$MetaName]) { Publish-Package $MetaName $version }
+else { Write-Ok "skipping publish of @nuphus/$MetaName@$version (already on registry)" }
 
 # Verify published versions on registry.
 #
