@@ -25,6 +25,8 @@ async-recursion = "1"
 # Web/API调用
 reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
 base64 = "0.22"
+# 网页字符集解码（web 工具嗅探 GBK/GB2312/Shift_JIS 等非 UTF-8 页面）
+encoding_rs = "0.8"
 
 # 序列化
 serde = { version = "1", features = ["derive"] }

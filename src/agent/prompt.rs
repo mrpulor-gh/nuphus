@@ -144,7 +144,6 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 禁止"功能通了"当作"闭环完成"。
 
 ## 构建与验证
-禁止未经显式指令允许构建（debug / release）、全量测试
 验证 / 测试 前必读 `prompts/build-verification-policy.md`，重审任务指令需求，确认与设计意图对齐。
 **验证四原则**：必要性（待办任务继承依赖）· 最小化（只验证本次改动）· 时间成本（选轻量手段）· 无后续（不产生待办债务）。
 "#;

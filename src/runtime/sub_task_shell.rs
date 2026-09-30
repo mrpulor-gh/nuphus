@@ -29,6 +29,18 @@ pub fn flush_output_lines(
 use std::io::BufRead;
 use std::sync::Arc;
 
+/// 长任务阈值（秒）。
+///
+/// `timeout_secs` 超过此值的调用被视为长任务（Release 构建 / 全量测试 /
+/// 大下载）：超时后**不终止**进程，因为杀掉会让已完成的编译产物与测试
+/// 进度全部作废，下次从零重跑。
+///
+/// 未超过的按原行为杀掉止损 —— 卡死的短命令继续跑只会占资源。
+///
+/// 取 300s（5 分钟）的依据：普通命令的合理上限远低于此；而 `tool_timeout`
+/// 给 system_shell 的桶是 1800s，真正需要"不杀"的长任务必然远超 300s。
+const LONG_TASK_THRESHOLD_SECS: u64 = 300;
+
 /// Execute system_shell with line-by-line streaming, pushing stdout/stderr to frontend in real-time
 pub fn stream_shell_blocking(
     command: &str,
@@ -141,17 +153,39 @@ pub fn stream_shell_blocking(
     let mut line_buf: Vec<(String, bool)> = Vec::new();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    // 超过这个时长的调用方意图是长任务（构建 / 全量测试 / 大下载），
+    // 超时后不终止进程；短命令仍按原行为杀掉，避免卡死的命令泄漏。
+    // 判据用调用方自己传的 timeout_secs：传 180（默认）是普通命令，
+    // 传 600+ 说明调用方明知这是长任务。
+    let is_long_task = timeout_secs > LONG_TASK_THRESHOLD_SECS;
 
     loop {
         let now = std::time::Instant::now();
         if now >= deadline {
-            let _ = child.kill();
             flush_output_lines(emitter, call_id, &mut line_buf);
+            if !is_long_task {
+                // 短命令：杀掉止损。卡死的命令继续跑只会占资源。
+                let _ = child.kill();
+                return ToolResult {
+                    success: false,
+                    output: Some(full_stdout),
+                    error: Some(format!("命令超时 ({}s)，已终止。可增加 timeout 参数重试。", timeout_secs)),
+                    exit_code: None,
+                };
+            }
+            // 长任务：**不杀**。杀掉会让已完成的编译产物/测试进度全部作废，
+            // 下次从零重跑 —— 一次 5-6 分钟的活被切成无数段，每段都从零开始。
+            //
+            // 安全性：`child` 是局部变量，函数返回时 drop，但 std Child 的 drop
+            // **不会**终止进程；stdout/stderr 已 `take()` 移交给 reader 线程，
+            // 管道不会关闭，reader 继续读到进程自然结束，无句柄泄漏、无僵尸。
             return ToolResult {
                 success: false,
                 output: Some(full_stdout),
                 error: Some(format!(
-                    "命令超时 ({}s)，请增加 timeout 参数重试",
+                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止）。\n\
+                     已产生的输出保留在原处（若重定向到文件，稍后直接读取）。\n\
+                     勿重复执行同一命令 —— 重复触发会让长任务从零重跑。",
                     timeout_secs
                 )),
                 exit_code: None,

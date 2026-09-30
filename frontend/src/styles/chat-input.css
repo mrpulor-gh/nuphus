@@ -263,7 +263,6 @@
   font-weight: 600;
   line-height: 16px;
   text-align: center;
-  box-shadow: 0 0 0 2px var(--input-bg);
   pointer-events: none;
   z-index: 1;
 }

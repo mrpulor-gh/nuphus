@@ -49,13 +49,26 @@ pub fn truncate_tool_output(text: &str, max_chars: usize, tool_name: &str) -> St
         return text.to_string();
     }
     let is_reader = tool_name == "Read" || tool_name == "Grep";
-    let limit = if is_reader { 60000 } else { max_chars };
+    // web_* 专用档：web_extract 默认抓取 30000（web.rs），截断上限必须高于它，
+    // 否则抓取成本已付、模型却只看到头部 8000（原 8000 档，利用率 26.7%），
+    // 正文中后段被静默丢弃。取 32000 覆盖默认抓取量，仅用户显式调大
+    // max_chars（上限 50000）或超长页才触发截断。
+    let is_web = tool_name.starts_with("web_");
+    let limit = if is_reader {
+        60000
+    } else if is_web {
+        32000
+    } else {
+        max_chars
+    };
 
     if text.chars().count() <= limit {
         return text.to_string();
     }
 
-    if is_reader {
+    // Read/Grep 与 web_* 都走头尾保留——单次返回的连续内容（源码/正文）
+    // 丢尾部等于丢结论。站内导航、文末结论、代码收尾都在尾部。
+    if is_reader || is_web {
         let head_chars = (limit as f64 * 0.6) as usize;
         let tail_chars = (limit as f64 * 0.4) as usize;
         let head: String = text.chars().take(head_chars).collect();

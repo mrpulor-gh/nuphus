@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-> **版本**: 0.2.23 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.24 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -286,6 +286,17 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v0.2.24 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#84](https://github.com/mrpulor-gh/nuphus/pull/84) | 补 mobile server / relay 威胁模型与已接受限制，写入 SECURITY.md |
+| [@yuansui486](https://github.com/yuansui486) | [#87](https://github.com/mrpulor-gh/nuphus/pull/87) | 修复外部数据点的 Markdown 渲染（MarkdownInline 导出供复用） |
+| [@yuansui486](https://github.com/yuansui486) | [#88](https://github.com/mrpulor-gh/nuphus/pull/88) | 明确模型连接成功反馈，并把模型能力探测移到后台不再阻塞切换 |
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#91](https://github.com/mrpulor-gh/nuphus/pull/91) | 外部 Agent 投递序列正确传递桌面输入与提交快捷键的失败 |
 
 ### v0.2.23 贡献者
 

@@ -431,7 +431,11 @@ impl ToolRegistry {
     ///
     /// 纪律：每个档位必须能讲清「为什么是这个数」——无出处魔数禁止入链；
     /// 能复用已有档位就不新造数字。各档推导：
-    /// - system_shell/system_sleep 自带超时机制，600s 容纳默认 180s + 余量
+    /// - system_shell/system_sleep：**1800s，与 video 档同级**。原 600s 是
+    ///   「容纳默认 180s + 余量」，但实测 Release 全量构建/测试在乾淨 target
+    ///   下可跑 5-10 分钟，600s 会把长任务拦腰砍断。而本桶取消不了任何东西
+    ///   （见下方 timeouts 说明），砍断只会诱导重试 → 重跑 → 再砍断的循环。
+    ///   取宽档：宁可晚、不可早。工具的 `timeout` 参数上限同步提高到 1800s。
     /// - web_search/web_extract/http_request 走 reqwest::blocking 慢抓取，120s 防误杀
     /// - video_subtitle_extract 含 yt-dlp 下载 + ffmpeg 转码 + 本地 ASR，
     ///   长视频兜底链路给 900s（15min）
@@ -457,7 +461,7 @@ impl ToolRegistry {
     /// 注：desktop_/browser_ 工具在上方分支已提前返回，不经过此处
     fn tool_timeout(tool_name: &str) -> Duration {
         if tool_name == "system_shell" || tool_name == "system_sleep" {
-            Duration::from_secs(600) // 足够容纳默认 180s + 余量
+            Duration::from_secs(1800) // 与 video 档同级，容纳 Release 全量构建/测试
         } else if tool_name == "web_search"
             || tool_name == "web_extract"
             || tool_name == "http_request"
@@ -489,6 +493,13 @@ impl ToolRegistry {
                  处置：先核对目标窗口/进程实况（windows_list / 截图看回显），确认指令是否已进入终端：\n\
                  已进入 → 勿重复投递（双序列会交错敲键、任务被外部 Agent 执行两遍）；\n\
                  确认未进入 → 才补输单行指令「Read {{brief_path}} and execute it.」补完投递，brief 无需重新上板。",
+                timeout.as_secs()
+            )
+        } else if tool_name == "system_shell" {
+            format!(
+                "工具 'system_shell' 已等待 {}秒仍未结束（到达等待上限）。\n\
+                 若本次调用 timeout > 300s（长任务：构建/全量测试/大下载），进程**未被终止**，仍在后台运行 —— 输出若重定向到文件，稍后直接读取，**勿重复执行**。\n\
+                 若为普通命令，进程已被终止，可修正后重试。",
                 timeout.as_secs()
             )
         } else {

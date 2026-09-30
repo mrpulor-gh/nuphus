@@ -184,7 +184,7 @@ impl ToolRegistry {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "PowerShell command on Windows, sh on Unix. On Windows use ; not &&" },
-                     "timeout": { "type": "integer", "minimum": 1, "maximum": 600, "default": 180, "description": "Timeout in seconds" },
+                     "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Timeout in seconds. On timeout the process is NOT killed — it keeps running in the background; read its output file instead of re-running." },
                     "cwd": { "type": "string", "description": "Working directory for the command" }
                 },
                 "required": ["command"]

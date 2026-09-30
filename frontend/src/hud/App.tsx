@@ -40,6 +40,9 @@ interface HudState {
   phase: HudPhase
   paused?: boolean
   step_kind?: string | null
+  /// 单次运行超过 1 分钟后的耐心提示态：标题切换为「正在执行，请耐心等待...」。
+  /// 只由前端计时触发，不影响 phase（成败仍由后端 ToolResult 决定）。
+  patience?: boolean
 }
 
 const LIGHT_COLORS: Record<HudPhase, { accent: string; bg: string; glow: string; text: string }> = {
@@ -290,13 +293,21 @@ function PhaseIcon({
 //  Live timer
 // ═══════════════════════════════════════════════════════════════════
 
-function useLiveTimer(running: boolean): number {
+function useLiveTimer(running: boolean, resetKey: string): number {
   const [elapsed, setElapsed] = useState(0)
   const startRef = useRef<number | null>(null)
 
+  // running 期间每次 resetKey 变化（后端发来新的 running 文本 = 新的一次
+  // 工具调用开始）都重新起表。
+  //
+  // 旧实现只在 running 由 false→true 时置零。一次执行往往是多个工具连跑
+  // （shell → shell → read...），running 布尔从头到尾为 true、effect 不重跑，
+  // 于是计时从第一个工具累积，HUD 显示的是整轮总时长，不是当前这一次的
+  // 真实运行时长。
   useEffect(() => {
     if (running) {
-      if (startRef.current === null) startRef.current = Date.now()
+      startRef.current = Date.now()
+      setElapsed(0)
       const id = setInterval(() => {
         setElapsed(Date.now() - startRef.current!)
       }, 200)
@@ -305,7 +316,7 @@ function useLiveTimer(running: boolean): number {
       startRef.current = null
       setElapsed(0)
     }
-  }, [running])
+  }, [running, resetKey])
 
   return elapsed
 }
@@ -372,7 +383,7 @@ export function HudOverlay() {
       // Guard: backend must only send known phases. An unknown one would make
       // colorScheme[phase] undefined and crash the render → blank window.
       const safePhase = COLORS[phase] ? phase : 'info'
-      setState({ text, phase: safePhase, paused: false, step_kind })
+      setState({ text, phase: safePhase, paused: false, patience: false, step_kind })
       animRef.current++
       if (phase === 'hidden') {
         invoke('hud_hide').catch(() => {})
@@ -405,7 +416,6 @@ export function HudOverlay() {
       unlistenGlobal.then(fn => fn?.())
       unlistenLocal.then(fn => fn?.())
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearHideTimer, scheduleAutoHide])
 
   // Theme sync: listen for localStorage changes from main window
@@ -419,20 +429,21 @@ export function HudOverlay() {
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
-  // Safety timeout: auto-done + auto-hide if running exceeds 120s
+  // 超长运行不再伪装成 done。
+  //
+  // 旧实现：running 超过 120s 就把 phase 强改为 'done'（打勾 + 自动隐藏），
+  // 但后端命令此时**仍在运行** —— 用户看到"成功"而实际还在跑，是
+  // "自己 timeout 显示成功而实际还在运行"的直接来源。done/error 只能由
+  // 后端 ToolResult 决定，前端无从判断成败，故此处只做"到时提醒"：
+  // 切到 'running' 的耐心提示态，保持 spinner 与计时，等真实结果。
   useEffect(() => {
     const isRunning = state.phase === 'running'
     if (!isRunning) return
     const timer = setTimeout(() => {
-      setState(s => {
-        if (s.phase !== 'running') return s
-        // scheduleAutoHide for the done phase so the HUD doesn't stay forever
-        scheduleAutoHide('done')
-        return { ...s, phase: 'done' }
-      })
-    }, 120_000)
+      setState(s => (s.phase === 'running' ? { ...s, patience: true } : s))
+    }, 60_000)
     return () => clearTimeout(timer)
-  }, [state.phase, scheduleAutoHide])
+  }, [state.phase])
 
   // 三个控制命令在后端都可能失败——例如 hud_stop 在取不到活动工作流时返回
   // "No active workflow"。旧实现一律 `catch { /* ignore */ }`，用户点了**毫无反馈**
@@ -473,7 +484,7 @@ export function HudOverlay() {
   // ── Derived state (hooks always called at top — no conditional returns before hooks) ──
   const isRunning = state.phase === 'running' || state.phase === 'workflow'
   const isWorkflow = state.phase === 'workflow' || state.phase === 'workflow_wait'
-  const elapsed = useLiveTimer(isRunning)
+  const elapsed = useLiveTimer(isRunning, state.text)
 
   // hidden: render a zero-size invisible div instead of null.
   // Returning null triggers #root:empty::after which paints a transparent block.
@@ -532,7 +543,9 @@ export function HudOverlay() {
       {/* ── Content area ── */}
       <div className="hud-content">
         <span className="hud-text" style={{ color: colors.text }} key={`text-${animKey}`}>
-          {state.text}
+          {state.phase === 'running' && state.patience
+            ? '正在执行，请耐心等待...'
+            : state.text}
         </span>
 
         {/* ── Meta row: elapsed time / workflow paused indicator ── */}

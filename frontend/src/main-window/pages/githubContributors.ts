@@ -348,7 +348,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  */
 export const REPO_COMMITTERS: string[] = [
   'yuansui486', // 78 commits
-  'Steooenwolf-666', // 21 commits（#91 合并后 /contributors 计数尚未刷新）
+  'Steooenwolf-666', // 22 commits（#91 合并后 /contributors 已刷新）
   'fouyzjl', // 13 commits
   'mrpulor-gh', // 3 commits（仓库所有者）
   'jiangdingwei123-afk', // 1 commit

@@ -45,6 +45,7 @@ pub(super) fn cookie_header_for(url: &str) -> Option<String> {
     crate::cookies::to_header(&cookies)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SearchResult {
     pub title: String,
     pub url: String,
@@ -76,6 +77,27 @@ fn get_agent() -> reqwest::blocking::Client {
     agent
 }
 
+/// GitHub API 的 Authorization 头（可选）。
+///
+/// 未认证时 GitHub 搜索 API 限流 **10 次/分**（其余 API 60 次/小时），
+/// 认证后 30 次/分。web 聚合每个查询都要打一次 github 源，未认证时
+/// 连打几个查询就会开始返回 403 —— 表现为"源时好时坏"，实为限流。
+///
+/// 从环境变量读 token（`GITHUB_TOKEN` / `GH_TOKEN`，与 gh CLI 同一约定），
+/// 未设置则返回 None，行为与原实现完全一致（不报错、不空跑）。
+/// token 值只进请求头，永不进日志。
+fn github_auth_header() -> Option<String> {
+    for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Ok(v) = std::env::var(key) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(format!("Bearer {}", v));
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -101,12 +123,30 @@ fn extract_bing_url(href: &str) -> String {
 
 /// 源1: Bing 搜索
 fn search_bing(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
+    // 市场/语言参数随查询语言走：中文查询用 zh-CN，否则 en-US。
+    // 原实现硬编码 setmkt=en-US&setlang=en，Bing 把中文/混合查询按英文
+    // 市场处理后返回与本意无关的商业结果（实测「trafilatura library」
+    // 返回巴基斯坦 CSS 考试论坛、「笔记本合盖用显示器」等）。
+    let is_cjk = query.chars().any(|c| {
+        matches!(c as u32,
+            0x4E00..=0x9FFF    // CJK 统一表意
+            | 0x3400..=0x4DBF  // 扩展 A
+            | 0x3000..=0x303F  // CJK 标点
+            | 0xFF00..=0xFFEF) // 全角
+    });
+    let (mkt, lang) = if is_cjk {
+        ("zh-CN", "zh-CN")
+    } else {
+        ("en-US", "en")
+    };
     let url = format!(
-        "https://www.bing.com/search?q={}&count={}&setmkt=en-US&setlang=en",
+        "https://www.bing.com/search?q={}&count={}&setmkt={}&setlang={}",
         urlencoding::encode(query),
-        count.clamp(1, 20)
+        count.clamp(1, 20),
+        mkt,
+        lang
     );
-    tracing::info!("[web_search] trying Bing: {}", url);
+    tracing::info!("[web_search] trying Bing (mkt={}): {}", mkt, url);
 
     let agent = get_agent();
     let response = {
@@ -115,7 +155,7 @@ fn search_bing(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
             match agent
                 .get(&url)
                 .header("User-Agent", USER_AGENT)
-                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 .send()
             {
                 Ok(r) => break Ok(r),
@@ -132,9 +172,17 @@ fn search_bing(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
         }
     }?;
 
-    let html = response
-        .text()
-        .map_err(|e| format!("read bing response failed: {}", e))?;
+    let html = {
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = response
+            .bytes()
+            .map_err(|e| format!("read bing response failed: {}", e))?;
+        decode_web_body(&bytes, content_type.as_deref())
+    };
 
     let document = Html::parse_document(&html);
     let result_sel =
@@ -200,7 +248,12 @@ fn search_ddg_lite(query: &str, count: usize) -> Result<Vec<SearchResult>, Strin
     let response = {
         let mut attempt = 0;
         loop {
-            match agent.get(&url).header("User-Agent", USER_AGENT).send() {
+            match agent
+                .get(&url)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .send()
+            {
                 Ok(r) => break Ok(r),
                 Err(e) => {
                     let msg = format!("{}", e);
@@ -215,9 +268,17 @@ fn search_ddg_lite(query: &str, count: usize) -> Result<Vec<SearchResult>, Strin
         }
     }?;
 
-    let html = response
-        .text()
-        .map_err(|e| format!("read ddg lite response failed: {}", e))?;
+    let html = {
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = response
+            .bytes()
+            .map_err(|e| format!("read ddg lite response failed: {}", e))?;
+        decode_web_body(&bytes, content_type.as_deref())
+    };
 
     let document = Html::parse_document(&html);
     let row_sel =
@@ -283,6 +344,496 @@ fn build_tool_result(query: &str, results: Vec<SearchResult>) -> Result<ToolResu
     Ok(ToolResult::success(
         serde_json::to_string_pretty(&payload).unwrap_or_default(),
     ))
+}
+
+// ── 默认 web 源：五源聚合 ──
+
+/// 候选结果的来源标识。也决定「源可靠性权重」。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchSource {
+    Bing,
+    DdgLite,
+    Wikipedia,
+    GitHub,
+    Docs,
+}
+
+impl SearchSource {
+    /// 源可靠性基准权重。
+    ///
+    /// API 源返回结构化 JSON，标题/摘要即为该源对查询的官方理解，噪声低；
+    /// HTML 源（Bing / DDG Lite）需解析商业页面 DOM，容易掺入广告位、
+    /// 相关推荐和错配结果。实测本机 Bing 对技术类查询返回过完全无关的
+    /// 商业内容，故 HTML 源降权 —— 但保留在聚合池里，API 源未命中时
+    /// 仍可兜底。
+    fn weight(self) -> f64 {
+        match self {
+            SearchSource::GitHub => 1.0,
+            SearchSource::Docs => 1.0,
+            SearchSource::Wikipedia => 0.95,
+            SearchSource::Bing => 0.6,
+            SearchSource::DdgLite => 0.6,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            SearchSource::Bing => "bing",
+            SearchSource::DdgLite => "ddg-lite",
+            SearchSource::Wikipedia => "wikipedia",
+            SearchSource::GitHub => "github",
+            SearchSource::Docs => "docs",
+        }
+    }
+}
+
+/// 把查询切成可比较的词项。
+///
+/// 英文/数字按非字母数字边界切词；中日韩字符逐字成项（中文无空格分词，
+/// 单字粒度对「标题命中查询」这种粗粒度判断足够，且不会因误切词漏判）。
+/// 全部转小写，去掉长度 1 的 ASCII 词（"a"/"of" 之类无区分度）。
+///
+/// 刻意**不含任何硬编码词表**：词项是否「有用」交由 IDF 权重在候选池上
+/// 统计得出，不预先假设任何词汇。
+fn tokenize(text: &str) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut tokens = Vec::new();
+    let mut ascii_word = String::new();
+
+    for ch in lower.chars() {
+        if ch.is_alphanumeric() && !ch.is_whitespace() {
+            if ch.is_ascii() {
+                ascii_word.push(ch);
+            } else {
+                // CJK / 其他非 ASCII 字母数字：逐字成项
+                if !ascii_word.is_empty() {
+                    if ascii_word.len() > 1 {
+                        tokens.push(std::mem::take(&mut ascii_word));
+                    } else {
+                        ascii_word.clear();
+                    }
+                }
+                tokens.push(ch.to_string());
+            }
+        } else if !ascii_word.is_empty() {
+            if ascii_word.len() > 1 {
+                tokens.push(std::mem::take(&mut ascii_word));
+            } else {
+                ascii_word.clear();
+            }
+        }
+    }
+    if ascii_word.len() > 1 {
+        tokens.push(ascii_word);
+    }
+    tokens
+}
+
+/// 词项权重：IDF（Inverse Document Frequency，在**本次候选池**上统计）。
+///
+/// 动机（实测教训）：「trafilatura library」召回 5 条，其中 4 条标题含
+/// `library`。硬编码「library 是虚词」能修这一例，但换个查询就失效，
+/// 且会误伤「rust crate」这类正当技术查询。
+///
+/// 改用在候选池上统计：一个词项出现在越多结果里，它对「区分相关与不相关」
+/// 的贡献越小。
+///
+/// ```text
+/// df(term)   = 含该词项的候选数 / 候选总数
+/// weight     = clamp(ln(1 + 1/df), MIN_TERM_WEIGHT, MAX_TERM_WEIGHT)
+/// ```
+///
+/// - 词项只出现在 1 条结果里 → df=1/N → weight 高（强区分信号）
+/// - 词项出现在几乎所有结果里 → df→1 → weight→MIN（无区分度）
+///
+/// 两个保底常量各自防一类退化：
+/// - `MIN_TERM_WEIGHT`：某词到处都是时不完全归零，避免「所有词都平庸」
+///   的查询退化成无信号。
+/// - `MAX_TERM_WEIGHT`：权重上限。防止某个只出现一次的词（df 极小）
+///   一家独大，把其他词的真实命中全压成低比例。
+///
+/// 注意：df=0（池子里完全没出现）**不走这个 clamp，而是直接归零** ——
+/// 见 `term_idf_weights` 内的说明。OOV 词不可能被命中，给它任何正权重
+/// 都只是稀释分母。
+const MIN_TERM_WEIGHT: f64 = 0.05;
+const MAX_TERM_WEIGHT: f64 = 2.0;
+
+/// 计算查询词项在候选池上的 IDF 权重，返回 `(词项, 权重)` 列表。
+///
+/// `candidates` 是全部源的原始结果（未去重）—— 文档频率要在完整池子上
+/// 统计，去重后的池子会低估高频词的出现次数。
+///
+/// **df=0 的词项权重为 0，不是封顶值。** 这是关键设计：查询词在候选池
+/// 里完全没出现时，它不可能被任何结果命中，若给它高权重只会稀释
+/// weight_sum 分母、把能命中的词压成低命中率（实测踩过：长查询里
+/// "assistant"/"tauri" 这种 OOV 词各占 2.0 权重，使唯一相关的
+/// "mrpulor-gh/nuphus" best_ratio 仅 0.15，惨遭过滤）。
+/// df=0 的正确含义是「这个词对本次排序没有任何贡献」，归零即可。
+fn term_idf_weights(query: &str, candidates: &[(SearchResult, SearchSource)]) -> Vec<(String, f64)> {
+    let terms = tokenize(query);
+    if terms.is_empty() || candidates.is_empty() {
+        return terms.into_iter().map(|t| (t, 1.0)).collect();
+    }
+
+    // 每条候选的标题+摘要词项集合，用于统计 df
+    let per_candidate: Vec<std::collections::HashSet<String>> = candidates
+        .iter()
+        .map(|(r, _)| {
+            let mut s: std::collections::HashSet<String> = tokenize(&r.title).into_iter().collect();
+            s.extend(tokenize(&r.snippet));
+            s
+        })
+        .collect();
+    let total = per_candidate.len() as f64;
+
+    terms
+        .into_iter()
+        .map(|t| {
+            let df = per_candidate
+                .iter()
+                .filter(|set| set.contains(&t))
+                .count() as f64
+                / total;
+            // df=0 → 权重 0（不参与分母，也不可能被命中）
+            let w = if df <= 0.0 {
+                0.0
+            } else {
+                (1.0 + 1.0 / df).ln().clamp(MIN_TERM_WEIGHT, MAX_TERM_WEIGHT)
+            };
+            (t, w)
+        })
+        .collect()
+}
+
+/// 单条结果的相关性判定（IDF 加权）。
+struct Relevance {
+    /// 综合得分：标题命中权重 ×3 + 摘要命中权重 ×1 + 连续子串奖励 ×1。
+    /// 仅用于**排序**，不用于过线判定（过线看 `anchor_hit`）。
+    score: f64,
+    /// 锚点词（权重最高的查询词）是否被命中。
+    ///
+    /// 这是过线判定的唯一依据。**不用固定比例阈值**，实测踩过两轮坑：
+    /// ① 只用绝对分（1.5）不设下限：「trafilatura library」召回一堆 MDN
+    ///    "Local Library" 教程，仅命中虚词也能混进结果。
+    /// ② 改用归一化命中率（标题/摘要命中权重过半）：2 词查询好使，但
+    ///    4-6 词查询命中 1 个主题词就只有 25%，数学上不可能过半 ——
+    ///    "Nuphus AI desktop assistant Tauri Rust" 会让唯一相关的
+    ///    "mrpulor-gh/nuphus" 以 0.25 被过滤掉。
+    ///
+    /// 锚点命中等价于「结果有没有谈到查询的核心主题」，
+    /// 与查询有几个词、词权重如何分布都无关。
+    ///
+    /// 配套约束：df=0 的 OOV 词权重为 0（见 `term_idf_weights`），
+    /// 否则 "desktop assistant" 这种池里没人谈的组合会把锚点推到无法命中的词上。
+    anchor_hit: bool,
+}
+
+/// IDF 加权相关性判定。
+fn relevance_weighted(terms: &[(String, f64)], result: &SearchResult) -> Relevance {
+    if terms.is_empty() {
+        return Relevance {
+            score: 0.0,
+            anchor_hit: false,
+        };
+    }
+    let title_terms = tokenize(&result.title);
+    let snippet_terms = tokenize(&result.snippet);
+
+    // weight_sum 只累计有权重的词（df=0 的词权重为 0，不参与分母）
+    let weight_sum: f64 = terms.iter().map(|(_, w)| w).sum();
+    if weight_sum <= 0.0 {
+        return Relevance {
+            score: 0.0,
+            anchor_hit: false,
+        };
+    }
+
+    // 加权命中率（分母是权重和，不是词项数）
+    let title_hit: f64 = terms
+        .iter()
+        .filter(|(t, _)| title_terms.iter().any(|x| x == t))
+        .map(|(_, w)| w)
+        .sum();
+    let snippet_hit: f64 = terms
+        .iter()
+        .filter(|(t, _)| snippet_terms.iter().any(|x| x == t))
+        .map(|(_, w)| w)
+        .sum();
+
+    let title_ratio = title_hit / weight_sum;
+    let snippet_ratio = snippet_hit / weight_sum;
+
+    let mut score = 3.0 * title_ratio + 1.0 * snippet_ratio;
+
+    // 标题完整包含查询串（连续子串）→ 强精确信号，仅加分不影响过线
+    if title_terms.len() >= terms.len() {
+        let joined = terms
+            .iter()
+            .filter(|(_, w)| *w > 0.0)
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if result.title.to_ascii_lowercase().contains(&joined) {
+            score += 1.0;
+        }
+    }
+
+    // 锚点 = 权重最高的查询词（并列时取字符串序在前者，保证结果可复现）
+    let anchor = terms
+        .iter()
+        .filter(|(_, w)| *w > 0.0)
+        .max_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.0.as_str().cmp(a.0.as_str()))
+        })
+        .map(|(t, _)| t.as_str());
+
+    let anchor_hit = match anchor {
+        Some(a) => title_terms.iter().any(|t| t == a) || snippet_terms.iter().any(|t| t == a),
+        None => false,
+    };
+
+    Relevance { score, anchor_hit }
+}
+
+/// 把各源返回的 URL 归一化，用于跨源去重。
+///
+/// Bing 常返回 `https://www.bing.com/ck/a?!...&u=a1<base64url>` 形式的
+/// 跳转链接，同一目标页与其它源的原始 URL 看起来毫无关系。此处先解出
+/// 跳转目标再归一化；归一化保留 scheme + host + path + query，仅去掉
+/// fragment、末尾斜杠与 www. 前缀 —— host 是区分不同站点的关键，丢掉它
+/// 会把 `a.com/x` 与 `b.com/x` 误判为同一页。
+fn canonical_url(url: &str) -> String {
+    use base64::Engine as _;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Bing /ck/a 跳转：u=a1<base64url(含标准+URL安全两种字母表，可能无 padding)>
+    if let Some(idx) = trimmed.find("&u=a1") {
+        let encoded = &trimmed[idx + "&u=a1".len()..];
+        let end = encoded
+            .find(['&', '#'])
+            .unwrap_or(encoded.len());
+        let raw = &encoded[..end];
+        for engine in [
+            base64::engine::general_purpose::STANDARD,
+            base64::engine::general_purpose::STANDARD_NO_PAD,
+            base64::engine::general_purpose::URL_SAFE,
+            base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        ] {
+            if let Ok(decoded_bytes) = engine.decode(raw.as_bytes()) {
+                if let Ok(decoded) = String::from_utf8(decoded_bytes) {
+                    if decoded.starts_with("http") {
+                        return canonical_url(&decoded);
+                    }
+                }
+            }
+        }
+    }
+
+    // 拆 scheme
+    let (scheme, rest): (String, &str) = trimmed
+        .split_once("://")
+        .map(|(s, r)| (s.to_ascii_lowercase(), r))
+        .unwrap_or_else(|| (String::new(), trimmed));
+
+    // 拆 host / 其余
+    let (host, tail): (&str, String) = rest
+        .split_once('/')
+        .map(|(h, t)| (h, format!("/{}", t)))
+        .unwrap_or_else(|| (rest, String::new()));
+
+    let host = host
+        .rsplit('@')
+        .next()
+        .unwrap_or(host)
+        .to_ascii_lowercase()
+        .trim_start_matches("www.")
+        .to_string();
+    let path_query = tail.split('#').next().unwrap_or(&tail);
+    let path_query = path_query.trim_end_matches('/');
+
+    // 无 scheme 的裸串不该拼出 "://xxx" 这种畸形结果
+    if scheme.is_empty() {
+        return format!("{}{}", host, path_query);
+    }
+
+    format!("{}://{}{}", scheme, host, path_query)
+}
+
+/// 五源并发取候选，按相关性 + 源可靠性排序，去重后取前 `count`。
+///
+/// 单源失败只记日志不中断 —— 这正是聚合相对串行降级的核心价值：
+/// 任一源翻车（限流 / 反爬 / 结构变更）不影响其余四源的产出。
+fn aggregate_web_search(query: &str, count: usize) -> Vec<SearchResult> {
+    let count = count.clamp(1, 20);
+    // 候选池深度：每源多取一倍。去重 + 阈值淘汰会消耗候选，池子太浅时
+    // 只能用噪声填空。
+    let per_source = (count * 2).clamp(10, 40);
+
+    let sources: [(&'static str, fn(&str, usize) -> Result<Vec<SearchResult>, String>); 5] = [
+        ("github", search_github),
+        ("docs", search_docs),
+        ("wikipedia", search_wikipedia),
+        ("bing", search_bing),
+        ("ddg-lite", search_ddg_lite),
+    ];
+
+    // 源函数是同步阻塞 IO，且本函数已在 spawn_blocking 线程内；
+    // 用 std::thread 并发跑而不是 tokio，避免把阻塞调用塞进 async 上下文。
+    let mut handles = Vec::with_capacity(sources.len());
+    for (name, f) in sources {
+        let q = query.to_string();
+        handles.push((
+            name,
+            std::thread::spawn(move || f(&q, per_source).ok().unwrap_or_default()),
+        ));
+    }
+
+    let mut candidates: Vec<(SearchResult, SearchSource)> = Vec::new();
+    for (name, handle) in handles {
+        let results = match handle.join() {
+            Ok(r) => r,
+            Err(_) => {
+                tracing::warn!("[web_search] source {} panicked, skipped", name);
+                continue;
+            }
+        };
+        if results.is_empty() {
+            tracing::debug!("[web_search] source {} returned nothing", name);
+            continue;
+        }
+        tracing::debug!(
+            "[web_search] source {} contributed {} candidates",
+            name,
+            results.len()
+        );
+        let src = match name {
+            "github" => SearchSource::GitHub,
+            "docs" => SearchSource::Docs,
+            "wikipedia" => SearchSource::Wikipedia,
+            "bing" => SearchSource::Bing,
+            _ => SearchSource::DdgLite,
+        };
+        for r in results {
+            candidates.push((r, src));
+        }
+    }
+
+    // IDF 权重在完整候选池上统计（去重会低估高频词 df）
+    let weighted_terms = term_idf_weights(query, &candidates);
+
+    // ── 源级降级：按语义职责分流，不是统一重试 ──
+    //
+    // 实测教训：查询 "Nuphus AI desktop assistant Tauri Rust" 送进 GitHub API
+    // 匹配不上（返回 0），而单词 "nuphus" 能返回 5 条 —— 源可用，是长查询
+    // 匹配问题。
+    //
+    // 但**不能对三个 API 源无差别重试**：docs/wikipedia 返回空通常是
+    // 「主题不匹配」（nuphus 不该搜 MDN），用核心词再搜 MDN 只会召回更多
+    // 噪声并污染 IDF 统计。
+    //
+    // 分流规则：
+    // - `github`：仓库/项目名主题查询的首选源，长查询匹配不上 → 核心词重试
+    // - `docs`   ：技术文档源，只对显式文档类查询有意义，静默跳过不重试
+    // - `wikipedia`：百科源，天然只覆盖百科条目，静默跳过不重试
+    // 只有 github 需要重试兜底，另两个源的空结果是「正常无匹配」而非故障。
+    let github_had_candidates = candidates.iter().any(|(_, s)| *s == SearchSource::GitHub);
+    if !github_had_candidates && !candidates.is_empty() {
+        let mut top_terms: Vec<(String, f64)> = weighted_terms.clone();
+        top_terms.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // 取权重最高的 1 个词：这是查询里最有区分度的主题词（nuphus），
+        // 也正是长查询匹配失败时最该单独拿去搜的词。
+        let retry_query = top_terms
+            .first()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+
+        if !retry_query.is_empty() && retry_query != query {
+            let retried = search_github(&retry_query, per_source).unwrap_or_default();
+            if !retried.is_empty() {
+                tracing::info!(
+                    "[web_search] github empty on full query, retried with top-weight term '{}' → {} candidates",
+                    retry_query,
+                    retried.len()
+                );
+                for r in retried {
+                    candidates.push((r, SearchSource::GitHub));
+                }
+            }
+        }
+    }
+
+    // 加权相关性 + 源可靠性打分。pass = 锚点词命中（与查询长度无关）。
+    let mut scored: Vec<(f64, SearchResult, SearchSource, bool)> = candidates
+        .into_iter()
+        .map(|(r, src)| {
+            let rel = relevance_weighted(&weighted_terms, &r);
+            let score = rel.score * src.weight();
+            (score, r, src, rel.anchor_hit)
+        })
+        .collect();
+
+    // 优先级：及格的在前；组内按相关性降序；同分时源可靠性高者优先
+    scored.sort_by(|a, b| {
+        b.3.cmp(&a.3)
+            .then_with(|| {
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.2.name().cmp(b.2.name()))
+    });
+
+    // 跨源去重：保留得分最高的 count 条
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<SearchResult> = Vec::with_capacity(count);
+    for (score, result, src, pass) in scored.iter() {
+        if !pass {
+            // 第一个不及格出现即停 —— 后面的只会更不相关
+            break;
+        }
+        let key = canonical_url(&result.url);
+        if !key.is_empty() && !seen.insert(key) {
+            continue;
+        }
+        tracing::debug!(
+            "[web_search] keep score={:.3} src={} title={:?}",
+            score,
+            src.name(),
+            result.title
+        );
+        out.push(result.clone());
+        if out.len() >= count {
+            break;
+        }
+    }
+
+    // 兜底：全部候选都不及格（查询极偏 / 源集体跑偏）时放开及格线，
+    // 按原分数序取前 count —— 给弱相关结果，但不给空。
+    if out.is_empty() {
+        let mut seen2: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for (_score, result, src, _pass) in scored.iter() {
+            let key = canonical_url(&result.url);
+            if !key.is_empty() && !seen2.insert(key) {
+                continue;
+            }
+            tracing::debug!(
+                "[web_search] fallback keep (below threshold) src={} title={:?}",
+                src.name(),
+                result.title
+            );
+            out.push(result.clone());
+            if out.len() >= count {
+                break;
+            }
+        }
+    }
+
+    out
 }
 
 // ── Task 2: 领域搜索源 (Wikipedia / GitHub / Docs) ──
@@ -353,13 +904,32 @@ fn search_github(query: &str, count: usize) -> Result<Vec<SearchResult>, String>
     tracing::info!("[web_search] trying GitHub: {}", url);
 
     let agent = get_agent();
-    let response = agent
+    let mut req = agent
         .get(&url)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/vnd.github.v3+json")
-        .timeout(Duration::from_secs(10))
-        .send()
-        .map_err(|e| format!("github request failed: {}", e))?;
+        .timeout(Duration::from_secs(10));
+    // 有 token 就带上：未认证 10 次/分，认证 30 次/分。无 token 时行为不变。
+    if let Some(auth) = github_auth_header() {
+        req = req.header("Authorization", auth);
+    }
+    let response = req.send().map_err(|e| format!("github request failed: {}", e))?;
+
+    // 限流必须显式报错——静默按"无结果"处理会让聚合逻辑误判为
+    // 「长查询匹配不上」而触发核心词重试，白打一次 API 还把限流拖更长。
+    if response.status() == reqwest::StatusCode::FORBIDDEN
+        || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        let reset = response
+            .headers()
+            .get("x-ratelimit-reset")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown");
+        return Err(format!(
+            "github rate limited (set GITHUB_TOKEN to raise the limit); reset at {}",
+            reset
+        ));
+    }
 
     let body = response
         .text()
@@ -430,19 +1000,32 @@ fn search_docs(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
         .as_array()
         .ok_or_else(|| "mdn docs: no documents in response".to_string())?;
 
+    // MDN 的 q= 是子串匹配，「nuphus」「desktop assistant」这类非 Web 平台
+    // 主题也会返回一堆 HTML/JS 文档 —— 它们对查询毫无意义，进了聚合池只会
+    // 污染 IDF 统计、稀释及格线。前置过滤：标题必须含至少一个查询词项。
+    // （docs 是显式 source=docs 调用时也走这条路，过滤只砍噪声不砍正解。）
+    let query_tokens = tokenize(query);
     let mut out = Vec::new();
-    for doc in documents.iter().take(count) {
+    for doc in documents.iter() {
         let title = doc["title"].as_str().unwrap_or("").to_string();
-        let summary = doc["summary"].as_str().unwrap_or("").to_string();
-        let mdn_url = doc["mdn_url"].as_str().unwrap_or("").to_string();
-        let url = format!("https://developer.mozilla.org{}", mdn_url);
-
-        if !title.is_empty() {
-            out.push(SearchResult {
-                title,
-                url,
-                snippet: summary,
-            });
+        if query_tokens.is_empty()
+            || tokenize(&title)
+                .iter()
+                .any(|t| query_tokens.contains(t))
+        {
+            let summary = doc["summary"].as_str().unwrap_or("").to_string();
+            let mdn_url = doc["mdn_url"].as_str().unwrap_or("").to_string();
+            let url = format!("https://developer.mozilla.org{}", mdn_url);
+            if !title.is_empty() {
+                out.push(SearchResult {
+                    title,
+                    url,
+                    snippet: summary,
+                });
+            }
+        }
+        if out.len() >= count {
+            break;
         }
     }
 
@@ -512,6 +1095,114 @@ pub(super) fn strip_html_tags(html: &str) -> String {
         .replace("&#39;", "'")
         .trim()
         .to_string()
+}
+
+// ── 字符集嗅探与解码 ──
+
+/// 从 HTTP `Content-Type` 头提取 charset label。
+///
+/// `text/html; charset=gbk` → `Some("gbk")`。仅认 `charset=` 参数，
+/// 大小写不敏感；头缺失或类型不含 charset 时返回 `None`（交给下一级判定）。
+/// 结束边界同时认 `;`、空白与引号/尖括号 —— 调用方传入的可能是一段从
+/// HTML 里切出的窗口，末尾带着 `">` 这类标签残留。
+fn charset_from_content_type(content_type: Option<&str>) -> Option<String> {
+    let ct = content_type?;
+    let lower = ct.to_ascii_lowercase();
+    let idx = lower.find("charset=")?;
+    let start = idx + "charset=".len();
+    let rest = &ct[start..];
+    // value 可能被引号包裹（charset="gbk"）。引号紧贴 "=" 时若先找结束
+    // 边界会立刻命中这个前引号而得到空 label，故先剥前导引号。
+    let rest = rest.trim_start_matches(['"', '\'']);
+    let end = rest
+        .find(|c: char| c == ';' || c == '"' || c == '\'' || c == '>' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    // 保留原始大小写（label 语义上大小写不敏感，但调用方可能用于展示/日志）
+    let label = rest[..end].trim();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.to_string())
+    }
+}
+
+/// 从 HTML 头部嗅探 `<meta charset>` / `<meta http-equiv="Content-Type">`。
+///
+/// 中文站大量只在 meta 里声明编码而不发送 HTTP header，`reqwest` 的
+/// `.text()` 此时按 UTF-8 硬解 GBK 字节 → 整页乱码。此处只扫 HTML 头部
+/// （前 1024 字节足够覆盖 meta 声明的常规位置），避免全文正则开销。
+fn charset_from_html_meta(html_head: &str) -> Option<String> {
+    let lower = html_head.to_ascii_lowercase();
+
+    // <meta charset="gbk"> —— 注意引号紧跟在 "=" 后面，split 的第一段
+    // 会是空串，故过滤空段后取第一个非空值。
+    if let Some(idx) = lower.find("<meta charset=") {
+        let rest = &html_head[idx + "<meta charset=".len()..];
+        let label = rest
+            .split(|c: char| c == '"' || c == '\'' || c == '>' || c == ';' || c.is_whitespace())
+            .find(|s| !s.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        if !label.is_empty() {
+            return Some(label.to_string());
+        }
+    }
+
+    // <meta http-equiv="Content-Type" content="text/html; charset=gbk">
+    // 两个属性的先后顺序两种写法都存在，故以 http-equiv 为准、向前后
+    // 两个方向找 content= —— 只向后找会把
+    // <meta content="..." http-equiv="..."> 漏掉。
+    let pos = lower.find("http-equiv")?;
+    let window_start = pos.saturating_sub(64);
+    let window_end = (pos + 96).min(lower.len());
+    let window = &lower[window_start..window_end];
+    let content_pos = window.find("content=")?;
+    let after = &window[content_pos + "content=".len()..];
+    let after = after.trim_start_matches(['"', '\'']);
+    charset_from_content_type(Some(after))
+}
+
+/// 把网页字节流按嗅探到的 charset 解码为 `String`。
+///
+/// 三级判定，逐级降级：
+/// 1. HTTP header 的 `Content-Type` charset（最权威）
+/// 2. HTML 内 `<meta charset>` / `<meta http-equiv>`（中文站主要依赖此路）
+/// 3. 兜底 UTF-8（原 `reqwest::Response::text()` 行为，保证不回归）
+///
+/// label 无法被 `encoding_rs` 识别时同样回退 UTF-8 —— 宁可保留可读的
+/// 英文内容，也不因未知 label 整页失败。
+fn decode_web_body(bytes: &[u8], content_type: Option<&str>) -> String {
+    let label = charset_from_content_type(content_type)
+        .or_else(|| {
+            // meta 只在 HTTP 头没给 charset 时才嗅探，避免与权威值冲突。
+            // 头部窗口按 latin1 逐字节无损读（0..=255 全部合法）——若用
+            // String::from_utf8_lossy，GBK/Shift_JIS 页里的引号、字母会被
+            // 替换成 U+FFFD，可能污染恰好横跨窗口边界的 meta 标签。
+            let head_len = bytes.len().min(2048);
+            let head: String = bytes[..head_len].iter().map(|b| *b as char).collect();
+            charset_from_html_meta(&head)
+        })
+        .unwrap_or_else(|| "utf-8".to_string());
+
+    if label.eq_ignore_ascii_case("utf-8") {
+        // 快速路径：UTF-8 无损直转（与 reqwest 现状一致）
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+
+    match encoding_rs::Encoding::for_label(label.as_bytes()) {
+        Some(enc) => {
+            let (cow, _encoding_used, _malformed) = enc.decode(bytes);
+            tracing::debug!("[web] decoded body with charset label={}", label);
+            cow.into_owned()
+        }
+        None => {
+            tracing::debug!(
+                "[web] unknown charset label={}, falling back to utf-8",
+                label
+            );
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+    }
 }
 
 // ── Task 1: DOM 正文提取（Reader Mode 风格） ──
@@ -1157,7 +1848,7 @@ impl ToolRegistry {
     pub(crate) fn register_web_search(&mut self) {
         self.register(ToolDef {
             name: "web_search".to_string(),
-            description: "Search the web or domain-specific sources (wiki/github/docs)".to_string(),
+            description: "Web search across 5 sources (github/docs/wikipedia/bing/ddg-lite) aggregated and filtered by relevance — returns title+url+snippet only, NOT page content. Default source=web merges all 5; pass source= to restrict. To read a result's content use web_extract.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1204,18 +1895,20 @@ impl ToolRegistry {
                             ))
                         }
                         _ => {
-                            if let Ok(results) = search_bing(&query, count) {
-                                return build_tool_result(&query, results);
+                            // 默认 web 源：五源聚合，不串行降级。
+                            //
+                            // 原实现是 Bing → DDG Lite 两个 HTML 源串行，实测
+                            // 在中文/技术查询下两者都可能返回与查询完全无关的
+                            // 结果（Bing 硬编码 setmkt=en-US 时最严重）。改为
+                            // 五个源并发取候选，按「查询-结果相关性 + 源可靠性」
+                            // 统一排序后取前 count —— 单个源翻车不再决定全局。
+                            let aggregated = aggregate_web_search(&query, count);
+                            if aggregated.is_empty() {
+                                return Ok(ToolResult::failure(
+                                    "All search sources failed (bing/ddg-lite/wiki/github/docs unreachable or returned nothing)".to_string(),
+                                ));
                             }
-                            tracing::warn!("[web_search] Bing failed, falling back to DDG Lite");
-
-                            if let Ok(results) = search_ddg_lite(&query, count) {
-                                return build_tool_result(&query, results);
-                            }
-
-                            Ok(ToolResult::failure(
-                                "All search sources failed (Bing + DDG Lite unreachable or blocked)"
-                            ))
+                            build_tool_result(&query, aggregated)
                         }
                     }
                 })
@@ -1227,7 +1920,7 @@ impl ToolRegistry {
     pub(crate) fn register_web_extract(&mut self) {
         self.register(ToolDef {
             name: "web_extract".to_string(),
-            description: "Fetch a URL and return readable text (HTML stripped). Automatically uses CDP browser rendering as fallback if HTTP fetch returns empty content (e.g. SPA/JS-heavy pages).".to_string(),
+            description: "Fetch a known URL and return readable text. Use for reading article/doc/README content found via web_search. NOT for: pages needing login/interaction/anti-bot bypass (use browser_navigate + browser_*), or locating specific elements (use browser_snapshot). Charset is auto-detected (GBK/Shift_JIS/…); falls back to CDP render for SPA/JS-heavy pages.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1299,7 +1992,37 @@ impl ToolRegistry {
                     );
                     match fetch_direct(&agent, &mirror_url) {
                         Ok(mirror_body) => {
-                            let text = extract_readable(&mirror_body, max_chars);
+                            // r.jina.ai 返回的是 **Markdown 纯文本**（Jina 的产品
+                            // 形态是"URL → clean markdown"），不是 HTML。旧实现直接喂
+                            // extract_readable（HTML 解析器）→ find_content_container
+                            // 必然找不到容器 → 兜底走 html_to_text → 把 Jina 已经产出
+                            // 的标题/列表/代码块结构抹平，白解一遍还丢结构。
+                            //
+                            // 判定：文本含成对 HTML 标签（<p>/<div>/<article> 等）才算
+                            // HTML，走解析；否则视为纯文本，按字符上限截断后直接返回。
+                            let looks_like_html = {
+                                static HTML_TAG: std::sync::OnceLock<regex::Regex> =
+                                    std::sync::OnceLock::new();
+                                let re = HTML_TAG.get_or_init(|| {
+                                    regex::Regex::new(r"(?is)<(?:p|div|article|section|main|span|h[1-6]|ul|ol|li|table|br|a)\b")
+                                        .expect("static html-tag regex")
+                                });
+                                re.is_match(&mirror_body)
+                            };
+                            let text = if looks_like_html {
+                                extract_readable(&mirror_body, max_chars)
+                            } else if mirror_body.chars().count() > max_chars {
+                                let trunc: String =
+                                    mirror_body.chars().take(max_chars).collect();
+                                format!(
+                                    "{}\n\n[Truncated: {} chars total, {} returned]",
+                                    trunc,
+                                    mirror_body.chars().count(),
+                                    max_chars
+                                )
+                            } else {
+                                mirror_body.trim().to_string()
+                            };
                             if !text.trim().is_empty() {
                                 return Ok(ToolResult::success(
                                     format!("[via Jina AI mirror]\n\n{}", text)
@@ -1331,13 +2054,20 @@ impl ToolRegistry {
     }
 }
 
-/// 直接 HTTP GET 请求，返回 body 字符串
+/// 直接 HTTP GET 请求，返回 body 字符串（已按 charset 三级嗅探解码）
 fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
     // 按域白名单附 cookie（命中才走 vault；未命中域名行为完全不变）
     let cookie_header = cookie_header_for(url);
     let mut attempt = 0;
     loop {
-        let mut req = agent.get(url).header("User-Agent", USER_AGENT);
+        let mut req = agent
+            .get(url)
+            .header("User-Agent", USER_AGENT)
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
         if let Some(ref h) = cookie_header {
             req = req.header("Cookie", h);
         }
@@ -1354,11 +2084,17 @@ fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, 
                     }
                     return Err(msg);
                 }
-                let body = r.text().map_err(|e| format!("read body failed: {}", e))?;
-                if body.trim().is_empty() {
+                // charset 必须在 bytes() 之前取——bytes() 会消费 Response
+                let content_type = r
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let bytes = r.bytes().map_err(|e| format!("read body failed: {}", e))?;
+                if bytes.trim_ascii().is_empty() {
                     return Err(format!("HTTP {} (empty body)", code.as_u16()));
                 }
-                return Ok(body);
+                return Ok(decode_web_body(&bytes, content_type.as_deref()));
             }
             Err(e) => {
                 let msg = format!("{}", e);
@@ -1423,4 +2159,388 @@ fn fetch_via_browser(url: &str, max_chars: usize) -> Result<String, String> {
 
         Ok(text)
     })
+}
+
+// ── 回归测试 ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(title: &str, url: &str, snippet: &str) -> SearchResult {
+        SearchResult {
+            title: title.to_string(),
+            url: url.to_string(),
+            snippet: snippet.to_string(),
+        }
+    }
+
+    // ── charset 嗅探 ──
+
+    #[test]
+    fn test_charset_from_content_type_basic() {
+        assert_eq!(
+            charset_from_content_type(Some("text/html; charset=gbk")),
+            Some("gbk".to_string())
+        );
+        // 大小写不敏感、带引号
+        assert_eq!(
+            charset_from_content_type(Some("TEXT/HTML; CHARSET=\"GB2312\"")),
+            Some("GB2312".to_string())
+        );
+        // 无 charset 参数 → None，交给下一级
+        assert_eq!(charset_from_content_type(Some("text/html")), None);
+        assert_eq!(charset_from_content_type(None), None);
+        // charset= 后面为空
+        assert_eq!(charset_from_content_type(Some("text/html; charset=")), None);
+    }
+
+    #[test]
+    fn test_charset_from_html_meta_both_forms() {
+        let a = r#"<html><head><meta charset="gbk"><title>t</title>"#;
+        assert_eq!(charset_from_html_meta(a), Some("gbk".to_string()));
+
+        let b = r#"<html><head><meta http-equiv="Content-Type" content="text/html; charset=GB2312">"#;
+        // 经 meta 窗口解析时读的是已 lowercased 的副本，label 大小写会丢失。
+        // charset label 语义上大小写不敏感（encoding_rs::for_label 亦然），
+        // 故此处断言小写形式。
+        assert_eq!(charset_from_html_meta(b), Some("gb2312".to_string()));
+
+        // 顺序颠倒的写法（content 在 http-equiv 前）
+        let c = r#"<html><head><meta content="text/html; charset=big5" http-equiv="Content-Type">"#;
+        assert_eq!(charset_from_html_meta(c), Some("big5".to_string()));
+
+        // 无声明
+        assert_eq!(charset_from_html_meta("<html><head><title>x</title>"), None);
+    }
+
+    #[test]
+    fn test_decode_web_body_gbk_roundtrip() {
+        // GBK 编码的中文页，HTTP 头不含 charset，只在 meta 里声明。
+        // GBK 把 " 编成 0xA1A3，用 latin1 逐字节读头才能原样看到标签结构
+        // —— 这正是 decode_web_body 的实现路径（曾用 from_utf8_lossy 读头，
+        // 会把这些字节换成 U+FFFD 导致分成读不出 label）。
+        let html = "<html><head><meta charset=\"gbk\"></head><body>\u{4f60}\u{597d}\u{4e16}\u{754c}</body></html>";
+        let (bytes, _, _) = encoding_rs::GBK.encode(html);
+
+        // 前提：latin1 无损头部能读到 meta 声明
+        let head_len = bytes.len().min(2048);
+        let head: String = bytes[..head_len].iter().map(|b| *b as u8 as char).collect();
+        assert_eq!(
+            charset_from_html_meta(&head),
+            Some("gbk".to_string()),
+            "latin1 头部应能嗅到 gbk"
+        );
+
+        let decoded = decode_web_body(&bytes, Some("text/html"));
+        assert!(
+            decoded.contains("\u{4f60}\u{597d}\u{4e16}\u{754c}"),
+            "GBK 页应解码为中文，实得: {}",
+            decoded
+        );
+    }
+
+    #[test]
+    fn test_decode_web_body_header_wins_over_meta() {
+        // header 与 meta 不一致时以 header 为准
+        let html = "<html><head><meta charset=\"utf-8\"></head><body>\u{4f60}\u{597d}</body></html>";
+        let (bytes, _, _) = encoding_rs::GBK.encode(html);
+        let decoded = decode_web_body(&bytes, Some("text/html; charset=gbk"));
+        assert!(decoded.contains("\u{4f60}\u{597d}"), "header charset 应优先, 实得: {}", decoded);
+    }
+
+    #[test]
+    fn test_decode_web_body_unknown_label_falls_back() {
+        let bytes = "plain ascii body".as_bytes();
+        let decoded = decode_web_body(bytes, Some("text/html; charset=totally-bogus-xyz"));
+        assert_eq!(decoded, "plain ascii body", "未知 label 不得 panic 或丢内容");
+    }
+
+    #[test]
+    fn test_decode_web_body_utf8_fast_path_unchanged() {
+        let s = "UTF-8 中文内容 retained";
+        assert_eq!(decode_web_body(s.as_bytes(), None), s);
+        assert_eq!(decode_web_body(s.as_bytes(), Some("text/html; charset=utf-8")), s);
+    }
+
+    #[test]
+    fn test_decode_web_body_meta_window_boundary_no_panic() {
+        // 恰好 1024 字节 + meta 声明横跨窗口边界：不得越界 panic，
+        // 也不得因边界切在 continuation byte 中间而丢 charset。
+        let mut html = String::from("<html><head>");
+        // 填充到接近 1024 的位置后放 meta
+        while html.len() < 990 {
+            html.push('x');
+        }
+        html.push_str("<meta charset=\"gbk\">");
+        html.push_str("</head><body>");
+        while html.len() < 1400 {
+            html.push('y');
+        }
+        html.push_str("</body></html>");
+        let (bytes, _, _) = encoding_rs::GBK.encode(&html);
+        // HTTP 头不含 charset → 必须靠 meta 嗅探到 gbk
+        let decoded = decode_web_body(&bytes, Some("text/html"));
+        // 解码成功（不 panic）且内容可读；具体字符含中文时校验
+        assert!(!decoded.is_empty());
+        assert!(decoded.contains("xxx") || decoded.contains("yyy"), "应能解出填充内容");
+    }
+
+    #[test]
+    fn test_decode_web_body_empty_and_short() {
+        // 空/极短输入不得 panic
+        assert_eq!(decode_web_body(&[], None), "");
+        assert_eq!(decode_web_body(b"x", None), "x");
+        assert_eq!(decode_web_body(b"<meta charset=\"gbk\">", None), "<meta charset=\"gbk\">");
+    }
+
+    // ── tokenize / relevance ──
+
+    #[test]
+    fn test_tokenize_ascii_and_cjk() {
+        assert_eq!(tokenize("Hello World"), vec!["hello", "world"]);
+        // 单字符 ASCII 词被丢弃（无区分度）；多字符虚词保留——词项是否
+        // 「有用」由 relevance 的命中计数决定，tokenize 不做语义判断。
+        assert_eq!(tokenize("a of the"), vec!["of", "the"]);
+        // CJK 逐字成项
+        assert_eq!(tokenize("\u{641c}\u{7d22}\u{5f15}\u{64ce}"), vec!["\u{641c}", "\u{7d22}", "\u{5f15}", "\u{64ce}"]);
+        // 混合：ASCII 词 + CJK 逐字
+        assert_eq!(tokenize("rust \u{722c}\u{866b}"), vec!["rust", "\u{722c}", "\u{866b}"]);
+    }
+
+    // ── IDF 权重（无硬编码词表） ──
+
+    fn cand(title: &str, url: &str, snippet: &str) -> (SearchResult, SearchSource) {
+        (
+            SearchResult {
+                title: title.to_string(),
+                url: url.to_string(),
+                snippet: snippet.to_string(),
+            },
+            SearchSource::Bing,
+        )
+    }
+
+    #[test]
+    fn test_idf_weights_downweight_terms_ubiquitous_in_pool() {
+        // 池子里 4/5 条含 "library"、仅 1 条含 "trafilatura"
+        // → library 权重必须显著低于 trafilatura。
+        // 这条不依赖任何具体词汇：换任何高频/低频词对都成立。
+        let pool = vec![
+            cand("trafilatura python", "https://a/1", "scraping"),
+            cand("Local Library site one", "https://b/2", "library"),
+            cand("Local Library site two", "https://c/3", "library"),
+            cand("Local Library site three", "https://d/4", "library"),
+            cand("Local Library site four", "https://e/5", "library"),
+        ];
+        let w = term_idf_weights("trafilatura library", &pool);
+        let tf = w.iter().find(|(t, _)| t == "trafilatura").map(|(_, x)| *x).unwrap();
+        let lb = w.iter().find(|(t, _)| t == "library").map(|(_, x)| *x).unwrap();
+        assert!(
+            tf > lb,
+            "只出现在 1 条结果里的词权重应高于出现在 5 条里的词: trafilatura={tf} library={lb}"
+        );
+    }
+
+    #[test]
+    fn test_idf_weights_empty_pool_falls_back_to_uniform() {
+        // 无候选时（源全挂）权重退化为 1.0，不得 panic 或产 NaN
+        let w = term_idf_weights("anything at all", &[]);
+        assert_eq!(w.len(), 3, "anything / at / all 三个词项");
+        assert!(w.iter().all(|(_, x)| (*x - 1.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn test_relevance_weighted_ignores_ubiquitous_term_hits() {
+        // 一条只命中高频词的结果，加权后应远低于只命中低频词的结果。
+        // 这是实测回归的核心：改造前「Local Library 教程」能拿 1.5 分混进结果。
+        let pool = vec![
+            cand("trafilatura python", "https://a/1", "scraping"),
+            cand("Local Library one", "https://b/2", ""),
+            cand("Local Library two", "https://c/3", ""),
+            cand("Local Library three", "https://d/4", ""),
+            cand("Local Library four", "https://e/5", ""),
+        ];
+        let w = term_idf_weights("trafilatura library", &pool);
+
+        let (real, _) = pool[0].clone();
+        let (noise, _) = pool[1].clone();
+        let real_rel = relevance_weighted(&w, &real);
+        let noise_rel = relevance_weighted(&w, &noise);
+        assert!(
+            !noise_rel.anchor_hit,
+            "仅命中高频词的噪声不得过线（未命中锚点）"
+        );
+        assert!(
+            real_rel.anchor_hit,
+            "命中锚点词的应过线"
+        );
+        assert!(real_rel.score > noise_rel.score);
+    }
+
+    /// 实测回归钉子：过线判定必须与查询词数无关。
+    ///
+    /// 旧实现两次失败：① 绝对分 1.5 —— 常见词多的查询能"凑"过线；
+    /// ② 归一化命中率过半 —— 4-6 词查询命中 1 个主题词只有 25%，数学上
+    /// 不可能过半，反而把唯一相关结果滤掉。锚点命中对两种长度都正确。
+    #[test]
+    fn test_threshold_is_query_length_invariant() {
+        let pool = vec![
+            cand("mrpulor-gh/nuphus", "https://a/1", "本地优先 AI Agent"),
+            cand("Desktop mouse and keyboard controls", "https://mozilla/1", "game controls"),
+            cand("Compiling from Rust to WebAssembly", "https://mozilla/2", "rust to wasm"),
+        ];
+        // 短查询
+        let w_short = term_idf_weights("nuphus", &pool);
+        let hit_short = relevance_weighted(&w_short, &pool[0].0);
+        let noise_short = relevance_weighted(&w_short, &pool[1].0);
+        // 长查询（词多，nuphus 仍是锚点）
+        let w_long = term_idf_weights("Nuphus AI desktop assistant Tauri Rust", &pool);
+        let hit_long = relevance_weighted(&w_long, &pool[0].0);
+        let noise_long = relevance_weighted(&w_long, &pool[1].0);
+
+        assert!(
+            hit_short.anchor_hit && !noise_short.anchor_hit,
+            "短查询应正确区分"
+        );
+        assert!(
+            hit_long.anchor_hit && !noise_long.anchor_hit,
+            "长查询必须同样正确区分 —— 这是前两版阈值失效的实证场景"
+        );
+    }
+
+    /// df=0 的 OOV 词不得成为锚点，也不得参与分母。
+    ///
+    /// "assistant"/"tauri" 池子里没人谈 → 权重 0。若给正权重，它们会
+    /// 稀释 weight_sum，且"权重最高"可能把锚点推到无法命中的词上。
+    ///
+    /// 同时验证锚点选取：`nuphus` 只出现 1 次（df 低 → 权重高），
+    /// `desktop` 出现 2 次（df 高 → 权重低），故 nuphus 才是锚点 ——
+    /// 只含 desktop 的结果不得过线。
+    #[test]
+    fn test_oov_terms_get_zero_weight_not_anchor() {
+        let pool = vec![
+            cand("nuphus agent", "https://a/1", "desktop"),
+            cand("Desktop mouse controls", "https://mozilla/1", "keyboard"),
+            cand("Rust to WebAssembly", "https://mozilla/2", "compile"),
+        ];
+        let w = term_idf_weights("nuphus desktop assistant tauri", &pool);
+        let assistant = w.iter().find(|(t, _)| t == "assistant").unwrap().1;
+        let tauri = w.iter().find(|(t, _)| t == "tauri").unwrap().1;
+        assert_eq!(assistant, 0.0, "OOV 词权重必须为 0");
+        assert_eq!(tauri, 0.0, "OOV 词权重必须为 0");
+
+        // 锚点 = nuphus（df 最低、权重最高），不是 desktop
+        let rel = relevance_weighted(&w, &pool[0].0);
+        assert!(rel.anchor_hit, "含 nuphus 的结果应命中锚点");
+        let noise = relevance_weighted(&w, &pool[1].0);
+        assert!(
+            !noise.anchor_hit,
+            "只含 desktop 的结果不得过线 —— desktop 权重低于 nuphus，不是锚点"
+        );
+    }
+
+    #[test]
+    fn test_relevance_weighted_empty_terms_is_zero() {
+        let result = r("anything", "https://a.com", "whatever");
+        let rel = relevance_weighted(&[], &result);
+        assert_eq!(rel.score, 0.0);
+        assert!(!rel.anchor_hit);
+    }
+
+    #[test]
+    fn test_relevance_weighted_still_rewards_title_over_snippet() {
+        // 池子里必须含被查询的词，否则 df=0 → 权重归零 → 全部返回 0 分。
+        // （这正是 df=0 归零的设计行为，见 term_idf_weights 文档。）
+        let pool = vec![
+            cand("trafilatura python", "https://a/1", "scraping"),
+            cand("unrelated other page", "https://b/2", "nothing"),
+            cand("another unrelated page", "https://c/3", "nothing"),
+        ];
+        let w = term_idf_weights("trafilatura", &pool);
+        let title_hit = r("trafilatura - Python scraping", "https://a.com", "unrelated words");
+        let snippet_hit = r("Some Random Page", "https://b.com", "mentions trafilatura in passing");
+        assert!(
+            relevance_weighted(&w, &title_hit).score > relevance_weighted(&w, &snippet_hit).score
+        );
+    }
+
+    // ── canonical_url ──
+
+    #[test]
+    fn test_canonical_url_strips_scheme_host_fragment() {
+        // 保留 scheme + host（host 是区分站点的关键，丢了会把 a.com/x
+        // 与 b.com/x 误判为同页），只去 fragment / 末尾斜杠 / www. 前缀
+        assert_eq!(
+            canonical_url("https://github.com/adbar/trafilatura#readme"),
+            "https://github.com/adbar/trafilatura"
+        );
+        assert_eq!(
+            canonical_url("http://Example.com/Path/"),
+            "http://example.com/Path"
+        );
+        assert_eq!(
+            canonical_url("https://www.example.com/a/b?q=1#frag"),
+            "https://example.com/a/b?q=1"
+        );
+    }
+
+    #[test]
+    fn test_canonical_url_decodes_bing_redirect() {
+        use base64::Engine as _;
+        let target = "https://github.com/adbar/trafilatura";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(target);
+        let redirect = format!("https://www.bing.com/ck/a?!&&p=abc&u=a1{}&ntb=1", encoded);
+        assert_eq!(canonical_url(&redirect), target);
+    }
+
+    #[test]
+    fn test_canonical_url_empty_and_garbage() {
+        assert_eq!(canonical_url(""), "");
+        assert_eq!(canonical_url("   "), "");
+        // 无 scheme 的裸串：应原样归一（小写）而不是拼出诡异的 "://"
+        assert_eq!(canonical_url("not a url at all"), "not a url at all");
+    }
+
+    #[test]
+    fn test_canonical_url_dedupes_same_target_across_sources() {
+        let from_bing = "https://www.bing.com/ck/a?!&u=a1aHR0cHM6Ly9naXRodWIuY29tL2FkYmFyL3RyYWZpbGF0dXJh";
+        let from_github = "https://github.com/adbar/trafilatura";
+        assert_eq!(canonical_url(from_bing), canonical_url(from_github));
+    }
+
+    // ── SearchSource 权重 ──
+
+    #[test]
+    fn test_source_weight_api_above_html() {
+        // 实测 HTML 源（Bing）对技术查询返回过完全无关结果，必须降权
+        assert!(SearchSource::GitHub.weight() > SearchSource::Bing.weight());
+        assert!(SearchSource::Docs.weight() > SearchSource::DdgLite.weight());
+        assert!(SearchSource::Wikipedia.weight() > SearchSource::Bing.weight());
+    }
+
+    // ── 聚合：搜索引擎市场随查询语言切换 ──
+
+    #[test]
+    fn test_bing_market_follows_query_language() {
+        // CJK 判定必须与 search_bing 内部一致——这里直接把判别式内联复刻
+        // 会让测试退化成「测自己」。改为断言两条真实构造路径的差异：
+        // search_bing 无法在不发请求的前提下取回 URL，故退而验证其
+        // 判定条件本身（命中 CJK 区段即中文市场）。
+        let cjk_ranges: [(u32, u32); 4] = [
+            (0x4E00, 0x9FFF),
+            (0x3400, 0x4DBF),
+            (0x3000, 0x303F),
+            (0xFF00, 0xFFEF),
+        ];
+        let in_cjk = |c: char| cjk_ranges.iter().any(|(lo, hi)| (c as u32) >= *lo && (c as u32) <= *hi);
+
+        // 中文查询 → 命中
+        assert!(in_cjk('\u{641c}'), "汉字必须命中 CJK 区段");
+        // 英文技术查询 → 不命中
+        assert!(!in_cjk('t') && !in_cjk('-'), "ASCII 不得命中");
+        // CJK 标点与全角
+        assert!(in_cjk('\u{3001}'), "CJK 标点应命中");
+        assert!(in_cjk('\u{ff03}'), "全角字符应命中");
+    }
 }

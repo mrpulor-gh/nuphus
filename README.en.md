@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.23 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.24 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -275,6 +275,17 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v0.2.24 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#84](https://github.com/mrpulor-gh/nuphus/pull/84) | Adds the mobile server / relay threat model and accepted limits to SECURITY.md |
+| [@yuansui486](https://github.com/yuansui486) | [#87](https://github.com/mrpulor-gh/nuphus/pull/87) | Fixes Markdown rendering for external data points (MarkdownInline exported for reuse) |
+| [@yuansui486](https://github.com/yuansui486) | [#88](https://github.com/mrpulor-gh/nuphus/pull/88) | Clarifies model connection success feedback and moves model capability probing off the switch path |
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#91](https://github.com/mrpulor-gh/nuphus/pull/91) | Correctly propagates desktop input and submit-hotkey failures in the external-Agent dispatch sequence |
 
 ### v0.2.23 Contributors
 

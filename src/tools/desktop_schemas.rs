@@ -246,7 +246,7 @@ impl ToolRegistry {
         vec![
             // ═══ Desktop automation tools ═══
             tool_def("desktop_mouse",
-                "鼠标操作。点击/悬停/移动优先传本次 perceive 的 capture_id + element_id，由本地换算并验证目标。旧 x/y 是屏幕绝对坐标（Windows 原生屏幕坐标，macOS 逻辑点），不是窗口/图片相对坐标。事件发送不代表业务成功。position 只读；macOS 需辅助功能授权。",
+                "鼠标操作。点击/悬停/移动优先传本次 perceive 的 capture_id + element_id，由本地换算并验证目标；旧 x/y 是屏幕绝对坐标，不是窗口/图片相对坐标。事件发送不代表业务成功。position 只读。",
                 json_props! {
                     "action" => obj!("type"="string","enum"=["click","double_click","hover","scroll","position","move"],"description"="写操作需 capture_id + element_id，或旧接口 (x,y)；position 只读"),
                     "hwnd" => obj!("type"="integer","description"="Target window handle. Optional for all write-actions; skip for position."),
@@ -261,7 +261,7 @@ impl ToolRegistry {
                 },
                 &["action"]),
             tool_def("desktop_mouse_drag",
-                "拖拽鼠标起点→终点（验证码滑块等）。macOS 需辅助功能授权",
+                "拖拽鼠标起点→终点（验证码滑块等）。起点/终点用 perceive 的 capture_id+element_id，或裸屏幕坐标，不要混用。",
                 json_props! {
                     "start_capture_id" => obj!("type"="string","description"="起点本地捕获，与 start_element_id 成对；不与裸坐标混用"),
                     "start_element_id" => obj!("type"="integer","minimum"=0),
@@ -274,7 +274,7 @@ impl ToolRegistry {
                 },
                 &[]),
             tool_def("desktop_input",
-                "向窗口输入文本或快捷键。保存工作流优先传成功语义动作的 target_locator，由本地重定位、激活并验证目标；不固化 hwnd。输入文本前先聚焦输入控件；快捷键可直接定位目标窗口。旧 hwnd 接口保留。",
+                "向窗口输入文本(mode=type)或快捷键(mode=hotkey)。优先传 target_locator（来自成功语义动作的 workflow_step.params.locator），本地会重定位、激活并验证目标；不要去固化 hwnd——窗口句柄跨运行会变。mode=type 前需先聚焦输入控件；mode=hotkey 可直接定位窗口。send 控制 typing 后是否追加回车。",
                 json_props! {
                     "mode" => obj!("type"="string","enum"=["type","hotkey"],"description"="type: input text; hotkey: press keys only"),
                     "target_locator" => obj!("type"="object","description"="成功 workflow_step.params.locator 的原样副本；与 hwnd 二选一，用于跨次运行的稳定定位"),
@@ -297,11 +297,11 @@ impl ToolRegistry {
                 serde_json::json!({}),
                 &[]),
             tool_def("desktop_windows_list",
-                "列出可见窗口(hwnd/标题/位置)。macOS 需辅助功能授权",
+                "列出可见窗口(hwnd/标题/位置)。操作窗口前先用它拿 hwnd。",
                 serde_json::json!({}),
                 &[]),
             tool_def("desktop_window_activate",
-                "激活窗口到前台(hwnd)。窗口操作前必须先激活，否则可能作用于错误窗口。macOS 需辅助功能授权",
+                "激活窗口到前台(hwnd)。任何窗口操作(move/resize/screenshot/input)前必须先激活，否则会作用于错误窗口。",
                 json_props! {
                     "hwnd" => obj!("type"="integer","description"="Window handle from windows_list")
                 },
@@ -337,14 +337,14 @@ impl ToolRegistry {
                 },
                 &["hwnd"]),
             tool_def("desktop_vision",
-"AI 图像理解(布局/文字/图标)。传 prompt 定向分析，不传提取全部文字。⚠️坐标偏差大不可用于点击——用 perceive 取精确坐标",
+                "AI image understanding (layout / text / icons) — answers 'what is on screen'. It does NOT return coordinates and must not be used to click; for clickable targets use desktop_perceive (pixel) or desktop_semantic_observe (UIA).",
                 json_props! {
                     "image_path" => obj!("type"="string","description"="BMP 图片路径"),
                     "prompt" => obj!("type"="string","description"="定向分析提示（如\"分析UI布局结构\"），不传默认提取全部文字")
                 },
                 &["image_path"]),
             tool_def("desktop_perceive",
-"本地 OCR+YOLO 元素定位。rect/center/image_center 是图片内坐标，不可直接当屏幕点。已登记截图附带 capture_id、element_id 和本地换算的 screen_center，优先用这两个 ID 调用 desktop_mouse。未知来源图片 screen_center 为 null。",
+                "Local OCR+YOLO element locate from a screenshot: returns capture_id + element_id + screen_center for desktop_mouse. Start here when a semantic (UIA) tree is unavailable or you need pixel-accurate targets. rect/center are IMAGE coords — never feed them to desktop_mouse directly; use the returned IDs. Untracked images yield screen_center=null.",
                 json_props! {
                     "image_path" => obj!("type"="string","description"="BMP 截图路径（来自 desktop_screenshot）")
                 },
@@ -405,13 +405,13 @@ impl ToolRegistry {
         vec![
             // ═══ Browser automation tools ═══
             tool_def("browser_navigate",
-                "Open URL in browser",
+                "Open a URL in the visible browser. Gateway to all browser_* tools: snapshot/click/type/exec require a loaded page first. NOT for reading content — use web_extract when no interaction is needed.",
                 json_props! {
                     "url" => obj!("type"="string","description"="URL to navigate to")
                 },
                 &["url"]),
             tool_def("browser_snapshot",
-                "Text snapshot of visible interactive elements via AX tree: @N [role] \"name\". Use @N refs for click/type. Falls back to DOM traversal if AX unavailable.",
+                "Interactable-element map of the current page as '@N [role] \"name\"'. Use @N refs as selectors in click/type/exec. This is the tool for LOCATING page elements; it is not a content extractor (use web_extract for known-URL content, browser_extract for raw page text). Supports selector= to scope to a subtree.",
                 json_props! {
                     "full" => obj!("type"="boolean","default"=false,"description"="Include hidden elements too"),
                     "selector" => obj!("type"="string","description"="Scope snapshot to this subtree")
@@ -425,7 +425,7 @@ impl ToolRegistry {
                 &["script"]),
             {
                 let mut click = tool_def("browser_click",
-                "Click element by CSS selector or ref ID (@N). Auto-waits for visibility (5s). Left clicks default to a JS click (ignores overlays but lacks user activation); trusted=true sends real CDP mouse events at the element center. Right/middle clicks are always trusted. After a left click the page is checked for a reaction — a note is appended when nothing changes within 3s.",
+                "Click an element by @N ref (from browser_snapshot) or CSS selector. Default JS click ignores overlays; trusted=true sends real mouse events (needed for autoplay/media). Right/middle are always trusted. Post-click DOM/URL change is checked — a 'no change' note means the click may not have landed.",
                 json_props! {
                     "selector" => obj!("type"="string","description"="CSS selector or ref ID (e.g. @1, @e0, 'button')"),
                     "ref" => obj!("type"="string","description"="Ref ID from snapshot (e.g. @1, @e0); alias of selector — provide either one"),
@@ -442,7 +442,7 @@ impl ToolRegistry {
             },
             {
                 let mut typed = tool_def("browser_type",
-                "Type text into input by CSS selector or ref ID (@N). Auto-waits for visibility (5s). After typing the page is checked for a reaction — a note is appended when the field neither mutates the DOM nor changes its value.",
+                "Type text into an input by @N ref (from browser_snapshot) or CSS selector. Post-type field-value change is checked — a 'no change' note means the text may not have gone into the right field.",
                 json_props! {
                     "selector" => obj!("type"="string","description"="CSS selector or ref ID of input field (e.g. @1, @e0)"),
                     "ref" => obj!("type"="string","description"="Ref ID from snapshot (e.g. @1, @e0); alias of selector — provide either one"),
@@ -470,7 +470,7 @@ impl ToolRegistry {
                 },
                 &["direction"]),
             tool_def("browser_extract",
-                "Extract readable text from current page (strips nav/ads).",
+                "Get visible text of the CURRENT page (after navigate/click), flattened to one line. Scope is only 4 hardcoded pickers: article → main → [class*=content] → body; nav/ads are NOT stripped despite the picker name. For readable CONTENT from a known URL prefer web_extract; for element structure use browser_snapshot. Capture output via browser_exec + h.extract(sel) when a specific selector is known.",
                 json_props! {
                     "max_chars" => obj!("type"="integer","default"=8000,"description"="Max characters to extract")
                 },
@@ -500,7 +500,7 @@ impl ToolRegistry {
                 serde_json::json!({}),
                 &[]),
             tool_def("browser_wait_for",
-                "Wait for CSS selector to reach a state (up to timeout). Note: click/type already auto-wait 5s; use for custom states or longer delays.",
+                "Block until a selector reaches a state, e.g. waiting for lazy content or SPA hydration before snapshot/extract. Use when 5s auto-wait is not enough.",
                 json_props! {
                     "selector" => obj!("type"="string","description"="CSS selector to wait for"),
                     "timeout_ms" => obj!("type"="integer","default"=5000,"description"="Max wait time in ms"),
