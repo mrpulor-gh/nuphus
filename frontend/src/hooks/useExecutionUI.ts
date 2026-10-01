@@ -63,6 +63,29 @@ export function refineForceMinPct(s: RefineState): number {
   return Math.max(floor, Math.min(cap, ceilByUsage))
 }
 
+/**
+ * 把后端已生效的 forceThreshold 自动抬到当前滑块下限。
+ *
+ * 补孔：提示事件里 usagePercent 涨上去后 `refineForceMinPct` 把滑块下限顶高，
+ * 但后端配置还是旧值——滑块显示 65% 而配置停在 0.55，下一轮 55% 即触发，
+ * 「显示撒谎」。这里只做 reconcile：低于下限 → 把配置抬到下限，使滑块显示 /
+ * 后端配置 / 实际行为三者一致。
+ *
+ * 静默自愈：invoke 失败只 console.warn，不 toast、不抛 rejection——这是自动
+ * 修复不是用户操作，下一轮事件到达还会再 reconcile；不做乐观 state 更新
+ * （滑块显示的本来就是抬升后的值，另写一份只会重新制造双数据源不一致）。
+ * 后端 set 只写 runtime guard 不发事件，故本地 state 无需抢先更新。
+ */
+export async function autoRaiseForceThreshold(s: RefineState): Promise<void> {
+  const minPct = refineForceMinPct(s)
+  if (Math.round(s.forceThreshold * 100) >= minPct) return
+  try {
+    await setRefineForceThreshold(minPct / 100)
+  } catch (e) {
+    console.warn('[refine] autoRaiseForceThreshold 失败：', e)
+  }
+}
+
 export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) => void) {
   // ── Execution trace visibility ──
   const [showExecTrace, setShowExecTrace] = useState(false)

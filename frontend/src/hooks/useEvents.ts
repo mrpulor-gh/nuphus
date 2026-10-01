@@ -4,6 +4,7 @@ import { invoke, listen } from '../core/bridge'
 import { debugEnabled } from '../core/debug'
 import { continueReplyAfterUser } from '../core/progressMessages'
 import type { RefineState, RefineTier } from './useExecutionUI'
+import { autoRaiseForceThreshold } from './useExecutionUI'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -1227,27 +1228,31 @@ export function useEvents(h: EventHandlers) {
 
           // 如果已经有 pendingRefine（用户已跳过弹窗）→ 只更新数据，不弹窗
           if (pendingRefineRef.current) {
-            h.setPendingRefine(prev =>
-              prev
-                ? {
-                    ...prev,
-                    usagePercent: pct,
-                    skippedTurns: prev.skippedTurns + 1,
-                  }
-                : null,
-            )
+            const pending = pendingRefineRef.current
+            const nextPending = {
+              ...pending,
+              usagePercent: pct,
+              skippedTurns: pending.skippedTurns + 1,
+            }
+            h.setPendingRefine(cur => (cur ? nextPending : null))
+            // usagePercent 把滑块下限顶高、而后端 forceThreshold 还停在旧值时
+            // 自动抬配置：滑块显示 / 后端配置 / 实际行为三者一致（静默自愈）
+            void autoRaiseForceThreshold(nextPending)
             break
           }
 
           // 正常弹窗（现有逻辑）；tier / 阈值一并带上，供弹窗决定是否给 slider
-          h.setRefineState({
+          const nextRefineState: RefineState = {
             usagePercent: pct,
             totalLimit: win,
             tier,
             forceThreshold,
             forceMin,
             forceMax,
-          })
+          }
+          h.setRefineState(nextRefineState)
+          // 同上：低于当前滑块下限的旧 active 配置在此 reconcile 抬升
+          void autoRaiseForceThreshold(nextRefineState)
           break
         }
         case 'refine_skipped':

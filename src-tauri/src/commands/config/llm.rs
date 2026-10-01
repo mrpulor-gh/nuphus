@@ -19,6 +19,7 @@ use super::toml_ops::{
 use crate::emitter::CompoundEmitter;
 use crate::models::aggregator as or_agg;
 use crate::state::{AppState, LlamaConfig};
+use nuphus::agent::distill::RefineTier;
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::config::registry::ProviderRegistry;
 use tauri::{Manager, State};
@@ -701,6 +702,12 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         .filter(|m| AgentModels::AGENTS.contains(m))
         .unwrap_or("leader");
     if agent_key == "leader" {
+        // 切换前上下文窗口校验（零副作用：只读 runtime/session 锁，不写任何状态）。
+        // 必须早于下方换 client / 落盘 / 广播——否则拒绝切换时配置已被改写，
+        // 「拒绝失败」变成半吊子切换。只对 leader 校验：main 会话在 leader 槽，
+        // workflow/exec 会话在别槽，本轮不纳入。
+        ensure_switch_within_context_window(&state, &resolved_provider, &resolved_model)?;
+
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         if let Some(agent) = guard.leader_agent.as_mut() {
             agent
@@ -769,6 +776,154 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         "Switched to: provider={}, model={}",
         resolved_provider, resolved_model
     ))
+}
+
+/// leader 会话当前用量——权威口径与 `agent::distill::maybe_refine_session` 一致：
+/// 官方读数 `api_input_tokens` 优先，为 0 回落字符估算。
+fn leader_session_usage(session: &nuphus::session::Session) -> usize {
+    if session.api_input_tokens > 0 {
+        session.api_input_tokens as usize
+    } else {
+        session.estimate_token_usage()
+    }
+}
+
+/// 切换前上下文窗口校验的拒绝详情——含用户可读文案所需的全部数字。
+///
+/// 由 [`evaluate_switch_context_window`] 产出；[`Self::user_message`] 直接渲染成
+/// 前端 `modelSwitchError` 错误通道可展示的中文文案。
+struct SwitchWindowOverflow {
+    /// 当前会话用量（tokens）
+    usage: usize,
+    /// 目标模型上下文窗口（tokens）
+    context_window: usize,
+    /// 生效强制线比例（small/medium 定值，large 为用户配置 clamp 后）
+    ratio: f64,
+    /// 强制线绝对阈值（tokens）
+    limit: usize,
+}
+
+impl SwitchWindowOverflow {
+    /// 已占目标窗口的百分比（窗口为 0 时防御性给 0）。
+    fn occupancy_pct(&self) -> f64 {
+        if self.context_window == 0 {
+            0.0
+        } else {
+            self.usage as f64 / self.context_window as f64 * 100.0
+        }
+    }
+
+    /// 拒绝文案：当前用量 / 占窗口比 / 阈值比例(=绝对 tokens) / 行动建议。
+    fn user_message(&self, model: &str) -> String {
+        format!(
+            "当前会话用量约 {} tokens，已占目标模型「{}」上下文窗口的 {:.1}%，\
+             超过切换阈值 {:.1}%（= {} tokens）。请先提炼上下文，或选择上下文窗口更大的模型",
+            self.usage,
+            model,
+            self.occupancy_pct(),
+            self.ratio * 100.0,
+            self.limit
+        )
+    }
+}
+
+/// 切换校验的判定核心（纯函数，不触碰 AppState，供单测直接覆盖）。
+///
+/// 口径与 `agent::distill::maybe_refine_session` 完全一致：档位按目标窗口分
+/// （[`RefineTier::for_window`]），比例取 [`RefineTier::force_ratio`]（small/medium
+/// 定值，large 读用户配置并经其内部 clamp）。**严格大于才拒绝**——强制线是下一轮
+/// 收尾的处理线而非错误线，等于阈值放行。
+///
+/// `None` 窗口（无元数据）一律放行：禁止拿 128K 兜底猜，那会把未知窗口的模型
+/// 一刀切死。
+fn evaluate_switch_context_window(
+    target_window: Option<usize>,
+    configured_large: f64,
+    usage: usize,
+) -> Result<(), SwitchWindowOverflow> {
+    let Some(context_window) = target_window else {
+        return Ok(());
+    };
+    let ratio = RefineTier::for_window(context_window).force_ratio(configured_large);
+    let limit = (context_window as f64 * ratio) as usize;
+    if usage > limit {
+        Err(SwitchWindowOverflow {
+            usage,
+            context_window,
+            ratio,
+            limit,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/// 切换前上下文窗口校验：当前会话用量超过目标模型的**生效强制线**时拒绝切换。
+///
+/// 拒绝发生在任何副作用之前（调用方保证：换 client / 落盘 / 广播都在此之后）。
+/// 只对 leader 会话生效（main 会话在 leader 槽）。
+///
+/// 当前用量两个来源：① `leader_agent.session()`（空闲态）；② 执行中 agent 被
+/// process 每轮 take 走，回落 `state.session` 的 `session_backup`（轮初快照，
+/// 保守近似，不含本轮新增）。两个源都拿不到 → 放行（无数据不制造阻塞）。
+/// runtime 锁与 session 锁各自短持有，不嵌套。
+fn ensure_switch_within_context_window(
+    state: &AppState,
+    provider: &str,
+    model: &str,
+) -> Result<(), String> {
+    // 目标窗口无元数据 → 放行并留痕。禁止编造 128K 兜底：那会把未知窗口的
+    // 模型一刀切死（用户手上的新模型元数据缺失是常态）。
+    let Some(target_window) =
+        nuphus::agent::goal_types::try_get_context_window_for(model, Some(provider))
+    else {
+        tracing::info!(
+            "switch_model: 目标模型 provider={}, model={} 无 context_window 元数据，跳过切换校验",
+            provider,
+            model
+        );
+        return Ok(());
+    };
+
+    let (agent_usage, configured_large) = match state.runtime.lock() {
+        Ok(g) => (
+            g.leader_agent
+                .as_ref()
+                .map(|agent| leader_session_usage(agent.session())),
+            g.large_force_refine_threshold,
+        ),
+        Err(_) => (None, nuphus::agent::distill::LARGE_FORCE_DEFAULT),
+    };
+    let usage = match agent_usage {
+        Some(u) => Some(u),
+        None => state.session.lock().ok().and_then(|sb| {
+            sb.session_backup
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<nuphus::session::Session>(json).ok())
+                .map(|session| leader_session_usage(&session))
+        }),
+    };
+    let Some(usage) = usage else {
+        tracing::info!(
+            "switch_model: leader_agent 与 session_backup 均取不到会话用量，跳过切换校验"
+        );
+        return Ok(());
+    };
+
+    match evaluate_switch_context_window(Some(target_window), configured_large, usage) {
+        Ok(()) => Ok(()),
+        Err(overflow) => {
+            tracing::info!(
+                "switch_model: 拒绝切换 —— provider={}, model={}, usage={}, window={}, limit={}",
+                provider,
+                model,
+                overflow.usage,
+                overflow.context_window,
+                overflow.limit
+            );
+            Err(overflow.user_message(model))
+        }
+    }
 }
 
 /// 桌面 IPC 命令入口（thin wrapper）：委托泛型核心 `switch_model_impl`。
@@ -3037,6 +3192,83 @@ mod tests {
         let e = resolve_agent_binding_provider(&registry, "nope", "same", None).unwrap_err();
         assert!(e.contains("未知 agent"), "{e}");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    // ── 切换前上下文窗口校验（switch_model 拒绝逻辑的判定核心）──
+
+    /// usage 超过强制线 → 拒绝；拒绝详情带上用户可读文案所需的全部数字。
+    #[test]
+    fn switch_window_check_rejects_usage_above_limit() {
+        // 200K 窗口 = Small 档，强制线比例 0.75 → limit = 150_000（配置 0.99 不得生效）
+        let overflow = evaluate_switch_context_window(Some(200_000), 0.99, 180_000)
+            .expect_err("180_000 > 150_000 应拒绝");
+        assert_eq!(overflow.usage, 180_000);
+        assert_eq!(overflow.context_window, 200_000);
+        assert_eq!(overflow.ratio, 0.75);
+        assert_eq!(overflow.limit, 150_000);
+
+        // 文案四要素：当前用量 / 占窗口比 / 阈值比例(=绝对 tokens) / 行动建议
+        let msg = overflow.user_message("test-model");
+        assert!(msg.contains("当前会话用量约 180000 tokens"), "{msg}");
+        assert!(msg.contains("上下文窗口的 90.0%"), "{msg}");
+        assert!(
+            msg.contains("超过切换阈值 75.0%（= 150000 tokens）"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("请先提炼上下文，或选择上下文窗口更大的模型"),
+            "{msg}"
+        );
+    }
+
+    /// 严格大于才拒绝：等于阈值放行——强制线是下一轮收尾的处理线，不是错误线。
+    #[test]
+    fn switch_window_check_allows_usage_at_limit() {
+        // small：200_000 * 0.75 = 150_000
+        assert!(evaluate_switch_context_window(Some(200_000), 0.99, 150_000).is_ok());
+        // medium：600_000 * 0.80 = 480_000
+        assert!(evaluate_switch_context_window(Some(600_000), 0.99, 480_000).is_ok());
+        // large：1_000_000 * 0.60（配置值）= 600_000
+        assert!(evaluate_switch_context_window(Some(1_000_000), 0.60, 600_000).is_ok());
+    }
+
+    /// 低于阈值放行（含空会话零用量）。
+    #[test]
+    fn switch_window_check_allows_usage_below_limit() {
+        assert!(evaluate_switch_context_window(Some(200_000), 0.99, 149_999).is_ok());
+        assert!(evaluate_switch_context_window(Some(200_000), 0.99, 0).is_ok());
+    }
+
+    /// 目标窗口无元数据 → 一律放行。禁止编造 128K 兜底：那会把未知窗口的模型一刀切死。
+    #[test]
+    fn switch_window_check_passes_when_window_unknown() {
+        assert!(evaluate_switch_context_window(None, 0.99, usize::MAX).is_ok());
+    }
+
+    /// 三档比例与 distill 强制线完全一致：small 0.75 / medium 0.80 固定，large 读用户
+    /// 配置（经 clamp）；small/medium 不受 large 配置污染（大模型设置不污染小模型）。
+    #[test]
+    fn switch_window_force_ratio_tiers() {
+        // 档位边界：256K → Small，600K → Medium，600_001 → Large
+        assert_eq!(RefineTier::for_window(256_000), RefineTier::Small);
+        assert_eq!(RefineTier::for_window(600_000), RefineTier::Medium);
+        assert_eq!(RefineTier::for_window(600_001), RefineTier::Large);
+
+        // small/medium 定值，用户配什么都不影响
+        assert_eq!(RefineTier::for_window(200_000).force_ratio(0.99), 0.75);
+        assert_eq!(RefineTier::for_window(400_000).force_ratio(0.99), 0.80);
+        // large 读配置
+        assert_eq!(RefineTier::for_window(1_000_000).force_ratio(0.60), 0.60);
+        // clamp 越界（既有语义，不得因本次校验漂移）
+        assert_eq!(RefineTier::for_window(1_000_000).force_ratio(0.99), 0.80);
+        assert_eq!(RefineTier::for_window(1_000_000).force_ratio(0.10), 0.50);
+
+        // 经判定链落地：small 档 configured=0.99 不得把线抬过 150_000
+        let overflow = evaluate_switch_context_window(Some(200_000), 0.99, 160_000)
+            .expect_err("small 档若误读配置（0.80/0.99）会放过 160_000");
+        assert_eq!(overflow.limit, 150_000);
+        // medium 档同理：480_001 拒绝（线仍是 480_000）
+        assert!(evaluate_switch_context_window(Some(600_000), 0.99, 480_001).is_err());
     }
 
     /// 自动补全 → 落盘 → 诊断健康：写入的绑定必是完整 (provider, model) 对。
