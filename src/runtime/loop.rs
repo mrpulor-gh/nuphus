@@ -313,13 +313,14 @@ impl RuntimeBuilder {
             crate::config::VisionStrategy::Main => Some(runtime.agent.config.model.clone()),
             crate::config::VisionStrategy::None => None,
         };
-        // 主模型 supports_vision：统一消歧入口（provider 绑定优先，候选遍历）
+        // 主模型 supports_vision：provider 取**当前生效绑定**（AgentConfig.provider，
+        // build 时由 create_client_for 写入）——不查 [last_model] 影子表反查
         let main_supports_vision = crate::config::load_registry()
             .ok()
             .map(|r| {
                 crate::config::resolve_capability(
                     &r,
-                    r.last_model_provider_hint().as_deref(),
+                    Some(runtime.agent.config.provider.as_str()),
                     &runtime.agent.config.model,
                     |m| m.supports_vision,
                     false,
@@ -329,13 +330,13 @@ impl RuntimeBuilder {
         runtime.agent.config.vision_model = vision_model;
         runtime.agent.config.supports_vision = main_supports_vision;
 
-        // 主模型 supports_image_generation：同一消歧入口
+        // 主模型 supports_image_generation：同一消歧入口，同源 provider
         let main_supports_image_gen = crate::config::load_registry()
             .ok()
             .map(|r| {
                 crate::config::resolve_capability(
                     &r,
-                    r.last_model_provider_hint().as_deref(),
+                    Some(runtime.agent.config.provider.as_str()),
                     &runtime.agent.config.model,
                     |m| m.supports_image_generation,
                     false,

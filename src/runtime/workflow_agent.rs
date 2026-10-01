@@ -178,7 +178,8 @@ impl WorkflowAgent {
 
     /// 构造后用 model_label 初始化 supports_vision（与 set_model_label 同源）
     fn apply_supports_vision(mut self) -> Self {
-        self.supports_vision = Self::resolve_supports_vision(&self.model_label);
+        self.supports_vision =
+            Self::resolve_supports_vision(&self.model_label, self.llm.provider_name());
         self
     }
 
@@ -218,7 +219,8 @@ impl WorkflowAgent {
 
     /// Set model label (for prompt building)
     pub fn set_model_label(&mut self, label: String) {
-        self.supports_vision = Self::resolve_supports_vision(&label);
+        // label 只影响展示；视觉能力判定的实例身份以持有的 client 为准
+        self.supports_vision = Self::resolve_supports_vision(&label, self.llm.provider_name());
         self.model_label = label;
     }
 
@@ -231,8 +233,8 @@ impl WorkflowAgent {
     /// Keeps session (cross-turn context), invalidates prompt/tool caches
     /// (prompt content is model-dependent).
     pub fn set_llm(&mut self, llm: Arc<dyn ApiClient>, model_label: String) {
+        self.supports_vision = Self::resolve_supports_vision(&model_label, llm.provider_name());
         self.llm = llm;
-        self.supports_vision = Self::resolve_supports_vision(&model_label);
         self.model_label = model_label;
         self.cached_prompt = None;
         self.cached_tools = None;
@@ -253,14 +255,22 @@ impl WorkflowAgent {
         self.tools.enhanced_mode()
     }
 
-    /// 从 model registry 解析主模型是否原生支持视觉（与 RuntimeBuilder 同源逻辑）
-    fn resolve_supports_vision(model_label: &str) -> bool {
+    /// 从 model registry 解析主模型是否原生支持视觉（与 RuntimeBuilder 同源逻辑）。
+    ///
+    /// provider 取自 client 自带身份（`ApiClient::provider_name`，段名）——
+    /// 当前生效实例的权威；不查 `[last_model]` 影子表反查。
+    fn resolve_supports_vision(model_label: &str, provider: &str) -> bool {
+        let provider = if provider.is_empty() {
+            None
+        } else {
+            Some(provider)
+        };
         crate::config::load_registry()
             .ok()
             .map(|r| {
                 crate::config::resolve_capability(
                     &r,
-                    r.last_model_provider_hint().as_deref(),
+                    provider,
                     model_label,
                     |m| m.supports_vision,
                     false,
@@ -388,7 +398,8 @@ impl WorkflowAgent {
                 crate::config::VisionStrategy::None => None,
             };
             // 主模型 supports_vision：统一消歧入口（经 resolve_supports_vision 同源）
-            let main_supports_vision = Self::resolve_supports_vision(&self.model_label);
+            let main_supports_vision =
+                Self::resolve_supports_vision(&self.model_label, self.llm.provider_name());
             self.cached_prompt = Some(crate::agent::prompt::build_workagent_prompt(
                 &self.model_label,
                 Some(self.llm.provider_name()),

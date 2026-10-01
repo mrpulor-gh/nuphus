@@ -182,20 +182,11 @@ impl fmt::Display for GoalType {
     }
 }
 
-/// Model context window mapping
-/// Prefers explicit context_window from config.toml (set after API query),
-/// falls back to built-in ProviderRegistry metadata, then a reasonable default.
-///
-/// ⚠️ **Provider-blind compatibility entry — new code must use
-/// [`get_context_window_for`] / [`get_context_window_of`] instead.**
-/// A same-name model published by two providers.toml segments (official
-/// `deepseek` vs a gateway/custom segment) is disambiguated here only by
-/// candidate scan, which can return the sibling segment's window; the `*_for` /
-/// `*_of` variants pin the routing segment and are the only correct choice when
-/// the caller holds a binding. Kept `pub` for external consumers only.
-pub fn get_context_window(model_name: &str) -> usize {
-    try_get_context_window(model_name).unwrap_or(128_000)
-}
+/// ⚠️ **Provider-blind 入口已随影子轨道废止而删除**（原
+/// `get_context_window(model)` / `try_get_context_window(model)`）：全库零调用，
+/// 且同 id 跨段时 candidate scan 必返回别段的值——那不是兼容，是错路由。
+/// 一律改用 [`get_context_window_for`] / [`try_get_context_window_for`] /
+/// [`get_context_window_of`]（provider 限定）。
 
 /// Context window lookup WITHOUT the 128K guess: explicit config → builtin
 /// metadata → None (unknown). Runtime sizing (refine budget etc.) may still
@@ -204,14 +195,8 @@ pub fn get_context_window(model_name: &str) -> usize {
 /// unknown model (e.g. a new model listed by the provider UI but not yet in
 /// our metadata) shows as 0/“--” instead of a fabricated 128K.
 ///
-/// ⚠️ **Provider-blind compatibility entry — same restriction as
-/// [`get_context_window`]: new code must use [`try_get_context_window_for`]**
-/// (pass the routing binding's `provider`), otherwise a same-name model under
-/// another segment can supply the wrong window. Kept `pub` for external
-/// consumers only.
-pub fn try_get_context_window(model_name: &str) -> Option<usize> {
-    try_get_context_window_for(model_name, None)
-}
+/// `provider = None`（或空串）= 调用方没有绑定可用：**返回 None，不猜**。
+/// 同 id 跨 custom-xxx 段是多实例常态，候选扫描会把别段窗口当成答案。
 
 /// Provider-aware variant of [`get_context_window`].
 ///
@@ -233,16 +218,15 @@ pub fn get_context_window_of(client: &dyn crate::api::ApiClient) -> usize {
     get_context_window_for(client.model_name(), Some(client.provider_name()))
 }
 
-/// Provider-aware variant of [`try_get_context_window`].
+/// Provider-aware context window lookup.
 ///
 /// Resolution order:
-///   1. providers.toml registry — the provider-exact value when `provider` is
-///      known; otherwise (or when that provider declares no value) the first
-///      same-name candidate carrying a value. A candidate without a value must
-///      never mask its same-name siblings, which is why the lookup scans
-///      candidates instead of trusting the segment-order first hit.
-///   2. builtin ProviderRegistry metadata table — same order (provider-exact,
-///      then alias-aware first match).
+///   1. providers.toml registry — the provider-exact value. **A missing
+///      binding (`None`/`""`) yields `None` — never a candidate scan**: a
+///      same-name model under a sibling custom-xxx segment would otherwise
+///      supply its window (silent mis-route).
+///   2. builtin ProviderRegistry metadata table — provider-qualified only,
+///      same rule.
 ///   3. `None` = unknown; the caller decides (0/"--" for UI, 128K for runtime).
 pub fn try_get_context_window_for(model_name: &str, provider: Option<&str>) -> Option<usize> {
     if let Ok(registry) = crate::config::load_registry() {
@@ -250,12 +234,11 @@ pub fn try_get_context_window_for(model_name: &str, provider: Option<&str>) -> O
             return Some(window);
         }
     }
-    // Fall back to ProviderRegistry metadata table
+    // Fall back to ProviderRegistry metadata table — provider-qualified only.
+    let provider = provider.filter(|p| !p.is_empty())?;
     let builtin = crate::config::registry::ProviderRegistry::builtin();
-    provider
-        .filter(|p| !p.is_empty())
-        .and_then(|p| builtin.find_model_for_provider(p, model_name))
-        .or_else(|| builtin.find_model(model_name).map(|(_, meta)| meta))
+    builtin
+        .find_model_for_provider(provider, model_name)
         .map(|meta| meta.context_window as usize)
 }
 
@@ -449,12 +432,12 @@ mod tests {
             model: missing,
             provider: "",
         };
+        // 未知模型（且 provider 未知）→ 128K 兜底：provider-blind 版本已删，
+        // 显式穿空 provider 与 client 无绑定（provider_name=""）同路径。
         assert_eq!(
             get_context_window_of(&unbound),
             get_context_window_for(unbound.model, Some(""))
         );
-        // 未知模型（且 provider 未知）→ 128K 兜底，与 provider-blind 版本一致。
-        assert_eq!(get_context_window_of(&unbound), get_context_window(missing));
         assert_eq!(get_context_window_of(&unbound), 128_000);
 
         // 绑定段名后走 provider 精确分支，取值不得偏离显式 provider 版本。

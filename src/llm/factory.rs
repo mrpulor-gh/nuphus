@@ -134,41 +134,13 @@ impl ClientFactory {
 
     /// Create Client for the main model (all text tasks)
     ///
-    /// 主模型绑定消歧：`registry.model` 只是模型 id，同名模型跨 provider 时
-    /// 无消歧解析会取段序首段（跨段误路由）。这里按绑定优先级解析——
-    /// 1. `[last_model]` 磁盘记录（`switch_model` 写；见
-    ///    `ModelRegistry::last_model_provider_hint`）→ 精确段；
-    /// 2. 无记录且候选唯一 → 该唯一段（安全推断）；
-    /// 3. 无记录且多候选 → 报错（对齐 `effective_model_binding` 的
-    ///    `"model has multiple providers; provider binding is required"` 契约），
-    ///    不静默取首段。
+    /// 主模型绑定唯一权威：`ModelRegistry::resolve_main_binding`（成对表解析，
+    /// 多候选无绑定 = 报错不猜）。历史上此处曾用 `[last_model]` hint 反查 +
+    /// 本地多候选分支，随影子轨道废止一并收编。
     pub fn create_main_client(&self) -> Result<Arc<dyn ApiClient>> {
         let registry = self.registry()?;
-        if registry.model.is_empty() {
-            return Err(crate::NuphusError::Config(
-                "no model configured".to_string(),
-            ));
-        }
-        if let Some(provider) = registry.last_model_provider_hint() {
-            return self.create_client_for(&provider, &registry.model);
-        }
-        match registry.find_model_candidates(&registry.model).len() {
-            1 => {
-                let provider = registry.find_model_candidates(&registry.model)[0]
-                    .0
-                    .name
-                    .clone();
-                self.create_client_for(&provider, &registry.model)
-            }
-            0 => Err(crate::NuphusError::llm(format!(
-                "model '{}' not found",
-                registry.model
-            ))),
-            n => Err(crate::NuphusError::llm(format!(
-                "model '{}' has multiple providers ({} candidates); provider binding is required",
-                registry.model, n
-            ))),
-        }
+        let (provider, model) = registry.resolve_main_binding()?;
+        self.create_client_for(&provider, &model)
     }
 
     /// Build a Transport for the given Provider + model.
@@ -410,10 +382,12 @@ mod tests {
             registry.resolve_context_window(Some(b.provider_name()), "probe-model"),
             Some(64_000)
         );
-        // provider 未知（None / ""）→ 回落候选遍历，取首个带值的候选。
+        // provider 未知（None / ""）→ None，不扫 sibling（二元组化 P1）：
+        // probe-model 在两段都有，但缺绑定时任何选择都是猜——显式 unknown。
+        assert_eq!(registry.resolve_context_window(None, "probe-model"), None);
         assert_eq!(
-            registry.resolve_context_window(None, "probe-model"),
-            Some(200_000)
+            registry.resolve_context_window(Some(""), "probe-model"),
+            None
         );
 
         // create_client（find_model 段序首匹配）→ 段序首段，语义不变。

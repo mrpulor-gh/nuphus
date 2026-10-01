@@ -734,9 +734,11 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         Some(&resolved_provider),
     )?;
 
-    // provider 归属磁盘记录：[agent_models] 只存 model id，同 id 跨 provider
-    // （官方 deepseek vs opencode-go）时 get_provider_context 靠本表回查归属。
-    nuphus::config::record_last_model(&state.llm_config_path, &resolved_model, &resolved_provider)?;
+    // [last_model] 影子表停写（二元组化 P1）：扁平 id→段 表在同 id 跨段时
+    // 只能存一个归属，与 custom-xxx 多实例现实结构性冲突——用户当前选择的
+    // 唯一权威是 [agent_models] 成对表（上方 save_agent_model）+ runtime
+    // llm_config。表内既有数据保留只读（get_provider_context 迁移链见
+    // config/last_model.rs），迁移窗口结束后随文件一并退役。
     let generation = super::model_metadata::activate(&state, &cfg, context_window)?;
 
     // 写盘后诊断一次绑定健康（含旧版半绑定遗留）：命中 B 类静默降级 → HUD 提示。
@@ -1458,17 +1460,11 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
                     or_agg::lookup_generic_cached(&config_dir, &provider.name, &model.id)
                 });
 
-            // builtin 元数据解析：provider 限定优先。同名模型可能同时由官方段与
-            // 网关段发布（官方 deepseek 与 opencode-go 都列 deepseek-v4-flash），
-            // 无限定的 find_model 会因 HashMap 迭代顺序命中另一段的元数据。
-            // Reasoning-effort options: prefer per-model metadata persisted at
-            // configure time (discovered from the provider's /models response,
-            // e.g. Kimi think_efforts); fall back to the built-in ModelDef
-            // (e.g. deepseek-flash = [high, max]); final fallback —
-            // OpenRouter supported_efforts. Unknown models → no effort knob.
-            let builtin_meta = builtin
-                .find_model_for_provider(provider.provider_type.as_str(), &model.id)
-                .or_else(|| builtin.find_model(&model.id).map(|(_, m)| m));
+            // builtin 元数据解析：provider 限定（协议类型键）。无限定的盲查
+            // 已删（二元组化 P1）：同 id 跨段时它会因迭代序命中另一段的元数据，
+            // 那是错贴不是兜底——miss 就 miss，effort 旋钮缺失好过贴错值。
+            let builtin_meta =
+                builtin.find_model_for_provider(provider.provider_type.as_str(), &model.id);
             let (mut reasoning_efforts, mut default_effort) = if !model.reasoning_efforts.is_empty()
             {
                 (
@@ -1996,17 +1992,14 @@ async fn fetch_provider_models(
     let briefs = models
         .into_iter()
         .map(|id| {
-            // builtin 元数据解析：provider 限定优先。同名模型可能同时由官方段与
-            // 网关段发布（官方 deepseek 与 opencode-go 都列 deepseek-v4-flash），
-            // 无限定的 find_model 会因迭代顺序命中另一段的元数据。
+            // builtin 元数据解析：段限定优先（provider_kind = 协议类型键），
+            // tier-1 精确 miss 后允许 tier-2 段限定 fuzzy（中转别名归一）。
+            // 无限定的 find_model / find_model_fuzzy 盲扫已删（二元组化 P1）：
+            // 同 id 跨段时会因迭代序把别段的元数据贴进本段 brief——UI 上将
+            // 显示错误的窗口/能力，属错贴非兜底。
             let meta = registry
                 .find_model_for_provider(provider_kind.as_str(), &id)
-                .or_else(|| registry.find_model(&id).map(|(_, m)| m))
-                // tier-2（仅在上面两级精确匹配全 miss 后走）：中转别名
-                // `Claude-Opus-4.6` / `claude_opus_4_6` 归一后命中内置表。
-                // 官方段 id 与内置逐字节相同，永远命中第一级，行为不变。
-                .or_else(|| registry.find_model_for_provider_fuzzy(provider_kind.as_str(), &id))
-                .or_else(|| registry.find_model_fuzzy(&id).map(|(_, m)| m));
+                .or_else(|| registry.find_model_for_provider_fuzzy(provider_kind.as_str(), &id));
             let mut brief = ProviderModelBrief {
                 id,
                 supports_streaming: meta.map(|m| m.supports_streaming).unwrap_or(true),

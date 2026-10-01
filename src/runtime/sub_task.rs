@@ -116,7 +116,7 @@ impl SubTaskRunner {
         system_prompt: String,
         goal: String,
     ) -> Self {
-        let supports_vision = Self::resolve_supports_vision(llm.model_name());
+        let supports_vision = Self::resolve_supports_vision(llm.model_name(), llm.provider_name());
         Self {
             llm,
             tools,
@@ -151,14 +151,23 @@ impl SubTaskRunner {
         }
     }
 
-    /// 从 model registry 解析主模型是否原生支持视觉（统一消歧入口）
-    fn resolve_supports_vision(model_name: &str) -> bool {
+    /// 从 model registry 解析主模型是否原生支持视觉（统一消歧入口）。
+    ///
+    /// provider 取自 client 自带身份（`ApiClient::provider_name`，段名）——
+    /// 当前生效实例的权威；不查 `[last_model]` 影子表反查。空 provider 时
+    /// 显式 unknown（None），由 registry 按候选唯一性处置。
+    fn resolve_supports_vision(model_name: &str, provider: &str) -> bool {
+        let provider = if provider.is_empty() {
+            None
+        } else {
+            Some(provider)
+        };
         crate::config::load_registry()
             .ok()
             .map(|r| {
                 crate::config::resolve_capability(
                     &r,
-                    r.last_model_provider_hint().as_deref(),
+                    provider,
                     model_name,
                     |m| m.supports_vision,
                     false,

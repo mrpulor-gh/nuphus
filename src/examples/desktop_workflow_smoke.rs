@@ -144,15 +144,18 @@ fn selected_model(registry: &ModelRegistry) -> Result<(String, Option<String>)> 
         .and_then(toml::Value::as_str)
         .filter(|v| !v.is_empty());
     let Some(model) = workflow else {
-        return Ok((registry.model.clone(), registry.last_model_provider_hint()));
+        // 无 workflow 绑定 → 回落主绑定（成对解析权威，不查 [last_model] 影子表）
+        let (provider, main) = registry
+            .resolve_main_binding()
+            .map_err(|e| anyhow::anyhow!("主模型绑定解析失败: {e}"))?;
+        return Ok((main, Some(provider)));
     };
     let provider = doc
         .get("agent_models")
         .and_then(|v| v.get("workflow_provider"))
         .and_then(toml::Value::as_str)
         .filter(|v| !v.is_empty())
-        .map(str::to_owned)
-        .or_else(|| config::load_last_model_provider(path, model));
+        .map(str::to_owned);
     Ok((model.to_owned(), provider))
 }
 

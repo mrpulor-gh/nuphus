@@ -1329,16 +1329,20 @@ mod tests {
     /// Exec 路径的展示标签形如 `"<model> (<provider>)"`；把它喂给
     /// `get_context_window_for` 必然 miss → 恒回落 128K。本用例断言：
     ///   1. `当前模型:` 显示标签本身（展示契约逐字符不变）；
-    ///   2. 上下文窗口来自**真 model id** 的解析结果（把标签当 id 用会得到 128K）。
+    ///   2. 上下文窗口来自**真 model id 的段限定解析**（把标签当 id 用会得到 128K）。
+    ///
+    /// provider 取 builtin 真实段（google）：二元组化 P1 起，盲查扫已删，
+    /// 幽灵 provider 名不再跨段拾遗——miss 就是 miss（128K 兜底），这是
+    /// 「不猜」的预期行为，不是退化。
     #[test]
     fn test_build_exec_prompt_keeps_display_label_out_of_resolution() {
         // 真 id 取自 builtin ProviderRegistry（gemini-2.5-pro → 2M），
         // 标签形式 "id (provider)" 在任何 registry 中都解析不到。
         let real = "gemini-2.5-pro";
-        let label = format!("{real} (gw)");
+        let label = format!("{real} (google)");
         let prompt = build_exec_prompt(
             real,
-            Some("gw"),
+            Some("google"),
             Some(&label),
             "schema",
             GoalType::ScriptingExec,
@@ -1348,7 +1352,7 @@ mod tests {
             None,
         );
 
-        let expected = crate::agent::goal_types::get_context_window_for(real, Some("gw"));
+        let expected = crate::agent::goal_types::get_context_window_for(real, Some("google"));
         let expected_str = if expected >= 1_000_000 {
             format!("{}M", expected / 1_000_000)
         } else {
@@ -1373,7 +1377,7 @@ mod tests {
         // fixture 自检：标签必解析到 128K 兜底，与真 id 取值不同——否则本用例
         // 无法区分「用标签解析」这一回归（退化即失败，不静默放过）。
         assert_ne!(
-            crate::agent::goal_types::get_context_window_for(&label, Some("gw")),
+            crate::agent::goal_types::get_context_window_for(&label, Some("google")),
             expected,
             "fixture degenerate: the label resolves like the real model id"
         );
