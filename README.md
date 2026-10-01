@@ -148,6 +148,10 @@ npx @nuphus/nuphus-desktop
 2. 双击安装包完成安装（Windows 安装后桌面生成 **Nuphus** 快捷方式）
 3. 双击快捷方式即可启动
 
+> **国内网络下载缓慢或失败时**，改从 [Gitee Releases](https://gitee.com/nuphus/nuphus/releases)
+> 获取 Windows 安装包（与 GitHub 发布版同一文件，签名一致，可直接用于自动更新）。
+> macOS / Linux 安装包暂仅托管在 GitHub，可配合镜像或代理下载。
+
 ### 从源码构建（开发者）
 
 **前置条件：**

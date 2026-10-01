@@ -13,6 +13,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0N0ZGMDRGRkQzOUI2OApSV1JvbTlQL0JQOUhCbmU1NHZVY1lsL0FZZElGSmRFWTJUaVlnSnl2cFZmVTFCeHordWlIK1EyYgo=",
       "endpoints": [
+        "https://gitee.com/nuphus/nuphus/raw/main/latest.json",
         "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/latest/download/latest.json",
         "https://github.com/mrpulor-gh/nuphus/releases/latest/download/latest.json"
       ],
