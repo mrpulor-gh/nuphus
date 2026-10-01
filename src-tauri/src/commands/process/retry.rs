@@ -117,10 +117,10 @@ pub async fn retry_agent(
             .lock()
             .map(|g| g.tool_permissions)
             .unwrap_or_default();
-        let refine_threshold = state
+        let large_force_refine_threshold = state
             .runtime
             .lock()
-            .map(|g| g.refine_threshold)
+            .map(|g| g.large_force_refine_threshold)
             .unwrap_or(0.5);
 
         let run_result = super::leader::run_runtime_with_config(
@@ -141,7 +141,7 @@ pub async fn retry_agent(
             &emitter,
             existing_runtime,
             Some(session_json), // 无留存 Runtime 时的 session 恢复来源（已是断点状态）
-            refine_threshold,
+            large_force_refine_threshold,
             None, // mode（复用 Runtime 原 mode；新建则默认 Free）
             state.workflow_engine.clone(),
             true,   // resume：断点续跑

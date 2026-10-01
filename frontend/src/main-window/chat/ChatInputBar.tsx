@@ -18,6 +18,7 @@ import {
 } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
+import type { RefineState } from '../../hooks/useExecutionUI'
 import { formatPrimaryShortcut } from '../../ui/platformShortcut'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
@@ -69,7 +70,7 @@ interface ChatInputBarProps {
    */
   executionStage: ExecutionStage
   pauseState: { actionId: string } | null
-  refineState: { usagePercent: number; totalLimit: number } | null
+  refineState: RefineState | null
   /** token 用量 */
   tokenUsage: TokenUsageInfo | null
   mainTokenUsage: TokenUsageInfo | null

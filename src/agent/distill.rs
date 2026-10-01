@@ -78,12 +78,82 @@ pub fn save_refine_entry(
     }
 }
 
+// ── Refine 分档 ────────────────────────────────────────────────────────────
+
+/// 按模型上下文窗口分档——refine 策略的唯一分档依据。
+///
+/// 为什么必须分档：小窗口模型「随便执行一下就达到阈值」，甚至强制线与撑爆之间
+/// 只差一个任务的长度，给它可调区间毫无意义（调与不调都改变不了什么），提示更是
+/// 纯噪音；而大窗口模型的主要矛盾是**防漂移**——上下文缓慢劣化比撑爆更早发生，
+/// 需要「尽早被告知 + 自行决定何时动手」。
+///
+/// 档位边界取 256K / 600K：256K 恰在现有元数据最高档（Anthropic 200K）之上的
+/// 2 的幂，**现有所有模型一律落入 Small 档，零行为回归**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefineTier {
+    /// cw ≤ 256K：无提示，75% 强制提炼。
+    Small,
+    /// 256K < cw ≤ 600K：50% 提示，80% 强制提炼（两条线均固定）。
+    Medium,
+    /// cw > 600K：30% 提示，强制线可调（默认 80%，范围 50%–80%）。
+    Large,
+}
+
+/// 大窗口强制线的可调范围（比例）。
+pub const LARGE_FORCE_MIN: f64 = 0.50;
+pub const LARGE_FORCE_MAX: f64 = 0.80;
+/// 大窗口强制线默认值——与 Medium 档的固定值一致，用户可往下调以更早提炼。
+pub const LARGE_FORCE_DEFAULT: f64 = 0.80;
+
+impl RefineTier {
+    pub fn for_window(context_window: usize) -> Self {
+        if context_window <= 256_000 {
+            RefineTier::Small
+        } else if context_window <= 600_000 {
+            RefineTier::Medium
+        } else {
+            RefineTier::Large
+        }
+    }
+
+    /// 提示线比例；`None` = 该档没有提示阶段（到达强制线直接提炼）。
+    pub fn prompt_ratio(&self) -> Option<f64> {
+        match self {
+            RefineTier::Small => None,
+            RefineTier::Medium => Some(0.50),
+            RefineTier::Large => Some(0.30),
+        }
+    }
+
+    /// 强制线比例。仅 [`RefineTier::Large`] 接受用户配置，其余档返回固定值。
+    /// 传入值会被 clamp 进 `LARGE_FORCE_MIN..=LARGE_FORCE_MAX`，
+    /// 防止越界配置把强制线压到提示线以下（那会让提示永不触发）。
+    pub fn force_ratio(&self, configured_large: f64) -> f64 {
+        match self {
+            RefineTier::Small => 0.75,
+            RefineTier::Medium => 0.80,
+            RefineTier::Large => configured_large.clamp(LARGE_FORCE_MIN, LARGE_FORCE_MAX),
+        }
+    }
+
+    /// 档位标识，随事件下发供前端决定 UI 形态（是否给 slider）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RefineTier::Small => "small",
+            RefineTier::Medium => "medium",
+            RefineTier::Large => "large",
+        }
+    }
+}
+
 /// Unified refinement check — usable by any Agent type after ReAct loop ends
-/// Emits RefinePrompt (forced=true for auto-refine, forced=false to ask user)
+///
+/// 三分档策略见 [`RefineTier`]。实际 token 优先取官方读数
+/// （`api_input_tokens`），取不到才回落到字符估算。
 pub async fn maybe_refine_session(
     session: &mut Session,
     context_window: usize,
-    refine_threshold: f64,
+    large_force_threshold: f64,
     emitter: Option<&dyn EventEmitter>,
     refine_count: &mut u32,
 ) {
@@ -93,29 +163,61 @@ pub async fn maybe_refine_session(
         session.estimate_token_usage()
     };
 
-    let refine_limit = ((context_window as f64) * refine_threshold) as usize;
-    let effective_limit = refine_limit.min(300_000);
-    let force_limit = ((context_window as f64) * 0.80) as usize;
-    let force_limit = force_limit.min(500_000);
+    let tier = RefineTier::for_window(context_window);
+    let force_ratio = tier.force_ratio(large_force_threshold);
+    let force_limit = ((context_window as f64) * force_ratio) as usize;
 
-    if actual_tokens < effective_limit {
-        return;
-    }
-
-    if actual_tokens >= force_limit {
-        tracing::warn!(
-            "[REFINE] Force refine triggered: tokens={} >= force_limit={}",
+    // 无提示档：到达强制线才动作，且直接执行（不问用户）。
+    let Some(prompt_ratio) = tier.prompt_ratio() else {
+        if actual_tokens < force_limit {
+            return;
+        }
+        tracing::info!(
+            "[REFINE] tier=small cw={} tokens={} >= force_limit={} ({:.0}%) — refine without prompting",
+            context_window,
             actual_tokens,
-            force_limit
+            force_limit,
+            force_ratio * 100.0
         );
-
         if let Some(em) = emitter {
             em.emit(crate::agent::events::NuphusEvent::RefinePrompt {
                 current_tokens: actual_tokens as u32,
-                refine_limit: effective_limit as u32,
+                refine_limit: force_limit as u32,
                 force_limit: force_limit as u32,
-                threshold: refine_threshold,
+                threshold: force_ratio,
                 context_window: context_window as u32,
+                tier: tier.as_str().to_string(),
+                forced: true,
+            });
+        }
+        *refine_count += 1;
+        return;
+    };
+
+    let prompt_limit = ((context_window as f64) * prompt_ratio) as usize;
+
+    if actual_tokens < prompt_limit {
+        return;
+    }
+
+    // 已越过强制线：不再询问，直接执行。
+    if actual_tokens >= force_limit {
+        tracing::warn!(
+            "[REFINE] tier={} cw={} tokens={} >= force_limit={} ({:.0}%) — forced refine",
+            tier.as_str(),
+            context_window,
+            actual_tokens,
+            force_limit,
+            force_ratio * 100.0
+        );
+        if let Some(em) = emitter {
+            em.emit(crate::agent::events::NuphusEvent::RefinePrompt {
+                current_tokens: actual_tokens as u32,
+                refine_limit: prompt_limit as u32,
+                force_limit: force_limit as u32,
+                threshold: prompt_ratio,
+                context_window: context_window as u32,
+                tier: tier.as_str().to_string(),
                 forced: true,
             });
         }
@@ -124,18 +226,22 @@ pub async fn maybe_refine_session(
     }
 
     tracing::info!(
-        "[REFINE] Prompt user: tokens={} >= limit={}, threshold={:.0}%",
+        "[REFINE] tier={} cw={} tokens={} >= prompt_limit={} ({:.0}%), force at {:.0}% — asking user",
+        tier.as_str(),
+        context_window,
         actual_tokens,
-        effective_limit,
-        refine_threshold * 100.0
+        prompt_limit,
+        prompt_ratio * 100.0,
+        force_ratio * 100.0
     );
     if let Some(em) = emitter {
         em.emit(crate::agent::events::NuphusEvent::RefinePrompt {
             current_tokens: actual_tokens as u32,
-            refine_limit: effective_limit as u32,
+            refine_limit: prompt_limit as u32,
             force_limit: force_limit as u32,
-            threshold: refine_threshold,
+            threshold: prompt_ratio,
             context_window: context_window as u32,
+            tier: tier.as_str().to_string(),
             forced: false,
         });
     }
@@ -160,17 +266,102 @@ impl ReactAgent {
         &mut self,
         cancel_flag: &AtomicBool,
         context_window: usize,
-        refine_threshold: f64,
+        large_force_threshold: f64,
     ) {
         let _ = cancel_flag;
         let emitter_ref: Option<&dyn EventEmitter> = self.exec_emitter.as_deref();
         maybe_refine_session(
             &mut self.session,
             context_window,
-            refine_threshold,
+            large_force_threshold,
             emitter_ref,
             &mut self.refine_count,
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 档位边界：256K / 600K 是闭区间/开区间的分界，必须逐点钉住。
+    #[test]
+    fn tier_boundaries() {
+        assert_eq!(RefineTier::for_window(0), RefineTier::Small);
+        assert_eq!(
+            RefineTier::for_window(128_000),
+            RefineTier::Small,
+            "主流 128K"
+        );
+        assert_eq!(
+            RefineTier::for_window(200_000),
+            RefineTier::Small,
+            "Anthropic 200K"
+        );
+        assert_eq!(
+            RefineTier::for_window(256_000),
+            RefineTier::Small,
+            "256K 含在上界内"
+        );
+        assert_eq!(RefineTier::for_window(256_001), RefineTier::Medium);
+        assert_eq!(
+            RefineTier::for_window(600_000),
+            RefineTier::Medium,
+            "600K 含在上界内"
+        );
+        assert_eq!(RefineTier::for_window(600_001), RefineTier::Large);
+        assert_eq!(RefineTier::for_window(1_000_000), RefineTier::Large);
+    }
+
+    /// 三档的提示/强制比例必须与设计一致。
+    #[test]
+    fn tier_ratios_match_design() {
+        assert_eq!(RefineTier::Small.prompt_ratio(), None, "小窗口无提示");
+        assert_eq!(RefineTier::Small.force_ratio(0.0), 0.75, "小窗口固定 75%");
+
+        assert_eq!(RefineTier::Medium.prompt_ratio(), Some(0.50));
+        assert_eq!(RefineTier::Medium.force_ratio(0.0), 0.80, "中窗口固定 80%");
+
+        assert_eq!(
+            RefineTier::Large.prompt_ratio(),
+            Some(0.30),
+            "大窗口 30% 提示"
+        );
+        assert_eq!(
+            RefineTier::Large.force_ratio(LARGE_FORCE_DEFAULT),
+            LARGE_FORCE_DEFAULT
+        );
+    }
+
+    /// 可调值必须被 clamp 进 [50%, 80%]：越界配置不能让强制线压到提示线以下
+    /// （那会让提示永不触发），也不能放到 80% 以上（失去"强制"意义）。
+    #[test]
+    fn large_force_ratio_is_clamped() {
+        assert_eq!(
+            RefineTier::Large.force_ratio(0.10),
+            LARGE_FORCE_MIN,
+            "低于下限被抬回"
+        );
+        assert_eq!(
+            RefineTier::Large.force_ratio(0.99),
+            LARGE_FORCE_MAX,
+            "高于上限被压回"
+        );
+        assert_eq!(RefineTier::Large.force_ratio(0.65), 0.65, "区间内原样生效");
+        // 小/中档必须忽略用户配置——它们的比例是设计定值，不随配置漂移
+        assert_eq!(RefineTier::Small.force_ratio(0.10), 0.75);
+        assert_eq!(RefineTier::Medium.force_ratio(0.99), 0.80);
+    }
+
+    /// 大窗口默认值即 Medium 的固定值：换模型不改变默认行为，只有用户主动下调才变。
+    #[test]
+    fn large_default_matches_medium_fixed() {
+        assert_eq!(
+            RefineTier::Large.force_ratio(LARGE_FORCE_DEFAULT),
+            RefineTier::Medium.force_ratio(0.0)
+        );
+        assert_eq!(LARGE_FORCE_MIN, 0.50);
+        assert_eq!(LARGE_FORCE_MAX, 0.80);
     }
 }

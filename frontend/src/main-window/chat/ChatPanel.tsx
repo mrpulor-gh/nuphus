@@ -13,6 +13,7 @@ import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
 import { composeAssistantReplies } from '../../core/progressMessages'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
+import { setRefineForceThreshold, type RefineState } from '../../hooks/useExecutionUI'
 import { useStickyScroll } from '../../hooks/useStickyScroll'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
@@ -173,10 +174,10 @@ interface ChatPanelProps {
    *  followReset 最新闭包（useEvents 经 h.refs 同读此 ref）。缺省（未注入）时
    *  useEvents 侧静默跳过，回底按钮与冻结/宽限语义不受影响。 */
   followResetRef?: React.MutableRefObject<(() => void) | null>
-  refineState?: { usagePercent: number; totalLimit: number } | null
-  pendingRefine: { usagePercent: number; totalLimit: number; skippedTurns: number } | null
+  refineState?: RefineState | null
+  pendingRefine: (RefineState & { skippedTurns: number }) | null
   setPendingRefine: React.Dispatch<
-    React.SetStateAction<{ usagePercent: number; totalLimit: number; skippedTurns: number } | null>
+    React.SetStateAction<(RefineState & { skippedTurns: number }) | null>
   >
   onRefine?: () => void
   onSkipRefine?: () => void
@@ -630,6 +631,12 @@ export function ChatPanel({
 
   const [input, setInput] = useState('')
   const [refineSelected, setRefineSelected] = useState(0) // 0=refine, 1=skip
+  // 大窗口强制线滑块的本地草稿：拖动要即时反馈，不等后端往返。
+  // refineState 更换（新一轮提示）时清空草稿，回到后端当前生效值。
+  const [forceDraft, setForceDraft] = useState<number | null>(null)
+  useEffect(() => {
+    setForceDraft(null)
+  }, [refineState])
   const [showRefineConfirm, setShowRefineConfirm] = useState(false)
   /* ── 外观浮窗 ──
      开关 state 放本组件内：面板常驻保活（打开/关闭不卸载内容），未保存调整跨开合存活。
@@ -1793,6 +1800,33 @@ export function ChatPanel({
                     <div className="item-desc">
                       {t('refine.pendingDesc', String(pendingRefine.usagePercent))}
                     </div>
+                    {/* 与主弹窗同一套规则：只有大窗口档给 slider。
+                        跳过只是不再自动弹窗，调节强制线的能力必须保留。 */}
+                    {pendingRefine.tier === 'large' && (
+                      <div className="refine-force">
+                        <div className="refine-force-head">
+                          <span>{t('refine.forceLabel')}</span>
+                          <span className="refine-force-value">
+                            {Math.round((forceDraft ?? pendingRefine.forceThreshold) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          className="refine-force-slider"
+                          type="range"
+                          min={Math.round(pendingRefine.forceMin * 100)}
+                          max={Math.round(pendingRefine.forceMax * 100)}
+                          step={5}
+                          value={Math.round((forceDraft ?? pendingRefine.forceThreshold) * 100)}
+                          aria-label={t('refine.forceLabel')}
+                          onChange={e => {
+                            const next = Number(e.target.value) / 100
+                            setForceDraft(next)
+                            setRefineForceThreshold(next).catch(() => {})
+                          }}
+                        />
+                        <div className="refine-force-hint">{t('refine.forceHint')}</div>
+                      </div>
+                    )}
                     <div className="refine-confirm-actions">
                       <button
                         className="refine-confirm-btn"
@@ -2250,6 +2284,36 @@ export function ChatPanel({
                         }}
                       />
                     </div>
+                    {/* 大窗口强制线：仅 large 档给 slider。
+                        小/中档两条线都是设计定值，给它 UI 只会造成"调了却没生效"
+                        的困惑——用户拖完发现行为不变，比不给更糟。 */}
+                    {refineState.tier === 'large' && (
+                      <div className="refine-force">
+                        <div className="refine-force-head">
+                          <span>{t('refine.forceLabel')}</span>
+                          <span className="refine-force-value">
+                            {Math.round((forceDraft ?? refineState.forceThreshold) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          className="refine-force-slider"
+                          type="range"
+                          min={Math.round(refineState.forceMin * 100)}
+                          max={Math.round(refineState.forceMax * 100)}
+                          step={5}
+                          value={Math.round((forceDraft ?? refineState.forceThreshold) * 100)}
+                          aria-label={t('refine.forceLabel')}
+                          onChange={e => {
+                            const next = Number(e.target.value) / 100
+                            // 先落草稿保证拖动即时可见；后端拒绝时保留草稿不静默回退
+                            // （用户看得见自己拖到哪，也看得见提示失败）
+                            setForceDraft(next)
+                            setRefineForceThreshold(next).catch(() => {})
+                          }}
+                        />
+                        <div className="refine-force-hint">{t('refine.forceHint')}</div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div

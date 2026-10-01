@@ -276,7 +276,7 @@ pub enum NuphusEvent {
     },
 
     // ── Context refinement events ──
-    /// Context usage exceeds threshold, ask user whether to refine.
+    /// Context usage crossed the tier's threshold, ask user whether to refine.
     /// If forced=true, backend has already decided to refine (auto-mode).
     RefinePrompt {
         current_tokens: u32,
@@ -284,6 +284,9 @@ pub enum NuphusEvent {
         force_limit: u32,
         threshold: f64,
         context_window: u32,
+        /// Refine tier for the current model's context window ("small"/"medium"/"large").
+        /// Frontend uses it to decide UI shape: only "large" gets the adjustable slider.
+        tier: String,
         /// true = forced refine (backend decided, frontend should auto-execute)
         forced: bool,
     },

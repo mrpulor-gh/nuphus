@@ -1761,6 +1761,9 @@ const zh: Record<string, string> = {
   'refine.pendingBtn': '可提炼',
   'refine.pendingDesc': '上下文已使用 {0}% — 现在提炼？',
   'refine.dismissHint': '提炼仍在后台进行，完成后将自动更新会话上下文',
+  'refine.forceLabel': '强制提炼阈值',
+  'refine.forceHint':
+    '阶段性工作未完成时可调高以延后；上下文开始漂移则调低，更早提炼。此设置只对当前大上下文窗口模型生效。',
 
   'message.system': '系统',
 

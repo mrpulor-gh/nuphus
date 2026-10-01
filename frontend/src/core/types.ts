@@ -822,6 +822,13 @@ export type NuphusEvent =
       force_limit: number
       threshold: number
       context_window: number
+      /** 当前模型上下文窗口的分档（后端 RefineTier）：small 无提示 / medium 固定双线 / large 可调 */
+      tier?: string
+      /** 当前生效的强制线比例（0~1） */
+      force_threshold?: number
+      /** 可调范围（0~1）；非 large 档同样下发，UI 按 tier 决定是否渲染 slider */
+      force_min?: number
+      force_max?: number
       forced: boolean
     }
   | { type: 'refine_executing' }

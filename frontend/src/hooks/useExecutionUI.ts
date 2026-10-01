@@ -16,6 +16,37 @@ import { executeSessionRefine, refineSkip } from '../main-window/lib/api'
 import type { Toast } from './useInit'
 import { initialApiHealthState } from '../main-window/chat/ApiHealthBadge'
 
+/**
+ * 提炼提示的状态。
+ *
+ * `tier` 来自后端 `RefinePrompt` 事件，是**当前模型上下文窗口的分档**：
+ *  - `small`  (cw ≤ 256K)  无提示阶段，到达 75% 直接提炼——不该出现这个状态
+ *  - `medium` (≤ 600K)     50% 提示 / 80% 强制，两条线均固定 → 不给 slider
+ *  - `large`  (> 600K)     30% 提示 / 强制线可调 → **只有这档给 slider**
+ *
+ * `forceThreshold` 是当前生效的强制线比例，`forceMin/forceMax` 是可调范围，
+ * 一并随事件下发，避免前端自己硬编码一份（后端 `LARGE_FORCE_MIN/MAX` 是唯一权威）。
+ */
+export type RefineTier = 'small' | 'medium' | 'large'
+
+export interface RefineState {
+  usagePercent: number
+  totalLimit: number
+  tier: RefineTier
+  /** 当前生效的强制线比例（0~1） */
+  forceThreshold: number
+  /** 可调范围（0~1）；非 large 档同样下发，UI 按 tier 决定是否渲染 slider */
+  forceMin: number
+  forceMax: number
+}
+
+/** 调整大窗口强制线（后端仅 large 档生效，其余档忽略）。
+ *  走 set_session_refine_config：越界会被后端拒绝而非静默 clamp，
+ *  那说明 UI 与后端不一致，值得暴露出来。 */
+export async function setRefineForceThreshold(ratio: number): Promise<void> {
+  await invoke('set_session_refine_config', { forceThreshold: ratio })
+}
+
 export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) => void) {
   // ── Execution trace visibility ──
   const [showExecTrace, setShowExecTrace] = useState(false)
@@ -79,19 +110,16 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   const [taskRuns, setTaskRuns] = useState<TaskRun[]>([])
 
   // ── 上下文提炼状态 ──
-  const [refineState, setRefineState] = useState<{
-    usagePercent: number
-    totalLimit: number
-  } | null>(null)
+  const [refineState, setRefineState] = useState<RefineState | null>(null)
   /** 提炼执行中（全局）：驱动「提炼中」全屏遮罩（弹窗路径与 refine-pending-btn
    *  路径统一）。handleRefine 成功/失败 finally 恢复；useEvents 事件兜底恢复。 */
   const [refining, setRefining] = useState(false)
 
-  const [pendingRefine, setPendingRefine] = useState<{
-    usagePercent: number
-    totalLimit: number
-    skippedTurns: number
-  } | null>(null)
+  /** 用户跳过提示后的常驻入口数据。除水位外还携带 tier / 强制线——
+   *  否则跳过之后再点开按钮，大窗口用户就失去了调节入口（同一个提示的复用）。 */
+  const [pendingRefine, setPendingRefine] = useState<
+    (RefineState & { skippedTurns: number }) | null
+  >(null)
 
   // ── 工作流运行状态 ──
   const [workflowRunSteps, setWorkflowRunSteps] = useState<WorkflowRunStep[]>([])
@@ -166,11 +194,8 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
 
   const handleSkipRefine = useCallback(() => {
     if (refineState) {
-      setPendingRefine({
-        usagePercent: refineState.usagePercent,
-        totalLimit: refineState.totalLimit,
-        skippedTurns: 0,
-      })
+      // 整份带走（含 tier 与强制线）：跳过只是不再弹窗，调节能力要保留
+      setPendingRefine({ ...refineState, skippedTurns: 0 })
     }
     setRefineState(null)
     // 通知后端广播 RefineSkipped——手机端弹窗同步关闭（双端状态一致）

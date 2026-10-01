@@ -193,7 +193,7 @@ pub struct RuntimeContext {
     pub model_generation: u64,
     pub model_context_explicit: Option<usize>,
     pub metadata_tasks: crate::commands::config::model_metadata::MetadataTasks,
-    pub refine_threshold: f64,
+    pub large_force_refine_threshold: f64,
 }
 
 impl Default for RuntimeContext {
@@ -207,7 +207,7 @@ impl Default for RuntimeContext {
             model_generation: 0,
             model_context_explicit: None,
             metadata_tasks: Default::default(),
-            refine_threshold: 0.5,
+            large_force_refine_threshold: nuphus::agent::distill::LARGE_FORCE_DEFAULT,
         }
     }
 }

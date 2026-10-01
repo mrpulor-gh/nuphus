@@ -5,6 +5,13 @@
 //!
 //! Migrated from agent/leader/dispatch.rs, now a free function receiving &mut ReactAgent.
 
+/// Exec 会话压缩比例：usage 达到窗口的这个比例就丢弃原始 session，
+/// 改用前序任务的最终回复拼接（`turn_replies`）。
+///
+/// 不按窗口分档、也不做 LLM 提炼——Exec 的 session 只是任务输入，没有沉淀价值，
+/// 而它的"压缩"是纯字符串替换，成本远低于语义提炼，因此可以放到更晚（0.85）。
+const EXEC_COMPRESS_RATIO: f64 = 0.85;
+
 use crate::agent::goal_types::{self, GoalType};
 use crate::agent::prompt;
 use crate::agent::ReactAgent;
@@ -332,8 +339,16 @@ pub(crate) async fn handle_task_dispatch(
     exec_agent.turn_replies.push(summary.clone());
     let cw = goal_types::get_context_window_of(exec_llm.as_ref());
     let usage = exec_agent.session.estimate_token_usage();
-    let compress_threshold = (cw as f64 * 0.50) as usize;
-    if usage >= compress_threshold && usage >= 300_000 {
+    // Exec 的"压缩"不是 LLM 提炼：丢弃原始 session，只拼接前序任务的最终回复
+    // （见下方 turn_replies join）。它是字符串替换，成本远低于语义提炼，因此比例
+    // 可以放得更晚，且**不按窗口分档**——Exec 的 session 只是任务输入，没有
+    // 沉淀价值，防漂移对它不适用。
+    //
+    // 这里曾经是 `cw*0.50 && usage >= 300_000`：那个绝对门槛让小窗口 Exec
+    // （128K×0.5=64K，远小于 300K）永不压缩，session 无上限膨胀直到被截断。
+    // 改为纯比例后小窗口同样受控。
+    let compress_threshold = (cw as f64 * EXEC_COMPRESS_RATIO) as usize;
+    if usage >= compress_threshold {
         exec_agent.needs_compress = true;
         tracing::info!(
             "[ExecPool] 标记压缩: turn_replies={}, usage={}, threshold={}",

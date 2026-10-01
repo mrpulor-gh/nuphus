@@ -1853,6 +1853,9 @@ const en: Record<string, string> = {
   'refine.pendingDesc': 'Context usage {0}% ...refine now?',
   'refine.dismissHint':
     'Refine continues in the background; the session will update when it finishes',
+  'refine.forceLabel': 'Force-refine threshold',
+  'refine.forceHint':
+    'Raise it to postpone refine while a phase of work is unfinished; lower it to refine earlier as the context starts drifting. Applies only to the current large-context model.',
 
   'message.system': 'System',
 

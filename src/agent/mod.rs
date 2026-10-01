@@ -37,8 +37,10 @@ pub struct AgentConfig {
     pub max_iterations: usize,
     pub enable_memory: bool,
     pub tool_permissions: ToolPermissions,
-    /// Context refine threshold (0.0~1.0, default 0.50)
-    pub refine_threshold: f64,
+    /// Large-window force-refine ratio (0.50~0.80, default 0.80).
+    /// Only takes effect for `RefineTier::Large` (context_window > 600K);
+    /// Small/Medium tiers ignore it and use their fixed ratios.
+    pub large_force_refine_threshold: f64,
     /// Shell Hooks configuration
     pub hooks: HookConfig,
     /// 视觉模型（None=未配置，Some=模型名）
@@ -69,7 +71,7 @@ impl Default for AgentConfig {
             max_iterations: crate::agent::goal_types::GoalType::MAX_ITERATIONS,
             enable_memory: true,
             tool_permissions: ToolPermissions::default(),
-            refine_threshold: 0.5,
+            large_force_refine_threshold: crate::agent::distill::LARGE_FORCE_DEFAULT,
             hooks: HookConfig::default(),
             vision_model: None,
             supports_vision: false,

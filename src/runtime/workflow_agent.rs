@@ -105,7 +105,7 @@ pub struct WorkflowAgent {
     /// Session refine counter (max 2 auto-refines)
     pub(crate) refine_count: u32,
     /// Refine threshold (inherited from Runtime config, same as Leader)
-    pub(crate) refine_threshold: f64,
+    pub(crate) large_force_threshold: f64,
     /// Model label for prompt building
     pub(crate) model_label: String,
     /// 主模型是否原生支持视觉（来自 ModelDef.supports_vision）。
@@ -138,7 +138,7 @@ impl WorkflowAgent {
         user_label: String,
         assistant_name: String,
         tool_permissions: crate::permissions::ToolPermissions,
-        refine_threshold: f64,
+        large_force_threshold: f64,
     ) -> Self {
         Self {
             llm,
@@ -163,7 +163,7 @@ impl WorkflowAgent {
             execution_started_at: std::time::Instant::now(),
             turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             refine_count: 0,
-            refine_threshold,
+            large_force_threshold,
             model_label,
             supports_vision: false,
             user_label,
@@ -355,13 +355,13 @@ impl WorkflowAgent {
     pub async fn maybe_refine_session(
         &mut self,
         context_window: usize,
-        refine_threshold: f64,
+        large_force_threshold: f64,
         emitter: Option<&dyn EventEmitter>,
     ) {
         distill::maybe_refine_session(
             &mut self.session,
             context_window,
-            refine_threshold,
+            large_force_threshold,
             emitter,
             &mut self.refine_count,
         )
@@ -750,7 +750,7 @@ impl WorkflowAgent {
                 distill::maybe_refine_session(
                     &mut self.session,
                     ctx_window,
-                    self.refine_threshold,
+                    self.large_force_threshold,
                     self.emitter.as_deref(),
                     &mut self.refine_count,
                 )
@@ -1233,7 +1233,7 @@ impl WorkflowAgent {
         distill::maybe_refine_session(
             &mut self.session,
             ctx_window,
-            self.refine_threshold,
+            self.large_force_threshold,
             self.emitter.as_deref(),
             &mut self.refine_count,
         )

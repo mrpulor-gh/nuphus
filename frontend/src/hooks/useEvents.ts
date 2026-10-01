@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
 import { debugEnabled } from '../core/debug'
 import { continueReplyAfterUser } from '../core/progressMessages'
+import type { RefineState, RefineTier } from './useExecutionUI'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -133,14 +134,12 @@ export interface EventHandlers {
     }>
   >
   setTaskBubbleVisible: (v: boolean) => void
-  setRefineState: React.Dispatch<
-    React.SetStateAction<{ usagePercent: number; totalLimit: number } | null>
-  >
-  refineState: { usagePercent: number; totalLimit: number } | null
+  setRefineState: React.Dispatch<React.SetStateAction<RefineState | null>>
+  refineState: RefineState | null
   setRefining: (v: boolean) => void
-  pendingRefine: { usagePercent: number; totalLimit: number; skippedTurns: number } | null
+  pendingRefine: (RefineState & { skippedTurns: number }) | null
   setPendingRefine: React.Dispatch<
-    React.SetStateAction<{ usagePercent: number; totalLimit: number; skippedTurns: number } | null>
+    React.SetStateAction<(RefineState & { skippedTurns: number }) | null>
   >
   setDismissThinking: (v: boolean) => void
   setExecutionCounter: React.Dispatch<React.SetStateAction<number>>
@@ -1115,11 +1114,18 @@ export function useEvents(h: EventHandlers) {
             }
           })()
           break
-        case 'refine_prompt':
+        case 'refine_prompt': {
           // context_window 优先（新后端），refine_limit 兜底（旧后端兼容）
           const win = event.context_window || event.refine_limit || 0
           const pct =
             event.current_tokens && win ? Math.round((event.current_tokens / win) * 100) : 0
+          // 分档与强制线由后端下发：档位决定 UI 形态（仅 large 给 slider），
+          // 阈值范围以后端 LARGE_FORCE_MIN/MAX 为唯一权威，前端不硬编码。
+          const tier = (event.tier || 'medium') as RefineTier
+          const forceThreshold =
+            typeof event.force_threshold === 'number' ? event.force_threshold : 0.8
+          const forceMin = typeof event.force_min === 'number' ? event.force_min : 0.5
+          const forceMax = typeof event.force_max === 'number' ? event.force_max : 0.8
 
           // forced=true → 强制提炼，清空 pendingRefine
           if (event.forced) {
@@ -1149,7 +1155,16 @@ export function useEvents(h: EventHandlers) {
               },
             ])
             h.setExecutionStage('running')
-            h.setRefineState({ usagePercent: 0, totalLimit: 0 })
+            // 清零用水位占位：forced 路径直接执行、不展示询问态，
+            // tier/阈值字段随便填即可（UI 不会读它）
+            h.setRefineState({
+              usagePercent: 0,
+              totalLimit: 0,
+              tier,
+              forceThreshold,
+              forceMin,
+              forceMax,
+            })
             import('../main-window/lib/api').then(({ executeSessionRefine }) => {
               // forced 自动提炼是「主流程自己广播、前端代跑」的机器触发路径：
               // maybe_refine_session 在轮次收尾期（busy 仍被主流程持有）才发
@@ -1204,20 +1219,25 @@ export function useEvents(h: EventHandlers) {
             break
           }
 
-          // 正常弹窗（现有逻辑）
-          h.setRefineState({ usagePercent: pct, totalLimit: win })
+          // 正常弹窗（现有逻辑）；tier / 阈值一并带上，供弹窗决定是否给 slider
+          h.setRefineState({
+            usagePercent: pct,
+            totalLimit: win,
+            tier,
+            forceThreshold,
+            forceMin,
+            forceMax,
+          })
           break
+        }
         case 'refine_skipped':
           // 另一端（手机/桌面）跳过了提炼：本端同步关闭弹窗 + 记录跳过（防重复弹窗）。
           // 提炼已开始则跳过无效（refine 正在执行中）。
           if (refineActiveRef.current) break
           h.setRefining(false)
           if (refineStateRef.current) {
-            h.setPendingRefine({
-              usagePercent: refineStateRef.current.usagePercent,
-              totalLimit: refineStateRef.current.totalLimit,
-              skippedTurns: 0,
-            })
+            // 整份带走（含 tier 与强制线）：跨端同步同样要保留调节能力
+            h.setPendingRefine({ ...refineStateRef.current, skippedTurns: 0 })
           }
           h.setRefineState(null)
           break

@@ -372,14 +372,14 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     cancel_flag.store(false, Ordering::SeqCst);
     state.pause_flag.store(false, Ordering::SeqCst);
 
-    let refine_threshold = state
+    let large_force_refine_threshold = state
         .runtime
         .lock()
         .map_err(|e| {
             state.busy.store(false, Ordering::SeqCst);
             e.to_string()
         })?
-        .refine_threshold;
+        .large_force_refine_threshold;
 
     // ── ClientFactory：实时源（providers.toml 是唯一权威源）──
     // 每次构建客户端时按当前配置解析：Leader/Workflow/Exec/Custom 各 agent 可独立模型，
@@ -623,7 +623,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
     let relation2 = relation.clone();
     let mode2 = mode.clone();
     let _backup_session2 = backup_session.clone();
-    let refine_threshold2 = refine_threshold;
+    let large_force_refine_threshold2 = large_force_refine_threshold;
     let existing_workflow_agent2 = existing_workflow_agent;
     let is_workflow2 = is_workflow;
     let source2 = source.clone();
@@ -841,7 +841,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     user_label.clone(),
                     assistant_name.clone(),
                     perms,
-                    refine_threshold2,
+                    large_force_refine_threshold2,
                 );
                 new_wa.set_workflow_engine(state.workflow_engine.clone());
                 let new_session_id = new_wa.session().id.clone();
@@ -937,7 +937,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 &emitter,
                 existing_agent,
                 session_backup_json,
-                refine_threshold2,
+                large_force_refine_threshold2,
                 mode_parsed,
                 state.workflow_engine.clone(),
                 false,
@@ -989,7 +989,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                                         state.tool_permissions_ref.clone(),
                                         &emitter,
                                         &pause_flag2,
-                                        refine_threshold2,
+                                        large_force_refine_threshold2,
                                     )
                                 {
                                     tracing::info!(
@@ -1053,7 +1053,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                                 &emitter,
                                 None,
                                 session_backup_json_retry.clone(),
-                                refine_threshold2,
+                                large_force_refine_threshold2,
                                 m2,
                                 state.workflow_engine.clone(),
                                 false,
@@ -1197,7 +1197,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     &workflow_binding.1,
                     Some(workflow_binding.0.as_str()),
                 );
-                wa.maybe_refine_session(cw, refine_threshold2, Some(&emitter))
+                wa.maybe_refine_session(cw, large_force_refine_threshold2, Some(&emitter))
                     .await;
                 let mut guard = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
                 guard.workflow_agent = wa_opt.take();
@@ -1238,8 +1238,8 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     &rt.config().model,
                     Some(rt.config().provider.as_str()),
                 );
-                let refine_threshold = rt.config().refine_threshold;
-                rt.maybe_refine_session(&cancel_flag2, cw, refine_threshold)
+                let large_force_refine_threshold = rt.config().large_force_refine_threshold;
+                rt.maybe_refine_session(&cancel_flag2, cw, large_force_refine_threshold)
                     .await;
 
                 {

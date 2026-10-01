@@ -34,7 +34,7 @@ import { loadRelation } from '../main-window/lib/relation'
 import { useLanguage } from '../locales'
 
 import { useModals } from './useModals'
-import { useExecutionUI } from './useExecutionUI'
+import { useExecutionUI, type RefineState } from './useExecutionUI'
 import { useAgentControl } from './useAgentControl'
 import { useInit } from './useInit'
 import type { Toast } from './useInit'
@@ -247,19 +247,13 @@ export interface SessionAPI {
   setExecutionCounter: React.Dispatch<React.SetStateAction<number>>
 
   // ── Refine ──
-  refineState: { usagePercent: number; totalLimit: number } | null
-  setRefineState: React.Dispatch<
-    React.SetStateAction<{ usagePercent: number; totalLimit: number } | null>
-  >
+  refineState: RefineState | null
+  setRefineState: React.Dispatch<React.SetStateAction<RefineState | null>>
   refining: boolean
   setRefining: (v: boolean) => void
-  pendingRefine: { usagePercent: number; totalLimit: number; skippedTurns: number } | null
+  pendingRefine: (RefineState & { skippedTurns: number }) | null
   setPendingRefine: React.Dispatch<
-    React.SetStateAction<{
-      usagePercent: number
-      totalLimit: number
-      skippedTurns: number
-    } | null>
+    React.SetStateAction<(RefineState & { skippedTurns: number }) | null>
   >
 
   // ── Planner / Approval / TaskBubble ──

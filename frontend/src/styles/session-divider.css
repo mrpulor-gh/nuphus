@@ -118,3 +118,31 @@
 .refine-usage {
   margin-bottom: var(--space-2);
 }
+
+/* 大窗口强制线滑杆（仅 RefineTier::Large 渲染，见 ChatPanel 的 tier 判断） */
+.refine-force {
+  margin-bottom: var(--space-3);
+}
+.refine-force-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--fz-xs);
+  color: var(--fg-2);
+  margin-bottom: 6px;
+}
+.refine-force-value {
+  font-family: var(--font-mono);
+  color: var(--fg-1);
+}
+.refine-force-slider {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.refine-force-hint {
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: 1.5;
+  margin-top: 4px;
+}

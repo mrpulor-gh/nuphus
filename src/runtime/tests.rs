@@ -438,7 +438,7 @@ fn test_runtime_config_custom_max_iterations() {
     let config = RuntimeConfig {
         mode: Mode::Leader,
         agent_config,
-        refine_threshold: 0.5,
+        large_force_refine_threshold: crate::agent::distill::LARGE_FORCE_DEFAULT,
         tool_permissions: Arc::new(Mutex::new(crate::permissions::ToolPermissions::default())),
     };
 

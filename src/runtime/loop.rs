@@ -365,8 +365,10 @@ pub struct RuntimeConfig {
     pub mode: Mode,
     /// Agent configuration
     pub agent_config: AgentConfig,
-    /// Context refine threshold
-    pub refine_threshold: f64,
+    /// Large-window force-refine ratio (0.50~0.80, default 0.80).
+    /// Only takes effect for `RefineTier::Large` (context_window > 600K);
+    /// Small/Medium tiers ignore it and use their fixed ratios.
+    pub large_force_refine_threshold: f64,
     /// Shared tool permissions (updated by Tauri layer, read by runtime before each tool call)
     #[allow(clippy::type_complexity)]
     pub tool_permissions: Arc<std::sync::Mutex<ToolPermissions>>,
@@ -377,7 +379,7 @@ impl Default for RuntimeConfig {
         Self {
             mode: Mode::Leader,
             agent_config: AgentConfig::default(),
-            refine_threshold: 0.5,
+            large_force_refine_threshold: crate::agent::distill::LARGE_FORCE_DEFAULT,
             tool_permissions: Arc::new(std::sync::Mutex::new(ToolPermissions::default())),
         }
     }

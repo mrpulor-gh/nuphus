@@ -25,7 +25,7 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
     tool_permissions_ref: Arc<std::sync::Mutex<ToolPermissions>>,
     emitter: &E,
     pause_flag: &Arc<AtomicBool>,
-    refine_threshold: f64,
+    large_force_refine_threshold: f64,
 ) -> std::result::Result<Runtime, String> {
     let leader_registry = if let Some(dc) = tools.desktop_client() {
         nuphus::ToolRegistry::leader_with_desktop(dc)
@@ -48,11 +48,11 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
                 model: config.model.clone(),
                 provider: config.provider.clone(),
                 tool_permissions,
-                refine_threshold,
+                large_force_refine_threshold,
                 reasoning_effort: config.reasoning_effort.clone(),
                 ..Default::default()
             },
-            refine_threshold,
+            large_force_refine_threshold,
             tool_permissions: tool_permissions_ref,
         })
         .emitter(Arc::new(emitter.clone()))
@@ -84,7 +84,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     emitter: &E,
     existing_runtime: Option<Runtime>,
     session_backup_json: Option<String>,
-    refine_threshold: f64,
+    large_force_refine_threshold: f64,
     mode: Option<nuphus::runtime::Mode>,
     workflow_engine: Arc<tokio::sync::RwLock<nuphus::workflow::WorkflowEngine>>,
     resume: bool,
@@ -120,7 +120,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
                 tool_permissions_ref.clone(),
                 emitter,
                 pause_flag,
-                refine_threshold,
+                large_force_refine_threshold,
             )?
         }
     } else {
@@ -132,7 +132,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
             tool_permissions_ref.clone(),
             emitter,
             pause_flag,
-            refine_threshold,
+            large_force_refine_threshold,
         )?
     };
 
