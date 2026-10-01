@@ -1,4 +1,4 @@
-﻿# npm-desktop/publish.ps1
+# npm-desktop/publish.ps1
 # Nuphus Desktop npm release pipeline:
 #   download platform assets from GitHub Releases
 #   -> assemble 4 packages (meta + 3 platform) -> publish -> verify install
@@ -514,6 +514,30 @@ if ($DryRun) {
 }
 
 Verify-Install $version
+
+# ── Gitee 国内下载点同步 ──────────────────────────────────────────────────
+# 国内用户没有本地下载渠道（Gitee 此前只有 v0.2.0 源码包），而 updater 的
+# endpoint[] 第一顺位就是 Gitee raw 清单：不同步，国内用户会"成功读到旧清单"
+# 而不回落到权威源 —— 那不是报错，是静默收不到更新。所以这是发版必做步骤。
+# 详细机制与踩坑见 plugin/skills/community/git-pr-protocol/SKILL.md §7.6。
+$SyncGitee = Join-Path $PSScriptRoot 'sync-gitee-release.ps1'
+if (Test-Path $SyncGitee) {
+    Write-Step 'Sync to Gitee (domestic download point)'
+    try {
+        # dry-run 必须传导给同步脚本：否则 publish 的 dry-run 会真去 Gitee 建
+        # release、传资产、推 latest.json，dry-run 名不副实。
+        $syncArgs = @('-NoProfile', '-File', $SyncGitee, '-Version', $version)
+        if ($DryRun) { $syncArgs += '-DryRun' }
+        & pwsh @syncArgs
+    } catch {
+        # 不同步不阻断 npm 发包（npm 是主渠道），但必须显式失败而不是假装成功
+        Write-WarnMsg "Gitee sync FAILED: $($_.Exception.Message)"
+        Write-WarnMsg '  Domestic users will NOT receive this version until it is synced.'
+        Write-WarnMsg "  Re-run manually:  pwsh -File `"$SyncGitee`" -Version $version"
+    }
+} else {
+    Write-WarnMsg "sync script not found: $SyncGitee (Gitee domestic point NOT updated)"
+}
 
 Write-Host ''
 Write-Host '============================================================' -ForegroundColor Green
