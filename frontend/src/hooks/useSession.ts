@@ -251,6 +251,11 @@ export interface SessionAPI {
   setRefineState: React.Dispatch<React.SetStateAction<RefineState | null>>
   refining: boolean
   setRefining: (v: boolean) => void
+  /** 大窗口强制线滑块的本地草稿：拖动要即时反馈，不等后端往返。
+   *  提升到 session 层，是为了让 useEvents 在"模型切换→作废 refine 提示"时
+   *  能一并清掉它（否则切档后草稿还是上一轮的值）。 */
+  forceDraft: number | null
+  setForceDraft: (v: number | null) => void
   pendingRefine: (RefineState & { skippedTurns: number }) | null
   setPendingRefine: React.Dispatch<
     React.SetStateAction<(RefineState & { skippedTurns: number }) | null>
@@ -1200,6 +1205,8 @@ export function useSession(): SessionAPI {
     refineState: execUI.refineState,
     setRefineState: execUI.setRefineState,
     refining: execUI.refining,
+    forceDraft: execUI.forceDraft,
+    setForceDraft: execUI.setForceDraft,
     setRefining: execUI.setRefining,
     pendingRefine: execUI.pendingRefine,
     setPendingRefine: execUI.setPendingRefine,

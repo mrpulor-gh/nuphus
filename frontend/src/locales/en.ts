@@ -1856,8 +1856,8 @@ const en: Record<string, string> = {
   'refine.forceLabel': 'Force-refine threshold',
   'refine.forceHint':
     'Raise it to postpone refine while a phase of work is unfinished; lower it to refine earlier as the context starts drifting. Applies only to the current large-context model.',
-  'refine.forceBelowUsage':
-    'Below current usage {0}% — refine will run right after this turn finishes.',
+  'refine.forceFloorRaised':
+    'Current usage {1}%; the floor is raised to {0}% — anything lower would refine right after this turn.',
 
   'message.system': 'System',
 

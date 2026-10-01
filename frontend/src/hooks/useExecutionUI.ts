@@ -47,6 +47,22 @@ export async function setRefineForceThreshold(ratio: number): Promise<void> {
   await invoke('set_session_refine_config', { forceThreshold: ratio })
 }
 
+/**
+ * 滑杆的**实际下限**（百分比）。
+ *
+ * 除后端范围外，还被当前用量顶高：阈值低于当前用量等于"下一轮立刻提炼"，
+ * 这种值没有意义（用户不会想追求它，只会误触）。在上限处硬性挡住，
+ * 好过让用户拖下去再弹警告。
+ *
+ * 返回 5 的整数倍以对齐 step；向上取整，保证不低于当前用量。
+ */
+export function refineForceMinPct(s: RefineState): number {
+  const floor = Math.round(s.forceMin * 100)
+  const ceilByUsage = Math.ceil(s.usagePercent / 5) * 5
+  const cap = Math.round(s.forceMax * 100)
+  return Math.max(floor, Math.min(cap, ceilByUsage))
+}
+
 export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) => void) {
   // ── Execution trace visibility ──
   const [showExecTrace, setShowExecTrace] = useState(false)
@@ -114,6 +130,13 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   /** 提炼执行中（全局）：驱动「提炼中」全屏遮罩（弹窗路径与 refine-pending-btn
    *  路径统一）。handleRefine 成功/失败 finally 恢复；useEvents 事件兜底恢复。 */
   const [refining, setRefining] = useState(false)
+
+  /** 大窗口强制线滑块的本地草稿：拖动要即时反馈，不等后端往返。
+   *  refineState 更换（新一轮提示 / 模型切换作废）时清空，回到后端当前生效值。 */
+  const [forceDraft, setForceDraft] = useState<number | null>(null)
+  useEffect(() => {
+    setForceDraft(null)
+  }, [refineState])
 
   /** 用户跳过提示后的常驻入口数据。除水位外还携带 tier / 强制线——
    *  否则跳过之后再点开按钮，大窗口用户就失去了调节入口（同一个提示的复用）。 */
@@ -347,6 +370,8 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
     pendingRefine,
     setPendingRefine,
     refining,
+    forceDraft,
+    setForceDraft,
     setRefining,
     handleRefine,
     handleSkipRefine,

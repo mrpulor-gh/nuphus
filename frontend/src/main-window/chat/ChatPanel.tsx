@@ -13,7 +13,11 @@ import type { SecurityCheck } from '../../core/types'
 import { listen } from '../../core/bridge'
 import { composeAssistantReplies } from '../../core/progressMessages'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
-import { setRefineForceThreshold, type RefineState } from '../../hooks/useExecutionUI'
+import {
+  refineForceMinPct,
+  setRefineForceThreshold,
+  type RefineState,
+} from '../../hooks/useExecutionUI'
 import { useStickyScroll } from '../../hooks/useStickyScroll'
 import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
@@ -184,6 +188,9 @@ interface ChatPanelProps {
   /** 提炼执行中（全局）：驱动提炼中全屏遮罩（弹窗路径与 refine-pending-btn 路径统一） */
   refining?: boolean
   setRefining?: (v: boolean) => void
+  /** 大窗口强制线滑块的本地草稿（session 层持有，模型切换时由 useEvents 清空） */
+  forceDraft?: number | null
+  setForceDraft?: (v: number | null) => void
   /** 手动关闭「提炼中」弹窗/遮罩：复位提炼 UI + 追踪 refs（后台提炼不中断，
    *  完成后 session_refined / refine_failed 照常落地）。缺省退化为仅收起遮罩 */
   onDismissRefine?: () => void
@@ -313,6 +320,8 @@ export function ChatPanel({
   followResetRef,
   refineState,
   pendingRefine,
+  forceDraft,
+  setForceDraft,
   setPendingRefine,
   onRefine,
   onSkipRefine,
@@ -631,12 +640,6 @@ export function ChatPanel({
 
   const [input, setInput] = useState('')
   const [refineSelected, setRefineSelected] = useState(0) // 0=refine, 1=skip
-  // 大窗口强制线滑块的本地草稿：拖动要即时反馈，不等后端往返。
-  // refineState 更换（新一轮提示）时清空草稿，回到后端当前生效值。
-  const [forceDraft, setForceDraft] = useState<number | null>(null)
-  useEffect(() => {
-    setForceDraft(null)
-  }, [refineState])
   const [showRefineConfirm, setShowRefineConfirm] = useState(false)
   /* ── 外观浮窗 ──
      开关 state 放本组件内：面板常驻保活（打开/关闭不卸载内容），未保存调整跨开合存活。
@@ -1813,22 +1816,26 @@ export function ChatPanel({
                         <input
                           className="refine-force-slider"
                           type="range"
-                          min={Math.round(pendingRefine.forceMin * 100)}
+                          min={refineForceMinPct(pendingRefine)}
                           max={Math.round(pendingRefine.forceMax * 100)}
                           step={5}
-                          value={Math.round((forceDraft ?? pendingRefine.forceThreshold) * 100)}
+                          value={Math.max(
+                            refineForceMinPct(pendingRefine),
+                            Math.round((forceDraft ?? pendingRefine.forceThreshold) * 100),
+                          )}
                           aria-label={t('refine.forceLabel')}
                           onChange={e => {
                             const next = Number(e.target.value) / 100
-                            setForceDraft(next)
+                            setForceDraft?.(next)
                             setRefineForceThreshold(next).catch(() => {})
                           }}
                         />
-                        {(forceDraft ?? pendingRefine.forceThreshold) * 100 <
-                          pendingRefine.usagePercent && (
+                        {refineForceMinPct(pendingRefine) >
+                          Math.round(pendingRefine.forceMin * 100) && (
                           <div className="refine-force-warn">
                             {t(
-                              'refine.forceBelowUsage',
+                              'refine.forceFloorRaised',
+                              String(refineForceMinPct(pendingRefine)),
                               String(Math.round(pendingRefine.usagePercent)),
                             )}
                           </div>
@@ -2307,26 +2314,30 @@ export function ChatPanel({
                         <input
                           className="refine-force-slider"
                           type="range"
-                          min={Math.round(refineState.forceMin * 100)}
+                          min={refineForceMinPct(refineState)}
                           max={Math.round(refineState.forceMax * 100)}
                           step={5}
-                          value={Math.round((forceDraft ?? refineState.forceThreshold) * 100)}
+                          value={Math.max(
+                            refineForceMinPct(refineState),
+                            Math.round((forceDraft ?? refineState.forceThreshold) * 100),
+                          )}
                           aria-label={t('refine.forceLabel')}
                           onChange={e => {
                             const next = Number(e.target.value) / 100
                             // 先落草稿保证拖动即时可见；后端拒绝时保留草稿不静默回退
                             // （用户看得见自己拖到哪，也看得见提示失败）
-                            setForceDraft(next)
+                            setForceDraft?.(next)
                             setRefineForceThreshold(next).catch(() => {})
                           }}
                         />
-                        {/* 拖到当前水位以下 = 下一轮收尾立即强制提炼。
-                            不提示的话用户会觉得"我刚设完就触发了"，必须当场说清。 */}
-                        {(forceDraft ?? refineState.forceThreshold) * 100 <
-                          refineState.usagePercent && (
+                        {/* 下限被当前用量顶高时说明原因：不是不给调，是这个值以下
+                            等于"下一轮立刻提炼"。硬限制好过事后警告。 */}
+                        {refineForceMinPct(refineState) >
+                          Math.round(refineState.forceMin * 100) && (
                           <div className="refine-force-warn">
                             {t(
-                              'refine.forceBelowUsage',
+                              'refine.forceFloorRaised',
+                              String(refineForceMinPct(refineState)),
                               String(Math.round(refineState.usagePercent)),
                             )}
                           </div>

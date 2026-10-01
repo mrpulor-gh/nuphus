@@ -144,6 +144,10 @@ export interface EventHandlers {
   setDismissThinking: (v: boolean) => void
   setExecutionCounter: React.Dispatch<React.SetStateAction<number>>
   setModelName: (v: string) => void
+  /** 当前模型名：仅用于识别"模型真的切换了"，不触发渲染 */
+  modelName?: string
+  /** 作废 refine 提示时一并清掉大窗口强制线的本地草稿 */
+  setForceDraftForRefine?: (v: number | null) => void
   setSessionId: (v: string) => void
   setStepIndex: (v: number | ((prev: number) => number)) => void
   setSecurity: React.Dispatch<React.SetStateAction<SecurityCheck | null>>
@@ -179,6 +183,10 @@ export function useEvents(h: EventHandlers) {
   userInputRequestRef.current = h.userInputRequest
   const pendingRefineRef = useRef(h.pendingRefine)
   pendingRefineRef.current = h.pendingRefine
+  // 当前模型名：模型切换时要靠它判断"真的换了"，才能作废基于旧窗口的
+  // refine 提示（见 session_info case）
+  const modelNameRef = useRef(h.modelName ?? '')
+  modelNameRef.current = h.modelName ?? ''
   const refineActiveRef = useRef(false)
   const refineOutputRef = useRef('')
   const refineStartTimeRef = useRef(0)
@@ -457,10 +465,22 @@ export function useEvents(h: EventHandlers) {
           h.setMood(isInterrupted ? 'idle' : 'error')
           break
         }
-        case 'session_info':
+        case 'session_info': {
+          // 模型切换 → 上下文窗口变了，待确认的 refine 提示全部作废。
+          // usagePercent 是按旧窗口算的，tier/阈值也基于旧档位；留着会让用户
+          // 拿过期数据做决定（例如在 1M 模型的提示里拖滑杆，而当前已是 128K
+          // 模型——那个滑杆对 small 档毫无作用）。清除比保留更诚实。
+          const modelChanged = event.model && event.model !== modelNameRef.current
+          if (modelChanged && (refineStateRef.current || pendingRefineRef.current)) {
+            h.setRefineState(null)
+            h.setPendingRefine(null)
+            h.setForceDraftForRefine?.(null)
+            addSystemMsg('模型已切换，上下文提示已按新的上下文窗口重新计算。')
+          }
           h.setModelName(event.model)
           if (event.session_id) h.setSessionId(event.session_id)
           break
+        }
         case 'understanding_complete':
           if (event.needs_clarification && event.critiques?.length > 0) {
             addSystemMsg(`我需要了解更多信息：${event.critiques[0]}`)

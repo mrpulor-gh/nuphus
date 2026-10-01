@@ -1764,7 +1764,7 @@ const zh: Record<string, string> = {
   'refine.forceLabel': '强制提炼阈值',
   'refine.forceHint':
     '阶段性工作未完成时可调高以延后；上下文开始漂移则调低，更早提炼。此设置只对当前大上下文窗口模型生效。',
-  'refine.forceBelowUsage': '低于当前用量 {0}% —— 下一轮结束后将立即强制提炼。',
+  'refine.forceFloorRaised': '当前用量 {1}%，最低只能设到 {0}% —— 再低就会在本轮结束后立即提炼。',
 
   'message.system': '系统',
 

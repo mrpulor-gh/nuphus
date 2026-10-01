@@ -1193,10 +1193,20 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 // 名会拿到别的段（或 builtin 无此模型 → 128K 猜测）。
                 // workflow 分支必须用 workflow_binding：leader_config 是当前 mode 的
                 // 活动模型，workflow 绑定与它可能不同（同 id 跨 provider 段）。
-                let cw = nuphus::agent::goal_types::get_context_window_for(
+                // 同 Leader 分支：无 fallback 查询 + 明确的兜底告警（见下方注释）
+                let cw = nuphus::agent::goal_types::try_get_context_window_for(
                     &workflow_binding.1,
                     Some(workflow_binding.0.as_str()),
-                );
+                )
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        "[REFINE] workflow 模型 {}/{} 无 context_window 元数据，回落到 128K 兜底。\
+                         如需准确分档，请在模型设置中手动指定上下文窗口。",
+                        workflow_binding.0,
+                        workflow_binding.1
+                    );
+                    128_000
+                });
                 wa.maybe_refine_session(cw, large_force_refine_threshold2, Some(&emitter))
                     .await;
                 let mut guard = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
@@ -1234,10 +1244,24 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     ttft_ms: None,
                 });
 
-                let cw = nuphus::agent::goal_types::get_context_window_for(
+                // 窗口必须走**无 fallback** 查询：猜一个 128K 会让未知窗口的模型
+                // 静默落进 small 档（无提示、75% 静默提炼），用户看不到 slider 也无从
+                // 知晓阈值依据是什么。custom 段模型靠 providers.toml 的手动设置入口
+                // （set_model_context_window）显式声明；128K 只是这条路也走不通时的
+                // 最后兜底，且必须留下可观测痕迹，不能无声无息。
+                let cw = nuphus::agent::goal_types::try_get_context_window_for(
                     &rt.config().model,
                     Some(rt.config().provider.as_str()),
-                );
+                )
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        "[REFINE] 模型 {}/{} 无 context_window 元数据，回落到 128K 兜底。\
+                         如需准确分档，请在模型设置中手动指定上下文窗口。",
+                        rt.config().provider,
+                        rt.config().model
+                    );
+                    128_000
+                });
                 let large_force_refine_threshold = rt.config().large_force_refine_threshold;
                 rt.maybe_refine_session(&cancel_flag2, cw, large_force_refine_threshold)
                     .await;
