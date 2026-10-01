@@ -107,6 +107,14 @@ pub struct SignalState {
     /// 当前执行阶段。见 [`ExecutionStage`]；读写统一走
     /// [`SignalState::execution_stage`] / [`SignalState::set_execution_stage`]。
     pub execution_stage: ExecutionStage,
+    /// 本轮起点（Unix 毫秒）——**刷新 / 重连后前端据此继续推算耗时，不归零**。
+    /// 由 `set_execution_stage` 在「空闲 → 执行」这一跳自动记录（与阶段抢占同锁），
+    /// 随 `get_execution_state` 快照下发。收尾期（Finalizing）保留：总耗时仍在累计。
+    pub execution_started_at_ms: Option<u64>,
+    /// 本轮工具调用步数（后端累加，`SignalState::inc_execution_tool_calls`）。
+    /// 执行中 / 完成后经 `get_execution_state` 快照下发，故刷新后**不依赖前端累加**。
+    /// 与 `execution_started_at_ms` 同生命周期：新轮开始清零、回 Idle 清零。
+    pub execution_tool_calls: usize,
 
     // ── Pause 子系统 ──
     /// 暂停决策 (action_id → PauseDecision)
@@ -221,8 +229,47 @@ impl SignalState {
     ///
     /// 互斥由本结构的 `RwLock` 提供：所有转换（含「空闲才抢占」的 CAS 语义）都在
     /// 同一把锁内完成，故不需要额外的原子量。锁内不做任何 await / 跨锁调用。
+    ///
+    /// 顺带记录本轮起点（`execution_started_at_ms`）：
+    /// - 「空闲 → 执行」这一跳写入 `now`——此时才是真正的新轮次开始。
+    ///   子任务在 Running 内再次置 Running **不重置**，否则主轮起点会被覆盖成
+    ///   子任务的开始时刻，导致主轮耗时偏小。
+    /// - 进入 `Finalizing` 保留起点：主循环已退出但总耗时仍在累计（收尾工作ing）。
+    /// - 回到 `Idle` 清空：本轮彻底结束，避免下一轮读到上一轮的起点。
     pub fn set_execution_stage(signals: &SharedSignals, stage: ExecutionStage) -> ExecutionStage {
-        std::mem::replace(&mut Self::write(signals).execution_stage, stage)
+        let mut w = Self::write(signals);
+        let old = std::mem::replace(&mut w.execution_stage, stage);
+        match (old, stage) {
+            (ExecutionStage::Idle, ExecutionStage::Running) => {
+                w.execution_started_at_ms = Some(crate::utils::now_unix_ms());
+                w.execution_tool_calls = 0;
+            }
+            (_, ExecutionStage::Idle) => {
+                w.execution_started_at_ms = None;
+                w.execution_tool_calls = 0;
+            }
+            _ => {}
+        }
+        old
+    }
+
+    /// 本轮起点（Unix 毫秒）。`None` = 当前无执行 / 后端未记录。
+    /// 前端据此 `now - started_at_ms` 实时推算耗时，刷新 / 重连后依然准确。
+    pub fn execution_started_at_ms(signals: &SharedSignals) -> Option<u64> {
+        Self::read(signals).execution_started_at_ms
+    }
+
+    /// 累加一次本轮工具调用（后端唯一累加点：emit `ToolCallStart` 时调用）。
+    /// 前端**不得**自己数调用次数——那会在刷新 / 丢事件后与实际不符。
+    pub fn inc_execution_tool_calls(signals: &SharedSignals) -> usize {
+        let mut w = Self::write(signals);
+        w.execution_tool_calls = w.execution_tool_calls.saturating_add(1);
+        w.execution_tool_calls
+    }
+
+    /// 本轮工具调用步数（后端累加值，快照下发用）。
+    pub fn execution_tool_calls(signals: &SharedSignals) -> usize {
+        Self::read(signals).execution_tool_calls
     }
 
     /// 轮询等待执行体**真正退出**（阶段回到 `Idle`）。

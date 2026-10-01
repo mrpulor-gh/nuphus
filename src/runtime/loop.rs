@@ -109,6 +109,7 @@ impl RuntimeEvent {
                     mode: mode.to_string(),
                     session_id: None,
                     turn_id: None,
+                    started_at_ms: Some(crate::utils::now_unix_ms()),
                 }
             }
             RuntimeEvent::LlmTextDelta {
@@ -160,6 +161,16 @@ impl RuntimeEvent {
                 },
                 total_duration_ms,
                 total_calls,
+                meta: Some(crate::agent::turn_meta::TurnMeta {
+                    duration_ms: Some(total_duration_ms),
+                    tool_calls: total_calls as u32,
+                    started_at_ms: if total_duration_ms > 0 {
+                        Some(crate::utils::now_unix_ms().saturating_sub(total_duration_ms))
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                }),
             },
             RuntimeEvent::Error {
                 code,

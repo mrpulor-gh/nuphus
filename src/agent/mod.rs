@@ -15,6 +15,7 @@ pub mod pause;
 pub mod prompt;
 pub mod reminders;
 pub mod task_run;
+pub mod turn_meta;
 use crate::agent::events::{EventEmitter, NuphusEvent};
 use crate::agent::reminders::ReminderQueue;
 use crate::{
@@ -160,6 +161,12 @@ pub struct ReactAgent {
     pub(crate) config: AgentConfig,
     pub(crate) session: Session,
     pub(crate) steps: Vec<ExecutionStep>,
+    /// 本轮执行的元数据累加器（耗时 / token / 步数）。
+    ///
+    /// 生命周期与「一轮用户请求」对齐：收到输入时 `reset_for_turn()`，
+    /// 每次 LLM 调用累加 token，完成时作为 `ExecutionCompleted.meta` 下发。
+    /// 单一数据源——消息底部 / 执行面板 / ctx 弹窗共用，避免各处口径不一。
+    pub(crate) turn_meta: crate::agent::turn_meta::TurnMeta,
     /// Shell Hooks runtime (initialized from config.hooks)
     pub(crate) hooks: Option<HookRunner>,
     /// Full tool registry (includes system_shell, file_edit, desktop_*, etc.),
@@ -249,6 +256,7 @@ impl ReactAgent {
             config,
             session: Session::new(),
             steps: Vec::new(),
+            turn_meta: crate::agent::turn_meta::TurnMeta::default(),
             hooks,
             exec_tools: None,
             exec_llm: None,

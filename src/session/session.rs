@@ -33,6 +33,14 @@ pub struct Session {
     /// 上次 API 返回的实际 input_tokens (prompt_tokens + prompt_cache_hit_tokens)
     /// 保持 session 内峰值——status-bar 和 refine 共用，不受 KV cache 波动影响
     pub api_input_tokens: u64,
+    /// 上次 API 返回的实际 output_tokens（completion_tokens，含 reasoning 段）
+    ///
+    /// 与 `api_input_tokens` 同源同时更新。**用途是算上下文占用**：一轮结束时
+    /// 会话里最后追加的内容正是这一次调用的产出，故
+    /// `context_occupancy = api_input_tokens + api_output_tokens`
+    /// 即「下一次请求的提示词规模」的官方近似——不靠字符估算（见 transform.rs）。
+    #[serde(default)]
+    pub api_output_tokens: u64,
     /// turn 计数器 — 每次用户发送消息时递增。
     /// 用作 memory entry 的 turn_id，用于因果链追踪。
     #[serde(default)]
@@ -52,6 +60,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
+            api_output_tokens: 0,
             turn_count: 0,
         }
     }
@@ -80,6 +89,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
+            api_output_tokens: 0,
             turn_count: parent_depth + 1,
         }
     }
@@ -129,6 +139,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
+            api_output_tokens: 0,
             turn_count: 0,
         }
     }
@@ -272,7 +283,9 @@ impl Session {
         // 必须清零：force refine 判据（agent/distill.rs）在 api_input_tokens > 0 时直接取它，
         // 留旧峰值会让下一轮必然再次越过 force_limit（issue #9 附带发现）。清零后
         // estimate_token_usage 回落到提炼后小会话的字符估算，不会误触发。
+        // output 一并清零：占用读数（context_occupancy）随会话内容作废，下次调用重建。
         self.api_input_tokens = 0;
+        self.api_output_tokens = 0;
         let _ = std::mem::take(&mut self.messages);
         self.messages.push(Message {
             role: MessageRole::System,
@@ -291,6 +304,7 @@ impl Session {
         self.refined = true;
         // 同 replace_with_distill：不清零则旧峰值残留，下一轮 force refine 必复发
         self.api_input_tokens = 0;
+        self.api_output_tokens = 0;
         self.messages.retain(|m| m.role == MessageRole::System);
         self.messages.push(Message {
             role: MessageRole::System,
@@ -360,6 +374,7 @@ impl Session {
             pending_refine_msgs: Vec::new(),
             last_refine_strategy: None,
             api_input_tokens: 0,
+            api_output_tokens: 0,
             turn_count: 0,
         }
     }

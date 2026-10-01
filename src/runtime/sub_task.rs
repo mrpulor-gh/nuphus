@@ -62,6 +62,9 @@ pub struct SubTaskRunner {
     // Execution statistics
     /// Total execution duration timer
     pub(crate) execution_started_at: std::time::Instant,
+    /// 本轮元数据累加器（耗时 / token / 步数）——与 ReactAgent 同一结构、
+    /// 同一口径，完成时作为 ExecutionCompleted.meta 下发。
+    pub(crate) turn_meta: crate::agent::turn_meta::TurnMeta,
     /// Actual total tool calls (for progress events)
     pub(crate) tool_call_total_count: u32,
     // Pause flag (set externally, polled between iterations)
@@ -127,6 +130,7 @@ impl SubTaskRunner {
             suppress_error_events: false,
             suppress_lifecycle_events: false,
             execution_started_at: std::time::Instant::now(),
+            turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             tool_call_total_count: 0,
             pause_flag: None,
             protection: ProtectionGuard::new(),

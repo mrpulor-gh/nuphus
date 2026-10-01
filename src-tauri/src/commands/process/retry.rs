@@ -207,6 +207,16 @@ pub async fn retry_agent(
             },
             total_duration_ms: elapsed,
             total_calls,
+            meta: Some(nuphus::agent::turn_meta::TurnMeta {
+                duration_ms: Some(elapsed),
+                tool_calls: total_calls as u32,
+                started_at_ms: if elapsed > 0 {
+                    Some(nuphus::utils::now_unix_ms().saturating_sub(elapsed))
+                } else {
+                    None
+                },
+                ..Default::default()
+            }),
         });
 
         Ok(ProcessInputResponse {

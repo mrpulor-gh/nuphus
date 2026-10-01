@@ -25,6 +25,13 @@ pub enum NuphusEvent {
         session_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
+        /// 本轮起点（Unix 毫秒，**后端权威**）。
+        ///
+        /// 前端据此实时推算耗时，刷新 / 重连后依然准确——根治「刷新后计时归零」
+        /// （原实现把起点存在组件 ref 里，一刷新就丢）。
+        /// `serde(default)` 保证旧端反序列化兼容（缺失 = None，前端退化为自计时）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<u64>,
     },
 
     /// User-facing workflow commentary, never raw model reasoning.
@@ -93,6 +100,13 @@ pub enum NuphusEvent {
         total_duration_ms: u64,
         /// Total actual calls
         total_calls: usize,
+        /// 本轮元数据（耗时 / token / 步数）。
+        ///
+        /// 新增统一出口：`total_duration_ms` / `total_calls` 保留原语义不删
+        /// （既有消费方零改动），`meta` 承载 token 等新维度。二者同源于后端
+        /// 同一份统计，不会漂移。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<crate::agent::turn_meta::TurnMeta>,
     },
 
     /// STEP execution error
@@ -546,6 +560,7 @@ mod tests {
                 mode: "leader".into(),
                 session_id: None,
                 turn_id: None,
+                started_at_ms: Some(1_700_000_000_000),
             })
             .unwrap(),
             serde_json::to_value(NuphusEvent::ExecutionCompleted {
@@ -558,6 +573,7 @@ mod tests {
                 },
                 total_duration_ms: 0,
                 total_calls: 0,
+                meta: None,
             })
             .unwrap(),
             serde_json::to_value(NuphusEvent::SessionRefined {

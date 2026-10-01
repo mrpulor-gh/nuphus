@@ -43,6 +43,19 @@ impl super::Runtime {
             // Clear previous round's steps (already returned via AgentOutput.steps clone)
             self.agent.steps.clear();
 
+            // 轮次元数据清零并记下「本轮起点 + 开始时上下文占用」。
+            // 此前 turn_meta 自 agent 构造起只累加重置——input/output 会变成
+            // **会话生命周期总量**（同一段上下文每轮被反复计入），气泡令牌因此
+            // 显示 11.2M 这种无意义数。现在是轮次级累加器。
+            // 起点与 SignalState 同源（react_loop 入口刚写的那个值），不另取时钟。
+            let turn_start =
+                crate::state::SignalState::execution_started_at_ms(self.agent.tools.signals())
+                    .unwrap_or_else(crate::utils::now_unix_ms);
+            self.agent.turn_meta = crate::agent::turn_meta::TurnMeta::started(turn_start);
+            self.agent
+                .turn_meta
+                .set_context_start(self.agent.session.context_occupancy());
+
             // 0. Session Start Hook
             if let Some(ref hooks) = self.agent.hooks {
                 hooks.run_session_start(&self.agent.session.id, input);
@@ -710,6 +723,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             let processed = crate::agent::common::process_events(events, content_tool_tags);
             if let Some((input, output)) = &processed.usage {
                 self.agent.session.update_api_input_tokens(*input as u64);
+                self.agent.session.update_api_output_tokens(*output as u64);
+                // 累计到本轮元数据（token 是每次 LLM 调用发一次的增量，此处逐次累加）
+                self.agent
+                    .turn_meta
+                    .add_usage(*input, *output, processed.cache_hit_tokens);
                 tracing::info!(tokens_in = input, tokens_out = output, "LLM call completed");
                 // dsh turn-metrics 口径：tok/s 只算「首 token→结束」的解码段，
                 // TTFT（请求发出→首 token）单独输出。云端 API 的网络/排队时间
@@ -758,7 +776,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     // 不是一次 Leader 调用；把上面那次 exec 调用的 cache 塞进 main 源，
                     // 会让前端拿到「分子=单次 exec 缓存、分母=Leader 总上下文」的废数。
                     // u32::MAX → 前端保留前值（Leader 自身调用上报的真实命中数）。
-                    let leader_ctx = self.agent.session.api_input_tokens as u32;
+                    // 分母用官方口径的上下文占用（本次 input + 本次 output = 下一次请求的
+                    // 提示词规模），不走 estimate_token_usage 的字符估算——那会让
+                    // 「轮次结束后的 ctx 已用值」压过 API 真实读数。
+                    let leader_ctx = self.agent.session.context_occupancy() as u32;
                     emitter.emit(NuphusEvent::TokenUsage {
                         input_tokens: leader_ctx,
                         output_tokens: 0,
@@ -926,6 +947,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                 },
                                 total_duration_ms: total_duration,
                                 total_calls: tool_calls_count,
+                                meta: Some({
+                                    let mut m = self.agent.turn_meta.clone();
+                                    m.finish(
+                                        total_duration,
+                                        tool_calls_count,
+                                        self.agent.session.context_occupancy(),
+                                    );
+                                    m
+                                }),
                             });
                             emitter.emit(NuphusEvent::LeaderDone {
                                 message: "任务完成".into(),
@@ -967,6 +997,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         },
                         total_duration_ms: total_duration,
                         total_calls: tool_calls_count,
+                        meta: Some({
+                            let mut m = self.agent.turn_meta.clone();
+                            m.finish(
+                                total_duration,
+                                tool_calls_count,
+                                self.agent.session.context_occupancy(),
+                            );
+                            m
+                        }),
                     });
                     emitter.emit(NuphusEvent::LeaderDone {
                         message: "任务完成".into(),
@@ -1044,6 +1083,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         },
                         total_duration_ms: total_duration,
                         total_calls: tool_calls_count,
+                        meta: Some({
+                            let mut m = self.agent.turn_meta.clone();
+                            m.finish(
+                                total_duration,
+                                tool_calls_count,
+                                self.agent.session.context_occupancy(),
+                            );
+                            m
+                        }),
                     });
                     emitter.emit(NuphusEvent::LeaderDone {
                         message: "任务完成".into(),
@@ -1069,6 +1117,9 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             // Execute tools
             for call in tool_calls {
                 let tool_start = std::time::Instant::now();
+                // 步数由后端累加（SignalState）——前端只读快照，绝不自己数：
+                // 刷新 / 丢事件时前端计数会与实际不符（历史缺陷源）。
+                crate::state::SignalState::inc_execution_tool_calls(self.agent.tools.signals());
                 if let Some(ref emitter) = self.agent.exec_emitter {
                     emitter.emit(NuphusEvent::ToolCallStart {
                         call_id: call.id.clone(),
@@ -1151,6 +1202,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             },
                             total_duration_ms: total_duration,
                             total_calls: tool_calls_count,
+                            meta: Some({
+                                let mut m = self.agent.turn_meta.clone();
+                                m.finish(
+                                    total_duration,
+                                    tool_calls_count,
+                                    self.agent.session.context_occupancy(),
+                                );
+                                m
+                            }),
                         });
                         emitter.emit(NuphusEvent::LeaderDone {
                             message: "任务完成".into(),
@@ -1575,6 +1635,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 },
                 total_duration_ms: total_duration,
                 total_calls: tool_calls_count,
+                meta: Some({
+                    let mut m = self.agent.turn_meta.clone();
+                    m.finish(
+                        total_duration,
+                        tool_calls_count,
+                        self.agent.session.context_occupancy(),
+                    );
+                    m
+                }),
             });
             emitter.emit(NuphusEvent::LeaderDone {
                 message: "达到最大迭代次数".into(),

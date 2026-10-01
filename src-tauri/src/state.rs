@@ -439,6 +439,10 @@ pub struct HistoryMessage {
     /// 历史拉取时下发，手机端显示完成状态（非「不显示不误导」的妥协）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_items: Vec<HistoryTraceItem>,
+    /// 本轮执行的元数据（耗时 / token / 步数）。仅 assistant 消息携带；
+    /// 旧历史缺省为 None → 前端不渲染元数据条（与 trace_items 同一演进策略）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<nuphus::agent::turn_meta::TurnMeta>,
 }
 
 /// [`ProcessInputResponse::rejected`] 的稳定取值：后端主循环已退出、正在收尾

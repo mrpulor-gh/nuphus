@@ -99,6 +99,9 @@ pub struct WorkflowAgent {
     pub(crate) user_terminated: bool,
     /// Execution start time (per round)
     pub(crate) execution_started_at: std::time::Instant,
+    /// 本轮元数据累加器（耗时 / token / 步数）——与 ReactAgent/SubTaskRunner
+    /// 同一结构与口径，完成时作为 ExecutionCompleted.meta 下发。
+    pub(crate) turn_meta: crate::agent::turn_meta::TurnMeta,
     /// Session refine counter (max 2 auto-refines)
     pub(crate) refine_count: u32,
     /// Refine threshold (inherited from Runtime config, same as Leader)
@@ -158,6 +161,7 @@ impl WorkflowAgent {
             pending_warnings: Vec::new(),
             user_terminated: false,
             execution_started_at: std::time::Instant::now(),
+            turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             refine_count: 0,
             refine_threshold,
             model_label,
@@ -479,6 +483,12 @@ impl WorkflowAgent {
         }
 
         // 2. Emit lifecycle events
+        // 轮次开始：记下起点与「开始时上下文占用」，结束时才算得出本轮增量
+        // （会话是新建的，此刻占用≈0；内部 refine  resume 时则带上既有占用）
+        let turn_start = crate::utils::now_unix_ms();
+        self.turn_meta = crate::agent::turn_meta::TurnMeta::started(turn_start);
+        self.turn_meta
+            .set_context_start(self.session.context_occupancy());
         self.emit(NuphusEvent::ExecutionStarted {
             step_index: 0,
             goal: input.chars().take(120).collect(),
@@ -487,6 +497,7 @@ impl WorkflowAgent {
             mode: "workflow".to_string(),
             session_id: Some(self.session.id.clone()),
             turn_id: Some(self.session.turn_count.to_string()),
+            started_at_ms: Some(crate::utils::now_unix_ms()),
         });
         let mut progress_cadence =
             super::workflow_progress::ProgressCadence::new(std::time::Instant::now());
@@ -677,6 +688,15 @@ impl WorkflowAgent {
                     },
                     total_duration_ms: total_duration,
                     total_calls: self.tool_call_count,
+                    meta: Some({
+                        let mut m = self.turn_meta.clone();
+                        m.finish(
+                            total_duration,
+                            self.tool_call_count,
+                            self.session.context_occupancy(),
+                        );
+                        m
+                    }),
                 });
                 self.store_turn_memory(input, &result_msg, true);
                 return Ok(AgentOutput {
@@ -715,6 +735,15 @@ impl WorkflowAgent {
                     },
                     total_duration_ms: total_duration,
                     total_calls: self.tool_call_count,
+                    meta: Some({
+                        let mut m = self.turn_meta.clone();
+                        m.finish(
+                            total_duration,
+                            self.tool_call_count,
+                            self.session.context_occupancy(),
+                        );
+                        m
+                    }),
                 });
                 // ── Session distillation before user stop exit ──
                 let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
@@ -801,6 +830,8 @@ impl WorkflowAgent {
                 }
                 progress_cadence.business_call();
                 self.tool_call_count += 1;
+                // 步数由后端累加（SignalState），前端只读快照、绝不自己数
+                crate::state::SignalState::inc_execution_tool_calls(self.tools.signals());
                 self.emit(NuphusEvent::ToolCallStart {
                     call_id: call.id.clone(),
                     tool_name: call.tool.clone(),
@@ -1481,6 +1512,7 @@ impl WorkflowAgent {
         let result = crate::agent::common::process_events(events, content_tool_tags);
         if let Some((input, output)) = &result.usage {
             self.session.update_api_input_tokens(*input as u64);
+            self.session.update_api_output_tokens(*output as u64);
             // Per-call consumption for exec tracking (shows "XX tok" in status bar)
             self.emit(NuphusEvent::TokenUsage {
                 input_tokens: *input,
@@ -1491,8 +1523,9 @@ impl WorkflowAgent {
                 ttft_ms: None,
             });
             // Cumulative session usage for context bar (like Leader's "main" source)
+            // 同 Leader：分母用官方口径占用（input+output），不用字符估算。
             self.emit(NuphusEvent::TokenUsage {
-                input_tokens: self.session.api_input_tokens as u32,
+                input_tokens: self.session.context_occupancy() as u32,
                 output_tokens: 0,
                 cache_hit_tokens: result.cache_hit_tokens,
                 source: "main".to_string(),

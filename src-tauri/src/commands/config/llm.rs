@@ -2409,6 +2409,20 @@ fn find_model_entry<'a>(
     })
 }
 
+/// 上游 `/models` 条目里的上下文字段候选（provider-agnostic）。
+///
+/// ⚠️ 不含 `max_tokens`：那是**输出**上限（completion cap，如 deepseek-v4-pro
+/// 的 32768），不是上下文窗口。上游若只暴露 max_tokens，旧实现会把它当成
+/// context_window 写进 providers.toml —— 分母从此错一个量级（128K 的模型显示成
+/// 32K），且 auto-calibration 只在「缺失」时补写、之后永不纠正。
+/// 宁可解析不出（→ 0 → 界面显示 "--"），不要一个错的官方感数字。
+const CTX_KEYS: &[&str] = &[
+    "context_length",
+    "max_context_length",
+    "context_window",
+    "max_input_tokens",
+];
+
 pub(super) fn query_model_metadata_from_api(
     base_url: &str,
     model: &str,
@@ -2484,14 +2498,8 @@ pub(super) fn query_model_metadata_from_api(
         }
     };
 
-    // Context window field names (provider-agnostic)
-    const CTX_KEYS: &[&str] = &[
-        "context_length",
-        "max_context_length",
-        "context_window",
-        "max_tokens",
-        "max_input_tokens",
-    ];
+    // Context window field names live in the module-level CTX_KEYS (see its doc:
+    // deliberately excludes `max_tokens` — that is an output cap, not a window).
 
     let build_meta = |m: &serde_json::Value| {
         let (reasoning_efforts, default_effort) = extract_reasoning_efforts(m);
@@ -2663,6 +2671,35 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 上游 /models 条目的上下文字段解析：只认**输入侧**窗口字段。
+    /// 钉子：`max_tokens`（输出上限）绝不可能是上下文窗口。
+    #[test]
+    fn extract_context_ignores_max_tokens() {
+        // 同时带 context_length 与 max_tokens：取前者（官方窗口），不被输出上限顶掉
+        let both =
+            serde_json::json!({"id": "m", "context_length": 1_000_000, "max_tokens": 32_768});
+        assert_eq!(extract_context(&both, CTX_KEYS), Some(1_000_000));
+
+        // 只暴露 max_tokens：解析不出 → None（调用方按「未知」处理，显示 "--"），
+        // 而不是把 32768 当上下文窗口写进 providers.toml
+        let only_max = serde_json::json!({"id": "m", "max_tokens": 32_768});
+        assert_eq!(extract_context(&only_max, CTX_KEYS), None);
+
+        // 其余输入侧字段照常识别
+        assert_eq!(
+            extract_context(&serde_json::json!({"max_input_tokens": 200_000}), CTX_KEYS),
+            Some(200_000)
+        );
+        assert_eq!(
+            extract_context(&serde_json::json!({"context_window": 128_000}), CTX_KEYS),
+            Some(128_000)
+        );
+        assert_eq!(
+            extract_context(&serde_json::json!({"id": "m"}), CTX_KEYS),
+            None
+        );
+    }
 
     /// 写临时配置：agent_models 内容 + registry config（providers 列表）。
     /// 返回 (providers_path, config_path)，测试结束由调用方清理目录。

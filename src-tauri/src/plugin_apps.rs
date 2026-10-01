@@ -2375,6 +2375,7 @@ mod tests {
             audio: vec![],
             timestamp: None,
             trace_items: vec![],
+            meta: None,
         };
         // 合法
         let ok = Some(vec![

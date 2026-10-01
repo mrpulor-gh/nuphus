@@ -326,15 +326,41 @@ impl Session {
 
     /// 估算当前消息列表 token 用量
     /// 优先使用 API 返回的实际 input_tokens，退化到字符估算
+    ///
+    /// ⚠️ 仅用于**内部水位启发式**（提炼触发判据、子任务/工作流的上下文告警阈值、
+    /// dispatch 记录的会话规模）——那些场景要的是「含尚未过 API 的内容」的保守值，
+    /// 官方读数覆盖不到刚追加的工具结果。
+    /// **界面上的 ctx 占用不得用它**：`max()` 会让字符估算压过官方读数（已导致的
+    /// 缺陷：轮次结束后 ctx 已用值不等于 API 真实 input_tokens）。界面一律走
+    /// [`Self::context_occupancy`]。
     pub fn estimate_token_usage(&self) -> usize {
         let json_str = serde_json::to_string(&self.messages).unwrap_or_default();
         let char_estimate = (json_str.len() / 4) + 100;
         std::cmp::max(self.api_input_tokens as usize, char_estimate)
     }
 
+    /// 当前上下文占用（**官方口径**）：最后一次 API 调用的 input + output。
+    ///
+    /// 为什么这样就够：一轮正常结束时，会话里最后追加的内容正是那一次调用的产出
+    /// （末轮无工具调用，只有 text / thinking / response），所以
+    /// `input + output` 就是「下一次请求的提示词规模」。三个数全部来自 API 的
+    /// `usage`，没有任何本地估算；下一次调用到达时会被该次真实的 `input_tokens`
+    /// 原地校正（自愈），误差窗口仅限两轮之间。
+    ///
+    /// 返回 0 = 尚无官方读数（新会话 / 提炼后已清零）→ 界面显示 "--"，
+    /// 或由调用方决定是否退回 `estimate_token_usage`。
+    pub fn context_occupancy(&self) -> u64 {
+        self.api_input_tokens.saturating_add(self.api_output_tokens)
+    }
+
     /// 更新 API 返回的 input_tokens
     pub fn update_api_input_tokens(&mut self, count: u64) {
         self.api_input_tokens = count;
+    }
+
+    /// 更新 API 返回的 output_tokens（与 input 成对调用，见 `context_occupancy`）
+    pub fn update_api_output_tokens(&mut self, count: u64) {
+        self.api_output_tokens = count;
     }
 
     /// 插入提炼/分裂标记消息到会话中

@@ -123,6 +123,7 @@ fn extract_history_for_mode(
                         audio,
                         timestamp: m.timestamp,
                         trace_items: Vec::new(),
+                        meta: None,
                     }];
                 }
             }
@@ -162,6 +163,7 @@ fn extract_history_for_mode(
                     audio,
                     timestamp: m.timestamp,
                     trace_items: Vec::new(),
+                    meta: None,
                 }];
             }
 
@@ -185,6 +187,7 @@ fn extract_history_for_mode(
                                     audio: Vec::new(),
                                     timestamp: *timestamp,
                                     trace_items: Vec::new(),
+                                    meta: None,
                                 })
                         }
                         _ => None,
@@ -289,6 +292,7 @@ fn extract_history_for_mode(
                 audio,
                 timestamp: m.timestamp,
                 trace_items,
+                meta: None,
             }];
             visible.extend(reports);
             visible
@@ -324,6 +328,7 @@ fn append_last_turn_user(
         audio: Vec::new(),
         timestamp: None,
         trace_items: Vec::new(),
+        meta: None,
     });
     msgs
 }
@@ -439,6 +444,7 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
                 audio: Vec::new(),
                 timestamp: None,
                 trace_items: Vec::new(),
+                meta: None,
             }]);
         }
     }

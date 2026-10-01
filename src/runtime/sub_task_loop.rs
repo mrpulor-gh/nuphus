@@ -53,6 +53,11 @@ impl super::SubTaskRunner {
         );
 
         if !self.suppress_lifecycle_events {
+            // 轮次开始：记下起点与「开始时上下文占用」（会话新建，占用≈0）
+            let turn_start = crate::utils::now_unix_ms();
+            self.turn_meta = crate::agent::turn_meta::TurnMeta::started(turn_start);
+            self.turn_meta
+                .set_context_start(self.session.context_occupancy());
             self.emit(NuphusEvent::ExecutionStarted {
                 step_index: 0,
                 goal: self.goal.chars().take(120).collect(),
@@ -61,6 +66,7 @@ impl super::SubTaskRunner {
                 mode: "leader".to_string(),
                 session_id: None,
                 turn_id: None,
+                started_at_ms: Some(turn_start),
             });
         }
 
@@ -316,6 +322,11 @@ impl super::SubTaskRunner {
                         },
                         total_duration_ms: total_duration,
                         total_calls: tool_count,
+                        meta: Some({
+                            let mut m = self.turn_meta.clone();
+                            m.finish(total_duration, tool_count, self.session.context_occupancy());
+                            m
+                        }),
                     });
                 }
                 return Ok((true, result_msg, vec![]));
@@ -352,6 +363,15 @@ impl super::SubTaskRunner {
                         },
                         total_duration_ms: total_duration,
                         total_calls: self.tool_call_total_count as usize,
+                        meta: Some({
+                            let mut m = self.turn_meta.clone();
+                            m.finish(
+                                total_duration,
+                                self.tool_call_total_count as usize,
+                                self.session.context_occupancy(),
+                            );
+                            m
+                        }),
                     });
                 }
                 return Ok((true, result_msg, vec![]));
@@ -367,6 +387,8 @@ impl super::SubTaskRunner {
 
             for call in &tool_calls {
                 self.tool_call_total_count += 1;
+                // 步数由后端累加（SignalState），前端只读快照、绝不自己数
+                crate::state::SignalState::inc_execution_tool_calls(self.tools.signals());
                 self.emit(NuphusEvent::ToolCallStart {
                     call_id: call.id.clone(),
                     tool_name: call.tool.clone(),
@@ -944,6 +966,9 @@ impl super::SubTaskRunner {
         let result = crate::agent::common::process_events(events, content_tool_tags);
         if let Some((input, output)) = &result.usage {
             self.session.update_api_input_tokens(*input as u64);
+            self.session.update_api_output_tokens(*output as u64);
+            self.turn_meta
+                .add_usage(*input, *output, result.cache_hit_tokens);
             self.emit(NuphusEvent::TokenUsage {
                 input_tokens: *input,
                 output_tokens: *output,

@@ -1318,6 +1318,17 @@ pub fn active_memory_md_path() -> PathBuf {
     memory_md_path(active_project_tag().as_deref())
 }
 
+/// 当前 Unix 时间戳（毫秒）。
+///
+/// 单一来源：事件中的 `started_at_ms`、元数据的起点等一律走这里，
+/// 避免各处各写一遍 `SystemTime::now()` 造成口径不一。
+pub fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 // ── 相对路径基准（唯一解析入口）──
 //
 // 历史缺陷（issue：产物落错位置）：文件、计划等工具各自 `Path::new(raw)`，相对路径

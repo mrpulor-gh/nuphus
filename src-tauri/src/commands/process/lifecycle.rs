@@ -258,15 +258,23 @@ pub struct ExecutionStateSnapshot {
     pub stage: String,
     pub busy: bool,
     pub append_accepting: bool,
+    /// 本轮起点（Unix 毫秒）——刷新 / 重连后前端据此继续推算耗时，**不归零、不需兜底**。
+    /// `None` = 当前无执行。判据见 `SignalState::set_execution_stage`。
+    pub started_at_ms: Option<u64>,
+    /// 本轮工具调用步数（后端累加）。刷新后前端**不自己数**，直接以此为准。
+    pub tool_calls: usize,
 }
 
 #[tauri::command]
 pub fn get_execution_state(state: State<'_, AppState>) -> Result<ExecutionStateSnapshot, String> {
-    let stage = state.busy.stage();
+    let signals = nuphus::state::SignalState::read(&state.signals);
+    let stage = signals.execution_stage;
     Ok(ExecutionStateSnapshot {
         stage: stage.as_str().to_string(),
         busy: stage.is_busy(),
         append_accepting: stage.accepts_append(),
+        started_at_ms: nuphus::state::SignalState::execution_started_at_ms(&state.signals),
+        tool_calls: nuphus::state::SignalState::execution_tool_calls(&state.signals),
     })
 }
 

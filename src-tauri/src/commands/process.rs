@@ -1174,9 +1174,16 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 guard.workflow_agent.take()
             };
             if let Some(ref mut wa) = wa_opt {
+                // 同 Leader 分支：官方口径占用优先，无官方读数（提炼后）才退回字符估算
+                let occupancy = wa.session().context_occupancy();
+                let session_usage = if occupancy > 0 {
+                    occupancy
+                } else {
+                    wa.session().estimate_token_usage() as u64
+                } as u32;
                 emitter.emit(NuphusEvent::TokenUsage {
                     source: "workflow".to_string(),
-                    input_tokens: wa.session().estimate_token_usage() as u32,
+                    input_tokens: session_usage,
                     output_tokens: 0,
                     cache_hit_tokens: u32::MAX,
                     gen_tps: None,
@@ -1202,12 +1209,22 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 guard.leader_agent.take()
             };
             if let Some(ref mut rt) = runtime_opt {
-                let session_usage = rt.session().estimate_token_usage() as u32;
-                // source="main"：这是**主会话上下文**的真实规模（estimate_token_usage 量的就是
-                // 当前会话），归 main 槽。此前写 "leader" 会按前端「非 main 即 exec」的兜底
-                // 落进 exec 槽——那个槽专供 exec 执行（dispatch/子任务），由 ctx 弹窗整组消费，
-                // 混入 Leader 的会话规模会让弹窗与主指示器互相污染。Leader 回合本就属于主会话，
-                // 与 exec 执行不是一类东西。
+                // 轮次结束的 ctx 占用 = **官方口径**：最后一次 API 调用的 input + output
+                // （末轮无工具调用，最后追加的内容正是那一次产出）→ 即下一次请求的
+                // 提示词规模。三个数全来自 usage，无字符估算。
+                // 仅当尚无官方读数（新会话 / 提炼后清零）才退回字符估算——
+                // 那时会话内容确实只在本地手里，估算比显示 "--" 有用。
+                let occupancy = rt.session().context_occupancy();
+                let session_usage = if occupancy > 0 {
+                    occupancy
+                } else {
+                    rt.session().estimate_token_usage() as u64
+                } as u32;
+                // source="main"：这是**主会话上下文**的真实规模，归 main 槽。此前写
+                // "leader" 会按前端「非 main 即 exec」的兜底落进 exec 槽——那个槽专供
+                // exec 执行（dispatch/子任务），由 ctx 弹窗整组消费，混入 Leader 的会话
+                // 规模会让弹窗与主指示器互相污染。Leader 回合本就属于主会话，与 exec
+                // 执行不是一类东西。
                 emitter.emit(NuphusEvent::TokenUsage {
                     source: "main".to_string(),
                     input_tokens: session_usage,

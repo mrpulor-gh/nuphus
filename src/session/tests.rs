@@ -110,6 +110,49 @@ mod tests {
         assert!(session.estimate_token_usage() < 102_400);
     }
 
+    /// 界面上的 ctx 占用必须来自官方 usage（input + output），不掺字符估算。
+    /// 缺陷背景：轮次结束曾用 `estimate_token_usage()`，其 `max(api_input, 字符/4)`
+    /// 会让字符估算压过 API 真实读数 ——「结束后的 ctx 已用值 ≠ 最后一次上报的
+    /// input_tokens」。现在界面一律走 `context_occupancy()`。
+    #[test]
+    fn test_context_occupancy_uses_official_input_plus_output() {
+        let mut session = Session::new();
+        // 一次典型末轮：prompt 130_801，产出 199（含 reasoning 段）
+        session.update_api_input_tokens(130_801);
+        session.update_api_output_tokens(199);
+        // = 下一次请求的提示词规模，全部官方
+        assert_eq!(session.context_occupancy(), 131_000);
+
+        // 多轮：后者覆盖前者（不是累加——占用是「当前规模」不是「累计消耗」）
+        session.update_api_input_tokens(132_500);
+        session.update_api_output_tokens(240);
+        assert_eq!(session.context_occupancy(), 132_740);
+
+        // 字符数再大也不能压过官方读数（estimate 仍可被内部启发式用，但不进界面）
+        session.push_user("x".repeat(2_000_000));
+        assert_eq!(session.context_occupancy(), 132_740);
+        assert!(
+            session.estimate_token_usage() > 132_740,
+            "估算仅供内部启发式"
+        );
+    }
+
+    /// 提炼后占用读数随之作废（0 = 未知 → 界面显示 "--" 或调用方退回估算），
+    /// 不得残留提炼前的峰值。
+    #[test]
+    fn test_context_occupancy_reset_after_distill() {
+        let mut session = Session::new();
+        session.update_api_input_tokens(112_498);
+        session.update_api_output_tokens(900);
+        session.replace_with_distill("short summary");
+        assert_eq!(session.context_occupancy(), 0, "提炼后占用必须归零");
+
+        session.update_api_input_tokens(50_000);
+        session.update_api_output_tokens(120);
+        session.accumulate_distill("second summary");
+        assert_eq!(session.context_occupancy(), 0, "accumulate 同样归零");
+    }
+
     #[test]
     fn test_to_api_messages_preserves_reasoning_content() {
         let mut session = Session::new();

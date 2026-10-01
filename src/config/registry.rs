@@ -247,7 +247,9 @@ mod tests {
         assert!(r
             .find_model_for_provider("anthropic", "claude-sonnet-5")
             .is_some());
-        assert!(r.find_model_for_provider("anthropic", "Claude-Sonnet-5").is_none());
+        assert!(r
+            .find_model_for_provider("anthropic", "Claude-Sonnet-5")
+            .is_none());
     }
 
     #[test]
@@ -276,7 +278,9 @@ mod tests {
             .is_none());
         assert!(r.find_model_fuzzy("claude-opus-4-6").is_none());
         // 段作用域：别的 provider 的表不该被 anthropic 查询命中
-        assert!(r.find_model_for_provider_fuzzy("anthropic", "gpt-4o").is_none());
+        assert!(r
+            .find_model_for_provider_fuzzy("anthropic", "gpt-4o")
+            .is_none());
         assert!(r.find_model_for_provider_fuzzy("anthropic", "").is_none());
     }
 }
