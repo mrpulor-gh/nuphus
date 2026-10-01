@@ -467,6 +467,15 @@ const en: Record<string, string> = {
   'update.downloading': 'Downloading update ({0})',
   'update.failed': '{0}',
   'update.retry': 'Retry',
+  'update.errVerify':
+    'Signature verification of the installer failed and the install was stopped (a security guard, not a forced write). Please send us the error below.',
+  'update.errNetwork':
+    'Downloading the update failed — the network or the download endpoint may be temporarily unavailable. Try again later; if it keeps failing, send us the error below.',
+  'update.errPlatform':
+    'The current platform is not listed in the update manifest. Please send us the error below.',
+  'update.errPermission':
+    'No write permission, so the install could not finish. Check the install directory permissions and retry.',
+  'update.errUnknown': 'The update did not finish. Please send us the error below.',
   'update.changesTitle': 'Changes in this version',
   'update.changesEmpty': 'No changelog entries for this version',
   'update.changesUnavailable': 'Changelog unavailable',

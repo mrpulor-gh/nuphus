@@ -453,6 +453,13 @@ const zh: Record<string, string> = {
   'update.downloading': '正在下载更新（{0}）',
   'update.failed': '{0}',
   'update.retry': '重试',
+  'update.errVerify':
+    '安装包签名校验未通过，已停止安装（这是安全机制，不会强行写入）。请把下方错误信息反馈给我们。',
+  'update.errNetwork':
+    '更新下载失败，可能是网络或下载通道暂时不可用。可稍后重试；若持续失败请把下方错误信息反馈给我们。',
+  'update.errPlatform': '当前系统平台不在更新清单内。请把下方错误信息反馈给我们。',
+  'update.errPermission': '没有写入权限，无法完成安装。请检查安装目录权限后重试。',
+  'update.errUnknown': '更新未完成。请把下方错误信息反馈给我们。',
   'update.changesTitle': '本版更新内容',
   'update.changesEmpty': '暂无本版变更记录',
   'update.changesUnavailable': '无法读取变更记录',

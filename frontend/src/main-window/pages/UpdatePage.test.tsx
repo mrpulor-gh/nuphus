@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { getVersion } from '@tauri-apps/api/app'
+import { check } from '@tauri-apps/plugin-updater'
 import { getChangelog } from '../lib/api'
 import { UpdatePage } from './UpdatePage'
 
@@ -35,6 +36,7 @@ const CHANGELOG = `# Changelog
 
 const mockedGetVersion = vi.mocked(getVersion)
 const mockedGetChangelog = vi.mocked(getChangelog)
+const mockedCheck = vi.mocked(check)
 
 function arrange(version: string, changelog: string) {
   mockedGetVersion.mockResolvedValue(version)
@@ -153,5 +155,61 @@ describe('UpdatePage 本版更新内容', () => {
     fireEvent.click(screen.getByRole('button', { name: /检查更新/ }))
 
     await waitFor(() => expect(screen.getByText('当前已是最新版本')).toBeInTheDocument())
+  })
+})
+
+/**
+ * 更新失败时的错误可见性。
+ *
+ * 2026-09-30 起因：用户反馈镜像渠道导致无法自动更新，而两端 catch 都不看错误对象、
+ * 只回通用文案，导致我们拿不到任何线索。钉住两条契约：
+ * ① 按错误类型给分类建议；② **服务商/插件的原始错误体必须出现在界面上**——
+ *    关键词永远追不齐，原文是漏匹配时唯一的定位依据。
+ */
+describe('UpdatePage 更新失败的错误可见性', () => {
+  const errText = (c: HTMLElement) => c.querySelector('.update-error')?.textContent ?? ''
+
+  it('网络/下载失败 → 网络类建议 + 保留原始错误体', async () => {
+    arrange('0.2.16', CHANGELOG)
+    mockedCheck.mockRejectedValueOnce(new Error('Download request failed with status: 404'))
+    const view = render(<UpdatePage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /检查更新/ }))
+
+    await waitFor(() => expect(errText(view.container)).not.toBe(''))
+    const text = errText(view.container)
+    expect(text).toContain('更新下载失败')
+    // 关键：原始错误体不能被替换成通用文案
+    expect(text).toContain('Download request failed with status: 404')
+  })
+
+  it('验签失败 → 安全类建议（与网络类区分，不可静默重试）', async () => {
+    arrange('0.2.16', CHANGELOG)
+    mockedCheck.mockRejectedValueOnce(
+      new Error('minisign: signature verification failed for the downloaded file'),
+    )
+    const view = render(<UpdatePage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /检查更新/ }))
+
+    await waitFor(() => expect(errText(view.container)).not.toBe(''))
+    const text = errText(view.container)
+    expect(text).toContain('签名校验未通过')
+    expect(text).toContain('minisign')
+    // 验签失败不得套用「稍后重试」那套说辞
+    expect(text).not.toContain('可能是网络或下载通道暂时不可用')
+  })
+
+  it('未知错误 → 通用建议 + 原文兜底（不空白、不假装知道原因）', async () => {
+    arrange('0.2.16', CHANGELOG)
+    mockedCheck.mockRejectedValueOnce(new Error('totally unexpected plugin state'))
+    const view = render(<UpdatePage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /检查更新/ }))
+
+    await waitFor(() => expect(errText(view.container)).not.toBe(''))
+    const text = errText(view.container)
+    expect(text).toContain('更新未完成')
+    expect(text).toContain('totally unexpected plugin state')
   })
 })

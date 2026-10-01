@@ -10,6 +10,47 @@ import { getChangelog } from '../lib/api'
 import { countSectionItems, parseChangelogSection, type ChangelogSection } from '../lib/changelog'
 import '../../styles/update.css'
 
+/**
+ * 把 updater 抛出的未知异常变成「一段人话 + 原始错误」。
+ *
+ * 2026-09-30 起因：有用户反馈换用镜像下载渠道后自动更新失效，而我们拿不到任何
+ * 线索 —— 原先两处 catch 都不看错误对象，只回一句通用文案。
+ * Tauri updater 内部会明确区分 Network(status) / Minisign(验签) / TargetNotFound
+ * 等，这些是定位问题的唯一依据，被替换掉就只剩猜。
+ *
+ * 输出 = 分类建议 + 截断后的原始错误体。原始错误体必须保留：关键词匹配永远追不齐
+ * 服务商/插件升级后的措辞，漏匹配时用户和维护者仍能看懂真实原因。
+ */
+function describeUpdateError(e: unknown, t: (k: string) => string): string {
+  const raw = e instanceof Error ? e.message : String(e ?? '')
+  const lower = raw.toLowerCase()
+  const snippet = raw.length > 240 ? `${raw.slice(0, 240)}…` : raw
+
+  let advice: string
+  if (lower.includes('signature') || lower.includes('minisign') || lower.includes('pubkey')) {
+    // 验签失败属安全问题：不能静默重试，必须让用户看到并反馈
+    advice = t('update.errVerify')
+  } else if (
+    lower.includes('network') ||
+    lower.includes('status') ||
+    lower.includes('timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('connection') ||
+    lower.includes('dns') ||
+    lower.includes('tls') ||
+    lower.includes('redirect')
+  ) {
+    advice = t('update.errNetwork')
+  } else if (lower.includes('target') || lower.includes('platform')) {
+    advice = t('update.errPlatform')
+  } else if (lower.includes('permission') || lower.includes('denied') || lower.includes('access')) {
+    advice = t('update.errPermission')
+  } else {
+    advice = t('update.errUnknown')
+  }
+  return snippet ? `${advice}\n${snippet}` : advice
+}
+
 /** 本版更新内容区块的状态（四态互斥，避免多个 flag 互相打架） */
 type ChangelogState =
   /** 版本号或 CHANGELOG 尚未就绪 */
@@ -70,11 +111,13 @@ export function UpdatePage() {
       const found = await check()
       setUpdate(found)
       setStatus(found ? 'available' : 'latest')
-    } catch {
-      setError('暂时无法获取官方版本信息，请稍后重试。')
+    } catch (e) {
+      // 必须把真实错误带出来：endpoint 已配镜像 + 权威源两路，仅凭"暂时无法获取"
+      // 分不清是镜像挂了、权威源也不通、还是清单本身有问题（见 describeUpdateError）
+      setError(describeUpdateError(e, t))
       setStatus('error')
     }
-  }, [])
+  }, [t])
 
   const install = useCallback(async () => {
     if (!update) return
@@ -98,11 +141,13 @@ export function UpdatePage() {
       })
       await update.install({ restartAfterInstall: true })
       await relaunch()
-    } catch {
-      setError('更新下载或安装未完成，请稍后重试。')
+    } catch (e) {
+      // 下载与验签的失败原因完全不同（网络不通 / 404 / 验签不过），
+      // 统一文案会让用户和我们都无法判断，所以原始错误必须保留
+      setError(describeUpdateError(e, t))
       setStatus('error')
     }
-  }, [update])
+  }, [update, t])
 
   return (
     <div className="update-page">
