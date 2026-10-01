@@ -146,3 +146,10 @@
   line-height: 1.5;
   margin-top: 4px;
 }
+/* 阈值调到当前水位以下时的警示：下一轮收尾会立即强制提炼 */
+.refine-force-warn {
+  font-size: var(--fz-xs);
+  color: var(--warning);
+  line-height: 1.5;
+  margin-top: 4px;
+}

@@ -102,8 +102,12 @@ pub enum RefineTier {
 /// 大窗口强制线的可调范围（比例）。
 pub const LARGE_FORCE_MIN: f64 = 0.50;
 pub const LARGE_FORCE_MAX: f64 = 0.80;
-/// 大窗口强制线默认值——与 Medium 档的固定值一致，用户可往下调以更早提炼。
-pub const LARGE_FORCE_DEFAULT: f64 = 0.80;
+/// 大窗口强制线默认值——**取范围下限**。
+///
+/// 这个默认值必须是**范围下限**而不是某个中间值：这套设置的目的是**延后与防漂移**
+/// （用户按实际任务自行决定何时动手），不是兜底。若默认给到 80%，它与 Medium 档的
+/// 固定值毫无区别，用户根本没有去碰它的理由——设置就白做了。
+pub const LARGE_FORCE_DEFAULT: f64 = LARGE_FORCE_MIN;
 
 impl RefineTier {
     pub fn for_window(context_window: usize) -> Self {
@@ -128,6 +132,10 @@ impl RefineTier {
     /// 强制线比例。仅 [`RefineTier::Large`] 接受用户配置，其余档返回固定值。
     /// 传入值会被 clamp 进 `LARGE_FORCE_MIN..=LARGE_FORCE_MAX`，
     /// 防止越界配置把强制线压到提示线以下（那会让提示永不触发）。
+    ///
+    /// 另有一层隐式保护：本方法**只对 large 档读配置**，small/medium 一律返回
+    /// 设计定值。因此用户在大窗口模型上把线调到 50% 之后切到 600K 以下的模型，
+    /// 新档位完全不受那个配置影响——不存在"大模型设置污染小模型"的问题。
     pub fn force_ratio(&self, configured_large: f64) -> f64 {
         match self {
             RefineTier::Small => 0.75,
@@ -166,6 +174,10 @@ pub async fn maybe_refine_session(
     let tier = RefineTier::for_window(context_window);
     let force_ratio = tier.force_ratio(large_force_threshold);
     let force_limit = ((context_window as f64) * force_ratio) as usize;
+    // "未被用户调节时"的强制线：用于区分触发是水位自己涨上来的，还是用户刚把线
+    // 拖到了当前水位以下。只有 large 档有这个概念，其余档两者恒等。
+    let baseline_ratio = tier.force_ratio(LARGE_FORCE_DEFAULT);
+    let force_limit_at_configured = ((context_window as f64) * baseline_ratio) as usize;
 
     // 无提示档：到达强制线才动作，且直接执行（不问用户）。
     let Some(prompt_ratio) = tier.prompt_ratio() else {
@@ -201,7 +213,23 @@ pub async fn maybe_refine_session(
     }
 
     // 已越过强制线：不再询问，直接执行。
+    //
+    // 两种到达方式，日志必须分开——它们对用户是不同的事件：
+    // ① 正常水位推进到强制线（预期行为）；
+    // ② 用户在提示弹窗里把强制线调到了**当前水位以下**（例如已 70%、拖到 50%），
+    //    下一轮收尾就会立刻强制提炼。这不是故障，但会让用户觉得"我刚设完就触发了"，
+    //    所以单独记一条，便于事后区分"是自己拖出来的"还是"水位自己涨上来的"。
     if actual_tokens >= force_limit {
+        if actual_tokens >= force_limit && actual_tokens < force_limit_at_configured {
+            tracing::info!(
+                "[REFINE] tier={} cw={} tokens={} 已超过用户下调后的强制线（configured={} → now={}）— 由用户调节触发",
+                tier.as_str(),
+                context_window,
+                actual_tokens,
+                force_limit_at_configured,
+                force_limit
+            );
+        }
         tracing::warn!(
             "[REFINE] tier={} cw={} tokens={} >= force_limit={} ({:.0}%) — forced refine",
             tier.as_str(),
@@ -354,14 +382,13 @@ mod tests {
         assert_eq!(RefineTier::Medium.force_ratio(0.99), 0.80);
     }
 
-    /// 大窗口默认值即 Medium 的固定值：换模型不改变默认行为，只有用户主动下调才变。
+    /// 大窗口默认值即范围下限：设置的意义是"按需延后/提前"，默认给范围上限
+    /// 会让它和 Medium 档的固定值没有区别，用户没有理由去调。
     #[test]
-    fn large_default_matches_medium_fixed() {
-        assert_eq!(
-            RefineTier::Large.force_ratio(LARGE_FORCE_DEFAULT),
-            RefineTier::Medium.force_ratio(0.0)
-        );
-        assert_eq!(LARGE_FORCE_MIN, 0.50);
-        assert_eq!(LARGE_FORCE_MAX, 0.80);
+    fn large_default_is_range_minimum() {
+        assert_eq!(LARGE_FORCE_DEFAULT, LARGE_FORCE_MIN);
+        assert_eq!(RefineTier::Large.force_ratio(LARGE_FORCE_DEFAULT), 0.50);
+        // 默认值必须不等于 Medium 的固定值——否则 large 与 medium 默认行为无差异
+        assert_ne!(LARGE_FORCE_DEFAULT, RefineTier::Medium.force_ratio(0.0));
     }
 }

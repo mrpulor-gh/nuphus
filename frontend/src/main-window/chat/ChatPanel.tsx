@@ -1824,6 +1824,15 @@ export function ChatPanel({
                             setRefineForceThreshold(next).catch(() => {})
                           }}
                         />
+                        {(forceDraft ?? pendingRefine.forceThreshold) * 100 <
+                          pendingRefine.usagePercent && (
+                          <div className="refine-force-warn">
+                            {t(
+                              'refine.forceBelowUsage',
+                              String(Math.round(pendingRefine.usagePercent)),
+                            )}
+                          </div>
+                        )}
                         <div className="refine-force-hint">{t('refine.forceHint')}</div>
                       </div>
                     )}
@@ -2311,6 +2320,17 @@ export function ChatPanel({
                             setRefineForceThreshold(next).catch(() => {})
                           }}
                         />
+                        {/* 拖到当前水位以下 = 下一轮收尾立即强制提炼。
+                            不提示的话用户会觉得"我刚设完就触发了"，必须当场说清。 */}
+                        {(forceDraft ?? refineState.forceThreshold) * 100 <
+                          refineState.usagePercent && (
+                          <div className="refine-force-warn">
+                            {t(
+                              'refine.forceBelowUsage',
+                              String(Math.round(refineState.usagePercent)),
+                            )}
+                          </div>
+                        )}
                         <div className="refine-force-hint">{t('refine.forceHint')}</div>
                       </div>
                     )}
