@@ -181,6 +181,28 @@ fn infer_browser_name(exe: &std::path::Path) -> String {
         .unwrap_or_else(|| "未知浏览器".to_string())
 }
 
+/// Whether `profile` is Nuphus's own managed browser profile.
+///
+/// Nuphus launches and manages its own Chrome with `--remote-debugging-port`
+/// (a debug port is mandatory — it reads `DevToolsActivePort` from that same
+/// profile to locate its own instance). Such a process therefore *always*
+/// satisfies this command's detection criteria, and listing it as an external
+/// fingerprint browser is wrong: picking it makes the endpoint point at a
+/// temporary instance that external mode will never start, so every later
+/// browser action fails.
+fn is_self_managed_profile(profile: Option<&std::path::Path>) -> bool {
+    let Some(dir) = profile else { return false };
+    let managed = nuphus::browser::managed_profile_dir();
+    // Compare canonicalized paths so separator / case / trailing-slash
+    // differences between the cmdline and the derived path cannot cause a
+    // false negative (Windows paths are case-insensitive).
+    let norm = |p: &std::path::Path| -> std::path::PathBuf {
+        std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    };
+    let (a, b) = (norm(dir), norm(&managed));
+    a == b || a.starts_with(&b)
+}
+
 /// Detect browsers currently running with a CDP debug port.
 ///
 /// Mechanism: any Chromium-based browser (including every fingerprint
@@ -191,6 +213,9 @@ fn infer_browser_name(exe: &std::path::Path) -> String {
 /// DevToolsActivePort file in the process's --user-data-dir. Every
 /// candidate's endpoint is probed before being returned, so every entry in
 /// the result is connectable right now.
+///
+/// Nuphus's own managed Chrome is excluded: it is not a user-operated
+/// fingerprint browser, and the "内置浏览器（自动管理）" mode already owns it.
 #[tauri::command]
 pub fn detect_cdp_browsers() -> Result<Vec<DetectedBrowser>, String> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
@@ -227,6 +252,16 @@ pub fn detect_cdp_browsers() -> Result<Vec<DetectedBrowser>, String> {
     let mut found = Vec::new();
     for (port, (exe, profile)) in candidates {
         let url = format!("http://127.0.0.1:{port}");
+        // Exclude Nuphus's own managed Chrome first (cheapest check, and it
+        // avoids probing an endpoint we must discard anyway). Its debug port
+        // is a side effect of how we launch it, not an external browser.
+        if is_self_managed_profile(profile.as_deref()) {
+            tracing::info!(
+                "CDP candidate at {url} excluded: Nuphus managed profile {:?}",
+                profile
+            );
+            continue;
+        }
         // Skip endpoints that don't answer the CDP handshake.
         let Ok(version) = cdp_probe(&url) else {
             continue;
@@ -612,6 +647,39 @@ fn apply_pinned_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 自管 profile 判据：Nuphus 自己启动的 Chrome 必须被识别为「自己」。
+    /// managed 目录 = dirs::data_dir()/Nuphus/browser_profile_v2。
+    #[test]
+    fn self_managed_profile_detection() {
+        let managed = nuphus::browser::managed_profile_dir();
+
+        // 精确命中（chromiumoxide 的 --user-data-dir= 就长这样）
+        assert!(
+            is_self_managed_profile(Some(&managed)),
+            "managed profile 自身必须被判为自管"
+        );
+
+        // 子目录同样算（Chrome 可能派生 Default/ 等子目录）
+        let child = managed.join("Default");
+        assert!(
+            is_self_managed_profile(Some(&child)),
+            "managed profile 的子目录不得漏判"
+        );
+
+        // None / 空 → 不是自管（不能凭空把别人的浏览器也排掉）
+        assert!(!is_self_managed_profile(None), "无 profile 不得判为自管");
+
+        // 别人的指纹浏览器目录必须放行 —— 关键：不能误伤真实候选
+        let other = managed
+            .parent()
+            .map(|p| p.join("AdsPower"))
+            .unwrap_or_else(|| managed.join("other_xyz"));
+        assert!(
+            !is_self_managed_profile(Some(&other)),
+            "外部指纹浏览器目录不得被误判为自管: {other:?}"
+        );
+    }
 
     /// 与生产书签结构一致（name/path/archived）。
     fn bookmark(name: &str, path: &str, archived: bool) -> nuphus::config::ProjectBookmark {

@@ -13,7 +13,7 @@ mod shared;
 
 pub mod cookie_source;
 
-pub use chrome_finder::{find_chrome, ChromeError};
+pub use chrome_finder::{find_chrome, get_profile_dir as managed_profile_dir, ChromeError};
 pub use client::{BrowserClient, BrowserError, ExternalIdentity};
 pub use shared::{get_or_launch, runtime, shared_client};
 

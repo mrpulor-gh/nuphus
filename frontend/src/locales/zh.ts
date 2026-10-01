@@ -1922,6 +1922,8 @@ const zh: Record<string, string> = {
   'browser.statusProbing': '正在检测连接…',
   'browser.statusConnected': '已连接：{0}',
   'browser.statusUnreachable': '无法连接——窗口可能已关闭，重新打开后将自动恢复',
+  'browser.endpointStale': '已失效',
+  'browser.switchToManaged': '切回内置浏览器',
 
   'soul.nameField': '称呼',
 

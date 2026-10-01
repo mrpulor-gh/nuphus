@@ -430,6 +430,188 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
     true
 }
 
+/// LLM 错误类别 —— 用于把「不可重试」的单一结论细化为可行动的指引。
+///
+/// 由来：`is_retryable_llm_error` 只答「是否重试」，于是所有非重试错误共用一句
+/// 「请检查配置或模型状态」。服务商返回 400 内容审核拦截时（StepFun 措辞
+/// `Content Exists Risk`、OpenAI 系 `content_policy_violation`、阿里系
+/// `DataInspectionFailed`……），用户被引去翻配置 / 换模型 / 查余额，全是白折腾，
+/// 而正确动作是「新开会话 / 换服务商 / 精简上下文」。
+///
+/// 设计约束：
+/// - **永远不改重试语义**。本函数与 `is_retryable_llm_error` 平行，独立判定，
+///   两边结论必须一致；调用方仍以 `is_retryable_llm_error` 决定是否重试。
+/// - **关键词为辅、原文兜底为主**。各服务商风控措辞差异极大且会变，命中不了
+///   任何已知词时回落 `Unknown`，文案仍带上服务商原始错误体（调用方负责）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmErrorKind {
+    /// 鉴权失败：Key 无效 / 过期 / 无权限。
+    Auth,
+    /// 余额 / 配额不足。
+    Balance,
+    /// 内容被服务商安全审核拦截（风控）。
+    ContentPolicy,
+    /// 模型或参数不被该服务商接受。
+    Model,
+    /// 上下文超长 / 超出 token 上限。
+    TooLong,
+    /// 其它不可重试错误（含参数错误）。
+    Param,
+    /// 未命中任何已知类别 —— 保留原始错误体，让用户/维护者自行判断。
+    Unknown,
+}
+
+impl LlmErrorKind {
+    /// 面向用户的可行动中文指引（不含原始错误体，调用方负责附上）。
+    ///
+    /// 每条都指向**真正能解决问题的动作**，而不是把用户引向无关方向。
+    pub fn guidance_zh(&self) -> &'static str {
+        match self {
+            LlmErrorKind::Auth => {
+                "API Key 无效或无权限，请到设置 → 模型服务商检查该服务商的密钥后重试"
+            }
+            LlmErrorKind::Balance => "账户余额或配额不足，请到对应服务商控制台查询后重试",
+            LlmErrorKind::ContentPolicy => {
+                "请求内容被该服务商的安全审核拦截，重试无意义。\
+                 可换一个服务商或模型、精简历史上下文，或新开会话后重试"
+            }
+            LlmErrorKind::Model => {
+                "该服务商不接受此模型或参数，请在设置 → 模型服务商更换模型后重试"
+            }
+            LlmErrorKind::TooLong => {
+                "上下文超出该模型的输入上限，请新开会话、精简历史消息，或换用上下文更大的模型"
+            }
+            LlmErrorKind::Param => {
+                "请求参数有误，请检查当前模型与相关配置；若持续出现请附上错误码反馈"
+            }
+            LlmErrorKind::Unknown => {
+                "服务商拒绝了本次请求，重试无意义。请保留下方原始错误信息便于反馈"
+            }
+        }
+    }
+}
+
+/// 与 [`is_retryable_llm_error`] 共享同一套关键词表，但把命中项**归类**而非只给 bool。
+///
+/// 顺序即优先级：先判最具体的类别。内容审核类关键词刻意排在 Auth/Balance 之前 ——
+/// 像 `Content Exists Risk` 这类风控错误体里也可能出现 "request"/"invalid"，
+/// 若不先判就会被 `Param` 抢走。
+pub fn classify_llm_error(err: &str) -> LlmErrorKind {
+    let e = err.to_lowercase();
+
+    // --- 内容审核拦截（风控）--- 已知措辞各不相同，只能尽量覆盖
+    let content_policy = [
+        "content filter",
+        "safety",
+        "moderation",
+        "content policy",
+        "content_policy_violation",
+        "content exists risk",
+        "data inspection failed",
+        "data_inspection_failed",
+        "risk detected",
+        "risky content",
+        "敏感",
+        "审核",
+    ];
+    for pat in &content_policy {
+        if e.contains(pat) {
+            return LlmErrorKind::ContentPolicy;
+        }
+    }
+
+    // --- 上下文超长 ---
+    let too_long = [
+        "context length",
+        "context_length",
+        "too long",
+        "max tokens",
+        "maximum context",
+        "token limit",
+        "prompt is too long",
+        "reduce the length",
+    ];
+    for pat in &too_long {
+        if e.contains(pat) {
+            return LlmErrorKind::TooLong;
+        }
+    }
+
+    // --- 模型不被接受 --- 只收明确的「模型名」错误，避免与 Param 混同
+    let model = [
+        "invalid model",
+        "model not found",
+        "unknown model",
+        "model_not_found",
+        "unsupported model",
+        "model does not exist",
+        "no such model",
+        "decommissioned",
+    ];
+    for pat in &model {
+        if e.contains(pat) {
+            return LlmErrorKind::Model;
+        }
+    }
+
+    // --- 余额 / 配额 ---
+    let balance = [
+        "402",
+        "payment",
+        "payment required",
+        "balance",
+        "insufficient",
+        "quota",
+        "credit",
+        "billing",
+    ];
+    for pat in &balance {
+        if e.contains(pat) {
+            return LlmErrorKind::Balance;
+        }
+    }
+
+    // --- 鉴权 ---
+    let auth = [
+        "401",
+        "unauthorized",
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "api key",
+        "apikey",
+        "api_key",
+        "403",
+        "forbidden",
+        "permission denied",
+    ];
+    for pat in &auth {
+        if e.contains(pat) {
+            return LlmErrorKind::Auth;
+        }
+    }
+
+    // --- 参数 / 通用 400 --- 放在最后：上面四类都没命中时，400 系列才归到这里。
+    // 这也保证「400 + 内容审核」的响应先被 ContentPolicy 接走（见上方排序说明）。
+    let param = [
+        "400",
+        "bad request",
+        "invalid request",
+        "unprocessable",
+        "422",
+        "invalid parameter",
+        "missing parameter",
+        "malformed",
+    ];
+    for pat in &param {
+        if e.contains(pat) {
+            return LlmErrorKind::Param;
+        }
+    }
+
+    LlmErrorKind::Unknown
+}
+
 pub fn render_ascii_progress(current: usize, total: usize) -> String {
     let width = 20;
     let filled = (current * width).checked_div(total).unwrap_or(0);
@@ -489,4 +671,126 @@ pub fn is_network_error(err: &str) -> bool {
         || err.contains("handshake failed")
         || err.contains("partial data")
         || err.contains("unexpected eof")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// issue #92 的原始触发样本：StepFun 的 400 风控响应。
+    /// 关键点：`Content Exists Risk` 不在 `is_retryable_llm_error` 的关键词表里，
+    /// 靠 `"400"` 命中（不可重试结论正确），但分类必须落在 ContentPolicy，
+    /// 而不是被 Param 抢走 —— 否则用户仍被引去「检查配置」。
+    #[test]
+    fn classifies_stepfun_content_risk_as_content_policy() {
+        let err = "LLM error: API error 400: {\"error\":{\"message\":\"Content Exists Risk \
+                    (request_id: abc123)\",\"type\":\"invalid_request_error\",\"param\":null,\
+                    \"code\":\"invalid_request_error\"}}";
+        assert_eq!(
+            classify_llm_error(err),
+            LlmErrorKind::ContentPolicy,
+            "400 + Content Exists Risk 必须归类为内容审核拦截"
+        );
+        // 不可重试语义未被改动
+        assert!(!is_retryable_llm_error(err), "400 仍须判定为不可重试");
+    }
+
+    /// 各服务商风控措辞差异极大，逐个钉住已知形态。
+    #[test]
+    fn classifies_vendor_specific_moderation_phrasings() {
+        assert_eq!(
+            classify_llm_error("400 content_policy_violation"),
+            LlmErrorKind::ContentPolicy,
+            "OpenAI 系措辞"
+        );
+        assert_eq!(
+            classify_llm_error("DataInspectionFailed: input data inspection failed"),
+            LlmErrorKind::ContentPolicy,
+            "阿里系措辞"
+        );
+        assert_eq!(
+            classify_llm_error("The response was filtered due to the content filter"),
+            LlmErrorKind::ContentPolicy,
+            "content filter 措辞"
+        );
+    }
+
+    /// 关键反模式：分类必须比「400」更具体。
+    /// 若 ordering 写错（把 Param 的 400 判在前面），风控错误会被误判成参数错误。
+    #[test]
+    fn content_policy_wins_over_generic_400() {
+        // 同时含 400 与风控词
+        assert_eq!(
+            classify_llm_error("400 Bad Request: content exists risk"),
+            LlmErrorKind::ContentPolicy
+        );
+    }
+
+    /// 纯 400（无风控词）→ Param，不再一律说「检查配置或模型状态」以外的领域。
+    #[test]
+    fn plain_400_falls_back_to_param() {
+        assert_eq!(classify_llm_error("API error 400"), LlmErrorKind::Param);
+    }
+
+    #[test]
+    fn classifies_auth_and_balance() {
+        assert_eq!(
+            classify_llm_error("401 Unauthorized: invalid api key"),
+            LlmErrorKind::Auth
+        );
+        assert_eq!(
+            classify_llm_error("402 Payment Required: insufficient balance"),
+            LlmErrorKind::Balance
+        );
+        assert_eq!(
+            classify_llm_error("You exceeded your current quota"),
+            LlmErrorKind::Balance
+        );
+    }
+
+    #[test]
+    fn classifies_model_and_too_long() {
+        assert_eq!(
+            classify_llm_error("404 model not found: gpt-4o-mini"),
+            LlmErrorKind::Model,
+            "模型名错误应归 Model，不是 Param"
+        );
+        assert_eq!(
+            classify_llm_error("400 This model's maximum context length is 8192 tokens"),
+            LlmErrorKind::TooLong,
+            "上下文超长应有独立类别"
+        );
+    }
+
+    /// 未知错误必须保留 Unknown，且每条类别都要有非空指引（不能在界面上出现空白）。
+    #[test]
+    fn unknown_kind_has_nonempty_guidance() {
+        assert_eq!(
+            classify_llm_error("something entirely unexpected happened"),
+            LlmErrorKind::Unknown
+        );
+        for kind in [
+            LlmErrorKind::Auth,
+            LlmErrorKind::Balance,
+            LlmErrorKind::ContentPolicy,
+            LlmErrorKind::Model,
+            LlmErrorKind::TooLong,
+            LlmErrorKind::Param,
+            LlmErrorKind::Unknown,
+        ] {
+            assert!(
+                !kind.guidance_zh().is_empty(),
+                "{kind:?} 的用户指引不能为空"
+            );
+        }
+    }
+
+    /// 网络类错误仍须判为可重试（分类与重试语义互不干扰）。
+    #[test]
+    fn network_errors_stay_retryable_and_uncategorized() {
+        assert!(is_retryable_llm_error("503 service unavailable"));
+        assert!(is_retryable_llm_error("connection reset by peer"));
+        // 分类对网络错误仍会给出类别（关键词可能擦边），但重试决策不受它影响
+        assert!(is_retryable_llm_error("429 Too Many Requests"));
+    }
 }

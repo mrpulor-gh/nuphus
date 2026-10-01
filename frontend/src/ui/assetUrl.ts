@@ -155,6 +155,23 @@ function guessImageMime(path: string): string {
   }
 }
 
+/**
+ * 头像专用：把本地图片路径解析成**真的能渲染**的 URL。
+ *
+ * 与 `resolveSkinImageUrl` 同构（asset:// 优先 → blob: 兜底，都不把字节
+ * 写进 CSS 值），差别只在失败语义：皮肤背景可以安静地退回纯色，而头像
+ * 位一旦解不出来就是 issue #94 描述的「破图 + 零提示」—— 用户看到浏览器
+ * 默认破图图标，既分不清「没设置」还是「坏了」，日志里也一条记录都没有。
+ * 所以这里解不出来时必须返回 null，交由调用方落回字母头像（有明确视觉信号）。
+ *
+ * 调用方契约：返回 `blob:` 时需在替换 / 卸载时 `releaseSkinImageUrl()`。
+ */
+export async function resolveAvatarImageUrl(
+  path: string | null | undefined,
+): Promise<string | null> {
+  return resolveSkinImageUrl(path)
+}
+
 /** 缩略图最大边长（px）：卡面约 170×64 @1x、340×128 @2x，320 覆盖高 DPI */
 const THUMB_MAX_EDGE = 320
 /** 缩略图 JPEG 质量（0-1）：卡面本来就是小图预览，0.75 已无可见劣化而文件小一个量级 */

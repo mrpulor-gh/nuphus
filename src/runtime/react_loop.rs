@@ -610,10 +610,16 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             self.agent.session.strip_incomplete_tools();
                             let session_json =
                                 serde_json::to_string(&self.agent.session).unwrap_or_default();
+                            // 按类别分流指引，而不是所有非重试错误共用一句「检查配置」：
+                            // 内容审核拦截时「检查配置」会把用户引向完全无关的方向
+                            // （issue #92）。原始错误体始终保留 —— 关键词永远追不齐
+                            // 服务商的措辞，漏匹配时用户/维护者仍能看懂真实原因。
+                            let kind = crate::agent::common::classify_llm_error(&err_str);
                             return Ok(crate::AgentOutput {
                                 message: format!(
-                                    "LLM请求失败：{}\n该错误不可重试，请检查配置或模型状态",
-                                    err_str
+                                    "LLM请求失败：{}\n该错误不可重试。{}",
+                                    err_str,
+                                    kind.guidance_zh()
                                 ),
                                 success: false,
                                 steps: self.agent.steps.clone(),

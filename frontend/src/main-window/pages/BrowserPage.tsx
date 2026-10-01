@@ -219,7 +219,22 @@ export function BrowserPage({ onClose: _onClose }: { onClose: () => void }) {
                   {probe === 'fail' && t('browser.statusUnreachable')}
                 </div>
               </div>
-              <span className="badge badge-success">{t('browser.inUse')}</span>
+              {/* 「使用中」徽标与探活结果互斥：旧实现只要有 savedUrl 就无条件
+                  渲染绿徽标，与下方红字「无法连接」同显，卡片状态自相矛盾。
+                  现按探活结论拆分：ok → 使用中；probing → 探测中；fail → 已失效，
+                  失效时给「切回内置浏览器」的出口（外部模式不会自动拉起自管
+                  实例，文案里的「重新打开将自动恢复」对它并不成立）。 */}
+              {savedUrl && probe !== 'fail' && (
+                <span className="badge badge-success">{t('browser.inUse')}</span>
+              )}
+              {savedUrl && probe === 'fail' && (
+                <div className="btn-row" style={{ marginTop: 6 }}>
+                  <span className="badge badge-warning">{t('browser.endpointStale')}</span>
+                  <Button variant="default" onClick={applyManaged} loading={applying}>
+                    {t('browser.switchToManaged')}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           <div style={{ fontSize: 'var(--fs-caption)', lineHeight: 1.8, color: 'var(--fg-2)' }}>

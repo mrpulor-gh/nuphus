@@ -2019,6 +2019,8 @@ const en: Record<string, string> = {
   'browser.statusConnected': 'Connected: {0}',
   'browser.statusUnreachable':
     'Unreachable ...the window may be closed; it will reconnect automatically once reopened',
+  'browser.endpointStale': 'Expired',
+  'browser.switchToManaged': 'Switch back to built-in browser',
 
   'soul.nameField': 'Name',
 

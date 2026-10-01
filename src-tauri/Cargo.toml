@@ -102,7 +102,7 @@ hex = "0.4"
 # SHA256 (插件包完整性校验 sha256_file + mobile_server 配对密码哈希；非 Windows 平台 API Key 加密密钥派生——路线图，当前 Windows 走 DPAPI)
 sha2 = "0.10"
 
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2.11.0"

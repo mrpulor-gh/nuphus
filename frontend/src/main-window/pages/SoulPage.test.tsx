@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SoulPage } from './SoulPage'
 import { setRelation } from '../lib/api'
 import { pickAndImportImage } from '../lib/localImage'
+import { __setSkinImageProbe } from '../../ui/assetUrl'
 
 const LS_SHOW_AVATAR = 'nuphus_show_avatar'
 const LS_USER_AVATAR = 'nuphus_user_avatar'
@@ -28,6 +29,14 @@ vi.mock('@tauri-apps/api/core', () => ({
   // 与 @tauri-apps/api/core 的 convertFileSrc 同形：路径 → 可渲染 URL
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }))
+
+beforeEach(() => {
+  // asset:// 通道可用（发布版 WebView2 的真实环境）：头像走 asset 直读。
+  __setSkinImageProbe(() => true)
+})
+afterEach(() => {
+  __setSkinImageProbe(null)
+})
 
 function renderSoul() {
   return render(<SoulPage onClose={() => {}} />)
@@ -86,11 +95,33 @@ describe('SoulPage 灵魂（单模块：开关 + 两侧身份行）', () => {
     await waitFor(() => expect(localStorage.getItem(LS_USER_AVATAR)).toBe('C:/img/me.png'))
     expect(vi.mocked(pickAndImportImage)).toHaveBeenCalledTimes(1)
     const previews = view.container.querySelectorAll('.avatar-preview')
-    expect(previews[0].querySelector('img')).toHaveAttribute(
-      'src',
-      'asset://localhost/C:/img/me.png',
+    // 异步解出（asset:// 优先）：等 resolveAvatarImageUrl 的 promise 落地后再断言
+    await waitFor(() =>
+      expect(previews[0].querySelector('img')).toHaveAttribute(
+        'src',
+        'asset://localhost/C:/img/me.png',
+      ),
     )
     expect(screen.getByRole('button', { name: '清除' })).toBeInTheDocument()
+  })
+
+  // issue #94 的核心：asset 协议不可用时不能再出现「破图 + 零提示」。
+  // 注入「asset:// 不可用」+ blob 兜底也读不到文件 → 组件必须落回字母头像。
+  it('asset 通道不可用且读不到文件 → 落回字母头像，不出现破图', async () => {
+    __setSkinImageProbe(() => false)
+    vi.mocked(pickAndImportImage).mockResolvedValue('C:/img/broken.png')
+    const view = renderSoul()
+
+    fireEvent.click(uploadButtons()[0])
+    await waitFor(() => expect(localStorage.getItem(LS_USER_AVATAR)).toBe('C:/img/broken.png'))
+
+    const previews = () => view.container.querySelectorAll('.avatar-preview')
+    await waitFor(() => {
+      // 终点态：<img> 彻底消失（退回字母头像 U）。
+      // 关键是「不能停在那个解不出来的 URL 上」——那正是破图 + 零提示。
+      expect(previews()[0].querySelector('img')).toBeNull()
+      expect(previews()[0].querySelector('svg text')?.textContent).toBe('U')
+    })
   })
 
   it('空态：无自定义头像 → 字母头像兜底（用户侧 U / 智能体侧 A），不空白', () => {

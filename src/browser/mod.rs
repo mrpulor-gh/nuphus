@@ -6,6 +6,6 @@
 //! `runtime` / `shared_client`。
 
 pub use nuphus_browser::{
-    find_chrome, get_or_launch, runtime, shared_client, BrowserClient, BrowserError, ChromeError,
-    ExternalIdentity,
+    find_chrome, get_or_launch, managed_profile_dir, runtime, shared_client, BrowserClient,
+    BrowserError, ChromeError, ExternalIdentity,
 };
