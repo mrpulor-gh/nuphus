@@ -110,7 +110,9 @@
 /* ── 左侧工作台面板（浮层弹窗）──
    与右侧 WorkflowTaskPanel(.wfst-panel) 同款外观：玻璃底 + 10px 圆角 + 抬升阴影，
    作为「浮在消息流之上的卡片」而非贴边抽屉（四边留白，左 20 / 上 20 / 下 150）。
-   背景改 --glass-bg 半透明玻璃，与 task 面板统一；backdrop-filter 提供毛玻璃。
+   背景走 --panel-bg（**主题设置 → 界面不透明度 → 控制面板**滑块派生）：
+   原先用 --glass-bg（三主题写死 α .9/.85/.9），滑块遍历不到它，拖「控制面板」
+   透明度时本面板毫无变化。backdrop-filter 保留磨砂观感。
    visibility 负责关闭态的焦点/命中隔离（贴合过渡结束时才断）。 */
 .session-rail-drawer {
   position: absolute;
@@ -122,7 +124,7 @@
   flex-direction: column;
   width: 300px;
   max-width: 82%;
-  background: var(--glass-bg);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: var(--border-divider);

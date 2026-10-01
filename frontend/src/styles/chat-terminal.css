@@ -77,6 +77,11 @@
 
 .message-actions {
   display: flex;
+  /* 必须可换行：末行的 TurnMetaBar 与 4 个图标按钮同排，气泡窄时（短回复）
+     不换行会把元数据 chip 挤出可见区——表现为「只看到令牌、耗时/步数不见」。 */
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 2px;
   gap: 4px;
   margin-top: 4px;
   opacity: 0;
@@ -600,6 +605,9 @@
    ═══════════════════════════════════════ */
 
 /* ── Panel container (acrylic floating) ── */
+/* 背景走 --panel-bg（主题设置 → 界面不透明度 → 控制面板滑块派生）：
+   与 session 会话台 (.session-rail-drawer) 同一按键，四个浮层面板统一归
+   「控制面板不透明度」管。原先 var(--glass-bg) 的 α 在三主题里写死，滑块无效。 */
 .wfst-panel {
   position: fixed;
   right: 20px;
@@ -609,7 +617,7 @@
   max-height: 520px;
   display: flex;
   flex-direction: column;
-  background: var(--glass-bg);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: var(--border-divider);

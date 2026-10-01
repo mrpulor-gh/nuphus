@@ -45,6 +45,10 @@ const tokensCss = stripComments(read('./tokens.css'))
 const settingsCss = stripComments(read('./settings-center.css'))
 const chatMessagesCss = stripComments(read('./chat-messages.css'))
 const chatInputCss = stripComments(read('./chat-input.css'))
+const chatTerminalCss = stripComments(read('./chat-terminal.css'))
+const sessionRailCss = stripComments(read('./session-rail.css'))
+const appearanceCss = stripComments(read('./appearance-panel.css'))
+const workflowModalCss = stripComments(read('./workflow-modal.css'))
 
 /** 取一条顶层规则的声明块（首个匹配） */
 const ruleBody = (css: string, selector: string): string => {
@@ -53,12 +57,48 @@ const ruleBody = (css: string, selector: string): string => {
   return re.exec(css)?.[1] ?? ''
 }
 
+describe('④ 四个浮层面板统一归「控制面板不透明度」（--panel-bg）', () => {
+  // 大王 2026-10-01：session 会话台 / 主题设置浮层 / task 任务列表 / workflow_run
+  // 面板的背景透明度必须由同一个滑块（主题设置 → 界面不透明度 → 控制面板）管。
+  // 此前前三个用 --glass-bg（α 在三主题里写死 .9/.85/.9）、第四个用 --modal-bg
+  // （归「弹窗」滑块）——拖「控制面板」滑块时它们毫无变化，观感上滑块是坏的。
+  const cases: [string, string, string][] = [
+    ['session 会话台', sessionRailCss, '.session-rail-drawer'],
+    ['主题设置浮层', appearanceCss, '.apnp-panel'],
+    ['task 任务列表', chatTerminalCss, '.wfst-panel'],
+    ['workflow_run 面板', workflowModalCss, '.wcf-content'],
+  ]
+  for (const [name, css, selector] of cases) {
+    it(`${name}（${selector}）底走 var(--panel-bg)`, () => {
+      const body = ruleBody(css, selector)
+      expect(body).toMatch(/background:\s*var\(--panel-bg\)/)
+    })
+  }
+
+  it('四个面板都不得再写 --glass-bg / --modal-bg 硬底（防回退）', () => {
+    for (const [name, css, selector] of cases) {
+      const body = ruleBody(css, selector)
+      expect(body, name).not.toMatch(/background:\s*var\(--glass-bg\)/)
+      expect(body, name).not.toMatch(/background:\s*var\(--modal-bg\)/)
+      // 也不接受把同族键兑透明的旁路：那会让同一滑块出现第二套混合比
+      expect(body, name).not.toMatch(/color-mix\([^)]*--modal-bg/)
+    }
+  })
+})
+
 describe('CSS 源码确实读进来了（防"读空文件导致断言静默通过"）', () => {
   it('四个样式文件非空且含预期选择器', () => {
     expect(tokensCss.length).toBeGreaterThan(1000)
     expect(settingsCss).toContain('.settings-center-panel')
     expect(chatMessagesCss).toContain('.message-bubble')
     expect(chatInputCss).toContain('.chat-input-area')
+  })
+
+  it('本轮新增的四个面板样式源也非空且含预期选择器', () => {
+    expect(sessionRailCss).toContain('.session-rail-drawer')
+    expect(appearanceCss).toContain('.apnp-panel')
+    expect(chatTerminalCss).toContain('.wfst-panel')
+    expect(workflowModalCss).toContain('.wcf-content')
   })
 })
 

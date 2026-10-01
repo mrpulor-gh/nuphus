@@ -25,7 +25,8 @@ import { StopChoiceDialog } from '../../ui/StopChoiceDialog'
 import { VoiceButton, type VoiceButtonHandle } from './VoiceButton'
 import { useLanguage } from '../../locales'
 import ReferenceBar from './ReferenceBar'
-import type { ChatReference, PendingImage, PendingFile } from '../../core/types'
+import type { ChatReference, PendingImage, PendingFile, TurnMeta } from '../../core/types'
+import { resolveTurnCalls, resolveTurnDuration } from '../../core/types'
 import {
   listCustomAgents,
   getActiveCustomAgent,
@@ -75,6 +76,8 @@ interface ChatInputBarProps {
   execTokenUsage: TokenUsageInfo | null
   totalDurationMs: number | undefined
   totalCalls: number | undefined
+  /** 本轮元数据（后端权威）——ctx 弹窗 / 执行面板 / 消息气泡共用的唯一数据源 */
+  turnMeta?: TurnMeta | null
   mood: string
   contextLimit: number | undefined
   apiHealth?: import('../../core/types').ApiHealthState
@@ -161,6 +164,7 @@ export function ChatInputBar({
   execTokenUsage,
   totalDurationMs,
   totalCalls,
+  turnMeta,
   mood,
   contextLimit,
   apiHealth,
@@ -289,21 +293,23 @@ export function ChatInputBar({
     },
     [],
   )
-  // ── 实时计时：执行中 time 实时走动；结束后以后端权威 totalDurationMs 覆盖 ──
-  const [liveDuration, setLiveDuration] = useState(0)
-  const startTimeRef = useRef<number | null>(null)
+  // ── 实时计时：起点来自后端 `started_at_ms`（权威），前端只做推算 ──
+  // 缺陷修复（2026-10）：原实现用组件 ref 记起点（`startTimeRef = Date.now()`），
+  // 页面刷新即丢 —— 后端仍在执行，前端却从刷新时刻重新计时，耗时统计不可靠。
+  // 现在起点由后端下发（绝对 Unix 毫秒），刷新 / 重连后 `Date.now() - startedAtMs`
+  // 仍指向真实起点，计时继续走、不归零。完成后以 `meta.durationMs`（后端权威）为准。
+  // ── ctx 弹窗耗时：turn 开始即起跑（execution_started.started_at_ms），实时走秒 ──
+  // 唯一来源 resolveTurnDuration：有 durationMs = 已结束（后端权威）；
+  // 否则有 startedAtMs = 进行中（Date.now() - startedAtMs）。
+  // 刷新后起点由 useSession 的轮询通道从 get_execution_state 补回，**无需任何兜底**。
+  // 执行中每 100ms 重渲染一次让数字走秒——tick 只触发渲染、不持有时间值。
+  const [, forceTick] = useState(0)
   useEffect(() => {
-    if (isProcessing) {
-      if (startTimeRef.current === null) startTimeRef.current = Date.now()
-      const timer = window.setInterval(() => {
-        setLiveDuration(Date.now() - startTimeRef.current!)
-      }, 100)
-      return () => window.clearInterval(timer)
-    }
-    // 结束：优先后端权威值；无值则清零
-    setLiveDuration(totalDurationMs !== undefined && totalDurationMs > 0 ? totalDurationMs : 0)
-    startTimeRef.current = null
-  }, [isProcessing, totalDurationMs])
+    if (!isProcessing) return
+    const timer = window.setInterval(() => forceTick(n => n + 1), 100)
+    return () => window.clearInterval(timer)
+  }, [isProcessing])
+  const ctxDurationMs = resolveTurnDuration(turnMeta)
   // ── 拖拽文件支持 ──
   const [isDragOver, setIsDragOver] = useState(false)
   const inputRef = useRef(input)
@@ -686,7 +692,13 @@ export function ChatInputBar({
   const detailTokens = (detail?.inputTokens || 0) + (detail?.outputTokens || 0)
   const detailCacheHit = detail?.cacheHitTokens || 0
   const detailCacheTotal = detail?.inputTokens || 0
-  const detailCacheRate = detailCacheTotal > 0 ? (detailCacheHit / detailCacheTotal) * 100 : -1
+  // 缓存命中率只在 exec 槽有真实读数时展示：main 槽只承载「主上下文占用」，
+  // 其 cache 用哨兵 0xffffffff 表达「无读数」（chat 模式下 main 永远收不到真实
+  // 读数——react_loop.rs:769 与 process.rs:1215 两个 main 发射点都是哨兵，唯一
+  // 真实来源是 workflow 模式），拿它当分子算出的 0% 是假数（表现为「每次执行
+  // 一开始 cache 恒显 0%」）。exec 槽无活动（轮次起点 / 空闲）→ 整行不渲染。
+  const detailCacheRate =
+    execActive && detailCacheTotal > 0 ? (detailCacheHit / detailCacheTotal) * 100 : -1
   // 生成速度/首 token 延迟：与上面同一数据源（exec 事件携带；main 源为 undefined 时整行隐藏）
   const genTps = detail?.genTps
   const ttftMs = detail?.ttftMs
@@ -1290,13 +1302,15 @@ export function ChatInputBar({
                         {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
                       </span>
                     </span>
+                    {/* 步数 / 耗时：唯一出口 resolveTurnCalls / resolveTurnDuration，无兜底。
+                        与消息底部、执行追踪面板读同一份 turnMeta（后端权威）。 */}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">{t('input.ctx.steps')}</span>
-                      <span className="input-bar-ctx-value">{totalCalls || 0}</span>
+                      <span className="input-bar-ctx-value">{resolveTurnCalls(turnMeta)}</span>
                     </span>
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">{t('input.ctx.time')}</span>
-                      <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
+                      <span className="input-bar-ctx-value">{fmtDur(ctxDurationMs)}</span>
                     </span>
                     {/* 生成速度与首 token 延迟：放在总耗时下方，便于按时间维度阅读 */}
                     {ttftDisplay && (

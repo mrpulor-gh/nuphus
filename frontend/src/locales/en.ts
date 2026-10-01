@@ -132,7 +132,7 @@ const en: Record<string, string> = {
   'common.saved': 'Saved',
   'common.fail': 'Failed',
   'common.unknown': 'Unknown',
-  'common.hint.upDown': '鈫戔啌 select',
+  'common.hint.upDown': '↑↓ select',
   'common.hint.enter': 'Enter confirm',
   'common.hint.esc': 'Esc cancel',
   'common.notSet': 'Not set',
@@ -215,6 +215,14 @@ const en: Record<string, string> = {
   'input.ctx.time': 'time',
   'input.ctx.ttft': 'ttft',
   'input.ctx.speed': 'speed',
+
+  // ── Turn metadata bar (duration / context delta / steps) ──
+  // Shared by message footer / ctx popup / mobile model card
+  'turn.duration': 'time',
+  // Context delta of this turn (occupancy at end − at start, backend-authoritative,
+  // both from API usage). NOT the per-call sum — that inflates to meaningless values.
+  'turn.ctxDelta': 'ctx',
+  'turn.steps': 'steps',
 
   // 鈹€鈹€ External Agents status bar (handoff) 鈹€鈹€
   'extAgents.title': 'Agents',
@@ -649,11 +657,11 @@ const en: Record<string, string> = {
   'tools.ability.pdfExtractPagesDesc': 'Extract selected pages into a new PDF',
   'tools.pagesList': 'Pages (comma-separated, e.g. 1,3,5)',
   'tools.ability.pdfRotate': 'Rotate Pages',
-  'tools.ability.pdfRotateDesc': 'Rotate all pages by 90掳 / 180掳 / 270掳',
+  'tools.ability.pdfRotateDesc': 'Rotate all pages by 90° / 180° / 270°',
   'tools.rotateDegrees': 'Angle',
-  'tools.rotate90': '90掳 clockwise',
-  'tools.rotate180': '180掳',
-  'tools.rotate270': '90掳 counter-clockwise (270掳)',
+  'tools.rotate90': '90° clockwise',
+  'tools.rotate180': '180°',
+  'tools.rotate270': '90° counter-clockwise (270°)',
   'tools.ability.imageCompress': 'Compress Image',
   'tools.ability.imageCompressDesc':
     'Scale to max size and lower quality: JPEG via quality, PNG via optimal compression',
@@ -912,7 +920,7 @@ const en: Record<string, string> = {
     'Icon requirement: every app must ship an SVG icon (e.g. icon.svg). Apps without an SVG icon cannot be installed or listed ...a baseline marketplace requirement.',
   'plugins.devMarketTitle': 'Publish to nuphus-market',
   'plugins.devMarketDesc':
-    'Open-source and closed-source submission tracks (design doc 搂8). Build now and claim your niche ...ship on day one when the marketplace goes live.',
+    'Open-source and closed-source submission tracks (design doc §8). Build now and claim your niche ...ship on day one when the marketplace goes live.',
   'plugins.devRefLead':
     'For those who want to go deeper: the one-page plugin contract. You do NOT need to understand it to build plugins ...the AI handles these details for you.',
   'plugins.searchPlaceholder': 'Search plugins...',
@@ -1429,7 +1437,7 @@ const en: Record<string, string> = {
   'theme.lightDesc': 'Light theme',
   'theme.tech': 'Void Light',
   'theme.techDesc': 'Deep black → high contrast',
-  'lang.zh': '涓枃',
+  'lang.zh': '中文',
   'lang.en': 'English',
 
   'splash.memory': 'Memory',
@@ -1750,7 +1758,7 @@ const en: Record<string, string> = {
   'mobile.paired': 'Ready',
   'mobile.unpaired': 'Not started',
   'security.title': 'Permission Request',
-  'security.hintUpDown': '鈫戔啌 select',
+  'security.hintUpDown': '↑↓ select',
   'security.hintEnter': 'Enter confirm',
   'security.hintEsc': 'Esc deny',
 
@@ -1829,7 +1837,7 @@ const en: Record<string, string> = {
   'refine.processingAction': 'Extracting key info, optimizing context',
   'refine.skip': 'Skip',
   'refine.skipDesc': 'Skip, continue current session',
-  'refine.hintSelect': '鈫戔啌 select',
+  'refine.hintSelect': '↑↓ select',
   'refine.hintConfirm': 'Enter confirm → Esc skip',
   'refine.usage': 'Context usage {0}% ({1} / {2} Token)',
   'refine.pendingBtn': 'Refine available',

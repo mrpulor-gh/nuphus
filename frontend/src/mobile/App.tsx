@@ -406,6 +406,9 @@ export default function App() {
             timestamp: m.timestamp,
             // 后端 Session 存储的完整执行过程（工具/文本/思考）——历史显示完成状态
             traceItems: m.traceItems,
+            // 本轮元数据（耗时 / token / 步数）→ 消息底部 <TurnMetaBar>；
+            // 与桌面 applyHistory 同一来源（后端 HistoryMessage.meta），旧历史缺省不渲染
+            meta: m.meta,
           }))
         dispatch({ type: 'history_merge', messages, manual: opts?.manual })
         setHistoryError(null)

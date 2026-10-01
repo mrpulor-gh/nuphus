@@ -9,7 +9,7 @@
  * - 未知事件类型 default 分支原样返回——静默忽略（向前兼容）
  */
 
-import type { NuphusEvent, WorkflowRunStep } from '../core/types'
+import type { NuphusEvent, WorkflowRunStep, TurnMeta } from '../core/types'
 import { t } from './i18n'
 import { projectExecutionActivity, type ExecutionActivity } from '../core/executionActivity'
 
@@ -50,6 +50,9 @@ export interface ChatMessage {
   pending?: boolean
   /** 流式输出中 */
   streaming?: boolean
+  /** 本轮执行的元数据（耗时 / token / 步数）——对齐后端 TurnMeta；
+   *  消息底部 <TurnMetaBar> 据此渲染，旧历史缺省不渲染 */
+  meta?: TurnMeta
 }
 
 export interface ToolActivity {
@@ -84,6 +87,12 @@ export interface ActivityState {
   pauseActionId?: string
   /** 本轮执行开始时间（ms），用于顶部实时用时 */
   startedAt?: number
+  /**
+   * 本轮执行开始时间（后端权威 Unix 毫秒）——与桌面 `TurnMeta.startedAtMs` 同源。
+   * 用于「模型信息卡 step/time」与消息执行条：它不受刷新 / 重连影响，避免前端
+   * `Date.now()` 起点在重连后归零（与桌面端 ChatInputBar 缺陷同根）。
+   */
+  metaStartedAtMs?: number
   /** 暂停发生时间（ms），用于冻结用时 */
   pausedAt?: number
 }
@@ -306,6 +315,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
           paused: false,
           pauseActionId: undefined,
           startedAt: Date.now(),
+          metaStartedAtMs: ev.started_at_ms,
           pausedAt: undefined,
         },
       }
@@ -534,17 +544,27 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
       // 由 session_refined 消费（本端只清状态不生成气泡）。若覆盖最后一条
       // assistant（真实回复）会把最终回复替换成 refine 内容，故跳过。
       // 最终回复填入最后一条 assistant 消息 content（执行过程 trace 保留，可点击查看）
+      // 本轮元数据（耗时 / token / 步数）→ 最后一条 assistant 气泡：
+      // 与桌面端同一来源（后端 execution_completed.meta），历史重开由 fetchHistory 的
+      // HistoryMessage.meta 还原（见 store 的历史映射）。
+      const completedMeta: TurnMeta = {
+        ...(ev.meta ?? {}),
+        durationMs: ev.meta?.durationMs ?? ev.total_duration_ms,
+        toolCalls: ev.meta?.toolCalls ?? ev.total_calls,
+        startedAtMs: ev.meta?.startedAtMs ?? state.activity.metaStartedAtMs,
+      }
       if (!state.refining && result) {
         const lastIdx = messages.length - 1
         const last = messages[lastIdx]
         if (last && last.role === 'assistant' && last.kind !== 'progress') {
-          messages[lastIdx] = { ...last, content: result, streaming: false }
+          messages[lastIdx] = { ...last, content: result, streaming: false, meta: completedMeta }
         } else {
           messages.push({
             id: rid(),
             role: 'assistant',
             content: result,
             timestamp: Date.now(),
+            meta: completedMeta,
           })
         }
       }
@@ -556,6 +576,7 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
           paused: false,
           pauseActionId: undefined,
           startedAt: undefined,
+          metaStartedAtMs: undefined,
           pausedAt: undefined,
         },
         pendingConfirm: null,
@@ -1022,6 +1043,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ...state.activity,
             running: true,
             startedAt: state.activity.startedAt ?? Date.now(),
+            // 后端权威起点（重连恢复时同步）——避免前端 startedAt 在重连后近似归零
+            metaStartedAtMs: state.activity.metaStartedAtMs,
             progressScopeRecovery:
               !state.activity.session_id &&
               !state.activity.turn_id &&

@@ -36,7 +36,10 @@
   max-height: calc(100dvh - 56px - 200px);
   display: flex;
   flex-direction: column;
-  background: var(--glass-bg);
+  /* 底走 --panel-bg（**主题设置 → 界面不透明度 → 控制面板**滑块派生）：
+     本面板就是那个滑块的宿主，却原先用 --glass-bg（写死 α）——拖滑块时它自己
+     不跟着变，观感上「滑块坏了」。现与 session 会话台 / task 面板同一按键。 */
+  background: var(--panel-bg);
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: var(--border-divider);

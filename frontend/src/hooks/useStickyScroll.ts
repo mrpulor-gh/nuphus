@@ -17,9 +17,11 @@
 //         用户滚回底部；
 //      c. 程序调 followReset（新轮次 execution_started / 任务完成瞬间补拉）。
 //
-// 进场宽限（执行追踪面板入场专用）：enterPanel(guardMs) 先 followReset 立即滚底展示
-// 最新执行态，再开宽限窗口 —— 窗口内 scroll 事件一律不判定，防进场瞬间的鼠标滚动 /
-// 触控板惯性 / 渲染抖动把机制打乱。对话窗无「进入」语义，不调用本方法。
+// 进场自动滚底（执行追踪面板 open 专用）：enterPanel 先 followReset 立即滚底展示
+// 最新执行态；在**这次自动滚底完成之前**，scroll 事件不参与判定 —— 但绝不吞用户
+// 输入：用户一伸手（向上 delta）立即交还判定权并按其意图冻结；滚到（容差内）即
+// 释放。没有固定时长宽限（旧实现是 3s 硬窗：窗内用户的滚动一律被丢，等于抢控制）。
+// 对话窗无「进入」语义，不调用本方法。
 //
 // 实现要点（成败点）：hook 自己发起的 smooth 滚动会连续触发 scroll 事件，中途态 scrollTop
 // 并未到底，若 onScroll 无脑判定会把「程序滚动」误判成「用户上拉」⇒ 冻结 + 按钮闪现。
@@ -34,8 +36,13 @@ const BOTTOM_TOLERANCE_PX = 80
 const DEFAULT_RESUME_MS = 15_000
 /** 程序滚动屏蔽窗：smooth 动画通常 <400ms；超窗即使未滚完也不再拦截（见 onScroll） */
 const PROGRAM_SCROLL_GUARD_MS = 400
-/** 进场宽限缺省值：enterPanel 后该窗口内的 scroll 事件一律不判定（防进场惯性/抖动误判） */
-const ENTRY_GUARD_MS = 3000
+/**
+ * 进场自动滚底的安全网上限（ms）——**不是宽限，是释放兜底**：
+ * smooth 动画正常 <400ms 内到底并释放；只在「浏览器不派发 scroll 事件 / 内容突变
+ * 导致永远滚不到底」的异常下，到点强行交还判定权，避免 pending 态把之后所有 scroll
+ * 全吞掉。选 1000ms 而非旧 3000ms：它越短，用户越早拿回控制。
+ */
+const ENTRY_SCROLL_MAX_WAIT_MS = 1_000
 /** scrollTop 方向判定阈值：|delta| <= 2px 视为静止，抹掉亚像素 / 布局抖动 */
 const SCROLL_DELTA_EPS_PX = 2
 
@@ -51,11 +58,12 @@ export interface StickyScroll {
   /** 立即恢复跟随并 smooth 滚底：新轮次 execution_started / 任务完成瞬间补拉（程序调用方） */
   followReset: () => void
   /**
-   * 进入面板（执行追踪面板专用）：先 followReset 立即滚底展示最新执行态，再开 guardMs
-   * （缺省 3000）进场宽限 —— 窗口内 scroll 事件一律不判定，防进场瞬间的鼠标滚动 /
-   * 触控板惯性 / 渲染抖动把机制打乱。对话窗无「进入」语义，不调用本方法。
+   * 进入面板（执行追踪面板 open / 可见态变化时调用）：先 followReset 立即滚底 —
+   * 进场展示最新执行态是默认预期；随后只等**这次自动滚底完成**就交还判定权
+   * （到底 / 用户伸手接手 / 安全网到点，见 onScroll），没有固定时长宽限。
+   * 对话窗无「进入」语义，不调用本方法。
    */
-  enterPanel: (guardMs?: number) => void
+  enterPanel: () => void
 }
 
 export interface StickyScrollOptions {
@@ -84,8 +92,10 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
   /** true = 正处于 hook 自己发起的 smooth 滚动中 */
   const programScrollRef = useRef(false)
   const programTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** 进场宽限截止时间戳（ms）：窗口内 scroll 事件一律不判定（见 enterPanel） */
-  const entryGuardUntilRef = useRef(0)
+  /** true = enterPanel 发起的自动滚底尚未完成：期间 scroll 不参与判定（见 onScroll） */
+  const entryScrollPendingRef = useRef(false)
+  /** 上一项的安全网截止时间戳（ms）：到点强行交还判定权，防异常卡死（见 enterPanel） */
+  const entryMaxWaitUntilRef = useRef(0)
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /** 切换跟随态：state 与 ref 同步置位（单一入口，防两处漂移） */
@@ -168,11 +178,23 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
     const last = lastScrollTopRef.current
     lastScrollTopRef.current = current
 
-    // 进场宽限（enterPanel）：窗口内的滚动一律不判定 —— 进场瞬间的鼠标滚动 / 触控板
-    // 惯性 / 渲染抖动都可能触发 scroll，此时判定必错。lastScrollTopRef 仍随每个事件
-    // 持续更新：宽限结束后的首个事件才能拿到干净的方向增量（否则进场期间的惯性序列
-    // 会把方向判反）。
-    if (Date.now() < entryGuardUntilRef.current) return
+    // 进场自动滚底进行中（enterPanel 发起的那次 smooth 滚底）：判定权暂不参与，
+    // 但**不吞用户输入**。三条出路，谁先来算谁：
+    //   · 已到底（80px 容差）= 自动下拉完成 → 释放，回归正常判定（此刻本就是贴底态）；
+    //   · 向上 delta = 用户伸手抢控制 → 立即释放并照常走用户分支（冻结 + 宽限重排），
+    //     绝不等任何固定时长；
+    //   · 向下 / 静止 = smooth 动画中间态 → 忽略；安全网到点（异常不派发 scroll 事件 /
+    //     永远滚不到底）也释放，之后的所有 scroll 恢复判定。
+    // lastScrollTopRef 仍随每个事件持续刷新：释放后的首个事件才能拿到干净的方向增量。
+    if (entryScrollPendingRef.current) {
+      const arrived = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANCE_PX
+      const userPulledUp = last !== null && current - last < -SCROLL_DELTA_EPS_PX
+      if (arrived || userPulledUp || Date.now() >= entryMaxWaitUntilRef.current) {
+        entryScrollPendingRef.current = false
+      } else {
+        return
+      }
+    }
 
     if (programScrollRef.current) {
       // 程序滚动中：向下 / 静止都是 smooth 动画的中间态，一律忽略；向上 delta 只可能
@@ -223,17 +245,19 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
 
   /**
    * 进入面板（执行追踪面板 open / 可见态变化时调用）：先 followReset 立即滚底 —
-   * 进场展示最新执行态是默认预期；再置进场宽限截止时间戳，此后 guardMs（缺省
-   * ENTRY_GUARD_MS=3000）内 onScroll 一律不判定 —— 进场瞬间的鼠标滚动 / 触控板
-   * 惯性 / 渲染抖动都可能触发 scroll，此时判定必错。对话窗无「进入」语义，不调用。
+   * 进场展示最新执行态是默认预期；随后只等**这次自动滚底完成**（到底 / 用户接手 /
+   * 安全网到点，见 onScroll 的三条出路），没有固定时长宽限。
+   * 无参：宽限不该由调用方给时长——给了就一定会被当成「抢控制的许可」。
    */
-  const enterPanel = useCallback(
-    (guardMs: number = ENTRY_GUARD_MS) => {
-      entryGuardUntilRef.current = Date.now() + guardMs
-      followReset()
-    },
-    [followReset],
-  )
+  const enterPanel = useCallback(() => {
+    const el = scrollRef.current
+    // 已在底部（内容不足一屏 / 本就贴底）= 没有「下拉」可等：不置等待态，
+    // 否则永不释放，之后所有 scroll 都被吞。
+    const atBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANCE_PX
+    entryScrollPendingRef.current = !atBottom
+    entryMaxWaitUntilRef.current = Date.now() + ENTRY_SCROLL_MAX_WAIT_MS
+    followReset()
+  }, [followReset])
 
   return { scrollRef, showJumpButton, onScroll, jumpToBottom: followReset, followReset, enterPanel }
 }

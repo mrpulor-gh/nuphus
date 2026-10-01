@@ -188,6 +188,11 @@ describe('mode 弹窗 title：纯展示当前项目文件夹', () => {
  * 回归背景（ZPY 实测报「dispatch 时 cache 数据丢失」）：弹窗曾把 tokens/ttft/speed 取自
  * exec 源、cache 单独取自 main 源——分子是一次 exec 调用的 cache、分母是 Leader 上下文，
  * 比出来的百分比是废数（甚至整行消失）。修复后：exec 有活动整套用 exec，否则整套用 main。
+ *
+ * 第二轮修正（大王实测「执行一开始 cache 恒显 0%」）：main 槽的 cache 是哨兵
+ * （react_loop/process.rs 两个 main 发射点都带 u32::MAX，chat 模式下没有任何真实读数
+ * 生产点），拿它当分子算出来的 0% 是**假读数**。故 cache 行改为「只有 exec 槽有活动
+ * （= 有真实 per-call 读数）时才渲染」；exec 无活动时 tokens / capacity 仍回落 main。
  */
 describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', () => {
   const MAIN_USAGE = { inputTokens: 100_000, outputTokens: 0, cacheHitTokens: 200 }
@@ -213,7 +218,7 @@ describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', (
     expect(screen.getByText('300ms')).toBeInTheDocument() // ttft 同源
   })
 
-  it('exec 无活动：整套回落到主模型数据（cache = 200/100000 = 0%）', () => {
+  it('exec 无活动：tokens/capacity 回落 main，cache 行不渲染（无真实读数不出假 0%）', () => {
     renderInputBar(ACTIVE_DIR, {
       mainTokenUsage: MAIN_USAGE,
       execTokenUsage: null,
@@ -221,6 +226,9 @@ describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', (
     })
     openCtxDetail()
 
-    expect(screen.getByText('0%')).toBeInTheDocument()
+    // tokens 仍走 main（ctx 常驻位与弹窗行各显示一次，故用 getAllByText）
+    expect(screen.getAllByText('100.0k').length).toBeGreaterThan(0)
+    // cache 行整体不渲染：main 的 cache 是哨兵，0/100000 = 0% 是废数
+    expect(screen.queryByText('0%')).toBeNull()
   })
 })

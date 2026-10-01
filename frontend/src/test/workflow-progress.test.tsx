@@ -62,7 +62,7 @@ function desktop() {
     lastStreamingMsgId: { current: null },
     executionActiveRef: { current: false },
     processingRef: { current: false },
-    toolCallCountRef: { current: 0 },
+    turnMetaTokensRef: { current: {} },
     interruptedRef: { current: false },
     // 贴底跟随 followReset 回填位（useEvents execution_started / execution_completed 调）；
     // 本桩不渲染 ChatPanel，置 null = 无人回填，useEvents 侧 ?.() 静默跳过

@@ -476,10 +476,12 @@ export default function NavBar({
     return String(n)
   }
   // step（工具调用步数）= 当前执行累计工具调用（tool_call_start 事件累积）；
-  // time（执行用时）= startedAt 起算，暂停冻结在 pausedAt（与执行状态条同款）。
+  // time（执行用时）= 优先后端权威起点 metaStartedAtMs（刷新/重连不归零），
+  // 旧后端缺省时退化为前端 startedAt；暂停冻结在 pausedAt。
   const execSteps = activity.tools.length
   const elapsedBase = activity.pausedAt ?? now
-  const execDuration = activity.startedAt ? elapsedBase - activity.startedAt : 0
+  const execOrigin = activity.metaStartedAtMs ?? activity.startedAt
+  const execDuration = execOrigin ? elapsedBase - execOrigin : 0
 
   // ── 会话分组（与桌面同一纯函数 + 同一返回体）──
   // 组序维度 / 组内键来自返回体 sort_prefs（桌面 ⋯ 菜单设置，落 preferences）；

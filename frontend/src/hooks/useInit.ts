@@ -145,6 +145,9 @@ export function useInit(deps: InitDeps) {
               ...(h.traceItems && h.traceItems.length > 0
                 ? { traceItems: h.traceItems.map(toTimelineEntry) }
                 : {}),
+              // 本轮元数据（耗时 / token / 步数）→ 消息底部 <TurnMetaBar>；
+              // 与 useSession.applyHistory 同一映射，旧历史缺省不渲染。
+              ...(h.meta ? { meta: h.meta } : {}),
             })),
           )
           messagesRestoredRef.current = true

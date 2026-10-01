@@ -1921,43 +1921,181 @@
 }
 
 /* ── 选中文字 → 引用浮条（固定定位，z-index 高于 .chat-jump-bottom 的 30）──
-   位置由 JS 按选区最后一行内联给定（left/top + translate(-50%) 居中），
+   位置由 JS 按松手时光标内联给定（left/top 即浮条左上角，不再居中于选区），
+   贴边翻转见 ChatPanel.handleMessagesMouseUp。
    这里只管外观与指针事件：mousedown 必须 preventDefault，
    否则焦点转移会清掉 selection，点击时已读不到原文。 */
 .quote-float {
   position: fixed;
   z-index: 40;
-  transform: translate(-50%, 8px);
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
+  gap: 6px;
+  padding: 6px 12px;
   border: 1px solid var(--glass-3);
-  border-radius: var(--radius-1);
+  border-radius: var(--radius-2);
   background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
-  backdrop-filter: blur(8px) saturate(1.2);
-  -webkit-backdrop-filter: blur(8px) saturate(1.2);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px) saturate(1.3);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
   color: var(--spark-secondary);
   font-family: var(--font-ui);
   font-size: 12px;
   line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
   animation: quote-float-in 120ms ease both;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .quote-float:hover {
   color: var(--spark-primary);
   border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.34);
+}
+
+.quote-float:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 
 @keyframes quote-float-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 2px);
+    transform: translateY(-2px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 8px);
+    transform: translateY(0);
   }
+}
+
+/* ── 消息区内容引用块（user message 正文上方）──
+   与输入区 .ref-chip 视觉同源但更紧凑：历史消息是只读陈列，不需要删除按钮，
+   故只留 图标 + 截断文本（全文在 title）。quote 引文可达 2000 字符，
+   此处必须 ellipsis，否则会撑爆气泡宽度。 */
+.msg-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.msg-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 320px;
+  padding: 3px 8px;
+  border: 1px solid var(--glass-3);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+  color: var(--spark-secondary);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.msg-ref-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.msg-ref-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* quote 引用用引号视觉强调：这是「被引用的对话内容」，与资源引用区分 */
+.msg-ref-chip--quote {
+  border-left: 2px solid var(--accent);
+  font-style: italic;
+}
+
+.msg-ref-chip--skill {
+  border-left: 2px solid var(--spark-primary);
+}
+
+.msg-ref-chip--knowledge {
+  border-left: 2px solid var(--spark-secondary);
+}
+
+.msg-ref-chip--workflow {
+  border-left: 2px solid var(--glass-3);
+}
+
+/* ── 一轮执行元数据条（耗时 / 令牌 / 步数）──
+   纯只读信息，不做任何交互反馈。
+   基因取自同族 .msg-ref-chip（只读小 chip）：
+     · 标签走 UI 字体、数值走等宽（数字对齐，换行不跳）
+     · 尺寸/间距全部落在 token 上，不写孤立魔数
+   三处接入点（消息底部 / ctx 弹窗 / 移动端）共用 <TurnMetaBar>，此处定义主视觉；
+   空数据由组件 isTurnMetaEmpty 判定后根本不渲染，不会出现空壳条。 */
+.turn-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px; /* 对齐 .msg-refs 行距（:1986 margin-bottom: 8px），三处同源 */
+}
+
+/* 三个 chip 都是纯文字（耗时 / 上下文增量 / 步数），不配图标：chip 曾带一个
+   12px SVG，既把同行其它项挤出窄气泡，又与「纯只读信息、不是按钮」的定位不符。 */
+.turn-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px; /* 标签↔数值间距（= .msg-ref-chip:1992 同值） */
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--panel-bg) 60%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+/* 标签与数值之间的间距略大，让「标签+数值」视觉成组 */
+.turn-meta-chip-label {
+  margin-right: 1px;
+}
+
+/* 数值单独切等宽：数字等宽才能纵向对齐，扫读时不跳字 */
+.turn-meta-chip-value {
+  color: var(--spark-secondary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── .message-actions 内嵌 ──
+   元数据条是只读信息，并入动作行只为共享同一行排版，**不共享按钮的交互语义**：
+   - 左侧留 10px 与图标按钮拉开，避免紧贴
+   - gap 与 .message-actions 同值（4px），三个 chip 与图标按钮保持同一节奏
+   - 不设 hover / active，不做任何点击反馈——它不是按钮 */
+.turn-meta-bar--actions {
+  margin-top: 0;
+  margin-left: 10px;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+/* 字号与行高对齐动作行（12px / 1.5），仅压缩水平内边距与透明度让位给图标按钮 */
+.turn-meta-bar--actions .turn-meta-chip {
+  padding: 1px 6px;
+  background: transparent;
+  color: var(--spark-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.turn-meta-bar--actions .turn-meta-chip-value {
+  color: inherit;
 }

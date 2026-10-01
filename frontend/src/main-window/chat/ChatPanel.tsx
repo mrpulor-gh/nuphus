@@ -43,6 +43,7 @@ import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '
 import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
 import { buildQuoteRef, isSelectableInBubble, truncateQuote } from './messageSelection'
+import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -82,6 +83,8 @@ import {
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
+import { TurnMetaBar } from '../../ui/TurnMetaBar'
+import type { TurnMeta } from '../../core/types'
 import { LetterAvatar } from '../../ui/LetterAvatar'
 import { playUiSound } from '../../ui/sound'
 import { useWheelSelection } from '../../ui/wheelSelection'
@@ -157,6 +160,9 @@ interface ChatPanelProps {
   } | null
   totalDurationMs?: number
   totalCalls?: number
+  /** 本轮元数据（耗时 / token / 步数）——最后一条 assistant 气泡实时元数据条用；
+   *  历史消息各用自己的 msg.meta，不走这个 prop */
+  turnMeta?: TurnMeta | null
   contextLimit?: number
   apiHealth?: ApiHealthState
   onApiHealthRead?: () => void
@@ -298,6 +304,7 @@ export function ChatPanel({
   execTokenUsage,
   totalDurationMs,
   totalCalls,
+  turnMeta,
   contextLimit,
   apiHealth,
   onApiHealthRead,
@@ -347,6 +354,16 @@ export function ChatPanel({
 
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+
+  // 执行中每 500ms 重渲染一次，让消息气泡的 TurnMetaBar 走秒。
+  // **不持有任何时间值**——耗时一律由 TurnMetaBar → resolveTurnDuration 从
+  // turnMeta/msg.meta 求出（执行中按 startedAtMs 推算、完成后取 durationMs）。
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!isProcessing) return
+    const timer = window.setInterval(() => forceTick(n => n + 1), 500)
+    return () => window.clearInterval(timer)
+  }, [isProcessing])
   /**
    * 自定义头像的**可渲染 URL**（用户侧 / 智能体侧）。
    *
@@ -1469,10 +1486,29 @@ export function ChatPanel({
     setPendingReferences(prev => prev.filter((_, i) => i !== index))
   }, [])
 
+  /**
+   * 右键菜单「引用这段」→ 加入引用栏。
+   *
+   * 与浮条共用同一链路（buildQuoteRef + addReference），只换触发入口：
+   * 拖选松手弹浮条 / 右键菜单选引用，两条路产出完全相同的 chip。
+   * 不落盘、不查文件——引用的就是这段文本本身（见 process.rs 的 quote 分支）。
+   */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ text?: string }>).detail
+      const ref = buildQuoteRef(detail?.text ?? '')
+      if (ref) addReference(ref)
+    }
+    window.addEventListener('nuphus:add-quote-reference', handler)
+    return () => window.removeEventListener('nuphus:add-quote-reference', handler)
+  }, [addReference])
+
   // ── 选中文字 → 引用（复用 ChatReference 的 quote 分支，不新开注入通道）──
   /** mouseup 判定选区：非空 + 锚点落在 .message-content 内才弹浮条。
-   *  刻意不用 selectionchange——拖选过程中弹窗会跟着选区跳动，松手才定型。 */
-  const handleMessagesMouseUp = useCallback(() => {
+   *  刻意不用 selectionchange——拖选过程中弹窗会跟着选区跳动，松手才定型。
+   *  位置取松手瞬间的光标（clientX/Y），贴合「鼠标在哪就在哪」的操作直觉；
+   *  贴边时自动翻转，避免浮条被视口裁掉。 */
+  const handleMessagesMouseUp = useCallback((e: React.MouseEvent) => {
     const sel = window.getSelection()
     const raw = sel?.toString() ?? ''
     if (!raw.trim() || !sel || sel.rangeCount === 0) {
@@ -1490,8 +1526,18 @@ export function ChatPanel({
       setQuoteBar(null)
       return
     }
-    const rect = sel.getRangeAt(0).getBoundingClientRect()
-    setQuoteBar({ x: rect.left + rect.width / 2, y: rect.bottom, label: text })
+    // 浮条尺寸（与 .quote-float 的 padding/font-size 对齐，用于边缘翻转判定）
+    const barW = 110
+    const barH = 28
+    const gap = 10
+    let x = e.clientX
+    let y = e.clientY + gap
+    // 下方不够 → 翻到光标上方
+    if (y + barH > window.innerHeight - 4) y = e.clientY - barH - gap
+    // 右侧不够 → 右对齐到视口内
+    if (x + barW > window.innerWidth - 4) x = window.innerWidth - barW - 4
+    if (x - barW < 4) x = barW + 4
+    setQuoteBar({ x, y, label: text })
   }, [])
 
   /** 点击浮条 → 入引用栏。按钮的 mousedown 已 preventDefault（见 JSX 注释）保住
@@ -1905,6 +1951,38 @@ export function ChatPanel({
                                     ))}
                                   </div>
                                 )}
+                                {/* ── 内容引用（quote/skill/knowledge/workflow）──
+                                    正文上方展示，先看引用的哪段、再看提问，符合阅读顺序。
+                                    quote 只截断显示、全文进 title：引文上限 2000 字符，
+                                    在气泡内铺全文会撑爆布局（发送时后端注入的是 label 全文）。 */}
+                                {msg.references &&
+                                  msg.references.some(r => r.type !== 'capture') && (
+                                    <div className="msg-refs">
+                                      {msg.references
+                                        .filter(r => r.type !== 'capture')
+                                        .map((r, i) => {
+                                          const short =
+                                            r.label.length > 60
+                                              ? r.label.slice(0, 60) + '…'
+                                              : r.label
+                                          return (
+                                            <span
+                                              key={`ref-${r.type}-${r.id}-${i}`}
+                                              className={`msg-ref-chip msg-ref-chip--${r.type}`}
+                                              title={r.label}
+                                            >
+                                              <span
+                                                className="msg-ref-chip-icon"
+                                                aria-hidden="true"
+                                              >
+                                                <RefIcon type={r.type} size={12} />
+                                              </span>
+                                              <span className="msg-ref-chip-label">{short}</span>
+                                            </span>
+                                          )
+                                        })}
+                                    </div>
+                                  )}
                                 {/* ── 截图引用（Ctrl+U 截图：本地文件路径经 asset 协议显示）── */}
                                 {msg.references &&
                                   msg.references.some(r => r.type === 'capture') && (
@@ -2018,6 +2096,13 @@ export function ChatPanel({
                                       <IconHistory size={14} />
                                     </IconButton>
                                   )}
+                                  {/* ── 本轮元数据（耗时 / 令牌 / 步数）──
+                                      与复制/点评同排陈列，随 hover 一同显隐（招安
+                                      .message-actions 的交互与配色）。数据源 =
+                                      ChatMessage.meta（后端 TurnMeta）：实时轮次由
+                                      useEvents 写入、历史由 applyHistory 还原。
+                                      空数据由组件判空后不渲染，不留空位。 */}
+                                  <TurnMetaBar meta={msg.meta} className="turn-meta-bar--actions" />
                                 </div>
                               )}
                               {/* user 消息首轮 LLM 失败：hover 显示重试（优雅停止气泡无此标记） */}
@@ -2063,7 +2148,8 @@ export function ChatPanel({
         </div>
       </div>
 
-      {/* ── 选中文字引用浮条：fixed + portal（避开 .chat-messages 的滚动裁剪）── */}
+      {/* ── 选中文字引用浮条：fixed + portal（避开 .chat-messages 的滚动裁剪）──
+          位置 = 松手时光标处（见 handleMessagesMouseUp 的边缘翻转），不再居中于选区。 */}
       {quoteBar &&
         createPortal(
           <button
@@ -2358,6 +2444,7 @@ export function ChatPanel({
           execTokenUsage={execTokenUsage || null}
           totalDurationMs={totalDurationMs}
           totalCalls={totalCalls}
+          turnMeta={turnMeta}
           mood={mood || 'idle'}
           contextLimit={contextLimit}
           apiHealth={apiHealth}

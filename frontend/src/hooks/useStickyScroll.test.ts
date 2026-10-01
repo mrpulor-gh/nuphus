@@ -16,8 +16,11 @@
  *  ⑪ executing=false（空闲读秒豁免）：上翻冻结且不排恢复计时，180s 不恢复不滚底；
  *     滚回底部 / followReset 两个出口仍生效
  *  ⑫ followReset：新轮次 / 完成补拉的 hook 侧语义 —— 立即恢复跟随 + 滚底 + 作废旧计时
- *  ⑬ enterPanel 进场宽限：3s 内的滚动（上下）一律不判定 —— 不冻结、不恢复、不续命；
- *     lastScrollTopRef 随事件持续刷新，满 3s 后判定恢复（上滚重新冻结 + 计时重排）
+ *  ⑬ enterPanel 进场自动下拉：**完成即释放**，没有固定时长宽限（旧 3s 硬窗已删）——
+ *     a. 下拉中途（未到底、向下 delta）= 动画中间态 → 不判定；
+ *     b. 用户上滚抢控制 → 立即冻结（不吞用户输入，不等任何时间窗）；
+ *     c. 滚到底（容差内）= 自动下拉完成 → 释放，后续用户滚动正常判定；
+ *     d. 安全网：无 scroll 事件的异常下 1000ms 到点释放（释放兜底，非宽限）
  *
  * jsdom 局限说明（盲区）：jsdom 不做布局，scrollHeight/clientHeight/scrollTop 均为
  * 注入值，smooth 动画的逐帧过程也只能用手动改 scrollTop + 调 onScroll 模拟；
@@ -376,7 +379,7 @@ describe('useStickyScroll', () => {
     expect(scrollToSpy).toHaveBeenCalledTimes(2) // 恢复本身不主动滚底（与宽限恢复不同）
   })
 
-  it('⑬ enterPanel 进场宽限：3s 内的滚动（上下）一律不判定，满 3s 恢复判定', () => {
+  it('⑬ enterPanel 进场自动下拉：完成即释放，无固定时长宽限', () => {
     const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
     attachScroller(result.current.scrollRef)
 
@@ -387,7 +390,7 @@ describe('useStickyScroll', () => {
     userScroll(result, 200) // 先冻结（60s 宽限计时在跑）
     expect(result.current.showJumpButton).toBe(true)
 
-    // 进场：enterPanel（缺省 3000ms）—— followReset 恢复 + 滚底，随后滚动一律不判定
+    // 进场：enterPanel —— followReset 恢复 + 滚底；未到底 → 进入「自动下拉未完成」态
     act(() => {
       result.current.enterPanel()
     })
@@ -397,26 +400,26 @@ describe('useStickyScroll', () => {
     expect(result.current.showJumpButton).toBe(false)
     expect(scrollToSpy).toHaveBeenCalledTimes(2) // 首次程序滚底 + followReset 补拉
 
-    // 宽限内上滚：本会冻结 —— 不判定（进场惯性 / 渲染抖动豁免）
-    userScroll(result, 150)
+    // a. 下拉中途（向下 delta、未到底）= smooth 动画中间态 → 不判定（不冻结）
+    userScroll(result, 400)
     expect(result.current.showJumpButton).toBe(false)
 
-    // 宽限内下滚：方向书签持续刷新（满 3s 后的首个事件据此算增量，不误判）
-    userScroll(result, 250)
-    expect(result.current.showJumpButton).toBe(false)
+    // b. 用户上滚抢控制 → 立即冻结，不等任何时间窗（旧实现这里要等满 3s）
+    userScroll(result, 300)
+    expect(result.current.showJumpButton).toBe(true)
 
-    // 未满 3s：判定仍未恢复
+    // 冻结后重新进场：这次让下拉「完成」——滚回 80px 容差内
     act(() => {
-      vi.advanceTimersByTime(2_900)
+      result.current.enterPanel()
     })
-    userScroll(result, 240) // 上滚仍不判定
-    expect(result.current.showJumpButton).toBe(false)
-
-    // 满 3s：判定恢复 —— 上滚立即重新冻结，60s 宽限计时重新起排
     act(() => {
-      vi.advanceTimersByTime(200)
+      vi.advanceTimersByTime(20)
     })
-    userScroll(result, 230)
+    expect(result.current.showJumpButton).toBe(false)
+    // c. 到底 = 自动下拉完成 → 立即释放；释放后用户上滚照常冻结
+    userScroll(result, GEO.scrollTop)
+    expect(result.current.showJumpButton).toBe(false)
+    userScroll(result, 300)
     expect(result.current.showJumpButton).toBe(true)
 
     act(() => {
@@ -430,8 +433,62 @@ describe('useStickyScroll', () => {
     act(() => {
       vi.advanceTimersByTime(20) // 恢复滚底的 rAF
     })
-    expect(scrollToSpy).toHaveBeenCalledTimes(3)
+    expect(scrollToSpy).toHaveBeenCalledTimes(4)
     expect(result.current.showJumpButton).toBe(false)
+  })
+
+  it('⑬b 安全网：无 scroll 事件的异常下，1000ms 到点交还判定权（释放兜底非宽限）', () => {
+    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
+    attachScroller(result.current.scrollRef)
+
+    changeFollowKey(rerender)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    userScroll(result, 200) // 冻结
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 进场后**一个 scroll 事件都不来**（浏览器不派发 / 内容突变永不到底）：
+    // 1000ms 安全网到点必须释放，否则之后所有 scroll 都会被吞
+    act(() => {
+      result.current.enterPanel()
+    })
+    act(() => {
+      vi.advanceTimersByTime(999)
+    })
+    // 中途只有向下 / 静止 delta（动画中间态）才被忽略 —— 上滚会被当用户输入立即释放，
+    // 所以这里用下滚证明「仍在 pending」
+    userScroll(result, 260)
+    expect(result.current.showJumpButton).toBe(false)
+
+    act(() => {
+      vi.advanceTimersByTime(2) // 满 1000ms
+    })
+    userScroll(result, 140) // 已释放：上滚正常冻结
+    expect(result.current.showJumpButton).toBe(true)
+  })
+
+  it('⑬c 已在底部时 enterPanel：不置等待态（否则永不释放，后续 scroll 全被吞）', () => {
+    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
+    attachScroller(result.current.scrollRef)
+
+    changeFollowKey(rerender)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    // 停在底部（GEO 距底 0），没有「下拉」可等
+    userScroll(result, GEO.scrollTop)
+    expect(result.current.showJumpButton).toBe(false)
+
+    act(() => {
+      result.current.enterPanel()
+    })
+    act(() => {
+      vi.advanceTimersByTime(20)
+    })
+    // 立即就能上翻冻结：等待态从未置位
+    userScroll(result, 200)
+    expect(result.current.showJumpButton).toBe(true)
   })
 
   it('⑪ executing=false：上翻冻结且不排恢复计时，180s 不恢复不滚底（空闲翻看不打扰）', () => {

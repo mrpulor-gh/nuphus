@@ -111,18 +111,23 @@ describe('desktop action execution trace', () => {
 describe('execution trace sticky scroll (useStickyScroll)', () => {
   let scrollToSpy: ReturnType<typeof vi.fn>
 
-  /** 卡片模式的步骤树滚动容器 */
+  /** 卡片模式的步骤树滚动容器：按需覆写成贴底 600（距底 0）*/
   function bodyOf(container: HTMLElement): HTMLDivElement {
-    const el = container.querySelector('.execution-trace-body') as HTMLDivElement
-    if (!el) throw new Error('.execution-trace-body 未渲染')
+    const el = bodyElOf(container)
     // jsdom 无布局：距底 0px（1000 - 600 - 400）视为贴底
-    Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true })
-    Object.defineProperty(el, 'clientHeight', { value: 400, configurable: true })
     Object.defineProperty(el, 'scrollTop', {
       value: 600,
       writable: true,
       configurable: true,
     })
+    return el
+  }
+
+  /** 只取滚动容器、不覆写几何：保留挂载时的 scrollTop（200 = 距底 400px，未到底）。
+   *  进场自动下拉的用例必须用它 —— 覆写成贴底就等于没有「下拉」可等。 */
+  function bodyElOf(container: HTMLElement): HTMLDivElement {
+    const el = container.querySelector('.execution-trace-body') as HTMLDivElement
+    if (!el) throw new Error('.execution-trace-body 未渲染')
     return el
   }
 
@@ -149,6 +154,22 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
       writable: true,
       configurable: true,
     })
+    // 挂载即有几何（否则 enterPanel 在 effect 里量到 scrollHeight=0 → 判「已在底部」，
+    // 永远进不了「自动下拉未完成」态，③/③b 就失去被测对象）。scrollTop 设在 200
+    // = 距底 400px（未到底），bodyOf 仍按需覆写成贴底 600。
+    Object.defineProperty(HTMLDivElement.prototype, 'scrollHeight', {
+      value: 1000,
+      configurable: true,
+    })
+    Object.defineProperty(HTMLDivElement.prototype, 'clientHeight', {
+      value: 400,
+      configurable: true,
+    })
+    Object.defineProperty(HTMLDivElement.prototype, 'scrollTop', {
+      value: 200,
+      writable: true,
+      configurable: true,
+    })
     // rAF 经 setTimeout 驱动：fake timers 下 advanceTimersByTime 即可冲刷
     vi.stubGlobal(
       'requestAnimationFrame',
@@ -161,6 +182,9 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     delete (window.Element.prototype as unknown as Record<string, unknown>).scrollTo
+    delete (HTMLDivElement.prototype as unknown as Record<string, unknown>).scrollHeight
+    delete (HTMLDivElement.prototype as unknown as Record<string, unknown>).clientHeight
+    delete (HTMLDivElement.prototype as unknown as Record<string, unknown>).scrollTop
   })
 
   it('① 执行中上翻 + 新步骤不闪回（旧 3s debounce 已删），静默满 15s 宽限才恢复滚底', () => {
@@ -173,10 +197,10 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     }
     const utils = renderPanel([entry], true)
     const bodyEl = bodyOf(utils.container)
-    // 挂载即跟随 + 模式切换兜底滚底 + enterPanel 进场宽限（3s）：全部落定后再清零
-    // 计数，只看用户交互后的行为（宽限内滚动不判定，用户输入须发生在宽限之后）
+    // 挂载即跟随 + 模式切换兜底滚底 + enterPanel 进场自动滚底：全部落定后再清零
+    // 计数，只看用户交互后的行为（进场自动滚底完成即释放，用户输入随时可介入）
     act(() => {
-      vi.advanceTimersByTime(3_100)
+      vi.advanceTimersByTime(1_200)
     })
     expect(scrollToSpy).toHaveBeenCalled()
     scrollToSpy.mockClear()
@@ -254,7 +278,7 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     expect(scrollToSpy).not.toHaveBeenCalled()
   })
 
-  it('③ 进场防误判：open 瞬间 enterPanel —— 立即滚底 + 3s 宽限内滚动不判定（可见态来源）', () => {
+  it('③ 进场自动下拉：完成即释放，用户随时可抢控制（无 3s 硬宽限）', () => {
     const entry: TimelineEntry = {
       id: 'e1',
       kind: 'tool_call',
@@ -279,18 +303,18 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     const utils = render(panel(false, [entry]))
     expect(utils.container.querySelector('.execution-trace-body')).toBeNull()
 
-    // 打开：enterPanel —— followReset 立即滚底（展示最新执行态）+ 3s 宽限起算
+    // 打开：enterPanel —— followReset 立即滚底（展示最新执行态）。
+    // 挂载几何就是「距底 400px」，故此刻确实处于「自动下拉未完成」态
     utils.rerender(panel(true, [entry]))
-    const bodyEl = bodyOf(utils.container)
+    const bodyEl = bodyElOf(utils.container)
     act(() => {
       vi.advanceTimersByTime(100) // enterPanel 的 rAF + 模式切换兜底的 50ms
     })
     expect(scrollToSpy).toHaveBeenLastCalledWith({ top: 1000, behavior: 'smooth' })
     scrollToSpy.mockClear()
 
-    // 宽限内上滚：不判定（不冻结）—— 进场惯性 / 渲染抖动豁免。跟随态仍在：新步骤
-    // 到达继续滚底（若误判冻结则不会滚）
-    bodyEl.scrollTop = 200
+    // 自动下拉中途（向下 delta、未到底）= smooth 动画中间态 → 不判定
+    bodyEl.scrollTop = 500
     fireEvent.scroll(bodyEl)
     const entry2: TimelineEntry = { ...entry, id: 'e2', toolName: 'Write' }
     utils.rerender(panel(true, [entry, entry2]))
@@ -299,10 +323,10 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     })
     expect(scrollToSpy).toHaveBeenCalled() // 新步骤跟随滚底：未被进场滚动误判冻结
 
-    // 满 3s 宽限后判定恢复：上滚重新冻结 —— 新步骤不再拽回（15s 静默宽限重排）
-    act(() => {
-      vi.advanceTimersByTime(3_000)
-    })
+    // 下拉完成（滚回 80px 容差内：1000 − 600 − 400 = 0）→ 立即释放判定，不等任何时长
+    bodyEl.scrollTop = 600
+    fireEvent.scroll(bodyEl)
+    // 释放后用户上滚立即冻结：新步骤不再拽回（15s 静默宽限重排）
     bodyEl.scrollTop = 100
     fireEvent.scroll(bodyEl)
     scrollToSpy.mockClear()
@@ -311,6 +335,48 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     act(() => {
       vi.advanceTimersByTime(2_000)
     })
-    expect(scrollToSpy).not.toHaveBeenCalled() // 冻结态不闪回：判定链路在宽限后完整恢复
+    expect(scrollToSpy).not.toHaveBeenCalled() // 冻结态不闪回：判定已交还用户
+  })
+
+  it('③b 自动下拉期间用户上滚抢控制：立即冻结（不吞用户输入、不等宽限）', () => {
+    const entry: TimelineEntry = {
+      id: 'e1',
+      kind: 'tool_call',
+      toolName: 'Read',
+      status: 'success',
+      output: 'ok',
+    }
+    const panel = (visible: boolean, timeline: TimelineEntry[]) => (
+      <ExecutionTraceFloating
+        timeline={timeline}
+        stepIndex={1}
+        progress={{ iteration: 1, max: 20, calls: 1 }}
+        isProcessing
+        completed={false}
+        expandedCalls={new Set()}
+        onToggleExpand={vi.fn()}
+        visible={visible}
+      />
+    )
+    const utils = render(panel(false, [entry]))
+    utils.rerender(panel(true, [entry]))
+    const bodyEl = bodyElOf(utils.container)
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    scrollToSpy.mockClear()
+
+    // 进场自动滚底还没完成，用户就向上滚（读历史）→ 立刻冻结，无需等任何时间窗
+    // （旧实现这里会等满 3s 硬宽限，用户的滚动被整段吞掉）
+    bodyEl.scrollTop = 150
+    fireEvent.scroll(bodyEl)
+    bodyEl.scrollTop = 100
+    fireEvent.scroll(bodyEl)
+    const entry2: TimelineEntry = { ...entry, id: 'e2', toolName: 'Write' }
+    utils.rerender(panel(true, [entry, entry2]))
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    expect(scrollToSpy).not.toHaveBeenCalled() // 用户已接管：不拽回
   })
 })

@@ -23,6 +23,7 @@ import type {
   RunRecord,
   ChatAgentConfig,
   InlineChatAgentEntry,
+  TurnMeta,
 } from '../../core/types'
 
 // ── Tools ──
@@ -125,6 +126,9 @@ export interface HistoryMessage {
   timestamp?: number
   /** 执行过程（思考/流式文本/工具调用，按实际顺序）——Session 完整存储 */
   traceItems?: HistoryTraceItem[]
+  /** 本轮执行的元数据（耗时 / token / 步数）；仅 assistant 消息携带，
+   *  旧历史缺省 → 前端不渲染元数据条（对齐后端 state::HistoryMessage.meta）。 */
+  meta?: TurnMeta
 }
 
 export function getChatHistory() {
@@ -357,6 +361,17 @@ export interface ExecutionStateSnapshot {
   busy: boolean
   /** 当前提交是否会按追加指令受理（仅 running；finalizing 会被拒收） */
   append_accepting: boolean
+  /**
+   * 本轮起点（Unix 毫秒，后端权威）——`SignalState::set_execution_stage` 在
+   * 「空闲 → 执行」这一跳记录。刷新 / 重连后前端据此 `now - started_at_ms`
+   * 继续推算耗时，**不归零**；没有它就只能显示 0（不可知）。
+   */
+  started_at_ms: number | null
+  /**
+   * 本轮工具调用步数（后端累加，`SignalState::inc_execution_tool_calls`）。
+   * 前端**不得**自己数调用次数——刷新 / 丢事件时前端计数会与实际不符。
+   */
+  tool_calls: number
 }
 
 export function getExecutionState() {

@@ -514,6 +514,7 @@ export default function App() {
               execTokenUsage={s.execTokenUsage}
               totalDurationMs={s.totalDurationMs}
               totalCalls={s.liveCalls}
+              turnMeta={s.turnMeta}
               contextLimit={s.contextLimit}
               apiHealth={s.apiHealth}
               onModelChanged={s.refreshModelInfo}
@@ -624,6 +625,7 @@ export default function App() {
               dismissed={s.dismissThinking}
               phase={s.execPhase}
               timeline={s.timeline}
+              toolCallCount={s.turnMeta?.toolCalls}
               mood={s.mood}
               progress={s.progress}
               onExpand={() => s.setShowExecTrace(true)}
@@ -643,6 +645,8 @@ export default function App() {
             goal={s.goal}
             totalDurationMs={s.totalDurationMs}
             totalCalls={s.totalCalls}
+            liveCalls={s.liveCalls}
+            turnMeta={s.turnMeta}
             visible={s.showExecTrace}
             onClose={() => {
               s.setExecTraceOverride(null)

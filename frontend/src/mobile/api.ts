@@ -3,6 +3,7 @@
  * 鉴权统一走 X-Mobile-Token Header（WS 才用 query）。
  */
 import type { TraceItem } from './store'
+import type { TurnMeta } from '../core/types'
 import { t } from './i18n'
 import { isPrivateHost, resolveTunnelDeviceId } from './connection'
 import { readStoredToken } from './auth'
@@ -49,6 +50,9 @@ export interface HistoryMessage {
   timestamp?: number
   /** 执行过程（思考/流式文本/工具调用，按实际顺序）——后端 Session 存储，历史拉取时下发 */
   traceItems?: TraceItem[]
+  /** 本轮执行的元数据（耗时 / token / 步数）——对齐后端 state::HistoryMessage.meta；
+   *  旧历史缺省 → 手机端消息底部不渲染元数据条 */
+  meta?: TurnMeta
 }
 
 /**

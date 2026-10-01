@@ -14,6 +14,13 @@ interface ThinkingIndicatorProps {
   dismissed?: boolean
   phase?: 'understanding' | 'executing' | 'recording' | 'workflow' | 'retrying' | ''
   timeline?: TimelineEntry[]
+  /**
+   * 本轮已完成的工具调用步数（后端权威：TurnMeta.toolCalls）。
+   * 与 timeline.filter(kind==='tool_call') 是同一语义，但**刷新后仍有效**——
+   * timeline 是执行中内存态，刷新即清空会让徽章归零；改用该值后，
+   * 实时与历史回看共用唯一数据源。缺省（旧后端/无 meta）退回数 timeline。
+   */
+  toolCallCount?: number
   mood?: MoodState
   progress?: { iteration: number; max: number; calls: number }
   onExpand?: () => void
@@ -110,6 +117,7 @@ export function ThinkingIndicator({
   dismissed,
   phase,
   timeline,
+  toolCallCount,
   mood,
   progress,
   onExpand,
@@ -170,7 +178,9 @@ export function ThinkingIndicator({
 
   const phaseColor = completed ? '#22c55e' : phase ? PHASE_COLORS[phase] : '#3b82f6'
 
-  const callCount = timeline ? timeline.filter(t => t.kind === 'tool_call').length : 0
+  // 步数优先取后端权威值（刷新后仍有效），无 meta 时退回数执行中的 timeline
+  const callCount =
+    toolCallCount ?? (timeline ? timeline.filter(t => t.kind === 'tool_call').length : 0)
   const lastCall = lastToolCall(timeline)
   const toolName = lastCall?.toolName || null
   // 优先展示「工具名 + 目标」标签（如 Read frontend/src/hooks/useSession.ts）；

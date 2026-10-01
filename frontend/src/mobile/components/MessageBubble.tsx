@@ -25,6 +25,7 @@ import type { ChatMessage, TraceItem } from '../store'
 import MobileMarkdown from './MobileMarkdown'
 import TraceModal from './TraceModal'
 import { t } from '../i18n'
+import { TurnMetaBar } from '../../ui/TurnMetaBar'
 
 interface Props {
   message: ChatMessage
@@ -261,6 +262,9 @@ export default function MessageBubble({
               <MobileMarkdown content={message.content} />
             </div>
           )}
+          {/* 本轮元数据（耗时 / 令牌 / 步数）——数据源 = ChatMessage.meta（后端 TurnMeta），
+              与桌面端消息底部 / ctx 弹窗共用同一 <TurnMetaBar> 与同一字段 */}
+          {!isUser && <TurnMetaBar meta={message.meta} slots={['duration', 'tokens', 'steps']} />}
           {!isUser && hasFinal && !streaming && (
             <div className="mobile-msg-actions">
               <button

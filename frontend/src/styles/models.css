@@ -1,9 +1,10 @@
-/* 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?   models.css 鈥?ModelsPage 椤甸潰鐗规湁鏍峰紡
-   楠ㄦ灦锛歶i/PageLayout Section/FormRow
-   鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?*/
+/* ═══════════════════════════════════════════════════════════
+   models.css — ModelsPage 页面特有样式
+   框架：ui/PageLayout Section/FormRow
+   ═══════════════════════════════════════════════════════════ */
 @import './tokens.css';
 
-/* 鈹€鈹€ 琛ㄥ崟缁勶紙label 涓?+ 鎺т欢涓嬶紝Section 鍐呯殑绾靛悜鑺傚锛夆攢鈹€ */
+/* ── 表单组（label 在上 + 控件在下，Section 内的纵向节奏）── */
 
 .detect-status {
   font-size: var(--fz-xs);
@@ -261,8 +262,8 @@
   background: var(--surface-2);
   color: var(--fg-3);
 }
-/* 涓婁笅鏂囩獥鍙ｆ湭鐭ワ紙builtin miss 涓旇仛鍚堝簱鏈懡涓級鈥斺€旇瘹瀹炲憟鐜?Unknown 鎬侊細
-   鏄剧ず鐏拌壊 ? 鑰岄潪浼鎴?128K 涔嬬被鐨勭寽娴嬪€笺€?*/
+/* 上下文窗口未知（builtin miss 且聚合库未命中）——不组装成 128K 之类的猜测值：
+   显示置灰的 Unknown，而不是拿一个假窗口数冒充。 */
 .model-badge--ctx-unknown {
   background: transparent;
   color: var(--fg-4);

@@ -16,7 +16,8 @@ import {
 } from '../../ui/Icons'
 import { NuphusAvatar } from '../../ui/NuphusAvatar'
 import MarkdownContent from '../chat/MarkdownContent'
-import type { TimelineEntry } from '../../core/types'
+import type { TimelineEntry, TurnMeta } from '../../core/types'
+import { resolveTurnCalls, resolveTurnDuration } from '../../core/types'
 import { desktopActionResult } from '../lib/desktopActionResult'
 import { DesktopActionStatus } from './DesktopActionStatus'
 import { useStickyScroll } from '../../hooks/useStickyScroll'
@@ -34,6 +35,10 @@ interface ExecutionTraceProps {
   goal?: string
   totalDurationMs?: number
   totalCalls?: number
+  /** 执行中实时步数（timeline 派生）——totalCalls 是完成态值，执行中恒 0 */
+  liveCalls?: number
+  /** 本轮元数据（耗时 / token / 步数）——后端权威，与输入栏 ctx / 消息底部同源 */
+  turnMeta?: TurnMeta | null
   onRate?: (name: string, rating: number, comment: string, saveAsStrategy: boolean) => void
   onRegenerate?: () => void
   // 新增：控制显示/隐藏
@@ -599,6 +604,8 @@ export function ExecutionTraceFloating({
   goal,
   totalDurationMs,
   totalCalls,
+  liveCalls,
+  turnMeta,
   onRate,
   onRegenerate,
   visible,
@@ -640,8 +647,9 @@ export function ExecutionTraceFloating({
     executing: isProcessing,
   })
 
-  // 进场防误判：面板打开瞬间 enterPanel —— 先立即滚底展示最新执行态，再开 3s 宽限，
-  // 进场瞬间的鼠标滚动 / 触控板惯性 / 渲染抖动不参与判定（详见 useStickyScroll 头注）。
+  // 进场防误判：面板打开瞬间 enterPanel —— 先立即滚底展示最新执行态，随后只等这次
+  // 自动滚底完成（到底 / 用户伸手接手 / 安全网到点）就交还判定权；没有固定时长宽限
+  // （旧实现 3s 硬窗会吞掉窗口内用户的滚动，等于抢控制，详见 useStickyScroll 头注）。
   // open 来源：受控 visible（App.tsx 的 showExecTrace）优先，未传时回落内部 isOpen。
   useEffect(() => {
     if (isVisible) enterPanel()
@@ -666,11 +674,12 @@ export function ExecutionTraceFloating({
   }, [isProcessing])
 
   const toolCalls = displayTimeline.filter(t => t.kind === 'tool_call')
-  const displayCalls = completed && totalCalls !== undefined ? totalCalls : toolCalls.length
-  const displayDuration =
-    completed && totalDurationMs !== undefined
-      ? totalDurationMs
-      : toolCalls.reduce((sum, t) => sum + (t.durationMs || 0), 0)
+  const isHistoryView = traceOverride != null && traceOverride.length > 0
+  // ── 步数 / 耗时：唯一出口 resolveTurnCalls / resolveTurnDuration，无兜底 ──
+  //   · 实时轮 → turnMeta（后端权威：execution_progress / execution_completed 写入）
+  //   · 气泡回溯 → 该轮 traceOverride 的 tool_call 条目数（这一轮的真实记录；
+  //     此时全局 turnMeta 属「当前轮」，与所看历史轮无关）
+  const displayCalls = isHistoryView ? toolCalls.length : resolveTurnCalls(turnMeta)
   const failCount = toolCalls.filter(t => t.status === 'error').length
 
   // ── Dynamic title state from last timeline entry ──
@@ -719,24 +728,19 @@ export function ExecutionTraceFloating({
     }
   }, [onClose])
 
-  // ── Live timer: shows elapsed time in header during execution ──
-  const [liveDuration, setLiveDuration] = useState(0)
-  const startTimeRef = useRef<number | null>(null)
+  // ── 实时计时：turn 开始（execution_started）即起跑，与工具调用无关 ──
+  // 数值唯一来源 resolveTurnDuration：
+  //   执行中 → Date.now() - turnMeta.startedAtMs（后端绝对起点，刷新后经轮询通道补回）
+  //   已结束 → turnMeta.durationMs（后端权威总耗时）
+  // 这里只做 100ms 重渲染让数字走秒，**不持有任何时间值、不起跑、不兜底**。
+  const [, forceTick] = useState(0)
   useEffect(() => {
-    if (isProcessing && !completed) {
-      if (startTimeRef.current === null) startTimeRef.current = Date.now()
-      const timer = setInterval(() => {
-        setLiveDuration(Date.now() - startTimeRef.current!)
-      }, 100)
-      return () => clearInterval(timer)
-    } else if (completed && totalDurationMs !== undefined) {
-      setLiveDuration(totalDurationMs)
-      startTimeRef.current = null
-    } else {
-      setLiveDuration(0)
-      startTimeRef.current = null
-    }
-  }, [isProcessing, completed, totalDurationMs])
+    if (!isProcessing) return
+    const timer = window.setInterval(() => forceTick(n => n + 1), 100)
+    return () => window.clearInterval(timer)
+  }, [isProcessing])
+
+  const displayDuration = resolveTurnDuration(turnMeta)
 
   // ── New entry entrance marker ──
   const prevTimelineIdsRef = useRef(new Set<string>())
@@ -771,8 +775,7 @@ export function ExecutionTraceFloating({
             <NuphusAvatar state={titleState.avatar} size={20} />
             <span>{titleState.text}</span>
             <span className="exec-topbar-meta">
-              {displayCalls} 调用 ·{' '}
-              {formatMs(isProcessing && !completed ? liveDuration : displayDuration)}
+              {displayCalls} 调用 · {formatMs(displayDuration)}
               {failCount > 0 && <span className="trace-fail-count"> · {failCount} 失败</span>}
             </span>
           </div>

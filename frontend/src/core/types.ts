@@ -159,6 +159,69 @@ export interface ChatMessage {
   /** 执行过程（思考/流式文本/工具调用，按实际顺序）——历史消息从后端
    *  trace_items 还原，气泡执行回溯入口展示用；实时消息由 useEvents 填充 */
   traceItems?: TimelineEntry[]
+  /**
+   * 本轮执行的元数据（耗时 / token / 步数）——后端 `TurnMeta` 的前端镜像。
+   *
+   * 唯一数据源：实时来自 `execution_started` / `token_usage` / `execution_progress` /
+   * `execution_completed`，历史来自 `HistoryMessage.meta`。执行面板与 ctx 弹窗同源消费，
+   * 不允许任何一处自留计时器（原缺陷：起点存组件 ref，刷新即丢）。
+   * 旧历史缺省 undefined → 不渲染元数据条（与 traceItems 同一演进策略）。
+   */
+  meta?: TurnMeta
+}
+
+/**
+ * 一轮执行的元数据（耗时 / token / 步数）——对齐后端 `agent::turn_meta::TurnMeta`。
+ *
+ * 全部字段可选：`#[serde(default, skip_serializing_if)]` 使零值 / 缺省字段根本不下发，
+ * 前端据此判空（见 `isTurnMetaEmpty`），避免渲染空壳条。
+ */
+export interface TurnMeta {
+  /** 本轮起点（Unix 毫秒，**后端权威**）。执行中前端以 `Date.now() - startedAtMs`
+   *  实时推算——刷新 / 重连后仍从真实起点继续，不归零（根治缺陷的根因字段）。 */
+  startedAtMs?: number
+  /** 本轮总耗时（毫秒）。执行中缺省（前端用起点推算）；完成时由后端给出权威值。 */
+  durationMs?: number
+  /** 输入 token 累计（本轮所有 LLM 调用之和） */
+  inputTokens?: number
+  /** 输出 token 累计 */
+  outputTokens?: number
+  /** 缓存命中 token 累计 */
+  cacheHitTokens?: number
+  /** 迭代轮次（ReAct 循环走了几轮） */
+  iterations?: number
+  /** 工具调用次数（本轮实际发生的 call 数） */
+  toolCalls?: number
+  /**
+   * 本轮**上下文增量**（tokens）：轮末上下文占用 − 轮初占用，后端权威
+   * （`TurnMeta::context_delta_tokens`，两个占用值都取自 API usage）。
+   *
+   * 元数据条展示它而不是「累计消耗」：同一段上下文在同轮多次调用里被反复计入
+   * inputTokens，累加和随调用次数线性膨胀（130K × 40 次 = 5.2M），是没有信息量
+   * 的数字；增量回答「这一轮让上下文长了多少」。
+   */
+  contextDeltaTokens?: number
+  /** 解码速度（output tokens / 解码秒数） */
+  genTps?: number
+  /** 首 token 延迟（毫秒） */
+  ttftMs?: number
+}
+
+/**
+ * 元数据是否「无内容可展示」——对齐后端 `TurnMeta::is_empty()` 的判据
+ * （duration / input / output / iterations / toolCalls 全空即空）。
+ *
+ * 用途：三处接入点统一据此短路，不渲染空壳元数据条（与 `trace_items` 同策略）。
+ */
+export function isTurnMetaEmpty(meta: TurnMeta | null | undefined): boolean {
+  if (!meta) return true
+  return (
+    (meta.durationMs == null || meta.durationMs === 0) &&
+    !meta.inputTokens &&
+    !meta.outputTokens &&
+    !meta.iterations &&
+    !meta.toolCalls
+  )
 }
 
 export interface ToolCall {
@@ -168,6 +231,69 @@ export interface ToolCall {
   status: 'running' | 'success' | 'error'
   durationMs: number
   output: string
+}
+
+// ── 元数据取值：唯一出口 ──
+// 所有消费点（消息底部 / ctx 弹窗 / 执行回溯顶栏 / 移动端 / ThinkingIndicator）
+// **必须**经此读取，不得各自拼兜底链——否则同一轮指标会出现多个不一致的值。
+// `turnMeta` 本身由后端权威字段构成，故这里不再叠加 fallback：
+//   · toolCalls ← execution_progress.tool_calls_so_far（执行中实时）
+//                 / execution_completed.meta.tool_calls（完成权威）
+/** 本轮工具调用步数。无数据返回 0（不可知，不拿别处的值充数）。 */
+export function resolveTurnCalls(meta: TurnMeta | null | undefined): number {
+  return meta?.toolCalls || 0
+}
+
+/**
+ * 本轮耗时（毫秒）唯一出口。
+ *
+ * 规则只有两条，**没有兜底链**：
+ *   ① 本轮已结束（`durationMs` 有值）→ 后端权威总耗时
+ *   ② 本轮进行中（`startedAtMs` 有值）→ `now - startedAtMs` 实时推算
+ *
+ * `startedAtMs` 由两条通道保证存在，故刷新 / 重连也不归零、不需 fallback：
+ *   - 事件通道：`execution_started.started_at_ms`
+ *   - 轮询通道：`get_execution_state` 快照的 `started_at_ms`
+ *     （后端 `SignalState::set_execution_stage` 在「空闲 → 执行」那一跳记录）
+ *
+ * 两者皆无 = 后端确实没给起点（后端不可达 / 旧版本）→ 返回 0（不可知，不伪造）。
+ */
+export function resolveTurnDuration(
+  meta: TurnMeta | null | undefined,
+  now: number = Date.now(),
+): number {
+  const finalMs = meta?.durationMs
+  if (finalMs != null && finalMs > 0) return finalMs
+  const startedAtMs = meta?.startedAtMs
+  if (startedAtMs != null && startedAtMs > 0) return Math.max(0, now - startedAtMs)
+  return 0
+}
+
+/**
+ * 轮询快照（`get_execution_state`）合入本轮 turnMeta —— 步数实时值的唯一入口。
+ *
+ * 后端 `SignalState::execution_tool_calls` 只在本轮「空闲 → Running」那一跳归零
+ * （`set_execution_stage`），之后单调递增，故**快照值即实时权威值，直接落定**。
+ * 不得与 prev 做 `prev.toolCalls || 快照` 之类合并：那会把首个非零值冻住，
+ * 之后更大的快照全被丢弃。主轮（react_loop）不发 execution_progress，轮询是
+ * 普通会话唯一的实时步数通道，该合并缺陷表现为「步数恒久显示为 1」。
+ *
+ * 起点反之「只在缺省时补」：事件通道（`execution_started.started_at_ms`）已写过的
+ * 起点不被快照覆盖，避免混入别的轮次 / 别的窗口的起点。
+ *
+ * 「当前无执行」（`started_at_ms = null` 且 `tool_calls = 0`）由调用方整体跳过，
+ * 本函数不做该判断——保持纯函数、无隐藏分支。同理，提炼（内部执行，见
+ * `RefineStreamFilter`）期间调用方也不得把快照写进用户轮的 turnMeta。
+ */
+export function applyTurnSnapshot(
+  prev: TurnMeta | null | undefined,
+  snapshot: { startedAtMs: number | null; toolCalls: number },
+): TurnMeta {
+  return {
+    ...(prev ?? {}),
+    startedAtMs: prev?.startedAtMs ?? snapshot.startedAtMs ?? undefined,
+    toolCalls: snapshot.toolCalls || undefined,
+  }
 }
 
 export interface UserInputRequest {
@@ -535,6 +661,9 @@ export type NuphusEvent =
       mode?: string
       session_id?: string
       turn_id?: string
+      /** 本轮起点（Unix 毫秒，**后端权威**）——前端据此实时推算耗时，
+       *  刷新 / 重连后依然准确（根治「刷新后计时归零」）。旧后端缺省 = 无起点。 */
+      started_at_ms?: number
     }
   | {
       type: 'assistant_progress'
@@ -585,6 +714,9 @@ export type NuphusEvent =
       }
       total_duration_ms: number
       total_calls: number
+      /** 本轮元数据（耗时 / token / 步数）。旧字段 `total_duration_ms` /
+       *  `total_calls` 语义不变；`meta` 承载 token 等新维度，二者同源不漂移。 */
+      meta?: TurnMeta
     }
   | { type: 'execution_error'; step_index: number; error: string }
   /**

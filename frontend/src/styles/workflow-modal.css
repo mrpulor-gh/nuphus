@@ -34,7 +34,12 @@
   width: 720px;
   max-width: 92vw;
   max-height: 80vh;
-  background: var(--modal-bg);
+  /* 底走 --panel-bg（主题设置 → 界面不透明度 → **控制面板**滑块派生），
+     与 session 会话台 / task 面板 / 主题设置浮层同一按键、同一可见性。
+     原先用 --modal-bg：它归「弹窗」滑块管，四个面板因此分裂成两套开关
+     （大王 2026-10-01 要求统一）。副作用（有意接受）：本弹窗不再跟随
+     「弹窗不透明度」滑块。 */
+  background: var(--panel-bg);
   border: 1px solid var(--glass-3);
   border-radius: 16px;
   box-shadow: var(--shadow-modal);

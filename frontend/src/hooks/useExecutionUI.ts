@@ -10,6 +10,7 @@ import type {
   TaskRun,
   WorkflowRunStep,
   ApiHealthState,
+  TurnMeta,
 } from '../core/types'
 import { executeSessionRefine, refineSkip } from '../main-window/lib/api'
 import type { Toast } from './useInit'
@@ -58,6 +59,21 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
 
   const [totalDurationMs, setTotalDurationMs] = useState(0)
   const [totalCalls, setTotalCalls] = useState(0)
+  /**
+   * 本轮执行元数据（耗时 / token / 步数）——**三处接入点共用的唯一数据源**。
+   *
+   * 事件语义：
+   *   execution_started     → 重置为 { startedAtMs }（后端权威起点，刷新不丢）
+   *   token_usage           → 累加本轮 input/output/cache（main/exec 源之和）
+   *   execution_progress    → 更新 iterations / toolCalls（ReAct 循环步）
+   *   execution_completed   → 整体替换为后端权威 meta（含 durationMs）
+   *
+   * 前端**不持有起点 ref**：`startedAtMs` 是后端绝对时间戳，刷新后 `Date.now() -
+   * startedAtMs` 仍指向真实起点——根治「刷新后耗时归零」。
+   */
+  const [turnMeta, setTurnMeta] = useState<TurnMeta | null>(null)
+  /** 执行中实时工具调用累计（timeline 尚无对应条目时给 ctx 弹窗兜底） */
+  const [liveTurnToolCalls, setLiveTurnToolCalls] = useState(0)
   const [contextLimit, setContextLimit] = useState<number>(0)
   /** ExecAgent 执行生命周期快照（task 面板唯一数据源，见 agent/task_run.rs） */
   const [taskRuns, setTaskRuns] = useState<TaskRun[]>([])
@@ -293,6 +309,10 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
     setTotalDurationMs,
     totalCalls,
     setTotalCalls,
+    turnMeta,
+    setTurnMeta,
+    liveTurnToolCalls,
+    setLiveTurnToolCalls,
     contextLimit,
     setContextLimit,
 

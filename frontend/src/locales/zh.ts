@@ -206,6 +206,15 @@ const zh: Record<string, string> = {
   'input.ctx.ttft': '首字',
   'input.ctx.speed': '速度',
 
+  // ── 一轮执行元数据条（耗时 / 上下文增量 / 步数）──
+  // 消息底部 / ctx 弹窗 / 移动端共用同一组件与词条，禁止各处另写字面量
+  'turn.duration': '耗时',
+  // 本轮上下文增量（轮末占用 − 轮初占用，后端权威，两个值都取自 API usage）。
+  // 不是「累计消耗」——同一段上下文在同轮多次调用里被反复计入，累加和会膨胀到
+  // 11.2M 这种没有信息量的数字（缺陷实证），那项已从界面移除。
+  'turn.ctxDelta': '上下文',
+  'turn.steps': '步数',
+
   // ── 外部 Agent 运行时态面板（handoff）──
   'extAgents.title': '外部 Agent',
   'extAgents.titleHint': '外部 Agent 运行时态（handoff 门铃事件实时同步）',

@@ -43,6 +43,13 @@ export interface ExecutionStateOptions {
    * 判成新回合）。存在流式目标即视为「执行正在建立」，忽略这一轮 idle。
    */
   hasStreamingTarget?: () => boolean
+  /**
+   * 轮询读到后端本轮快照时回调（起点 + 步数，皆为后端权威值）。
+   * 用途：刷新 / 重连后事件通道已错过 `execution_started` / `tool_call_start`，本地拿不到
+   * 起点与步数；轮询通道补上，前端即恢复推算与显示，**无需任何前端自算或兜底**。
+   * 由调用方决定合并策略（只在缺省时补，不覆盖事件已写入的同一值）。
+   */
+  onTurnSnapshot?: (snapshot: { startedAtMs: number | null; toolCalls: number }) => void
 }
 
 export interface ExecutionState {
@@ -71,6 +78,10 @@ export function useExecutionState(options: ExecutionStateOptions = {}): Executio
   stageRef.current = stage
   const hasStreamingTargetRef = useRef(options.hasStreamingTarget)
   hasStreamingTargetRef.current = options.hasStreamingTarget
+  // 快照回调走 ref：refresh 是 useCallback 稳定引用（轮询依赖它），
+  // 若直接捕获 options 闭包，调用方每次渲染传新函数就会让 refresh 失效重建。
+  const onTurnSnapshotRef = useRef(options.onTurnSnapshot)
+  onTurnSnapshotRef.current = options.onTurnSnapshot
 
   const setStage = useCallback((next: ExecutionStage) => {
     stageRef.current = next
@@ -83,6 +94,12 @@ export function useExecutionState(options: ExecutionStateOptions = {}): Executio
       // 无回执（IPC 未就绪 / 后端不可达）：保持当前态，不按 idle 处理——
       // 把「读不到」当「空闲」会误清正在进行的执行态。
       if (!snapshot || typeof snapshot.stage !== 'string') return stageRef.current
+      // 本轮快照（起点 + 步数，皆后端权威）。无论阶段是否变化都上报——
+      // 刷新后首次轮询拿到它们、而阶段可能本就一致，漏报就补不回来。
+      onTurnSnapshotRef.current?.({
+        startedAtMs: snapshot.started_at_ms ?? null,
+        toolCalls: snapshot.tool_calls ?? 0,
+      })
       const next = normalizeExecutionStage(snapshot.stage)
       // 空窗保护：后端尚未进入主循环（空闲）但本端已有流式目标 → 保持本地态，
       // 让后端下轮轮询再收敛；否则刚发出的执行会被误判为空闲。

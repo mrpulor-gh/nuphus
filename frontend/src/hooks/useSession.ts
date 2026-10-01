@@ -13,6 +13,7 @@ import type {
   PlanTask,
   TaskRun,
   WorkflowRunStep,
+  TurnMeta,
 } from '../core/types'
 import type { MoodState } from '../ui/MoodFace'
 import {
@@ -25,6 +26,7 @@ import {
   newChatSessionCmd,
   type HistoryMessage,
 } from '../main-window/lib/api'
+import { applyTurnSnapshot } from '../core/types'
 import { useExecutionState } from './useExecutionState'
 import type { ExecutionStage } from './useExecutionState'
 import { foldHistoryAssistants, toTimelineEntry } from './useInit'
@@ -183,6 +185,10 @@ export interface SessionAPI {
   execTokenUsage: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
   totalDurationMs: number
   totalCalls: number
+  /** 本轮元数据（耗时 / token / 步数）——三处接入点共用的唯一数据源 */
+  turnMeta: import('../core/types').TurnMeta | null
+  /** 执行中实时工具调用累计（ctx 弹窗步数兜底） */
+  liveTurnToolCalls: number
   contextLimit: number
   apiHealth: import('../core/types').ApiHealthState
 
@@ -234,6 +240,9 @@ export interface SessionAPI {
   >
   setTotalDurationMs: (v: number) => void
   setTotalCalls: (v: number) => void
+  /** 本轮元数据（耗时 / token / 步数）——useEvents 消费 started_at_ms / meta */
+  setTurnMeta: React.Dispatch<React.SetStateAction<import('../core/types').TurnMeta | null>>
+  setLiveTurnToolCalls: React.Dispatch<React.SetStateAction<number>>
   executionCounter: number
   setExecutionCounter: React.Dispatch<React.SetStateAction<number>>
 
@@ -305,7 +314,8 @@ export interface SessionAPI {
     lastSentRef: React.MutableRefObject<{ content: string; time: number } | null>
     sendSeqRef: React.MutableRefObject<number>
     messagesRef: React.MutableRefObject<ChatMessage[]>
-    toolCallCountRef: React.MutableRefObject<number>
+    /** 本轮 token 累加基准（同步可读）：token_usage 连续到达时以闭包 prev 累加会漏加 */
+    turnMetaTokensRef: React.MutableRefObject<TurnMeta>
     messagesRestoredRef: React.MutableRefObject<boolean>
     /** 用户已点击强制中断；置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
     interruptedRef: React.MutableRefObject<boolean>
@@ -415,7 +425,9 @@ export function useSession(): SessionAPI {
   const sendSeqRef = useRef(0)
   const messagesRef = useRef<ChatMessage[]>(messages)
   messagesRef.current = messages
-  const toolCallCountRef = useRef(0)
+  // 本轮 token 累加基准（ref 同步可读）：事件连续到达时用闭包 prev 累加会因批处理
+  // 读到同一 prev 而漏加，故以 ref 持有绝对累加值，再分发给 turnMeta 与流式气泡。
+  const turnMetaTokensRef = useRef<TurnMeta>({})
   /** 用户已点击强制中断（interrupt）：置位后迟到的 tool_call 事件不再把 mood 打回执行中 */
   const interruptedRef = useRef(false)
   /** ChatPanel useStickyScroll 的 followReset 回填位：App 层 useEvents 与新轮次 /
@@ -433,7 +445,19 @@ export function useSession(): SessionAPI {
     // 流式目标存在 = 本轮执行正在建立或进行中：此时后端若仍报 idle（受理前的空窗），
     // 不把执行态打回空闲，否则刚发出的回合会被误判为「未执行」。
     hasStreamingTarget: () => streamingMsgId.current !== null,
+    // 后端权威快照（起点 + 步数）：刷新后补回本轮 turnMeta 的这两个字段。
+    // 起点「只在缺省时补」（不覆盖事件值）；步数直接取快照权威值——后端计数器
+    // 本轮内单调递增，快照即实时值（旧实现用 `prev.toolCalls || 快照` 合并，
+    // 把首个非零值冻住，主轮步骤数恒显示 1）。补上后前端即可恢复推算与显示，
+    // 没有任何前端自算或兜底。
+    // 注：setTurnMeta 由下方 execUI 提供，故经 ref 中转，避免在 execUI 定义前引用（TDZ）。
+    onTurnSnapshot: ({ startedAtMs, toolCalls }) => {
+      turnSnapshotFromPollRef.current?.(startedAtMs, toolCalls)
+    },
   })
+  const turnSnapshotFromPollRef = useRef<
+    ((startedAtMs: number | null, toolCalls: number) => void) | null
+  >(null)
   const executionStage = execState.stage
   const isProcessing = execState.running
   const busy = execState.busy
@@ -464,6 +488,19 @@ export function useSession(): SessionAPI {
   })
 
   const execUI = useExecutionUI(showToast)
+  // 轮询快照回填（见上方 onTurnSnapshot 注释）：起点与步数皆后端权威，
+  // 合并规则集中在 applyTurnSnapshot（步数不得被前值 `||` 短路冻住）。
+  turnSnapshotFromPollRef.current = (startedAtMs, toolCalls) => {
+    // 提炼是内部执行（REFINE_PROMPT，禁工具）：它的 resume 会占用后端执行轮
+    // （Idle→Running 重置起点与步数），但 RefineStreamFilter 只放行 LlmTextDelta，
+    // 前端收不到 execution_started → turnMeta 不重置。此时若把提炼轮的快照写进来，
+    // 上一用户轮的步数会被清掉且再也回不来（提炼结束回到 Idle，快照是 null/0，
+    // 被下面的守卫挡掉）→ 提炼后步数永久显示 0。故提炼进行中整份跳过。
+    if (execUI.refining) return
+    if (startedAtMs == null && toolCalls === 0) return
+    // 合并规则（含「步数不得被前值短路冻住」的钉子）见 applyTurnSnapshot。
+    execUI.setTurnMeta(prev => applyTurnSnapshot(prev, { startedAtMs, toolCalls }))
+  }
 
   // 重试时移除失败回合的错误气泡（assistant 含「LLM请求失败」/ system 以「错误」开头）
   const removeRetryErrorBubble = useCallback(() => {
@@ -776,6 +813,9 @@ export function useSession(): SessionAPI {
           ...(h.traceItems && h.traceItems.length > 0
             ? { traceItems: h.traceItems.map(toTimelineEntry) }
             : {}),
+          // 本轮元数据（耗时 / token / 步数）：后端 HistoryMessage.meta 直接映射到气泡，
+          // 历史消息重新打开时消息底部 <TurnMetaBar> 据此渲染。旧历史缺省 → 不渲染。
+          ...(h.meta ? { meta: h.meta } : {}),
         })),
       )
       messagesRestoredRef.current = true
@@ -1134,6 +1174,8 @@ export function useSession(): SessionAPI {
     execTokenUsage: execUI.execTokenUsage,
     totalDurationMs: execUI.totalDurationMs,
     totalCalls: execUI.totalCalls,
+    turnMeta: execUI.turnMeta,
+    liveTurnToolCalls: execUI.liveTurnToolCalls,
     contextLimit: execUI.contextLimit,
 
     // Setters (for useEvents)
@@ -1155,6 +1197,8 @@ export function useSession(): SessionAPI {
     setExecTokenUsage: execUI.setExecTokenUsage,
     setTotalDurationMs: execUI.setTotalDurationMs,
     setTotalCalls: execUI.setTotalCalls,
+    setTurnMeta: execUI.setTurnMeta,
+    setLiveTurnToolCalls: execUI.setLiveTurnToolCalls,
     executionCounter,
     setExecutionCounter,
 
@@ -1201,7 +1245,7 @@ export function useSession(): SessionAPI {
       lastSentRef,
       sendSeqRef,
       messagesRef,
-      toolCallCountRef,
+      turnMetaTokensRef,
       messagesRestoredRef,
       interruptedRef,
       stickyFollowResetRef,

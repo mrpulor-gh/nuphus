@@ -25,18 +25,25 @@ interface ReferenceBarProps {
 
 const ICON_SIZE = 14
 
-function RefIcon({ type }: { type: ChatReference['type'] }) {
+/** 引用类型 → 图标。导出供消息区渲染历史引用（与引用栏视觉同源）。 */
+export function RefIcon({
+  type,
+  size = ICON_SIZE,
+}: {
+  type: ChatReference['type']
+  size?: number
+}) {
   switch (type) {
     case 'capture':
-      return <IconCamera size={ICON_SIZE} />
+      return <IconCamera size={size} />
     case 'skill':
-      return <IconWrench size={ICON_SIZE} />
+      return <IconWrench size={size} />
     case 'knowledge':
-      return <IconBrain size={ICON_SIZE} />
+      return <IconBrain size={size} />
     case 'workflow':
-      return <IconWorkflow size={ICON_SIZE} />
+      return <IconWorkflow size={size} />
     case 'quote':
-      return <IconQuote size={ICON_SIZE} />
+      return <IconQuote size={size} />
   }
 }
 

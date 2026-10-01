@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '../locales'
 import { invoke } from '../core/bridge'
-import { IconCopy, IconFolder } from './Icons'
+import { IconCopy, IconFolder, IconQuote } from './Icons'
 import '../styles/context-menu.css'
 
 /**
@@ -24,6 +24,8 @@ export default function AppContextMenu() {
     y: number
     text: string
     filePath?: string
+    /** 本次右键命中的是「选区」而非整块：仅此时提供「引用这段」（quote 语义 = 引用所选） */
+    quotable?: boolean
   } | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -50,7 +52,7 @@ export default function AppContextMenu() {
         return
       }
 
-      // 1) 有选区 → 复制选中文字
+      // 1) 有选区 → 复制选中文字 / 引用这段
       const sel = window.getSelection()
       const selectionText = sel && sel.toString().trim() ? sel.toString() : ''
       // 2) 无选区 → 复制命中的最近可复制块全文
@@ -69,12 +71,12 @@ export default function AppContextMenu() {
       const text = selectionText || blockText
       if (!text) return // 无可复制内容：右键无动作（原生已拦截）
 
-      // 边界防溢出（菜单约 180×84）
+      // 边界防溢出（菜单约 180×112：多一项「引用这段」）
       const menuW = 180
-      const menuH = 84
+      const menuH = selectionText ? 112 : 84
       const x = Math.min(e.clientX, window.innerWidth - menuW - 8)
       const y = Math.min(e.clientY, window.innerHeight - menuH - 8)
-      setMenu({ x: Math.max(4, x), y: Math.max(4, y), text })
+      setMenu({ x: Math.max(4, x), y: Math.max(4, y), text, quotable: !!selectionText })
     }
     const onDown = (e: MouseEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.('.ctx-menu')) return
@@ -121,6 +123,21 @@ export default function AppContextMenu() {
     close()
   }
 
+  /**
+   * 选中文本加入引用栏（ChatReference 通道，与拖选浮条同链路）。
+   *
+   * 与「问问 Nuphus」的区别：那是把文本塞进输入框（可编辑的纯文本），
+   * 这是把文本变成结构化引用 chip —— 发送时经 resolve_references 注入 prompt，
+   * 模型能明确知道「在针对这段追问」，且多条引用可并存、可去重。
+   */
+  const doQuote = () => {
+    if (!menu) return
+    window.dispatchEvent(
+      new CustomEvent('nuphus:add-quote-reference', { detail: { text: menu.text } }),
+    )
+    close()
+  }
+
   const doReveal = () => {
     if (!menu?.filePath) return
     void invoke('reveal_path', { path: menu.filePath })
@@ -141,6 +158,13 @@ export default function AppContextMenu() {
         {menu.filePath && <IconCopy size={13} />}
         {copied ? t('common.copied') : menu.filePath ? t('common.copyPath') : t('common.copy')}
       </button>
+      {/* 仅选中文字时提供：quote 语义 = 引用所选那段，整块右键不适用 */}
+      {menu.quotable && !menu.filePath && (
+        <button type="button" className="ctx-menu-item" onClick={doQuote}>
+          <IconQuote size={13} />
+          {t('chat.quoteSelection')}
+        </button>
+      )}
       <div className="ctx-menu-divider" />
       {menu.filePath ? (
         <>
