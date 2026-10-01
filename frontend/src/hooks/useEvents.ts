@@ -479,7 +479,10 @@ export function useEvents(h: EventHandlers) {
             addSystemMsg('模型已切换，上下文提示已按新的上下文窗口重新计算。')
           }
           h.setModelName(event.model)
-          if (event.session_id) h.setSessionId(event.session_id)
+          // ⚠️ SessionInfo.session_id 是**每轮随机生成的事件关联 id**（后端
+          // uuid::new_v4()），不是会话 id——会话 id 的唯一权威来源是
+          // execution_started.session_id（见该 case 的写入）。曾经在此处
+          // 消费它导致点评等消费关联到假会话（2026-10 纠正，勿再加回）。
           break
         }
         case 'understanding_complete':
@@ -549,6 +552,11 @@ export function useEvents(h: EventHandlers) {
             event.session_id && event.turn_id
               ? { session_id: event.session_id, turn_id: event.turn_id }
               : null
+          // 真实会话 id 的唯一权威来源：execution_started.session_id（后端
+          // rt.session().id）——点评提交（useAgentControl submitExecutionRating）
+          // 等消费方据此关联后端会话记录。SessionInfo.session_id 是每轮随机
+          // 事件关联 id、**不是会话 id**（曾误消费，点评关联到假会话，2026-10 纠）。
+          if (event.session_id) h.setSessionId(event.session_id)
           progressIdsRef.current.clear()
           // Refine mode: set execution state but don't create a message bubble
           // Keep refineState intact — the modal should stay open until SessionRefined
@@ -1329,7 +1337,28 @@ export function useEvents(h: EventHandlers) {
                   : m,
               ),
             )
+          } else {
+            // H2 兜底：95s 超时 guard 已删过流式气泡（refineMsgIdRef 清空）——
+            // 但后端提炼可能还在跑（本地端点预算 max(配置,900s)+60s，远大于 95s），
+            // SessionRefined 到达时**补一条**已完成摘要气泡。不猜时间阈值：
+            // 「后台成功、前台无感」比任何 guard 数字之争都更该消除。
+            h.setMessages((prev: ChatMessage[]) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'refine' as const,
+                content: event.summary,
+                timestamp: Date.now(),
+                messageCount: event.message_count,
+                sessionId: event.session_id,
+                refineStatus: 'completed' as const,
+              },
+            ])
           }
+          // 提炼后会话已压缩：主指示器的旧快照（提炼前用量）作废，置 null 走
+          // 「--」未知态——下一轮 TokenUsage 官方读数到达前不显示过期百分比
+          // （与换会话时的处置一致，避免「已提炼仍显示 75%」）。
+          h.setMainTokenUsage(null)
           break
         case 'refine_failed': {
           // 提炼失败（LLM key 失效/连不上/超时/空摘要）：与 refine_executing 配对的

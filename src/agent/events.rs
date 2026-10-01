@@ -238,6 +238,10 @@ pub enum NuphusEvent {
 
     /// Session lifecycle
     SessionInfo {
+        /// ⚠️ **每轮随机生成的事件关联 id，不是会话 id**（后端 `uuid::new_v4()`）。
+        /// 会话 id 的唯一权威来源是 `ExecutionStarted.session_id`（真实
+        /// `session().id`）。2026-10 纠错：前端曾消费本字段写入会话 id，
+        /// 导致点评等消费关联到假会话。此字段不得用于会话身份判断。
         session_id: String,
         model: String,
         timestamp: u64,

@@ -71,6 +71,9 @@ interface ChatInputBarProps {
   executionStage: ExecutionStage
   pauseState: { actionId: string } | null
   refineState: RefineState | null
+  /** 提炼执行中（small 档 forced 路径会以占位 refineState + refining=true 出现——
+   *  占位符必须据此区分「待确认」与「提炼中」，不能见 refineState 就提示处理） */
+  refining?: boolean
   /** token 用量 */
   tokenUsage: TokenUsageInfo | null
   mainTokenUsage: TokenUsageInfo | null
@@ -160,6 +163,7 @@ export function ChatInputBar({
   executionStage,
   pauseState,
   refineState,
+  refining,
   tokenUsage,
   mainTokenUsage,
   execTokenUsage,
@@ -738,7 +742,7 @@ export function ChatInputBar({
     ? 'WORKFLOW 需要打开全部安全权限，请点击右上角控制面板 → 权限与安全 → 勾选全部权限'
     : mode === 'workflow'
       ? '描述你需要的工作流...'
-      : refineState
+      : refineState && !refining
         ? t('input.placeholder.refine')
         : hints[hintIndex] || ''
 

@@ -767,6 +767,12 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
     case 'session_info':
       // 当前执行模型（桌面端下发），手机端「模型设置」只读展示
       if (!ev.model) return state
+      // 模型真切换 → 待确认的 refine 提示作废（与桌面 useEvents session_info
+      // 同源，D2 修复）：usagePercent/档位/阈值全按旧窗口算的，留着会让用户
+      // 拿过期数据做决定。refining（执行锁）不动——正在提炼不该被切换打断。
+      if (ev.model !== state.model) {
+        return { ...state, model: ev.model, pendingRefine: null }
+      }
       return { ...state, model: ev.model }
 
     case 'token_usage': {

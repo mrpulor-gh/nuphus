@@ -20,7 +20,9 @@ import { initialApiHealthState } from '../main-window/chat/ApiHealthBadge'
  * 提炼提示的状态。
  *
  * `tier` 来自后端 `RefinePrompt` 事件，是**当前模型上下文窗口的分档**：
- *  - `small`  (cw ≤ 256K)  无提示阶段，到达 75% 直接提炼——不该出现这个状态
+ *  - `small`  (cw ≤ 256K)  无提示阶段，到达 75% 直接提炼（forced 路径会用
+ *    `usagePercent: 0` 占位设置本状态以承载 tier/阈值——UI 不渲染询问体，
+ *    输入框占位符只认 `refining`，勿据此推断「不该出现」）
  *  - `medium` (≤ 600K)     50% 提示 / 80% 强制，两条线均固定 → 不给 slider
  *  - `large`  (> 600K)     30% 提示 / 强制线可调 → **只有这档给 slider**
  *

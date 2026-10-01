@@ -641,6 +641,9 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [refineSelected, setRefineSelected] = useState(0) // 0=refine, 1=skip
   const [showRefineConfirm, setShowRefineConfirm] = useState(false)
+  /** 强制线滑杆的后端拒绝反馈（越界 Err）；渲染在滑杆下方而非静默吞掉——
+   *  「看得见失败」是该控件的契约。开合弹窗/执行提炼时清空。 */
+  const [forceError, setForceError] = useState<string | null>(null)
   /* ── 外观浮窗 ──
      开关 state 放本组件内：面板常驻保活（打开/关闭不卸载内容），未保存调整跨开合存活。
      唯一的外部入口是 Ctrl+K 命令面板 —— 它经 App 层把 useModals.showThemes 置 true，
@@ -1784,7 +1787,10 @@ export function ChatPanel({
             <div className="refine-pending-area">
               <button
                 className="refine-pending-btn"
-                onClick={() => setShowRefineConfirm(true)}
+                onClick={() => {
+                  setShowRefineConfirm(true)
+                  setForceError(null)
+                }}
                 title={`${t('refine.pendingBtn')} (${pendingRefine.usagePercent}%)`}
               >
                 <IconChartColumn size={14} />
@@ -1827,9 +1833,13 @@ export function ChatPanel({
                           onChange={e => {
                             const next = Number(e.target.value) / 100
                             setForceDraft?.(next)
-                            setRefineForceThreshold(next).catch(() => {})
+                            setRefineForceThreshold(next).catch((err: unknown) => {
+                              const msg = err instanceof Error ? err.message : String(err)
+                              setForceError(`强制线设置失败：${msg}`)
+                            })
                           }}
                         />
+                        {forceError && <div className="refine-force-warn">{forceError}</div>}
                         {refineForceMinPct(pendingRefine) >
                           Math.round(pendingRefine.forceMin * 100) && (
                           <div className="refine-force-warn">
@@ -2324,12 +2334,17 @@ export function ChatPanel({
                           aria-label={t('refine.forceLabel')}
                           onChange={e => {
                             const next = Number(e.target.value) / 100
-                            // 先落草稿保证拖动即时可见；后端拒绝时保留草稿不静默回退
-                            // （用户看得见自己拖到哪，也看得见提示失败）
+                            // 先落草稿保证拖动即时可见；后端越界会拒绝（范围外
+                            // Err 不 clamp），失败渲染在滑杆下方——「看得见失败」
+                            // 是此控件的契约（S2：曾静默 catch 无任何反馈）。
                             setForceDraft?.(next)
-                            setRefineForceThreshold(next).catch(() => {})
+                            setRefineForceThreshold(next).catch((err: unknown) => {
+                              const msg = err instanceof Error ? err.message : String(err)
+                              setForceError(`强制线设置失败：${msg}`)
+                            })
                           }}
                         />
+                        {forceError && <div className="refine-force-warn">{forceError}</div>}
                         {/* 下限被当前用量顶高时说明原因：不是不给调，是这个值以下
                             等于"下一轮立刻提炼"。硬限制好过事后警告。 */}
                         {refineForceMinPct(refineState) >
@@ -2534,6 +2549,7 @@ export function ChatPanel({
           executionStage={executionStage}
           pauseState={pauseState ?? null}
           refineState={refineState ?? null}
+          refining={refining}
           tokenUsage={tokenUsage || null}
           mainTokenUsage={mainTokenUsage || null}
           execTokenUsage={execTokenUsage || null}

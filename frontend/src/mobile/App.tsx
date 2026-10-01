@@ -203,6 +203,54 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4000)
   }, [])
 
+  /** 模型名 toast 镜像（ref，无 stale）：session_info 的模型变化只提示一次 */
+  const modelNameToastRef = useRef<string | null>(null)
+
+  /**
+   * 触发一次会话提炼（POST /refine）——**手动确认与 forced 自动执行的唯一路径**。
+   *
+   * 2026-10 修复（D1）：mobile 曾只在用户手动确认时触发；forced（small 75% /
+   * medium 80% / large 强制线越线）路径只置 refining=true 而无任何触发 → 手机
+   * 端越线后提炼永不执行、常驻假「提炼中」。本函数让两条路同源，与桌面
+   * useEvents.ts forced 路径语义逐条对齐：
+   *  - ref 锁防并发重入（同帧双击 / 双端同触）
+   *  - 「提炼进行中」防重拒绝不置 refining=false（等事件权威收敛）
+   *  - 「收尾」拒绝有界重试（主流程收尾未释放 busy，毫秒~秒级窗口，5×400ms）
+   *  - 其余失败释放 UI 锁 + toast 透出后端原因
+   */
+  const triggerForcedRefine = useCallback(() => {
+    if (refineTriggerLockRef.current) return
+    refineTriggerLockRef.current = true
+    dispatch({ type: 'refine_resolve' })
+    dispatch({ type: 'refine_state', refining: true })
+    const RETRY_DELAY_MS = 400
+    const RETRY_MAX = 5
+    const attempt = (n: number) => {
+      triggerRefine(token ?? '')
+        .then(() => {
+          refineTriggerLockRef.current = false
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          // 后端防重拒绝（提炼进行中）：另一端/本端第一发已在提炼——保持
+          // refining 锁，等 RefineExecuting / SessionRefined 收敛，只放触发锁。
+          if (msg.includes('提炼进行中')) {
+            refineTriggerLockRef.current = false
+            return
+          }
+          // 主流程收尾尚未结束（busy 未释放）：稍候重试（与桌面同参数）
+          if (n < RETRY_MAX && msg.includes('收尾')) {
+            window.setTimeout(() => attempt(n + 1), RETRY_DELAY_MS)
+            return
+          }
+          refineTriggerLockRef.current = false
+          dispatch({ type: 'refine_state', refining: false })
+          showToast(msg || '提炼失败')
+        })
+    }
+    attempt(0)
+  }, [token, dispatch, showToast])
+
   /**
    * 手动「切换到本地网络」：中继页(https) 应用内切 http 局域网被 Mixed Content 拦（iOS），
    * 唯一本地直连形态 = 整页跳转 http://<IP>:18772?token=（top-level 导航不受 mixed content 限制）。
@@ -647,6 +695,25 @@ export default function App() {
           if (event.type === 'execution_started') {
             ensureNotificationPermission()
           }
+          // forced 提炼：small 75% / medium 80% / large 越线——后端已决定提炼，
+          // 前端必须真正触发 POST /refine（D1 修复前只置 refining 卡假进度）。
+          // 与 onRefineConfirm 共用同一条路径（锁 / 防重豁免 / 收尾重试 / 失败反馈）。
+          if (event.type === 'refine_prompt' && event.forced) {
+            triggerForcedRefine()
+          }
+          // 模型真切换（桌面遥控或本机切换）：待确认的 refine 提示按旧窗口算的，
+          // 已由 store session_info case 作废；此处只做一次用户可见反馈
+          // （ref 镜像避免 effect 闭包 stale 与每轮重复提示）。
+          if (
+            event.type === 'session_info' &&
+            event.model &&
+            event.model !== modelNameToastRef.current
+          ) {
+            if (modelNameToastRef.current !== null) {
+              showToast('模型已切换，上下文提示已按新的上下文窗口重新计算。')
+            }
+            modelNameToastRef.current = event.model
+          }
           // 会话镜像跟随：桌面 rail（或本机遥控）切换了当前会话 → 重拉历史呈现
           if (event.type === 'session_changed') {
             void loadHistory(token ?? '')
@@ -707,6 +774,7 @@ export default function App() {
     resolveLanUrl,
     switchToLan,
     withinSwitchCooldown,
+    triggerForcedRefine,
   ])
 
   // ── LAN 断连自动回退中继：局域网直连模式下 WS 离线（离开 WiFi）持续一段时间
@@ -1194,29 +1262,9 @@ export default function App() {
             showToast(approved ? t('mobile.allowedContinue') : t('mobile.deniedIntercepted'))
           }}
           onRefineConfirm={() => {
-            // in-flight 锁：提炼请求已发出/提炼执行中不重复触发（双击 / 另一端
-            // 已开始 refine 时，弹窗虽被 refining 隐藏但请求仍可能被重复 POST）
-            if (refineTriggerLockRef.current) return
-            refineTriggerLockRef.current = true
-            dispatch({ type: 'refine_resolve' })
-            dispatch({ type: 'refine_state', refining: true })
-            // 触发后端提炼（/refine）；成功/失败经 WS 事件（session_refined / 错误）恢复状态
-            triggerRefine(token ?? '')
-              .catch((err: unknown) => {
-                const msg = err instanceof Error ? err.message : String(err ?? '')
-                // 后端防重拒绝（提炼进行中）说明另一端/本端第一发已在提炼：
-                // 不置 refining=false（否则会破坏真实提炼的 UI 锁，弹窗/入口
-                // 提前重新可触发），等 RefineExecuting/session_refined 事件权威收敛。
-                if (msg.includes('提炼进行中')) return
-                // 其余拒绝（网络/后端不可用；或后端 busy 抢占失败「当前轮次仍在收尾」）：
-                // 释放锁避免 UI 永久锁死，并透出后端原因——「请稍候再试」比笼统的
-                // 「提炼失败」可操作（与 App.tsx:506 透出 res.error 的既有风格一致）。
-                dispatch({ type: 'refine_state', refining: false })
-                showToast(msg || t('mobile.refineFailed'))
-              })
-              .finally(() => {
-                refineTriggerLockRef.current = false
-              })
+            // 手动确认与 forced 自动执行同一条路径（D1 修复）：锁 / 防重豁免 /
+            // 收尾重试 / 失败反馈全部内聚在 triggerForcedRefine
+            triggerForcedRefine()
           }}
           onRefineSkip={() => {
             dispatch({ type: 'refine_resolve' })

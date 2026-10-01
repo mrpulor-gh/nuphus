@@ -95,7 +95,7 @@ pub enum RefineTier {
     Small,
     /// 256K < cw ≤ 600K：50% 提示，80% 强制提炼（两条线均固定）。
     Medium,
-    /// cw > 600K：30% 提示，强制线可调（默认 80%，范围 50%–80%）。
+    /// cw > 600K：30% 提示，强制线可调（默认 50% = 范围下限，范围 50%–80%）。
     Large,
 }
 
@@ -174,10 +174,6 @@ pub async fn maybe_refine_session(
     let tier = RefineTier::for_window(context_window);
     let force_ratio = tier.force_ratio(large_force_threshold);
     let force_limit = ((context_window as f64) * force_ratio) as usize;
-    // "未被用户调节时"的强制线：用于区分触发是水位自己涨上来的，还是用户刚把线
-    // 拖到了当前水位以下。只有 large 档有这个概念，其余档两者恒等。
-    let baseline_ratio = tier.force_ratio(LARGE_FORCE_DEFAULT);
-    let force_limit_at_configured = ((context_window as f64) * baseline_ratio) as usize;
 
     // 无提示档：到达强制线才动作，且直接执行（不问用户）。
     let Some(prompt_ratio) = tier.prompt_ratio() else {
@@ -217,22 +213,11 @@ pub async fn maybe_refine_session(
 
     // 已越过强制线：不再询问，直接执行。
     //
-    // 两种到达方式，日志必须分开——它们对用户是不同的事件：
-    // ① 正常水位推进到强制线（预期行为）；
-    // ② 用户在提示弹窗里把强制线调到了**当前水位以下**（例如已 70%、拖到 50%），
-    //    下一轮收尾就会立刻强制提炼。这不是故障，但会让用户觉得"我刚设完就触发了"，
-    //    所以单独记一条，便于事后区分"是自己拖出来的"还是"水位自己涨上来的"。
+    // 曾想区分「水位自己涨上来的」与「用户把线拖到当前水位以下」两种触发并
+    // 分开记日志，但后端不持有「用户上次设置值」的状态，该区分条件恒假
+    // （force_limit 已被 clamp 到 >= 默认线）——2026-10 删除该死分支，
+    // 统一记 warn，「为什么触达」由前后端事件链本身可解释。
     if actual_tokens >= force_limit {
-        if actual_tokens >= force_limit && actual_tokens < force_limit_at_configured {
-            tracing::info!(
-                "[REFINE] tier={} cw={} tokens={} 已超过用户下调后的强制线（configured={} → now={}）— 由用户调节触发",
-                tier.as_str(),
-                context_window,
-                actual_tokens,
-                force_limit_at_configured,
-                force_limit
-            );
-        }
         tracing::warn!(
             "[REFINE] tier={} cw={} tokens={} >= force_limit={} ({:.0}%) — forced refine",
             tier.as_str(),

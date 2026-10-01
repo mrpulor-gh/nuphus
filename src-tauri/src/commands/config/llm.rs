@@ -675,6 +675,21 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         resolved_base_url
     );
 
+    // Install the exact provider+model client before mutating persisted/runtime state.
+    // Failure leaves the old binding intact and emits no success event.
+    let agent_key = mode
+        .as_deref()
+        .filter(|m| AgentModels::AGENTS.contains(m))
+        .unwrap_or("leader");
+    // 切换前上下文窗口校验（零副作用：只读 runtime/session 锁，不写任何状态）。
+    // 必须早于**一切**副作用——base_url 写盘 / 换 client / save_agent_model /
+    // record / activate / 广播：拒绝切换时任何持久状态都不得被改写，「拒绝失败」
+    // 变成半吊子切换是契约破坏（H1：校验曾晚于 base_url 持久化，2026-10 修）。
+    // 只对 leader 校验：main 会话在 leader 槽，workflow/exec 会话在别槽。
+    if agent_key == "leader" {
+        ensure_switch_within_context_window(&state, &resolved_provider, &resolved_model)?;
+    }
+
     // 持久化用户显式改过的接口地址：switch_model 此前只把地址写进运行时内存，
     // 磁盘 providers.toml 仍保留旧值 → 重启后「改了地址又回退」的根因。空/未传
     // = 交回 resolve_effective_base_url 已解析的已存地址，无需写盘。
@@ -695,19 +710,7 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     // (from_single → transport) picks it up.
     let reasoning_effort = read_provider_reasoning_effort_from_config_toml(&resolved_provider);
 
-    // Install the exact provider+model client before mutating persisted/runtime state.
-    // Failure leaves the old binding intact and emits no success event.
-    let agent_key = mode
-        .as_deref()
-        .filter(|m| AgentModels::AGENTS.contains(m))
-        .unwrap_or("leader");
-    if agent_key == "leader" {
-        // 切换前上下文窗口校验（零副作用：只读 runtime/session 锁，不写任何状态）。
-        // 必须早于下方换 client / 落盘 / 广播——否则拒绝切换时配置已被改写，
-        // 「拒绝失败」变成半吊子切换。只对 leader 校验：main 会话在 leader 槽，
-        // workflow/exec 会话在别槽，本轮不纳入。
-        ensure_switch_within_context_window(&state, &resolved_provider, &resolved_model)?;
-
+    {
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         if let Some(agent) = guard.leader_agent.as_mut() {
             agent
