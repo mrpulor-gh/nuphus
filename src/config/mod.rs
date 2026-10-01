@@ -266,14 +266,20 @@ pub fn resolve_vision_strategy() -> VisionStrategy {
         return VisionStrategy::Capability(cap_vision.clone());
     }
 
-    // 主模型直接支持多模态
-    let main_supports_vision = resolve_capability(
-        &registry,
-        registry.last_model_provider_hint().as_deref(),
-        &registry.model,
-        |m| m.supports_vision,
-        false,
-    );
+    // 主模型直接支持多模态——绑定取权威成对解析（resolve_main_binding），
+    // 不查 [last_model] 影子表（二元组化 P2-a）
+    let main_supports_vision = registry
+        .resolve_main_binding()
+        .map(|(provider, model)| {
+            resolve_capability(
+                &registry,
+                Some(provider.as_str()),
+                &model,
+                |m| m.supports_vision,
+                false,
+            )
+        })
+        .unwrap_or(false);
     if main_supports_vision {
         return VisionStrategy::Main;
     }

@@ -39,13 +39,14 @@ pub fn resolve_cloud_config() -> Option<CloudSttConfig> {
         return None;
     }
     // `stt_provider` 非空 → 按 provider 精确解析（同名模型跨段时命中选定段）；
-    // 为空（旧配置）→ 回落按 model id 解析，保持旧行为兼容。
+    // 为空 → None：二元组化 P2-a 起废除「按 model id 盲查兜底」——段序首段
+    // 命中是猜，同 id 跨 custom-xxx 段时会把别段的语音模型当成答案。旧配置
+    // 缺 provider 时由上层回落本地引擎/提示重新绑定，不静默错路由。
     let provider_name = registry.capabilities.stt_provider.trim();
-    let (provider, model) = if provider_name.is_empty() {
-        registry.find_model(model_id)?
-    } else {
-        registry.find_model_for_provider(provider_name, model_id)?
-    };
+    if provider_name.is_empty() {
+        return None;
+    }
+    let (provider, model) = registry.find_model_for_provider(provider_name, model_id)?;
     if provider.base_url.trim().is_empty() {
         return None;
     }

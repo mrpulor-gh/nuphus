@@ -816,6 +816,7 @@ mod tests {
             cost_per_million_in: None,
             cost_per_million_out: None,
             source: ModelSource::Auto,
+            context_window_source: None,
         }
     }
 

@@ -100,6 +100,12 @@ pub fn update_model_context_window(
                                             "context_window".to_string(),
                                             toml::Value::Integer(context_window as i64),
                                         );
+                                        // 来源戳：user = 手动校准，此后 sync/校准
+                                        // 链路不得覆盖（apply_capabilities 屏蔽）
+                                        map.insert(
+                                            CONTEXT_WINDOW_SOURCE_KEY.to_string(),
+                                            toml::Value::String("user".to_string()),
+                                        );
                                         nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
                                         let new_content =
                                             toml::to_string_pretty(&doc).map_err(|e| {
@@ -336,6 +342,11 @@ pub const VISION_SOURCE_KEY: &str = "supports_vision_source";
 /// `supports_image_generation` 的来源标记键：值 `user` = 用户手动设定，
 /// 探测链路不得覆盖（与 VISION_SOURCE_KEY 同一契约）。
 pub const IMAGE_GENERATION_SOURCE_KEY: &str = "supports_image_generation_source";
+
+/// `context_window` 的来源标记键：值 `user` = 用户手动校准
+/// （`set_model_context_window`），同步/校准链路不得覆盖（二元组化 P2-b，
+/// 与 VISION_SOURCE_KEY 同一契约——手填 intent 高于权威聚合值）。
+pub const CONTEXT_WINDOW_SOURCE_KEY: &str = "context_window_source";
 
 /// 读取模型条目里的来源标记（仅认 `user`；其它/缺失 = 非用户设定）。
 pub fn read_model_vision_source(
@@ -832,8 +843,16 @@ fn apply_capabilities(
             changed |= set_bool(entry, "supports_image_generation", v);
         }
     }
-    if let Some(v) = cap.context_window {
-        changed |= set_int(entry, "context_window", v as i64);
+    if let Some(window) = cap.context_window {
+        // 来源戳屏蔽（与 vision/image_generation 同契约）：用户手填的窗口
+        // 不被权威同步覆盖——miss 就保持手填值。
+        if entry
+            .get(CONTEXT_WINDOW_SOURCE_KEY)
+            .and_then(|v| v.as_str())
+            != Some("user")
+        {
+            changed |= set_int(entry, "context_window", window as i64);
+        }
     }
     if let Some(efforts) = cap.reasoning_efforts {
         let value = toml::Value::Array(

@@ -72,6 +72,12 @@ pub struct ModelEntry {
     /// written before this field existed deserializing as `auto`.
     #[serde(default)]
     pub source: ModelSource,
+    /// 窗口来源戳：`"user"` = 用户手动校准（`set_model_context_window`），
+    /// `"auto"`/None = 权威同步或校准补值。`"user"` 屏蔽 sync 覆写——手填
+    /// 窗口是用户意图，不该被官方 /models 聚合值顶掉（对齐
+    /// `supports_vision_source` 既有契约，见 toml_ops apply_capabilities）。
+    #[serde(default)]
+    pub context_window_source: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -590,6 +596,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -623,6 +630,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -656,6 +664,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -689,6 +698,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -721,6 +731,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -754,6 +765,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -934,19 +946,19 @@ impl ModelRegistry {
     /// (root cause of cross-provider cross-routing). Capability probes go
     /// through here instead.
     ///
-    /// Rules (mirroring [`Self::resolve_context_window`]):
+    /// Rules:
     /// 1. `provider` given and that provider publishes `model_id` → that exact
     ///    entry. Callers holding a routing binding (agent `provider` field,
     ///    `run.provider`, `capabilities.*_provider`) must pass it.
-    /// 2. Otherwise every same-id candidate is scanned in segment order and the
-    ///    first one for which `predicate` holds is returned — a candidate that
-    ///    lacks the capability never masks a sibling that has it.
-    /// 3. No candidate satisfies `predicate` → `None`.
+    /// 2. **The former candidate scan is gone** (二元组化 P2-a, twin of
+    ///    `resolve_context_window`): no binding or a valueless segment hit →
+    ///    `None`. A sibling same-id entry under another custom-xxx segment
+    ///    must never supply the capability.
     ///
-    /// `None` means "could not resolve": unknown model id, or no candidate
-    /// carries the capability. Callers must keep the two apart from "model
-    /// exists but is unverified" by giving unknown models a known fallback
-    /// before calling (see `config::resolve_capability`).
+    /// `None` means "could not resolve": unknown model id, or the bound
+    /// provider does not publish it. Callers must keep the two apart from
+    /// "model exists but is unverified" by giving unknown models a known
+    /// fallback before calling (see `config::resolve_capability`).
     pub fn resolve_capability<F>(
         &self,
         provider: Option<&str>,
@@ -956,29 +968,9 @@ impl ModelRegistry {
     where
         F: Fn(&ModelEntry) -> bool,
     {
-        if let Some(provider) = provider.filter(|p| !p.is_empty()) {
-            if let Some((_, model)) = self.find_model_for_provider(provider, model_id) {
-                return predicate(model).then_some(model);
-            }
-        }
-        self.find_model_candidates(model_id)
-            .into_iter()
-            .map(|(_, model)| model)
-            .find(|model| predicate(model))
-    }
-
-    /// Provider hint for the registry's own main model (`self.model`).
-    ///
-    /// The main model binding is written by `switch_model` into `[last_model]`
-    /// (`model id → provider name`); reading it back gives the capability
-    /// probes a provider context so a same-named main model resolves to the
-    /// segment the user actually bound. Returns `None` when no binding is
-    /// recorded (or the record no longer resolves) — callers then fall back to
-    /// the candidate scan of [`Self::resolve_capability`].
-    pub fn last_model_provider_hint(&self) -> Option<String> {
-        let path = self.source_path.as_deref()?;
-        crate::config::load_last_model_provider(path, &self.model)
-            .filter(|p| self.find_model_for_provider(p, &self.model).is_some())
+        let provider = provider.filter(|p| !p.is_empty())?;
+        let (_, model) = self.find_model_for_provider(provider, model_id)?;
+        predicate(model).then_some(model)
     }
 
     /// List all available models
@@ -1038,6 +1030,7 @@ impl ModelRegistry {
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort,
                 extra_headers: BTreeMap::new(),
@@ -1067,9 +1060,9 @@ impl ModelRegistry {
     /// truncated long thinking streams for reasoning models (see transport).
     ///
     /// Provider-aware (`resolve_capability` semantics): with a known binding the
-    /// provider-exact entry wins, otherwise the first same-id candidate carrying
-    /// a value is used — a candidate without `max_tokens` never masks a sibling
-    /// that declares it. See [`Self::resolve_capability`].
+    /// provider-exact entry wins; no binding (or a valueless segment hit) →
+    /// `None` — 二元组化 P2-a 起 sibling 候选扫描已删，`max_tokens` 与
+    /// context window 同等只认段限定。See [`Self::resolve_capability`].
     pub fn get_max_output_tokens(&self, provider: Option<&str>, model_id: &str) -> Option<u32> {
         self.resolve_capability(provider, model_id, |m| m.max_tokens.is_some())
             .and_then(|m| m.max_tokens)
@@ -1464,6 +1457,7 @@ id = "m1"
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -1596,6 +1590,7 @@ vision_provider = "custom"
                     cost_per_million_in: None,
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
+                    context_window_source: None,
                 })
                 .collect(),
             reasoning_effort: None,
@@ -1629,6 +1624,7 @@ vision_provider = "custom"
                 cost_per_million_in: None,
                 cost_per_million_out: None,
                 source: ModelSource::Auto,
+                context_window_source: None,
             })
             .collect();
         provider
@@ -1795,6 +1791,7 @@ vision_provider = "custom"
                 cost_per_million_in: None,
                 cost_per_million_out: None,
                 source: ModelSource::Auto,
+                context_window_source: None,
             })
             .collect();
         provider
@@ -1823,15 +1820,15 @@ vision_provider = "custom"
         assert!(registry
             .resolve_capability(Some("custom"), "m", |e| e.supports_vision)
             .is_some());
-        // No hint → candidate scan finds the vision-declaring sibling (the old
-        // first-segment-order lookup returned deepseek and missed it).
+        // No hint → None（二元组化 P2-a）：旧「扫候选取有值 sibling」规则已删——
+        // sibling 的能力/取值跨段泄漏即错路由，缺绑定一律显式 unknown。
         assert!(registry
             .resolve_capability(None, "m", |e| e.supports_vision)
-            .is_some());
-        // Empty provider == no hint.
+            .is_none());
+        // Empty provider == no hint → None（同上，不猜）。
         assert!(registry
             .resolve_capability(Some(""), "m", |e| e.supports_vision)
-            .is_some());
+            .is_none());
     }
 
     /// No candidate (or no candidate) declares the capability → None.
@@ -1878,8 +1875,10 @@ vision_provider = "custom"
         // Exact binding on a segment without a value → None (does not borrow the
         // sibling's value).
         assert_eq!(registry.get_max_output_tokens(Some("deepseek"), "m"), None);
-        // No hint → scan finds the declaring sibling.
-        assert_eq!(registry.get_max_output_tokens(None, "m"), Some(65_536));
+        // No hint → None（二元组化 P2-a）：段限定 only，sibling 的 65_536 不得
+        // 跨段泄漏成 deepseek 段的输出上限。
+        assert_eq!(registry.get_max_output_tokens(None, "m"), None);
+        assert_eq!(registry.get_max_output_tokens(Some(""), "m"), None);
     }
 
     /// Capability provider fields round-trip; legacy configs omitting them

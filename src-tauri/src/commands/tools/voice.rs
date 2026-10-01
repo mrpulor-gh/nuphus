@@ -30,12 +30,14 @@ fn resolve_voice_config() -> Option<VoiceConfig> {
     if model_id.is_empty() {
         return None;
     }
+    // voice_provider 非空 → 按 provider 精确解析（同名模型跨段时命中选定段）；
+    // 为空 → None：二元组化 P2-a 起废除「按 model id 盲查兜底」——段序首段
+    // 命中是猜，同 id 跨 custom-xxx 段时会把别段的克隆模型当成答案。
     let provider_name = registry.capabilities.voice_provider.trim();
-    let (provider, model) = if provider_name.is_empty() {
-        registry.find_model(model_id)?
-    } else {
-        registry.find_model_for_provider(provider_name, model_id)?
-    };
+    if provider_name.is_empty() {
+        return None;
+    }
+    let (provider, model) = registry.find_model_for_provider(provider_name, model_id)?;
     if provider.base_url.trim().is_empty() || provider.api_key.trim().is_empty() {
         return None;
     }

@@ -1281,12 +1281,19 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 .as_ref()
                 .map(|r| r.model.clone())
                 .unwrap_or_default();
+            // provider 取权威成对绑定（resolve_main_binding），不查 [last_model]
+            // 影子表（二元组化 P2-a）——与 runtime build 的 vision 判定同源。
+            let main_provider = registry
+                .as_ref()
+                .and_then(|r| r.resolve_main_binding().ok())
+                .map(|(provider, _)| provider)
+                .unwrap_or_default();
             let main_supports_vision = registry
                 .as_ref()
                 .map(|r| {
                     nuphus::config::resolve_capability(
                         r,
-                        r.last_model_provider_hint().as_deref(),
+                        Some(main_provider.as_str()),
                         &main_model,
                         |m| m.supports_vision,
                         false,
