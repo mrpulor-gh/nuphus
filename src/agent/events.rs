@@ -287,6 +287,14 @@ pub enum NuphusEvent {
         /// Refine tier for the current model's context window ("small"/"medium"/"large").
         /// Frontend uses it to decide UI shape: only "large" gets the adjustable slider.
         tier: String,
+        /// 当前档生效的强制线比例（small/medium 定值，large = 用户配置 clamp 后）。
+        /// 滑块 slider 的当前值**只认此字段**——历史缺陷：字段缺失时前端
+        /// fallback 硬编码 0.8，弹窗显示 80% 而非默认 50%（2026-10 修复）。
+        force_threshold: f64,
+        /// 可调范围（仅 large 档有意义；其余档一并下发，UI 按 tier 决定形态）。
+        /// 权威 = `distill::LARGE_FORCE_MIN/MAX`，前端不得自持一份。
+        force_min: f64,
+        force_max: f64,
         /// true = forced refine (backend decided, frontend should auto-execute)
         forced: bool,
     },
@@ -460,6 +468,37 @@ mod tests {
             NuphusEvent::DirectResponse { message } => assert_eq!(message, "你好！"),
             _ => panic!("wrong variant"),
         }
+    }
+
+    /// RefinePrompt 必须携带 force_threshold/force_min/force_max 三字段。
+    ///
+    /// 2026-10 缺陷实录：这三个字段在 Rust 事件定义里漏了，前端
+    /// `useEvents.ts` 读不到只能 fallback 硬编码 0.8 —— large 档弹窗的滑块
+    /// **恒显 80%**，后端 LARGE_FORCE_DEFAULT（50%）从未到达 UI。本钉直接
+    /// 断言「字段存在且值穿透」，缺失即编译/测试双失败。
+    #[test]
+    fn test_refine_prompt_carries_force_band() {
+        let json = serde_json::to_value(NuphusEvent::RefinePrompt {
+            current_tokens: 307_200,
+            refine_limit: 300_000,
+            force_limit: 500_000,
+            threshold: 0.30,
+            context_window: 1_000_000,
+            tier: "large".to_string(),
+            force_threshold: 0.50,
+            force_min: 0.50,
+            force_max: 0.80,
+            forced: false,
+        })
+        .unwrap();
+        assert_eq!(json["type"], "refine_prompt");
+        assert_eq!(json["tier"], "large");
+        assert_eq!(
+            json["force_threshold"], 0.50,
+            "滑块当前值：large 档默认 = LARGE_FORCE_DEFAULT"
+        );
+        assert_eq!(json["force_min"], 0.50);
+        assert_eq!(json["force_max"], 0.80);
     }
 
     #[test]

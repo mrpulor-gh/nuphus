@@ -199,6 +199,9 @@ pub async fn maybe_refine_session(
                 threshold: force_ratio,
                 context_window: context_window as u32,
                 tier: tier.as_str().to_string(),
+                force_threshold: force_ratio,
+                force_min: LARGE_FORCE_MIN,
+                force_max: LARGE_FORCE_MAX,
                 forced: true,
             });
         }
@@ -246,6 +249,9 @@ pub async fn maybe_refine_session(
                 threshold: prompt_ratio,
                 context_window: context_window as u32,
                 tier: tier.as_str().to_string(),
+                force_threshold: force_ratio,
+                force_min: LARGE_FORCE_MIN,
+                force_max: LARGE_FORCE_MAX,
                 forced: true,
             });
         }
@@ -270,6 +276,9 @@ pub async fn maybe_refine_session(
             threshold: prompt_ratio,
             context_window: context_window as u32,
             tier: tier.as_str().to_string(),
+            force_threshold: force_ratio,
+            force_min: LARGE_FORCE_MIN,
+            force_max: LARGE_FORCE_MAX,
             forced: false,
         });
     }

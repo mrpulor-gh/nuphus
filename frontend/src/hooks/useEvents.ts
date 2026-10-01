@@ -1143,8 +1143,11 @@ export function useEvents(h: EventHandlers) {
           // 分档与强制线由后端下发：档位决定 UI 形态（仅 large 给 slider），
           // 阈值范围以后端 LARGE_FORCE_MIN/MAX 为唯一权威，前端不硬编码。
           const tier = (event.tier || 'medium') as RefineTier
+          // force_threshold 由后端下发（2026-10 修复：此前后端未发该字段，
+          // fallback 0.8 导致弹窗恒显 80%）；0.5 = 后端 LARGE_FORCE_DEFAULT，
+          // 仅旧后端（无 tier/force_* 字段的远古版本）兼容路径。
           const forceThreshold =
-            typeof event.force_threshold === 'number' ? event.force_threshold : 0.8
+            typeof event.force_threshold === 'number' ? event.force_threshold : 0.5
           const forceMin = typeof event.force_min === 'number' ? event.force_min : 0.5
           const forceMax = typeof event.force_max === 'number' ? event.force_max : 0.8
 
