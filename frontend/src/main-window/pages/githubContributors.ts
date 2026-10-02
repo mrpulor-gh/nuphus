@@ -23,9 +23,10 @@
  * 确认该区间 ahead=27 / behind=0，并用 `/pulls?state=closed` 核对三个 PR 的 merged_at
  * 与作者（#87 01:49 与 #88 10:48 均 yuansui486，#84 10:53 为 zhoupeiyu515-ui），
  * 三者均能在 git log 找到 `Merge PR #NN` 合并提交。两位作者均已在既有轮次出现，
- * 非新提交者，故头像墙无需新增。0.2.24 发版时把 version 改为 `0.2.24`、date 填实际日期。
- * #91 同轮追加：2026-09-29 16:09 经 `/issues/91/events` 确认 merged，作者 Steooenwolf-666
- * 已在 0.2.23 轮次出现（非新提交者），出处为 `Merge PR #91`（fb52f668）。
+ * 非新提交者，故头像墙无需新增。该组随 v0.2.24 发行（tag 日期 2026-09-30，
+ * 与 CHANGELOG `## [0.2.24] - 2026-09-30` 一致）；#91 同轮追加：2026-09-29 16:09
+ * 经 `/issues/91/events` 确认 merged，作者 Steooenwolf-666 已在 0.2.23 轮次出现
+ * （非新提交者），出处为 `Merge PR #91`（fb52f668）。
  *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
@@ -74,8 +75,8 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
-    version: 'Unreleased',
-    date: null,
+    version: '0.2.24',
+    date: '2026-09-30',
     contributors: [
       {
         user: 'yuansui486',

@@ -499,6 +499,21 @@ export function useSession(): SessionAPI {
     if (startedAtMs == null && toolCalls === 0) return
     // 合并规则（含「步数不得被前值短路冻住」的钉子）见 applyTurnSnapshot。
     execUI.setTurnMeta(prev => applyTurnSnapshot(prev, { startedAtMs, toolCalls }))
+    // ── 同源同步到流式气泡的 msg.meta ──
+    // 气泡底部 `.message-actions` 的 TurnMetaBar 读 `msg.meta.toolCalls`，不是
+    // turnMeta。执行中的实时通道原本只有 useEvents 的 execution_progress
+    // （syncDraftMeta），而**主轮 react_loop 不发该事件**（仅 sub_task_loop /
+    // workflow_agent 发）→ 普通会话执行中气泡步数恒空，直到 execution_completed
+    // 才落定（实测症状：步数「执行时不在、完成后才出现」）。轮询快照（本回调，
+    // 1500ms）是主轮唯一的实时通道，故在此同值补写一个字段。
+    // 幂等：与 execution_progress 路径写同一字段同来源值（SignalState 权威累加），
+    // 后到覆盖先到不产生分叉；完成后由 completedMeta 以后端最终值收口。
+    const draftId = streamingMsgId.current
+    if (draftId && toolCalls > 0) {
+      setMessages(prev =>
+        prev.map(m => (m.id === draftId ? { ...m, meta: { ...(m.meta ?? {}), toolCalls } } : m)),
+      )
+    }
   }
 
   // 重试时移除失败回合的错误气泡（assistant 含「LLM请求失败」/ system 以「错误」开头）
