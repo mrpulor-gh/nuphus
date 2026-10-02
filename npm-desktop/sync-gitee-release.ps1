@@ -263,8 +263,20 @@ if (-not $DryRun) {
 if (-not $DryRun) {
     $hasTag = git rev-parse -q --verify "refs/tags/$Tag" 2>$null
     if ($LASTEXITCODE -eq 0) {
+        # git 把「Everything up-to-date」等信息消息写在 stderr；PS 5.1 在全局
+        # $ErrorActionPreference='Stop' 下会把 native command 的 stderr 行当
+        # NativeCommandError 抛死整条流水线（2>&1 合并流也不免疫）。
+        # 同 publish.ps1 的 npm 段修法：仅本次调用把 EAP 降为 Continue，
+        # stderr 作为数据被捕获，成功判定不变。
         Write-Step "push tag $Tag to gitee"
-        git push gitee "refs/tags/$Tag" 2>&1 | ForEach-Object { Write-Ok $_ }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $pushOut = & git push gitee "refs/tags/$Tag" 2>&1
+            foreach ($line in $pushOut) { Write-Ok $line }
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
     } else {
         Write-WarnMsg "local tag $Tag missing - Gitee release creation may fail without it"
     }
@@ -426,9 +438,22 @@ git -C $RepoRoot add -- $RepoManifest
 if ((git -C $RepoRoot status --porcelain -- $RepoManifest) -eq '') {
     Write-Ok 'latest.json unchanged - nothing to commit'
 } else {
-    git -C $RepoRoot commit -m "chore(release): 刷新 latest.json 至 $Ver（Gitee 国内入口）" 2>&1 | ForEach-Object { Write-Ok $_ }
-    git -C $RepoRoot push origin main 2>&1 | ForEach-Object { Write-Ok $_ }
-    git -C $RepoRoot push gitee main 2>&1 | ForEach-Object { Write-Ok $_ }
+    # native git 的信息消息（Everything up-to-date / remote: Bypassed… / push 统计）
+    # 走 stderr，在全局 EAP='Stop' 下会被当 NativeCommandError 抛死（v0.2.25 实测连炸两处：
+    # push 已成功，报错却在成功后的信息行上）。同前修法：仅这段降 EAP 到 Continue，
+    # 输出进日志，退出码判定不变——真失败（exit≠0）照旧 throw。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        git -C $RepoRoot commit -m "chore(release): 刷新 latest.json 至 $Ver（Gitee 国内入口）" 2>&1 | ForEach-Object { Write-Ok $_ }
+        if ($LASTEXITCODE -ne 0) { throw "latest.json commit failed (exit $LASTEXITCODE)" }
+        git -C $RepoRoot push origin main 2>&1 | ForEach-Object { Write-Ok $_ }
+        if ($LASTEXITCODE -ne 0) { throw "push origin main failed (exit $LASTEXITCODE)" }
+        git -C $RepoRoot push gitee main 2>&1 | ForEach-Object { Write-Ok $_ }
+        if ($LASTEXITCODE -ne 0) { throw "push gitee main failed (exit $LASTEXITCODE)" }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     Write-Ok "domestic manifest: $GiteeManifestUrl"
 }
 
