@@ -210,6 +210,8 @@ function Get-Asset($p, $version) {
     $lastErr = ''
     foreach ($s in $sources) {
         # 一律先落 .tmp：校验不过或中途失败即删除，截断/污染文件不得留在缓存里被 -SkipDownload 复用
+        # ⚠️ IWR 大文件坑（PS 5.1，>40MB 会停滞或 .tmp 循环删档，见 git-pr-protocol SKILL §7.7）：
+        # 本段若停滞，用 npm-desktop/fetch-release-asset.ps1 预下载 + digest 对账，再 -SkipDownload 续跑本脚本。
         $tmp = "$localFile.tmp"
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         Write-Step "Downloading $assetName <- $($s.Uri)"
