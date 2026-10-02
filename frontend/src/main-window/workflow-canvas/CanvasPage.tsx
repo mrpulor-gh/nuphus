@@ -207,8 +207,8 @@ function CanvasInner({
   const { t, lang } = useLanguage()
   const ui = (zh: string, en: string) => (lang === 'zh' ? zh : en)
   const rf = useReactFlow()
-  // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流 / 录制）──
-  // 画布已打开也不豁免：Agent 跑任务期间运行/录制入口必须锁住（本 wf 自身运行由
+  // ── 全局执行闸门（大王铁律：任意执行态禁止启动工作流）──
+  // 画布已打开也不豁免：Agent 跑任务期间运行入口必须锁住（本 wf 自身运行由
   // snapshot.running 只读锁覆盖，闸门轮询感知其它 agent/workflow 的执行态）。
   const gate = useWorkflowGate()
   const gateLocked = gate.locked
@@ -363,7 +363,7 @@ function CanvasInner({
   }, [edgeInsert])
 
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** 新节点闪光高亮（连线插入 / 录制入画布）；复用既有 wfc-flash CSS（0.6s × 2） */
+  /** 新节点闪光高亮（连线插入 / 新步骤入画布）；复用既有 wfc-flash CSS（0.6s × 2） */
   const flashStep = useCallback((id: string) => {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
     setFlashId(id)
@@ -1480,7 +1480,7 @@ function CanvasInner({
         setInspectorOpen(true)
         setToolFocusId(kind === 'tool' ? step.id : null)
         focusStepFlow(step.id)
-        flashStep(step.id) // D1/D7：普通添加后闪光高亮，与连线插入/录制入画布一致
+        flashStep(step.id) // D1/D7：普通添加后闪光高亮，与连线插入/新增节点一致
       }
     },
     [layer, readOnly, selectedId, applyEdit, rf, focusStepFlow, flashStep, lang, t],

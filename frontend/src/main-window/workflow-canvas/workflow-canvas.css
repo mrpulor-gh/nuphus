@@ -1759,7 +1759,7 @@ textarea.wfc-input {
 .wfc-confirm-mask {
   position: fixed;
   inset: 0;
-  /* 高于录制浮层/面板（rec-* z 9500~9600）：草稿面板内「清空草稿」等 askConfirm 必须可点 */
+  /* 高于画布浮层/面板（如意向表单 wfc-intent-mask z 9600）：草稿面板内「清空草稿」等 askConfirm 必须可点 */
   z-index: 9700;
   display: flex;
   align-items: center;

@@ -393,7 +393,7 @@ export function forceReset() {
 // ── 后端资源互斥门（见 nuphus::automation_gate）──
 
 /**
- * 稳定错误码：桌面自动化 / 浏览器控制 / 录制 / 主执行体互斥被拒。
+ * 稳定错误码：桌面自动化 / 浏览器控制 / 主执行体互斥被拒。
  * 后端 `LeaseBusy` 的 Display 固定为 `automation_busy: <人话>`（Tauri 的 Err 只有
  * 字符串通道，码前缀是前端识别的唯一锚点，前后端契约不可改名）。
  */
@@ -405,7 +405,7 @@ function errorText(err: unknown): string {
   return String(err ?? '')
 }
 
-/** 该错误是否来自资源互斥门（执行体/录制占用中） */
+/** 该错误是否来自资源互斥门（执行体占用中） */
 export function isAutomationBusy(err: unknown): boolean {
   return errorText(err).startsWith(AUTOMATION_BUSY)
 }

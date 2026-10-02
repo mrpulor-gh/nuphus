@@ -1,4 +1,4 @@
-//! automation_gate — 后端**资源级互斥门**（桌面自动化 / 浏览器控制 / 屏幕录制 / 主执行体）
+//! automation_gate — 后端**资源级互斥门**（桌面自动化 / 浏览器控制 / 主执行体）
 //!
 //! ## 为什么需要它
 //!
@@ -10,7 +10,7 @@
 //!   会让「Agent 的自动化步骤」与「用户手动操作」互相污染。
 //!
 //! 光靠执行态（`SignalState::execution_stage`）不够：它只覆盖「主轮次」，
-//! 而工具页手动调用、录制会话、插件独立运行时都不经过主轮次（B3/B4 路径）。
+//! 而工具页手动调用、插件独立运行时都不经过主轮次（B3/B4 路径）。
 //!
 //! ## 语义（大王铁律：无并行机制、禁止并行、系统操作更禁止并行）
 //!
@@ -19,10 +19,10 @@
 //! - **非阻塞**：拿不到立即返回 [`LeaseBusy`]（稳定码 [`CODE_BUSY`]），
 //!   **不排队、不等待、不降级** —— 禁止用重试 / sleep 掩盖竞态。
 //! - **RAII**：租约 drop 即释放（含 panic 展开路径），异常路径不泄漏。
-//! - **同所有者可重入**：`owner` 相同的再次获取直接通过（录制会话里的
-//!   `rec_browser_*` 子操作就是同一所有者的内部步骤）；不同 owner 一律拒绝。
+//! - **同所有者可重入**：`owner` 相同的再次获取直接通过（执行体内的嵌套工具调用
+//!   就是同一所有者的内部步骤）；不同 owner 一律拒绝。
 //! - **与执行态协同**：Agent 轮次（Running / Finalizing）整轮持锁，期间手动工具
-//!   请求被拒；反过来录制会话 / 定时任务等执行体持锁时新轮次也被拒。
+//!   请求被拒；反过来执行体持锁时新轮次也被拒。
 //!   **本门不拦截「追加消息（终止 / 停止）」通道** —— 那条通道必须永远可用。
 //!
 //! ## 实例与注入
@@ -44,8 +44,6 @@ pub enum ResourceClass {
     Desktop,
     /// 浏览器控制：进程级 CDP 单例（chromiumoxide）
     Browser,
-    /// 屏幕录制：低层 hook 捕获真实桌面事件（录制会话）
-    Recording,
     /// 主执行体：Agent 轮次 / 工作流运行 / 插件独立运行时 —— 期间上述资源全部不可用
     ExecutionBody,
 }
@@ -55,7 +53,6 @@ impl ResourceClass {
         match self {
             Self::Desktop => "desktop",
             Self::Browser => "browser",
-            Self::Recording => "recording",
             Self::ExecutionBody => "execution_body",
         }
     }
@@ -65,7 +62,6 @@ impl ResourceClass {
         match self {
             Self::Desktop => "桌面自动化",
             Self::Browser => "浏览器控制",
-            Self::Recording => "屏幕录制",
             Self::ExecutionBody => "任务执行",
         }
     }
@@ -78,8 +74,6 @@ pub enum HoldKind {
     ExecutionBody,
     /// 手动工具单次调用（工具页 / 独立桌面命令）
     ManualTool,
-    /// 录制会话及其子操作
-    Recording,
 }
 
 impl HoldKind {
@@ -87,7 +81,6 @@ impl HoldKind {
         match self {
             Self::ExecutionBody => "execution_body",
             Self::ManualTool => "manual_tool",
-            Self::Recording => "recording",
         }
     }
 
@@ -95,7 +88,6 @@ impl HoldKind {
         match self {
             Self::ExecutionBody => "任务执行",
             Self::ManualTool => "手动工具操作",
-            Self::Recording => "录制会话",
         }
     }
 }
@@ -201,7 +193,7 @@ impl AutomationGate {
         let mut slot = self.lock();
         if let Some(current) = slot.as_ref() {
             if current.owner == owner {
-                // 同一所有者的内部子操作（如录制会话内的 rec_browser_*）
+                // 同一所有者的内部步骤（如执行体内的嵌套工具调用）
                 return Ok(AutomationLease {
                     gate: None,
                     token: 0,
@@ -346,9 +338,6 @@ pub fn tool_resource_class(tool_name: &str) -> Option<ResourceClass> {
     }
 }
 
-/// 录制会话固定 owner 键：同一会话内的子操作（`rec_browser_*`）借此重入。
-pub const OWNER_RECORDING: &str = "recording-session";
-
 /// 手动工具操作 owner 键：工具页每次调用独立（同一次并发双击也各自成 owner → 互斥）。
 pub const OWNER_MANUAL_TOOL: &str = "manual-tool";
 
@@ -476,25 +465,22 @@ mod tests {
             .is_ok());
     }
 
-    /// ③ 重入语义：同一 owner（录制会话）在持锁期间可重复获取；不同 owner 一律拒绝。
+    /// ③ 重入语义：同一 owner（执行体）在持锁期间可重复获取；不同 owner 一律拒绝。
     #[test]
     fn same_owner_reenters_other_owner_rejected() {
         let gate = Arc::new(AutomationGate::new());
+        let owner = "execution-body:agent-round";
         let session = gate
-            .try_acquire(
-                ResourceClass::Recording,
-                HoldKind::Recording,
-                OWNER_RECORDING,
-            )
+            .try_acquire(ResourceClass::ExecutionBody, HoldKind::ExecutionBody, owner)
             .expect("空闲时应获取成功");
 
-        // 录制会话内的子操作（rec_browser_* 触碰浏览器单例）：同 owner → 重入
+        // 同一执行体内的嵌套工具调用（触碰浏览器单例）：同 owner → 重入
         let sub = gate
-            .try_acquire(ResourceClass::Browser, HoldKind::Recording, OWNER_RECORDING)
+            .try_acquire(ResourceClass::Browser, HoldKind::ExecutionBody, owner)
             .expect("同一所有者应可重入");
         assert!(sub.is_reentrant(), "重入租约不占槽位");
 
-        // 手动工具 / 轮次是不同 owner → 拒绝
+        // 手动工具 / 新轮次是不同 owner → 拒绝
         assert!(
             gate.try_acquire(
                 ResourceClass::Browser,
@@ -502,7 +488,7 @@ mod tests {
                 OWNER_MANUAL_TOOL
             )
             .is_err(),
-            "录制中手动操作浏览器必须被拒"
+            "持锁期间手动操作浏览器必须被拒"
         );
         assert!(
             gate.try_acquire(
@@ -511,13 +497,13 @@ mod tests {
                 execution_body_owner("agent-round")
             )
             .is_err(),
-            "录制中不得开出新轮次（旧执行体仍在跑 = 双跑）"
+            "执行体持锁期间不得开出新轮次（旧执行体仍在跑 = 双跑）"
         );
 
-        drop(sub); // 重入租约 drop 不得释放会话槽位
+        drop(sub); // 重入租约 drop 不得释放持有者的槽位
         assert!(!gate.is_free(), "重入租约 drop 不能释放持有者的槽位");
         drop(session);
-        assert!(gate.is_free(), "会话结束（含子操作）后释放");
+        assert!(gate.is_free(), "执行体结束（含子操作）后释放");
     }
 
     /// ④ 与执行态协同 + append 通道不被门拦截。

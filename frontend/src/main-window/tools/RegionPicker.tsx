@@ -28,7 +28,7 @@ interface RegionPickerProps {
   bgImagePath?: string
   /**
    * 外部（父组件）失败文案：如保存截图被后端资源门拒绝
-   * （`automation_busy` = 任务执行中 / 录制中，桌面自动化暂不可用）。
+   * （`automation_busy` = 任务执行中，桌面自动化暂不可用）。
    */
   errorMessage?: string
 }
@@ -119,7 +119,7 @@ export function RegionPicker({
         }
       } catch (e) {
         console.error('RegionPicker: screenshot failed', e)
-        // 后端资源门拒绝（automation_busy：任务执行中 / 录制中）等错误必须让用户看见，
+        // 后端资源门拒绝（automation_busy：任务执行中）等错误必须让用户看见，
         // 否则只会停在空白选区界面，用户以为工具坏了。
         if (!cancelled) {
           setLoadError(backendErrorMessage(e))

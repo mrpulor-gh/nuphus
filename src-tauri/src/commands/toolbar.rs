@@ -294,9 +294,9 @@ pub async fn overlay_magnifier_region(x: i32, y: i32, size: u32) -> Result<Strin
 /// * mode = "screenshot" (default) / "ocr" / "picker": crop from PRE_SCREENSHOT 冻结帧
 ///   （全部模式统一走冻结帧裁剪：产物必须与用户眼里那张图一致）
 /// * mode = "ocr" / "picker": crop directly from PRE_SCREENSHOT (clean, no overlay mask interference)
-/// * mode = "rec_region" / "rec_template": crop directly from PRE_SCREENSHOT（录制铁律：ROI 证据与
-///   find_image 模板一律走预截图裁剪，禁止 live capture——透明竞态根因），PNG 保存到当前录制会话
-///   screenshots 目录（rec.rs 会话 state 注入），返回结构不变。
+/// * mode = "rec_region" / "rec_template": crop directly from PRE_SCREENSHOT（ROI 证据与
+///   find_image 模板一律走预截图裁剪，禁止 live capture——透明竞态根因），PNG 保存到全局
+///   截图目录（与 "capture" 模式同源），返回结构不变。
 /// Overlay is closed by overlay_capture_done (confirm) or overlay_capture_cancel (cancel).
 #[tauri::command]
 pub async fn overlay_capture_confirm(
@@ -309,8 +309,8 @@ pub async fn overlay_capture_confirm(
 ) -> Result<serde_json::Value, String> {
     use base64::Engine;
 
-    // 录制框选（ROI 证据 / find_image 模板）：仅保存目录/文件名前缀按 mode 区分，
-    // 其余行为与其它模式完全一致（都走同一份冻结帧裁剪）。
+    // ROI 证据 / find_image 模板框选：仅文件名前缀按 mode 区分，
+    // 其余行为与其它模式完全一致（同一份冻结帧裁剪 + 同一全局截图目录）。
     let rec_prefix = match mode.as_deref() {
         Some("rec_region") => Some("rec_region"),
         Some("rec_template") => Some("rec_template"),
@@ -346,18 +346,13 @@ pub async fn overlay_capture_confirm(
             .ok_or_else(|| "创建裁剪图像失败".to_string())?,
     );
 
-    // Save as PNG —— 录制模式保存到当前录制会话截图目录（会话未初始化则报错）
-    let (save_dir, file_prefix) = if let Some(prefix) = rec_prefix {
-        (
-            crate::commands::rec::rec_active_screenshots_dir()?,
-            prefix.to_string(),
-        )
-    } else {
-        (
-            nuphus::desktop::captures_dir_path().map_err(|e| format!("获取截图目录失败: {e}"))?,
-            "capture".to_string(),
-        )
-    };
+    // Save as PNG —— 所有模式统一保存到全局截图目录（NUPHUS_CAPTURES_DIR > temp/nuphus/captures）。
+    // rec_region / rec_template（ROI 证据 / find_image 模板）旧实现借道录制会话截图目录
+    // （随录制链路删除），现义为「带前缀的同目录裁剪产物」，与普通截图同目录同生命周期；
+    // 目录获取/创建失败仍返回明确错误。
+    let file_prefix = rec_prefix.unwrap_or("capture");
+    let save_dir =
+        nuphus::desktop::captures_dir_path().map_err(|e| format!("获取截图目录失败: {e}"))?;
     std::fs::create_dir_all(&save_dir).map_err(|e| format!("创建截图目录失败: {e}"))?;
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
     let save_path = save_dir.join(format!("{file_prefix}_{ts}.png"));

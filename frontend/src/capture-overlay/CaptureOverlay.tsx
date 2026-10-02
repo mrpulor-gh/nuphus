@@ -35,14 +35,16 @@ export function CaptureOverlay() {
   const SHOW_PREVIEW = overlayMode === 'screenshot'
   const IS_COLOR_PICKER = overlayMode === 'color_picker'
   const IS_MOUSE_POS = overlayMode === 'mouse_pos'
+  // mode 字符串是前后端裁剪协议（Rust overlay_capture_confirm 按此前缀命名保存产物），
+  // 属截图模式协议、不改名：二者现义为「ROI 证据 / find_image 模板」截图框选，与录制链路无关。
   const IS_REC_REGION = overlayMode === 'rec_region'
   const IS_REC_TEMPLATE = overlayMode === 'rec_template'
 
-  // 录制框选模式：走 PRE_SCREENSHOT 裁剪，确认后自动完成（非截图模式），提示语按模式区分
+  // ROI / 模板框选模式：走 PRE_SCREENSHOT 裁剪，确认后自动完成（非截图模式），提示语按模式区分
   const guideText = IS_REC_REGION
-    ? '框选录制区域（ROI 证据）· 放大镜精确定位 · Esc / 右键取消'
+    ? '框选 ROI 证据区域 · 放大镜精确定位 · Esc / 右键取消'
     : IS_REC_TEMPLATE
-      ? '框选 find_image 模板 · 裁剪自动保存到录制截图目录 · Esc / 右键取消'
+      ? '框选 find_image 模板 · 裁剪自动保存到截图目录 · Esc / 右键取消'
       : '拖拽选择截图区域 · 放大镜精确定位 · Esc / 右键取消'
 
   // Listen for mode changes from Rust (when overlay is reshown with different mode)

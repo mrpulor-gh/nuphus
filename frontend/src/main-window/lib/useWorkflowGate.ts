@@ -4,7 +4,7 @@
 // 任意执行态（Agent 跑代码 / workflow 执行中）禁止启动任何工作流、禁止进入画布。
 //
 // 后端权威源 wf_gate_status 合成 active_run + Agent busy：
-//   locked=true 时 UI 应禁用「运行 / 画布 / 录制」入口并提示
+//   locked=true 时 UI 应禁用「运行 / 画布」入口并提示
 //   「当前有任务执行中，暂不可用！」。
 //
 // 轮询 1.5s（同 ChatInputBar 先例，页面挂载期间持续感知执行开始/结束；

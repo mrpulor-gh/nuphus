@@ -429,20 +429,6 @@ fn main() {
             commands::overlay_capture_cancel,
             commands::overlay_pick_color,
             commands::take_capture_result,
-            // -- 工作流录制（rec_*；Windows 低层 hook 捕获 + 会话状态机） --
-            commands::rec_set_workflow,
-            commands::rec_session_status,
-            commands::rec_start,
-            commands::rec_cancel,
-            commands::rec_abort,
-            commands::rec_complete,
-            commands::rec_save_pending,
-            commands::rec_load_pending,
-            commands::rec_discard_pending,
-            // -- 浏览器网页点击录制（rec_browser_*；CDP 注入捕获真实点击） --
-            commands::rec_browser_capture_click_start,
-            commands::rec_browser_capture_click_poll,
-            commands::rec_browser_capture_cancel,
             // -- HUD overlay --
             commands::hud::hud_update,
             commands::hud::hud_hide,
