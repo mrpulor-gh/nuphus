@@ -182,21 +182,21 @@ impl fmt::Display for GoalType {
     }
 }
 
-/// ⚠️ **Provider-blind 入口已随影子轨道废止而删除**（原
-/// `get_context_window(model)` / `try_get_context_window(model)`）：全库零调用，
-/// 且同 id 跨段时 candidate scan 必返回别段的值——那不是兼容，是错路由。
-/// 一律改用 [`get_context_window_for`] / [`try_get_context_window_for`] /
-/// [`get_context_window_of`]（provider 限定）。
+// ⚠️ **Provider-blind 入口已随影子轨道废止而删除**（原
+// `get_context_window(model)` / `try_get_context_window(model)`）：全库零调用，
+// 且同 id 跨段时 candidate scan 必返回别段的值——那不是兼容，是错路由。
+// 一律改用 [`get_context_window_for`] / [`try_get_context_window_for`] /
+// [`get_context_window_of`]（provider 限定）。
 
-/// Context window lookup WITHOUT the 128K guess: explicit config → builtin
-/// metadata → None (unknown). Runtime sizing (refine budget etc.) may still
-/// want the fallback via [`get_context_window_for`]; callers that surface the
-/// value to the UI (startup load / is_llm_configured) must use this variant so an
-/// unknown model (e.g. a new model listed by the provider UI but not yet in
-/// our metadata) shows as 0/“--” instead of a fabricated 128K.
-///
-/// `provider = None`（或空串）= 调用方没有绑定可用：**返回 None，不猜**。
-/// 同 id 跨 custom-xxx 段是多实例常态，候选扫描会把别段窗口当成答案。
+// Context window lookup WITHOUT the 128K guess: explicit config → builtin
+// metadata → None (unknown). Runtime sizing (refine budget etc.) may still
+// want the fallback via [`get_context_window_for`]; callers that surface the
+// value to the UI (startup load / is_llm_configured) must use this variant so an
+// unknown model (e.g. a new model listed by the provider UI but not yet in
+// our metadata) shows as 0/“--” instead of a fabricated 128K.
+//
+// `provider = None`（或空串）= 调用方没有绑定可用：**返回 None，不猜**。
+// 同 id 跨 custom-xxx 段是多实例常态，候选扫描会把别段窗口当成答案。
 
 /// Provider-aware variant of [`get_context_window`].
 ///
