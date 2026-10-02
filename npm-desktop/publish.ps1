@@ -519,7 +519,10 @@ Verify-Install $version
 # 国内用户没有本地下载渠道（Gitee 此前只有 v0.2.0 源码包），而 updater 的
 # endpoint[] 第一顺位就是 Gitee raw 清单：不同步，国内用户会"成功读到旧清单"
 # 而不回落到权威源 —— 那不是报错，是静默收不到更新。所以这是发版必做步骤。
-# 详细机制与踩坑见 plugin/skills/community/git-pr-protocol/SKILL.md §7.6。
+# 详细机制与踩坑（均已实测）：Gitee API v5 只收 form（JSON body 报 tag_name is missing）；
+# 资产下载是 302×2 重定向，校验必须 curl -sL 跟随；中文 body 写临时文件再 -F "body=<file"
+# 避开命令行编码；上传后必须从 Gitee 下载回来再哈希一次，与 GitHub Release API 的 sha256 对账；
+# Gitee 清单里的 signature 与 GitHub 权威版逐字节相同——镜像换的是传输通道，minisign 按内容验签。
 $SyncGitee = Join-Path $PSScriptRoot 'sync-gitee-release.ps1'
 if (Test-Path $SyncGitee) {
     Write-Step 'Sync to Gitee (domestic download point)'

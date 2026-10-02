@@ -1,8 +1,9 @@
 /**
  * GithubPage.tsx — 社区贡献者页（设置中心 · 管理组 + Ctrl+K「GitHub」）
  *
- * 定位：替代原「付费插件市场筹备页」。按**发布轮次**展示本仓库已合并的社区 PR：
- * 贡献者 → 贡献内容 → GitHub 主页（可点击）；说明栏内保留仓库入口。
+ * 定位：替代原「付费插件市场筹备页」。按**发布轮次**展示本仓库的贡献记录：
+ * 社区贡献走 PR 归属，作者直推的重要功能走 commit 出处（无 PR 轮次亦有内容）——
+ * 贡献者 → 贡献内容（可点开 GitHub 核对）→ 主页链接；说明栏内保留仓库入口。
  *
  * 数据：全部来自仓库真实记录，集中于 `./githubContributors`（溯源注释见该文件）；
  * 本文件不内联数据。头像统一为 **GitHub 圆形头像 + 首字母兜底**（页头头像墙 / 轮次卡片同一实现）：
@@ -18,8 +19,8 @@ import {
   CONTRIBUTOR_ROUNDS,
   REPO_URL,
   avatarUrl,
+  contributionRef,
   profileUrl,
-  pullUrl,
 } from './githubContributors'
 import '../../styles/github-contributors.css'
 
@@ -98,7 +99,10 @@ export function GithubPage() {
 
       <div className="github-rounds">
         {CONTRIBUTOR_ROUNDS.map(round => {
-          const prCount = round.contributors.reduce((n, c) => n + c.contributions.length, 0)
+          const contributionCount = round.contributors.reduce(
+            (n, c) => n + c.contributions.length,
+            0,
+          )
           return (
             <section className="github-round" key={round.version}>
               <div className="github-round-head">
@@ -109,7 +113,9 @@ export function GithubPage() {
                 <span className="github-round-meta">
                   {round.date ?? t('github.roundInProgress')}
                 </span>
-                <span className="github-round-meta">{t('github.prCount', String(prCount))}</span>
+                <span className="github-round-meta">
+                  {t('github.contributionCount', String(contributionCount))}
+                </span>
               </div>
 
               <div className="github-contributors">
@@ -131,19 +137,22 @@ export function GithubPage() {
                     </a>
 
                     <ul className="github-contributor-list">
-                      {contributor.contributions.map(item => (
-                        <li className="github-contributor-item" key={item.pr}>
-                          <a
-                            className="github-pr-link"
-                            href={pullUrl(item.pr)}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            #{item.pr}
-                          </a>
-                          <span className="github-contributor-summary">{item.summary}</span>
-                        </li>
-                      ))}
+                      {contributor.contributions.map(item => {
+                        const ref = contributionRef(item)
+                        return (
+                          <li className="github-contributor-item" key={ref.label}>
+                            <a
+                              className="github-pr-link"
+                              href={ref.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {ref.label}
+                            </a>
+                            <span className="github-contributor-summary">{item.summary}</span>
+                          </li>
+                        )
+                      })}
                     </ul>
                   </article>
                 ))}

@@ -223,8 +223,8 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           BASE="https://github.com/mrpulor-gh/nuphus/releases/download/${GITHUB_REF_NAME}"
           # 资产下载域名单独拆出 ASSET_BASE：国内用户直连 GitHub 资产实测不通（TLS 被重置）
-          # 或仅 ~19 KB/s，走 gh-proxy 镜像 ~6.4 MB/s（2026-09-28 实测，清单见 plugin/skills
-          # /community/git-pr-protocol/SKILL.md §7.2）。上面的 BASE 只用于取 .sig 权威签名，
+          # 或仅 ~19 KB/s，走 gh-proxy 镜像 ~6.4 MB/s（2026-09-28 实测，镜像清单 gh-proxy.com
+          # 可用、ghproxy.com/gh.llkk.cc/ghproxy.net/hub.gitmirror.com 均失败勿用）。上面的 BASE 只用于取 .sig 权威签名，
           # minisign 按内容验签，镜像改了文件也过不了——换的是传输通道，不是可信根。
           ASSET_BASE="https://gh-proxy.com/${BASE}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)

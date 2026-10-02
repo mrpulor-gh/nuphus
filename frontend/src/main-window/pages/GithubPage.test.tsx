@@ -6,7 +6,7 @@ import {
   CONTRIBUTOR_ROUNDS,
   REPO_COMMITTERS,
   REPO_URL,
-  pullUrl,
+  contributionRef,
 } from './githubContributors'
 
 const contributorCount = CONTRIBUTOR_ROUNDS.reduce((n, r) => n + r.contributors.length, 0)
@@ -34,7 +34,7 @@ describe('GithubPage 贡献者页', () => {
         (n, c) => n + c.contributions.length,
         0,
       )
-      expect(within(node as HTMLElement).getByText(`${expected} 个 PR`)).toBeInTheDocument()
+      expect(within(node as HTMLElement).getByText(`${expected} 项贡献`)).toBeInTheDocument()
     })
   })
 
@@ -46,7 +46,12 @@ describe('GithubPage 贡献者页', () => {
     const links = within(rounds).getAllByRole('link')
     const profileLinks = links.filter(link => {
       const href = link.getAttribute('href') ?? ''
-      return href.startsWith('https://github.com/') && href !== REPO_URL && !href.includes('/pull/')
+      return (
+        href.startsWith('https://github.com/') &&
+        href !== REPO_URL &&
+        !href.includes('/pull/') &&
+        !href.includes('/commit/')
+      )
     })
 
     // 仓库入口（https://github.com/<org>/<repo>）与 PR 链接不计入「贡献者主页」
@@ -68,19 +73,21 @@ describe('GithubPage 贡献者页', () => {
     }
   })
 
-  it('每条贡献都有内容与 PR 链接（指向本仓库的 pull/<n>）', () => {
+  it('每条贡献都有内容与出处链接（有 PR 指向 pull/<n>，无 PR 指向 commit/<sha>）', () => {
     render(<GithubPage />)
 
-    const prLinks = screen
-      .getAllByRole('link')
-      .filter(link => (link.getAttribute('href') ?? '').includes('/pull/'))
-    expect(prLinks).toHaveLength(contributionCount)
+    const refLinks = screen.getAllByRole('link').filter(link => {
+      const href = link.getAttribute('href') ?? ''
+      return href.includes('/pull/') || href.includes('/commit/')
+    })
+    expect(refLinks).toHaveLength(contributionCount)
 
     for (const round of CONTRIBUTOR_ROUNDS) {
       for (const contributor of round.contributors) {
         for (const item of contributor.contributions) {
-          const link = screen.getByRole('link', { name: `#${item.pr}` })
-          expect(link).toHaveAttribute('href', pullUrl(item.pr))
+          const ref = contributionRef(item)
+          const link = screen.getByRole('link', { name: ref.label })
+          expect(link).toHaveAttribute('href', ref.url)
           expect(link).toHaveAttribute('target', '_blank')
           expect(link).toHaveAttribute('rel', 'noreferrer')
           expect(screen.getByText(item.summary)).toBeInTheDocument()

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { CONTRIBUTOR_ROUNDS, REPO_URL, profileUrl, pullUrl } from './githubContributors'
+import {
+  CONTRIBUTOR_ROUNDS,
+  REPO_URL,
+  commitUrl,
+  contributionRef,
+  profileUrl,
+  pullUrl,
+} from './githubContributors'
 
 /**
  * 数据契约测试：贡献者名单是「可公开核对的事实」的落点，任何新增都必须自证来源
@@ -28,7 +35,7 @@ describe('githubContributors 数据契约', () => {
     expect(dates).toEqual(sorted)
   })
 
-  it('每个贡献者都有用户名与至少一条贡献，贡献描述与 PR 号非空', () => {
+  it('每个贡献者都有用户名与至少一条贡献，贡献描述非空且出处二选一', () => {
     for (const round of rounds) {
       expect(round.contributors.length).toBeGreaterThan(0)
       for (const contributor of round.contributors) {
@@ -36,8 +43,34 @@ describe('githubContributors 数据契约', () => {
         expect(contributor.user).not.toMatch(/\s/)
         expect(contributor.contributions.length).toBeGreaterThan(0)
         for (const item of contributor.contributions) {
-          expect(Number.isInteger(item.pr) && item.pr > 0).toBe(true)
+          if (item.pr !== null) {
+            // 社区贡献：PR 号必须是正整数，且不带 commit 出处
+            expect(Number.isInteger(item.pr) && item.pr > 0).toBe(true)
+            expect(item.commit).toBeUndefined()
+          } else {
+            // 作者直推提交：无 PR 号，必须有可核对的 commit 短 sha
+            expect(item.pr).toBeNull()
+            expect(typeof item.commit).toBe('string')
+            expect((item.commit ?? '').length).toBeGreaterThanOrEqual(7)
+          }
           expect(item.summary.trim().length).toBeGreaterThan(0)
+        }
+      }
+    }
+  })
+
+  it('贡献出处链接均有公开出处：PR 指向 pull/<n>，直推提交指向 commit/<sha>', () => {
+    for (const round of rounds) {
+      for (const contributor of round.contributors) {
+        expect(profileUrl(contributor.user).startsWith('https://github.com/')).toBe(true)
+        for (const item of contributor.contributions) {
+          const ref = contributionRef(item)
+          if (item.pr !== null) {
+            expect(ref).toEqual({ label: `#${item.pr}`, url: pullUrl(item.pr) })
+          } else {
+            expect(ref.label).toMatch(/^[0-9a-f]{7,40}$/)
+            expect(ref.url).toBe(commitUrl(ref.label))
+          }
         }
       }
     }
@@ -50,14 +83,20 @@ describe('githubContributors 数据契约', () => {
         expect(profileUrl(contributor.user)).toBe(`https://github.com/${contributor.user}`)
         expect(profileUrl(contributor.user).startsWith('https://github.com/')).toBe(true)
         for (const item of contributor.contributions) {
-          expect(pullUrl(item.pr)).toBe(`${REPO_URL}/pull/${item.pr}`)
+          if (item.pr !== null) {
+            expect(pullUrl(item.pr)).toBe(`${REPO_URL}/pull/${item.pr}`)
+          } else {
+            expect(commitUrl(String(item.commit))).toBe(`${REPO_URL}/commit/${item.commit}`)
+          }
         }
       }
     }
   })
 
   it('同一 PR 号不重复出现在多个贡献者名下', () => {
-    const prs = rounds.flatMap(r => r.contributors.flatMap(c => c.contributions.map(i => i.pr)))
+    const prs = rounds
+      .flatMap(r => r.contributors.flatMap(c => c.contributions.map(i => i.pr)))
+      .filter((pr): pr is number => pr !== null)
     expect(new Set(prs).size).toBe(prs.length)
   })
 
@@ -67,6 +106,7 @@ describe('githubContributors 数据契约', () => {
       'Steooenwolf-666',
       'fouyzjl',
       'jiangdingwei123-afk',
+      'mrpulor-gh',
       'yuansui486',
       'zhoupeiyu515-ui',
     ])

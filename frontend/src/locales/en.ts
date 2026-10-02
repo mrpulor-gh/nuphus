@@ -750,11 +750,11 @@ const en: Record<string, string> = {
   'github.intro':
     'Issues and pull requests based on real-world use are welcome — we encourage the step from user to co-developer',
   'github.roundInProgress': 'In progress',
-  'github.prCount': '{0} PRs',
+  'github.contributionCount': '{0} contributions',
   'github.repoEntry': 'Open the repository mrpulor-gh/nuphus',
   'github.authorWechat': 'Author WeChat: {0}',
   'github.dataNote':
-    'Data comes from this repository CHANGELOG and merged PR records; only publicly verifiable GitHub accounts are listed.',
+    'Data comes from this repository CHANGELOG and merged PR / commit records; only publicly verifiable GitHub accounts are listed.',
 
   'plugins.listTitle': 'Plugin Marketplace',
   'plugins.listDesc': 'Plugins are apps: discover, install and manage your Nuphus mini-apps',

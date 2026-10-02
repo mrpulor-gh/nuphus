@@ -718,10 +718,11 @@ const zh: Record<string, string> = {
   'github.subtitle': '按发布轮次收录本仓库合并的社区 Pull Request',
   'github.intro': '欢迎大家根据实际使用情况提交问题和 PR，我们鼓励由使用者到共同开发者的转变',
   'github.roundInProgress': '开发中',
-  'github.prCount': '{0} 个 PR',
+  'github.contributionCount': '{0} 项贡献',
   'github.repoEntry': '打开仓库 mrpulor-gh/nuphus',
   'github.authorWechat': '作者微信：{0}',
-  'github.dataNote': '数据来自本仓库 CHANGELOG 与 PR 合并记录，仅收录可公开核对的 GitHub 账号。',
+  'github.dataNote':
+    '数据来自本仓库 CHANGELOG 与 PR / commit 合并记录，仅收录可公开核对的 GitHub 账号。',
 
   'plugins.listTitle': '插件市场',
   'plugins.listDesc': '插件即应用：发现、安装、管理你的 Nuphus 小应用',

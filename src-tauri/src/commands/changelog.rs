@@ -34,8 +34,8 @@ mod tests {
     /// 耦死：Keep a Changelog 的惯例正是发版时把 `[Unreleased]` 改名为 `[版本] - 日期`，
     /// 结果每次发版后 cargo test 必红，且红因与任何 PR 的内容无关（issue #86）。
     ///
-    /// 「发版后补一个空 `## [Unreleased]`」仍是本仓库的发版惯例（用户看得到"开发中"轮次，
-    /// 见 git-pr-protocol §7.1），但它不再是测试的前置条件。
+    /// 「发版后补一个空 `## [Unreleased]`」仍是本仓库的发版惯例（用户看得到"开发中"轮次），
+    /// 但它不再是测试的前置条件。
     #[test]
     fn changelog_sections_are_well_formed() {
         // 至少一个版本段落标题
