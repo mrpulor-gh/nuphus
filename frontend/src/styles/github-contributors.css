@@ -250,6 +250,15 @@
   box-shadow: var(--shadow-focus);
 }
 
+/* 作者微信号：联系方式次级行，跟随 data-note 的弱化配方（不引新色值）。
+   位于 repo-entry 之后，间距与 head 区内其它块一致。 */
+.github-author-wechat {
+  margin: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  line-height: var(--leading-normal);
+}
+
 .github-data-note {
   margin: 0;
   color: var(--fg-4);

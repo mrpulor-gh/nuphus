@@ -752,6 +752,7 @@ const en: Record<string, string> = {
   'github.roundInProgress': 'In progress',
   'github.prCount': '{0} PRs',
   'github.repoEntry': 'Open the repository mrpulor-gh/nuphus',
+  'github.authorWechat': 'Author WeChat: {0}',
   'github.dataNote':
     'Data comes from this repository CHANGELOG and merged PR records; only publicly verifiable GitHub accounts are listed.',
 

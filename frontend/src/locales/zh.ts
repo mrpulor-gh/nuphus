@@ -720,6 +720,7 @@ const zh: Record<string, string> = {
   'github.roundInProgress': '开发中',
   'github.prCount': '{0} 个 PR',
   'github.repoEntry': '打开仓库 mrpulor-gh/nuphus',
+  'github.authorWechat': '作者微信：{0}',
   'github.dataNote': '数据来自本仓库 CHANGELOG 与 PR 合并记录，仅收录可公开核对的 GitHub 账号。',
 
   'plugins.listTitle': '插件市场',

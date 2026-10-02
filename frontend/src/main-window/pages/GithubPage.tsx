@@ -30,6 +30,12 @@ import '../../styles/github-contributors.css'
 const AVATAR_OVERLAP = 0.3
 
 /**
+ * 作者微信号：联系方式，非数据文件内容（githubContributors 只存 PR 溯源数据），
+ * 故以页面常量持有，经 i18n 占位符渲染（词条 `github.authorWechat`）。
+ */
+const AUTHOR_WECHAT = 'mrpulorx2025'
+
+/**
  * 头像内容：GitHub 圆形头像 + 同尺寸首字母兜底。
  *
  * 外链不可用（离线 / CSP 未放行 / 418/404）时 `onError` 让 img 自隐，露出底下的
@@ -87,6 +93,7 @@ export function GithubPage() {
           <IconExternalLink size={13} />
           <span>{t('github.repoEntry')}</span>
         </a>
+        <p className="github-author-wechat">{t('github.authorWechat', AUTHOR_WECHAT)}</p>
       </div>
 
       <div className="github-rounds">
