@@ -210,6 +210,56 @@ pub fn list_snapshots_with_conn(
     Ok(rows)
 }
 
+/// 列出有快照的会话，**每个项目各取最新 `limit_per_project` 条**（含「未分组」组：
+/// 无 session_meta 归属行的会话同样受限，防止未登记会话挤占/绕过容量）。返回
+/// (id, mode, updated_at)，全局仍按 updated_at 降序（最新在前）——调用方（Shelf
+/// 启动预热）按该顺序追加即得 newest-first 驻留序。
+///
+/// 实现选型：窗口函数 ROW_NUMBER() OVER (PARTITION BY …) 单条 SQL 完成分组截断，
+/// 而非应用层分组——bundled SQLite 3.45.0（libsqlite3-sys 0.28，见 Cargo.lock /
+/// sqlite3.h `SQLITE_VERSION`）≥ 窗口函数最低要求 3.25，且分组截断下推数据库、
+/// 无需把全量快照行拉进应用层。`project_tag` 为 NOT NULL 列，只有 LEFT JOIN
+/// 未命中（无归属行）才产出 NULL → COALESCE 归入 '' 组，与 ShelfState::put 的
+/// None（未分组）桶同一把尺子。
+pub fn list_snapshots_per_project(
+    limit_per_project: usize,
+) -> crate::Result<Vec<(String, String, String)>> {
+    let guard = crate::store::db::acquire()?;
+    list_snapshots_per_project_with_conn(&guard, limit_per_project)
+}
+
+/** List the newest snapshots per project through the caller's connection. */
+pub fn list_snapshots_per_project_with_conn(
+    conn: &rusqlite::Connection,
+    limit_per_project: usize,
+) -> crate::Result<Vec<(String, String, String)>> {
+    // 组内/全局排序均带 id 兜底：updated_at 相同（同轮次批量落盘）时截断与输出顺序
+    // 仍确定，不依赖 SQLite 对并列行的任意内部序。
+    let mut stmt = conn.prepare(
+        "SELECT id, mode, updated_at FROM (
+             SELECT s.id AS id, s.mode AS mode, s.updated_at AS updated_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY COALESCE(m.project_tag, '')
+                        ORDER BY s.updated_at DESC, s.id DESC
+                    ) AS rn
+             FROM sessions s
+             LEFT JOIN session_meta m ON m.session_id = s.id
+             WHERE s.snapshot IS NOT NULL
+         )
+         WHERE rn <= ?1
+         ORDER BY updated_at DESC, id DESC",
+    )?;
+
+    let rows = stmt
+        .query_map(params![limit_per_project as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
+}
+
 /// 获取最新的快照（按 updated_at 降序取 1 条），返回 (mode, snapshot_json)。
 pub fn latest_snapshot() -> crate::Result<Option<(String, String)>> {
     let guard = crate::store::db::acquire()?;
@@ -271,6 +321,33 @@ pub fn list_created_at(ids: &[String]) -> crate::Result<HashMap<String, String>>
         map.insert(r.0, r.1);
     }
     Ok(map)
+}
+
+/// 读取单个会话的项目归属标签（session_meta.project_tag）：无归属行 → None。
+///
+/// Shelf 容量淘汰的**分桶键**（每项目 ≤ 上限，None = 「未分组」桶同样受限）：
+/// 归属为会话诞生时快照（INSERT OR IGNORE 只记首次），此后切换工作目录不改写，
+/// 故淘汰桶必须读登记的 tag，不得按当前工作目录推断。空串按无归属处理
+/// （与 session_project_path 对空路径的归一一致）。
+pub fn session_project_tag(session_id: &str) -> crate::Result<Option<String>> {
+    let guard = crate::store::db::acquire()?;
+    session_project_tag_with_conn(&guard, session_id)
+}
+
+/** Read one session's project tag through the caller's connection. */
+pub fn session_project_tag_with_conn(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> crate::Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT project_tag FROM session_meta
+         WHERE session_id = ?1",
+    )?;
+    let mut rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+    match rows.next() {
+        Some(Ok(tag)) if !tag.is_empty() => Ok(Some(tag)),
+        _ => Ok(None),
+    }
 }
 
 /// 裁剪防护：库内非空快照达到该数量才启用比例判定（小库不设防，避免误拦）。
@@ -908,6 +985,138 @@ mod tests {
         for id in &ids {
             delete_session(id).unwrap();
         }
+    }
+
+    /// 每项目各取最新 N 条快照（Shelf 预热数据源）：3 个项目各 4 条 + 未分组 4 条，
+    /// limit=2 → 每组恰留最新 2 条、最旧 2 条不出现；无 session_meta 行的会话归
+    /// 「未分组」组同样受限（LEFT JOIN + COALESCE 兜底）。
+    /// 与既有 store 测试同款约定：真库、随机 id、2099 年时间戳（不受库内存量快照
+    /// 干扰）、结束即清理 sessions 行 + session_meta 行——绝不触碰用户现存数据。
+    #[serial]
+    #[test]
+    fn list_snapshots_per_project_caps_each_project() {
+        let tags = ["list-pp-a-1111", "list-pp-b-2222", "list-pp-c-3333"];
+        let mut created: Vec<String> = Vec::new();
+        let mut kept: Vec<String> = Vec::new();
+        let mut rejected: Vec<String> = Vec::new();
+        for tag in tags {
+            for i in 0..4 {
+                let id = random_id();
+                upsert_snapshot(&id, "leader", r#"{"t":1}"#).unwrap();
+                let ts = format!("2099-04-01T00:00:0{i}Z");
+                {
+                    let conn = crate::store::db::acquire().unwrap();
+                    conn.execute(
+                        "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                        params![ts, id],
+                    )
+                    .unwrap();
+                    assert!(
+                        register_session_meta(&conn, &id, tag, "E:\\__list_pp_test__", "t")
+                            .unwrap(),
+                        "归属登记应写入"
+                    );
+                }
+                if i >= 2 {
+                    kept.push(id.clone());
+                } else {
+                    rejected.push(id.clone());
+                }
+                created.push(id);
+            }
+        }
+        // 未分组（无归属行）：时间戳比项目组更新，即便库内存量无归属快照也不挤占前二
+        let mut untagged_kept = Vec::new();
+        for i in 0..4 {
+            let id = random_id();
+            upsert_snapshot(&id, "leader", r#"{"t":1}"#).unwrap();
+            let ts = format!("2099-05-01T00:00:0{i}Z");
+            {
+                let conn = crate::store::db::acquire().unwrap();
+                conn.execute(
+                    "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                    params![ts, id],
+                )
+                .unwrap();
+            }
+            if i >= 2 {
+                untagged_kept.push(id.clone());
+            } else {
+                rejected.push(id.clone());
+            }
+            created.push(id);
+        }
+
+        let got = list_snapshots_per_project(2).unwrap();
+        let got_ids: Vec<&str> = got.iter().map(|(id, _, _)| id.as_str()).collect();
+        for id in &kept {
+            assert!(got_ids.contains(&id.as_str()), "各组最新 2 条应返回: {id}");
+        }
+        for id in &untagged_kept {
+            assert!(
+                got_ids.contains(&id.as_str()),
+                "未分组组最新 2 条应返回（不因无归属被排除）: {id}"
+            );
+        }
+        for id in &rejected {
+            assert!(
+                !got_ids.contains(&id.as_str()),
+                "各组最旧 2 条不应返回: {id}"
+            );
+        }
+        // 全局仍按 updated_at 降序：未分组组最新一条（2099-05 秒位 3）排最前
+        let mine: Vec<&str> = got_ids
+            .iter()
+            .filter(|id| {
+                let s = id.to_string();
+                kept.contains(&s) || untagged_kept.contains(&s)
+            })
+            .copied()
+            .collect();
+        assert_eq!(mine.len(), 8, "4 个组 × 2 条 = 本次新建的保留项");
+        assert_eq!(
+            mine.first().copied(),
+            Some(untagged_kept[1].as_str()),
+            "未分组组最新一条应排最前"
+        );
+
+        for id in &created {
+            delete_session(id).unwrap();
+            let conn = crate::store::db::acquire().unwrap();
+            conn.execute(
+                "DELETE FROM session_meta WHERE session_id = ?1",
+                params![id],
+            )
+            .unwrap();
+        }
+    }
+
+    /// 归属标签查询（Shelf 分桶键）：有行返回值；空串归一为无归属；
+    /// 无行 None——与 project_path 对空值的归一语义一致。
+    #[test]
+    fn session_project_tag_reads_and_normalizes() {
+        let conn = setup_meta_conn();
+        let missing = random_id();
+        assert_eq!(
+            session_project_tag_with_conn(&conn, &missing).unwrap(),
+            None,
+            "无归属行应返回 None"
+        );
+        let owned = random_id();
+        register_session_meta(&conn, &owned, "tag-1a2b3c4d", "E:\\work\\A", "t").unwrap();
+        assert_eq!(
+            session_project_tag_with_conn(&conn, &owned)
+                .unwrap()
+                .as_deref(),
+            Some("tag-1a2b3c4d")
+        );
+        let empty = random_id();
+        register_session_meta(&conn, &empty, "", "E:\\work\\B", "t").unwrap();
+        assert_eq!(
+            session_project_tag_with_conn(&conn, &empty).unwrap(),
+            None,
+            "空 tag 应按无归属归一（不单独成桶）"
+        );
     }
 
     /// 裁剪防护判据边界（纯函数）：正常清理放行、残缺名单拒绝、小库不设防。

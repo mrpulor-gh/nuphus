@@ -3026,6 +3026,7 @@ mod tests {
                     preview: String::new(),
                     message_count: 1,
                     updated_at: 1_700_000_000_000,
+                    project_tag: None,
                 };
                 state.shelf.lock().unwrap().put(entry, session);
             }

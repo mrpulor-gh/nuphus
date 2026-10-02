@@ -487,6 +487,7 @@ mod tests {
                 preview: String::new(),
                 message_count: 0,
                 updated_at: 0,
+                project_tag: None,
             },
             session.clone(),
         );
@@ -510,6 +511,7 @@ mod tests {
                 preview: String::new(),
                 message_count: 0,
                 updated_at: 0,
+                project_tag: None,
             },
             session.clone(),
         );

@@ -1,6 +1,6 @@
 //! Session Shelf —— 浅层会话展示台
 //!
-//! 内存 LRU（≤10）+ SQLite 完整快照（sessions.snapshot 列，方案A）。
+//! 内存 LRU（每项目 ≤10，含未分组桶）+ SQLite 完整快照（sessions.snapshot 列，方案A）。
 //! 存储原始 Session 对象本身：切换 = 整对象换入换出，tool_use/tool_result
 //! 配对由构造保证，不经过任何「重建/转换」路径（规避上下文正确性风险）。
 //!
@@ -21,7 +21,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::State;
 
-/// 展示台容量上限
+/// 展示台容量上限：**每项目 10 个**（不是全局总数）。
+///
+/// 分桶键为 [`ShelfEntry::project_tag`]；无归属（session_meta 无行的历史会话 /
+/// 未配置项目目录时诞生的会话）归「未分组」桶，同样限额 10——不给未登记会话开
+/// 无限口子。单项目会话增长只淘汰该项目自己的最旧成员，不再挤掉其它项目的
+/// 可恢复会话（2026-10-02 大王拍板；此前为全局口径，一个项目刷满即全台清场）。
 pub const SHELF_CAPACITY: usize = 10;
 
 /// 旧磁盘镜像目录（迁移用：扫描导入 SQLite；导入后文件保留不删）
@@ -50,6 +55,10 @@ pub struct ShelfEntry {
     pub message_count: usize,
     /// Unix 毫秒；最后一条消息 timestamp，缺省为归档时刻
     pub updated_at: u64,
+    /// 项目归属标签（`session_meta.project_tag` 的诞生时快照）；None = 未分组。
+    /// 容量淘汰按此字段分桶（每项目 ≤ [`SHELF_CAPACITY`]，未分组桶同限额）；
+    /// 展示分组仍走 `project_path`（list 层按 id 批量查），此处只作分桶键。
+    pub project_tag: Option<String>,
 }
 
 /// 草稿对话（「新建项目文件夹」→ 立刻可开说、尚未诞生的一条空对话）。
@@ -111,29 +120,53 @@ impl ShelfState {
 
     /// 入台（归档/装载）一个会话；返回被淘汰的 id（若有）。已存在则更新并提到最前。
     ///
-    /// 容量语义：驻留上限 [`SHELF_CAPACITY`]（10），超限淘汰最旧，并**同时清掉
-    /// `entries` / `sessions` 的内存残留**——此前只 `pop` 了 `order`，另两张表仍留着
-    /// 该 id，形成幽灵成员（`len()` 与 `order` 口径漂移 → 快照白名单口径跟着漂）。
+    /// 容量语义：**每项目**驻留上限 [`SHELF_CAPACITY`]（10，含「未分组」桶）——
+    /// 按 [`ShelfEntry::project_tag`] 分桶，同桶超限时从 `order` 尾部向前找该桶
+    /// 最旧的一个淘汰（不是全局 pop 最旧），并**同时清掉 `entries` / `sessions`
+    /// 的内存残留**——此前只 `pop` 了 `order`，另两张表仍留着该 id，形成幽灵成员
+    /// （`len()` 与 `order` 口径漂移 → 快照白名单口径跟着漂）。
     ///
     /// 被淘汰者的**快照处置由调用方决定**：`archive_active` 走主动归档（显式、可追溯），
     /// 其余路径由 `prune_snapshots` 兜底（受残缺防护约束）。
     pub fn put(&mut self, entry: ShelfEntry, session: Session) -> Option<String> {
         let id = entry.id.clone();
+        let bucket = entry.project_tag.clone();
         if let Some(pos) = self.order.iter().position(|x| x == &id) {
             self.order.remove(pos);
         }
         self.order.insert(0, id.clone());
         self.entries.insert(id.clone(), entry);
         self.sessions.insert(id.clone(), session);
-        if self.order.len() > SHELF_CAPACITY {
-            let evicted = self.order.pop();
-            if let Some(ref e) = evicted {
-                self.entries.remove(e);
-                self.sessions.remove(e);
+        if self.bucket_len(&bucket) > SHELF_CAPACITY {
+            // order 为 newest-first：尾部向前第一个同桶成员即该桶最旧。
+            // Option 相等比较（None 与 Some("") 不互通，不造字符串兜底）。
+            if let Some(pos) = self.order.iter().rposition(|x| {
+                self.entries
+                    .get(x)
+                    .map(|e| e.project_tag == bucket)
+                    .unwrap_or(false)
+            }) {
+                let evicted = self.order.remove(pos);
+                self.entries.remove(&evicted);
+                self.sessions.remove(&evicted);
+                return Some(evicted);
             }
-            return evicted;
         }
         None
+    }
+
+    /// 某项目桶当前驻留数（`None` = 未分组桶）。`put` 分桶淘汰判据与
+    /// `warm_from_disk_with_conn` 装台守卫共用同一把尺子。
+    pub fn bucket_len(&self, project_tag: &Option<String>) -> usize {
+        self.order
+            .iter()
+            .filter(|x| {
+                self.entries
+                    .get(*x)
+                    .map(|e| &e.project_tag == project_tag)
+                    .unwrap_or(false)
+            })
+            .count()
     }
 
     /// 取出（换装到 agent 后从展示台移除）
@@ -480,7 +513,8 @@ fn load_latest_mirror_with_conn(conn: &rusqlite::Connection) -> Option<(String, 
     Some((mode, session))
 }
 
-/// 启动预热：SQLite 快照装回内存展示台（≤10 个最新），供列表命令直接消费。
+/// 启动预热：SQLite 快照装回内存展示台（**每项目**各 ≤ [`SHELF_CAPACITY`] 个最新，
+/// 未分组桶同限额），供列表命令直接消费。
 /// updated_at 使用 sessions 表时间（RFC3339），非文件 mtime。
 pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
     let Ok(conn) = nuphus::store::db::acquire() else {
@@ -491,7 +525,8 @@ pub(crate) fn warm_from_disk(shelf: &mut ShelfState) {
 
 /** Warm the shelf from one connection without consulting the global database. */
 fn warm_from_disk_with_conn(shelf: &mut ShelfState, conn: &rusqlite::Connection) {
-    let Ok(snapshots) = nuphus::store::session::list_snapshots_with_conn(conn, SHELF_CAPACITY)
+    let Ok(snapshots) =
+        nuphus::store::session::list_snapshots_per_project_with_conn(conn, SHELF_CAPACITY)
     else {
         return;
     };
@@ -502,10 +537,16 @@ fn warm_from_disk_with_conn(shelf: &mut ShelfState, conn: &rusqlite::Connection)
         let Ok(file_session) = serde_json::from_str::<Session>(&json) else {
             continue;
         };
-        if file_session.is_empty()
-            || shelf.contains(&file_session.id)
-            || shelf.len() >= SHELF_CAPACITY
-        {
+        if file_session.is_empty() || shelf.contains(&file_session.id) {
+            continue;
+        }
+        // 分桶装台守卫：该项目（未分组桶同）驻留已满则跳过——与 ShelfState::put
+        // 的淘汰判据同一把尺子（此前为全局 `len() >= SHELF_CAPACITY`，一个项目
+        // 刷满会挤掉其它项目的全部可恢复会话）。
+        let project_tag = nuphus::store::session::session_project_tag_with_conn(conn, &id)
+            .ok()
+            .flatten();
+        if shelf.bucket_len(&project_tag) >= SHELF_CAPACITY {
             continue;
         }
         // 标题回读：优先 DB 已存标题（用户改过名），为空才派生默认——此前无条件
@@ -524,6 +565,7 @@ fn warm_from_disk_with_conn(shelf: &mut ShelfState, conn: &rusqlite::Connection)
             preview: derive_preview(&file_session),
             message_count: file_session.messages().len(),
             updated_at: rfc3339_to_millis(&updated_at).unwrap_or_else(now_millis),
+            project_tag,
         };
         let id = entry.id.clone();
         // 回填钉住表：titles 是内存态，重启即清空；不回填的话，后续 flush/
@@ -533,14 +575,14 @@ fn warm_from_disk_with_conn(shelf: &mut ShelfState, conn: &rusqlite::Connection)
         }
         shelf.entries.insert(id.clone(), entry);
         shelf.sessions.insert(id.clone(), file_session);
-        // order 保持 newest-first（与 ShelfState::put 语义一致）：list_snapshots
-        // 返回 updated_at DESC（最新在前），逐个 append 到末尾 → order[0]=最新、
-        // 末尾=最旧；此后 put 超限 pop() 移除的正是最旧（回归 2026-08-30：
+        // order 保持 newest-first（与 ShelfState::put 语义一致）：快照列表
+        // 按 updated_at DESC（最新在前），逐个 append 到末尾 → order[0]=最新、
+        // 末尾=最旧；此后 put 同桶超限时从尾部淘汰的正是该桶最旧（回归 2026-08-30：
         // 此前 insert(0) 把顺序倒转，重启后首次 put 会误淘汰「最新」）。
         shelf.order.push(id);
     }
     // 预热完成（即使一个成员都没装回，也说明「读盘已成功、内存态可信」）。
-    // list_snapshots 失败时函数在上方提前 return，warmed 保持 false → 禁止裁剪。
+    // list_snapshots_per_project 失败时函数在上方提前 return，warmed 保持 false → 禁止裁剪。
     shelf.warmed = true;
 }
 
@@ -682,6 +724,7 @@ fn build_entry(
     mode: &str,
     session: &Session,
     title_override: Option<&str>,
+    project_tag: Option<String>,
 ) -> ShelfEntry {
     ShelfEntry {
         id,
@@ -697,7 +740,16 @@ fn build_entry(
             .last()
             .and_then(|m| m.timestamp)
             .unwrap_or_else(now_millis),
+        project_tag,
     }
+}
+
+/// 会话的项目归属标签快照（session_meta 查询）：无归属行 → None（未分组桶）。
+/// build_entry 各调用路径统一经此取值——归属为诞生时登记，不按当前工作目录推断。
+fn session_project_tag_of(session_id: &str) -> Option<String> {
+    nuphus::store::session::session_project_tag(session_id)
+        .ok()
+        .flatten()
 }
 
 /// 将当前会话加入展示台列表。当前会话可能来自 runtime agent，也可能来自
@@ -723,7 +775,13 @@ fn push_active_candidate(
         .ok()
         .and_then(|s| s.titles.get(&session.id).cloned())
         .unwrap_or_default();
-    let entry = build_entry(session.id.clone(), &stored_mode, session, Some(&title));
+    let entry = build_entry(
+        session.id.clone(),
+        &stored_mode,
+        session,
+        Some(&title),
+        session_project_tag_of(&session.id),
+    );
     *active_id = Some(entry.id.clone());
     created_fallback.insert(
         entry.id.clone(),
@@ -1007,7 +1065,13 @@ pub(crate) fn archive_active(state: &AppState, ctx: &mut crate::state::RuntimeCo
         .lock()
         .ok()
         .and_then(|s| s.titles.get(&snapshot.id).cloned());
-    let entry = build_entry(snapshot.id.clone(), kind, &snapshot, title.as_deref());
+    let entry = build_entry(
+        snapshot.id.clone(),
+        kind,
+        &snapshot,
+        title.as_deref(),
+        session_project_tag_of(&snapshot.id),
+    );
     let protected = protected_snapshot_ids_with_ctx(ctx, state);
     write_mirror(kind, &snapshot, &protected);
     upsert_meta_row(&snapshot, &entry.title);
@@ -1329,7 +1393,13 @@ pub(crate) fn switch_session_inner_mode(
                     .ok()
                     .and_then(|s| s.titles.get(&session.id).cloned());
                 (
-                    build_entry(session.id.clone(), &mode, &session, title.as_deref()),
+                    build_entry(
+                        session.id.clone(),
+                        &mode,
+                        &session,
+                        title.as_deref(),
+                        session_project_tag_of(&session.id),
+                    ),
                     session,
                 )
             }
@@ -1765,6 +1835,7 @@ mod tests {
                 preview: String::new(),
                 message_count: s.messages().len(),
                 updated_at: now_millis(),
+                project_tag: None,
             };
             if let Some(e) = shelf.put(entry, s) {
                 evicted.push(e);
@@ -1777,6 +1848,117 @@ mod tests {
         let first_id = shelf.order[0].clone();
         assert!(shelf.take(&first_id).is_some());
         assert!(!shelf.contains(&first_id));
+    }
+
+    /// 测试用驻留条目：显式 project_tag 分桶入台。
+    fn tagged_entry(session: &Session, title: &str, project_tag: Option<String>) -> ShelfEntry {
+        ShelfEntry {
+            id: session.id.clone(),
+            mode: "leader".into(),
+            title: title.to_string(),
+            preview: String::new(),
+            message_count: session.messages().len(),
+            updated_at: now_millis(),
+            project_tag,
+        }
+    }
+
+    /// 容量不变量 (a)：put 分桶淘汰——A/B 两个项目各 10 个在台互不淘汰；
+    /// A 项目第 11 个 put 只淘 A 自己的最旧，B 项目 10 个原样。
+    /// 回归口径：此前为全局上限，A 项目刷满即把 B 项目全部挤出展示台。
+    #[test]
+    fn shelf_put_evicts_within_project_bucket_only() {
+        let mut shelf = ShelfState::default();
+        let tag_a = Some("proj-a-11111111".to_string());
+        let tag_b = Some("proj-b-22222222".to_string());
+        let mut a_ids = Vec::new();
+        let mut b_ids = Vec::new();
+        for i in 0..SHELF_CAPACITY {
+            let s = session_with_user(&[&format!("A{i}")]);
+            let id = s.id.clone();
+            let entry = tagged_entry(&s, &format!("A{i}"), tag_a.clone());
+            assert!(shelf.put(entry, s).is_none(), "A{i} 入台不应淘汰任何人");
+            a_ids.push(id);
+        }
+        for i in 0..SHELF_CAPACITY {
+            let s = session_with_user(&[&format!("B{i}")]);
+            let id = s.id.clone();
+            let entry = tagged_entry(&s, &format!("B{i}"), tag_b.clone());
+            assert!(
+                shelf.put(entry, s).is_none(),
+                "B{i} 入台不应淘汰（A 项目成员不得挤占 B 的份额）"
+            );
+            b_ids.push(id);
+        }
+        assert_eq!(shelf.len(), 2 * SHELF_CAPACITY, "两项目成员应同时在台");
+
+        // A 项目第 11 个：只淘 A 最旧（a_ids[0]）
+        let s = session_with_user(&["A 第 11 个"]);
+        let entry = tagged_entry(&s, "A 第 11 个", tag_a.clone());
+        let evicted = shelf.put(entry, s);
+        assert_eq!(
+            evicted.as_deref(),
+            Some(a_ids[0].as_str()),
+            "只应淘汰 A 项目桶的最旧成员"
+        );
+
+        assert_eq!(shelf.len(), 2 * SHELF_CAPACITY, "一进一出，总驻留不变");
+        assert_eq!(shelf.bucket_len(&tag_a), SHELF_CAPACITY, "A 桶仍为上限");
+        assert_eq!(shelf.bucket_len(&tag_b), SHELF_CAPACITY, "B 桶仍为上限");
+        assert!(!shelf.contains(&a_ids[0]), "A 最旧应被淘汰");
+        for id in &a_ids[1..] {
+            assert!(shelf.contains(id), "A 其余成员应保留: {id}");
+        }
+        for id in &b_ids {
+            assert!(shelf.contains(id), "B 项目成员不得被 A 的增长挤掉: {id}");
+        }
+        // 幽灵成员修复纪律：三表口径一致
+        assert_eq!(shelf.entries.len(), shelf.order.len());
+        assert_eq!(shelf.sessions.len(), shelf.order.len());
+
+        // 未分组桶与项目桶互不占用：空桶 put 不应淘汰任何人
+        let s = session_with_user(&["未分组会话"]);
+        let entry = tagged_entry(&s, "未分组会话", None);
+        assert!(shelf.put(entry, s).is_none(), "未分组桶为空，不应触发淘汰");
+        assert_eq!(shelf.len(), 2 * SHELF_CAPACITY + 1);
+    }
+
+    /// 容量不变量 (c)：未分组桶（project_tag = None）同样限额 10——连续 put
+    /// 15 个无归属会话只留最新 10；且 None 桶与 Some(tag) 桶不互通
+    /// （Option 相等比较，不用 unwrap_or("") 造字符串兜底）。
+    #[test]
+    fn shelf_put_limits_untagged_bucket() {
+        let mut shelf = ShelfState::default();
+        let mut ids = Vec::new();
+        for i in 0..SHELF_CAPACITY + 5 {
+            let s = session_with_user(&[&format!("无归属{i}")]);
+            let id = s.id.clone();
+            let entry = tagged_entry(&s, &format!("无归属{i}"), None);
+            shelf.put(entry, s);
+            ids.push(id);
+        }
+        assert_eq!(shelf.len(), SHELF_CAPACITY, "未分组桶同样只留 10 个");
+        assert_eq!(shelf.bucket_len(&None), SHELF_CAPACITY);
+        for id in &ids[..5] {
+            assert!(!shelf.contains(id), "最旧 5 个无归属会话应被淘汰: {id}");
+        }
+        for id in &ids[5..] {
+            assert!(shelf.contains(id), "最新 10 个无归属会话应在台: {id}");
+        }
+        assert_eq!(shelf.entries.len(), shelf.order.len(), "不得留幽灵成员");
+        assert_eq!(shelf.sessions.len(), shelf.order.len());
+
+        // None 桶不吞并有 tag 的会话：有归属会话 put 不应淘汰未分组桶任何人
+        let s = session_with_user(&["有归属会话"]);
+        let id = s.id.clone();
+        let entry = tagged_entry(&s, "有归属会话", Some("proj-x-99999999".to_string()));
+        assert!(
+            shelf.put(entry, s).is_none(),
+            "有归属会话不应挤占未分组桶份额"
+        );
+        assert!(shelf.contains(&id));
+        assert_eq!(shelf.bucket_len(&None), SHELF_CAPACITY, "未分组桶计数不变");
+        assert_eq!(shelf.len(), SHELF_CAPACITY + 1);
     }
 
     #[test]
@@ -1808,6 +1990,12 @@ mod tests {
                 summary TEXT DEFAULT '',
                 mode TEXT NOT NULL DEFAULT 'leader',
                 snapshot TEXT
+            );
+            CREATE TABLE session_meta (
+                session_id      TEXT PRIMARY KEY,
+                project_tag     TEXT NOT NULL,
+                project_path    TEXT,
+                created_at      TEXT NOT NULL
             );",
         )
         .unwrap();
@@ -1860,6 +2048,89 @@ mod tests {
         );
         assert_eq!(shelf.order, vec![b.id, a.id], "快照应按时间降序装载");
         assert!(shelf.warmed);
+    }
+
+    /// 容量不变量 (b)：启动预热**按项目各取最新 10 个**——3 个项目各 12 条快照 +
+    /// 12 条无归属快照，预热后每个项目（含未分组桶）恰装回最新 10 条。
+    /// 回归口径：此前为全局 LIMIT 10，一个项目刷满即把其它项目的可恢复会话
+    /// 全部挤掉（重启后 rail 只剩一个项目的会话）。
+    #[test]
+    fn warm_from_disk_caps_each_project_bucket() {
+        let conn = snapshot_conn();
+        let tags = ["proj-a-11111111", "proj-b-22222222", "proj-c-33333333"];
+        // tag → (该组全部 id, 按 updated_at 升序；最新 10 条 = 末 10 个)
+        let mut groups: std::collections::HashMap<&str, Vec<String>> =
+            std::collections::HashMap::new();
+        for tag in tags {
+            let mut ids = Vec::new();
+            for i in 0..12 {
+                let s = session_with_user(&[&format!("{tag}-{i}")]);
+                // 同一项目内 i 越大越新（秒位 00..11），不同项目互不参与排序
+                insert_snapshot(&conn, "leader", &s, &format!("2026-01-01T00:{i:02}:00Z"));
+                insert_meta(&conn, &s.id, tag, None);
+                ids.push(s.id);
+            }
+            groups.insert(tag, ids);
+        }
+        // 未分组（无 session_meta 行）12 条，2 月时间戳与项目组交错
+        let mut untagged = Vec::new();
+        for i in 0..12 {
+            let s = session_with_user(&[&format!("未分组-{i}")]);
+            insert_snapshot(&conn, "leader", &s, &format!("2026-02-01T00:{i:02}:00Z"));
+            untagged.push(s.id);
+        }
+
+        let mut shelf = ShelfState::default();
+        warm_from_disk_with_conn(&mut shelf, &conn);
+
+        assert!(shelf.warmed, "读盘成功即置位预热完成");
+        for tag in tags {
+            let ids = &groups[tag];
+            let bucket = Some(tag.to_string());
+            assert_eq!(
+                shelf.bucket_len(&bucket),
+                SHELF_CAPACITY,
+                "{tag} 应恰装回 {SHELF_CAPACITY} 条（不是全局 10 被别人分走）"
+            );
+            for id in &ids[2..] {
+                assert!(shelf.contains(id), "{tag} 的最新 10 条应装台: {id}");
+                assert_eq!(
+                    shelf.get(id).unwrap().project_tag.as_deref(),
+                    Some(tag),
+                    "装台条目的 project_tag 必须与归属登记一致"
+                );
+            }
+            for id in &ids[..2] {
+                assert!(!shelf.contains(id), "{tag} 的最旧 2 条不应装台: {id}");
+            }
+        }
+        // 未分组桶同样恰 10 条且为最新 10 条
+        assert_eq!(
+            shelf.bucket_len(&None),
+            SHELF_CAPACITY,
+            "未分组桶同样限额 {SHELF_CAPACITY}"
+        );
+        for id in &untagged[2..] {
+            assert!(shelf.contains(id), "未分组最新 10 条应装台: {id}");
+            assert!(
+                shelf.get(id).unwrap().project_tag.is_none(),
+                "无归属会话的 project_tag 必须为 None（未分组桶）"
+            );
+        }
+        for id in &untagged[..2] {
+            assert!(!shelf.contains(id), "未分组最旧 2 条不应装台: {id}");
+        }
+        // 全局仍 newest-first：order[0] 是全库最新（未分组-11，2 月 11 秒）
+        assert_eq!(
+            shelf.order.first().map(String::as_str),
+            Some(untagged[11].as_str())
+        );
+        assert_eq!(shelf.len(), 4 * SHELF_CAPACITY, "4 个桶 × 10 条");
+        assert_eq!(
+            shelf.entries.len(),
+            shelf.order.len(),
+            "预热装台不得留幽灵成员"
+        );
     }
 
     #[test]
@@ -2377,7 +2648,13 @@ mod tests {
         let id = sess.id.clone();
         {
             let mut shelf = state.shelf.lock().unwrap();
-            let entry = build_entry(id.clone(), "leader", &sess, Some("历史会话（无归属）"));
+            let entry = build_entry(
+                id.clone(),
+                "leader",
+                &sess,
+                Some("历史会话（无归属）"),
+                None,
+            );
             shelf.put(entry, sess);
         }
 
@@ -2447,7 +2724,7 @@ mod tests {
         {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(
-                build_entry(id.clone(), "leader", &sess, Some("创建时间来源校验")),
+                build_entry(id.clone(), "leader", &sess, Some("创建时间来源校验"), None),
                 sess,
             );
         }
@@ -2491,7 +2768,7 @@ mod tests {
         {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(
-                build_entry(id.clone(), "leader", &sess, Some("有归属会话")),
+                build_entry(id.clone(), "leader", &sess, Some("有归属会话"), None),
                 sess,
             );
         }
@@ -2550,7 +2827,7 @@ mod tests {
                 let s = session_with_user(&[&format!("驻留成员{i}")]);
                 let title = format!("驻留成员{i}");
                 shelf.put(
-                    build_entry(s.id.clone(), "leader", &s, Some(title.as_str())),
+                    build_entry(s.id.clone(), "leader", &s, Some(title.as_str()), None),
                     s,
                 );
             }
@@ -2574,7 +2851,7 @@ mod tests {
             let mut shelf = state.shelf.lock().unwrap();
             let s = session_with_user(&["未预热成员"]);
             shelf.put(
-                build_entry(s.id.clone(), "leader", &s, Some("未预热成员")),
+                build_entry(s.id.clone(), "leader", &s, Some("未预热成员"), None),
                 s,
             );
         }
@@ -2604,7 +2881,7 @@ mod tests {
         for i in 0..SHELF_CAPACITY + 2 {
             let s = session_with_user(&[&format!("成员{i}")]);
             let id = s.id.clone();
-            let evicted = shelf.put(build_entry(id.clone(), "leader", &s, None), s);
+            let evicted = shelf.put(build_entry(id.clone(), "leader", &s, None, None), s);
             if i < SHELF_CAPACITY {
                 assert!(evicted.is_none(), "未超容量不应淘汰");
             } else {
@@ -2710,7 +2987,13 @@ mod tests {
 
         let target = session_with_user(&["备份中的工作流会话"]);
         let target_id = target.id.clone();
-        let entry = build_entry(target_id.clone(), "workflow", &target, Some("工作流当前"));
+        let entry = build_entry(
+            target_id.clone(),
+            "workflow",
+            &target,
+            Some("工作流当前"),
+            None,
+        );
         {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(entry, target.clone());
@@ -2757,6 +3040,7 @@ mod tests {
                 "workflow",
                 &backup_session,
                 Some("旧备份"),
+                None,
             );
             shelf.put(entry, backup_session.clone());
         }
@@ -2804,6 +3088,7 @@ mod tests {
             preview: String::new(),
             message_count: target_msg_count,
             updated_at: now_millis(),
+            project_tag: None,
         };
         {
             let mut shelf = state.shelf.lock().unwrap();
@@ -2838,11 +3123,17 @@ mod tests {
         {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(
-                build_entry(first_id.clone(), "workflow", &first, Some("增强会话")),
+                build_entry(first_id.clone(), "workflow", &first, Some("增强会话"), None),
                 first,
             );
             shelf.put(
-                build_entry(second_id.clone(), "workflow", &second, Some("普通会话")),
+                build_entry(
+                    second_id.clone(),
+                    "workflow",
+                    &second,
+                    Some("普通会话"),
+                    None,
+                ),
                 second,
             );
         }
@@ -3124,7 +3415,7 @@ mod tests {
         {
             let mut shelf = state.shelf.lock().unwrap();
             shelf.put(
-                build_entry(other_id.clone(), "leader", &other, Some("别的会话")),
+                build_entry(other_id.clone(), "leader", &other, Some("别的会话"), None),
                 other,
             );
         }
