@@ -28,38 +28,53 @@ fn is_zero_u32(v: &u32) -> bool {
 ///
 /// 完整地描述「这一轮花了多久、用了多少 token、走了多少步」，
 /// 供消息底部、执行面板、ctx 弹窗共用同一个数据源。
+///
+/// ## 命名契约（缺陷根因，勿改回 snake_case）
+///
+/// 本结构同时进**两条对外通道**：NuphusEvent 下发（`events.rs`）与
+/// HistoryMessage 持久化（`state.rs:445`，session 快照 JSON）。前端镜像
+/// 类型 `frontend/src/core/types.ts` 的 `TurnMeta` 是 **camelCase**，
+/// 两端之间没有任何转换层——故序列化名必须与前端一致，否则：
+/// - 实时轮：`durationMs`/`toolCalls` 靠事件顶层 `total_duration_ms` /
+///   `total_calls` fallback 侥幸显示，token 类字段（无 fallback）全丢
+///   （实测症状：气泡有耗时/步数、token chip 不显示）；
+/// - 历史轮：meta 整条读不出 → `isTurnMetaEmpty` → 元数据条完全不渲染。
+///
+/// 字段级 `alias` 保旧数据兼容：改名前落盘的 snake_case JSON（session
+/// 快照 / 旧前端发的事件）仍可反序列化，只是不再产出该命名。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
 pub struct TurnMeta {
     /// 本轮起点（Unix 毫秒，**后端权威**）。
     ///
     /// 前端据此实时推算耗时（`now - started_at_ms`），刷新 / 重连后依然准确
     /// ——这正是「刷新后计时归零」缺陷的根治点。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "started_at_ms")]
     pub started_at_ms: Option<u64>,
 
     /// 本轮总耗时（毫秒）。执行中为 `None`（前端用起点实时推算），
     /// 完成时由后端给出权威值。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "duration_ms")]
     pub duration_ms: Option<u64>,
 
     /// 输入 token 累计（本轮所有 LLM 调用之和）。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(skip_serializing_if = "is_zero_u32", alias = "input_tokens")]
     pub input_tokens: u32,
 
     /// 输出 token 累计。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(skip_serializing_if = "is_zero_u32", alias = "output_tokens")]
     pub output_tokens: u32,
 
     /// 缓存命中 token 累计。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(skip_serializing_if = "is_zero_u32", alias = "cache_hit_tokens")]
     pub cache_hit_tokens: u32,
 
     /// 迭代轮次（ReAct 循环走了几轮）。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(skip_serializing_if = "is_zero_u32", alias = "iterations")]
     pub iterations: u32,
 
     /// 工具调用次数（本轮实际发生的 call 数）。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(skip_serializing_if = "is_zero_u32", alias = "tool_calls")]
     pub tool_calls: u32,
 
     /// 本轮**上下文增量**（tokens）：轮次结束时的上下文占用 − 轮次开始时的占用。
@@ -69,20 +84,28 @@ pub struct TurnMeta {
     /// 那是个对用户没有信息量的数字（缺陷实证：气泡曾显示 11.2M）。增量回答的是
     /// 「这一轮让上下文长了多少」。两个占用值都来自 API `usage`
     /// （`Session::context_occupancy`），无本地估算。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(
+        default,
+        skip_serializing_if = "is_zero_u32",
+        alias = "context_delta_tokens"
+    )]
     pub context_delta_tokens: u32,
 
     /// 轮次开始时的上下文占用（内部量，用于结束时算增量；0 = 未记录）。
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(
+        default,
+        skip_serializing_if = "is_zero_u32",
+        alias = "context_start_tokens"
+    )]
     pub context_start_tokens: u32,
 
     /// 解码速度（output tokens / 解码秒数）。与既有 `TokenUsage.gen_tps` 同语义，
     /// 此处保留「最后一次 LLM 调用」的值作为整轮代表。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "gen_tps")]
     pub gen_tps: Option<f64>,
 
     /// 首 token 延迟（毫秒）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "ttft_ms")]
     pub ttft_ms: Option<f64>,
 }
 
@@ -160,9 +183,10 @@ mod tests {
         let m = TurnMeta::started(42);
         let json = serde_json::to_value(&m).unwrap();
         // 起点保留；零值字段不下发，避免噪声
-        assert_eq!(json["started_at_ms"], 42);
-        assert!(json.get("input_tokens").is_none());
-        assert!(json.get("duration_ms").is_none());
+        // 键名是 camelCase（前端镜像契约，见 `serializes_camel_case_for_frontend_contract`）
+        assert_eq!(json["startedAtMs"], 42);
+        assert!(json.get("inputTokens").is_none());
+        assert!(json.get("durationMs").is_none());
 
         let back: TurnMeta = serde_json::from_value(json).unwrap();
         assert_eq!(back, m);
@@ -208,5 +232,62 @@ mod tests {
         m.set_context_start(500);
         m.finish(10, 1, 100);
         assert_eq!(m.context_delta_tokens, 0);
+    }
+
+    /// 序列化命名必须是 camelCase——与前端镜像类型（core/types.ts TurnMeta）
+    /// 逐字对齐。曾因缺这条钉：后端 snake_case 下发、前端读 camelCase，
+    /// token 类字段（无顶层 fallback）全丢 → 气泡耗时/步数在、token chip 不在；
+    /// 历史轮 meta 整条读不出 → 元数据条完全不渲染。
+    #[test]
+    fn serializes_camel_case_for_frontend_contract() {
+        let mut m = TurnMeta::started(1_700_000_000_000);
+        m.add_usage(100, 20, 30);
+        m.set_context_start(1_000);
+        m.finish(5_000, 3, 1_500);
+        let json = serde_json::to_value(&m).expect("serialize");
+        let obj = json.as_object().expect("object");
+        // fixture 里这些字段全部非零/Some → 必然出现在输出中，逐个钉名字：
+        // 前端 TurnMetaBar / applyHistory / useEvents 直接读这些 camelCase 键。
+        for key in [
+            "startedAtMs",
+            "durationMs",
+            "inputTokens",
+            "outputTokens",
+            "toolCalls",
+            "contextDeltaTokens",
+            "contextStartTokens",
+        ] {
+            assert!(obj.contains_key(key), "输出缺少 {key}——前端将读空");
+        }
+        // 显式钉住三个对外消费字段的值
+        assert_eq!(json["startedAtMs"], 1_700_000_000_000u64);
+        assert_eq!(json["durationMs"], 5_000);
+        assert_eq!(json["contextDeltaTokens"], 500);
+        // snake_case 不得再出现在输出里（出现即前端读不出）
+        for (k, _) in obj {
+            assert!(
+                !k.contains('_'),
+                "输出含 snake_case 键 {k}——前端镜像类型是 camelCase，必然读空"
+            );
+        }
+    }
+
+    /// 旧持久化数据（改名前落盘的 snake_case JSON）必须仍能反序列化：
+    /// session 快照 / 历史事件里存量 meta 不该因改名整体变缺省。
+    #[test]
+    fn deserializes_legacy_snake_case_meta() {
+        let legacy = serde_json::json!({
+            "started_at_ms": 1_700_000_000_000u64,
+            "duration_ms": 5_000,
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "tool_calls": 3,
+            "context_delta_tokens": 500,
+        });
+        let m: TurnMeta = serde_json::from_value(legacy).expect("legacy deserialize");
+        assert_eq!(m.started_at_ms, Some(1_700_000_000_000));
+        assert_eq!(m.duration_ms, Some(5_000));
+        assert_eq!(m.tool_calls, 3);
+        assert_eq!(m.context_delta_tokens, 500);
     }
 }
