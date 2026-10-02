@@ -1,4 +1,4 @@
-# on_session_start hook
+﻿# on_session_start hook
 # 会话开始时调用（异步）
 # 参数: session_id user_input
 param([string]$SessionId, [string]$UserInput)

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Sync a Nuphus release to Gitee so domestic users can download from gitee.com directly.

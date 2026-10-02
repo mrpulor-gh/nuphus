@@ -1,4 +1,4 @@
-# post_tool_call hook
+﻿# post_tool_call hook
 # 工具执行后调用（异步，不阻塞主流程）
 # 参数: tool_name json_params json_result
 param(

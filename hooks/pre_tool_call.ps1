@@ -1,4 +1,4 @@
-# pre_tool_call hook
+﻿# pre_tool_call hook
 # 工具执行前调用
 # 参数: tool_name json_params
 # 返回: 0=允许执行, 非0=Veto（阻止执行）

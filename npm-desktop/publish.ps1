@@ -1,4 +1,4 @@
-# npm-desktop/publish.ps1
+﻿# npm-desktop/publish.ps1
 # Nuphus Desktop npm release pipeline:
 #   download platform assets from GitHub Releases
 #   -> assemble 4 packages (meta + 3 platform) -> publish -> verify install

@@ -1,4 +1,4 @@
-# on_session_end hook
+﻿# on_session_end hook
 # 会话结束时调用（异步）
 # 参数: session_id success output
 param([string]$SessionId, [string]$Success, [string]$Output)
