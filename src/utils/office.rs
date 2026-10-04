@@ -758,8 +758,9 @@ fn read_pdf_via_bridge(path: &str) -> Result<String, String> {
             let img = image::load_from_memory(png)
                 .map_err(|e| format!("解码第 {} 页渲染结果失败: {}", page_no, e))?
                 .to_rgb8();
-            match crate::desktop::paddle_ocr::PaddleOcr::with_engine(|engine| engine.ocr_image(&img))
-            {
+            match crate::desktop::paddle_ocr::PaddleOcr::with_engine(|engine| {
+                engine.ocr_image(&img)
+            }) {
                 Ok(t) if !t.trim().is_empty() => {
                     segments.push((
                         *page_no,

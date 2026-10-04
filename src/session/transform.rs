@@ -463,7 +463,8 @@ fn save_base64_to_temp_png(data_url: &str) -> Result<std::path::PathBuf, String>
         bytes
     } else {
         // 其他格式（jpeg/bmp/webp）统一转 PNG，保证幂等性与格式一致
-        let img = image::load_from_memory(&bytes).map_err(|e| format!("Image decode failed: {e}"))?;
+        let img =
+            image::load_from_memory(&bytes).map_err(|e| format!("Image decode failed: {e}"))?;
         let mut png_buf = std::io::Cursor::new(Vec::new());
         img.write_to(&mut png_buf, image::ImageFormat::Png)
             .map_err(|e| format!("PNG encode failed: {e}"))?;
