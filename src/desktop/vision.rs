@@ -68,44 +68,15 @@ impl SearchDir {
     }
 }
 
-fn u32_from_le(b: &[u8]) -> u32 {
-    b.iter()
-        .enumerate()
-        .take(4)
-        .fold(0u32, |a, (i, &v)| a | (v as u32) << (i * 8))
-}
-fn u16_from_le(b: &[u8]) -> u16 {
-    b[0] as u16 | (b[1] as u16) << 8
-}
-
-pub fn load_bmp(path: &str) -> crate::Result<(u32, u32, Vec<u8>)> {
-    let data = std::fs::read(path)
-        .map_err(|e| crate::NuphusError::Tool(format!("read bmp failed: {e}")))?;
-    if data.len() < 54 {
-        return Err(crate::NuphusError::Tool("bmp too small".into()));
-    }
-    if &data[0..2] != b"BM" {
-        return Err(crate::NuphusError::Tool("not a BMP".into()));
-    }
-    let w = u32_from_le(&data[18..22]);
-    let h = u32_from_le(&data[22..26]);
-    let bpp = u16_from_le(&data[28..30]);
-    let pad = ((4 - (w * (bpp as u32 / 8) % 4)) % 4) as usize;
-    let off = u32_from_le(&data[10..14]) as usize;
-    let row_size = (w as usize * (bpp as usize / 8)) + pad;
-    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-    for row in (0..h as usize).rev() {
-        let start = off + row * row_size;
-        for col in 0..w as usize {
-            let idx = start + col * (bpp as usize / 8);
-            if bpp == 24 || bpp == 32 {
-                rgb.push(data[idx + 2]);
-                rgb.push(data[idx + 1]);
-                rgb.push(data[idx]);
-            }
-        }
-    }
-    Ok((w, h, rgb))
+/// Load a screenshot file (PNG — the one format `screenshot`/`window_screenshot`
+/// now emit) into `(width, height, RGB24 row-major)` pixels via the image crate.
+///
+/// Replaces the old hand-written BMP decoder (per-pixel `Vec::push`, BMP-only).
+pub fn load_image_rgb(path: &str) -> crate::Result<(u32, u32, Vec<u8>)> {
+    let img = image::open(path)
+        .map_err(|e| crate::NuphusError::Tool(format!("read image failed: {e}")))?;
+    let rgb = img.to_rgb8();
+    Ok((rgb.width(), rgb.height(), rgb.into_raw()))
 }
 
 fn parse_color_hex(s: &str) -> Option<(u8, u8, u8)> {
@@ -179,7 +150,7 @@ pub fn find_color(
     region_h: u32,
     direction: &str,
 ) -> crate::Result<Value> {
-    let (sw, sh, pixels) = load_bmp(screenshot_path)?;
+    let (sw, sh, pixels) = load_image_rgb(screenshot_path)?;
     let specs: Vec<((u8, u8, u8), (u8, u8, u8))> =
         color.split('|').filter_map(parse_color_delta).collect();
     if specs.is_empty() {
@@ -299,7 +270,7 @@ pub fn find_multi_color(
     region_h: u32,
     _direction: &str,
 ) -> crate::Result<Value> {
-    let (sw, sh, pixels) = load_bmp(screenshot_path)?;
+    let (sw, sh, pixels) = load_image_rgb(screenshot_path)?;
     let (ac, ad) = parse_color_delta(anchor_color)
         .ok_or_else(|| crate::NuphusError::Tool("invalid anchor color".into()))?;
 

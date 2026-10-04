@@ -286,9 +286,9 @@ impl ToolRegistry {
                 },
                 &["mode"]),
             tool_def("desktop_screenshot",
-                "全屏截图（支持 region 区域截图），保存为 BMP",
+                "全屏截图（支持 region 区域截图），保存为 PNG",
                 json_props! {
-                    "path" => obj!("type"="string","description"="保存路径（自动转为 .bmp）"),
+                    "path" => obj!("type"="string","description"="保存路径（自动转为 .png）"),
                     "region" => obj!("type"="object","description"="裁剪区域 {x,y,width,height}，不传则全屏")
                 },
                 &[]),
@@ -307,11 +307,11 @@ impl ToolRegistry {
                 },
                 &["hwnd"]),
             tool_def("desktop_window_screenshot",
-                "截取窗口截图存 BMP（hwnd 或 title 定位）。需先激活窗口",
+                "截取窗口截图存 PNG（hwnd 或 title 定位）。需先激活窗口",
                 json_props! {
                     "title" => obj!("type"="string","description"="Window title substring to find"),
                     "hwnd" => obj!("type"="integer","description"="Window handle from windows_list"),
-                    "path" => obj!("type"="string","description"="Save path (always BMP)")
+                    "path" => obj!("type"="string","description"="Save path (always PNG)")
                 },
                 &[]),
             tool_def("desktop_window_move",
@@ -339,14 +339,14 @@ impl ToolRegistry {
             tool_def("desktop_vision",
                 "AI image understanding (layout / text / icons) — answers 'what is on screen'. It does NOT return coordinates and must not be used to click; for clickable targets use desktop_perceive (pixel) or desktop_semantic_observe (UIA).",
                 json_props! {
-                    "image_path" => obj!("type"="string","description"="BMP 图片路径"),
+                    "image_path" => obj!("type"="string","description"="PNG 截图路径（来自 desktop_screenshot）"),
                     "prompt" => obj!("type"="string","description"="定向分析提示（如\"分析UI布局结构\"），不传默认提取全部文字")
                 },
                 &["image_path"]),
             tool_def("desktop_perceive",
                 "Local OCR+YOLO element locate from a screenshot: returns capture_id + element_id + screen_center for desktop_mouse. Start here when a semantic (UIA) tree is unavailable or you need pixel-accurate targets. rect/center are IMAGE coords — never feed them to desktop_mouse directly; use the returned IDs. Untracked images yield screen_center=null.",
                 json_props! {
-                    "image_path" => obj!("type"="string","description"="BMP 截图路径（来自 desktop_screenshot）")
+                    "image_path" => obj!("type"="string","description"="PNG 截图路径（来自 desktop_screenshot）")
                 },
                 &["image_path"]),
             tool_def("desktop_clipboard_clean",

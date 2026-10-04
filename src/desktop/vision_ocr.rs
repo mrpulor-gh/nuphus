@@ -46,7 +46,8 @@ fn resolve_vision_model<'a>(
 ///
 /// 对外行为不变：接受文件路径，内部读取文件 → data URL → 直调内部函数。
 pub async fn vision_ocr(image_path: &str, prompt: Option<&str>) -> Result<String, String> {
-    // 4. Read image — convert BMP to PNG (LLM APIs don't support image/bmp)
+    // 4. Read image — PNG passes through as-is (screenshot now emits PNG);
+    //    other formats are converted because LLM APIs don't support image/bmp
     let image_bytes = std::fs::read(image_path).map_err(|e| format!("读取图片失败: {e}"))?;
     let (mime_type, final_bytes) = if image_path.to_lowercase().ends_with(".png") {
         ("image/png", image_bytes)

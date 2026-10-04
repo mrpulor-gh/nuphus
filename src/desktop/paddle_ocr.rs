@@ -16,6 +16,16 @@ pub struct OcrBlock {
     pub h: i32,
 }
 
+/// 进程内共享引擎槽位（对齐 desktop-api YoloDetector 的懒加载范式：
+/// 首次 `with_engine` 时加载 det+rec 两个 ONNX 模型，之后跨调用复用。
+/// 模型加载失败不写槽——下次进入重试，修复后即恢复）。
+static OCR_ENGINE: std::sync::OnceLock<std::sync::Mutex<Option<PaddleOcr>>> =
+    std::sync::OnceLock::new();
+
+fn engine_slot() -> &'static std::sync::Mutex<Option<PaddleOcr>> {
+    OCR_ENGINE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 // ─── Debug 探针：保存中间产物（仅在 debug 编译时激活）─────────
 #[cfg(debug_assertions)]
 mod debug_probes {
@@ -162,6 +172,29 @@ impl PaddleOcr {
             rec_session,
             char_dict,
         })
+    }
+
+    // ─── 进程内共享引擎（对齐 YoloDetector 懒加载范式）──
+    //
+    // 背景： perceive / ocr 工具 / office PDF 兜底原先每次调用都
+    // PaddleOcr::new() → commit_from_file 重新加载 det+rec 两个 ONNX
+    // 模型（读盘几十 MB + 建图，秒级）。引擎无状态（session/dict 只读），
+    // 可跨调用复用——与 desktop-api YoloDetector 的
+    // `session: Mutex<Option<Session>>` 同一模式。
+    /// 以共享引擎执行一次 OCR 操作（闭包在锁内运行）。
+    ///
+    /// - 首次调用时加载模型（`PaddleOcr::new()`）；失败错误上抛且**不缓存失败态**，
+    ///   下次进入仍会重试（模型后补、路径修复后即恢复）。
+    /// - 闭包内不得跨 await / 不得重入 with_engine（std::Mutex 非重入）。
+    pub fn with_engine<T>(
+        f: impl FnOnce(&mut PaddleOcr) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut guard = engine_slot().lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = Some(PaddleOcr::new()?);
+        }
+        let engine = guard.as_mut().expect("engine slot initialized");
+        f(engine)
     }
 
     /// OCR 识别图片，返回纯文本

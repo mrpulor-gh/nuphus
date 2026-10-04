@@ -37,3 +37,70 @@ module_inception = "allow"
 manual_range_contains = "allow"
 manual_is_multiple_of = "allow"
 items_after_test_module = "allow"
+
+# ── dev 构建热点依赖优化（实测驱动）──
+# 分段实测（2026-10-04）：debug 构建下 image/PNG 编码 1884ms、xcap 抓屏 315ms，
+# 而 release 仅 13ms / 37ms —— debug 的未优化计算是「截图工具
+# 面板耗时 1-2s」的真凶（工具链代码路径已拆干净，零绕道）。
+# 按包覆盖仅优化这些计算密集依赖：除 opt-level 外必须同时关闭
+# debug-assertions / overflow-checks —— 实测仅开 opt-level 只能把
+# PNG 编码从 1884ms 降到 ~290ms，关掉检查后才接近 release（~13ms），
+# 索引/减法密集的 deflate·CRC·滤波循环对溢出检查是数量级敏感。
+# 不影响 workspace 自身编译速度，dev 重启即生效，不必切 release 构建。
+[profile.dev.package.image]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.png]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.fdeflate]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.flate2]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.zlib-rs]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.crc32fast]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.xcap]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.windows]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.windows-core]
+opt-level = 2
+debug-assertions = false
+overflow-checks = false
+
+# ── dev 全局轻度优化 ──
+# 实测：perceive 的 ONNX 预处理热点分布在 desktop-api（YOLO）与 nuphus 自身
+# crate（OCR 预处理）——外部依赖包级覆盖（上方 profile.dev.package.*）够不着
+# 它们，warm perceive 仍要 4.4s。opt-level=1 是标准折中：保住行号调试信息、
+# 抓走视觉预处理循环的大头，比全关检查安全。若后续要更狠可再评估 2。
+[profile.dev]
+opt-level = 1

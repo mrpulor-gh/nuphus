@@ -458,12 +458,17 @@ fn save_base64_to_temp_png(data_url: &str) -> Result<std::path::PathBuf, String>
         .decode(base64_data)
         .map_err(|e| format!("Base64 decode failed: {e}"))?;
 
-    // 统一转码 PNG（若已是 PNG 会轻微重编码，保证幂等性与格式一致）
-    let img = image::load_from_memory(&bytes).map_err(|e| format!("Image decode failed: {e}"))?;
-    let mut png_buf = std::io::Cursor::new(Vec::new());
-    img.write_to(&mut png_buf, image::ImageFormat::Png)
-        .map_err(|e| format!("PNG encode failed: {e}"))?;
-    let png_bytes = png_buf.into_inner();
+    // PNG 已是目标格式：magic 命中免解码重编码，直接落盘（screenshot 产物即 PNG）
+    let png_bytes = if bytes.len() >= 8 && &bytes[..8] == b"\x89PNG\r\n\x1a\n" {
+        bytes
+    } else {
+        // 其他格式（jpeg/bmp/webp）统一转 PNG，保证幂等性与格式一致
+        let img = image::load_from_memory(&bytes).map_err(|e| format!("Image decode failed: {e}"))?;
+        let mut png_buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png_buf, image::ImageFormat::Png)
+            .map_err(|e| format!("PNG encode failed: {e}"))?;
+        png_buf.into_inner()
+    };
 
     // 用内容 hash 替代时间戳，保证相同图片 → 相同路径
     use std::hash::{Hash, Hasher};

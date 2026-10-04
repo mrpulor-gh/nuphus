@@ -461,11 +461,17 @@ fn clean_think_remnants_folded(text: &str) -> String {
     result
 }
 
-/// Convert a BMP base64 data URL to PNG base64 data URL.
+/// Convert a base64 image data URL to a PNG base64 data URL.
 ///
 /// LLM APIs (MiniMax, etc.) reject `image/bmp`. This function decodes the BMP,
 /// re-encodes as PNG, and returns a `data:image/png;base64,...` URL.
+///
+/// Screenshot tools now emit PNG directly, so the common case short-circuits:
+/// a PNG data URL is returned as-is (no decode/re-encode round trip).
 pub fn convert_bmp_data_url_to_png(data_url: &str) -> Result<String, String> {
+    if data_url.starts_with("data:image/png") {
+        return Ok(data_url.to_string());
+    }
     let b64 = data_url
         .split(',')
         .nth(1)

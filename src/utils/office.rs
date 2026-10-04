@@ -754,13 +754,12 @@ fn read_pdf_via_bridge(path: &str) -> Result<String, String> {
 
         let pages_png = crate::render_bridge::render_pdf_pages(path, &to_ocr)
             .map_err(|e| format!("渲染无文本层页失败: {e}"))?;
-        let mut engine = crate::desktop::paddle_ocr::PaddleOcr::new()
-            .map_err(|e| format!("OCR 引擎初始化失败: {e}"))?;
         for (page_no, png) in to_ocr.iter().zip(pages_png.iter()) {
             let img = image::load_from_memory(png)
                 .map_err(|e| format!("解码第 {} 页渲染结果失败: {}", page_no, e))?
                 .to_rgb8();
-            match engine.ocr_image(&img) {
+            match crate::desktop::paddle_ocr::PaddleOcr::with_engine(|engine| engine.ocr_image(&img))
+            {
                 Ok(t) if !t.trim().is_empty() => {
                     segments.push((
                         *page_no,
@@ -810,24 +809,13 @@ fn read_pdf_scanned_ocr(path: &str, total_pages: usize) -> Result<String, String
         Err(e) => return Err(format!("{}\nOCR 兜底不可用: {}", original_err(), e)),
     };
 
-    let mut engine = match crate::desktop::paddle_ocr::PaddleOcr::new() {
-        Ok(e) => e,
-        Err(e) => {
-            return Err(format!(
-                "{}\nOCR 兜底不可用: 引擎初始化失败: {}",
-                original_err(),
-                e
-            ));
-        }
-    };
-
     let mut out = String::new();
     let mut any_text = false;
     for (i, png) in pages_png.iter().enumerate() {
         let img = image::load_from_memory(png)
             .map_err(|e| format!("解码第 {} 页渲染结果失败: {}", i + 1, e))?
             .to_rgb8();
-        match engine.ocr_image(&img) {
+        match crate::desktop::paddle_ocr::PaddleOcr::with_engine(|engine| engine.ocr_image(&img)) {
             Ok(t) if !t.trim().is_empty() => {
                 any_text = true;
                 out.push_str(&format!("--- Page {} (OCR) ---\n", i + 1));
