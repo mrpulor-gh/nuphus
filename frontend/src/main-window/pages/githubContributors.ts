@@ -470,7 +470,8 @@ export const REPO_COMMITTERS: string[] = [
   'yuansui486', // 78 commits
   'Steooenwolf-666', // 22 commits（#91 合并后 /contributors 已刷新）
   'fouyzjl', // 13 commits
-  'mrpulor-gh', // 3 commits（仓库所有者；2026-10-05 API 复核次数不变，0.2.26 的直推提交尚未 push）
+  'mrpulor-gh', // 3 commits（仓库所有者；2026-10-05 发版后重跑 API 仍报 3——/contributors
+  // 统计有缓存滞后，0.2.26 的 8 个直推提交已 push 双远端，计数待 GitHub 后台刷新）
   'jiangdingwei123-afk', // 1 commit
   'zhoupeiyu515-ui', // 1 commit
 ]
