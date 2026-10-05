@@ -326,9 +326,10 @@ mod tests {
         // 选区贴屏幕右下角 —— 旧实现在这里把 OK / X 挤到一起
         let sel = Sel::new(1920 - 320, 1080 - 220, 320, 220);
         let (ok, x) = layout_buttons(sel, 1920, 1080);
-        assert!(ok.right() + BTN_GAP <= x.left, "OK/X 之间必须留出间距");
-        assert!(ok.left >= 0 && x.right() <= 1920, "整组必须在屏内");
-        assert!(ok.bottom() <= sel.y, "下方放不下时应翻到选区上边外侧");
+        // 注意：ok / x 是 Rect，right / bottom 是**字段**（不是 Sel 的方法）
+        assert!(ok.right + BTN_GAP <= x.left, "OK/X 之间必须留出间距");
+        assert!(ok.left >= 0 && x.right <= 1920, "整组必须在屏内");
+        assert!(ok.bottom <= sel.y, "下方放不下时应翻到选区上边外侧");
     }
 
     #[test]
@@ -336,9 +337,10 @@ mod tests {
         // 选区占满整屏：仍必须在屏内且互不重叠（退到屏内最下方）
         let sel = Sel::new(0, 0, 1920, 1080);
         let (ok, x) = layout_buttons(sel, 1920, 1080);
-        assert!(ok.right() + BTN_GAP <= x.left, "OK/X 之间必须留出间距");
+        // 注意：ok / x 是 Rect，right / bottom 是**字段**（不是 Sel 的方法）
+        assert!(ok.right + BTN_GAP <= x.left, "OK/X 之间必须留出间距");
         assert!(
-            ok.left >= 0 && x.right() <= 1920 && ok.top >= 0 && x.bottom() <= 1080,
+            ok.left >= 0 && x.right <= 1920 && ok.top >= 0 && x.bottom <= 1080,
             "整组必须在屏内"
         );
     }

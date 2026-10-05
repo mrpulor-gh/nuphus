@@ -110,8 +110,19 @@ jobs:
           df -h / | tail -1
           cd target/release/bundle/macos
           # 手动 hdiutil create -srcfolder：一步创建，无需 attach/detach/AppleScript，
-          # 是 dmg 打包最简可靠方式；GitHub Actions 直接显示 stderr 便于诊断
-          hdiutil create -volname "Nuphus" -srcfolder Nuphus.app -ov -format UDZO ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg
+          # 是 dmg 打包最简可靠方式；GitHub Actions 直接显示 stderr 便于诊断。
+          # 重试 3 次：v0.2.26 首跑撞见 `hdiutil: create failed - Resource busy`
+          # （深签名刚落盘、Spotlight/文件系统仍在扫新 .app，一次性竞态；磁盘余量充足，
+          # 非空间问题）。sleep 5s 后重试即过——环境竞态，靠重试兜底，不改变产物。
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "Nuphus" -srcfolder Nuphus.app -ov -format UDZO ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg; then
+              echo "dmg created on attempt $attempt"
+              break
+            fi
+            echo "hdiutil attempt $attempt failed, retrying in 5s"
+            sleep 5
+          done
+          test -f ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg
           ls -lh ../../../../nuphus-osx-arm64-${{ env.VER }}.dmg
 
       - name: Package portable (Linux)

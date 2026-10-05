@@ -52,7 +52,7 @@
 //! 2. **不抓屏**：`capture_original` / `BitBlt` 不移植，冻结帧由参数传入；
 //!    屏幕尺寸同样取自参数（不再 `GetSystemMetrics`），避免 DPI 虚拟化误差。
 //! 3. **不落盘**：裁剪 PNG / GDI+ / 输出目录 / 后台写盘线程全部移除，
-//!   确认后只把选区交给调用方（session 层用 xcap 冻结帧裁剪编码）。
+//!    确认后只把选区交给调用方（session 层用 xcap 冻结帧裁剪编码）。
 //! 4. **不退出宿主进程**：shot 走 `ExitProcess`，这里只销毁本模块的窗口、
 //!    卸载钩子并返回 —— 宿主 Tauri 进程必须继续存活。
 //! 5. **日志用 `tracing`**：移除 shot 的内存缓冲 + 文件写盘日志。
@@ -114,7 +114,7 @@ struct WinRect {
 
 impl WinRect {
     /// 转成选区；宽高非正视为无效窗口。
-    fn to_sel(&self) -> Option<Sel> {
+    fn to_sel(self) -> Option<Sel> {
         let w = self.right - self.left;
         let h = self.bottom - self.top;
         if w <= 0 || h <= 0 {
@@ -1251,7 +1251,11 @@ unsafe fn free_layer(l: &mut Option<Layer>) {
 unsafe fn ensure_dpi() {
     let user32 = GetModuleHandleW(wide("user32.dll").as_ptr());
     if !user32.is_null() {
-        let f = GetProcAddress(user32, b"SetProcessDpiAwarenessContext\0".as_ptr());
+        // windows-sys 口径 LPCSTR = *const u8；c"..." 字面量 as_ptr() 是 *const c_char(i8)， cast 对齐
+        let f = GetProcAddress(
+            user32,
+            c"SetProcessDpiAwarenessContext".as_ptr().cast::<u8>(),
+        );
         if !f.is_null() {
             let f: extern "system" fn(isize) -> i32 = core::mem::transmute(f);
             if f(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != 0 {
