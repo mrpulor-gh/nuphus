@@ -28,6 +28,7 @@
 // 约束（tauri.conf.json 的 csp 段**不含** `preview:`）→ 只能走 asset://，
 // 不能照抄 PreviewOverlay 的 `convertFileSrc(path, 'preview')`。
 
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// 允许入库的图片扩展名（比较前统一转小写）。
@@ -90,10 +91,68 @@ pub fn save_user_image(source_path: String) -> Result<String, String> {
     let dir = user_image_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建图片目录失败：{}", e))?;
 
+    // 内容寻址去重：目录内已有逐字节相同的文件则直接复用其路径，不再落新副本。
+    // unique_path 只按「同名追加 -1/-2」规避覆盖，于是同一张图在多张主题卡上各设
+    // 一次背景（或上传重试）就生成 N 个同字节副本 —— 实测本机 images/ 68 个文件
+    // 301.9MB 中仅 20 个唯一内容，202.3MB（67%）是逐字节重复。调用方（主题皮肤 /
+    // 头像）只消费返回的路径，复用路径对其完全透明。
+    if let Some(existing) = find_identical(&dir, src, size) {
+        return Ok(existing.to_string_lossy().into_owned());
+    }
+
     let dest = unique_path(&dir, &sanitize_stem(src), &ext);
     std::fs::copy(src, &dest).map_err(|e| format!("复制图片失败：{}", e))?;
 
     Ok(dest.to_string_lossy().into_owned())
+}
+
+/// 流式计算文件 SHA-256。
+///
+/// 刻意不整文件读入：入库源有 `MAX_IMAGE_BYTES` 兜底，但目录里的存量文件不受该
+/// 上限约束（历史大图 / 后续调整上限都可能超），故一律分块读。
+fn sha256_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    Ok(out)
+}
+
+/// 在 `dir` 内寻找与 `src` 逐字节相同的既有文件，命中则返回其路径。
+///
+/// 先按体积过滤再算哈希：`metadata` 比读文件便宜两个量级，体积不符的候选在读
+/// 内容前就被排除，不会为「必然不匹配」的文件付出 IO。极端情况下（目录内大量
+/// 同体积文件）会退化为逐个哈希，仍有 `MAX_IMAGE_BYTES` 单文件上限兜底。
+fn find_identical(dir: &Path, src: &Path, src_size: u64) -> Option<PathBuf> {
+    let src_hash = sha256_file(src).ok()?;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.len() != src_size {
+            continue;
+        }
+        if sha256_file(&path).ok() == Some(src_hash) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// 图片入库目录：`nuphus_data_dir()/images`。
@@ -212,6 +271,76 @@ mod tests {
         assert!(!p.exists(), "返回的路径必须是尚不存在的文件");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sha256_file_matches_known_digest() {
+        // sha256("abc") = ba7816bf...f20015ad（标准测试向量，防哈希实现被改坏）
+        let dir = scratch_dir("sha");
+        std::fs::write(dir.join("abc.bin"), b"abc").unwrap();
+
+        let expected: [u8; 32] = [
+            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+            0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+            0xf2, 0x00, 0x15, 0xad,
+        ];
+        assert_eq!(sha256_file(&dir.join("abc.bin")).unwrap(), expected);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_bytes_reuse_the_existing_file() {
+        // 同一份字节换个文件名再次入库，必须命中既有文件而不是再落一个副本
+        let dir = scratch_dir("dedup-hit");
+        let src = scratch_dir("dedup-hit-src");
+        std::fs::write(dir.join("wall.png"), b"identical-bytes").unwrap();
+        std::fs::write(src.join("another-name.png"), b"identical-bytes").unwrap();
+
+        let found = find_identical(
+            &dir,
+            &src.join("another-name.png"),
+            b"identical-bytes".len() as u64,
+        );
+        assert_eq!(
+            found.as_ref().and_then(|p| p.file_name()),
+            Some(std::ffi::OsStr::new("wall.png")),
+            "同字节必须复用既有路径"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&src);
+    }
+
+    #[test]
+    fn same_size_different_bytes_is_not_deduped() {
+        // 体积相同但内容不同：体积预过滤放行后，哈希必须能区分（防只比大小的退化）
+        let dir = scratch_dir("dedup-samesize");
+        let src = scratch_dir("dedup-samesize-src");
+        std::fs::write(dir.join("a.png"), b"AAA").unwrap();
+        std::fs::write(src.join("b.png"), b"BBB").unwrap();
+
+        assert!(
+            find_identical(&dir, &src.join("b.png"), 3).is_none(),
+            "同体积不同字节不得误判为重复"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&src);
+    }
+
+    #[test]
+    fn different_size_is_rejected_before_hashing() {
+        // 体积不同即无重复可能；这条守住预过滤不被绕过的回归
+        let dir = scratch_dir("dedup-size");
+        let src = scratch_dir("dedup-size-src");
+        std::fs::write(dir.join("a.png"), b"longer-bytes").unwrap();
+        std::fs::write(src.join("b.png"), b"short").unwrap();
+
+        assert!(find_identical(&dir, &src.join("b.png"), 5).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&src);
     }
 
     #[test]
