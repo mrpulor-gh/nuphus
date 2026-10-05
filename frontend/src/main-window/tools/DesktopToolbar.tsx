@@ -35,6 +35,7 @@ import {
   IconCheck,
   IconPin,
   IconPinOff,
+  IconAppWindow,
 } from '../../ui/Icons'
 
 import { Pipette as IconDropper } from 'lucide-react'
@@ -67,7 +68,7 @@ const TOOLTIP: Record<NonNullable<ToolMode>, string> = {
   screenshot: '截图 — 框选区域保存为图片（自动隐藏窗口）',
   picker: '选区 — 返回区域坐标（自动隐藏窗口）',
   mouse_pos: '鼠标位置 — 实时显示光标坐标',
-  ocr: '游戏文字识别 — 框选区域提取文字（颜色+字典匹配）',
+  ocr: '字典 — 框选区域提取文字（颜色+字典匹配）',
   color_picker: '取色 — 选取屏幕某点颜色值',
 }
 
@@ -83,7 +84,7 @@ const TOOLS: ToolBtn[] = [
   { mode: 'picker', icon: IconCrop, label: '选区', desc: '获取坐标' },
   { mode: 'mouse_pos', icon: IconCrosshair, label: '鼠标', desc: '实时坐标' },
   { mode: 'color_picker', icon: IconDropper, label: '取色', desc: '屏幕取色' },
-  { mode: 'ocr', icon: IconType, label: '游戏字典', desc: '游戏提取' },
+  { mode: 'ocr', icon: IconType, label: '字典', desc: '文字识别' },
 ]
 
 export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
@@ -397,7 +398,8 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
             }
           }}
         >
-          登记应用
+          <IconAppWindow size={16} />
+          <span className="desktop-toolbar-label">登记应用</span>
         </IconButton>
 
         {/* Separator */}
