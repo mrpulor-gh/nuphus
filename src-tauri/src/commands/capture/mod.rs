@@ -1,10 +1,14 @@
 //! 截图遮罩模块 —— 平台分派的原生遮罩实现。
 //!
+//! ⚠️ **本模块仅在 Windows 编译**（`commands/mod.rs` 的 `#[cfg(windows)]` 门控）：
+//! 主链路是 Windows 原生遮罩；非 Windows 平台截图走 WebView overlay 兜底，
+//! 不引用本模块。macOS / Linux 原生实现完成并接回时（见 `wip/`）再去掉门控。
+//!
 //! 目标：为桌面工具栏（ctrl+U）的模式提供原生遮罩交互：冻结帧 + hover 跟窗
 //! 自动框选 + 拖拽重划 + 确认态平移 + 8 节点调整 + OK/X + 单点拾取 + 无残影。
-//! Windows 为主链路，`commands/toolbar.rs` 把 screenshot / picker /
-//! color_picker / mouse_pos / ocr 五个模式统一路由进来（单点拾取模式见
-//! `session::run_screenshot` 的 `point_pick` / `pick_color`）。
+//! `commands/toolbar.rs` 把 screenshot / picker / color_picker / mouse_pos /
+//! ocr 五个模式统一路由进来（单点拾取模式见 `session::run_screenshot` 的
+//! `point_pick` / `pick_color`）。
 //!
 //! 架构：
 //! ```text
@@ -20,9 +24,8 @@
 //! ```
 //!
 //! 硬约束：
-//!   1. **跨平台**：非 Windows 平台由 `session::run_screenshot` 的
-//!      `#[cfg(not(windows))]` 分支直接报错，调用方回退现有 WebView overlay
-//!      链路，不破坏编译（`#[cfg]` 分派）。
+//!   1. **仅 Windows 编译**：整模块由 `commands/mod.rs` 按 `#[cfg(windows)]` 门控；
+//!      非 Windows 截图走 WebView overlay，不进入本模块。
 //!   2. **确定性**：不用轮询、不用硬 sleep；等待用合成器同步（DwmFlush）或事件握手。
 //!   3. **主窗恢复兜底**：无论哪一步失败，主窗可见性与抓屏排除都由 guard 还原。
 

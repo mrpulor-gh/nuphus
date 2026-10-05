@@ -31,15 +31,20 @@ ubuntu-24.04 两个 job 红、windows-latest 绿），已整体移出编译树�
    已废弃函数（CI 里有 deprecated 警告）。
 2. **Linux**：修 `paint` 导入路径，把 cookie 等待/校验改到 x11rb 0.13 的真实 API
    （`Cookie::check` 不存在，改用 `reply()` / `check()` 的等价物，以 0.13 文档为准）。
-3. 两个平台各恢复 `surface/mod.rs` 的 `pub mod` 与 `pub use … run_overlay`、
+3. 恢复 `surface/mod.rs` 的 `pub mod` 与 `pub use … run_overlay`、
    `capture/mod.rs` 架构注释里的对应行、`Cargo.toml` 对应 target 依赖段
    （段落里留了注释标记，取消注释即可）。
-4. **真机验证通过前不得切主链路**：`session::run_screenshot` 的
+4. **去掉 `commands/mod.rs` 里 `pub mod capture;` 上的 `#[cfg(windows)]` 门控**——
+   v0.2.26 起因：模块不门控时，非 Windows 平台上消费者（windows.rs）整体消失，
+   geometry/state/session/paint 全部变成死代码，`clippy --all-targets -D warnings`
+   报 81 处 dead_code 直接红 CI。门控是当时的止血，接回平台时必须一并拆除。
+5. **真机验证通过前不得切主链路**：`session::run_screenshot` 的
    `#[cfg(not(windows))]` 分支继续返回 `native-capture-unsupported`，
    非 Windows 一律回落 WebView overlay。
 
 ## 当前生效的范围
 
 - Windows：原生遮罩主链路（分层窗口 + 冻结帧 + WDA_EXCLUDEFROMCAPTURE），已真机验证。
+  `commands/mod.rs` 用 `#[cfg(windows)]` 门控整个 capture 模块。
 - macOS / Linux / 其它：WebView overlay 兜底（`surface/fallback.rs` 之外的既有链路，
-  由 `commands/toolbar.rs` 的旧分支处理）。
+  由 `commands/toolbar.rs` 的旧分支处理）；capture 模块在这些平台不参与编译。

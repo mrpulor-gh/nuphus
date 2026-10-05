@@ -1,6 +1,12 @@
 pub mod annotations;
 pub mod approval;
 pub mod canvas_export;
+// 原生遮罩截图链路（capture/）：**仅 Windows 编译**。主链路是 Windows 原生遮罩；
+// 非 Windows 平台截图走既有的 WebView overlay 兜底（toolbar.rs 的旧分支），
+// 从不引用本模块。若不门控，非 Windows 上本模块的全部消费者随 windows.rs 一起
+//消失，81 处 dead_code 会被 CI 的 clippy -D warnings 直接判死（v0.2.26 实测）。
+// macOS / Linux 原生实现完成并接回时（capture/wip/），同步去掉本门控。
+#[cfg(windows)]
 pub mod capture;
 pub mod changelog;
 pub mod chat_agent;
