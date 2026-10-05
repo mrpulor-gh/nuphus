@@ -34,6 +34,13 @@
  * **commit 出处**补入（`pr: null` + `commit: 短 sha`，`/commit/<sha>` 可公开核对），
  * 不写 PR 号——无出处不写，宁缺勿造。
  *
+ * `0.2.26` 轮次（零 PR）取证：2026-10-05 重跑 `/pulls?state=closed` API，最后合并的 PR 仍是
+ * #91（2026-09-29，已收录于 0.2.24 轮次，非新提交者）；`/contributors` API 六个账号与提交数
+ * 与 REPO_COMMITTERS 完全一致（头像墙无新增）。`git log v0.2.25..HEAD` 区间同样零合并 PR，
+ * 全为仓库所有者直推。经大王指示（本轮无 PR），作者自己的重要功能继续以 **commit 出处**
+ * 补入（`pr: null` + `commit: 短 sha`，`/commit/<sha>` 可公开核对），措辞对齐提交标题；
+ * 纯格式 / lint 提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -94,6 +101,53 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '0.2.26',
+    date: '2026-10-05',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '0675b9e8',
+            summary: 'npm 发布与 git hooks 脚本补 UTF-8 BOM：PS 5.1 按 GBK 误读吞字符致解析失败',
+          },
+          {
+            pr: null,
+            commit: 'd099408f',
+            summary: 'Gitee 同步脚本 native 调用统一降 EAP：git stderr 通知不再炸流水线误判失败',
+          },
+          {
+            pr: null,
+            commit: '0b51ce50',
+            summary: '新增 fetch-release-asset.ps1：发布资产预下载与 sha256 对账固化',
+          },
+          {
+            pr: null,
+            commit: '0b1abc05',
+            summary: '截图管线改 PNG 单次写入、OCR 引擎进程级共享、dev profile 调优',
+          },
+          {
+            pr: null,
+            commit: 'c7054b53',
+            summary:
+              '原生遮罩截图链路接入桌面工具栏五模式：冻结帧 + hover 跟窗框选 + 8 节点 + 单点拾取',
+          },
+          {
+            pr: null,
+            commit: '20cb116e',
+            summary: '用户资源内容寻址去重：同字节文件不再重复落盘',
+          },
+          {
+            pr: null,
+            commit: 'a8824397',
+            summary: 'OCR 工具改名「字典」，登记应用按钮补图标与文字',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.25',
     date: '2026-10-02',
@@ -416,7 +470,7 @@ export const REPO_COMMITTERS: string[] = [
   'yuansui486', // 78 commits
   'Steooenwolf-666', // 22 commits（#91 合并后 /contributors 已刷新）
   'fouyzjl', // 13 commits
-  'mrpulor-gh', // 3 commits（仓库所有者）
+  'mrpulor-gh', // 3 commits（仓库所有者；2026-10-05 API 复核次数不变，0.2.26 的直推提交尚未 push）
   'jiangdingwei123-afk', // 1 commit
   'zhoupeiyu515-ui', // 1 commit
 ]
