@@ -4772,11 +4772,12 @@ dependencies = [
 
 [[package]]
 name = "nuphus-desktop"
-version = "0.2.24"
+version = "0.2.25"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "block2 0.6.2",
  "chrono",
  "cpal",
  "dirs 5.0.1",
@@ -4788,7 +4789,10 @@ dependencies = [
  "lopdf",
  "nuphus",
  "nuphus-index",
+ "objc2 0.6.4",
  "objc2-av-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -4811,6 +4815,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows-sys 0.59.0",
+ "x11rb",
  "xcap",
  "zip 1.1.4",
 ]

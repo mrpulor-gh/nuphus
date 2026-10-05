@@ -1,6 +1,7 @@
 pub mod annotations;
 pub mod approval;
 pub mod canvas_export;
+pub mod capture;
 pub mod changelog;
 pub mod chat_agent;
 pub mod config;

@@ -119,7 +119,18 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Registry",
     # 无边框窗口的 Win11 系统圆角（DwmSetWindowAttribute + CORNER_PREFERENCE）
     "Win32_Graphics_Dwm",
+    # ── 以下为截图新链路（commands/capture/）所需，见 docs/capture-refactor-plan.md ──
+    # 按屏幕坐标抓取矩形：BitBlt / GetDIBits / CreateCompatibleDC / GetDIBits
+    # 显示器枚举与物理边界：MonitorFromPoint / GetMonitorInfoW（同在 Gdi 模块）
+    "Win32_Graphics_Gdi",
+    # 光标位置：GetCursorPos；双击阈值：GetDoubleClickTime
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
+
+# Linux 原生遮罩（commands/capture/surface/linux.rs）：X11 纯 Rust 协议实现。
+# 版本与 core（src/Cargo.toml 的 linux 段）保持一致，共用同一份 lock 解析。
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
 
 # macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需要 macos-private-api；
 # 同一依赖在 target 段声明，features 与通用段自动合并（非 macOS 平台不启用该 feature，
@@ -130,6 +141,14 @@ objc2-av-foundation = { version = "0.3.2", default-features = false, features = 
     "AVCaptureDevice",
     "AVMediaFormat",
 ] }
+# macOS 原生遮罩（commands/capture/surface/macos.rs）：AppKit 窗口（msg_send 直调）
+# + CoreGraphics 位图 + NSTimer/事件监视（block2）。版本对齐 lock
+# （objc2 0.6.4 / objc2-foundation 0.3.2 / objc2-core-graphics 0.3.2 / block2 0.6.2），
+# 不引入新的版本解析；NSGeometry 提供 NSPoint/NSSize/NSRect。
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
+objc2-core-graphics = "0.3.2"
+block2 = "0.6"
 
 [dev-dependencies]
 tokio-test = "0.4"

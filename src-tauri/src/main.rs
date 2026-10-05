@@ -536,10 +536,11 @@ fn main() {
             // (fn-pointer injection — same pattern as video/render).
             crate::ext_agent::init_bridge(app.handle());
 
-            // Pre-create capture overlay window (hidden) to eliminate white flash on first use
-            if let Err(e) = commands::toolbar::ensure_overlay(app.handle()) {
-                tracing::warn!("Failed to pre-create overlay window: {e}");
-            }
+            // 注：capture_overlay（WebView 截图遮罩）**不再启动预创建**。
+            // Windows 截图已走原生遮罩链路（`commands/capture/`，Win32 分层窗口），
+            // 这个 WebView 只有在「非 Windows 且未被原生实现接管」的兜底链路上才用得到；
+            // 启动即创建只会让 WebView2 进程常驻（任务管理器可见，2026-10-05 大王要求按需加载）。
+            // 真正走到旧链路时由 `start_overlay_mask` → `ensure_overlay` 按需创建。
 
             // HUD 窗口由 tauri.conf.json 声明（label="hud"，visible=false），
             // **不走 `hud::create()`** —— 但拖动检测与初始定位必须在这里挂上：
