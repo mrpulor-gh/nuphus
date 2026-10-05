@@ -127,10 +127,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
 ] }
 
-# Linux 原生遮罩（commands/capture/surface/linux.rs）：X11 纯 Rust 协议实现。
-# 版本与 core（src/Cargo.toml 的 linux 段）保持一致，共用同一份 lock 解析。
-[target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.13"
+# Linux 原生遮罩：X11 纯 Rust 协议实现（x11rb）。
+# ⚠️ 2026-10-05：`commands/capture/wip/linux.rs` 尚未完成（x11rb API 漂移 + 从未编译通过），
+# 未接入编译；非 Windows 平台截图走 WebView overlay 兜底链路。完成并真机验证后再恢复本段
+# 与 `surface/mod.rs` 的模块声明（版本需与 core/src/Cargo.toml 的 linux 段一致，共用同一份 lock）。
+# [target.'cfg(target_os = "linux")'.dependencies]
+# x11rb = "0.13"
 
 # macOS 专属 tauri feature：HUD overlay 透明窗口（hud.rs transparent）需要 macos-private-api；
 # 同一依赖在 target 段声明，features 与通用段自动合并（非 macOS 平台不启用该 feature，
@@ -141,14 +143,16 @@ objc2-av-foundation = { version = "0.3.2", default-features = false, features = 
     "AVCaptureDevice",
     "AVMediaFormat",
 ] }
-# macOS 原生遮罩（commands/capture/surface/macos.rs）：AppKit 窗口（msg_send 直调）
-# + CoreGraphics 位图 + NSTimer/事件监视（block2）。版本对齐 lock
-# （objc2 0.6.4 / objc2-foundation 0.3.2 / objc2-core-graphics 0.3.2 / block2 0.6.2），
-# 不引入新的版本解析；NSGeometry 提供 NSPoint/NSSize/NSRect。
-objc2 = "0.6"
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
-objc2-core-graphics = "0.3.2"
-block2 = "0.6"
+# macOS 原生遮罩（commands/capture/wip/macos.rs）：AppKit 窗口 + CoreGraphics 位图 + block2。
+# ⚠️ 2026-10-05：该实现尚未完成——依赖图里同时存在 objc2 0.5.2（enigo→icrate→block2 0.4）
+# 与 0.6.4（objc2-foundation 0.3.2 一线），`Retained<AnyObject>` 的 Encode / MessageReceiver /
+# ConvertReturn 系列 trait 不满足，且 `MacState` 缺 `scale` 字段；该文件从未编译通过，
+# 未接入编译。完成移植（统一 objc2 版本口径或整体改用 0.6.4 API）并真机验证后，
+# 再恢复本段依赖与 `surface/mod.rs` 的模块声明。
+# objc2 = "0.6"
+# objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
+# objc2-core-graphics = "0.3.2"
+# block2 = "0.6"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -14,9 +14,9 @@
 //! ├── session.rs    平台无关：编排（抓屏排除自身主窗 → 冻结帧 → 跑遮罩 → 恢复）
 //! └── surface/      平台相关：遮罩表面（同一 run_overlay 契约签名）
 //!     ├── windows.rs  Win32 分层窗口（UpdateLayeredWindow，精确物理像素）
-//!     ├── macos.rs    AppKit 无边框窗口 + CGEventTap（真机验证前不作主链路）
-//!     ├── linux.rs    X11 override-redirect + x11rb（同上；Wayland 受限）
 //!     └── fallback.rs 上述三平台之外的兜底
+//! wip/              未完成的平台实现（macos.rs / linux.rs，从未编译通过，
+//!                   未接入编译；非 Windows 截图走 WebView overlay 兜底，详见 wip/README.md）
 //! ```
 //!
 //! 硬约束：

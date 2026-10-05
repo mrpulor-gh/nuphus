@@ -7,9 +7,9 @@
 //!   └── surface/mod.rs        契约：OverlayParams / OverlayOutcome / run_overlay
 //!
 //! 平台实现（同一契约签名，各自原生实现）
-//!   ├── windows.rs   Win32 分层窗口（UpdateLayeredWindow，像素精确）
-//!   ├── macos.rs     AppKit 无边框窗口 + CGEventTap + CGBitmapContext（实现中）
-//!   ├── linux.rs     X11 override-redirect + x11rb（实现中；Wayland 受限）
+//!   ├── windows.rs   Win32 分层窗口（UpdateLayeredWindow，像素精确）——已真机验证
+//!   ├── macos.rs     → 2026-10-05 移入 ../wip/（从未编译通过，见 wip/README.md）
+//!   ├── linux.rs     → 2026-10-05 移入 ../wip/（同上）
 //!   └── fallback.rs  其它平台：回退 WebView overlay 链路
 //! ```
 //!
@@ -18,14 +18,15 @@
 //! - `session.rs`（编排）与 `commands/toolbar.rs`（路由）**只依赖本文件的契约类型**，
 //!   不再引用任何平台的窗口/输入/呈现细节；
 //! - 各平台实现只依赖 `geometry` / `state` + 自身 FFI（Windows: user32/gdi32；
-//!   macOS: objc2-app-kit 等；Linux: x11rb）；
+//!   macOS / Linux 的实现在 ../wip/，恢复编译时再接回）；
 //! - 契约签名唯一：`run_overlay(OverlayParams) -> OverlayOutcome`。
 //!
 //! # 退役计划
 //!
-//! macOS / Linux 原生实现**真机验证通过**后：删除本文件对 `fallback` 的分派、
-//! `commands/toolbar.rs` 的旧 WebView 分支与前端 `frontend/src/capture-overlay/`。
-//! 在此之前保留 WebView 链路作为可用性兜底（无真机验证前不切主链路）。
+//! macOS / Linux 原生实现**编译通过并真机验证**后：从 ../wip/ 移回本目录、恢复模块声明，
+//! 删除本文件对 `fallback` 的分派、`commands/toolbar.rs` 的旧 WebView 分支与前端
+//! `frontend/src/capture-overlay/`。在此之前保留 WebView 链路作为可用性兜底
+//! （无编译通过 + 无真机验证前不切主链路）。
 
 // ── 平台无关：视觉规格（颜色/尺寸/放大镜/HUD 参数），三平台共用 ──
 pub mod paint;
@@ -34,12 +35,6 @@ pub mod paint;
 
 #[cfg(windows)]
 pub mod windows;
-
-#[cfg(target_os = "macos")]
-pub mod macos;
-
-#[cfg(target_os = "linux")]
-pub mod linux;
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub mod fallback;
@@ -61,12 +56,6 @@ pub struct OverlayParams {
     /// 取色模式（point_pick 的子集）：跟随鼠标绘制放大镜 + 实时色值条。
     /// 鼠标坐标模式为 false。
     pub pick_color: bool,
-    /// 宿主 AppHandle —— **仅 macOS 使用**：AppKit 的所有 UI 操作必须在主线程执行，
-    /// macOS 实现通过 `AppHandle::run_on_main_thread` 建窗并用 NSTimer 驱动渲染。
-    /// Windows / Linux 忽略该字段（它们的窗口/消息循环自给自足），故在那两个平台上
-    /// 该字段永远不会被读 —— 显式 allow，避免 CI 的 `-D warnings` 把它当死代码。
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub app: Option<tauri::AppHandle>,
 }
 
 /// 遮罩运行结果。
@@ -85,9 +74,3 @@ pub enum OverlayOutcome {
 
 #[cfg(windows)]
 pub use windows::run_overlay;
-
-#[cfg(target_os = "macos")]
-pub use macos::run_overlay;
-
-#[cfg(target_os = "linux")]
-pub use linux::run_overlay;

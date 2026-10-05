@@ -14,7 +14,11 @@
 //! **确定性原则**（硬约束）：不使用轮询与硬 sleep。等待 DWM 完成窗口移除
 //! 用 `DwmFlush`（合成器同步，返回即确定），而非「猜一个 150ms」。
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+// `get_webview_window` 来自 Manager trait，仅 Windows 主链路取主窗句柄用得到；
+// 非 Windows 平台该 import 未被使用（CI 的 unused_imports 警告），按平台门控。
+#[cfg(windows)]
+use tauri::Manager;
 
 /// 一次截图的结果（确认后）。
 pub struct CaptureResult {
@@ -171,8 +175,6 @@ pub fn run_screenshot(
         screen_h,
         point_pick,
         pick_color,
-        // macOS 需要它把 AppKit 建窗/节拍调度回主线程；Windows / Linux 忽略。
-        app: Some(app.clone()),
     };
     let outcome = std::thread::Builder::new()
         .name("nuphus-capture-overlay".into())
