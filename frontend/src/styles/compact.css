@@ -12,8 +12,9 @@
   align-items: center;
   justify-content: center;
   background: var(--overlay-bg);
-  /* 遮罩玻璃化 —— 与 ModalPage（.modal-overlay）同源。--overlay-bg 是 55% 半透黑，
-     不加模糊时背后正文以清晰轮廓透出，与卡片内表单文字互相干扰 */
+  /* 遮罩玻璃化 —— 与 ModalPage（.modal-overlay）同源。--overlay-bg 亮色为 25% 黑薄罩
+      （2026-10-07 起，DeepSeek mask 手法；暗色仍为半透黑），背后内容压暗而非洗白，
+      与卡片内文字主次分明；blur(4px) 进一步柔化轮廓干扰 */
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   animation: compactOverlayIn var(--dur-med) var(--ease-out);

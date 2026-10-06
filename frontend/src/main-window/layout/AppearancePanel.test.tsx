@@ -724,8 +724,8 @@ const THEME_TOKENS: Record<string, Record<string, string>> = {
   },
   light: {
     '--accent': '#111111',
-    '--surface-0': '#e8e8ea',
-    '--surface-1': '#f4f4f6',
+    '--surface-0': '#ffffff',
+    '--surface-1': '#f7f7f8',
     '--fg-1': '#1a1a1a',
     '--fg-2': '#444444',
     '--msg-user-bg': '#f0f0f2',
@@ -757,7 +757,7 @@ const EXPECTED: Record<string, { colors: string[]; sliders: number[] }> = {
     sliders: [100, 100, 90, 80, 35],
   },
   light: {
-    colors: ['#111111', '#e8e8ea', '#f4f4f6', '#1a1a1a', '#444444'],
+    colors: ['#111111', '#ffffff', '#f7f7f8', '#1a1a1a', '#444444'],
     sliders: [100, 100, 85, 75, 40],
   },
   tech: {
@@ -894,7 +894,7 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
           base: 'dark',
           overrides: { '--msg-user-bg': 'rgba(21, 34, 56, 0.6)' },
         },
-        { id: 'ct-dst', name: '目标', base: 'light', overrides: { '--surface-0': '#e8e8ea' } },
+        { id: 'ct-dst', name: '目标', base: 'light', overrides: { '--surface-0': '#ffffff' } },
       ]),
     )
     localStorage.setItem('nuphus_custom_active', 'ct-src')

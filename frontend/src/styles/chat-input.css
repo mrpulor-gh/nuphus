@@ -12,9 +12,15 @@
      var(--glass-bg) 叠成两层 —— 「输入框不透明度」滑块只改了本层，
      内层不透明的 --glass-bg（α=0.9）把效果整个吃掉，用户拖滑块毫无反应。 */
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  /* 无 border（2026-10-07 大王令移除）：输入框零描边态。
+      分层完全由本层 box-shadow（--shadow-input：0.5px 描边阴影 + 双层加重柔光）承担。
+      防回退：本层与 .chat-input-body 均勿加 border，见 body 层注释。 */
+  border-radius: var(--radius-6);
+  /* 阴影走 token：三主题各自适配（简白 = 输入框专属加重档 --shadow-input，
+     dark/tech = 等同原 elevated）。输入框是全局唯一天然「贴窗浮起」的元素，
+     故独立成档——加重它不再震动 --shadow-elevated 的其余 29 处浮层消费方。
+     原 0 2px 10px rgba(0,0,0,.15) 是三主题共享的 neutral 重影，简白下尤显脏。 */
+  box-shadow: var(--shadow-input);
   z-index: 50;
 }
 /* ── 输入区 dock：VideoProgressBadge 与 ChatInputBar 的共享定位容器 ──
@@ -85,6 +91,8 @@
   overflow-y: auto;
   padding: 4px 0;
   min-height: 28px;
+  /* 光标显式声明为 accent（DeepSeek caret=business 蓝；简白 accent=墨黑，跟随品牌） */
+  caret-color: var(--accent);
 }
 .chat-input::-moz-placeholder {
   color: var(--spark-dim);
@@ -119,7 +127,7 @@
   transition: all var(--transition-fast);
 }
 .input-tool-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-send-btn {
   display: flex;
@@ -134,10 +142,12 @@
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
-  box-shadow: 0 2px 6px #0000004d;
+  /* 阴影走 token：原 0 2px 6px #0000004d 是三主题共享的 30% 黑硬影，
+     简白下脏重（大王 2026-10-07 令减轻）。浅色=描边+微影，深色=深底落影 */
+  box-shadow: var(--shadow-surface);
 }
 .input-send-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-send-btn.active {
   background: var(--accent);
@@ -147,30 +157,33 @@
 .input-send-btn.active:hover {
   background: var(--accent-hover);
 }
+/* 终止态配色走 --send-interrupt-* 语义键（简白=墨黑反色 / dark·tech=红，见 tokens.css）。
+   光晕/呼吸同步换 --send-interrupt-glow；落影换 var(--shadow-surface) 去写死重影。
+   语义不变：呼吸节奏=可终止的进行中动作（与 processing 的 sendBreathing 同 1.6s）。 */
 .input-send-btn.interrupt {
-  background: var(--error);
-  color: #fff;
-  border-color: var(--error);
+  background: var(--send-interrupt-fill);
+  color: var(--send-interrupt-fg);
+  border-color: var(--send-interrupt-fill);
   animation: interruptBreathing 1.6s ease-in-out infinite;
 }
 .input-send-btn.interrupt:hover {
-  background: rgba(var(--error-rgb), 0.85);
-  color: #fff;
+  background: color-mix(in srgb, var(--send-interrupt-fill) 85%, transparent);
+  color: var(--send-interrupt-fg);
 }
-/* 终止按钮呼吸：红色光晕脉动 + border 微呼吸（与 sendBreathing 同节奏；语义=可终止的危险动作） */
+/* 终止按钮呼吸：光晕脉动 + border 微呼吸（与 sendBreathing 同节奏） */
 @keyframes interruptBreathing {
   0%,
   to {
     box-shadow:
-      0 0 6px rgba(var(--error-rgb), 0.25),
-      0 2px 6px #0000004d;
-    border-color: rgba(var(--error-rgb), 0.3);
+      0 0 6px rgba(var(--send-interrupt-glow), 0.25),
+      var(--shadow-surface);
+    border-color: rgba(var(--send-interrupt-glow), 0.3);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(var(--error-rgb), 0.55),
-      0 2px 10px rgba(var(--error-rgb), 0.3);
-    border-color: rgba(var(--error-rgb), 0.55);
+      0 0 16px rgba(var(--send-interrupt-glow), 0.55),
+      0 2px 10px rgba(var(--send-interrupt-glow), 0.3);
+    border-color: rgba(var(--send-interrupt-glow), 0.55);
   }
 }
 
@@ -297,7 +310,7 @@
   flex-shrink: 0;
 }
 .input-tool-plus-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .input-tool-plus-btn:focus-visible {
@@ -305,7 +318,7 @@
   box-shadow: var(--shadow-focus);
 }
 .input-tool-plus-btn:active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 /* 语音按钮在容器内：取消 absolute 独立定位，由 flex 排布 */
 .input-actions .chat-voice-btn {
@@ -323,7 +336,7 @@
   background: var(--void-primary);
   border: 1px solid var(--line-1);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   z-index: 200;
   display: flex;
   flex-direction: column;
@@ -349,7 +362,9 @@
     color var(--transition-fast);
 }
 .input-tool-menu-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  /* token 化：原 rgba(255,255,255,.03) 是深色语义写死值，简白白底上「白叠白」不可见
+     （2026-10-07 大王报：弹窗列表 hover 无背景）。light=蓝黑 6% / dark=#2e2e3c 实色 */
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .input-tool-menu-item:disabled {
@@ -380,7 +395,7 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 .input-bar-ctx:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-bar-ctx-value {
   font-size: 11px;
@@ -417,7 +432,7 @@
   background: var(--void-primary);
   border: 1px solid var(--line-1);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   z-index: 200;
   display: flex;
   flex-direction: column;
@@ -482,8 +497,12 @@
      直接原因：外层 .chat-input-area 那层被滑块改了，却被本层盖死。
      现在全应用只有这一层画输入框底，滑块改的就是用户看到的那一层。 */
   background: var(--input-bg);
-  border: 1px solid var(--glass-2);
-  border-radius: 10px;
+  /* 无 border（2026-10-07 大王令移除，两轮后输入框回到零描边态）：
+     分层完全由 .chat-input-area 的 --shadow-elevated 承担
+     （0.5px 描边阴影 + 3px/20px 双层柔光）——即 DeepSeek 输入卡配方
+     （border:0 + elevation-soft）。防回退：勿在本层加 border/outline。
+     若白窗下浮起感不足，调 --shadow-elevated 而不是回退 border。 */
+  border-radius: var(--radius-6);
   position: relative;
 }
 .input-bar {
@@ -574,12 +593,13 @@
 }
 .input-bar-toolbox-btn:hover {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-bar-toolbox-btn.is-active {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  background: var(--surface-active);
+  /* inset 边同步 token：原 rgba(255,255,255,.18) 深色语义，简白下白边不可见 */
+  box-shadow: inset 0 0 0 1px var(--line-3);
 }
 /* 执行态锁定：半透明 + hover 不变亮 + not-allowed（伪可点感消除）；功能入口在
    ChatInputBar 内以 gate.locked 收起为「仅原因提示层」，此处只管视觉 */
@@ -609,7 +629,7 @@
   background: var(--void-primary);
   border: 1px solid var(--line-1);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   z-index: 200;
   animation: menuPopIn 0.12s var(--ease-out);
 }
@@ -633,7 +653,7 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 .input-bar-toolbox-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .input-bar-toolbox-item-key {
@@ -669,7 +689,7 @@
    - 统一中性灰，去 mode 颜色编码（黄/紫/蓝）
    - active 态：inset 1px 浅边 + 5% 背景
    - 字号 12px monospace，描述 11px text-3，caret 8px
-   - menu 8px 圆角 + 柔和阴影（0 4px 16px rgba(0,0,0,0.35)）
+   - menu 8px 圆角 + 阴影（--shadow-elevated，三主题自适应）
    ════════════════════════════════════════════════════════ */
 .input-bar-chip {
   display: inline-flex;
@@ -691,15 +711,15 @@
 }
 .input-bar-chip:hover {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-bar-chip:active {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 .input-bar-chip:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 1px var(--line-3);
 }
 /* mode chip 去色编码：active 态由 inset 1px 浅边 + 5% 背景区分 */
 .input-bar-chip.mode-leader,
@@ -747,7 +767,7 @@
   background: var(--void-primary);
   border: 1px solid var(--line-1);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   z-index: 200;
   animation: menuPopIn 0.12s var(--ease-out);
 }
@@ -765,12 +785,12 @@
     color var(--transition-fast);
 }
 .input-bar-effort-option:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .input-bar-effort-option.active {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 
 /* ── 模式 chip 容器 ── */
@@ -788,7 +808,7 @@
   background: var(--void-primary);
   border: 1px solid var(--line-1);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   z-index: 200;
   display: flex;
   flex-direction: column;
@@ -805,10 +825,10 @@
   transition: background var(--transition-fast);
 }
 .input-bar-mode-option:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-bar-mode-option.active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 .input-bar-mode-option-name {
   font-size: 12px;
@@ -846,7 +866,7 @@
     color var(--transition-fast);
 }
 .input-bar-mode-manage:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 
@@ -862,7 +882,7 @@
   color: var(--spark-tertiary);
 }
 .input-bar .input-tool-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
 }
 .input-bar .input-tool-btn .icon-btn-label {
   font-size: var(--fz-xs);
@@ -1007,7 +1027,8 @@
     background: transparent;
   }
   50% {
-    background: rgba(255, 255, 255, 0.04);
+    /* token 化：原白 4% 深色语义，简白白底上呼吸不可见 */
+    background: var(--surface-hover);
   }
 }
 /* ── 语音输入（STT）── */
@@ -1038,7 +1059,7 @@
   flex-shrink: 0;
 }
 .chat-voice-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .chat-voice-btn:focus-visible {
@@ -1046,7 +1067,7 @@
   box-shadow: var(--shadow-focus);
 }
 .chat-voice-btn:active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 .chat-voice-btn:disabled {
   opacity: 0.5;

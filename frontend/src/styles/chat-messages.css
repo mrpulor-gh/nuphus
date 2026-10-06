@@ -164,7 +164,7 @@
   to {
     box-shadow:
       0 0 8px rgba(var(--accent-rgb), 0.3),
-      0 2px 6px #0000004d;
+      var(--shadow-surface);
   }
   50% {
     box-shadow:
@@ -461,6 +461,32 @@
   align-items: center;
   justify-content: center;
   width: 36px;
+}
+/* ── Mood 头像固定默认色（2026-10-07 大王令：SVG 用默认色，不随主题变化）──
+   MoodFace 内部全部 stroke/fill="currentColor"，颜色由 .mood-face.* 的 color 决定。
+   此处限定 .thinking-mood-box 作用域覆写为固定色值（取默认/暗色主题的语义色）：
+   该组中等亮度，亮卡片与暗卡片底上均清晰可读；若取亮色主题套，
+   墨黑 #111 在深色 indicator 卡上不可见，故不取。
+   语义区分保留：idle/thinking/读写/检索/编码=蓝、working/waiting/analyzing=琥珀、
+   success=绿、error=红。全局 .mood-face.*（ChatPanel 等处）仍走主题色，不变。 */
+.thinking-mood-box .mood-face.idle,
+.thinking-mood-box .mood-face.thinking,
+.thinking-mood-box .mood-face.reading,
+.thinking-mood-box .mood-face.writing,
+.thinking-mood-box .mood-face.searching,
+.thinking-mood-box .mood-face.coding {
+  color: #3b82f6;
+}
+.thinking-mood-box .mood-face.working,
+.thinking-mood-box .mood-face.waiting,
+.thinking-mood-box .mood-face.analyzing {
+  color: #f59e0b;
+}
+.thinking-mood-box .mood-face.success {
+  color: #10b981;
+}
+.thinking-mood-box .mood-face.error {
+  color: #ef4444;
 }
 /* ── 中间内容 ── */
 .thinking-body {

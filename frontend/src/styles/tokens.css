@@ -122,6 +122,7 @@
   --radius-3: 8px;
   --radius-4: 12px;
   --radius-5: 14px;
+  --radius-6: 16px; /* 大容器：输入卡/浮层（对标 DeepSeek 大圆角输入面板） */
 
   /* ── ① 语义层：间距 ── */
   --space-1: 4px;
@@ -154,7 +155,13 @@
   --shadow-inset: 0 0 16px rgba(0, 0, 0, 0.4) inset;
   --shadow-focus: 0 0 0 3px rgba(59, 130, 246, 0.12);
   --shadow-drop: var(--shadow-elevated); /* 浮层落影别名（= elevated，随主题解析） */
+  --shadow-input: var(--shadow-elevated); /* 输入框专属档：深色浮起已充分，等同 elevated */
   --thinking-shadow: 0 4px 32px rgba(0, 0, 0, 0.4);
+  /* 发送钮「终止」态语义键（2026-10-07 大王令：简白用主题反色=墨黑，不用红）：
+     dark/tech 保持红色警示；光晕用 rgb 三元组供 keyframes 取用 */
+  --send-interrupt-fill: var(--error);
+  --send-interrupt-fg: #ffffff;
+  --send-interrupt-glow: var(--error-rgb);
 
   /* ── ② 基础层：玻璃拟态（仅弹窗/浮层使用）── */
   --glass-0: rgba(255, 255, 255, 0.03);
@@ -274,14 +281,16 @@
    设计意向：宣纸/白瓷底 + 墨色文字阶梯 + 墨黑笔触 accent
    ═════════════════════════════════════════════ */
 [data-theme='light'] {
-  /* ── 语义层：表面（白瓷阶梯）── */
-  --surface-0: #e8e8ea;
-  --surface-1: #f4f4f6;
-  --surface-2: #fafafa;
-  --surface-3: #fbfbfc;
-  --surface-hover: #ececed;
-  --surface-active: #d6d6d8;
-  --surface-inset: #ffffff;
+  /* ── 语义层：表面（简白阶梯，参照 DeepSeek 浅色体系 2026-10-07）──
+     基底纯白靠描边分层（而非灰阶递进）；悬浮层比面板更白=浮起感；
+     hover/active 用蓝黑调低透明（#263148 同思路），告别中性灰发闷。 */
+  --surface-0: #ffffff;
+  --surface-1: #f7f7f8;
+  --surface-2: #ffffff;
+  --surface-3: #ffffff;
+  --surface-hover: rgba(38, 49, 72, 0.06);
+  --surface-active: rgba(38, 49, 72, 0.12);
+  --surface-inset: #f6f6f7;
 
   /* ── 语义层：前景（墨色稀释阶梯：焦墨 → 淡墨）── */
   --fg-1: #1a1a1a;
@@ -290,10 +299,10 @@
   --fg-4: #999999;
   --fg-5: #bbbbbb;
 
-  /* ── 语义层：线条（极细烟灰，保持克制）── */
-  --line-1: rgba(0, 0, 0, 0.04);
-  --line-2: rgba(0, 0, 0, 0.03);
-  --line-3: rgba(0, 0, 0, 0.06);
+  /* ── 语义层：线条（递增可见：0.06 → 0.10 → 0.16，修正原 l2<l1 倒挂）── */
+  --line-1: rgba(0, 0, 0, 0.06);
+  --line-2: rgba(0, 0, 0, 0.10);
+  --line-3: rgba(0, 0, 0, 0.16);
 
   /* ── 语义层：Accent（墨黑笔触）── */
   --accent: #111111;
@@ -314,10 +323,13 @@
   --syntax-diff-header: #9333ea;
   --syntax-diff-meta: #9ca3af;
 
-  /* ── 语义层：终端 ── */
-  --term-bg: var(--fg-1);
-  --term-fg: #222;
-  --term-prompt-color: #111;
+  /* ── 语义层：终端（浅色体系，2026-10-07 修正）──
+     原 --term-bg = var(--fg-1) 墨黑底而 --term-fg = #222 深字（自相矛盾的黑底深字），
+     叠加面板内浅色卡片（term-call/term-out/diff）→ 深底叠浅卡，观感混乱（大王报障）。
+     现整套跟随浅色体系：白底 + 墨字 + 蓝 prompt；dark 保持深底浅字不变。 */
+  --term-bg: var(--surface-0);
+  --term-fg: var(--fg-1);
+  --term-prompt-color: #0969da;
   --term-toolname-color: #1e7e34;
   --term-toolname-read: #0969da;
   --term-toolname-write: #1e7e34;
@@ -334,13 +346,25 @@
   --warning: #ef6c00; /* 琥珀橙 */
   --warning-rgb: 239, 108, 0;
 
-  /* ── 基础层：阴影（宣纸边缘的微弱折痕）── */
-  --shadow-surface: 0 1px 2px rgba(0, 0, 0, 0.02);
-  --shadow-elevated: 0 4px 20px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.01) inset;
-  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.06);
-  --shadow-inset: 0 0 12px rgba(0, 0, 0, 0.02) inset;
-  --shadow-focus: 0 0 0 3px rgba(17, 17, 17, 0.06);
-  --thinking-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+  /* ── 基础层：阴影（DeepSeek 式：0.5px 描边 + 双层柔光，告别单层重影）── */
+  --shadow-surface: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 3px 8px rgba(0, 0, 0, 0.05),
+    0 0 20px rgba(0, 0, 0, 0.05);
+  --shadow-modal: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.06),
+    0 0 24px rgba(0, 0, 0, 0.08);
+  /* 输入框专属加重档（2026-10-07 大王令）：简白白窗贴白卡，零 border 下
+     浮起全靠本档。较 elevated 距离加倍（8→16px / 20→40px）、alpha 加倍
+     （.05→.10 / .08），取 DeepSeek elevation-soft 同量级，仍是柔光非硬影。 */
+  --shadow-input: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(0, 0, 0, 0.1),
+    0 0 40px rgba(0, 0, 0, 0.08);
+  --shadow-inset: 0 0 0 0.5px rgba(0, 0, 0, 0.05) inset;
+  --shadow-focus: 0 0 0 2px rgba(17, 17, 17, 0.1);
+  --thinking-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 4px 24px rgba(0, 0, 0, 0.05);
+  /* 终止态 = 主题反色（accent 墨黑 + on-accent 白）：与简白「墨黑笔触」品牌一致，
+     替代原红色（赭石红 #c62828 在白底上刺眼且与 State error 语义重复）。 */
+  --send-interrupt-fill: var(--accent);
+  --send-interrupt-fg: var(--on-accent);
+  --send-interrupt-glow: var(--accent-rgb);
 
   /* ── 基础层：玻璃拟态 ── */
   --glass-0: rgba(0, 0, 0, 0.01);
@@ -350,33 +374,34 @@
   --glass-4: rgba(0, 0, 0, 0.05);
   --glass-bg: rgba(251, 251, 252, 0.85);
   --glass-bg-soft: rgba(251, 251, 252, 0.6);
-  --modal-bg: rgba(251, 251, 252, 0.8); /* 弹窗面板底（默认 80% 不透明；可被不透明度滑块覆盖） */
-  --panel-bg: rgba(251, 251, 252, 0.9); /* 设置中心面板底（弹窗族；默认 90%，可被滑块覆盖） */
-  --overlay-bg: rgba(255, 255, 255, 0.6);
+  --modal-bg: rgba(255, 255, 255, 0.96); /* 弹窗面板底（近不透明；可被不透明度滑块覆盖） */
+  --panel-bg: rgba(255, 255, 255, 0.98); /* 设置中心面板底（弹窗族；可被滑块覆盖） */
+  --overlay-bg: rgba(15, 17, 21, 0.25); /* 遮罩：黑薄罩（DeepSeek mask 手法，替代白雾洗白） */
 
   /* ── 基础层：业务专用色 ── */
   --msg-user-bg: #f0f0f2; /* 用户：浅灰气泡 */
   --msg-assistant-bg: #ffffff; /* 智能体：白纸卡片 */
-  --input-bg: #f6f6f7; /* 输入框底（新增语义 token，= --bg-secondary 现值） */
+  --input-bg: #ffffff; /* 输入框底（白卡+细描边分层，DeepSeek 输入卡手法；受滑块派生） */
   --code-bg: #f5f5f6;
   --scrollbar-thumb: #d4d4d6;
 
-  /* ── 别名层：slate 系（独立旧体系，必须保留覆盖）── */
-  --bg-primary: #fbfbfc;
-  --bg-secondary: #f6f6f7;
+  /* ── 别名层：slate 系（独立旧体系，必须保留覆盖）──
+     2026-10-07 同步简白新基底：中性灰 → 白/蓝调透明，与语义层一致 */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f7f7f8;
   --bg-tertiary: #f0f0f2;
-  --bg-hover: #ececed;
-  --bg-active: #e2e2e4;
+  --bg-hover: rgba(38, 49, 72, 0.06);
+  --bg-active: rgba(38, 49, 72, 0.12);
   --bg-input: #ffffff;
   --bg-card: #ffffff;
-  --bg-sidebar: #f4f4f6;
+  --bg-sidebar: #f7f7f8;
   --text-primary: #1a1a1a;
   --text-secondary: #555555;
   --text-tertiary: #888888;
   --text-muted: #aaaaaa;
-  --border-primary: #e5e5e8;
-  --border: #e5e5e8;
-  --border-secondary: #e2e2e5;
+  --border-primary: rgba(0, 0, 0, 0.1);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-secondary: rgba(0, 0, 0, 0.06);
 
   /* 别名层特例：--border-accent 语义为 rgba(accent,.5)，
      亮色原值为 rgba(0,0,0,.12)，解析值不同，必须保留此覆盖 */
@@ -453,9 +478,13 @@
   --shadow-surface: 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-elevated: 0 4px 24px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.06);
   --shadow-modal: 0 12px 48px rgba(0, 0, 0, 0.92), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-input: var(--shadow-elevated); /* 输入框专属档：tech 深底浮起已充分，等同 elevated */
   --shadow-inset: 0 0 24px rgba(0, 0, 0, 0.6) inset;
   --shadow-focus: 0 0 0 3px rgba(124, 111, 247, 0.28), 0 0 8px rgba(124, 111, 247, 0.14);
   --thinking-shadow: 0 4px 28px rgba(0, 0, 0, 0.7);
+  --send-interrupt-fill: var(--error);
+  --send-interrupt-fg: #ffffff;
+  --send-interrupt-glow: var(--error-rgb);
 
   /* ── 玻璃 — 无色薄雾 ── */
   --glass-0: rgba(255, 255, 255, 0.02);
