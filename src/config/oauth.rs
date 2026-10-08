@@ -24,7 +24,7 @@ pub const EXPIRY_SKEW_SECS: i64 = 60;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TokenIssuance {
     pub access_token: String,
-    /// 响应缺 refresh_token（部分服务只在首次下发）→ None，刷��时保留旧值。
+    /// 响应缺 refresh_token（部分服务只在首次下发）→ None，刷新时保留旧值。
     pub refresh_token: Option<String>,
     pub expires_in: Option<i64>,
 }
@@ -97,7 +97,7 @@ pub fn parse_token_response(body: &str) -> Result<TokenIssuance, String> {
 /// 读指定段的 OAuth 配置（令牌字段已透明解密）。
 ///
 /// 段不存在 / 未配 oauth → None；配置文件缺失/损坏 → None（调用方按
-/// ���尚未配置」语义处理，与 api_key 读取路径口径一致）。
+/// 「尚未配置」语义处理，与 api_key 读取路径口径一致）。
 pub fn read_oauth_segment(config_path: &std::path::Path, provider: &str) -> Option<ProviderOAuth> {
     let registry = ModelRegistry::from_toml(config_path.to_str()?).ok()?;
     registry

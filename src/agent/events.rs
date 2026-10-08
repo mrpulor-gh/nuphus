@@ -336,7 +336,7 @@ pub enum NuphusEvent {
 
     // ── 会话镜像（手机跟随桌面当前视图）──
     /// 当前会话已切换（桌面 rail 或手机遥控任一路径触发）。
-    /// 手机��收到后重拉 /history 即呈现桌面当前会话——手机不维护独立会话状态。
+    /// 手机端收到后重拉 /history 即呈现桌面当前会话——手机不维护独立会话状态。
     SessionChanged {
         /// 切换后的当前会话 id
         session_id: String,

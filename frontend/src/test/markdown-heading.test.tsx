@@ -15,7 +15,7 @@ describe('MarkdownContent 紧凑标题回归钉', () => {
     expect(html).toContain('差距巨大，核心在调试断层。')
   })
 
-  it('多段紧凑标题：每个标题���的正文都必须渲染', () => {
+  it('多段紧凑标题：每个标题后的正文都必须渲染', () => {
     const md = ['## 第一节', '第一节的内容。', '## 第二节', '第二节的内容。'].join('\n')
     const html = renderToString(<MarkdownContent content={md} />)
     expect(html).toContain('第一节的内容。')

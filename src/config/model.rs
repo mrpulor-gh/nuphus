@@ -157,7 +157,7 @@ pub struct ProviderOAuth {
 }
 
 impl ProviderOAuth {
-    /// ���个授权配置项是否齐备（发起授权登录的前置条件）。
+    /// 每个授权配置项是否齐备（发起授权登录的前置条件）。
     /// 令牌字段不参与判定——它们是登录产物，不是配置。
     pub fn config_complete(&self) -> bool {
         !self.authorize_url.trim().is_empty()

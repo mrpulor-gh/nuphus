@@ -1137,7 +1137,7 @@ impl BrowserClient {
         // 不做的事（刻意）：
         // - 不加 --app / --kiosk：它们去掉标签页与地址栏，多标签管理（new_tab /
         //   switch_tab）会失去落点，而这是 Agent 自动化的基础能力。
-        // - 不隐藏窗口：Agent 操作过程需要用户可��，隐藏会让"卡住了"无法自查。
+        // - 不隐藏窗口：Agent 操作过程需要用户可见，隐藏会让"卡住了"无法自查。
         let (screen_w, screen_h) = detect_screen_size();
         let win_w = screen_w.min(NUPHUS_WINDOW_WIDTH);
         let win_h = screen_h.min(NUPHUS_WINDOW_HEIGHT);
@@ -1148,7 +1148,7 @@ impl BrowserClient {
             // 去掉首次启动残留的滚动条/残留标记，保持渲染干净。
             .arg("--hide-scrollbars")
             .arg("--disable-session-crashed-bubble")
-            // 让页面拿到正确的 DPR，避免截图/坐标换算偏��（截图与点击按物理像素）。
+            // 让页面拿到正确的 DPR，避免截图/坐标换算偏移（截图与点击按物理像素）。
             .arg("--force-device-scale-factor=1");
 
         // Headed mode is user-visible, so retain Chrome's normal GPU, extension, and background
