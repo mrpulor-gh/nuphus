@@ -43,6 +43,7 @@ import {
   setProjectDir as setProjectDirCmd,
   setProjectBookmarks as setProjectBookmarksCmd,
   TOOL_PERMISSIONS_CHANGED_EVENT,
+  browserShowWindow,
   openExternal,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
@@ -372,6 +373,18 @@ export function ChatPanel({
   const openUrl = useCallback((url: string) => {
     openExternal(url).catch(e => {
       hudUpdate(friendlyIpcError(e, '打开链接失败'), 'warning')
+    })
+  }, [])
+
+  /**
+   * header 浏览器按钮：把 Agent 浏览器（Nuphus 的 CDP 实例）提到前台。
+   *
+   * 它与系统浏览器是两件事：外链走 open_external 给人看，这个窗口是 Agent
+   * 自动化与人工示教、标注共用的现场——独立 profile，登录态与应用一致。
+   */
+  const showBrowserWindow = useCallback(() => {
+    browserShowWindow().catch(e => {
+      hudUpdate(friendlyIpcError(e, '打开浏览器失败'), 'warning')
     })
   }, [])
 
@@ -1792,6 +1805,16 @@ export function ChatPanel({
             onClick={() => setShowAppearance(o => !o)}
           >
             <IconPalette size={15} />
+          </button>
+          {/* Agent 浏览器窗口：CDP 那个 Chrome，独立 profile。这里只做「唤出/置前」，
+              浏览、标注、示教都在那个窗口内进行。 */}
+          <button
+            className="chat-header-browser-btn"
+            aria-label={t('browser.toggle')}
+            title={t('browser.toggleTitle')}
+            onClick={showBrowserWindow}
+          >
+            <IconBrowser size={15} />
           </button>
           {pendingRefine && !refineState && !refining && (
             <div className="refine-pending-area">

@@ -481,6 +481,8 @@ fn main() {
             commands::tools::voice::voice_clone,
             // -- 外链：桌面端 WebView 不处理 target="_blank"，交系统浏览器 --
             commands::open_external,
+            // -- Agent 浏览器窗口：把 CDP 那个 Chrome 提到前台（人要看/要示范时）--
+            commands::browser_show_window,
             // -- Document render service (pdf.js in main webview) --
             render::commands::pdf_render_done,
             render::commands::pdf_render_error,

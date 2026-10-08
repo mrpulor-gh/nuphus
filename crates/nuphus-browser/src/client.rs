@@ -3123,6 +3123,54 @@ impl BrowserClient {
         Ok(out.as_bool().unwrap_or(false))
     }
 
+    /// 开始录制人操作。返回 false 表示页面里没有录制脚本（注入失败或页面已换）。
+    pub async fn start_recording(&self) -> Result<bool, BrowserError> {
+        let out = self
+            .evaluate(
+                "(function(){ if (!window.__nuphusRecording) return false; \
+                 return window.__nuphusRecording.start(); })()",
+            )
+            .await?;
+        Ok(out.as_bool().unwrap_or(false))
+    }
+
+    /// 停止录制并**取走**已录步骤（取走即清空缓冲，返回空数组表示一步未录）。
+    pub async fn stop_recording(&self) -> Result<serde_json::Value, BrowserError> {
+        self.evaluate(
+            "(function(){ if (!window.__nuphusRecording) return []; \
+             return window.__nuphusRecording.stop(); })()",
+        )
+        .await
+    }
+
+    /// 查看已录步骤但不取走（用于运行中观察进度）。
+    pub async fn peek_recording(&self) -> Result<serde_json::Value, BrowserError> {
+        self.evaluate(
+            "(function(){ if (!window.__nuphusRecording) return []; \
+             return window.__nuphusRecording.peek(); })()",
+        )
+        .await
+    }
+
+    /// 把浏览器窗口切到前台（人主动查看时用）。
+    ///
+    /// `Page.bringToFront` 是 CDP 的标准能力：它把该 target 所属的窗口提到前台，
+    /// 跨平台且无需自行枚举窗口句柄——后者在多窗口场景下容易拿错窗口。
+    ///
+    /// 页面尚未创建时先建一个：人被唤起却看不到任何窗口是最差体验，宁可开一张
+    /// 起始页（可被随后 navigate 覆盖）。
+    pub async fn bring_to_front(&mut self) -> Result<(), BrowserError> {
+        use chromiumoxide::cdp::browser_protocol::page::BringToFrontParams;
+
+        let page = self.get_or_create_page().await?;
+        let page_guard = page.lock().await;
+        page_guard
+            .execute(BringToFrontParams::default())
+            .await
+            .map(|_| ())
+            .map_err(cdp_err)
+    }
+
     /// Execute JavaScript (supports async/await via IIFE wrapping).
     pub async fn evaluate(&self, script: &str) -> Result<serde_json::Value, BrowserError> {
         let page = self.get_page().await?;
@@ -3731,6 +3779,24 @@ impl BrowserClient {
         Ok(())
     }
 
+    /// Register the teaching recorder on a page.
+    ///
+    /// Same document-start channel as the annotator, so it survives every
+    /// navigation. The script itself stays dormant until `start_recording` is
+    /// called, and even then it only observes: no listener blocks or rewrites
+    /// anything, so the page behaves normally while being demonstrated.
+    async fn inject_recorder(page: &Page) -> Result<(), BrowserError> {
+        use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+
+        const SOURCE: &str = super::RECORDER_SCRIPT;
+
+        page.execute(AddScriptToEvaluateOnNewDocumentParams::new(SOURCE))
+            .await
+            .map_err(cdp_err)?;
+        page.evaluate(SOURCE).await.map_err(cdp_err)?;
+        Ok(())
+    }
+
     async fn get_or_create_page(&mut self) -> Result<Arc<Mutex<Page>>, BrowserError> {
         if let Some(page) = &self.page {
             return Ok(page.clone());
@@ -3763,6 +3829,8 @@ impl BrowserClient {
             let _ = Self::inject_anti_detection(&page_guard).await;
             // 标注 overlay：非编辑态完全惰性，注入本身不改变页面行为。
             let _ = Self::inject_annotation_overlay(&page_guard).await;
+            // 示教录制：非录制态惰性，只观察不干预。
+            let _ = Self::inject_recorder(&page_guard).await;
         }
 
         // Configure download behavior on first page

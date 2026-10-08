@@ -2296,6 +2296,17 @@ export function openExternal(url: string) {
   return invoke<void>('open_external', { url })
 }
 
+/**
+ * 唤起 Agent 浏览器窗口（Nuphus 自己的 CDP 浏览器，不是系统浏览器）。
+ *
+ * 已有窗口则提到前台，没有则启动一个。返回窗口当前页URL，供调用方回显落点。
+ * 与 {@link openExternal} 的分工：外链给人看走系统浏览器；这个窗口是 Agent 自动化
+ * 与人示教、标注共用的现场。
+ */
+export function browserShowWindow() {
+  return invoke<string>('browser_show_window')
+}
+
 // Local workflow execution evidence. Summaries stay separate from full invocation values.
 export interface WorkflowInvocationSummary {
   id: number

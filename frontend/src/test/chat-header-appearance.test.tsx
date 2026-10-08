@@ -140,10 +140,11 @@ describe('refine chip 移入 header 右侧按钮列', () => {
     const chip = document.querySelector('.refine-pending-area')!
     expect(chip).toBeTruthy()
     expect(chip.parentElement).toBe(headerRight())
-    // 顺序：设置 → 外观 → chip。应用内独立浏览器的入口已删除（2026-10-08）：
-    // CDP 浏览器是 Agent 的执行器，人不在应用内看网页，裸 URL 走系统浏览器。
-    expect(headerRight().children).toHaveLength(3)
-    expect(headerRight().children[2]).toBe(chip)
+    // 顺序：设置 → 外观 → 浏览器 → chip。
+    // 浏览器按钮唤起的是 Agent 浏览器（Nuphus 的 CDP 实例，独立 profile），
+    // 不是应用内自建窗口；裸 URL 仍走系统浏览器。
+    expect(headerRight().children).toHaveLength(4)
+    expect(headerRight().children[3]).toBe(chip)
   })
 
   it('点 chip 打开 confirm 弹窗，仍挂在 chip 旁（同一父节点下）', () => {
