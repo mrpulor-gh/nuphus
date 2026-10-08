@@ -70,8 +70,13 @@ fn get_http_agent() -> reqwest::blocking::Client {
 
 // ── SSRF 防护 ──
 
-/// 判定单个 IP 是否被 SSRF 策略拦截。localhost 恒放行。
-fn ip_blocked(ip: &IpAddr, allow_private: bool) -> bool {
+/// 判定单个 IP 是否被 SSRF 策略拦截。
+///
+/// 两个开关各管一类非公网地址，互相独立：
+/// - `allow_private`：10/8、172.16/12、192.168/16（由 http_request 的模型开关控制）
+/// - `allow_loopback`：127.0.0.0/8、::1 —— http_request 需要（本地 API 调试是真实
+///   需求），公网抓取工具不需要，传 false 即拦
+fn ip_blocked(ip: &IpAddr, allow_private: bool, allow_loopback: bool) -> bool {
     // IPv4-mapped IPv6（::ffff:a.b.c.d）归一化为 v4 判定，防格式绕过
     let v4 = match ip {
         IpAddr::V4(v4) => Some(*v4),
@@ -79,7 +84,7 @@ fn ip_blocked(ip: &IpAddr, allow_private: bool) -> bool {
     };
     if let Some(v4) = v4 {
         if v4.is_loopback() {
-            return false; // 127.0.0.0/8 放行
+            return !allow_loopback; // 127.0.0.0/8
         }
         if v4.is_unspecified() || v4.is_link_local() {
             return true; // 0.0.0.0 / 169.254.0.0/16（云元数据）恒拦截
@@ -89,11 +94,11 @@ fn ip_blocked(ip: &IpAddr, allow_private: bool) -> bool {
         }
         return false;
     }
-    // 纯 IPv6：::1 放行，未指定地址（::）恒拦截，其余放行
+    // 纯 IPv6：::1 按 allow_loopback 判定，未指定地址（::）恒拦截，其余放行
     match ip {
         IpAddr::V6(v6) => {
             if v6.is_loopback() {
-                return false;
+                return !allow_loopback;
             }
             v6.is_unspecified()
         }
@@ -103,7 +108,19 @@ fn ip_blocked(ip: &IpAddr, allow_private: bool) -> bool {
 
 /// SSRF 校验：解析 URL host → IP，按策略判定放行/拦截。
 /// 域名的全部解析结果必须全部放行才放行（防混合应答绕过）。
-fn check_ssrf(url: &str, allow_private: bool) -> Result<(), String> {
+///
+/// 共用守卫：http_request 与 web_extract 共用本函数（web.rs 经
+/// `super::http::check_ssrf` 调用）—— 同 category 不允许两套安全基线。
+/// 两者的策略差异**只用参数表达**，不各写一份判断：
+/// - http_request：`(allow_private = 模型开关, allow_loopback = true)` ——
+///   本地 API 调试要能打 127.0.0.1，这是真实需求
+/// - web_extract：`(false, false)` —— 抓公网网页的工具没有任何理由访问本机，
+///   模型构造出 localhost URL 只有异常与恶意两种来源
+pub(super) fn check_ssrf(
+    url: &str,
+    allow_private: bool,
+    allow_loopback: bool,
+) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {}", e))?;
     match parsed.scheme() {
         "http" | "https" => {}
@@ -120,7 +137,7 @@ fn check_ssrf(url: &str, allow_private: bool) -> Result<(), String> {
 
     // IP 字面量直接判定，无需 DNS
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if ip_blocked(&ip, allow_private) {
+        if ip_blocked(&ip, allow_private, allow_loopback) {
             return Err(format!(
                 "SSRF blocked: {} is a restricted address (allow_private={})",
                 ip, allow_private
@@ -140,7 +157,7 @@ fn check_ssrf(url: &str, allow_private: bool) -> Result<(), String> {
         ));
     }
     for ip in &addrs {
-        if ip_blocked(ip, allow_private) {
+        if ip_blocked(ip, allow_private, allow_loopback) {
             return Err(format!(
                 "SSRF blocked: {} resolves to restricted address {} (allow_private={})",
                 host, ip, allow_private
@@ -176,7 +193,7 @@ fn classify_reqwest_error(e: &reqwest::Error) -> String {
 }
 
 fn perform_http_request(args: &HttpArgs) -> Result<String, String> {
-    check_ssrf(&args.url, args.allow_private)?;
+    check_ssrf(&args.url, args.allow_private, true)?;
     let agent = get_http_agent();
     let mut method = reqwest::Method::from_bytes(args.method.as_bytes())
         .map_err(|_| format!("unsupported HTTP method: {}", args.method))?;
@@ -231,7 +248,7 @@ fn perform_http_request(args: &HttpArgs) -> Result<String, String> {
                     .and_then(|base| base.join(loc))
                     .map_err(|e| format!("invalid redirect Location '{}': {}", loc, e))?
                     .to_string();
-                check_ssrf(&next, args.allow_private)?;
+                check_ssrf(&next, args.allow_private, true)?;
                 tracing::info!(
                     "[http_request] redirect {} (status {})",
                     next,
@@ -608,31 +625,45 @@ mod tests {
 
     #[test]
     fn http_ssrf_blocks_private_and_metadata() {
-        // 私网段默认拦截
-        assert!(check_ssrf("http://192.168.1.1/", false).is_err());
-        assert!(check_ssrf("http://10.0.0.1/", false).is_err());
-        assert!(check_ssrf("http://172.16.0.1/", false).is_err());
+        // 私网段默认拦截（第三参 true = http_request 的策略，管的是 loopback）
+        assert!(check_ssrf("http://192.168.1.1/", false, true).is_err());
+        assert!(check_ssrf("http://10.0.0.1/", false, true).is_err());
+        assert!(check_ssrf("http://172.16.0.1/", false, true).is_err());
         // 云元数据恒拦截（allow_private=true 也不放行）
-        assert!(check_ssrf("http://169.254.169.254/latest/meta-data", false).is_err());
-        assert!(check_ssrf("http://169.254.169.254/latest/meta-data", true).is_err());
+        assert!(check_ssrf("http://169.254.169.254/latest/meta-data", false, true).is_err());
+        assert!(check_ssrf("http://169.254.169.254/latest/meta-data", true, true).is_err());
         // 0.0.0.0 恒拦截
-        assert!(check_ssrf("http://0.0.0.0/", false).is_err());
-        assert!(check_ssrf("http://0.0.0.0/", true).is_err());
+        assert!(check_ssrf("http://0.0.0.0/", false, true).is_err());
+        assert!(check_ssrf("http://0.0.0.0/", true, true).is_err());
         // IPv4-mapped IPv6 不能绕过
-        assert!(check_ssrf("http://[::ffff:192.168.1.1]/", false).is_err());
+        assert!(check_ssrf("http://[::ffff:192.168.1.1]/", false, true).is_err());
         // allow_private 放行私网段
-        assert!(check_ssrf("http://192.168.1.1/", true).is_ok());
-        assert!(check_ssrf("http://10.0.0.1/", true).is_ok());
+        assert!(check_ssrf("http://192.168.1.1/", true, true).is_ok());
+        assert!(check_ssrf("http://10.0.0.1/", true, true).is_ok());
         // 非 http/https scheme 拦截
-        assert!(check_ssrf("file:///etc/passwd", false).is_err());
+        assert!(check_ssrf("file:///etc/passwd", false, true).is_err());
     }
 
     #[test]
     fn http_ssrf_allows_localhost() {
-        assert!(check_ssrf("http://127.0.0.1:8080/", false).is_ok());
-        assert!(check_ssrf("http://127.0.0.2/", false).is_ok());
-        assert!(check_ssrf("http://[::1]:9000/", false).is_ok());
-        assert!(check_ssrf("http://localhost/", false).is_ok());
+        // http_request 的策略：本地 API 调试要能打本机
+        assert!(check_ssrf("http://127.0.0.1:8080/", false, true).is_ok());
+        assert!(check_ssrf("http://127.0.0.2/", false, true).is_ok());
+        assert!(check_ssrf("http://[::1]:9000/", false, true).is_ok());
+        assert!(check_ssrf("http://localhost/", false, true).is_ok());
+    }
+
+    #[test]
+    fn web_extract_policy_blocks_loopback() {
+        // web_extract 的策略是 (allow_private=false, allow_loopback=false)：
+        // 抓公网网页的工具没有任何理由访问本机 —— 模型被抓回的网页内容注入后
+        // 构造 127.0.0.1:{Ollama/开发服务器/管理面板} 是真实可达的利用路径。
+        assert!(check_ssrf("http://127.0.0.1:11434/api/tags", false, false).is_err());
+        assert!(check_ssrf("http://127.0.0.2/", false, false).is_err());
+        assert!(check_ssrf("http://[::1]:9000/", false, false).is_err());
+        assert!(check_ssrf("http://localhost/", false, false).is_err());
+        // 公网地址照常放行（用 IP 字面量，不依赖测试机的 DNS）
+        assert!(check_ssrf("http://93.184.216.34/", false, false).is_ok());
     }
 
     #[test]

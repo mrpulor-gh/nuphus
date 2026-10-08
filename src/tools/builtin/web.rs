@@ -16,6 +16,7 @@ use crate::permissions::ToolCategory;
 use crate::tools::registry::{ToolDef, ToolRegistry};
 use crate::ToolResult;
 use scraper::{CaseSensitivity, Html, Selector};
+use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -24,6 +25,20 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 /// Agent 缓存 TTL（秒）—— 过期后重建，感知代理变化
 /// pub(super)：http.rs 的 client 缓存复用同一 TTL 模式
 pub(super) const AGENT_TTL: i64 = 60;
+
+/// web 抓取单响应字节上限（5 MiB）。
+///
+/// 动机：`max_chars` 是字符闸且由模型控制，挡不住「一个 100MB 的 HTML 直接进内存」
+/// —— 字符闸在 decode 之后才生效，全量 `bytes()` 会先把整个 body 读进内存。
+/// 带 Content-Length 且超限的响应直接拒绝（不读 body）；无 Content-Length
+/// （chunked）时读满上限即截断，保留可用部分，不报错。
+const MAX_WEB_BYTES: usize = 5 * 1024 * 1024;
+
+/// DOM 渲染最大递归深度。
+///
+/// 真实页面嵌套几十层就到头，超深只有「恶意构造」一种来源。超限只是不再继续
+/// 下钻，已产出的 parts 照常返回（不整页丢弃）。
+const MAX_DOM_DEPTH: usize = 256;
 
 /// reqwest 出口的 cookie 域白名单（视频/风控域，命中才从 vault 取 cookie
 /// 拼 Cookie header；未命中域名的请求行为完全不变）。
@@ -178,8 +193,7 @@ fn search_bing(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let bytes = response
-            .bytes()
+        let bytes = read_body_capped(response)
             .map_err(|e| format!("read bing response failed: {}", e))?;
         decode_web_body(&bytes, content_type.as_deref())
     };
@@ -274,8 +288,7 @@ fn search_ddg_lite(query: &str, count: usize) -> Result<Vec<SearchResult>, Strin
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let bytes = response
-            .bytes()
+        let bytes = read_body_capped(response)
             .map_err(|e| format!("read ddg lite response failed: {}", e))?;
         decode_web_body(&bytes, content_type.as_deref())
     };
@@ -1571,7 +1584,12 @@ fn is_nav_link(el: &scraper::ElementRef) -> bool {
 }
 
 /// 递归渲染 DOM 元素为结构化文本
-fn render_element(el: &scraper::ElementRef, parts: &mut Vec<String>, _depth: usize) {
+fn render_element(el: &scraper::ElementRef, parts: &mut Vec<String>, depth: usize) {
+    // 深度闸：真实页面嵌套几十层就到头，超深只有恶意构造一种来源。
+    // 超限只是不再下钻 —— 已产出的 parts 照常返回，不整页丢弃。
+    if depth > MAX_DOM_DEPTH {
+        return;
+    }
     let tag = el.value().name();
 
     if matches!(
@@ -1621,7 +1639,7 @@ fn render_element(el: &scraper::ElementRef, parts: &mut Vec<String>, _depth: usi
                 if let Some(child_el) = scraper::ElementRef::wrap(child) {
                     match child_el.value().name() {
                         "thead" | "tbody" | "tfoot" | "tr" | "caption" | "colgroup" | "col" => {
-                            render_element(&child_el, parts, _depth + 1);
+                            render_element(&child_el, parts, depth + 1);
                         }
                         _ => {}
                     }
@@ -1704,14 +1722,14 @@ fn render_element(el: &scraper::ElementRef, parts: &mut Vec<String>, _depth: usi
         "div" | "section" | "article" | "main" | "header" | "details" | "summary" => {
             for child in el.children() {
                 if let Some(child_el) = scraper::ElementRef::wrap(child) {
-                    render_element(&child_el, parts, _depth + 1);
+                    render_element(&child_el, parts, depth + 1);
                 }
             }
         }
         _ => {
             for child in el.children() {
                 if let Some(child_el) = scraper::ElementRef::wrap(child) {
-                    render_element(&child_el, parts, _depth + 1);
+                    render_element(&child_el, parts, depth + 1);
                 }
             }
         }
@@ -1933,10 +1951,12 @@ impl ToolRegistry {
                 if url.trim().is_empty() {
                     return Ok(ToolResult::failure("url cannot be empty"));
                 }
-                if !(url.starts_with("http://") || url.starts_with("https://")) {
-                    return Ok(ToolResult::failure(
-                        "url must start with http:// or https://"
-                    ));
+                // SSRF 守卫：与 http_request 共用同一实现（check_ssrf 内部已含
+                // http/https scheme 白名单，不再另写前缀判断）。策略传
+                // (allow_private=false, allow_loopback=false)：web_extract 抓的是
+                // 公网网页，私网段与本机地址都不该碰，也不给模型开关。
+                if let Err(e) = super::http::check_ssrf(&url, false, false) {
+                    return Ok(ToolResult::failure(e));
                 }
 
                 super::run_blocking(move || {
@@ -1950,7 +1970,10 @@ impl ToolRegistry {
                             let trimmed = text.trim();
                             // 内容充分（>= 2000 chars）直接返回
                             if trimmed.len() >= 2000 {
-                                return Ok(ToolResult::success(text));
+                                return Ok(ToolResult::success(format!(
+                                    "Fetched {}\n\n{}",
+                                    url, text
+                                )));
                             }
                             tracing::info!(
                                 "[web_extract] direct content too short ({} chars), trying CDP browser fallback",
@@ -1968,9 +1991,10 @@ impl ToolRegistry {
                     tracing::info!("[web_extract] launching CDP browser for: {}", url);
                     match fetch_via_browser(&url, max_chars) {
                         Ok(text) if !text.trim().is_empty() => {
-                            return Ok(ToolResult::success(
-                                format!("[via CDP browser render]\n\n{}", text)
-                            ));
+                            return Ok(ToolResult::success(format!(
+                                "Fetched {}\n\n[via CDP browser render]\n\n{}",
+                                url, text
+                            )));
                         }
                         Ok(_) => {
                             tracing::warn!("[web_extract] browser returned empty content");
@@ -2020,9 +2044,10 @@ impl ToolRegistry {
                                 mirror_body.trim().to_string()
                             };
                             if !text.trim().is_empty() {
-                                return Ok(ToolResult::success(
-                                    format!("[via Jina AI mirror]\n\n{}", text)
-                                ));
+                                return Ok(ToolResult::success(format!(
+                                    "Fetched {}\n\n[via Jina AI mirror]\n\n{}",
+                                    url, text
+                                )));
                             }
                             Ok(ToolResult::failure(format!(
                                 "All methods failed for {} (direct/browser/mirror all returned empty)",
@@ -2050,6 +2075,45 @@ impl ToolRegistry {
     }
 }
 
+/// 按字节上限读取响应 body（防超大响应打爆内存）。
+///
+/// - 带 Content-Length 且超限 → 直接 Err（不读 body，避免先分配再丢弃）
+/// - 否则 `take(MAX_WEB_BYTES + 1)` 读入；读出超过上限则截断保留可用部分（不报错）
+fn read_body_capped(response: reqwest::blocking::Response) -> Result<Vec<u8>, String> {
+    if let Some(len) = response.content_length() {
+        if len > MAX_WEB_BYTES as u64 {
+            return Err(format!(
+                "response too large: Content-Length {} exceeds cap {} bytes",
+                len, MAX_WEB_BYTES
+            ));
+        }
+    }
+    let mut buf = Vec::new();
+    let mut limited = response.take(MAX_WEB_BYTES as u64 + 1);
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("body read error: {}", e))?;
+    if buf.len() > MAX_WEB_BYTES {
+        buf.truncate(MAX_WEB_BYTES);
+    }
+    Ok(buf)
+}
+
+/// 解析 `Retry-After` 头（仅秒数形式）。
+///
+/// 只支持 `Retry-After: 2` 这类 delta-seconds；HTTP-date 形式（绝对时间）不解析
+/// —— 抓取工具不该为服务端时区解析引入不确定性。秒数封顶 30s：服务端可能回
+/// `Retry-After: 3600`，抓取工具不能因此挂住一小时。
+fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let raw = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    let secs = raw.parse::<u64>().ok()?;
+    Some(Duration::from_secs(secs.min(30)))
+}
+
 /// 直接 HTTP GET 请求，返回 body 字符串（已按 charset 三级嗅探解码）
 fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
     // 按域白名单附 cookie（命中才走 vault；未命中域名行为完全不变）
@@ -2073,20 +2137,25 @@ fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, 
                 if !code.is_success() {
                     // reqwest blocking: HTTP error status comes as Ok(Response), not Err
                     let msg = format!("HTTP {}", code.as_u16());
-                    if attempt == 0 {
-                        std::thread::sleep(Duration::from_millis(500));
+                    // 只重试 429（限流）/ 503（服务暂不可用）—— 404/403 等重试无意义。
+                    let retryable = matches!(code.as_u16(), 429 | 503);
+                    if retryable && attempt == 0 {
+                        let delay = retry_after_delay(r.headers())
+                            .unwrap_or(Duration::from_millis(500));
+                        std::thread::sleep(delay);
                         attempt += 1;
                         continue;
                     }
                     return Err(msg);
                 }
-                // charset 必须在 bytes() 之前取——bytes() 会消费 Response
+                // charset 必须在消费 Response 之前取——read_body_capped 会消费 Response
                 let content_type = r
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
-                let bytes = r.bytes().map_err(|e| format!("read body failed: {}", e))?;
+                let bytes =
+                    read_body_capped(r).map_err(|e| format!("read body failed: {}", e))?;
                 if bytes.trim_ascii().is_empty() {
                     return Err(format!("HTTP {} (empty body)", code.as_u16()));
                 }
@@ -2111,6 +2180,9 @@ fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, 
 /// launch。浏览器操作必须在常驻 browser runtime 上执行（临时 runtime drop
 /// 会杀死 CDP handler）；实例用毕保持存活供后续复用，不在此 close。
 fn fetch_via_browser(url: &str, max_chars: usize) -> Result<String, String> {
+    // SSRF 守卫：本层危害最大 —— CDP profile 带登录态，入口一旦被绕过
+    // 就是「以用户身份访问内网」。策略与 web_extract 入口一致 (false, false)。
+    super::http::check_ssrf(url, false, false)?;
     crate::browser::runtime().block_on(async {
         let mut guard = crate::browser::get_or_launch(true) // headless mode
             .await
@@ -2588,5 +2660,98 @@ mod tests {
         // CJK 标点与全角
         assert!(in_cjk('\u{3001}'), "CJK 标点应命中");
         assert!(in_cjk('\u{ff03}'), "全角字符应命中");
+    }
+
+    // ── 加固：字节闸 / 深度闸 / 重试策略 / SSRF 复用 ──
+
+    #[test]
+    fn test_retry_after_delay_parses_seconds_and_caps() {
+        use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+        // 无头 → None
+        let mut h = HeaderMap::new();
+        assert_eq!(retry_after_delay(&h), None);
+
+        // 秒数形式正常解析
+        h.insert(RETRY_AFTER, HeaderValue::from_static("2"));
+        assert_eq!(retry_after_delay(&h), Some(Duration::from_secs(2)));
+
+        // 封顶 30s（服务端说 1 小时也不能挂住抓取工具）
+        h.insert(RETRY_AFTER, HeaderValue::from_static("3600"));
+        assert_eq!(
+            retry_after_delay(&h),
+            Some(Duration::from_secs(30)),
+            "Retry-After 必须封顶 30s"
+        );
+
+        // HTTP-date 形式不解析
+        h.insert(
+            RETRY_AFTER,
+            HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"),
+        );
+        assert_eq!(retry_after_delay(&h), None, "HTTP-date 不应被解析");
+
+        // 非数字 → None
+        h.insert(RETRY_AFTER, HeaderValue::from_static("soon"));
+        assert_eq!(retry_after_delay(&h), None);
+    }
+
+    #[test]
+    fn test_render_element_depth_gate_stops_deep_nesting() {
+        // 5000 层嵌套：无深度闸时 render_element 递归会爆栈。
+        // 真实页面几十层就到头，超深只有恶意构造一种来源。
+        let html = format!(
+            "<html><body>{}<p>deep</p>{}</body></html>",
+            "<div>".repeat(5000),
+            "</div>".repeat(5000)
+        );
+        let doc = Html::parse_document(&html);
+        let body_sel = Selector::parse("body").unwrap();
+        let body = doc.select(&body_sel).next().expect("body element");
+
+        let mut parts: Vec<String> = Vec::new();
+        let start = std::time::Instant::now();
+        render_element(&body, &mut parts, 0); // 不得 panic / 爆栈
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "深层渲染耗时应可接受，实得 {:?}",
+            start.elapsed()
+        );
+        // 超限后不再下钻：5000 层深处的文本不应被产出（已产出的 parts 照常返回）
+        assert!(
+            !parts.iter().any(|p| p.contains("deep")),
+            "超过 MAX_DOM_DEPTH 的内容应被闸断"
+        );
+
+        // 直接以超限深度调用：应立即返回、不产出任何内容
+        let mut parts2: Vec<String> = Vec::new();
+        render_element(&body, &mut parts2, MAX_DOM_DEPTH + 1);
+        assert!(parts2.is_empty(), "初始深度即超限时应直接返回");
+    }
+
+    /// web_extract 复用 http_request 的 SSRF 守卫（不再只查 http:// 前缀）。
+    /// 必须在任何网络请求前拦下，故此用例不触网。
+    #[test]
+    fn test_web_extract_applies_ssrf_guard_before_fetch() {
+        let mut registry = ToolRegistry::new();
+        registry.register_web_extract();
+        let def = registry.get("web_extract").expect("web_extract registered");
+        let result = (def.executor)(
+            &serde_json::json!({"url": "http://169.254.169.254/latest/meta-data/"}),
+            &crate::tools::registry::ToolCtx::default(),
+        )
+        .expect("executor ok");
+        assert!(
+            !result.success,
+            "内网/云元数据地址必须在抓取前被 SSRF 守卫拦下"
+        );
+
+        // 非 http/https scheme 同样被守卫拦下（原前缀检查已移除）
+        let result = (def.executor)(
+            &serde_json::json!({"url": "file:///etc/passwd"}),
+            &crate::tools::registry::ToolCtx::default(),
+        )
+        .expect("executor ok");
+        assert!(!result.success, "file 协议应被拦下");
     }
 }
