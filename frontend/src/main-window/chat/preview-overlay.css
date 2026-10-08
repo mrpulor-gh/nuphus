@@ -109,6 +109,14 @@
   min-height: 0;
 }
 
+/* ── HTML 预览：通栏无内边距（2026-10-08 大王报障「页面非通栏」）──
+   .pv-body 的 padding 让 iframe 左右各缩进 16px、上下也留白，视觉上页面被套了个框。
+   HTML 走全出血（edge-to-edge）：预览就该是「页面本身」，与在浏览器里看一致。
+   只给 HTML 分支加，图片/PDF/代码等仍保留 padding（有内容边距更易读）。 */
+.pv-body:has(> .pv-iframe) {
+  padding: 0;
+}
+
 .pv-md {
   max-width: 860px;
   margin: 0 auto;
@@ -132,12 +140,14 @@
   background: var(--surface-checker, transparent);
 }
 
+/* HTML 预览 iframe：全出血 + 直角边框（圆角会让页面四角与滚动条不贴边）*/
 .pv-iframe {
   width: 100%;
   height: 100%;
   border: none;
-  border-radius: var(--radius-2);
+  border-radius: 0;
   background: var(--surface-0);
+  display: block;
 }
 
 .pv-code {
@@ -274,4 +284,367 @@
 }
 .pv-audio {
   width: min(560px, 92%);
+}
+
+/* ── HTML 标注回流面板（P4：编辑入口与修改列表全部由父窗口承载）──
+   iframe 侧已零常驻 UI（见 preview_protocol.rs 的 P4 铁律），父窗口负责：
+   右侧中部悬浮 ✎ 编辑开关 + 右侧常驻修改列表（批注/删除/定位/放弃/发送）。 */
+.pv-annot-panel {
+  position: absolute;
+  /* 与编辑按钮同列、垂直居中偏上；不遮内容（列表可滚动） */
+  top: 42%;
+  right: var(--space-5);
+  transform: translateY(-50%);
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(340px, calc(100vw - 96px));
+  max-height: calc(100% - var(--space-8));
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+}
+.pv-annot-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.pv-annot-panel-title {
+  flex: none;
+  font-size: var(--fz-md);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+.pv-annot-panel-file {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv-annot-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+}
+.pv-annot-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fz-sm);
+}
+.pv-annot-index {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  line-height: 1;
+}
+.pv-annot-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.pv-annot-comment {
+  color: var(--fg-1);
+}
+.pv-annot-sel {
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  word-break: break-all;
+}
+.pv-annot-rect {
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+}
+/* P3 区域框选条的 region 辅助行（琥珀色与 overlay 内区域框同色系） */
+.pv-annot-region {
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--accent);
+}
+/* outerHTML 摘要折叠：默认收起，展开也只露出 ≤300 字符的截断片段 */
+.pv-annot-html summary {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  cursor: pointer;
+  user-select: none;
+}
+.pv-annot-html code {
+  display: block;
+  margin-top: 2px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-1);
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: var(--fz-sm);
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.pv-annot-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line-1);
+}
+/* 编辑态零标注的空态（列表常驻、零标注也显示，避免面板空白无解释） */
+.pv-annot-empty {
+  padding: var(--space-3) var(--space-2);
+  color: var(--fg-3);
+  font-size: var(--fz-sm);
+  text-align: center;
+}
+/* 列表项尾部的批注输入（P4：批注编辑从 iframe 批注框迁到这里） */
+.pv-annot-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 52px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-0);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+  resize: vertical;
+}
+.pv-annot-input::placeholder {
+  color: var(--fg-3);
+}
+.pv-annot-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+/* 单条操作按钮（◎ 定位 / × 删除）：与 .pv-icon-btn 同源的小方钮 */
+.pv-annot-item-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.pv-annot-item-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.pv-annot-item-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+/* 末行：定位 + 删除（与批注输入同排） */
+.pv-annot-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-top: 2px;
+}
+/* ── 编辑入口：右侧中部悬浮 ✎（P4）──
+   三态契约与 app-island.css 的 .app-island-pill 对齐（hover surface-2+line-3、
+   focus-visible 用 box-shadow 而非 outline、active surface-active）；
+   激活态沿用 chat-input.css 的 .input-bar-toolbox-btn.is-active 范式（accent 系）。 */
+.pv-edit-toggle {
+  position: absolute;
+  /* 大王定案：右侧靠上 12%（不是垂直居中——中位既挡视线又要来回找）*/
+  top: 12%;
+  right: var(--space-5);
+  transform: translateY(-50%);
+  /* 层级：在 .pv-page(z-index:200) 内部自成一个层，不抬全局层级（≤260 的岛纪律） */
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--fg-3);
+  box-shadow: var(--shadow-elevated);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.pv-edit-toggle:hover {
+  background: var(--surface-2);
+  border-color: var(--line-3);
+  color: var(--fg-1);
+}
+.pv-edit-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-elevated), var(--shadow-focus);
+}
+.pv-edit-toggle:active {
+  background: var(--surface-active);
+}
+/* 编辑态激活视觉：accent 底 + accent 描边（与列表面板同色系） */
+.pv-edit-toggle.is-active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 待处理角标：收起态仍能看到「这批标注还没发」（P4 信息不丢） */
+.pv-edit-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fz-sm);
+  line-height: 1;
+  font-weight: var(--fw-semibold);
+}
+/* 编辑态顶部 2px accent 条：极轻提示，不遮内容（内容从工具栏下方开始） */
+.pv-page[data-annotating]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 13;
+  background: var(--accent);
+  pointer-events: none;
+}
+/* 主按钮：加入引用栏随消息发给丞相（--accent 语义色） */
+.pv-annot-send {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pv-annot-send:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pv-annot-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 标注器握手超时（best-effort）：overlay 注入失败 /页面脚本异常时告知用户。
+   可点击展开诊断详情——红条本身只说明「2s 内没听到握手」，断在哪一层要看诊断。 */
+.pv-annot-missing {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 32px));
+  border-radius: var(--radius-2);
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.1);
+  border: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.4);
+  color: var(--error, #ef4444);
+  font-size: var(--fz-sm);
+  overflow: hidden;
+}
+.pv-annot-missing-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.pv-annot-missing-head:hover {
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.12);
+}
+.pv-annot-missing-head:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.pv-annot-missing-toggle {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.18);
+  font-size: var(--fz-xs);
+  white-space: nowrap;
+}
+/* 诊断详情：逐层证据，让「注入失败」变成可定位的断点 */
+.pv-annot-diag {
+  margin: 0;
+  padding: var(--space-2) 12px 10px;
+  border-top: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  color: var(--fg-2);
+}
+.pv-annot-diag-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+.pv-annot-diag-row dt {
+  flex: none;
+  min-width: 84px;
+  color: var(--fg-3);
+}
+.pv-annot-diag-row dd {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pv-annot-diag-hint {
+  margin: var(--space-1) 0 0;
+  padding-top: var(--space-1);
+  border-top: 1px dashed rgba(var(--error-rgb, 239, 68, 68), 0.28);
+  color: var(--fg-3);
+  line-height: 1.5;
 }

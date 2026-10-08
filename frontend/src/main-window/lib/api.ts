@@ -1923,6 +1923,106 @@ export function revealPath(path: string) {
   return invoke<void>('reveal_path', { path })
 }
 
+// ── 应用内浏览器（后端 src-tauri/src/commands/browser.rs） ──
+
+/**
+ * 浏览窗口快照。字段 camelCase 与 Rust 侧 `BrowserState` 的
+ * `#[serde(rename_all = "camelCase")]` 一一对应。
+ */
+export interface BrowserState {
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+/** 打开一个远程浏览窗口，返回其 label（如 "browser-1"） */
+export function browserOpen(url: string) {
+  return invoke<string>('browser_open', { url })
+}
+
+/** 在已有窗口内跳转 */
+export function browserNavigate(label: string, url: string) {
+  return invoke<void>('browser_navigate', { label, url })
+}
+
+/** 刷新当前页 */
+export function browserReload(label: string) {
+  return invoke<void>('browser_reload', { label })
+}
+
+/** 关闭浏览窗口 */
+export function browserClose(label: string) {
+  return invoke<void>('browser_close', { label })
+}
+
+/** 后退（无历史时后端返回 Err，文案透出给调用方） */
+export function browserGoBack(label: string) {
+  return invoke<void>('browser_go_back', { label })
+}
+
+/** 前进 */
+export function browserGoForward(label: string) {
+  return invoke<void>('browser_go_forward', { label })
+}
+
+/** 读取窗口当前状态 */
+export function browserGetState(label: string) {
+  return invoke<BrowserState>('browser_get_state', { label })
+}
+
+/**
+ * 活跃浏览窗口快照。字段 camelCase 与 Rust 侧 `BrowserWindowInfo` 的
+ * `#[serde(rename_all = "camelCase")]` 一一对应。
+ */
+export interface BrowserWindowInfo {
+  /** window label（browser-<n>） */
+  label: string
+  title: string
+  url: string
+}
+
+/**
+ * 列出所有活跃浏览窗口（壳页面 tab 列表 / 主窗口「唤出已有窗口」共用）。
+ *
+ * ⚠️ Rust 侧签名是 `()-> Vec<BrowserWindowInfo>`（**无 Result**）：列窗口失败
+ * 由后端内部静默（单个窗口的 url() 失败会回落 session 历史），不向上抛。
+ * invoke 仍可能因 IPC 断开返回 null，调用方按「空列表」处理即可。
+ */
+export function browserListWindows() {
+  return invoke<BrowserWindowInfo[]>('browser_list_windows')
+}
+
+/** 录制事件回传：壳/内容脚本把动作压进 session 的 recording 流 */
+export function browserRecordAction(label: string, action: unknown) {
+  return invoke<void>('browser_record_action', { label, action })
+}
+
+/** 取回某窗口已录制的动作流（无记录返回空数组） */
+export function browserGetRecording(label: string) {
+  return invoke<unknown[]>('browser_get_recording', { label })
+}
+
+/** 清空某窗口的录制流（幂等：窗口/记录不存在时静默成功） */
+export function browserClearRecording(label: string) {
+  return invoke<void>('browser_clear_recording', { label })
+}
+
+/**
+ * 浏览器**起始页**：header 浏览器按钮没有 URL 可传时用它开窗。
+ *
+ * 为什么是 example.com：后端 `parse_remote_url` 只放行 http/https 且必须有 host，
+ * `about:blank` / `https://` 裸 scheme 都会被拒（已核验 browser.rs）；example.com 是
+ * IANA 保留的文档域名（RFC 2606），永远不是真实服务，渲染「Example Domain」，
+ * 作为「你有浏览器了，请输入网址」的占位内容没有第三方依赖与追踪。
+ * 壳页面挂载后会自动聚焦地址栏等输入（BrowserFrame.tsx）。
+ *
+ * 想要「Nuphus 内置起始页」的话有两条路：① 起一个 http(s) 可达的页面；
+ * ② 让 Rust 的 browser_open 接受 App URL（需改 Rust，本期不做）。
+ */
+export const BROWSER_START_URL = 'https://example.com'
+
 // ── 数据目录（只读列举） ──
 
 /** 单个数据目录条目；path 为空串 = 本机无法解析该目录（exists 必为 false） */
