@@ -21,6 +21,7 @@ mod tests {
     fn test_endpoint_for_deepseek() {
         let config = ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com".into(),
             model: "deepseek-v4-pro".into(),
@@ -41,6 +42,7 @@ mod tests {
     fn test_endpoint_strips_trailing_slash() {
         let config = ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com/".into(),
             model: "deepseek-v4-pro".into(),
@@ -61,6 +63,7 @@ mod tests {
     fn test_build_request_body_no_reasoning() {
         let config = ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com".into(),
             model: "deepseek-v4-pro".into(),
@@ -99,6 +102,7 @@ mod tests {
         for effort in ["low", "high", "max"] {
             let config = ChatCompletionsConfig {
                 name: "deepseek".into(),
+                provider_segment: String::new(), // 测试/直构：无段绑定
                 api_key: "sk-test".into(),
                 base_url: "https://api.deepseek.com".into(),
                 model: "deepseek-v4-flash".into(),
@@ -135,6 +139,7 @@ mod tests {
         // No reasoning_effort in config → parameter must be absent (provider default).
         let config = ChatCompletionsConfig {
             name: "deepseek".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com".into(),
             model: "deepseek-v4-flash".into(),
@@ -166,6 +171,7 @@ mod tests {
         // truncated long thinking streams for reasoning models.
         let config = ChatCompletionsConfig {
             name: "deepseek".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com".into(),
             model: "deepseek-v4-flash".into(),
@@ -204,6 +210,7 @@ mod tests {
         // value must NOT leak into other providers' request bodies.
         let config = ChatCompletionsConfig {
             name: "openai".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.openai.com".into(),
             model: "gpt-4o".into(),
@@ -233,6 +240,7 @@ mod tests {
         // byte-identical to current behavior (no reasoning_effort).
         let config = ChatCompletionsConfig {
             name: "deepseek".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.deepseek.com".into(),
             model: "deepseek-v4-flash".into(),
@@ -268,6 +276,7 @@ mod tests {
     fn test_with_model_preserves_other_config() {
         let config = ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-original".into(),
             base_url: "https://api.openai.com".into(),
             model: "gpt-4o".into(),
@@ -289,6 +298,7 @@ mod tests {
     fn test_with_provider_kind_sets_explicit_kind() {
         let config = ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "https://api.minimax.com/v1".into(),
             model: "MiniMax-M1".into(),

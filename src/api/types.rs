@@ -39,8 +39,20 @@ pub struct MessageRequest {
     pub merged_system: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default = "default_stream", skip_serializing_if = "std::ops::Not::not")]
     pub stream: bool,
+}
+
+/// Serde default for [`MessageRequest::stream`].
+///
+/// Must stay `true` to match [`MessageRequest::new`]. A bare `#[serde(default)]`
+/// on a `bool` yields `false`, so a request deserialized without an explicit
+/// `stream` field would silently become **non-streaming** — the opposite of the
+/// constructor. Providers that only serve streaming (CodeBuddy's relay answers
+/// `11101` to a non-stream request) would then fail with nothing pointing at a
+/// missing field as the cause.
+fn default_stream() -> bool {
+    true
 }
 
 impl MessageRequest {

@@ -181,6 +181,7 @@ mod tests {
     fn test_with_transport() {
         let transport = ChatCompletionsTransport::new(crate::transports::ChatCompletionsConfig {
             name: "test".to_string(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "test-key".to_string(),
             base_url: "https://api.deepseek.com".to_string(),
             model: "deepseek-v4-flash".to_string(),

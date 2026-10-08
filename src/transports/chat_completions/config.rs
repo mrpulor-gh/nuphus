@@ -5,8 +5,19 @@ use crate::config::provider::ProviderQuirks;
 /// Chat Completions Transport configuration
 #[derive(Debug, Clone)]
 pub struct ChatCompletionsConfig {
-    /// Provider name (e.g. "deepseek", "openai")
+    /// Provider **type** id (e.g. "deepseek", "custom"). Protocol identity, not a
+    /// routing binding — every custom-xxx instance collapses to "custom" here.
+    /// See `provider_segment` for the providers.toml segment name.
     pub name: String,
+    /// providers.toml **segment** name backing this transport (e.g. "custom-41flash").
+    ///
+    /// Distinct from `name` on purpose: `name` is the protocol/type id, while
+    /// per-segment config lookups (model-level `max_tokens` today) need the exact
+    /// segment. Collapsing the two is what made a custom instance look up a
+    /// segment called "custom", miss, and silently drop its `max_tokens`.
+    /// Empty = unbound (in-memory/direct construction); such lookups then resolve
+    /// to nothing rather than silently matching a sibling segment.
+    pub provider_segment: String,
     /// API endpoint (without /chat/completions suffix)
     pub base_url: String,
     /// API key

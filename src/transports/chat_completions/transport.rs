@@ -1180,9 +1180,15 @@ impl ChatCompletionsTransport {
         });
         if let Some(max_tokens) = request.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
-        } else if let Some(cfg_max) =
-            crate::config::resolve_max_output_tokens(&model, Some(&self.config.name))
-        {
+        } else if let Some(cfg_max) = crate::config::resolve_max_output_tokens(
+            &model,
+            // Segment-exact binding: `config.name` is the provider *type* id, under
+            // which every custom-xxx instance collapses to "custom" and misses its
+            // own segment (silently dropping model-level max_tokens). Empty when
+            // unbound → None, which resolves to nothing instead of a sibling.
+            (!self.config.provider_segment.is_empty())
+                .then_some(self.config.provider_segment.as_str()),
+        ) {
             // 用户显式在 providers.toml 配置了模型级 max_tokens → 遵循
             body["max_tokens"] = serde_json::json!(cfg_max);
         }
@@ -1822,6 +1828,7 @@ mod salvage_tests {
     fn test_config(port: u16) -> ChatCompletionsConfig {
         ChatCompletionsConfig {
             name: "test".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: format!("http://127.0.0.1:{}", port),
             model: "test-model".into(),
@@ -2439,6 +2446,7 @@ mod wire_shape_tests {
     fn config() -> ChatCompletionsConfig {
         ChatCompletionsConfig {
             name: "wire-shape".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
             api_key: "sk-test".into(),
             base_url: "http://127.0.0.1:1".into(),
             model: "test-model".into(),

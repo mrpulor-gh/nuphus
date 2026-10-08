@@ -53,7 +53,17 @@ impl Provider for CustomProvider {
     fn quirks(&self) -> ProviderQuirks {
         ProviderQuirks {
             requires_reasoning_echo: false,
-            supports_reasoning_effort: false,
+            // 推理强度（reasoning_effort）对 custom 段开闸：字段只在用户**显式**
+            // 在 providers.toml 写了 `reasoning_effort` 时才下发（transport
+            // `build_request_body` 的 opt-in 闸门），因此不会给「只是挂了个自定义
+            // 中转站」的段引入未知字段。
+            // 需求来源：CodeBuddy/WorkBuddy 中转（custom 段）持有的
+            // deepseek-v4.1-flash 等模型，**不带** reasoning_effort 时上游零思考
+            // 直接交付 1-token 结果；带上才按 effort 档位思考（已实测 low/high/max
+            // 均 200，且与 tools 同发不冲突 —— 故 effort_excludes_tools 保持 false）。
+            supports_reasoning_effort: true,
+            // 与 DeepSeek 的 effort_excludes_tools: true 相反：custom 中转（如上）
+            // 实测带工具 + reasoning_effort 仍 200 且 reasoning_tokens > 0。
             effort_excludes_tools: false,
             sanitize_tools: None,
             extra_headers: vec![],
@@ -77,6 +87,10 @@ impl Provider for CustomProvider {
         );
         Arc::new(ChatCompletionsTransport::new(ChatCompletionsConfig {
             name: "custom".to_string(),
+            // 协议/类型 id —— Transport::provider_name 的语义（每个 custom 实例都折叠成 "custom"）
+            // providers.toml 段名 —— 模型级配置（max_tokens 等）必须按段精确查找，
+            // 用类型 id 查会静默查不到（段名是 custom-xxx 而非 custom）。
+            provider_segment: cfg.name.clone(),
             api_key: cfg.api_key.clone(),
             base_url: if cfg.base_url.is_empty() {
                 self.default_base_url().to_string()
