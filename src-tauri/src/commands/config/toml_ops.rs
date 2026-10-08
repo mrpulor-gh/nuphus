@@ -1918,6 +1918,75 @@ pub fn read_provider_timeout_secs_from_config_toml(provider_name: &str) -> Optio
     None
 }
 
+/// Read the persisted large-window force-refine ratio (`[refine].large_force_threshold`).
+///
+/// 缺键 / 不可解析 / 越界一律返回 `None`，由调用方回落到
+/// [`nuphus::agent::distill::LARGE_FORCE_DEFAULT`]。**不**在此处静默 clamp：
+/// 越界值说明配置文件被手改过，应当回落到默认值而不是猜一个语义。
+pub fn read_refine_force_threshold_from_config_toml() -> Option<f64> {
+    let min = nuphus::agent::distill::LARGE_FORCE_MIN;
+    let max = nuphus::agent::distill::LARGE_FORCE_MAX;
+    let config_path = get_config_path()?;
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let raw = doc
+        .get("refine")?
+        .get("large_force_threshold")?
+        .as_float()?;
+    ((min..=max).contains(&raw)).then_some(raw)
+}
+
+/// Persist the large-window force-refine ratio to `[refine].large_force_threshold`.
+///
+/// 该值此前只存在于 `RuntimeContext` 内存 guard 里，进程一退出即丢失：用户把强制线
+/// 从默认 50% 调到 65%，重启后端点回到 50%，于是「显示 65% / 实际 50% 强制提炼」
+/// 的分歧再次出现，且用户无法察觉是自己没保存——因为 UI 上根本没有「保存」按钮，
+/// 滑杆 onChange 直接写内存，看起来就像已经生效了。
+pub fn write_refine_force_threshold_to_config_toml(value: f64) -> Result<(), String> {
+    let min = nuphus::agent::distill::LARGE_FORCE_MIN;
+    let max = nuphus::agent::distill::LARGE_FORCE_MAX;
+    if !(min..=max).contains(&value) {
+        return Err(format!(
+            "large_force_threshold must be between {} ~ {}",
+            min, max
+        ));
+    }
+    let Some(config_path) = get_config_path() else {
+        return Err("config.toml not found".to_string());
+    };
+
+    let _config_write = nuphus::config::lock_provider_config();
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        // 配置文件尚不存在（首次引导前）：内存值仍然生效，留给后续设置写入时落盘
+        Err(_) => return Ok(()),
+    };
+    let mut doc: toml::Value = match content.parse() {
+        Ok(d) => d,
+        Err(e) => return Err(format!("parse config.toml failed: {}", e)),
+    };
+
+    let root = doc
+        .as_table_mut()
+        .ok_or_else(|| "config.toml is not a table".to_string())?;
+    let table = root
+        .entry("refine")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[refine] is not a table".to_string())?;
+    table.insert(
+        "large_force_threshold".to_string(),
+        toml::Value::Float(value),
+    );
+
+    let new_content =
+        toml::to_string_pretty(&doc).map_err(|e| format!("serialize config.toml failed: {}", e))?;
+    nuphus::config::write_provider_config(&config_path, &new_content)
+        .map_err(|e| format!("write config.toml failed: {}", e))?;
+    tracing::info!("[refine] persisted large_force_threshold={}", value);
+    Ok(())
+}
+
 /// Collect all provider names that have non-empty API keys in config.toml.
 pub fn list_configured_providers() -> Vec<String> {
     let config_path = match get_config_path() {

@@ -144,6 +144,10 @@ pub fn set_session_refine_config(
         let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
         guard.large_force_refine_threshold = th;
         tracing::info!("set_session_refine_config: force_threshold={}", th);
+        // 落盘：内存 guard 随进程消失，不持久化等于「用户调了但下次启动悄悄退回
+        // 默认 50%」。先落盘再返回——写失败要让调用方看到（滑杆会弹错误提示），
+        // 否则又变成「显示已生效、实际没保存」。
+        crate::commands::config::toml_ops::write_refine_force_threshold_to_config_toml(th)?;
     }
     Ok("Refinement config updated".to_string())
 }

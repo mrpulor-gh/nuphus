@@ -163,4 +163,35 @@ describe('useEvents refine_prompt → autoRaiseForceThreshold', () => {
     expect(handlers.setRefineState).toHaveBeenCalledTimes(1)
     expect(invokeMock).not.toHaveBeenCalled()
   })
+
+  // 回归：pending 分支曾用「跳过那一刻」的旧 forceThreshold 快照去 reconcile，
+  // 而 autoRaiseForceThreshold 以 `forceThreshold >= minPct` 判「后端已够高」。
+  // 用户把线调到 0.80 后快照仍停在 0.50，下一轮 usage 把下限顶到 70% →
+  // 误判需要抬升 → 把后端从 0.80 静默改写成 0.70，用户设置被降级。
+  it('④ pending 分支以事件权威值为准，不被旧快照带偏（用户设 0.80 → 不降级到 0.70）', () => {
+    // PENDING 快照停留在 0.55（= 用户跳过那一刻的值），事件权威值为 0.80
+    const { handlers, setPendingRefine } = makeHandlers(PENDING)
+    renderHook(() => useEvents(handlers))
+
+    driveEvent(refinePrompt(0.8))
+
+    const updater = setPendingRefine.mock.calls[0][0] as (
+      prev: typeof PENDING | null,
+    ) => typeof PENDING | null
+    const next = updater(PENDING)
+    // pendingRefine 必须被刷成后端权威值，否则显示继续停留在旧快照
+    expect(next).toMatchObject({ usagePercent: 70, forceThreshold: 0.8 })
+    // 权威值 0.80 已高于下限 70 → 无需抬升，绝不能把 0.80 改小
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('⑤ pending 分支：权威值确实低于下限时才抬升（0.50 + usage 70% → 0.70）', () => {
+    const { handlers } = makeHandlers(PENDING)
+    renderHook(() => useEvents(handlers))
+
+    driveEvent(refinePrompt(0.5))
+
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith('set_session_refine_config', { forceThreshold: 0.7 })
+  })
 })

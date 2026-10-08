@@ -1243,6 +1243,15 @@ export function useEvents(h: EventHandlers) {
             const nextPending = {
               ...pending,
               usagePercent: pct,
+              // 必须用本次事件下发的 force_threshold（= 后端此刻真正生效的强制线），
+              // 不能沿用 pending 里的旧快照。旧快照是「跳过那一刻」的值，而滑块拖动
+              // 只写后端 + 组件本地 forceDraft，从不回写 refineState/pendingRefine，
+              // 于是快照会长期偏低甚至偏高。autoRaiseForceThreshold 以
+              // `forceThreshold >= minPct` 作为「后端已够高、无需抬升」的判据，
+              // 喂旧快照会误判：用户明明调到 80%，快照还停在 0.5，下一轮 usage 把
+              // 下限顶到 70% → 误判为「需要抬升」→ 把后端从 0.80 改写成 0.70，
+              // 用户的设置被静默降级。此处对齐权威值即可消除该降级。
+              forceThreshold,
               skippedTurns: pending.skippedTurns + 1,
             }
             h.setPendingRefine(cur => (cur ? nextPending : null))

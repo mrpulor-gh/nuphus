@@ -207,7 +207,12 @@ impl Default for RuntimeContext {
             model_generation: 0,
             model_context_explicit: None,
             metadata_tasks: Default::default(),
-            large_force_refine_threshold: nuphus::agent::distill::LARGE_FORCE_DEFAULT,
+            // 从 config.toml 恢复用户设定的强制线；缺键/不可解析/越界时回落到默认。
+            // 此前恒为 LARGE_FORCE_DEFAULT(=0.50)，意味着用户每次调完强制线，
+            // 重启应用后就被静默重置——表现就是「界面调到 65%，下一轮仍在 50% 强制提炼」。
+            large_force_refine_threshold:
+                crate::commands::config::toml_ops::read_refine_force_threshold_from_config_toml()
+                    .unwrap_or(nuphus::agent::distill::LARGE_FORCE_DEFAULT),
         }
     }
 }
