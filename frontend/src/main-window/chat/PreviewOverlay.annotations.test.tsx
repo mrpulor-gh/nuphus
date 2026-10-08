@@ -443,9 +443,15 @@ describe('注入 overlay 脚本：真实 JS 语法校验（防 Rust 内嵌脚本
     // tsconfig 未装 @types/node，直接写 process 会报 TS2580；取全局再断言。
     const cwd = (globalThis as { process?: { cwd(): string } }).process?.cwd()
     if (!cwd) throw new Error('无法确定 vitest 的工作目录')
-    const src = readFileSync(resolve(cwd, '..', 'src-tauri', 'src', 'preview_protocol.rs'), 'utf8')
+    // 脚本真源搬到了 nuphus-browser（CDP 与 preview 两个宿主共同依赖的最底层
+    // crate）；preview_protocol.rs 改为 `pub(crate) use` 引用它。这里必须跟着搬，
+    // 否则会读到"常量已不在此文件"的假失败。
+    const src = readFileSync(
+      resolve(cwd, '..', 'crates', 'nuphus-browser', 'src', 'annotation_overlay.rs'),
+      'utf8',
+    )
     const m = src.match(/const ANNOTATION_OVERLAY_SCRIPT: &str = r####"([\s\S]*?)"####/)
-    if (!m) throw new Error('未能从 preview_protocol.rs 提取 ANNOTATION_OVERLAY_SCRIPT')
+    if (!m) throw new Error('未能从 annotation_overlay.rs 提取 ANNOTATION_OVERLAY_SCRIPT')
     // 剥掉 <script> 包装，得到纯 JS 源码
     return m[1].replace(/^<script>/, '').replace(/<\/script>\s*$/, '')
   }

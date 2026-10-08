@@ -3090,6 +3090,39 @@ impl BrowserClient {
         }
     }
 
+    /// 读取页面上人工标注的结果（点选位置 + 批注文本 + 框选区域）。
+    ///
+    /// 页面侧由 overlay 脚本维护 `window.__NUPHUS_ANNOTATIONS__`：CDP 宿主的页面
+    /// 没有可通信的父窗口（window.parent === window），postMessage 只会把消息
+    /// 发回自己，故上行改挂全局变量，由本方法经 evaluate 取回。
+    ///
+    /// 返回 null 表示页面尚未产生过快照（未进入编辑态，或脚本未注入）——调用方
+    /// 应按「暂无标注」处理，而不是错误。
+    pub async fn read_annotations(&self) -> Result<serde_json::Value, BrowserError> {
+        self.evaluate("window.__nuphusReadAnnotations ? window.__nuphusReadAnnotations() : null")
+            .await
+    }
+
+    /// 向页面内标注器下发一条指令（进入/退出编辑态、定位、删除、改批注等）。
+    ///
+    /// 与 `read_annotations` 成对：CDP 下没有父窗口可postMessage，下行同样只能
+    /// 经 evaluate 调用脚本导出的 `window.__nuphusAnnotate(cmd)`。
+    ///
+    /// 脚本未注入时返回 false，调用方据此提示「标注器未就绪」而不是静默无反应。
+    pub async fn send_annotation_command(
+        &self,
+        command: &serde_json::Value,
+    ) -> Result<bool, BrowserError> {
+        let payload = serde_json::to_string(command).map_err(|e| BrowserError::Execution(e.to_string()))?;
+        let script = format!(
+            "(function(){{ if (typeof window.__nuphusAnnotate !== 'function') return false; \
+             window.__nuphusAnnotate({}); return true; }})()",
+            payload
+        );
+        let out = self.evaluate(&script).await?;
+        Ok(out.as_bool().unwrap_or(false))
+    }
+
     /// Execute JavaScript (supports async/await via IIFE wrapping).
     pub async fn evaluate(&self, script: &str) -> Result<serde_json::Value, BrowserError> {
         let page = self.get_page().await?;
@@ -3670,6 +3703,34 @@ impl BrowserClient {
         Ok(())
     }
 
+    /// Register the annotation overlay on a page, so a human can mark exact click
+    /// targets and describe the change for the Agent to consume as task intent.
+    ///
+    /// Registered as a document-start script (same channel as the automation
+    /// compatibility script), so it is in place before the page's own scripts run
+    /// and survives every subsequent navigation in this session.
+    ///
+    /// The overlay is inert until told otherwise: while the annotating flag is
+    /// false every document listener returns on its first line, so a page nobody
+    /// is marking up behaves exactly as if this script were absent.
+    ///
+    /// The script itself detects its host at runtime (iframe vs top-level CDP
+    /// page) — see `annotation_overlay.rs` for the two transport paths.
+    async fn inject_annotation_overlay(page: &Page) -> Result<(), BrowserError> {
+        use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+
+        const SOURCE: &str = super::ANNOTATION_OVERLAY_SCRIPT;
+
+        // Covers every future document, before its scripts run.
+        page.execute(AddScriptToEvaluateOnNewDocumentParams::new(SOURCE))
+            .await
+            .map_err(cdp_err)?;
+
+        // Also covers the document already loaded at attach time.
+        page.evaluate(SOURCE).await.map_err(cdp_err)?;
+        Ok(())
+    }
+
     async fn get_or_create_page(&mut self) -> Result<Arc<Mutex<Page>>, BrowserError> {
         if let Some(page) = &self.page {
             return Ok(page.clone());
@@ -3700,6 +3761,8 @@ impl BrowserClient {
             let page_guard = page_arc.lock().await;
             let _ = page_guard.execute(DOMEnable::default()).await;
             let _ = Self::inject_anti_detection(&page_guard).await;
+            // 标注 overlay：非编辑态完全惰性，注入本身不改变页面行为。
+            let _ = Self::inject_annotation_overlay(&page_guard).await;
         }
 
         // Configure download behavior on first page

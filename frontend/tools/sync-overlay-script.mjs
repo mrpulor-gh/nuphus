@@ -1,6 +1,10 @@
 /**
  * sync-overlay-script.mjs — 把 tools/overlay-script.src.js 同步进
- * src-tauri/src/preview_protocol.rs 的 ANNOTATION_OVERLAY_SCRIPT 原始字符串。
+ * crates/nuphus-browser/src/annotation_overlay.rs 的 ANNOTATION_OVERLAY_SCRIPT。
+ *
+ * 真源为什么在这个 crate：CDP（远程页）与 preview://（本地 HTML）两个宿主共用
+ * 这份脚本，而 nuphus-browser 是两者共同依赖的最底层 crate——脚本放这里，
+ * 才不必让底层反向依赖 Tauri 壳。preview_protocol.rs 改为 `pub(crate) use` 引用它。
  *
  * 为什么需要这一步（2026-10-08 实机事故的直接教训）：
  *   注入脚本约 18KB 的 JS 此前只有一处副本（.rs 里的 r####"..."#### 原始字符串），
@@ -24,7 +28,7 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..', '..')
 const jsPath = join(here, 'overlay-script.src.js')
-const rsPath = join(repoRoot, 'src-tauri', 'src', 'preview_protocol.rs')
+const rsPath = join(repoRoot, 'crates', 'nuphus-browser', 'src', 'annotation_overlay.rs')
 
 const HEAD = 'const ANNOTATION_OVERLAY_SCRIPT: &str = r####"<script>\n'
 const TAIL = '</script>"####;'

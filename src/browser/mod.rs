@@ -9,3 +9,8 @@ pub use nuphus_browser::{
     find_chrome, get_or_launch, managed_profile_dir, runtime, shared_client, BrowserClient,
     BrowserError, ChromeError, ExternalIdentity,
 };
+
+// 标注 overlay 脚本：CDP 与 preview:// 两个宿主共用的唯一副本（真源在
+// nuphus-browser，因为那是两者共同依赖的最底层 crate）。Tauri 壳经本模块取，
+// 无需让壳直接依赖 browser crate。
+pub use nuphus_browser::ANNOTATION_OVERLAY_SCRIPT;

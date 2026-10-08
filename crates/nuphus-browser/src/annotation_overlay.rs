@@ -1,3 +1,34 @@
+//! Annotation overlay script, shared by every browser surface.
+//!
+//! **Source of truth**: `frontend/tools/overlay-script.src.js`. The file you
+//! are reading is generated — run `node frontend/tools/sync-overlay-script.mjs`
+//! to refresh it, and `--check` (CI) to verify it has not drifted.
+//!
+//! ## Why it lives in this crate
+//!
+//! Two consumers need it: the `preview://` sandbox (local HTML, inside the
+//! Tauri shell) and the CDP-driven browser (remote pages, this crate). This
+//! crate is the lowest layer both depend on, so the script belongs here and
+//! `preview_protocol.rs` refers to it. Keeping the copy up in the shell would
+//! force this crate to depend on the shell — backwards, and impossible.
+//!
+//! ## Two hosts, one script
+//!
+//! The same source serves both, detected at runtime:
+//!
+//! - **iframe host** (`preview://`): the app window is `window.parent`, so
+//!   snapshots go up via `postMessage` and commands arrive the same way.
+//! - **CDP host** (remote page): the page is a top-level document, so
+//!   `window.parent === window` and `postMessage` would only echo back to
+//!   itself. Snapshots are parked on `window.__NUPHUS_ANNOTATIONS__` for the
+//!   Rust side to read via `evaluate`, and commands come in through
+//!   `window.__nuphusAnnotate(cmd)`.
+//!
+//! Either way the overlay is **inert until told otherwise** — every document
+//! listener returns on its first line while the annotating flag is false, so a
+//! page nobody is marking up behaves exactly as if this script were absent.
+
+pub const ANNOTATION_OVERLAY_SCRIPT: &str = r####"<script>
 (function () {
   'use strict'
   var LOG = '[nuphus-annotator]'
@@ -706,4 +737,4 @@
     // 注入异常绝不影响预览本身：仅 console.error，父窗口经握手超时兜底提示
     console.error(LOG + ' 初始化失败', err)
   }
-})();
+})();</script>"####;

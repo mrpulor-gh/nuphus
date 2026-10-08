@@ -7,11 +7,14 @@
 //! tokio runtime (temporary runtimes are forbidden — dropping one kills the CDP handler and leaves
 //! a zombie browser connection). Synchronous contexts enter uniformly via `runtime().block_on(...)`.
 
+mod annotation_overlay;
 mod chrome_finder;
 mod client;
 mod shared;
 
 pub mod cookie_source;
+
+pub use annotation_overlay::ANNOTATION_OVERLAY_SCRIPT;
 
 pub use chrome_finder::{find_chrome, get_profile_dir as managed_profile_dir, ChromeError};
 pub use client::{BrowserClient, BrowserError, ExternalIdentity};
