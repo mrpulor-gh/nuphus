@@ -158,8 +158,8 @@ npx @nuphus/nuphus-desktop
 
 | 工具 | 版本 | 用途 |
 |------|------|------|
-| [Rust](https://rustup.rs/) | ≥ 1.95 | 核心引擎编译 |
-| [Node.js](https://nodejs.org/) | ≥ 18 | Tauri 前端构建 |
+| [Rust](https://rustup.rs/) | 1.95.0（`rust-toolchain.toml` 锁定） | 核心引擎编译 |
+| [Node.js](https://nodejs.org/) | ≥ 20（vitest 4 不支持 18） | Tauri 前端构建与前端测试 |
 | Tauri CLI | `cargo install tauri-cli --version "^2"` | 桌面应用开发 |
 
 ```bash

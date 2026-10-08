@@ -2,8 +2,9 @@
  * 聊天 header 右侧按钮列 + refine chip 移列 + 外观浮窗接线。
  *
  * 钉住三件事（jsdom 不做布局，故断言 DOM 结构与可见结果，几何交真机）：
- * ① header 右侧是**同一 DOM 纵向两按钮**：设置（齿轮）→ 外观（调色板），
- *    兄弟关系而非各自 absolute（共用同一个 `.chat-header-right` 父节点）；
+ * ① header 右侧是**同一 DOM 纵向按钮列**：设置（齿轮）→ 外观（调色板）→
+ *    浏览器（罗盘），兄弟关系而非各自 absolute（共用同一个
+ *    `.chat-header-right` 父节点）；
  * ② refine chip 从 header 外移入该列后仍渲染，且 confirm 弹窗仍能打开
  *    （它的定位基准是 `.refine-pending-area`—— area 必须 position:relative，
  *     弹窗仍出现在 chip 旁）；
@@ -82,7 +83,7 @@ function renderChat(overrides: Record<string, unknown> = {}) {
 const headerRight = () => document.querySelector('.chat-header-right') as HTMLElement
 
 describe('聊天 header 右侧按钮列', () => {
-  it('设置与外观两按钮在同一 DOM 父子下纵向排布（兄弟节点）', () => {
+  it('设置 / 外观 / 浏览器三按钮在同一 DOM 父子下纵向排布（兄弟节点）', () => {
     renderChat()
 
     const right = headerRight()
@@ -91,7 +92,7 @@ describe('聊天 header 右侧按钮列', () => {
 
     expect(settings.parentElement).toBe(right)
     expect(appearance.parentElement).toBe(right)
-    // 外观按钮在设置按钮之后（列内顺序：设置 → 外观）
+    // 外观按钮在设置按钮之后（列内顺序：设置 → 外观 → 浏览器）
     expect(settings.nextElementSibling).toBe(appearance)
     // 类名独立，不复用设置按钮的类
     expect(settings).toHaveClass('chat-header-settings-btn')
@@ -133,15 +134,16 @@ describe('聊天 header 右侧按钮列', () => {
 })
 
 describe('refine chip 移入 header 右侧按钮列', () => {
-  it('chip 是按钮列的第三个子节点（自然下延，不再 absolute 到 header 外）', () => {
+  it('chip 是按钮列的最后一个子节点（自然下延，不再 absolute 到 header 外）', () => {
     renderChat({ pendingRefine: PENDING_REFINE })
 
     const chip = document.querySelector('.refine-pending-area')!
     expect(chip).toBeTruthy()
     expect(chip.parentElement).toBe(headerRight())
-    // 顺序：设置 → 外观 → chip
-    expect(headerRight().children).toHaveLength(3)
-    expect(headerRight().children[2]).toBe(chip)
+    // 顺序：设置 → 外观 → 浏览器 → chip（浏览器入口的切换行为见
+    // chat-header-browser.test.tsx，这里只钉 chip 仍在这一列尾部）
+    expect(headerRight().children).toHaveLength(4)
+    expect(headerRight().children[3]).toBe(chip)
   })
 
   it('点 chip 打开 confirm 弹窗，仍挂在 chip 旁（同一父节点下）', () => {

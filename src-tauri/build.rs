@@ -24,6 +24,15 @@ fn main() {
     // .so 是 ensure_sherpa_libs() 下载解包生成的——不先下载，校验必挂。
     ensure_sherpa_libs();
 
+    // 必须在 tauri_build::build() 之前：tauri-build 会把 bundle.resources 里的每个
+    // 条目 fs::copy 到 target/<profile>/（tauri-build-2.6.3 src/lib.rs:537-570），
+    // 且那处 copy 是裸 `?`，失败即中断构建脚本。sherpa 的 .dll 正在
+    // tauri.windows.conf.json 的 bundle.resources 里，只要上一次启动的实例还在跑
+    // （它已加载这些 DLL），目标副本就被 Windows 锁定 → os error 32，
+    // 而 tauri-build 不带任何上下文，构建者只能看到一句无头无尾的
+    // 「另一个程序正在使用此文件」。这里提前探测并给出可操作的诊断。
+    guard_sherpa_runtime_lib_locked();
+
     tauri_build::build();
 
     // ═══ 前端产物必须触发构建脚本重跑（重新内嵌 frontend/dist）═══
@@ -412,6 +421,81 @@ fn ensure_codesign_adhoc(path: &std::path::Path) {
         ),
         Err(e) => println!("cargo:warning=sherpa-onnx: 调不起 codesign: {e}"),
     }
+}
+
+/// 在 tauri_build::build() 之前探测 sherpa 运行时库在 target/<profile>/ 的副本
+/// 是否被正在运行的实例占用。
+///
+/// 为什么需要它：tauri-build 的 `copy_resources` 对 bundle.resources 每个条目做
+/// `fs::copy(src, target_dir/..)?`（tauri-build-2.6.3 `src/lib.rs:52` / `:99`），
+/// **不带任何错误上下文**。sherpa 的 .dll 正是 tauri.windows.conf.json 的
+/// bundle.resources 条目，于是「上一次 `tauri dev` 的 exe 还在跑」这一 everyday
+/// 场景必然让构建脚本以 `另一个程序正在使用此文件 (os error 32)` 收场——既不说是哪个
+/// 文件，也不说该关掉什么。Windows 加载中的 DLL 是内存映射镜像，无法被覆盖写入，
+/// 这个失败无法绕过，只能提前说清楚。
+///
+/// 仅 Windows 强制中断：Windows 对已加载模块拒绝写打开，探测结果与 tauri-build
+/// 的 copy 结果一致（必然失败，提前退出不改变成败，只是把诊断换成人能读懂的）。
+/// unix 上加载中的库通常可写，探测会误报，此时只告警不中断，避免把好构建判死。
+fn guard_sherpa_runtime_lib_locked() {
+    let Ok(out_dir) = std::env::var("OUT_DIR") else {
+        return;
+    };
+    let Some(profile_dir) = std::path::PathBuf::from(&out_dir)
+        .parent() // build/<hash>
+        .and_then(|p| p.parent()) // build/
+        .and_then(|p| p.parent()) // <profile>/
+        .map(|p| p.to_path_buf())
+    else {
+        return;
+    };
+
+    let mut locked: Vec<String> = Vec::new();
+    for name in platform_sherpa_runtime_libs() {
+        let dest = profile_dir.join(name);
+        if !dest.exists() {
+            continue;
+        }
+        // 只探测可写性，不写入、不改动任何内容
+        let is_locked = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&dest)
+            .is_err_and(|e| {
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+                ) || e.raw_os_error() == Some(32)
+            });
+        if is_locked {
+            locked.push(dest.display().to_string());
+        }
+    }
+
+    if locked.is_empty() {
+        return;
+    }
+
+    for path in &locked {
+        println!("cargo:warning=sherpa-onnx: 目标副本正被占用: {path}");
+    }
+    println!("cargo:warning=");
+    println!(
+        "cargo:warning=  这些文件是上一次运行的 Nuphus 实例已加载的 DLL，Windows 不允许覆盖写入。"
+    );
+    println!("cargo:warning=  tauri-build 需要把它们从 desktop/sherpa/ 重新拷贝到 {}/，因此构建无法继续。",
+        profile_dir.display());
+    println!("cargo:warning=");
+    println!("cargo:warning=  请先退出正在运行的实例，然后重新构建：");
+    println!("cargo:warning=");
+    println!("cargo:warning=    # 关闭托盘/窗口里的 Nuphus，或直接：");
+    println!("cargo:warning=");
+    #[cfg(target_os = "windows")]
+    println!("cargo:warning=    taskkill /IM nuphus.exe /F");
+    println!("cargo:warning=");
+    println!("cargo:warning=  （这是预期行为，不是构建配置错误；源码本身没有问题。）");
+
+    #[cfg(target_os = "windows")]
+    std::process::exit(1);
 }
 
 /// 三平台链接 + 运行时库同步：平台链接库存在即链接，并把运行时库拷到

@@ -127,6 +127,30 @@
   border-color: var(--glass-3);
   color: var(--spark-primary);
 }
+/* 浏览器（罗盘）按钮：与上一块逐字同款磨砂配方（--panel-bg 62% + blur(8px)
+   saturate(1.2) + 30×30 + radius 8 + hover 85% 档），不引新审美。
+   同样分开写而不合并选择器：opacity-system.test.ts 按单选择器取各按钮的
+   声明块，合并会让回归断言静默落空。 */
+.chat-header-browser-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-bg) 62%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  color: var(--spark-secondary);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all var(--transition-fast);
+}
+.chat-header-browser-btn:hover {
+  background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
+  border-color: var(--glass-3);
+  color: var(--spark-primary);
+}
 .chat-messages {
   flex: 1;
   /* min-height: 0 —— 滚动链的最后一环。本元素是 .chat-panel（纵向 flex）的 item，

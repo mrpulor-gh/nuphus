@@ -148,8 +148,8 @@ For users unfamiliar with the command line — **no CLI, no Node.js / Rust requi
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Rust](https://rustup.rs/) | ≥ 1.95 | Core engine compilation |
-| [Node.js](https://nodejs.org/) | ≥ 18 | Tauri frontend build |
+| [Rust](https://rustup.rs/) | 1.95.0 (pinned by `rust-toolchain.toml`) | Core engine compilation |
+| [Node.js](https://nodejs.org/) | ≥ 20 (vitest 4 does not support 18) | Tauri frontend build and frontend tests |
 | Tauri CLI | `cargo install tauri-cli --version "^2"` | Desktop app development |
 
 ```bash
