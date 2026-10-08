@@ -1,0 +1,317 @@
+/* browser-frame.css — 壳页面（44px 控制器）样式，.bf-* 前缀。
+
+   ⚠️ @import 必须在文件最前（CSS 规范）：壳页面是独立 HTML 入口，不继承主窗口样式表，
+   缺这一行则下方所有 var(--surface-*)/var(--fg-*) 解析失败 → 整条控制器回落到浏览器
+   默认值，表现为「看起来没有任何样式」（2026-10-08 实机故障）。
+   参照其他二级入口：capture-overlay/styles.css、main-window/tools/tools.css 同款。 */
+@import '../styles/tokens.css';
+
+/* 硬契约：壳 webview 的高度由 Rust 固定在 44px
+   （src-tauri/src/commands/browser.rs 的 FRAME_HEIGHT，add_child 时按逻辑像素设置、
+   窗口 resize 时重算 bounds）。两边无法共享常量，故本文件把该值钉成 --bf-height 并
+   与 Rust 常量双向注释互指——改任何一边都必须同步另一边，否则壳会被内容区盖住或留缝。
+   .bf-root 用显式高度（而非 100%）：「契约值」写在 CSS 里可被 grep 到，藏进 webview
+   裁剪行为里只会表现为难查的几何漂移。
+
+   视觉对齐已删除的 browser-panel.css（.bp-*）：仅引用 tokens.css 语义变量，
+   禁止硬编码色值 / 尺寸；圆角 --radius-2、间距 --space-*、字号 --fz-*。 */
+
+/* 壳页面是chrome：不允许出现文档滚动条 / 白底闪缝 */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* 44px 壳高：与 Rust FRAME_HEIGHT 一致（改这里必须同步改 Rust，反之亦然）。
+   显式写高而非 100%：壳的几何来源就是这个常量，写 100% 会把「契约值」藏进
+   webview 的裁剪行为里，漂移时表现为难查的留缝/遮挡。 */
+.bf-root {
+  --bf-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--bf-height);
+  padding: 0 var(--space-2);
+  background: var(--surface-1);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-md);
+  border-bottom: 1px solid var(--line-1);
+  overflow: hidden;
+  /* 控制器是 chrome：误拖选中文本会干扰下面的页面操作 */
+  user-select: none;
+}
+
+/* ── 导航三连：← → ⟳ ── */
+.bf-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.bf-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.bf-icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.bf-icon-btn:active:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.bf-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bf-icon-btn:focus-visible,
+.bf-btn:focus-visible,
+.bf-toggle:focus-visible,
+.bf-address:focus-visible,
+.bf-tab-main:focus-visible,
+.bf-tab-close:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── 地址栏：flex 1 吃掉剩余宽度 ── */
+.bf-address-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* loading spinner：绝对定位嵌在输入框左内边距处，不占文档流 */
+.bf-spinner {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--fg-3);
+  animation: bf-spin 1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes bf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.bf-address {
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 var(--space-6);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-inset);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-md);
+}
+
+.bf-address::placeholder {
+  color: var(--fg-4);
+}
+
+/* ── Go 按钮 ── */
+.bf-btn {
+  flex: 0 0 auto;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-1);
+  font-family: var(--font-ui);
+  font-size: var(--fz-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.bf-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-3);
+}
+
+/* ── 录制 / 标注开关 ── */
+.bf-toggles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.bf-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.bf-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+/* 开启态：accent 描边 + 软底，和旧面板的 active tab 同一套语义 */
+.bf-toggle.is-on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 窗口很窄时先牺牲开关的文字（图标 + 高亮仍表意） */
+.bf-toggle-text {
+  white-space: nowrap;
+}
+
+/* ── 错误 chip：44px 内嵌展示，截断 + title 全文，4s 自退 ── */
+.bf-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  height: var(--control-h);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border: 1px solid rgba(var(--error-rgb, 239, 68, 68), 0.4);
+  border-radius: var(--radius-2);
+  background: rgba(var(--error-rgb, 239, 68, 68), 0.1);
+  color: var(--error, #ef4444);
+  font-size: var(--fz-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── tab 列表：横向滚动而非换行（换行会把壳撑高，破坏 44px 契约）── */
+.bf-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.bf-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.bf-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 180px;
+  height: var(--control-h);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--fg-3);
+}
+
+/* 本窗口对应的 tab：抬亮底色 + 加深描边，一眼可辨 */
+.bf-tab.is-own {
+  background: var(--surface-0);
+  border-color: var(--line-3);
+  color: var(--fg-1);
+}
+
+.bf-tab-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bf-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bf-tab-spinner {
+  flex: 0 0 auto;
+  color: var(--fg-3);
+  animation: bf-spin 1s linear infinite;
+}
+
+.bf-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+}
+
+.bf-tab-close:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+/* 媒体查询兜底：窄窗口下开关文字隐去，保证地址栏最小可用宽度 */
+@media (max-width: 720px) {
+  .bf-toggle-text {
+    display: none;
+  }
+}

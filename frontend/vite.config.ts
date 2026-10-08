@@ -39,6 +39,10 @@ export default defineConfig({
         'mobile.html': 'mobile.html',
         'capture_overlay.html': 'capture_overlay.html',
         'hud.html': 'hud.html',
+        // 应用内浏览器壳页面（44px 控制器）：Rust 侧
+        // WebviewUrl::App("browser-frame.html") 指向 dist 根，缺入口则 frame
+        // webview 加载 404，整个壳+内容架构退化成「只有一个远程页」
+        'browser-frame.html': 'browser-frame.html',
       },
     },
   },

@@ -1,15 +1,19 @@
 import React from 'react'
+import { IconGlobe } from '../../ui/Icons'
 import '../../styles/markdown.css'
 
 interface MarkdownContentProps {
   content: string
   /** 可选：点击裸文件路径（仅绝对路径 + 白名单扩展名）时回调 */
   onFileClick?: (path: string) => void
+  /** 可选：点击裸 http(s) URL（未被 [text](url) 语法消费）时回调 */
+  onUrlClick?: (url: string) => void
 }
 
 const MarkdownContent = React.memo(function MarkdownContent({
   content,
   onFileClick,
+  onUrlClick,
 }: MarkdownContentProps) {
   // Normalize line endings: \r\n / \r → \n, prevent Windows line endings from breaking split(/\n\n+/)
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -57,7 +61,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
             </code>
           </pre>
         ) : (
-          <MarkdownText key={i} text={part.text} onFileClick={onFileClick} />
+          <MarkdownText key={i} text={part.text} onFileClick={onFileClick} onUrlClick={onUrlClick} />
         )
       })}
     </>
@@ -69,9 +73,11 @@ const MarkdownContent = React.memo(function MarkdownContent({
 function MarkdownText({
   text,
   onFileClick,
+  onUrlClick,
 }: {
   text: string
   onFileClick?: (path: string) => void
+  onUrlClick?: (url: string) => void
 }) {
   const lines = text.split('\n')
   const elements: React.ReactNode[] = []
@@ -84,6 +90,7 @@ function MarkdownText({
           key={elements.length}
           block={current.join('\n')}
           onFileClick={onFileClick}
+          onUrlClick={onUrlClick}
         />,
       )
       current = []
@@ -139,10 +146,12 @@ function NestedList({
   lines,
   ordered,
   onFileClick,
+  onUrlClick,
 }: {
   lines: string[]
   ordered: boolean
   onFileClick?: (path: string) => void
+  onUrlClick?: (url: string) => void
 }) {
   const Tag = ordered ? 'ol' : 'ul'
   const cls = ordered ? 'markdown-ol' : 'markdown-ul'
@@ -202,6 +211,7 @@ function NestedList({
                 lines={item.children}
                 ordered={/^\d+\.\s/.test(firstChild)}
                 onFileClick={onFileClick}
+                onUrlClick={onUrlClick}
               />
             )
           }
@@ -212,7 +222,7 @@ function NestedList({
               </span>
               <span className="markdown-body">
                 <span className={checked ? 'markdown-task-done' : ''}>
-                  <MarkdownInline text={text} onFileClick={onFileClick} />
+                  <MarkdownInline text={text} onFileClick={onFileClick} onUrlClick={onUrlClick} />
                 </span>
                 {childList}
               </span>
@@ -229,7 +239,7 @@ function NestedList({
           const firstChild = item.children.find(l => l.trim().length > 0)?.trim() || ''
           const childOrdered = /^\d+\.\s/.test(firstChild)
           childList = (
-            <NestedList lines={item.children} ordered={childOrdered} onFileClick={onFileClick} />
+            <NestedList lines={item.children} ordered={childOrdered} onFileClick={onFileClick} onUrlClick={onUrlClick} />
           )
         }
 
@@ -237,7 +247,7 @@ function NestedList({
           <li key={idx} className="markdown-li">
             <span className={markerClass}>{marker}</span>
             <span className="markdown-body">
-              <MarkdownInline text={content} onFileClick={onFileClick} />
+              <MarkdownInline text={content} onFileClick={onFileClick} onUrlClick={onUrlClick} />
               {childList}
             </span>
           </li>
@@ -251,9 +261,11 @@ function NestedList({
 function BlockRenderer({
   block,
   onFileClick,
+  onUrlClick,
 }: {
   block: string
   onFileClick?: (path: string) => void
+  onUrlClick?: (url: string) => void
 }) {
   const lines = block.split('\n')
 
@@ -269,24 +281,24 @@ function BlockRenderer({
     if (quoteText.trim().length === 0) return null
     return (
       <blockquote className="markdown-blockquote">
-        <MarkdownInline text={quoteText} onFileClick={onFileClick} />
+        <MarkdownInline text={quoteText} onFileClick={onFileClick} onUrlClick={onUrlClick} />
       </blockquote>
     )
   }
 
   // ▸ Unordered list
   if (/^[-*+]\s/.test(lines[0])) {
-    return <NestedList lines={lines} ordered={false} onFileClick={onFileClick} />
+    return <NestedList lines={lines} ordered={false} onFileClick={onFileClick} onUrlClick={onUrlClick} />
   }
 
   // ▸ Ordered list
   if (/^\d+\.\s/.test(lines[0])) {
-    return <NestedList lines={lines} ordered={true} onFileClick={onFileClick} />
+    return <NestedList lines={lines} ordered={true} onFileClick={onFileClick} onUrlClick={onUrlClick} />
   }
 
   // ▸ Table (second line must be separator: |---| format)
   if (lines.length >= 2 && lines[0].includes('|') && /^[\s:|:-]+$/.test(lines[1])) {
-    return <TableRenderer lines={lines} onFileClick={onFileClick} />
+    return <TableRenderer lines={lines} onFileClick={onFileClick} onUrlClick={onUrlClick} />
   }
 
   // ▸ Headings (# ~ ######)
@@ -300,7 +312,7 @@ function BlockRenderer({
     const rest = lines.slice(1)
     const heading = (
       <Tag className={`markdown-h markdown-h${level}`}>
-        <MarkdownInline text={headerMatch[2]} onFileClick={onFileClick} />
+        <MarkdownInline text={headerMatch[2]} onFileClick={onFileClick} onUrlClick={onUrlClick} />
       </Tag>
     )
     if (rest.length === 0 || rest.every(l => l.trim() === '')) {
@@ -309,7 +321,7 @@ function BlockRenderer({
     return (
       <>
         {heading}
-        <MarkdownText text={rest.join('\n')} onFileClick={onFileClick} />
+        <MarkdownText text={rest.join('\n')} onFileClick={onFileClick} onUrlClick={onUrlClick} />
       </>
     )
   }
@@ -325,7 +337,7 @@ function BlockRenderer({
   if (paraLines.length === 1) {
     return (
       <p className="markdown-paragraph">
-        <MarkdownInline text={block} onFileClick={onFileClick} />
+        <MarkdownInline text={block} onFileClick={onFileClick} onUrlClick={onUrlClick} />
       </p>
     )
   }
@@ -333,7 +345,7 @@ function BlockRenderer({
     <p className="markdown-paragraph">
       {paraLines.map((line, i) => (
         <span className="md-line" key={i}>
-          <MarkdownInline text={line} onFileClick={onFileClick} />
+          <MarkdownInline text={line} onFileClick={onFileClick} onUrlClick={onUrlClick} />
         </span>
       ))}
     </p>
@@ -344,9 +356,11 @@ function BlockRenderer({
 function TableRenderer({
   lines,
   onFileClick,
+  onUrlClick,
 }: {
   lines: string[]
   onFileClick?: (path: string) => void
+  onUrlClick?: (url: string) => void
 }) {
   const headers = lines[0]
     .split('|')
@@ -381,7 +395,7 @@ function TableRenderer({
                 .filter(Boolean)
                 .map((cell, ci) => (
                   <td key={ci} style={{ textAlign: aligns[ci] as any }}>
-                    <MarkdownInline text={cell.trim()} onFileClick={onFileClick} />
+                    <MarkdownInline text={cell.trim()} onFileClick={onFileClick} onUrlClick={onUrlClick} />
                   </td>
                 ))}
             </tr>
@@ -514,12 +528,140 @@ function applyFilePaths(
   })
 }
 
+// ── 裸 http(s) URL 识别 ──
+// 只认 http/https：`file:` / `javascript:` / `data:` 等协议一律不识别，避免把
+// 不可信协议包装成"可点击"的芯片（与 link 分支的协议白名单同一套口径）。
+const BARE_URL_RE = /https?:\/\/[^\s<>"'`]+/g
+
+/**
+ * Extract bare http(s) URL ranges from a plain-text fragment.
+ *
+ * 仅对「未被语法消费的纯文本」生效：[text](url) 已由 linkRegex 渲染成 <a> 元素，
+ * 行内代码已由 tokenizeByCode 切成 {t:'code'} 段，两者都不会流到这里。
+ *
+ * 尾部标点不属于 URL 的一部分，被吞进去会导致 404，这里按常见惯例剥离。
+ * 含中日韩全角句读（。！？，、；：）——AI 回复以中文为主，只剥半角标点会让
+ * 每句末尾的 URL 都带上句号。
+ */
+const URL_TRAILING_PUNCT = new Set([
+  '.',
+  ',',
+  ';',
+  ':',
+  '!',
+  '?',
+  '。',
+  '，',
+  '、',
+  '；',
+  '：',
+  '！',
+  '？',
+  '）',
+  '」',
+  '』',
+  '】',
+  '》',
+  '”',
+  '’',
+])
+
+export function extractUrls(text: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = []
+  const re = new RegExp(BARE_URL_RE.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[0]
+    // 排除被嵌入到更长 token 里的片段：`xhttps://a.com` / `foohttps://a.com`
+    // 这类前缀紧邻字母数字时，整串并不作为一个 URL 起头。
+    if (m.index > 0 && /[A-Za-z0-9@.\-]/.test(text[m.index - 1])) continue
+
+    // 括号平衡：`(https://x.com/a_(b))` 这类 URL 内部允许成对括号，
+    // 只在右括号多于左括号时剥离尾部 `)`。
+    let end = m.index + raw.length
+    while (end > m.index) {
+      const last = text[end - 1]
+      if (last === ')') {
+        const inner = text.slice(m.index, end)
+        const opens = (inner.match(/\(/g) ?? []).length
+        const closes = (inner.match(/\)/g) ?? []).length
+        if (closes <= opens) break
+        end--
+        continue
+      }
+      if (URL_TRAILING_PUNCT.has(last)) {
+        end--
+        continue
+      }
+      break
+    }
+    // 剥完后不能是空串（形如 `https://` 本身无意义，交给纯文本呈现）
+    if (end > m.index) out.push({ start: m.index, end })
+    re.lastIndex = end
+  }
+  return out
+}
+
+function UrlReference({ url, onOpen }: { url: string; onOpen: (url: string) => void }) {
+  const domain = url.replace(/^https?:\/\//i, '').split(/[/?#]/)[0]
+  return (
+    <button
+      type="button"
+      className="markdown-url-path"
+      title={url}
+      data-url-href={url}
+      onClick={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        onOpen(url)
+      }}
+    >
+      <IconGlobe className="markdown-url-icon" aria-hidden="true" />
+      <span className="markdown-url-domain">{domain}</span>
+    </button>
+  )
+}
+
+/**
+ * 对字符串节点做裸 URL 渲染；onUrlClick 缺省时原样返回（零回归）。
+ * 与 applyFilePaths 同构：只处理字符串节点，已渲染的元素跳过。
+ */
+function applyUrls(
+  nodes: React.ReactNode[],
+  onUrlClick: ((url: string) => void) | undefined,
+  prefix: string,
+): React.ReactNode[] {
+  if (!onUrlClick) return nodes
+  return nodes.flatMap((n, idx) => {
+    if (typeof n !== 'string') return [n]
+    const ranges = extractUrls(n)
+    if (ranges.length === 0) return [n]
+    const parts: React.ReactNode[] = []
+    let cursor = 0
+    ranges.forEach((r, ri) => {
+      if (r.start > cursor) parts.push(n.slice(cursor, r.start))
+      parts.push(
+        <UrlReference
+          key={`u-${prefix}-${idx}-${ri}`}
+          url={n.slice(r.start, r.end)}
+          onOpen={onUrlClick}
+        />,
+      )
+      cursor = r.end
+    })
+    if (cursor < n.length) parts.push(n.slice(cursor))
+    return parts
+  })
+}
+
 export function MarkdownInline({
   text,
   onFileClick,
+  onUrlClick,
 }: {
   text: string
   onFileClick?: (path: string) => void
+  onUrlClick?: (url: string) => void
 }) {
   const boldRegex = /\*\*(.+?)\*\*/g
   const italicRegex = /(?<!\w)\*(?!\*)(.+?)\*(?!\*)/g
@@ -628,6 +770,11 @@ export function MarkdownInline({
             })
           : [n],
       )
+
+      // 裸 URL 识别（link 之后；onUrlClick 缺省时零回归）
+      // 必须在 applyFilePaths 之前：先把 URL 摘成元素节点，后续文件路径分支只会
+      // 跳过非字符串节点，不会再把 URL 里的路径片段切一刀。
+      layer = applyUrls(layer, onUrlClick, `u-${i}`)
 
       // 裸文件路径识别（link 之后；onFileClick 缺省时零回归）
       layer = applyFilePaths(layer, onFileClick, `f-${i}`)

@@ -147,6 +147,49 @@
   white-space: nowrap;
 }
 
+/* ── 可点击裸 URL（AI 回复中的 http(s) 链接） ── */
+.markdown-url-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(100%, 320px);
+  margin: 0 2px;
+  padding: 2px 6px;
+  color: var(--fg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.35;
+  vertical-align: middle;
+  transition: all var(--transition-fast);
+}
+.markdown-url-path:hover {
+  color: var(--fg-1);
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: var(--accent-dim);
+}
+.markdown-url-path:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.markdown-url-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--accent);
+}
+.markdown-url-domain {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── 无序/有序列表 ── */
 .markdown-ul {
   margin: 8px 0 12px;
