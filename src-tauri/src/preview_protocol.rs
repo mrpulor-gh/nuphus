@@ -65,11 +65,10 @@ const MAX_PREVIEW_BYTES: u64 = 64 * 1024 * 1024;
 /// 上行除既有 `nuphus:annotations` / `nuphus:annotator-ready` 外新增
 /// `nuphus:annotate-exit`（iframe 内按 Esc 请求父窗口退出编辑态——焦点在 iframe 内，
 /// 父窗口收不到 keydown，不加这条用户会被困在编辑态）。
-// pub(crate)：commands/browser.rs 的 content webview 复用同一份标注脚本
-// （initialization_script 注入），禁止手抄副本——脚本真源只有这一处。
-/// 标注 overlay 脚本：唯一真源在 `nuphus-browser`（CDP 与 preview 两个宿主共用）。
+/// 标注 overlay 脚本：唯一真源在 `nuphus-browser`（preview:// 宿主经此引用）。
 /// 生成物，真源是 `frontend/tools/overlay-script.src.js`；
 /// `frontend/tools/sync-overlay-script.mjs` 负责搬运与 `--check` 防漂移。
+/// 禁止手抄副本——脚本真源只有这一处。
 pub(crate) use nuphus::browser::ANNOTATION_OVERLAY_SCRIPT;
 
 /// 注册 preview 协议到 Builder（main.rs Builder 链首调用）

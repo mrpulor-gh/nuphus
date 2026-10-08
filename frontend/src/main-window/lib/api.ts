@@ -2300,8 +2300,8 @@ export function openExternal(url: string) {
  * 唤起 Agent 浏览器窗口（Nuphus 自己的 CDP 浏览器，不是系统浏览器）。
  *
  * 已有窗口则提到前台，没有则启动一个。返回窗口当前页URL，供调用方回显落点。
- * 与 {@link openExternal} 的分工：外链给人看走系统浏览器；这个窗口是 Agent 自动化
- * 与人示教、标注共用的现场。
+ * 与 {@link openExternal} 的分工：外链给人看走系统浏览器；这个窗口是 Agent
+ * 自动化真正干活的地方，想看它进行到哪一步时把它提到前台。
  */
 export function browserShowWindow() {
   return invoke<string>('browser_show_window')

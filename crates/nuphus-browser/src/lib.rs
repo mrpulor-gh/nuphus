@@ -9,14 +9,12 @@
 
 mod annotation_overlay;
 mod chrome_finder;
-mod recorder_script;
 mod client;
 mod shared;
 
 pub mod cookie_source;
 
 pub use annotation_overlay::ANNOTATION_OVERLAY_SCRIPT;
-pub use recorder_script::RECORDER_SCRIPT;
 
 pub use chrome_finder::{find_chrome, get_profile_dir as managed_profile_dir, ChromeError};
 pub use client::{BrowserClient, BrowserError, ExternalIdentity};

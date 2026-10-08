@@ -6,23 +6,22 @@
 //!
 //! ## Why it lives in this crate
 //!
-//! Two consumers need it: the `preview://` sandbox (local HTML, inside the
-//! Tauri shell) and the CDP-driven browser (remote pages, this crate). This
-//! crate is the lowest layer both depend on, so the script belongs here and
-//! `preview_protocol.rs` refers to it. Keeping the copy up in the shell would
-//! force this crate to depend on the shell — backwards, and impossible.
+//! The script belongs to the lowest layer so the Tauri shell can reach it:
+//! `preview_protocol.rs` refers to it through this crate, not the other way
+//! around (a copy living in the shell would force this crate to depend on the
+//! shell — backwards, and impossible).
 //!
-//! ## Two hosts, one script
+//! ## Host detection
 //!
-//! The same source serves both, detected at runtime:
+//! The script probes its host at runtime:
 //!
 //! - **iframe host** (`preview://`): the app window is `window.parent`, so
-//!   snapshots go up via `postMessage` and commands arrive the same way.
-//! - **CDP host** (remote page): the page is a top-level document, so
-//!   `window.parent === window` and `postMessage` would only echo back to
-//!   itself. Snapshots are parked on `window.__NUPHUS_ANNOTATIONS__` for the
-//!   Rust side to read via `evaluate`, and commands come in through
-//!   `window.__nuphusAnnotate(cmd)`.
+//!   snapshots go up via `postMessage` and commands arrive the same way. This is
+//!   the only wired-up consumer.
+//! - **top-level host**: the page has no parent window, so `postMessage` would
+//!   only echo back to itself; snapshots are parked on
+//!   `window.__NUPHUS_ANNOTATIONS__` instead. The branch is kept in the script
+//!   but has **no consumer** — CDP-side annotation was removed (2026-10-08).
 //!
 //! Either way the overlay is **inert until told otherwise** — every document
 //! listener returns on its first line while the annotating flag is false, so a
