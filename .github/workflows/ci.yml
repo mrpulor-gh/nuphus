@@ -19,6 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 行尾闸门：仓库统一 LF（见 .gitattributes）。历史上曾出现「脚本改 1 行
+      # → 整个文件被转成 CRLF」导致 diff 里 2450 行全是噪音，review 与 blame 双双失效。
+      # 这里在装依赖之前先拦，失败只需几秒。
+      - name: Line endings must be LF
+        run: |
+          bad=$(git grep -Il $'\r' -- . ':!*.png' ':!*.jpg' ':!*.gif' ':!*.ico' \
+                ':!*.woff*' ':!*.dll' ':!*.exe' ':!*.so' ':!*.pdf' ':!*.zip' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::以下文件含 CRLF，请归一化为 LF（git add --renormalize .）："
+            echo "$bad"
+            exit 1
+          fi
+          echo "line endings OK"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

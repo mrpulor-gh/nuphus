@@ -1,0 +1,79 @@
+# 行尾策略：仓库内统一 LF，工作区不因工具/平台而变。
+#
+# 为什么需要（2026-10-08 事故）：本仓库 core.autocrlf=false，git 按字节
+# 比较。曾出现「用脚本改 1 行 → 整个 2985 行文件被转成 CRLF → diff 显示
+# 3006 增/2985 删」的真实 diff 噪音（真实改动仅 +73/-52），review 失效、
+# git blame 全部指到最后一次改动、merge 按行而非按内容冲突。
+#
+# `text=auto eol=lf`：git 视文本为文本，且**工作区也强制 LF**。这让
+# 「工作区被工具转成 CRLF」不再发生——git 检出时即已归一化。
+
+* text=auto eol=lf
+
+# ── 明确标为二进制：禁止任何行尾/文本转换，也禁止 diff ──
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.eot    binary
+*.mp3    binary
+*.wav    binary
+*.mp4    binary
+*.webm   binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.7z     binary
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.dylib  binary
+*.node   binary
+*.wasm   binary
+*.db     binary
+*.sqlite binary
+*.pack   binary
+*.idx    binary
+*.pdf    binary
+
+# ── 明确文本但必须 LF（即使内容看起来像二进制也要归一）──
+*.rs        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+*.html      text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.md        text eol=lf
+*.mdx       text eol=lf
+*.toml      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.py        text eol=lf
+*.sh        text eol=lf
+*.ps1       text eol=lf
+*.bat       text eol=lf
+*.cmd       text eol=lf
+*.txt       text eol=lf
+*.csv       text eol=lf
+*.sql       text eol=lf
+*.toml      text eol=lf
+*.xml       text eol=lf
+*.svg       text eol=lf
+*.lock      text eol=lf
+
+# ── 合并冲突标记不可当作行尾处理 ──
+*.dll  -text -diff
+*.exe  -text -diff
+*.pdb  -text -diff binary
