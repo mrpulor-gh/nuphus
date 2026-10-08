@@ -32,6 +32,11 @@ jobs:
             exit 1
           fi
           echo "line endings OK"
+      # 标注 overlay 脚本的防漂移闸门：.rs 里的原始字符串必须与 .js 真源逐字节相同。
+      # 此前 CI 完全不跑它，等于这道防线无人执行——vitest 只做子串提取，不比对内容。
+      # 退出码契约：0=同步 / 1=漂移 / 2=无法判定。
+      - name: Annotation overlay script must be in sync
+        run: node frontend/tools/sync-overlay-script.mjs --check
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

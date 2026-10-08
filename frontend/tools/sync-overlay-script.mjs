@@ -16,6 +16,11 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
+// Exit-code contract, relied on by CI:
+//   0 = in sync, 1 = drifted, 2 = cannot decide (anchors missing / unreadable).
+// 2 exists so "the checker could not run" is never reported as "in sync" — a
+// silent pass from a broken checker is worse than a red build.
+
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..', '..')
 const jsPath = join(here, 'overlay-script.src.js')
@@ -34,17 +39,28 @@ const src = readFileSync(rsPath, 'utf8').replace(/\r\n/g, '\n')
 const start = src.indexOf(HEAD)
 const endMarker = TAIL
 const end = src.indexOf(endMarker, start)
-if (start < 0 || end < 0)
-  throw new Error('未在 preview_protocol.rs 中定位到 ANNOTATION_OVERLAY_SCRIPT')
+if (start < 0 || end < 0) {
+  console.error('overlay script: 定位不到 ANNOTATION_OVERLAY_SCRIPT 锚点，无法判定同步状态')
+  process.exit(2)
+}
 const next = src.slice(0, start) + block + src.slice(end + endMarker.length)
 
-if (next === src.replace(/\r\n/g, '\n')) {
-  console.log('overlay script: in sync')
+// Compare the inner script as well as the wrapped text. The wrapped text alone
+// would still pass if the wrapper were edited on both sides; the inner
+// comparison is what actually answers "does the .rs copy equal the .js source".
+const innerMatch = src.slice(start + HEAD.length, end) === js
+const wrappedMatch = next === src
+if (!innerMatch || !wrappedMatch) {
+  if (process.argv.includes('--check')) {
+    console.error(
+      'overlay script: OUT OF SYNC with tools/overlay-script.src.js ' +
+        `(inner ${innerMatch ? 'ok' : 'MISMATCH'}, wrapped ${wrappedMatch ? 'ok' : 'MISMATCH'})`,
+    )
+    process.exit(1)
+  }
+  writeFileSync(rsPath, next, 'utf8')
+  console.log('overlay script: synced into preview_protocol.rs')
   process.exit(0)
 }
-if (process.argv.includes('--check')) {
-  console.error('overlay script: OUT OF SYNC with tools/overlay-script.src.js')
-  process.exit(1)
-}
-writeFileSync(rsPath, next, 'utf8')
-console.log('overlay script: synced into preview_protocol.rs')
+console.log('overlay script: in sync')
+process.exit(0)
