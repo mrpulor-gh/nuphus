@@ -1,5 +1,20 @@
 (function () {
   'use strict'
+
+  // ── 时序闸门：必须等 DOM 就绪 ──
+  //
+  // 为什么需要：注入分两条通道。
+  // - preview:// iframe：宿主在文档解析后 eval，时序正常。
+  // - CDP：`Page.addScriptToEvaluateOnNewDocument` 在 document-start 执行，
+  //   此时 document.body / document.head 都还不存在。脚本里
+  //   `document.body.appendChild(host)` 与 `document.head.appendChild(style)`
+  //   会直接抛错，而整段包在 try 里 → 静默失败 → 标注器根本没起来，
+  //   页面看起来毫无变化（现场踩过）。
+  //
+  // 因此把「登记排队」与「真正启动」分开：document-start 阶段只挂一个
+  // once 监听，等 DOMContentLoaded（已就绪则直接跑）再执行真正的初始化。
+  // 这样同一条注册在两种宿主下都成立，且跨导航自动重跑。
+  function boot() {
   var LOG = '[nuphus-annotator]'
   try {
     if (window.__nuphusAnnotatorLoaded) return
@@ -700,10 +715,28 @@
               console.error(LOG + ' 滚动条样式注入失败', err)
             }
 
-        // 握手：父窗口（PreviewOverlay）据此判断标注器就绪；2s 未收到即显示「标注器未就绪」
-        window.parent.postMessage({ type: 'nuphus:annotator-ready' }, '*')
+        // 握手：iframe 宿主下告知父窗口（PreviewOverlay）标注器已就绪；
+        // 2s 未收到即显示「标注器未就绪」。CDP 宿主没有可通信的父窗口，
+        // 改为标记全局标志 —— Rust 侧 read_annotations 读到的对象里
+        // ready 为 true 即表示初始化完成，不必再等一次协议往返。
+        if (CDP_HOST) {
+          window.__NUPHUS_ANNOTATIONS__ = { type: 'nuphus:annotator-ready', ready: true, at: Date.now() }
+        } else {
+          try {
+            window.parent.postMessage({ type: 'nuphus:annotator-ready' }, '*')
+          } catch (err) {
+            console.error(LOG + ' 握手失败', err)
+          }
+        }
   } catch (err) {
     // 注入异常绝不影响预览本身：仅 console.error，父窗口经握手超时兜底提示
     console.error(LOG + ' 初始化失败', err)
+  }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true })
+  } else {
+    boot()
   }
 })();
