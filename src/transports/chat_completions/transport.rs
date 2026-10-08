@@ -928,7 +928,13 @@ impl ChatCompletionsTransport {
                         }
 
                         // usage
-                        if let Some(usage) = json.get("usage") {
+                        // 必须过滤 null：vLLM/SGLang 系网关（opencode zen、CodeBuddy 等）
+                        // 会在中间 chunk 里序列化成 `"usage": null`。若不挡掉，
+                        // `json.get("usage")` 对 null 也返回 Some(Value::Null)，
+                        // 下面取值全落 unwrap_or(0)，final_usage 被提前锁成 Some(0,0,0)，
+                        // 紧接着的收尾判据就会在 finish_reason 帧后立刻 break，
+                        // 真正携带 token 的 usage 尾帧永远读不到（ctx 显示 -- / 0 tok）。
+                        if let Some(usage) = json.get("usage").filter(|u| u.is_object()) {
                             let prompt_tokens = usage
                                 .get("prompt_tokens")
                                 .and_then(|v| v.as_u64())
@@ -949,10 +955,21 @@ impl ChatCompletionsTransport {
                         }
                     }
                     // 本 chunk 已带 finish_reason 且内容已全部处理。
-                    // 收尾判据：**usage 尾帧已到手**（协议规定的最后一块）⇒ 收；
+                    // 收尾判据：**非空 usage 尾帧已到手**（协议规定的最后一块）⇒ 收；
                     // 若尚未到手，继续读——它按协议是紧随其后的毫秒级帧，
                     // 由 USAGE_GRACE 短容差兜底，不会退化成 60s 空等。
-                    if saw_finish && final_usage.is_some() {
+                    //
+                    // 判据要求 usage 非零而非 `is_some()`：上游若真给了全 0
+                    // （部分网关在未统计时如此），也应继续等真正的尾帧。
+                    let usage_ready = matches!(
+                        final_usage,
+                        Some(StreamEvent::Usage {
+                            input_tokens,
+                            output_tokens,
+                            ..
+                        }) if input_tokens > 0 || output_tokens > 0
+                    );
+                    if saw_finish && usage_ready {
                         break 'sse;
                     }
                 }
@@ -1434,7 +1451,9 @@ impl ChatCompletionsTransport {
                     current_reasoning.push_str(r);
                 }
             }
-            if let Some(usage) = json.get("usage") {
+            // 过滤 null：`"usage": null` 不是有效统计，推 0 值只会污染下游
+            // 取"最后一个 Usage 事件"的逻辑（common.rs 按 last-wins 归一）。
+            if let Some(usage) = json.get("usage").filter(|u| u.is_object()) {
                 let prompt_tokens = usage
                     .get("prompt_tokens")
                     .and_then(|v| v.as_u64())
@@ -1620,7 +1639,8 @@ impl ChatCompletionsTransport {
                     current_reasoning.push_str(r);
                 }
             }
-            if let Some(usage) = json.get("usage") {
+            // 过滤 null：同 parse_sse，`"usage": null` 不产生统计事件
+            if let Some(usage) = json.get("usage").filter(|u| u.is_object()) {
                 let prompt_tokens = usage
                     .get("prompt_tokens")
                     .and_then(|v| v.as_u64())
@@ -1791,7 +1811,8 @@ impl ChatCompletionsTransport {
         }
 
         // usage
-        if let Some(usage) = json.get("usage") {
+        // 过滤 null：非流式响应同样可能带 `"usage": null`（网关转发重序列化）
+        if let Some(usage) = json.get("usage").filter(|u| u.is_object()) {
             let prompt_tokens = usage
                 .get("prompt_tokens")
                 .and_then(|v| v.as_u64())
