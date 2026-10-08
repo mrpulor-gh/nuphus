@@ -21,7 +21,7 @@ import type { MutableRefObject } from 'react'
 import type { ExecutionStage } from './useExecutionState'
 import type { MoodState } from '../ui/MoodFace'
 import { playUiSound } from '../ui/sound'
-import { showAppFeedbackByHudPhase } from '../ui/islandChannel'
+import { showAppFeedback, showAppFeedbackByHudPhase } from '../ui/islandChannel'
 import type { ApiHealthState, ApiHealthEventKind, ApiHealthIncident } from '../core/types'
 import { requestWorkflowEnhancedModeRefresh } from '../main-window/workflow-canvas/enhancedModeEvents'
 
@@ -476,7 +476,11 @@ export function useEvents(h: EventHandlers) {
             h.setRefineState(null)
             h.setPendingRefine(null)
             h.setForceDraftForRefine?.(null)
-            addSystemMsg('模型已切换，上下文提示已按新的上下文窗口重新计算。')
+            // 只提示、不落进对话流：这不是执行结果，而是一次即时说明，常驻气泡会把
+            // 会话切碎；轻反馈通道自会分流（应用在前台 → island，后台 → HUD）。
+            // 注意别和模型侧的通知混为一谈：后端已经把「当前模型已切换至 …」注入了
+            // Agent 会话（config/llm.rs 的 push_system），那条必须留着。
+            showAppFeedback('模型已切换，上下文提示已按新的上下文窗口重新计算。')
           }
           h.setModelName(event.model)
           // ⚠️ SessionInfo.session_id 是**每轮随机生成的事件关联 id**（后端
