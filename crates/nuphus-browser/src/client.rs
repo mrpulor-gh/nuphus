@@ -3097,16 +3097,35 @@ impl BrowserClient {
     ///
     /// 页面尚未创建时先建一个：人被唤起却看不到任何窗口是最差体验，宁可开一张
     /// 起始页（可被随后 navigate 覆盖）。
+    ///
+    /// ## 为什么自愈放在这一层
+    ///
+    /// 这是唯一**由人**触发的 CDP 操作：点了打不开就是坏了，没有第二次机会
+    /// （nuphus-mcp 那侧的自愈挂在调用方 `run_op_with_reconnect` 上，Tauri 命令
+    /// 没有那一层）。两种失效在用户眼里都是「点了没反应」，故都在此就地恢复：
+    ///
+    /// - **连接已死**（Chrome 被外部关闭或崩溃）→ 重建后重试。`launch` 的探活只
+    ///   回答「确定活着？」，不会自己判死（见其文档），死亡恰恰由这里的失败证明。
+    /// - **缓存页面失效**（人在浏览器里关掉了我们那张标签页）→ 丢弃句柄重开一张。
+    ///
+    /// 连接还活着时不做任何重建：一次失败的操作本身不代表浏览器已死（慢页面、
+    /// 事件洪水都会让单次命令失败），只有错误类型明确时才付出重建代价。
     pub async fn bring_to_front(&mut self) -> Result<(), BrowserError> {
-        use chromiumoxide::cdp::browser_protocol::page::BringToFrontParams;
-
         let page = self.get_or_create_page().await?;
-        let page_guard = page.lock().await;
-        page_guard
-            .execute(BringToFrontParams::default())
-            .await
-            .map(|_| ())
-            .map_err(cdp_err)
+        match activate_page(&page).await {
+            Ok(()) => Ok(()),
+            Err(e) if Self::is_connection_error(&e) => {
+                self.reconnect().await?;
+                let page = self.get_or_create_page().await?;
+                activate_page(&page).await
+            }
+            Err(e) if Self::is_stale_page_error(&e) => {
+                self.page = None;
+                let page = self.get_or_create_page().await?;
+                activate_page(&page).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Execute JavaScript (supports async/await via IIFE wrapping).
@@ -3533,6 +3552,26 @@ impl BrowserClient {
         }
     }
 
+    /// Classify failures that only mean *our handle to a page* is stale: the tab was
+    /// closed from inside the browser by the person using it.
+    ///
+    /// Distinct from [`Self::is_connection_error`] in both cause and cure — the
+    /// connection and the window are perfectly alive, so a reconnect would needlessly
+    /// tear down a browser the person is looking at. Re-creating the page handle is
+    /// enough. Matched on protocol wording only (no page-controlled text can reach
+    /// this phrasing), and deliberately narrow: an unrecognized failure is reported
+    /// rather than "fixed" by dropping someone's page.
+    pub fn is_stale_page_error(err: &BrowserError) -> bool {
+        let BrowserError::Execution(msg) = err else {
+            return false;
+        };
+        let msg = msg.to_ascii_lowercase();
+        msg.contains("no target with given id")
+            || msg.contains("target closed")
+            || msg.contains("session not found")
+            || msg.contains("cannot find context")
+    }
+
     /// New tab
     pub async fn new_tab(&mut self, url: Option<&str>) -> Result<String, BrowserError> {
         // Scope the browser borrow + guard: ensure_download_behavior below
@@ -3783,6 +3822,21 @@ fn is_transport_cdp_error(e: &chromiumoxide::error::CdpError) -> bool {
     )
 }
 
+/// Bring the window owning `page` to the front (CDP `Page.bringToFront`).
+///
+/// A free function rather than a method: `bring_to_front` calls it from recovery
+/// branches that still hold `&mut self`, so it cannot borrow the client.
+async fn activate_page(page: &Arc<Mutex<Page>>) -> Result<(), BrowserError> {
+    use chromiumoxide::cdp::browser_protocol::page::BringToFrontParams;
+
+    let page_guard = page.lock().await;
+    page_guard
+        .execute(BringToFrontParams::default())
+        .await
+        .map(|_| ())
+        .map_err(cdp_err)
+}
+
 /// Wrap a chromiumoxide error preserving the transport-vs-business distinction
 /// (P1: string-flattening used to let page JS exception text like "WebSocket
 /// disconnected" spoof the connection-error classifier).
@@ -3970,6 +4024,33 @@ mod tests {
         ));
         assert!(!BrowserClient::is_stale_node_error(
             &BrowserError::Execution("Click on '#x' failed: some other error".to_string())
+        ));
+    }
+
+    #[test]
+    fn stale_page_error_classification() {
+        // Target page gone (the person closed that tab) → rebuild the handle only;
+        // the browser and the connection are fine, so a reconnect would be wrong.
+        assert!(BrowserClient::is_stale_page_error(&BrowserError::Execution(
+            "Page.bringToFront failed: No target with given id found".to_string()
+        )));
+        assert!(BrowserClient::is_stale_page_error(
+            &BrowserError::Execution("Target closed".to_string())
+        ));
+        assert!(BrowserClient::is_stale_page_error(&BrowserError::Execution(
+            "Runtime.evaluate failed: Cannot find context with specified id".to_string()
+        )));
+        // Connection-class failures are handled by is_connection_error — the two
+        // paths differ in cost (relaunch vs. new page), so they must not overlap.
+        assert!(!BrowserClient::is_stale_page_error(
+            &BrowserError::Connection("send failed because receiver is gone".to_string())
+        ));
+        // A page's own JS exception must never be read as a dead handle: that would
+        // discard the page the person is looking at for no reason.
+        assert!(!BrowserClient::is_stale_page_error(
+            &BrowserError::Execution(
+                "Click JS exception: TypeError: undefined is not a function".to_string()
+            )
         ));
     }
 
