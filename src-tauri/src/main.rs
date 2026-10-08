@@ -481,19 +481,6 @@ fn main() {
             commands::tools::voice::voice_clone,
             // -- 外链：桌面端 WebView 不处理 target="_blank"，交系统浏览器 --
             commands::open_external,
-            // -- 应用内浏览器：一个 Window + 两个子 webview（壳 frame + 内容 content），
-            // 事件回主窗口 browser://event。见 docs/browser-shell-arch.md --
-            commands::browser_open,
-            commands::browser_navigate,
-            commands::browser_reload,
-            commands::browser_close,
-            commands::browser_go_back,
-            commands::browser_go_forward,
-            commands::browser_get_state,
-            commands::browser_list_windows,
-            commands::browser_record_action,
-            commands::browser_get_recording,
-            commands::browser_clear_recording,
             // -- Document render service (pdf.js in main webview) --
             render::commands::pdf_render_done,
             render::commands::pdf_render_error,

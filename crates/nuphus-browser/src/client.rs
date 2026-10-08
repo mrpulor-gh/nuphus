@@ -362,6 +362,11 @@ fn sort_by_mtime_desc(files: &mut [serde_json::Value]) {
 const MIN_AUTOMATION_WIDTH: u32 = 1280;
 const MIN_AUTOMATION_HEIGHT: u32 = 720;
 
+/// Agent 浏览器窗口的目标尺寸（与 Nuphus 主窗口 1080x720 同量级，略放宽以
+/// 容纳网页工具栏）。实际取值再与屏幕尺寸取 min，避免超出可视区。
+const NUPHUS_WINDOW_WIDTH: u32 = 1280;
+const NUPHUS_WINDOW_HEIGHT: u32 = 800;
+
 /// Detect primary monitor physical size via xcap.
 ///
 /// Falls back to the minimum automation viewport when display enumeration fails
@@ -1123,6 +1128,28 @@ impl BrowserClient {
             .arg("--no-default-browser-check")
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--disable-popup-blocking"); // keep `window.open` flows from being lost mid-workflow
+
+        // ── 窗口形态：贴合 Nuphus 的桌面观感 ──
+        // 理由：Agent 驱动时窗口常被用户当背景，不应像"随手开的网页"占满全屏。
+        // 尺寸取 min(屏幕, NUPHUS 目标尺寸)，并在屏幕更小时回退——不放大到超出屏幕
+        // （Chrome 会把窗口推到屏幕外，反而看不见）。
+        //
+        // 不做的事（刻意）：
+        // - 不加 --app / --kiosk：它们去掉标签页与地址栏，多标签管理（new_tab /
+        //   switch_tab）会失去落点，而这是 Agent 自动化的基础能力。
+        // - 不隐藏窗口：Agent 操作过程需要用户可��，隐藏会让"卡住了"无法自查。
+        let (screen_w, screen_h) = detect_screen_size();
+        let win_w = screen_w.min(NUPHUS_WINDOW_WIDTH);
+        let win_h = screen_h.min(NUPHUS_WINDOW_HEIGHT);
+        config_builder = config_builder
+            .arg(format!("--window-size={win_w},{win_h}"))
+            // 置顶偏移交给系统；仅要求不继承上次退出时的记忆位置感之外的怪尺寸。
+            .arg("--window-position=0,0")
+            // 去掉首次启动残留的滚动条/残留标记，保持渲染干净。
+            .arg("--hide-scrollbars")
+            .arg("--disable-session-crashed-bubble")
+            // 让页面拿到正确的 DPR，避免截图/坐标换算偏��（截图与点击按物理像素）。
+            .arg("--force-device-scale-factor=1");
 
         // Headed mode is user-visible, so retain Chrome's normal GPU, extension, and background
         // behavior. The flags below remain headless-only stability/performance optimizations.

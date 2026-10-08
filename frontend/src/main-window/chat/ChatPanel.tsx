@@ -43,8 +43,7 @@ import {
   setProjectDir as setProjectDirCmd,
   setProjectBookmarks as setProjectBookmarksCmd,
   TOOL_PERMISSIONS_CHANGED_EVENT,
-  BROWSER_START_URL,
-  browserOpen,
+  openExternal,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
@@ -367,46 +366,13 @@ export function ChatPanel({
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
 
-  // ── 远程浏览窗口（AI 回复中的裸 URL 点击） ──
-  // 与文件预览走两条独立链路：URL 交给 browser_open 开独立浏览器窗口，
-  // 不复用覆盖层，避免把远端站点当成本地文件渲染。
+  // ── 远程链接点击 → 交给系统浏览器 ──
+  // 应用内不再自建浏览窗口：CDP 浏览器是 Agent 的执行器，人不在应用内看网页，
+  // 裸 URL 走系统浏览器，与文件预览互不干扰。
   const openUrl = useCallback((url: string) => {
-    browserOpen(url).catch(e => {
+    openExternal(url).catch(e => {
       hudUpdate(friendlyIpcError(e, '打开链接失败'), 'warning')
     })
-  }, [])
-
-  /**
-   * header 浏览器按钮：已有浏览窗口就唤出（置前），否则用起始页开一扇新窗。
-   *
-   * 2026-10-08 架构切换（docs/browser-shell-arch.md §六）：主窗口的控制条已删，
-   * 按钮从「切显隐」变成「直达窗口」。聚焦走 `plugin:window|set_focus`
-   * （tauri window/plugin.rs:13 按 label 参数解析目标窗口）——主窗口 label 在
-   * capabilities/default.json 的 windows 列表里，调用合法；壳页面自己做不到
-   * （browser-* 不在表内），那条降级路径见 BrowserFrame.tsx 头注释。
-   */
-  const openBrowserWindow = useCallback(() => {
-    void (async () => {
-      try {
-        const { getAllWindows, Window: TauriWindow } = await import('@tauri-apps/api/window')
-        // getAllWindows 返回 Window 实例（Rust 侧 windows() 的 keys 序列化而来）。
-        // HashMap keys 顺序随机，排一下保证「唤出最早那扇」的确定性行为
-        const existing = (await getAllWindows())
-          .map(w => w.label)
-          .filter(l => l.startsWith('browser-'))
-          .sort()
-        if (existing.length > 0) {
-          await new TauriWindow(existing[0]).setFocus()
-          return
-        }
-      } catch (e) {
-        // 枚举/聚焦失败不阻塞主路径：落回开新窗
-        console.warn('[Browser] 唤出已有浏览窗口失败，改开新窗', e)
-      }
-      browserOpen(BROWSER_START_URL).catch(e => {
-        hudUpdate(friendlyIpcError(e, '打开浏览器失败'), 'warning')
-      })
-    })()
   }, [])
 
   // 执行中每 500ms 重渲染一次，让消息气泡的 TurnMetaBar 走秒。
@@ -1827,17 +1793,6 @@ export function ChatPanel({
           >
             <IconPalette size={15} />
           </button>
-          {/* 应用内浏览器入口：直接开/唤出独立浏览器窗口（壳页面 + 内容页的
-              44px 控制器在窗口内，见 frontend/src/browser-frame/）。2026-10-08
-              起主窗口不再挂控制条——远程浏览与本地文件预览彻底分离。 */}
-          <button
-            className="chat-header-browser-btn"
-            aria-label={t('browser.toggle')}
-            title={t('browser.toggleTitle')}
-            onClick={openBrowserWindow}
-          >
-            <IconBrowser size={15} />
-          </button>
           {pendingRefine && !refineState && !refining && (
             <div className="refine-pending-area">
               <button
@@ -2552,9 +2507,6 @@ export function ChatPanel({
           onOpenConfig={onManageExternalAgents}
           onNotice={onExternalAgentNotice}
         />
-        {/* ── 应用内浏览器入口已移至窗口内壳页面（frontend/src/browser-frame/）──
-            2026-10-08 起主窗口只保留 header 的一枚「开/唤出窗口」按钮，
-            控制条（地址栏 / 前进后退 / tab）随独立窗口走，不再占输入区高度。 */}
         <ChatInputBar
           input={input}
           onInputChange={handleInputChange}
