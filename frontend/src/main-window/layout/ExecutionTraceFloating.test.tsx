@@ -380,3 +380,81 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
     expect(scrollToSpy).not.toHaveBeenCalled() // 用户已接管：不拽回
   })
 })
+
+describe('history folding', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  })
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  function makeCalls(n: number): TimelineEntry[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `call-${i + 1}`,
+      kind: 'tool_call' as const,
+      toolName: `tool_${i + 1}`,
+      status: 'success' as const,
+    }))
+  }
+
+  function renderTimeline(entries: TimelineEntry[]) {
+    return render(
+      <ExecutionTraceFloating
+        timeline={entries}
+        stepIndex={entries.length}
+        progress={{ iteration: 1, max: 200, calls: entries.length }}
+        isProcessing={false}
+        completed={false}
+        expandedCalls={new Set()}
+        onToggleExpand={vi.fn()}
+        visible
+      />,
+    )
+  }
+
+  const indicators = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('.tc-option-indicator')).map(el => el.textContent)
+
+  it('超阈值时只渲染最近 40 条，更早的收进一行摘要', () => {
+    const { container } = renderTimeline(makeCalls(60))
+    expect(screen.getByText('已折叠更早的 20 项 · 点击展开')).toBeInTheDocument()
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(40)
+    expect(screen.queryByText('tool_1')).not.toBeInTheDocument()
+    expect(screen.getByText('tool_60')).toBeInTheDocument()
+  })
+
+  it('折叠态的序号接着数，不从 1 重来', () => {
+    const { container } = renderTimeline(makeCalls(60))
+    const nums = indicators(container)
+    expect(nums).toHaveLength(40)
+    expect(nums[0]).toBe('21')
+    expect(nums[39]).toBe('60')
+  })
+
+  it('展开后全部条目回归，序号仍连续', () => {
+    const { container } = renderTimeline(makeCalls(60))
+    fireEvent.click(screen.getByText('已折叠更早的 20 项 · 点击展开'))
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(60)
+    expect(screen.getByText('tool_1')).toBeInTheDocument()
+    const nums = indicators(container)
+    expect(nums[0]).toBe('1')
+    expect(nums[40]).toBe('41')
+    expect(nums[59]).toBe('60')
+  })
+
+  it('展开后可再收起，回到折叠态', () => {
+    const { container } = renderTimeline(makeCalls(60))
+    fireEvent.click(screen.getByText('已折叠更早的 20 项 · 点击展开'))
+    fireEvent.click(screen.getByText('收起更早的 20 项'))
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(40)
+    expect(screen.queryByText('tool_1')).not.toBeInTheDocument()
+  })
+
+  it('条目未超阈值时不出现折叠行', () => {
+    renderTimeline(makeCalls(40))
+    expect(screen.queryByText(/已折叠更早的/)).not.toBeInTheDocument()
+  })
+})

@@ -592,6 +592,44 @@ export function RatingModal({
 
 // ================================================================
 
+/**
+ * 历史折叠阈值：条目超过这个数量时，只完整渲染最近这么多条，更早的收进一行摘要。
+ *
+ * 为什么需要：本面板是全量渲染（没有虚拟列表），而每一步都可能带整段思考文本，
+ * 上百步时 DOM 与文本量会把刷新、滚动都拖到掉帧。折叠是最低成本的减法——默认
+ * 只看最近若干条，历史点一下即可全量回归，功能一点不少。
+ *
+ * 40 的取法：面板高度约 80vh，一屏大致能看十几条，40 条足够覆盖「回看刚才发生了什么」
+ * 这一常见诉求；再往上加就开始磨损收益了。
+ */
+const RECENT_ENTRIES_KEPT = 40
+
+/**
+ * 历史折叠行：折叠时提示可展开，展开后提供收回。
+ *
+ * 抽成组件而不是在两处渲染里各写一遍：终端模式与卡片模式各有一条渲染路径，
+ * 这份文案与交互必须一致（两处漂移过一次的东西，通常还会漂第二次）。
+ */
+function HistoryFoldBar({
+  count,
+  expanded,
+  onToggle,
+}: {
+  count: number
+  expanded: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={`trace-history-fold ${expanded ? 'is-expanded' : ''}`}
+      onClick={onToggle}
+    >
+      {expanded ? `收起更早的 ${count} 项` : `已折叠更早的 ${count} 项 · 点击展开`}
+    </button>
+  )
+}
+
 export function ExecutionTraceFloating({
   timeline,
   traceOverride,
@@ -620,6 +658,8 @@ export function ExecutionTraceFloating({
   const [collapsedThinking, setCollapsedThinking] = useState<Set<string>>(new Set())
   // Card/UI mode: thinking default collapsed (expanded = user manually expanded)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
+  // 历史折叠：默认只看最近若干条（见 RECENT_ENTRIES_KEPT），展开态由用户显式切换
+  const [historyExpanded, setHistoryExpanded] = useState(false)
   // Track render count per output line, for new-line animation (terminal mode)
   const lineRenderCountRef = useRef<Map<string, number>>(new Map())
 
@@ -629,6 +669,21 @@ export function ExecutionTraceFloating({
   // 气泡执行回溯：traceOverride 非空时展示该轮历史执行过程（替代全局 timeline）
   const displayTimeline = traceOverride ?? timeline
 
+  // ── 历史折叠 ──
+  // 只完整渲染最近 RECENT_ENTRIES_KEPT 条，更早的收进一行摘要。按**条目**切片而非
+  // 按工具调用：这是一条混合流（tool_call / thinking / text），按调用切会把一段
+  // 思考或一段文本劈成两半。
+  const foldableCount = Math.max(0, displayTimeline.length - RECENT_ENTRIES_KEPT)
+  const hiddenHistoryCount = historyExpanded ? 0 : foldableCount
+  const visibleTimeline =
+    hiddenHistoryCount > 0 ? displayTimeline.slice(hiddenHistoryCount) : displayTimeline
+  // 折叠时 map 的起点整体后移，工具序号必须接着数——否则序号从 1 重来，与头部的
+  // 「N 调用」计数对不上（展开/折叠一次就穿帮）。
+  const leadingCallCount =
+    hiddenHistoryCount > 0
+      ? displayTimeline.slice(0, hiddenHistoryCount).filter(e => e.kind === 'tool_call').length
+      : 0
+
   // Internal state: auto-popup (only in uncontrolled mode)
   const hasRunning = displayTimeline.some(t => t.kind === 'tool_call' && t.status === 'running')
   useEffect(() => {
@@ -636,6 +691,14 @@ export function ExecutionTraceFloating({
       setIsOpen(true)
     }
   }, [hasRunning, isOpen, isProcessing, visible])
+
+  // 新一轮从零开始时（条目回落到阈值以内）自动收起历史：否则上一轮展开过的状态会被
+  // 原样带进下一轮，等它再长到上百步就又是全量渲染——折叠形同虚设。
+  useEffect(() => {
+    if (historyExpanded && displayTimeline.length <= RECENT_ENTRIES_KEPT) {
+      setHistoryExpanded(false)
+    }
+  }, [displayTimeline.length, historyExpanded])
 
   // 贴底跟随：执行步骤（displayTimeline）变化即滚底；用户上翻冻结 + 15s 静默宽限兜底
   // —— 本面板没有回底按钮，宽限必须保持 15s 封顶值（不得加大）；空闲（!isProcessing）
@@ -815,9 +878,16 @@ export function ExecutionTraceFloating({
               <div className="execution-trace-placeholder">等待执行...</div>
             )}
             <div className="execution-terminal-lines">
+              {foldableCount > 0 && (
+                <HistoryFoldBar
+                  count={foldableCount}
+                  expanded={historyExpanded}
+                  onToggle={() => setHistoryExpanded(v => !v)}
+                />
+              )}
               {(() => {
-                let callIdx = 0
-                return displayTimeline.map((entry, i) => {
+                let callIdx = leadingCallCount
+                return visibleTimeline.map((entry, i) => {
                   if (entry.kind === 'tool_call') {
                     callIdx++
                     const isExpanded = expandedCalls.has(entry.id)
@@ -1146,9 +1216,17 @@ export function ExecutionTraceFloating({
               <div className="execution-trace-placeholder">等待执行...</div>
             )}
 
+            {foldableCount > 0 && (
+              <HistoryFoldBar
+                count={foldableCount}
+                expanded={historyExpanded}
+                onToggle={() => setHistoryExpanded(v => !v)}
+              />
+            )}
+
             {(() => {
-              let callIdx = 0
-              return displayTimeline.map((entry, i) => {
+              let callIdx = leadingCallCount
+              return visibleTimeline.map((entry, i) => {
                 if (entry.kind === 'tool_call') {
                   callIdx++
                   const isExpanded = expandedCalls.has(entry.id)

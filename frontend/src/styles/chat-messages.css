@@ -728,6 +728,32 @@
   color: var(--spark-muted);
   font-size: var(--fz-md);
 }
+/* ── 历史折叠行（执行追踪：只完整渲染最近 N 条，更早的收进这里）──
+   两类容器共用：终端模式挂 .execution-terminal-lines 内、卡片模式挂
+   .execution-trace-body 内，宽度吃满各自的内容盒，无需为容器再加 padding。 */
+.trace-history-fold {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-3);
+  background: transparent;
+  color: var(--fg-3);
+  font-family: var(--font-ui);
+  font-size: var(--fz-xs);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.trace-history-fold:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-3);
+  color: var(--fg-2);
+}
 .tc-option {
   display: flex;
   align-items: center;
