@@ -1,6 +1,5 @@
 pub mod annotations;
 pub mod approval;
-pub mod canvas_export;
 pub mod cdp_window;
 // 原生遮罩截图链路（capture/）：**仅 Windows 编译**。主链路是 Windows 原生遮罩；
 // 非 Windows 平台截图走既有的 WebView overlay 兜底（toolbar.rs 的旧分支），
@@ -37,7 +36,6 @@ pub mod workflow_edit;
 
 pub use self::annotations::*;
 pub use self::approval::*;
-pub use self::canvas_export::*;
 pub use self::cdp_window::*;
 pub use self::changelog::*;
 pub use self::chat_agent::*;

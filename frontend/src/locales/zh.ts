@@ -587,17 +587,14 @@ const zh: Record<string, string> = {
   'workflow.workTypeLabel': '工作类型',
   'workflow.workType.workflow': '工作流编辑器',
   'workflow.workType.workflowEditor': '工作流编辑器',
-  'workflow.workType.prototype': 'UI 原型',
   'workflow.workType.tools': '工具',
   'cmd.category.canvas': '画布',
 
   'canvas.title': '画布中心',
   'canvas.workflow': '工作流画布',
   'canvas.workflowDesc': '可视化编排 Agent 任务：意图表单 / 工具步骤 / 条件分支 / 失败重试',
-  'canvas.uiPrototype': 'UI 原型设计',
-  'canvas.uiPrototypeDesc': '拖放组件绘制应用界面线框，一键导出为 AI 编码实现 prompt',
   'canvas.comingSoon': '移植中',
-  'canvas.footNote': '画布能力持续扩展：UI 原型设计 / 动效录制 / 投屏预览 / 真机调试将陆续接入',
+  'canvas.footNote': '画布能力持续扩展：动效录制 / 投屏预览 / 真机调试将陆续接入',
 
   'tools.tabImage': '图片',
   'tools.tabVideo': '视频',

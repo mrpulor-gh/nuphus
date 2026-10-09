@@ -111,15 +111,13 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
 
-# Windows API（emitter.rs 置前不抢焦点：SetWindowPos + SWP_NOACTIVATE；
-# canvas_export.rs 读 User Shell Folders 的 Downloads 值：RegGetValueW）
+# Windows API（emitter.rs 置前不抢焦点：SetWindowPos + SWP_NOACTIVATE）
 # 用 windows-sys 而非 windows crate——tauri 内部依赖 windows-sys，
 # 避免 windows_core 多版本导致 Param trait 类型冲突。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_System_Registry",
     # 无边框窗口的 Win11 系统圆角（DwmSetWindowAttribute + CORNER_PREFERENCE）
     "Win32_Graphics_Dwm",
     # ── 以下为截图新链路（commands/capture/）所需，见 docs/capture-refactor-plan.md ──

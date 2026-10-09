@@ -605,7 +605,6 @@ const en: Record<string, string> = {
   'workflow.workTypeLabel': 'Work type',
   'workflow.workType.workflow': 'Workflow Editor',
   'workflow.workType.workflowEditor': 'Workflow Editor',
-  'workflow.workType.prototype': 'UI Prototype',
   'workflow.workType.tools': 'Tools',
   'cmd.category.canvas': 'Canvas',
 
@@ -613,12 +612,9 @@ const en: Record<string, string> = {
   'canvas.workflow': 'Workflow Canvas',
   'canvas.workflowDesc':
     'Visually compose agent tasks: intent forms, tool steps, branches, retries',
-  'canvas.uiPrototype': 'UI Prototype',
-  'canvas.uiPrototypeDesc':
-    'Drag-and-drop UI screens, export as a concise prompt for AI coding agents',
   'canvas.comingSoon': 'Porting',
   'canvas.footNote':
-    'Canvas capabilities keep growing: UI prototyping, motion recording, screen casting and device debugging land here',
+    'Canvas capabilities keep growing: motion recording, screen casting and device debugging land here',
 
   'tools.tabImage': 'Image',
   'tools.tabVideo': 'Video',

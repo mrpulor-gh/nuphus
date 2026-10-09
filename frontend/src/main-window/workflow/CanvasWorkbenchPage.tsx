@@ -8,20 +8,15 @@ import './workflow-workbench.css'
 import { useCanvasLeaveGuard } from '../workflow-canvas/useCanvasLeaveGuard'
 
 // ── 按 tab 拆包 ──
-// 三个页面体量差异极大（UI 原型画布自身 4600+ 行且静态引入 motion / html-to-image），
-// 静态 import 会把三者合并进同一个 chunk，打开任一 tab 都要付全部解析代价。
+// 两个页面体量差异极大（工具页聚合 PDF/图片/视频等多个子模块），
+// 静态 import 会把二者合并进同一个 chunk，打开任一 tab 都要付全部解析代价。
 // tab 本身是条件渲染、切换即卸载，因此改为 lazy 不引入任何状态损失。
 const CanvasPage = lazy(() =>
   import('../workflow-canvas/CanvasPage').then(m => ({ default: m.CanvasPage })),
 )
 const ToolsPage = lazy(() => import('../tools/ToolsPage').then(m => ({ default: m.ToolsPage })))
-const UiPrototypeCanvas = lazy(() =>
-  import('../canvases/ui-prototype/UiPrototypeCanvas').then(m => ({
-    default: m.UiPrototypeCanvas,
-  })),
-)
 
-type CanvasType = 'workflow-editor' | 'prototype' | 'tools'
+type CanvasType = 'workflow-editor' | 'tools'
 
 export function CanvasWorkbenchPage({
   onClose,
@@ -121,14 +116,6 @@ export function CanvasWorkbenchPage({
           </button>
           <button
             type="button"
-            className={canvasType === 'prototype' ? 'is-active' : ''}
-            onClick={() => void navigation.leave(() => setCanvasType('prototype'))}
-          >
-            <IconPalette size={14} />
-            <span>{t('workflow.workType.prototype')}</span>
-          </button>
-          <button
-            type="button"
             className={canvasType === 'tools' ? 'is-active' : ''}
             onClick={() => void navigation.leave(() => setCanvasType('tools'))}
           >
@@ -159,13 +146,6 @@ export function CanvasWorkbenchPage({
               </Suspense>
             )}
           </>
-        )}
-        {canvasType === 'prototype' && (
-          <div className="workflow-workbench-prototype">
-            <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>
-              <UiPrototypeCanvas onSent={onClose} />
-            </Suspense>
-          </div>
         )}
         {canvasType === 'tools' && (
           <Suspense fallback={<div className="page-loading">{t('common.loading')}</div>}>

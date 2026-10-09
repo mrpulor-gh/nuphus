@@ -10,7 +10,7 @@
 - **Vite** v6 — 构建工具
 - **TypeScript** — 类型安全
 
-> 注：项目含 TailwindCSS 依赖但实际未启用（src/styles 无 @tailwind 引用），样式系统为纯 CSS 文件（`src/styles/` + 各模块 CSS，共 48 个文件），基于 CSS 变量设计令牌。
+> 注：样式系统为纯 CSS 文件（`src/styles/` + 各模块 CSS，共 48 个文件），基于 CSS 变量设计令牌。项目不使用 TailwindCSS。
 
 ## 源码结构
 

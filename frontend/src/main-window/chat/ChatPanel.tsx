@@ -3,14 +3,12 @@ import { createPortal } from 'react-dom'
 import type {
   ChatMessage,
   ChatReference,
-  NuphusEvent,
   PendingImage,
   PendingFile,
   SendOutcome,
   TimelineEntry,
 } from '../../core/types'
 import type { SecurityCheck } from '../../core/types'
-import { listen } from '../../core/bridge'
 import { composeAssistantReplies } from '../../core/progressMessages'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
 import {
@@ -19,7 +17,6 @@ import {
   type RefineState,
 } from '../../hooks/useExecutionUI'
 import { useStickyScroll } from '../../hooks/useStickyScroll'
-import { createSendReceiptHub, type SendReceiptHub } from '../lib/sendReceipt'
 import { isCustomProviderId } from '../lib/customProvider'
 import { setIslandAnchor } from '../../ui/islandChannel'
 import { toAssetUrl, resolveLocalImageUrl } from '../../ui/assetUrl'
@@ -120,8 +117,7 @@ interface ChatPanelProps {
    * （会话 rail 锁 / mode 锁 / 终止按钮）。禁止再各自订阅 is_busy / can_switch。
    */
   executionStage: ExecutionStage
-  /** 返回发送的真实结果；画布等外部入口据此回执（见 nuphus:send-result）。
-   *  sendId 为调用方（画布 requestId）指定的发送标识：后端受理事件按它精确对齐，
+  /** 返回发送的真实结果；sendId 为调用方指定的发送标识：后端受理事件按它精确对齐，
    *  缺省时由 useSession 生成（老调用方行为不变）。 */
   onSend: (
     input: string,
@@ -1189,108 +1185,6 @@ export function ChatPanel({
     }
     window.addEventListener('nuphus:append-to-chat', handler)
     return () => window.removeEventListener('nuphus:append-to-chat', handler)
-  }, [])
-
-  // Canvas "send to Leader": a full-screen canvas (e.g. UI prototype) can start a
-  // real send without touching the input first. The listener is registered once and
-  // always reads the current onSend through a ref, so a send never fires a stale
-  // session handle.
-  const onSendRef = useRef(onSend)
-  onSendRef.current = onSend
-  // 带 mode 的发送（如「发送 Leader」）需先切模式再发；用 ref 防闭包拿旧 onSetMode
-  const onSetModeRef = useRef(onSetMode)
-  onSetModeRef.current = onSetMode
-  /* 发送回执单一出口（见 lib/sendReceipt）：同一 sendId 的事件回执与 onSend 结果回执
-     先到先得，保证 nuphus:send-result 只发一次。 */
-  const receiptHubRef = useRef<SendReceiptHub | null>(null)
-  if (!receiptHubRef.current) receiptHubRef.current = createSendReceiptHub()
-
-  /* 受理回执通道：后端「消息已受理」事件（真实发送成功）→ 画布立即收起发送遮罩
-     回主对话，不必等整轮执行结束（send_message_cmd 返回）。监听失败静默降级：
-     仅由 onSend 结果回执，发送本身不受影响。 */
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let disposed = false
-    listen<{ seq: number; event: NuphusEvent }>('nuphus-event', ({ event }) => {
-      if (disposed) return
-      receiptHubRef.current?.handleEvent(event)
-    })
-      .then(fn => {
-        if (disposed) fn()
-        else unlisten = fn
-      })
-      .catch((err: unknown) => {
-        console.warn('[nuphus:send-message] accept-event listen unavailable', err)
-      })
-    return () => {
-      disposed = true
-      unlisten?.()
-      receiptHubRef.current?.clear()
-    }
-  }, [])
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      const text = detail?.text
-      if (!text) return
-      const images = Array.isArray(detail?.images) ? (detail.images as string[]) : undefined
-      const mode = detail?.mode
-      const requestId = typeof detail?.requestId === 'string' ? detail.requestId : ''
-      /* 回执：发起方（画布）按 requestId 匹配后显示真实结果，不再无条件报成功。
-         没有 requestId 的老调用方不受影响（不回发）。
-         rejected 一并透出（稳定拒收标识，如 'finalizing'）：画布没有输入框，
-         需要它给渠道自有文案，不能沿用桌面输入框的「内容已退回输入框」。 */
-      const rawReply = (ok: boolean, message?: string, rejected?: string) => {
-        if (!requestId) return
-        window.dispatchEvent(
-          new CustomEvent('nuphus:send-result', { detail: { requestId, ok, message, rejected } }),
-        )
-      }
-      /* 先登记再发送：受理事件（后端真实收下）可能早于 onSend promise 返回，
-         先登记才不会丢；回执幂等——受理先到 → 立刻收起（不等整轮执行），
-         onSend 结果先到（受理前失败）→ 立即报失败且不被迟到事件改写。 */
-      const reply = receiptHubRef.current
-        ? receiptHubRef.current.begin(requestId, rawReply)
-        : rawReply
-      const send = () => {
-        let pending: Promise<SendOutcome>
-        try {
-          // requestId 同时作为后端 send_id：受理事件按它精确对齐（camelCase → sendId）
-          pending = Promise.resolve(
-            onSendRef.current(text, images, undefined, requestId || undefined),
-          )
-        } catch (err: unknown) {
-          // onSend 理论上不会同步抛出；兜住异常，保证一定回执、不静默
-          const message = err instanceof Error ? err.message : String(err)
-          console.error('[nuphus:send-message] send threw synchronously', err)
-          reply(false, message)
-          return
-        }
-        pending
-          .then(outcome => reply(outcome?.ok !== false, outcome?.message, outcome?.rejected))
-          .catch((err: unknown) => {
-            const message = err instanceof Error ? err.message : String(err)
-            console.error('[nuphus:send-message] send failed', err)
-            reply(false, message)
-          })
-      }
-      const setMode = onSetModeRef.current
-      if (typeof mode === 'string' && mode && setMode) {
-        // 先切到事件要求的模式（leader）再发送，避免被 workflow 等当前模式劫持；
-        // 切换失败则放弃发送（与 App 内「切模式 → 发送」顺序一致，失败即中止）
-        Promise.resolve(setMode(mode))
-          .then(send)
-          .catch(err => {
-            console.error('[nuphus:send-message] mode switch failed, send skipped', err)
-            reply(false)
-          })
-      } else {
-        send()
-      }
-    }
-    window.addEventListener('nuphus:send-message', handler)
-    return () => window.removeEventListener('nuphus:send-message', handler)
   }, [])
 
   // Reset refining and selection state when refine modal closes

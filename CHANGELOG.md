@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Removed
+- **画布 · UI 原型设计整体下线**（原 0.2.8 引入）：移除 `main-window/canvases/`（46 个文件 / 约 24k 行，
+  含 M3 线框编辑器、四语言 i18n、prompt 导出与图标选择器）、Tauri 命令 `save_prototype_png`
+  （`commands/canvas_export.rs`）、以及仅服务于它的 `lib/sendReceipt`、`lib/useSendLock`
+  与 `nuphus:send-message` 发送回执通道。「画布」工作台回到「工作流编辑器 / 工具」两个页签。
+  一并移除仅被它引用的静态资源（Material Symbols 图标字体 5.11MB + 图标元数据 1.23MB、
+  `agent.md` 草图契约、provider logo），前端产物减少约 6.9MB（`dist` 11.09MB → 4.20MB）。
+- **移除空转的 Tailwind 工具链**：`tailwind.config.cjs` / `postcss.config.cjs` /
+  `ui-proto-tailwind.css` 及 `tailwindcss`、`autoprefixer`、`postcss` 三个 devDependency。
+  该管线的 content glob 只指向 UI 原型目录，且实际未产出任何被使用的工具类（仅误提取约 1.6KB 垃圾 CSS）。
+- **移除 UI 原型独占的运行时依赖**：`motion`、`html-to-image`。
+
 ## [0.2.26] - 2026-10-05
 
 ### Added

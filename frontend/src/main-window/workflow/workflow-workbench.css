@@ -78,16 +78,6 @@
 .workflow-workbench-body > .page {
   min-height: 100%;
 }
-.workflow-workbench-body--prototype {
-  overflow: hidden;
-}
-.workflow-workbench-prototype {
-  height: 100%;
-  min-height: 520px;
-}
-.workflow-workbench-prototype > * {
-  height: 100%;
-}
 .workflow-workbench-body--tools {
   padding: 0;
 }

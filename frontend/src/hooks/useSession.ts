@@ -330,8 +330,8 @@ export interface SessionAPI {
   liveCalls: number
 
   // ── Handlers ──
-  /** 返回发送的真实结果（画布等外部入口据此回执，见 nuphus:send-result）。
-   *  sendId 由调用方指定（画布 requestId）时替代内部生成的 uuid —— 后端受理事件
+  /** 返回发送的真实结果。
+   *  sendId 由调用方指定时替代内部生成的 uuid —— 后端受理事件
    *  按同一 sendId 精确对齐（见 message_accepted），缺省时行为不变。
    *  appendedHint：调用方自有语境的「已受理为追加指令」补充文案（如「运行工作流」入口
    *  需要说明工作流不会立即启动）；缺省用通用追加提示。 */
@@ -630,7 +630,7 @@ export function useSession(): SessionAPI {
         execUI.setPlanData(null)
         execUI.setGoal(input.slice(0, 120))
       }
-      // 调用方指定的 sendId（画布 requestId）优先：后端受理事件按它精确对齐；
+      // 调用方指定的 sendId 优先：后端受理事件按它精确对齐；
       // 未指定（输入框发送等）沿用内部 uuid，行为不变。
       const effectiveSendId = sendId || crypto.randomUUID()
       // ⚠️ 追加指令（执行中发送）绝不覆盖 streamingMsgId：它指向正在流式的

@@ -453,8 +453,6 @@ fn main() {
             commands::read_file_base64,
             commands::open_path,
             commands::reveal_path,
-            // -- 画布导出落盘（UI 原型图：明确告知绝对路径，替代静默下载）--
-            commands::save_prototype_png,
             // -- 用户图片入库（皮肤背景/头像：复制进应用数据目录，前端只存路径）--
             commands::save_user_image,
             // -- 内置工具命令（PDF/图片/视频；内部机制，非 agent 工具调用项） --

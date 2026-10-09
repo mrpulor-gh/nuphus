@@ -54,9 +54,8 @@ const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 /// 把用户选中的本地图片复制进应用数据目录的 `images/` 子目录，
 /// 返回写入文件的**绝对路径**（前端只存这个路径，不再存 base64）。
 ///
-/// 同目录内绝不覆盖已有文件：重名时主名追加 `-1` / `-2` … 序号，
-/// 与 `canvas_export.rs::unique_path` 的策略一致（用户连续换两次同名背景图，
-/// 前一张不该被悄悄替换掉）。
+/// 同目录内绝不覆盖已有文件：重名时主名追加 `-1` / `-2` … 序号
+/// （用户连续换两次同名背景图，前一张不该被悄悄替换掉）。
 #[tauri::command]
 pub fn save_user_image(source_path: String) -> Result<String, String> {
     let src = Path::new(&source_path);
@@ -179,8 +178,8 @@ fn sanitize_stem(src: &Path) -> String {
     }
 }
 
-/// 目标路径：同名已存在时主名追加 `-1`/`-2`…，保留原扩展名（皮肤图可能是 jpg，
-/// 不能像 canvas_export 那样无条件写成 .png）。绝不复用已存在的文件名。
+/// 目标路径：同名已存在时主名追加 `-1`/`-2`…，保留原扩展名（皮肤图可能是 jpg）。
+/// 绝不复用已存在的文件名。
 fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let first = dir.join(format!("{}.{}", stem, ext));
     if !first.exists() {
