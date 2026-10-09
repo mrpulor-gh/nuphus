@@ -415,7 +415,7 @@ mod tests {
         }
         // 连续三个以上同类引号 = 词法必错（`'''` 曾真实发生过）
         for (q, name) in [('\'', "单引号"), ('"', "双引号")] {
-            let triple: String = std::iter::repeat(q).take(3).collect();
+            let triple: String = std::iter::repeat_n(q, 3).collect();
             assert!(
                 !s.contains(&triple),
                 "脚本出现连续三个{name}（{triple}）——必然语法错误"

@@ -325,7 +325,7 @@ pub fn kill_process_tree(pid: u32) -> std::result::Result<(), String> {
             Ok(())
         } else {
             let detail = format!("{}{}", stdout.trim(), stderr.trim());
-            Err(format!("taskkill 失败: {}", detail.trim().to_string()))
+            Err(format!("taskkill 失败: {}", detail.trim()))
         }
     }
 
