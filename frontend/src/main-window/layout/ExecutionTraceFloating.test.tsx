@@ -111,7 +111,6 @@ describe('desktop action execution trace', () => {
  * 逻辑（解锁 / 回归 / 贴底目标值）。
  */
 describe('execution trace sticky scroll (useStickyScroll)', () => {
-
   /** 卡片模式的步骤树滚动容器：按需覆写成贴底 600（距底 0）*/
   function bodyOf(container: HTMLElement): HTMLDivElement {
     const el = bodyElOf(container)
