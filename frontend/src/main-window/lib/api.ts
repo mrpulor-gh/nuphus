@@ -24,6 +24,7 @@ import type {
   ChatAgentConfig,
   InlineChatAgentEntry,
   TurnMeta,
+  BackgroundTaskView,
 } from '../../core/types'
 
 // ── Tools ──
@@ -325,6 +326,31 @@ export async function processInput(
 
 export function interrupt() {
   return invoke<string>('interrupt')
+}
+
+// ── 后台任务账本（跨工具调用存活的子进程）──
+//
+// 「强制终止」只杀 retain=false 的前台进程；被显式保留（background=true）或
+// 超时转后台的进程会继续跑。账本是用户唯一能看见/结束它们的地方（产品原则：
+// 不杀可以，但不能看不见）。三个命令的语义见
+// src-tauri/src/commands/process/background.rs。
+
+/** 列出仍存活的后台任务（死条目由后端在读取时顺带清理） */
+export function listBackgroundTasks() {
+  return invoke<BackgroundTaskView[]>('list_background_tasks')
+}
+
+/** 仍存活的**保留项**数量——轻量查询，专供「保留 M 个」这个数字用 */
+export function countRetainedBackgroundTasks() {
+  return invoke<number>('count_retained_background_tasks')
+}
+
+/**
+ * 按 id 结束某个后台任务（**含保留项**——这是显式意图）。
+ * 返回后端的中文结果句（事实来源，原样展示给用户）；失败时后端 reject。
+ */
+export function killBackgroundTask(id: string) {
+  return invoke<string>('kill_background_task', { id })
 }
 
 export function pauseExecution() {

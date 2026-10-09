@@ -10,6 +10,7 @@ use tauri::Manager;
 use tauri::State;
 
 // Submodule split
+pub mod background;
 pub mod leader;
 pub mod lifecycle;
 pub mod mode;
@@ -19,6 +20,7 @@ pub mod session;
 pub mod shelf;
 
 // Re-export public commands so commands::xxx remains accessible
+pub use background::*;
 pub use lifecycle::*;
 pub use mode::*;
 pub use retry::*;
@@ -826,6 +828,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 let mut tools = nuphus::ToolRegistry::work_agent();
                 // 与 AppState 持有的全局唯一信号实例对齐
                 tools.set_signals(state.signals.clone());
+                tools.set_cancel_flag(state.cancel_flag.clone());
                 tools.set_automation_gate(state.automation_gate.clone());
                 let perms = state
                     .runtime
@@ -989,6 +992,7 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                                         state.tool_permissions_ref.clone(),
                                         &emitter,
                                         &pause_flag2,
+                                        &state.cancel_flag,
                                         large_force_refine_threshold2,
                                     )
                                 {

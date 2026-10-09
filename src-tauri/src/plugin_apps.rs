@@ -1088,13 +1088,13 @@ async fn run_plugin_chat_isolated(
     } else {
         nuphus::ToolRegistry::leader()
     };
+    // 独立 cancel_flag：每调用新实例；command drop / IPC 断 → future 整体取消即停
+    let cancel_flag = Arc::new(AtomicBool::new(false));
     leader_tools.set_signals(tools.signals().clone());
+    leader_tools.set_cancel_flag(cancel_flag.clone());
     if let Some(gate) = tools.automation_gate() {
         leader_tools.set_automation_gate(gate);
     }
-
-    // 独立 cancel_flag：每调用新实例；command drop / IPC 断 → future 整体取消即停
-    let cancel_flag = Arc::new(AtomicBool::new(false));
 
     let run_fut = async {
         let mut runtime = RuntimeBuilder::new()

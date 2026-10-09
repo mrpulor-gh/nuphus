@@ -103,6 +103,27 @@ const zh: Record<string, string> = {
   'common.cancel': '取消',
   'common.close': '关闭',
   'common.delete': '删除',
+
+  // ── 后台任务账本 + 强制终止汇报 ──
+  // interrupt.* 里的 {0} 一律是**后端返回的事实句原样**（它才是真相来源，
+  // 本地化只负责前后那层引导语，不能改写也不能吞掉里面的失败面）
+  'interrupt.report': '已中断 · {0}',
+  'interrupt.reportFailed': '中断未完全生效 · {0}',
+  'interrupt.retained': '仍有 {0} 个后台任务在运行（点右下角胶囊可查看或结束）',
+
+  'backgroundTasks.entryTitle': '后台任务',
+  'backgroundTasks.entryLabel': '后台任务（{0} 个仍在运行）',
+  'backgroundTasks.title': '后台任务',
+  'backgroundTasks.close': '关闭',
+  'backgroundTasks.loading': '读取中…',
+  'backgroundTasks.empty': '当前没有仍在运行的后台任务',
+  'backgroundTasks.badgeRetained': '后台保留',
+  'backgroundTasks.kill': '结束',
+  'backgroundTasks.killFailed': '结束后台任务失败',
+  'backgroundTasks.killRequested': '已发出结束后台任务的请求',
+  'backgroundTasks.confirmTitle': '结束后台任务',
+  'backgroundTasks.confirmBody':
+    '将结束「{0}」及其所有子孙进程，正在进行的构建 / 下载会立即中止。确定继续？',
   'common.edit': '编辑',
   'common.add': '添加',
   'common.switch': '切换',

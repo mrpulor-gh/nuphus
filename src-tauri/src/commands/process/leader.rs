@@ -25,6 +25,7 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
     tool_permissions_ref: Arc<std::sync::Mutex<ToolPermissions>>,
     emitter: &E,
     pause_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     large_force_refine_threshold: f64,
 ) -> std::result::Result<Runtime, String> {
     let leader_registry = if let Some(dc) = tools.desktop_client() {
@@ -35,6 +36,7 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
     // 与 AppState 持有的全局唯一信号实例对齐（leader()/leader_with_desktop() 新建 registry 默认独立实例）
     let mut leader_registry = leader_registry;
     leader_registry.set_signals(tools.signals().clone());
+    leader_registry.set_cancel_flag(cancel_flag.clone());
     if let Some(gate) = tools.automation_gate() {
         leader_registry.set_automation_gate(gate);
     }
@@ -120,6 +122,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
                 tool_permissions_ref.clone(),
                 emitter,
                 pause_flag,
+                cancel_flag,
                 large_force_refine_threshold,
             )?
         }
@@ -132,6 +135,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
             tool_permissions_ref.clone(),
             emitter,
             pause_flag,
+            cancel_flag,
             large_force_refine_threshold,
         )?
     };
@@ -144,6 +148,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     // ——build_runtime 对 Leader registry 已有同样对齐（L36-37），此处是同类遗漏。
     let mut exec_registry = nuphus::ToolRegistry::exec();
     exec_registry.set_signals(tools.signals().clone());
+    exec_registry.set_cancel_flag(cancel_flag.clone());
     runtime.set_exec_resources(exec_registry, exec_llm.clone(), emitter.clone());
 
     // ExecAgent 执行生命周期台账（task 面板的唯一数据源）。进程级单例。

@@ -1,5 +1,6 @@
 //! Tools module - pluggable tool system
 
+pub mod background_tasks;
 pub mod browser_tools;
 pub mod builtin;
 pub mod definitions;

@@ -925,3 +925,28 @@ export interface WorkflowRunStep {
   depth?: number
   kind?: string
 }
+
+/**
+ * 后台任务账本条目（后端 `nuphus::tools::background_tasks::BackgroundTaskView`）。
+ *
+ * 字段名与 Rust 侧 serde 默认的 snake_case **逐字一致**，此处刻意不做驼峰归一：
+ * 归一层只是多一处可能与后端漂移的映射，而 IPC 的字段名就是契约本身。
+ *
+ * 后端只返回**存活**条目（死条目在读取时顺带从账本清出）。
+ */
+export interface BackgroundTaskView {
+  /** 账本 id（`bg-<seq>`），结束任务时按它寻址 */
+  id: string
+  /** 启动它的工具名（如 `system_shell`） */
+  tool: string
+  /** 命令文本（后端已截断，仅供展示） */
+  command: string
+  pid: number
+  started_at_ms: number
+  /** 已运行时长（毫秒）——前端本地格式化，避免自算起点与后端漂移 */
+  elapsed_ms: number
+  /** 显式保留意图：true = 用户/Agent 要求留在后台，取消不会杀它 */
+  retain: boolean
+  /** 输出日志路径（可读取），没有则为 null */
+  output_path: string | null
+}

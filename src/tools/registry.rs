@@ -8,10 +8,40 @@ use crate::ToolResult;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::string::String;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use super::semantic_desktop::SemanticDesktopBackend;
+
+/// `ToolRegistry::execute()` 等待段的三种结局。
+///
+/// 超时与取消**不是一回事**：超时什么都不取消（后台照跑），取消会解除等待并
+/// 触发杀进程。分开建模是为了让两条分支各自带着自己的文案口径，避免「超时的
+/// 等待」被写成「已取消」这种诱导安全重试的说法。
+enum ToolWaitOutcome {
+    /// 阻塞线程跑完了（含 panic / join 错误）
+    Joined(
+        std::result::Result<
+            std::result::Result<
+                std::result::Result<ToolResult, String>,
+                Box<dyn std::any::Any + Send>,
+            >,
+            tokio::task::JoinError,
+        >,
+    ),
+    /// 到达超时上限（**什么都没被取消**）
+    Timeout,
+    /// 取消被置位 → 立刻脱身，并走杀进程路径
+    Cancelled,
+}
+
+/// 取消标志的轮询周期。与 `system_shell` 内部子进程轮询同档。
+///
+/// 取 150ms 的依据：取消的体感上限就是「点下去之后多久开始有反应」，150ms 在
+/// 人眼里已经是瞬时；而再密只会白烧 CPU（等待侧 tokio 定时器 + 工具侧轮询各
+/// 一份）。放宽到秒级会让「立即生效」名不副实。
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 /// Tool execution context — bundle of injected handles passed to every executor.
 ///
@@ -27,6 +57,23 @@ pub struct ToolCtx {
     pub signals: crate::state::SharedSignals,
     /// Desktop host bridge for schedule_cron. None in headless/library-only contexts.
     pub schedule_tool: Option<ScheduleToolCallback>,
+    /// 取消标志句柄 —— **与调用方（agent 循环 / Tauri 命令）持有的是同一个
+    /// `Arc<AtomicBool>` 实例**，不是快照、也不是新建的独立标志。
+    ///
+    /// `None` = 该上下文不存在取消面（纯库 / 单测 / 未注入的 registry），
+    /// 工具据此退化为「不可取消」，**不得**自行造一个 AtomicBool 顶上
+    /// （造了就等于取消信号断链，且会误导模型以为能中断）。
+    pub cancel_flag: Option<Arc<AtomicBool>>,
+}
+
+impl ToolCtx {
+    /// 当前是否已被请求取消
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag
+            .as_ref()
+            .map(|f| f.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -34,6 +81,7 @@ impl std::fmt::Debug for ToolCtx {
         f.debug_struct("ToolCtx")
             .field("signals", &self.signals)
             .field("schedule_tool", &self.schedule_tool.is_some())
+            .field("cancel_flag", &self.cancel_flag.is_some())
             .finish()
     }
 }
@@ -76,6 +124,15 @@ pub struct ToolRegistry {
     /// Clone shares the same Arc (same pattern as desktop_client).
     signals: crate::state::SharedSignals,
     schedule_tool: Arc<RwLock<Option<ScheduleToolCallback>>>,
+    /// 取消标志句柄 —— 由宿主（src-tauri AppState / 每调用的 plugin 路径）注入
+    /// 的**唯一实例**，`ToolCtx.cancel_flag` 从这里取。
+    ///
+    /// 纪律：任何调用 [`ToolRegistry::set_signals`] 的地方都必须同时调用
+    /// [`ToolRegistry::set_cancel_flag`]——否则该 registry 派生出的 agent 会
+    /// 拿着 `None`，工具执行内部退化为不可取消（表现为「点了中断没反应」）。
+    /// 形态取 `Option` 而非直接新建 AtomicBool：纯库/CLI 上下文本就没有取消面，
+    /// 让「没有」显式可见，好过造一个永远为 false 的假标志。
+    cancel_flag: Option<Arc<AtomicBool>>,
     /// 自动化工具（`desktop_*` / `browser_*`）开关。
     ///
     /// false = 既不暴露 schema，也拒绝执行。ExecAgent 走此隔离：
@@ -100,6 +157,7 @@ impl Default for ToolRegistry {
             canonical_map: HashMap::new(),
             signals: crate::state::new_shared_signals(),
             schedule_tool: Arc::new(RwLock::new(None)),
+            cancel_flag: None,
             automation_tools_enabled: true,
             automation_gate: None,
         }
@@ -119,6 +177,7 @@ impl Clone for ToolRegistry {
             canonical_map: self.canonical_map.clone(),
             signals: self.signals.clone(),
             schedule_tool: self.schedule_tool.clone(),
+            cancel_flag: self.cancel_flag.clone(),
             automation_tools_enabled: self.automation_tools_enabled,
             automation_gate: self.automation_gate.clone(),
         }
@@ -164,6 +223,22 @@ impl ToolRegistry {
     /// 保证全进程指向同一 SignalState 实例）
     pub fn set_signals(&mut self, signals: crate::state::SharedSignals) {
         self.signals = signals;
+    }
+
+    /// 注入取消标志句柄。**必须与 [`ToolRegistry::set_signals`] 同点调用**——
+    /// 两句是一套：signals 决定暂停/安全信号能否透传，cancel_flag 决定「强制
+    /// 终止」能否真正打断工具执行。漏掉本句的 registry 会让工具内部拿着
+    /// `None`，退化成「点了中断没反应」。
+    ///
+    /// 传入的必须是**宿主持有的那一个 `Arc<AtomicBool>`**（AppState.cancel_flag /
+    /// plugin 每调用新建的 cancel_flag），禁止在 registry 侧另造实例。
+    pub fn set_cancel_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.cancel_flag = Some(flag);
+    }
+
+    /// 共享取消标志句柄（派生 registry 时用于对齐，见 `set_cancel_flag`）
+    pub fn cancel_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.cancel_flag.clone()
     }
 
     pub fn set_automation_gate(&mut self, gate: Arc<AutomationGate>) {
@@ -387,44 +462,117 @@ impl ToolRegistry {
         // 占用 tokio worker 线程导致整个 runtime 假死（取消无响应、LLM 流中断）。
         let executor = def.executor; // fn 指针 Copy + Send + 'static
         let params_owned = params.clone();
-        // ToolCtx 携带本 registry 的共享信号句柄（src-tauri 启动时注入的唯一实例）
+        // ToolCtx 携带本 registry 的共享信号句柄 + 取消标志句柄。
+        // 两者都是宿主（src-tauri AppState / plugin 每调用）注入的**唯一实例**，
+        // 不是快照、不新建 —— 见 set_signals / set_cancel_flag。
         let ctx = ToolCtx {
             signals: self.signals.clone(),
             schedule_tool: self.schedule_tool.read().ok().and_then(|slot| slot.clone()),
+            cancel_flag: self.cancel_flag.clone(),
         };
         // 超时分档与每档取值推导见 Self::tool_timeout（无出处魔数禁止入链）
         let timeout = Self::tool_timeout(tool_name);
-        match tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    executor(&params_owned, &ctx)
-                }))
-            }),
-        )
-        .await
-        {
-            Ok(Ok(panic_result)) => match panic_result {
-                Ok(result) => result,
-                Err(_panic_info) => {
-                    let msg = format!("工具 '{}' 执行时发生内部错误（panic），已拦截", tool_name);
-                    tracing::error!("[PANIC] {}", msg);
-                    Ok(ToolResult::failure(msg))
-                }
-            },
-            Ok(Err(join_err)) => {
+        let cancel_flag = self.cancel_flag.clone();
+        let joined = tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                executor(&params_owned, &ctx)
+            }))
+        });
+
+        // ── 等待段：超时与取消是**两件独立的事**，各有各的文案口径 ──
+        //
+        // 超时：**不取消任何东西**（阻塞线程与子进程照跑），口径见 timeout_message。
+        // 取消：**先解除等待**（本函数立刻返回，agent 不再卡在工具调用里），
+        //       再由取消分支去触发 background_tasks 的杀进程路径 ——
+        //       `spawn_blocking` 本身不可中断，真正让阻塞线程退出的是「子进程被杀」。
+        //
+        // `biased` 且 joined 分支排首位：工具已经跑完时优先采用它的真实结果，
+        // 避免 cancel_flag 恰在收尾瞬间置位就把真实结果换成一条取消事实。
+        let outcome = tokio::select! {
+            biased;
+            joined_result = joined => ToolWaitOutcome::Joined(joined_result),
+            _ = tokio::time::sleep(timeout) => ToolWaitOutcome::Timeout,
+            _ = Self::wait_cancel(cancel_flag) => ToolWaitOutcome::Cancelled,
+        };
+
+        match outcome {
+            ToolWaitOutcome::Joined(Ok(Ok(result))) => result,
+            ToolWaitOutcome::Joined(Ok(Err(_panic_info))) => {
+                let msg = format!("工具 '{}' 执行时发生内部错误（panic），已拦截", tool_name);
+                tracing::error!("[PANIC] {}", msg);
+                Ok(ToolResult::failure(msg))
+            }
+            ToolWaitOutcome::Joined(Err(join_err)) => {
                 let msg = format!("工具 '{}' 执行线程异常退出: {}", tool_name, join_err);
                 tracing::error!("[BLOCKING] {}", msg);
                 Ok(ToolResult::failure(msg))
             }
-            Err(_elapsed) => {
+            ToolWaitOutcome::Timeout => {
                 // 文案口径钉在 Self::timeout_message：超时不取消任何东西，
                 // 禁止出现「已取消」这类与实现矛盾的表述
                 let msg = Self::timeout_message(tool_name, timeout);
                 tracing::error!("[TIMEOUT] {}", msg);
                 Ok(ToolResult::failure(msg))
             }
+            ToolWaitOutcome::Cancelled => Ok(Self::settle_cancellation(tool_name)),
         }
+    }
+
+    /// 取消等待器：每 [`CANCEL_POLL_INTERVAL`] 查一次共享 cancel_flag。
+    ///
+    /// 句柄为 `None`（纯库 / CLI 等无取消面）时**永不返回** —— 等价于该分支
+    /// 不参与竞争，而不是「立刻算已取消」。
+    async fn wait_cancel(flag: Option<Arc<AtomicBool>>) {
+        let Some(flag) = flag else {
+            std::future::pending::<()>().await;
+            return;
+        };
+        loop {
+            tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
+            if flag.load(Ordering::SeqCst) {
+                return;
+            }
+        }
+    }
+
+    /// 取消分支的结算：**先杀前台进程树，再如实汇报**。
+    ///
+    /// 这是 `spawn_blocking` 唯一能被真正打断的方式 —— 只解除等待而不杀进程，
+    /// 那只是把「卡住」换成「孤儿继续跑」，问题从 UI 转嫁到系统。
+    ///
+    /// 汇报纪律：杀掉几个、还有几个保留项、几个没杀掉，全部写进文案，
+    /// 不允许出现「已全部停止」这类可能撒谎的说法。
+    fn settle_cancellation(tool_name: &str) -> ToolResult {
+        use crate::tools::background_tasks as bg;
+
+        // 只终止 retain=false 的前台进程；保留项一律不碰（见 kill_foreground 契约）
+        let report = bg::global().kill_foreground();
+        for (id, pid, reason) in &report.failed {
+            tracing::error!("[CANCEL] 终止前台进程失败 {id} (PID {pid}): {reason}");
+        }
+        tracing::info!(
+            "[CANCEL] 已终止 {} 个前台进程, 保留 {} 个, 失败 {} 个, 已自行退出 {} 个",
+            report.killed.len(),
+            report.retained,
+            report.failed.len(),
+            report.already_gone
+        );
+
+        let mut notice = match report.killed.first() {
+            // system_shell：确实杀掉了子进程树 → 可以如实说「已终止」
+            Some(task) if tool_name == "system_shell" => {
+                bg::CancellationNotice::terminated(&task.command, Some(task.pid))
+            }
+            // 其余工具：等待已解除，但同步执行体可能仍在收尾 —— 不谎称已终止
+            _ => bg::CancellationNotice::wait_released_without_kill(tool_name),
+        };
+        if report.retained > 0 {
+            notice.message = format!(
+                "{}\n另有 {} 个被显式保留的后台任务仍在运行（取消不会杀它们），需按需结束。",
+                notice.message, report.retained
+            );
+        }
+        bg::cancelled_result(String::new(), &notice)
     }
 
     /// 工具超时分级：`execute` 同步执行段（spawn_blocking）的等待上限。

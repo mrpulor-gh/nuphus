@@ -53,6 +53,7 @@ import { SplashScreen } from '../ui/SplashScreen'
 import { ErrorScreen } from '../ui/ErrorScreen'
 import { TaskBubble } from './chat/TaskBubble'
 import { WorkflowTaskPanel } from './layout/WorkflowTaskPanel'
+import { BackgroundTasksPanel } from './layout/BackgroundTasksPanel'
 import { UserInputPrompt } from './layout/UserInputPrompt'
 import { RegionPicker } from './tools/RegionPicker'
 import { ScreenCaptureTool } from './tools/ScreenCaptureTool'
@@ -706,6 +707,13 @@ export default function App() {
               {s.isWorkflowPaused && <span className="wfst-restore-paused">已暂停</span>}
             </button>
           )}
+
+          {/* ── 后台任务账本（跨工具调用存活的子进程）──
+              与工作流面板同层挂载：入口/面板都是**只在有保留任务时**才出现的
+              fixed 浮层，两者纵向错开（bottom 204 / 244 vs 160），互不遮挡。
+              executionStage 供它在「一轮执行转空闲」时刷新保留项数量——
+              长任务超时那一刻没有任何事件推给前端，这是唯一可靠的触发点。 */}
+          <BackgroundTasksPanel executionStage={s.executionStage} />
 
           {/* ── Command Palette（Ctrl+K） ── */}
           <CommandPalette

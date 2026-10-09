@@ -114,6 +114,7 @@ mod tests {
         ToolCtx {
             signals: Arc::new(RwLock::new(crate::state::SignalState::default())),
             schedule_tool: None,
+            cancel_flag: None,
         }
     }
 

@@ -107,6 +107,29 @@ const en: Record<string, string> = {
   'app.name': 'Nuphus',
   'app.subtitle': 'Smart Partner → Always Ready',
 
+  // ── Background task ledger + interrupt reporting ──
+  // {0} in the interrupt.* keys is the backend's factual sentence, verbatim
+  // (it is the source of truth — i18n only frames it, never rewrites it and
+  // never swallows the "could not terminate" part inside).
+  'interrupt.report': 'Interrupted · {0}',
+  'interrupt.reportFailed': 'Interrupt did not fully take effect · {0}',
+  'interrupt.retained':
+    '{0} background task(s) still running (open the bottom-right capsule to view or end them)',
+
+  'backgroundTasks.entryTitle': 'Background tasks',
+  'backgroundTasks.entryLabel': 'Background tasks ({0} still running)',
+  'backgroundTasks.title': 'Background tasks',
+  'backgroundTasks.close': 'Close',
+  'backgroundTasks.loading': 'Loading…',
+  'backgroundTasks.empty': 'No background tasks are still running',
+  'backgroundTasks.badgeRetained': 'Retained',
+  'backgroundTasks.kill': 'End',
+  'backgroundTasks.killFailed': 'Failed to end background task',
+  'backgroundTasks.killRequested': 'End request sent for the background task',
+  'backgroundTasks.confirmTitle': 'End background task',
+  'backgroundTasks.confirmBody':
+    'This ends "{0}" and all of its child processes. Any build or download in progress will stop immediately. Continue?',
+
   'common.save': 'Save',
   'common.cancel': 'Cancel',
   'common.close': 'Close',

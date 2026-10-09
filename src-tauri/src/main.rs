@@ -235,6 +235,10 @@ fn main() {
             // -- 数据目录（只读列举；路径解析 + 存在性判定）--
             commands::list_data_dirs,
             commands::interrupt,
+            // -- 后台任务（跨工具调用存活的子进程）--
+            commands::list_background_tasks,
+            commands::kill_background_task,
+            commands::count_retained_background_tasks,
             commands::pause_execution,
             commands::continue_execution,
             commands::append_instruction,

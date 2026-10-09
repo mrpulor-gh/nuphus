@@ -541,7 +541,9 @@ impl super::SubTaskRunner {
                         match &self.event_emitter {
                             Some(emitter) => {
                                 crate::runtime::sub_task_shell::execute_shell_streaming(
-                                    &call, emitter,
+                                    &call,
+                                    emitter,
+                                    tools.cancel_flag(),
                                 )
                                 .await
                             }

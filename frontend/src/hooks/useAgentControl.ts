@@ -21,7 +21,13 @@ import {
   wfResume,
   submitExecutionRating,
   backendErrorMessage,
+  countRetainedBackgroundTasks,
 } from '../main-window/lib/api'
+import {
+  notifyBackgroundTasksChanged,
+  reportHasKillFailure,
+} from '../main-window/lib/backgroundTasks'
+import { useLanguage } from '../locales'
 import type { Toast } from './useInit'
 
 export interface AgentControlDeps {
@@ -67,6 +73,8 @@ export interface AgentControlDeps {
 }
 
 export function useAgentControl(deps: AgentControlDeps) {
+  // 提示文案本地化（handleInterrupt 的引导语；事实句本身原样透出）
+  const { t } = useLanguage()
   const {
     isProcessing,
     sessionId,
@@ -285,18 +293,49 @@ export function useAgentControl(deps: AgentControlDeps) {
   }, [showToast])
 
   // ── handleInterrupt ──
+  // 汇报纪律（本函数存在的唯一理由就是别再把事实丢掉）：
+  // 后端 interrupt 返回的是**事实句**——杀了几个前台进程、几个没杀掉、保留几个。
+  // 那是用户判断「到底停没停」的唯一依据，丢弃它等于「点了中断毫无反应」。
+  // 三个分支：
+  //   ① 汇报里含「未能终止」→ warning，且**原样**带出整句明细（失败面必须被看见）
+  //   ② 其余情况            → info，事实句原样附在引导语后面
+  //   ③ 保留项 > 0          → 追加一条 warning，并通知面板刷新 → 入口自动出现
+  //     （不指望用户去猜菜单在哪；也不自动打开面板抢走注意力）
   const handleInterrupt = useCallback(async () => {
-    await interrupt()
+    // interrupt 自身的失败（IPC 断）按原语义上抛：调用方（App.tsx）已有 .catch
+    const report = await interrupt()
     // 置位中断标记：后端 cancel_flag 是异步收敛（下个检查点才真正停），
     // 期间迟到的 tool_call_start 事件不得再把 mood 打回执行中；
     // 后端真正停止后会发 execution_error("任务已被用户中断") 完成最终收敛。
     interruptedRef.current = true
     setMood('idle')
-    showToast('Interrupted', 'info')
     // 同上：中断是异步收敛，真值仍由执行态轮询给出（execution_error 会再收敛一次）
     setExecutionStage('finalizing')
     setCompleted(true)
-  }, [showToast, setMood, interruptedRef, setExecutionStage])
+
+    const text = report ?? ''
+    if (reportHasKillFailure(text)) {
+      showToast(t('interrupt.reportFailed', text), 'warning')
+    } else if (text) {
+      showToast(t('interrupt.report', text), 'info')
+    }
+    // 汇报为空（旧后端 / IPC 返回 null）时不上报：宁可不说，也不能编一句
+    // 「已停止」——那正是后端明令禁止的撒谎措辞。
+
+    // 保留项数量：独立轻量查询。失败静默——中断本身已经生效并汇报过了，
+    // 不能因为一个计数查询失败就把上面的事实汇报也吞掉。
+    try {
+      const retained = await countRetainedBackgroundTasks()
+      const n = typeof retained === 'number' && retained > 0 ? retained : 0
+      if (n > 0) {
+        showToast(t('interrupt.retained', String(n)), 'warning')
+      }
+      // 无论是否 > 0 都通知：面板据此把「已消失的入口」收回去
+      notifyBackgroundTasksChanged()
+    } catch {
+      /* 计数不可用不阻塞中断流程 */
+    }
+  }, [showToast, t, setMood, interruptedRef, setExecutionStage])
 
   // ── handleWfPause ──
   const handleWfPause = useCallback(async () => {
