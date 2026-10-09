@@ -17,7 +17,11 @@ use nuphus::browser::{get_or_launch, runtime, BrowserError};
 fn diag(line: &str) {
     use std::io::Write;
     let path = std::env::var("APPDATA")
-        .map(|d| std::path::PathBuf::from(d).join("Nuphus").join("cdp_window.log"))
+        .map(|d| {
+            std::path::PathBuf::from(d)
+                .join("Nuphus")
+                .join("cdp_window.log")
+        })
         .unwrap_or_else(|_| std::path::PathBuf::from("cdp_window.log"));
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
@@ -49,29 +53,32 @@ fn diag(line: &str) {
 #[tauri::command]
 pub async fn browser_show_window() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
+        // 每行都带累计毫秒：入口慢在哪一段（预检 / 冷启 / 建页 / 置前）应当一眼可读，
+        // 不必再靠外部探针复现（此前定位「每次等几秒」就是这么绕出来的）。
+        let t0 = std::time::Instant::now();
+        let ms = || t0.elapsed().as_millis();
         let url = runtime()
             .block_on(async {
                 diag("step1: calling get_or_launch");
                 let mut guard = match get_or_launch(/* headless */ false).await {
                     Ok(g) => g,
                     Err(e) => {
-                        diag(&format!("get_or_launch FAILED: {e}"));
+                        diag(&format!("get_or_launch FAILED after {}ms: {e}", ms()));
                         return Err(BrowserError::Launch(e));
                     }
                 };
-                let client = guard
-                    .as_mut()
-                    .ok_or(BrowserError::NotStarted)?;
+                let client = guard.as_mut().ok_or(BrowserError::NotStarted)?;
+                let alive = client.is_connection_alive().await;
                 diag(&format!(
-                    "step2: bring_to_front (connection alive = {})",
-                    client.is_connection_alive().await
+                    "step2: bring_to_front ({}ms, connection alive = {alive})",
+                    ms()
                 ));
                 if let Err(e) = client.bring_to_front().await {
-                    diag(&format!("bring_to_front FAILED: {e}"));
+                    diag(&format!("bring_to_front FAILED after {}ms: {e}", ms()));
                     return Err(e);
                 }
                 let url = client.current_url().await?;
-                diag(&format!("window front, url = {url}"));
+                diag(&format!("window front after {}ms, url = {url}", ms()));
                 Ok(url)
             })
             .map_err(|e| format!("打开浏览器窗口失败：{e}"))?;
@@ -79,4 +86,116 @@ pub async fn browser_show_window() -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("打开浏览器窗口失败：{e}"))?
+}
+
+/// 用户点击外链时的落点（裸 URL chip / markdown 链接 / 各页面外链共用）。
+#[derive(serde::Serialize)]
+pub struct OpenedUrl {
+    /// 本次调用是否**新启动**了浏览器（false = 窗口本来就在）
+    pub launched: bool,
+    /// 实际落点 URL（前端回显用）
+    pub url: String,
+}
+
+/// 在 Agent 浏览器（CDP 那个 Chrome）里**新开一个标签页**打开外链，并把窗口置前。
+///
+/// ## 为什么不再交给系统浏览器（2026-10-09 大王定调）
+///
+/// 用户点外链的常见动机是「Agent 让我登录某个网站」。登录态必须落在**工作流/Agent
+/// 用的那个 profile** 里——用户在系统浏览器登录，工作流照样过不去。统一到 CDP 浏览器
+/// 之后，用户在这个窗口里登录、授权、填表，Agent 随后直接复用同一份状态。
+///
+/// ## 为什么是新开标签而不是导航当前页
+///
+/// 点链接的时机常常正好是 Agent 在自动化某个页面时；导航会把它正在操作的那张页顶掉，
+/// 轻则打断流程，重则让它的下一步操作落到用户的页面上。
+///
+/// 校验复用 `external::is_allowed_external_url`（只放行 http/https、拒控制字符与超长）。
+#[tauri::command]
+pub async fn browser_open_url(url: String) -> Result<OpenedUrl, String> {
+    let requested = url.trim().to_string();
+    if !crate::commands::external::is_allowed_external_url(&requested) {
+        return Err(format!("不支持的链接（仅允许 http/https）：{requested}"));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let t0 = std::time::Instant::now();
+        let ms = || t0.elapsed().as_millis();
+        let out = runtime()
+            .block_on(async move {
+                // 判定「浏览器本来在不在」必须在**取锁之前**：拿不到锁说明此刻正被别人
+                // 用着（多半是 Agent 在跑），保守当成"已在" → 前端不弹"正在启动"。
+                let pre_existed = match nuphus::browser::shared_client().try_lock() {
+                    Ok(guard) => guard.is_some(),
+                    // tokio 的 TryLockError 只有 WouldBlock：拿不到锁 = 此刻正被别人用着
+                    Err(_) => true,
+                };
+
+                let mut guard = get_or_launch(/* headless */ false)
+                    .await
+                    .map_err(BrowserError::Launch)?;
+                let client = guard.as_mut().ok_or(BrowserError::NotStarted)?;
+                client.new_tab(Some(&requested)).await?;
+                if let Err(e) = client.bring_to_front().await {
+                    diag(&format!(
+                        "open_url: bring_to_front FAILED after {}ms: {e}",
+                        ms()
+                    ));
+                    return Err(e);
+                }
+                let landed = client
+                    .current_url()
+                    .await
+                    .unwrap_or_else(|_| requested.clone());
+                diag(&format!(
+                    "open_url done after {}ms: pre_existed={pre_existed} landed={landed}",
+                    ms()
+                ));
+                Ok(OpenedUrl {
+                    launched: !pre_existed,
+                    url: landed,
+                })
+            })
+            .map_err(|e| format!("在 Agent 浏览器中打开链接失败：{e}"))?;
+        Ok(out)
+    })
+    .await
+    .map_err(|e| format!("在 Agent 浏览器中打开链接失败：{e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 前端按 `launched` / `url` 取值（见 `api.ts` 的 `AgentBrowserOpened`），
+    /// 字段名一旦漂移前端会静默拿到 undefined —— 这里把序列化形状钉住。
+    #[test]
+    fn opened_url_serializes_with_stable_field_names() {
+        let json = serde_json::to_value(OpenedUrl {
+            launched: true,
+            url: "https://example.com/".into(),
+        })
+        .expect("serialize");
+        assert_eq!(json["launched"], serde_json::json!(true));
+        assert_eq!(json["url"], serde_json::json!("https://example.com/"));
+    }
+
+    /// 校验复用 external 的白名单：伪协议必须在进浏览器之前就被拒。
+    #[test]
+    fn rejects_non_http_urls_before_launching() {
+        for bad in [
+            "javascript:alert(1)",
+            "file:///C:/Windows",
+            "data:text/html,<script>",
+            "https://",
+        ] {
+            assert!(
+                !crate::commands::external::is_allowed_external_url(bad),
+                "should reject: {bad}"
+            );
+        }
+        assert!(crate::commands::external::is_allowed_external_url(
+            "https://example.com/path?q=1"
+        ));
+    }
 }

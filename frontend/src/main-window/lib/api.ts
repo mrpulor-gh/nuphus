@@ -1951,7 +1951,6 @@ export function revealPath(path: string) {
 
 // ── 应用内浏览器（后端 src-tauri/src/commands/browser.rs） ──
 
-
 // ── 数据目录（只读列举） ──
 
 /** 单个数据目录条目；path 为空串 = 本机无法解析该目录（exists 必为 false） */
@@ -2315,7 +2314,13 @@ export async function getChangelog() {
 // ── 外链 ──
 
 /**
- * 用系统默认浏览器打开外链（桌面端 WebView 不处理 `target="_blank"`）。
+ * 用系统默认浏览器打开外链。
+ *
+ * ⚠️ **用户可见的外链不再走这里**（2026-10-09 起统一进 Agent 浏览器，见
+ * {@link browserOpenUrl}）：登录态必须落在工作流/Agent 用的那个 profile 里。
+ * 现存调用点只剩模型厂商 OAuth 授权——那条链路依赖外部浏览器的回调与既有登录态，
+ * 刻意保持系统浏览器。
+ *
  * 后端只放行 http/https；失败时返回可读原因，调用方通常只记录不打断。
  */
 export function openExternal(url: string) {
@@ -2326,11 +2331,37 @@ export function openExternal(url: string) {
  * 唤起 Agent 浏览器窗口（Nuphus 自己的 CDP 浏览器，不是系统浏览器）。
  *
  * 已有窗口则提到前台，没有则启动一个。返回窗口当前页URL，供调用方回显落点。
- * 与 {@link openExternal} 的分工：外链给人看走系统浏览器；这个窗口是 Agent
- * 自动化真正干活的地方，想看它进行到哪一步时把它提到前台。
+ * 只置前、**不导航**；要打开某个网址用 {@link browserOpenUrl}（新开标签）。
  */
 export function browserShowWindow() {
   return invoke<string>('browser_show_window')
+}
+
+/** {@link browserOpenUrl} 的返回（字段名与后端 serde 逐字对应，见 cdp_window.rs 的测试） */
+export interface AgentBrowserOpened {
+  /** 本次调用是否**新启动**了浏览器（false = 窗口本来就在） */
+  launched: boolean
+  /** 实际落点 URL */
+  url: string
+}
+
+/**
+ * 在 Agent 浏览器（CDP 那个 Chrome）里**新开一个标签页**打开外链，并把窗口置前。
+ *
+ * ## 为什么外链不再走系统浏览器（2026-10-09 大王定调）
+ *
+ * 用户点外链的常见动机是「Agent 让我登录某个网站」。登录态必须落在**工作流/Agent 用的
+ * 那个 profile** 里——在系统浏览器登录，工作流照样过不去。统一到 CDP 浏览器后，用户在
+ * 这个窗口里登录/授权/填表，Agent 随后复用同一份状态。
+ *
+ * ## 为什么不导航当前页
+ *
+ * 点链接的时机常常正好是 Agent 在自动化某页时；导航会把它正在操作的页顶掉。
+ *
+ * 窗口已经开着时不会重复提示——`launched=false` 即代表"它本来就在"。
+ */
+export function browserOpenUrl(url: string) {
+  return invoke<AgentBrowserOpened>('browser_open_url', { url })
 }
 
 // Local workflow execution evidence. Summaries stay separate from full invocation values.

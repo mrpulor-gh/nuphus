@@ -44,7 +44,7 @@ import {
   setProjectBookmarks as setProjectBookmarksCmd,
   TOOL_PERMISSIONS_CHANGED_EVENT,
   browserShowWindow,
-  openExternal,
+  browserOpenUrl,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
@@ -367,11 +367,12 @@ export function ChatPanel({
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
 
-  // ── 远程链接点击 → 交给系统浏览器 ──
-  // 应用内不再自建浏览窗口：CDP 浏览器是 Agent 的执行器，人不在应用内看网页，
-  // 裸 URL 走系统浏览器，与文件预览互不干扰。
+  // ── 远程链接点击 → 统一进 Agent 浏览器（CDP），不再走系统浏览器 ──
+  // 2026-10-09 大王定调：点外链的常见动机是「Agent 让我登录某个网站」，登录态必须落在
+  // 工作流/Agent 用的那个 profile 里；在系统浏览器登录，工作流照样过不去。后端在新标签
+  // 打开（不导航当前页），因此不会把 Agent 正在自动化的页面顶掉。
   const openUrl = useCallback((url: string) => {
-    openExternal(url).catch(e => {
+    browserOpenUrl(url).catch(e => {
       hudUpdate(friendlyIpcError(e, '打开链接失败'), 'warning')
     })
   }, [])

@@ -34,6 +34,13 @@ export function friendlyIpcError(e: unknown, fallback = '操作失败，请稍�
   // 原因缺失或仍是原始 IPC 文本 → 兜底文案（细节留在 console）
   if (!reason.trim() || /IPC invoke/i.test(reason)) return fallback
 
+  // ── 浏览器被 Agent 占用（nuphus-browser 的进程级单例锁）──
+  // 原文是英文技术句，用户看不出该怎么办 → 给一句可操作的。放在连接类判定之前：
+  // 该文案里带 "retry later" 等词，不该被后面的网络类规则抢先改写语义。
+  if (/browser automation is busy|is busy: another operation/i.test(reason)) {
+    return '浏览器正被 Agent 的自动化任务占用，请等这一步跑完再试'
+  }
+
   // ── 连接类失败：地址 / 网络 / 鉴权 / 协议不匹配是最常见的四种 ──
   // 原文（如 `error sending request for url (https://x/v1/models)`）只有开发者能读，
   // 对用户零可操作性 → 逐类给出「下一步该做什么」，细节仍留在 console。

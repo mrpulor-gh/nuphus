@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
-import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, openExternal } from './lib/api'
+import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, browserOpenUrl } from './lib/api'
 import { handleExternalAnchorClick } from './lib/externalLink'
 import { scheduleIdle } from './lib/idle'
 import { applySkinBg, readSkinBg } from '../ui/skinBg'
@@ -171,13 +171,15 @@ export default function App() {
     return () => window.removeEventListener('nuphus-nav-models', handler)
   }, [s.setShowModels])
 
-  // ── 外链接管：WebView 不处理 target="_blank"（点了没反应）→ 交系统浏览器 ──
+  // ── 外链接管：WebView 不处理 target="_blank"（点了没反应）→ 交 Agent 浏览器 ──
   // 捕获阶段统一拦截，覆盖聊天消息、设置中心各页、插件页等所有外链。
+  // 2026-10-09 起不再走系统浏览器：登录态必须落在工作流/Agent 用的那个 profile 里，
+  // 用户在 Agent 浏览器里登录，工作流才过得去。后端在新标签打开，不打断正在自动化的页面。
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const handled = handleExternalAnchorClick(e.target, url => {
-        void openExternal(url).catch(err => {
-          console.warn('[external] open failed:', err)
+        void browserOpenUrl(url).catch(err => {
+          console.warn('[external] open in agent browser failed:', err)
         })
       })
       if (handled) e.preventDefault()

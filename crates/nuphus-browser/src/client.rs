@@ -515,6 +515,23 @@ const NEW_PAGE_TIMEOUT_SECS: u64 = 15;
 /// Budget for the liveness probe inside `instance_is_headless`, which runs on
 /// every launch/attach.
 const LAUNCH_PROBE_TIMEOUT_SECS: u64 = 3;
+/// Budget for the TCP pre-flight against the port recorded in `DevToolsActivePort`
+/// (see `launch`). A live loopback listener is confirmed from the kernel's accept
+/// backlog in microseconds — the handshake completes in the kernel whether or not
+/// the browser process is scheduled — so this budget only decides how long the
+/// *dead* case may stall, and 200ms is still three orders of magnitude above what
+/// a healthy instance needs.
+///
+/// It exists because a dead loopback port is expensive on Windows: measured on the
+/// dev machine, `connect()` to a closed port fails only after ~2.0s (silent drop +
+/// SYN retransmit, not an instant RST). The previous flow paid that twice — the WS
+/// attach and a raw liveness probe — before every cold launch, i.e. ~4s of dead
+/// time on top of a ~0.5s Chrome start.
+///
+/// A/B measured with `examples/cold_open_timing.rs` (stale port file present →
+/// probe runs; file removed → probe skipped): 1.2s vs 0.7s total, i.e. the probe
+/// spends its whole budget exactly as designed and nothing more.
+const ATTACH_PRECHECK_TIMEOUT_MS: u64 = 200;
 /// Budget for the teardown round trips in `close()`.
 const CLOSE_TIMEOUT_SECS: u64 = 5;
 
@@ -1046,39 +1063,47 @@ impl BrowserClient {
         // Attach first: if a Chrome with a debugging port is already running for the same profile (an in-app
         // existing instance, leftovers from a previous crash, or another Nuphus process), connect and reuse it —
         // only one Chrome instance per profile is allowed at a time, so a hard launch would inevitably fail.
-        if self.try_attach().await.is_ok() {
-            // A headed request must not ride a headless instance: web_extract / cookies CDP may
-            // have left a headless Chrome resident in this profile (attached instances are not
-            // owned here — close() only drops the connection, the process survives). Probe the
-            // user agent and upgrade: kill the process, then fall through to the headed launch.
-            if !headless && self.instance_is_headless().await.unwrap_or(false) {
-                tracing::info!(
-                    "[Browser] attached to headless instance; upgrading to headed (profile={})",
-                    self.profile_dir.display()
-                );
-                self.close().await?;
-                kill_chrome_for_profile(&self.profile_dir).await?;
-                // close() cleared the local connection; DevToolsActivePort may still point at
-                // the (now dead) instance — attach_target_alive() below detects the dead port
-                // and proceeds to a hard headed launch.
-            } else {
-                return Ok(());
-            }
-        }
+        //
+        // Pre-flight it, because a *stale* DevToolsActivePort is the common case: when the previous Chrome died
+        // (window closed, crash, app restart) the file survives and keeps pointing at a dead port — and probing
+        // a dead loopback port is expensive on Windows (~2s per connect, see ATTACH_PRECHECK_TIMEOUT_MS).
+        // Gating the WS attempt on one cheap TCP probe removes ~4s of dead time from every cold open while
+        // costing the healthy path nothing.
+        let attach_port_live = match Self::devtools_port_of(&self.profile_dir) {
+            Some(port) => Self::loopback_port_alive(port, ATTACH_PRECHECK_TIMEOUT_MS).await,
+            None => false, // no file → no attach target at all
+        };
 
-        // Before deleting locks, confirm the attach target is actually dead: if DevToolsActivePort
-        // still points to a live instance, removing SingletonLock/SingletonSocket would break its
-        // singleton state, and a hard launch on the same profile would exit with code 21. Retry
-        // attach once against the live instance; only delete locks when the instance is dead.
-        if self.attach_target_alive().await {
+        if attach_port_live {
             if self.try_attach().await.is_ok() {
+                // A headed request must not ride a headless instance: web_extract / cookies CDP may
+                // have left a headless Chrome resident in this profile (attached instances are not
+                // owned here — close() only drops the connection, the process survives). Probe the
+                // user agent and upgrade: kill the process, then fall through to the headed launch.
+                if !headless && self.instance_is_headless().await.unwrap_or(false) {
+                    tracing::info!(
+                        "[Browser] attached to headless instance; upgrading to headed (profile={})",
+                        self.profile_dir.display()
+                    );
+                    self.close().await?;
+                    kill_chrome_for_profile(&self.profile_dir).await?;
+                    // close() dropped the connection and the process is gone; the port pre-flighted
+                    // above is dead now, so the flow falls through to the hard headed launch below.
+                } else {
+                    return Ok(());
+                }
+            } else if self.try_attach().await.is_ok() {
+                // Port live but the first attach failed: one retry, unchanged from the previous flow.
                 return Ok(());
+            } else {
+                // The target is verifiably alive, so removing SingletonLock/SingletonSocket would break
+                // its singleton state and a hard launch on the same profile would exit with code 21.
+                return Err(BrowserError::Launch(
+                    "DevToolsActivePort points to a live Chrome instance but CDP attach \
+                     keeps failing; refusing to delete its profile locks"
+                        .into(),
+                ));
             }
-            return Err(BrowserError::Launch(
-                "DevToolsActivePort points to a live Chrome instance but CDP attach \
-                 keeps failing; refusing to delete its profile locks"
-                    .into(),
-            ));
         }
 
         // Clean up stale lock files that can cause Chrome exit code 21
@@ -1539,28 +1564,29 @@ impl BrowserClient {
         }
     }
 
-    /// Probe whether the DevToolsActivePort port is still listened on by a live instance.
+    /// Port recorded in the profile's `DevToolsActivePort` file (Chrome writes it when
+    /// launched with `--remote-debugging-port=0`), or `None` when the file is
+    /// missing/unreadable — no attach target exists then.
+    fn devtools_port_of(profile_dir: &std::path::Path) -> Option<u16> {
+        let content = std::fs::read_to_string(profile_dir.join("DevToolsActivePort")).ok()?;
+        Self::parse_devtools_port(&content)
+    }
+
+    /// First line of `DevToolsActivePort` as a port number; anything else → `None`.
+    fn parse_devtools_port(content: &str) -> Option<u16> {
+        content.lines().next()?.trim().parse::<u16>().ok()
+    }
+
+    /// Cheap liveness probe for a loopback debugging port: connectable → a listener exists.
     ///
-    /// try_attach has already failed at this point; this is a light TCP probe: port
-    /// connectable → instance alive (usually a transient attach failure, locks must not
-    /// be deleted); file missing / parse failure / port unreachable → instance dead
-    /// (crash leftover), locks may be safely deleted for a hard launch.
-    async fn attach_target_alive(&self) -> bool {
-        let port_file = self.profile_dir.join("DevToolsActivePort");
-        let content = match std::fs::read_to_string(&port_file) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        let port = match content
-            .lines()
-            .next()
-            .and_then(|l| l.trim().parse::<u16>().ok())
-        {
-            Some(p) => p,
-            None => return false,
-        };
+    /// Replaces the former `attach_target_alive`: the caller (see `launch`) now runs this
+    /// *before* any WS attempt, so a stale port costs one bounded probe instead of two full
+    /// OS-level connect timeouts. Deliberately raw TCP (no WS handshake, no CDP command):
+    /// the only question asked here is "is anything listening?", and the kernel answers it
+    /// from the accept backlog even while the browser process is busy.
+    async fn loopback_port_alive(port: u16, timeout_ms: u64) -> bool {
         tokio::time::timeout(
-            std::time::Duration::from_secs(2),
+            std::time::Duration::from_millis(timeout_ms),
             tokio::net::TcpStream::connect(("127.0.0.1", port)),
         )
         .await
@@ -4031,15 +4057,19 @@ mod tests {
     fn stale_page_error_classification() {
         // Target page gone (the person closed that tab) → rebuild the handle only;
         // the browser and the connection are fine, so a reconnect would be wrong.
-        assert!(BrowserClient::is_stale_page_error(&BrowserError::Execution(
-            "Page.bringToFront failed: No target with given id found".to_string()
-        )));
+        assert!(BrowserClient::is_stale_page_error(
+            &BrowserError::Execution(
+                "Page.bringToFront failed: No target with given id found".to_string()
+            )
+        ));
         assert!(BrowserClient::is_stale_page_error(
             &BrowserError::Execution("Target closed".to_string())
         ));
-        assert!(BrowserClient::is_stale_page_error(&BrowserError::Execution(
-            "Runtime.evaluate failed: Cannot find context with specified id".to_string()
-        )));
+        assert!(BrowserClient::is_stale_page_error(
+            &BrowserError::Execution(
+                "Runtime.evaluate failed: Cannot find context with specified id".to_string()
+            )
+        ));
         // Connection-class failures are handled by is_connection_error — the two
         // paths differ in cost (relaunch vs. new page), so they must not overlap.
         assert!(!BrowserClient::is_stale_page_error(
@@ -4494,6 +4524,57 @@ document.addEventListener('DOMContentLoaded', function() {
 
         client.close().await.expect("close Chrome");
         cleanup_profile(profile_name);
+    }
+
+    /// Pre-flight regression: a dead debugging port must be rejected *within budget*.
+    ///
+    /// On Windows `connect()` to a closed loopback port only fails after ~2s (silent drop +
+    /// SYN retransmit, not an instant RST). Without the budget this probe would add that dead
+    /// time to every cold launch — the exact defect it was introduced to remove.
+    #[tokio::test]
+    async fn port_precheck_rejects_dead_port_within_budget() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener); // the port is now (almost certainly) closed
+
+        let started = std::time::Instant::now();
+        assert!(!BrowserClient::loopback_port_alive(port, 200).await);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(1500),
+            "probe ignored its budget: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A live listener is confirmed immediately — the budget must never be spent on the
+    /// healthy path (every attach/launch pre-flights through this probe).
+    #[tokio::test]
+    async fn port_precheck_accepts_live_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let started = std::time::Instant::now();
+        assert!(BrowserClient::loopback_port_alive(port, 500).await);
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    }
+
+    /// `DevToolsActivePort` parsing: first line is the port; junk/empty → no attach target.
+    #[test]
+    fn devtools_active_port_parsing() {
+        assert_eq!(
+            BrowserClient::parse_devtools_port("65478\n/devtools/browser/abc\n"),
+            Some(65478)
+        );
+        assert_eq!(BrowserClient::parse_devtools_port(" 9222 \n"), Some(9222));
+        assert_eq!(BrowserClient::parse_devtools_port(""), None);
+        assert_eq!(
+            BrowserClient::parse_devtools_port("not-a-port\n/devtools/x"),
+            None
+        );
     }
 
     /// Connection-level self-healing: after the Chrome child process is killed (an externally

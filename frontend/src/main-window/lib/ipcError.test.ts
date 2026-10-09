@@ -54,6 +54,18 @@ describe('friendlyIpcError', () => {
     expect(friendlyIpcError(wrap('404 Not Found'))).toContain('/v1')
   })
 
+  it('浏览器被 Agent 自动化占用 → 中文可操作文案（不泄露英文技术句）', () => {
+    // 原文来自 nuphus-browser 的单例锁超时，是英文技术句，用户看不出该怎么办
+    const msg = friendlyIpcError(
+      wrap(
+        '打开浏览器窗口失败：Browser automation is busy: another operation in this process ' +
+          'has held the shared browser client for over 30s; retry later.',
+      ),
+    )
+    expect(msg).toContain('浏览器正被 Agent')
+    expect(msg).not.toMatch(/browser client|retry later/i)
+  })
+
   it('返回非 JSON（中转站登录页等）→ 提示不是模型列表接口', () => {
     expect(friendlyIpcError(wrap('expected value at line 1 column 1'))).toContain('不是模型列表')
   })

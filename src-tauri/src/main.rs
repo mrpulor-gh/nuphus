@@ -487,6 +487,7 @@ fn main() {
             commands::open_external,
             // -- Agent 浏览器窗口：把 CDP 那个 Chrome 提到前台（人要看/要示范时）--
             commands::browser_show_window,
+                        commands::browser_open_url,
             // -- Document render service (pdf.js in main webview) --
             render::commands::pdf_render_done,
             render::commands::pdf_render_error,
