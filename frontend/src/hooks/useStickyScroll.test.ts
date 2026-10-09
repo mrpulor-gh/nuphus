@@ -1,568 +1,411 @@
 /**
- * useStickyScroll 单测 —— 消息流「贴底跟随」滚动语义
+ * useStickyScroll 单测 —— 手势驱动的「贴底跟随」滚动语义（2026-10-09 重写）
  *
- * 覆盖以下不变量（对应任务验收项）：
- *  ① followKey 变化且贴底 → smooth 滚底
- *  ② 用户上翻离开底部 → 按钮显示，且 followKey 再变化不再拽回（冻结）
- *  ③ 点击 jumpToBottom → 立即滚底 + 按钮隐藏
- *  ④ 程序滚动期间的 scroll 事件（向下 / 静止 delta）不触发冻结
- *  ⑤ 程序滚动期间用户向上 delta 被识别为用户操作（不被屏蔽窗吞掉）
- *  ⑥ 冻结后静默 15s 无用户操作 → 自动滚底 + 按钮隐藏；期间任何用户滚动都重置计时
- *  ⑦ 卸载后恢复计时被清理（不再触发滚底）
- *  ⑧ 滚动续命（主判定）：每 20s 向上滚一次 ×5，累计 100s 不恢复 —— 宽限是「连续无上滚
- *     操作」的上限而非读死表，用户在读就永不恢复（下滚不冻结不续命、回底才恢复，见 ⑩）
- *  ⑨ resumeMs 参数化：60s 宽限下 59s 不恢复、满 60s 才恢复并滚底（真静默）
- *  ⑩ 向下滚动不弹回：未回底的下滚不恢复也不续命，滚回 80px 容差内才恢复（用户可自由下滚）
- *  ⑪ executing=false（空闲读秒豁免）：上翻冻结且不排恢复计时，180s 不恢复不滚底；
- *     滚回底部 / followReset 两个出口仍生效
- *  ⑫ followReset：新轮次 / 完成补拉的 hook 侧语义 —— 立即恢复跟随 + 滚底 + 作废旧计时
- *  ⑬ enterPanel 进场自动下拉：**完成即释放**，没有固定时长宽限（旧 3s 硬窗已删）——
- *     a. 下拉中途（未到底、向下 delta）= 动画中间态 → 不判定；
- *     b. 用户上滚抢控制 → 立即冻结（不吞用户输入，不等任何时间窗）；
- *     c. 滚到底（容差内）= 自动下拉完成 → 释放，后续用户滚动正常判定；
- *     d. 安全网：无 scroll 事件的异常下 1000ms 到点释放（释放兜底，非宽限）
+ * 行为契约（与任务 B1–B6 一一对应）：
+ *  B1 跟随态不由「滚动条位置 / 距底百分比」判定：内容增长（scrollHeight 变大、
+ *     scrollTop 不变）派发的 scroll 帧既不解锁也不会误回归；位置变化（哪怕落回贴底）
+ *     也不能重新开启跟随。
+ *  B2 鼠标滚轮向上 → 立即解锁：只发 wheel、连 scroll 事件都未派发时状态就已改写。
+ *  B3 拖拽滚动条 → 解锁（pointerdown 落在滚动条槽上）；且「原生滚动条拖拽不派发
+ *     pointer 事件」时有兜底：未对冲的 scrollTop 下降归因用户 → 解锁。
+ *  B4 只有「手势结束」且落点贴底才回归：滚轮/键盘 = 末次手势后 120ms 无新手势；
+ *     指针 = pointerup。停在中途松手不回归。
+ *  B5 流式把滚动条顶起来不得被读成「用户到底」：跟随态不因增长解锁；解锁态不因位置
+ *     落回底部而回归。
+ *  B6 上滚解锁后可停留在任意位置阅读：后续新增内容不拽回，且无任何「静默 N 秒恢复」。
+ *  ⑦ onScroll 返回值语义（调用方 gate 依赖）：程序写入的回响帧 false，用户手势帧 true。
+ *  ⑧ nudgeScrollTop 走程序对冲：其后的 scroll 帧不得被读成用户操作。
  *
- * jsdom 局限说明（盲区）：jsdom 不做布局，scrollHeight/clientHeight/scrollTop 均为
- * 注入值，smooth 动画的逐帧过程也只能用手动改 scrollTop + 调 onScroll 模拟；
- * 这里断言的是判定逻辑，不是真实滚动手感（真实布局由真机验收）。
+ * jsdom 局限（盲区）：无布局，scrollHeight/clientHeight/scrollTop 均为注入值；真实
+ * 滚动条拖拽的 pointer 事件行为、overflow-anchor: none 的实际效果只能真机验收
+ * （见任务报告的人工验证步骤）。这里断言的是状态机与事件归因逻辑。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import type { RefObject } from 'react'
-import { useStickyScroll, type StickyScroll, type StickyScrollOptions } from './useStickyScroll'
+import { useStickyScroll, type StickyScroll } from './useStickyScroll'
 
-/** 容器几何：距底 0px（scrollHeight 1000 - scrollTop 600 - clientHeight 400）视为贴底 */
-const GEO = { scrollHeight: 1000, clientHeight: 400, scrollTop: 600 }
+/** 容器几何：max = 1000 − 400 = 600，初始 scrollTop 200 → 距底 400px（未贴底） */
+const GEO = { scrollHeight: 1000, clientHeight: 400 }
 
-/** followKey 用消息数组的身份变化模拟（与 ChatPanel 传 messages 同构） */
-type FollowKey = number[]
+type Result = { current: StickyScroll }
 
-let scrollToSpy: ReturnType<typeof vi.fn>
-
-beforeEach(() => {
-  // jsdom 未实现 Element.prototype.scrollTo（与本仓其余 ChatPanel 测试同一处理）
-  scrollToSpy = vi.fn()
-  Object.defineProperty(window.Element.prototype, 'scrollTo', {
-    value: scrollToSpy,
-    writable: true,
-    configurable: true,
-  })
-  vi.useFakeTimers()
-})
-
-afterEach(() => {
-  vi.useRealTimers()
-})
-
-/** jsdom 无布局：给元素注入可读的滚动几何（scrollHeight/clientHeight 只读，scrollTop 可写） */
-function makeScroller(): HTMLDivElement {
+function makeScroller(scrollTop = 200): HTMLDivElement {
   const el = document.createElement('div')
-  Object.defineProperty(el, 'scrollHeight', { value: GEO.scrollHeight, configurable: true })
-  Object.defineProperty(el, 'clientHeight', { value: GEO.clientHeight, configurable: true })
-  Object.defineProperty(el, 'scrollTop', {
-    value: GEO.scrollTop,
+  Object.defineProperty(el, 'scrollHeight', {
+    value: GEO.scrollHeight,
     writable: true,
     configurable: true,
   })
+  Object.defineProperty(el, 'clientHeight', {
+    value: GEO.clientHeight,
+    writable: true,
+    configurable: true,
+  })
+  Object.defineProperty(el, 'scrollTop', { value: scrollTop, writable: true, configurable: true })
   return el
 }
 
-/** renderHook 不渲染 DOM：hook 内部创建的 scrollRef 需手动挂到元素上 */
+/** renderHook 不渲染 DOM：hook 内部创建的 scrollRef 需手动挂到元素上。
+ *  必须挂进 document —— 手势监听在 window 捕获阶段，离屏元素的事件不会冒泡到 window
+ *  （真实 App 中容器恒在 DOM 树内，行为一致）。 */
+const attachedScrollers: HTMLDivElement[] = []
 function attachScroller(scrollRef: RefObject<HTMLDivElement>): HTMLDivElement {
   const el = makeScroller()
-  const mutable = scrollRef as { current: HTMLDivElement | null }
-  mutable.current = el
+  document.body.appendChild(el)
+  attachedScrollers.push(el)
+  ;(scrollRef as { current: HTMLDivElement | null }).current = el
   return el
 }
 
-/** 用户滚动：改 scrollTop 后触发 onScroll（rAF 里已排队的程序滚动不参与） */
-function userScroll(result: { current: StickyScroll }, top: number): void {
-  const el = result.current.scrollRef.current
-  if (!el) throw new Error('scroller 未挂载')
-  el.scrollTop = top
+/** jsdom 无布局：scrollHeight 是只读 getter，用 defineProperty 覆写模拟内容增长 */
+function setScrollHeight(el: HTMLElement, h: number): void {
+  Object.defineProperty(el, 'scrollHeight', { value: h, writable: true, configurable: true })
+}
+
+function setup() {
+  return renderHook((props: { n: number }) => useStickyScroll(props.n), {
+    initialProps: { n: 1 },
+  })
+}
+
+/** followKey 变化（新消息 / 流式 delta）*/
+function bumpKey(rerender: (props: { n: number }) => void, n: number): void {
+  act(() => {
+    rerender({ n })
+  })
+}
+
+/** 冲刷 rAF 补写并消费浏览器为程序写入派发的 scroll 回响 —— 让一次贴底彻底落定 */
+function settle(result: Result): void {
+  act(() => {
+    vi.advanceTimersByTime(20)
+  })
   act(() => {
     result.current.onScroll()
   })
 }
 
-function setup(opts?: StickyScrollOptions) {
-  return renderHook((key: FollowKey) => useStickyScroll(key, opts), { initialProps: [1] })
+/** 跟随着完成一次贴底 */
+function followKeyChange(result: Result, rerender: (props: { n: number }) => void, n: number) {
+  bumpKey(rerender, n)
+  settle(result)
 }
 
-/** 触发一次 followKey 变化并把 rAF 里的 scrollTo 跑出来 */
-function changeFollowKey(rerender: (key: FollowKey) => void): void {
+const scrollFrame = (result: Result): boolean => {
+  let ret = false
   act(() => {
-    rerender([1, 2])
+    ret = result.current.onScroll()
   })
+  return ret
+}
+
+/** 真实滚轮手势：wheel 事件（判定意图）→ 浏览器滚动 → scroll 事件（归因帧） */
+function wheelScroll(result: Result, el: HTMLDivElement, deltaY: number): void {
   act(() => {
-    vi.advanceTimersByTime(20) // rAF 约 16ms 一帧
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true }))
+  })
+  el.scrollTop = el.scrollTop + deltaY
+  scrollFrame(result)
+}
+
+function pointerDown(el: HTMLDivElement, clientX: number, clientY: number): void {
+  act(() => {
+    el.dispatchEvent(new MouseEvent('pointerdown', { clientX, clientY, bubbles: true }))
   })
 }
 
-describe('useStickyScroll', () => {
-  it('① followKey 变化且贴底 → smooth 滚底', () => {
+function pointerUpWindow(): void {
+  act(() => {
+    window.dispatchEvent(new Event('pointerup'))
+  })
+}
+
+function keyDown(el: HTMLDivElement, key: string): void {
+  act(() => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  })
+}
+
+beforeEach(() => {
+  vi.useFakeTimers()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  for (const el of attachedScrollers) el.remove()
+  attachedScrollers.length = 0
+})
+
+describe('useStickyScroll 手势语义', () => {
+  it('B1 内容增长改不了跟随态：贴底靠 followKey 驱动，不看距底距离', () => {
     const { result, rerender } = setup()
-    attachScroller(result.current.scrollRef)
+    const el = attachScroller(result.current.scrollRef)
 
-    changeFollowKey(rerender)
+    followKeyChange(result, rerender, 2)
+    expect(el.scrollTop).toBe(600) // 瞬移贴底（max = 1000 − 400）
+    expect(result.current.showJumpButton).toBe(false)
 
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-    expect(scrollToSpy).toHaveBeenCalledWith({ top: GEO.scrollHeight, behavior: 'smooth' })
+    // 流式：内容暴涨把滚动条顶离底部。浏览器不会因此改 scrollTop，即便派发 scroll 帧：
+    setScrollHeight(el, 3000)
+    expect(scrollFrame(result)).toBe(false) // 静止帧：不按用户操作处理
+    expect(result.current.showJumpButton).toBe(false) // 跟随态不被增长改写
+
+    // 跟随态下新内容继续贴底（新 max = 2600）
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(2600)
+  })
+
+  it('B1b 位置永远不能重新开启跟随：解锁后落回贴底也不回归', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -120) // 600 → 480，用户上滚解锁
+    expect(result.current.showJumpButton).toBe(true)
+    act(() => {
+      vi.advanceTimersByTime(200) // 手势结束：落点 480 未贴底 → 保持解锁
+    })
+
+    // 内容缩短，滚动条此刻恰好落回贴底（旧 80px 容差逻辑会在这里误回归）
+    setScrollHeight(el, 700) // max = 300
+    el.scrollTop = 300
+    scrollFrame(result)
+    expect(result.current.showJumpButton).toBe(true) // 位置贴底 ≠ 用户到底
+  })
+
+  it('B2 鼠标上滚立即解锁：不等 scroll 事件、不等防抖、不等计时器', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+    expect(result.current.showJumpButton).toBe(false)
+
+    // 只派发 wheel（紧随的 scroll 事件还没来）：状态必须已经改写
+    act(() => {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }))
+    })
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 解锁后 followKey 变化不再改 scrollTop
+    el.scrollTop = 480 // 浏览器随后执行的滚动
+    const frozenAt = el.scrollTop
+    act(() => {
+      vi.advanceTimersByTime(200) // 手势结束：落点 480 未贴底
+    })
+    followKeyChange(result, rerender, 3)
+    followKeyChange(result, rerender, 4)
+    expect(el.scrollTop).toBe(frozenAt)
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 无任何「静默 N 秒恢复」：再等 5 分钟也不动
+    act(() => {
+      vi.advanceTimersByTime(300_000)
+    })
+    followKeyChange(result, rerender, 5)
+    expect(el.scrollTop).toBe(frozenAt)
+  })
+
+  it('B3 拖拽滚动条立即解锁，拖拽期间不跟随', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    // pointerdown 落在滚动条槽（clientWidth = 400，按下点 x = 460 越过内容盒）
+    pointerDown(el, 460, 50)
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 拖拽期间到达的 scroll 事件一律归因用户
+    el.scrollTop = 300
+    expect(scrollFrame(result)).toBe(true)
+
+    // 拖拽中 followKey 变化不跟随
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(300)
+
+    // 松手停在半途（未贴底）→ 保持解锁
+    pointerUpWindow()
+    expect(result.current.showJumpButton).toBe(true)
+  })
+
+  it('B3b 兜底：无 pointer 事件时，未对冲的 scrollTop 下降即归因用户 → 解锁', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+    expect(result.current.showJumpButton).toBe(false)
+
+    // 原生滚动条拖拽在部分浏览器不派发 pointer 事件：只有 scrollTop 下降这一个信号
+    el.scrollTop = 200
+    expect(scrollFrame(result)).toBe(true)
+    expect(result.current.showJumpButton).toBe(true)
+  })
+
+  it('B4 只有手势结束且落点贴底才回归（滚轮去抖 / 指针松开）', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    // (a) 上滚解锁后停在中途：手势结束不回归
+    wheelScroll(result, el, -120) // 600 → 480
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true)
+
+    // (b) 向下滚回贴底后手势结束 → 回归
+    act(() => {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true }))
+    })
+    el.scrollTop = 600
+    scrollFrame(result)
+    act(() => {
+      vi.advanceTimersByTime(200) // 末次手势后 120ms 无新手势 = 手势结束
+    })
+    expect(result.current.showJumpButton).toBe(false)
+
+    // 回归后 followKey 变化重新贴底（新 max = 1000）
+    setScrollHeight(el, 1400)
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(1000)
+
+    // (c) 指针路径：解锁 → 手动拖回底部 → pointerup 才回归
+    wheelScroll(result, el, -400) // 1000 → 600
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true)
+    pointerDown(el, 50, 50) // 内容区按下：不判拖拽槽，但记为指针活跃
+    el.scrollTop = 1000 // max
+    scrollFrame(result)
+    expect(result.current.showJumpButton).toBe(true) // 尚未松手：不回归
+    pointerUpWindow()
     expect(result.current.showJumpButton).toBe(false)
   })
 
-  it('② 用户上翻离开底部 → 按钮显示，且 followKey 再变化不滚底（冻结跟随）', () => {
+  it('B4b 键盘：ArrowUp 解锁，ArrowDown/End 到底后手势结束回归', () => {
     const { result, rerender } = setup()
     const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
 
-    changeFollowKey(rerender)
+    keyDown(el, 'ArrowUp')
+    el.scrollTop = 400
+    scrollFrame(result)
     act(() => {
-      vi.advanceTimersByTime(500) // 等程序滚动屏蔽窗（400ms）过去
-    })
-
-    // 上翻到距底 400px（> 80px 容差）
-    el.scrollTop = 200
-    act(() => {
-      result.current.onScroll()
+      vi.advanceTimersByTime(200)
     })
     expect(result.current.showJumpButton).toBe(true)
 
-    // 冻结态：followKey 再变化（流式继续输出）也不拽回
-    const callsBefore = scrollToSpy.mock.calls.length
-    changeFollowKey(rerender)
-    expect(scrollToSpy.mock.calls.length).toBe(callsBefore)
+    keyDown(el, 'End')
+    el.scrollTop = 600
+    scrollFrame(result)
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(false)
+  })
+
+  it('B5 流式顶起滚动条不得被读成「用户到底」：跟随态不误解锁、不误保持', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    // 内容暴涨（滚动条离底很远），但这不是用户操作
+    setScrollHeight(el, 8000)
+    expect(scrollFrame(result)).toBe(false)
+    expect(result.current.showJumpButton).toBe(false) // 仍在跟随
+
+    // 继续跟随到底：新 max = 7600
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(7600)
+  })
+
+  it('B6 上滚解锁后可停在任意位置阅读：流式续来也不拽回', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -120) // 600 → 480，停在这里读历史
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    const readingAt = el.scrollTop
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 连续 5 次流式内容到达：位置纹丝不动
+    for (let i = 3; i <= 7; i++) {
+      setScrollHeight(el, GEO.scrollHeight + (i - 2) * 1000)
+      followKeyChange(result, rerender, i)
+    }
+    expect(el.scrollTop).toBe(readingAt)
+
+    // 长时间静默也不闪回
+    act(() => {
+      vi.advanceTimersByTime(600_000)
+    })
+    expect(el.scrollTop).toBe(readingAt)
     expect(result.current.showJumpButton).toBe(true)
   })
 
-  it('③ 点击 jumpToBottom → 立即滚底 + 按钮隐藏', () => {
+  it('⑦ onScroll 返回值：程序回响帧 false、用户手势帧 true（调用方 gate 依赖）', () => {
     const { result, rerender } = setup()
     const el = attachScroller(result.current.scrollRef)
 
-    changeFollowKey(rerender)
+    bumpKey(rerender, 2) // 程序写入 scrollTop=600，装甲一次待吞
+    expect(scrollFrame(result)).toBe(false) // 紧随的这一次 = 程序回响
+    expect(scrollFrame(result)).toBe(false) // 静止帧（无手势、delta 0）
+
     act(() => {
-      vi.advanceTimersByTime(500)
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }))
     })
-    el.scrollTop = 200
+    el.scrollTop = 480
+    expect(scrollFrame(result)).toBe(true) // 用户手势帧
+  })
+
+  it('⑧ nudgeScrollTop 是程序写入：其后 scroll 帧不被读成用户操作，冻结态不解', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -120) // 600 → 480，解锁
     act(() => {
-      result.current.onScroll()
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true)
+
+    act(() => {
+      result.current.nudgeScrollTop(50) // 视野锚点补偿
+    })
+    expect(el.scrollTop).toBe(530)
+    expect(scrollFrame(result)).toBe(false) // 程序回响，不参与判定
+    expect(result.current.showJumpButton).toBe(true) // 冻结态保持
+  })
+
+  it('jumpToBottom / followReset / enterPanel：恢复跟随并瞬移贴底', () => {
+    const { result, rerender } = setup()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -120)
+    act(() => {
+      vi.advanceTimersByTime(200)
     })
     expect(result.current.showJumpButton).toBe(true)
 
     act(() => {
       result.current.jumpToBottom()
     })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: GEO.scrollHeight, behavior: 'smooth' })
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('④ 程序滚动期间的 scroll 事件（向下 / 静止 delta）不触发冻结', () => {
-    const { result, rerender } = setup()
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender) // 程序滚动进行中，屏蔽窗开启
-
-    // smooth 动画中间态：向下推进 + 静止抖动，一律忽略
-    userScroll(result, 800)
-    userScroll(result, 1000)
-    userScroll(result, 1001) // |delta| = 1px，静止容差内
-    userScroll(result, 999)
-
-    expect(result.current.showJumpButton).toBe(false)
-    expect(scrollToSpy).toHaveBeenCalledTimes(1) // 仍只有程序自己发起的那一次
-  })
-
-  it('⑤ 程序滚动期间用户向上 delta 被识别为用户操作（不被屏蔽窗吞掉）', () => {
-    const { result, rerender } = setup()
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender) // 屏蔽窗开启
-
-    // 用户在 smooth 途中抢滚动条 / 反向滚轮：向上 300px
-    userScroll(result, 300)
-
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 屏蔽窗已随用户操作关闭：滚回底部（容差内）应立即恢复、隐藏按钮
-    userScroll(result, GEO.scrollTop)
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('⑥ 冻结后静默 15s 无用户操作 → 自动滚底 + 按钮隐藏', () => {
-    const { result, rerender } = setup()
-    const el = attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    el.scrollTop = 200
-    act(() => {
-      result.current.onScroll()
-    })
-    expect(result.current.showJumpButton).toBe(true)
-
-    act(() => {
-      vi.advanceTimersByTime(14_000)
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(1) // 未满 15s 不恢复
-    expect(result.current.showJumpButton).toBe(true)
-
-    act(() => {
-      vi.advanceTimersByTime(1_500)
-    })
-    act(() => {
-      vi.advanceTimersByTime(20) // 恢复滚底的 rAF
-    })
-
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: GEO.scrollHeight, behavior: 'smooth' })
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('⑥b 15s 内任何用户滚动都重置计时（10s + 滚动 + 10s 不恢复，满 15s 才恢复）', () => {
-    const { result, rerender } = setup()
-    const el = attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    el.scrollTop = 200
-    act(() => {
-      result.current.onScroll()
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(10_000)
-    })
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 用户又滚动了一次（仍未回底）：计时重置
-    userScroll(result, 150)
-
-    act(() => {
-      vi.advanceTimersByTime(10_000)
-    })
-    expect(result.current.showJumpButton).toBe(true) // 距上次用户操作仅 10s，不恢复
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-
-    act(() => {
-      vi.advanceTimersByTime(5_000)
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('⑦ 卸载后恢复计时被清理（不再触发滚底）', () => {
-    const { result, rerender, unmount } = setup()
-    const el = attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    el.scrollTop = 200
-    act(() => {
-      result.current.onScroll()
-    })
-
-    unmount()
-
-    act(() => {
-      vi.advanceTimersByTime(20_000)
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('⑧ 滚动续命（主判定）：冻结态每 20s 向上滚一次 ×5，累计 100s 不恢复', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500) // 等程序滚动屏蔽窗过去
-    })
-    userScroll(result, 200)
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 用户在持续向上滚动（读历史）：每滚一次宽限计时清零，永远攒不满 60s 连续静默
-    // ——「时间是上滚操作的上限，不是读死表」（下滚不续命，见 ⑩）
-    for (let i = 0; i < 5; i++) {
-      act(() => {
-        vi.advanceTimersByTime(20_000)
-      })
-      expect(result.current.showJumpButton).toBe(true) // 距上次滚动仅 20s，不恢复
-      userScroll(result, 200 - (i + 1) * 10)
-    }
-
-    // 全程只有初始那一次程序滚底：没有任何一次被宽限逻辑拽回底部
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-    expect(result.current.showJumpButton).toBe(true)
-  })
-
-  it('⑨ resumeMs 参数化：60s 宽限下 59s 不恢复，满 60s（真静默）才恢复并滚底', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    userScroll(result, 200)
-
-    act(() => {
-      vi.advanceTimersByTime(59_000)
-    })
-    expect(result.current.showJumpButton).toBe(true) // 未满 60s 不恢复
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-
-    act(() => {
-      vi.advanceTimersByTime(1_500) // 连续静默满 60s
-    })
-    act(() => {
-      vi.advanceTimersByTime(20) // 恢复滚底的 rAF
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: GEO.scrollHeight, behavior: 'smooth' })
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('⑩ 向下滚动不弹回：未回底的下滚不恢复也不续命，滚回 80px 容差内才恢复', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    userScroll(result, 300) // 上翻离开底部（距底 300px）→ 冻结
-    expect(result.current.showJumpButton).toBe(true)
-
-    act(() => {
-      vi.advanceTimersByTime(20_000)
-    })
-    expect(result.current.showJumpButton).toBe(true) // 未满 60s 宽限
-
-    // 向下滚 100px（距底 200px，仍在 80px 容差之外）：用户在往回走 —— 不弹回底部
-    // （不恢复、不主动滚底），也不按读历史续命（不重置宽限计时）
-    userScroll(result, 400)
-    expect(result.current.showJumpButton).toBe(true)
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-
-    // 不续命实证：计时从上次上翻起算、与这次下滚无关 —— 再静默 40s 即满 60s 恢复
-    act(() => {
-      vi.advanceTimersByTime(40_000)
-    })
-    act(() => {
-      vi.advanceTimersByTime(20) // 恢复滚底的 rAF
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
+    settle(result)
+    expect(el.scrollTop).toBe(600)
     expect(result.current.showJumpButton).toBe(false)
 
-    // 恢复后重新上翻冻结，再下滚进 80px 容差（距底 70px）—— 拉到底部附近才恢复
+    wheelScroll(result, el, -200) // 600 → 400
     act(() => {
-      vi.advanceTimersByTime(500) // 等恢复滚底的程序滚动屏蔽窗过去
+      vi.advanceTimersByTime(200)
     })
-    userScroll(result, 200) // 上翻重新冻结
-    expect(result.current.showJumpButton).toBe(true)
-    userScroll(result, 530) // 下滚 330px，距底 70px < 80px 容差
-    expect(result.current.showJumpButton).toBe(false)
-    expect(scrollToSpy).toHaveBeenCalledTimes(2) // 恢复本身不主动滚底（与宽限恢复不同）
-  })
-
-  it('⑬ enterPanel 进场自动下拉：完成即释放，无固定时长宽限', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    userScroll(result, 200) // 先冻结（60s 宽限计时在跑）
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 进场：enterPanel —— followReset 恢复 + 滚底；未到底 → 进入「自动下拉未完成」态
     act(() => {
       result.current.enterPanel()
     })
-    act(() => {
-      vi.advanceTimersByTime(20) // followReset 的 rAF
-    })
+    settle(result)
+    expect(el.scrollTop).toBe(600)
     expect(result.current.showJumpButton).toBe(false)
-    expect(scrollToSpy).toHaveBeenCalledTimes(2) // 首次程序滚底 + followReset 补拉
-
-    // a. 下拉中途（向下 delta、未到底）= smooth 动画中间态 → 不判定（不冻结）
-    userScroll(result, 400)
-    expect(result.current.showJumpButton).toBe(false)
-
-    // b. 用户上滚抢控制 → 立即冻结，不等任何时间窗（旧实现这里要等满 3s）
-    userScroll(result, 300)
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 冻结后重新进场：这次让下拉「完成」——滚回 80px 容差内
-    act(() => {
-      result.current.enterPanel()
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    expect(result.current.showJumpButton).toBe(false)
-    // c. 到底 = 自动下拉完成 → 立即释放；释放后用户上滚照常冻结
-    userScroll(result, GEO.scrollTop)
-    expect(result.current.showJumpButton).toBe(false)
-    userScroll(result, 300)
-    expect(result.current.showJumpButton).toBe(true)
-
-    act(() => {
-      vi.advanceTimersByTime(59_000)
-    })
-    expect(result.current.showJumpButton).toBe(true) // 未满 60s 不恢复
-
-    act(() => {
-      vi.advanceTimersByTime(1_500) // 连续无上滚满 60s
-    })
-    act(() => {
-      vi.advanceTimersByTime(20) // 恢复滚底的 rAF
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(4)
-    expect(result.current.showJumpButton).toBe(false)
-  })
-
-  it('⑬b 安全网：无 scroll 事件的异常下，1000ms 到点交还判定权（释放兜底非宽限）', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    userScroll(result, 200) // 冻结
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 进场后**一个 scroll 事件都不来**（浏览器不派发 / 内容突变永不到底）：
-    // 1000ms 安全网到点必须释放，否则之后所有 scroll 都会被吞
-    act(() => {
-      result.current.enterPanel()
-    })
-    act(() => {
-      vi.advanceTimersByTime(999)
-    })
-    // 中途只有向下 / 静止 delta（动画中间态）才被忽略 —— 上滚会被当用户输入立即释放，
-    // 所以这里用下滚证明「仍在 pending」
-    userScroll(result, 260)
-    expect(result.current.showJumpButton).toBe(false)
-
-    act(() => {
-      vi.advanceTimersByTime(2) // 满 1000ms
-    })
-    userScroll(result, 140) // 已释放：上滚正常冻结
-    expect(result.current.showJumpButton).toBe(true)
-  })
-
-  it('⑬c 已在底部时 enterPanel：不置等待态（否则永不释放，后续 scroll 全被吞）', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    // 停在底部（GEO 距底 0），没有「下拉」可等
-    userScroll(result, GEO.scrollTop)
-    expect(result.current.showJumpButton).toBe(false)
-
-    act(() => {
-      result.current.enterPanel()
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    // 立即就能上翻冻结：等待态从未置位
-    userScroll(result, 200)
-    expect(result.current.showJumpButton).toBe(true)
-  })
-
-  it('⑪ executing=false：上翻冻结且不排恢复计时，180s 不恢复不滚底（空闲翻看不打扰）', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: false })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    userScroll(result, 200)
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 空闲期：不排恢复计时，180s 也不恢复、不滚底
-    act(() => {
-      vi.advanceTimersByTime(180_000)
-    })
-    expect(result.current.showJumpButton).toBe(true)
-    expect(scrollToSpy).toHaveBeenCalledTimes(1)
-
-    // 出口一：用户自己滚回底部（容差内）→ 立即恢复，无需再滚底
-    userScroll(result, GEO.scrollTop)
-    expect(result.current.showJumpButton).toBe(false)
-
-    // 出口二：再上翻冻结 → followReset（程序侧）→ 立即恢复并滚底
-    userScroll(result, 200)
-    expect(result.current.showJumpButton).toBe(true)
-    act(() => {
-      result.current.followReset()
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    expect(result.current.showJumpButton).toBe(false)
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-  })
-
-  it('⑫ followReset：立即恢复跟随 + 滚底 + 作废旧宽限计时（新轮次 / 完成补拉的 hook 侧语义）', () => {
-    const { result, rerender } = setup({ resumeMs: 60_000, executing: true })
-    attachScroller(result.current.scrollRef)
-
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-    // 用户停在上一轮的上翻位置，冻结中（60s 宽限计时在跑）
-    userScroll(result, 200)
-    expect(result.current.showJumpButton).toBe(true)
-
-    // 新轮次 execution_started → followReset：立即恢复 + 滚底
-    act(() => {
-      result.current.followReset()
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    expect(result.current.showJumpButton).toBe(false)
-    expect(scrollToSpy).toHaveBeenCalledTimes(2)
-
-    // 恢复后 followKey 变化继续跟随滚底（后续流式不被拦）
-    const callsAfterReset = scrollToSpy.mock.calls.length
-    changeFollowKey(rerender)
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    expect(scrollToSpy.mock.calls.length).toBe(callsAfterReset + 1)
-
-    // 旧宽限计时已随 followReset 作废：再静默 120s 不会有第二次「恢复滚底」
-    act(() => {
-      vi.advanceTimersByTime(120_000)
-    })
-    act(() => {
-      vi.advanceTimersByTime(20)
-    })
-    expect(scrollToSpy).toHaveBeenCalledTimes(3)
   })
 })

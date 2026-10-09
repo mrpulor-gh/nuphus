@@ -238,6 +238,10 @@
      .chat-panel(min-height:0) → .chat-messages(本处，overflow-y:auto)。 */
   min-height: 0;
   overflow-y: auto;
+  /* overflow-anchor: none —— 关掉浏览器的滚动锚定。默认锚定会在流式内容增长时反向
+     调整 scrollTop，与 useStickyScroll 的贴底互相打架（「被流式顶起」的根因之一）；
+     关掉后内容增长只改 scrollHeight、不改 scrollTop，跟随态不会因增长被误改。 */
+  overflow-anchor: none;
   padding: 0;
 }
 .chat-messages-inner {
@@ -800,6 +804,8 @@
 .execution-trace-body {
   flex: 1;
   overflow-y: auto;
+  /* 同 .chat-messages：关掉浏览器滚动锚定，避免流式增长反向调整 scrollTop 与贴底打架 */
+  overflow-anchor: none;
   padding: 10px 12px;
 }
 .execution-trace-placeholder {

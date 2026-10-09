@@ -752,18 +752,13 @@ export function ExecutionTraceFloating({
     foldLastTopRef.current = null
   }, [headEntryId, totalSteps])
 
-  // 贴底跟随：执行步骤（displayTimeline）变化即滚底；用户上翻冻结 + 15s 静默宽限兜底
-  // —— 本面板没有回底按钮，宽限必须保持 15s 封顶值（不得加大）；空闲（!isProcessing）
-  // 翻看历史不排恢复计时。取代旧的自有滚动 state（userScrolledRef + 3s debounce
-  // 强制滚底）——那套「停手 3s 即闪回底部」无论用户在读什么都会被打断（语义与
-  // 程序滚动屏蔽窗见 useStickyScroll 头注）。
-  const { scrollRef, onScroll, followReset, enterPanel, nudgeScrollTop } = useStickyScroll(
-    displayTimeline,
-    {
-      resumeMs: 15_000,
-      executing: isProcessing,
-    },
-  )
+  // 贴底跟随（useStickyScroll）：跟随态只由用户手势改写 —— 面板无回底按钮，靠「上滚
+  // 即解锁、停在底部才回归」保证用户在流式下读历史不被拽回（旧「15s 静默宽限 /
+  // isProcessing 读秒」参数已随 hook 一并删除）。取代更早的自有滚动 state
+  // （userScrolledRef + 3s debounce 强制滚底）——那套「停手 3s 即闪回底部」无论用户
+  // 在读什么都会被打断。
+  const { scrollRef, onScroll, followReset, enterPanel, nudgeScrollTop } =
+    useStickyScroll(displayTimeline)
 
   // ── 历史折叠：自动续展 + 滚动锚点补偿 ──
   /**
@@ -848,8 +843,8 @@ export function ExecutionTraceFloating({
   }, [isVisible, enterPanel])
 
   // Auto-scroll to bottom when switching terminal/card mode. 必须走 followReset 出口
-  // （而非裸 scrollTo）：裸滚不恢复跟随态也不装甲程序滚动屏蔽窗，其 smooth 动画触发
-  // 的 scroll 事件会建立在错误的前提上被判定。
+  // （而非裸改 scrollTop）：裸改不恢复跟随态、也不装甲程序回响对冲，其 scroll 事件
+  // 会被当成用户操作建立在错误的前提上被判定。
   useEffect(() => {
     const timer = setTimeout(() => {
       followReset()

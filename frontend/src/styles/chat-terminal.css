@@ -160,6 +160,8 @@
 .execution-terminal-body {
   flex: 1;
   overflow-y: auto;
+  /* 同 .chat-messages：关掉浏览器滚动锚定，避免流式增长反向调整 scrollTop 与贴底打架 */
+  overflow-anchor: none;
   padding: 0;
   background: var(--term-bg);
   font-family: var(--font-mono);

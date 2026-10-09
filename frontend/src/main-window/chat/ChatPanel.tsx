@@ -1057,15 +1057,11 @@ export function ChatPanel({
     [currentProvider],
   )
 
-  // 贴底跟随：默认跟随流式输出滚底；用户上翻则冻结 + 排「滚动驱动」的宽限计时，期间不拽回。
-  // 宽限语义（useStickyScroll）：连续无上滚满 resumeMs 才恢复（向上 scroll 都重置
-  // 计时，用户在读就永不恢复；下滚不冻结不续命，滚回底部才恢复）；仅执行态读秒
-  // （executionStage !== 'idle'）—— 空闲期翻看历史永久冻结不打扰。对话窗有回底按钮
-  // 兜底，宽限放大到 60s 与流式阅读节奏匹配。
-  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } = useStickyScroll(
-    messages,
-    { resumeMs: 60_000, executing: executionStage !== 'idle' },
-  )
+  // 贴底跟随（useStickyScroll）：默认跟随流式输出贴底；用户鼠标上滚 / 拖拽滚动条即
+  // 立即解锁，停在任意位置阅读不再被拽回；手势结束且停在底部才回归跟随。跟随态只由
+  // 用户手势改写，流式撑高滚动条永不改写它（旧「80px 容差 + 60s 静默宽限」参数已删）。
+  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } =
+    useStickyScroll(messages)
   // followReset 回填：useEvents 在 App 层（本组件之上）监听 nuphus-event，
   // execution_started（新轮次恢复跟随后续流式）/ execution_completed（完成瞬间补拉）
   // 都要拉回底部 —— 函数不能经 props 上行，父层下发 followResetRef、本组件把最新闭包
