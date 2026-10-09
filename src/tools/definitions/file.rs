@@ -306,6 +306,7 @@ impl ToolRegistry {
             1 => "exact",
             2 => "行尾空白",
             3 => "缩进",
+            4 => "逐行去缩进",
             _ => "首尾空白",
         }
     }
@@ -317,6 +318,119 @@ impl ToolRegistry {
         s.replace("\r\n", "\n").replace('\r', "\n")
     }
 
+    /// 文件块（自 `start` 起）与 `old_string` 的缩进形状是否一致。
+    fn shape_matches(content_lines: &[&str], start: usize, old_str: &str) -> bool {
+        let block: String = (start..start + old_str.lines().count())
+            .map(|i| content_lines[i])
+            .collect::<Vec<_>>()
+            .join("\n");
+        Self::remove_indentation(&block) == Self::remove_indentation(old_str)
+    }
+
+    /// 对称去缩进：剥掉 text 里所有非空行**共有的最小行首空白**，只留形状。
+    ///
+    /// 关键约束：**只用于比较，绝不用于写盘。** 文件块与 old_string 各自归零后比形状，
+    /// 命中的仍是文件原文切片 —— 这样匹配能容忍两边缩进基准不同（Tab vs 空格、
+    /// 4 空格基准 vs 8 空格基准、模型 dedent 锚点），又不会像逐行 trim_start 那样把
+    /// **块内相对层级一起抹平**（那样 `a {\n  b();\n}` 会误配 `a {\nb();\n}`）。
+    ///
+    /// 用 `strip_prefix` 而非 `&s[n..]` 下标切片：行首空白可能含多字节字符
+    /// （U+00A0 / U+3000 等），按字符数下标切会 panic 在非字符边界上。
+    fn remove_indentation(text: &str) -> String {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut common: Option<String> = None;
+        for line in lines.iter().filter(|l| !l.trim().is_empty()) {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            common = Some(match common {
+                None => indent,
+                Some(prev) => prev
+                    .chars()
+                    .zip(indent.chars())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(_, b)| b)
+                    .collect(),
+            });
+        }
+        let common = match common {
+            Some(c) if !c.is_empty() => c,
+            // 无非空行，或本来就贴左边：形状未变，原样返回
+            _ => return text.to_string(),
+        };
+        lines
+            .iter()
+            .map(|l| {
+                if l.trim().is_empty() {
+                    *l
+                } else {
+                    l.strip_prefix(common.as_str())
+                        .unwrap_or_else(|| l.trim_start())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 写盘后收敛缩进：Rust 走 `cargo fmt`，前端走 `prettier --write`。
+    ///
+    /// 写盘侧刻意不做缩进重建（`new_string` 逐字写入），所以模型给出的缩进若与文件基准
+    /// 不一致就会原样保留。opencode 的做法是写完立刻 `format.file()` 再读回 ——
+    /// **缩进问题在工具内部闭环，而不是甩给下一次 `cargo fmt --check` / prettier。**
+    /// 这正是「Edit 之后才报缩进错」这个症状的根因：信号被搬到了离根因最远的地方。
+    ///
+    /// 只在**模糊命中**时触发：精确命中说明模型照着 Read 的真实内容给的缩进，本来就对，
+    /// 此时不该有多余副作用（更不该在别人的仓库里擅自跑 fmt）。模糊命中才是缩进可能
+    /// 漂移的唯一入口。
+    ///
+    /// 工具缺失 / 执行失败 / 非零退出都**不阻断编辑** —— 格式化是兜底收敛，不是前置条件。
+    /// 返回 Some 表示确实跑过（回执里要如实告知模型）。
+    fn format_after_write(path: &str) -> Option<String> {
+        let lower = path.to_ascii_lowercase();
+        let ext = lower.rsplit('.').next().unwrap_or("");
+        // 第三方 vendor 目录不动：改坏 vendored 代码不是本工具该做的事，
+        // 而且这些文件通常带机器生成的标记，重排只会制造无关 diff。
+        if lower.replace('\\', "/").contains("/third_party/") {
+            return None;
+        }
+        // Rust 走 rustfmt 而非 `cargo fmt`：`cargo fmt` 只认 cargo 的 target 列表，
+        // 对单个被编辑文件会直接 "Failed to find targets" 退出。rustfmt 能只格式化
+        // 这一个文件，且自动向上找 rustfmt.toml / Cargo.toml 的 edition 配置。
+        let (program, args): (&str, Vec<&str>) = if ext == "rs" {
+            ("rustfmt", vec!["--edition", "2021"])
+        } else if matches!(
+            ext,
+            "ts" | "tsx"
+                | "js"
+                | "jsx"
+                | "mjs"
+                | "cjs"
+                | "json"
+                | "css"
+                | "scss"
+                | "md"
+                | "yaml"
+                | "yml"
+        ) {
+            ("prettier", vec!["--write", "--log-level", "silent"])
+        } else {
+            return None;
+        };
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args).arg(path);
+        let ok = cmd
+            .current_dir(
+                std::path::Path::new(path)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            )
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        ok.then(|| format!("已执行 `{program}` 收敛 {path} 的缩进"))
+    }
+
     pub(crate) fn register_edit_file(&mut self) {
         self.register(ToolDef {
             name: "Edit".to_string(),
@@ -325,8 +439,8 @@ impl ToolRegistry {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Path to the file to edit" },
-                    "old_string": { "type": "string", "description": "Text to find (multi-line supported)" },
-                    "new_string": { "type": "string", "description": "Replacement text" },
+                    "old_string": { "type": "string", "description": "Text to find (multi-line supported). Indentation is matched tolerantly, but the tool NEVER rewrites your new_string's indentation — it is written verbatim." },
+                    "new_string": { "type": "string", "description": "Replacement text, written verbatim. Copy the real indentation from Read output; do not re-indent or dedent it. If your match was whitespace-tolerant (the receipt shows a level other than 'exact'), the returned context reflects the file AFTER formatting — trust the context, not your input." },
                     "replace_all": { "type": "boolean", "description": "Replace all occurrences (default: only first). Exact matches only unless fuzzy=true" },
                     "fuzzy": { "type": "boolean", "description": "With replace_all: also replace whitespace-tolerant matches (leading/trailing whitespace ignored). Default false — fuzzy candidates are reported but skipped" },
                     "expected_count": { "type": "integer", "description": "Expected number of replacements. If actual hits differ, the edit aborts atomically (nothing written). Grep first to get the count" },
@@ -495,19 +609,27 @@ impl ToolRegistry {
                         matched = true;
                         level = 2;
                     }
-                    // Pass 3: ignore leading whitespace (indentation)
+                    // Pass 3: 对称去缩进 —— 文件块与 old_string 各自剥掉共有最小缩进后比形状。
+                    // 缩进弹性到此为止：命中的仍是 content_lines 的原文切片，写盘逐字写入
+                    // （见下方 replacement 构造），不把匹配端的容错泄漏到写盘端。
+                    else if Self::shape_matches(&content_lines, start, &old_str) {
+                        matched = true;
+                        level = 3;
+                    }
+                    // Pass 4: 忽略行首空白（逐行 trim_start）。
+                    // 比 Pass 3 宽松：抹平块内相对层级，仅作 Pass 3 落空时的兜底。
                     else if old_lines.iter().enumerate().all(|(i, ol)| {
                         content_lines[start + i].trim_start() == ol.trim_start()
                     }) {
                         matched = true;
-                        level = 3;
+                        level = 4;
                     }
-                    // Pass 4: ignore both leading and trailing whitespace
+                    // Pass 5: ignore both leading and trailing whitespace
                     else if old_lines.iter().enumerate().all(|(i, ol)| {
                         content_lines[start + i].trim() == ol.trim()
                     }) {
                         matched = true;
-                        level = 4;
+                        level = 5;
                     }
 
                     if matched {
@@ -589,43 +711,22 @@ impl ToolRegistry {
                 let mut result_lines: Vec<String> =
                     content_lines.iter().map(|s| s.to_string()).collect();
 
-                for &(start, level) in match_positions.iter().rev() {
+                for &(start, _level) in match_positions.iter().rev() {
                     let end = start + old_lines.len();
-                    // 只有 level 3/4 忽略了行首空白，才同步替换块的基准缩进。
-                    // level 2 只忽略行尾空白；它不是缩进模糊匹配，必须保留调用方给出的
-                    // new_string 行首空白。同步时保留原缩进前缀及 new_string 的相对前缀，
-                    // 避免把 Tab 或混合缩进重建成空格。
-                    let synced_lines: Vec<String> = if level >= 3 && !new_lines.is_empty() {
-                        let original_prefix: String = content_lines[start]
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .collect();
-                        let new_prefix: String = new_lines[0]
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .collect();
-                        new_lines.iter().map(|ln| {
-                            if ln.trim().is_empty() {
-                                (*ln).to_string()
-                            } else {
-                                let own_prefix: String = ln
-                                    .chars()
-                                    .take_while(|c| c.is_whitespace())
-                                    .collect();
-                                let relative_prefix = if own_prefix.starts_with(&new_prefix) {
-                                    &own_prefix[new_prefix.len()..]
-                                } else if own_prefix.chars().count() < new_prefix.chars().count() {
-                                    ""
-                                } else {
-                                    own_prefix.as_str()
-                                };
-                                format!("{}{}{}", original_prefix, relative_prefix, ln.trim_start())
-                            }
-                        }).collect()
-                    } else {
-                        new_lines.iter().map(|s| s.to_string()).collect()
-                    };
-                    result_lines.splice(start..end, synced_lines);
+                    // new_string **逐字写入**：写盘侧不做任何缩进重建。
+                    //
+                    // 历史实现会在 level>=3 时把每行重挂成「文件原缩进 + 模型相对前缀」，
+                    // 但基准只取自 new_string 的**首行**。模型习惯用闭合括号 / dedent 行
+                    // 当锚点（首行缩进 0），此时 `own_prefix.starts_with("")` 恒真，
+                    // relative_prefix 退化成整段缩进 → 结果 = 原缩进 + 模型缩进（双重叠加）。
+                    // 这类损坏完全静默，只能等 fmt / 编译阶段炸出来，锅落在格式化工具头上。
+                    //
+                    // 现在缩进弹性只存在于**定位侧**（remove_indentation pass），命中的是
+                    // 文件原文切片，写盘不猜。模型若给出与文件不一致的缩进，会原样落盘并
+                    // 出现在返回的上下文里，随后由 format_after_write 收敛 ——
+                    // 可见的错误优于静默的错误。
+                    let replacement: Vec<String> = new_lines.iter().map(|s| s.to_string()).collect();
+                    result_lines.splice(start..end, replacement);
                 }
 
                 let mut new_content = result_lines.join("\n");
@@ -644,6 +745,20 @@ impl ToolRegistry {
                 };
                 std::fs::write(&target, &write_content)
                     .map_err(|e| format!("write failed: {}", e))?;
+
+                // 模糊命中是缩进可能漂移的唯一入口（精确命中的缩进来自 Read 的真实内容）。
+                // 在这里闭环，而不是等调用方下一次 cargo fmt / prettier --check 才发现。
+                let format_note = if match_positions.iter().all(|(_, l)| *l == 1) {
+                    None
+                } else {
+                    Self::format_after_write(&target.to_string_lossy())
+                };
+
+                // 格式化可能重排缩进，上下文必须回读落盘结果，不能用内存里的 result_lines。
+                let result_lines: Vec<String> = match std::fs::read_to_string(&target) {
+                    Ok(s) => Self::normalize_newlines(&s).lines().map(|l| l.to_string()).collect(),
+                    Err(_) => result_lines,
+                };
 
                 // 写后验证：读回文件，检查编码完整性和替换结果
                 let verify_result = match std::fs::read(&target) {
@@ -695,6 +810,12 @@ impl ToolRegistry {
                 } else {
                     ""
                 };
+                // 模糊命中后跑了格式化，必须如实回执 —— 模型看到的应是落盘真相，
+                // 而不是它以为写进去的样子。
+                let format_str = match &format_note {
+                    Some(note) => format!("\n{}", note),
+                    None => String::new(),
+                };
 
                 // Return context around first change for verification
                 let first_start = match_positions.first().map(|(s, _)| *s).unwrap_or(0);
@@ -711,8 +832,9 @@ impl ToolRegistry {
                     .collect();
 
                 Ok(ToolResult::success(format!(
-                    "{} replacement(s) at {} in {}{}{}\n修改后上下文 (lines {}-{}):\n{}",
+                    "{} replacement(s) at {} in {}{}{}{}\n修改后上下文 (lines {}-{}):\n{}",
                     match_count, positions.join(", "), path, skipped_note, normalized_note,
+                    format_str,
                     context_start + 1, context_end,
                     context.join("\n")
                 )))
@@ -1395,21 +1517,50 @@ mod edit_contract_tests {
     }
 
     #[test]
-    fn fuzzy_match_preserves_original_indentation() {
-        // 回归保护（2026-09-08 反复踩坑）：模糊匹配（old_string 无缩进、文件行带缩进）
-        // 替换后必须保留文件原缩进，否则 YAML/JSON 结构被打坏。
+    fn fuzzy_match_locates_by_shape_and_writes_verbatim() {
+        // 回归保护（2026-09-08 反复踩坑）：old_string 无缩进、文件行带缩进时，
+        // **定位**必须成功 —— 这是缩进弹性的唯一承诺。
+        //
+        // 旧用例断言「替换后必须保留文件原缩进」，那是写盘端重建缩进的副作用，
+        // 而重建正是双重叠加 bug 的来源。契约已反转：定位端容错，写盘端逐字。
+        // 缩进保持原样由调用方负责（照 Read 的真实内容给 new_string）。
         let path = setup_file(
             "t7-indent.txt",
             "{\n  \"version\": \"0.2.7\",\n  \"build\": {}\n}\n",
         );
+        // old_string dedent（定位需要容错），new_string 带真实缩进（照 Read 的内容给）。
         let r = run_edit(serde_json::json!({
-            "path": path, "old_string": "\"version\": \"0.2.7\",", "new_string": "\"version\": \"0.2.8\","
+            "path": path,
+            "old_string": "\"version\": \"0.2.7\",",
+            "new_string": "  \"version\": \"0.2.8\","
         }));
         assert!(r.success, "fuzzy edit failed: {:?}", r.error);
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             content, "{\n  \"version\": \"0.2.8\",\n  \"build\": {}\n}\n",
-            "original indent must survive fuzzy replacement"
+            "模糊定位必须命中，且 new_string 逐字写入"
+        );
+    }
+
+    /// 缩进弹性的契约测试：old_string 与文件缩进不一致时仍能定位（哪怕 new_string dedent）。
+    ///
+    /// 守护的是「定位端容错」这条承诺本身，不是任何缩进重建行为。
+    #[test]
+    fn dedented_old_string_still_locates_indented_block() {
+        let path = setup_file(
+            "t13-dedent-locate.yaml",
+            "root:\n    item: old\n    other: 1\n",
+        );
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "item: old",
+            "new_string": "item: new"
+        }));
+        assert!(r.success, "dedent locate failed: {:?}", r.error);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "root:\nitem: new\n    other: 1\n",
+            "new_string 逐字写入；定位不重建缩进"
         );
     }
 
@@ -1427,8 +1578,12 @@ mod edit_contract_tests {
     }
 
     #[test]
-    fn indentation_fuzzy_match_preserves_tabs_and_multiline_relative_indent() {
-        // level 3：块首行的 Tab 应被保留，且多行相对缩进不应被重建为空格基准。
+    fn indentation_fuzzy_match_locates_block_but_writes_new_string_verbatim() {
+        // level 3（对称去缩进）只在**定位**侧生效。写盘侧不重建缩进。
+        //
+        // 旧断言是 `root:\n\titem: new\n\t  child: value\n` —— 那是「文件原缩进 \t +
+        // 模型缩进」的叠加结果，属于被误当成契约的损坏行为。模型给的就是
+        // `item: new` / `  child: value`，工具就该原样写这两行。
         let path = setup_file("t10-tab-multiline.txt", "root:\n\titem: old\nend\n");
         let r = run_edit(serde_json::json!({
             "path": path,
@@ -1438,13 +1593,18 @@ mod edit_contract_tests {
         assert!(r.success, "tab multiline edit failed: {:?}", r.error);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "root:\n\titem: new\n\t  child: value\nend\n"
+            "root:\nitem: new\n  child: value\nend\n",
+            "new_string 必须逐字写入：定位端容错不得泄漏到写盘端"
         );
     }
 
     #[test]
-    fn fuzzy_match_preserves_inner_relative_indent_for_multiline() {
-        // 多行替换：首行缩进对齐文件原缩进，new_string 内部相对缩进不丢失。
+    fn fuzzy_match_writes_new_string_verbatim_without_rehanging_indent() {
+        // 多行替换：new_string 逐字写入，缩进不被重挂。
+        //
+        // 旧断言 `a:\n  b: 10\n    c: 20\n    d: 30\n` 里那 4 空格 =
+        // 文件原缩进 2 + 模型缩进 2 的**双重叠加**，正是 2026-09 反复踩坑的那个 bug；
+        // 它被写进了断言，于是错误变成了契约。现在契约是：原样写入。
         let path = setup_file("t8-multiline.txt", "a:\n  b: 1\n  c: 2\nd: 3\n");
         let r = run_edit(serde_json::json!({
             "path": path,
@@ -1452,11 +1612,89 @@ mod edit_contract_tests {
             "new_string": "b: 10\n  c: 20\n  d: 30"
         }));
         assert!(r.success, "multiline fuzzy edit failed: {:?}", r.error);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "a:\nb: 10\n  c: 20\n  d: 30\nd: 3\n",
+            "new_string 必须逐字写入"
+        );
+    }
+
+    /// 核心回归守卫：模型用 dedent 锚点（旧实现的真实触发条件）时，绝不能双重叠加。
+    ///
+    /// 旧实现的缩进基准取自 new_string **首行**。首行缩进为 0（顶层 struct / 贴左的
+    /// 闭合括号）时 `own_prefix.starts_with("")` 恒真，relative_prefix 退化成整段缩进，
+    /// 结果 = 文件原缩进 + 模型缩进：8/8/4 落成 12/12/8。静默损坏，只能等 fmt 阶段炸。
+    #[test]
+    fn dedented_first_line_does_not_get_double_indented() {
+        // 用 .txt 而非 .rs：否则 format_after_write 会跑 rustfmt 把结果重排，
+        // 断言的就不是「写盘是否逐字」而是「rustfmt 输出什么」，测不到目标行为。
+        let path = setup_file(
+            "t11-dedent-first-line.txt",
+            "    let old = 1;\n    let keep = 2;\n",
+        );
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "let old = 1;",
+            "new_string": "struct Added {\n        a: u8,\n        b: u8,\n    }"
+        }));
+        assert!(r.success, "dedent edit failed: {:?}", r.error);
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            content, "a:\n  b: 10\n    c: 20\n    d: 30\nd: 3\n",
-            "first line aligned to block indent, relative indent preserved"
+            content, "struct Added {\n        a: u8,\n        b: u8,\n    }\n    let keep = 2;\n",
+            "首行 dedent 时必须逐字写入，不能把 8 空格缩进叠加到原 4 空格基准上"
         );
+        assert!(
+            !content.contains("            a: u8"),
+            "首行 dedent 触发了缩进双重叠加：\n{}",
+            content
+        );
+    }
+
+    /// 模型照 Read 的真实缩进给 new_string 时，必须逐字往返（无任何改写）。
+    #[test]
+    fn new_string_with_real_indent_round_trips_verbatim() {
+        let path = setup_file("t12-verbatim.txt", "fn f() {\n    let x = 1;\n}\n");
+        let r = run_edit(serde_json::json!({
+            "path": path,
+            "old_string": "    let x = 1;",
+            "new_string": "    let x = 2;\n    let y = 3;"
+        }));
+        assert!(r.success, "verbatim edit failed: {:?}", r.error);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "fn f() {\n    let x = 2;\n    let y = 3;\n}\n"
+        );
+    }
+
+    /// 对称去缩进必须保留**块内相对层级**。
+    ///
+    /// 这是它优于逐行 trim_start 的地方：`a {\n  b();\n}` 与 `a {\nb();\n}` 形状不同，
+    /// 不该互相匹配。反过来，两边缩进基准不同但形状相同必须能匹配（Tab vs 空格）。
+    #[test]
+    fn remove_indentation_is_symmetric_and_keeps_inner_relative_shape() {
+        // 基准不同、形状相同 → 归一化后相等
+        assert_eq!(
+            ToolRegistry::remove_indentation("        foo();\n            bar();"),
+            ToolRegistry::remove_indentation("    foo();\n        bar();")
+        );
+        // 注意：Tab 与空格**不会**互相归一 —— 只剥「共有的最小缩进」，不替换空白字符。
+        // 混合缩进文件靠 Pass 4（逐行 trim_start）兜底，不靠本函数跨字符集匹配。
+        assert_ne!(
+            ToolRegistry::remove_indentation("\t\tfoo();\n\t\t\tbar();"),
+            ToolRegistry::remove_indentation("    foo();\n        bar();")
+        );
+        // 形状不同（内层相对层级不一致）→ 必须不等
+        assert_ne!(
+            ToolRegistry::remove_indentation("a {\n  b();\n}"),
+            ToolRegistry::remove_indentation("a {\nb();\n}")
+        );
+        // 空白行不参与基准计算，也不被 strip_prefix 破坏
+        assert_eq!(
+            ToolRegistry::remove_indentation("  a:\n\n  b: 1\n"),
+            "a:\n\nb: 1\n"
+        );
+        // 全空白行：形状未变
+        assert_eq!(ToolRegistry::remove_indentation("\n  \n"), "\n  \n");
     }
 
     #[test]
