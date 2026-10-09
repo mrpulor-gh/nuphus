@@ -3613,11 +3613,21 @@ impl BrowserClient {
             )
             .await
             .map_err(|_| {
-                BrowserError::Launch(format!(
+                // 超时 = CDP 无响应，属**连接层**问题。原来标成 Launch，导致
+                // is_connection_error 认不出它，人触发的打开操作因此失去自愈机会。
+                BrowserError::Connection(format!(
                     "Timed out after {NEW_PAGE_TIMEOUT_SECS}s opening a new tab (CDP unresponsive)"
                 ))
             })?
-            .map_err(|e| BrowserError::Launch(e.to_string()))?;
+            // new_page 的失败是 CDP 传输/业务错误，**不是**启动失败。原实现错标成
+            // BrowserError::Launch 有两个后果：
+            //   ① 报错文案误导 —— 现场表现为「Browser launch error: send failed
+            //      because receiver is gone」（2026-10-09 大王报障）；
+            //   ② is_connection_error 只认 Connection / Execution → 分类失败 →
+            //      调用方（browser_open_url）无法自愈，CDP 未启动时点外链必失败，
+            //      而先点 header 入口（走 bring_to_front，有自愈）之后又能用。
+            // 改用 cdp_err：传输类错误映射为 Connection，分类即恢复。
+            .map_err(cdp_err)?;
             Arc::new(Mutex::new(page))
         };
         self.page = Some(page_arc);

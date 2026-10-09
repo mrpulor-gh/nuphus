@@ -7,7 +7,7 @@
 //! 二者不是同一件事，故并存：人不必为了看链接切到自动化浏览器，但需要让
 //! Agent 操作的那个窗口可见时（想看它进行到哪一步），走本命令把它提到前台。
 
-use nuphus::browser::{get_or_launch, runtime, BrowserError};
+use nuphus::browser::{get_or_launch, runtime, BrowserClient, BrowserError};
 
 /// 把诊断行追加到日志文件。
 ///
@@ -135,7 +135,25 @@ pub async fn browser_open_url(url: String) -> Result<OpenedUrl, String> {
                     .await
                     .map_err(BrowserError::Launch)?;
                 let client = guard.as_mut().ok_or(BrowserError::NotStarted)?;
-                client.new_tab(Some(&requested)).await?;
+                // 自愈：与 bring_to_front 同一套理由 —— 这是**由人**触发的操作，
+                // 点了打不开就是坏了，没有第二次机会（Tauri 命令层没有 nuphus-mcp 的
+                // run_op_with_reconnect）。launch() 的探活「不判死」，僵尸连接会被原样
+                // 交到这里；new_tab 往死通道发命令只会得到
+                // "send failed because receiver is gone"。
+                // 现场：CDP 浏览器被关掉后点外链必失败；先点 header 入口能成功，
+                // 因为那条路径走 bring_to_front，它会 reconnect（2026-10-09）。
+                if let Err(e) = client.new_tab(Some(&requested)).await {
+                    if BrowserClient::is_connection_error(&e) {
+                        diag(&format!(
+                            "open_url: new_tab FAILED after {}ms ({e}); reconnecting",
+                            ms()
+                        ));
+                        client.reconnect().await?;
+                        client.new_tab(Some(&requested)).await?;
+                    } else {
+                        return Err(e);
+                    }
+                }
                 if let Err(e) = client.bring_to_front().await {
                     diag(&format!(
                         "open_url: bring_to_front FAILED after {}ms: {e}",
