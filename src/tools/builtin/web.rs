@@ -193,8 +193,17 @@ fn search_bing(query: &str, count: usize) -> Result<Vec<SearchResult>, String> {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let bytes = read_body_capped(response)
-            .map_err(|e| format!("read bing response failed: {}", e))?;
+        let (bytes, truncated) =
+            read_body_capped(response).map_err(|e| format!("read bing response failed: {}", e))?;
+        // 搜索结果页被字节闸截断 = DOM 不完整，解析出来的条目不可信。
+        // 与其把半页结果混进聚合池（污染排序），不如让本源整体退出，
+        // 由 aggregate_web_search 的跨源降级接手。
+        if truncated {
+            return Err(format!(
+                "bing result page exceeds {} MiB byte cap; source dropped",
+                MAX_WEB_BYTES / (1024 * 1024)
+            ));
+        }
         decode_web_body(&bytes, content_type.as_deref())
     };
 
@@ -288,8 +297,15 @@ fn search_ddg_lite(query: &str, count: usize) -> Result<Vec<SearchResult>, Strin
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let bytes = read_body_capped(response)
+        let (bytes, truncated) = read_body_capped(response)
             .map_err(|e| format!("read ddg lite response failed: {}", e))?;
+        // 同 search_bing：结果页被截断则 DOM 不完整，本源退出而非产出半页结果。
+        if truncated {
+            return Err(format!(
+                "ddg lite result page exceeds {} MiB byte cap; source dropped",
+                MAX_WEB_BYTES / (1024 * 1024)
+            ));
+        }
         decode_web_body(&bytes, content_type.as_deref())
     };
 
@@ -334,6 +350,55 @@ fn search_ddg_lite(query: &str, count: usize) -> Result<Vec<SearchResult>, Strin
         return Err("ddg lite returned no parseable results".to_string());
     }
     Ok(results)
+}
+
+/// 把各源失败原因汇总成一句**可行动**的失败文案。
+///
+/// 这是跨源降级的最后一环：真正决定「重试还是换词」的判断交给模型，
+/// 文案必须把两件事说清楚 —— 哪些源挂了、各自因为什么挂。
+///
+/// 旧实现是一句写死的 `All search sources failed (...)`，五个源名全列上但
+/// 一个原因都没有，模型只能反复重试同一个查询。
+fn describe_aggregate_failure(failures: &[(&'static str, String, SourceFailure)]) -> String {
+    if failures.is_empty() {
+        // 所有源都「成功返回但零结果」——这不是故障，是查询没匹配上任何源。
+        return "No search source returned results for this query. The query likely matched \
+                nothing; try different or broader terms (drop brand/version qualifiers), or \
+                narrow with source=wiki/github/docs."
+            .to_string();
+    }
+
+    let detail = failures
+        .iter()
+        .map(|(name, reason, _)| format!("{}: {}", name, reason))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let retryable = failures
+        .iter()
+        .filter(|(_, _, kind)| *kind == SourceFailure::Retryable)
+        .count();
+
+    if retryable > 0 {
+        // 可重试失败占多数 → 大概率是限流而非查询问题，该等而不是换词。
+        format!(
+            "All {} search sources failed ({} of {} look rate-limited or timed out): {}. \
+             This looks like rate limiting rather than a bad query — retry after a short wait \
+             instead of rewriting the query.",
+            failures.len(),
+            retryable,
+            failures.len(),
+            detail
+        )
+    } else {
+        // 全是永久性失败 → 换个查询词比重试有用。
+        format!(
+            "All {} search sources failed for reasons that retrying will not fix ({}). \
+             Try different search terms, or target one source directly with source=wiki/github/docs.",
+            failures.len(),
+            detail
+        )
+    }
 }
 
 fn build_tool_result(query: &str, results: Vec<SearchResult>) -> Result<ToolResult, String> {
@@ -680,7 +745,45 @@ fn canonical_url(url: &str) -> String {
 ///
 /// 单源失败只记日志不中断 —— 这正是聚合相对串行降级的核心价值：
 /// 任一源翻车（限流 / 反爬 / 结构变更）不影响其余四源的产出。
-fn aggregate_web_search(query: &str, count: usize) -> Vec<SearchResult> {
+/// 源失败后可重试与否 —— 只用于**诊断**：告诉模型/用户该重试还是该改查询。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceFailure {
+    /// 限流 / 暂不可用 / 超时：过一会儿重试可能成功
+    Retryable,
+    /// 不可解析 / 无匹配 / 被拒：重试无意义
+    Permanent,
+}
+
+/// 从源返回的错误文本里判可重试性。
+///
+/// 各 `search_*` 返回 `Result<_, String>`，错误串形如 `HTTP 429` / `HTTP 503` /
+/// `… request failed: …timed out…`，**没有结构化状态码可读**，只能按文本判定。
+/// 真正决定「要不要重试」的仍是各源内部的 `fetch_direct`（429/503 才重试）；
+/// 此处只是把结论汇总给调用方，避免失败时只丢一句
+/// 「All search sources failed」让模型无从判断该等还是该换词。
+fn classify_source_failure(reason: &str) -> SourceFailure {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("429")
+        || lower.contains("503")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+    {
+        SourceFailure::Retryable
+    } else {
+        SourceFailure::Permanent
+    }
+}
+
+/// 五源聚合的产出：最终结果 + 各源的失败原因。
+///
+/// 失败原因必须一路带回调用方 —— 全部源挂掉时，模型需要知道是「限流，等一下
+/// 再试」还是「查询没匹配，换个词」，这两者的下一步动作完全相反。
+struct AggregateOutcome {
+    results: Vec<SearchResult>,
+    failures: Vec<(&'static str, String, SourceFailure)>,
+}
+
+fn aggregate_web_search(query: &str, count: usize) -> AggregateOutcome {
     let count = count.clamp(1, 20);
     // 候选池深度：每源多取一倍。去重 + 阈值淘汰会消耗候选，池子太浅时
     // 只能用噪声填空。
@@ -702,25 +805,36 @@ fn aggregate_web_search(query: &str, count: usize) -> Vec<SearchResult> {
     let mut handles = Vec::with_capacity(sources.len());
     for (name, f) in sources {
         let q = query.to_string();
-        handles.push((
-            name,
-            std::thread::spawn(move || f(&q, per_source).ok().unwrap_or_default()),
-        ));
+        // 保留 Result —— 旧实现 `.ok().unwrap_or_default()` 把失败原因整个丢掉，
+        // 五个源全挂时只留一句「All search sources failed」，模型分不清是限流
+        // （该等）还是查询本身没匹配（该换词）。
+        handles.push((name, std::thread::spawn(move || f(&q, per_source))));
     }
 
     let mut candidates: Vec<(SearchResult, SearchSource)> = Vec::new();
+    let mut failures: Vec<(&'static str, String, SourceFailure)> = Vec::new();
     for (name, handle) in handles {
-        let results = match handle.join() {
+        let outcome = match handle.join() {
             Ok(r) => r,
             Err(_) => {
                 tracing::warn!("[web_search] source {} panicked, skipped", name);
+                failures.push((name, "panicked".to_string(), SourceFailure::Permanent));
                 continue;
             }
         };
-        if results.is_empty() {
-            tracing::debug!("[web_search] source {} returned nothing", name);
-            continue;
-        }
+        let results = match outcome {
+            Ok(r) if r.is_empty() => {
+                tracing::debug!("[web_search] source {} returned nothing", name);
+                continue;
+            }
+            Ok(r) => r,
+            Err(e) => {
+                let kind = classify_source_failure(&e);
+                tracing::warn!("[web_search] source {} failed ({:?}): {}", name, kind, e);
+                failures.push((name, e, kind));
+                continue;
+            }
+        };
         tracing::debug!(
             "[web_search] source {} contributed {} candidates",
             name,
@@ -844,7 +958,10 @@ fn aggregate_web_search(query: &str, count: usize) -> Vec<SearchResult> {
         }
     }
 
-    out
+    AggregateOutcome {
+        results: out,
+        failures,
+    }
 }
 
 // ── Task 2: 领域搜索源 (Wikipedia / GitHub / Docs) ──
@@ -1916,13 +2033,13 @@ impl ToolRegistry {
                             // 结果（Bing 硬编码 setmkt=en-US 时最严重）。改为
                             // 五个源并发取候选，按「查询-结果相关性 + 源可靠性」
                             // 统一排序后取前 count —— 单个源翻车不再决定全局。
-                            let aggregated = aggregate_web_search(&query, count);
-                            if aggregated.is_empty() {
+                            let outcome = aggregate_web_search(&query, count);
+                            if outcome.results.is_empty() {
                                 return Ok(ToolResult::failure(
-                                    "All search sources failed (bing/ddg-lite/wiki/github/docs unreachable or returned nothing)".to_string(),
+                                    describe_aggregate_failure(&outcome.failures),
                                 ));
                             }
-                            build_tool_result(&query, aggregated)
+                            build_tool_result(&query, outcome.results)
                         }
                     }
                 })
@@ -1966,13 +2083,20 @@ impl ToolRegistry {
                     let direct_result = fetch_direct(&agent, &url);
                     let _direct_content_ok = match &direct_result {
                         Ok(body) => {
-                            let text = extract_readable(body, max_chars);
+                            let text = extract_readable(&body.text, max_chars);
                             let trimmed = text.trim();
                             // 内容充分（>= 2000 chars）直接返回
                             if trimmed.len() >= 2000 {
+                                // 字节闸若截断过，必须让模型看见：否则它会把半篇
+                                // 正文当成完整文档来回答，且无从察觉漏了尾巴。
+                                let marker = if body.byte_truncated {
+                                    byte_truncation_marker()
+                                } else {
+                                    String::new()
+                                };
                                 return Ok(ToolResult::success(format!(
-                                    "Fetched {}\n\n{}",
-                                    url, text
+                                    "Fetched {}\n\n{}{}",
+                                    url, text, marker
                                 )));
                             }
                             tracing::info!(
@@ -2011,7 +2135,8 @@ impl ToolRegistry {
                         url.trim_start_matches("http://").trim_start_matches("https://")
                     );
                     match fetch_direct(&agent, &mirror_url) {
-                        Ok(mirror_body) => {
+                        Ok(mirror) => {
+                            let mirror_body = mirror.text.as_str();
                             // r.jina.ai 返回的是 **Markdown 纯文本**（Jina 的产品
                             // 形态是"URL → clean markdown"），不是 HTML。旧实现直接喂
                             // extract_readable（HTML 解析器）→ find_content_container
@@ -2027,10 +2152,10 @@ impl ToolRegistry {
                                     regex::Regex::new(r"(?is)<(?:p|div|article|section|main|span|h[1-6]|ul|ol|li|table|br|a)\b")
                                         .expect("static html-tag regex")
                                 });
-                                re.is_match(&mirror_body)
+                                re.is_match(mirror_body)
                             };
                             let text = if looks_like_html {
-                                extract_readable(&mirror_body, max_chars)
+                                extract_readable(mirror_body, max_chars)
                             } else if mirror_body.chars().count() > max_chars {
                                 let trunc: String =
                                     mirror_body.chars().take(max_chars).collect();
@@ -2044,9 +2169,16 @@ impl ToolRegistry {
                                 mirror_body.trim().to_string()
                             };
                             if !text.trim().is_empty() {
+                                // 字符闸与字节闸各自打自己的标记：长文常常只触到
+                                // 其中一个，两个都触到时模型能看出被砍了两刀。
+                                let marker = if mirror.byte_truncated {
+                                    byte_truncation_marker()
+                                } else {
+                                    String::new()
+                                };
                                 return Ok(ToolResult::success(format!(
-                                    "Fetched {}\n\n[via Jina AI mirror]\n\n{}",
-                                    url, text
+                                    "Fetched {}\n\n[via Jina AI mirror]\n\n{}{}",
+                                    url, text, marker
                                 )));
                             }
                             Ok(ToolResult::failure(format!(
@@ -2057,7 +2189,7 @@ impl ToolRegistry {
                         Err(e) => {
                             let direct_info = match &direct_result {
                                 Ok(body) => {
-                                    let text = extract_readable(body, max_chars);
+                                    let text = extract_readable(&body.text, max_chars);
                                     format!("HTTP content ({} chars)", text.len())
                                 }
                                 Err(e) => format!("HTTP error: {}", e),
@@ -2075,11 +2207,14 @@ impl ToolRegistry {
     }
 }
 
-/// 按字节上限读取响应 body（防超大响应打爆内存）。
+/// 按字节上限读取响应 body（防超大响应打爆内存），返回 body 与「是否触发截断」。
 ///
 /// - 带 Content-Length 且超限 → 直接 Err（不读 body，避免先分配再丢弃）
-/// - 否则 `take(MAX_WEB_BYTES + 1)` 读入；读出超过上限则截断保留可用部分（不报错）
-fn read_body_capped(response: reqwest::blocking::Response) -> Result<Vec<u8>, String> {
+/// - 否则 `take(MAX_WEB_BYTES + 1)` 读入；读出超过上限则截断保留可用部分
+///
+/// `+1` 是为了让「恰好填满上限」与「超出上限」可区分 —— 否则一个正好等于
+/// 上限的响应会被误标成已截断（下游据此判断要不要给模型打标记）。
+fn read_body_capped(response: reqwest::blocking::Response) -> Result<(Vec<u8>, bool), String> {
     if let Some(len) = response.content_length() {
         if len > MAX_WEB_BYTES as u64 {
             return Err(format!(
@@ -2094,9 +2229,29 @@ fn read_body_capped(response: reqwest::blocking::Response) -> Result<Vec<u8>, St
         .read_to_end(&mut buf)
         .map_err(|e| format!("body read error: {}", e))?;
     if buf.len() > MAX_WEB_BYTES {
+        // 真正读到超限才截断；只读满不超限时 truncated 保持 false。
         buf.truncate(MAX_WEB_BYTES);
+        return Ok((buf, true));
     }
-    Ok(buf)
+    Ok((buf, false))
+}
+
+/// 字节闸截断标记 —— 由调用方拼到**最终文本**末尾。
+///
+/// 不能塞进原始 bytes：中间还隔着 charset 解码与 HTML 正文提取，落在正文
+/// 容器之外的标记会被解析器整段丢掉，模型就不知道自己拿到的是残缺页面。
+/// 格式对齐 `extract_readable` 既有的 `[Truncated: …]` 标记，让模型只需认一种。
+pub(super) fn byte_truncation_marker() -> String {
+    format!(
+        "\n\n[Truncated: response exceeds {} MiB byte cap; tail omitted]",
+        MAX_WEB_BYTES / (1024 * 1024)
+    )
+}
+
+/// `fetch_direct` 的产出：已解码的 body 文本 + 字节闸是否触发过截断。
+pub(super) struct FetchedBody {
+    pub text: String,
+    pub byte_truncated: bool,
 }
 
 /// 解析 `Retry-After` 头（仅秒数形式）。
@@ -2114,8 +2269,8 @@ fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     Some(Duration::from_secs(secs.min(30)))
 }
 
-/// 直接 HTTP GET 请求，返回 body 字符串（已按 charset 三级嗅探解码）
-fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
+/// 直接 HTTP GET 请求，返回已按 charset 三级嗅探解码的 body + 字节闸截断标志
+fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<FetchedBody, String> {
     // 按域白名单附 cookie（命中才走 vault；未命中域名行为完全不变）
     let cookie_header = cookie_header_for(url);
     let mut attempt = 0;
@@ -2140,8 +2295,8 @@ fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, 
                     // 只重试 429（限流）/ 503（服务暂不可用）—— 404/403 等重试无意义。
                     let retryable = matches!(code.as_u16(), 429 | 503);
                     if retryable && attempt == 0 {
-                        let delay = retry_after_delay(r.headers())
-                            .unwrap_or(Duration::from_millis(500));
+                        let delay =
+                            retry_after_delay(r.headers()).unwrap_or(Duration::from_millis(500));
                         std::thread::sleep(delay);
                         attempt += 1;
                         continue;
@@ -2154,12 +2309,15 @@ fn fetch_direct(agent: &reqwest::blocking::Client, url: &str) -> Result<String, 
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
-                let bytes =
+                let (bytes, byte_truncated) =
                     read_body_capped(r).map_err(|e| format!("read body failed: {}", e))?;
                 if bytes.trim_ascii().is_empty() {
                     return Err(format!("HTTP {} (empty body)", code.as_u16()));
                 }
-                return Ok(decode_web_body(&bytes, content_type.as_deref()));
+                return Ok(FetchedBody {
+                    text: decode_web_body(&bytes, content_type.as_deref()),
+                    byte_truncated,
+                });
             }
             Err(e) => {
                 let msg = format!("{}", e);
@@ -2753,5 +2911,130 @@ mod tests {
         )
         .expect("executor ok");
         assert!(!result.success, "file 协议应被拦下");
+    }
+
+    /// 字节闸截断必须对模型可见。
+    ///
+    /// 回归目标：曾经 `read_body_capped` 静默 `buf.truncate()`，模型拿到半篇
+    /// 正文却无从察觉，会当成完整文档回答。本用例锁死「标记存在且带上限值」。
+    #[test]
+    fn test_byte_truncation_marker_is_visible_and_names_the_cap() {
+        let marker = byte_truncation_marker();
+        assert!(
+            marker.contains("[Truncated:"),
+            "标记必须沿用 extract_readable 的既有格式，模型只需认一种：{}",
+            marker
+        );
+        assert!(
+            marker.contains(&format!("{}", MAX_WEB_BYTES / (1024 * 1024))),
+            "标记必须报出实际 MiB 上限，否则模型不知道丢了多少：{}",
+            marker
+        );
+        // 标记挂在末尾，供调用方直接 format 到最终文本尾部
+        assert!(marker.starts_with("\n\n"), "应作为独立段落追加");
+    }
+
+    // ── 跨源降级：失败分类与可行动文案 ──
+
+    /// 可重试性判定：限流/超时归 Retryable，其余归 Permanent。
+    ///
+    /// 这条分类直接决定失败文案给模型的下一步建议（等 vs 换词），
+    /// 判错会让模型在限流时反复改写查询、越改越跑偏。
+    #[test]
+    fn test_classify_source_failure_splits_retryable_from_permanent() {
+        for r in [
+            "HTTP 429",
+            "HTTP 503",
+            "bing request failed: operation timed out",
+            "github request failed: timeout",
+            "HTTP 429 Too Many Requests",
+        ] {
+            assert_eq!(
+                classify_source_failure(r),
+                SourceFailure::Retryable,
+                "限流/超时必须归可重试：{}",
+                r
+            );
+        }
+        for r in [
+            "bing returned no parseable results",
+            "HTTP 404",
+            "wikipedia request failed: invalid URL",
+            "ddg lite result page exceeds 5 MiB byte cap; source dropped",
+            "panicked",
+        ] {
+            assert_eq!(
+                classify_source_failure(r),
+                SourceFailure::Permanent,
+                "重试无意义的失败不得归可重试：{}",
+                r
+            );
+        }
+    }
+
+    /// 失败文案必须给出下一步动作，而不是只列源名。
+    ///
+    /// 回归目标：旧文案是一句写死的「All search sources failed (bing/ddg-lite/
+    /// wiki/github/docs unreachable or returned nothing)」，五个源名全列但一个
+    /// 原因都没有 —— 模型只能对同一个查询反复重试。
+    #[test]
+    fn test_describe_aggregate_failure_is_actionable() {
+        // 零失败 = 源都正常但没匹配上 → 应引导换词，而不是让模型等
+        let none: Vec<(&'static str, String, SourceFailure)> = vec![];
+        let msg = describe_aggregate_failure(&none);
+        assert!(
+            msg.contains("No search source returned results"),
+            "零失败应与「全挂」区分开：{}",
+            msg
+        );
+        assert!(
+            msg.contains("different or broader terms"),
+            "零失败要给换词建议：{}",
+            msg
+        );
+
+        // 限流占多数 → 明确劝「等」而不是「改查询」
+        let rate_limited = vec![
+            ("bing", "HTTP 429".to_string(), SourceFailure::Retryable),
+            (
+                "ddg-lite",
+                "request failed: timed out".to_string(),
+                SourceFailure::Retryable,
+            ),
+            (
+                "wikipedia",
+                "returned no parseable results".to_string(),
+                SourceFailure::Permanent,
+            ),
+        ];
+        let msg = describe_aggregate_failure(&rate_limited);
+        assert!(msg.contains("2 of 3"), "应报出可重试占比：{}", msg);
+        assert!(
+            msg.contains("retry after a short wait instead of rewriting"),
+            "限流场景必须劝等待而非改查询：{}",
+            msg
+        );
+        assert!(msg.contains("bing: HTTP 429"), "要带上具体原因：{}", msg);
+
+        // 全是永久性失败 → 劝换词
+        let all_permanent = vec![
+            ("bing", "HTTP 404".to_string(), SourceFailure::Permanent),
+            (
+                "github",
+                "search failed".to_string(),
+                SourceFailure::Permanent,
+            ),
+        ];
+        let msg = describe_aggregate_failure(&all_permanent);
+        assert!(
+            msg.contains("retrying will not fix"),
+            "永久失败要劝换词：{}",
+            msg
+        );
+        assert!(
+            msg.contains("source=wiki/github/docs"),
+            "永久失败要给定向源的出口：{}",
+            msg
+        );
     }
 }
