@@ -2174,6 +2174,8 @@ const en: Record<string, string> = {
   'help.shortcut.workflowPanel':
     'Workflow steps panel: collapse / expand (available while a run has steps)',
   'help.shortcut.esc': 'Close modal / Cancel',
+  'help.shortcut.imeHint':
+    'While an IME (Chinese, Japanese, etc.) is composing, Enter only confirms the highlighted candidate — it will not send. Press Enter again once the text is committed.',
   'help.entries': 'Where to Find Things',
   'help.entries.settings':
     'Gear icon (top-right of chat) = Settings: five groups — Shortcuts, AI, Connect, Workspace, System — hold every setting.',

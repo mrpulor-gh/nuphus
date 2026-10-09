@@ -2071,6 +2071,8 @@ const zh: Record<string, string> = {
   'help.shortcut.newChat': '新建会话（当前对话归档）',
   'help.shortcut.workflowPanel': '工作流步骤面板：收起 / 展开（运行中有步骤时可用）',
   'help.shortcut.esc': '关闭弹窗 / 取消',
+  'help.shortcut.imeHint':
+    '输入法（中文 / 日文等）组词选字时，Enter 只用于确认候选词上屏，不会发送消息；上屏后再按 Enter 才发送。',
   'help.entries': '界面入口',
   'help.entries.settings':
     '聊天区右上角齿轮 = 设置中心：快捷入口 / AI 能力 / 连接 / 工作台 / 系统五组，收纳全部设置。',

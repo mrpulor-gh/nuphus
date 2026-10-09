@@ -60,4 +60,14 @@ describe('HelpPage 帮助内容', () => {
     // 未实现的 TODO 占位（Ctrl/Cmd+O）不写进帮助
     expect(shortcutSection.textContent).not.toContain(`${primary('O')}`)
   })
+
+  it('IME 组词态说明在位：Enter 发送的唯一例外是输入法选词', () => {
+    render(<HelpPage />)
+    const shortcutSection = screen
+      .getByRole('heading', { name: '快捷键' })
+      .closest('section') as HTMLElement
+    // 与 ChatPanel.handleKeyDown 的 isComposing / keyCode 229 守卫对应
+    expect(shortcutSection.textContent).toContain('输入法')
+    expect(shortcutSection.textContent).toContain('不会发送消息')
+  })
 })

@@ -2,7 +2,9 @@
  * 输入框键盘契约（ZPY 终审）：
  * - Enter（无修饰键）= 发送；
  * - Shift+Enter = 换行（原生）；
- * - Ctrl/Cmd+Enter = 换行（此前与 Enter 同为发送，现改为按光标插入换行）。
+ * - Ctrl/Cmd+Enter = 换行（此前与 Enter 同为发送，现改为按光标插入换行）；
+ * - IME 组词态（isComposing / keyCode 229）按 Enter = 输入法确认候选词上屏，
+ *   一律让位给输入法：不发送、不插换行、不改动输入。
  *
  * 只断言真实可观察结果：`onSend` 是否被调用、textarea 的值与光标位置。
  */
@@ -83,7 +85,7 @@ function typeInto(ta: HTMLTextAreaElement, text: string) {
   ta.setSelectionRange(text.length, text.length)
 }
 
-describe('输入框键盘契约：Enter 发送 / Shift+Enter 换行 / Ctrl+Enter 换行', () => {
+describe('输入框键盘契约：Enter 发送 / Shift+Enter 换行 / Ctrl+Enter 换行 / IME 组词态让位', () => {
   beforeEach(() => {
     onSend.mockClear()
   })
@@ -126,5 +128,36 @@ describe('输入框键盘契约：Enter 发送 / Shift+Enter 换行 / Ctrl+Enter
 
     expect(onSend).not.toHaveBeenCalled()
     expect(ta.value).toBe('abcd\n')
+  })
+
+  // ── IME 组词态守卫（用户反馈"输入消息时直接发送"的根因修复）──
+  // 中文/日文输入法选词时按 Enter 会派发 key='Enter' 且 isComposing=true，
+  // 必须被发送/换行分支忽略，否则候选词未上屏消息已飞出。
+
+  it('IME 组词态按 Enter：不发送、不改动输入（isComposing=true）', () => {
+    const ta = renderPanel()
+    typeInto(ta, 'nihao')
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: true })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(ta.value).toBe('nihao')
+  })
+
+  it('IME 组词态按 Ctrl+Enter：同样让位给输入法，不插入换行', () => {
+    const ta = renderPanel()
+    typeInto(ta, 'nihao')
+    fireEvent.keyDown(ta, { key: 'Enter', ctrlKey: true, isComposing: true })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(ta.value).toBe('nihao')
+  })
+
+  it('WebView2 兜底：keyCode 229 的 Enter 不发送（isComposing 未置位的环境）', () => {
+    const ta = renderPanel()
+    typeInto(ta, '你好')
+    fireEvent.keyDown(ta, { key: 'Enter', keyCode: 229 })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(ta.value).toBe('你好')
   })
 })

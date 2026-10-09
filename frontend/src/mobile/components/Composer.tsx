@@ -329,6 +329,9 @@ export default function Composer({
             value={value}
             onChange={handleInput}
             onKeyDown={e => {
+              // IME 组词态守卫：输入法选词时按 Enter = 确认上屏，不是发送
+              // （与 ChatPanel.handleKeyDown 的守卫等价，改动时同步）
+              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void handleSend()

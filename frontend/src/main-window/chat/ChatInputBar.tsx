@@ -785,12 +785,15 @@ export function ChatInputBar({
                 }}
                 onKeyDown={e => {
                   // 录音/识别中按 Enter = 说完发送：先冲刷语音会话再发送
-                  // （Ctrl/Cmd+Enter 不参与：它固定是换行，交回 handleKeyDown 处理）
+                  // （Ctrl/Cmd+Enter 不参与：它固定是换行，交回 handleKeyDown 处理；
+                  //   IME 组词态同样不参与——选词确认键交回 handleKeyDown 的守卫放行）
                   if (
                     e.key === 'Enter' &&
                     !e.shiftKey &&
                     !e.ctrlKey &&
                     !e.metaKey &&
+                    !e.nativeEvent.isComposing &&
+                    e.nativeEvent.keyCode !== 229 &&
                     !isProcessing &&
                     voiceRef.current?.isActive()
                   ) {

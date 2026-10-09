@@ -1751,6 +1751,14 @@ export function ChatPanel({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // ── IME 组词态守卫（必须置于所有 Enter 分支之前）──
+    // 中文/日文输入法组词时按 Enter = 确认候选词上屏，不是发送。WebView2(Chromium)
+    // 在该态仍会派发 keydown（key='Enter'、isComposing=true，部分环境 keyCode=229），
+    // 若无此守卫会被下方发送分支截获 → 候选词未上屏消息已飞出（用户反馈的"误发"）。
+    // 组词态下 Ctrl/Cmd+Enter 与 Enter 一律让位给输入法：选词期间的组合键不该生效。
+    // 同 Inspector.tsx / VariablePicker.tsx 的既有防护模式；mobile/components/Composer.tsx
+    // 与 examples/agent-chat/index.html 有等价守卫，改动时三处同步。
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
     // Ctrl/Cmd+Enter：换行（不再等同于发送；Shift+Enter 仍是原生换行）
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
