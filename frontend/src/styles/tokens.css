@@ -301,7 +301,7 @@
 
   /* ── 语义层：线条（递增可见：0.06 → 0.10 → 0.16，修正原 l2<l1 倒挂）── */
   --line-1: rgba(0, 0, 0, 0.06);
-  --line-2: rgba(0, 0, 0, 0.10);
+  --line-2: rgba(0, 0, 0, 0.1);
   --line-3: rgba(0, 0, 0, 0.16);
 
   /* ── 语义层：Accent（墨黑笔触）── */
@@ -348,15 +348,15 @@
 
   /* ── 基础层：阴影（DeepSeek 式：0.5px 描边 + 双层柔光，告别单层重影）── */
   --shadow-surface: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-elevated: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 3px 8px rgba(0, 0, 0, 0.05),
-    0 0 20px rgba(0, 0, 0, 0.05);
-  --shadow-modal: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.06),
-    0 0 24px rgba(0, 0, 0, 0.08);
+  --shadow-elevated:
+    0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 3px 8px rgba(0, 0, 0, 0.05), 0 0 20px rgba(0, 0, 0, 0.05);
+  --shadow-modal:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.06), 0 0 24px rgba(0, 0, 0, 0.08);
   /* 输入框专属加重档（2026-10-07 大王令）：简白白窗贴白卡，零 border 下
      浮起全靠本档。较 elevated 距离加倍（8→16px / 20→40px）、alpha 加倍
      （.05→.10 / .08），取 DeepSeek elevation-soft 同量级，仍是柔光非硬影。 */
-  --shadow-input: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(0, 0, 0, 0.1),
-    0 0 40px rgba(0, 0, 0, 0.08);
+  --shadow-input:
+    0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(0, 0, 0, 0.1), 0 0 40px rgba(0, 0, 0, 0.08);
   --shadow-inset: 0 0 0 0.5px rgba(0, 0, 0, 0.05) inset;
   --shadow-focus: 0 0 0 2px rgba(17, 17, 17, 0.1);
   --thinking-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 4px 24px rgba(0, 0, 0, 0.05);

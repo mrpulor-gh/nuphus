@@ -61,7 +61,12 @@ const MarkdownContent = React.memo(function MarkdownContent({
             </code>
           </pre>
         ) : (
-          <MarkdownText key={i} text={part.text} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+          <MarkdownText
+            key={i}
+            text={part.text}
+            onFileClick={onFileClick}
+            onUrlClick={onUrlClick}
+          />
         )
       })}
     </>
@@ -239,7 +244,12 @@ function NestedList({
           const firstChild = item.children.find(l => l.trim().length > 0)?.trim() || ''
           const childOrdered = /^\d+\.\s/.test(firstChild)
           childList = (
-            <NestedList lines={item.children} ordered={childOrdered} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+            <NestedList
+              lines={item.children}
+              ordered={childOrdered}
+              onFileClick={onFileClick}
+              onUrlClick={onUrlClick}
+            />
           )
         }
 
@@ -288,12 +298,16 @@ function BlockRenderer({
 
   // ▸ Unordered list
   if (/^[-*+]\s/.test(lines[0])) {
-    return <NestedList lines={lines} ordered={false} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+    return (
+      <NestedList lines={lines} ordered={false} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+    )
   }
 
   // ▸ Ordered list
   if (/^\d+\.\s/.test(lines[0])) {
-    return <NestedList lines={lines} ordered={true} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+    return (
+      <NestedList lines={lines} ordered={true} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+    )
   }
 
   // ▸ Table (second line must be separator: |---| format)
@@ -395,7 +409,11 @@ function TableRenderer({
                 .filter(Boolean)
                 .map((cell, ci) => (
                   <td key={ci} style={{ textAlign: aligns[ci] as any }}>
-                    <MarkdownInline text={cell.trim()} onFileClick={onFileClick} onUrlClick={onUrlClick} />
+                    <MarkdownInline
+                      text={cell.trim()}
+                      onFileClick={onFileClick}
+                      onUrlClick={onUrlClick}
+                    />
                   </td>
                 ))}
             </tr>

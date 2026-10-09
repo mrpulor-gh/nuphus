@@ -497,68 +497,68 @@ describe('注入 overlay 脚本：真实 JS 语法校验（防 Rust 内嵌脚本
   })
 
   /** P4 铁律一：iframe 侧零常驻 UI（编辑入口与列表全在父窗口）。 */
-    it('不得残留胶囊/提示条/侧边列表/批注框', async () => {
-      const js = await loadOverlayScript()
-      for (const banned of [
-        'capsule',
-        'mgr-item',
-        'mgr-empty',
-        'data-toggle',
-        'data-send',
-        'openComment',
-        'renderList',
-        'textarea',
-      ]) {
-        expect(js).not.toContain(banned)
-      }
-    })
+  it('不得残留胶囊/提示条/侧边列表/批注框', async () => {
+    const js = await loadOverlayScript()
+    for (const banned of [
+      'capsule',
+      'mgr-item',
+      'mgr-empty',
+      'data-toggle',
+      'data-send',
+      'openComment',
+      'renderList',
+      'textarea',
+    ]) {
+      expect(js).not.toContain(banned)
+    }
+  })
 
-    /**
-     * 配色必须走主题令牌下发，禁止把色值硬编码进脚本（2026-10-08 大王指令）。
-     *
-     * 事故背景：脚本原先直接写死蓝 `#2f6fdd` / 琥珀 `#f59e0b`，那是从**外部产品**
-     * 的设计文档抄来的数值，既不属于 Nuphus 的 token 体系，也会让标注器配色
-     * 与界面 accent 脱钩（切简白/深色/tech 后仍是旧色）。现改为父窗口读自己的
-     * CSS 变量（--accent/--on-accent/--warning/--accent-rgb）经postMessage 下发，
-     *脚本只认 --pv-annot-* 自定义属性。
-     *
-     * 断言直接读 .rs 内的真实注入内容——所以它同时是「src.js 与 .rs 漂移」的
-     * 防线：2026-10-08 sync-overlay-script.mjs 的 --check 曾因锚点漂移谎报
-     * "in sync"，只有这条测试会真的失败。
-     */
-    it('配色走 --pv-annot-* 令牌，脚本内不得硬编码主题色值', async () => {
-        const js = await loadOverlayScript()
-        // 令牌定义与消费都在
-        for (const required of [
-          '--pv-annot-accent',
-          '--pv-annot-on-accent',
-          '--pv-annot-region',
-          'var(--pv-annot-accent)',
-          'var(--pv-annot-region)',
-          'nuphus:annotate-theme',
-          'applyTheme',
-        ]) {
-          expect(js, `脚本应包含 ${required}`).toContain(required)
-        }
-        // 真正抄自外部产品的色值已彻底移除（这三色曾写死在样式规则里）
-        for (const bannedHex of ['#2f6fdd', 'rgba(47, 111, 221', 'rgba(245, 158, 11']) {
-          expect(js, `脚本不应再硬编码外部色值 ${bannedHex}`).not.toContain(bannedHex)
-        }
-        // 兜底默认值允许存在（Nuphus 自己 token 的字面值：--accent/--on-accent/--warning
-        // 在 dark 主题的值），但**只允许**出现在 :host 令牌声明块内；样式规则里必须一律
-        // 走 var(--pv-annot-*)，否则父窗口下发的主题令牌会失效（硬编码规则不读变量）。
-        const styleStart = js.indexOf('<style>')
-        const styleEnd = js.indexOf('</style>')
-        const styleBody = js.slice(styleStart, styleEnd)
-        const hostBlockEnd = styleBody.indexOf('}', styleBody.indexOf('--pv-annot-shadow'))
-        expect(hostBlockEnd, ':host 令牌块应闭合').toBeGreaterThan(0)
-        // 令牌块之后的规则区不得再出现任何裸 hex / rgba 色值
-        const rules = styleBody.slice(hostBlockEnd)
-        for (const m of rules.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba\([^)]*\)/g)) {
-          expect(m[0], `样式规则里出现裸色值 ${m[0]}（应走 var(--pv-annot-*)令牌）`).toBe('')
-        }
-      })
-    })
+  /**
+   * 配色必须走主题令牌下发，禁止把色值硬编码进脚本（2026-10-08 大王指令）。
+   *
+   * 事故背景：脚本原先直接写死蓝 `#2f6fdd` / 琥珀 `#f59e0b`，那是从**外部产品**
+   * 的设计文档抄来的数值，既不属于 Nuphus 的 token 体系，也会让标注器配色
+   * 与界面 accent 脱钩（切简白/深色/tech 后仍是旧色）。现改为父窗口读自己的
+   * CSS 变量（--accent/--on-accent/--warning/--accent-rgb）经postMessage 下发，
+   *脚本只认 --pv-annot-* 自定义属性。
+   *
+   * 断言直接读 .rs 内的真实注入内容——所以它同时是「src.js 与 .rs 漂移」的
+   * 防线：2026-10-08 sync-overlay-script.mjs 的 --check 曾因锚点漂移谎报
+   * "in sync"，只有这条测试会真的失败。
+   */
+  it('配色走 --pv-annot-* 令牌，脚本内不得硬编码主题色值', async () => {
+    const js = await loadOverlayScript()
+    // 令牌定义与消费都在
+    for (const required of [
+      '--pv-annot-accent',
+      '--pv-annot-on-accent',
+      '--pv-annot-region',
+      'var(--pv-annot-accent)',
+      'var(--pv-annot-region)',
+      'nuphus:annotate-theme',
+      'applyTheme',
+    ]) {
+      expect(js, `脚本应包含 ${required}`).toContain(required)
+    }
+    // 真正抄自外部产品的色值已彻底移除（这三色曾写死在样式规则里）
+    for (const bannedHex of ['#2f6fdd', 'rgba(47, 111, 221', 'rgba(245, 158, 11']) {
+      expect(js, `脚本不应再硬编码外部色值 ${bannedHex}`).not.toContain(bannedHex)
+    }
+    // 兜底默认值允许存在（Nuphus 自己 token 的字面值：--accent/--on-accent/--warning
+    // 在 dark 主题的值），但**只允许**出现在 :host 令牌声明块内；样式规则里必须一律
+    // 走 var(--pv-annot-*)，否则父窗口下发的主题令牌会失效（硬编码规则不读变量）。
+    const styleStart = js.indexOf('<style>')
+    const styleEnd = js.indexOf('</style>')
+    const styleBody = js.slice(styleStart, styleEnd)
+    const hostBlockEnd = styleBody.indexOf('}', styleBody.indexOf('--pv-annot-shadow'))
+    expect(hostBlockEnd, ':host 令牌块应闭合').toBeGreaterThan(0)
+    // 令牌块之后的规则区不得再出现任何裸 hex / rgba 色值
+    const rules = styleBody.slice(hostBlockEnd)
+    for (const m of rules.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba\([^)]*\)/g)) {
+      expect(m[0], `样式规则里出现裸色值 ${m[0]}（应走 var(--pv-annot-*)令牌）`).toBe('')
+    }
+  })
+})
 
 // ══════════════════════════════════════════════════════════════════
 // P4：父窗口托管 UI（✎ 悬浮入口 + 右侧修改列表 + 上下行指令）
@@ -722,52 +722,52 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     dispatchMessage(PAYLOAD, iframe.contentWindow)
 
     enterAnnotating(iframe)
-        expect(panelTitle()).toContain('2 条标注')
-        expect(panelTitle()).toContain('含恢复 2 条')
-        expect(commentInput(1).value).toBe('标题改成蓝色')
-      })
+    expect(panelTitle()).toContain('2 条标注')
+    expect(panelTitle()).toContain('含恢复 2 条')
+    expect(commentInput(1).value).toBe('标题改成蓝色')
+  })
 
-      /**
-       * 回归（2026-10-08 大王报障）：点「放弃」后再进编辑态，旧标注全部回来。
-       *
-       * 根因：数据真正持有方是 iframe 内的 markers，而「放弃」只清了父窗口的
-       * localStorage + React state —— iframe 数据没清，重进编辑态 renderOverlays()
-       * 把旧标记全画回来。修法是新增下行指令 `nuphus:annotate-clear-all`。
-       * 本组断言钉住：**放弃与发送都必须下发 clear-all**，且clear-all 先于 mode(false)。
-       */
-      it('放弃：下发 annotate-clear-all 清 iframe 数据，且先于退出编辑态', () => {
-        const iframe = renderHtmlPreview('C:/work/demo.html', vi.fn())
-        const postSpy = enterAnnotating(iframe)
-        dispatchMessage(PAYLOAD, iframe.contentWindow)
+  /**
+   * 回归（2026-10-08 大王报障）：点「放弃」后再进编辑态，旧标注全部回来。
+   *
+   * 根因：数据真正持有方是 iframe 内的 markers，而「放弃」只清了父窗口的
+   * localStorage + React state —— iframe 数据没清，重进编辑态 renderOverlays()
+   * 把旧标记全画回来。修法是新增下行指令 `nuphus:annotate-clear-all`。
+   * 本组断言钉住：**放弃与发送都必须下发 clear-all**，且clear-all 先于 mode(false)。
+   */
+  it('放弃：下发 annotate-clear-all 清 iframe 数据，且先于退出编辑态', () => {
+    const iframe = renderHtmlPreview('C:/work/demo.html', vi.fn())
+    const postSpy = enterAnnotating(iframe)
+    dispatchMessage(PAYLOAD, iframe.contentWindow)
 
-        postSpy.mockClear()
-        fireEvent.click(screen.getByRole('button', { name: '放弃' }))
+    postSpy.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '放弃' }))
 
-        const types = postSpy.mock.calls.map(c => (c[0] as { type?: string }).type)
-        expect(types).toContain('nuphus:annotate-clear-all')
-        expect(types).toContain('nuphus:annotate-mode')
-        // 顺序铁律：先清数据再退编辑态（反了的话 mode(false) 只清视觉，数据留着会回来）
-        expect(types.indexOf('nuphus:annotate-clear-all')).toBeLessThan(
-          types.lastIndexOf('nuphus:annotate-mode'),
-        )
-        // 本地库同步清空
-        expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
-        postSpy.mockRestore()
-      })
+    const types = postSpy.mock.calls.map(c => (c[0] as { type?: string }).type)
+    expect(types).toContain('nuphus:annotate-clear-all')
+    expect(types).toContain('nuphus:annotate-mode')
+    // 顺序铁律：先清数据再退编辑态（反了的话 mode(false) 只清视觉，数据留着会回来）
+    expect(types.indexOf('nuphus:annotate-clear-all')).toBeLessThan(
+      types.lastIndexOf('nuphus:annotate-mode'),
+    )
+    // 本地库同步清空
+    expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
+    postSpy.mockRestore()
+  })
 
-      it('发送：同样下发 annotate-clear-all（与放弃同源，不能只清父窗口）', () => {
-        const onSend = vi.fn()
-        const iframe = renderHtmlPreview('C:/work/demo.html', onSend)
-        const postSpy = enterAnnotating(iframe)
-        dispatchMessage(PAYLOAD, iframe.contentWindow)
+  it('发送：同样下发 annotate-clear-all（与放弃同源，不能只清父窗口）', () => {
+    const onSend = vi.fn()
+    const iframe = renderHtmlPreview('C:/work/demo.html', onSend)
+    const postSpy = enterAnnotating(iframe)
+    dispatchMessage(PAYLOAD, iframe.contentWindow)
 
-        postSpy.mockClear()
-        fireEvent.click(screen.getByRole('button', { name: /发送给 Agent/ }))
+    postSpy.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /发送给 Agent/ }))
 
-        const types = postSpy.mock.calls.map(c => (c[0] as { type?: string }).type)
-        expect(types).toContain('nuphus:annotate-clear-all')
-        expect(onSend).toHaveBeenCalledTimes(1)
-        expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
-        postSpy.mockRestore()
-      })
-    })
+    const types = postSpy.mock.calls.map(c => (c[0] as { type?: string }).type)
+    expect(types).toContain('nuphus:annotate-clear-all')
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
+    postSpy.mockRestore()
+  })
+})
