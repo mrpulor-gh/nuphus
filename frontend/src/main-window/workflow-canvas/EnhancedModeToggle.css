@@ -78,18 +78,6 @@
   color: var(--warning);
 }
 
-.wfc-enhanced-toggle.is-compact {
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 6px;
-  background: transparent;
-  font-size: 11px;
-}
-
-.wfc-enhanced-toggle.is-compact .wfc-enhanced-status {
-  font-size: 10px;
-}
-
 .wfc-enhanced-confirm-copy {
   margin: 0;
   color: var(--fg-2);

@@ -18,15 +18,22 @@ import {
 type EnhancedModeToggleProps = {
   disabled?: boolean
   onNotice?: (message: string) => void
-  compact?: boolean
 }
 
-const INITIAL_STATE: WorkflowEnhancedMode = {
+/**
+ * 增强模式状态初值。**导出**以供 EnhancedModeStatus 复用 —— 两处各写一份初值
+ * 会让「读取中」闪现与错误回退行为漂移。
+ */
+export const INITIAL_STATE: WorkflowEnhancedMode = {
   enabled: false,
   configured: false,
 }
 
-function statusLabel(
+/**
+ * 状态 → 文案的**唯一实现点**（导出供 EnhancedModeStatus 复用，禁止复制第二份）。
+ * @param loadFailed 读取失败时一律回落为「服务不可用」——宁可说不可用，不谎报可用。
+ */
+export function statusLabel(
   state: WorkflowEnhancedMode,
   loadFailed: boolean,
   ui: (zh: string, en: string) => string,
@@ -53,11 +60,7 @@ function statusLabel(
   return state.enabled ? ui('可用', 'Ready') : ui('已关闭', 'Off')
 }
 
-export function EnhancedModeToggle({
-  disabled = false,
-  onNotice,
-  compact = false,
-}: EnhancedModeToggleProps) {
+export function EnhancedModeToggle({ disabled = false, onNotice }: EnhancedModeToggleProps) {
   const { lang } = useLanguage()
   const ui = (zh: string, en: string) => (lang === 'zh' ? zh : en)
   const [state, setState] = useState<WorkflowEnhancedMode>(INITIAL_STATE)
@@ -161,7 +164,7 @@ export function EnhancedModeToggle({
     <>
       <button
         type="button"
-        className={`wfc-enhanced-toggle${state.enabled ? ' is-on' : ''}${compact ? ' is-compact' : ''}`}
+        className={`wfc-enhanced-toggle${state.enabled ? ' is-on' : ''}`}
         aria-pressed={state.enabled}
         aria-label={`${ui('增强模式，', 'Enhanced mode, ')}${label}`}
         disabled={locked}
@@ -189,9 +192,7 @@ export function EnhancedModeToggle({
         }
       >
         <IconSparkles size={13} />
-        <span className="wfc-enhanced-label">
-          {compact ? ui('增强', 'Enhanced') : ui('增强模式', 'Enhanced mode')}
-        </span>
+        <span className="wfc-enhanced-label">{ui('增强模式', 'Enhanced mode')}</span>
         <span className="wfc-enhanced-switch" aria-hidden="true">
           <span />
         </span>

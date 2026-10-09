@@ -117,7 +117,6 @@ vi.mock('./ScopedEditDialog', () => ({
     </div>
   ),
 }))
-vi.mock('./EnhancedModeToggle', () => ({ EnhancedModeToggle: () => null }))
 vi.mock('./WorkflowSwitcher', () => ({ WorkflowSwitcher: () => null }))
 vi.mock('./WorkflowInputsEditor', () => ({
   WorkflowInputsEditor: ({

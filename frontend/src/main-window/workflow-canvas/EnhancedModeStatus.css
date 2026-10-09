@@ -1,0 +1,59 @@
+/* EnhancedModeStatus.css — 增强模式只读状态行
+ *
+ * 视觉与它所在的 .input-bar-effort-menu 选项行同一语言（12px / var(--font-mono) /
+ * --fg-2 / 6px 10px padding / hover --surface-hover），不引第二套审美：
+ * 它就住在推理强度菜单里，用户不该看出这是另一个组件。
+ * 状态语义走 is-on 类（--accent），与 .input-bar-effort-option.active 对齐。 */
+
+.wfc-enhanced-status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wfc-enhanced-status-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.wfc-enhanced-status-item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* 已启用：与同菜单的 active 档同语义（--accent 走主题 token，不写死色值） */
+.wfc-enhanced-status-item.is-on {
+  color: var(--fg-1);
+}
+
+.wfc-enhanced-status-item.is-on .wfc-enhanced-status-item-state {
+  color: var(--accent);
+}
+
+.wfc-enhanced-status-item-label {
+  flex: none;
+}
+
+.wfc-enhanced-status-item-sep {
+  flex: none;
+  color: var(--fg-4);
+}
+
+.wfc-enhanced-status-item-state {
+  color: var(--fg-2);
+}

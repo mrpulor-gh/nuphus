@@ -36,7 +36,7 @@ import {
 } from '../lib/api'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
 import { ApiHealthBadge, apiHealthRailLabel } from './ApiHealthBadge'
-import { EnhancedModeToggle } from '../workflow-canvas/EnhancedModeToggle'
+import { EnhancedModeStatus } from '../workflow-canvas/EnhancedModeStatus'
 
 interface TokenUsageInfo {
   inputTokens: number
@@ -531,6 +531,12 @@ export function ChatInputBar({
 
   // reasoning_efforts 是唯一能力契约；未声明时不显示可配置旋钮，避免伪造等级。
   const effortAvailable = supportedEfforts.length > 0
+
+  // 下拉的**入口**条件：可配置推理强度，或 workflow 模式下要露增强模式状态行。
+  // 二者分开：effortAvailable 决定「有没有等级可选」，effortMenuAvailable 决定
+  // 「这个 hover 弹窗该不该出现」。模型不声明 reasoning_efforts 时仍需展示增强
+  // 状态行（大王定稿：增强状态行落在推理强度弹窗内的下方），故入口放宽到二选一。
+  const effortMenuAvailable = effortAvailable || mode === 'workflow'
 
   // WORKFLOW mode requires system_automation permission
   const workflowLocked =
@@ -1106,7 +1112,7 @@ export function ChatInputBar({
             >
               <span className="input-bar-text input-bar-chip" onClick={onModelSwitch}>
                 {modelLabel || modelName || '—'}
-                {effortAvailable && (
+                {effortMenuAvailable && (
                   <IconChevronDown
                     className="input-bar-effort-caret"
                     aria-hidden
@@ -1115,24 +1121,30 @@ export function ChatInputBar({
                   />
                 )}
               </span>
-              {effortAvailable && modelEffortOpen && (
+              {effortMenuAvailable && modelEffortOpen && (
                 <div className="input-bar-effort-menu">
-                  <div
-                    className={`input-bar-effort-option ${!effort ? 'active' : ''}`}
-                    onClick={() => selectEffort(null)}
-                  >
-                    {t('models.reasoningDefault')}
-                  </div>
-                  {supportedEfforts.map(e => (
-                    <div
-                      key={e}
-                      className={`input-bar-effort-option ${effort === e ? 'active' : ''}`}
-                      onClick={() => selectEffort(e)}
-                    >
-                      {e}
-                      {e === 'high' ? ` (${t('models.reasoningHighHint')})` : ''}
-                    </div>
-                  ))}
+                  {effortAvailable && (
+                    <>
+                      <div
+                        className={`input-bar-effort-option ${!effort ? 'active' : ''}`}
+                        onClick={() => selectEffort(null)}
+                      >
+                        {t('models.reasoningDefault')}
+                      </div>
+                      {supportedEfforts.map(e => (
+                        <div
+                          key={e}
+                          className={`input-bar-effort-option ${effort === e ? 'active' : ''}`}
+                          onClick={() => selectEffort(e)}
+                        >
+                          {e}
+                          {e === 'high' ? ` (${t('models.reasoningHighHint')})` : ''}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {/* ── 增强模式状态行（只读，无开关）：点击跳设置 → 模型 → 增强判断模型 ── */}
+                  {mode === 'workflow' && <EnhancedModeStatus />}
                 </div>
               )}
             </div>

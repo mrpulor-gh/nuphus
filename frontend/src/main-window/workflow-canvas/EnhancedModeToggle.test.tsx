@@ -27,7 +27,7 @@ describe('EnhancedModeToggle', () => {
     })
     render(
       <LangProvider>
-        <EnhancedModeToggle compact />
+        <EnhancedModeToggle />
       </LangProvider>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Enhanced mode, Not configured' }))
@@ -127,7 +127,7 @@ describe('EnhancedModeToggle', () => {
       configured: false,
       status: 'primary_fallback',
     })
-    render(<EnhancedModeToggle compact />)
+    render(<EnhancedModeToggle />)
 
     const button = await screen.findByRole('button', { name: /增强模式，未配置/ })
     fireEvent.click(button)
@@ -200,13 +200,16 @@ describe('EnhancedModeToggle', () => {
 
     render(
       <>
-        <EnhancedModeToggle compact />
+        <EnhancedModeToggle />
         <EnhancedModeToggle />
       </>,
     )
 
     const buttons = await screen.findAllByRole('button', { name: /增强模式，已关闭/ })
-    expect(buttons[0]).toHaveClass('is-compact')
+    expect(buttons).toHaveLength(2)
+    for (const button of buttons) {
+      expect(button).toHaveAttribute('aria-pressed', 'false')
+    }
     fireEvent.click(buttons[0])
 
     await waitFor(() =>
