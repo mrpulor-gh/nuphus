@@ -1,12 +1,10 @@
-// DesktopToolbar.tsx — Desktop tool floating bar v4
-// Ctrl+U to invoke, freely draggable
+// DesktopToolbar.tsx — 桌面工具浮窗条 v6
+// 右侧固定按钮列（dock 常驻 + hover 从上到下逐次显形），**不可拖拽**、无快捷键、无置顶
 // Screenshot/region/OCR overlay tools: start_overlay_mask returns immediately, poll take_capture_result for results
 // Completely solve Tauri event loss / oneshot blocking null issue
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke as bridgeInvoke } from '../../core/bridge'
-import { usePanelDrag } from '../../hooks/usePanelDrag'
-import '../../styles/panel-drag.css'
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -29,12 +27,9 @@ import {
   IconCrop,
   IconCrosshair,
   IconType,
-  IconGrip,
   IconX,
   IconCopy,
   IconCheck,
-  IconPin,
-  IconPinOff,
   IconAppWindow,
 } from '../../ui/Icons'
 
@@ -42,11 +37,6 @@ import { Pipette as IconDropper } from 'lucide-react'
 
 import { OcrDictionary } from './OcrDictionary'
 import { Button, IconButton } from '../../ui/Button'
-
-interface DesktopToolbarProps {
-  visible: boolean
-  onClose: () => void
-}
 
 type ToolMode = null | 'screenshot' | 'picker' | 'mouse_pos' | 'ocr' | 'color_picker'
 
@@ -87,35 +77,17 @@ const TOOLS: ToolBtn[] = [
   { mode: 'ocr', icon: IconType, label: '字典', desc: '文字识别' },
 ]
 
-export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
-  // ── 拖拽（共享实现 usePanelDrag；storageKey = desktop_toolbar_pos、默认 {x:669,y:60}，
-  //    与抽取前逐字一致；不传 clampOnResize → 无窗口缩放钳制，行为零变化）──
-  const {
-    pos,
-    panelRef: barRef,
-    handleMouseDown,
-  } = usePanelDrag('desktop_toolbar_pos', {
-    fallback: { x: 669, y: 60 },
-    enabled: visible,
-  })
+/**
+ * hover 入场错峰步长（ms）：第 n 个按钮延迟 n × 步长，由 CSS 的 --stagger-delay 消费。
+ * 取 40ms —— 与 --transition-fast(120ms) 相邻，6 个按钮总时长约 320ms：
+ * 看得清「从上到下逐次显示」，又不会拖到像加载动画。
+ */
+const STAGGER_STEP_MS = 40
 
-  // ── Pin (always on top) state ──
-  const [pinned, setPinned] = useState(() => {
-    return localStorage.getItem('desktop_toolbar_pinned') === 'true'
-  })
-
-  const togglePin = useCallback(async () => {
-    const newState = !pinned
-    try {
-      const result = await bridgeInvoke<boolean>('toggle_main_window_topmost')
-      setPinned(result ?? newState)
-      localStorage.setItem('desktop_toolbar_pinned', String(result ?? newState))
-    } catch {
-      setPinned(newState)
-      localStorage.setItem('desktop_toolbar_pinned', String(newState))
-    }
-  }, [pinned])
-
+/** 把错峰步长交给样式层：只写 CSS 变量，不在 JS 里做定时器（卸载后无残留回调） */
+const staggerStyle = (index: number) =>
+  ({ '--stagger-delay': `${index * STAGGER_STEP_MS}ms` }) as React.CSSProperties
+export function DesktopToolbar() {
   // Sub-panel state
   const [activeTool, setActiveTool] = useState<ToolMode>(null)
   const [result, setResult] = useState<ToolResult | null>(null)
@@ -349,27 +321,24 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
     }
   }
 
-  if (!visible) return null
-
   return (
     <>
-      {/* ── Main toolbar ── */}
-      <div ref={barRef} className="desktop-toolbar" style={{ left: pos.x, top: pos.y }}>
-        {/* Drag handle */}
-        <div className="panel-grip" onMouseDown={handleMouseDown} title="拖拽移动">
-          <IconGrip size={14} />
-        </div>
-
-        {/* Tool buttons */}
-        {TOOLS.map(tool => (
+      {/* ── Dock：右侧固定按钮列。常驻占位 + hover 从上到下逐次显形 ──
+          列排布直接落在 dock 上（竖向 / gap 4px / 右对齐），同 .chat-header-right：
+          按钮等宽 30px，flex-end 与 center 视觉等价，用 flex-end 与 header 一致。
+          热区 = 这一列按钮的真实盒子，dock 不加任何 padding/margin/inset 撑大。 */}
+      <div className="desktop-toolbar-dock">
+        {/* Tool buttons —— 下标即错峰序号：第 i 个延迟 i × STAGGER_STEP_MS 入场 */}
+        {TOOLS.map((tool, i) => (
           <IconButton
             key={tool.mode}
             variant={activeTool === tool.mode ? 'desktop-toolbar-active' : 'desktop-toolbar'}
             label={tool.label}
             onClick={() => handleToolClick(tool.mode)}
             title={tool.desc}
+            style={staggerStyle(i)}
           >
-            <tool.icon size={16} />
+            <tool.icon size={15} />
             <span className="desktop-toolbar-label">{tool.label}</span>
           </IconButton>
         ))}
@@ -379,6 +348,7 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
           label="登记应用"
           disabled={loading}
           title="通过本地选择器登记未被自动发现的桌面应用；不会立即启动应用"
+          style={staggerStyle(TOOLS.length)}
           onClick={async () => {
             setLoading(true)
             try {
@@ -398,17 +368,21 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
             }
           }}
         >
-          <IconAppWindow size={16} />
+          <IconAppWindow size={15} />
           <span className="desktop-toolbar-label">登记应用</span>
         </IconButton>
 
-        {/* Separator */}
-        <div className="desktop-toolbar-divider" />
-
-        {/* Mouse position indicator */}
+        {/* ── 鼠标坐标：读数 + 关闭**并排成一组**，且**常驻不受 hover 显隐约束** ──
+            为什么必须常驻：整列平时 opacity:0，只在 hover dock 时才显形。若坐标
+            读数跟着一起隐藏，用户为了看读数/去别处用坐标，鼠标一离开 dock 就
+            什么都看不见了（2026-10-09 大王报障「点击后坐标位置获取不到」），
+            关闭钮也一起消失、无从点击。故本组自成一体：只要 activeTool 是
+            mouse_pos 就常驻显示，点关闭才收。
+            关闭钮与读数同级并排（原实现把它排在列末尾、落在读数「下方」）。 */}
         {activeTool === 'mouse_pos' && (
-          <>
+          <div className="desktop-toolbar-pos-group" role="group" aria-label="鼠标坐标">
             <button
+              type="button"
               className="desktop-toolbar-pos"
               onClick={async () => {
                 try {
@@ -421,34 +395,17 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
             >
               ({cursorPos.x}, {cursorPos.y})
             </button>
-            <IconButton
-              variant="desktop-toolbar"
-              label="停止鼠标跟踪"
+            <button
+              type="button"
+              className="desktop-toolbar-pos-close"
+              aria-label="关闭鼠标坐标"
+              title="关闭鼠标坐标"
               onClick={() => setActiveTool(null)}
-              style={{ color: '#f87171' }}
             >
-              <IconX size={14} />
-            </IconButton>
-          </>
+              <IconX size={15} />
+            </button>
+          </div>
         )}
-
-        {/* Pin button */}
-        <IconButton
-          variant={pinned ? 'desktop-toolbar-active' : 'desktop-toolbar'}
-          label={pinned ? '取消置顶' : '固定窗口置顶'}
-          onClick={togglePin}
-          style={{ color: pinned ? '#3b82f6' : undefined }}
-        >
-          {pinned ? <IconPin size={15} /> : <IconPinOff size={15} />}
-        </IconButton>
-
-        {/* Separator */}
-        <div className="desktop-toolbar-divider" />
-
-        {/* Close button */}
-        <IconButton variant="ghost" label="关闭" onClick={onClose} title="关闭 (Ctrl+U)">
-          <IconX size={14} />
-        </IconButton>
       </div>
 
       {/* ── Dictionary OCR panel ── */}
@@ -461,7 +418,9 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(0,0,0,0.5)',
+            // 遮罩归位到弹窗族语义键：原写死 rgba(0,0,0,0.5) 三主题同值，
+            // 与设置中心等弹窗宿主（--overlay-bg）不统一。
+            background: 'var(--overlay-bg)',
             backdropFilter: 'blur(4px)',
           }}
           onClick={() => setShowOcrDict(false)}
@@ -492,7 +451,8 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(0,0,0,0.5)',
+            // 遮罩归位到弹窗族语义键（同上：原写死 rgba(0,0,0,0.5)）。
+            background: 'var(--overlay-bg)',
             backdropFilter: 'blur(4px)',
           }}
           onClick={() => {
@@ -503,7 +463,10 @@ export function DesktopToolbar({ visible, onClose }: DesktopToolbarProps) {
           <div
             onClick={e => e.stopPropagation()}
             style={{
-              background: 'var(--glass-bg-soft, rgba(10,10,18,0.82))',
+              // 面板底归位弹窗族：原 --glass-bg-soft（α 三主题写死，且带 rgba 硬兜底），
+              // 滑块（主题设置 → 界面不透明度 → 控制面板）遍历不到它。与
+              // .settings-center-panel / .session-rail-drawer / .wfst-panel / .wcf-content 同一按键。
+              background: 'var(--panel-bg)',
               backdropFilter: 'blur(24px)',
               borderRadius: 20,
               padding: 20,

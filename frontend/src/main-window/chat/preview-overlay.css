@@ -479,7 +479,8 @@
 /* ── 编辑入口：右侧中部悬浮 ✎（P4）──
    三态契约与 app-island.css 的 .app-island-pill 对齐（hover surface-2+line-3、
    focus-visible 用 box-shadow 而非 outline、active surface-active）；
-   激活态沿用 chat-input.css 的 .input-bar-toolbox-btn.is-active 范式（accent 系）。 */
+   激活态走 accent 系（对应 .input-bar-toolbox-btn.is-active 范式，该类已于
+   2026-10-09 随输入框扳手入口下线而移除，此处保留范式说明）。 */
 .pv-edit-toggle {
   position: absolute;
   /* 大王定案：右侧靠上 12%（不是垂直居中——中位既挡视线又要来回找）*/

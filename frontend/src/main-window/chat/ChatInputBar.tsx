@@ -6,7 +6,6 @@ import {
   IconBrain,
   IconWorkflow,
   IconSparkles,
-  IconWrench,
   IconFolder,
   IconPlus,
   IconPaperclip,
@@ -19,7 +18,6 @@ import {
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
 import type { RefineState } from '../../hooks/useExecutionUI'
-import { formatPrimaryShortcut } from '../../ui/platformShortcut'
 import { MOOD_COLORS } from '../layout/StatusBar'
 import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { StopChoiceDialog } from '../../ui/StopChoiceDialog'
@@ -37,7 +35,6 @@ import {
   type CustomAgentConfig,
 } from '../lib/api'
 import type { ExecutionStage } from '../../hooks/useExecutionState'
-import { useWorkflowGate } from '../lib/useWorkflowGate'
 import { ApiHealthBadge, apiHealthRailLabel } from './ApiHealthBadge'
 import { EnhancedModeToggle } from '../workflow-canvas/EnhancedModeToggle'
 
@@ -108,13 +105,6 @@ interface ChatInputBarProps {
   onEffortChange: (effort: string | null) => void
   /** 工作流模式（mode chip 第四档） */
   onToggleWorkAgentMode?: () => Promise<void>
-  /** 桌面工具箱（Ctrl+U）显示状态与切换（workflow 模式下在 mode chip 旁显示按钮） */
-  showDesktopToolbar?: boolean
-  onToggleDesktopToolbar?: () => void
-  /** 扳手菜单「工作流画布」：直达画布（续最近草稿或新建空白，App 层执行） */
-  onOpenWorkflowCanvas?: () => void
-  /** 扳手菜单「工作流列表」：打开 WorkflowPage 弹窗（等同 Ctrl+K → 工作流） */
-  onOpenWorkflowList?: () => void
   onModelSwitch: () => void
   /** 权限状态（用于 WORKFLOW 模式权限检查） */
   toolPermissions?: { file_access: boolean; web_search: boolean; system_automation: boolean }
@@ -181,10 +171,6 @@ export function ChatInputBar({
   onSetMode,
   onManageCustomAgents,
   onToggleWorkAgentMode,
-  showDesktopToolbar,
-  onToggleDesktopToolbar,
-  onOpenWorkflowCanvas,
-  onOpenWorkflowList,
   modelLabel,
   modelName,
   effort,
@@ -223,53 +209,8 @@ export function ChatInputBar({
   const executing = executionStage !== 'idle'
   const [localTextareaRef, setLocalTextareaRef] = useState<HTMLTextAreaElement | null>(null)
   const modeSwitchLock = useRef(false)
-  // ── 全局执行闸门（大王铁律：任意执行态禁用 workflow 快捷入口）──
-  // 仅 workflow 模式轮询感知执行态（1.5s）；其它模式 pollMs=0 只挂载查一次，不空转 IPC。
-  // gate.locked 时扳手禁用 + hover 提示原因（后端权威源 wf_gate_status：active_run + Agent busy）
-  const gate = useWorkflowGate(mode === 'workflow' ? 1500 : 0)
-  const gateLocked = gate.locked
-  const gateLockNotice =
-    gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
   // ── 工具弹窗（附件/图片/原则/标注 合并入口）──
   const [toolMenuOpen, setToolMenuOpen] = useState(false)
-  /** workflow 扳手菜单（hover/click 展开）：工作流画布 / 工作流列表 / 工具箱（Ctrl+U） */
-  const [wfMenuOpen, setWfMenuOpen] = useState(false)
-  const wfMenuRef = useRef<HTMLDivElement>(null)
-  const wfMenuTimerRef = useRef<number | null>(null)
-  const openWfMenu = useCallback(() => {
-    if (wfMenuTimerRef.current) window.clearTimeout(wfMenuTimerRef.current)
-    setWfMenuOpen(true)
-  }, [])
-  const closeWfMenuSoon = useCallback(() => {
-    if (wfMenuTimerRef.current) window.clearTimeout(wfMenuTimerRef.current)
-    wfMenuTimerRef.current = window.setTimeout(() => setWfMenuOpen(false), 180)
-  }, [])
-  useEffect(
-    () => () => {
-      if (wfMenuTimerRef.current) window.clearTimeout(wfMenuTimerRef.current)
-    },
-    [],
-  )
-  // 外部点击 / Esc 关闭（菜单可点，不能只靠 hover 消失）
-  useEffect(() => {
-    if (!wfMenuOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (wfMenuRef.current && !wfMenuRef.current.contains(e.target as Node)) setWfMenuOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setWfMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [wfMenuOpen])
-  // 执行态锁定时立即收起已开菜单（防止菜单悬空）
-  useEffect(() => {
-    if (gateLocked) setWfMenuOpen(false)
-  }, [gateLocked])
   const toolMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!toolMenuOpen) return
@@ -1153,82 +1094,6 @@ export function ChatInputBar({
                 </div>
               )}
             </div>
-            {/* ── workflow 工具菜单按钮（扳手，图标不变）：仅 workflow 模式显示。
-                 hover/点击展开三项：工作流画布（直达续编/新建）/ 工作流列表（Ctrl+K 直达）
-                 / 工具箱 Ctrl+U（原点击行为收进菜单）。── */}
-            {mode === 'workflow' && (
-              <EnhancedModeToggle compact disabled={gateLocked || isProcessing} />
-            )}
-            {mode === 'workflow' && (
-              <div
-                className="input-bar-toolbox-wrap"
-                ref={wfMenuRef}
-                onMouseEnter={openWfMenu}
-                onMouseLeave={closeWfMenuSoon}
-              >
-                <IconButton
-                  variant="raw"
-                  className={`input-bar-toolbox-btn${showDesktopToolbar ? ' is-active' : ''}${gateLocked ? ' is-locked' : ''}`}
-                  label={gateLocked ? gateLockNotice : t('wfMenu.title')}
-                  onClick={() => setWfMenuOpen(o => !o)}
-                >
-                  <IconWrench size={13} />
-                </IconButton>
-                {wfMenuOpen &&
-                  (gateLocked ? (
-                    /* 执行态锁定：不提供可用项，仅说明原因（禁止进入画布/列表是闸门铁律） */
-                    <div className="input-bar-toolbox-menu" role="status">
-                      <div className="input-bar-toolbox-lock">{gateLockNotice}</div>
-                    </div>
-                  ) : (
-                    <div
-                      className="input-bar-toolbox-menu"
-                      role="menu"
-                      aria-label={t('wfMenu.title')}
-                    >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="input-bar-toolbox-item"
-                        onClick={() => {
-                          setWfMenuOpen(false)
-                          onOpenWorkflowCanvas?.()
-                        }}
-                      >
-                        <span>{t('wfMenu.canvas')}</span>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="input-bar-toolbox-item"
-                        onClick={() => {
-                          setWfMenuOpen(false)
-                          onOpenWorkflowList?.()
-                        }}
-                      >
-                        <span>{t('wfMenu.list')}</span>
-                        <kbd className="input-bar-toolbox-item-key">
-                          {formatPrimaryShortcut('K')}
-                        </kbd>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="input-bar-toolbox-item"
-                        onClick={() => {
-                          setWfMenuOpen(false)
-                          onToggleDesktopToolbar?.()
-                        }}
-                      >
-                        <span>{t('wfMenu.toolbox')}</span>
-                        <kbd className="input-bar-toolbox-item-key">
-                          {formatPrimaryShortcut('U')}
-                        </kbd>
-                      </button>
-                    </div>
-                  ))}
-              </div>
-            )}
             {/* ── model chip：点击切换模型；hover 弹出推理强度选择（默认/low/high/max）── */}
             <div
               className="input-bar-model"

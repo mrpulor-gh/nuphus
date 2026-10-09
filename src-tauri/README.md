@@ -112,7 +112,7 @@ Runtime::react_loop() → 流式事件 → 推送到前端
 | `mcp.rs` | MCP 管理 | `list_mcp_servers`, `list_mcp_tools` |
 | `chat_agent.rs` | ChatAgent 配置 | `chat_agent_list`, `chat_agent_save`, `chat_agent_delete`, `chat_agent_set_active`, `chat_agent_get_active` |
 | `custom_agent.rs` | 自定义 Agent | `list_custom_agents`, `save_custom_agent`, `delete_custom_agent`, `get_active_custom_agent`, `set_active_custom_agent` |
-| `toolbar.rs` | 工具栏/覆盖层 | `toggle_main_window_topmost`, `finish_startup`, `ensure_overlay`, `overlay_capture_confirm`, `hide_overlay` 等 |
+| `toolbar.rs` | 工具栏/覆盖层 | `finish_startup`, `ensure_overlay`, `overlay_capture_confirm`, `hide_overlay` 等 |
 | `export_log.rs` | 日志导出 | `export_error_log` |
 
 另有 `speech/`（STT：stt_start/stt_stop/stt_cancel/stt_status/stt_recognize_file/stt_download_model）、`video/`（视频字幕）、`render/`（PDF 渲染）、`mobile_server`、`relay_client`、`plugin_apps` 等模块在 main.rs invoke_handler 注册（约 177 个命令）。

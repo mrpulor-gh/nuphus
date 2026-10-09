@@ -232,21 +232,11 @@ export default function App() {
     // layout effect 先于本 passive effect 执行），故无需列入依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // ── 输入栏 workflow 扳手菜单「工作流画布」直达（2026-09-03 大王定稿）：
-  //    有未完成（draft）工作流 → 续编最近草稿；否则新建空白工作流并进入画布。
-  //    闸门铁律同 WorkflowPage：任意执行态禁止进入画布（点击级 gate 复核）。──
-  const handleWorkflowCanvasDirect = async () => {
-    s.setShowCanvas(true)
-  }
-  /** 输入栏 workflow 扳手菜单「工作流列表」：等同 Ctrl+K → 工作流（WorkflowPage 弹窗） */
-  const handleOpenWorkflowList = () => s.setShowWorkflow(true)
   // ── 应用插件全屏宿主（App Plugin 体系；打开即关闭列表弹窗，仿画布模式）──
   const [runningPluginId, setRunningPluginId] = useState<string | null>(null)
   // ── 宿主最小化态：true 时 AppShellPage 保持挂载但 visibility 隐藏（iframe 保活），
   //    主窗口输入框 dock 左侧悬浮 PluginRestoreFab 点击恢复 ──
   const [pluginMinimized, setPluginMinimized] = useState(false)
-  // ── Desktop toolbar (Ctrl+U) ──
-  const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
   const [showSettingsCenter, setShowSettingsCenter] = useState(false)
   // island 落点锚点：模型页这类全屏宿主（fixed inset:0 + z 2500）会盖住聊天区，
@@ -278,7 +268,7 @@ export default function App() {
   }
   /**
    * 聊天界面快捷键的可用性闸门：设置中心面板打开时不响应。
-   * 这些快捷键作用于面板「背后」的聊天界面（Ctrl+N 新建会话 / Ctrl+U 桌面工具栏 /
+   * 这些快捷键作用于面板「背后」的聊天界面（Ctrl+N 新建会话 /
    * Ctrl+L 聚焦输入框 / Ctrl+Shift+W 工作流面板），焦点此时已被焦点陷阱收进面板，
    * 继续生效会让用户在弹窗里的操作意外改动背后会话。Ctrl+K 例外 —— 它的语义是
    * 「先退出面板，再执行原分支」，见下。
@@ -316,12 +306,6 @@ export default function App() {
       handler: () => {
         /* TODO: 插件搜索 */
       },
-    },
-    {
-      key: 'u',
-      ctrl: true,
-      enabled: chatShortcutEnabled,
-      handler: () => setShowDesktopToolbar((p: boolean) => !p),
     },
     {
       // 工作流步骤面板：收起 / 展开。
@@ -550,10 +534,6 @@ export default function App() {
                 s.showToast(t('refine.dismissHint'), 'info')
               }}
               isWorkflowRunning={s.workflowRunSteps.length > 0}
-              showDesktopToolbar={showDesktopToolbar}
-              onToggleDesktopToolbar={() => setShowDesktopToolbar(o => !o)}
-              onOpenWorkflowCanvas={() => void handleWorkflowCanvasDirect()}
-              onOpenWorkflowList={handleOpenWorkflowList}
               onOpenSettings={() => setShowSettingsCenter(true)}
               /* 外观浮窗的全局打开请求（Ctrl+K → 外观）：开关 state 在
                  ChatPanel 内，这里只喂请求 + 在收起时收回 */
@@ -1196,8 +1176,8 @@ export default function App() {
         <AnnotationsDialog onClose={() => setMemoryDialog(null)} />
       )}
 
-      {/* ── Desktop toolbar (Ctrl+U) ── */}
-      <DesktopToolbar visible={showDesktopToolbar} onClose={() => setShowDesktopToolbar(false)} />
+      {/* ── Desktop toolbar：右侧固定竖条，hover 显隐（无快捷键 / 无关闭） ── */}
+      <DesktopToolbar />
     </div>
   )
 }

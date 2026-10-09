@@ -421,7 +421,6 @@ fn main() {
             commands::dict_ocr::dict_list,
             commands::dict_ocr::dict_load,
             commands::dict_ocr::dict_delete,
-            commands::toggle_main_window_topmost,
             commands::finish_startup,
             commands::splash_status_update,
             commands::splash_skip_download,

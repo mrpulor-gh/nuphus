@@ -2031,11 +2031,6 @@ const zh: Record<string, string> = {
   'workflow.runCount': '运行 {0} 次',
   'workflow.run': '启动',
   'workflow.canvas': '画布',
-  // 输入栏 workflow 模式扳手菜单（工作流画布 / 工作流列表 / 工具箱）
-  'wfMenu.title': '工作流工具',
-  'wfMenu.canvas': '工作流画布',
-  'wfMenu.list': '工作流列表',
-  'wfMenu.toolbox': '工具箱',
 
   'workflowCreate.title': '创建工作流',
   'workflowCreate.errorName': '请填写工作流名称',
@@ -2074,7 +2069,6 @@ const zh: Record<string, string> = {
   'help.shortcut.palette': '打开命令面板；Workflow 模式下打开工作流列表',
   'help.shortcut.focusInput': '聚焦输入框',
   'help.shortcut.newChat': '新建会话（当前对话归档）',
-  'help.shortcut.desktopToolbar': '桌面工具栏（取色 / 截屏等工具）',
   'help.shortcut.workflowPanel': '工作流步骤面板：收起 / 展开（运行中有步骤时可用）',
   'help.shortcut.esc': '关闭弹窗 / 取消',
   'help.entries': '界面入口',

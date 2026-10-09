@@ -10,9 +10,6 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// Global always-on-top state
-static ALWAYS_ON_TOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Whether overlay window has been created (lazy init)
 static OVERLAY_CREATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -30,17 +27,6 @@ pub static STARTUP_FINISHED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 // ── Main window control ──
-
-#[tauri::command]
-pub async fn toggle_main_window_topmost(app: AppHandle) -> Result<bool, String> {
-    let new_state = !ALWAYS_ON_TOP.load(std::sync::atomic::Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window("main") {
-        win.set_always_on_top(new_state)
-            .map_err(|e| format!("设置窗口置顶失败: {e}"))?;
-    }
-    ALWAYS_ON_TOP.store(new_state, std::sync::atomic::Ordering::SeqCst);
-    Ok(new_state)
-}
 
 /// Called by frontend when initialization is complete.
 /// Closes the splash window and shows the main window.

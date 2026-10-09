@@ -3,7 +3,7 @@
  *
  * 2026-09-28 整页按当前源码重写 —— 这里钉住重写的核心事实：
  * ① 斜杠命令 13 条与 ChatPanel SLASH_ITEMS 一致（含 /snake，无已移除的 /project）；
- * ② 快捷键覆盖 App.tsx useKeyboard 的真实绑定（Ctrl+K / L / N / U / Shift+W）；
+ * ② 快捷键覆盖 App.tsx useKeyboard 的真实绑定（Ctrl+K / L / N / Shift+W；Ctrl+U 桌面工具栏已彻底移除）；
  * ③ 新版块「界面入口 / 使用建议」在，且不再引用死命令 /project。
  */
 import { render, screen, within } from '@testing-library/react'
@@ -49,20 +49,12 @@ describe('HelpPage 帮助内容', () => {
     expect(slashSection.textContent).not.toContain('/project')
   })
 
-  it('快捷键覆盖真实绑定（K / L / N / U / Shift+W / Esc），无 TODO 占位', () => {
+  it('快捷键覆盖真实绑定（K / L / N / Shift+W / Esc），无 TODO 占位', () => {
     render(<HelpPage />)
     const shortcutSection = screen
       .getByRole('heading', { name: '快捷键' })
       .closest('section') as HTMLElement
-    for (const keys of [
-      'Enter',
-      primary('K'),
-      primary('L'),
-      primary('N'),
-      primary('U'),
-      shiftPrimary,
-      'Esc',
-    ]) {
+    for (const keys of ['Enter', primary('K'), primary('L'), primary('N'), shiftPrimary, 'Esc']) {
       expect(within(shortcutSection).getByText(keys)).toBeInTheDocument()
     }
     // 未实现的 TODO 占位（Ctrl/Cmd+O）不写进帮助

@@ -217,13 +217,6 @@ interface ChatPanelProps {
   onShowExecTrace?: (trace: TimelineEntry[]) => void
   /** Leader 暂停是否禁用（workflow 运行时） */
   isWorkflowRunning?: boolean
-  /** 桌面工具箱（Ctrl+U）显示状态与切换（workflow 模式输入栏按钮） */
-  showDesktopToolbar?: boolean
-  onToggleDesktopToolbar?: () => void
-  /** workflow 扳手菜单「工作流画布」：直达画布（续草稿或新建） */
-  onOpenWorkflowCanvas?: () => void
-  /** workflow 扳手菜单「工作流列表」：打开 WorkflowPage（等同 Ctrl+K → 工作流） */
-  onOpenWorkflowList?: () => void
   /** 输入栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
   onOpenSettings?: () => void
   /**
@@ -339,10 +332,6 @@ export function ChatPanel({
   onToggleWorkAgentMode,
   startupStats,
   isWorkflowRunning,
-  showDesktopToolbar,
-  onToggleDesktopToolbar,
-  onOpenWorkflowCanvas,
-  onOpenWorkflowList,
   onOpenSettings,
   appearanceOpen,
   onAppearanceDismiss,
@@ -1629,7 +1618,7 @@ export function ChatPanel({
     setPendingFiles(prev => prev.filter((_, i) => i !== index))
   }, [])
 
-  // ── Capture result from DesktopToolbar (Ctrl+U screenshot) ──
+  // ── Capture result from DesktopToolbar (右侧竖条发起的截图) ──
   useEffect(() => {
     const handler = (e: Event) => {
       const { path, region, base64 } = (e as CustomEvent).detail as {
@@ -2095,7 +2084,7 @@ export function ChatPanel({
                                         })}
                                     </div>
                                   )}
-                                {/* ── 截图引用（Ctrl+U 截图：本地文件路径经 asset 协议显示）── */}
+                                {/* ── 截图引用（桌面工具条截图：本地文件路径经 asset 协议显示）── */}
                                 {msg.references &&
                                   msg.references.some(r => r.type === 'capture') && (
                                     <div className="msg-images">
@@ -2596,10 +2585,6 @@ export function ChatPanel({
           onGracefulStop={onGracefulStop}
           appendQueue={appendQueue}
           isWorkflowRunning={isWorkflowRunning}
-          showDesktopToolbar={showDesktopToolbar}
-          onToggleDesktopToolbar={onToggleDesktopToolbar}
-          onOpenWorkflowCanvas={onOpenWorkflowCanvas}
-          onOpenWorkflowList={onOpenWorkflowList}
           toolPermissions={toolPermissions}
           onFileSelect={handleFileSelect}
           onImageAttach={handleImageAttach}

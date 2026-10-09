@@ -1,6 +1,6 @@
 // usePanelDrag.ts — 应用内面板拖拽的**单一实现点**
 //
-// 机制从 DesktopToolbar.tsx（Ctrl+U 浮窗条，battle-tested）逐行抽出：
+// 机制从 DesktopToolbar.tsx（桌面工具浮窗条，battle-tested）逐行抽出：
 //   mousedown 记抓取偏移 → window mousemove 实时跟手（视口边界钳制）→ mouseup 落盘
 // 语义与源实现同构（mousedown/mousemove/mouseup，**不用 pointer events**），
 // 只对源语义做两项**可选**扩展，且默认关闭，老调用方行为零变化：

@@ -637,7 +637,10 @@ export function OcrDictionary({ onClose }: OcrDictionaryProps) {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        background: 'var(--glass-bg-soft)',
+        // 面板底归位弹窗族语义键 --panel-bg（**主题设置 → 界面不透明度 → 控制面板**滑块
+        // 派生）：原 --glass-bg-soft 的 α 三主题写死，滑块遍历不到它，与取色器面板/
+        // .settings-center-panel 等不同族。backdrop-filter 磨砂观感保留（同 .wfst-panel）。
+        background: 'var(--panel-bg)',
         backdropFilter: 'blur(24px)',
         border: '1px solid var(--glass-4)',
         borderRadius: 20,

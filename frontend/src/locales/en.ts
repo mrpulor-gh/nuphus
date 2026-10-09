@@ -2132,11 +2132,6 @@ const en: Record<string, string> = {
   'workflow.runCount': 'Run {0} times',
   'workflow.run': 'Run',
   'workflow.canvas': 'Canvas',
-  // Input box: workflow mode wrench menu (workflow canvas / workflow list / toolbox)
-  'wfMenu.title': 'Workflow tools',
-  'wfMenu.canvas': 'Workflow canvas',
-  'wfMenu.list': 'Workflow list',
-  'wfMenu.toolbox': 'Toolbox',
 
   'workflowCreate.title': 'Create Workflow',
   'workflowCreate.errorName': 'Please enter a workflow name',
@@ -2176,7 +2171,6 @@ const en: Record<string, string> = {
   'help.shortcut.palette': 'Open command palette; in Workflow mode, open workflows',
   'help.shortcut.focusInput': 'Focus the input box',
   'help.shortcut.newChat': 'New session (archives the current chat)',
-  'help.shortcut.desktopToolbar': 'Desktop toolbar (color picker, screen capture, etc.)',
   'help.shortcut.workflowPanel':
     'Workflow steps panel: collapse / expand (available while a run has steps)',
   'help.shortcut.esc': 'Close modal / Cancel',

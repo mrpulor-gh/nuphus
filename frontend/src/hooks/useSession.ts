@@ -295,12 +295,10 @@ export interface SessionAPI {
   // ── Command palette & keyboard ──
   cmdPaletteOpen: boolean
   focusSignal: number
-  showDesktopToolbar: boolean
   regionPickerMode: 'picker' | 'capture' | 'ocr' | null
   expandedCalls: Set<string>
   setCmdPaletteOpen: (v: boolean | ((prev: boolean) => boolean)) => void
   setFocusSignal: (v: number | ((prev: number) => number)) => void
-  setShowDesktopToolbar: (v: boolean | ((prev: boolean) => boolean)) => void
   setRegionPickerMode: (v: 'picker' | 'capture' | 'ocr' | null) => void
   setExpandedCalls: (v: Set<string> | ((prev: Set<string>) => Set<string>)) => void
 
@@ -1093,7 +1091,6 @@ export function useSession(): SessionAPI {
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false)
   const [focusSignal, setFocusSignal] = useState(0)
   const [executionCounter, setExecutionCounter] = useState(0)
-  const [showDesktopToolbar, setShowDesktopToolbar] = useState(false)
   const [regionPickerMode, setRegionPickerMode] = useState<'picker' | 'capture' | 'ocr' | null>(
     null,
   )
@@ -1243,12 +1240,10 @@ export function useSession(): SessionAPI {
     // Command palette & keyboard
     cmdPaletteOpen,
     focusSignal,
-    showDesktopToolbar,
     regionPickerMode,
     expandedCalls,
     setCmdPaletteOpen,
     setFocusSignal,
-    setShowDesktopToolbar,
     setRegionPickerMode,
     setExpandedCalls,
 

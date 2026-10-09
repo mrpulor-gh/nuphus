@@ -63,7 +63,6 @@ export function HelpPage() {
     { keys: formatPrimaryShortcut('K'), key: 'help.shortcut.palette' },
     { keys: formatPrimaryShortcut('L'), key: 'help.shortcut.focusInput' },
     { keys: formatPrimaryShortcut('N'), key: 'help.shortcut.newChat' },
-    { keys: formatPrimaryShortcut('U'), key: 'help.shortcut.desktopToolbar' },
     { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+Shift+W`, key: 'help.shortcut.workflowPanel' },
     { keys: 'Esc', key: 'help.shortcut.esc' },
   ] as const
