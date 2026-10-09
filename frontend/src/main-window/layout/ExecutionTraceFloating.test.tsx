@@ -381,9 +381,12 @@ describe('execution trace sticky scroll (useStickyScroll)', () => {
   })
 })
 
-describe('history folding', () => {
+describe('history folding by step', () => {
   beforeEach(() => {
-    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    )
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
   })
   afterEach(() => {
@@ -400,61 +403,182 @@ describe('history folding', () => {
     }))
   }
 
+  /** 混合流：每步前挂一段文本 —— 验证切点落在 tool_call 起点、文本整段不劈半 */
+  function makeMixedCalls(n: number): TimelineEntry[] {
+    const out: TimelineEntry[] = []
+    for (let i = 1; i <= n; i++) {
+      out.push({ id: `text-${i}`, kind: 'text', text: `段落 ${i}` })
+      out.push({
+        id: `call-${i}`,
+        kind: 'tool_call',
+        toolName: `tool_${i}`,
+        status: 'success',
+      })
+    }
+    return out
+  }
+
+  const panel = (entries: TimelineEntry[]) => (
+    <ExecutionTraceFloating
+      timeline={entries}
+      stepIndex={entries.length}
+      progress={{ iteration: 1, max: 200, calls: entries.length }}
+      isProcessing={false}
+      completed={false}
+      expandedCalls={new Set()}
+      onToggleExpand={vi.fn()}
+      visible
+    />
+  )
+
   function renderTimeline(entries: TimelineEntry[]) {
-    return render(
-      <ExecutionTraceFloating
-        timeline={entries}
-        stepIndex={entries.length}
-        progress={{ iteration: 1, max: 200, calls: entries.length }}
-        isProcessing={false}
-        completed={false}
-        expandedCalls={new Set()}
-        onToggleExpand={vi.fn()}
-        visible
-      />,
-    )
+    return render(panel(entries))
   }
 
   const indicators = (container: HTMLElement) =>
     Array.from(container.querySelectorAll('.tc-option-indicator')).map(el => el.textContent)
 
-  it('超阈值时只渲染最近 40 条，更早的收进一行摘要', () => {
-    const { container } = renderTimeline(makeCalls(60))
-    expect(screen.getByText('已折叠更早的 20 项 · 点击展开')).toBeInTheDocument()
-    expect(container.querySelectorAll('.tc-option')).toHaveLength(40)
+  /**
+   * 卡片模式滚动容器。jsdom 无布局：scrollHeight 按「已渲染步数 × px」现算 ——
+   * 于是「展开前后的高度差」可被精确断言（锚点补偿量的唯一依据）。
+   */
+  function scrollBodyOf(container: HTMLElement, pxPerStep = 100): HTMLDivElement {
+    const el = container.querySelector('.execution-trace-body') as HTMLDivElement
+    if (!el) throw new Error('.execution-trace-body 未渲染')
+    Object.defineProperty(el, 'scrollHeight', {
+      configurable: true,
+      get: () => container.querySelectorAll('.tc-option').length * pxPerStep,
+    })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 400 })
+    return el
+  }
+
+  /** 模拟「用户上滚到折叠条」：先落远处建立方向，再落进触发带（≤32px） */
+  function scrollUpToFoldBar(el: HTMLDivElement, from: number, to: number) {
+    el.scrollTop = from
+    fireEvent.scroll(el)
+    el.scrollTop = to
+    fireEvent.scroll(el)
+  }
+
+  it('默认档只渲染最新 30 步，折叠条文案以「步」计', () => {
+    const { container } = renderTimeline(makeCalls(90))
+    expect(screen.getByText('已折叠更早的 60 步 · 上滚展开')).toBeInTheDocument()
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(30)
     expect(screen.queryByText('tool_1')).not.toBeInTheDocument()
-    expect(screen.getByText('tool_60')).toBeInTheDocument()
+    expect(screen.getByText('tool_90')).toBeInTheDocument()
   })
 
   it('折叠态的序号接着数，不从 1 重来', () => {
-    const { container } = renderTimeline(makeCalls(60))
+    const { container } = renderTimeline(makeCalls(90))
     const nums = indicators(container)
-    expect(nums).toHaveLength(40)
-    expect(nums[0]).toBe('21')
-    expect(nums[39]).toBe('60')
+    expect(nums).toHaveLength(30)
+    expect(nums[0]).toBe('61')
+    expect(nums[29]).toBe('90')
   })
 
-  it('展开后全部条目回归，序号仍连续', () => {
-    const { container } = renderTimeline(makeCalls(60))
-    fireEvent.click(screen.getByText('已折叠更早的 20 项 · 点击展开'))
+  it('切点落在 tool_call 起点：整段文本整体隐藏，不劈半', () => {
+    // 40 步 → 默认档 30 步 → 收起最前 10 步；切点 = 第 11 条 tool_call
+    const { container } = renderTimeline(makeMixedCalls(40))
+    const body = container.querySelector('.execution-trace-body') as HTMLElement
+    expect(screen.getByText('已折叠更早的 10 步 · 上滚展开')).toBeInTheDocument()
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(30)
+    // 折叠条之后的**第一个内容节点**就是 tool_call 卡片 —— 切点落在步骤起点上
+    const [, firstContent] = Array.from(body.children)
+    expect(firstContent.classList.contains('tc-option')).toBe(true)
+    expect(indicators(container)[0]).toBe('11')
+    // 折叠区内的文本整段隐藏（不是被截半），可见区内的文本整段保留
+    expect(screen.queryByText('段落 11')).not.toBeInTheDocument()
+    expect(screen.getByText('段落 12')).toBeInTheDocument()
+  })
+
+  it('折叠条点击可展开一档、再点收起回默认档', () => {
+    const { container } = renderTimeline(makeCalls(90))
+    fireEvent.click(screen.getByText('已折叠更早的 60 步 · 上滚展开'))
     expect(container.querySelectorAll('.tc-option')).toHaveLength(60)
-    expect(screen.getByText('tool_1')).toBeInTheDocument()
-    const nums = indicators(container)
-    expect(nums[0]).toBe('1')
-    expect(nums[40]).toBe('41')
-    expect(nums[59]).toBe('60')
-  })
-
-  it('展开后可再收起，回到折叠态', () => {
-    const { container } = renderTimeline(makeCalls(60))
-    fireEvent.click(screen.getByText('已折叠更早的 20 项 · 点击展开'))
-    fireEvent.click(screen.getByText('收起更早的 20 项'))
-    expect(container.querySelectorAll('.tc-option')).toHaveLength(40)
+    expect(screen.getByText('收起更早的 60 步')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('收起更早的 60 步'))
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(30)
     expect(screen.queryByText('tool_1')).not.toBeInTheDocument()
   })
 
-  it('条目未超阈值时不出现折叠行', () => {
-    renderTimeline(makeCalls(40))
+  it('上滚到折叠条自动 +30 步，并按新增高度补偿 scrollTop（视野不跳）', () => {
+    const { container } = renderTimeline(makeCalls(90))
+    const body = scrollBodyOf(container)
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(30)
+
+    scrollUpToFoldBar(body, 300, 10)
+
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(60)
+    expect(screen.getByText('收起更早的 60 步')).toBeInTheDocument()
+    // 新增 30 步 × 100px = 3000px 插在折叠条之后：scrollTop 同步 +3000，视野停在原处
+    expect(body.scrollTop).toBe(10 + 3000)
+    // 序号续数：可见区首条是第 31 步
+    expect(indicators(container)[0]).toBe('31')
+  })
+
+  it('展开补偿产生的程序滚动不连环触发；再上滚才再放一档', () => {
+    const { container } = renderTimeline(makeCalls(90))
+    const body = scrollBodyOf(container)
+    scrollUpToFoldBar(body, 300, 10)
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(60)
+
+    // 补偿把 scrollTop 推到带外，浏览器为此派发的 scroll（向下）不得触发续展
+    fireEvent.scroll(body)
+    // 仍在带外但方向为上：折叠条未贴顶，同样不触发
+    body.scrollTop = 100
+    fireEvent.scroll(body)
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(60)
+
+    // 重新上滚到折叠条 → 再 +30；全部放出后折叠条消失（无更早内容）
+    scrollUpToFoldBar(body, 100, 5)
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(90)
     expect(screen.queryByText(/已折叠更早的/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/收起更早的/)).not.toBeInTheDocument()
+  })
+
+  it('步数未超默认档时不出现折叠条，上滚也不续展', () => {
+    const { container } = renderTimeline(makeCalls(30))
+    expect(screen.queryByText(/已折叠更早的/)).not.toBeInTheDocument()
+    const body = scrollBodyOf(container)
+    scrollUpToFoldBar(body, 300, 10)
+    expect(container.querySelectorAll('.tc-option')).toHaveLength(30)
+  })
+
+  it('新一轮开始（步数回落默认档以内）自动收回默认档', () => {
+    const utils = renderTimeline(makeCalls(90))
+    fireEvent.click(screen.getByText('已折叠更早的 60 步 · 上滚展开'))
+    expect(utils.container.querySelectorAll('.tc-option')).toHaveLength(60)
+
+    // 新一轮：timeline 回落到 5 步
+    utils.rerender(panel(makeCalls(5)))
+    expect(utils.container.querySelectorAll('.tc-option')).toHaveLength(5)
+    expect(screen.queryByText(/已折叠更早的/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/收起更早的/)).not.toBeInTheDocument()
+    expect(indicators(utils.container)).toEqual(['1', '2', '3', '4', '5'])
+  })
+
+  it('新一轮即使步数不减少，也收回默认档（换轮次信号）', () => {
+    const utils = renderTimeline(makeCalls(90))
+    fireEvent.click(screen.getByText('已折叠更早的 60 步 · 上滚展开'))
+    expect(utils.container.querySelectorAll('.tc-option')).toHaveLength(60)
+
+    // 新一轮：头部条目 id 变化（call-1 → round2-call-1），步数同为 90
+    const nextRound = makeCalls(90).map(e => ({ ...e, id: `round2-${e.id}` }))
+    utils.rerender(panel(nextRound))
+    expect(utils.container.querySelectorAll('.tc-option')).toHaveLength(30)
+    expect(screen.getByText('已折叠更早的 60 步 · 上滚展开')).toBeInTheDocument()
+  })
+
+  it('终端模式与卡片模式共用同一折叠条（文案/交互一致）', () => {
+    const { container } = renderTimeline(makeCalls(90))
+    expect(screen.getByText('已折叠更早的 60 步 · 上滚展开')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('终端模式'))
+    expect(container.querySelector('.execution-terminal-body')).not.toBeNull()
+    // 同一节点、同一文案、同一续展逻辑：终端模式下点一下同样放出 30 步
+    fireEvent.click(screen.getByText('已折叠更早的 60 步 · 上滚展开'))
+    expect(screen.getByText('收起更早的 60 步')).toBeInTheDocument()
+    expect(container.querySelectorAll('.term-cmd')).toHaveLength(60)
   })
 })

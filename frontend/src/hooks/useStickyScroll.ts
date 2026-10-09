@@ -51,8 +51,16 @@ export interface StickyScroll {
   scrollRef: RefObject<HTMLDivElement>
   /** 是否显示「回到底部」按钮：已冻结跟随且未回底时为 true */
   showJumpButton: boolean
-  /** 绑到滚动容器的 onScroll：识别用户滚动，程序滚动自动豁免 */
-  onScroll: () => void
+  /**
+   * 绑到滚动容器的 onScroll：识别用户滚动，程序滚动自动豁免。
+   *
+   * 返回值 = 这一帧**是否按「用户操作」处理**（false = 被进场/程序滚动屏蔽窗吞掉，
+   * 或只是静止 / 亚像素抖动）。调用方若在 onScroll 之外还有自己的滚动语义
+   * （执行追踪面板的"上滚到折叠条续展"），**必须**用这个返回值 gate 住自己那份判定：
+   * 否则程序滚动（进场自动下拉、贴底回滚、折叠锚点补偿）产生的 delta 会被当成用户
+   * 意图 → 上翻冻结被悄悄解掉、面板被顶离底部（2026-10-09 实测事故）。
+   */
+  onScroll: () => boolean
   /** 点击回底按钮：立即恢复跟随并 smooth 滚底 */
   jumpToBottom: () => void
   /** 立即恢复跟随并 smooth 滚底：新轮次 execution_started / 任务完成瞬间补拉（程序调用方） */
@@ -64,6 +72,12 @@ export interface StickyScroll {
    * 对话窗无「进入」语义，不调用本方法。
    */
   enterPanel: () => void
+  /**
+   * 程序性调整 scrollTop（**保持当前视野锚点**）：内容在视野上方增删时，用它把
+   * 视野钉回原处。必须走本 hook 的程序滚动屏蔽窗——裸改 scrollTop 产生的 delta
+   * 会被方向判定读成"用户在往底部回走"，把上翻冻结解掉并触发回底。
+   */
+  nudgeScrollTop: (deltaPx: number) => void
 }
 
 export interface StickyScrollOptions {
@@ -119,22 +133,27 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
     }
   }, [])
 
-  /** 程序滚动到底：smooth + 前置屏蔽窗（原理见文件头） */
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
+  /** 装甲程序滚动屏蔽窗（原理见文件头）：窗内向下 / 静止 delta 一律忽略 */
+  const armProgramGuard = useCallback(() => {
     programScrollRef.current = true
-    lastScrollTopRef.current = el.scrollTop
     if (programTimerRef.current) clearTimeout(programTimerRef.current)
     programTimerRef.current = setTimeout(() => {
       programTimerRef.current = null
       programScrollRef.current = false
     }, PROGRAM_SCROLL_GUARD_MS)
+  }, [])
+
+  /** 程序滚动到底：smooth + 前置屏蔽窗（原理见文件头） */
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    armProgramGuard()
+    lastScrollTopRef.current = el.scrollTop
     // rAF 不能丢：同步调用会量到尚未布局的高度（沿用旧实现的取舍）
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     })
-  }, [])
+  }, [armProgramGuard])
 
   /**
    * 冻结 + 排恢复计时（滚动驱动的宽限，主判定，不是读死表）：
@@ -171,9 +190,10 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
     }
   }, [])
 
-  const onScroll = useCallback(() => {
+  /** 返回值语义见 StickyScroll.onScroll：true = 这一帧按「用户操作」处理 */
+  const onScroll = useCallback((): boolean => {
     const el = scrollRef.current
-    if (!el) return
+    if (!el) return false
     const current = el.scrollTop
     const last = lastScrollTopRef.current
     lastScrollTopRef.current = current
@@ -191,8 +211,10 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
       const userPulledUp = last !== null && current - last < -SCROLL_DELTA_EPS_PX
       if (arrived || userPulledUp || Date.now() >= entryMaxWaitUntilRef.current) {
         entryScrollPendingRef.current = false
+        // 自动下拉自己滚到底、且用户没伸手抢：这一帧属程序滚动，不算用户操作
+        if (arrived && !userPulledUp) return false
       } else {
-        return
+        return false
       }
     }
 
@@ -202,7 +224,7 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
       if (last !== null && current - last < -SCROLL_DELTA_EPS_PX) {
         clearProgramGuard()
       } else {
-        return
+        return false
       }
     }
 
@@ -214,7 +236,8 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
         clearResumeTimer()
         setFollowingMode(true)
       }
-      return
+      // 只有"用户往下滚到底"算用户操作；静止 / 被新内容顶到底（delta≈0）不算
+      return current - (last ?? current) > SCROLL_DELTA_EPS_PX
     }
 
     // 离开底部后再判方向，方向即意图：
@@ -228,7 +251,10 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
         setFollowingMode(false)
       }
       freezeWithResumeTimer()
+      return true
     }
+    // 向下 = 用户主动朝底部回走（是用户操作，但按语义不冻结、不续命）
+    return delta > SCROLL_DELTA_EPS_PX
   }, [clearProgramGuard, clearResumeTimer, freezeWithResumeTimer, setFollowingMode])
 
   /**
@@ -242,6 +268,27 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
     setFollowingMode(true)
     scrollToBottom()
   }, [clearResumeTimer, scrollToBottom, setFollowingMode])
+
+  /**
+   * 程序性调整 scrollTop：把当前视野锚回原处（内容在视野**上方**增删时）。
+   *
+   * 必须走屏蔽窗：裸改 scrollTop 产生的「向下 delta」会被方向判定读成"用户在往底部
+   * 回走"→ 上翻冻结被解掉、followKey 一来即回底，用户正在读的位置被顶走
+   * （2026-10-09 实测事故：折叠续展与自动下拉互相打架）。
+   */
+  const nudgeScrollTop = useCallback(
+    (deltaPx: number) => {
+      const el = scrollRef.current
+      if (!el || !deltaPx) return
+      // 先装甲再改 scrollTop：这一帧产生的 scroll 事件必须被判为程序滚动
+      armProgramGuard()
+      lastScrollTopRef.current = el.scrollTop + deltaPx
+      // 同步落地：调用方（折叠锚点补偿）已在 layoutEffect 里量到高度差，此时布局已定；
+      // 多套一层 rAF 只会让用户看到一次额外的跳动。
+      el.scrollTop = el.scrollTop + deltaPx
+    },
+    [armProgramGuard],
+  )
 
   /**
    * 进入面板（执行追踪面板 open / 可见态变化时调用）：先 followReset 立即滚底 —
@@ -259,5 +306,13 @@ export function useStickyScroll(followKey: unknown, opts?: StickyScrollOptions):
     followReset()
   }, [followReset])
 
-  return { scrollRef, showJumpButton, onScroll, jumpToBottom: followReset, followReset, enterPanel }
+  return {
+    scrollRef,
+    showJumpButton,
+    onScroll,
+    jumpToBottom: followReset,
+    followReset,
+    enterPanel,
+    nudgeScrollTop,
+  }
 }

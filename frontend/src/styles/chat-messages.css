@@ -727,7 +727,9 @@
 }
 .exec-topbar-meta {
   font-size: var(--fz-xs);
-  color: var(--spark-muted);
+  /* 头部「N 调用」计数走 --fg-3（弱文本级）：原 --spark-muted = --fg-4，
+     在三个主题下对面板底分别只有 ≈4.0/2.8/2.8:1，数字看不清。 */
+  color: var(--fg-3);
   font-weight: 400;
   font-family: var(--font-mono);
 }
@@ -849,7 +851,9 @@
 }
 .tc-option-indicator {
   font-size: 10px;
-  color: var(--glass-3);
+  /* 每行「步骤序号」：原 --glass-3 是**背景**用键（深色 白 7% / 浅色 黑 4%），
+     当文字色用近乎不可见（≈1.1:1）。改用前景语义键 --fg-3。 */
+  color: var(--fg-3);
   font-family: var(--font-mono);
   min-width: 16px;
   text-align: right;

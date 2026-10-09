@@ -1,7 +1,7 @@
 // ExecutionTraceFloating.tsx — Central execution trace panel
 // Desktop app style: center floating, not web popup, with material depth
 
-import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment } from 'react'
 import {
   IconX,
   IconTerminal,
@@ -593,29 +593,44 @@ export function RatingModal({
 // ================================================================
 
 /**
- * 历史折叠阈值：条目超过这个数量时，只完整渲染最近这么多条，更早的收进一行摘要。
+ * 历史折叠默认档：只完整渲染最新这么多**步**（1 步 = 1 条 tool_call），更早的收进折叠条。
  *
  * 为什么需要：本面板是全量渲染（没有虚拟列表），而每一步都可能带整段思考文本，
  * 上百步时 DOM 与文本量会把刷新、滚动都拖到掉帧。折叠是最低成本的减法——默认
- * 只看最近若干条，历史点一下即可全量回归，功能一点不少。
+ * 只看最近若干步，上滚即可逐档续展，功能一点不少。
  *
- * 40 的取法：面板高度约 80vh，一屏大致能看十几条，40 条足够覆盖「回看刚才发生了什么」
+ * 30 的取法：面板高度约 80vh，一屏大致能看十几步，30 步足够覆盖「回看刚才发生了什么」
  * 这一常见诉求；再往上加就开始磨损收益了。
  */
-const RECENT_ENTRIES_KEPT = 40
+const RECENT_STEPS_KEPT = 30
+
+/** 每次自动续展的步数（30 → 60 → 90 …）：用户上滚到折叠条即再放出一档 */
+const STEPS_PER_EXPAND = 30
 
 /**
- * 历史折叠行：折叠时提示可展开，展开后提供收回。
+ * 折叠条触发带（px）：滚动容器 scrollTop 落进该带内 = 折叠条已贴到视口顶。折叠条是
+ * 内容首元素，两种渲染路径的容器 padding（≤10px）都远小于此值，故无需量 rect。
+ * 到带内即视为「上滚到折叠条」自动续展一档；补偿后 scrollTop 被推回带外，不会连环触发。
+ */
+const FOLD_TRIGGER_BAND_PX = 32
+
+/** 上滚判定阈值（px）：与 useStickyScroll 的方向判定同量级，抹掉亚像素抖动 */
+const FOLD_SCROLL_DELTA_EPS_PX = 2
+
+/**
+ * 历史折叠行：折叠时提示可上滚展开，展开后提供收回。
  *
  * 抽成组件而不是在两处渲染里各写一遍：终端模式与卡片模式各有一条渲染路径，
  * 这份文案与交互必须一致（两处漂移过一次的东西，通常还会漂第二次）。
+ * 单位是**步**（tool_call），与头部「N 调用」同一口径。
  */
 function HistoryFoldBar({
-  count,
+  stepCount,
   expanded,
   onToggle,
 }: {
-  count: number
+  /** 折叠态 = 当前被收起的步数；展开态 = 点「收起」会收起的步数（回到默认档） */
+  stepCount: number
   expanded: boolean
   onToggle: () => void
 }) {
@@ -625,7 +640,7 @@ function HistoryFoldBar({
       className={`trace-history-fold ${expanded ? 'is-expanded' : ''}`}
       onClick={onToggle}
     >
-      {expanded ? `收起更早的 ${count} 项` : `已折叠更早的 ${count} 项 · 点击展开`}
+      {expanded ? `收起更早的 ${stepCount} 步` : `已折叠更早的 ${stepCount} 步 · 上滚展开`}
     </button>
   )
 }
@@ -658,8 +673,15 @@ export function ExecutionTraceFloating({
   const [collapsedThinking, setCollapsedThinking] = useState<Set<string>>(new Set())
   // Card/UI mode: thinking default collapsed (expanded = user manually expanded)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
-  // 历史折叠：默认只看最近若干条（见 RECENT_ENTRIES_KEPT），展开态由用户显式切换
-  const [historyExpanded, setHistoryExpanded] = useState(false)
+  // 历史折叠档位：渲染多少个「最新步骤」（见 RECENT_STEPS_KEPT）。上滚到折叠条自动 +1 档，
+  // 点折叠条亦可切换（展开态点「收起」回默认档）。新一轮开始自动收回默认档。
+  const [visibleStepCount, setVisibleStepCount] = useState(RECENT_STEPS_KEPT)
+  /** 展开/收起的滚动锚点：变更前记下容器 scrollHeight，layoutEffect 里按差值修正 scrollTop */
+  const foldAnchorHeightRef = useRef<number | null>(null)
+  /** 已贴顶过一次的折叠条失去触发资格，直到用户再次上滚才复位（防补偿后程序滚动连环触发） */
+  const foldArmedRef = useRef(false)
+  /** 折叠触发用的上一次 scrollTop：用来判定「用户确实在上滚」 */
+  const foldLastTopRef = useRef<number | null>(null)
   // Track render count per output line, for new-line animation (terminal mode)
   const lineRenderCountRef = useRef<Map<string, number>>(new Map())
 
@@ -669,20 +691,38 @@ export function ExecutionTraceFloating({
   // 气泡执行回溯：traceOverride 非空时展示该轮历史执行过程（替代全局 timeline）
   const displayTimeline = traceOverride ?? timeline
 
-  // ── 历史折叠 ──
-  // 只完整渲染最近 RECENT_ENTRIES_KEPT 条，更早的收进一行摘要。按**条目**切片而非
-  // 按工具调用：这是一条混合流（tool_call / thinking / text），按调用切会把一段
-  // 思考或一段文本劈成两半。
-  const foldableCount = Math.max(0, displayTimeline.length - RECENT_ENTRIES_KEPT)
-  const hiddenHistoryCount = historyExpanded ? 0 : foldableCount
-  const visibleTimeline =
-    hiddenHistoryCount > 0 ? displayTimeline.slice(hiddenHistoryCount) : displayTimeline
-  // 折叠时 map 的起点整体后移，工具序号必须接着数——否则序号从 1 重来，与头部的
-  // 「N 调用」计数对不上（展开/折叠一次就穿帮）。
-  const leadingCallCount =
-    hiddenHistoryCount > 0
-      ? displayTimeline.slice(0, hiddenHistoryCount).filter(e => e.kind === 'tool_call').length
-      : 0
+  // ── 历史折叠（按**步骤**切：1 步 = 1 条 tool_call）──
+  // 默认只渲染最新 RECENT_STEPS_KEPT 步，更早的收进折叠条；上滚到折叠条自动续下一档。
+  // 切点必须落在某条 tool_call 的**起点**：这是一条混合流（tool_call / thinking / text），
+  // 按条目数切会把一段思考或一段文本劈成两半；按「第 N 条 tool_call 的下标」切则天然
+  // 整块——切点之前的整段 thinking 随之整体收入折叠区，不劈半。
+  const totalSteps = displayTimeline.reduce((n, e) => (e.kind === 'tool_call' ? n + 1 : n), 0)
+  // 档位不得超过实际步数（切轮次变短时夹紧，避免留出空档）
+  const visibleSteps = Math.min(visibleStepCount, totalSteps)
+  const hiddenSteps = Math.max(0, totalSteps - visibleSteps)
+  const foldable = hiddenSteps > 0
+  // 切点：隐藏区正好是「最前面 hiddenSteps 条 tool_call」，渲染从第 hiddenSteps + 1 条
+  // tool_call 的下标起 —— 可见区即恰好「最新 visibleSteps 步」。
+  let cutIndex = 0
+  if (foldable) {
+    let seen = 0
+    for (let i = 0; i < displayTimeline.length; i++) {
+      if (displayTimeline[i].kind !== 'tool_call') continue
+      seen++
+      if (seen === hiddenSteps + 1) {
+        cutIndex = i
+        break
+      }
+    }
+  }
+  const visibleTimeline = foldable ? displayTimeline.slice(cutIndex) : displayTimeline
+  // 折叠条步数 = 点「收起」会收起的量（回到默认档），故恒为 totalSteps − 默认档；
+  // 折叠态下 visibleSteps 恒等于默认档，故这个数同时就是「当前被收起的步数」。
+  const foldBarSteps = Math.max(0, totalSteps - RECENT_STEPS_KEPT)
+  const foldExpanded = visibleStepCount > RECENT_STEPS_KEPT
+  // 序号续数：隐藏区内的 tool_call 数即「可见区首条的序号前缀」——否则序号从 1 重来，
+  // 与头部的「N 调用」计数对不上（展开/折叠一次就穿帮）。
+  const leadingCallCount = hiddenSteps
 
   // Internal state: auto-popup (only in uncontrolled mode)
   const hasRunning = displayTimeline.some(t => t.kind === 'tool_call' && t.status === 'running')
@@ -692,30 +732,119 @@ export function ExecutionTraceFloating({
     }
   }, [hasRunning, isOpen, isProcessing, visible])
 
-  // 新一轮从零开始时（条目回落到阈值以内）自动收起历史：否则上一轮展开过的状态会被
-  // 原样带进下一轮，等它再长到上百步就又是全量渲染——折叠形同虚设。
+  // 新一轮 / 切到另一轮时自动收回默认档：否则上一轮展开过的档位会被原样带进下一轮，
+  // 等它再长到上百步就又是全量渲染——折叠形同虚设。
+  //
+  // 判定用两个信号（任一命中即复位）：
+  //   ① 头部条目 id 变化 —— 本轮内 timeline 只增不减、任务行只追加（见 useEvents），
+  //      头部 id 本轮内稳定，故同一轮内不会误复位；
+  //   ② 步数总量**变少** —— 新一轮从 0 起算 / 切看另一轮，总量回落是唯一解释。
+  // 两个信号都只认「轮次换了」，不认「本轮又长了」，故续展档位在本轮内不受打扰。
+  const headEntryId = displayTimeline[0]?.id ?? ''
+  const roundMarkRef = useRef<{ head: string; steps: number } | null>(null)
   useEffect(() => {
-    if (historyExpanded && displayTimeline.length <= RECENT_ENTRIES_KEPT) {
-      setHistoryExpanded(false)
-    }
-  }, [displayTimeline.length, historyExpanded])
+    const prev = roundMarkRef.current
+    roundMarkRef.current = { head: headEntryId, steps: totalSteps }
+    if (prev && prev.head === headEntryId && totalSteps >= prev.steps) return
+    setVisibleStepCount(RECENT_STEPS_KEPT)
+    // 触发资格与方向记忆一并复位：新一轮的第一次上滚从干净状态起算
+    foldArmedRef.current = false
+    foldLastTopRef.current = null
+  }, [headEntryId, totalSteps])
 
   // 贴底跟随：执行步骤（displayTimeline）变化即滚底；用户上翻冻结 + 15s 静默宽限兜底
   // —— 本面板没有回底按钮，宽限必须保持 15s 封顶值（不得加大）；空闲（!isProcessing）
   // 翻看历史不排恢复计时。取代旧的自有滚动 state（userScrolledRef + 3s debounce
   // 强制滚底）——那套「停手 3s 即闪回底部」无论用户在读什么都会被打断（语义与
   // 程序滚动屏蔽窗见 useStickyScroll 头注）。
-  const { scrollRef, onScroll, followReset, enterPanel } = useStickyScroll(displayTimeline, {
-    resumeMs: 15_000,
-    executing: isProcessing,
-  })
+  const { scrollRef, onScroll, followReset, enterPanel, nudgeScrollTop } = useStickyScroll(
+    displayTimeline,
+    {
+      resumeMs: 15_000,
+      executing: isProcessing,
+    },
+  )
+
+  // ── 历史折叠：自动续展 + 滚动锚点补偿 ──
+  /**
+   * 展开/收起的共同入口：先记下当前 scrollHeight 作为锚点，再改档位。
+   * 新内容插在折叠条之后（即挡在原有可见内容上方），若不修正 scrollTop，视野会被整段
+   * 推下去；补偿在 layoutEffect 里按高度差做，展开与点击收起共用同一出口。
+   */
+  const applyStepCount = useCallback(
+    (next: (v: number) => number) => {
+      foldAnchorHeightRef.current = scrollRef.current?.scrollHeight ?? null
+      setVisibleStepCount(next)
+    },
+    [scrollRef],
+  )
+
+  /**
+   * 折叠条点击：展开态 → 收回默认档；折叠态 → 再放一档。
+   * 另有自动续展路径（上滚到折叠条），见 handleScroll —— 两者共用 applyStepCount。
+   */
+  const handleFoldToggle = useCallback(() => {
+    applyStepCount(v => (v > RECENT_STEPS_KEPT ? RECENT_STEPS_KEPT : v + STEPS_PER_EXPAND))
+  }, [applyStepCount])
+
+  /**
+   * 滚动容器 onScroll：先交既有贴底跟随/上翻冻结判定（onScroll），再做折叠续展判定。
+   * 两种渲染模式共用这一个 handler，避免两条路径漂移。
+   *
+   * 触发条件（三与）：用户确实在上滚（delta < 0）+ 折叠条已贴到视口顶（scrollTop 落进
+   * 触发带）+ 尚有更早内容。展开后锚点补偿把 scrollTop 推回带外，且 foldArmedRef 已解除，
+   * 补偿产生的程序滚动不会连环触发——要再展开必须再上滚一次。
+   */
+  const handleScroll = useCallback(() => {
+    // 先问 hook：这一帧算不算「用户操作」。进场自动下拉、贴底回滚、折叠锚点补偿
+    // 都是**程序滚动**，一律不参与续展判定——否则自动下拉途中的一次中间态 delta
+    // 就会被当成"用户在上滚"，续展 + 补偿反过来把自动下拉顶掉（2026-10-09 实测事故）。
+    const el = scrollRef.current
+    if (!el) return
+    const top = el.scrollTop
+    const prev = foldLastTopRef.current
+    // 位置**每帧**都记（哪怕是程序滚动造成的）：方向判定必须拿真实相邻两帧作比较，
+    // 否则第一次用户上滚会因"没有前��帧"而永远无法武装（2026-10-09 实测事故）。
+    foldLastTopRef.current = top
+    // 武装只认「用户帧」：进场自动下拉 / 贴底回滚 / 锚点补偿都是程序滚动。
+    if (onScroll() && prev != null && top < prev - FOLD_SCROLL_DELTA_EPS_PX) {
+      foldArmedRef.current = true
+    }
+    if (!foldArmedRef.current || !foldable) return
+    if (top > FOLD_TRIGGER_BAND_PX) return
+    foldArmedRef.current = false
+    applyStepCount(v => v + STEPS_PER_EXPAND)
+  }, [onScroll, scrollRef, foldable, applyStepCount])
+
+  /**
+   * 滚动锚点补偿：档位变更与 DOM 在同一提交里落定，layoutEffect 同步按新增/减少的高度
+   * 修正 scrollTop —— 视野停在原处不跳。溢出/收缩都按同一差值修正（浏览器自行夹紧边界）。
+   */
+  useLayoutEffect(() => {
+    const anchor = foldAnchorHeightRef.current
+    if (anchor == null) return
+    // 无条件消费锚点：即便此刻容器已不在（模式切换同帧卸挂），也不让旧高度跨提交残留
+    foldAnchorHeightRef.current = null
+    const el = scrollRef.current
+    if (!el) return
+    const delta = el.scrollHeight - anchor
+    // 走 hook 的程序滚动出口：裸改 scrollTop 会被读成"用户在回底部" → 上翻冻结被解
+    if (delta !== 0) nudgeScrollTop(delta)
+  }, [visibleStepCount, scrollRef, nudgeScrollTop])
 
   // 进场防误判：面板打开瞬间 enterPanel —— 先立即滚底展示最新执行态，随后只等这次
   // 自动滚底完成（到底 / 用户伸手接手 / 安全网到点）就交还判定权；没有固定时长宽限
   // （旧实现 3s 硬窗会吞掉窗口内用户的滚动，等于抢控制，详见 useStickyScroll 头注）。
   // open 来源：受控 visible（App.tsx 的 showExecTrace）优先，未传时回落内部 isOpen。
   useEffect(() => {
-    if (isVisible) enterPanel()
+    if (!isVisible) return
+    // 重新进场（含"关闭后再打开"）一律收回默认档：面板只是隐藏时组件并不卸载，
+    // 档位会原样留着，用户看到的是上次的展开态而不是"最近 30 步"（2026-10-09 大王报障）。
+    setVisibleStepCount(RECENT_STEPS_KEPT)
+    foldArmedRef.current = false
+    foldLastTopRef.current = null
+    foldAnchorHeightRef.current = null
+    enterPanel()
   }, [isVisible, enterPanel])
 
   // Auto-scroll to bottom when switching terminal/card mode. 必须走 followReset 出口
@@ -824,6 +953,12 @@ export function ExecutionTraceFloating({
     prevTimelineIdsRef.current = currentIds
   }, [displayTimeline])
 
+  // 折叠条节点在这里生成一次、两条渲染路径共用：终端模式与卡片模式的文案、交互、
+  // 续展逻辑不可能漂移（两处各写一遍的东西，通常还会漂第二次）。
+  const foldBarNode = foldable ? (
+    <HistoryFoldBar stepCount={foldBarSteps} expanded={foldExpanded} onToggle={handleFoldToggle} />
+  ) : null
+
   if (!isVisible) return null
 
   return (
@@ -873,18 +1008,12 @@ export function ExecutionTraceFloating({
 
         {/* ── Timeline Body ── */}
         {terminalMode ? (
-          <div className="execution-terminal-body" ref={scrollRef} onScroll={onScroll}>
+          <div className="execution-terminal-body" ref={scrollRef} onScroll={handleScroll}>
             {displayTimeline.length === 0 && isProcessing && (
               <div className="execution-trace-placeholder">等待执行...</div>
             )}
             <div className="execution-terminal-lines">
-              {foldableCount > 0 && (
-                <HistoryFoldBar
-                  count={foldableCount}
-                  expanded={historyExpanded}
-                  onToggle={() => setHistoryExpanded(v => !v)}
-                />
-              )}
+              {foldBarNode}
               {(() => {
                 let callIdx = leadingCallCount
                 return visibleTimeline.map((entry, i) => {
@@ -1211,18 +1340,12 @@ export function ExecutionTraceFloating({
             </div>
           </div>
         ) : (
-          <div className="execution-trace-body" ref={scrollRef} onScroll={onScroll}>
+          <div className="execution-trace-body" ref={scrollRef} onScroll={handleScroll}>
             {displayTimeline.length === 0 && isProcessing && (
               <div className="execution-trace-placeholder">等待执行...</div>
             )}
 
-            {foldableCount > 0 && (
-              <HistoryFoldBar
-                count={foldableCount}
-                expanded={historyExpanded}
-                onToggle={() => setHistoryExpanded(v => !v)}
-              />
-            )}
+            {foldBarNode}
 
             {(() => {
               let callIdx = leadingCallCount
