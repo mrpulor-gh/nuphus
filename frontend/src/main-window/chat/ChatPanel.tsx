@@ -381,13 +381,28 @@ export function ChatPanel({
    * header 浏览器按钮：把 Agent 浏览器（Nuphus 的 CDP 实例）提到前台。
    *
    * 它与系统浏览器是两件事：外链走 open_external 给人看，这个窗口是 Agent
-   * 自动化与人工示教、标注共用的现场——独立 profile，登录态与应用一致。
+   * 自动化真正干活的地方（独立 profile）——想看它进行到哪一步时置前。
+   *
+   * 冷启动要拉起整个 Chrome 进程（不是切个标签页），所以点击后**立刻**回一条提示，
+   * 让「点了到底有没有用」当场可见；按钮自身进入 pending 直到后端返回。pending 期间
+   * 再次点击直接丢弃：后端浏览器是单槽串行的，连点只会把等待排成一队，越点越慢。
    */
+  const [browserOpening, setBrowserOpening] = useState(false)
+  const browserOpeningRef = useRef(false)
   const showBrowserWindow = useCallback(() => {
-    browserShowWindow().catch(e => {
-      hudUpdate(friendlyIpcError(e, '打开浏览器失败'), 'warning')
-    })
-  }, [])
+    if (browserOpeningRef.current) return
+    browserOpeningRef.current = true
+    setBrowserOpening(true)
+    hudUpdate(t('browser.starting'), 'info')
+    browserShowWindow()
+      .catch(e => {
+        hudUpdate(friendlyIpcError(e, '打开浏览器失败'), 'warning')
+      })
+      .finally(() => {
+        browserOpeningRef.current = false
+        setBrowserOpening(false)
+      })
+  }, [t])
 
   // 执行中每 500ms 重渲染一次，让消息气泡的 TurnMetaBar 走秒。
   // **不持有任何时间值**——耗时一律由 TurnMetaBar → resolveTurnDuration 从
@@ -1793,29 +1808,32 @@ export function ChatPanel({
           <button
             className="chat-header-settings-btn"
             aria-label={t('app.settings')}
-            title={t('app.settings')}
             onClick={() => onOpenSettings?.()}
           >
             <IconSettings size={15} />
+            <span className="chat-header-btn-label">{t('app.settings')}</span>
           </button>
           <button
             ref={appearanceToggleRef}
             className="chat-header-appearance-btn"
             aria-label={t('app.appearance')}
-            title={t('app.appearance')}
             onClick={() => setShowAppearance(o => !o)}
           >
             <IconPalette size={15} />
+            <span className="chat-header-btn-label">{t('app.appearance')}</span>
           </button>
           {/* Agent 浏览器窗口：CDP 那个 Chrome，独立 profile。这里只做「唤出/置前」，
-              浏览、标注、示教都在那个窗口内进行。 */}
+              Agent 的浏览与自动化操作都在那个窗口内进行。启动中禁用（is-busy），
+              避免连点把单槽串行的后端排成长队。 */}
           <button
-            className="chat-header-browser-btn"
+            className={`chat-header-browser-btn${browserOpening ? ' is-busy' : ''}`}
             aria-label={t('browser.toggle')}
-            title={t('browser.toggleTitle')}
+            aria-busy={browserOpening}
+            disabled={browserOpening}
             onClick={showBrowserWindow}
           >
             <IconBrowser size={15} />
+            <span className="chat-header-btn-label">{t('browser.toggleTitle')}</span>
           </button>
           {pendingRefine && !refineState && !refining && (
             <div className="refine-pending-area">

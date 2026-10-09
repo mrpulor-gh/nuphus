@@ -151,6 +151,84 @@
   border-color: var(--glass-3);
   color: var(--spark-primary);
 }
+/* 启动中（pending）：冷启动要拉起整个 Chrome 进程，期间按钮禁用——后端浏览器是单槽
+   串行的，连点只会把等待排成队。图标自转 + 降不透明度表达「在处理」，文案由岛
+   （island）/ HUD 承担，按钮上不重复。keyframes 自带（不复用 ink.css 里的 spin）：
+   本文件不保证 components.css 已加载。 */
+.chat-header-browser-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+  /* 压回未 hover 的档位：禁用态不该再被 :hover 提亮 */
+  background: color-mix(in srgb, var(--panel-bg) 62%, transparent);
+}
+/* ── header 右侧按钮列的 hover 名称浮层 ──
+   仿桌面工具条 .desktop-toolbar-label 的配方（同一视觉语言）：常态隐藏，hover /
+   focus-visible 时绝对定位向左浮出——按钮列贴窗口右缘，向左是唯一不出屏的方向。
+   原先这三个按钮只有浏览器原生 title（灰底方框、延迟约1s、跟随系统样式），
+   与工具条不一致，故统一为本浮层。
+
+   ⚠️ 两条纪律：
+   ① 只新增本选择器，**不改** .chat-header-settings-btn / -appearance-btn /
+   -browser-btn 三条本体规则的既有声明 —— opacity-system.test.ts:236 按单选择器
+   取 .chat-header-settings-btn 的声明块做断言，合并选择器会让那条回归静默落空。
+   ② position:relative 是**新增**属性而非改写：三个按钮原本没有定位上下文，
+   浮层会以 .chat-header-right（position:relative）为包含块 → 三个浮层会重叠在
+   同一位置。给按钮自身加 relative 才能让各浮层贴各自按钮浮出。 */
+.chat-header-settings-btn,
+.chat-header-appearance-btn,
+.chat-header-browser-btn {
+  position: relative;
+}
+.chat-header-btn-label {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  color: var(--fg-1);
+  font-size: var(--fz-xs);
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--transition-fast),
+    visibility var(--transition-fast);
+}
+.chat-header-settings-btn:hover > .chat-header-btn-label,
+.chat-header-appearance-btn:hover > .chat-header-btn-label,
+.chat-header-browser-btn:hover > .chat-header-btn-label,
+.chat-header-settings-btn:focus-visible > .chat-header-btn-label,
+.chat-header-appearance-btn:focus-visible > .chat-header-btn-label,
+.chat-header-browser-btn:focus-visible > .chat-header-btn-label {
+  opacity: 1;
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-header-btn-label {
+    transition: none;
+  }
+}
+
+.chat-header-browser-btn.is-busy svg {
+  animation: chat-header-browser-spin 0.8s linear infinite;
+}
+@keyframes chat-header-browser-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-header-browser-btn.is-busy svg {
+    animation: none;
+  }
+}
 .chat-messages {
   flex: 1;
   /* min-height: 0 —— 滚动链的最后一环。本元素是 .chat-panel（纵向 flex）的 item，

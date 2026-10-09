@@ -155,6 +155,7 @@ const en: Record<string, string> = {
   // ── In-app browser (own window: 44px shell controller + remote content page) ──
   'browser.toggle': 'In-app browser',
   'browser.toggleTitle': 'Open / raise a browser window',
+  'browser.starting': 'Starting browser…',
   'browser.addressPlaceholder': 'Enter a URL and press Enter, e.g. https://example.com',
   'browser.go': 'Go',
   'browser.goTitle': 'Navigate to this URL',
