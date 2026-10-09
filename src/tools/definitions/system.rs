@@ -587,6 +587,15 @@ pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolRes
             // 默认前台：杀进程树。这一步才是「真正生效」——只解除等待而不杀，
             // 那只是把卡住换成孤儿继续跑。
             let killed = bg::kill_process_tree(pid);
+            // 收尸（reap）：Unix 上不 wait 的子进程死后变 zombie，`ps -p` 仍列得
+            // 出它，is_process_alive 会把死进程误报成「活着」（CI ubuntu 实测翻车）。
+            // SIGKILL 已送达 ⇒ reaping 近即时；预算内没等到就交给 init 收养清理。
+            for _ in 0..20 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
             registry.unregister(&task.id);
             bg::discard_log(&task);
             let notice = match &killed {

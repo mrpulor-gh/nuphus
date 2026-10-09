@@ -380,10 +380,27 @@ pub fn is_process_alive(pid: u32) -> bool {
 
     #[cfg(not(target_os = "windows"))]
     {
+        let pid_s = pid.to_string();
         std::process::Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "pid="])
+            .args(["-p", &pid_s, "-o", "pid=,stat="])
             .output()
-            .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+            .map(|o| {
+                let text = String::from_utf8_lossy(&o.stdout);
+                let mut listed = false;
+                for line in text.lines() {
+                    let mut parts = line.split_whitespace();
+                    if parts.next() != Some(pid_s.as_str()) {
+                        continue;
+                    }
+                    listed = true;
+                    let stat = parts.next().unwrap_or("");
+                    if !stat.is_empty() && stat.starts_with('Z') {
+                        // zombie：已被 SIGKILL、只剩收尸前的空壳，ps 仍列得出但不算活着
+                        return false;
+                    }
+                }
+                listed
+            })
             .unwrap_or(false)
     }
 }
