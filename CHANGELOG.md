@@ -731,7 +731,7 @@
 - SessionDivider 移除冗余流式标签（无样式 + 信息增量为零）
 - 模型切换弹窗增加按压态 + loading spinner 反馈
 - 语言选择页面修复默认选中态不显示问题
-- 启动时 LLM 配置未及时加载：`main.rs` 增加 `eager-load` 调用，确保 `send_message_cmd` 启动即可找到 API Key 与 providers.toml（解决"启动后第一次对话��模型未配置"）
+- 启动时 LLM 配置未及时加载：`main.rs` 增加 `eager-load` 调用，确保 `send_message_cmd` 启动即可找到 API Key 与 providers.toml（解决"启动后第一次对话时模型未配置"）
 - refine：提炼期间置位 busy——根除提炼前后对话窗口强刷与会话切换竞态
 - HUD：agent_dispatch 投递完成后步数指示不再永远转动（编排结束发终态事件）
 - 输入框 mode 锁切后端权威源：界面刷新/热更新后执行中不再误解锁
