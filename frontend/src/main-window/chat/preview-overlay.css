@@ -20,6 +20,25 @@
   font-size: var(--fz-md);
 }
 
+/* 窗口最外圈：主题化 1px 内描边 —— 与主窗口 .app-shell 的窗口描边同一视觉契约
+   （2026-10-09 定案；契约说明见 components.css 的 .app-shell 注释）。
+   为何不照抄 .app-shell 的 inset box-shadow：盒阴影画在自身背景之上、子元素之下，
+   本宿主顶部是实色工具栏（.pv-toolbar 的 --surface-1），会把顶边与左右上段的线
+   盖断。改用覆盖层伪元素绘制：absolute 脱离 flex 流，z-index 抬到宿主内部常规
+   内容之上，全圈完整；pointer-events: none 保证不挡任何交互。
+   z 50 的依据：高于宿主内部全部常规层（.pv-annot-missing 10 / .pv-annot-panel 11 /
+   .pv-edit-toggle 12 / 标注态顶条 13），低于应用级浮层（岛、模态遮罩）——
+   贴边的更高层浮层可局部盖住 1px，与主窗口 .app-shell 行为一致。
+   色走 --line-2（三主题各自取值，见 tokens.css）：与 .app-shell 完全同源。 */
+.pv-page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
+}
+
 /* ── 工具栏 ── */
 .pv-toolbar {
   display: flex;

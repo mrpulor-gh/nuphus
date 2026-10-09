@@ -438,6 +438,19 @@
   background: var(--surface-0);
   color: var(--fg-1);
 }
+
+/* 窗口最外圈：主题化 1px 内描边（同 .app-shell 的窗口描边契约；契约说明见
+   components.css 的 .app-shell 注释，绘制方式说明见 preview-overlay.css 的
+   .pv-page::after）。本宿主顶栏 .models-page-bar 是实色（--surface-1），照抄
+   box-shadow 会被盖断，故用同款覆盖层伪元素画全圈，pointer-events: none 不挡交互。 */
+.models-page-host::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
+}
 .models-page-bar {
   /* 供 island 落点锚点（.island-slot，绝对定位于本栏）作为定位基准 */
   position: relative;

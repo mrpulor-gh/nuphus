@@ -511,8 +511,13 @@ fn main() {
             // 这里创建后立即隐藏，保持 splash→main 启动流程不变
             // （见 tauri issue #14643 / wry issue #1639）。
             if let Some(main) = app.get_webview_window("main") {
-                // Windows 会为无装饰、可缩放窗口默认保留左/右/下非客户区，
-                // 浅色主题下表现为黑边。关闭阴影后 Tao 仍保留四边/四角缩放命中。
+                // 窗口阴影**保持关闭**（2026-10-09 二次定案，勿再打开）：
+                // · 打开 = Tao 在 WM_NCCALCSIZE 按 inset 收紧客户区、由 DWM 画投影，同时必然
+                //   带来一条 1px 深色边框线（浅色主题下尤其刺眼）。大王的裁决：**偶尔找不到
+                //   窗口边，好过一直有这条令人难受的黑边**。
+                // · 关闭的代价：无投影——窗口压在白色背景上时边界不显眼。取舍已知且已接受。
+                // 若将来要「有边界感但不要黑边」，正确做法是 CSS 侧一圈**主题化内描边**（不碰
+                // DWM），而不是重新打开这个开关。
                 #[cfg(target_os = "windows")]
                 if let Err(error) = main.set_shadow(false) {
                     tracing::warn!("Failed to disable main window shadow: {error}");

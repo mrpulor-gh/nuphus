@@ -38,6 +38,16 @@
      并不一致（多一层强调色径向渐变），这正是"应用 head 和 body 背景不同步"的来源。
      底色上移到 #root 后，标题栏、聊天区、body 三段必然同色。 */
   background: transparent;
+  /* 窗口最外圈：一圈**主题化** 1px 内描边 —— 窗口压在白色背景（例如它下面的浏览器）
+     上时仍能看清边界。
+     为什么用 inset box-shadow 而不是 border/outline：它不参与布局计算，不会把内容挤
+     出 1px；`inset 0 0 0 1px` 也是本仓库既有写法（chat-input.css / chat-terminal.css）。
+     为什么不用系统投影：那要打开 DWM 无装饰阴影，代价是一条 1px 深色边框线（浅色主题
+     下刺眼），已被裁决关闭 —— 见 src-tauri/src/main.rs:507 的两次定案。
+     色走 --line-2（"常规边框"档）：简白 = rgba(0,0,0,.10) ≈ #e6e6e6 浅灰细线，
+     深色/科技主题各按自己的 token 取值，三主题都不会变成"黑边"。
+     嫌淡/嫌重只改这一个 token —— 换成 --line-3 更清楚，换成 --line-1 更轻。 */
+  box-shadow: inset 0 0 0 1px var(--line-2);
 }
 /* 标题栏：落在命名行 titlebar（按名字定位，与源码顺序无关）。 */
 .app-shell > header.title-bar {
@@ -1060,6 +1070,19 @@
   display: flex;
   flex-direction: column;
   background: var(--surface-0);
+}
+
+/* 窗口最外圈：主题化 1px 内描边（同 .app-shell 的窗口描边契约；绘制方式与理由
+   见 preview-overlay.css 的 .pv-page::after —— 顶层是实色工作台 Header，box-shadow
+   会被盖断，故用覆盖层伪元素画全圈）。Suspense 占位（CanvasWorkbenchLoading）与本
+   宿主同类名，加载期同样带描边。 */
+.canvas-workbench-host::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
 }
 /* 外壳 chunk 加载中的占位：复用全局 .page-loading，撑满宿主高度以居中显示 */
 .canvas-workbench-host > .page-loading {
