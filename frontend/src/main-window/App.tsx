@@ -361,13 +361,23 @@ export default function App() {
     }
   }
   useEffect(() => {
+    let disposed = false
     let unlisten: (() => void) | undefined
     void listen<{ seq: number; event: { type: string } }>('nuphus-event', ({ event }) => {
+      if (disposed) return
       if (event.type === 'new_chat_broadcast') void reloadFromBackendRef.current()
     }).then(u => {
-      unlisten = u
+      // 卸载竞态：listen 的 promise 还没回来就清理时，unlisten 仍是 undefined，
+      // 只写 unlisten?.() 会空转 → 监听器在 JS/Rust 两侧都留着（dev 双挂载、
+      // HMR 必现），此后每个 nuphus-event 帧被**重复处理 N 次**。
+      // 与 useEvents.ts / LiveExecutionActivity.tsx 的写法对齐。
+      if (disposed) u()
+      else unlisten = u
     })
-    return () => unlisten?.()
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
   }, [])
 
   // ── 实际启动工作流（权限与模式均已确认后调用） ──

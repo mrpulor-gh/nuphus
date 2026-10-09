@@ -1484,9 +1484,11 @@ export function useEvents(h: EventHandlers) {
 
   // ── toolbar:action listener ──
   useEffect(() => {
+    let disposed = false
     let unlisten: (() => void) | null = null
 
     listen<{ action: string }>('toolbar:action', async payload => {
+      if (disposed) return
       console.log('[Toolbar] action received:', payload)
       switch (payload.action) {
         case 'screenshot':
@@ -1505,10 +1507,13 @@ export function useEvents(h: EventHandlers) {
           console.warn('[Toolbar] unknown action:', payload.action)
       }
     }).then(fn => {
-      unlisten = fn
+      // 同 App.tsx：promise 未回来即卸载时，unlisten 为 null → 清理空转 → 泄漏。
+      if (disposed) fn()
+      else unlisten = fn
     })
 
     return () => {
+      disposed = true
       unlisten?.()
     }
   }, [h.setRegionPickerMode])
