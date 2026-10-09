@@ -41,6 +41,12 @@
  * 补入（`pr: null` + `commit: 短 sha`，`/commit/<sha>` 可公开核对），措辞对齐提交标题；
  * 纯格式 / lint 提交不收录。
  *
+ * `0.2.27` 轮次（零 PR）取证：2026-10-10 经 `/pulls?state=closed` API 核对，v0.2.26（2026-10-05）
+ * 之后无任何合并 PR（最后合并仍是 #91，2026-09-29，已收录，非新提交者）；`/contributors`
+ * API 六账号与 REPO_COMMITTERS 一致，头像墙无新增。`git log v0.2.26..HEAD` 区间 38 个提交
+ * 全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能（`pr: null` + `commit: 短 sha`）；
+ * 纯格式 / lint / 发版杂务提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -101,6 +107,82 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '0.2.27',
+    date: '2026-10-10',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '592fdef3',
+            summary: '简白主题按浅色手法重构，清除深色语义残留',
+          },
+          {
+            pr: null,
+            commit: '93656dbc',
+            summary: 'HTML 预览标注闭环：框选批注回流为结构化引用，按引用定向修改页面',
+          },
+          {
+            pr: null,
+            commit: '8bf6d758',
+            summary: '应用图标反色为白底黑体，修正 ICO 帧行序',
+          },
+          {
+            pr: null,
+            commit: '0241e52b',
+            summary: '修 CDP 浏览器入口唤不起：runtime 死锁 + 连接死亡后不自愈',
+          },
+          {
+            pr: null,
+            commit: '919dc5c1',
+            summary: '执行追踪默认只渲染最近 40 条，上百步不再掉帧',
+          },
+          {
+            pr: null,
+            commit: 'ea3c23a8',
+            summary: 'web_extract 补齐 SSRF 守卫，收紧为公网抓取策略',
+          },
+          {
+            pr: null,
+            commit: '2ba36240',
+            summary: '后台任务账本与中断汇报闭环：跨调用子进程可查可结束，中断如实结算汇报',
+          },
+          {
+            pr: null,
+            commit: '78854529',
+            summary: '外链统一进 Agent 浏览器，冷启动预检提速（6s → 0.9s）',
+          },
+          {
+            pr: null,
+            commit: '28e7d28d',
+            summary: '桌面工具条改右侧常驻按钮列，撤 Ctrl+U 与扳手菜单',
+          },
+          {
+            pr: null,
+            commit: '390ae68f',
+            summary: '输入法组词态守卫，Enter 选词不再误发',
+          },
+          {
+            pr: null,
+            commit: '53ef4098',
+            summary: '执行追踪按步折叠与滚动锚点补偿，折叠 / 下拉 / 贴底不再打架',
+          },
+          {
+            pr: null,
+            commit: 'cd416661',
+            summary: '增强模式改只读状态行，迁入推理强度弹窗',
+          },
+          {
+            pr: null,
+            commit: 'e0d3f368',
+            summary: '贴底跟随改手势判定，内容增长永不抢控制',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.26',
     date: '2026-10-05',
