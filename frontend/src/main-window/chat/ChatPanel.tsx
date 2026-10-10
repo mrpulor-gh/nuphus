@@ -1058,10 +1058,18 @@ export function ChatPanel({
   )
 
   // 贴底跟随（useStickyScroll）：默认跟随流式输出贴底；用户鼠标上滚 / 拖拽滚动条即
-  // 立即解锁，停在任意位置阅读不再被拽回；手势结束且停在底部才回归跟随。跟随态只由
-  // 用户手势改写，流式撑高滚动条永不改写它（旧「80px 容差 + 60s 静默宽限」参数已删）。
-  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } =
-    useStickyScroll(messages)
+  // 立即解锁，停在任意位置阅读不再被拽回。
+  //
+  // bottomZonePx = 80（对话窗宽容语义，2026-10-10 修回归）：严格版要求「4px 内 + 手势收尾
+  // 瞬间」双条件才恢复跟随，在流式增长下几乎不可达（用户滚回底部松手时内容已又长高一截）
+  // → 自动下拉永久丢失；且内容变矮（草稿被 progress 替换 / think 块剥离）时浏览器把
+  // scrollTop 钳回底部，会被严格版误读成「用户上滚」而静默解锁。宽容语义下：
+  // 「用户向下滚回区内」是唯一恢复入口（内容增长仍不恢复）、收缩钳位不再误解锁。
+  // 执行追踪面板（ExecutionTraceFloating）不传该选项，保持原严格语义不变。
+  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } = useStickyScroll(
+    messages,
+    { bottomZonePx: 80 },
+  )
   // followReset 回填：useEvents 在 App 层（本组件之上）监听 nuphus-event，
   // execution_started（新轮次恢复跟随后续流式）/ execution_completed（完成瞬间补拉）
   // 都要拉回底部 —— 函数不能经 props 上行，父层下发 followResetRef、本组件把最新闭包

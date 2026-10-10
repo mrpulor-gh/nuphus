@@ -409,3 +409,94 @@ describe('useStickyScroll 手势语义', () => {
     expect(result.current.showJumpButton).toBe(false)
   })
 })
+
+/**
+ * bottomZonePx（对话窗宽容语义，2026-10-10 修「自动下拉没了」实机回归）
+ *
+ * 两处根因（都只在对话窗触发）：
+ *   ① 内容变矮（草稿气泡被 progress 行替换 / think 块剥离）时浏览器把越界 scrollTop
+ *      钳回底部 → 负 delta 被严格版误读成「用户上滚」→ 跟随静默解除且再也回不来；
+ *   ② 严格版恢复要「4px 内 + 手势收尾瞬间」双条件，流式下用户滚回底部松手时内容已
+ *      又长高一截 → 判定落空，自动下拉永久丢失。
+ * 宽容语义：向下滚回区内即恢复（唯一恢复入口）、钳位不误解锁、增长仍不恢复。
+ * 严格语义（追踪面板路径）由上方全部用例覆盖 —— 它们都不传选项。
+ */
+describe('bottomZonePx 对话窗宽容语义', () => {
+  function setupZone() {
+    return renderHook((props: { n: number }) => useStickyScroll(props.n, { bottomZonePx: 80 }), {
+      initialProps: { n: 1 },
+    })
+  }
+
+  it('内容变矮的收缩钳位不误解锁：仍跟随，后续流式继续贴底', () => {
+    const { result, rerender } = setupZone()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+    expect(el.scrollTop).toBe(600) // max = 1000 − 400
+
+    // 内容变矮 ⇒ 浏览器把越界的 scrollTop 钳回新底部（max = 700 − 400 = 300）
+    setScrollHeight(el, 700)
+    el.scrollTop = 300
+    scrollFrame(result)
+    expect(result.current.showJumpButton).toBe(false) // 钳位 ≠ 用户上滚：不得解锁
+
+    // 后续流式继续贴底（新 max = 1400 − 400）
+    setScrollHeight(el, 1400)
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(1000)
+  })
+
+  it('向下滚回贴底区（80px）即恢复跟随：不必压线 4px、不必等手势收尾', () => {
+    const { result, rerender } = setupZone()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -200) // 600 → 400：距底 200 > 80，未进区
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true) // 停在区外：保持解锁
+
+    wheelScroll(result, el, 140) // 400 → 540：距底 60 ≤ 80，进区即恢复
+    expect(el.scrollTop).toBe(540)
+    expect(result.current.showJumpButton).toBe(false)
+
+    // 恢复后 followKey 变化重新贴底
+    setScrollHeight(el, 1400)
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(1000)
+  })
+
+  it('上滚停在区内（方向向上）收尾不恢复：不把阅读中的用户拽回', () => {
+    const { result, rerender } = setupZone()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -30) // 600 → 570：距底 30 在区内，但方向是向上
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true)
+
+    // 流式续来也不拽回
+    setScrollHeight(el, 1600)
+    followKeyChange(result, rerender, 3)
+    expect(el.scrollTop).toBe(570)
+  })
+
+  it('内容增长本身不恢复跟随（区内也一样）：向下滚动才是唯一恢复入口', () => {
+    const { result, rerender } = setupZone()
+    const el = attachScroller(result.current.scrollRef)
+    followKeyChange(result, rerender, 2)
+
+    wheelScroll(result, el, -40) // 600 → 560：解锁且停在区内
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.showJumpButton).toBe(true)
+
+    setScrollHeight(el, 5000) // 内容暴涨（增长只改 scrollHeight、不改 scrollTop）
+    scrollFrame(result)
+    expect(result.current.showJumpButton).toBe(true) // 非用户手势：位置变化不得恢复
+  })
+})

@@ -53,6 +53,30 @@ const GESTURE_END_DEBOUNCE_MS = 120
  */
 const UNGUARDED_UNLOCK_EPS_PX = 1
 
+/**
+ * 内容收缩钳位判定阈值（px）：气泡变矮时（草稿被 progress 替换 / think 块被剥离 / 折叠）
+ * 浏览器会把越界的 scrollTop 钳回底部 —— 这个「恰好落回底部」的下降**不是**用户上滚。
+ * 误判会让自动下拉在流中途静默失锁且再也回不来（0.2.27 实机复现）。
+ */
+const CLAMP_TO_BOTTOM_EPS_PX = 2
+
+/**
+ * 贴底区宽容语义（对话窗启用；不传 = 严格语义，执行追踪面板沿用）。
+ */
+export interface StickyScrollOptions {
+  /**
+   * 贴底区半径（px）。> 0 时启用对话窗语义：
+   *   ① 用户**向下**滚回区内（滚轮 / 键盘 / 拖拽滚动条，含松手瞬间）→ 立即恢复跟随；
+   *   ② 「恰好落回底部」的 scrollTop 下降识别为内容收缩钳位，不再误判成用户上滚；
+   *   ③ 手势收尾只在「方向向下且落在区内」时恢复，绝不把正在阅读的用户拽回底部。
+   *
+   * 为什么需要：严格版用 4px + 手势收尾双条件判定恢复，在流式增长下几乎不可达 ——
+   * 用户滚回底部松手时内容已又长高一截，判定落空后跟随永久丢失（0.2.27 实机复现）。
+   * 内容增长本身依旧不恢复跟随（向下滚动是唯一恢复入口），上滚依旧立即解锁。
+   */
+  bottomZonePx?: number
+}
+
 export interface StickyScroll {
   /** 绑到滚动容器（ChatPanel 的 .chat-messages / 执行面板的步骤树 / 终端容器） */
   scrollRef: RefObject<HTMLDivElement>
@@ -87,7 +111,7 @@ export interface StickyScroll {
   nudgeScrollTop: (deltaPx: number) => void
 }
 
-export function useStickyScroll(followKey: unknown): StickyScroll {
+export function useStickyScroll(followKey: unknown, options?: StickyScrollOptions): StickyScroll {
   const scrollRef = useRef<HTMLDivElement>(null)
   /** true = 贴底跟随中；false = 被用户手势解锁（按钮显示） */
   const [following, setFollowing] = useState(true)
@@ -111,6 +135,10 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
   /** true = 滚轮 / 键盘手势去抖窗内：期间出现的 scroll 事件归因用户手势 */
   const gestureActiveRef = useRef(false)
   const gestureEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 最近一次用户滚动方向：手势收尾只在「向下」时恢复跟随（不会把阅读中的用户拽回底部） */
+  const lastUserDirRef = useRef<'up' | 'down' | null>(null)
+  /** 贴底区半径：0 = 严格语义（默认）；> 0 = 对话窗宽容语义（见 StickyScrollOptions） */
+  const zonePx = options?.bottomZonePx ?? 0
 
   /** 切换跟随态：state 与 ref 同步置位（单一入口，防两处漂移） */
   const setFollowingMode = useCallback((next: boolean) => {
@@ -122,6 +150,16 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
   const isAtBottom = useCallback((el: HTMLDivElement): boolean => {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_EPS_PX
   }, [])
+
+  /**
+   * 「在贴底区内」查询：严格版 = 4px 贴底；宽容版（对话窗）= 落进 bottomZonePx 半径。
+   * 宽容版只扩大**恢复跟随**的落点判定，不新增解锁入口（解锁仍只由明确的上滚手势负责）。
+   */
+  const inBottomZone = useCallback(
+    (el: HTMLDivElement): boolean =>
+      zonePx > 0 ? el.scrollHeight - el.scrollTop - el.clientHeight <= zonePx : isAtBottom(el),
+    [isAtBottom, zonePx],
+  )
 
   /** 用户手势优先：清掉可能残留的程序待吞账，绝不让它吞掉用户的 scroll 事件 */
   const clearProgramGuard = useCallback(() => {
@@ -148,9 +186,15 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
       if (draggingRef.current) return
       const el = scrollRef.current
       if (!el) return
+      if (zonePx > 0) {
+        // 对话窗：只在「这一轮手势是往下滚、且落点在贴底区内」时恢复。**绝不在收尾时解锁** ——
+        // 严格版在此无条件按 4px 改写跟随态，向下滚 + 流式增长会把它误锁死（自动下拉丢失）。
+        if (lastUserDirRef.current === 'down' && inBottomZone(el)) setFollowingMode(true)
+        return
+      }
       setFollowingMode(isAtBottom(el))
     }, GESTURE_END_DEBOUNCE_MS)
-  }, [clearGestureEndTimer, isAtBottom, setFollowingMode])
+  }, [clearGestureEndTimer, inBottomZone, isAtBottom, setFollowingMode, zonePx])
 
   /**
    * 程序写入 scrollTop 的唯一出口：先记目标值（供方向判定拿到干净基准）、再置 1 次
@@ -193,14 +237,19 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
       clearProgramGuard()
       if (e.deltaY < 0) {
         // B2：鼠标上滚 → 立即解锁（同步改写，不等 scroll 事件、不等去抖、不等计时器）
+        lastUserDirRef.current = 'up'
         setFollowingMode(false)
         scheduleGestureEnd()
       } else if (e.deltaY > 0) {
-        // 向下滚不当场恢复：中途恢复等于把用户弹回底部。等手势收尾后按落点决定（B4）
+        lastUserDirRef.current = 'down'
+        // 向下滚不当场恢复：中途恢复等于把用户弹回底部。等手势收尾后按落点决定（B4）。
+        // 例外（对话窗）：已在贴底区内继续往下滚 —— 其实滚无可滚、不会派发 scroll 帧，
+        // 这个手势的本意只能是「回到跟随」，当场恢复。
+        if (zonePx > 0 && !followingRef.current && inBottomZone(el)) setFollowingMode(true)
         scheduleGestureEnd()
       }
     },
-    [clearProgramGuard, scheduleGestureEnd, setFollowingMode],
+    [clearProgramGuard, inBottomZone, scheduleGestureEnd, setFollowingMode, zonePx],
   )
 
   const handlePointerDown = useCallback(
@@ -228,14 +277,18 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
       if (!el || !el.contains(e.target as Node)) return
       clearProgramGuard()
       if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
+        lastUserDirRef.current = 'up'
         setFollowingMode(false)
         scheduleGestureEnd()
       } else if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'End') {
-        // 同滚轮向下：手势收尾后按落点决定（End 落到底 → 回归）
+        lastUserDirRef.current = 'down'
+        // 同滚轮向下：手势收尾后按落点决定（End 落到底 → 回归）；已在贴底区内继续下按
+        // （滚无可滚、无 scroll 帧）→ 对话窗当场恢复。
+        if (zonePx > 0 && !followingRef.current && inBottomZone(el)) setFollowingMode(true)
         scheduleGestureEnd()
       }
     },
-    [clearProgramGuard, scheduleGestureEnd, setFollowingMode],
+    [clearProgramGuard, inBottomZone, scheduleGestureEnd, setFollowingMode, zonePx],
   )
 
   const handlePointerUp = useCallback(() => {
@@ -245,8 +298,12 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
     // B4：用户操作后释放指针且停在底部 → 回归自动下拉。注意这里**只回归、不解锁**
     // （解锁只由明确的上滚手势触发），所以它不会把正在阅读的用户拽回底部。
     if (!el || followingRef.current) return
-    if (isAtBottom(el)) setFollowingMode(true)
-  }, [isAtBottom, setFollowingMode])
+    // 对话窗：松手时落点在贴底区内、且本轮指针移动不是「向上」（自己拖回底部 / 拖到底
+    // 松手）→ 恢复。严格版仍是 4px 贴底判定。
+    if (zonePx > 0 ? lastUserDirRef.current === 'down' && inBottomZone(el) : isAtBottom(el)) {
+      setFollowingMode(true)
+    }
+  }, [inBottomZone, isAtBottom, setFollowingMode, zonePx])
 
   useEffect(() => {
     const capture = { capture: true } as const
@@ -290,16 +347,42 @@ export function useStickyScroll(followKey: unknown): StickyScroll {
     const fromUserGesture =
       draggingRef.current || pointerActiveRef.current || gestureActiveRef.current
 
+    // 收缩钳位：内容变矮时浏览器把越界的 scrollTop 钳回底部 —— 落点**恰好**在底
+    // （≤2px）、且没有任何用户手势。它不是「用户上滚」（严格版 / 用户拖回区内不误判：
+    // 拖回只会在区内、不会精准停在 2px 内；对话窗识别并放行，防止自动下拉静默失锁）。
+    const clampedByShrink =
+      zonePx > 0 &&
+      !fromUserGesture &&
+      el.scrollHeight - el.scrollTop - el.clientHeight <= CLAMP_TO_BOTTOM_EPS_PX
+
+    if (delta > UNGUARDED_UNLOCK_EPS_PX) {
+      lastUserDirRef.current = 'down'
+    } else if (delta < -UNGUARDED_UNLOCK_EPS_PX && !clampedByShrink) {
+      lastUserDirRef.current = 'up'
+    }
+
     // 未经对冲的 scrollTop 下降只可能来自用户：内容增长只改 scrollHeight、不改
     // scrollTop（overflow-anchor: none 已关掉浏览器的反向锚定），程序写入已在上一步
     // 对冲。这也是「原生滚动条拖拽不派发 pointer 事件」时的兜底识别手段 —— 拖拽期间
     // 到达的 scroll 事件一律归因用户意图（B3），绝不因此回退成位置百分比判定。
-    if (delta < -UNGUARDED_UNLOCK_EPS_PX && followingRef.current) {
+    if (delta < -UNGUARDED_UNLOCK_EPS_PX && followingRef.current && !clampedByShrink) {
       setFollowingMode(false)
     }
 
+    // 对话窗恢复入口：用户**向下**滚回贴底区 → 立即恢复跟随。落点进区即恢复，
+    // 不必压线到 4px、不必等手势收尾 —— 后两个条件在流式增长下几乎不可达，是
+    // 「自动下拉没了」的主因。内容增长本身不产生向下 delta，不会误开（B1/B5 不变）。
+    if (
+      zonePx > 0 &&
+      !followingRef.current &&
+      delta > UNGUARDED_UNLOCK_EPS_PX &&
+      inBottomZone(el)
+    ) {
+      setFollowingMode(true)
+    }
+
     return fromUserGesture || delta !== 0
-  }, [setFollowingMode])
+  }, [inBottomZone, setFollowingMode, zonePx])
 
   /**
    * 立即恢复跟随并瞬移到底 —— 程序调用方出口（新轮次 / 任务完成补拉 / 模式切换 /
