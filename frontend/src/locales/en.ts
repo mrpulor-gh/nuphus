@@ -1069,7 +1069,7 @@ const en: Record<string, string> = {
   'models.toolbarAgents': 'Sub-agent Models',
   'models.visionSection': 'Image Understanding',
   'models.visionSectionDesc':
-    'Once a vision model is configured, screenshots and images in chat are recognized automatically (OCR and UI description). Empty uses the default model; models confirmed to support vision input show an icon, and custom / relay models can be selected manually even if capability probing did not detect it.',
+    'Once a vision model is configured, screenshots and images in chat are recognized automatically (OCR and UI description). Empty uses the default model; models confirmed to support vision input show an icon. Relay models usually get their capability from auto-probing, so when probing misses it, use "Mark as vision-capable" below to add the current model to the list.',
   'models.visionExplicitPath':
     'Explicitly set: images are always handled by {0} (no longer follows Leader; switching Leader will not change this)',
   'models.visionFollowOk':
@@ -1192,6 +1192,18 @@ const en: Record<string, string> = {
     'Vision input is enabled (click to disable; the model will no longer appear in the image understanding model list)',
   'models.visionToggleTitleOff':
     'Click to mark as vision-input capable (only models supporting images appear in the image understanding model list)',
+  // ── Row prefs: featured (eye) / provider default (star) / popular shortcuts ──
+  'models.hotModelsTitle': 'Popular models',
+  'models.visibleToggleAria': 'Featured (show this model in the switcher): {0}',
+  'models.visibleToggleTitleOn':
+    'Featured (this provider switcher shows featured models only; click to remove)',
+  'models.visibleToggleTitleOff':
+    'Click to feature (this provider switcher will then show featured models only)',
+  'models.defaultToggleAria': 'Set as provider default model: {0}',
+  'models.defaultToggleTitleOn': 'Provider default model (click to unset)',
+  'models.defaultToggleTitleOff':
+    'Set as the provider default model (preference only, does not switch now)',
+  'models.defaultModelMeta': 'Default: {0}',
   'models.removeFromLocalList': 'Remove from local list',
   'models.localCtxLabel': 'Default context for local models (K tokens)',
   'models.localCtxHint':
@@ -1424,6 +1436,10 @@ const en: Record<string, string> = {
   'models.visionModelPlaceholder': 'Model name',
   'models.visionSaved': 'Saved',
   'models.visionSaveFail': 'Save failed',
+  'models.visionMarkHint':
+    'Current model {0} is not marked as supporting image input, so it is not in the list above',
+  'models.visionMarkBtn': 'Mark as vision-capable',
+  'models.visionMarkDone': 'Marked {0} as supporting vision input',
   'models.visionModelNone': 'Add vision model',
   'models.clearKey': 'Clear the saved API key for this local model provider',
   'models.capVision': 'Vision',

@@ -360,6 +360,63 @@
   }
 }
 
+/* ── 热门模型快捷区（筛选框下方一排 chip）──
+   点击 = 把关键词片段填进筛选框，复用列表的 includes 筛选。 */
+.models-hot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.models-hot-label {
+  font-size: 11px;
+  color: var(--fg-4);
+  margin-right: 2px;
+}
+.models-hot-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-hot-chip:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+  border-color: var(--accent);
+}
+.models-hot-chip:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── 视觉能力自助出口（图像理解区）：探测没认出能力时一键声明 ──
+   行内视觉开关移除后，这里是「候选列表里没有我的模型」的唯一出口。 */
+.models-vision-mark {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.models-vision-mark .text-caption {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* ── 手动添加模型行（灰度/临时模型，不依赖 /v1/models 返回）── */
 .models-add-row {
   display: flex;

@@ -45,7 +45,13 @@ import {
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
-import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
+import {
+  filterProviderModels,
+  orderProviderModels,
+  readRecentModels,
+  rememberRecentModel,
+} from './modelPopupOrder'
+import { getDefaultModel, getPickedModels } from '../lib/modelPrefs'
 import { buildQuoteRef, isSelectableInBubble, truncateQuote } from './messageSelection'
 import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
@@ -2580,11 +2586,19 @@ export function ChatPanel({
                     <div className="model-provider-picker">
                       <div className="model-provider-list">
                         {savedConfigs.map(cfg => {
-                          // 子列表按「最近切换顺序」排：模型多的 provider 不必每次
-                          // 都在长列表里找。只用展示顺序，不参与模型解析/切换。
-                          const providerModels = orderProviderModels(
-                            allModels.filter(m => m.provider === cfg.provider),
-                            readRecentModels(localStorage, cfg.provider),
+                          // 子列表展示口径（只影响可见范围与顺序，不参与模型解析/切换）：
+                          // 先排「厂商默认置顶 → 最近切换顺序」，再按设置页的「精选」清单收窄
+                          // （无精选记录 → 全显示）——模型多的 provider 不必每次都在长列表里找。
+                          // 该 provider 的默认模型（设置页 ⭐ 写入的本地偏好）：子列表置顶 + 卡片 meta 显示。
+                          // 必须在排序前取——pinned 是排序的输入，不是事后注解。
+                          const defaultModelId = getDefaultModel(localStorage, cfg.provider)
+                          const providerModels = filterProviderModels(
+                            orderProviderModels(
+                              allModels.filter(m => m.provider === cfg.provider),
+                              readRecentModels(localStorage, cfg.provider),
+                              defaultModelId,
+                            ),
+                            getPickedModels(localStorage, cfg.provider),
                           )
                           // 勾选态 = (provider, model) 双全等：官方厂商与 opencode-go 存在同 id
                           // 模型（deepseek-v4-flash 等），仅比 id 会让两 provider 卡片同时打勾。
@@ -2622,9 +2636,12 @@ export function ChatPanel({
                               <span className="model-provider-option-body">
                                 <span className="cmd-modal-card-name">{cfg.label}</span>
                                 <span className="cmd-modal-card-meta">
-                                  {/* 显示该 provider 最近使用的模型（localStorage 持久化）；
+                                  {/* 优先显示设置页设的厂商默认（⭐ 写的本地偏好）；没有则回退到
+                                      该 provider 最近使用的模型（localStorage 持久化）。
                                       仅当前生效项由右侧 ✓ 标识，不再用"暂无模型"掩盖其他项 */}
-                                  {cfg.model || t('models.noModels')}
+                                  {defaultModelId
+                                    ? t('models.defaultModelMeta', defaultModelId)
+                                    : cfg.model || t('models.noModels')}
                                 </span>
                               </span>
                               {isActive && (

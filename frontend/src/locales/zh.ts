@@ -1025,7 +1025,7 @@ const zh: Record<string, string> = {
   'models.toolbarAgents': '子智能体模型',
   'models.visionSection': '图像理解',
   'models.visionSectionDesc':
-    '配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标，自定义 / 中转模型即使未探测到能力也可以手动选择。',
+    '配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标。中转模型的能力多由自动探测写入，探测没认出来时，用下方的「标记为支持视觉输入」把当前模型补进候选列表。',
   'models.visionExplicitPath':
     '已显式指定：图像统一由 {0} 理解（不再跟随 Leader；换 Leader 不会自动改这里）',
   'models.visionFollowOk': '跟随 Leader：图像由当前 Leader 模型 {0} 直接理解，无需额外配置',
@@ -1137,6 +1137,15 @@ const zh: Record<string, string> = {
   'models.visionToggleTitleOn': '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）',
   'models.visionToggleTitleOff':
     '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）',
+  // ── 行内偏好：精选（眼睛）/ 厂商默认（⭐）/ 热门快捷 ──
+  'models.hotModelsTitle': '热门模型',
+  'models.visibleToggleAria': '精选（在切换弹窗中显示该模型）：{0}',
+  'models.visibleToggleTitleOn': '已加入精选（该厂商切换弹窗只显示精选模型；点击移出）',
+  'models.visibleToggleTitleOff': '点击加入精选（该厂商切换弹窗将只显示精选模型）',
+  'models.defaultToggleAria': '设为该厂商默认模型：{0}',
+  'models.defaultToggleTitleOn': '已设为该厂商默认模型（点击取消）',
+  'models.defaultToggleTitleOff': '设为该厂商默认模型（仅记录偏好，不会立即切换）',
+  'models.defaultModelMeta': '默认：{0}',
   'models.removeFromLocalList': '从本地列表移除',
   'models.localCtxLabel': '本地模型默认上下文（K tokens）',
   'models.localCtxHint': '为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。',
@@ -1351,6 +1360,9 @@ const zh: Record<string, string> = {
   'models.visionModelPlaceholder': '模型名称',
   'models.visionSaved': '已保存',
   'models.visionSaveFail': '保存失败',
+  'models.visionMarkHint': '当前模型 {0} 未标记支持图像输入，不在上方候选列表里',
+  'models.visionMarkBtn': '标记为支持视觉输入',
+  'models.visionMarkDone': '已将 {0} 标记为支持视觉输入',
   'models.visionModelNone': '添加图像理解模型',
   'models.clearKey': '清除本地此模型提供商已保存密钥',
   'models.capVision': '支持视觉理解',
