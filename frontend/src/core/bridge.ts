@@ -935,4 +935,13 @@ registerMock('oauth_status', () => ({
 }))
 registerMock('switch_model', () => 'ok')
 registerMock('set_model_context_window', () => 'ok')
+// 真改内存里的 mock 模型（而不是回一个 'ok'）：图像理解的「标记为支持视觉输入」依赖
+// 写回后重新拉列表能看到变化，否则预览里点了像没生效。
+registerMock('set_model_supports_vision', (args?: Record<string, unknown>) => {
+  const provider = String(args?.provider ?? '')
+  const model = String(args?.model ?? '')
+  const hit = MOCK_MODELS.find(m => m.provider === provider && m.id === model)
+  if (hit) hit.supports_vision = Boolean(args?.supportsVision)
+  return 'ok'
+})
 registerMock('set_model_supports_image_generation', () => 'ok')
