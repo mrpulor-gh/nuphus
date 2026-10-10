@@ -332,9 +332,43 @@ impl SkillRegistry {
         if !tmp_dir.join("skill.json").exists() {
             // 降级适配：Claude Code / Codex 生态仓库通常无 skill.json，
             // 尝试从 .claude-plugin/plugin.json、SKILL.md frontmatter 合成 manifest。
-            if let Err(e) = self.synthesize_manifest(&tmp_dir) {
+            let synthesized = match self.synthesize_manifest(&tmp_dir) {
+                Ok(m) => m,
+                Err(e) => {
+                    std::fs::remove_dir_all(&tmp_dir).ok();
+                    return Err(e);
+                }
+            };
+
+            // 拒绝「哑巴技能」：Nuphus 的技能内容只取自技能目录根的 SKILL.md
+            // （get_skill_md 不递归子目录）。缺它时安装会「成功」，列表里也能看到，
+            // 但 skill_read 永远读不到正文——宁可在源头报错，也不产出这种半成品。
+            if !tmp_dir.join("SKILL.md").exists() {
                 std::fs::remove_dir_all(&tmp_dir).ok();
-                return Err(e);
+                return Err(format!(
+                    "仓库根目录缺少 SKILL.md，已中止安装: {}\n\
+                     该仓库大概率是 Claude Code plugin 型布局（技能位于 skills/<分类>/<技能名>/ 下，\
+                     根目录只有 README 与 plugin 元数据），或根本不是技能仓库。\n\
+                     Nuphus 要求 SKILL.md 位于技能目录根，请先单独取出目标技能目录\
+                     （连同其 SKILL.md 与 data/），再改用本地目录方式安装。",
+                    url
+                ));
+            }
+
+            // 拒绝无意义的名字：名字若完全来自 git clone 的临时目录名，说明仓库未提供
+            // 任何名称元数据，装进去只会得到 `nuphus_skill_<时间戳>` 这种垃圾名。
+            let tmp_name = tmp_dir
+                .file_name()
+                .map(|n| sanitize_skill_name(&n.to_string_lossy()))
+                .unwrap_or_default();
+            if synthesized.name == tmp_name {
+                std::fs::remove_dir_all(&tmp_dir).ok();
+                return Err(format!(
+                    "仓库未提供任何名称元数据，无法确定技能名，已中止安装: {}\n\
+                     skill.json / .claude-plugin/plugin.json / 根 SKILL.md 的 frontmatter name 均缺失。\n\
+                     请改用本地目录方式安装，并在目录名或 SKILL.md frontmatter 中给出技能名。",
+                    url
+                ));
             }
         }
 
@@ -659,6 +693,64 @@ mod tests {
         assert!(dest.join("SKILL.md").exists(), "SKILL.md should be copied");
 
         let _ = reg.remove("git-synth-test");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn install_from_git_rejects_plugin_layout_repo() {
+        // Claude Code plugin 型仓库：根目录无 SKILL.md，技能嵌在 skills/<分类>/<技能名>/ 下。
+        // 这类仓库直接安装会产出「列表可见、skill_read 读不到」的哑巴技能，必须在源头拒绝。
+        let repo =
+            std::env::temp_dir().join(format!("nuphus_plugin_layout_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo);
+        let nested = repo.join("skills").join("engineering").join("thing");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(repo.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            repo.join(".claude-plugin").join("plugin.json"),
+            r#"{"name":"plugin-layout-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(nested.join("SKILL.md"), "---\nname: thing\n---\n# body").unwrap();
+
+        let run = |cmd: &str, dir: &std::path::Path| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(cmd.split_whitespace())
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.local")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.local")
+                .output()
+                .expect("git should be available");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                cmd,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run("init -b main", &repo);
+        run("add -A", &repo);
+        run("commit -m init", &repo);
+
+        let reg = SkillRegistry::new();
+        let url = format!("file://{}", repo.display());
+        let err = reg
+            .install_from_git(&url)
+            .expect_err("plugin-layout repo (no root SKILL.md) must be rejected");
+        assert!(
+            err.contains("SKILL.md"),
+            "error should name the missing SKILL.md: {err}"
+        );
+
+        let dest = SkillRegistry::community_dir().join("plugin-layout-test");
+        assert!(
+            !dest.exists(),
+            "rejected install must not leave a half-installed skill behind"
+        );
+
         let _ = std::fs::remove_dir_all(&repo);
     }
 }
