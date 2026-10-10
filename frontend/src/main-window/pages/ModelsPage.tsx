@@ -520,11 +520,7 @@ function makeTXT(t: TFunc) {
       '点击加入精选（该厂商切换弹窗将只显示精选模型）',
     ),
     defaultToggleAria: (state: string) => t('models.defaultToggleAria', state),
-    defaultToggleTitleOn: tr(
-      t,
-      'models.defaultToggleTitleOn',
-      '已设为该厂商默认模型（点击取消）',
-    ),
+    defaultToggleTitleOn: tr(t, 'models.defaultToggleTitleOn', '已设为该厂商默认模型（点击取消）'),
     defaultToggleTitleOff: tr(
       t,
       'models.defaultToggleTitleOff',
@@ -3418,9 +3414,7 @@ export function ModelsPage({
                                       className={`model-vision-toggle${isPicked ? ' is-on' : ''}`}
                                       aria-pressed={isPicked}
                                       aria-label={TXT.visibleToggleAria(
-                                        isPicked
-                                          ? t('models.capStateOn')
-                                          : t('models.capStateOff'),
+                                        isPicked ? t('models.capStateOn') : t('models.capStateOff'),
                                       )}
                                       title={
                                         isPicked
@@ -3543,9 +3537,7 @@ export function ModelsPage({
                                     isPicked ? t('models.capStateOn') : t('models.capStateOff'),
                                   )}
                                   title={
-                                    isPicked
-                                      ? TXT.visibleToggleTitleOn
-                                      : TXT.visibleToggleTitleOff
+                                    isPicked ? TXT.visibleToggleTitleOn : TXT.visibleToggleTitleOff
                                   }
                                   onClick={e => {
                                     e.stopPropagation()
@@ -3560,7 +3552,9 @@ export function ModelsPage({
                                   className={`model-vision-toggle${isDefaultModel ? ' is-on' : ''}`}
                                   aria-pressed={isDefaultModel}
                                   aria-label={TXT.defaultToggleAria(
-                                    isDefaultModel ? t('models.capStateOn') : t('models.capStateOff'),
+                                    isDefaultModel
+                                      ? t('models.capStateOn')
+                                      : t('models.capStateOff'),
                                   )}
                                   title={
                                     isDefaultModel

@@ -54,10 +54,7 @@ export function getVisibleModels(storage: Storage | undefined): VisibleModelsMap
  * 调用方需要区分「没精选过」与「精选了但列表为空」时用本函数——
  * 前者应显示全部，后者在本模块里不会出现（空数组写入时即被删除）。
  */
-export function getPickedModels(
-  storage: Storage | undefined,
-  provider: string,
-): string[] | null {
+export function getPickedModels(storage: Storage | undefined, provider: string): string[] | null {
   return getVisibleModels(storage)[provider] ?? null
 }
 

@@ -985,9 +985,10 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     })
     // 眼睛开态可见（两态之一），且不触发视觉能力命令 / 切换
     expect(row('model-one')).toHaveAttribute('aria-busy', 'false')
-    expect(
-      within(row('model-one')).getByRole('button', { name: /精选/ }),
-    ).toHaveAttribute('aria-pressed', 'true')
+    expect(within(row('model-one')).getByRole('button', { name: /精选/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
     expect(setModelSupportsVision).not.toHaveBeenCalled()
     expect(switchModel).not.toHaveBeenCalled()
     expect(configureLlm).not.toHaveBeenCalled()
