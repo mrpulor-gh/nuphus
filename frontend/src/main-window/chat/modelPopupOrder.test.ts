@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  filterProviderModels,
   orderProviderModels,
   readRecentModels,
   rememberRecentModel,
@@ -71,6 +72,36 @@ describe('orderProviderModels', () => {
   it('不修改入参数组（返回新数组）', () => {
     const input = models('a', 'b')
     const out = orderProviderModels(input, ['b'])
+    expect(out).not.toBe(input)
+    expect(input.map(m => m.id)).toEqual(['a', 'b'])
+  })
+
+  // ── 厂商默认（pinned）──────────────────────────────────────────────
+  // 「设为默认」必须在弹窗里有真实作用点，否则它只是一行小字。
+
+  it('pinned 恒定置顶，优先于最近切换序', () => {
+    const input = models('m1', 'm2', 'm3')
+    expect(orderProviderModels(input, ['m3', 'm2'], 'm1').map(m => m.id)).toEqual([
+      'm1',
+      'm3',
+      'm2',
+    ])
+  })
+
+  it('只有 pinned、无历史 → 仅把它提到首位，其余保持原序', () => {
+    const input = models('a', 'b', 'c')
+    expect(orderProviderModels(input, [], 'c').map(m => m.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('pinned 不在候选集 → 无害忽略，不退化为乱序', () => {
+    const input = models('a', 'b')
+    expect(orderProviderModels(input, [], 'ghost').map(m => m.id)).toEqual(['a', 'b'])
+    expect(orderProviderModels(input, ['b'], 'ghost').map(m => m.id)).toEqual(['b', 'a'])
+  })
+
+  it('pinned 不改入参', () => {
+    const input = models('a', 'b')
+    const out = orderProviderModels(input, [], 'b')
     expect(out).not.toBe(input)
     expect(input.map(m => m.id)).toEqual(['a', 'b'])
   })
@@ -156,5 +187,55 @@ describe('读写闭环（rememberRecentModel → readRecentModels → orderProvi
     rememberRecentModel(s, 'p', 'd')
     const ordered = orderProviderModels(models('a', 'b', 'c', 'd'), readRecentModels(s, 'p'))
     expect(ordered.map(m => m.id)).toEqual(['d', 'b', 'a', 'c'])
+  })
+})
+
+/**
+ * 子列表可见范围（精选过滤）——与设置页「精选」清单配合的纯函数契约。
+ * 关键语义：清单为空 / null ⇒ 全显示（不是全隐藏）；清单非空 ⇒ 只留命中项。
+ */
+describe('filterProviderModels', () => {
+  it('清单为 null（无精选记录）→ 全显示，逐项与原顺序一致', () => {
+    const input = models('a', 'b', 'c')
+    expect(filterProviderModels(input, null)).toEqual(input)
+  })
+
+  it('清单为空数组 → 同样全显示（空集语义 = 全显示，不是全隐藏）', () => {
+    const input = models('a', 'b')
+    expect(filterProviderModels(input, [])).toEqual(input)
+  })
+
+  it('清单为 undefined / 未提供 → 全显示', () => {
+    expect(filterProviderModels(models('a'), undefined).map(m => m.id)).toEqual(['a'])
+  })
+
+  it('非空清单 → 只保留清单命中的模型', () => {
+    const input = models('a', 'b', 'c', 'd')
+    expect(filterProviderModels(input, ['b', 'd']).map(m => m.id)).toEqual(['b', 'd'])
+  })
+
+  it('清单里有已不存在的模型 id → 无害忽略，不影响其余展示', () => {
+    const input = models('a', 'b')
+    expect(filterProviderModels(input, ['ghost', 'a']).map(m => m.id)).toEqual(['a'])
+  })
+
+  it('不修改入参数组（返回新数组）', () => {
+    const input = models('a', 'b')
+    const out = filterProviderModels(input, ['a'])
+    expect(out).not.toBe(input)
+    expect(input.map(m => m.id)).toEqual(['a', 'b'])
+  })
+
+  it('过滤 → 排序组合：命中项按最近切换顺序排列', () => {
+    const input = models('a', 'b', 'c', 'd')
+    const out = filterProviderModels(orderProviderModels(input, ['d', 'b']), ['a', 'b', 'd'])
+    expect(out.map(m => m.id)).toEqual(['d', 'b', 'a'])
+  })
+
+  it('「移除最后一个精选」的闭环：清单回到 null ⇒ 全部重新可见', () => {
+    // 模拟 modelPrefs 的语义入口：清单只剩一个时过滤为 1 项，清空后（null）回到全显示
+    const input = models('a', 'b', 'c')
+    expect(filterProviderModels(input, ['a']).map(m => m.id)).toEqual(['a'])
+    expect(filterProviderModels(input, null)).toEqual(input)
   })
 })

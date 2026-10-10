@@ -18,8 +18,8 @@ import {
   getProviderContext,
   setAgentModel,
   setModelContextWindow,
-  setModelSupportsVision,
   setModelSupportsImageGeneration,
+  setModelSupportsVision,
   setCapabilityBinding,
   createCustomProvider,
   updateCustomProvider,
@@ -57,6 +57,7 @@ import {
   IconEyeOff,
   IconMic,
   IconImage,
+  IconStar,
   IconAlertTriangle,
   IconRefresh,
   IconBrushCleaning,
@@ -76,6 +77,13 @@ import {
 } from '../lib/customProvider'
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
+import { HOT_MODELS } from '../lib/hotModels'
+import {
+  getDefaultModel,
+  getPickedModels,
+  setDefaultModel,
+  setModelVisible,
+} from '../lib/modelPrefs'
 import { JevSettings } from './JevSettings'
 // 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
 import { AppPill } from '../../ui/AppPill'
@@ -374,9 +382,18 @@ function makeTXT(t: TFunc) {
     visionSectionDesc: tr(
       t,
       'models.visionSectionDesc',
-      '配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标，自定义 / 中转模型即使未探测到能力也可以手动选择。',
+      '配置图像理解模型后，对话中的截图 / 图片可被自动识别（OCR 与界面描述）。留空表示使用默认模型；已确认支持视觉输入的模型会显示图标。中转模型的能力多由自动探测写入，探测没认出来时，用下方的「标记为支持视觉输入」把当前模型补进候选列表。',
     ),
     visionSaved: tr(t, 'models.visionSaved', '已保存'),
+    visionMarkHint: (m: string) =>
+      t('models.visionMarkHint', m) === 'models.visionMarkHint'
+        ? `当前模型 ${m} 未标记支持图像输入，不在上方候选列表里`
+        : t('models.visionMarkHint', m),
+    visionMarkBtn: tr(t, 'models.visionMarkBtn', '标记为支持视觉输入'),
+    visionMarkDone: (m: string) =>
+      t('models.visionMarkDone', m) === 'models.visionMarkDone'
+        ? `已将 ${m} 标记为支持视觉输入`
+        : t('models.visionMarkDone', m),
     saveFailed: tr(t, 'models.visionSaveFail', '保存失败'),
     visionExplicitPath: (m: string) =>
       t('models.visionExplicitPath', m) === 'models.visionExplicitPath'
@@ -489,17 +506,27 @@ function makeTXT(t: TFunc) {
     detectingModels: tr(t, 'models.detectingModels', '正在连接并获取模型列表…'),
     goGateway: tr(t, 'models.goGateway', 'OpenCode Go 网关'),
     audioSupported: tr(t, 'models.audioSupported', '支持语音'),
-    visionToggleAria: (state: string) => t('models.visionToggleAria', state),
-    visionToggleTitleOn: tr(
+    // ── 行内偏好：精选（眼睛）/ 厂商默认（⭐）／热门快捷 ──
+    // 说明：行内视觉能力开关已移除（视觉能力改由后端探测自动判定，方案 C）。
+    visibleToggleAria: (state: string) => t('models.visibleToggleAria', state),
+    visibleToggleTitleOn: tr(
       t,
-      'models.visionToggleTitleOn',
-      '已支持视觉输入（点击关闭后，该模型不再出现在图像理解模型列表）',
+      'models.visibleToggleTitleOn',
+      '已加入精选（该厂商切换弹窗只显示精选模型；点击移出）',
     ),
-    visionToggleTitleOff: tr(
+    visibleToggleTitleOff: tr(
       t,
-      'models.visionToggleTitleOff',
-      '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）',
+      'models.visibleToggleTitleOff',
+      '点击加入精选（该厂商切换弹窗将只显示精选模型）',
     ),
+    defaultToggleAria: (state: string) => t('models.defaultToggleAria', state),
+    defaultToggleTitleOn: tr(t, 'models.defaultToggleTitleOn', '已设为该厂商默认模型（点击取消）'),
+    defaultToggleTitleOff: tr(
+      t,
+      'models.defaultToggleTitleOff',
+      '设为该厂商默认模型（仅记录偏好，不会立即切换）',
+    ),
+    hotModelsTitle: tr(t, 'models.hotModelsTitle', '热门模型'),
     removeFromLocalList: tr(t, 'models.removeFromLocalList', '从本地列表移除'),
     localCtxLabel: tr(t, 'models.localCtxLabel', '本地模型默认上下文（K tokens）'),
     localCtxHint: tr(
@@ -736,7 +763,7 @@ function VisionModelSelect({
             <div className="compact-select-empty" role="status">
               {isGeneration
                 ? t('models.genBoundMissing', value)
-                : `当前配置的 ${value} 未开启视觉能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「视觉输入」。`}
+                : `当前配置的 ${value} 未开启视觉能力，已不在候选列表中；若它正是你在用的模型，可用本区下方的「标记为支持视觉输入」把它加回。`}
             </div>
           )}
           {filtered.map(m => (
@@ -1538,6 +1565,8 @@ export function ModelsPage({
   const [visionProvider, setVisionProvider] = useState('')
   const [visionSaving, setVisionSaving] = useState(false)
   const [visionFeedback, setVisionFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  /** 「标记为支持视觉输入」进行中（行内开关移除后，这是唯一的自助出口） */
+  const [visionMarking, setVisionMarking] = useState(false)
   // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测）
   const [sttLocalStatus, setSttLocalStatus] = useState<SttStatus | null>(null)
   const [sttModel, setSttModel] = useState('')
@@ -1891,9 +1920,9 @@ export function ModelsPage({
     }
   })
   const [ctxOverrides, setCtxOverrides] = useState<Record<string, number>>({})
-  /** 正在保存视觉能力开关的模型名（行内 loading 态，避免重复点击） */
-  const [visionToggling, setVisionToggling] = useState('')
-  /** 正在保存图像生成能力开关的模型名（与 visionToggling 同行内 loading 态） */
+  /** 行内偏好（精选/厂商默认）只存 localStorage、非 React 状态；写入后 bump 一次强制重渲染。 */
+  const [, bumpPrefs] = useState(0)
+  /** 正在保存图像生成能力开关的模型名（行内 loading 态，避免重复点击） */
   const [imageGenToggling, setImageGenToggling] = useState('')
   const [editingCtxModel, setEditingCtxModel] = useState<string | null>(null)
   const [editingCtxValue, setEditingCtxValue] = useState('')
@@ -2502,14 +2531,32 @@ export function ModelsPage({
     return info?.context_window
   }
 
-  /** 模型当前生效的视觉能力（list_models 已按 provider+id 同源解析） */
-  const rowVision = (name: string): boolean => {
-    const brief = detectedModels.find(d => d.id === name)
-    if (brief) return brief.supports_vision
-    return allModels.find(m => m.provider === provider && m.id === name)?.supports_vision ?? false
+  /**
+   * 行内偏好快照：精选清单与厂商默认整个列表只读一次（避免每行各解析一遍 JSON）。
+   * 偏好在 localStorage，写入后由 bumpPrefs 触发重渲染刷新快照。
+   */
+  const pickedModelIds = new Set(getPickedModels(localStorage, provider) ?? [])
+  const defaultModelId = getDefaultModel(localStorage, provider)
+
+  /**
+   * 行内「精选」开关：只写 localStorage 偏好（决定切换弹窗显示哪些模型），不发任何 IPC。
+   * 眼睛开 = 该模型在精选清单里；无记录时全部为关态（此时弹窗仍显示全部）。
+   */
+  const toggleVisibleModel = (name: string) => {
+    setModelVisible(localStorage, provider, name, !pickedModelIds.has(name))
+    bumpPrefs(v => v + 1)
   }
 
-  /** 模型当前生效的图像生成能力（本地行取值，与 rowVision 同源解析） */
+  /**
+   * 行内「设为厂商默认」：只写 localStorage 偏好，**绝不调用 switchModel / 任何 IPC**
+   * （切换会写盘 + 插会话系统消息 + 触发一次付费探测，误触成本高）。再次点击取消默认。
+   */
+  const toggleDefaultModel = (name: string) => {
+    setDefaultModel(localStorage, provider, defaultModelId === name ? '' : name)
+    bumpPrefs(v => v + 1)
+  }
+
+  /** 模型当前生效的图像生成能力（本地行取值，与上下文窗口同源解析） */
   const rowImageGen = (name: string): boolean => {
     const brief = detectedModels.find(d => d.id === name)
     if (brief) return brief.supports_image_generation
@@ -2517,6 +2564,40 @@ export function ModelsPage({
       allModels.find(m => m.provider === provider && m.id === name)?.supports_image_generation ??
       false
     )
+  }
+
+  /**
+   * 本服务商在用的模型条目（「标记为支持视觉输入」是否出现、以及标记谁，都由它决定）。
+   *
+   * 必须带 provider 归属校验：`currentModel` 是**全局生效模型**（get_current_config），
+   * 用户切到别的服务商后它并不属于当前段 —— 拿它直接标记会把 A 厂商的模型写进 B 段。
+   * 归属查不到（如该模型尚未进入本页列表）时不显示出口，宁可少一个按钮也不写错数据。
+   */
+  const currentModelEntry = allModels.find(m => m.provider === provider && m.id === currentModel)
+  const currentModelSupportsVision = !!currentModelEntry?.supports_vision
+
+  /**
+   * 把当前模型一键标记为支持图像输入（写 providers.toml，来源标记为 user）。
+   *
+   * 行内视觉能力开关移除后，这是「候选列表里没有我的模型」的唯一自助出口：
+   * 云端 / 中转模型的能力主要由自动探测写入，探测没认出来时用户仍能把它拉进
+   * 图像理解候选列表。落盘为 user 来源后，自动探测不再覆盖该值。
+   */
+  const markCurrentModelVision = async () => {
+    if (!currentModelEntry) return
+    setVisionMarking(true)
+    setVisionFeedback(null)
+    try {
+      await setModelSupportsVision(provider, currentModelEntry.id, true)
+      const list = await listModels().catch(() => null)
+      if (Array.isArray(list)) setAllModels(list)
+      setVisionFeedback({ ok: true, msg: TXT.visionMarkDone(currentModelEntry.id) })
+      setTimeout(() => setVisionFeedback(null), 2000)
+    } catch (e: unknown) {
+      setVisionFeedback({ ok: false, msg: friendlyIpcError(e, TXT.saveFailed) })
+    } finally {
+      setVisionMarking(false)
+    }
   }
 
   /** 该模型是否已有 per-model 显式 context_window */
@@ -2579,34 +2660,14 @@ export function ModelsPage({
   }
 
   /**
-   * 行内切换模型的视觉（多模态）能力 —— 与「上下文窗口」同构的第二类模型元数据编辑。
-   *
-   * 这个开关是图像理解模型列表的来源：只有打开它的模型才会出现在视觉模型候选里。
-   * 落盘时会标记来源为 user，此后自动探测不再覆盖（否则今天开、下次连接又被关掉）。
-   */
-  const toggleModelVision = async (name: string, next: boolean) => {
-    setVisionToggling(name)
-    try {
-      await setModelSupportsVision(provider, name, next)
-      setFeedback({
-        ok: true,
-        msg: next ? `${name} 已标记为支持视觉输入` : `${name} 已标记为不支持视觉输入`,
-      })
-      const list = await listModels().catch(() => null)
-      if (Array.isArray(list)) setAllModels(list)
-    } catch (e: any) {
-      setFeedback({ ok: false, msg: friendlyIpcError(e, '保存失败') })
-    } finally {
-      setVisionToggling('')
-    }
-  }
-
-  /**
-   * 行内切换模型的图像生成能力 —— 与视觉开关同构的第二类模型元数据编辑。
+   * 行内切换模型的图像生成能力 —— 与「上下文窗口」同构的第二类模型元数据编辑。
    *
    * 这个开关是图片/视频生成绑定候选列表的来源：只有打开它的模型才会出现在
    * 绑定下拉里（注册表只有这一个生成能力声明字段）。落盘时标记来源为 user，
    * 此后自动探测不再覆盖（否则今天开、下次连接又被关掉）。
+   *
+   * 注：行内视觉能力开关已移除（视觉能力改由后端探测自动判定，方案 C）；
+   * 后端命令 set_model_supports_vision 与 IPC 封装保留，仅无 UI 入口。
    */
   const toggleModelImageGen = async (name: string, next: boolean) => {
     setImageGenToggling(name)
@@ -3166,6 +3227,21 @@ export function ModelsPage({
                       onChange={e => setFilterInput(e.target.value)}
                       placeholder={TXT.filterPlaceholder}
                     />
+                    {/* 热门模型快捷区：点击 = 把该关键词片段填进筛选框（子串匹配），
+                        复用列表既有的 includes 筛选，不引入第二套过滤逻辑。 */}
+                    <div className="models-hot-row">
+                      <span className="models-hot-label">{TXT.hotModelsTitle}</span>
+                      {HOT_MODELS.map(chip => (
+                        <button
+                          key={chip.match}
+                          type="button"
+                          className="models-hot-chip"
+                          onClick={() => setFilterInput(chip.match)}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                    </div>
                     {addOpen && (
                       <div className="models-add-row">
                         <input
@@ -3286,13 +3362,14 @@ export function ModelsPage({
                               const ctx =
                                 ctxOverrides[name] ?? brief?.context_window ?? info?.context_window
                               const caps = {
-                                vision: brief?.supports_vision || info?.supports_vision || false,
                                 audio: brief?.supports_audio || info?.supports_audio || false,
                                 image:
                                   brief?.supports_image_generation ||
                                   info?.supports_image_generation ||
                                   false,
                               }
+                              const isPicked = pickedModelIds.has(name)
+                              const isDefaultModel = defaultModelId === name
                               return (
                                 <div
                                   key={name}
@@ -3329,38 +3406,58 @@ export function ModelsPage({
                                     )}
                                   </div>
                                   <div className="model-list-badges">
-                                    {/* 视觉能力开关：与「上下文窗口」同为行内模型元数据编辑，
-                                        开关本身即状态（关闭态 = 该模型不进图像理解候选列表）。 */}
+                                    {/* 「精选」开关（原视觉能力开关的语义已改为精选/显示该模型）：
+                                        只写 localStorage 偏好——某厂商有非空精选时，切换弹窗
+                                        只显示这些模型；点击不触发任何 IPC。 */}
                                     <button
                                       type="button"
-                                      className={`model-vision-toggle${caps.vision ? ' is-on' : ''}`}
-                                      aria-pressed={caps.vision}
-                                      aria-label={TXT.visionToggleAria(
-                                        caps.vision
+                                      className={`model-vision-toggle${isPicked ? ' is-on' : ''}`}
+                                      aria-pressed={isPicked}
+                                      aria-label={TXT.visibleToggleAria(
+                                        isPicked ? t('models.capStateOn') : t('models.capStateOff'),
+                                      )}
+                                      title={
+                                        isPicked
+                                          ? TXT.visibleToggleTitleOn
+                                          : TXT.visibleToggleTitleOff
+                                      }
+                                      onClick={e => {
+                                        e.stopPropagation()
+                                        toggleVisibleModel(name)
+                                      }}
+                                    >
+                                      {isPicked ? <IconEye size={12} /> : <IconEyeOff size={12} />}
+                                    </button>
+                                    {/* 厂商默认：只写 localStorage 偏好（弹窗厂商卡片显示该默认模型），
+                                        与「点行即切换」相互独立，绝不调用 switchModel。 */}
+                                    <button
+                                      type="button"
+                                      className={`model-vision-toggle${isDefaultModel ? ' is-on' : ''}`}
+                                      aria-pressed={isDefaultModel}
+                                      aria-label={TXT.defaultToggleAria(
+                                        isDefaultModel
                                           ? t('models.capStateOn')
                                           : t('models.capStateOff'),
                                       )}
                                       title={
-                                        caps.vision
-                                          ? TXT.visionToggleTitleOn
-                                          : TXT.visionToggleTitleOff
+                                        isDefaultModel
+                                          ? TXT.defaultToggleTitleOn
+                                          : TXT.defaultToggleTitleOff
                                       }
-                                      disabled={visionToggling === name}
                                       onClick={e => {
                                         e.stopPropagation()
-                                        void toggleModelVision(name, !caps.vision)
+                                        toggleDefaultModel(name)
                                       }}
                                     >
-                                      <IconEye size={12} />
+                                      <IconStar size={12} />
                                     </button>
                                     {caps.audio && (
                                       <span className="model-badge" title={TXT.audioSupported}>
                                         <IconMic size={12} />
                                       </span>
                                     )}
-                                    {/* 图像生成能力开关：与「视觉输入」同为行内模型元数据
-                                        编辑，开关本身即状态（开启态 = 该模型进入图片/视频
-                                        生成绑定候选列表；关闭态 = 掉出候选）。 */}
+                                    {/* 图像生成能力开关：行内模型元数据编辑，开关本身即状态
+                                        （开启态 = 该模型进入图片/视频生成绑定候选列表；关闭态 = 掉出候选）。 */}
                                     <button
                                       type="button"
                                       className={`model-vision-toggle${caps.image ? ' is-on' : ''}`}
@@ -3410,6 +3507,8 @@ export function ModelsPage({
                         {models.map(m => {
                           const isActive = currentModel === m
                           const mctx = ctxOverrides[m] ?? rowCtx(m)
+                          const isPicked = pickedModelIds.has(m)
+                          const isDefaultModel = defaultModelId === m
                           return (
                             <div
                               key={m}
@@ -3429,27 +3528,45 @@ export function ModelsPage({
                             >
                               <div className="model-list-name">{m}</div>
                               <div className="model-list-badges">
-                                {/* 本地端点也可能是多模态（本地视觉模型）：同样可标记，
-                                    否则「图像理解模型」列表对本地服务永久为空。 */}
+                                {/* 本地端点同样可精选（本地模型多的用户只挑常用的几个进切换弹窗）。 */}
                                 <button
                                   type="button"
-                                  className={`model-vision-toggle${rowVision(m) ? ' is-on' : ''}`}
-                                  aria-pressed={rowVision(m)}
-                                  aria-label={TXT.visionToggleAria(
-                                    rowVision(m) ? t('models.capStateOn') : t('models.capStateOff'),
+                                  className={`model-vision-toggle${isPicked ? ' is-on' : ''}`}
+                                  aria-pressed={isPicked}
+                                  aria-label={TXT.visibleToggleAria(
+                                    isPicked ? t('models.capStateOn') : t('models.capStateOff'),
                                   )}
                                   title={
-                                    rowVision(m)
-                                      ? TXT.visionToggleTitleOn
-                                      : TXT.visionToggleTitleOff
+                                    isPicked ? TXT.visibleToggleTitleOn : TXT.visibleToggleTitleOff
                                   }
-                                  disabled={visionToggling === m}
                                   onClick={e => {
                                     e.stopPropagation()
-                                    void toggleModelVision(m, !rowVision(m))
+                                    toggleVisibleModel(m)
                                   }}
                                 >
-                                  <IconEye size={12} />
+                                  {isPicked ? <IconEye size={12} /> : <IconEyeOff size={12} />}
+                                </button>
+                                {/* 本地端点同样可设为厂商默认（只写偏好，不触发切换/IPC）。 */}
+                                <button
+                                  type="button"
+                                  className={`model-vision-toggle${isDefaultModel ? ' is-on' : ''}`}
+                                  aria-pressed={isDefaultModel}
+                                  aria-label={TXT.defaultToggleAria(
+                                    isDefaultModel
+                                      ? t('models.capStateOn')
+                                      : t('models.capStateOff'),
+                                  )}
+                                  title={
+                                    isDefaultModel
+                                      ? TXT.defaultToggleTitleOn
+                                      : TXT.defaultToggleTitleOff
+                                  }
+                                  onClick={e => {
+                                    e.stopPropagation()
+                                    toggleDefaultModel(m)
+                                  }}
+                                >
+                                  <IconStar size={12} />
                                 </button>
                                 {/* 本地端点同样可挂图片生成模型（如本地多模态生成服务）：
                                      打开后该模型才进入图片/视频生成绑定候选列表。 */}
@@ -3614,6 +3731,24 @@ export function ModelsPage({
                         className={`text-caption${visionFeedback.ok ? ' text-success' : ' text-danger'}`}
                       >
                         {visionFeedback.msg}
+                      </div>
+                    )}
+                    {/* 自助出口：行内视觉开关移除后，探测没认出来的模型在这里一键声明。
+                        没有它，「候选列表里找不到我的模型」就是死路——中转站的自定义别名
+                        几乎不可能被自动探测覆盖。 */}
+                    {currentModelEntry && !currentModelSupportsVision && (
+                      <div className="models-vision-mark">
+                        <span className="text-caption">
+                          {TXT.visionMarkHint(currentModelEntry.id)}
+                        </span>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          disabled={visionMarking}
+                          onClick={() => void markCurrentModelVision()}
+                        >
+                          {TXT.visionMarkBtn}
+                        </Button>
                       </div>
                     )}
                     {/* 图像理解生效路径如实呈现：默认「跟随 Leader」时讲清由谁处理，

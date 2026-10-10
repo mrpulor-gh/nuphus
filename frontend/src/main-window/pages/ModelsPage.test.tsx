@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { listen } from '@tauri-apps/api/event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -90,6 +90,7 @@ import {
   getProviderContext,
   listModels,
   refreshProviderModels,
+  setModelSupportsVision,
   sttStatus,
 } from '../lib/api'
 
@@ -117,6 +118,14 @@ function provider(over: Partial<ProviderInfoStub> & { id: string }): ProviderInf
 }
 
 let providerList: ProviderInfoStub[] = []
+
+/**
+ * 左栏（aside）内查询：新增的「热门模型」chip 里也含 DeepSeek 等品牌名，
+ * 全局按名称查会同时命中 chip 与左栏服务商条目；左栏条目一律限定范围查找。
+ */
+function withinRail() {
+  return within(screen.getByRole('complementary'))
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -522,7 +531,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     )
 
     // 官方 provider 页不回归：只读名称 + 原有密钥栏，无自定义四字段表单
-    fireEvent.click(screen.getByRole('button', { name: /DeepSeek/ }))
+    fireEvent.click(withinRail().getByRole('button', { name: /DeepSeek/ }))
     await waitFor(() => expect(screen.queryByLabelText('自定义名称')).not.toBeInTheDocument())
     expect(container.querySelector('.models-provider-current-name')?.textContent).toBe('DeepSeek')
     expect(screen.getByLabelText('API 密钥')).toBeInTheDocument()
@@ -542,7 +551,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     ]
 
     const { container } = render(<ModelsPage onClose={() => {}} />)
-    await screen.findByRole('button', { name: /DeepSeek/ })
+    await withinRail().findByRole('button', { name: /DeepSeek/ })
 
     const groups = [...container.querySelectorAll('.models-rail-group')].map(g => ({
       title: g.querySelector('.models-rail-group-title')?.textContent?.trim() ?? '',
@@ -906,7 +915,7 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     const pending = deferred<ReturnType<typeof brief>[]>()
     vi.mocked(listProviderModels).mockReturnValue(pending.promise)
     fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
-    fireEvent.click(screen.getByRole('button', { name: 'DeepSeek' }))
+    fireEvent.click(withinRail().getByRole('button', { name: 'DeepSeek' }))
     await act(async () => pending.resolve([brief('stale-model')]))
     expect(screen.queryByText('stale-model')).not.toBeInTheDocument()
     expect(screen.queryByText(/已获取到/)).not.toBeInTheDocument()
@@ -963,6 +972,103 @@ describe('ModelsPage 连接反馈与快速切换', () => {
       undefined,
     )
     expect(switchModel).not.toHaveBeenCalled()
+  })
+
+  it('点「精选」眼睛只写本地偏好，不调用任何 IPC', async () => {
+    await openModels()
+    await detect()
+    fireEvent.click(within(row('model-one')).getByRole('button', { name: /精选/ }))
+
+    // 只落 localStorage：结构 { provider: string[] }
+    expect(JSON.parse(localStorage.getItem('nuphus_visible_models') || '{}')).toEqual({
+      'custom-fast': ['model-one'],
+    })
+    // 眼睛开态可见（两态之一），且不触发视觉能力命令 / 切换
+    expect(row('model-one')).toHaveAttribute('aria-busy', 'false')
+    expect(within(row('model-one')).getByRole('button', { name: /精选/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(setModelSupportsVision).not.toHaveBeenCalled()
+    expect(switchModel).not.toHaveBeenCalled()
+    expect(configureLlm).not.toHaveBeenCalled()
+  })
+
+  it('点 ⭐ 只写厂商默认偏好，不调用 switchModel', async () => {
+    await openModels()
+    await detect()
+    const star = () => within(row('model-two')).getByRole('button', { name: /默认模型/ })
+
+    fireEvent.click(star())
+    expect(localStorage.getItem('nuphus_default_model_custom-fast')).toBe('model-two')
+    expect(switchModel).not.toHaveBeenCalled()
+    expect(configureLlm).not.toHaveBeenCalled()
+
+    // 再次点击取消默认
+    fireEvent.click(star())
+    expect(localStorage.getItem('nuphus_default_model_custom-fast')).toBeNull()
+    expect(switchModel).not.toHaveBeenCalled()
+  })
+
+  it('点热门 chip 填入筛选词并按关键词过滤列表', async () => {
+    await openModels()
+    await detect()
+    const filterInput = screen.getByPlaceholderText('筛选模型…')
+    expect(filterInput).toHaveValue('')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Opus' }))
+
+    expect(filterInput).toHaveValue('claude-opus')
+    // 两个 mock 模型都不含该关键词 → 列表被过滤为空并给出空态文案
+    expect(screen.queryByText('model-one')).not.toBeInTheDocument()
+    expect(screen.queryByText('model-two')).not.toBeInTheDocument()
+    expect(screen.getByText('没有匹配「claude-opus」的模型')).toBeInTheDocument()
+  })
+
+  // ── 视觉能力自助出口（行内开关移除后唯一的补录入口）────────────────
+
+  const modelInfo = (id: string, p: string, vision: boolean) =>
+    ({
+      id,
+      provider: p,
+      alias: [],
+      supports_streaming: true,
+      supports_vision: vision,
+      supports_audio: false,
+      supports_image_generation: false,
+      reasoning_efforts: [],
+    }) as never
+
+  it('图像理解区提供「标记为支持视觉输入」，点击写回本服务商的该模型', async () => {
+    vi.mocked(listModels).mockResolvedValue([modelInfo('deepseek-flash', 'deepseek', false)])
+    render(<ModelsPage onClose={() => {}} onModelChanged={vi.fn()} />)
+    await withinRail().findByRole('button', { name: 'DeepSeek' })
+    fireEvent.click(screen.getByRole('button', { name: '图像音频模型' }))
+
+    const mark = await screen.findByRole('button', { name: '标记为支持视觉输入' })
+    fireEvent.click(mark)
+    await waitFor(() =>
+      expect(setModelSupportsVision).toHaveBeenCalledWith('deepseek', 'deepseek-flash', true),
+    )
+  })
+
+  it('生效模型不属于本服务商时不出该出口（防止把 A 厂商的模型写进 B 段）', async () => {
+    // 列表里只有别的服务商的同名模型 → 归属校验不通过
+    vi.mocked(listModels).mockResolvedValue([modelInfo('deepseek-flash', 'custom-other', false)])
+    render(<ModelsPage onClose={() => {}} onModelChanged={vi.fn()} />)
+    await withinRail().findByRole('button', { name: 'DeepSeek' })
+    fireEvent.click(screen.getByRole('button', { name: '图像音频模型' }))
+    await screen.findByText('图像理解')
+    expect(screen.queryByRole('button', { name: '标记为支持视觉输入' })).not.toBeInTheDocument()
+  })
+
+  it('已声明支持视觉的模型不再显示该出口', async () => {
+    vi.mocked(listModels).mockResolvedValue([modelInfo('deepseek-flash', 'deepseek', true)])
+    render(<ModelsPage onClose={() => {}} onModelChanged={vi.fn()} />)
+    await withinRail().findByRole('button', { name: 'DeepSeek' })
+    fireEvent.click(screen.getByRole('button', { name: '图像音频模型' }))
+    await screen.findByText('图像理解')
+    expect(screen.queryByRole('button', { name: '标记为支持视觉输入' })).not.toBeInTheDocument()
   })
 
   it('后台能力更新会刷新模型列表，卸载后释放监听', async () => {

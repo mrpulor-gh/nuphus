@@ -409,6 +409,9 @@ registerMock('get_current_config', () => ({
   model: 'MiniMax-M2.7',
   provider: 'minimax',
   base_url: 'https://api.minimaxi.com/v1',
+  // 模型页依赖：是否为已配置密钥 / 已配置的 provider 列表（浏览器预览用）
+  has_key: true,
+  configured_providers: ['deepseek', 'custom-demo'],
 }))
 registerMock('get_session_history', () => MOCK_SESSIONS)
 registerMock('get_session_detail', args => {
@@ -818,3 +821,127 @@ registerMock('mobile_token_regenerate', () => {
     'mock-regenerated-' + Math.random().toString(16).slice(2, 10) + '-0123456789'
   return MOCK_MOBILE_STATE.token
 })
+
+// ── 模型管理页（ModelsPage / 输入框 Models 弹窗）——浏览器预览用 mock ──
+// 背景：非 Tauri 环境下「未注册的命令一律返回 null」（见上方 invoke），模型页因此空白。
+// 这里补齐其依赖的命令，形状对齐 src/main-window/lib/api.ts 的
+// ProviderInfo / ModelInfo / ProviderModelBrief / Capabilities / AgentModels 等接口；
+// 数据仅用于本地预览与演示，不参与任何真实链路。
+const MOCK_PROVIDERS = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    provider_type: 'openai',
+    base_url: 'https://api.deepseek.com',
+    default_model: 'deepseek-chat',
+    auth_header: 'Authorization',
+    auth_prefix: 'Bearer ',
+  },
+  {
+    id: 'custom-demo',
+    name: '示例中转站',
+    display_name: '示例中转站',
+    provider_type: 'custom',
+    base_url: 'https://relay.example/v1',
+    default_model: '',
+    auth_header: 'Authorization',
+    auth_prefix: 'Bearer ',
+  },
+  {
+    id: 'local',
+    name: 'Local',
+    provider_type: 'custom',
+    base_url: 'http://localhost:11434/v1',
+    default_model: '',
+    auth_header: 'Authorization',
+    auth_prefix: '',
+  },
+]
+
+function mockModel(
+  id: string,
+  provider: string,
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    provider,
+    alias: [],
+    supports_streaming: true,
+    supports_vision: false,
+    supports_audio: false,
+    supports_image_generation: false,
+    reasoning_efforts: [],
+    context_window: 128000,
+    ...over,
+  }
+}
+
+const MOCK_MODELS: Array<Record<string, unknown>> = [
+  mockModel('deepseek-chat', 'deepseek', { supports_vision: false }),
+  mockModel('deepseek-reasoner', 'deepseek', { reasoning_efforts: ['low', 'high'] }),
+  mockModel('deepseek-v4-flash', 'deepseek'),
+  mockModel('anthropic/claude-opus-4.6', 'custom-demo', {
+    supports_vision: true,
+    context_window: 200000,
+  }),
+  mockModel('gpt-5', 'custom-demo', { supports_vision: true, context_window: 400000 }),
+  mockModel('qwen2.5:7b', 'local', { context_window: 32000 }),
+]
+
+registerMock('get_supported_providers', () => MOCK_PROVIDERS)
+registerMock('list_models', () => MOCK_MODELS)
+registerMock('get_provider_context', () => ({ model: 'deepseek-chat', provider: 'deepseek' }))
+registerMock('list_provider_models', (args?: Record<string, unknown>) => {
+  const provider = (args?.provider as string) || ''
+  return MOCK_MODELS.filter(m => m.provider === provider).map(m => ({
+    id: m.id,
+    supports_streaming: m.supports_streaming,
+    supports_vision: m.supports_vision,
+    supports_audio: m.supports_audio,
+    supports_image_generation: m.supports_image_generation,
+    context_window: m.context_window,
+  }))
+})
+registerMock('refresh_provider_models', () => ({ models: MOCK_MODELS, report: null }))
+registerMock('get_provider_base_url', (args?: Record<string, unknown>) => {
+  const provider = (args?.provider as string) || ''
+  return MOCK_PROVIDERS.find(p => p.id === provider)?.base_url ?? null
+})
+registerMock('get_capabilities', () => ({
+  model: 'deepseek-chat',
+  vision: '',
+  stt: '',
+  tts: '',
+  voice: '',
+  chat_agent_max_iterations: null,
+}))
+registerMock('get_agent_models', () => ({
+  leader: '',
+  leader_provider: '',
+  workflow: '',
+  workflow_provider: '',
+  exec: '',
+  exec_provider: '',
+  custom: '',
+  custom_provider: '',
+}))
+registerMock('stt_status', () => null)
+registerMock('oauth_status', () => ({
+  configured: false,
+  logged_in: false,
+  expires_at: null,
+  needs_login: false,
+}))
+registerMock('switch_model', () => 'ok')
+registerMock('set_model_context_window', () => 'ok')
+// 真改内存里的 mock 模型（而不是回一个 'ok'）：图像理解的「标记为支持视觉输入」依赖
+// 写回后重新拉列表能看到变化，否则预览里点了像没生效。
+registerMock('set_model_supports_vision', (args?: Record<string, unknown>) => {
+  const provider = String(args?.provider ?? '')
+  const model = String(args?.model ?? '')
+  const hit = MOCK_MODELS.find(m => m.provider === provider && m.id === model)
+  if (hit) hit.supports_vision = Boolean(args?.supportsVision)
+  return 'ok'
+})
+registerMock('set_model_supports_image_generation', () => 'ok')
