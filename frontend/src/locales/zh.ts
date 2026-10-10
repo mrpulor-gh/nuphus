@@ -1171,6 +1171,7 @@ const zh: Record<string, string> = {
   // ── 模型列表区 ──
   'models.modelListTitle': '可用模型',
   'models.currentModelOf': '（当前使用：{0}）',
+  'models.currentModelElsewhere': '（当前生效模型 {0} 来自其他服务商：{1}）',
   'models.refreshBtn': '刷新',
   'models.refreshing': '刷新中…',
   'models.refreshTitle': '用已保存密钥重新拉取最新模型列表',
@@ -1381,6 +1382,22 @@ const zh: Record<string, string> = {
     '点击标记为支持图像生成（开启后，该模型才会出现在图片生成绑定候选列表）',
   'models.imageGenMarkedOn': '{0} 已标记为支持图像生成',
   'models.imageGenMarkedOff': '{0} 已标记为不支持图像生成',
+  // ── 模型卡片：能力 chip / 收藏 / 启用 ──
+  // 能力 chip 只呈现后端事实：可切换项（图像理解、图像/视频生成）写 user 来源，
+  // 只读项（推理档位、语音输入）仅探测数据，affordance 分别为按钮与纯文本。
+  'models.chipVision': '图像理解',
+  'models.chipImageVideo': '图像/视频生成',
+  'models.chipReasoning': '文本推理',
+  'models.chipAudio': '语音输入',
+  'models.capReasoningHint': '推理档位来自上游能力数据，暂不支持手动修改',
+  'models.capAudioHint': '语音输入能力来自自动探测，暂不支持手动修改',
+  'models.favAria': '收藏',
+  'models.favHintOn': '已收藏（切换弹窗中置顶显示）',
+  'models.favHintOff': '点击收藏（切换弹窗中置顶显示）',
+  'models.switchBtn': '切换',
+  'models.using': '使用中',
+  'models.usingHint': '当前生效模型；修改连接参数后再点可重新应用（仍会触发一次探测）',
+  'models.switchingBtn': '切换中…',
   'models.capContext': '上下文窗口',
   'models.capContextUnknown': '上下文窗口未知',
   'models.editContext': '编辑上下文窗口',
@@ -1801,6 +1818,7 @@ const zh: Record<string, string> = {
   'modelManager.noConfigsHint': '在设置中配置 API 密钥以启用模型。',
   'modelManager.switchTip': '提示：使用 /models 可快速切换模型',
   'modelManager.unknownContext': '上下文未知',
+  'modelManager.favorited': '已收藏（该服务商弹窗内置顶）',
   'modelManager.contextUnit': '上下文 {0}',
   'modelManager.reasoning': '推理 {0}',
 

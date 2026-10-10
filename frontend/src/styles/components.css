@@ -1024,6 +1024,35 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 弹窗内模型名后的收藏星标：紧跟名称，accent 描边小星（与设置页卡片星形同义，
+   未收藏不渲染）。尺寸对准 GO 徽章，不与名称文字混排错位。 */
+.model-popup-fav {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--accent);
+  vertical-align: middle;
+  user-select: none;
+}
+/* GO 网关徽标：模型名旁小字标注 opencode-go，与官方厂商同 id 模型区分。
+   注意 margin-left 必须有：名称 span 是 nowrap 行内内容，没有它徽标会与
+   模型 id 直接贴字（deepseek-flashGO）。设置页卡片版为 .model-card-go。 */
+.model-go-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  user-select: none;
+}
 .model-provider-model-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1041,25 +1070,6 @@
 .model-provider-context {
   color: var(--spark-tertiary);
   font-variant-numeric: tabular-nums;
-}
-
-/* GO 网关模型徽标：模型名旁小字标注 opencode-go，与官方厂商同 id 模型区分。
-   低调样式（细字 + 描边），不抢主文本、不与 active 选中色冲突。 */
-.model-go-badge {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 5px;
-  padding: 0 4px;
-  border: 1px solid var(--line-2);
-  border-radius: 4px;
-  color: var(--fg-3);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-  vertical-align: middle;
-  user-select: none;
 }
 
 /* ── Canvas unified workbench: direct full-screen editor surface ── */

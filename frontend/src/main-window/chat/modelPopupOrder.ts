@@ -1,10 +1,15 @@
 /**
- * modelPopupOrder — 输入框 Models 弹窗「提供商子列表」的展示排序口径。
+ * modelPopupOrder — 模型列表「子列表 / 卡片网格」共用的展示排序口径。
  *
  * 痛点：provider 模型多时，每次切换都要在长列表里找模型。这里把最近切换过的
  * 模型排到前面，没有历史的模型保持 `list_models`（= providers.toml）原序接在后面。
  *
- * 铁律：只影响弹窗里的展示顺序。模型解析、切换、生效判定走 `switch_model` 与
+ * 两处消费方共用本口径（**同一套语义，不是两份实现**）：
+ * - 输入框 Models 弹窗 hover 出的 provider 子列表（ChatPanel）；
+ * - 设置页模型卡片网格（ModelsPage），第三参传收藏偏好——
+ *   排序即「收藏 > 用过 > 未使用」。
+ *
+ * 铁律：只影响展示顺序。模型解析、切换、生效判定走 `switch_model` 与
  * `get_provider_context`，均与排序无关——本模块不参与那三条链路，也不读任何
  * 后端状态。
  *
@@ -57,18 +62,28 @@ export function rememberRecentModel(
 }
 
 /**
- * 子列表排序：有历史的按历史位次升序，无历史的统一排在其后。
- * `Array#sort` 稳定（ES2019 起规范保证），同位次模型保持入参（= `list_models`）相对顺序，
- * 因此没有历史时结果与调用方原顺序逐项一致——不是巧合，是排序稳定性的直接推论。
+ * 子列表排序：**收藏的模型恒定置顶**，其后有历史的按历史位次升序，
+ * 无历史的统一排在其后。收藏之间保持入参（= `list_models`）相对顺序。
+ *
+ * `favorites` 与 `recent` 是两套独立口径：前者是用户在设置页卡片上显式收藏的
+ * 模型（`nuphus_favorite_models`），后者是使用痕迹。显式意图优先——否则「收藏」
+ * 在弹窗里除了没有作用。收藏**只影响顺序，不过滤**：无收藏时行为与本函数加
+ * 参数前完全一致。
+ *
+ * `Array#sort` 稳定（ES2019 起规范保证），同位次模型保持入参相对顺序，
+ * 因此没有收藏也没有历史时，结果与调用方原顺序逐项一致——不是巧合，是排序稳定性的直接推论。
  */
 export function orderProviderModels<T extends OrderableModel>(
   models: readonly T[],
   recent: readonly string[],
+  favorites?: readonly string[] | null,
 ): T[] {
-  if (recent.length === 0) return [...models]
-  const rank = new Map(recent.map((id, i) => [id, i]))
-  return [...models].sort(
-    (a, b) =>
-      (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
-  )
+  if (recent.length === 0 && !favorites?.length) return [...models]
+  const favSet = new Set(favorites ?? [])
+  const recentRank = new Map(recent.map((id, i) => [id, i]))
+  const rankOf = (m: T) => {
+    if (favSet.has(m.id)) return -1
+    return recentRank.get(m.id) ?? Number.MAX_SAFE_INTEGER
+  }
+  return [...models].sort((a, b) => rankOf(a) - rankOf(b))
 }

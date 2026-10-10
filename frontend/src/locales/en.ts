@@ -1227,6 +1227,7 @@ const en: Record<string, string> = {
   // ── Model list section ──
   'models.modelListTitle': 'Available Models',
   'models.currentModelOf': '(Currently using: {0})',
+  'models.currentModelElsewhere': '(Active model {0} belongs to another provider: {1})',
   'models.refreshBtn': 'Refresh',
   'models.refreshing': 'Refreshing…',
   'models.refreshTitle': 'Re-fetch the latest model list using the saved key',
@@ -1455,6 +1456,23 @@ const en: Record<string, string> = {
     'Click to declare image generation (only declared models appear in the image generation binding candidates)',
   'models.imageGenMarkedOn': '{0} marked as supporting image generation',
   'models.imageGenMarkedOff': '{0} marked as not supporting image generation',
+  // ── Model cards: capability chips / favorite / use ──
+  'models.chipVision': 'Image understanding',
+  'models.chipImageVideo': 'Image/video generation',
+  'models.chipReasoning': 'Text reasoning',
+  'models.chipAudio': 'Audio input',
+  'models.capReasoningHint':
+    'Reasoning tiers come from upstream capability data; manual editing is not supported yet',
+  'models.capAudioHint':
+    'Audio input capability comes from auto-probing; manual editing is not supported yet',
+  'models.favAria': 'Favorite',
+  'models.favHintOn': 'Favorited (pinned to the top of the switcher popup)',
+  'models.favHintOff': 'Click to favorite (pinned to the top of the switcher popup)',
+  'models.switchBtn': 'Switch',
+  'models.using': 'In use',
+  'models.usingHint':
+    'Active model; click again after editing connection params to re-apply (triggers one probe)',
+  'models.switchingBtn': 'Switching…',
   'models.capContext': 'Context window',
   'models.capContextUnknown': 'Context window unknown',
   'models.editContext': 'Edit context window',
@@ -1892,6 +1910,7 @@ const en: Record<string, string> = {
   'modelManager.noConfigsHint': 'Configure API keys in Settings to enable models.',
   'modelManager.switchTip': 'Tip: Use /models to quickly switch models anytime',
   'modelManager.unknownContext': 'Context unknown',
+  'modelManager.favorited': 'Favorited (pinned to top of this provider popup)',
   'modelManager.contextUnit': 'Context {0}',
   'modelManager.reasoning': 'Reasoning {0}',
 

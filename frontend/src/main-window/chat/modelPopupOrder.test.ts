@@ -76,6 +76,56 @@ describe('orderProviderModels', () => {
   })
 })
 
+// ── 收藏置顶 ────────────────────────────────────────────────────────────
+// 收藏只改顺序、不过滤；与最近切换的关系：收藏恒定在最近之前。
+describe('orderProviderModels — 收藏置顶', () => {
+  it('收藏恒定置顶，优先于最近切换序', () => {
+    const input = models('m1', 'm2', 'm3')
+    expect(orderProviderModels(input, ['m3', 'm2'], ['m1']).map(m => m.id)).toEqual([
+      'm1',
+      'm3',
+      'm2',
+    ])
+  })
+
+  it('多个收藏之间保持入参相对顺序（不按收藏写入时间重排）', () => {
+    const input = models('a', 'b', 'c', 'd')
+    expect(orderProviderModels(input, [], ['d', 'b']).map(m => m.id)).toEqual(['b', 'd', 'a', 'c'])
+  })
+
+  it('收藏 + 最近同时存在：收藏在前，其后按最近序', () => {
+    const input = models('m1', 'm2', 'm3', 'm4')
+    expect(orderProviderModels(input, ['m4', 'm2'], ['m1']).map(m => m.id)).toEqual([
+      'm1',
+      'm4',
+      'm2',
+      'm3',
+    ])
+  })
+
+  it('收藏指向已不存在的模型 → 无害忽略，不退化为乱序', () => {
+    const input = models('a', 'b')
+    expect(orderProviderModels(input, [], ['ghost']).map(m => m.id)).toEqual(['a', 'b'])
+  })
+
+  it('收藏为空数组 / null / undefined → 视作无收藏，行为与不传一致', () => {
+    const input = models('x', 'a', 'y')
+    expect(orderProviderModels(input, [], []).map(m => m.id)).toEqual(['x', 'a', 'y'])
+    expect(orderProviderModels(input, [], null).map(m => m.id)).toEqual(['x', 'a', 'y'])
+    expect(orderProviderModels(input, [], undefined).map(m => m.id)).toEqual(['x', 'a', 'y'])
+  })
+
+  it('只有收藏、无历史 → 收藏置顶，其余保持原序', () => {
+    const input = models('a', 'b', 'c')
+    expect(orderProviderModels(input, [], ['c']).map(m => m.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('收藏与最近命中同一模型 → 不重复乱序（置顶即可）', () => {
+    const input = models('a', 'b', 'c')
+    expect(orderProviderModels(input, ['a'], ['a']).map(m => m.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
 describe('readRecentModels', () => {
   it('无 key → 空序', () => {
     expect(readRecentModels(fakeStorage(), 'local')).toEqual([])

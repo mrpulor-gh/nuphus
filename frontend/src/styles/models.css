@@ -92,10 +92,8 @@
   font-size: var(--fz-xs);
   line-height: 1.4;
 }
-.model-list-item[aria-disabled='true'] {
-  cursor: progress;
-}
-.model-list-item[aria-busy='true'] {
+/* 模型卡片：切换中（启用按钮 busy）——整卡一圈细描边，替代旧行内 aria-busy 样式 */
+.model-card[aria-busy='true'] {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
@@ -117,102 +115,68 @@
   top: auto;
   bottom: calc(100% + 4px);
 }
-.model-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* 模型卡片网格：2~3 列自适应（minmax 320px），窄屏降为 1 列。
+   **不设固定高度/内滚动**：页面宿主自己滚，列表再滚一次就是双滚动条，
+   操作（拖选、点星、点 chip）要在两条滚动轴之间来回对齐，体验很差。 */
+.model-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 8px;
 }
-.model-list--spaced {
+.model-card-grid--spaced {
   margin-top: var(--space-2);
 }
 .hint-text {
   margin-top: 6px;
 }
-/* 鈹€鈹€ Model list锛堣嚜 components.css 鎷嗗嚭骞跺叆锛夆攢鈹€ */
-/* 鈹€鈹€ Model list 鈹€鈹€ */
-.model-list-item {
+/* ═══════════ 模型卡片（三行）═══════════
+   首行：名称 + 徽章 + 收藏；中行：能力 chips；底行：ctx + 启用。 */
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--glass-0);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.model-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+.model-card.is-active {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+/* 首行 */
+.model-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  background: var(--glass-0);
-  transition: all 0.15s ease;
-  user-select: none;
-  -webkit-user-select: none;
+  gap: 6px;
+  min-width: 0;
 }
-.model-list-item:hover {
-  background: var(--void-hover);
-}
-.model-list-item.active {
-  background: rgba(var(--accent-rgb), 0.08);
-  border-color: rgba(var(--accent-rgb), 0.25);
-}
-
-.model-radio {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1.5px solid var(--glass-2);
-  background: transparent;
-  flex-shrink: 0;
-  transition: all 0.15s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.model-radio::after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-.model-radio.selected {
-  border-color: var(--spark-secondary);
-}
-.model-radio.selected::after {
-  background: var(--spark-secondary);
-}
-
-.model-list-name {
+.model-card-name {
   flex: 1;
   min-width: 0;
   font-size: 12.5px;
-  font-weight: 400;
+  font-weight: 600;
   font-family: var(--font-mono);
-  color: var(--spark-secondary);
+  color: var(--fg-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-list-item.active .model-list-name {
-  font-weight: 500;
-  color: var(--spark-primary);
-}
-
-/* 鈹€鈹€ 妯″瀷鑳藉姏寰芥爣锛堣瑙?闊抽/鍥惧儚鐢熸垚/涓婁笅鏂囩獥鍙ｏ級鈹€鈹€ */
-.model-list-badges {
+.model-card-head-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  gap: 2px;
   flex-shrink: 0;
 }
-.model-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-4);
-  opacity: 0.9;
-  line-height: 1;
-}
-/* 视觉能力开关：关闭态低调（未开启），开启态用主题强调色表达「该模型会进入
-   图像理解候选列表」。与 .model-badge--ctx 同一行内区域，尺寸对齐。 */
-.model-vision-toggle {
+/* 收藏星形：常驻但低调，开态才点亮——不与任何能力 chip 抢视觉权重 */
+.model-fav-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -224,34 +188,151 @@
   background: transparent;
   color: var(--fg-4);
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.45;
   transition:
     opacity var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
 }
-.model-vision-toggle:hover:not(:disabled) {
+.model-fav-btn:hover {
   opacity: 1;
   color: var(--fg-1);
   border-color: var(--border);
   background: var(--surface-hover);
 }
-.model-vision-toggle:focus-visible {
-  outline: none;
-  opacity: 1;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-.model-vision-toggle.is-on {
+.model-fav-btn.is-on {
   opacity: 1;
   color: var(--accent);
   border-color: rgba(var(--accent-rgb), 0.34);
   background: var(--accent-dim);
 }
-.model-vision-toggle:disabled {
+.model-fav-btn:focus-visible {
+  outline: none;
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+.model-card-del {
+  opacity: 0;
+}
+.model-card:hover .model-card-del,
+.model-card-del:focus-visible {
+  opacity: 0.7;
+}
+
+/* 中行：能力 chips——支持在前（重色），不支持在后（浅色线框）；
+   可切换项是按钮（hover 提示可点击），只读项是 span（affordance 不撒谎）。 */
+.model-card-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--fg-4);
+  font-size: 10.5px;
+  line-height: 1;
+  cursor: default;
+  user-select: none;
+}
+.cap-chip.is-on {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  color: var(--fg-1);
+}
+.cap-chip.is-on svg {
+  color: var(--accent);
+}
+.cap-chip-detail {
+  font-family: var(--font-mono);
+  color: var(--fg-3);
+}
+button.cap-chip {
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+button.cap-chip:hover:not(:disabled) {
+  color: var(--fg-1);
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+button.cap-chip:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+button.cap-chip:disabled {
   cursor: progress;
-  opacity: 0.4;
+  opacity: 0.5;
+}
+
+/* 底行：ctx（左）+ 启用（右） */
+.model-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.model-card-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.model-use-btn {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.model-use-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.model-use-btn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.model-card.is-active .model-use-btn {
+  /* 使用中是全局唯一态，视觉权重必须最高：实心前景色（= 主题反色）做底，
+     主题基色做字——暗色主题下「亮底 + 近黑字」，亮色主题下「深底 + 白字」。
+     注意不能用 --accent 做字：亮色主题的 accent 本身接近黑（#111），
+     叠在近黑的反色底上直接看不见。 */
+  border-color: transparent;
+  background: var(--fg-1);
+  color: var(--surface-0);
+}
+
+/* 模型能力徽章（只读呈现的通用底座：ctx 等徽章复用同一形状） */
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-4);
+  opacity: 0.9;
+  line-height: 1;
 }
 .model-badge--ctx {
   font-family: var(--font-mono);
@@ -782,23 +863,6 @@
 .models-list-wrap {
   margin-top: var(--space-4);
 }
-.model-list {
-  display: flex;
-  max-height: min(440px, 52vh);
-  flex-direction: column;
-  gap: 3px;
-  overflow-y: auto;
-  padding-right: 3px;
-}
-.model-list-item:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-.model-list-item:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
 @media (max-width: 720px) {
   .models-page-layout {
     grid-template-columns: 1fr;
@@ -823,7 +887,10 @@
    分区已改为宿主分流），故降级判据只认上面的视口断点，不再需要容器宽度标记。 */
 @media (prefers-reduced-motion: reduce) {
   .models-rail-item,
-  .model-list-item {
+  .model-card,
+  .cap-chip,
+  .model-use-btn,
+  .model-fav-btn {
     transition: none;
   }
 }
@@ -985,11 +1052,10 @@
   color: var(--accent-hover);
 }
 
-/* GO 网关模型徽标（opencode-go 页模型行）：低调描边小字，不与选中色/能力徽标冲突 */
-.model-go-badge {
+/* GO 网关模型徽标（模型卡片首行）：低调描边小字，不与选中色/能力 chip 冲突 */
+.model-card-go {
   display: inline-flex;
   align-items: center;
-  margin-left: 5px;
   padding: 0 4px;
   border: 1px solid var(--line-2);
   border-radius: 4px;
@@ -999,7 +1065,6 @@
   font-weight: 500;
   line-height: 1.5;
   letter-spacing: 0.02em;
-  vertical-align: middle;
   user-select: none;
 }
 
@@ -1029,10 +1094,9 @@
 }
 
 /* 手动添加徽标（官方 /v1/models 清单外）：与 GO 徽标同一视觉语言 */
-.model-manual-badge {
+.model-card-manual {
   display: inline-flex;
   align-items: center;
-  margin-left: 5px;
   padding: 0 4px;
   border: 1px solid var(--line-2);
   border-radius: 4px;
@@ -1041,7 +1105,6 @@
   font-weight: 500;
   line-height: 1.5;
   letter-spacing: 0.02em;
-  vertical-align: middle;
   user-select: none;
 }
 /* ══════════════════════════════════════════════════════════════

@@ -51,16 +51,13 @@ import {
   modelsDownloadProgressText,
 } from '../lib/useVisionModelDownload'
 import {
-  IconCheck,
   IconTrash2,
   IconEye,
   IconEyeOff,
   IconMic,
-  IconImage,
   IconAlertTriangle,
   IconRefresh,
   IconBrushCleaning,
-  IconEdit3,
   IconPlug,
   IconX,
   IconHardDrive,
@@ -69,6 +66,10 @@ import { Section, FormRow } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
+import { ModelCard, type ModelCardCap } from './ModelCard'
+import { RowCtxEditor, formatContextWindow } from './RowCtxEditor'
+import { getProviderFavorites, setFavorite } from '../lib/favorites'
+import { orderProviderModels, readRecentModels, rememberRecentModel } from '../chat/modelPopupOrder'
 import {
   buildCustomInstanceId,
   isCustomProviderId,
@@ -266,6 +267,12 @@ function makeTXT(t: TFunc) {
     oauthLogoutFail: tr(t, 'models.oauthLogoutFail', '退出登录失败'),
     modelListTitle: tr(t, 'models.modelListTitle', '可用模型'),
     currentModelOf: (name: string) => t('models.currentModelOf', name),
+    // 使用中是全局唯一态：正在看的 provider 不是生效模型归属时如实说明，
+    // 而不是把别家的模型说成「本 provider 的当前模型」。
+    currentModelElsewhere: (name: string, prov: string) =>
+      t('models.currentModelElsewhere', name) === 'models.currentModelElsewhere'
+        ? `当前生效模型 ${name} 来自其他服务商（${prov}）`
+        : t('models.currentModelElsewhere', name, prov),
     refreshBtn: tr(t, 'models.refreshBtn', '刷新'),
     refreshing: tr(t, 'models.refreshing', '刷新中…'),
     refreshTitle: tr(t, 'models.refreshTitle', '用已保存密钥重新拉取最新模型列表'),
@@ -797,92 +804,6 @@ function loadDetectedModels(provider: string): ProviderModelBrief[] {
 
 function saveDetectedModels(provider: string, models: ProviderModelBrief[]) {
   localStorage.setItem(DETECTED_KEY_PREFIX + provider, JSON.stringify(models))
-}
-
-/** 上下文窗口格式化：1_000_000 → 1M，128_000 → 128K，32_768 → 33K；未知返回空串 */
-function formatContextWindow(n?: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1_000_000) {
-    const m = n / 1_000_000
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
-  return `${n}`
-}
-
-/** 模型行内 Context Window 编辑：未编辑时显示 ctx badge + 铅笔入口；编辑中输入框 */
-function RowCtxEditor({
-  ctx,
-  isEditing,
-  value,
-  onValueChange,
-  onStart,
-  onCommit,
-  onCancel,
-  t,
-}: {
-  ctx?: number
-  isEditing: boolean
-  value: string
-  onValueChange: (v: string) => void
-  onStart: () => void
-  onCommit: (name: string) => void
-  onCancel: () => void
-  t: (key: string, ...args: string[]) => string
-}) {
-  const TXT = makeTXT(t)
-  if (isEditing) {
-    return (
-      <span className="ctx-inline-wrap" onClick={e => e.stopPropagation()}>
-        <input
-          autoFocus
-          type="number"
-          className="ctx-inline-input input-num"
-          min={0.1}
-          max={10000}
-          step={0.001}
-          value={value}
-          onChange={e => onValueChange(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              e.stopPropagation()
-              onCommit(value)
-            } else if (e.key === 'Escape') {
-              e.stopPropagation()
-              onCancel()
-            }
-          }}
-          onBlur={() => onCommit(value)}
-        />
-        <span className="ctx-unit">K</span>
-      </span>
-    )
-  }
-  return (
-    <>
-      {ctx && ctx > 0 ? (
-        <span className="model-badge model-badge--ctx" title={TXT.ctxCap}>
-          {formatContextWindow(ctx)}
-        </span>
-      ) : (
-        <span className="model-badge model-badge--ctx model-badge--ctx-unknown" title={TXT.ctxCap}>
-          ?
-        </span>
-      )}
-      <button
-        type="button"
-        className="icon-btn-ghost model-ctx-edit-btn"
-        title={TXT.editContext}
-        aria-label={TXT.editContext}
-        onClick={e => {
-          e.stopPropagation()
-          onStart()
-        }}
-      >
-        <IconEdit3 size={11} />
-      </button>
-    </>
-  )
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1494,6 +1415,14 @@ export function ModelsPage({
   const { t } = useLanguage()
   const TXT = makeTXT(t)
   const [currentModel, setCurrentModel] = useState('')
+  /**
+   * 当前生效模型的 provider 归属（与 currentModel 一起构成「使用中」的全集键）。
+   *
+   * 两个都必须有：同 id 模型跨 provider 共存（官方 deepseek vs opencode-go 的
+   * deepseek-v4-flash、中转站镜像），只比 id 会让两个列表同时标「使用中」——
+   * 而使用中是**全局唯一**的态：一个模型、一个 provider，没有第二个。
+   */
+  const [currentProvider, setCurrentProvider] = useState('')
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [providersLoading, setProvidersLoading] = useState(true)
   const [provider, setProvider] = useState('')
@@ -1678,6 +1607,9 @@ export function ModelsPage({
           /* localStorage 写入失败不阻塞 UI */
         }
         if (cfg || pctx) setProvider(prov)
+        // 「使用中」跟随全局生效模型（get_current_config + mode 感知归属），
+        // 不随本页正在看哪个 provider 变化。
+        setCurrentProvider(prov)
       }),
     ]).finally(() => setProvidersLoading(false))
     getCapabilities()
@@ -1732,12 +1664,10 @@ export function ModelsPage({
     setCtxOverrides({})
     setEditingCtxModel(null)
     editingCtxRef.current = null
-    try {
-      const saved = localStorage.getItem(`nuphus_current_model_${provider}`)
-      if (saved) setCurrentModel(saved)
-    } catch {
-      setCurrentModel('')
-    }
+    // 注意：**不从** `nuphus_current_model_<provider>` 回填 currentModel。
+    // 那把 key 是「该 provider 最近用过的模型」（切换弹窗卡片 meta 的数据源，
+    // 见 ChatPanel），不是全局生效模型；拿它回填会让正在看 A 提供商时把 A 的
+    // 旧模型标成「使用中」——而使用中全局只有一个（一个模型 + 一个 provider）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider])
 
@@ -2485,7 +2415,7 @@ export function ModelsPage({
     const list = loadModels(provider).filter(m => m !== name)
     saveModels(provider, list)
     setModels(list)
-    if (currentModel === name) {
+    if (currentModel === name && currentProvider === provider) {
       setCurrentModel('')
     }
   }
@@ -2545,6 +2475,55 @@ export function ModelsPage({
     setEditingCtxModel(null)
     setEditingCtxValue('')
   }
+
+  // ── 收藏偏好（localStorage，只影响排序不过滤；不触发任何 IPC）──────────
+  // 写入后 bump 一次强制重渲染，让卡片星形与弹窗排序读到新值。
+  const [, bumpPrefs] = useState(0)
+  const favoriteIds = new Set(getProviderFavorites(localStorage, provider) ?? [])
+  const toggleFavorite = (name: string) => {
+    setFavorite(localStorage, provider, name, !favoriteIds.has(name))
+    bumpPrefs(v => v + 1)
+  }
+
+  // 能力 chip 文案（支持在前、弱化在后；可切换项复用 vision/imageGen 的 title 体系）
+  const capVisionLabel = tr(t, 'models.chipVision', '图像理解')
+  const capImageVideoLabel = tr(t, 'models.chipImageVideo', '图像/视频生成')
+  const capReasoningLabel = tr(t, 'models.chipReasoning', '文本推理')
+  const capAudioLabel = tr(t, 'models.chipAudio', '语音输入')
+  const capReasoningHint = tr(
+    t,
+    'models.capReasoningHint',
+    '推理档位来自上游能力数据，暂不支持手动修改',
+  )
+  const capAudioHint = tr(t, 'models.capAudioHint', '语音输入能力来自自动探测，暂不支持手动修改')
+
+  const cardTxt = {
+    favAria: (n: string) => `${tr(t, 'models.favAria', '收藏')}：${n}`,
+    favHintOn: tr(t, 'models.favHintOn', '已收藏（切换弹窗中置顶显示）'),
+    favHintOff: tr(t, 'models.favHintOff', '点击收藏（切换弹窗中置顶显示）'),
+    goTitle: TXT.goGateway,
+    manualTitle: TXT.manualBadgeTitle,
+    removeTitle: TXT.removeFromLocalList,
+    switchLabel: tr(t, 'models.switchBtn', '切换'),
+    usingLabel: tr(t, 'models.using', '使用中'),
+    usingHint: tr(
+      t,
+      'models.usingHint',
+      '当前生效模型；修改连接参数后再点可重新应用（仍会触发一次探测）',
+    ),
+    switchingLabel: tr(t, 'models.switchingBtn', '切换中…'),
+  }
+
+  /** 卡片的 ctx 编辑三件套（每个卡片一份，状态由页面统一持有） */
+  const ctxEditProps = (name: string) => ({
+    isEditing: editingCtxModel === name,
+    value: editingCtxValue,
+    onValueChange: setEditingCtxValue,
+    onStart: () => startCtxEdit(name),
+    onCommit: (raw: string) => commitCtxEdit(name, raw),
+    onCancel: cancelCtxEdit,
+    t,
+  })
 
   const commitCtxEdit = async (name: string, rawValue: string) => {
     if (editingCtxRef.current !== name) return
@@ -2650,6 +2629,10 @@ export function ModelsPage({
         await switchModelCmd(name, target, resolvedBaseUrl, ctxArg, 'default')
       }
       persistCurrentProvider(name)
+      // 记一次使用痕迹：卡片网格与切换弹窗都按「用过」排序（收藏 > 用过 > 未使用）。
+      // 与弹窗切换（ChatPanel）写同一把 key，两个入口的排序口径天然一致。
+      rememberRecentModel(localStorage, target, name)
+      setCurrentProvider(target)
       onModelChanged?.()
       if (!isCurrent()) return
       if (resolvedBaseUrl) setLoadedBaseUrl(resolvedBaseUrl)
@@ -3122,7 +3105,11 @@ export function ModelsPage({
                   <Section
                     title={TXT.modelListTitle}
                     description={
-                      currentModel ? TXT.currentModelOf(currentModel) : TXT.modelListDescEmpty
+                      currentModel
+                        ? currentProvider === provider
+                          ? TXT.currentModelOf(currentModel)
+                          : TXT.currentModelElsewhere(currentModel, currentProvider)
+                        : TXT.modelListDescEmpty
                     }
                     actions={
                       <>
@@ -3275,128 +3262,102 @@ export function ModelsPage({
                         detectedModels.map(d => [d.id, d]),
                       )
                       const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
+                      const capsOf = (name: string): ModelCardCap[] => {
+                        const brief = briefById.get(name)
+                        const info = infoById.get(name)
+                        const vision = !!brief?.supports_vision || !!info?.supports_vision
+                        const imageVideo =
+                          !!brief?.supports_image_generation || !!info?.supports_image_generation
+                        const audio = !!brief?.supports_audio || !!info?.supports_audio
+                        const tiers = info?.reasoning_efforts?.length ?? null
+                        const out: ModelCardCap[] = [
+                          {
+                            key: 'vision',
+                            label: capVisionLabel,
+                            on: vision,
+                            toggleable: true,
+                            busy: visionToggling === name,
+                            hint: vision ? TXT.visionToggleTitleOn : TXT.visionToggleTitleOff,
+                          },
+                          {
+                            key: 'imageVideo',
+                            label: capImageVideoLabel,
+                            on: imageVideo,
+                            toggleable: true,
+                            busy: imageGenToggling === name,
+                            hint: imageVideo
+                              ? t('models.imageGenToggleTitleOn')
+                              : t('models.imageGenToggleTitleOff'),
+                          },
+                        ]
+                        // 推理档位：仅有数据（list_models 的 ModelInfo）时才呈现——
+                        // brief（连接探测）不含该字段，未知即不显示，不猜。
+                        if (tiers != null) {
+                          out.push({
+                            key: 'reasoning',
+                            label: capReasoningLabel,
+                            on: tiers > 0,
+                            toggleable: false,
+                            detail: tiers > 0 ? `${tiers} 档` : undefined,
+                            hint: capReasoningHint,
+                          })
+                        }
+                        out.push({
+                          key: 'audio',
+                          label: capAudioLabel,
+                          on: audio,
+                          toggleable: false,
+                          hint: capAudioHint,
+                        })
+                        // 支持的能力在前（重色），不支持的随后（浅色）；组内顺序固定。
+                        return [...out.filter(c => c.on), ...out.filter(c => !c.on)]
+                      }
                       return (
                         <div className="models-list-wrap">
                           <div className="detect-status">{TXT.modelsCount(display.length)}</div>
-                          <div className="model-list">
-                            {filtered.map(name => {
-                              const isActive = currentModel === name
+                          <div className="model-card-grid">
+                            {orderProviderModels(
+                              filtered.map(name => ({ id: name })),
+                              readRecentModels(localStorage, provider),
+                              getProviderFavorites(localStorage, provider),
+                            ).map(({ id: name }) => {
+                              const isActive = currentModel === name && currentProvider === provider
                               const brief = briefById.get(name)
                               const info = infoById.get(name)
                               const ctx =
                                 ctxOverrides[name] ?? brief?.context_window ?? info?.context_window
-                              const caps = {
-                                vision: brief?.supports_vision || info?.supports_vision || false,
-                                audio: brief?.supports_audio || info?.supports_audio || false,
-                                image:
-                                  brief?.supports_image_generation ||
-                                  info?.supports_image_generation ||
-                                  false,
-                              }
                               return (
-                                <div
+                                <ModelCard
                                   key={name}
-                                  className={'model-list-item' + (isActive ? ' active' : '')}
-                                  role="button"
-                                  tabIndex={0}
-                                  aria-disabled={!!switchingModel}
-                                  aria-busy={switchingModel === name}
-                                  onClick={() => void switchModel(name)}
-                                  onKeyDown={e => {
-                                    if (e.target !== e.currentTarget) return
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault()
-                                      ;(e.currentTarget as HTMLElement).click()
+                                  name={name}
+                                  active={isActive}
+                                  switching={switchingModel === name}
+                                  favorite={favoriteIds.has(name)}
+                                  manual={info?.source === 'manual'}
+                                  go={provider === 'opencode-go'}
+                                  caps={capsOf(name)}
+                                  ctx={ctx}
+                                  txt={cardTxt}
+                                  onToggleFavorite={() => toggleFavorite(name)}
+                                  onToggleCap={key => {
+                                    const brief0 = briefById.get(name)
+                                    const info0 = infoById.get(name)
+                                    if (key === 'vision') {
+                                      void toggleModelVision(
+                                        name,
+                                        !brief0?.supports_vision && !info0?.supports_vision,
+                                      )
+                                    } else if (key === 'imageVideo') {
+                                      void toggleModelImageGen(
+                                        name,
+                                        !brief0?.supports_image_generation &&
+                                          !info0?.supports_image_generation,
+                                      )
                                     }
                                   }}
-                                >
-                                  <div className={'model-radio' + (isActive ? ' selected' : '')} />
-                                  <div className="model-list-name">
-                                    {name}
-                                    {provider === 'opencode-go' && (
-                                      <span className="model-go-badge" title={TXT.goGateway}>
-                                        GO
-                                      </span>
-                                    )}
-                                    {/* 官方清单外：手动添加的模型，刷新时不会被移除 */}
-                                    {info?.source === 'manual' && (
-                                      <span
-                                        className="model-manual-badge"
-                                        title={TXT.manualBadgeTitle}
-                                      >
-                                        {TXT.manualBadge}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="model-list-badges">
-                                    {/* 视觉能力开关：与「上下文窗口」同为行内模型元数据编辑，
-                                        开关本身即状态（关闭态 = 该模型不进图像理解候选列表）。 */}
-                                    <button
-                                      type="button"
-                                      className={`model-vision-toggle${caps.vision ? ' is-on' : ''}`}
-                                      aria-pressed={caps.vision}
-                                      aria-label={TXT.visionToggleAria(
-                                        caps.vision
-                                          ? t('models.capStateOn')
-                                          : t('models.capStateOff'),
-                                      )}
-                                      title={
-                                        caps.vision
-                                          ? TXT.visionToggleTitleOn
-                                          : TXT.visionToggleTitleOff
-                                      }
-                                      disabled={visionToggling === name}
-                                      onClick={e => {
-                                        e.stopPropagation()
-                                        void toggleModelVision(name, !caps.vision)
-                                      }}
-                                    >
-                                      <IconEye size={12} />
-                                    </button>
-                                    {caps.audio && (
-                                      <span className="model-badge" title={TXT.audioSupported}>
-                                        <IconMic size={12} />
-                                      </span>
-                                    )}
-                                    {/* 图像生成能力开关：与「视觉输入」同为行内模型元数据
-                                        编辑，开关本身即状态（开启态 = 该模型进入图片/视频
-                                        生成绑定候选列表；关闭态 = 掉出候选）。 */}
-                                    <button
-                                      type="button"
-                                      className={`model-vision-toggle${caps.image ? ' is-on' : ''}`}
-                                      aria-pressed={caps.image}
-                                      aria-label={t(
-                                        'models.imageGenToggleAria',
-                                        caps.image
-                                          ? t('models.capStateOn')
-                                          : t('models.capStateOff'),
-                                      )}
-                                      title={
-                                        caps.image
-                                          ? t('models.imageGenToggleTitleOn')
-                                          : t('models.imageGenToggleTitleOff')
-                                      }
-                                      disabled={imageGenToggling === name}
-                                      onClick={e => {
-                                        e.stopPropagation()
-                                        void toggleModelImageGen(name, !caps.image)
-                                      }}
-                                    >
-                                      <IconImage size={12} />
-                                    </button>
-                                    <RowCtxEditor
-                                      ctx={ctx}
-                                      isEditing={editingCtxModel === name}
-                                      value={editingCtxValue}
-                                      onValueChange={setEditingCtxValue}
-                                      onStart={() => startCtxEdit(name)}
-                                      onCommit={(raw: string) => commitCtxEdit(name, raw)}
-                                      onCancel={cancelCtxEdit}
-                                      t={t}
-                                    />
-                                  </div>
-                                  {isActive && <IconCheck size={13} className="model-list-check" />}
-                                </div>
+                                  onUse={() => void switchModel(name)}
+                                  ctxEdit={ctxEditProps(name)}
+                                />
                               )
                             })}
                           </div>
@@ -3406,101 +3367,85 @@ export function ModelsPage({
 
                     {/* local：手动模型列表与默认上下文 */}
                     {provider === 'local' && models.length > 0 && (
-                      <div className="model-list model-list--spaced">
-                        {models.map(m => {
-                          const isActive = currentModel === m
+                      <div className="model-card-grid model-card-grid--spaced">
+                        {orderProviderModels(
+                          models.map(m => ({ id: m })),
+                          readRecentModels(localStorage, provider),
+                          getProviderFavorites(localStorage, provider),
+                        ).map(({ id: m }) => {
+                          const isActive = currentModel === m && currentProvider === provider
                           const mctx = ctxOverrides[m] ?? rowCtx(m)
+                          const localInfo = allModels.find(
+                            x => x.provider === 'local' && x.id === m,
+                          )
+                          const localTiers = localInfo?.reasoning_efforts?.length ?? null
+                          const localVision = rowVision(m)
+                          const localImageGen = rowImageGen(m)
+                          const localAudio = !!localInfo?.supports_audio
+                          const localCaps: ModelCardCap[] = [
+                            {
+                              key: 'vision',
+                              label: capVisionLabel,
+                              on: localVision,
+                              toggleable: true,
+                              busy: visionToggling === m,
+                              hint: localVision
+                                ? TXT.visionToggleTitleOn
+                                : TXT.visionToggleTitleOff,
+                            },
+                            {
+                              key: 'imageVideo',
+                              label: capImageVideoLabel,
+                              on: localImageGen,
+                              toggleable: true,
+                              busy: imageGenToggling === m,
+                              hint: localImageGen
+                                ? t('models.imageGenToggleTitleOn')
+                                : t('models.imageGenToggleTitleOff'),
+                            },
+                          ]
+                          if (localTiers != null) {
+                            localCaps.push({
+                              key: 'reasoning',
+                              label: capReasoningLabel,
+                              on: localTiers > 0,
+                              toggleable: false,
+                              detail: localTiers > 0 ? `${localTiers} 档` : undefined,
+                              hint: capReasoningHint,
+                            })
+                          }
+                          localCaps.push({
+                            key: 'audio',
+                            label: capAudioLabel,
+                            on: localAudio,
+                            toggleable: false,
+                            hint: capAudioHint,
+                          })
+                          const orderedLocalCaps = [
+                            ...localCaps.filter(c => c.on),
+                            ...localCaps.filter(c => !c.on),
+                          ]
                           return (
-                            <div
+                            <ModelCard
                               key={m}
-                              className={'model-list-item' + (isActive ? ' active' : '')}
-                              role="button"
-                              tabIndex={0}
-                              aria-disabled={!!switchingModel}
-                              aria-busy={switchingModel === m}
-                              onClick={() => void switchModel(m)}
-                              onKeyDown={e => {
-                                if (e.target !== e.currentTarget) return
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault()
-                                  void switchModel(m)
-                                }
+                              name={m}
+                              active={isActive}
+                              switching={switchingModel === m}
+                              favorite={favoriteIds.has(m)}
+                              caps={orderedLocalCaps}
+                              ctx={mctx}
+                              showRemove
+                              txt={cardTxt}
+                              onToggleFavorite={() => toggleFavorite(m)}
+                              onToggleCap={key => {
+                                if (key === 'vision') void toggleModelVision(m, !rowVision(m))
+                                else if (key === 'imageVideo')
+                                  void toggleModelImageGen(m, !rowImageGen(m))
                               }}
-                            >
-                              <div className="model-list-name">{m}</div>
-                              <div className="model-list-badges">
-                                {/* 本地端点也可能是多模态（本地视觉模型）：同样可标记，
-                                    否则「图像理解模型」列表对本地服务永久为空。 */}
-                                <button
-                                  type="button"
-                                  className={`model-vision-toggle${rowVision(m) ? ' is-on' : ''}`}
-                                  aria-pressed={rowVision(m)}
-                                  aria-label={TXT.visionToggleAria(
-                                    rowVision(m) ? t('models.capStateOn') : t('models.capStateOff'),
-                                  )}
-                                  title={
-                                    rowVision(m)
-                                      ? TXT.visionToggleTitleOn
-                                      : TXT.visionToggleTitleOff
-                                  }
-                                  disabled={visionToggling === m}
-                                  onClick={e => {
-                                    e.stopPropagation()
-                                    void toggleModelVision(m, !rowVision(m))
-                                  }}
-                                >
-                                  <IconEye size={12} />
-                                </button>
-                                {/* 本地端点同样可挂图片生成模型（如本地多模态生成服务）：
-                                     打开后该模型才进入图片/视频生成绑定候选列表。 */}
-                                <button
-                                  type="button"
-                                  className={`model-vision-toggle${rowImageGen(m) ? ' is-on' : ''}`}
-                                  aria-pressed={rowImageGen(m)}
-                                  aria-label={t(
-                                    'models.imageGenToggleAria',
-                                    rowImageGen(m)
-                                      ? t('models.capStateOn')
-                                      : t('models.capStateOff'),
-                                  )}
-                                  title={
-                                    rowImageGen(m)
-                                      ? t('models.imageGenToggleTitleOn')
-                                      : t('models.imageGenToggleTitleOff')
-                                  }
-                                  disabled={imageGenToggling === m}
-                                  onClick={e => {
-                                    e.stopPropagation()
-                                    void toggleModelImageGen(m, !rowImageGen(m))
-                                  }}
-                                >
-                                  <IconImage size={12} />
-                                </button>
-                                <RowCtxEditor
-                                  ctx={mctx}
-                                  isEditing={editingCtxModel === m}
-                                  value={editingCtxValue}
-                                  onValueChange={setEditingCtxValue}
-                                  onStart={() => startCtxEdit(m)}
-                                  onCommit={(raw: string) => commitCtxEdit(m, raw)}
-                                  onCancel={cancelCtxEdit}
-                                  t={t}
-                                />
-                              </div>
-                              {isActive && <IconCheck size={13} className="model-list-check" />}
-                              <button
-                                type="button"
-                                className="icon-btn-ghost icon-btn-clear"
-                                onClick={e => {
-                                  e.stopPropagation()
-                                  removeModel(m)
-                                }}
-                                title={TXT.removeFromLocalList}
-                                aria-label={TXT.removeFromLocalList}
-                              >
-                                <IconTrash2 size={12} />
-                              </button>
-                            </div>
+                              onUse={() => void switchModel(m)}
+                              onRemove={() => removeModel(m)}
+                              ctxEdit={ctxEditProps(m)}
+                            />
                           )
                         })}
                       </div>

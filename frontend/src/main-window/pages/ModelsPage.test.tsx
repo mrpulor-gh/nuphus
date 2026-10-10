@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { listen } from '@tauri-apps/api/event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -90,6 +90,7 @@ import {
   getProviderContext,
   listModels,
   refreshProviderModels,
+  setModelSupportsVision,
   sttStatus,
 } from '../lib/api'
 
@@ -878,7 +879,12 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
     await screen.findByText('model-two')
   }
-  const row = (name: string) => screen.getByText(name).closest('[role="button"]') as HTMLElement
+  const card = (name: string) => screen.getByTestId(`model-card-${name}`)
+  // 卡片不再是可点行：切换的唯一入口是底行「启用」按钮（真实 button，原生支持
+  // Enter/Space）。整卡点击切换已移除——切换会写盘+插系统消息+付费探测，
+  // 误触成本高，显式按钮比扫读误触安全。
+  const useBtn = (name: string) =>
+    within(card(name)).getByRole('button', { name: /^(切换|使用中|切换中…)$/ })
 
   it('连接成功明确提示数量，并在修改参数后清除过时提示', async () => {
     await openModels()
@@ -918,29 +924,31 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     await detect()
     const pending = deferred<string>()
     vi.mocked(switchModel).mockReturnValue(pending.promise)
-    fireEvent.click(row('model-two'))
+    fireEvent.click(useBtn('model-two'))
     expect(screen.getByText('正在切换到 model-two…')).toBeInTheDocument()
-    expect(row('model-two')).toHaveAttribute('aria-busy', 'true')
-    expect(row('model-two')).not.toHaveClass('active')
-    fireEvent.click(row('model-one'))
+    expect(card('model-two')).toHaveAttribute('aria-busy', 'true')
+    expect(useBtn('model-two')).toBeDisabled()
+    expect(card('model-two')).not.toHaveClass('is-active')
+    fireEvent.click(useBtn('model-one'))
     expect(switchModel).toHaveBeenCalledTimes(1)
     await act(async () => pending.resolve('ok'))
-    expect(row('model-two')).toHaveClass('active')
+    expect(card('model-two')).toHaveClass('is-active')
+    expect(useBtn('model-two')).toHaveTextContent('使用中')
     expect(screen.getByText('已切换到 model-two')).toBeInTheDocument()
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
-  it('切换失败保留原选择，支持 Enter 和空格切换', async () => {
+  it('切换失败保留原选择（启用按钮为原生 button，键盘可用）', async () => {
     await openModels()
     await detect()
     vi.mocked(switchModel).mockResolvedValueOnce('ok')
-    fireEvent.keyDown(row('model-one'), { key: 'Enter' })
-    await waitFor(() => expect(row('model-one')).toHaveClass('active'))
+    fireEvent.click(useBtn('model-one'))
+    await waitFor(() => expect(card('model-one')).toHaveClass('is-active'))
     vi.mocked(switchModel).mockRejectedValueOnce(new Error('保存失败'))
-    fireEvent.keyDown(row('model-two'), { key: ' ' })
+    fireEvent.click(useBtn('model-two'))
     await screen.findByText('保存失败')
-    expect(row('model-one')).toHaveClass('active')
-    expect(row('model-two')).not.toHaveClass('active')
+    expect(card('model-one')).toHaveClass('is-active')
+    expect(card('model-two')).not.toHaveClass('is-active')
   })
 
   it('输入密钥时复用 configureLlm，重复选择仍可保存修改后的连接参数', async () => {
@@ -948,12 +956,12 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     await detect()
     vi.mocked(configureLlm).mockResolvedValue('ok')
     fireEvent.change(screen.getByLabelText('模型 API Key'), { target: { value: 'test-key' } })
-    fireEvent.click(row('model-two'))
-    await waitFor(() => expect(row('model-two')).toHaveClass('active'))
+    fireEvent.click(useBtn('model-two'))
+    await waitFor(() => expect(card('model-two')).toHaveClass('is-active'))
     fireEvent.change(screen.getByLabelText('模型 API URL'), {
       target: { value: 'https://new.example/v1' },
     })
-    fireEvent.click(row('model-two'))
+    fireEvent.click(useBtn('model-two'))
     await waitFor(() => expect(configureLlm).toHaveBeenCalledTimes(2))
     expect(configureLlm).toHaveBeenLastCalledWith(
       'test-key',
@@ -978,5 +986,173 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     expect(listModels).toHaveBeenCalledTimes(before + 1)
     unmount()
     expect(unlistenMock).toHaveBeenCalled()
+  })
+})
+
+// ── 卡片化模型列表：收藏 / 能力 chip / 排序 ────────────────────────────────
+describe('ModelsPage 模型卡片（收藏 / 能力 / 排序）', () => {
+  const brief = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    supports_streaming: true,
+    supports_vision: false,
+    supports_audio: false,
+    supports_image_generation: false,
+    ...over,
+  })
+  async function openModels() {
+    localStorage.clear()
+    providerList.push(
+      provider({
+        id: 'custom-fast',
+        name: '快速中转站',
+        display_name: '快速中转站',
+        provider_type: 'custom',
+        base_url: 'https://relay.example/v1',
+      }),
+    )
+    render(<ModelsPage onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: '快速中转站' }))
+  }
+  async function detect(ids: Array<Record<string, unknown>>) {
+    vi.mocked(listProviderModels).mockResolvedValue(ids as never)
+    fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
+    // 等连接结果真正落成卡片（mock resolve 是异步的），否则后续断言抢跑
+    await waitFor(() =>
+      expect(document.querySelectorAll('.model-card-grid > .model-card')).toHaveLength(ids.length),
+    )
+  }
+  const card = (name: string) => screen.getByTestId(`model-card-${name}`)
+  const gridOrder = () =>
+    [...document.querySelectorAll('.model-card-grid > .model-card')].map(
+      el => el.querySelector('.model-card-name')?.textContent ?? '',
+    )
+  const useBtn = (name: string) =>
+    within(card(name)).getByRole('button', { name: /^(切换|使用中|切换中…)$/ })
+
+  it('点收藏星形只写本地偏好，不调用任何 IPC', async () => {
+    await openModels()
+    await detect([brief('model-one')])
+    fireEvent.click(within(card('model-one')).getByRole('button', { name: /收藏/ }))
+    expect(JSON.parse(localStorage.getItem('nuphus_favorite_models') || '{}')).toEqual({
+      'custom-fast': ['model-one'],
+    })
+    expect(within(card('model-one')).getByRole('button', { name: /收藏/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(setModelSupportsVision).not.toHaveBeenCalled()
+    expect(switchModel).not.toHaveBeenCalled()
+  })
+
+  it('列表排序：收藏 > 用过 > 未使用（「用过」= 最近切换痕迹，非当前模型）', async () => {
+    await openModels()
+    await detect([brief('a'), brief('b'), brief('c'), brief('d')])
+    expect(gridOrder()).toEqual(['a', 'b', 'c', 'd'])
+    // 切到 b：b 进入「用过」，置顶
+    vi.mocked(switchModel).mockResolvedValue('ok')
+    fireEvent.click(useBtn('b'))
+    await waitFor(() => expect(card('b')).toHaveClass('is-active'))
+    await waitFor(() => expect(gridOrder()).toEqual(['b', 'a', 'c', 'd']))
+    // 收藏 d：d 置顶，b（用过）次之，其余原序
+    fireEvent.click(within(card('d')).getByRole('button', { name: /收藏/ }))
+    await waitFor(() => expect(gridOrder()).toEqual(['d', 'b', 'a', 'c']))
+  })
+
+  it('能力 chip：可切换项是按钮（点了写后端），只读项是纯文本', async () => {
+    vi.mocked(listModels).mockResolvedValue([
+      {
+        id: 'm1',
+        provider: 'custom-fast',
+        alias: [],
+        supports_streaming: true,
+        supports_vision: false,
+        supports_audio: false,
+        supports_image_generation: false,
+        reasoning_efforts: ['low', 'high', 'max'],
+      },
+    ] as never)
+    await openModels()
+    await detect([brief('m1', { supports_vision: false })])
+    // 等 list_models 的 ModelInfo 合入后，推理 chip 出现且为只读（span，不是 button）
+    const reasoningLabel = await within(card('m1')).findByText('文本推理')
+    const reasoningChip = reasoningLabel.closest('.cap-chip') as HTMLElement
+    expect(reasoningLabel.closest('button')).toBeNull()
+    expect(reasoningChip).toHaveClass('is-on')
+    expect(reasoningChip.querySelector('.cap-chip-detail')).toHaveTextContent('3 档')
+    // 视觉 chip 可点击：写入 set_model_supports_vision(true)
+    fireEvent.click(within(card('m1')).getByRole('button', { name: /图像理解/ }))
+    await waitFor(() =>
+      expect(setModelSupportsVision).toHaveBeenCalledWith('custom-fast', 'm1', true),
+    )
+  })
+
+  it('「使用中」全局唯一：同 id 模型跨 provider 时只标生效归属那一张卡', async () => {
+    // 当前生效模型 = (deepseek, dup-model)；二中转也有一个同名 dup-model。
+    // 「使用中」一个模型一个 provider，没有第二个——同 id 不得让两张卡同时点亮。
+    vi.mocked(getCurrentConfig).mockResolvedValue({
+      model: 'dup-model',
+      provider: 'deepseek',
+      base_url: '',
+      has_key: true,
+      configured_providers: ['deepseek'],
+    } as never)
+    providerList.push(
+      provider({
+        id: 'custom-two',
+        name: '二中转',
+        display_name: '二中转',
+        provider_type: 'custom',
+        base_url: 'https://relay2.example/v1',
+      }),
+    )
+    vi.mocked(listProviderModels).mockImplementation(
+      async () =>
+        [
+          {
+            id: 'dup-model',
+            supports_streaming: true,
+            supports_vision: false,
+            supports_audio: false,
+            supports_image_generation: false,
+          },
+        ] as never,
+    )
+    // deepseek 是非 custom 的已配置 provider：进页自动同步走 refresh_provider_models
+    vi.mocked(refreshProviderModels).mockResolvedValue({
+      models: [
+        {
+          id: 'dup-model',
+          supports_streaming: true,
+          supports_vision: false,
+          supports_audio: false,
+          supports_image_generation: false,
+        },
+      ],
+      report: null,
+    } as never)
+    render(<ModelsPage onClose={() => {}} />)
+    // deepseek 段：生效归属那张卡 = 使用中
+    fireEvent.click(await screen.findByRole('button', { name: /DeepSeek/ }))
+    await waitFor(() =>
+      expect(document.querySelectorAll('.model-card-grid > .model-card')).toHaveLength(1),
+    )
+    expect(card('dup-model')).toHaveClass('is-active')
+    expect(within(card('dup-model')).getByRole('button', { name: '使用中' })).toBeInTheDocument()
+    // 切到二中转段：同 id 卡片不得点亮（生效归属是 deepseek，不是它）。
+    // custom 段不自动同步（设计如此），走「连接测试」拿列表。
+    fireEvent.click(screen.getByRole('button', { name: '二中转' }))
+    fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
+    await waitFor(() =>
+      expect(document.querySelectorAll('.model-card-grid > .model-card')).toHaveLength(1),
+    )
+    expect(card('dup-model')).not.toHaveClass('is-active')
+    expect(within(card('dup-model')).getByRole('button', { name: '切换' })).toBeInTheDocument()
+  })
+
+  it('模型卡片网格不设内滚动（页面宿主自己滚，避免双滚动条）', async () => {
+    await openModels()
+    await detect([brief('a'), brief('b')])
+    const grid = document.querySelector('.model-card-grid') as HTMLElement
+    expect(grid.getAttribute('style')).toBeNull()
   })
 })

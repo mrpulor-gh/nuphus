@@ -46,6 +46,7 @@ import {
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
+import { getProviderFavorites } from '../lib/favorites'
 import { buildQuoteRef, isSelectableInBubble, truncateQuote } from './messageSelection'
 import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
@@ -2580,11 +2581,15 @@ export function ChatPanel({
                     <div className="model-provider-picker">
                       <div className="model-provider-list">
                         {savedConfigs.map(cfg => {
-                          // 子列表按「最近切换顺序」排：模型多的 provider 不必每次
-                          // 都在长列表里找。只用展示顺序，不参与模型解析/切换。
+                          // 子列表排序口径：收藏置顶 → 最近切换顺序 → 其余原序。
+                          // 收藏（设置页卡片星形写的本地偏好）只影响顺序、不过滤——
+                          // 没有收藏时行为与之前完全一致。均不参与模型解析/切换。
+                          // 同一份集合同时驱动「名称后的收藏星标」，取一次即可。
+                          const favorites = getProviderFavorites(localStorage, cfg.provider)
                           const providerModels = orderProviderModels(
                             allModels.filter(m => m.provider === cfg.provider),
                             readRecentModels(localStorage, cfg.provider),
+                            favorites,
                           )
                           // 勾选态 = (provider, model) 双全等：官方厂商与 opencode-go 存在同 id
                           // 模型（deepseek-v4-flash 等），仅比 id 会让两 provider 卡片同时打勾。
@@ -2693,6 +2698,18 @@ export function ChatPanel({
                                                   title="OpenCode Go 网关"
                                                 >
                                                   GO
+                                                </span>
+                                              )}
+                                              {/* 收藏星标紧跟在名称后；没有收藏就不渲染
+                                                  （不占位、不置灰——未收藏是默认态，
+                                                  不需要一个空图标来「说明」它） */}
+                                              {favorites?.includes(model.id) && (
+                                                <span
+                                                  className="model-popup-fav"
+                                                  title={t('modelManager.favorited')}
+                                                  aria-label={t('modelManager.favorited')}
+                                                >
+                                                  <IconStar size={10} />
                                                 </span>
                                               )}
                                             </span>
