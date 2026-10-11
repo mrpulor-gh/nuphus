@@ -1382,7 +1382,7 @@ const zh: Record<string, string> = {
     '点击标记为支持图像生成（开启后，该模型才会出现在图片生成绑定候选列表）',
   'models.imageGenMarkedOn': '{0} 已标记为支持图像生成',
   'models.imageGenMarkedOff': '{0} 已标记为不支持图像生成',
-  // ── 模型卡片：能力 chip / 收藏 / 启用 ──
+  // ── 模型卡片：能力 chip / 收藏 / 切换 ──
   // 能力 chip 只呈现后端事实：可切换项（图像理解、图像/视频生成）写 user 来源，
   // 只读项（推理档位、语音输入）仅探测数据，affordance 分别为按钮与纯文本。
   'models.chipVision': '图像理解',

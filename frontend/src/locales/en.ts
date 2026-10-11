@@ -1456,7 +1456,7 @@ const en: Record<string, string> = {
     'Click to declare image generation (only declared models appear in the image generation binding candidates)',
   'models.imageGenMarkedOn': '{0} marked as supporting image generation',
   'models.imageGenMarkedOff': '{0} marked as not supporting image generation',
-  // ── Model cards: capability chips / favorite / use ──
+  // ── Model cards: capability chips / favorite / switch ──
   'models.chipVision': 'Image understanding',
   'models.chipImageVideo': 'Image/video generation',
   'models.chipReasoning': 'Text reasoning',
