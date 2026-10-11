@@ -1,4 +1,4 @@
-import { editorZh } from './workflowEditor'
+﻿import { editorZh } from './workflowEditor'
 
 const zh: Record<string, string> = {
   ...editorZh,
@@ -1581,6 +1581,9 @@ const zh: Record<string, string> = {
   'init.app': '应用初始化',
 
   'chat.systemLabel': '系统',
+  'chat.turnRail.label': '对话轮次导航',
+  'chat.turnRail.jump': '跳转到第 {0} 轮',
+  'chat.turnRail.turn': '第 {0} 轮',
   'chat.errorPrefix': '错误',
   'chat.llmErrorPrefix': 'LLM请求失败',
   'chat.retry': '重试',

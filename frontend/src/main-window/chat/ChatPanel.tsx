@@ -17,6 +17,7 @@ import {
   type RefineState,
 } from '../../hooks/useExecutionUI'
 import { useStickyScroll } from '../../hooks/useStickyScroll'
+import { TurnRail } from './TurnRail'
 import { isCustomProviderId } from '../lib/customProvider'
 import { setIslandAnchor } from '../../ui/islandChannel'
 import { toAssetUrl, resolveLocalImageUrl } from '../../ui/assetUrl'
@@ -1909,6 +1910,7 @@ export function ChatPanel({
                         <React.Fragment key={`row-${msg.id}`}>
                           <div
                             key={msg.id}
+                            id={msg.role === 'user' ? `turn-anchor-${msg.id}` : undefined}
                             className={`message-row ${msg.role} ${showAvatar ? 'with-avatar' : ''}`}
                           >
                             {msg.role === 'assistant' && showAvatar && (
@@ -2155,6 +2157,9 @@ export function ChatPanel({
               <IconChevronsDown size={16} />
             </button>
           )}
+          {/* ── 轮次轨：消息流 ≥2 轮时渲染（组件内部控制），左侧 20px / 距底 188px，
+               定位几何与显隐由 turn-rail.css 承担；锚点 = user 行的 turn-anchor id ── */}
+          <TurnRail messages={messages} scrollRef={scrollRef} t={t} />
         </div>
       </div>
 

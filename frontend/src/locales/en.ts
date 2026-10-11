@@ -1,4 +1,4 @@
-import { editorEn } from './workflowEditor'
+﻿import { editorEn } from './workflowEditor'
 
 const en: Record<string, string> = {
   ...editorEn,
@@ -1659,6 +1659,9 @@ const en: Record<string, string> = {
   'init.app': 'App',
 
   'chat.systemLabel': 'System',
+  'chat.turnRail.label': 'Conversation turns',
+  'chat.turnRail.jump': 'Jump to turn {0}',
+  'chat.turnRail.turn': 'Turn {0}',
   'chat.errorPrefix': 'Error',
   'chat.llmErrorPrefix': 'LLM Error',
   'chat.retry': 'Retry',
