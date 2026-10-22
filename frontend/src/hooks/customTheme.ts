@@ -158,54 +158,232 @@ export const OPACITY_INTENT_KEY_ORDER: readonly OpacityChannel[] = [
 ]
 
 /**
- * 用户「显式拖过的滑块通道」的持久化位置。
+ * 外观微调层的持久化（2026-10 二次定稿：**按主题各自一份**，改前先读）。
  *
- * 为什么必须持久化而不是只放组件 ref：维护这份意图的组件（外观浮窗
- * `AppearancePanel`）随会话生灭 —— 早先它是被 `<CompactModal open={s.showThemes}>`
- * 包裹的 `ThemesPage`，关一次弹窗就卸载、ref 归零；现在浮窗已保活（开合不卸载），
- * 但刷新页面 / 重启应用仍会让 ref 归零。归零后切主题，`:dirty` 门槛判定
- * 「用户没拖过」，于是把 `--input-bg` 等派生色整个丢弃、回落基底实色 →
- * 用户设定的透明度丢失，而滑块读数仍显示旧值（读数来自 overrides），
- * 画面与滑块彻底脱钩。这正是「输入框背景不跟透明度变化」的确定性成因。
+ * 「微调」= 5 个不透明度通道 + 5 个核心色 token。它不是全局偏好，而是**某个主题的
+ * 参数**：内置主题按 `dark / light / fresh` 分槽，自定义主题按主题 id 分槽。于是：
+ * - 切主题 → 加载目标槽位自己的值（没调过就是该主题默认值），A 的参数不会带到 B；
+ * - 切回来 → A 的参数原样回来（不丢）；
+ * - 重启 → 当前主题（`activeCustomId ?? LS_THEME`）的槽位被恢复，不回到出厂值。
+ *
+ * 存「值」而不是派生后的 rgba：百分比 / α 属于用户，rgb 属于基底（深色气泡底 vs
+ * 浅色气泡底），换基底必须按新基底重新派生（见 deriveTweaksOverrides）。
+ *
+ * 兼容：上一层迭代（同日早期实现）存的是「一份不分主题的微调」——读取时作为
+ * `legacy` 返回，由 useTheme 迁移到当前主题槽位；更早的布尔意图键
+ * `nuphus_opacity_intent` 直接忽略。
  */
-const LS_OPACITY_INTENT = 'nuphus_opacity_intent'
+const LS_TWEAKS = 'nuphus_appearance_tweaks'
 
-const EMPTY_INTENT: Record<OpacityChannel, boolean> = {
-  bubbles: false,
-  input: false,
-  panel: false,
-  modal: false,
-  skin: false,
+/** 微调作用域：内置主题 id 或自定义主题 id */
+export type TweakScope = string
+
+/** 微调层：缺省的通道 / token 表示「用该基底默认值」，不写任何覆盖 */
+export interface AppearanceTweaks {
+  alphas: Partial<Record<OpacityChannel, number>>
+  tokens: Partial<Record<CoreTokenKey, string>>
 }
 
-/** 读取用户拖过的滑块通道（缺省/损坏 → 全 false） */
-export function readOpacityIntent(): Record<OpacityChannel, boolean> {
+/** 全量槽位表（scope → 微调层） */
+export type TweakStore = Record<string, AppearanceTweaks>
+
+/** 空微调层（稳定引用，避免每次渲染生成新对象） */
+export const EMPTY_TWEAKS: AppearanceTweaks = { alphas: {}, tokens: {} }
+
+const isOpacityChannel = (v: string): v is OpacityChannel =>
+  v === 'bubbles' || v === 'input' || v === 'panel' || v === 'modal' || v === 'skin'
+
+const clampPercent = (n: number) => Math.max(0, Math.min(100, Math.round(n)))
+
+/** 把任意值收敛成合法微调层（缺省 / 损坏字段直接丢弃） */
+function parseTweaks(input: unknown): AppearanceTweaks {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return EMPTY_TWEAKS
+  const obj = input as { alphas?: unknown; tokens?: unknown }
+  const alphas: Partial<Record<OpacityChannel, number>> = {}
+  if (obj.alphas && typeof obj.alphas === 'object' && !Array.isArray(obj.alphas)) {
+    for (const [key, value] of Object.entries(obj.alphas as Record<string, unknown>)) {
+      if (isOpacityChannel(key) && typeof value === 'number' && Number.isFinite(value)) {
+        alphas[key] = clampPercent(value)
+      }
+    }
+  }
+  const tokens: Partial<Record<CoreTokenKey, string>> = {}
+  if (obj.tokens && typeof obj.tokens === 'object' && !Array.isArray(obj.tokens)) {
+    for (const [key, value] of Object.entries(obj.tokens as Record<string, unknown>)) {
+      if (!(CORE_TOKEN_KEYS as readonly string[]).includes(key)) continue
+      const hex = typeof value === 'string' ? normalizeHexInput(value) : null
+      if (hex) tokens[key as CoreTokenKey] = hex
+    }
+  }
+  return { alphas, tokens }
+}
+
+export function isEmptyTweaks(t: AppearanceTweaks): boolean {
+  return Object.keys(t.alphas).length === 0 && Object.keys(t.tokens).length === 0
+}
+
+/**
+ * 读取全量槽位表。早期「一份不分主题」的存储被识别为 `legacy` 返回 ——
+ * 迁移到哪个槽位只有 useTheme 知道（它持有当前主题），故不在此处落盘。
+ */
+export function readTweakStore(): { store: TweakStore; legacy: AppearanceTweaks | null } {
   try {
-    const raw = localStorage.getItem(LS_OPACITY_INTENT)
-    if (!raw) return { ...EMPTY_INTENT }
+    const raw = localStorage.getItem(LS_TWEAKS)
+    if (!raw) return { store: {}, legacy: null }
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { ...EMPTY_INTENT }
+      return { store: {}, legacy: null }
     }
     const obj = parsed as Record<string, unknown>
-    const out = { ...EMPTY_INTENT }
-    for (const key of Object.keys(EMPTY_INTENT) as OpacityChannel[]) {
-      if (obj[key] === true) out[key] = true
+    // 旧形态：顶层直接是 { alphas, tokens }
+    if ('alphas' in obj || 'tokens' in obj) return { store: {}, legacy: parseTweaks(obj) }
+    const store: TweakStore = {}
+    for (const [scope, value] of Object.entries(obj)) {
+      const tweaks = parseTweaks(value)
+      if (!isEmptyTweaks(tweaks)) store[scope] = tweaks
     }
-    return out
+    return { store, legacy: null }
   } catch {
-    return { ...EMPTY_INTENT }
+    return { store: {}, legacy: null }
   }
 }
 
-/** 记录某通道被用户显式拖动过（只写 true，不清除 —— 意图是单调累积的用户声明） */
-export function markOpacityIntent(channel: OpacityChannel): void {
+/** 落盘全量槽位表（唯一写入点；空表直接删键） */
+export function writeTweakStore(store: TweakStore): void {
   try {
-    const current = readOpacityIntent()
-    if (current[channel]) return
-    current[channel] = true
-    localStorage.setItem(LS_OPACITY_INTENT, JSON.stringify(current))
+    if (Object.keys(store).length === 0) localStorage.removeItem(LS_TWEAKS)
+    else localStorage.setItem(LS_TWEAKS, JSON.stringify(store))
   } catch {}
+}
+
+/** 取某主题的微调层（无 = 空层） */
+export function getScopeTweaks(store: TweakStore, scope: TweakScope): AppearanceTweaks {
+  return store[scope] ?? EMPTY_TWEAKS
+}
+
+/** 写某主题的微调层（空层 = 删除该槽位，不留 `{}` 残渣） */
+export function setScopeTweaks(
+  store: TweakStore,
+  scope: TweakScope,
+  tweaks: AppearanceTweaks,
+): TweakStore {
+  const next = { ...store }
+  if (isEmptyTweaks(tweaks)) delete next[scope]
+  else next[scope] = tweaks
+  return next
+}
+
+/** 设置某通道的不透明度（纯函数，返回新层） */
+export function setTweakAlpha(
+  t: AppearanceTweaks,
+  channel: OpacityChannel,
+  percent: number,
+): AppearanceTweaks {
+  return { ...t, alphas: { ...t.alphas, [channel]: clampPercent(percent) } }
+}
+
+/** 恢复某通道默认（删键 = 回落当前基底默认值） */
+export function resetTweakAlpha(t: AppearanceTweaks, channel: OpacityChannel): AppearanceTweaks {
+  const alphas = { ...t.alphas }
+  delete alphas[channel]
+  return { ...t, alphas }
+}
+
+/** 设置某核心色（非法 hex 原样返回，不写脏值） */
+export function setTweakToken(
+  t: AppearanceTweaks,
+  key: CoreTokenKey,
+  hex: string,
+): AppearanceTweaks {
+  const normalized = normalizeHexInput(hex)
+  if (!normalized) return t
+  return { ...t, tokens: { ...t.tokens, [key]: normalized } }
+}
+
+/** 恢复某核心色默认 */
+export function resetTweakToken(t: AppearanceTweaks, key: CoreTokenKey): AppearanceTweaks {
+  const tokens = { ...t.tokens }
+  delete tokens[key]
+  return { ...t, tokens }
+}
+
+/** 通道 → 受它驱动的颜色 token（与不透明度滑块的排列一一对应） */
+const CHANNEL_COLOR_TOKENS: Record<'bubbles' | 'input' | 'panel' | 'modal', readonly string[]> = {
+  bubbles: ['--msg-user-bg', '--msg-assistant-bg'],
+  input: ['--input-bg'],
+  panel: ['--panel-bg'],
+  modal: ['--modal-bg'],
+}
+
+/** --accent 在 overrides 里连同派生变量一起占用（见 applyCoreColor） */
+const ACCENT_OVERRIDE_KEYS: readonly string[] = ['--accent', ...ACCENT_DERIVED_KEYS]
+
+/** 某条微调项占用的 overrides 键 */
+function tweakOverrideKeys(
+  target: { channel: OpacityChannel } | { token: CoreTokenKey },
+): readonly string[] {
+  if ('channel' in target) {
+    if (target.channel === 'skin') return [SKIN_OPACITY_KEY]
+    return CHANNEL_COLOR_TOKENS[target.channel]
+  }
+  return target.token === '--accent' ? ACCENT_OVERRIDE_KEYS : [target.token]
+}
+
+/**
+ * 从一份 overrides（主题快照）里摘掉某条微调项占用的键。
+ *
+ * 为什么需要：自定义主题把当时的值烘进了 `overrides`（主题层）。若只在微调层里删键，
+ * 主题层仍会把它套回去 —— 表现为「点了恢复默认却没变」。无变化时返回原对象。
+ */
+export function stripTweakKeys(
+  overrides: Record<string, string>,
+  target: { channel: OpacityChannel } | { token: CoreTokenKey },
+): Record<string, string> {
+  const keys = tweakOverrideKeys(target)
+  if (!keys.some(key => overrides[key] !== undefined)) return overrides
+  const next = { ...overrides }
+  for (const key of keys) delete next[key]
+  return next
+}
+
+/** 某主题快照里是否含有该微调项（决定「恢复默认」是否可点） */
+export function overridesHaveTweak(
+  overrides: Record<string, string> | null | undefined,
+  target: { channel: OpacityChannel } | { token: CoreTokenKey },
+): boolean {
+  if (!overrides) return false
+  return tweakOverrideKeys(target).some(key => overrides[key] !== undefined)
+}
+
+/**
+ * 把微调层派生为 CSS 覆盖集合。
+ *
+ * `readBase(key)` 必须返回**当前基底**该 token 的计算值（不含本层覆盖）：
+ * 由 useTheme 在两阶段 apply 的第一阶段（只上主题层）之后读取，读到的就是基底色。
+ * 通道缺省 = 不写覆盖，让基底 CSS 默认值生效（这正是「恢复默认」的实现方式）。
+ */
+export function deriveTweaksOverrides(
+  t: AppearanceTweaks,
+  readBase: (key: string) => string,
+): Record<string, string> {
+  let out: Record<string, string> = {}
+  for (const [key, hex] of Object.entries(t.tokens) as [CoreTokenKey, string][]) {
+    out = applyCoreColor(out, key, hex)
+  }
+  for (const channel of Object.keys(
+    CHANNEL_COLOR_TOKENS,
+  ) as (keyof typeof CHANNEL_COLOR_TOKENS)[]) {
+    const percent = t.alphas[channel]
+    if (percent === undefined) continue
+    for (const key of CHANNEL_COLOR_TOKENS[channel]) {
+      const rgb = parseColorValue(readBase(key))
+      if (!rgb) continue
+      out[key] = toRgba(rgb, percent / 100)
+    }
+  }
+  const skin = t.alphas.skin
+  if (skin !== undefined) out[SKIN_OPACITY_KEY] = String(skin / 100)
+  return out
 }
 
 /** 解析 hex / rgb() / rgba() 颜色字符串 → {r,g,b}；非法返回 null */
@@ -257,6 +435,13 @@ export function stripOpacityColorKeys(overrides: Record<string, string>): Record
   const next = { ...overrides }
   for (const key of OPACITY_COLOR_KEYS) delete next[key]
   return next
+}
+
+/** 两个覆盖集合是否等价（键集合相同且逐键同值；键序无关） */
+export function sameOverrides(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(k => a[k] === b[k])
 }
 
 export type CustomThemeParseResult =

@@ -4,11 +4,12 @@
  * 定位：**非模态常驻浮层**，从聊天 header 的调色板按钮展开，盖在主界面之上但不遮罩、
  * 不拦交互（没有全屏遮罩、没有 aria-modal）。它取代了原先 `CompactModal` 里的
  * `ThemesPage` 整页——那份实现的痛点是「主题 token 全局注入即时生效，但模态把主界面
- * 盖死，生效却看不见；关闭即卸载，草稿也跟着丢」。本组件按三条原则重做：
+ * 盖死，生效却看不见；关闭即卸载，草稿也跟着丢」。本组件按四条原则重做：
  *
- * ① 打开/关闭不卸载内容（`hidden` 收起而非条件渲染）—— 未保存调整跨开合存活；
+ * ① 打开/关闭不卸载内容（`hidden` 收起而非条件渲染）—— 本地草稿（行内改名输入）
+ *    跨开合存活；主题微调本身即改即存（见 ④），不依赖开合；
  * ② **一页流，不翻页**：没有 Tab 并列、没有手风琴折叠、没有并列的条件按钮组
- *    （「放弃修改」是全面板唯一的条件按钮，仅有无保存调整时出现），也没有
+ *    （「全部恢复默认」是全面板唯一的条件按钮，仅存在微调时出现），也没有
  *    「选择页 / 自定义页」两页互切。自上而下按「普通用户四步」排优先级：
  *    系统主题（3 大卡）→ 我的主题（卡片网格）→ 界面不透明度 →
  *    颜色微调 → 紧凑保存行。管理型低频动作（导入 / 导出 / 停用）收进「⋯ 更多」
@@ -16,6 +17,11 @@
  * ③ 「我的主题」即管理台：换背景（卡面 hover 的「上传」钮）/ 行内改名 / 删除 /
  *    ＋ 新建全在卡片上完成 —— 浮窗内**没有**独立的皮肤背景栏，背景只归主题。
  *    「保存 → 原地看到它（新卡即进入行内改名）」是本浮窗的用户感知闭环。
+ * ④ **微调 = 个人偏好层，即改即存**（2026-10 定稿）：5 个不透明度通道 + 5 个核心色
+ *    由 ThemeProvider 的持久微调层承载（customTheme.readTweaks / writeTweaks），
+ *    每次改动立即落盘；换主题 / 重启 app 都保留，且颜色分量按新基底重新派生。
+ *    每行右侧「恢复默认」只清该项，「全部恢复默认」一次清空 —— 「恢复默认」的
+ *    实现就是删掉对应键，让基底 CSS 默认值重新生效。
  *
  * 界面语言**不在本浮窗**：2026-09-28 迁入设置中心新增 `language` 分区
  * （pages/LanguagePage.tsx，LangProvider / apiSetLanguage 原链路整体搬迁）。
@@ -24,9 +30,10 @@
  * apnp-in）见 styles/appearance-panel.css，与 WorkflowTaskPanel 同一浮层家族；
  * 类名独立 `apnp-*`，不复用 `wfst-*`。
  *
- * 数据链路（customTheme.ts / skinBg.ts / lib/localImage.ts）一行未改：只搬 UI。
- * 唯一的数据模型变更是 `CustomTheme.skin`（每主题一张皮肤快照）与 useTheme 激活时
- * 的快照恢复一步——边界（LS_SKIN = 系统预设态的背景）见 useTheme.tsx 顶部注释。
+ * 数据链路：主题数据仍归 useTheme（列表 / 激活 id / 皮肤快照）；本浮窗只把用户的
+ * 微调值交给 provider（setTweakAlpha / setTweakToken），不自持生效态。
+ * `CustomTheme.skin`（每主题一张皮肤快照）与 useTheme 激活时的快照恢复一步不变——
+ * 边界（LS_SKIN = 系统预设态的背景）见 useTheme.tsx 顶部注释。
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -36,6 +43,7 @@ import {
   IconMoreHorizontal,
   IconPalette,
   IconPlus,
+  IconRotateCcw,
   IconSave,
   IconUpload,
   IconX,
@@ -45,15 +53,15 @@ import type { ThemeId } from '../../hooks/useTheme'
 import {
   CORE_TOKEN_KEYS,
   SKIN_OPACITY_KEY,
-  applyCoreColor,
+  isEmptyTweaks,
   newCustomThemeId,
   normalizeHexInput,
+  overridesHaveTweak,
   parseColorAlpha,
-  parseColorValue,
   parseCustomThemeJSON,
-  toRgba,
   type CoreTokenKey,
   type CustomTheme,
+  type OpacityChannel,
 } from '../../hooks/customTheme'
 import { Button } from '../../ui/Button'
 import { FormRow } from '../../ui/PageLayout'
@@ -83,9 +91,6 @@ const TOKEN_LABELS: Record<CoreTokenKey, string> = {
   '--fg-2': 'themes.tokenFg2Hint',
 }
 
-/* 无覆盖时的稳定空对象（避免每次渲染生成新引用触发 effect） */
-const EMPTY_OVERRIDES: Record<string, string> = {}
-
 type ToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
 
 /**
@@ -101,11 +106,18 @@ function ColorTokenRow({
   label,
   value,
   onCommit,
+  onReset,
+  modified,
+  resetLabel,
 }: {
   tokenKey: CoreTokenKey
   label: string
   value: string
+  /** 该 token 是否被微调过（为 false 时「恢复默认」不可点） */
+  modified: boolean
   onCommit: (key: CoreTokenKey, hex: string) => void
+  onReset: (key: CoreTokenKey) => void
+  resetLabel: string
 }) {
   const [text, setText] = useState(value)
 
@@ -144,6 +156,16 @@ function ColorTokenRow({
             spellCheck={false}
             aria-label={`${label} hex`}
           />
+          <button
+            type="button"
+            className="tweak-reset-btn"
+            onClick={() => onReset(tokenKey)}
+            disabled={!modified}
+            aria-label={`${label} ${resetLabel}`}
+            title={resetLabel}
+          >
+            <IconRotateCcw size={12} />
+          </button>
         </span>
       }
     />
@@ -322,7 +344,7 @@ function readOpacityAlphas(overrides: Record<string, string>, skinDefault: numbe
   }
 }
 
-/* ── 不透明度滑块行：range + 百分比数值 ──
+/* ── 不透明度滑块行：range + 百分比数值 + 恢复默认 ──
    `label` 直接就是**被调整的对象名**（消息气泡 / 输入框 / 控制面板 / 弹窗 /
    背景图），不再挂「影响对象」小注：label 与 note 早先互为同义反复
    （「气泡不透明度 · 消息气泡」），对用户是纯噪音。 */
@@ -330,11 +352,19 @@ function OpacitySliderRow({
   label,
   value,
   onChange,
+  onReset,
+  modified,
+  resetLabel,
   min = 20,
 }: {
   label: string
   value: number
   onChange: (percent: number) => void
+  /** 恢复该通道默认（删掉微调项，回落基底默认值） */
+  onReset: () => void
+  /** 该通道是否被微调过（为 false 时「恢复默认」不可点） */
+  modified: boolean
+  resetLabel: string
   min?: number
 }) {
   return (
@@ -347,12 +377,22 @@ function OpacitySliderRow({
             className="opacity-range"
             min={min}
             max={100}
-            step={5}
+            step={1}
             value={value}
             onChange={e => onChange(Number(e.target.value))}
             aria-label={label}
           />
           <span className="opacity-value">{value}%</span>
+          <button
+            type="button"
+            className="tweak-reset-btn"
+            onClick={onReset}
+            disabled={!modified}
+            aria-label={`${label} ${resetLabel}`}
+            title={resetLabel}
+          >
+            <IconRotateCcw size={12} />
+          </button>
         </span>
       }
     />
@@ -378,9 +418,13 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
     customTheme,
     customThemes,
     activeCustomId,
-    previewOverrides,
-    applyCustomPreview,
-    clearCustomPreview,
+    tweaks,
+    resolvedOverrides,
+    setTweakAlpha,
+    setTweakToken,
+    resetTweakAlpha,
+    resetTweakToken,
+    resetTweaks,
     saveCustom,
     activateCustom,
     deleteCustom,
@@ -400,8 +444,8 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   // 行内改名态：哪张卡在改名 + 输入框草稿（点铅笔开，回车/失焦落盘，Esc 取消）
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
-  // 当前生效的覆盖（实时预览优先，其次已保存自定义，最后无覆盖）
-  const activeOverrides = previewOverrides ?? customTheme?.overrides ?? EMPTY_OVERRIDES
+  /** 当前实际生效的覆盖（主题层 + 微调派生，由 ThemeProvider 合成） */
+  const activeOverrides = resolvedOverrides
   // 无覆盖时各核心 token 的基底有效值（读自 computed style，避免与 tokens.css 重复维护）
   const [baseDefaults, setBaseDefaults] = useState<Record<string, string>>({})
   // 五个不透明度滑块的当前值（%）；覆盖存在时由 rgba/数值反向解析，无覆盖时回退 computed α
@@ -438,9 +482,8 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   const effectiveValue = (key: CoreTokenKey): string =>
     activeOverrides[key] ?? baseDefaults[key] ?? '#000000'
 
-  // 有自定义激活（保存或实时预览有实际覆盖）时，「我的主题」标题旁显示标识
-  const hasCustomApplied =
-    customTheme !== null || (previewOverrides !== null && Object.keys(previewOverrides).length > 0)
+  // 有自定义激活或存在微调时，「我的主题」标题旁显示标识
+  const hasCustomApplied = customTheme !== null || !isEmptyTweaks(tweaks)
 
   /**
    * 当前**生效**的皮肤值（路径）—— 皮肤背景区预览 / 换图 / 清除都对准它：
@@ -454,99 +497,50 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
    *  只动展示层，useTheme 里列表的存储顺序不变。 */
   const displayThemes = [...customThemes].reverse()
 
-  /** 实时预览对象（`applyCustomPreview` 只消费 base + overrides；
-   *  名称与皮肤不属于预览态，落盘时另走 createCustomFromPreview / 保存入口） */
-  const buildPreview = (base: ThemeId, overrides: Record<string, string>): CustomTheme => ({
-    name: '',
-    base,
-    overrides,
-  })
+  /* ── 微调（不透明度 5 通道 + 核心色 5 token）：即改即存 ──
+     值写进 useTheme 的持久微调层（localStorage），因此换主题 / 重启 app 都不丢；
+     rgba 的 rgb 分量由 ThemeProvider 按「当前基底」统一派生，本组件不自己做
+     两阶段重派（旧实现把派生色塞进会话级预览通道，重启/切主题即丢）。 */
+  const handleColorCommit = (key: CoreTokenKey, hex: string) => setTweakToken(key, hex)
 
-  // 不透明度属于**每个自定义主题自己的数据**（以 rgba / 数值覆盖的形式存于 overrides，
-  // 由主题 JSON 一起保存 / 导出 / 导入）。激活主题只应用该主题的 overrides，
-  // 绝不能用「上一个主题的滑块读数」重新派生覆盖 —— 那会把目标主题已保存的
-  // 不透明度改写成源主题的值（基底不同时必现，同基底时偶发，取决于 dirty 通道）。
-  // 早先的 dirty-intent 全局重派机制正是这一缺陷的来源，已整体移除。
-  const handleColorCommit = (key: CoreTokenKey, hex: string) => {
-    const next = applyCoreColor(activeOverrides, key, hex)
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
+  const handleBubbleOpacity = (percent: number) => setTweakAlpha('bubbles', percent)
+  const handleInputOpacity = (percent: number) => setTweakAlpha('input', percent)
+  const handlePanelOpacity = (percent: number) => setTweakAlpha('panel', percent)
+  const handleModalOpacity = (percent: number) => setTweakAlpha('modal', percent)
+  const handleSkinOpacity = (percent: number) => setTweakAlpha('skin', percent)
+
+  /** 单参数是否被设置过（决定该行「恢复默认」是否可点）：
+   *  微调层里有该项，或当前自定义主题快照里烘着该项 */
+  const isAlphaModified = (channel: OpacityChannel): boolean =>
+    tweaks.alphas[channel] !== undefined || overridesHaveTweak(customTheme?.overrides, { channel })
+  const isTokenModified = (key: CoreTokenKey): boolean =>
+    tweaks.tokens[key] !== undefined || overridesHaveTweak(customTheme?.overrides, { token: key })
+
+  /** 当前主题是否有任何可恢复的设置（微调层 或 主题快照里烘着的值） */
+  const themeHasBakedTweaks =
+    customTheme !== null &&
+    ((['bubbles', 'input', 'panel', 'modal', 'skin'] as OpacityChannel[]).some(channel =>
+      overridesHaveTweak(customTheme.overrides, { channel }),
+    ) ||
+      CORE_TOKEN_KEYS.some(key => overridesHaveTweak(customTheme.overrides, { token: key })))
+  const hasAnyTweak = !isEmptyTweaks(tweaks) || themeHasBakedTweaks
+
+  /** 单参数恢复默认：删掉该项即回落当前基底默认值（不做确认，可反复调） */
+  const handleOpacityReset = (channel: OpacityChannel) => resetTweakAlpha(channel)
+  const handleColorReset = (key: CoreTokenKey) => resetTweakToken(key)
+
+  /** 全部恢复默认：清空微调层（主题选择保持不变） */
+  const handleResetAllTweaks = () => {
+    resetTweaks()
+    showToast(t('themes.resetAllDone'), 'success')
   }
-
-  /* ── 不透明度滑块 ── */
-  // 取当前生效色（computed style，兼容 hex/rgb/rgba）→ 转 rgba(color, α) 写入覆盖通道。
-  // 拖动时读到的 rgb 即基底色（α 不改变 rgb 分量），后续拖动可继续以此派生。
-  // 覆盖随「保存」落到当前自定义主题；切换主题时按目标主题的覆盖原样恢复。
-  const handleBubbleOpacity = (percent: number) => {
-    setOpacityAlphas(prev => ({ ...prev, bubbles: percent }))
-    const cs = getComputedStyle(document.documentElement)
-    const user = parseColorValue(cs.getPropertyValue('--msg-user-bg').trim())
-    const assistant = parseColorValue(cs.getPropertyValue('--msg-assistant-bg').trim())
-    const next = { ...activeOverrides }
-    if (percent >= 100) {
-      delete next['--msg-user-bg']
-      delete next['--msg-assistant-bg']
-    } else if (user && assistant) {
-      next['--msg-user-bg'] = toRgba(user, percent / 100)
-      next['--msg-assistant-bg'] = toRgba(assistant, percent / 100)
-    }
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
-  }
-
-  const handleInputOpacity = (percent: number) => {
-    setOpacityAlphas(prev => ({ ...prev, input: percent }))
-    const cs = getComputedStyle(document.documentElement)
-    const inputColor = parseColorValue(cs.getPropertyValue('--input-bg').trim())
-    const next = { ...activeOverrides }
-    if (percent >= 100) delete next['--input-bg']
-    else if (inputColor) next['--input-bg'] = toRgba(inputColor, percent / 100)
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
-  }
-
-  // 设置中心面板：语义上属弹窗族（--panel-bg），与弹窗同规则 ——
-  // 基底即半透明玻璃，100% 需写 α=1 实色覆盖（不能 delete 回落基底，否则仍是玻璃）
-  const handlePanelOpacity = (percent: number) => {
-    setOpacityAlphas(prev => ({ ...prev, panel: percent }))
-    const cs = getComputedStyle(document.documentElement)
-    const panelColor = parseColorValue(cs.getPropertyValue('--panel-bg').trim())
-    const next = { ...activeOverrides }
-    if (panelColor) next['--panel-bg'] = toRgba(panelColor, percent / 100)
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
-  }
-
-  const handleModalOpacity = (percent: number) => {
-    setOpacityAlphas(prev => ({ ...prev, modal: percent }))
-    const cs = getComputedStyle(document.documentElement)
-    const modalColor = parseColorValue(cs.getPropertyValue('--modal-bg').trim())
-    const next = { ...activeOverrides }
-    // 弹窗基底即半透明玻璃，100% 需写 α=1 实色覆盖（不能 delete 回落基底，否则仍是玻璃）
-    if (modalColor) next['--modal-bg'] = toRgba(modalColor, percent / 100)
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
-  }
-
-  // 皮肤背景图为数值直写（非 rgba 派生），0% 即隐藏背景图
-  const handleSkinOpacity = (percent: number) => {
-    setOpacityAlphas(prev => ({ ...prev, skin: percent }))
-    const next = { ...activeOverrides }
-    next[SKIN_OPACITY_KEY] = String(percent / 100)
-    const nextTheme = buildPreview(theme, next)
-    applyCustomPreview(nextTheme)
-  }
-
-  // 预览草稿 = 未保存修改（编辑一律先预览不落盘；保存按钮才持久化——
-  // 修复「已激活自定义主题时编辑直接落盘，下次启动仍是草稿」）
-  const hasUnsavedPreview = previewOverrides !== null && Object.keys(previewOverrides).length > 0
 
   /**
    * 新建链路（「＋ 新建」卡与「保存」的非编辑态共用）：
-   * 以「当前系统主题 + 当前微调预览值」建条，皮肤继承当前**生效**的那张图作为
+   * 以「当前基底 + 当前实际生效的微调」建条，皮肤继承当前**生效**的那张图作为
    * 初始快照（用户随后可在卡上改）；新卡落盘即进入行内改名态（预填「未命名主题」）。
    */
-  const createCustomFromPreview = () => {
+  const createCustomFromCurrent = () => {
     const id = newCustomThemeId()
     const name = t('themes.themeUnnamed')
     saveCustom({
@@ -568,14 +562,13 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
       showToast(t('themes.customSaved'), 'success')
       return
     }
-    createCustomFromPreview()
+    createCustomFromCurrent()
   }
 
-  /** 激活「我的主题」网格里的某张卡；有未保存草稿时先确认放弃 */
+  /** 激活「我的主题」网格里的某张卡（微调层随并入而非清空，见 useTheme.activateCustom） */
   const handleActivateCustom = (ct: CustomTheme) => {
     if (!ct.id) return
-    if (ct.id === activeCustomId && !hasUnsavedPreview) return
-    if (hasUnsavedPreview && !window.confirm(t('themes.customSwitchConfirm'))) return
+    if (ct.id === activeCustomId) return
     activateCustom(ct.id)
   }
 
@@ -586,12 +579,6 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
     if (id === activeCustomId) void applySkinBg(readSkinBg())
     deleteCustom(id)
     showToast(t('themes.customDeleted'), 'info')
-  }
-
-  /** 放弃未保存修改：清预览覆盖，回到已保存主题 / 纯内置基底 */
-  const handleDiscardPreview = () => {
-    clearCustomPreview()
-    showToast(t('themes.customDiscardDone'), 'info')
   }
 
   /** 开行内改名：名称变输入框，草稿从该主题现名开始 */
@@ -825,10 +812,8 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
                 type="button"
                 className={`apnp-preset-card ${theme === th.id ? 'active' : ''}`}
                 onClick={() => {
-                  // 点系统预设卡 = 回纯净预设态（铁律②）：自定义覆盖是自定义主题
-                  // 专属，不得跨系统主题残留。useTheme.setTheme 本就清草稿预览，
-                  // 此处显式再清一次是把契约钉在本调用点，不依赖上游实现的自觉。
-                  clearCustomPreview()
+                  // 点系统预设卡 = 停用自定义主题（自定义覆盖是主题专属，不跨基底残留）。
+                  // 微调层**保留**：它是个人偏好，换主题照旧生效（用户明确要求）。
                   // 若此前挂着自定义主题，背景同步回 LS_SKIN（主题皮肤快照只归
                   // 该主题，边界见 useTheme.tsx 顶部注释）
                   const fromCustom = customTheme !== null
@@ -939,12 +924,12 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
                 </div>
               )
             })}
-            {/* 末位固定「＋ 新建」：以「当前系统主题 + 当前微调预览值」建新主题，
+            {/* 末位固定「＋ 新建」：以「当前基底 + 当前生效微调」建新主题，
                 落盘即出现在主题卡首位并进入行内改名态 */}
             <button
               type="button"
               className="apnp-theme-card apnp-theme-card-new"
-              onClick={createCustomFromPreview}
+              onClick={createCustomFromCurrent}
               title={t('themes.newTheme')}
             >
               <span className="apnp-theme-new-inner">
@@ -955,34 +940,50 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
           </div>
         </section>
 
-        {/* ── 三「界面不透明度」：5 个滑块铺开（进到这里就是要调，铺开是诚实）── */}
+        {/* ── 三「界面不透明度」：5 个滑块铺开（进到这里就是要调，铺开是诚实）──
+            每行右侧「恢复默认」= 删掉该通道的微调项，回落当前基底默认值 */}
         <section className="apnp-zone">
           <div className="apnp-zone-title">{t('themes.opacityZone')}</div>
           <OpacitySliderRow
             label={t('themes.opacityBubbles')}
             value={opacityAlphas.bubbles}
             onChange={handleBubbleOpacity}
+            onReset={() => handleOpacityReset('bubbles')}
+            modified={isAlphaModified('bubbles')}
+            resetLabel={t('themes.tweakReset')}
           />
           <OpacitySliderRow
             label={t('themes.opacityInput')}
             value={opacityAlphas.input}
             onChange={handleInputOpacity}
+            onReset={() => handleOpacityReset('input')}
+            modified={isAlphaModified('input')}
+            resetLabel={t('themes.tweakReset')}
           />
           <OpacitySliderRow
             label={t('themes.opacityPanel')}
             value={opacityAlphas.panel}
             onChange={handlePanelOpacity}
+            onReset={() => handleOpacityReset('panel')}
+            modified={isAlphaModified('panel')}
+            resetLabel={t('themes.tweakReset')}
           />
           <OpacitySliderRow
             label={t('themes.opacityModal')}
             value={opacityAlphas.modal}
             onChange={handleModalOpacity}
+            onReset={() => handleOpacityReset('modal')}
+            modified={isAlphaModified('modal')}
+            resetLabel={t('themes.tweakReset')}
           />
           <OpacitySliderRow
             label={t('themes.opacitySkin')}
             value={opacityAlphas.skin}
             min={0}
             onChange={handleSkinOpacity}
+            onReset={() => handleOpacityReset('skin')}
+            modified={isAlphaModified('skin')}
+            resetLabel={t('themes.tweakReset')}
           />
         </section>
 
@@ -995,18 +996,21 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
               tokenKey={key}
               label={t(TOKEN_LABELS[key])}
               value={effectiveValue(key)}
+              modified={isTokenModified(key)}
               onCommit={handleColorCommit}
+              onReset={handleColorReset}
+              resetLabel={t('themes.tweakReset')}
             />
           ))}
         </section>
 
         {/* ── 紧凑保存行：次要在左、主操作「保存」贴最右缘 ──
-            「保存」常驻：编辑激活主题 → 更新该条；否则走新建链路（新卡进入行内改名）。
-            「放弃修改」是全面板唯一的条件按钮：仅有无保存调整时出现。 */}
+            「保存」= 把当前样子固化成一个命名主题（微调本身已即时落盘，保存不是必需）。
+            「恢复默认」是唯一的条件按钮：仅当存在微调时出现，一次清空全部微调。 */}
         <div className="apnp-save-control">
-          {hasUnsavedPreview && (
-            <button type="button" className="apnp-glass-btn" onClick={handleDiscardPreview}>
-              {t('themes.customDiscard')}
+          {hasAnyTweak && (
+            <button type="button" className="apnp-glass-btn" onClick={handleResetAllTweaks}>
+              {t('themes.resetAllTweaks')}
             </button>
           )}
           <span className="apnp-more-wrap" ref={moreWrapRef}>

@@ -20,7 +20,7 @@ import { act, fireEvent, render, screen, waitFor, type RenderResult } from '@tes
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppearancePanel } from './AppearancePanel'
 import { ThemeProvider } from '../../hooks/useTheme'
-import { OPACITY_COLOR_KEYS } from '../../hooks/customTheme'
+import { OPACITY_COLOR_KEYS, readTweakStore } from '../../hooks/customTheme'
 import { __setThumbEncoder } from '../../ui/assetUrl'
 
 // 轻提示通道：jsdom 无 Tauri IPC，桩掉（HUD/island 分流不在本测试范围）
@@ -460,30 +460,36 @@ describe('AppearancePanel 外观浮窗', () => {
     expect(themeCards(view)).toHaveLength(1)
   })
 
-  it('保存按钮文案「保存」，与放弃修改紧凑同行；放弃修改仅有无保存调整时出现', async () => {
+  it('保存按钮文案「保存」，与「全部恢复默认」紧凑同行；后者仅在有微调时出现', async () => {
     const view = await renderPanel()
 
     // 主按钮文案就是「保存」两字
     const save = screen.getByRole('button', { name: '保存' })
     expect(save).toBeInTheDocument()
-    // 紧凑同行：保存 + （可能的放弃）+ ⋯更多 在同一行控件里
+    // 紧凑同行：保存 + （可能的全部恢复默认）+ ⋯更多 在同一行控件里
     const row = view.container.querySelector('.apnp-save-control') as HTMLElement
     expect(row).toContainElement(save)
     expect(row.querySelector('.apnp-more-trigger')).toBeInTheDocument()
     // 「保存」是行内最后一个子元素（贴最右缘，防回归）
     expect(row.lastElementChild).toBe(save)
-    // 无未保存调整 → 没有「放弃修改」
-    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    // 无微调 → 没有「全部恢复默认」
+    expect(screen.queryByRole('button', { name: '全部恢复默认' })).toBeNull()
 
-    // 造成未保存调整（改一个核心色 → 进入预览态），「放弃修改」随之出现
+    // 造成微调（改一个核心色 → 立即落盘），「全部恢复默认」随之出现
     const picker = view.container.querySelectorAll('.color-token-picker')[0]
-    fireEvent.change(picker, { target: { value: '#ff0000' } })
-    const discard = screen.getByRole('button', { name: '放弃修改' })
-    expect(row).toContainElement(discard)
+    await act(async () => {
+      fireEvent.change(picker, { target: { value: '#ff0000' } })
+    })
+    const resetAll = screen.getByRole('button', { name: '全部恢复默认' })
+    expect(row).toContainElement(resetAll)
+    expect(readTweakStore().store.dark?.tokens['--accent']).toBe('#ff0000')
 
-    // 点放弃 → 清预览草稿，按钮随之消失
-    fireEvent.click(discard)
-    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    // 点全部恢复默认 → 微调清空，按钮随之消失
+    await act(async () => {
+      fireEvent.click(resetAll)
+    })
+    expect(screen.queryByRole('button', { name: '全部恢复默认' })).toBeNull()
+    expect(readTweakStore().store).toEqual({})
   })
 
   it('「⋯ 更多」：点开浮现导入/导出/停用（放弃修改不在菜单里）', async () => {
@@ -843,25 +849,101 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('fresh')
   })
 
-  it('拖过气泡滑块后切系统主题：按新基底 computed α 重解析，不停在拖动值', async () => {
+  it('每个系统主题各记各的参数：dark 调 60 → 切简白回默认 → 切回 dark 仍是 60', async () => {
     const view = await renderPanel()
 
-    // dark 下把气泡拖到 60% → 生成预览草稿（--msg-*-bg 写 rgba 覆盖）
-    fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
-      target: { value: '60' },
+    // dark 下把气泡拖到 60% → 写入 dark 槽位（立即落盘）
+    await act(async () => {
+      fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
+        target: { value: '60' },
+      })
     })
     expect(opacitySliderValues(view)[0]).toBe(60)
-    expect(screen.getByRole('button', { name: '放弃修改' })).toBeInTheDocument()
+    expect(readTweakStore().store.dark?.alphas.bubbles).toBe(60)
+    expect(screen.getByRole('button', { name: '全部恢复默认' })).toBeInTheDocument()
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe(
+      'rgba(21, 34, 56, 0.6)',
+    )
 
-    // 点系统预设卡 = 回纯净预设态：草稿清空，滑块按新基底（简白）computed 重解析
+    // 切简白：简白有自己的槽位（没调过 = 默认），不继承 dark 的 60%
     await switchPreset(view, 1)
     expect(opacitySliderValues(view)).toEqual(EXPECTED.light.sliders)
-    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
     expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe('')
+    expect(screen.queryByRole('button', { name: '全部恢复默认' })).toBeNull()
 
-    // 再切清新仍跟随（系统预设态不携带任何自定义覆盖）
+    // 切回 dark：自己的 60% 原样回来
+    await switchPreset(view, 0)
+    expect(opacitySliderValues(view)[0]).toBe(60)
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe(
+      'rgba(21, 34, 56, 0.6)',
+    )
+
+    // 再切清新仍跟随（清新没有自己的参数 → 默认值）
     await switchPreset(view, 2)
     expect(opacitySliderValues(view)).toEqual(EXPECTED.fresh.sliders)
+  })
+
+  it('重启后参数不丢：从 localStorage 恢复当前主题槽位并按基底派生', async () => {
+    localStorage.setItem(
+      'nuphus_appearance_tweaks',
+      JSON.stringify({
+        dark: { alphas: { input: 60 }, tokens: { '--accent': '#ff0000' } },
+        light: { alphas: { input: 45 }, tokens: {} },
+      }),
+    )
+    localStorage.setItem('nuphus_theme', 'dark')
+    const view = await renderPanel()
+
+    // dark 槽位：输入框 60% + 强调色红
+    expect(opacitySliderValues(view)[1]).toBe(60)
+    expect(colorTokenValues(view)[0]).toBe('#ff0000')
+    expect(document.documentElement.style.getPropertyValue('--input-bg')).toBe(
+      'rgba(18, 20, 30, 0.6)',
+    )
+
+    // 切简白：读 light 自己的槽位（45%），不是 dark 的 60%
+    await switchPreset(view, 1)
+    expect(opacitySliderValues(view)[1]).toBe(45)
+    expect(document.documentElement.style.getPropertyValue('--input-bg')).toBe(
+      'rgba(18, 20, 30, 0.45)',
+    )
+    expect(colorTokenValues(view)[0]).toBe(EXPECTED.light.colors[0])
+  })
+
+  it('单参数恢复默认：只清当前主题该项，回基底默认值', async () => {
+    const view = await renderPanel()
+
+    await act(async () => {
+      fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
+        target: { value: '60' },
+      })
+    })
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).not.toBe('')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '消息气泡 恢复默认' }))
+    })
+    expect(readTweakStore().store.dark).toBeUndefined()
+    expect(opacitySliderValues(view)[0]).toBe(100)
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe('')
+    expect(screen.getByRole('button', { name: '消息气泡 恢复默认' })).toBeDisabled()
+  })
+
+  it('颜色区单参数恢复默认：回落该主题基底的颜色', async () => {
+    const view = await renderPanel()
+
+    await act(async () => {
+      fireEvent.change(view.container.querySelectorAll('.color-token-picker')[0], {
+        target: { value: '#ff0000' },
+      })
+    })
+    expect(colorTokenValues(view)[0]).toBe('#ff0000')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /强调色（按钮·链接·选中态） 恢复默认/ }))
+    })
+    expect(readTweakStore().store.dark).toBeUndefined()
+    expect(colorTokenValues(view)[0]).toBe(EXPECTED.dark.colors[0])
   })
 
   it('已保存自定义主题激活态：自身 overrides 优先；切系统预设卡后回落基底', async () => {

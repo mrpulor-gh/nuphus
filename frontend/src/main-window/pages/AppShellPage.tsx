@@ -115,7 +115,7 @@ export function AppShellPage({
   showToast,
 }: AppShellPageProps) {
   const { t, lang } = useLanguage()
-  const { theme, customTheme, previewOverrides } = useTheme()
+  const { theme, customTheme, resolvedOverrides } = useTheme()
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [plugin, setPlugin] = useState<PluginAppSummary | null>(null)
@@ -133,13 +133,11 @@ export function AppShellPage({
   const readyRef = useRef(false)
   const themeRef = useRef({ base: '', overrides: {} as Record<string, string> })
 
-  // 生效主题：预览优先 → 已保存自定义 → 纯内置基底（与 useTheme 应用逻辑一致）
+  // 生效主题：基底 + 实际生效覆盖（主题层 + 微调层，由 ThemeProvider 合成）
   const currentTheme = useCallback(() => {
     const base = customTheme?.base ?? theme
-    const overrides =
-      previewOverrides !== null ? previewOverrides : customTheme ? customTheme.overrides : {}
-    return { base, overrides }
-  }, [theme, customTheme, previewOverrides])
+    return { base, overrides: resolvedOverrides }
+  }, [theme, customTheme, resolvedOverrides])
 
   useEffect(() => {
     themeRef.current = currentTheme()

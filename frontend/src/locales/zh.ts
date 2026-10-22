@@ -1508,11 +1508,8 @@ const zh: Record<string, string> = {
   'themes.themeUnnamed': '未命名主题',
   'themes.themeRename': '重命名此主题',
   'themes.customDefaultName': '我的主题',
-  'themes.customDiscard': '放弃修改',
-  'themes.customDiscardDone': '已放弃未保存的修改',
   'themes.myThemeActivate': '点击使用此主题',
   'themes.myThemeDelete': '删除此主题',
-  'themes.customSwitchConfirm': '当前有未保存的修改，切换将放弃。继续？',
   'themes.customDeleteConfirm': '删除这个主题？此操作不可撤销',
   'themes.customDeleted': '主题已删除',
   // 标签 = 用户语言名称 + 括号内「改这个界面上什么会变」（效果说明，非 token 名复述）
@@ -1533,6 +1530,10 @@ const zh: Record<string, string> = {
   'themes.customImport': '导入 JSON',
   'themes.moreActions': '更多',
   'themes.customBadge': '自定义',
+  // 微调（不透明度 / 颜色）单行「恢复默认」与全局重置
+  'themes.tweakReset': '恢复默认',
+  'themes.resetAllTweaks': '全部恢复默认',
+  'themes.resetAllDone': '已恢复默认外观',
   'themes.customSaved': '自定义主题已保存',
   'themes.customResetDone': '已停用自定义，回到内置主题（我的主题保留在列表中）',
   'themes.customImported': '自定义主题已导入',

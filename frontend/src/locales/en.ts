@@ -1593,11 +1593,8 @@ const en: Record<string, string> = {
   'themes.themeUnnamed': 'Untitled Theme',
   'themes.themeRename': 'Rename this theme',
   'themes.customDefaultName': 'My Theme',
-  'themes.customDiscard': 'Discard changes',
-  'themes.customDiscardDone': 'Unsaved changes discarded',
   'themes.myThemeActivate': 'Click to use this theme',
   'themes.myThemeDelete': 'Delete this theme',
-  'themes.customSwitchConfirm': 'You have unsaved changes that will be lost on switch. Continue?',
   'themes.customDeleteConfirm': 'Delete this theme? This cannot be undone',
   'themes.customDeleted': 'Theme deleted',
   // Label = user-facing name + what changes on screen (effect note, not a token-name echo)
@@ -1618,6 +1615,10 @@ const en: Record<string, string> = {
   'themes.customImport': 'Import JSON',
   'themes.moreActions': 'More',
   'themes.customBadge': 'Custom',
+  // Micro-tweak per-row "reset" and global reset
+  'themes.tweakReset': 'Reset to default',
+  'themes.resetAllTweaks': 'Reset all',
+  'themes.resetAllDone': 'Appearance restored to defaults',
   'themes.customSaved': 'Custom theme saved',
   'themes.customResetDone':
     'Custom theme deactivated ...back to built-in (your themes stay in the list)',

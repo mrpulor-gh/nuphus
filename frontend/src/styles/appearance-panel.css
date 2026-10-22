@@ -449,7 +449,7 @@
   color: var(--spark-primary);
 }
 
-/* ── 紧凑保存行：放弃修改（仅有无保存调整时）+ ⋯ 更多 + 「保存」──
+/* ── 紧凑保存行：「全部恢复默认」（仅在有微调时）+ ⋯ 更多 + 「保存」──
     布局语义：次要动作在左、主操作「保存」恒为行内最后一个子元素并以
     margin-left:auto 贴浮窗右缘（大王 2026-09-28：保存放最右侧）；
     窄窗换行时保存仍落在末行末端。 */
@@ -539,9 +539,40 @@
    下列宽度都是为整页 / 宽模态定的，在 380px 里会把 label 挤出可视区；
    只收窄占用宽度，不改任何视觉语言（配色 / 圆角 / 字号均沿用原规则）。 */
 .apnp-body .opacity-control {
-  width: 128px;
+  width: 148px;
 }
 
 .apnp-body .color-token-hex {
-  width: 76px;
+  width: 68px;
+}
+
+/* ── 微调行的「恢复默认」小钮 ──
+   每行恒定占位（禁用态只降透明度），避免调过之后滑块宽度跳动；
+   可点态用 accent 描边回应 hover / 键盘焦点。 */
+.apnp-body .tweak-reset-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.apnp-body .tweak-reset-btn:hover:not(:disabled),
+.apnp-body .tweak-reset-btn:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+.apnp-body .tweak-reset-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
