@@ -410,8 +410,9 @@ mod tests {
         }
     }
 
-    /// anthropic.rs is the only Provider that overrides default_transport —
-    /// it must declare Anthropic to mirror its AnthropicTransport transport().
+    /// Providers whose default route is Anthropic (anthropic.rs 官方；
+    /// minimax/qwen 官方 Anthropic 兼容端点同型) must declare Anthropic
+    /// to mirror their AnthropicTransport transport().
     #[test]
     fn anthropic_default_transport_is_anthropic() {
         let p = crate::config::providers::AnthropicProvider;
@@ -421,13 +422,26 @@ mod tests {
         assert_eq!(p.transport_for("anything"), TransportKind::Anthropic);
     }
 
+    /// minimax / qwen 官方 Anthropic 兼容端点为默认路由（与 anthropic.rs
+    /// 同型：default_transport 与 transport() 一致返回 AnthropicTransport）。
+    #[test]
+    fn minimax_and_qwen_default_transport_is_anthropic() {
+        let p = crate::config::providers::MiniMaxProvider;
+        assert_eq!(p.default_transport(), TransportKind::Anthropic);
+        assert_eq!(p.transport_for("MiniMax-M3"), TransportKind::Anthropic);
+        assert_eq!(p.transport_for("anything"), TransportKind::Anthropic);
+        let p = crate::config::providers::QwenProvider;
+        assert_eq!(p.default_transport(), TransportKind::Anthropic);
+        assert_eq!(p.transport_for("qwen-plus"), TransportKind::Anthropic);
+        assert_eq!(p.transport_for("anything"), TransportKind::Anthropic);
+    }
+
     /// Every other built-in Provider keeps the ChatCompletions default.
     #[test]
     fn chat_providers_default_to_chat_completions() {
         use crate::config::providers::{
             ByteDanceProvider, CustomProvider, DeepSeekProvider, GoogleProvider, KimiProvider,
-            LocalProvider, MiniMaxProvider, OpenAIProvider, OpenCodeGoProvider, OpenRouterProvider,
-            QwenProvider, ZhipuProvider,
+            LocalProvider, OpenAIProvider, OpenCodeGoProvider, OpenRouterProvider, ZhipuProvider,
         };
         let providers: Vec<Box<dyn Provider>> = vec![
             Box::new(ByteDanceProvider),
@@ -436,11 +450,9 @@ mod tests {
             Box::new(GoogleProvider),
             Box::new(KimiProvider),
             Box::new(LocalProvider),
-            Box::new(MiniMaxProvider),
             Box::new(OpenAIProvider),
             Box::new(OpenCodeGoProvider),
             Box::new(OpenRouterProvider),
-            Box::new(QwenProvider),
             Box::new(ZhipuProvider),
         ];
         for p in &providers {

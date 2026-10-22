@@ -1,7 +1,38 @@
 use crate::config::provider::*;
-use crate::transports::chat_completions::{ChatCompletionsConfig, ChatCompletionsTransport};
+use crate::transports::anthropic::{AnthropicConfig, AnthropicTransport};
 use crate::transports::Transport;
 use std::sync::Arc;
+
+/// Anthropic 兼容端点的 base_url 归一。
+///
+/// MiniMax 官方提供两条协议面：
+/// - Chat Completions：`/v1`（`default_base_url()` 保持指向它，供模型级
+///   覆盖切回 Chat Completions 时 factory 通用分支使用）。
+/// - Anthropic Messages：`/anthropic`（本 provider 默认路由）。
+///
+/// 存量配置可能把旧 chat 端点写进了 `base_url`（配置向导曾按
+/// `default_base_url()` 显式落盘）。把它精确改写成同源 Anthropic 端点，
+/// 避免模型级升级后 Anthropic POST 打进 `/v1` chat 路径；其它值视为
+/// 用户显式选择，原样透传。
+fn anthropic_base_url(cfg_base_url: &str) -> String {
+    const KNOWN_CHAT_BASES: [(&str, &str); 2] = [
+        (
+            "https://api.minimaxi.com/v1",
+            "https://api.minimaxi.com/anthropic",
+        ),
+        ("https://api.minimax.io/v1", "https://api.minimax.io/anthropic"),
+    ];
+    let trimmed = cfg_base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "https://api.minimaxi.com/anthropic".to_string();
+    }
+    for (chat_base, anthropic_base) in KNOWN_CHAT_BASES {
+        if trimmed.eq_ignore_ascii_case(chat_base) {
+            return anthropic_base.to_string();
+        }
+    }
+    trimmed.to_string()
+}
 
 pub struct MiniMaxProvider;
 
@@ -77,26 +108,51 @@ impl Provider for MiniMaxProvider {
         }
     }
 
+    fn default_transport(&self) -> TransportKind {
+        // MiniMax 官方 Anthropic 兼容端点（README/Claude Code 接入指引同款，
+        // 与 pi / MiniMax 官方 anthropic-messages 链路一致）：M3/M2.5 走
+        // Messages API 原生 thinking/tool_use 流。Chat Completions 仍可经
+        // 模型级覆盖切回（factory 通用分支，默认端点见 default_base_url）。
+        TransportKind::Anthropic
+    }
+
     fn transport(&self, cfg: &ProviderConfig, model_id: &str) -> Arc<dyn Transport> {
-        Arc::new(ChatCompletionsTransport::new(ChatCompletionsConfig {
-            name: "minimax".to_string(),
-            // 协议/类型 id —— Transport::provider_name 的语义（每个 custom 实例都折叠成 "custom"）
-            // providers.toml 段名 —— 模型级配置（max_tokens 等）必须按段精确查找，
-            // 用类型 id 查会静默查不到（段名是 custom-xxx 而非 custom）。
-            provider_segment: cfg.name.clone(),
+        Arc::new(AnthropicTransport::new(AnthropicConfig {
             api_key: cfg.api_key.clone(),
-            base_url: if cfg.base_url.is_empty() {
-                self.default_base_url().to_string()
-            } else {
-                cfg.base_url.clone()
-            },
+            base_url: anthropic_base_url(&cfg.base_url),
             model: model_id.to_string(),
             timeout_secs: cfg.timeout_secs,
-            auth_header: self.auth_header().to_string(),
-            auth_prefix: self.auth_prefix().to_string(),
             provider_kind: Some(crate::api::ProviderKind::MiniMax),
-            quirks: self.quirks(),
             reasoning_effort: cfg.reasoning_effort.clone(),
+            extra_headers: vec![],
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_base_url_rewrites_legacy_chat_endpoints() {
+        // 空值 → 官方 Anthropic 兼容端点
+        assert_eq!(
+            anthropic_base_url(""),
+            "https://api.minimaxi.com/anthropic"
+        );
+        // 存量 chat 端点（配流向导按 default_base_url 落盘）→ 同源改写
+        assert_eq!(
+            anthropic_base_url("https://api.minimaxi.com/v1"),
+            "https://api.minimaxi.com/anthropic"
+        );
+        assert_eq!(
+            anthropic_base_url("https://api.minimax.io/v1/"),
+            "https://api.minimax.io/anthropic"
+        );
+        // 用户显式端点原样透传（含自定义按 Anthropic 协议代理的网关）
+        assert_eq!(
+            anthropic_base_url("https://gw.example.com/anthropic"),
+            "https://gw.example.com/anthropic"
+        );
     }
 }

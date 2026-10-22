@@ -1,7 +1,32 @@
 use crate::config::provider::*;
-use crate::transports::chat_completions::{ChatCompletionsConfig, ChatCompletionsTransport};
+use crate::transports::anthropic::{AnthropicConfig, AnthropicTransport};
 use crate::transports::Transport;
 use std::sync::Arc;
+
+/// Anthropic 兼容端点的 base_url 归一。
+///
+/// DashScope 官方提供两条协议面：
+/// - Chat Completions / OpenAI 兼容：`/compatible-mode/v1`
+///   （`default_base_url()` 保持指向它，供模型级覆盖切回 Chat Completions
+///   时 factory 通用分支使用）。
+/// - Anthropic Messages：`/apps/anthropic`（本 provider 默认路由；官方
+///   文档明确 base 不得以 `/v1/` 结尾，由客户端追加 `/v1/messages`）。
+///
+/// 与 minimax 同型：存量落盘的旧 chat 端点按当前 dashscope 语义精确改写
+/// （含业务空间专属域 `{WorkspaceId}.cn-*.maas.aliyuncs.com` 上的同形路径）；
+/// 其它值视为用户显式的 Anthropic 面端点，原样透传。
+fn anthropic_base_url(cfg_base_url: &str) -> String {
+    // 空 → 公网默认域；
+    let trimmed = cfg_base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "https://dashscope.aliyuncs.com/apps/anthropic".to_string();
+    }
+    // 旧 OpenAI 兼容面 → 官方 Anthropic 兼容面（同 host 同构换后缀）
+    if let Some(host) = trimmed.strip_suffix("/compatible-mode/v1") {
+        return format!("{host}/apps/anthropic");
+    }
+    trimmed.to_string()
+}
 
 pub struct QwenProvider;
 
@@ -77,26 +102,52 @@ impl Provider for QwenProvider {
         }
     }
 
+    fn default_transport(&self) -> TransportKind {
+        // DashScope 官方 Anthropic 兼容端点（/apps/anthropic，Anthropic SDK
+        // 直进指引同款）：qwen3.7 系走 Messages API 原生 thinking/tool_use
+        // 流；AnthropicTransport 以 x-api-key + anthropic-version 直连，
+        // 与官方 SDK 语义一致。Chat Completions 仍可经模型级覆盖切回。
+        TransportKind::Anthropic
+    }
+
     fn transport(&self, cfg: &ProviderConfig, model_id: &str) -> Arc<dyn Transport> {
-        Arc::new(ChatCompletionsTransport::new(ChatCompletionsConfig {
-            name: "qwen".to_string(),
-            // 协议/类型 id —— Transport::provider_name 的语义（每个 custom 实例都折叠成 "custom"）
-            // providers.toml 段名 —— 模型级配置（max_tokens 等）必须按段精确查找，
-            // 用类型 id 查会静默查不到（段名是 custom-xxx 而非 custom）。
-            provider_segment: cfg.name.clone(),
+        Arc::new(AnthropicTransport::new(AnthropicConfig {
             api_key: cfg.api_key.clone(),
-            base_url: if cfg.base_url.is_empty() {
-                self.default_base_url().to_string()
-            } else {
-                cfg.base_url.clone()
-            },
+            base_url: anthropic_base_url(&cfg.base_url),
             model: model_id.to_string(),
             timeout_secs: cfg.timeout_secs,
-            auth_header: self.auth_header().to_string(),
-            auth_prefix: self.auth_prefix().to_string(),
             provider_kind: Some(crate::api::ProviderKind::Qwen),
-            quirks: self.quirks(),
             reasoning_effort: cfg.reasoning_effort.clone(),
+            extra_headers: vec![],
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_base_url_rewrites_legacy_chat_endpoints() {
+        // 空值 → 官方 Anthropic 兼容端点（公网默认域）
+        assert_eq!(
+            anthropic_base_url(""),
+            "https://dashscope.aliyuncs.com/apps/anthropic"
+        );
+        // 存量 OpenAI 兼容面 → 同 host 的 Anthropic 兼容面
+        assert_eq!(
+            anthropic_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            "https://dashscope.aliyuncs.com/apps/anthropic"
+        );
+        // 业务空间专属域上的同形路径同样改写
+        assert_eq!(
+            anthropic_base_url("https://w123.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1"),
+            "https://w123.cn-hongkong.maas.aliyuncs.com/apps/anthropic"
+        );
+        // 用户显式端点原样透传（含自定义 Anthropic 协议网关）
+        assert_eq!(
+            anthropic_base_url("https://gw.example.com/anthropic"),
+            "https://gw.example.com/anthropic"
+        );
     }
 }

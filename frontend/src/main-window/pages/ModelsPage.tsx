@@ -805,6 +805,19 @@ function VisionModelSelect({
 const MODELS_KEY_PREFIX = 'nuphus_models_'
 const DETECTED_KEY_PREFIX = 'nuphus_detected_models_'
 
+/**
+ * 官方 Anthropic 兼容端点的默认路由提示：minimax / qwen 的默认协议是
+ * Anthropic Messages（与 anthropic provider 同型，后端
+ * `default_transport()` 落实）。提示用户切协议/自填端点时保持匹配。
+ */
+function protocolProviderNote(provider: string): string | null {
+  if (provider === 'minimax')
+    return 'MiniMax 官方提供 Anthropic Messages 兼容端点：本页模型默认按 Anthropic 协议路由；切换协议或自填 base_url 时注意端点与协议匹配（Anthropic 面为 …/anthropic）。'
+  if (provider === 'qwen')
+    return 'DashScope 官方提供 Anthropic Messages 兼容端点：本页模型默认按 Anthropic 协议路由；切换协议或自填 base_url 时注意端点与协议匹配（Anthropic 面为 …/apps/anthropic）。'
+  return null
+}
+
 function loadModels(provider: string): string[] {
   try {
     return JSON.parse(localStorage.getItem(MODELS_KEY_PREFIX + provider) || '[]')
@@ -3516,6 +3529,9 @@ export function ModelsPage({
                       return (
                         <div className="models-list-wrap">
                           <div className="detect-status">{TXT.modelsCount(display.length)}</div>
+                          {protocolProviderNote(provider) && (
+                            <div className="detect-status">{protocolProviderNote(provider)}</div>
+                          )}
                           <div className="model-card-grid">
                             {orderProviderModels(
                               filtered.map(name => ({ id: name })),

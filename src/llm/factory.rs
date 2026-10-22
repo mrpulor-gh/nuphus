@@ -320,6 +320,71 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// 内置 minimax / qwen 默认路由 = Anthropic Messages（官方兼容端点，
+    /// x-api-key + anthropic-version）。模型级覆盖可切回 Chat Completions，
+    /// 置空还原为默认 Anthropic。
+    #[test]
+    fn builtin_minimax_qwen_default_route_is_anthropic() {
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-factory-builtin-route-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("providers.toml");
+        let cfg = "model = \"MiniMax-M3\"\n\n\
+             [[providers]]\n\
+             name = \"minimax\"\n\
+             provider_type = \"minimax\"\n\
+             api_key = \"sk-mm\"\n\
+             base_url = \"https://api.minimaxi.com/v1\"\n\n\
+             [[providers.models]]\n\
+             id = \"MiniMax-M3\"\n\
+             context_window = 250000\n\n\
+             [[providers]]\n\
+             name = \"qwen\"\n\
+             provider_type = \"qwen\"\n\
+             api_key = \"sk-q\"\n\n\
+             [[providers.models]]\n\
+             id = \"qwen-plus\"\n\
+             context_window = 131072\n";
+        std::fs::write(&path, cfg).unwrap();
+        let factory = ClientFactory::live_at(&path);
+
+        let reg = factory.registry().unwrap();
+        for (seg, model) in [("minimax", "MiniMax-M3"), ("qwen", "qwen-plus")] {
+            let provider = &reg.providers.iter().find(|p| p.name == seg).unwrap();
+            let transport = factory.build_transport(&reg, provider, model).unwrap();
+            assert_eq!(transport.provider_name(), "anthropic", "seg {seg}");
+        }
+
+        // 模型级覆盖切回 Chat Completions（factory 通用分支；Chat 名取
+        // provider_type 字符串， 非 Anthropic 标签即可分辨路由族）
+        crate::config::model::set_model_transport(
+            &path,
+            "minimax",
+            "MiniMax-M3",
+            Some(TransportKind::ChatCompletions),
+        )
+        .unwrap();
+        let reg = factory.registry().unwrap();
+        let provider = &reg.providers.iter().find(|p| p.name == "minimax").unwrap();
+        let transport = factory.build_transport(&reg, provider, "MiniMax-M3").unwrap();
+        assert_eq!(transport.provider_name(), "minimax");
+        assert_ne!(transport.provider_name(), "anthropic");
+
+        // 置空还原 → 默认 Anthropic
+        crate::config::model::set_model_transport(&path, "minimax", "MiniMax-M3", None).unwrap();
+        let reg = factory.registry().unwrap();
+        let provider = &reg.providers.iter().find(|p| p.name == "minimax").unwrap();
+        let transport = factory.build_transport(&reg, provider, "MiniMax-M3").unwrap();
+        assert_eq!(transport.provider_name(), "anthropic");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 同 id 双段 fixture，且两段都是 `provider_type = "custom"` —— builtin
     /// 枚举把二者一并折叠成 `ProviderKind::Custom`，只有 providers.toml 段名
     /// 能区分；窗口值也不同，便于断言「段名 → provider 精确取值」。
