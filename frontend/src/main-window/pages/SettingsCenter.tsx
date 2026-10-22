@@ -43,6 +43,7 @@
  */
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { WorkflowItem } from '../../core/types'
+import type { AppUpdate } from '../hooks/useAppUpdate'
 import { IconButton } from '../../ui/Button'
 import {
   IconBrowser,
@@ -221,6 +222,8 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
 const NAV_ITEMS: SettingsNavItem[] = NAV_GROUPS.flatMap(g => g.items)
 
 export interface SettingsCenterProps {
+  /** 与主窗口提示条和独立更新弹窗共用同一更新状态。 */
+  updater: AppUpdate
   /** 右上角关闭 → 返回聊天 */
   onClose: () => void
   /**
@@ -242,6 +245,7 @@ export interface SettingsCenterProps {
 }
 
 export function SettingsCenter({
+  updater,
   onClose,
   onRunWorkflow,
   onOpenCanvas,
@@ -356,7 +360,7 @@ export function SettingsCenter({
       case 'data-dirs':
         return <DataDirsPage />
       case 'update':
-        return <UpdatePage />
+        return <UpdatePage updater={updater} />
       /* 帮助：与 App 层 CompactModal 同一个 HelpPage（无 props），面板内嵌渲染 */
       case 'help':
         return <HelpPage />

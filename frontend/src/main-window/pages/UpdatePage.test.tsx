@@ -3,7 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { getVersion } from '@tauri-apps/api/app'
 import { check } from '@tauri-apps/plugin-updater'
 import { getChangelog } from '../lib/api'
-import { UpdatePage } from './UpdatePage'
+import { UpdatePage as UpdatePageView } from './UpdatePage'
+import { useAppUpdate } from '../hooks/useAppUpdate'
+
+/** 手动页测试共用真实更新控制器，只替换 Tauri 边界。 */
+function UpdatePage() {
+  return <UpdatePageView updater={useAppUpdate(false)} />
+}
 
 // Tauri 侧依赖全部桩掉：本测试只验证「版本与更新」页面的渲染与 CHANGELOG 段落切分，
 // 不触达真实 updater / IPC（jsdom 里没有 Tauri 运行时）。

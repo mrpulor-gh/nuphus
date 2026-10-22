@@ -59,6 +59,8 @@ import { RegionPicker } from './tools/RegionPicker'
 import { ScreenCaptureTool } from './tools/ScreenCaptureTool'
 import { DesktopToolbar } from './tools/DesktopToolbar'
 import { MacosPermissionNotice } from './components/MacosPermissionNotice'
+import { UpdateNotice } from './components/UpdateNotice'
+import { useAppUpdate } from './hooks/useAppUpdate'
 import { useSession } from '../hooks/useSession'
 import { useEvents } from '../hooks/useEvents'
 import { playPopupSound, ensureAudioCtx } from '../ui/sound'
@@ -132,6 +134,7 @@ export default function App() {
   // ── Hooks ──
   const { t } = useLanguage()
   const s = useSession()
+  const updater = useAppUpdate(s.appState === 'ready', s.busy)
   /** +号菜单记忆弹窗：'tenets' | 'annotations' | null */
   const [memoryDialog, setMemoryDialog] = useState<'tenets' | 'annotations' | null>(null)
   const [modelsInitialView, setModelsInitialView] = useState<ModelsInitialView>('provider')
@@ -477,6 +480,7 @@ export default function App() {
           />
           <MacosPermissionNotice mode={s.mode} onOpenSettings={() => s.setShowSecurity(true)} />
           <div className="chat-area">
+            <UpdateNotice updater={updater} onOpen={() => s.setShowUpdate(true)} />
             {/*
               ⛔ 禁止把「外部 Agent 列表栏」等 UI 反馈写进 s.messages（addMessage）：
               执行期「messages 最后一条 = 正在流式的 agent 气泡」是强约定
@@ -931,7 +935,7 @@ export default function App() {
             size="sm"
           >
             <Suspense fallback={null}>
-              <UpdatePage />
+              <UpdatePage updater={updater} />
             </Suspense>
           </CompactModal>
           <CompactModal
@@ -1104,6 +1108,7 @@ export default function App() {
           {showSettingsCenter && (
             <Suspense fallback={null}>
               <SettingsCenter
+                updater={updater}
                 onClose={() => setShowSettingsCenter(false)}
                 onRunWorkflow={wf => {
                   // 运行确认弹窗（wcf-wrapper z-index 100）低于设置中心宿主（2500）→

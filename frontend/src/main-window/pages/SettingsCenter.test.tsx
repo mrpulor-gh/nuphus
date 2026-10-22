@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SettingsCenter } from './SettingsCenter'
+import { useAppUpdate } from '../hooks/useAppUpdate'
 import type { WorkflowItem } from '../../core/types'
 import zh from '../../locales/zh'
 import en from '../../locales/en'
@@ -69,7 +70,10 @@ function renderCenter() {
     onOpenCanvas: vi.fn(),
     onOpenModels: vi.fn(),
   }
-  render(<SettingsCenter {...props} />)
+  function Center() {
+    return <SettingsCenter {...props} updater={useAppUpdate(false)} />
+  }
+  render(<Center />)
   return props
 }
 

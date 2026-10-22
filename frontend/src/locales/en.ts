@@ -547,6 +547,16 @@ const en: Record<string, string> = {
   'update.latest': 'You are up to date',
   'update.available': 'New version v{0} is available',
   'update.downloadInstall': 'Download and install',
+  'update.installRestart': 'Install and restart',
+  'update.downloadReady': 'The update is downloaded. Click “Install and restart” to continue.',
+  'update.waitForIdle':
+    'Wait for tasks and saving to finish before installing to avoid interrupting your work.',
+  'update.stateUnavailable':
+    'Unable to verify task status. Installation is paused; click install again later.',
+  'update.noticeHint': 'Nuphus will restart after installation. You can update later.',
+  'update.noticeFailed': 'The update did not complete. View details to retry.',
+  'update.viewDetails': 'View details',
+  'update.later': 'Later',
   'update.downloading': 'Downloading update ({0})',
   'update.failed': '{0}',
   'update.retry': 'Retry',
