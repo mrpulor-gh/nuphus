@@ -20,7 +20,10 @@ fn anthropic_base_url(cfg_base_url: &str) -> String {
             "https://api.minimaxi.com/v1",
             "https://api.minimaxi.com/anthropic",
         ),
-        ("https://api.minimax.io/v1", "https://api.minimax.io/anthropic"),
+        (
+            "https://api.minimax.io/v1",
+            "https://api.minimax.io/anthropic",
+        ),
     ];
     let trimmed = cfg_base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -136,10 +139,7 @@ mod tests {
     #[test]
     fn anthropic_base_url_rewrites_legacy_chat_endpoints() {
         // 空值 → 官方 Anthropic 兼容端点
-        assert_eq!(
-            anthropic_base_url(""),
-            "https://api.minimaxi.com/anthropic"
-        );
+        assert_eq!(anthropic_base_url(""), "https://api.minimaxi.com/anthropic");
         // 存量 chat 端点（配流向导按 default_base_url 落盘）→ 同源改写
         assert_eq!(
             anthropic_base_url("https://api.minimaxi.com/v1"),

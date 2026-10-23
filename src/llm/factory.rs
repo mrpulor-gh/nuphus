@@ -371,7 +371,9 @@ mod tests {
         .unwrap();
         let reg = factory.registry().unwrap();
         let provider = &reg.providers.iter().find(|p| p.name == "minimax").unwrap();
-        let transport = factory.build_transport(&reg, provider, "MiniMax-M3").unwrap();
+        let transport = factory
+            .build_transport(&reg, provider, "MiniMax-M3")
+            .unwrap();
         assert_eq!(transport.provider_name(), "minimax");
         assert_ne!(transport.provider_name(), "anthropic");
 
@@ -379,7 +381,9 @@ mod tests {
         crate::config::model::set_model_transport(&path, "minimax", "MiniMax-M3", None).unwrap();
         let reg = factory.registry().unwrap();
         let provider = &reg.providers.iter().find(|p| p.name == "minimax").unwrap();
-        let transport = factory.build_transport(&reg, provider, "MiniMax-M3").unwrap();
+        let transport = factory
+            .build_transport(&reg, provider, "MiniMax-M3")
+            .unwrap();
         assert_eq!(transport.provider_name(), "anthropic");
 
         std::fs::remove_dir_all(dir).unwrap();

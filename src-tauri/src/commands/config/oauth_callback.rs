@@ -99,6 +99,35 @@ impl Drop for Callback {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /**
+     * 断言端口在宽限期内确实释放（不要求「同一行」就已空出）。
+     *
+     * 回环服务停止是异步事实：优雅关停/abort 落地后内核释放 socket 与测试
+     * 下一条语句执行之间有一个调度间隙，Linux CI 高并行时偶发一拍滞后，
+     * 立即断言重绑成功会闪红（ubuntu-latest 迁 26 后出现过）。语义不变：
+     * 端口必须释放——只是给内核 3s；逾期仍绑不上则照常失败。
+     */
+    async fn assert_port_released(address: std::net::SocketAddr) {
+        static GRACE: Duration = Duration::from_secs(3);
+        let started = tokio::time::Instant::now();
+        loop {
+            match TcpListener::bind(address).await {
+                Ok(probe) => {
+                    drop(probe);
+                    return;
+                }
+                Err(error) => {
+                    assert!(
+                        started.elapsed() < GRACE,
+                        "port {address} not released in time: {error}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn invalid_state_keeps_waiting_and_callback_is_single_use() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -141,7 +170,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(params["code"], "one");
-        assert!(TcpListener::bind(address).await.is_ok());
+        assert_port_released(address).await;
     }
     #[tokio::test]
     async fn cancellation_and_timeout_release_the_port() {
@@ -160,7 +189,7 @@ mod tests {
                 )
                 .await;
             assert!(result.is_err());
-            assert!(TcpListener::bind(address).await.is_ok());
+            assert_port_released(address).await;
         }
     }
 }
