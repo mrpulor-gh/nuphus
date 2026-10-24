@@ -971,3 +971,219 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
     )
   })
 })
+
+/* ═══════════════════════════════════════════════════════════════
+   行内「恢复默认」小钮（5 个不透明度行 + 5 个颜色行各一个）
+
+   契约（main 现行草稿语义，逐条钉住）：
+   ① 只回退**未保存草稿**（previewOverrides）里的对应覆盖键；
+   ② **绝不触碰、不回写用户已保存的自定义主题数据** —— 恢复路径不调
+      saveCustom、不写 localStorage（用 Storage.setItem spy 钉死）；
+   ③ 恢复目标 = 当前生效基线：已激活的自定义主题里有该键 → 回到它的值；
+      基线里没有 → 删键（回落主题基底默认）；
+   ④ 草稿被清空 → clearCustomPreview()（空草稿若留着会遮蔽已保存主题的值）；
+   ⑤ 没有可恢复内容时按钮 disabled，且**常驻渲染**（不做条件渲染）。
+
+   无障碍名 = 「恢复默认 · <行标签>」，故 10 个小钮彼此可区分。
+   ═══════════════════════════════════════════════════════════════ */
+describe('行内「恢复默认」：只回退未保存草稿，不碰已保存主题', () => {
+  /** 10 个「恢复默认」小钮（顺序：5 个不透明度行 → 5 个颜色行） */
+  const resetButtons = (r: RenderResult): HTMLButtonElement[] =>
+    Array.from(r.container.querySelectorAll<HTMLButtonElement>('.apnp-reset-btn'))
+
+  /** 按行标签取小钮（无障碍名 = 「恢复默认 · <行标签>」） */
+  const resetBtn = (rowLabel: string): HTMLButtonElement =>
+    screen.getByRole('button', { name: `恢复默认 · ${rowLabel}` }) as HTMLButtonElement
+
+  beforeEach(() => {
+    localStorage.clear()
+    // ThemeProvider 的覆盖应用是全局的：清掉上个用例残留的内联 token 与 data-theme
+    document.documentElement.style.cssText = ''
+    document.documentElement.removeAttribute('data-theme')
+    stubThemeComputedStyle()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('不透明度滑块步进为 1%（细粒度微调）', async () => {
+    const view = await renderPanel()
+
+    const sliders = Array.from(view.container.querySelectorAll('.opacity-range'))
+    expect(sliders).toHaveLength(5)
+    for (const slider of sliders) {
+      expect(slider).toHaveAttribute('step', '1')
+    }
+  })
+
+  it('无草稿时 10 个「恢复默认」小钮全部 disabled（常驻渲染，不是条件按钮）', async () => {
+    const view = await renderPanel()
+
+    const buttons = resetButtons(view)
+    expect(buttons).toHaveLength(10)
+    for (const button of buttons) {
+      expect(button).toBeDisabled()
+    }
+  })
+
+  it('改气泡不透明度后点「恢复默认」：两个气泡键一起回基线，草稿清空', async () => {
+    const view = await renderPanel()
+
+    // 拖气泡滑块 → 草稿写入两个气泡键（dark 基底色派生）
+    fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
+      target: { value: '60' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe(
+      'rgba(21, 34, 56, 0.6)',
+    )
+    expect(document.documentElement.style.getPropertyValue('--msg-assistant-bg')).toBe(
+      'rgba(18, 20, 30, 0.6)',
+    )
+    expect(resetBtn('消息气泡')).toBeEnabled()
+
+    fireEvent.click(resetBtn('消息气泡'))
+
+    // 草稿清空 → 覆盖被撤掉（空草稿若仍留着会遮蔽已保存主题的值）
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--msg-assistant-bg')).toBe('')
+    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    // 无可恢复内容 → 小钮回到 disabled
+    expect(resetBtn('消息气泡')).toBeDisabled()
+  })
+
+  it('颜色行「恢复默认」：该 token 键回基线（草稿删键），其余行不受影响', async () => {
+    const view = await renderPanel()
+
+    // 改「窗口底色」→ 草稿出现该键
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[1], {
+      target: { value: '#123456' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('#123456')
+    expect(resetBtn('窗口底色（全局背景的基础色）')).toBeEnabled()
+
+    fireEvent.click(resetBtn('窗口底色（全局背景的基础色）'))
+
+    // 删键 → 回落主题基底默认
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('')
+    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    expect(resetBtn('窗口底色（全局背景的基础色）')).toBeDisabled()
+  })
+
+  it('编辑已激活自定义主题时，「恢复默认」回落到该主题已保存的值（而非主题基底）', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: { '--surface-0': '#0d1b2a' } },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+
+    // 改「窗口底色」→ 草稿覆盖了该主题已保存的值
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[1], {
+      target: { value: '#123456' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('#123456')
+
+    fireEvent.click(resetBtn('窗口底色（全局背景的基础色）'))
+
+    // 回到该主题**已保存**的值（不是主题基底值）
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('#0d1b2a')
+    // 已保存主题数据原封不动
+    expect(storedThemes()[0].overrides['--surface-0']).toBe('#0d1b2a')
+  })
+
+  it('恢复默认只动草稿：已保存主题数据与 localStorage 均未被改写（saveCustom 未被调用）', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: { '--surface-0': '#0d1b2a' } },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+    const storedBefore = localStorage.getItem('nuphus_custom_themes')
+
+    // 写入 spy：恢复路径若碰了 saveCustom / persistCustomStore，这里必被记到
+    const spy = vi.spyOn(Storage.prototype, 'setItem')
+
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[1], {
+      target: { value: '#123456' },
+    })
+    fireEvent.click(resetBtn('窗口底色（全局背景的基础色）'))
+
+    // 已保存主题数据逐字未变
+    expect(localStorage.getItem('nuphus_custom_themes')).toBe(storedBefore)
+    expect(storedThemes()[0].overrides).toEqual({ '--surface-0': '#0d1b2a' })
+    // 恢复路径没有一次 localStorage 写入（不落盘、不新增持久化键）
+    expect(spy.mock.calls.filter(c => c[0] === 'nuphus_custom_themes')).toHaveLength(0)
+    expect(spy.mock.calls.filter(c => c[0] === 'nuphus_custom_active')).toHaveLength(0)
+
+    spy.mockRestore()
+  })
+
+  it('恢复强调色：主键与 4 个派生键同组回退（派生键不留在旧强调色上）', async () => {
+    const view = await renderPanel()
+
+    // 改强调色 → 主键 + 派生键一起进草稿
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[0], {
+      target: { value: '#ff0000' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#ff0000')
+    expect(document.documentElement.style.getPropertyValue('--accent-rgb')).toBe('255, 0, 0')
+
+    fireEvent.click(resetBtn('强调色（按钮·链接·选中态）'))
+
+    // 主键与派生键一起撤回（回落主题基底，不留半套派生值）
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--accent-rgb')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--accent-hover')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--accent-dim')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--accent-glow')).toBe('')
+  })
+
+  it('各不透明度通道只回退自己的键（不牵连别行）', async () => {
+    const view = await renderPanel()
+
+    // 只拖输入框 → 草稿里只有 --input-bg
+    fireEvent.change(view.container.querySelectorAll('.opacity-range')[1], {
+      target: { value: '70' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--input-bg')).toBe(
+      'rgba(18, 20, 30, 0.7)',
+    )
+    expect(resetBtn('输入框')).toBeEnabled()
+    expect(resetBtn('消息气泡')).toBeDisabled()
+    expect(resetBtn('控制面板')).toBeDisabled()
+    expect(resetBtn('弹窗')).toBeDisabled()
+    expect(resetBtn('背景图')).toBeDisabled()
+
+    fireEvent.click(resetBtn('输入框'))
+
+    expect(document.documentElement.style.getPropertyValue('--input-bg')).toBe('')
+  })
+
+  it('基线只有强调色主键（导入的主题）时，恢复后派生键按主键重新派生（保持同源）', async () => {
+    // 外部导入的主题 JSON 可能只带主键，没有 4 个派生键
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-b', name: '橄榄', base: 'dark', overrides: { '--accent': '#0d1b2a' } },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-b')
+    const view = await renderPanel()
+
+    // 改强调色 → 主键 + 派生键一起进草稿
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[0], {
+      target: { value: '#ff0000' },
+    })
+    expect(document.documentElement.style.getPropertyValue('--accent-rgb')).toBe('255, 0, 0')
+
+    fireEvent.click(resetBtn('强调色（按钮·链接·选中态）'))
+
+    // 回到基线主键；派生键**按基线主键重新派生**，不留在旧强调色上（不同源 = 脱钩）
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#0d1b2a')
+    expect(document.documentElement.style.getPropertyValue('--accent-rgb')).toBe('13, 27, 42')
+  })
+})

@@ -535,6 +535,42 @@
   background: var(--line-1);
 }
 
+/* ── 行内「恢复默认」小钮（5 个不透明度行 + 5 个颜色行各一个）──
+   语义：只回退**未保存草稿**里的覆盖键，绝不触碰已保存的自定义主题数据。
+   常驻渲染、没有可恢复内容时 disabled（不做条件渲染 —— 面板形态约束：
+   「放弃修改」是全面板唯一的条件按钮）。视觉沿用同文件的 .apnp-theme-edit。 */
+.apnp-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.apnp-reset-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+
+.apnp-reset-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 无可恢复内容：留位但不可点（布局不跳、行序不乱） */
+.apnp-reset-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 /* ── 380px 窄窗适配 ──
    下列宽度都是为整页 / 宽模态定的，在 380px 里会把 label 挤出可视区；
    只收窄占用宽度，不改任何视觉语言（配色 / 圆角 / 字号均沿用原规则）。 */

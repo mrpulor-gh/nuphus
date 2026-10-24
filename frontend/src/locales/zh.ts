@@ -1518,6 +1518,7 @@ const zh: Record<string, string> = {
   'themes.customDefaultName': '我的主题',
   'themes.customDiscard': '放弃修改',
   'themes.customDiscardDone': '已放弃未保存的修改',
+  'themes.resetItem': '恢复默认',
   'themes.myThemeActivate': '点击使用此主题',
   'themes.myThemeDelete': '删除此主题',
   'themes.customSwitchConfirm': '当前有未保存的修改，切换将放弃。继续？',
