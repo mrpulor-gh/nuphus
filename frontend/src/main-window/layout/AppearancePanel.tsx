@@ -13,6 +13,8 @@
  *    系统主题（3 大卡）→ 我的主题（卡片网格）→ 界面不透明度 →
  *    颜色微调 → 紧凑保存行。管理型低频动作（导入 / 导出 / 停用）收进「⋯ 更多」
  *    小菜单——不进主视线，也不单独占一页；
+ *    （行内的「恢复默认」小钮 —— 5 个不透明度行 + 5 个颜色行各一个 ——
+ *      **常驻渲染**，没有可恢复内容时 disabled，不是条件按钮）
  * ③ 「我的主题」即管理台：换背景（卡面 hover 的「上传」钮）/ 行内改名 / 删除 /
  *    ＋ 新建全在卡片上完成 —— 浮窗内**没有**独立的皮肤背景栏，背景只归主题。
  *    「保存 → 原地看到它（新卡即进入行内改名）」是本浮窗的用户感知闭环。
@@ -36,6 +38,7 @@ import {
   IconMoreHorizontal,
   IconPalette,
   IconPlus,
+  IconRotateCcw,
   IconSave,
   IconUpload,
   IconX,
@@ -43,8 +46,10 @@ import {
 import { useTheme } from '../../hooks/useTheme'
 import type { ThemeId } from '../../hooks/useTheme'
 import {
+  ACCENT_DERIVED_KEYS,
   CORE_TOKEN_KEYS,
   SKIN_OPACITY_KEY,
+  accentOverrideGroup,
   applyCoreColor,
   newCustomThemeId,
   normalizeHexInput,
@@ -86,6 +91,35 @@ const TOKEN_LABELS: Record<CoreTokenKey, string> = {
 /* 无覆盖时的稳定空对象（避免每次渲染生成新引用触发 effect） */
 const EMPTY_OVERRIDES: Record<string, string> = {}
 
+/* ── 行内「恢复默认」的覆盖键分组 ──
+   语义严格限定为 **未保存草稿**（previewOverrides）：只回退草稿里对应的覆盖键，
+   绝不触碰、不回写用户已保存的自定义主题数据（不调 saveCustom / 不写 localStorage）。
+
+   气泡是两个键（用户气泡 / 助手气泡），**视为一组**一起回退 ——
+   只回退一个会让两边气泡透明度劈叉。 */
+const OPACITY_RESET_KEYS: Record<
+  'bubbles' | 'input' | 'panel' | 'modal' | 'skin',
+  readonly string[]
+> = {
+  bubbles: ['--msg-user-bg', '--msg-assistant-bg'],
+  input: ['--input-bg'],
+  panel: ['--panel-bg'],
+  modal: ['--modal-bg'],
+  skin: [SKIN_OPACITY_KEY],
+}
+
+/**
+ * 强调色的派生键（customTheme.applyCoreColor 随主键一起写进草稿）。
+ * 恢复时必须与主键**同组**回退：只回退 '--accent' 会把派生键留在「上一版强调色」
+ * 的取值上 —— 主键与派生键脱钩（底色回蓝、悬停/辉光还是红的）。
+ * 键清单直接取自 customTheme（不另建镜像常量）：清单漂移会让恢复只回退一半。
+ */
+
+/** 颜色行 → 覆盖键组（普通 token 单键；强调色带 4 个派生键） */
+function colorResetKeys(key: CoreTokenKey): readonly string[] {
+  return key === '--accent' ? ['--accent', ...ACCENT_DERIVED_KEYS] : [key]
+}
+
 type ToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
 
 /**
@@ -95,17 +129,56 @@ type ToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error'
  */
 const showToast: ToastFn = (message, type = 'info') => showAppFeedback(message, type)
 
+/* ── 行内「恢复默认」小钮（每个不透明度行 / 每个颜色行各一个）──
+   **常驻渲染**：没有可恢复的内容时 disabled，而不是不渲染 ——
+   面板形态约束里「放弃修改」是唯一的条件按钮，行内小钮不做条件渲染。
+
+   语义只到「未保存草稿」一层：回退 previewOverrides 里的覆盖键，
+   已保存的自定义主题数据一概不碰。 */
+function ResetItemButton({
+  label,
+  canReset,
+  onReset,
+}: {
+  /** 行标签（气泡名 / 颜色名），进无障碍名以便 10 个小钮彼此可区分 */
+  label: string
+  /** 草稿里该行有值且与基线不同 → 可恢复；否则 disabled */
+  canReset: boolean
+  onReset: () => void
+}) {
+  const { t } = useLanguage()
+  const title = `${t('themes.resetItem')} · ${label}`
+  return (
+    <button
+      type="button"
+      className="apnp-reset-btn"
+      aria-label={title}
+      title={title}
+      disabled={!canReset}
+      onClick={onReset}
+    >
+      <IconRotateCcw size={12} />
+    </button>
+  )
+}
+
 /* ── 核心色 token 行：color picker + 可手改 hex ── */
 function ColorTokenRow({
   tokenKey,
   label,
   value,
   onCommit,
+  onReset,
+  canReset,
 }: {
   tokenKey: CoreTokenKey
   label: string
   value: string
   onCommit: (key: CoreTokenKey, hex: string) => void
+  /** 行内「恢复默认」：把该行的草稿覆盖回退到基线（不碰已保存数据） */
+  onReset: () => void
+  /** 草稿里该行有值且与基线不同 → 可恢复；否则小钮 disabled */
+  canReset: boolean
 }) {
   const [text, setText] = useState(value)
 
@@ -124,27 +197,30 @@ function ColorTokenRow({
     <FormRow
       label={<span className="color-token-label">{label}</span>}
       control={
-        <span className="color-token-control">
-          <input
-            type="color"
-            className="color-token-picker"
-            value={value}
-            onChange={e => onCommit(tokenKey, e.target.value)}
-            aria-label={label}
-          />
-          <input
-            type="text"
-            className="color-token-hex"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onBlur={commitText}
-            onKeyDown={e => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            }}
-            spellCheck={false}
-            aria-label={`${label} hex`}
-          />
-        </span>
+        <>
+          <span className="color-token-control">
+            <input
+              type="color"
+              className="color-token-picker"
+              value={value}
+              onChange={e => onCommit(tokenKey, e.target.value)}
+              aria-label={label}
+            />
+            <input
+              type="text"
+              className="color-token-hex"
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onBlur={commitText}
+              onKeyDown={e => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
+              spellCheck={false}
+              aria-label={`${label} hex`}
+            />
+          </span>
+          <ResetItemButton label={label} canReset={canReset} onReset={onReset} />
+        </>
       }
     />
   )
@@ -330,30 +406,39 @@ function OpacitySliderRow({
   label,
   value,
   onChange,
+  onReset,
+  canReset,
   min = 20,
 }: {
   label: string
   value: number
   onChange: (percent: number) => void
+  /** 行内「恢复默认」：把该通道的草稿覆盖回退到基线（不碰已保存数据） */
+  onReset: () => void
+  /** 草稿里该通道有值且与基线不同 → 可恢复；否则小钮 disabled */
+  canReset: boolean
   min?: number
 }) {
   return (
     <FormRow
       label={label}
       control={
-        <span className="opacity-control">
-          <input
-            type="range"
-            className="opacity-range"
-            min={min}
-            max={100}
-            step={5}
-            value={value}
-            onChange={e => onChange(Number(e.target.value))}
-            aria-label={label}
-          />
-          <span className="opacity-value">{value}%</span>
-        </span>
+        <>
+          <span className="opacity-control">
+            <input
+              type="range"
+              className="opacity-range"
+              min={min}
+              max={100}
+              step={1}
+              value={value}
+              onChange={e => onChange(Number(e.target.value))}
+              aria-label={label}
+            />
+            <span className="opacity-value">{value}%</span>
+          </span>
+          <ResetItemButton label={label} canReset={canReset} onReset={onReset} />
+        </>
       }
     />
   )
@@ -535,6 +620,53 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
     next[SKIN_OPACITY_KEY] = String(percent / 100)
     const nextTheme = buildPreview(theme, next)
     applyCustomPreview(nextTheme)
+  }
+
+  /* ── 行内「恢复默认」（每个不透明度行 / 每个颜色行各一个小钮）──
+     语义严格限定为 **main 现行草稿语义**：只删「未保存草稿」里的对应覆盖键，
+     **绝不触碰、不回写用户已保存的自定义主题数据** ——
+     不调 saveCustom、不写 localStorage、不新增任何持久化键。
+
+     恢复目标 = **当前生效基线**：已激活的自定义主题里有该键 → 回到它的值；
+     基线里没有该键 → 从草稿里删掉该键（回落主题基底默认）。 */
+  const baselineOverrides = customTheme?.overrides ?? EMPTY_OVERRIDES
+
+  /** 该组键在草稿里「有值且与基线不同」才有可恢复的东西（否则小钮 disabled） */
+  const canResetKeys = (keys: readonly string[]): boolean => {
+    if (previewOverrides === null) return false
+    return keys.some(key => {
+      const draftValue: string | undefined = previewOverrides[key]
+      return draftValue !== undefined && draftValue !== baselineOverrides[key]
+    })
+  }
+
+  /**
+   * 把该组键恢复到基线：**只改草稿**（previewOverrides），已保存主题一概不碰。
+   * 草稿被清空 → clearCustomPreview()：空草稿若仍留在 previewOverrides 上会
+   * 遮蔽已保存主题的覆盖（activeOverrides = previewOverrides ?? customTheme…），
+   * 用户会看不到自己保存过的值。
+   */
+  const resetKeysToBaseline = (keys: readonly string[]) => {
+    const next: Record<string, string> = { ...(previewOverrides ?? {}) }
+    if (keys.includes('--accent')) {
+      // 强调色**成组**回退：主键与 4 个派生键必须同源 —— 只回退主键会让派生键留在
+      // 旧强调色的取值上（底色回蓝、悬停/辉光还是红的）
+      for (const key of keys) delete next[key]
+      const baselineAccent = baselineOverrides['--accent']
+      // 基线可能**只有主键**（导入的主题 JSON）→ 按主键重新派生，保持同源
+      if (baselineAccent !== undefined) Object.assign(next, accentOverrideGroup(baselineAccent))
+    } else {
+      for (const key of keys) {
+        const baseline: string | undefined = baselineOverrides[key]
+        if (baseline !== undefined) next[key] = baseline
+        else delete next[key]
+      }
+    }
+    if (Object.keys(next).length === 0) {
+      clearCustomPreview()
+      return
+    }
+    applyCustomPreview(buildPreview(theme, next))
   }
 
   // 预览草稿 = 未保存修改（编辑一律先预览不落盘；保存按钮才持久化——
@@ -962,27 +1094,37 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
             label={t('themes.opacityBubbles')}
             value={opacityAlphas.bubbles}
             onChange={handleBubbleOpacity}
+            canReset={canResetKeys(OPACITY_RESET_KEYS.bubbles)}
+            onReset={() => resetKeysToBaseline(OPACITY_RESET_KEYS.bubbles)}
           />
           <OpacitySliderRow
             label={t('themes.opacityInput')}
             value={opacityAlphas.input}
             onChange={handleInputOpacity}
+            canReset={canResetKeys(OPACITY_RESET_KEYS.input)}
+            onReset={() => resetKeysToBaseline(OPACITY_RESET_KEYS.input)}
           />
           <OpacitySliderRow
             label={t('themes.opacityPanel')}
             value={opacityAlphas.panel}
             onChange={handlePanelOpacity}
+            canReset={canResetKeys(OPACITY_RESET_KEYS.panel)}
+            onReset={() => resetKeysToBaseline(OPACITY_RESET_KEYS.panel)}
           />
           <OpacitySliderRow
             label={t('themes.opacityModal')}
             value={opacityAlphas.modal}
             onChange={handleModalOpacity}
+            canReset={canResetKeys(OPACITY_RESET_KEYS.modal)}
+            onReset={() => resetKeysToBaseline(OPACITY_RESET_KEYS.modal)}
           />
           <OpacitySliderRow
             label={t('themes.opacitySkin')}
             value={opacityAlphas.skin}
             min={0}
             onChange={handleSkinOpacity}
+            canReset={canResetKeys(OPACITY_RESET_KEYS.skin)}
+            onReset={() => resetKeysToBaseline(OPACITY_RESET_KEYS.skin)}
           />
         </section>
 
@@ -996,6 +1138,8 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
               label={t(TOKEN_LABELS[key])}
               value={effectiveValue(key)}
               onCommit={handleColorCommit}
+              canReset={canResetKeys(colorResetKeys(key))}
+              onReset={() => resetKeysToBaseline(colorResetKeys(key))}
             />
           ))}
         </section>

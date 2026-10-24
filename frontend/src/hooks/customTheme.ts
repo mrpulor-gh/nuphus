@@ -20,7 +20,7 @@ export const CORE_TOKEN_KEYS: readonly CoreTokenKey[] = [
 ]
 
 /** 选择 --accent 时一并派生的关联变量 */
-const ACCENT_DERIVED_KEYS = [
+export const ACCENT_DERIVED_KEYS = [
   '--accent-rgb',
   '--accent-hover',
   '--accent-dim',
@@ -100,6 +100,19 @@ function deriveAccentOverrides(accentHex: string): Record<string, string> {
     '--accent-dim': `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${ACCENT_DIM_ALPHA})`,
     '--accent-glow': `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${ACCENT_GLOW_ALPHA})`,
   }
+}
+
+/**
+ * 强调色的**完整覆盖组**（主键 + 4 个派生键）。
+ *
+ * 供 UI 侧「恢复默认」成组回退用 —— 两个理由：
+ * ① 只回退主键 '--accent' 会把派生键留在旧强调色的取值上：底色回蓝、悬停/辉光
+ *    还是红的（主键与派生键脱钩）；
+ * ② 基线里可能**只有主键**（外部导入的主题 JSON）—— 此时按主键重新派生，
+ *    保证恢复后主键与派生键仍然同源。
+ */
+export function accentOverrideGroup(hex: string): Record<string, string> {
+  return { '--accent': hex, ...deriveAccentOverrides(hex) }
 }
 
 /** 更新单个核心色 token 到 overrides（--accent 自动带入 4 个派生变量） */

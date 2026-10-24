@@ -1605,6 +1605,7 @@ const en: Record<string, string> = {
   'themes.customDefaultName': 'My Theme',
   'themes.customDiscard': 'Discard changes',
   'themes.customDiscardDone': 'Unsaved changes discarded',
+  'themes.resetItem': 'Restore default',
   'themes.myThemeActivate': 'Click to use this theme',
   'themes.myThemeDelete': 'Delete this theme',
   'themes.customSwitchConfirm': 'You have unsaved changes that will be lost on switch. Continue?',
