@@ -10,7 +10,13 @@
 
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
-> **Version**: 1.0.0 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
+<p align="center">
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.1.0"></a>
+  &nbsp;
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.0"></a>
+</p>
+
+> **Version**: 1.1.0 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">

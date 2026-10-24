@@ -10,6 +10,12 @@
 
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
+<p align="center">
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="下载 Nuphus 1.1.0"></a>
+  &nbsp;
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.0"></a>
+</p>
+
 > **版本**: 1.1.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
