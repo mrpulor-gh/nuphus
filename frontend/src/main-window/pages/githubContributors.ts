@@ -76,6 +76,16 @@
  * API 六账号与 REPO_COMMITTERS 完全一致（78/24/13/4/1/1），头像墙无新增。区间提交全为仓库
  * 所有者直推，按既定口径以 **commit 出处** 收录重要功能；纯格式 / lint / 发版杂务提交不收录。
  *
+ * `1.1.0` 轮次取证：2026-10-24 经 `/search/issues?q=is:pr+is:merged+merged:>=2026-10-22` API
+ * 核对，v1.0.0（2026-10-22）之后合并 PR 共两个：#110（Steooenwolf-666，启动更新提醒 +
+ * 任务期间延迟安装两个分支提交，2026-10-22 23:18 合并，merge commit 2a9e2f2a）与 #112
+ * （zhoupeiyu515-ui，滑块 step=1 + 行内「恢复默认」，2026-10-24 06:04 合并，merge commit
+ * 8c615e2e；分支提交 312bd64d 作者署名 Zpy，与 0.2.29 轮次备注的邮箱归属一致）。
+ * 两位均非新提交者（前者自 0.2.23 轮次起在头像墙，后者见于 0.2.24/0.2.29 等轮次），
+ * REPO_COMMITTERS 六账号无新增、头像墙不变。`git log v1.0.0..HEAD` 区间其余提交全为仓库
+ * 所有者直推，按既定口径以 **commit 出处**收录重要功能；3ac9dbb9（oauth_callback 断言
+ * 放宽）属测试基建、b951090f 为 1.0.0  latest.json 资产刷新，均不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -136,6 +146,68 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '1.1.0',
+    date: '2026-10-24',
+    contributors: [
+      {
+        user: 'Steooenwolf-666',
+        contributions: [
+          {
+            pr: 110,
+            summary:
+              '启动自动检查新版本并提示用户点击更新（顶部提示条 + 手动更新页共用状态，任务执行期间延迟安装）',
+          },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 112,
+            summary:
+              '外观滑块步进改 1% + 每个参数行内「恢复默认」（只回退未保存草稿，不碰已保存主题）',
+          },
+        ],
+      },
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '5f5e993b',
+            summary: 'HUD 更新按全局 seq 排序，live 计时不设上限',
+          },
+          {
+            pr: null,
+            commit: '2f36f3ca',
+            summary: '单实例守卫：重复启动唤醒主窗，不再双进程/双托盘/门铃抢占',
+          },
+          {
+            pr: null,
+            commit: '198b91b6',
+            summary: 'minimax/qwen 默认路由到官方 Anthropic 兼容端点',
+          },
+          {
+            pr: null,
+            commit: 'b8e65c86',
+            summary:
+              'HUD 优先级仲裁、聊天消息底部动作同行布局与代码块复制、执行中动效平滑化、WorkAgent 跨迭代换行',
+          },
+          {
+            pr: null,
+            commit: '7e457500',
+            summary: '恢复默认后草稿等值基线即清空（消除假未保存态）；外观浮窗右让位 55px',
+          },
+          {
+            pr: null,
+            commit: '59014f0a',
+            summary: '工具条 dock 移入 chat-area 栈叠上下文，不再压住右锚定浮层',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '1.0.0',
     date: '2026-10-22',

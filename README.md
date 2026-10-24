@@ -10,7 +10,7 @@
 
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
-> **版本**: 1.0.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
+> **版本**: 1.1.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -310,6 +310,17 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v1.1.0 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#110](https://github.com/mrpulor-gh/nuphus/pull/110) | 启动自动检查新版本并提示用户点击更新（顶部提示条 + 手动更新页共用状态，任务执行期间延迟安装） |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#112](https://github.com/mrpulor-gh/nuphus/pull/112) | 外观滑块步进改 1% + 每个参数行内「恢复默认」（只回退未保存草稿，不碰已保存主题） |
+
+其余变更由维护者完成。
 
 ### v1.0.0 贡献者
 
