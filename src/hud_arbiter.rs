@@ -152,9 +152,7 @@ pub fn on_tool_call_start(call_id: &str, tool: &str) -> Option<String> {
                 tool: tool.to_string(),
             },
         );
-        let Some((top_text, top_prio)) = s.top() else {
-            return None;
-        };
+        let (top_text, top_prio) = s.top()?;
         let switch = match &s.displayed {
             None => true,
             // 更高优先级进场 → 切换；同级 FIFO 稳定不互抢
@@ -173,9 +171,7 @@ pub fn on_tool_call_start(call_id: &str, tool: &str) -> Option<String> {
 /// 返回 Some(rewrite_text) = 改写显示；None = 保持事件原文。
 pub fn on_running_hint() -> Option<String> {
     with_state(|s| {
-        let Some((top_text, top_prio)) = s.top() else {
-            return None;
-        };
+        let (top_text, top_prio) = s.top()?;
         let needs_rewrite = match &s.displayed {
             Some((d, _)) => *d != top_text,
             None => true,
@@ -200,9 +196,7 @@ pub fn on_hud_terminal() -> Option<String> {
             s.displayed = None;
             return None;
         }
-        let Some((top_text, top_prio)) = s.top() else {
-            return None;
-        };
+        let (top_text, top_prio) = s.top()?;
         let needs_switch = match &s.displayed {
             Some((d, _)) => *d != top_text,
             None => true,
@@ -304,6 +298,17 @@ mod tests {
         g.pending_ends = 0;
     }
 
+    /// 本模块所有用例共享全局 ARBITER 状态：并行执行会互相清空/插入，断言出现
+    /// 非确定性失败（2026-10-24 实测 8 例并行跑出 2 例偶发失败）。用模块级锁把
+    /// 碰状态的用例串行化，不引新依赖；纯函数用例无需持锁。
+    fn serialize() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        GUARD
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn name(a: &ToolEndAction) -> &'static str {
         match a {
             ToolEndAction::None => "None",
@@ -330,6 +335,7 @@ mod tests {
 
     #[test]
     fn parallel_switches_to_system_priority() {
+        let _serial = serialize();
         reset();
         // 截图先注册，shell 后注册 → 仲裁切到 system 优先级文本
         let a = on_tool_call_start("c1", "desktop_screenshot");
@@ -356,6 +362,7 @@ mod tests {
 
     #[test]
     fn same_level_desktop_fifo_then_switch() {
+        let _serial = serialize();
         reset();
         // 同级 desktop 并行：先到者显示；先结束者结束 → 切到留任者
         let a = on_tool_call_start("c1", "desktop_screenshot");
@@ -372,6 +379,7 @@ mod tests {
 
     #[test]
     fn same_level_system_two_shells_no_flap() {
+        let _serial = serialize();
         reset();
         // 两个 system_shell 并行：文本相同 → 去重不闪烁
         assert_eq!(
@@ -397,6 +405,7 @@ mod tests {
 
     #[test]
     fn missing_terminal_for_hint_tool_gets_synth() {
+        let _serial = serialize();
         reset();
         // system_info 在 sub_task 路径没有终态 HudUpdate —— End 时必须合成收尾
         on_tool_call_start("c1", "system_info");
@@ -411,6 +420,7 @@ mod tests {
 
     #[test]
     fn synth_failure_on_unsuccess() {
+        let _serial = serialize();
         reset();
         on_tool_call_start("c1", "system_shell");
         // 前台超时被杀：无终态 HudUpdate、success=false → 合成 error 终态
@@ -425,6 +435,7 @@ mod tests {
 
     #[test]
     fn single_leader_tool_no_double_terminal() {
+        let _serial = serialize();
         reset();
         // Leader 单工具标准链：running → done(真实终态) → ToolCallEnd
         on_tool_call_start("c1", "desktop_click");
@@ -439,6 +450,7 @@ mod tests {
 
     #[test]
     fn flush_clears_everything() {
+        let _serial = serialize();
         reset();
         on_tool_call_start("c1", "system_shell");
         on_hud_terminal();

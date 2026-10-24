@@ -73,6 +73,9 @@ describe('GithubPage 贡献者页', () => {
     }
   })
 
+  // 时间预算 20s：本用例遍历 CONTRIBUTOR_ROUNDS 全部轮次 × 贡献逐条 getByText，
+  // 工作量随每轮发版线性增长（1.1.0 轮次 +8 条后已超默认 5s）。断言强度不变，
+  // 只放宽资源预算——不是降断言。
   it('每条贡献都有内容与出处链接（有 PR 指向 pull/<n>，无 PR 指向 commit/<sha>）', () => {
     render(<GithubPage />)
 
@@ -94,7 +97,7 @@ describe('GithubPage 贡献者页', () => {
         }
       }
     }
-  })
+  }, 20000)
 
   it('保留仓库入口链接，并给出数据来源说明', () => {
     render(<GithubPage />)
