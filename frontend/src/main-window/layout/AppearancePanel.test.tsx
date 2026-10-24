@@ -1052,4 +1052,76 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
       'rgba(21, 34, 56, 0.35)',
     )
   })
+
+  /* ── 「恢复默认」不得在用户不知情时改写**已保存**的自定义主题 ──
+     自定义主题把当时的值烘进了自己的 overrides（主题层）。只删微调层里的键，
+     主题层仍会把它套回去 —— 于是「恢复默认」必须连主题快照一起改，
+     而改用户已保存的数据必须先问一句。 */
+  it('单项「恢复默认」要改写已保存主题快照时先确认；取消则已保存数据原封不动', async () => {
+    seedCustomTheme() // 快照里烘着 --accent
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderPanel()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /强调色.*恢复默认/ }))
+    })
+
+    // 弹了确认，且文案点名了是哪个主题、哪一项
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmSpy.mock.calls[0][0]).toContain('深夜蓝调')
+    expect(confirmSpy.mock.calls[0][0]).toContain('强调色')
+    // 取消 → 已保存主题快照原封不动
+    expect(storedThemes()[0].overrides['--accent']).toBe('#3b82f6')
+    expect(storedThemes()[0].overrides['--surface-0']).toBe('#0d1b2a')
+    confirmSpy.mockRestore()
+  })
+
+  it('确认后单项「恢复默认」才改写已保存主题快照（只摘该项，其余不动）', async () => {
+    seedCustomTheme()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderPanel()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /强调色.*恢复默认/ }))
+    })
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    const overrides = storedThemes()[0].overrides
+    expect(overrides['--accent']).toBeUndefined()
+    expect(overrides['--surface-0']).toBe('#0d1b2a')
+    confirmSpy.mockRestore()
+  })
+
+  it('「全部恢复默认」同样先确认；取消则已保存快照不动', async () => {
+    seedCustomTheme()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderPanel()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '全部恢复默认' }))
+    })
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmSpy.mock.calls[0][0]).toContain('深夜蓝调')
+    expect(storedThemes()[0].overrides['--accent']).toBe('#3b82f6')
+    confirmSpy.mockRestore()
+  })
+
+  it('未激活自定义主题时「恢复默认」不打扰（无已保存数据可改 → 不弹确认）', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const view = await renderPanel()
+
+    // 先制造一处微调（未保存，立即落盘到微调层）
+    await act(async () => {
+      fireEvent.change(view.container.querySelectorAll('.color-token-picker')[0], {
+        target: { value: '#ff0000' },
+      })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /强调色.*恢复默认/ }))
+    })
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
 })

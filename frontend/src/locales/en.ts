@@ -1619,6 +1619,9 @@ const en: Record<string, string> = {
   'themes.tweakReset': 'Reset to default',
   'themes.resetAllTweaks': 'Reset all',
   'themes.resetAllDone': 'Appearance restored to defaults',
+  'themes.tweakResetSavedConfirm':
+    'The saved theme "{0}" contains a value for "{1}". Resetting will also modify that saved theme. Continue?',
+  'themes.resetAllItems': 'these tweaked items',
   'themes.customSaved': 'Custom theme saved',
   'themes.customResetDone':
     'Custom theme deactivated ...back to built-in (your themes stay in the list)',

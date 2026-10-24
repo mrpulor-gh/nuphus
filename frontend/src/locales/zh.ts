@@ -1534,6 +1534,9 @@ const zh: Record<string, string> = {
   'themes.tweakReset': '恢复默认',
   'themes.resetAllTweaks': '全部恢复默认',
   'themes.resetAllDone': '已恢复默认外观',
+  'themes.tweakResetSavedConfirm':
+    '「{0}」里保存过「{1}」的值，恢复默认会同时改写那个已保存的主题。继续？',
+  'themes.resetAllItems': '这些微调项',
   'themes.customSaved': '自定义主题已保存',
   'themes.customResetDone': '已停用自定义，回到内置主题（我的主题保留在列表中）',
   'themes.customImported': '自定义主题已导入',

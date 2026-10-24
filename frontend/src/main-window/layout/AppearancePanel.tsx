@@ -91,6 +91,15 @@ const TOKEN_LABELS: Record<CoreTokenKey, string> = {
   '--fg-2': 'themes.tokenFg2Hint',
 }
 
+/** 不透明度通道 → 人话标签（二次确认要指名道姓说改的是哪一项） */
+const OPACITY_LABELS: Record<OpacityChannel, string> = {
+  bubbles: 'themes.opacityBubbles',
+  input: 'themes.opacityInput',
+  panel: 'themes.opacityPanel',
+  modal: 'themes.opacityModal',
+  skin: 'themes.opacitySkin',
+}
+
 type ToastFn = (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
 
 /**
@@ -525,12 +534,39 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
       CORE_TOKEN_KEYS.some(key => overridesHaveTweak(customTheme.overrides, { token: key })))
   const hasAnyTweak = !isEmptyTweaks(tweaks) || themeHasBakedTweaks
 
-  /** 单参数恢复默认：删掉该项即回落当前基底默认值（不做确认，可反复调） */
-  const handleOpacityReset = (channel: OpacityChannel) => resetTweakAlpha(channel)
-  const handleColorReset = (key: CoreTokenKey) => resetTweakToken(key)
+  /**
+   * 「恢复默认」若会**改写用户已保存的自定义主题快照**（该值烘在主题的 overrides 里），
+   * 必须先确认 —— 恢复默认不该在用户不知情的情况下修改已保存的数据。
+   * 只动未保存的微调（内置主题 / 未烘值的自定义主题）时不打扰：没有已保存数据可改。
+   */
+  const confirmSavedRewrite = (what: string): boolean => {
+    const name = customTheme?.name ?? t('themes.themeUnnamed')
+    return window.confirm(t('themes.tweakResetSavedConfirm', name, what))
+  }
+
+  /** 单参数恢复默认：删掉该项即回落当前基底默认值 */
+  const handleOpacityReset = (channel: OpacityChannel) => {
+    if (
+      overridesHaveTweak(customTheme?.overrides, { channel }) &&
+      !confirmSavedRewrite(t(OPACITY_LABELS[channel]))
+    ) {
+      return
+    }
+    resetTweakAlpha(channel)
+  }
+  const handleColorReset = (key: CoreTokenKey) => {
+    if (
+      overridesHaveTweak(customTheme?.overrides, { token: key }) &&
+      !confirmSavedRewrite(t(TOKEN_LABELS[key]))
+    ) {
+      return
+    }
+    resetTweakToken(key)
+  }
 
   /** 全部恢复默认：清空微调层（主题选择保持不变） */
   const handleResetAllTweaks = () => {
+    if (themeHasBakedTweaks && !confirmSavedRewrite(t('themes.resetAllItems'))) return
     resetTweaks()
     showToast(t('themes.resetAllDone'), 'success')
   }
