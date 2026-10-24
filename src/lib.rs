@@ -23,6 +23,7 @@ pub mod ext_agent_bridge;
 pub mod filter;
 pub mod handoff;
 pub mod hooks;
+pub mod hud_arbiter;
 pub mod llm;
 pub mod mcp;
 pub mod memory;

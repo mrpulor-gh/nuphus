@@ -1,8 +1,59 @@
 {
   "app_name": "Nuphus",
   "app_category": "desktop",
-  "updated_at": "2026-08-06T11:50:10.261618500+00:00",
-  "screens": {},
+  "updated_at": "2026-10-24T01:21:00.419570800+00:00",
+  "screens": {
+    "settings-center": {
+      "regions": [
+        {
+          "name": "command-palette",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1096,
+            "height": 728
+          },
+          "description": "Ctrl+K 命令面板（任何模式一致）：搜索框自动聚焦，输入搜索词后回车执行该条目；条目文案即搜索词来源，按分组聚合（快捷入口/AI 能力/连接/工作台/系统/娱乐）",
+          "elements": []
+        },
+        {
+          "name": "compact-modal-mask",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1096,
+            "height": 728
+          },
+          "description": "CompactModal 弹窗遮罩 inset:0，onClick 关闭；卡片居中 → 左下角 (60, height-30) 必在遮罩内，可作通用关闭点",
+          "elements": []
+        },
+        {
+          "name": "model-page-close",
+          "rect": {
+            "x": 18,
+            "y": 14,
+            "width": 34,
+            "height": 34
+          },
+          "description": "模型整页宿主左上角 ×，中心约 (35,31)，无遮罩、无返回箭头",
+          "elements": []
+        },
+        {
+          "name": "appearance-float",
+          "rect": {
+            "x": 720,
+            "y": 60,
+            "width": 360,
+            "height": 520
+          },
+          "description": "外观非模态右侧浮窗：无遮罩，右下角点击无效，关闭用 Esc 或浮窗自身 × ",
+          "elements": []
+        }
+      ],
+      "anchors": [],
+      "updated_at": "2026-10-24T01:21:00.419570800+00:00"
+    }
+  },
   "experiences": [
     {
       "id": "panel-tour-loop",
@@ -30,24 +81,27 @@
     },
     {
       "id": "panel-tour-search",
-      "name": "搜索定位面板巡览",
+      "name": "搜索定位面板巡览（2026-10 版）",
       "keywords": [
         "搜索定位",
         "命令面板",
         "巡览",
         "Ctrl+K",
-        "for_each",
         "遮罩关闭",
-        "浏览器"
+        "CompactModal",
+        "ASCII转义"
       ],
       "tool_chain": [
         "desktop_windows_list",
+        "script(python)",
         "desktop_window_activate",
-        "desktop_input",
-        "desktop_mouse"
+        "desktop_input(hotkey)",
+        "desktop_input(type)",
+        "desktop_mouse",
+        "sleep"
       ],
-      "summary": "Nuphus 面板巡览：Ctrl+K 打开命令面板 → 输入面板名（完全匹配）→ Enter 进入，面板加载后点击左下角遮罩（close_x=wx+50, close_y=wy+wh-76）关闭。面板列表通过 init 步骤 Python 脚本解析 desktop_windows_list 结果预计算，for_each 循环遍历。所有面板（含浏览器）均为模态弹窗，同一套打开/关闭机制。关键判断：面板名在命令面板中可见即可搜索定位，新面板只需加入 init 脚本 names 列表（按命令面板显示顺序插入），无需新增步骤。可跨应用：凡命令面板支持搜索定位的桌面应用，面板名列表 + for_each 循环模式适用。",
-      "screen_ref": "nuphus-main",
+      "summary": "入口唯一化：Ctrl+K 任何模式都开命令面板（Workflow 模式曾抢占为工作流列表，已拆成 Ctrl+F）。每格：激活窗口 → Ctrl+K → 输入搜索词+Enter → 停 0.8s → 关闭。关闭三类：CompactModal 弹窗点遮罩左下角 (win.x+60, win.y+height-30)；整页宿主（模型）点页面左上角 × (win.x+35, win.y+31)；非模态浮窗（外观）只能 Esc（点右侧栏图标只会重开）。脚本输出必须是纯 ASCII JSON（json.dumps 默认 ensure_ascii，搜索词写 \\uXXXX），否则 Windows stdout 编码会把中文变成 ??? 并原样输入搜索框。搜索词要避开同名/同描述条目（工作流列表用「自动化工作流」）。",
+      "screen_ref": "settings-center",
       "workflow_id": "nuphus-tour-v4"
     }
   ]

@@ -62,6 +62,7 @@ export function HelpPage() {
     { keys: 'Enter', key: 'help.shortcut.send' },
     { keys: `Shift+Enter / ${formatPrimaryShortcut('Enter')}`, key: 'help.shortcut.newline' },
     { keys: formatPrimaryShortcut('K'), key: 'help.shortcut.palette' },
+    { keys: formatPrimaryShortcut('F'), key: 'help.shortcut.workflowList' },
     { keys: formatPrimaryShortcut('L'), key: 'help.shortcut.focusInput' },
     { keys: formatPrimaryShortcut('N'), key: 'help.shortcut.newChat' },
     { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+Shift+W`, key: 'help.shortcut.workflowPanel' },

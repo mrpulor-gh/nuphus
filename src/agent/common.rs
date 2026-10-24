@@ -8,7 +8,8 @@ use crate::agent::events::{EventEmitter, NuphusEvent};
 use crate::api::AssistantEvent;
 use crate::session::ContentBlock;
 use crate::ToolCall;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 /// Return result of process_events
 pub struct ProcessEventsResult {
@@ -253,6 +254,56 @@ pub fn emit_text_break(emitter: Option<&dyn EventEmitter>, from_task: bool) {
             is_thinking: false,
             from_task,
         });
+    }
+}
+
+/// 跨迭代 text 边界状态：一轮用户任务内共享，**唯一实现**。
+///
+/// 前端对 `llm_text_delta` 只做纯字符串拼接（`useEvents.ts` / mobile store），
+/// 自身无法得知 LLM 迭代边界；边界只能由后端补。此前只有 leader（react_loop）
+/// 做了这件事，WorkAgent 路径因此把多次迭代的过程 text 粘成一段——这里把
+/// leader 的既有语义收口成共享组件，所有 runtime 共用，禁止各自复制：
+///   - 每轮迭代开始调用 [`TextBoundary::begin_iteration`] 取得一次性句柄；
+///   - 流回调在首个 `TextDelta` 前调用 [`IterationBreak::before_delta`]；
+///   - 路由函数返回「确实产出可见 text」时调用 [`IterationBreak::mark_emitted`]。
+#[derive(Clone, Default)]
+pub struct TextBoundary {
+    seen: Arc<AtomicBool>,
+}
+
+/// 单次 LLM 迭代的边界句柄（由 [`TextBoundary::begin_iteration`] 产出）。
+#[derive(Clone)]
+pub struct IterationBreak {
+    pending: Arc<AtomicBool>,
+    seen: Arc<AtomicBool>,
+}
+
+impl TextBoundary {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 开始新一次 LLM 迭代：若此前已有迭代产出过可见 text，则本轮首个
+    /// TextDelta 前需要补一个换行。
+    pub fn begin_iteration(&self) -> IterationBreak {
+        IterationBreak {
+            pending: Arc::new(AtomicBool::new(self.seen.load(Ordering::SeqCst))),
+            seen: self.seen.clone(),
+        }
+    }
+}
+
+impl IterationBreak {
+    /// 本迭代首个 TextDelta 调用：需要时补一个换行（swap 保证同轮只补一次）。
+    pub fn before_delta(&self, emitter: Option<&dyn EventEmitter>, from_task: bool) {
+        if self.pending.swap(false, Ordering::SeqCst) {
+            emit_text_break(emitter, from_task);
+        }
+    }
+
+    /// 本迭代确实产出了可见 text：下一迭代开始前需要补分隔。
+    pub fn mark_emitted(&self) {
+        self.seen.store(true, Ordering::SeqCst);
     }
 }
 

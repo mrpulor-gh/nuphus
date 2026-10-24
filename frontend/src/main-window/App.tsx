@@ -44,7 +44,7 @@ import {
   IconRefresh,
 } from '../ui/Icons'
 import { CommandPalette } from '../ui/CommandPalette'
-import { routePrimaryK } from './shortcutRouting'
+import { routePrimaryF, routePrimaryK } from './shortcutRouting'
 import { useLanguage } from '../locales'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { Button, IconButton } from '../ui/Button'
@@ -284,17 +284,21 @@ export default function App() {
       key: 'k',
       ctrl: true,
       handler: () => {
-        // 设置中心宿主（z-index 2500）会盖住 Ctrl+K 两条分支的目标弹层
-        //（命令面板 300 / 工作流列表 150）→ 先退出设置中心，保证面板可见可用
+        // 设置中心宿主（z-index 2500）会盖住命令面板（300）→ 先退出，保证面板可见可用
         setShowSettingsCenter(false)
-        routePrimaryK(
-          s.mode,
-          () => {
-            s.setCmdPaletteOpen(false)
-            s.setShowWorkflow(true)
-          },
-          () => s.setCmdPaletteOpen((p: boolean) => !p),
-        )
+        routePrimaryK(() => s.setCmdPaletteOpen((p: boolean) => !p))
+      },
+    },
+    {
+      // 工作流列表：所有模式一致（Workflow 会话不再抢占 Ctrl+K）
+      key: 'f',
+      ctrl: true,
+      handler: () => {
+        setShowSettingsCenter(false)
+        routePrimaryF(() => {
+          s.setCmdPaletteOpen(false)
+          s.setShowWorkflow(true)
+        })
       },
     },
     {

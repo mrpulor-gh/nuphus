@@ -74,6 +74,26 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
         // ExecutionCompleted: Leader/工作流完成时主窗口置顶
         match &event {
             NuphusEvent::HudUpdate { text, phase, .. } => {
+                // 并行工具计时仲裁：running 文本始终跟随活跃集 top（system 族 >
+                // desktop/browser），终态经过时若留任工具则切回其 running。
+                let (text, phase) = if phase == "running" {
+                    match nuphus::hud_arbiter::on_running_hint() {
+                        Some(rewritten) => (rewritten, phase.clone()),
+                        None => (text.clone(), phase.clone()),
+                    }
+                } else if phase != "workflow" && phase != "workflow_wait" {
+                    match nuphus::hud_arbiter::on_hud_terminal() {
+                        Some(remain_text) => {
+                            // 留任工具仍在跑：本终态帧之外补发其 running（fresh seq）
+                            let seq2 = self.seq.fetch_add(1, Ordering::SeqCst);
+                            crate::commands::hud::show(&self.app, &remain_text, "running", seq2);
+                            (text.clone(), phase.clone())
+                        }
+                        None => (text.clone(), phase.clone()),
+                    }
+                } else {
+                    (text.clone(), phase.clone())
+                };
                 // Delegate to shared show/hide logic (off-screen positioning,
                 // force-close fallback, etc.)
                 if phase == "hidden" || phase == "hide" {
@@ -82,7 +102,55 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
                     // HUD 消费端按全局 seq 单调排序：迟到/乱序的 running 不会再
                     // 覆盖已落地的终态 done（计时器完成不退表的根源）。直调
                     // show 的旁路（main.rs / llm.rs）传 seq=0，前端恒生效。
-                    crate::commands::hud::show(&self.app, text, phase, seq);
+                    crate::commands::hud::show(&self.app, &text, &phase, seq);
+                }
+            }
+            NuphusEvent::ToolCallStart {
+                call_id, tool_name, ..
+            } => {
+                // 并行工具注册：更高优先级（system 族 > desktop/browser）进场即切换
+                if let Some(text) = nuphus::hud_arbiter::on_tool_call_start(call_id, tool_name) {
+                    let seq2 = self.seq.fetch_add(1, Ordering::SeqCst);
+                    crate::commands::hud::show(&self.app, &text, "running", seq2);
+                }
+            }
+            NuphusEvent::ToolCallEnd {
+                call_id,
+                tool_name,
+                success,
+                ..
+            } => {
+                use nuphus::hud_arbiter::{on_tool_call_end, ToolEndAction};
+                match on_tool_call_end(call_id, tool_name, *success) {
+                    ToolEndAction::None => {}
+                    ToolEndAction::SwitchRunning(text) => {
+                        let seq2 = self.seq.fetch_add(1, Ordering::SeqCst);
+                        crate::commands::hud::show(&self.app, &text, "running", seq2);
+                    }
+                    ToolEndAction::SynthTerminal { phase, text } => {
+                        // 活跃集清空且仍处 running 显示：合成终态收尾计时
+                        // （覆盖 sub_task 提示工具/shell 前台超时等无终态路径）
+                        let seq2 = self.seq.fetch_add(1, Ordering::SeqCst);
+                        crate::commands::hud::show(&self.app, &text, phase, seq2);
+                    }
+                }
+            }
+            // 任务级终局/中断：中断路径 ToolCallEnd 缺席，清场防泄漏
+            NuphusEvent::ExecutionError { .. } => {
+                nuphus::hud_arbiter::flush_all();
+            }
+            NuphusEvent::ExecutionCompleted { .. } => {
+                // 不做窗口激活——子任务完成（sub_task_loop）和全局完成
+                // 都会发此事件。不做 show/focus，避免每次工具调用都抢前台。
+                nuphus::hud_arbiter::flush_all();
+            }
+            NuphusEvent::LeaderDone { .. } => {
+                // 窗口置前但【不抢键盘焦点】：执行完成窗口自动跑到最前
+                // （大王要求保留置前），但输入框不自动聚焦、不打断其他窗口打字
+                // （2026-08-08 大王要求移除执行完自动聚焦）。
+                nuphus::hud_arbiter::flush_all();
+                if let Some(main) = self.app.get_webview_window("main") {
+                    bring_to_front_no_activate(&main);
                 }
             }
             NuphusEvent::UserInputRequest { .. } => {
@@ -94,18 +162,6 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
             NuphusEvent::SecurityCheck { tool, .. }
                 if tool == nuphus::tools::desktop_approval::EVENT_TOOL =>
             {
-                if let Some(main) = self.app.get_webview_window("main") {
-                    bring_to_front_no_activate(&main);
-                }
-            }
-            NuphusEvent::ExecutionCompleted { .. } => {
-                // 不做窗口激活——子任务完成（sub_task_loop）和全局完成
-                // 都会发此事件。不做 show/focus，避免每次工具调用都抢前台。
-            }
-            NuphusEvent::LeaderDone { .. } => {
-                // 窗口置前但【不抢键盘焦点】：执行完成窗口自动跑到最前
-                // （大王要求保留置前），但输入框不自动聚焦、不打断其他窗口打字
-                // （2026-08-08 大王要求移除执行完自动聚焦）。
                 if let Some(main) = self.app.get_webview_window("main") {
                     bring_to_front_no_activate(&main);
                 }

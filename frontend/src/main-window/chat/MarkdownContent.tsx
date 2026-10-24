@@ -1,5 +1,5 @@
-import React from 'react'
-import { IconGlobe } from '../../ui/Icons'
+import React, { useState } from 'react'
+import { IconCheck, IconCopy, IconGlobe } from '../../ui/Icons'
 import '../../styles/markdown.css'
 
 interface MarkdownContentProps {
@@ -15,6 +15,32 @@ const MarkdownContent = React.memo(function MarkdownContent({
   onFileClick,
   onUrlClick,
 }: MarkdownContentProps) {
+  // 代码块复制反馈（记录已复制的代码块索引，短暂显示「已复制」）
+  const [copiedCodeIdx, setCopiedCodeIdx] = useState<number | null>(null)
+
+  // 跨环境复制：优先 Clipboard API（secure context），否则退回 textarea
+  // （与 MobileMarkdown 同策略；桌面 Tauri webview 两者都可用）
+  const copyCode = async (code: string, idx: number) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = code
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopiedCodeIdx(idx)
+      setTimeout(() => setCopiedCodeIdx(prev => (prev === idx ? null : prev)), 1500)
+    } catch {
+      /* 复制失败静默：按钮保持可点，不阻塞阅读 */
+    }
+  }
+
   // Normalize line endings: \r\n / \r → \n, prevent Windows line endings from breaking split(/\n\n+/)
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
@@ -55,7 +81,20 @@ const MarkdownContent = React.memo(function MarkdownContent({
             key={i}
             className={`markdown-code-block${isDiff ? ' markdown-code-block--diff' : ''}`}
           >
-            {part.lang && <div className="code-lang-label">{part.lang}</div>}
+            {/* 头部：语言标签在左、复制按钮在右（2026-10-24 大王定） */}
+            <div className="code-block-head">
+              {part.lang && <div className="code-lang-label">{part.lang}</div>}
+              <button
+                type="button"
+                className="code-copy-btn"
+                onClick={() => void copyCode(part.code, i)}
+                aria-label={copiedCodeIdx === i ? '已复制' : '复制代码'}
+                title={copiedCodeIdx === i ? '已复制' : '复制代码'}
+              >
+                {copiedCodeIdx === i ? <IconCheck size={12} /> : <IconCopy size={12} />}
+                <span>{copiedCodeIdx === i ? '已复制' : '复制'}</span>
+              </button>
+            </div>
             <code className={part.lang ? `lang-${part.lang}` : ''}>
               {isDiff ? highlightDiffCode(part.code) : highlightCode(part.code, part.lang)}
             </code>

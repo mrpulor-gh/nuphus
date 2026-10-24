@@ -384,11 +384,11 @@ impl ToolRegistry {
     pub(crate) fn register_workflow_memory_update(&mut self) {
         self.register(ToolDef {
             name: "workflow_memory_update".to_string(),
-            description: "Append a dated summary entry to the workflow working memory (.nuphus/workflow-memory.md), injected into new Workflow Agent sessions. Write a SEARCHABLE digest: phase progress, key findings, parameter experiments, blocking items — not full details; deep history stays in SQLite, reachable via memory_search / memory_session_context using the session id shown in each signature line. Session id is auto-appended by the system — do not repeat it. Write INCREMENTAL changes only (new phase, new decision, resolved blocker) — do not restate unchanged items. Max 2000 chars per entry. Suggested structure: ##Phase / ##File / ##Blocker / ##Decision.".to_string(),
+            description: "向 workflow-memory.md 追加一条摘要，新建 Workflow 会话时自动注入最新尾部。写可检索的摘要（阶段进展 / 关键发现 / 参数实验 / 阻塞与决策），不写全量细节；只写本轮增量，不复述未变内容；单条 ≤2000 字符（超出取尾部）。session id 由系统自动追加，不要重复；署名行里的 session id 可用于回查。需要更细的历史时用 memory_search / memory_session_context 查 SQLite。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "记忆内容（建议结构化格式：## phase / ## files / ## blockers / ## decisions）"},
+                    "content": {"type": "string", "description": "记忆内容（建议 ## phase / ## files / ## blockers / ## decisions）"},
                 },
                 "required": ["content"]
             }),

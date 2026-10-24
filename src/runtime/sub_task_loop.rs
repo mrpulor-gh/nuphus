@@ -844,8 +844,8 @@ impl super::SubTaskRunner {
                     // thinking (is_thinking=true) before content
                     // (is_thinking=false) so the frontend order is stable.
                     // 返回值（是否产出可见 text）暂不使用：子任务的过程 text 由
-                    // TimelineEntry 按事件展示，不参与跨迭代边界分隔（见
-                    // `emit_text_break` 与 react_loop 的 stream_text_seen）。
+                    // TimelineEntry 按事件展示，不参与跨迭代边界分隔（共享实现
+                    // 见 agent::common::TextBoundary，leader / WorkAgent 已接入）。
                     let _ = crate::agent::common::route_stream_text_delta(
                         text,
                         &think_state,

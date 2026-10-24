@@ -1,24 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
-import { modelSetupHint, routePrimaryK } from '../main-window/shortcutRouting'
+import { modelSetupHint, routePrimaryF, routePrimaryK } from '../main-window/shortcutRouting'
 import { formatPrimaryShortcut } from '../ui/platformShortcut'
 import { createWheelSelectionAccumulator } from '../ui/wheelSelection'
 
 describe('主快捷键路由', () => {
-  it('Workflow 模式直接打开工作流列表', () => {
-    const openWorkflow = vi.fn()
+  it('Ctrl+K 在任何模式下都只切换全局命令面板', () => {
     const togglePalette = vi.fn()
-    routePrimaryK('workflow', openWorkflow, togglePalette)
-    expect(openWorkflow).toHaveBeenCalledOnce()
-    expect(togglePalette).not.toHaveBeenCalled()
-  })
-
-  it('其他模式继续切换全局命令面板，并按平台显示文案', () => {
-    const openWorkflow = vi.fn()
-    const togglePalette = vi.fn()
-    routePrimaryK('leader', openWorkflow, togglePalette)
+    routePrimaryK(togglePalette)
     expect(togglePalette).toHaveBeenCalledOnce()
     expect(formatPrimaryShortcut('K', 'MacIntel')).toBe('Cmd+K')
     expect(formatPrimaryShortcut('K', 'Win32')).toBe('Ctrl+K')
+  })
+
+  it('Ctrl+F 打开工作流列表（与模式无关）', () => {
+    const openWorkflow = vi.fn()
+    routePrimaryF(openWorkflow)
+    expect(openWorkflow).toHaveBeenCalledOnce()
+    expect(formatPrimaryShortcut('F', 'Win32')).toBe('Ctrl+F')
   })
 
   it('未配置模型提示不会在 Workflow 模式误导用户使用主快捷键', () => {

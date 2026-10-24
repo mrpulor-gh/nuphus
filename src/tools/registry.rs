@@ -1237,7 +1237,7 @@ impl ToolRegistry {
         // wf_call — 调用已保存的子工作流（Executor 内部处理）
         self.register(ToolDef {
             name: "wf_call".to_string(),
-            description: "调用已保存的子工作流模块。传入 workflow_id 和 inputs，子流程执行后 outputs 回写父流程变量。支持模块复用和嵌套。".to_string(),
+            description: "调用已保存的子工作流模块：inputs 传入子变量，子流程产出经 outputs 回写父变量池。支持模块复用与嵌套。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

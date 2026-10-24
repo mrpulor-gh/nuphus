@@ -466,7 +466,8 @@ pub fn build_l2_leader() -> String {
 关键决策后必须 `leader_memory_update`：写可检索摘要（决策 / 依据 / 影响面 / 文件路径），细节靠 session id 精查。
 
 ## 6. 输出纪律
-- `text` 按重要节点输出；最终交付单独以 `text` 给出，禁止以 reasoning 替代
+- 收到消息指令第一时间必须以 `text` 回应，`text` 按重要节点输出
+- 最终交付单独以 `text` 给出，禁止以 reasoning 替代
 - 结构化汇报，结论与关键信息（路径 / 待办 / 决策点 / 风险）前置，过程落盘，宁短勿冗
 - 供用户查看的产出文件用裸绝对路径单独成行（不加反引号），供前端识别点击
 
@@ -961,7 +962,8 @@ Explore → Solidify → Design → Verify → Decide
 
 ## Output Discipline
 
-- 禁止以 `reasoning` / `thinking` 替代最终交付，最终回复必须单独以 `text` 直接交付
+- 收到消息指令第一时间必须以 `text` 回应
+- 禁止以 `reasoning` / `thinking` 替代最终交付，最终回复必须单独以 `text` 直接交付，后续禁止调用任何工具
 - 汇报精简：结构化输出（层级 / 表格 / 代码块），结论与关键信息（结果 / 产物路径 / 异常）前置，宁短勿冗
 - 产出文件供用户查看时，用裸的绝对路径单独成行、不加反引号——前端自动识别为可点击路径
 - 禁止在工作流文件中写入敏感数据（密码 / token / API Key）
@@ -1005,7 +1007,7 @@ const WORKAGENT_L2_COMMON: &str = r#"## Skill Routing（按需读取——走到
 阶段与 L0 Runtime Loop 对应：Phase 0-1 = Explore，Phase 2 = Solidify，Phase 3 = Design，Phase 4 = Verify；Decide = 每阶段退出门禁的判定（达标推进 / 回补 / 切换路径）。
 
 ## Phase 0：复用检索
-执行：`skill_read workflow-design`；随后按**每个骨架子步骤**（或整个目标）`ui_maps_search` / experience 检索同类经验。
+执行：按**每个骨架子步骤**（或整个目标）检索同类经验——`ui_maps_search`（按应用找屏与操作链）+ `experience_query`（跨应用方法论）。
 退出：每个子步骤/切入点都有明确去向——有 screen 跳过布局解析、有 experience 参考 tool_chain、无则完整探索。
 
 ## Phase 1：探索跑通
@@ -1043,8 +1045,6 @@ plugin/workflows/index.json  ← 注册（id / name / status / step_count / upda
 
 **status 生命周期**：设计保存时一律写 `Draft`；`Ready / Running / Completed / Error` 由应用与运行引擎随运行管理，不要手工改 index.json 的状态字段。
 
-**目录噪声（不参与执行）**：`workflow.<时间戳>.json`（写盘自动备份）、带中文名的 .json/.md 导出件、`canvas.layout.json`（画布布局）、`screenshots/`（复用截图）——引擎加载时只读各目录的 `workflow.json`。
-
 workflow.json 字段、步骤 V2 schema（13 种 do）、变量引用与条件表达式的完整规范 → skill: workflow-design。禁止未读 schema 凭记忆写步骤。
 
 ## Design Checklist
@@ -1053,7 +1053,7 @@ Phase 3 提交前逐项勾选：
 
 - [ ] 所有步骤引用 `params.json`，无硬编码坐标/选择器/文案
 - [ ] `tool` / `script` / `chat` 的输出若被后续引用，必有 `capture`；`call` 用 `with.outputs` 回写
-- [ ] 第一步为环境重置（浏览器导航 `about:blank` 清 SPA 状态；桌面**不做 resize/搬窗**——W2：绑定稳定窗口身份 + 语义 locator 重定位，尺寸变化由重观察适应）
+- [ ] 第一步清残留状态：浏览器导航 `about:blank` 清 SPA；桌面**不搬窗/resize**（W2：语义 locator 重定位，尺寸变化靠重观察）
 - [ ] 登录检测在需要登录的操作之前，用语义判断（`chat` + `login_detection`），不用 `if contains` 文案
 - [ ] 关键步骤后有验证步骤（`assert` 或状态检查）
 - [ ] 所有分支路径可测试，降级逻辑非空且不导致重复提交/丢失数据
@@ -1061,11 +1061,9 @@ Phase 3 提交前逐项勾选：
 - [ ] 无敏感数据写入任何文件
 - [ ] 子工作流文件与主工作流同目录"#;
 
-fn workflow_desktop_capabilities(tool_schemas: &str) -> String {
+fn workflow_desktop_capabilities(tools: &[crate::api::ToolDefinition]) -> String {
     // Inspect actual function names, not descriptions that may mention unavailable tools.
-    let schemas =
-        serde_json::from_str::<Vec<crate::api::ToolDefinition>>(tool_schemas).unwrap_or_default();
-    let has = |name: &str| schemas.iter().any(|tool| tool.function.name == name);
+    let has = |name: &str| tools.iter().any(|tool| tool.function.name == name);
     let semantics = has("desktop_semantic_observe") && has("desktop_semantic_execute");
     let route = if semantics && has("desktop_agent_step") {
         "当前桌面入口：desktop_agent_step。每轮先使用增强判断入口，再按返回结果补充业务文本或接手候选判断。"
@@ -1089,11 +1087,15 @@ fn workflow_desktop_capabilities(tool_schemas: &str) -> String {
 /// forwarded to `env_info_section` for provider-exact context-window resolution.
 /// `model` here is the real model id and doubles as the display label — this path
 /// has no separate label, so `env_info_section` gets `model_display = None`.
+///
+/// `tools` 是**本模式 registry 的实际 schema 切片**：prompt 内只渲染工具名
+/// （与 Leader 同一契约），schema 细节只走请求的 API tools 字段；切片同时用于
+/// 能力探测（语义桌面/增强入口），因此调用方不要再传预渲染字符串。
 pub fn build_workagent_prompt(
     model: &str,
     provider: Option<&str>,
     supports_vision: bool,
-    tool_schemas: &str,
+    tools: &[crate::api::ToolDefinition],
     user_label: &str,
     assistant_name: &str,
     vision_model: Option<&str>,
@@ -1116,8 +1118,10 @@ pub fn build_workagent_prompt(
     parts.push(l0);
 
     // L1: Tools + Environment + Tenets
-    parts.push(tool_schemas_section(tool_schemas));
-    parts.push(workflow_desktop_capabilities(tool_schemas));
+    parts.push(tool_schemas_section(
+        &crate::tools::registry::render_tool_names_by_group(tools),
+    ));
+    parts.push(workflow_desktop_capabilities(tools));
     // 内置工具感知：工具页内部机制命令不进 agent 工具列表，仅用户手动调用；详见 skill
     parts.push(
         "## 内置工具感知\n\
@@ -1299,12 +1303,11 @@ mod tests {
     fn workflow_prompt_makes_enhanced_decision_primary() {
         // 增强模式细则已下沉 skill: workflow-interaction；系统提示词只保留
         // workflow_desktop_capabilities 的运行时路由（入口声明 + 重放能力）。
-        let schemas = serde_json::to_string(&[
+        let schemas = vec![
             crate::api::ToolDefinition::new("desktop_agent_step", serde_json::json!({})),
             crate::api::ToolDefinition::new("desktop_semantic_observe", serde_json::json!({})),
             crate::api::ToolDefinition::new("desktop_semantic_execute", serde_json::json!({})),
-        ])
-        .unwrap();
+        ];
         let prompt =
             build_workagent_prompt("test-model", None, false, &schemas, "用户", "Nuphus", None);
         assert!(prompt.contains("当前桌面入口：desktop_agent_step"));
@@ -1314,15 +1317,7 @@ mod tests {
 
     #[test]
     fn workflow_prompt_converges_after_one_successful_real_run() {
-        let prompt = build_workagent_prompt(
-            "test-model",
-            None,
-            false,
-            "desktop_semantic_observe workflow_run",
-            "用户",
-            "Nuphus",
-            None,
-        );
+        let prompt = build_workagent_prompt("test-model", None, false, &[], "用户", "Nuphus", None);
         assert!(prompt.contains("默认只要求一次真实 `workflow_run`"));
         assert!(prompt.contains("用户执行中追加的新指令代表最新最高优先级意图"));
         assert!(prompt.contains("核心路径跑通却继续研究旁支会阻碍交付"));
@@ -1396,15 +1391,7 @@ mod tests {
     /// 细则下沉 skill 后，系统提示词不得再常驻对应长文——防止重构后回弹膨胀。
     #[test]
     fn workagent_prompt_delegates_details_to_skills() {
-        let prompt = build_workagent_prompt(
-            "test-model",
-            None,
-            false,
-            "desktop_semantic_observe workflow_run",
-            "用户",
-            "Nuphus",
-            None,
-        );
+        let prompt = build_workagent_prompt("test-model", None, false, &[], "用户", "Nuphus", None);
         // 交互细则（现居 workflow-interaction）
         assert!(!prompt.contains("候选输出是完整 JSON 分页"));
         assert!(!prompt.contains("needs_primary_decision"));
@@ -1423,7 +1410,7 @@ mod tests {
                 .iter()
                 .map(|name| crate::api::ToolDefinition::new(*name, serde_json::json!({})))
                 .collect();
-            workflow_desktop_capabilities(&serde_json::to_string(&schemas).unwrap())
+            workflow_desktop_capabilities(&schemas)
         };
         let ordinary = render(&[
             "desktop_semantic_observe",
@@ -1446,7 +1433,7 @@ mod tests {
             "fallback for desktop_agent_step desktop_semantic_observe desktop_semantic_execute"
                 .into(),
         );
-        let missing = workflow_desktop_capabilities(&serde_json::to_string(&[mouse]).unwrap());
+        let missing = workflow_desktop_capabilities(&[mouse]);
         assert!(missing.contains("当前未提供完整桌面语义工具链"));
         assert!(!missing.contains("当前桌面入口："));
     }

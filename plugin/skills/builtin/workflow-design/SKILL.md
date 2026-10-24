@@ -18,7 +18,7 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
   ├─ [探] UIA/Accessibility 优先跑通核心路径；只在工作流依赖时补视觉或旁支证据
   ├─ [固] 生成 params.json + workflow.json + guide.md（核心路径参数都有界面证据）
   ├─ [验] workflow_validate 编译校验 → workflow_run 真实成功一次；失败时针对性修正重跑
-  └─ [馈] 跑通后 ui_maps_save_experience 提炼经验；新异常回写 params.json exceptions
+  └─ [馈] 跑通后 ui_maps_save_experience 提炼经验；新异常回写 params.json exceptions；跨会话进展用 workflow_memory_update 写增量摘要
 ```
 
 输入形态（意图骨架 vs 自由对话）的判定与处理在系统提示词 L2「输入即骨架」；表单行意图是纯文本、无工具参数，稳定的语义定位器、窗口身份和视觉锚点规则由你探索后固化进 `params.json` / `with`，不保存本次捕获 ID 或绝对坐标常量。
@@ -26,6 +26,20 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
 ---
 
 ## 一、步骤 Schema（V2，唯一真相源 `src/workflow/step_schema.json`）
+
+### 顶层字段（workflow.json）
+
+| 字段 | 说明 |
+|------|------|
+| `id` / `name` | 工作流标识 / 显示名 |
+| `status` | 设计保存写 `Draft`；`Ready / Running / Completed / Error` 由运行引擎维护，不手改 |
+| `steps` | 步骤数组（见下方步骤字段） |
+| `doc` | 计划 markdown；**不参与模板变量扫描**（正文写 `{{inputs.x}}` 不算引用） |
+| `schedule` | 定时调度配置（`schedule_cron` 管理），无则 `null` |
+| `run_history` | 运行历史；**同 id 重跑前若怀疑变量陈旧，置 `[]`**（断点续连会复用上次成功步骤的 capture 值） |
+| `dry_run` | `true` = 只编译不执行（与 `workflow_validate` 是两回事） |
+
+> 目录噪声（不参与执行）：`workflow.<时间戳>.json`（写盘备份）、导出件、`canvas.layout.json`、`screenshots/`——引擎只读各目录的 `workflow.json`。
 
 ### 公共字段
 
@@ -285,6 +299,13 @@ workflow_validate（编译校验：步骤合法性/工具名/必填/变量引用
 ---
 
 ## 八、经验检索 / 提炼
+
+### 两个存储的分工
+
+| 存储 | 工具 | 存什么 |
+|------|------|--------|
+| ui-maps | `ui_maps_save_screen` / `ui_maps_save_experience` / `ui_maps_search` | 某应用的屏幕布局与操作链（按 app + screen 检索） |
+| 经验库 | `experience_save` / `experience_query` / `experience_list` | 跨应用通用方法论（按 domain + category + 关键词检索） |
 
 ### 两级检索
 

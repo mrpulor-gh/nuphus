@@ -489,10 +489,10 @@ impl WorkflowAgent {
     /// Build system prompt (cached)
     fn build_system_prompt(&mut self) -> String {
         if self.cached_prompt.is_none() {
-            let tool_schemas = {
-                let schemas = self.get_filtered_schemas();
-                serde_json::to_string(&schemas).unwrap_or_default()
-            };
+            // prompt 内的工具段只渲染「分组 + 工具名」（与 Leader 同一契约）：
+            // 完整 schema 只由请求的 API tools 字段下发一次。此处传本体 schema
+            // 切片，既供名字渲染，也供桌面能力探测（不能传已渲染的字符串）。
+            let tools = self.get_filtered_schemas();
             // Check vision availability: capabilities.vision > main model supports_vision > none
             let vision_model = self.current_vision_model();
             // 主模型 supports_vision：统一消歧入口（经 resolve_supports_vision 同源）
@@ -502,7 +502,7 @@ impl WorkflowAgent {
                 &self.model_label,
                 Some(self.llm.provider_name()),
                 main_supports_vision,
-                &tool_schemas,
+                &tools,
                 &self.user_label,
                 &self.assistant_name,
                 vision_model.as_deref(),
@@ -612,6 +612,10 @@ impl WorkflowAgent {
         });
 
         let mut user_requested_stop = false;
+        // ── 跨迭代 text 边界分隔 ──
+        // 与 leader 共用 agent::common::TextBoundary 唯一实现：前端对
+        // llm_text_delta 纯字符串拼接，迭代边界只能由后端补。禁止另写一套。
+        let text_boundary = crate::agent::common::TextBoundary::new();
 
         for iteration in 0..self.config.max_iterations {
             if cancel_flag.load(Ordering::SeqCst) {
@@ -730,7 +734,9 @@ impl WorkflowAgent {
             }
 
             // ── LLM call with real-time streaming ──
-            let events = self.llm_stream_with_streaming(cancel_flag).await?;
+            let events = self
+                .llm_stream_with_streaming(cancel_flag, &text_boundary)
+                .await?;
             if cancel_flag.load(Ordering::SeqCst) {
                 continue; // Report cancellation at the next loop boundary; do not dispatch.
             }
@@ -1397,8 +1403,12 @@ impl WorkflowAgent {
     async fn llm_stream_with_streaming(
         &mut self,
         cancel_flag: &AtomicBool,
+        text_boundary: &crate::agent::common::TextBoundary,
     ) -> crate::Result<Vec<AssistantEvent>> {
         const MAX_RETRIES: u32 = 2;
+
+        // 本迭代边界句柄（与 leader 同一共享实现，禁止复制状态机）。
+        let iteration_break = text_boundary.begin_iteration();
 
         // Tool schemas cached
         let tools = {
@@ -1454,22 +1464,25 @@ impl WorkflowAgent {
                 .get(self.llm.provider_kind().as_str())
                 .map(|p| p.quirks().content_tool_tags)
                 .unwrap_or(&[]);
+            // 每次 attempt 各自持句柄 clone：closure 是 move，不能把外层句柄移走
+            let iteration_break = iteration_break.clone();
             let emitter = Box::new(move |event: crate::api::AssistantEvent| {
                 if let crate::api::AssistantEvent::TextDelta(text) = &event {
+                    // 跨迭代边界：本迭代首个 TextDelta 前补一个换行
+                    iteration_break.before_delta(stream_emitter.as_deref(), false);
                     // Single routing entry: process_text_delta (think split +
                     // tool-XML strip with the provider tag set), then emit
                     // thinking (is_thinking=true) before content
                     // (is_thinking=false) so the frontend order is stable.
-                    // 返回值（是否产出可见 text）暂不使用：工作流步骤的过程 text
-                    // 不进跨迭代边界分隔（见 `emit_text_break` 与 react_loop 的
-                    // stream_text_seen）。
-                    let _ = crate::agent::common::route_stream_text_delta(
+                    if crate::agent::common::route_stream_text_delta(
                         text,
                         &think_state,
                         content_tool_tags,
                         false,
                         stream_emitter.as_deref(),
-                    );
+                    ) {
+                        iteration_break.mark_emitted();
+                    }
                 }
                 if let crate::api::AssistantEvent::Reasoning(text) = &event {
                     // DeepSeek thinking mode: reasoning_content deltas arrive as

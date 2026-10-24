@@ -373,6 +373,45 @@
   user-select: none;
   border: 1px solid var(--glass-1);
 }
+/* 代码块头部：语言标签在左、复制按钮在右（2026-10-24 大王定：纯代码块右上角复制） */
+.code-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 20px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.code-block-head .code-lang-label {
+  margin-right: auto;
+  margin-bottom: 0;
+}
+.code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--glass-1);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--spark-dim);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+.code-copy-btn:hover,
+.code-copy-btn:focus-visible {
+  color: var(--spark-primary);
+  border-color: var(--glass-2);
+  background: var(--glass-0);
+}
 .markdown-code-block code {
   font-family: inherit;
   font-size: inherit;

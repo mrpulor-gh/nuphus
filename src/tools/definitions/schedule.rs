@@ -12,7 +12,7 @@ impl ToolRegistry {
     pub(crate) fn register_schedule_cron(&mut self) {
         self.register(ToolDef {
             name: "schedule_cron".to_string(),
-            description: "Manage workflow cron schedules (list/add/remove). Changes persist and take effect immediately.".to_string(),
+            description: "管理定时调度（cron 五字段 + IANA 时区）：list 列出 / add 新增 / remove 删除；写入即生效，声明默认值在触发时读取。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

@@ -65,7 +65,7 @@ impl ToolRegistry {
     fn register_experience_save(&mut self) {
         self.register(ToolDef {
             name: "experience_save".to_string(),
-            description: "保存通用操作经验到 JSON 文件。存「法」不存「案」——只保存可跨应用复用的通用方法论，不保存某个具体应用的参数实例。同名存在时保留 created 时间，更新 updated 为当前时间并覆盖 content/keywords/tags。".to_string(),
+            description: "保存跨应用可复用的操作方法论（不存具体应用参数实例）；同 domain/category/name 覆盖。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -177,7 +177,7 @@ impl ToolRegistry {
     fn register_experience_query(&mut self) {
         self.register(ToolDef {
             name: "experience_query".to_string(),
-            description: "检索经验库。按 domain + category（可选）+ 关键词匹配搜索经验文件。关键词在 keywords 和 content 字段中全文检索（AND 匹配，大小写不敏感）。返回 name/keywords/tags/content 摘要。".to_string(),
+            description: "检索经验库：domain(+category) 过滤，query 在 keywords/content 全文 AND 匹配（忽略大小写）。返回 name/keywords/tags/content 摘要。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

@@ -359,14 +359,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         let mut reasoning_followup_done = false;
 
         // ── 跨迭代 text 边界分隔（issue #66 后续）──
-        // 前端把 llm_text_delta 做纯字符串拼接（useEvents.ts：m.content + event.text
-        // 与 last.text + event.text），自身不插任何分隔——它无法知道一轮 LLM 调用
-        // 在哪里结束。一轮任务通常横跨多个 react 迭代（每次工具调用后又是一轮 LLM），
-        // 于是上一轮末句与下一轮首句直接相邻：MarkdownContent 收到的是整块无 \n 的
-        // 文本，走单行分支不产 span.md-line，多步过程性文字塌成连续文字流。
-        // 这里在每轮「首个内容 text」之前补一个换行；本轮无 text 则不补，纯工具轮
-        // 不会留下孤立空行。修在 Rust 侧而非前端，一次覆盖气泡 / timeline / mobile。
-        let stream_text_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // 共享实现见 agent::common::TextBoundary：一轮任务内跟踪「是否已有迭代
+        // 产出过可见 text」，在下一迭代首个 TextDelta 前补一个换行，避免前端
+        // 纯字符串拼接把过程性 text 塌成连续文字流。所有 runtime 共用，禁止复制。
+        let text_boundary = crate::agent::common::TextBoundary::new();
 
         // 上下文预算：执行中防溢出（预警 + 强制收敛）。达到强制线 = 让 agent 输出
         // 最终回复、自然结束循环；loop 结束后 maybe_refine_session 自动 refine，
@@ -390,12 +386,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 last_flush = Instant::now();
             }
 
-            // 本轮是否需要补分隔 = 此前是否已有迭代产出过内容 text。
-            // 用独立 Arc 而非复用 stream_text_seen：发出即清零，保证同轮后续
-            // chunk 不会被反复插入换行。
-            let break_before_text = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-                stream_text_seen.load(std::sync::atomic::Ordering::SeqCst),
-            ));
+            // 本迭代的边界句柄：此前已有可见 text 时，首个 TextDelta 前补换行。
+            let iteration_break = text_boundary.begin_iteration();
             if iteration > 0 && iteration % 5 == 0 {
                 let progress = crate::agent::common::render_ascii_progress(
                     iteration,
@@ -607,8 +599,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 let collected_clone = collected.clone();
                 let think_state = in_think.clone();
                 let first_token_clone = first_token_at.clone();
-                let break_before_text_clone = break_before_text.clone();
-                let stream_text_seen_clone = stream_text_seen.clone();
+                let iteration_break_clone = iteration_break.clone();
                 let emitter = Box::new(move |event: crate::api::AssistantEvent| {
                     // 首 token 时间戳：首个内容/推理 chunk 到达即记录（dsh turn-metrics
                     // 的 firstTokenTime 等价物）。TTFT = 该戳 - gen_attempt_start。
@@ -623,12 +614,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         }
                     }
                     if let crate::api::AssistantEvent::TextDelta(text) = &event {
-                        // 迭代边界分隔：本内容 chunk 若是本轮首个可见 text 且此前已有
-                        // 迭代产出过 text，先补一个换行（swap 保证同轮只补一次）
-                        if break_before_text_clone.swap(false, std::sync::atomic::Ordering::SeqCst)
-                        {
-                            crate::agent::common::emit_text_break(exec_emitter.as_deref(), false);
-                        }
+                        // 迭代边界分隔（共享实现）：本迭代首个 TextDelta 前补换行
+                        iteration_break_clone.before_delta(exec_emitter.as_deref(), false);
                         // Single routing entry: process_text_delta (think split +
                         // tool-XML strip with the provider tag set), then emit
                         // thinking (is_thinking=true) before content
@@ -641,7 +628,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             exec_emitter.as_deref(),
                         ) {
                             // 本轮确实产出了可见 text → 下一轮需要补分隔
-                            stream_text_seen_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                            iteration_break_clone.mark_emitted();
                         }
                     }
                     if let crate::api::AssistantEvent::Reasoning(text) = &event {
@@ -1278,6 +1265,21 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         ),
                         false,
                     );
+                    // HUD 仲裁按 ToolCallStart/End 配对注册/注销——此处 continue
+                    // 缺 End 会让条目泄漏、活跃集永远非空。补一条 stub End。
+                    if let Some(ref emitter) = self.agent.exec_emitter {
+                        emitter.emit(NuphusEvent::ToolCallEnd {
+                            call_id: call.id.clone(),
+                            tool_name: call.tool.clone(),
+                            success: false,
+                            duration_ms: 0,
+                            output_preview: format!("unknown tool {}", call.tool),
+                            output_full_size: 0,
+                            is_truncated: false,
+                            error: Some(format!("unknown tool {}", call.tool)),
+                            from_task: false,
+                        });
+                    }
                     continue;
                 }
 

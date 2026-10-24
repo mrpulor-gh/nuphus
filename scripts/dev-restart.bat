@@ -11,6 +11,8 @@ if errorlevel 1 (
   pause >nul
   exit /b 1
 )
+REM touch 快捷方式使其 mtime 变化，强制 Explorer 重新提取目标 exe 的图标（避免构建后桌面图标变空白）
+if exist "%USERPROFILE%\Desktop\nuphus.lnk" powershell -NoProfile -Command "(Get-Item '%USERPROFILE%\Desktop\nuphus.lnk').LastWriteTime = Get-Date" >nul 2>&1
 echo [3/3] 重启 Nuphus...
 start "" "%~dp0..\target\debug\nuphus.exe"
 echo 完成

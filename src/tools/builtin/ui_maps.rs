@@ -175,7 +175,7 @@ impl ToolRegistry {
     fn register_ui_maps_save_screen(&mut self) {
         self.register(ToolDef {
             name: "ui_maps_save_screen".to_string(),
-            description: "保存/更新一个屏幕的布局解析结果（regions + anchors）。Leader 在阶段一探索完一个屏幕后立即调用。同名 screen 会覆盖更新（不丢失其他屏幕数据）。".to_string(),
+            description: "保存/更新某屏幕的布局解析（regions + anchors）；同名 screen 覆盖该项，其余屏幕保留。探索完一个屏幕立即调用。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -277,7 +277,7 @@ impl ToolRegistry {
     fn register_ui_maps_save_experience(&mut self) {
         self.register(ToolDef {
             name: "ui_maps_save_experience".to_string(),
-            description: "保存一个操作经验到 app 的 ui-maps。Leader 在工作流确认后提取关键操作链和判断依据。同一 exp_id 会覆盖更新。不存坐标参数（坐标在 workflow 的 params.json 中）。".to_string(),
+            description: "保存可复用操作经验（操作链 + 判断依据）到该应用的 ui-maps；同 id 覆盖。不存坐标（坐标归 params.json）。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -378,7 +378,7 @@ impl ToolRegistry {
     fn register_ui_maps_search(&mut self) {
         self.register(ToolDef {
             name: "ui_maps_search".to_string(),
-            description: "两级搜索 ui-maps：不传 screen_name 时返回匹配 app 的骨架（screen 名列表 + experience 名列表）；传 screen_name 时返回该屏幕的完整 regions 数据和关联 experiences。递归遍历所有子目录。".to_string(),
+            description: "两级检索 ui-maps：无 screen_name → 返回 app 骨架（screen/experience 名）；有 screen_name → 返回该屏完整 regions 与关联 experiences。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

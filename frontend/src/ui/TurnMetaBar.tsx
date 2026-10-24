@@ -117,33 +117,46 @@ export function runningToolLabel(tool: TurnMetaBarActiveTool): string {
 /** 耐心阈值（毫秒）：单条工具执行超过 60s 才提示（HUD 单次运行同款节奏） */
 const PATIENCE_DELAY_MS = 60_000
 
-/** 执行中状态指示：HUD IconSpinner 同款（track + 半圆弧旋转）——「复用 HUD 的
- * svg 图标变化」（大王 2026-10-22）。仅 duration slot 且 isLive 时渲染。 */
-function LiveSpinner() {
+/** 执行中状态指示（2026-10-24 大王定）：1.5s 平滑节奏——
+ *  四角圆点同步顺时针换位 → 中心聚合脉冲 → 带过冲弹回四角，
+ *  四角轻微呼吸后循环。方形 SVG 块无边框无背景；实际尺寸 10×10（DOM）。 */
+function LiveThinking() {
   return (
     <svg
       width="10"
       height="10"
-      viewBox="0 0 14 14"
+      viewBox="0 0 10 10"
       fill="none"
-      className="turn-meta-spinner"
+      className="turn-meta-thinking"
       aria-hidden="true"
     >
       <circle
-        cx="7"
-        cy="7"
-        r="5.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        fill="none"
-        opacity="0.3"
+        cx="2"
+        cy="2"
+        r="1.35"
+        fill="currentColor"
+        className="turn-meta-thinking-dot turn-meta-thinking-dot--tl"
       />
-      <path
-        d="M12.5 7A5.5 5.5 0 0 0 1.5 7"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        fill="none"
+      <circle
+        cx="8"
+        cy="2"
+        r="1.35"
+        fill="currentColor"
+        className="turn-meta-thinking-dot turn-meta-thinking-dot--tr"
+      />
+      <circle
+        cx="8"
+        cy="8"
+        r="1.35"
+        fill="currentColor"
+        className="turn-meta-thinking-dot turn-meta-thinking-dot--br"
+      />
+      <circle
+        cx="2"
+        cy="8"
+        r="1.35"
+        fill="currentColor"
+        className="turn-meta-thinking-dot turn-meta-thinking-dot--bl"
       />
     </svg>
   )
@@ -227,7 +240,7 @@ export function TurnMetaBar({
     <div className={`turn-meta-bar${className ? ` ${className}` : ''}`}>
       {chips.map(c => (
         <span key={c.key} className={`turn-meta-chip turn-meta-chip--${c.key}`}>
-          {c.key === 'duration' && isLive && <LiveSpinner />}
+          {c.key === 'duration' && isLive && <LiveThinking />}
           <span className="turn-meta-chip-label">{c.label}</span>
           <span className="turn-meta-chip-value">{c.value}</span>
         </span>

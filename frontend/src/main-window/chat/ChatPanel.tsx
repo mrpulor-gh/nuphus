@@ -2144,65 +2144,65 @@ export function ChatPanel({
                                   <span className="msg-plain-text">{msg.content}</span>
                                 ) : null}
                               </div>
-                              {msg.role === 'assistant' && !(isCurrentAgent && isProcessing) && (
-                                <div className="message-actions">
-                                  <IconButton
-                                    variant="msg-action"
-                                    label="复制"
-                                    title={copiedMsgId === msg.id ? '已复制' : '复制内容'}
-                                    onClick={() => handleCopy(msg.id, msg.content)}
-                                  >
-                                    {copiedMsgId === msg.id ? (
-                                      <IconCheck size={14} />
-                                    ) : (
-                                      <IconCopy size={14} />
-                                    )}
-                                  </IconButton>
-                                  <IconButton
-                                    variant="msg-action"
-                                    label="点评"
-                                    title="点评"
-                                    onClick={() => {
-                                      const userMsg =
-                                        [...messages.slice(0, idx)]
-                                          .reverse()
-                                          .find(m => m.role === 'user')?.content ?? ''
-                                      setRatingMsg({
-                                        id: msg.id,
-                                        content: msg.content,
-                                        userQuestion: userMsg,
-                                      })
-                                    }}
-                                  >
-                                    <IconStar size={14} />
-                                  </IconButton>
-                                  {msg.traceItems && msg.traceItems.length > 0 && (
-                                    <IconButton
-                                      variant="msg-action"
-                                      label="执行回溯"
-                                      title="查看该轮执行过程"
-                                      onClick={() => onShowExecTrace?.(msg.traceItems!)}
-                                    >
-                                      <IconHistory size={14} />
-                                    </IconButton>
-                                  )}
+                              {msg.role === 'assistant' && (
+                                <div className="message-footer-row">
                                   {/* ── 本轮元数据（耗时 / 令牌 / 步数）──
-                                       已移至动作容器外常驻（2026-10-22）：
-                                       按钮组（复制/点评/执行回溯）执行完成才显示，
-                                       元数据条不随 hover、执行中也实时可见。数据源 =
-                                       ChatMessage.meta（后端 TurnMeta）：实时轮次由
+                                       常驻：不随 hover——执行中也能看到耗时/步数实时在涨。
+                                       数据源 = ChatMessage.meta（后端 TurnMeta）：实时轮次由
                                        useEvents 写入、历史由 applyHistory 还原。
                                        空数据由组件判空后不渲染，不留空位。 */}
+                                  <TurnMetaBar
+                                    meta={msg.meta}
+                                    activeTool={activeTool}
+                                    className="turn-meta-bar--actions"
+                                  />
+                                  {/* 动作按钮（复制/点评/执行回溯）跟在执行数据后，同行显示
+                                      （2026-10-24 大王定；执行完成才显示） */}
+                                  {!(isCurrentAgent && isProcessing) && (
+                                    <div className="message-actions">
+                                      <IconButton
+                                        variant="msg-action"
+                                        label="复制"
+                                        title={copiedMsgId === msg.id ? '已复制' : '复制内容'}
+                                        onClick={() => handleCopy(msg.id, msg.content)}
+                                      >
+                                        {copiedMsgId === msg.id ? (
+                                          <IconCheck size={14} />
+                                        ) : (
+                                          <IconCopy size={14} />
+                                        )}
+                                      </IconButton>
+                                      <IconButton
+                                        variant="msg-action"
+                                        label="点评"
+                                        title="点评"
+                                        onClick={() => {
+                                          const userMsg =
+                                            [...messages.slice(0, idx)]
+                                              .reverse()
+                                              .find(m => m.role === 'user')?.content ?? ''
+                                          setRatingMsg({
+                                            id: msg.id,
+                                            content: msg.content,
+                                            userQuestion: userMsg,
+                                          })
+                                        }}
+                                      >
+                                        <IconStar size={14} />
+                                      </IconButton>
+                                      {msg.traceItems && msg.traceItems.length > 0 && (
+                                        <IconButton
+                                          variant="msg-action"
+                                          label="执行回溯"
+                                          title="查看该轮执行过程"
+                                          onClick={() => onShowExecTrace?.(msg.traceItems!)}
+                                        >
+                                          <IconHistory size={14} />
+                                        </IconButton>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                              {msg.role === 'assistant' && (
-                                /* 常驻：不随 hover——执行中也能看到耗时/步数实时在涨
-                                   （按钮组才是「执行完才用」的动作，元数据条是状态信息） */
-                                <TurnMetaBar
-                                  meta={msg.meta}
-                                  activeTool={activeTool}
-                                  className="turn-meta-bar--actions"
-                                />
                               )}
                               {/* user 消息首轮 LLM 失败：hover 显示重试（优雅停止气泡无此标记） */}
                               {msg.role === 'user' && msg.failed && !isProcessing && onRetry && (

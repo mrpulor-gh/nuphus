@@ -2310,7 +2310,8 @@ const en: Record<string, string> = {
   'help.action': 'Action',
   'help.shortcut.send': 'Send message',
   'help.shortcut.newline': 'New line',
-  'help.shortcut.palette': 'Open command palette; in Workflow mode, open workflows',
+  'help.shortcut.palette': 'Open the command palette',
+  'help.shortcut.workflowList': 'Open the workflow list',
   'help.shortcut.focusInput': 'Focus the input box',
   'help.shortcut.newChat': 'New session (archives the current chat)',
   'help.shortcut.workflowPanel':
