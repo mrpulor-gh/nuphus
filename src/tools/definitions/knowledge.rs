@@ -40,7 +40,7 @@ impl ToolRegistry {
     pub(crate) fn register_knowledge_search(&mut self) {
         self.register(ToolDef {
             name: "knowledge_search".to_string(),
-            description: "搜索知识库文档（plugin/knowledge/ 下的 .md 文件）。返回标题、摘要、路径，不返回全文 — 用 Read 工具读取具体文档。".to_string(),
+            description: "搜索知识库文档（plugin/knowledge/ 下的 .md 文件）。返回标题、摘要、路径，不返回全文 — 用 Read 工具读取具体文档。多个关键词用空格分隔时按 AND 匹配（全部命中才返回）。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
