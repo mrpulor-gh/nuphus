@@ -645,6 +645,16 @@ export default function App() {
               onExpand={() => s.setShowExecTrace(true)}
               onClose={() => s.setDismissThinking(true)}
             />
+
+            {/* ── Desktop toolbar：右侧固定竖条，hover 显隐（无快捷键 / 无关闭）──
+              必须挂在 .chat-area **内**：.chat-area 自身 z-index:1（components.css，
+              压皮肤背景层）是一个 stacking context，header 三钮（.chat-header-right
+              z10）与外观面板（.apnp-panel z60）的层级都是 chat-area **局部**的。
+              dock 若留在 app-shell 根级，其 z10 是根层值 —— 会浮在整个 chat 区
+              之上，压住右锚定浮层（2026-10-24 事故：压住外观面板行内恢复小钮）。
+              移进来后 dock 的 z10 与 .chat-header-right 同上下文同值 = 真正同级：
+              高于消息内容，低于思考条 40 / 浮层（面板 60 等）。 */}
+            <DesktopToolbar onOpenTools={() => s.setShowTools(true)} />
           </div>
 
           <ExecutionTraceFloating
@@ -1211,9 +1221,6 @@ export default function App() {
       {memoryDialog === 'annotations' && (
         <AnnotationsDialog onClose={() => setMemoryDialog(null)} />
       )}
-
-      {/* ── Desktop toolbar：右侧固定竖条，hover 显隐（无快捷键 / 无关闭） ── */}
-      <DesktopToolbar onOpenTools={() => s.setShowTools(true)} />
     </div>
   )
 }

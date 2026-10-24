@@ -61,7 +61,10 @@
    - div.chat-area（App.tsx:426）               → 需占满剩余高度，必须落 content 行 ✔
    - SplashScreen（App.tsx:405；splash.css:2）  → position: fixed，行放置对其无影响 ✔
    - ErrorScreen（App.tsx:410；error.css:10）   → position: fixed，同上 ✔
-   - DesktopToolbar（App.tsx:1126）             → position: fixed，同上 ✔
+   - DesktopToolbar（2026-10-24 起移入 .chat-area 内，见 App.tsx）→ position: fixed，
+     行放置对其无影响 ✔（移入原因：根级 z10 会浮在 chat 区全部内容与浮层之上——
+     .chat-area 的 z-index:1 是 stacking context；移入后其 z10 与 .chat-header-right
+     同上下文同值，才是真正的「与主题/设置/CDP 按钮同级」）
    - MacosPermissionNotice（App.tsx:425）       → position: fixed，同上 ✔
    以下在 React 树里位于 .app-shell 内，但**渲染到 body**，DOM 上不是 grid item：
    - SkinBackdrop（portal → body）、AppContextMenu（portal → body）、

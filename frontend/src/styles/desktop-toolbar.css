@@ -19,14 +19,24 @@
   /* 视觉重心略高于几何中线（大王 2026-10-17 定：整体上移） */
   top: 45%;
   transform: translateY(-50%);
-  /* 层级与 .chat-header-left / .chat-header-right 同为10（chat-messages.css:66）。
-   2026-10-12 大王钦定：工具条不是弹窗，不该有任何「压过别的浮层」的特权；
-   但也不必比 header 更低——两者同属常驻 chrome，同层内按 DOM 顺序压住即可。
-   10 之上依次是：思考条 40 / 工具条自身遮罩 200 / island 260 / cmd-palette 300 /
-   右键菜单 3000 / 模型页遮罩 10000，以及 input-bar 50、后台任务面板 52、
-   设置类 60~90、确认弹窗 150 —— 用户正在用的任何弹窗都在工具条之上。
-   刻意不用 pointer-events:none（会让 hover 永不触发、整列变死 UI，
-   见文件头「热区纪律」）。 */
+  /* z-index:10 是 **.chat-area 栈叠上下文内的局部值**（dock 挂在该容器内，见
+     App.tsx ready 态），与 .chat-header-left / .chat-header-right
+     （chat-messages.css:66）同上下文同值 —— 这才是真正的同级。
+     2026-10-12 大王钦定：工具条不是弹窗，不该有任何「压过别的浮层」的特权；
+     两者同属常驻 chrome，同层内按 DOM 顺序压住即可。
+     ⚠️ 2026-10-24 事故（勿复发）：dock 曾在 app-shell 根级，其 z10 是**根层**值。
+     .chat-area 自身 z-index:1（components.css，压皮肤背景层）是一个 stacking
+     context，header 三钮与外观面板（z60）都被锁在第 1 层；根级 z10 的 dock
+     因此浮在整个 chat 区之上，压住外观面板的行内恢复小钮。
+     **不要把 dock 移出 .chat-area，也不要抬它的 z** —— 移出去必须重新评估栈叠：
+     0 会被皮肤背景层盖住（.app-skin-backdrop 同 z0 且 portal 在 body 末尾，
+     DOM 顺序在其之上）；1 与 chat-area 同层、按 DOM 顺序仍胜出；0 与 1 之间
+     没有整数可站。唯一正确的同级方式就是共处 .chat-area 这一个栈叠上下文。
+     10 之上依次是：思考条 40 / 工具条自身遮罩 200 / island 260 / cmd-palette 300 /
+     右键菜单 3000 / 模型页遮罩 10000，以及 input-bar 50、后台任务面板 52、
+     设置类 60~90、确认弹窗 150 —— 用户正在用的任何弹窗都在工具条之上。
+     （默认态显隐不用 pointer-events:none —— 那会让 hover 永不触发、整列变死 UI，
+     见文件头「热区纪律」。） */
   z-index: 10;
   display: flex;
   flex-direction: column;
