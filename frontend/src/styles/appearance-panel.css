@@ -28,7 +28,9 @@
 .apnp-panel {
   position: fixed;
   top: 56px;
-  right: 20px;
+  /* 右让位 55px：行内「恢复默认」小钮在每行控制区右端，right 太小时被
+     右侧 tools bar 压住，点不到。 */
+  right: 55px;
   z-index: 60;
   width: 380px;
   /* 底部预留 200px：输入 dock +  refine  chip 一列 header 之下的可视余量，
@@ -565,10 +567,11 @@
   outline-offset: 1px;
 }
 
-/* 无可恢复内容：留位但不可点（布局不跳、行序不乱） */
+/* 无可恢复内容：留位但不可点（布局不跳、行序不乱）。
+   光标保持 pointer（不按回 default）：小钮常态 disabled，hover 也要有
+   「这是可点控件」的样式反馈，而非默认箭头。 */
 .apnp-reset-btn:disabled {
   opacity: 0.35;
-  cursor: default;
 }
 
 /* ── 380px 窄窗适配 ──

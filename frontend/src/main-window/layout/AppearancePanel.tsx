@@ -108,14 +108,11 @@ const OPACITY_RESET_KEYS: Record<
   skin: [SKIN_OPACITY_KEY],
 }
 
-/**
- * 强调色的派生键（customTheme.applyCoreColor 随主键一起写进草稿）。
- * 恢复时必须与主键**同组**回退：只回退 '--accent' 会把派生键留在「上一版强调色」
- * 的取值上 —— 主键与派生键脱钩（底色回蓝、悬停/辉光还是红的）。
- * 键清单直接取自 customTheme（不另建镜像常量）：清单漂移会让恢复只回退一半。
- */
-
-/** 颜色行 → 覆盖键组（普通 token 单键；强调色带 4 个派生键） */
+/** 颜色行 → 覆盖键组（普通 token 单键；强调色带 4 个派生键）。
+ *
+ * 强调色必须与派生键同组：applyCoreColor 随主键一起写草稿，只回退主键会把
+ * 派生键留在上一版强调色的取值上（主键与派生键脱钩）。清单取自 customTheme，
+ * 不另建镜像常量 —— 清单漂移会让恢复只回退一半。 */
 function colorResetKeys(key: CoreTokenKey): readonly string[] {
   return key === '--accent' ? ['--accent', ...ACCENT_DERIVED_KEYS] : [key]
 }
@@ -642,9 +639,11 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
 
   /**
    * 把该组键恢复到基线：**只改草稿**（previewOverrides），已保存主题一概不碰。
-   * 草稿被清空 → clearCustomPreview()：空草稿若仍留在 previewOverrides 上会
-   * 遮蔽已保存主题的覆盖（activeOverrides = previewOverrides ?? customTheme…），
-   * 用户会看不到自己保存过的值。
+   * 草稿与基线等值（含被清空）→ clearCustomPreview()：空草稿若仍留在
+   * previewOverrides 上会遮蔽已保存主题的覆盖
+   * （activeOverrides = previewOverrides ?? customTheme…），用户会看不到自己
+   * 保存过的值；等值草稿留着则让「放弃修改」亮着却没有任何真实未保存差异
+   * （假未保存态）——两者都清。
    */
   const resetKeysToBaseline = (keys: readonly string[]) => {
     const next: Record<string, string> = { ...(previewOverrides ?? {}) }
@@ -662,7 +661,10 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
         else delete next[key]
       }
     }
-    if (Object.keys(next).length === 0) {
+    // 只剩与基线等值的键 = 没有真实未保存差异 → 清草稿（空草稿同样在此收敛）：
+    // 等值草稿留着会让「放弃修改」亮着，构成假未保存态
+    const hasRealDiff = Object.keys(next).some(key => next[key] !== baselineOverrides[key])
+    if (!hasRealDiff) {
       clearCustomPreview()
       return
     }

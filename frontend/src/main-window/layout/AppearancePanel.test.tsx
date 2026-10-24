@@ -1186,4 +1186,54 @@ describe('行内「恢复默认」：只回退未保存草稿，不碰已保存�
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#0d1b2a')
     expect(document.documentElement.style.getPropertyValue('--accent-rgb')).toBe('13, 27, 42')
   })
+
+  it('恢复默认后草稿与基线等值 → 清空草稿（不留「假未保存」态）', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: { '--surface-0': '#0d1b2a' } },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+
+    // 改「窗口底色」→ 草稿覆盖该主题已保存的值
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[1], {
+      target: { value: '#123456' },
+    })
+    expect(screen.getByRole('button', { name: '放弃修改' })).toBeInTheDocument()
+
+    fireEvent.click(resetBtn('窗口底色（全局背景的基础色）'))
+
+    // 回到已保存值，且草稿被清掉：等值草稿 = 假未保存，「放弃修改」不再出现
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('#0d1b2a')
+    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    expect(resetBtn('窗口底色（全局背景的基础色）')).toBeDisabled()
+  })
+
+  it('恢复默认后仍有其它真实差异 → 草稿保留（只清等值部分，不误伤真草稿）', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: { '--surface-0': '#0d1b2a' } },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+
+    // 两处真实修改：窗口底色 + 强调色
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[1], {
+      target: { value: '#123456' },
+    })
+    fireEvent.change(view.container.querySelectorAll('.color-token-picker')[0], {
+      target: { value: '#ff0000' },
+    })
+
+    // 只恢复窗口底色 → 强调色仍是真实差异，草稿必须保留
+    fireEvent.click(resetBtn('窗口底色（全局背景的基础色）'))
+
+    expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe('#0d1b2a')
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#ff0000')
+    expect(screen.getByRole('button', { name: '放弃修改' })).toBeInTheDocument()
+  })
 })
