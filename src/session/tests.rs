@@ -676,4 +676,155 @@ mod tests {
         assert_eq!(content[1]["type"], "text");
         assert!(content[1]["text"].as_str().unwrap().contains("已保存至"));
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // in-loop refine 支撑件（2026-10-25 85% 硬止损链路）
+    // ══════════════════════════════════════════════════════════════════
+
+    /// 大王 2026-10-25 追问：多次 refine 后必须只保留最后一次的 refine 内容
+    /// （refine1+refine2+... 不得累加）。连续 3 次 refine 后断言：
+    /// - refine 摘要消息恒为 1 条，内容 = 最后一次摘要（旧摘要逐次删除）；
+    /// - 对话消息为 0（每次 refine 都真压缩）；
+    /// - 非 refine 的 System（安全警告等）保留，不误删。
+    #[test]
+    fn accumulate_distill_keeps_only_latest_across_multiple_refines() {
+        let mut session = Session::new();
+        // 首次提炼（replace：清空全部，只留摘要）——此后进入 is_refined 状态
+        session.replace_with_distill("summary-1");
+        // 运行中注入的安全警告（非 refine System）——后续提炼必须保留
+        session.push_system("安全警告".to_string());
+        for i in 2..=3 {
+            session.push_user(format!("用户提问 {i}"));
+            session.push_assistant(vec![ContentBlock::Text {
+                text: format!("助手回复 {i}"),
+                reasoning: None,
+            }]);
+            session.accumulate_distill(&format!("summary-{i}"));
+
+            let refine_msgs: Vec<_> = session
+                .messages
+                .iter()
+                .filter(|m| Session::is_refine_system_message(m))
+                .collect();
+            assert_eq!(
+                refine_msgs.len(),
+                1,
+                "第 {i} 次 refine 后必须只有 1 条 refine 摘要（不得累加）"
+            );
+            assert!(
+                refine_msgs[0]
+                    .text_content()
+                    .contains(&format!("summary-{i}")),
+                "第 {i} 次 refine 后摘要必须是最后一次内容"
+            );
+            assert!(
+                !refine_msgs[0]
+                    .text_content()
+                    .contains(&format!("summary-{}", i - 1)),
+                "第 {i} 次 refine 后不得残留上一次摘要内容"
+            );
+            // 对话消息全清（真压缩）
+            assert!(
+                session
+                    .messages
+                    .iter()
+                    .all(|m| m.role == MessageRole::System),
+                "第 {i} 次 refine 后对话消息必须全清"
+            );
+            // 非 refine 的 System 保留
+            assert!(
+                session
+                    .messages
+                    .iter()
+                    .any(|m| m.text_content().contains("安全警告")),
+                "第 {i} 次 refine 后安全警告 System 必须保留"
+            );
+        }
+    }
+
+    /// 提炼轮失败回滚：truncate_messages 必须精确移除注入的提示词消息，
+    /// 且消息数不足时不得 panic / 不得增长（refine_in_loop 的失败路径依赖）。
+    #[test]
+    fn test_truncate_messages_rolls_back_injected_prompt() {
+        let mut session = Session::new();
+        session.push_user("task".to_string());
+        session.push_assistant(vec![ContentBlock::Text {
+            text: "working".to_string(),
+            reasoning: None,
+        }]);
+        let before = session.len();
+        session.push_user_internal("REFINE PROMPT".to_string());
+        assert_eq!(session.len(), before + 1);
+        session.truncate_messages(before);
+        assert_eq!(session.len(), before, "注入的提炼提示词必须被完整回滚");
+        // 目标长度大于当前长度：不 panic、不增长
+        session.truncate_messages(100);
+        assert_eq!(session.len(), before);
+    }
+
+    /// TooLong 应急截断：System 保留 + 最后一条纯 User 及其后完整工具链保留，
+    /// 删除边界不落在 tool_result 上（防撕断 tool_use/tool_result 对）。
+    #[test]
+    fn test_emergency_truncate_keeps_last_plain_user_and_system() {
+        let mut session = Session::new();
+        session.push_system("安全警告".to_string());
+        // 第一段工具链（应被整体丢弃）
+        session.push_user("first task".to_string());
+        session.push_assistant(vec![ContentBlock::ToolUse {
+            id: "t1".to_string(),
+            name: "Read".to_string(),
+            input: serde_json::json!({}),
+        }]);
+        session.push_tool_result("t1".to_string(), "huge result".to_string(), false);
+        // 中途追加指令（纯 User，应成为保留起点）
+        session.push_user("continue with phase 2".to_string());
+        session.push_assistant(vec![ContentBlock::Text {
+            text: "ok".to_string(),
+            reasoning: None,
+        }]);
+
+        let removed = session.emergency_truncate_for_overflow();
+        assert!(removed > 0, "第一段工具链必须被丢弃");
+        // System 保留
+        assert!(
+            session
+                .messages()
+                .iter()
+                .any(|m| m.role == MessageRole::System),
+            "System（安全警告/refine 摘要）必须保留"
+        );
+        // 第一条非 System 消息必须是纯 User（不含 ToolResult）——删除边界
+        // 不得落在工具结果上
+        let first_non_system = session
+            .messages()
+            .iter()
+            .find(|m| m.role != MessageRole::System);
+        let first = first_non_system.expect("必须保留至少一条非 System 消息");
+        assert_eq!(first.role, MessageRole::User);
+        assert!(
+            !first
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolResult { .. })),
+            "截断后不得以孤立 ToolResult 开头"
+        );
+        // 保留段完整：纯 User + 其后的 assistant
+        assert_eq!(session.len(), 3, "System + 纯 User + assistant");
+    }
+
+    /// 无可删历史时返回 0（调用方据此如实报错，不假装自救成功）。
+    #[test]
+    fn test_emergency_truncate_noop_when_only_initial_task() {
+        let mut session = Session::new();
+        session.push_system("safety".to_string());
+        session.push_user("only task".to_string());
+        session.push_assistant(vec![ContentBlock::Text {
+            text: "reply".to_string(),
+            reasoning: None,
+        }]);
+        let before = session.len();
+        let removed = session.emergency_truncate_for_overflow();
+        assert_eq!(removed, 0, "唯一纯 User 即保留起点，无历史可删");
+        assert_eq!(session.len(), before);
+    }
 }

@@ -337,6 +337,56 @@ impl Session {
         self.refined = false;
     }
 
+    /// 回滚到指定消息数——in-loop refine 失败时移除刚注入的提示词消息
+    /// （先调用后 commit：摘要没拿到就不能在 session 里留下提炼指令残留，
+    /// 否则下一轮 LLM 会看到一条无人响应的「开始提炼」指令）。
+    pub fn truncate_messages(&mut self, len: usize) {
+        if self.messages.len() > len {
+            self.messages.truncate(len);
+        }
+    }
+
+    /// 应急截断（TooLong 兜底）：上下文已被 API 判超限且不可重试时的最后自救。
+    ///
+    /// 策略：**最后一条纯 User 消息**（不含 ToolResult）及其之后的完整工具链
+    /// 保留，此前所有非 System 消息整体丢弃——删除边界只落在纯 User 消息上，
+    /// 绝不撕断 assistant tool_use / user tool_result 对（孤儿块会被 API 拒绝）。
+    /// System（含 refine 摘要与安全警告）一律保留。
+    ///
+    /// 这是粗粒度截断（可能多删）：TooLong 场景的目标是保命重试，不是精细压缩；
+    /// 精细压缩由 85% 硬止损（in-loop refine）负责。返回删除的消息数；
+    /// 0 = 无处可删（除 System 前缀外已无历史），调用方应如实报错。
+    pub fn emergency_truncate_for_overflow(&mut self) -> usize {
+        // 最后一条纯 User 消息的下标（从后往前找）
+        let keep_from = self.messages.iter().enumerate().rev().find_map(|(i, m)| {
+            (m.role == MessageRole::User
+                && !m
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolResult { .. })))
+            .then_some(i)
+        });
+        let Some(keep_from) = keep_from else {
+            return 0;
+        };
+        let before = self.messages.len();
+        let kept: Vec<Message> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(i, m)| m.role == MessageRole::System || *i >= keep_from)
+            .map(|(_, m)| m.clone())
+            .collect();
+        let removed = before.saturating_sub(kept.len());
+        if removed > 0 {
+            self.messages = kept;
+            // 会话内容已变，官方读数作废（下一请求会重建）
+            self.api_input_tokens = 0;
+            self.api_output_tokens = 0;
+        }
+        removed
+    }
+
     /// 方案 1: 提炼后原始对话存入 memory，用提炼内容替换当前会话历史
     /// 保留 session ID、depth 不变，清空 messages，插入引导消息
     pub fn replace_with_distill(&mut self, distill_content: &str) {

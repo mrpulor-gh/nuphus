@@ -188,6 +188,11 @@ pub struct ReactAgent {
     pub(crate) pause_flag: Option<Arc<AtomicBool>>,
     /// 强制提炼计数器（防止无限循环提炼）
     pub refine_count: u32,
+    /// 提炼轮禁工具开关（**代码级**，非提示词约束）：true 时 build_request
+    /// 不携带任何 tools，react_loop 剔除模型产出的 tool_use 块——提炼轮
+    /// 只允许输出摘要文本，杜绝「提炼轮继续调工具膨胀上下文」。
+    /// 仅 in-loop refine 的提炼轮临时置 true，结束立即复位。
+    pub tools_suppressed: bool,
     /// 注意力提示标记（每次 refine 后重置，大窗口专用，每 refine 周期一次）
     pub context_hint_shown: bool,
     /// 上次触发记忆保存提示时的 token 数（每 100K 递增触发）
@@ -283,6 +288,7 @@ impl ReactAgent {
             client_factory: None,
             pause_flag: None,
             refine_count: 0,
+            tools_suppressed: false,
             context_hint_shown: false,
             last_memory_hint_at: 0,
             cached_base_prompt: None,
@@ -530,21 +536,27 @@ impl ReactAgent {
             }));
             self.last_used_binding = Some((provider, model));
         }
-        let tools = if let Some(tools) = &self.cached_tools_schemas {
-            tools.clone()
-        } else {
-            let schemas = self.prompt_tool_schemas();
-            tracing::info!(
-                "[PromptCache] Tool schemas cached ({} tools) for session",
-                schemas.len()
-            );
-            self.cached_tools_schemas = Some(schemas.clone());
-            schemas
-        };
-
-        crate::api::MessageRequest::new(&self.config.model, messages)
-            .with_merged_system(merged_system_prompt)
-            .with_tools(tools)
+        let mut request = crate::api::MessageRequest::new(&self.config.model, messages)
+            .with_merged_system(merged_system_prompt);
+        // 提炼轮禁工具（代码级，非提示词约束）：请求体完全不携带 tools 字段，
+        // 模型无从发起工具调用——85% 硬止损的提炼轮必须只产出摘要，不能继续
+        // 膨胀上下文（19e52dee 仅靠提示词「禁止调用任何工具」，模型不遵守时
+        // 提炼轮本身就会失控）。其余请求路径不受影响（默认 false）。
+        if !self.tools_suppressed {
+            let tools = if let Some(tools) = &self.cached_tools_schemas {
+                tools.clone()
+            } else {
+                let schemas = self.prompt_tool_schemas();
+                tracing::info!(
+                    "[PromptCache] Tool schemas cached ({} tools) for session",
+                    schemas.len()
+                );
+                self.cached_tools_schemas = Some(schemas.clone());
+                schemas
+            };
+            request = request.with_tools(tools);
+        }
+        request
     }
 
     /// Set model factory (for runtime model switching)

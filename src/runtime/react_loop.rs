@@ -358,18 +358,28 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         // Prevents infinite follow-up loops; resets each run() call.
         let mut reasoning_followup_done = false;
 
+        // TooLong 应急截断是否已用（每轮一次）：上下文被 API 判超限且不可重试时，
+        // 返回失败前尝试一次「丢弃最老工具链」的自救重发；只救一次，防死循环。
+        let mut too_long_emergency_done = false;
+
         // ── 跨迭代 text 边界分隔（issue #66 后续）──
         // 共享实现见 agent::common::TextBoundary：一轮任务内跟踪「是否已有迭代
         // 产出过可见 text」，在下一迭代首个 TextDelta 前补一个换行，避免前端
         // 纯字符串拼接把过程性 text 塌成连续文字流。所有 runtime 共用，禁止复制。
         let text_boundary = crate::agent::common::TextBoundary::new();
 
-        // 上下文预算：执行中防溢出（prompt 线软预警 + 越线提炼注入）。越线时
-        // 注入未闭合提炼提示词，模型产出摘要后循环自然收敛；run() 收尾处
-        // 整体替换会话并 resume 接力续跑。flag 保证预警/提炼注入各一次，
-        // 不撑大上下文。
+        // 上下文预算：执行中防溢出（两级，2026-10-25 定权）。
+        // - prompt 线（Medium 50% / Large 30%）：软预警一次，提示模型规划收敛；
+        // - force 线（Small 75% / Medium 80% / Large 可调默认 50%）：软劝导一次，
+        //   给模型自己收敛的机会——收敛后轮次自然结束，turn-end 正常 refine
+        //   兜底，**不接力**；
+        // - 85%（绝对硬线）：唯一保命线与**唯一接力点**——小上下文长任务单
+        //   turn 内（上限 1000 迭代）可能一次暴涨顶爆 API；85% 保留 15% 余量
+        //   给「提炼请求 + 摘要输出」，越线当场提炼、压缩后从摘要就地续跑。
+        //   此线不依赖模型自觉（模型不遵守 force 劝导时它是唯一兜底）。
         let mut ctx_warned = false;
-        let mut ctx_force_converged = false;
+        let mut ctx_force_warned = false;
+        let mut ctx_hard_stop_done = false;
 
         // ── 轮中增量快照：进入循环前首刷一次 ──
         // 此刻 session 已含用户消息（上方 push_user），首次 LLM 请求尚未发出。
@@ -526,15 +536,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     .push_user_internal(crate::handoff::format_doorbell_section(&handoff_events));
             }
 
-            // ── 上下文预算：执行中防溢出（prompt 线软预警 + 越线提炼注入）──
-            // 分档与 turn-end 的 maybe_refine_session 同源（RefineTier）——废除
-            // 本循环自有的固定 85% 单线：两套线各管一段是「85% 没起作用」
-            // 排查误判的根源（2026-10-25）。
-            // 语义：prompt 线（Medium 50% / Large 30%）软预警一次；force 线
-            // （Small 75% / Medium 80% / Large 可调默认 50%）注入未闭合提炼
-            // 提示词——模型产出摘要、不再调用工具，循环自然收敛；run() 收尾
-            // 处整体替换会话（replace_with_distill，与 turn-end 同一落地动作）
-            // 并以 resume 断点续跑接力，任务从摘要接续。不硬杀、不丢任务。
+            // ── 上下文预算：执行中防溢出（两级，2026-10-25 定权）──
+            // 1) prompt 线（Medium 50% / Large 30%）：软预警一次；
+            // 2) force 线（分档 75/80/50，与 turn-end maybe_refine_session
+            //    同源）：软劝导一次——模型自己收敛，收敛后本轮自然结束，
+            //    turn-end 正常 refine 兜底，不接力；
+            // 3) 85% 绝对硬线：唯一保命线与唯一接力点——无视模型状态当场
+            //    提炼（refine_in_loop：禁工具提炼 → accumulate 压缩 → 从摘要
+            //    就地续跑）。模型不遵守 force 劝导继续暴涨时，此线是最后兜底；
+            //    85% 留出的 15% 余量正是提炼请求 + 摘要输出的安全空间。
             // 注入走 push_user_internal，不动系统提示前缀，不影响缓存命中。
             {
                 let cw = crate::agent::goal_types::get_context_window_for(
@@ -543,22 +553,49 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 );
                 // 官方 usage 缺失时回落字符估算（2026-10-25 审计修正：此前只读
                 // api_input_tokens，不回 usage 的 provider 会让本块整段失效）。
-                // 估算可能低估——这是水位监控的固有置信下限，非独立硬止损线。
+                // estimate 取 max(官方读数, 字符估算) 的保守值；中文密集时字符
+                // 估算仍可能偏低——85% 硬线是这类失真的最后一道确定性拦截。
                 let tokens = self.agent.session.estimate_token_usage();
                 if cw > 0 && tokens > 0 {
                     let tier = crate::agent::distill::RefineTier::for_window(cw);
                     let force_ratio = tier.force_ratio(self.config.large_force_refine_threshold);
                     let ratio = tokens as f64 / cw as f64;
-                    let at_force_line = ratio >= force_ratio;
-                    if at_force_line && !ctx_force_converged {
-                        // 越线即注入未闭合提炼提示词（替换原 85% 软劝导）：
-                        // 模型产出摘要、循环自然收敛后，由 run() 收尾处整体
-                        // 替换会话并 resume 接力续跑（见 Runtime::run）。
-                        ctx_force_converged = true;
-                        self.refine_injected = true;
-                        self.agent.session.push_user_internal(
-                            crate::agent::distill::REFINE_PROMPT_UNFINISHED.to_string(),
+
+                    if ratio >= 0.85 && !ctx_hard_stop_done {
+                        // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
+                        // 独立于 force 线——force 线已被模型无视时（或单次暴涨
+                        // 直接从线下越到 85%+），此处是最后一个不依赖模型自觉
+                        // 的动作点。ctx_hard_stop_done 保证本轮只硬切一次。
+                        ctx_hard_stop_done = true;
+                        ctx_force_warned = true;
+                        tracing::warn!(
+                            "[REFINE] 85% hard stop: {}/{} tokens ({:.1}%) — in-loop refine",
+                            tokens,
+                            cw,
+                            ratio * 100.0
                         );
+                        if !self.refine_in_loop(cancel_flag).await {
+                            // 提炼失败/达上限：降级硬劝导（一次性）——turn-end
+                            // 正常 refine 兜底，不 break（收敛与否交模型）。
+                            self.agent.session.push_user_internal(format!(
+                                "⚠️ 上下文用量已达 {:.0}%（约 {}/{} tokens），自动提炼未生效。\
+                                 请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
+                                ratio * 100.0,
+                                tokens,
+                                cw
+                            ));
+                        }
+                    } else if ratio >= force_ratio && !ctx_force_warned {
+                        // force 线软劝导：给模型自己收敛的机会（不接力——收敛后
+                        // 本轮结束，turn-end 正常 refine 处理）。
+                        ctx_force_warned = true;
+                        self.agent.session.push_user_internal(format!(
+                            "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens），接近该模型的容量上限。\
+                             请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
+                            ratio * 100.0,
+                            tokens,
+                            cw
+                        ));
                     } else if let Some(pr) = tier.prompt_ratio() {
                         if ratio >= pr && !ctx_warned {
                             ctx_warned = true;
@@ -748,6 +785,30 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             // （issue #92）。原始错误体始终保留 —— 关键词永远追不齐
                             // 服务商的措辞，漏匹配时用户/维护者仍能看懂真实原因。
                             let kind = crate::agent::common::classify_llm_error(&err_str);
+                            // TooLong 兜底（2026-10-25）：上下文已被 API 判超限且
+                            // 不可重试——返回失败之前做一次应急截断自救：丢弃最老
+                            // 工具链（保留最后一条纯 User 及其后完整链 + 全部
+                            // System），截断成功则重发；仍失败才如实报错。
+                            // 这是 85% 硬止损估算失真窗口（如中文密集会话字符
+                            // 估算偏低、单轮直越上限）的最后一道网。
+                            if kind == crate::agent::common::LlmErrorKind::TooLong
+                                && !too_long_emergency_done
+                            {
+                                too_long_emergency_done = true;
+                                let removed = self.agent.session.emergency_truncate_for_overflow();
+                                if removed > 0 {
+                                    self.agent.session.strip_incomplete_tools();
+                                    tracing::warn!(
+                                        "[REFINE] TooLong emergency truncate: removed {} msgs, retrying",
+                                        removed
+                                    );
+                                    self.agent.emit_exec(&format!(
+                                        "// CONTEXT OVERFLOW: emergency truncate ({} msgs dropped), retrying",
+                                        removed
+                                    ));
+                                    continue;
+                                }
+                            }
                             return Ok(crate::AgentOutput {
                                 message: format!(
                                     "LLM请求失败：{}\n该错误不可重试。{}",
@@ -990,7 +1051,25 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             consecutive_empty = 0;
 
             // Extract tool calls
-            let tool_calls = crate::agent::common::extract_tool_calls(&assistant_blocks);
+            // 提炼轮（tools_suppressed）代码级禁工具第二道保险：请求已不带 tools，
+            // 但少数 provider 的 XML content tag 仍可能产出 tool_use 块——此处
+            // 直接剔除，不执行、不落库，只留文本作为摘要。提炼轮继续调工具会
+            // 让 85% 硬止损的保命动作本身膨胀上下文（19e52dee 仅靠提示词约束）。
+            let (assistant_blocks, tool_calls) = if self.agent.tools_suppressed {
+                let text_only: Vec<ContentBlock> = assistant_blocks
+                    .into_iter()
+                    .filter(|b| {
+                        !matches!(
+                            b,
+                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. }
+                        )
+                    })
+                    .collect();
+                (text_only, Vec::new())
+            } else {
+                let calls = crate::agent::common::extract_tool_calls(&assistant_blocks);
+                (assistant_blocks, calls)
+            };
 
             // Text and reasoning already emitted in real-time during streaming
             // (TextDelta via process_text_delta, Reasoning via direct forward).

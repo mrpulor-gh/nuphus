@@ -115,11 +115,9 @@ pub struct WorkflowAgent {
     /// 内部流程标记（refine 用）：本轮 input 以 internal user 消息入 session（前端不显示），
     /// 且不重复 push（调用方已手动 push_user_internal）。
     pub(crate) internal_input: bool,
-    /// 本轮是否已越线注入未闭合提炼提示词（REFINE_PROMPT_UNFINISHED）。
-    /// run() 迭代检查点越线时置位；循环自然收敛后由 run() 收尾处读取——
-    /// 整体替换会话（历史全弃、摘要成唯一记忆）后重新进入迭代，任务从
-    /// 摘要接续，读后即清。
-    pub(crate) refine_injected: bool,
+    /// 提炼轮禁工具开关（**代码级**）：true 时请求不携带 tools、tool_use 块被
+    /// 剔除——in-loop refine 的提炼轮只能输出摘要（与 Leader ReactAgent 同构）。
+    pub(crate) tools_suppressed: bool,
 }
 
 impl WorkflowAgent {
@@ -166,7 +164,7 @@ impl WorkflowAgent {
             workflow_engine: None,
             source: "desktop".to_string(),
             internal_input: false,
-            refine_injected: false,
+            tools_suppressed: false,
         }
         .apply_supports_vision()
     }
@@ -732,32 +730,48 @@ impl WorkflowAgent {
                 );
             }
 
-            // ── 上下文预算：执行中防溢出（与 Leader 同机制，2026-10-25 定权）──
-            // 分档口径同 turn-end 判定（RefineTier）；越 force 线注入未闭合提炼
-            // 提示词：模型产出摘要、循环自然收敛，run() 收尾处整体替换会话
-            // （replace_with_distill）并重新进入迭代接力续跑。
+            // ── 上下文预算：执行中防溢出（两级，与 Leader 同机制，2026-10-25 定权）──
+            // 1) force 线（分档 75/80/50–80 可调）：渐进警告 + 软劝导——模型
+            //    自己收敛，本轮结束即 turn-end 正常 refine（**不接力**；
+            //    turn-end 的 50%（50%–80% 可设）强制 refine 是独立且正常的
+            //    既有链路，本检查点不替代、不影响它）；
+            // 2) 85% 绝对硬线：唯一保命线与**唯一接力点**——当场提炼（代码级
+            //    禁工具）、accumulate 压缩后本迭代继续，任务从摘要接续。
             // 未越线维持原有渐进警告（inject_context_warning）与 FORBID break 语义。
             {
                 let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
                 if ctx_window > 0 {
-                    let usage = if self.session.api_input_tokens > 0 {
-                        self.session.api_input_tokens as usize
-                    } else {
-                        self.session.estimate_token_usage()
-                    };
+                    // 口径与 Leader 检查点统一：estimate_token_usage = max(官方
+                    // 读数, 字符估算) 的保守值——官方读数覆盖不到本迭代刚追加
+                    // 的工具结果，取 max 才不会漏判。
+                    let usage = self.session.estimate_token_usage();
                     if usage > 0 {
-                        let tier = crate::agent::distill::RefineTier::for_window(ctx_window);
-                        let force_ratio = tier.force_ratio(self.large_force_threshold);
                         let ratio = usage as f64 / ctx_window as f64;
-                        let at_force_line = ratio >= force_ratio;
-                        if at_force_line && !self.refine_injected {
-                            self.refine_injected = true;
-                            self.session.push_user_internal(
-                                crate::agent::distill::REFINE_PROMPT_UNFINISHED.to_string(),
+                        let can_hard_stop =
+                            self.refine_count < crate::agent::distill::MAX_IN_LOOP_REFINES;
+                        if ratio >= 0.85 && can_hard_stop {
+                            // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
+                            // 提炼失败/达上限 → 降级渐进警告 / FORBID break（衔接老语义）。
+                            tracing::warn!(
+                                "[REFINE] workflow 85% hard stop: {}/{} ({:.1}%) — in-loop refine",
+                                usage,
+                                ctx_window,
+                                ratio * 100.0
                             );
-                        } else if !at_force_line && self.inject_context_warning() {
-                            // Forbidden warning injected, give LLM one more chance
-                        } else if !at_force_line && self.max_warning_injected >= 4 {
+                            if !self.refine_in_loop(cancel_flag).await {
+                                if self.inject_context_warning() {
+                                    // Forbidden warning injected, give LLM one more chance
+                                } else if self.max_warning_injected >= 4 {
+                                    tracing::warn!(
+                                        "[WORKFLOW-FORBID] Context watermark exceeded limit"
+                                    );
+                                    break;
+                                }
+                            }
+                        } else if self.inject_context_warning() {
+                            // 渐进警告（60/75/88/95% 四档劝导文案）——force 线以内
+                            // 各档软劝导由它承担，给模型自己收敛的机会，不接力。
+                        } else if self.max_warning_injected >= 4 {
                             tracing::warn!("[WORKFLOW-FORBID] Context watermark exceeded limit");
                             break;
                         }
@@ -792,7 +806,14 @@ impl WorkflowAgent {
                 continue;
             }
 
-            let tool_calls = crate::agent::common::extract_tool_calls(&assistant_blocks);
+            // 提炼轮（tools_suppressed）代码级禁工具第二道保险：请求已不带
+            // tools，仍可能从 XML content tag 产生 tool_use——按空 tool_calls
+            // 处理（下方 filtered_blocks 自动剔除全部 ToolUse 块），只留文本。
+            let tool_calls = if self.tools_suppressed {
+                Vec::new()
+            } else {
+                crate::agent::common::extract_tool_calls(&assistant_blocks)
+            };
 
             let valid_ids: std::collections::HashSet<&str> =
                 tool_calls.iter().map(|c| c.id.as_str()).collect();
@@ -807,34 +828,6 @@ impl WorkflowAgent {
             // ── No tool calls → return result ──
             if tool_calls.is_empty() {
                 self.session.push_assistant(filtered_blocks);
-                // refine 接力：本轮注入了未闭合提炼提示词，模型的无工具调用
-                // 回复即摘要——整体替换会话（历史全弃、摘要成唯一记忆，与
-                // turn-end 同一落地动作），本迭代继续，任务从摘要接续
-                // （无递归、无额外机制；用户中断/终止不接力）。
-                if self.refine_injected
-                    && !cancel_flag.load(Ordering::SeqCst)
-                    && !self.user_terminated
-                {
-                    if let Some(summary) = self.session.last_assistant_text() {
-                        let summary = summary.trim().to_string();
-                        if !summary.is_empty() {
-                            self.session.replace_with_distill(&summary);
-                            let _ = crate::agent::distill::save_refine_entry(
-                                &self.session.id,
-                                &self.session.current_turn_id(),
-                                &summary,
-                                "in_loop",
-                                crate::memory::entry::AgentType::WorkAgent,
-                            );
-                            tracing::info!(
-                                "[REFINE] workflow in-loop done: session replaced ({} chars), continuing",
-                                summary.len()
-                            );
-                            self.refine_injected = false;
-                            continue;
-                        }
-                    }
-                }
                 let text = assistant_blocks
                     .iter()
                     .filter_map(|b| match b {
@@ -1470,8 +1463,10 @@ impl WorkflowAgent {
         // 本迭代边界句柄（与 leader 同一共享实现，禁止复制状态机）。
         let iteration_break = text_boundary.begin_iteration();
 
-        // Tool schemas cached
-        let tools = {
+        // Tool schemas cached（提炼轮 tools_suppressed：不构建、不携带——代码级禁工具）
+        let tools = if self.tools_suppressed {
+            Vec::new()
+        } else {
             if self.cached_tools.is_none() {
                 self.cached_tools = Some(self.get_filtered_schemas());
             }
@@ -1504,9 +1499,11 @@ impl WorkflowAgent {
                 }
             }
             let messages = self.session.to_api_messages(self.supports_vision);
-            let request = MessageRequest::new("", messages)
-                .with_system(base.clone())
-                .with_tools(tools.clone());
+            let mut request = MessageRequest::new("", messages).with_system(base.clone());
+            // 提炼轮禁工具：请求体完全不携带 tools 字段（代码级，与 Leader 同构）。
+            if !self.tools_suppressed {
+                request = request.with_tools(tools.clone());
+            }
             self.capture_session_prompt_snapshot();
 
             // Collect events while streaming text deltas to frontend in real-time
@@ -1692,6 +1689,101 @@ impl WorkflowAgent {
             _ => {}
         }
         level >= 4
+    }
+
+    /// 执行中提炼（in-loop refine）——与 Leader（Runtime::refine_in_loop）
+    /// **同机制同构件**（2026-10-25 定权：WorkflowAgent 与 Leader 走一致机制；
+    /// 85% 是唯一硬止损线与**唯一接力点**，force 线只软劝导不接力）。
+    ///
+    /// 就地完成 refine：push 未闭合提示词 → run 跑一轮提炼（`tools_suppressed`
+    /// **代码级**禁工具）→ 摘要 commit（accumulate_distill：对话全清、旧摘要
+    /// 不累加 + 归档）→ 本迭代继续，任务从摘要接续（不硬杀、不丢任务）。
+    ///
+    /// 失败（超时 / API 错 / 空输出）：truncate 回滚提示词消息，session 原样
+    /// 不动，返回 false 由调用方降级到渐进警告（inject_context_warning）兜底。
+    /// 同轮上限 [`MAX_IN_LOOP_REFINES`] 次，尝试即计数（含失败）。
+    ///
+    /// 为什么必须在 85% 当场动作（而不是注入提示词等下一轮收敛）：注入依赖
+    /// 下一次请求被读到，若上下文已逼近上限，该请求可能直接 TooLong（不可
+    /// 重试）——85% 留出的 15% 余量正是提炼请求 + 摘要输出的安全空间。
+    async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
+        use crate::agent::distill::{
+            commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
+            REFINE_PROMPT_UNFINISHED,
+        };
+
+        if self.refine_count >= MAX_IN_LOOP_REFINES {
+            tracing::info!(
+                "[REFINE] workflow in-loop skipped: refine_count {} >= max {}",
+                self.refine_count,
+                MAX_IN_LOOP_REFINES
+            );
+            return false;
+        }
+        self.refine_count += 1;
+
+        let before = self.session.messages().len();
+        self.session
+            .push_user_internal(REFINE_PROMPT_UNFINISHED.to_string());
+        // 代码级禁工具：请求不携带 tools（llm_stream_with_streaming）+
+        // tool_use 块被剔除（run 的 iterate 处）——双保险。
+        self.tools_suppressed = true;
+        // internal_input=true 让 run 跳过重复 push_user（同 turn-end workflow
+        // refine 路径）；过滤器静默 ExecutionStarted 等生命周期事件、放行
+        // LlmTextDelta 供前端提炼气泡流式渲染。
+        self.set_internal_input(true);
+        let saved = self.take_emitter();
+        if let Some(ref e) = saved {
+            self.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
+        }
+        // Box::pin 断异步递归环：refine_in_loop → run → 迭代循环 → refine_in_loop。
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            Box::pin(self.run(REFINE_PROMPT_UNFINISHED, &None, cancel_flag)),
+        )
+        .await
+        .map_err(|_| "提炼超时（300s）".to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+        self.set_internal_input(false);
+        self.tools_suppressed = false;
+        let _ = self.take_emitter();
+        self.set_emitter(saved);
+
+        match result {
+            Ok(output) if output.success && !output.message.trim().is_empty() => {
+                let summary = output.message.trim().to_string();
+                if commit_in_loop_refine(
+                    &mut self.session,
+                    &summary,
+                    // workflow refine 归档归 WorkAgent（与既有 workflow 提炼
+                    // 路径的 save_refine_entry 归属一致）。
+                    crate::memory::entry::AgentType::WorkAgent,
+                ) {
+                    tracing::info!(
+                        "[REFINE] workflow in-loop done: {} chars compacted (refine_count={})",
+                        summary.len(),
+                        self.refine_count
+                    );
+                    true
+                } else {
+                    self.session.truncate_messages(before);
+                    false
+                }
+            }
+            Ok(_) => {
+                self.session.truncate_messages(before);
+                tracing::warn!("[REFINE] workflow in-loop: empty output, rolled back");
+                false
+            }
+            Err(reason) => {
+                self.session.truncate_messages(before);
+                tracing::warn!(
+                    "[REFINE] workflow in-loop failed ({}), session rolled back; warning degraded",
+                    reason
+                );
+                false
+            }
+        }
     }
 
     /// Safety check: session authorization → permissions → SecurityGuard
