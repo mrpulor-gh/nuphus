@@ -1786,9 +1786,10 @@ export function ChatPanel({
             <IconPalette size={15} />
             <span className="chat-header-btn-label">{t('app.appearance')}</span>
           </button>
-          {/* Agent 浏览器窗口：CDP 那个 Chrome，独立 profile。这里只做「唤出/置前」，
-              Agent 的浏览与自动化操作都在那个窗口内进行。启动中禁用（is-busy），
-              避免连点把单槽串行的后端排成长队。 */}
+          {/* 浏览器窗口：配了指纹浏览器时是用户那个（attach_external，绝不自启
+              自管 Chrome），未配时是 Nuphus 自管 CDP Chrome、独立 profile。这里
+              只做「唤出/置前」，Agent 的浏览与自动化都在这个窗口内进行。启动中
+              禁用（is-busy），避免连点把单槽串行的后端排成长队。 */}
           <button
             className={`chat-header-browser-btn${browserOpening ? ' is-busy' : ''}`}
             aria-label={t('browser.toggle')}

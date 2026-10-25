@@ -1,13 +1,32 @@
-//! cdp_window.rs — 唤起 Agent 浏览器的窗口（CDP 驱动的那个 Chrome）。
+//! cdp_window.rs — 唤起浏览器窗口（用户配了指纹浏览器时是用户那个，否则是
+//! Nuphus 自管 CDP Chrome）。
 //!
 //! 与 `external.rs` 的分工：那边把外链交给**系统浏览器**（人在自己浏览器里看，
-//! 带自己的登录态与扩展）；这边唤起的是 **Nuphus 自己的浏览器实例**——
-//! 独立 profile，Agent 的自动化都发生在这个窗口里。
+//! 带自己的登录态与扩展）；这边唤起的是 **Agent 自动化真正干活的那个浏览器
+//! 实例**——用户配置了指纹浏览器（browser_cdp_url + browser_identity）时即
+//! 用户那个（attach_external，失败硬报错、绝不自启自管 Chrome），未配时才是
+//! Nuphus 自管实例（独立 profile）。
 //!
 //! 二者不是同一件事，故并存：人不必为了看链接切到自动化浏览器，但需要让
 //! Agent 操作的那个窗口可见时（想看它进行到哪一步），走本命令把它提到前台。
 
 use nuphus::browser::{get_or_launch, runtime, BrowserError};
+
+/// 默认页导航裁决（browser_show_window 用）。
+///
+/// 仅「自管实例 + 当前空白页 + 传了默认页」三者同时成立才导。external
+/// （用户指纹浏览器）一律不导：用户的标签页是现场——`about:blank` 也可能
+/// 是他正要用的新标签；默认页只属于 Nuphus 自管实例的冷启动体验。
+fn should_navigate_default(
+    is_external: bool,
+    current_url: &str,
+    default_url: Option<&str>,
+) -> Option<String> {
+    if is_external || current_url != "about:blank" {
+        return None;
+    }
+    default_url.map(str::to_owned)
+}
 
 /// 把诊断行追加到日志文件。
 ///
@@ -92,21 +111,27 @@ pub async fn browser_show_window(
                 // 空白页 → 顺势导航到默认页（就地导航，不新开标签）。
                 // 窗口已有真实页面（用户上次的浏览现场）时绝不打扰：按钮语义是
                 // 「唤出/置前」，日常点击只置前不改动现场，避免标签堆积与页面顶掉。
-                if let Some(target) = default_url {
-                    if url == "about:blank" {
-                        diag(&format!(
-                            "step3: navigating blank page to default ({})",
-                            ms()
-                        ));
-                        match client.navigate(&target).await {
-                            Ok(_) => {
-                                diag(&format!("default page loaded after {}ms", ms()));
-                                return Ok(target);
-                            }
-                            // 导航失败不阻断置前成功的主流程：窗口已在前台，
-                            // 用户看得见空白页本身，报错反而噪音。
-                            Err(e) => diag(&format!("default page navigate FAILED: {e}")),
+                // 默认页导航裁决（纯函数 should_navigate_default）：仅「自管实例 +
+                // 空白页 + 有默认页」才导。external（用户指纹浏览器）一律不导——
+                // 用户的标签页是现场，about:blank 也可能是他正要用的新标签，
+                // 置前即可；默认页只属于 Nuphus 自管实例的冷启动。
+                if let Some(target) = should_navigate_default(
+                    client.external_cdp_url().is_some(),
+                    &url,
+                    default_url.as_deref(),
+                ) {
+                    diag(&format!(
+                        "step3: navigating blank page to default ({})",
+                        ms()
+                    ));
+                    match client.navigate(&target).await {
+                        Ok(_) => {
+                            diag(&format!("default page loaded after {}ms", ms()));
+                            return Ok(target);
                         }
+                        // 导航失败不阻断置前成功的主流程：窗口已在前台，
+                        // 用户看得见空白页本身，报错反而噪音。
+                        Err(e) => diag(&format!("default page navigate FAILED: {e}")),
                     }
                 }
                 diag(&format!("window front after {}ms, url = {url}", ms()));
@@ -237,6 +262,28 @@ mod tests {
         .expect("serialize");
         assert_eq!(json["launched"], serde_json::json!(true));
         assert_eq!(json["url"], serde_json::json!("https://example.com/"));
+    }
+
+    /// 默认页导航裁决：external 一律不导、真实页不导、无默认页不导。
+    #[test]
+    fn default_page_navigation_only_for_managed_blank() {
+        // 自管 + 空白页 + 有默认页 → 导（冷启动体验）
+        assert_eq!(
+            should_navigate_default(false, "about:blank", Some("https://www.nuphus.com/")),
+            Some("https://www.nuphus.com/".to_string())
+        );
+        // 自管 + 真实页 → 不导（不顶用户现场）
+        assert_eq!(
+            should_navigate_default(false, "https://work.example", Some("https://x")),
+            None
+        );
+        // external + 空白页 → 不导（用户的空白标签也是现场）
+        assert_eq!(
+            should_navigate_default(true, "about:blank", Some("https://x")),
+            None
+        );
+        // 无默认页 → 不导
+        assert_eq!(should_navigate_default(false, "about:blank", None), None);
     }
 
     /// 校验复用 external 的白名单：伪协议必须在进浏览器之前就被拒。

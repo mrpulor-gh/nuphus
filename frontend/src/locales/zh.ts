@@ -146,7 +146,7 @@ const zh: Record<string, string> = {
   'preview.exitAnnotateMode': '退出标注模式',
 
   // ── 应用内浏览器（独立窗口：壳页面 44px 控制器 + 远程内容页）──
-  'browser.toggle': '应用内浏览器',
+  'browser.toggle': '浏览器',
   'browser.toggleTitle': '打开 / 唤出浏览器窗口',
   'browser.starting': '正在启动浏览器…',
   'browser.addressPlaceholder': '输入网址后回车，例如 https://example.com',
