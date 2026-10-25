@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Sync a Nuphus release to Gitee so domestic users can download from gitee.com directly.
@@ -445,7 +445,12 @@ foreach ($name in $staged.Keys) {
 # 只 add 这一个文件，绝不把工作区里别人的改动顺手带进这次提交。
 Write-Step 'commit latest.json and push'
 git -C $RepoRoot add -- $RepoManifest
-if ((git -C $RepoRoot status --porcelain -- $RepoManifest) -eq '') {
+# 幂等判断用 **staged 差异**而非 `git status`：Set-Content 每次写回 CRLF，
+# 而 index 里是归一化后的 LF —— status 会永远报「工作区已修改」，但 add
+# 后 staged 无差异，直接 commit 会空跑 exit 1 抛死（-SkipDownload 重跑必踩，
+# 2026-10-25 v1.1.1 实测）。diff --cached --quiet 返回 0 = 无真实变更。
+git -C $RepoRoot diff --cached --quiet -- $RepoManifest 2>$null
+if ($LASTEXITCODE -eq 0) {
     Write-Ok 'latest.json unchanged - nothing to commit'
 } else {
     # native git 的信息消息（Everything up-to-date / remote: Bypassed… / push 统计）
@@ -482,7 +487,24 @@ try {
     }
     Write-Ok ("total across {0} releases: {1:N1} MB" -f @($all).Count, ($total / 1MB))
     if (@($all).Count -gt $KeepReleases) {
-        Write-WarnMsg "more than $KeepReleases releases retained - Gitee capacity is shared with the code mirror. Review manually (this script never deletes without -PruneReleases)."
+        if ($PruneReleases) {
+            # 保留最新 $KeepReleases 个（按 created_at 降序），其余删除。
+            # 只删 release（不动 git tag——代码历史与 clone 不受影响）；
+            # 本次同步的 tag 永远保护，即便排序异常也不删。
+            $sorted = @($all | Sort-Object -Property created_at -Descending)
+            $drop = @($sorted | Select-Object -Skip $KeepReleases)
+            foreach ($r in $drop) {
+                if ($r.tag_name -eq $Tag) {
+                    Write-WarnMsg "skip prune current release $($r.tag_name)"
+                    continue
+                }
+                Write-Ok "prune release $($r.tag_name) (id=$($r.id), assets=$(@($r.assets).Count))"
+                Invoke-RestMethod -Method Delete -Uri "$relUrl/$($r.id)" -Headers $hdrs -TimeoutSec 60 | Out-Null
+                Write-Ok "deleted $($r.tag_name)"
+            }
+        } else {
+            Write-WarnMsg "more than $KeepReleases releases retained - Gitee capacity is shared with the code mirror. Review manually (this script never deletes without -PruneReleases)."
+        }
     }
 } catch {
     Write-WarnMsg "could not enumerate Gitee releases: $($_.Exception.Message)"
