@@ -159,7 +159,7 @@ fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<
 fn refresh_shell_icon_cache() {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::{
-        SHCNE_UPDATEDIR, SHCNE_UPDATEITEM, SHCNF_PATH, SHChangeNotify,
+        SHChangeNotify, SHCNE_UPDATEDIR, SHCNE_UPDATEITEM, SHCNF_PATH,
     };
 
     let Ok(exe) = std::env::current_exe() else {
