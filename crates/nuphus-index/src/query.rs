@@ -1,7 +1,8 @@
 //! 知识文档搜索逻辑。
 //!
-//! 在内存索引的 HashMap 上做多维匹配 + 语义向量检索，按相关性评分排序。
-//! 搜索字段：标题、标签、正文全文、语义向量。
+//! 在内存索引的 HashMap 上做多维子串匹配 + 相关性评分排序。
+//! 搜索字段：标题、标签、正文全文（子串匹配，非 FTS / 非向量）。
+//! 注：`FileMeta.embedding` 为预留字段，当前无注入方、不参与检索。
 
 use crate::types::{FileMeta, KnowledgeHit, QueryRequest};
 use std::collections::HashMap;
@@ -60,12 +61,13 @@ pub fn search_index(files: &HashMap<String, FileMeta>, req: &QueryRequest) -> Ve
 ///
 /// 查询词按空白（含全角空格）切分为多个关键字，采用**严格 AND** 语义：
 /// 任一关键字在标题 / 标签 / 正文中均未命中即返回 0；全部命中则累加各词得分。
-/// 单关键字查询的分数与旧实现完全一致（向后兼容，不改变既有排序）。
+/// 无空白的单关键字查询得分与旧实现逐位一致（向后兼容，不改变既有排序）；
+/// 带空格的「单关键字」（如 `"powershell "`）旧实现整串 contains 必然落空返回 0 条，
+/// 切词后正常命中——这是修复旧 bug 的良性偏差，非逐位一致场景。
 fn calc_relevance(file: &FileMeta, query: &str) -> f32 {
     let terms: Vec<&str> = query.split_whitespace().collect();
-    if terms.is_empty() {
-        return 0.0;
-    }
+    // 注：全空白 query 已被 search_index 入口（req.query.trim().is_empty()）拦截，
+    // 此处 terms 为空时下方 for 循环 0 次、total 为 0.0，与显式返回等价，故不特判。
 
     // 归一化只做一次：多关键字场景下避免按词重复分配整篇正文的小写副本
     let title_lower = file.title.to_lowercase();

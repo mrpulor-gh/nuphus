@@ -1,6 +1,6 @@
 //! video — 视频字幕获取工具（video_subtitle_extract）
 //!
-//! 薄封装：实际管线在桌面壳（src-tauri/src/video/，四级降级实现前三级：
+//! 薄封装：实际管线在桌面壳（src-tauri/src/video/，三级降级：
 //! 内嵌字幕流 → 平台字幕 → 本地 ASR），经 crate::video_bridge 注入的
 //! fn 指针调用（单进程，无 IPC）。本工具只返回带时间戳的字幕全文，
 //! 内容理解由 LLM 在对话内完成。

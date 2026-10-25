@@ -860,7 +860,18 @@ impl ToolRegistry {
                 if path.is_empty() {
                     return Ok(ToolResult::failure("path is required"));
                 }
-                match std::fs::remove_file(path) {
+
+                // 与 Write/Append 对齐：仅阻止明显的路径穿越（`../` 等），不做沙箱限制
+                // 用户使用场景需要操作桌面、下载目录等任何位置
+                if path.contains("..") {
+                    return Ok(ToolResult::failure("path traversal not allowed"));
+                }
+
+                // 相对路径以当前工作根为基准（唯一入口，见 utils::resolve_user_path）：
+                // 与 Rename/Copy/CreateDir/RemoveDir/Glob/Grep 一致——修复前 Delete 按
+                // 进程 cwd 解析，是唯一基准不一致的文件工具，可能删错文件。
+                let p = crate::utils::resolve_user_path(path);
+                match std::fs::remove_file(&p) {
                     Ok(_) => Ok(ToolResult::success(format!("Deleted: {}", path))),
                     Err(e) => Ok(ToolResult::failure(format!("Delete failed: {}", e))),
                 }
@@ -1087,7 +1098,7 @@ impl ToolRegistry {
                 "properties": {
                     "pattern": { "type": "string", "description": "Regex pattern to search for" },
                     "path": { "type": "string", "description": "Root directory to search (default: current work root; absolute paths unaffected)" },
-                    "-n": { "type": "boolean", "description": "Show line numbers in results" },
+                    "-n": { "type": "boolean", "description": "Line numbers are always included in output (path:line: text); kept for compatibility, no effect" },
                     "-i": { "type": "boolean", "description": "Case-insensitive search" },
                     "head_limit": { "type": "integer", "description": "Max matches to return (default: 50)" }
                 },

@@ -42,14 +42,6 @@ impl ToolRegistry {
                     return Ok(ToolResult::failure("path traversal not allowed"));
                 }
 
-                // 二进制办公格式不支持追加内容
-                if crate::tools::definitions::file::is_binary_office_format(path) {
-                    return Ok(ToolResult::failure(format!(
-                        "{} 是二进制办公格式，Append 不支持追加内容。",
-                        path
-                    )));
-                }
-
                 let p = crate::utils::resolve_user_path(path);
                 if !p.exists() {
                     let root = crate::utils::work_root();

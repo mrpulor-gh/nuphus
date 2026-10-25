@@ -220,16 +220,28 @@ impl ToolRegistry {
                         if force { cmd.arg("/F"); }
                         let output = cmd.output()
                             .map_err(|e| format!("taskkill failed: {}", e))?;
-                        let msg = String::from_utf8_lossy(&output.stdout);
-                        Ok(ToolResult::success(format!("Killed PID {}: {}", pid, msg.trim())))
+                        if output.status.success() {
+                            let msg = String::from_utf8_lossy(&output.stdout);
+                            Ok(ToolResult::success(format!("Killed PID {}: {}", pid, msg.trim())))
+                        } else {
+                            // 修复前不检查退出码：taskkill ERROR（进程不存在/拒绝访问）
+                            // 混在 stdout 里也回成功文本，调用方收到假成功
+                            let err = String::from_utf8_lossy(&output.stderr);
+                            Ok(ToolResult::failure(format!("taskkill failed for PID {}: {}", pid, err.trim())))
+                        }
                     } else if let Some(name) = name {
                         let mut cmd = std::process::Command::new("taskkill");
                         cmd.arg("/IM").arg(name);
                         if force { cmd.arg("/F"); }
                         let output = cmd.output()
                             .map_err(|e| format!("taskkill failed: {}", e))?;
-                        let msg = String::from_utf8_lossy(&output.stdout);
-                        Ok(ToolResult::success(format!("Killed process '{}': {}", name, msg.trim())))
+                        if output.status.success() {
+                            let msg = String::from_utf8_lossy(&output.stdout);
+                            Ok(ToolResult::success(format!("Killed process '{}': {}", name, msg.trim())))
+                        } else {
+                            let err = String::from_utf8_lossy(&output.stderr);
+                            Ok(ToolResult::failure(format!("taskkill failed for '{}': {}", name, err.trim())))
+                        }
                     } else {
                         Ok(ToolResult::failure("Either pid or name must be provided"))
                     }
@@ -241,15 +253,26 @@ impl ToolRegistry {
                         let mut cmd = std::process::Command::new("kill");
                         if force { cmd.arg("-9"); }
                         cmd.arg(pid.to_string());
-                        let _output = cmd.output()
+                        let output = cmd.output()
                             .map_err(|e| format!("kill failed: {}", e))?;
-                        Ok(ToolResult::success(format!("Killed PID {}", pid)))
+                        if output.status.success() {
+                            Ok(ToolResult::success(format!("Killed PID {}", pid)))
+                        } else {
+                            let err = String::from_utf8_lossy(&output.stderr);
+                            Ok(ToolResult::failure(format!("kill failed for PID {}: {}", pid, err.trim())))
+                        }
                     } else if let Some(name) = name {
-                        let _output = std::process::Command::new("pkill")
+                        let output = std::process::Command::new("pkill")
                             .args(if force { vec!["-9", name] } else { vec![name] })
                             .output()
                             .map_err(|e| format!("pkill failed: {}", e))?;
-                        Ok(ToolResult::success(format!("Killed process '{}'", name)))
+                        if output.status.success() {
+                            Ok(ToolResult::success(format!("Killed process '{}'", name)))
+                        } else {
+                            // pkill 无匹配进程时退出码 1——如实报失败，杜绝假成功
+                            let err = String::from_utf8_lossy(&output.stderr);
+                            Ok(ToolResult::failure(format!("pkill found no process '{}' or failed: {}", name, err.trim())))
+                        }
                     } else {
                         Ok(ToolResult::failure("Either pid or name must be provided"))
                     }

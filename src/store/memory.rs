@@ -898,7 +898,9 @@ pub fn search_entries_semantic(
         return Ok(vec![]);
     }
 
-    // 取 top-N * 2 候选，获取完整 MemoryEntry，snapshot 加权 1.2x 优先
+    // 取 top-N * 2 候选，获取完整 MemoryEntry。
+    // 注：snapshot 加权 1.2x 优先仅 SQL/FTS 路径有（见 search_entries_scored）；
+    // 语义（HNSW）路径不做该加权——两侧排序策略不同，勿在此注释照搬承诺。
     let mut results = Vec::with_capacity(scored.len().min(limit * 2));
     for (id, score) in scored.into_iter().take(limit * 2) {
         if let Ok(Some(entry)) = get_entry_by_id(&id) {

@@ -23,7 +23,8 @@ pub struct FileMeta {
     pub file_size: u64,
     /// 正文全文（去除 frontmatter 区域）
     pub body_text: String,
-    /// 语义向量（512-dim，由上层计算注入，不持久化）
+    /// 语义向量（512-dim）。**预留字段**：当前无注入方（parser 恒 None），
+    /// search_index 不读取、不参与检索；上层记忆库的向量检索与本索引无关。
     #[serde(skip)]
     pub embedding: Option<Vec<f32>>,
 }

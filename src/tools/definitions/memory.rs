@@ -149,7 +149,11 @@ impl ToolRegistry {
                 let mut zero_result_diagnostic: Option<String> = None;
                 #[allow(clippy::unnecessary_unwrap)]
                 let entries: Vec<String> = if semantic && query_ref.is_some() {
-                    let mut results = memory::search_entries_semantic(query_ref.unwrap(), fetch_limit, kind, all_projects)
+                    // session_id 精查不受项目过滤限制（与下方 filtered 路径对齐：
+                    // store 层 `!all_projects && session_id.is_none()` 才启用项目过滤）。
+                    // 修复前 semantic 路径把 all_projects 原样下传，跨项目 sid 精查被静默滤空。
+                    let effective_all = all_projects || session_id.is_some();
+                    let mut results = memory::search_entries_semantic(query_ref.unwrap(), fetch_limit, kind, effective_all)
                         .map_err(|e| format!("semantic search failed: {}", e))?;
                     if let Some(sid) = session_id { results.retain(|(e,_)| e.session_id == sid); }
                     if let Some(gt) = goal_type { results.retain(|(e,_)| e.goal_type.as_deref() == Some(gt)); }
@@ -304,7 +308,8 @@ impl ToolRegistry {
 
     /// Leader 主动记忆更新工具 —— 只允许 Leader 写入，ExecAgent 不可访问
     ///
-    /// 写入 ~/.nuphus/memory.md（用户数据目录，见 utils::nuphus_data_dir）。
+    /// 写入项目记忆日志 `.nuphus/memory/{tag}.md`（用户数据目录，见
+    /// utils::active_memory_md_path；早期文档写的 ~/.nuphus/memory.md 已过时）。
     /// 这不是随手笔记，而是重点阶段/文件/操作的索引指南，
     /// 会被注入到 Leader 每轮 prompt 中用于快速决策。
     /// 自动截断到 2000 字符，保留尾部最新内容。
