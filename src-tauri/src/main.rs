@@ -141,6 +141,59 @@ fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<
     }
 }
 
+/// Windows Shell 图标缓存自愈（dev 场景专项）。
+///
+/// 根因（2026-10-25 实证）：`cargo build`（含 opencode 每轮 build 验证）会 in-place
+/// 覆盖 nuphus.exe，Explorer 若在写入窗口期读到半写 PE，会把「白纸/空白文件图标」
+/// 按「路径 + 时间戳/大小」为键写进图标缓存并长期驻留——桌面快捷方式此后一直显示
+/// 空白图标，与 icon.ico / exe 内嵌资源是否完好无关（三层验证：源文件、本地 exe、
+/// CI 安装包的图标提取均逐像素一致）。安装/升级/updater 链路的同类刷新见
+/// src-tauri/installer-hooks.nsh。
+///
+/// 这里在每次 GUI 启动时对 exe 文件及其所在目录发 SHChangeNotify，促使 Explorer
+/// 重取文件信息（含图标），坏条目在下次启动即自愈：
+/// - SHCNE_UPDATEITEM(0x2000)：单文件属性/图标已变
+/// - SHCNE_UPDATEDIR(0x1000)：目录内容已变，重读目录视图
+/// 均为用户级通知、无返回值、失败无副作用；CLI 形态（task 子命令）不走本路径。
+#[cfg(target_os = "windows")]
+fn refresh_shell_icon_cache() {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{
+        SHCNE_UPDATEDIR, SHCNE_UPDATEITEM, SHCNF_PATH, SHChangeNotify,
+    };
+
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let mut exe_wide: Vec<u16> = exe.as_os_str().encode_wide().collect();
+    exe_wide.push(0);
+    let mut dir_wide: Vec<u16> = dir.as_os_str().encode_wide().collect();
+    dir_wide.push(0);
+
+    // SAFETY: shell32!SHChangeNotify 为稳定公开 API；dwItem1 传以 NUL 结尾的宽路径
+    // （SHCNF_PATH 语义），dwItem2 为空；调用不转移内存所有权、无返回值。
+    unsafe {
+        SHChangeNotify(
+            SHCNE_UPDATEITEM as i32,
+            SHCNF_PATH,
+            exe_wide.as_ptr().cast(),
+            std::ptr::null(),
+        );
+        SHChangeNotify(
+            SHCNE_UPDATEDIR as i32,
+            SHCNF_PATH,
+            dir_wide.as_ptr().cast(),
+            std::ptr::null(),
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn refresh_shell_icon_cache() {}
+
 fn main() {
     // 外部 Agent 上报 CLI：`nuphus.exe task <verb> ...`（方案 A——旁车 bin nuphus-task
     // 已废止，上报逻辑并入 lib 的 nuphus::handoff::cli，本进程以 `task` 子命令直接承载）。
@@ -159,6 +212,10 @@ fn main() {
             1
         });
     }
+    // Windows：启动即自愈 Shell 图标缓存坏条目（构建覆盖 exe 后被 Explorer
+    // 缓存的「白纸图标」）。放在 CLI 分支之后——task 形态不建窗口、无需刷新。
+    refresh_shell_icon_cache();
+
     // Inject the persisted external-browser CDP endpoint into the process env so
     // future BrowserClient::new() picks it up; any MCP server child process
     // spawned later inherits it.
