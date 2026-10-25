@@ -93,8 +93,14 @@ export async function applySkinBg(value: string): Promise<void> {
     return
   }
   const url = await resolveSkinImageUrl(value)
-  // 解析期间有更新的调用插队 → 本次结果已过期，丢弃（否则盖掉新状态）
-  if (seq !== applySeq) return
+  // 解析期间有更新的调用插队 → 本次结果已过期，丢弃（否则盖掉新状态）。
+  // 若本次解析已产出 blob URL（file 路径经 createObjectURL），必须在此释放：
+  // 本结果不会广播，SkinBackdrop 无从持有与释放，不释放则图片字节活到页面
+  // 关闭（assetUrl.ts 调用方契约「替换/卸载时 release」同样覆盖丢弃路径）。
+  if (seq !== applySeq) {
+    if (url) releaseSkinImageUrl(url)
+    return
+  }
   if (!url) {
     console.error('[skin] 背景图无法转为可渲染 URL，已保留当前背景不变：', value)
     return

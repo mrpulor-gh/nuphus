@@ -125,6 +125,37 @@ describe('皮肤背景（广播链路）', () => {
     // 内联样式里也不得残留
     expect(document.documentElement.style.getPropertyValue('--app-skin-bg')).toBe('')
   })
+  /* ── 竞态丢弃路径必须释放 blob（2026-10-25 审阅补丁）──
+     seq 守卫丢弃过期结果时，resolveSkinImageUrl 可能已创建 blob URL；
+     该结果不会广播，SkinBackdrop 无从持有与释放 → 不释放则图片字节活到
+     页面关闭（assetUrl.ts 调用方契约「替换/卸载时 release」同样覆盖丢弃路径）。 */
+  it('过期解析结果被丢弃时必须释放其 blob URL（不泄漏）', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+
+    // 第一次解析挂起（慢），第二次调用（清除）立即插队 → 第一次结果过期
+    const gateCtl: { release: (() => void) | null } = { release: null }
+    const gate = new Promise<void>(resolve => {
+      gateCtl.release = resolve
+    })
+    const core = await import('@tauri-apps/api/core')
+    const invokeMock = vi.mocked(core.invoke)
+    invokeMock.mockImplementationOnce(async () => {
+      await gate
+      return { base64: 'QUJD', mime: 'image/png' }
+    })
+
+    const slow = applySkinBg('C:\\\\img\\\\slow.png') // 占号 1，解析挂起
+    await applySkinBg('') // 占号 2，同步清除
+    expect(broadcasts[broadcasts.length - 1].url).toBeNull()
+
+    gateCtl.release?.()
+    await slow
+
+    // 过期结果既不得广播，也必须释放它创建的 blob
+    expect(broadcasts.filter(b => typeof b.url === 'string')).toHaveLength(0)
+    expect(revoke).toHaveBeenCalledTimes(1)
+    expect(String(revoke.mock.calls[0][0])).toMatch(/^blob:/)
+  })
 })
 
 describe('releaseSkinBg —— 转发到 assetUrl 的生命周期工具', () => {
