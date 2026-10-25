@@ -18,6 +18,7 @@
  */
 import { act, fireEvent, render, screen, waitFor, type RenderResult } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
 import { AppearancePanel } from './AppearancePanel'
 import { ThemeProvider } from '../../hooks/useTheme'
 import { OPACITY_COLOR_KEYS } from '../../hooks/customTheme'
@@ -230,6 +231,91 @@ describe('AppearancePanel 外观浮窗', () => {
     // 回预设态 → 重新应用 LS_SKIN（解析出可渲染 URL，而不是清空、也不是主题那张）
     expect(skinBroadcasts).toHaveLength(1)
     expect(skinBroadcasts[0]).toMatch(/^blob:/)
+  })
+
+  /* ── 背景图必须跟着主题走：切到系统主题后，那张自定义主题的背景图不得留着 ──
+     复现路径：激活带皮肤图的自定义主题 → 点系统主题卡 → 背景应回到预设态
+     （LS_SKIN；本仓该键已无写入点，故为"无背景"），而不是继续显示上一张图。 */
+  it('激活带皮肤图的自定义主题后点系统主题卡：背景图被清掉（不留上一张）', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: {}, skin: 'C:/img/theme.png' },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+    skinBroadcasts = []
+
+    await act(async () => {
+      fireEvent.click(presetCards(view)[2])
+    })
+
+    // 背景必须重新应用（预设态的值），而不是"什么都不做"留下上一张图
+    expect(skinBroadcasts.length).toBeGreaterThan(0)
+    // 预设态的 LS_SKIN 为空 → 广播清除（null）
+    expect(skinBroadcasts[skinBroadcasts.length - 1]).toBeNull()
+  })
+
+  it('预设态之间切系统主题：背景也按预设态重新应用（不留上一张图）', async () => {
+    const view = await renderPanel()
+    skinBroadcasts = []
+
+    await act(async () => {
+      fireEvent.click(presetCards(view)[1])
+    })
+
+    expect(skinBroadcasts.length).toBeGreaterThan(0)
+    expect(skinBroadcasts[skinBroadcasts.length - 1]).toBeNull()
+  })
+
+  /* ── 竞态：背景图解析是异步的，慢的解析会盖掉后来的清除 ──
+     真实时序：点「我的主题」卡激活带图主题（触发图片解析，耗时）→ 用户在解析
+     完成前点系统主题卡（触发清除）→ 先前的解析随后才完成 → 若无守卫，
+     后到的"图片"广播盖掉已生效的"清除" → 背景图留在系统主题上。 */
+  it('激活主题的图片解析慢于切主题：后到的图片广播不得盖掉已生效的清除', async () => {
+    let releaseImage: (() => void) | null = null
+    const imageGate = new Promise<void>(resolve => {
+      releaseImage = resolve
+    })
+    const invokeMock = vi.mocked(invoke)
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'read_image_base64') {
+        await imageGate
+        return { base64: 'QUJD', mime: 'image/png' }
+      }
+      return undefined as never
+    })
+
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: {}, skin: 'C:/img/theme.png' },
+      ]),
+    )
+    const view = await renderPanel()
+    skinBroadcasts = []
+
+    // ① 点「我的主题」卡激活（触发 activateCustom → applySkinBg(图片路径) → 慢解析）
+    await act(async () => {
+      fireEvent.click(themeCards(view)[0].querySelector('.apnp-theme-face') as HTMLElement)
+    })
+    // ② 解析未完成时点系统主题卡（触发清除）
+    await act(async () => {
+      fireEvent.click(presetCards(view)[2])
+    })
+    const afterClear = skinBroadcasts.length
+    expect(skinBroadcasts[afterClear - 1]).toBeNull()
+
+    // ③ 慢的解析此刻才完成 → 后到的图片广播必须被丢弃
+    await act(async () => {
+      releaseImage?.()
+      await imageGate
+    })
+
+    // 广播数不再增加（过期的图片结果被守卫丢弃），最后一次仍是"清除"
+    expect(skinBroadcasts.length).toBe(afterClear)
+    expect(skinBroadcasts[skinBroadcasts.length - 1]).toBeNull()
   })
 
   it('「我的主题」空态只显示「＋ 新建」卡（无空列表提示句）', async () => {

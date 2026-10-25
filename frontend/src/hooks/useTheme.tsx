@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { newCustomThemeId, parseCustomThemeJSON, type CustomTheme } from './customTheme'
-import { applySkinBg } from '../ui/skinBg'
+import { applySkinBg, readSkinBg } from '../ui/skinBg'
 
 export type ThemeId = 'dark' | 'light' | 'fresh'
 
@@ -230,6 +230,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       persistCustomStore(prev.themes, null)
       return { themes: prev.themes, activeId: null }
     })
+    // 停用自定义 = 回系统预设态 → 背景同步回 LS_SKIN（与外观浮窗点系统主题卡
+    // 同一口径）。早先这里不碰背景，HUD 快捷切主题后背景图会留在原主题上。
+    void applySkinBg(readSkinBg())
   }, [persistCustomStore])
 
   // 实时预览：切换基底 + 临时覆盖（不持久化，用于「保存前」的编辑态）

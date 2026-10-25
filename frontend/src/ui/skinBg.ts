@@ -71,13 +71,30 @@ function broadcast(url: string | null): void {
  * 第三种最关键：解析失败时绝不能广播 null。否则用户正看着一张好背景，只因为新选的
  *   那张没能渲染，眼前这张就被连带清掉 —— 表现为「换了个有问题的图之后，
  *   连原来的背景也不见了」。失败应该只影响新图，不该摧毁现状。
+ *
+ * # 并发守卫（2026-10-25 修「切主题后背景图留着」）
+ *
+ * 解析是异步的（可能经 Rust 读本机文件），而调用方常在解析完成前又发新请求
+ * （典型：切主题 → 清除；先前的图片解析随后才完成）。若无守卫，后到的**旧**
+ * 图片广播会盖掉已经生效的**新**状态 —— 表现为「切到系统主题了，背景图还在」。
+ *
+ * 这里用单调递增的序号做「最后发起者胜」：每次调用领一个号，解析完成后只有
+ * 号仍是最新（没有更新的调用插队）才广播。早到的旧请求被丢弃。
+ *
+ * 注意：序号只认**调用顺序**，不认完成顺序；解析失败的调用同样占号（它不广播，
+ * 但会挡掉更早的调用 —— 那更早的调用本来就该被丢弃）。
  */
+let applySeq = 0
+
 export async function applySkinBg(value: string): Promise<void> {
+  const seq = ++applySeq
   if (!value) {
     broadcast(null)
     return
   }
   const url = await resolveSkinImageUrl(value)
+  // 解析期间有更新的调用插队 → 本次结果已过期，丢弃（否则盖掉新状态）
+  if (seq !== applySeq) return
   if (!url) {
     console.error('[skin] 背景图无法转为可渲染 URL，已保留当前背景不变：', value)
     return
