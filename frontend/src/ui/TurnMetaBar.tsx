@@ -117,9 +117,11 @@ export function runningToolLabel(tool: TurnMetaBarActiveTool): string {
 /** 耐心阈值（毫秒）：单条工具执行超过 60s 才提示（HUD 单次运行同款节奏） */
 const PATIENCE_DELAY_MS = 60_000
 
-/** 执行中状态指示（2026-10-24 大王定）：1.5s 平滑节奏——
- *  四角圆点同步顺时针换位 → 中心聚合脉冲 → 带过冲弹回四角，
- *  四角轻微呼吸后循环。方形 SVG 块无边框无背景；实际尺寸 10×10（DOM）。 */
+/** 执行中状态指示（2026-10-25 大王定 v3「突触回路」）：两枚神经元由一条
+ *  微光线相连，脉冲沿回路往返行进——到达即端点闪爆 + 小涟漪，反向再发。
+ *  语义与 agent 执行回路同构（输入→思考→输出→反馈），读「在推进」而非
+ *  「加载等待」。契约延续：**不做旋转**（旋转语义是加载等待，长任务会被
+ *  读成卡住）。SVG 10×10 无边框无背景，chip 左间距仍由图标自身宽度承担。 */
 function LiveThinking() {
   return (
     <svg
@@ -130,33 +132,65 @@ function LiveThinking() {
       className="turn-meta-thinking"
       aria-hidden="true"
     >
+      {/* 涟漪 ×2：随脉冲抵达自端点迸出（置底层）；常态 opacity 0，降级时隐没 */}
       <circle
-        cx="2"
-        cy="2"
-        r="1.35"
-        fill="currentColor"
-        className="turn-meta-thinking-dot turn-meta-thinking-dot--tl"
+        cx="2.2"
+        cy="5"
+        r="1.9"
+        stroke="currentColor"
+        strokeWidth="0.5"
+        opacity="0"
+        className="turn-meta-thinking-ring-l"
       />
       <circle
-        cx="8"
-        cy="2"
-        r="1.35"
-        fill="currentColor"
-        className="turn-meta-thinking-dot turn-meta-thinking-dot--tr"
+        cx="7.8"
+        cy="5"
+        r="1.9"
+        stroke="currentColor"
+        strokeWidth="0.5"
+        opacity="0"
+        className="turn-meta-thinking-ring-r"
+      />
+      {/* 回路轨道：恒显微弱，把两枚神经元系成"一条回路"的语义锚 */}
+      <path
+        d="M 2.2 5 L 7.8 5"
+        stroke="currentColor"
+        strokeWidth="0.55"
+        opacity="0.22"
+        className="turn-meta-thinking-axis"
       />
       <circle
-        cx="8"
-        cy="8"
-        r="1.35"
+        cx="2.2"
+        cy="5"
+        r="1.2"
         fill="currentColor"
-        className="turn-meta-thinking-dot turn-meta-thinking-dot--br"
+        className="turn-meta-thinking-node-l"
       />
       <circle
-        cx="2"
-        cy="8"
-        r="1.35"
+        cx="7.8"
+        cy="5"
+        r="1.2"
         fill="currentColor"
-        className="turn-meta-thinking-dot turn-meta-thinking-dot--bl"
+        className="turn-meta-thinking-node-r"
+      />
+      {/* 彗尾：与脉冲同拍但 +0.05s 延迟+小一号暗一档，形成拖尾；基态 opacity 0（降级时隐没） */}
+      <circle
+        cx="2.2"
+        cy="5"
+        r="0.55"
+        fill="currentColor"
+        opacity="0"
+        className="turn-meta-thinking-tail"
+      />
+      {/* 行进脉冲：0-20% 左→右、33-52% 右→左，到端点即被吸收，端点负责闪；
+          基态 opacity 0，仅由关键帧点亮，降级时静场只剩轨道+双端 */}
+      <circle
+        cx="2.2"
+        cy="5"
+        r="0.9"
+        fill="currentColor"
+        opacity="0"
+        className="turn-meta-thinking-pulse"
       />
     </svg>
   )

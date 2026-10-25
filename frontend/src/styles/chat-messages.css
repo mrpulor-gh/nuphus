@@ -2288,8 +2288,10 @@
   align-items: center;
 }
 
-/* 执行中状态指示（2026-10-24 大王定）：四角圆点顺时针依次换位 →
-   四点向正方形中心聚合成一点 → 停顿 → 分裂回四角，循环。
+/* 执行中状态指示（2026-10-25 大王定 v3「突触回路」）：两枚神经元由一条微光
+   线相连，脉冲在两者间往返——到达即端点闪爆 + 小涟漪，反向再发，1.5s 一拍。
+   语义与 agent 执行回路同构（输入→思考→输出→反馈），读「在推进」。
+   契约延续：不做旋转（旋转=加载等待，长任务会被读成卡住）。
    方形 SVG 块无边框无背景；仅 duration slot 且 isLive 时由 TurnMetaBar 渲染。 */
 .turn-meta-thinking {
   flex-shrink: 0;
@@ -2297,173 +2299,239 @@
   color: var(--spark-dim);
   overflow: visible;
 }
-.turn-meta-thinking-dot {
+.turn-meta-thinking-axis {
+  opacity: 0.22;
+}
+.turn-meta-thinking-node-l,
+.turn-meta-thinking-node-r {
   transform-box: fill-box;
   transform-origin: center;
-  animation-duration: 1.5s;
-  animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
-  animation-iteration-count: infinite;
 }
-.turn-meta-thinking-dot--tl {
-  animation-name: turn-meta-dot-tl;
+.turn-meta-thinking-node-l {
+  animation: turn-meta-node-l 1.5s cubic-bezier(0.45, 0, 0.2, 1) infinite;
 }
-.turn-meta-thinking-dot--tr {
-  animation-name: turn-meta-dot-tr;
+.turn-meta-thinking-node-r {
+  animation: turn-meta-node-r 1.5s cubic-bezier(0.45, 0, 0.2, 1) infinite;
 }
-.turn-meta-thinking-dot--br {
-  animation-name: turn-meta-dot-br;
+.turn-meta-thinking-pulse,
+.turn-meta-thinking-tail {
+  transform-box: fill-box;
+  transform-origin: center;
 }
-.turn-meta-thinking-dot--bl {
-  animation-name: turn-meta-dot-bl;
+.turn-meta-thinking-pulse {
+  animation: turn-meta-pulse 1.5s cubic-bezier(0.34, 0.62, 0.28, 1) infinite;
+}
+/* 彗尾 = 同一套拍子 + 0.05s 相位滞后（正延迟=落在脉冲身后），幅度更小更哑 */
+.turn-meta-thinking-tail {
+  animation: turn-meta-tail 1.5s cubic-bezier(0.34, 0.62, 0.28, 1) infinite;
+  animation-delay: 0.05s;
+}
+.turn-meta-thinking-ring-l,
+.turn-meta-thinking-ring-r {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.turn-meta-thinking-ring-l {
+  animation: turn-meta-ring-l 1.5s cubic-bezier(0.25, 0.6, 0.3, 1) infinite;
+}
+.turn-meta-thinking-ring-r {
+  animation: turn-meta-ring-r 1.5s cubic-bezier(0.25, 0.6, 0.3, 1) infinite;
 }
 
-/* 1.5s 平滑节奏（大王 2026-10-24 定）：
-   0-30% 四点同步顺时针换位（1% 级微错峰，全部在动）；
-   34%-46% 聚合到中心；46%-58% 中心聚合脉冲（含二次轻呼吸）；
-   58%-72% 带过冲弹回四角；72%-80% 回弹落定；
-   80%-100% 四角轻微呼吸（scale 1→1.06→1）后循环——
-   避免换位结束后画面完全静止，看起来像「突然卡住」。 */
-@keyframes turn-meta-dot-tl {
+/* 1.5s 突触回路拍子（脉冲行程 2.2→7.8 = 5.6px，全程 translate 驱动、零旋转）：
+   0-20%   左→右行进（彗尾以 0.05s 相位落其后）；
+   20-26%  抵达右元被吸收（缩点隐没）；26-31% 驻留蓄势；
+   33-52%  右→左行进；52-58% 抵达左元被吸收；
+   65-100% 于左元处重新蓄能（渐显长大），下一拍整装出发。
+   端点在被抵达的邻段闪爆（node-r ~26% / node-l ~60%），涟漪同步迸出大于端点、
+   渐扩渐隐（上限 scale 1.35 → 半径 ~2.6，画布内基本不溢界）。 */
+@keyframes turn-meta-pulse {
   0% {
-    transform: translate(0, 0) scale(1);
+    transform: translateX(0) scale(0.95);
+    opacity: 1;
   }
-  24%,
-  30% {
-    transform: translate(6px, 0) scale(1);
+  20% {
+    transform: translateX(5.6px) scale(0.95);
+    opacity: 1;
   }
-  34% {
-    transform: translate(3px, 3px) scale(0.94);
+  26% {
+    transform: translateX(5.6px) scale(0.35);
+    opacity: 0;
   }
-  40% {
-    transform: translate(3px, 3px) scale(1.12);
+  31% {
+    transform: translateX(5.6px) scale(0.35);
+    opacity: 0;
   }
-  46% {
-    transform: translate(3px, 3px) scale(1);
+  33% {
+    transform: translateX(5.6px) scale(0.6);
+    opacity: 0.9;
   }
   52% {
-    transform: translate(3px, 3px) scale(1.06);
+    transform: translateX(0) scale(0.95);
+    opacity: 1;
   }
   58% {
-    transform: translate(3px, 3px) scale(1);
+    transform: translateX(0) scale(0.35);
+    opacity: 0;
   }
-  72% {
-    transform: translate(-0.5px, -0.5px) scale(1);
+  65% {
+    transform: translateX(0) scale(0.5);
+    opacity: 0.5;
   }
-  80%,
-  90% {
-    transform: translate(0, 0) scale(1.06);
+  84% {
+    transform: translateX(0) scale(0.7);
+    opacity: 0.7;
+  }
+  94% {
+    transform: translateX(0) scale(0.85);
+    opacity: 0.9;
   }
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translateX(0) scale(0.95);
+    opacity: 1;
   }
 }
-@keyframes turn-meta-dot-tr {
-  0%,
-  2% {
-    transform: translate(0, 0) scale(1);
+@keyframes turn-meta-tail {
+  0% {
+    transform: translateX(0) scale(0.6);
+    opacity: 0.55;
   }
-  26%,
-  30% {
-    transform: translate(0, 6px) scale(1);
+  20% {
+    transform: translateX(5.6px) scale(0.6);
+    opacity: 0.55;
   }
-  34% {
-    transform: translate(-3px, 3px) scale(0.94);
+  26% {
+    transform: translateX(5.6px) scale(0.22);
+    opacity: 0;
   }
-  40% {
-    transform: translate(-3px, 3px) scale(1.12);
+  31% {
+    transform: translateX(5.6px) scale(0.22);
+    opacity: 0;
   }
-  46% {
-    transform: translate(-3px, 3px) scale(1);
+  33% {
+    transform: translateX(5.6px) scale(0.4);
+    opacity: 0.5;
   }
   52% {
-    transform: translate(-3px, 3px) scale(1.06);
+    transform: translateX(0) scale(0.6);
+    opacity: 0.55;
   }
   58% {
-    transform: translate(-3px, 3px) scale(1);
+    transform: translateX(0) scale(0.22);
+    opacity: 0;
   }
-  72% {
-    transform: translate(0.5px, -0.5px) scale(1);
+  65% {
+    transform: translateX(0) scale(0.32);
+    opacity: 0.25;
   }
-  80%,
-  90% {
-    transform: translate(0, 0) scale(1.06);
+  84% {
+    transform: translateX(0) scale(0.45);
+    opacity: 0.4;
+  }
+  94% {
+    transform: translateX(0) scale(0.5);
+    opacity: 0.5;
   }
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translateX(0) scale(0.6);
+    opacity: 0.55;
   }
 }
-@keyframes turn-meta-dot-br {
+@keyframes turn-meta-node-l {
   0%,
-  4% {
-    transform: translate(0, 0) scale(1);
+  48% {
+    transform: scale(1);
+    opacity: 1;
   }
-  28%,
-  30% {
-    transform: translate(-6px, 0) scale(1);
-  }
-  34% {
-    transform: translate(-3px, -3px) scale(0.94);
-  }
-  40% {
-    transform: translate(-3px, -3px) scale(1.12);
-  }
-  46% {
-    transform: translate(-3px, -3px) scale(1);
-  }
-  52% {
-    transform: translate(-3px, -3px) scale(1.06);
+  56% {
+    transform: scale(1.1);
+    opacity: 1;
   }
   58% {
-    transform: translate(-3px, -3px) scale(1);
+    transform: scale(1.5);
+    opacity: 1;
   }
-  72% {
-    transform: translate(0.5px, 0.5px) scale(1);
+  68% {
+    transform: scale(1.04);
+    opacity: 1;
   }
   80%,
-  90% {
-    transform: translate(0, 0) scale(1.06);
-  }
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: scale(1);
+    opacity: 1;
   }
 }
-@keyframes turn-meta-dot-bl {
+@keyframes turn-meta-node-r {
   0%,
-  6% {
-    transform: translate(0, 0) scale(1);
+  20% {
+    transform: scale(1);
+    opacity: 1;
   }
-  30%,
-  32% {
-    transform: translate(0, -6px) scale(1);
+  24% {
+    transform: scale(1.05);
+    opacity: 1;
   }
-  34% {
-    transform: translate(3px, -3px) scale(0.94);
+  26% {
+    transform: scale(1.5);
+    opacity: 1;
   }
-  40% {
-    transform: translate(3px, -3px) scale(1.12);
+  36% {
+    transform: scale(1.04);
+    opacity: 1;
   }
-  46% {
-    transform: translate(3px, -3px) scale(1);
-  }
-  52% {
-    transform: translate(3px, -3px) scale(1.06);
-  }
-  58% {
-    transform: translate(3px, -3px) scale(1);
-  }
-  72% {
-    transform: translate(-0.5px, 0.5px) scale(1);
-  }
-  80%,
-  90% {
-    transform: translate(0, 0) scale(1.06);
-  }
+  48%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes turn-meta-ring-r {
+  0%,
+  24% {
+    transform: scale(0.45);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(0.7);
+    opacity: 0.42;
+  }
+  44% {
+    transform: scale(1.3);
+    opacity: 0.1;
+  }
+  56%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@keyframes turn-meta-ring-l {
+  0%,
+  56% {
+    transform: scale(0.45);
+    opacity: 0;
+  }
+  62% {
+    transform: scale(0.7);
+    opacity: 0.42;
+  }
+  76% {
+    transform: scale(1.3);
+    opacity: 0.1;
+  }
+  88%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .turn-meta-thinking-dot {
+  .turn-meta-thinking-pulse,
+  .turn-meta-thinking-tail,
+  .turn-meta-thinking-ring-l,
+  .turn-meta-thinking-ring-r,
+  .turn-meta-thinking-node-l,
+  .turn-meta-thinking-node-r {
     animation: none;
   }
 }
