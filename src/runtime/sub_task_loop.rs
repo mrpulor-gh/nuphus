@@ -730,26 +730,48 @@ impl super::SubTaskRunner {
                 );
             }
 
-            // Context water level monitor (no distillation, just reminder)
+            // Context water level monitor (no distillation, reminder only)
+            // ── Exec 设计决策（大王 2026-10-25 定权）──
+            // Exec **不引入 refine 机制**：子任务会话无沉淀价值，且提炼预算
+            // （一次 LLM 调用）对小窗口任务是纯浪费。软约束就够——越线仅注入
+            // 收敛劝导，产出回复交 Leader，由 Leader 决定后续（拆分/重试/在
+            // 主会话 refine）。口径与 Leader 同源（RefineTier 分档 + 85% 硬
+            // 止损），但动作只有劝导，没有压缩。
             let usage = self.session.estimate_token_usage();
-            let ratio = usage as f64 / self.config.context_window as f64;
-            if ratio > 0.70 {
-                tracing::warn!(
-                    "[EXEC CONTEXT] High context usage: {}/{} ({:.1}%). \
-                    Consider breaking task into smaller subtasks.",
-                    usage,
-                    self.config.context_window,
-                    ratio * 100.0
-                );
-                self.reminders.enqueue(
-                    format!(
-                        "当前上下文使用量已达 {:.0}% ({} tokens)。如后续步骤继续失败，请精简输出或要求 Leader 拆分任务。",
-                        ratio * 100.0, usage
-                    ),
-                    3,
-                    ReminderPriority::High,
-                    ReminderCategory::DeviationCorrect,
-                );
+            let cw_exec = self.config.context_window;
+            if cw_exec > 0 && usage > 0 {
+                let tier = crate::agent::distill::RefineTier::for_window(cw_exec);
+                let ratio = usage as f64 / cw_exec as f64;
+                // 85% 硬止损：最强劝导（仍不 refine、不截断执行）
+                if ratio >= 0.85 && self.max_warning_injected < 4 {
+                    self.max_warning_injected = 4;
+                    tracing::warn!(
+                        "[EXEC CONTEXT] usage {}/{} ({:.1}%) — hard-stop advisory (no refine by design)",
+                        usage, cw_exec, ratio * 100.0
+                    );
+                    self.reminders.enqueue(
+                        format!(
+                            "上下文使用量已达 {:.0}% ({} tokens)。请立即停止非关键探索，基于已获得的信息尽快产出结论回复 Leader——后续由 Leader 决策（拆分任务或重试）。",
+                            ratio * 100.0, usage
+                        ),
+                        3,
+                        ReminderPriority::Critical,
+                        ReminderCategory::DeviationCorrect,
+                    );
+                } else if let Some(pr) = tier.prompt_ratio() {
+                    if ratio >= pr && self.max_warning_injected < 2 {
+                        self.max_warning_injected = 2;
+                        self.reminders.enqueue(
+                            format!(
+                                "当前上下文使用量已达 {:.0}% ({} tokens)。请规划收敛：优先完成核心目标，尽快输出结论回复 Leader。",
+                                ratio * 100.0, usage
+                            ),
+                            3,
+                            ReminderPriority::High,
+                            ReminderCategory::DeviationCorrect,
+                        );
+                    }
+                }
             }
 
             let iter_duration = iter_timer.elapsed().as_millis();

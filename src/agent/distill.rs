@@ -4,8 +4,9 @@
 //! ReactAgent methods below are thin wrappers.
 
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use crate::agent::events::EventEmitter;
+use crate::agent::events::{EventEmitter, NuphusEvent};
 use crate::agent::ReactAgent;
 use crate::memory::entry::AgentType;
 use crate::session::Session;
@@ -39,6 +40,90 @@ pub const REFINE_PROMPT: &str = "开始进行上下文提炼，把以上session�
 只输出提炼内容文本，禁止携带任何无关语句，结果将自动保存记忆。\n\
 \n\
 注意：如果前文已有以「[当前 session 对话内容已触发提炼」开头的 System 消息，那是之前的提炼摘要——不要重复摘要它们已经涵盖的内容，只提炼其后出现的新消息。";
+
+/// 执行中提炼提示词（in-loop refine）——Leader / WorkflowAgent 在 ReAct 循环
+/// 内上下文越线时使用。与标准 [`REFINE_PROMPT`] 的关键差异：**任务未闭合**。
+///
+/// 为什么必须另写一份：`replace_with_distill`/`accumulate_distill` 会清空全部
+/// 消息（session.rs），提炼后摘要将是 agent 唯一的任务记忆。标准版把
+/// 「当前状态/下一步」放在保留列表里一带而过；未闭合场景下目标/进度/待办
+/// 必须升级为**强制首部结构化**，否则续跑会偏离原始目标或重复已完成工作
+/// （2026-10-25 大王定调：目标、已完成、未完成、待办、关键路径要具体清晰）。
+pub const REFINE_PROMPT_UNFINISHED: &str = "[执行中上下文提炼 — 任务未完成]\n\
+\n\
+以上是一个正在执行中的任务会话，上下文用量已达阈值。现在把会话提炼为紧凑摘要，提炼完成后你将立即继续执行未尽事宜。禁止调用任何工具，直接输出最终文本。\n\
+\n\
+**第一行必须是简短标题（10-30字），概括任务核心内容。** 标题后空一行，输出摘要，摘要必须按以下结构：\n\
+\n\
+## 原始任务目标\n\
+用户/上级下达的原始目标原文或其忠实转述。这是你提炼后唯一的任务记忆，必须完整保留意图与约束，不得丢失或改写。\n\
+\n\
+## 已完成\n\
+逐项列出：完成了什么、产出在哪个文件/路径、关键结论、验证状态。\n\
+\n\
+## 当前进度\n\
+进行到哪一步、手停在哪、上一步的产出是什么。\n\
+\n\
+## 待办与下一步\n\
+按优先级列出未尽事宜与下一步行动——提炼后你将从这里直接继续。\n\
+\n\
+## 关键文件与路径\n\
+涉及的文件/目录、各自角色、修改历史。\n\
+\n\
+## 关键中间数据与决策依据\n\
+重要数值、配置、决策链与备选方案、阻塞与解决状态——防止重复探索。\n\
+\n\
+丢弃：纯问候、已完成的确认、重复说明等无信息量内容。\n\
+只输出提炼内容文本，禁止携带任何无关语句。\n\
+如果前文已有以「[当前 session 对话内容已触发提炼」开头的 System 消息，那是之前的提炼摘要——在其基础上增量更新（吸收其中仍然有效的内容），不要从零重写。";
+
+/// 同一轮次内 in-loop refine 的次数上限。
+///
+/// 落地 `refine_count` 的真实约束（修复 B9：此前计数器只 `+= 1` 从不比较，
+/// workflow_agent.rs 注释声称的「max 2 auto-refines」是过期声明）。超过上限
+/// 后 in-loop 不再提炼，降级为软劝导 + turn-end 正常 refine 兜底——防
+/// 「提炼→续跑→再越线→再提炼」无限循环。
+pub const MAX_IN_LOOP_REFINES: u32 = 2;
+
+/// in-loop refine 的提交动作：摘要落地（压缩 + 归档）。
+///
+/// 与 turn-end 路径共用压缩本体（`accumulate_distill`：再次提炼只留最新
+/// refine 消息，防累加撑爆小窗口）与归档（`save_refine_entry`）。
+/// 返回 false = 摘要为空（调用方应回滚 session）。
+pub fn commit_in_loop_refine(session: &mut Session, summary: &str, agent_type: AgentType) -> bool {
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return false;
+    }
+    session.accumulate_distill(summary);
+    let _ = save_refine_entry(
+        &session.id,
+        &session.current_turn_id(),
+        summary,
+        "in_loop",
+        agent_type,
+    );
+    true
+}
+
+/// Refine 内部流程的过滤发射器：只放行 LlmTextDelta（提炼气泡流式渲染），
+/// 静默其余事件（ExecutionStarted / ExecutionCompleted / ToolCall* 等）。
+///
+/// 从 src-tauri 下沉至此：in-loop refine 在 lib 层（Runtime / WorkflowAgent）
+/// 就地执行，与 turn-end 的 execute_session_refine 共用同一过滤器——两路径
+/// 必须同构，禁止各写一套（原定义处改为 `pub use` 引用本件）。
+#[derive(Clone)]
+pub struct RefineStreamFilter {
+    pub inner: Arc<dyn EventEmitter>,
+}
+
+impl EventEmitter for RefineStreamFilter {
+    fn emit(&self, event: NuphusEvent) {
+        if matches!(event, NuphusEvent::LlmTextDelta { .. }) {
+            self.inner.emit(event);
+        }
+    }
+}
 
 /// Write refinement result to memory system — usable by any Agent type
 pub fn save_refine_entry(

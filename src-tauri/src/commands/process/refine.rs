@@ -2,28 +2,10 @@
 
 use crate::emitter::CompoundEmitter;
 use crate::state::AppState;
+use nuphus::agent::distill::RefineStreamFilter;
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-/// Refine 内部流程的过滤发射器：只放行 LlmTextDelta（前端提炼气泡流式渲染），
-/// 静默其余事件（ExecutionStarted / UserMessageReceived / ExecutionCompleted /
-/// DirectResponse / TokenUsage / ToolCall* 等）。
-/// 此前 Leader/Workflow 两路径均 take_emitter 全静默：提炼期间前端收不到任何
-/// delta，气泡空转直到 session_refined 一次性填 summary——双 mode 提炼均无
-/// 流式输出的根因（2026-08-30 修复）。REFINE_PROMPT 是纯总结任务，正常不产生
-/// 工具调用；即使 LLM 意外调工具，ToolCall* 也被静默（提炼不污染执行轨迹）。
-struct RefineStreamFilter {
-    inner: Arc<dyn EventEmitter>,
-}
-
-impl EventEmitter for RefineStreamFilter {
-    fn emit(&self, event: NuphusEvent) {
-        if matches!(event, NuphusEvent::LlmTextDelta { .. }) {
-            self.inner.emit(event);
-        }
-    }
-}
 
 /// 提炼的墙钟预算（秒）。
 ///

@@ -359,6 +359,15 @@ impl Session {
         });
     }
 
+    /// 回滚到指定消息数——in-loop refine 失败时移除刚注入的提示词消息
+    /// （先调用后 commit：摘要没拿到就不能在 session 里留下提炼指令残留，
+    /// 否则下一轮 LLM 会看到一条无人响应的「开始提炼」指令）。
+    pub fn truncate_messages(&mut self, len: usize) {
+        if self.messages.len() > len {
+            self.messages.truncate(len);
+        }
+    }
+
     /// 再次提炼：只保留当前 refine —— 移除过往 refine System 消息（内容已由
     /// save_refine_entry 归档至记忆系统 refine-{session_id}-{timestamp}），清空其余
     /// 消息，插入新摘要。避免 refine1+refine2 累加撑大小模型上下文，单对话可无限复用。

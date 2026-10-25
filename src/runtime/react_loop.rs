@@ -525,36 +525,57 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     .push_user_internal(crate::handoff::format_doorbell_section(&handoff_events));
             }
 
-            // ── 上下文预算：执行中防溢出（预警 + 强制收敛，执行中不碰压缩）──
+            // ── 上下文预算：执行中防溢出（分档劝导 + 越线就地提炼）──
+            // 与 turn-end 的 maybe_refine_session 同源分档（RefineTier）——废除
+            // 本循环自有的固定 85% 单线：两套线各管一段（一个管劝导、一个管
+            // turn-end 提炼）是「85% 没起作用」排查误判的根源（2026-10-25）。
+            // 语义：prompt 线（Medium 50% / Large 30%）软预警一次；force 线
+            // （Small 75% / Medium 80% / Large 可调默认 50%）或绝对硬止损 85%
+            // 触发 refine_in_loop——真正像正常 refine 一样就地压缩，成功后
+            // 循环自然继续（任务接续），不硬杀、不丢任务。
+            // 注入走 push_user_internal，不动系统提示前缀，不影响缓存命中。
             {
-                // 执行中防溢出：预警线 70%，强制收敛线 85%（固定值）。
-                // 达到强制线 = 让 agent 输出最终回复、自然结束循环；loop 结束后
-                // maybe_refine_session 自动 refine。注入走 push_user_internal，不动
-                // 系统提示前缀，不影响缓存命中（同 reminders 机制）。flag 各注入一次。
                 let cw = crate::agent::goal_types::get_context_window_for(
                     &self.agent.config.model,
                     Some(&self.agent.config.provider),
                 );
                 let tokens = self.agent.session.api_input_tokens as usize;
                 if cw > 0 && tokens > 0 {
-                    // 预警线 70%，强制收敛线 85%（固定值，不随 refine 档位）。
+                    let tier = crate::agent::distill::RefineTier::for_window(cw);
+                    let force_ratio = tier.force_ratio(self.config.large_force_refine_threshold);
                     let ratio = tokens as f64 / cw as f64;
-                    if ratio >= 0.85 && !ctx_force_converged {
+                    // 85% 绝对硬止损：不低于任何档 force 线；provider 不回 usage
+                    // 时 tokens 回落字符估算，仍可能低估，硬止损是最后一道线。
+                    let at_force_line = ratio >= force_ratio || ratio >= 0.85;
+                    if at_force_line && !ctx_force_converged {
                         ctx_force_converged = true;
-                        self.agent.session.push_user_internal(format!(
-                            "⚠ 上下文用量已达 {:.0}%（约 {}/{} tokens）。请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
-                            ratio * 100.0,
-                            tokens,
-                            cw
-                        ));
-                    } else if ratio >= 0.70 && !ctx_warned {
-                        ctx_warned = true;
-                        self.agent.session.push_user_internal(format!(
-                            "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
-                            ratio * 100.0,
-                            tokens,
-                            cw
-                        ));
+                        if self.refine_in_loop(cancel_flag).await {
+                            // 提炼成功：session 已压缩、token 清零（accumulate_distill
+                            // 内置）。重置 flag 允许下一周期再触发（refine_count
+                            // 上限兜底防循环）；本迭代继续——build_request 用的
+                            // 就是压缩后的上下文，未尽事宜由摘要承载续跑。
+                            ctx_force_converged = false;
+                        } else {
+                            // 提炼失败或已达同 turn 上限：降级软劝导（一次性），
+                            // turn-end 正常 refine 兜底。不 break——是否收敛
+                            // 交模型，执行终止不由代码硬杀。
+                            self.agent.session.push_user_internal(format!(
+                                "⚠ 上下文用量已达 {:.0}%（约 {}/{} tokens），自动提炼未生效。请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
+                                ratio * 100.0,
+                                tokens,
+                                cw
+                            ));
+                        }
+                    } else if let Some(pr) = tier.prompt_ratio() {
+                        if ratio >= pr && !ctx_warned {
+                            ctx_warned = true;
+                            self.agent.session.push_user_internal(format!(
+                                "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
+                                ratio * 100.0,
+                                tokens,
+                                cw
+                            ));
+                        }
                     }
                 }
             }
