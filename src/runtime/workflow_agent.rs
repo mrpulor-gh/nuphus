@@ -91,7 +91,8 @@ pub struct WorkflowAgent {
     /// 本轮元数据累加器（耗时 / token / 步数）——与 ReactAgent/SubTaskRunner
     /// 同一结构与口径，完成时作为 ExecutionCompleted.meta 下发。
     pub(crate) turn_meta: crate::agent::turn_meta::TurnMeta,
-    /// Session refine counter (max 2 auto-refines)
+    /// Session refine counter（turn-end maybe_refine_session 分档计数用；
+    /// in-loop 注入不再计数——整体替换后 token 清零、消息归 1，天然不循环）
     pub(crate) refine_count: u32,
     /// Refine threshold (inherited from Runtime config, same as Leader)
     pub(crate) large_force_threshold: f64,
@@ -114,6 +115,11 @@ pub struct WorkflowAgent {
     /// 内部流程标记（refine 用）：本轮 input 以 internal user 消息入 session（前端不显示），
     /// 且不重复 push（调用方已手动 push_user_internal）。
     pub(crate) internal_input: bool,
+    /// 本轮是否已越线注入未闭合提炼提示词（REFINE_PROMPT_UNFINISHED）。
+    /// run() 迭代检查点越线时置位；循环自然收敛后由 run() 收尾处读取——
+    /// 整体替换会话（历史全弃、摘要成唯一记忆）后重新进入迭代，任务从
+    /// 摘要接续，读后即清。
+    pub(crate) refine_injected: bool,
 }
 
 impl WorkflowAgent {
@@ -160,6 +166,7 @@ impl WorkflowAgent {
             workflow_engine: None,
             source: "desktop".to_string(),
             internal_input: false,
+            refine_injected: false,
         }
         .apply_supports_vision()
     }
@@ -726,10 +733,10 @@ impl WorkflowAgent {
             }
 
             // ── 上下文预算：执行中防溢出（与 Leader 同机制，2026-10-25 定权）──
-            // 分档口径同 turn-end 判定（RefineTier）；越 force 线或 85% 硬止损
-            // → refine_in_loop 就地压缩，成功后循环自然继续（任务接续，不硬杀）。
-            // 提炼失败 / 已达同 turn 上限 → 降级到渐进警告（inject_context_warning）
-            // 兜底，保留原有 FORBID break 语义。
+            // 分档口径同 turn-end 判定（RefineTier）；越 force 线注入未闭合提炼
+            // 提示词：模型产出摘要、循环自然收敛，run() 收尾处整体替换会话
+            // （replace_with_distill）并重新进入迭代接力续跑。
+            // 未越线维持原有渐进警告（inject_context_warning）与 FORBID break 语义。
             {
                 let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
                 if ctx_window > 0 {
@@ -742,11 +749,15 @@ impl WorkflowAgent {
                         let tier = crate::agent::distill::RefineTier::for_window(ctx_window);
                         let force_ratio = tier.force_ratio(self.large_force_threshold);
                         let ratio = usage as f64 / ctx_window as f64;
-                        let refined = (ratio >= force_ratio || ratio >= 0.85)
-                            && self.refine_in_loop(cancel_flag).await;
-                        if !refined && self.inject_context_warning() {
+                        let at_force_line = ratio >= force_ratio;
+                        if at_force_line && !self.refine_injected {
+                            self.refine_injected = true;
+                            self.session.push_user_internal(
+                                crate::agent::distill::REFINE_PROMPT_UNFINISHED.to_string(),
+                            );
+                        } else if !at_force_line && self.inject_context_warning() {
                             // Forbidden warning injected, give LLM one more chance
-                        } else if !refined && self.max_warning_injected >= 4 {
+                        } else if !at_force_line && self.max_warning_injected >= 4 {
                             tracing::warn!("[WORKFLOW-FORBID] Context watermark exceeded limit");
                             break;
                         }
@@ -796,6 +807,34 @@ impl WorkflowAgent {
             // ── No tool calls → return result ──
             if tool_calls.is_empty() {
                 self.session.push_assistant(filtered_blocks);
+                // refine 接力：本轮注入了未闭合提炼提示词，模型的无工具调用
+                // 回复即摘要——整体替换会话（历史全弃、摘要成唯一记忆，与
+                // turn-end 同一落地动作），本迭代继续，任务从摘要接续
+                // （无递归、无额外机制；用户中断/终止不接力）。
+                if self.refine_injected
+                    && !cancel_flag.load(Ordering::SeqCst)
+                    && !self.user_terminated
+                {
+                    if let Some(summary) = self.session.last_assistant_text() {
+                        let summary = summary.trim().to_string();
+                        if !summary.is_empty() {
+                            self.session.replace_with_distill(&summary);
+                            let _ = crate::agent::distill::save_refine_entry(
+                                &self.session.id,
+                                &self.session.current_turn_id(),
+                                &summary,
+                                "in_loop",
+                                crate::memory::entry::AgentType::WorkAgent,
+                            );
+                            tracing::info!(
+                                "[REFINE] workflow in-loop done: session replaced ({} chars), continuing",
+                                summary.len()
+                            );
+                            self.refine_injected = false;
+                            continue;
+                        }
+                    }
+                }
                 let text = assistant_blocks
                     .iter()
                     .filter_map(|b| match b {
@@ -1653,92 +1692,6 @@ impl WorkflowAgent {
             _ => {}
         }
         level >= 4
-    }
-
-    /// 执行中提炼（in-loop refine）——与 Leader（Runtime::refine_in_loop）
-    /// **同机制同构件**（大王 2026-10-25 定权：WorkflowAgent 与 Leader 走一样
-    /// 的机制）。就地完整 refine：push 未闭合提示词 → run 跑一轮禁工具 →
-    /// 摘要 commit（accumulate_distill + 归档）→ 外层循环自然继续（任务接续）。
-    ///
-    /// 失败（超时 / API 错 / 空输出）：truncate 回滚提示词消息，session 原样
-    /// 不动，返回 false 由调用方降级到渐进警告（inject_context_warning）兜底。
-    /// 同 turn 上限 MAX_IN_LOOP_REFINES 次，尝试即计数（含失败）。
-    async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
-        use crate::agent::distill::{
-            commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
-        };
-
-        if self.refine_count >= MAX_IN_LOOP_REFINES {
-            tracing::info!(
-                "[REFINE] workflow in-loop skipped: refine_count {} >= max {}",
-                self.refine_count,
-                MAX_IN_LOOP_REFINES
-            );
-            return false;
-        }
-        self.refine_count += 1;
-
-        let before = self.session.messages().len();
-        self.session
-            .push_user_internal(REFINE_PROMPT_UNFINISHED.to_string());
-        // internal_input=true 让 run 跳过重复 push_user（同 turn-end workflow
-        // refine 路径）；过滤器静默 ExecutionStarted 等生命周期事件、放行
-        // LlmTextDelta 供前端提炼气泡流式。
-        self.set_internal_input(true);
-        let saved = self.take_emitter();
-        if let Some(ref e) = saved {
-            self.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
-        }
-        // Box::pin 断异步递归环：refine_in_loop → run → 迭代循环 →
-        // refine_in_loop（Rust 要求 async fn 递归必须 boxed）。
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            Box::pin(self.run(REFINE_PROMPT_UNFINISHED, &None, cancel_flag)),
-        )
-        .await
-        .map_err(|_| "提炼超时（300s）".to_string())
-        .and_then(|r| r.map_err(|e| e.to_string()));
-        self.set_internal_input(false);
-        let _ = self.take_emitter();
-        self.set_emitter(saved);
-
-        match result {
-            Ok(output) if output.success && !output.message.trim().is_empty() => {
-                let summary = output.message.trim().to_string();
-                if commit_in_loop_refine(
-                    &mut self.session,
-                    &summary,
-                    // AgentType 仅 Leader 一个变体（memory::entry）——workflow
-                    // refine 归档历来归 Leader 类型，与 turn-end workflow refine
-                    // 路径（save_refine_entry 硬编码 Leader）保持一致。
-                    crate::memory::entry::AgentType::Leader,
-                ) {
-                    tracing::info!(
-                        "[REFINE] workflow in-loop done: {} chars compacted (refine_count={})",
-                        summary.len(),
-                        self.refine_count
-                    );
-                    true
-                } else {
-                    self.session.truncate_messages(before);
-                    false
-                }
-            }
-            Ok(_) => {
-                self.session.truncate_messages(before);
-                tracing::warn!("[REFINE] workflow in-loop: empty output, rolled back");
-                false
-            }
-            Err(reason) => {
-                self.session.truncate_messages(before);
-                tracing::warn!(
-                    "[REFINE] workflow in-loop failed ({}), rolled back; degraded to warnings",
-                    reason
-                );
-                false
-            }
-        }
     }
 
     /// Safety check: session authorization → permissions → SecurityGuard

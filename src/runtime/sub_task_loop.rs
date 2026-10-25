@@ -735,8 +735,9 @@ impl super::SubTaskRunner {
             // Exec **不引入 refine 机制**：子任务会话无沉淀价值，且提炼预算
             // （一次 LLM 调用）对小窗口任务是纯浪费。软约束就够——越线仅注入
             // 收敛劝导，产出回复交 Leader，由 Leader 决定后续（拆分/重试/在
-            // 主会话 refine）。口径与 Leader 同源（RefineTier 分档 + 85% 硬
-            // 止损），但动作只有劝导，没有压缩。
+            // 主会话 refine）。口径与 Leader 同源（RefineTier 分档）；85% 是
+            // Exec 专属硬劝导线，Leader 侧无此线（force 线即分档内 75/80/50–80），
+            // 动作只有劝导，没有压缩。
             let usage = self.session.estimate_token_usage();
             let cw_exec = self.config.context_window;
             if cw_exec > 0 && usage > 0 {

@@ -273,7 +273,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
             pr: null,
             commit: 'a7828be3',
             summary:
-              '执行中上下文预算防溢出（预警 70%/强制收敛 85%）+ refine 不累加（只保留最新摘要）',
+              '执行中上下文预算防溢出（分档强制线 75%/80%，大窗口默认 50% 可调 50%~80%）+ refine 落地为整体替换（历史全弃、摘要成唯一记忆）',
           },
           {
             pr: null,

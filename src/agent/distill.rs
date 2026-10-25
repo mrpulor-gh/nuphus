@@ -77,41 +77,12 @@ pub const REFINE_PROMPT_UNFINISHED: &str = "[执行中上下文提炼 — 任务
 只输出提炼内容文本，禁止携带任何无关语句。\n\
 如果前文已有以「[当前 session 对话内容已触发提炼」开头的 System 消息，那是之前的提炼摘要——在其基础上增量更新（吸收其中仍然有效的内容），不要从零重写。";
 
-/// 同一轮次内 in-loop refine 的次数上限。
-///
-/// 落地 `refine_count` 的真实约束（修复 B9：此前计数器只 `+= 1` 从不比较，
-/// workflow_agent.rs 注释声称的「max 2 auto-refines」是过期声明）。超过上限
-/// 后 in-loop 不再提炼，降级为软劝导 + turn-end 正常 refine 兜底——防
-/// 「提炼→续跑→再越线→再提炼」无限循环。
-pub const MAX_IN_LOOP_REFINES: u32 = 2;
-
-/// in-loop refine 的提交动作：摘要落地（压缩 + 归档）。
-///
-/// 与 turn-end 路径共用压缩本体（`accumulate_distill`：再次提炼只留最新
-/// refine 消息，防累加撑爆小窗口）与归档（`save_refine_entry`）。
-/// 返回 false = 摘要为空（调用方应回滚 session）。
-pub fn commit_in_loop_refine(session: &mut Session, summary: &str, agent_type: AgentType) -> bool {
-    let summary = summary.trim();
-    if summary.is_empty() {
-        return false;
-    }
-    session.accumulate_distill(summary);
-    let _ = save_refine_entry(
-        &session.id,
-        &session.current_turn_id(),
-        summary,
-        "in_loop",
-        agent_type,
-    );
-    true
-}
-
 /// Refine 内部流程的过滤发射器：只放行 LlmTextDelta（提炼气泡流式渲染），
 /// 静默其余事件（ExecutionStarted / ExecutionCompleted / ToolCall* 等）。
 ///
-/// 从 src-tauri 下沉至此：in-loop refine 在 lib 层（Runtime / WorkflowAgent）
-/// 就地执行，与 turn-end 的 execute_session_refine 共用同一过滤器——两路径
-/// 必须同构，禁止各写一套（原定义处改为 `pub use` 引用本件）。
+/// 从 src-tauri 下沉至此：turn-end 的 execute_session_refine 与 lib 层
+/// refine 流程共用同一过滤器——两路径必须同构，禁止各写一套（原定义处
+/// 改为 `pub use` 引用本件）。
 #[derive(Clone)]
 pub struct RefineStreamFilter {
     pub inner: Arc<dyn EventEmitter>,

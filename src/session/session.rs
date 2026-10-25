@@ -359,12 +359,26 @@ impl Session {
         });
     }
 
-    /// 回滚到指定消息数——in-loop refine 失败时移除刚注入的提示词消息
-    /// （先调用后 commit：摘要没拿到就不能在 session 里留下提炼指令残留，
-    /// 否则下一轮 LLM 会看到一条无人响应的「开始提炼」指令）。
-    pub fn truncate_messages(&mut self, len: usize) {
-        if self.messages.len() > len {
-            self.messages.truncate(len);
+    /// 末条 assistant 消息的文本——refine 接力的取数口（模型产出摘要后
+    /// 循环自然收敛，末条 assistant 即摘要正文）。无 assistant 消息返回 None。
+    pub fn last_assistant_text(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::Assistant)
+            .map(|m| m.text_content())
+    }
+
+    /// 末条消息是否为「无工具调用的 assistant 纯文本回复」——refine 接力的
+    /// 收敛闸门：模型遵守提炼提示词（产出摘要、不调工具）才允许整体替换
+    /// 会话；否则（提示词未被遵守、循环走到耗尽/中断）不替换，历史不丢。
+    pub fn last_assistant_is_plain_text(&self) -> bool {
+        match self.messages.last() {
+            Some(m) if m.role == MessageRole::Assistant => !m
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. })),
+            _ => false,
         }
     }
 

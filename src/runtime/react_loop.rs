@@ -364,9 +364,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         // 纯字符串拼接把过程性 text 塌成连续文字流。所有 runtime 共用，禁止复制。
         let text_boundary = crate::agent::common::TextBoundary::new();
 
-        // 上下文预算：执行中防溢出（预警 + 强制收敛）。达到强制线 = 让 agent 输出
-        // 最终回复、自然结束循环；loop 结束后 maybe_refine_session 自动 refine，
-        // 执行中不碰压缩。flag 保证预警/强制收敛各注入一次，不撑大上下文。
+        // 上下文预算：执行中防溢出（prompt 线软预警 + 越线提炼注入）。越线时
+        // 注入未闭合提炼提示词，模型产出摘要后循环自然收敛；run() 收尾处
+        // 整体替换会话并 resume 接力续跑。flag 保证预警/提炼注入各一次，
+        // 不撑大上下文。
         let mut ctx_warned = false;
         let mut ctx_force_converged = false;
 
@@ -525,47 +526,39 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     .push_user_internal(crate::handoff::format_doorbell_section(&handoff_events));
             }
 
-            // ── 上下文预算：执行中防溢出（分档劝导 + 越线就地提炼）──
-            // 与 turn-end 的 maybe_refine_session 同源分档（RefineTier）——废除
-            // 本循环自有的固定 85% 单线：两套线各管一段（一个管劝导、一个管
-            // turn-end 提炼）是「85% 没起作用」排查误判的根源（2026-10-25）。
+            // ── 上下文预算：执行中防溢出（prompt 线软预警 + 越线提炼注入）──
+            // 分档与 turn-end 的 maybe_refine_session 同源（RefineTier）——废除
+            // 本循环自有的固定 85% 单线：两套线各管一段是「85% 没起作用」
+            // 排查误判的根源（2026-10-25）。
             // 语义：prompt 线（Medium 50% / Large 30%）软预警一次；force 线
-            // （Small 75% / Medium 80% / Large 可调默认 50%）或绝对硬止损 85%
-            // 触发 refine_in_loop——真正像正常 refine 一样就地压缩，成功后
-            // 循环自然继续（任务接续），不硬杀、不丢任务。
+            // （Small 75% / Medium 80% / Large 可调默认 50%）注入未闭合提炼
+            // 提示词——模型产出摘要、不再调用工具，循环自然收敛；run() 收尾
+            // 处整体替换会话（replace_with_distill，与 turn-end 同一落地动作）
+            // 并以 resume 断点续跑接力，任务从摘要接续。不硬杀、不丢任务。
             // 注入走 push_user_internal，不动系统提示前缀，不影响缓存命中。
             {
                 let cw = crate::agent::goal_types::get_context_window_for(
                     &self.agent.config.model,
                     Some(&self.agent.config.provider),
                 );
-                let tokens = self.agent.session.api_input_tokens as usize;
+                // 官方 usage 缺失时回落字符估算（2026-10-25 审计修正：此前只读
+                // api_input_tokens，不回 usage 的 provider 会让本块整段失效）。
+                // 估算可能低估——这是水位监控的固有置信下限，非独立硬止损线。
+                let tokens = self.agent.session.estimate_token_usage();
                 if cw > 0 && tokens > 0 {
                     let tier = crate::agent::distill::RefineTier::for_window(cw);
                     let force_ratio = tier.force_ratio(self.config.large_force_refine_threshold);
                     let ratio = tokens as f64 / cw as f64;
-                    // 85% 绝对硬止损：不低于任何档 force 线；provider 不回 usage
-                    // 时 tokens 回落字符估算，仍可能低估，硬止损是最后一道线。
-                    let at_force_line = ratio >= force_ratio || ratio >= 0.85;
+                    let at_force_line = ratio >= force_ratio;
                     if at_force_line && !ctx_force_converged {
+                        // 越线即注入未闭合提炼提示词（替换原 85% 软劝导）：
+                        // 模型产出摘要、循环自然收敛后，由 run() 收尾处整体
+                        // 替换会话并 resume 接力续跑（见 Runtime::run）。
                         ctx_force_converged = true;
-                        if self.refine_in_loop(cancel_flag).await {
-                            // 提炼成功：session 已压缩、token 清零（accumulate_distill
-                            // 内置）。重置 flag 允许下一周期再触发（refine_count
-                            // 上限兜底防循环）；本迭代继续——build_request 用的
-                            // 就是压缩后的上下文，未尽事宜由摘要承载续跑。
-                            ctx_force_converged = false;
-                        } else {
-                            // 提炼失败或已达同 turn 上限：降级软劝导（一次性），
-                            // turn-end 正常 refine 兜底。不 break——是否收敛
-                            // 交模型，执行终止不由代码硬杀。
-                            self.agent.session.push_user_internal(format!(
-                                "⚠ 上下文用量已达 {:.0}%（约 {}/{} tokens），自动提炼未生效。请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
-                                ratio * 100.0,
-                                tokens,
-                                cw
-                            ));
-                        }
+                        self.refine_injected = true;
+                        self.agent.session.push_user_internal(
+                            crate::agent::distill::REFINE_PROMPT_UNFINISHED.to_string(),
+                        );
                     } else if let Some(pr) = tier.prompt_ratio() {
                         if ratio >= pr && !ctx_warned {
                             ctx_warned = true;

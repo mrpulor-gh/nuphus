@@ -304,6 +304,7 @@ impl RuntimeBuilder {
             tool_permissions,
             injected_annotations: HashSet::new(),
             source: "desktop".to_string(),
+            refine_injected: false,
         };
 
         // 视觉能力判定：capabilities.vision > 主模型 supports_vision > 无
@@ -400,6 +401,10 @@ pub struct Runtime {
     injected_annotations: HashSet<String>,
     /// Message source marker ("desktop" | "mobile"), stamped on UserMessageReceived / ExecutionStarted
     source: String,
+    /// 本轮是否已越线注入未闭合提炼提示词（REFINE_PROMPT_UNFINISHED）。
+    /// react_loop 越线时置位；run() 收尾处读取——模型产出摘要、循环自然
+    /// 收敛后，整体替换会话并以 resume 接力续跑，读后即清。
+    pub(crate) refine_injected: bool,
 }
 
 impl Runtime {
@@ -724,6 +729,34 @@ impl Runtime {
             .react_loop(&effective_input, images, cancel_flag, false)
             .await?;
 
+        // refine 接力：本轮越线注入了未闭合提炼提示词（REFINE_PROMPT_UNFINISHED），
+        // 模型产出摘要、不再调用工具，循环自然收敛——此处整体替换会话（历史
+        // 全弃、摘要成唯一记忆，与 turn-end execute_session_refine 同一落地
+        // 动作 replace_with_distill）后以断点续跑 resume 接力，任务从摘要
+        // 接续。resume 不经 run()，无递归；替换后 token 清零、消息归 1，
+        // 续跑从干净状态重新爬坡，不构成循环。
+        if self.refine_injected {
+            self.refine_injected = false;
+            // 收敛闸门：仅当末条为无工具调用的 assistant 纯文本回复（模型遵守
+            // 提炼提示词）才整体替换——否则是提示词未被遵守、循环走到耗尽，
+            // 不替换，历史不丢（turn-end refine 仍会兜底）。
+            if self.agent.session.last_assistant_is_plain_text() {
+                if let Some(summary) = self.agent.session.last_assistant_text() {
+                    let summary = summary.trim().to_string();
+                    if !summary.is_empty() {
+                        self.agent.session.replace_with_distill(&summary);
+                        let _ = self.save_refine_entry(&summary, "in_loop");
+                        tracing::info!(
+                            "[REFINE] in-loop done: session replaced ({} chars), resuming",
+                            summary.len()
+                        );
+                        let goal = effective_input.clone();
+                        return self.resume(&goal, cancel_flag).await;
+                    }
+                }
+            }
+        }
+
         // ExecutionCompleted is emitted by the orchestrator (process.rs), Runtime does not re-emit
         // Runtime is only responsible for the execution lifecycle; completion events are decided by upper orchestration when and with what data to emit
         Ok(output)
@@ -766,98 +799,5 @@ impl Runtime {
 
         // goal 作为 input 传入但不 push——供 wants_file_output 等回合级启发式使用
         self.react_loop(goal, &None, cancel_flag, true).await
-    }
-
-    /// 执行中提炼（in-loop refine）——react_loop 迭代检查点上下文越线时调用。
-    ///
-    /// 与 turn-end 的 `execute_session_refine` **同构**：push 未闭合提示词 →
-    /// resume 跑一轮禁工具 LLM → 摘要 commit（accumulate_distill + 归档）。
-    /// 差异只在：① 就地（agent 在 Runtime 内，无需 AppState take/put）
-    /// ② 提示词为执行未闭合版（目标/进度/待办强制结构化）③ 成功后**外层循环
-    /// 自然继续**——下一迭代 build_request 即用压缩后的 session，任务接续。
-    ///
-    /// 失败路径（超时 / API 错 / 空输出）：**先调用后 commit**——truncate 回滚
-    /// 注入的提示词消息，session 原样不动，返回 false 由调用方降级为软劝导，
-    /// turn-end 正常 refine 兜底。同 turn 上限 `MAX_IN_LOOP_REFINES` 次。
-    pub async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
-        use crate::agent::distill::{
-            commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
-        };
-
-        if self.agent.refine_count >= MAX_IN_LOOP_REFINES {
-            tracing::info!(
-                "[REFINE] in-loop skipped: refine_count {} >= max {}",
-                self.agent.refine_count,
-                MAX_IN_LOOP_REFINES
-            );
-            return false;
-        }
-        // 尝试即计数（含失败）：失败也 +1，防止「越线→尝试→超时失败→再越线」
-        // 无限循环浪费超时预算；两次尝试后降级软劝导 + turn-end 兜底。
-        self.agent.refine_count += 1;
-
-        let before = self.agent.session.messages().len();
-        self.agent
-            .session
-            .push_user_internal(REFINE_PROMPT_UNFINISHED.to_string());
-
-        // 与 turn-end 同款：过滤器替换而非全静默——LlmTextDelta 放行（前端
-        // 提炼气泡流式），ExecutionStarted 等生命周期事件静默（in-loop 提炼
-        // 不应在前端表现为一次新的「执行开始」）。
-        let saved = self.take_emitter();
-        if let Some(ref e) = saved {
-            self.restore_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
-        }
-
-        // 墙钟预算与 turn-end 的本地端点语义对齐：云端默认 120s 偏紧可由
-        // 传输层自己的超时先报错（错误信息更准确）；此处只防「resume 整体
-        // 挂死」——tokio timeout 到点即回滚，不留下半提炼状态。
-        // Box::pin 断异步递归环：refine_in_loop → resume → react_loop →
-        // refine_in_loop（Rust 要求 async fn 递归必须 boxed）。
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            Box::pin(self.resume(REFINE_PROMPT_UNFINISHED, cancel_flag)),
-        )
-        .await
-        .map_err(|_| "提炼超时（300s）".to_string())
-        .and_then(|r| r.map_err(|e| e.to_string()));
-
-        let _ = self.take_emitter();
-        self.restore_emitter(saved);
-
-        match result {
-            Ok(output) if output.success && !output.message.trim().is_empty() => {
-                let summary = output.message.trim().to_string();
-                if commit_in_loop_refine(
-                    &mut self.agent.session,
-                    &summary,
-                    crate::memory::entry::AgentType::Leader,
-                ) {
-                    tracing::info!(
-                        "[REFINE] in-loop done: {} chars compacted (refine_count={})",
-                        summary.len(),
-                        self.agent.refine_count
-                    );
-                    true
-                } else {
-                    self.agent.session.truncate_messages(before);
-                    false
-                }
-            }
-            Ok(_) => {
-                self.agent.session.truncate_messages(before);
-                tracing::warn!("[REFINE] in-loop: empty output, session rolled back");
-                false
-            }
-            Err(reason) => {
-                self.agent.session.truncate_messages(before);
-                tracing::warn!(
-                    "[REFINE] in-loop failed ({}), session rolled back; soft warning degraded",
-                    reason
-                );
-                false
-            }
-        }
     }
 }
