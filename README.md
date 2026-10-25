@@ -11,12 +11,12 @@
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
 <p align="center">
-  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="下载 Nuphus 1.1.0"></a>
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="下载 Nuphus 1.1.1"></a>
   &nbsp;
-  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.0"></a>
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.1-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.1"></a>
 </p>
 
-> **版本**: 1.1.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
+> **版本**: 1.1.1 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -316,6 +316,17 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v1.1.1 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#115](https://github.com/mrpulor-gh/nuphus/pull/115) | ego lite 外部 CDP 浏览器识别（`ego.exe` 精确匹配 + 名称推断 + 双安装路径覆盖） |
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#116](https://github.com/mrpulor-gh/nuphus/pull/116) | 切换主题后背景图残留修复（预设卡无条件回退 + 异步解析序号守卫 + HUD 快捷切主题回退） |
+
+其余变更由维护者完成。
 
 ### v1.1.0 贡献者
 

@@ -86,6 +86,13 @@
  * 所有者直推，按既定口径以 **commit 出处**收录重要功能；3ac9dbb9（oauth_callback 断言
  * 放宽）属测试基建、b951090f 为 1.0.0  latest.json 资产刷新，均不收录。
  *
+ * `1.1.1` 轮次取证：2026-10-25，v1.1.0（2026-10-24）之后合并 PR 共两个：#115
+ * （zhoupeiyu515-ui，ego lite 外部 CDP 浏览器识别，merge a624a617）与 #116
+ * （zhoupeiyu515-ui，切换主题后背景图残留，merge 8a13ffcf；合并后维护者补
+ * df7dc1d2 释放过期解析的 blob URL）。作者已在 0.2.24 起收录于头像墙，非新
+ * 提交者，REPO_COMMITTERS 无新增。维护者直推的核心修复按既定口径以 **commit
+ * 出处**收录（d89e1f4 / ce29afb / 68abc7b），纯格式 / 杂务提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -146,6 +153,46 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '1.1.1',
+    date: '2026-10-25',
+    contributors: [
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 115,
+            summary: 'ego lite 外部 CDP 浏览器识别（ego.exe 精确匹配 + 名称推断 + 双安装路径覆盖）',
+          },
+          {
+            pr: 116,
+            summary:
+              '切换主题后背景图残留修复（预设卡无条件回退 + 异步解析序号守卫 + HUD 快捷切主题回退）',
+          },
+        ],
+      },
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: 'd89e1f4',
+            summary: 'refine 上下文压缩回归修复（accumulate_distill 恢复对话全清）',
+          },
+          {
+            pr: null,
+            commit: 'ce29afb',
+            summary: '85% 硬止损恢复为最后兜底 + 提炼轮代码级禁工具 + 上下文超限自救',
+          },
+          {
+            pr: null,
+            commit: '68abc7b',
+            summary: '提炼后重建 L1 提示词缓存，记忆索引与最新摘要同步',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '1.1.0',
     date: '2026-10-24',
