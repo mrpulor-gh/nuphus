@@ -117,6 +117,39 @@ mod tests {
         assert_eq!(refine_count, 1, "accumulate 后只保留 1 条 refine，不累加");
     }
 
+    /// 回归测试（a7828be3，10-21）：accumulate_distill 必须清空对话消息。
+    /// 该 commit 为修「摘要累加」把 retain 改成「只删旧摘要 System」，对话消息
+    /// 从此全留——refine 不再压缩，上下文照样爆（v1.0.0/v1.1.0 发版事故）。
+    /// 旧测试先 replace 再 accumulate，对话早已被清空，天然放行了该回归。
+    #[test]
+    fn accumulate_distill_clears_conversation_messages() {
+        let mut session = Session::new();
+        session.replace_with_distill("first summary"); // is_refined = true
+        session.push_user("用户提问".to_string());
+        session.push_assistant(vec![ContentBlock::Text {
+            text: "助手回复".to_string(),
+            reasoning: None,
+        }]);
+        assert!(
+            session.messages().len() >= 3,
+            "前置应有摘要 System + user + assistant"
+        );
+        session.accumulate_distill("second summary");
+        assert_eq!(
+            session.messages().len(),
+            1,
+            "accumulate 后对话消息必须全清，只能剩新摘要（v0.1.0 压缩语义）"
+        );
+        assert!(
+            Session::is_refine_system_message(&session.messages()[0]),
+            "剩下的一条必须是新摘要 System"
+        );
+        assert!(
+            session.estimate_token_usage() < 1_024,
+            "清零+清消息后估算必须塌到千级以内"
+        );
+    }
+
     /// 界面上的 ctx 占用必须来自官方 usage（input + output），不掺字符估算。
     /// 缺陷背景：轮次结束曾用 `estimate_token_usage()`，其 `max(api_input, 字符/4)`
     /// 会让字符估算压过 API 真实读数 ——「结束后的 ctx 已用值 ≠ 最后一次上报的

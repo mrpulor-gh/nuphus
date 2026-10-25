@@ -382,18 +382,21 @@ impl Session {
         }
     }
 
-    /// 再次提炼：只保留当前 refine —— 移除过往 refine System 消息（内容已由
-    /// save_refine_entry 归档至记忆系统 refine-{session_id}-{timestamp}），清空其余
-    /// 消息，插入新摘要。避免 refine1+refine2 累加撑大小模型上下文，单对话可无限复用。
-    /// 非 refine 的 System 消息（安全警告等）保留。
+    /// 再次提炼：清空全部对话消息，仅保留非 refine 的 System 消息（安全警告等），
+    /// 移除过往 refine 摘要（内容已由 save_refine_entry 归档至记忆系统），写入新摘要。
+    ///
+    /// 历史事故（2026-10-25 定位）：a7828be3（10-21）为修「多次 refine 摘要累加」把
+    /// retain 条件从「只留 System」改成「只删旧摘要 System」——摘要累加修掉了，却把
+    /// v0.1.0 起「对话消息全清」的压缩能力搭进去，refine 从此不压缩、上下文照样爆
+    /// （随 v1.0.0/v1.1.0 发版给全部用户）。本实现同时满足两者：对话全清（压缩）
+    /// + 旧摘要不累加 + 安全警告 System 保留。
     pub fn accumulate_distill(&mut self, distill_content: &str) {
         self.refined = true;
         // 同 replace_with_distill：不清零则旧峰值残留，下一轮 force refine 必复发
         self.api_input_tokens = 0;
         self.api_output_tokens = 0;
-        // 只保留最新 refine：移除过往 refine System 消息，非 refine 的 System 消息保留
         self.messages
-            .retain(|m| !Session::is_refine_system_message(m));
+            .retain(|m| m.role == MessageRole::System && !Session::is_refine_system_message(m));
         self.messages.push(Message {
             role: MessageRole::System,
             content: vec![ContentBlock::Text {
