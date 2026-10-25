@@ -91,8 +91,8 @@ describe('执行中状态图标：突触回路pulse往返而非旋转', () => {
   it('无动画降级（prefers-reduced-motion）仍然可读：只余轨道+双端', () => {
     // 文件里早有其它 prefers-reduced-motion 块（如流光降级），须锁定图标那块
     const block =
-      [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g)].find(
-        (m) => m[0].includes('.turn-meta-thinking-pulse,'),
+      [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g)].find(m =>
+        m[0].includes('.turn-meta-thinking-pulse,'),
       )?.[0] ?? ''
     expect(block).not.toBe('')
     expect(block).toContain('.turn-meta-thinking-tail')

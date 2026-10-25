@@ -159,20 +159,8 @@ function LiveThinking() {
         opacity="0.22"
         className="turn-meta-thinking-axis"
       />
-      <circle
-        cx="2.2"
-        cy="5"
-        r="1.2"
-        fill="currentColor"
-        className="turn-meta-thinking-node-l"
-      />
-      <circle
-        cx="7.8"
-        cy="5"
-        r="1.2"
-        fill="currentColor"
-        className="turn-meta-thinking-node-r"
-      />
+      <circle cx="2.2" cy="5" r="1.2" fill="currentColor" className="turn-meta-thinking-node-l" />
+      <circle cx="7.8" cy="5" r="1.2" fill="currentColor" className="turn-meta-thinking-node-r" />
       {/* 彗尾：与脉冲同拍但 +0.05s 延迟+小一号暗一档，形成拖尾；基态 opacity 0（降级时隐没） */}
       <circle
         cx="2.2"
