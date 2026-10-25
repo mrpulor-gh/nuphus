@@ -703,11 +703,15 @@ mod tests {
 
     /// ego lite (Citro Labs) 必须被识别为浏览器 —— 它的可执行文件叫 `ego.exe`，
     /// 不含 chrome/browser/edge 任何一个子串。漏判 → 设置页扫不到它。
+    ///
+    /// 路径按平台逐段拼接，不用字面量 `C:\...`：Windows 上反斜杠不是 Linux/macOS
+    /// 的路径分隔符，`Path::file_name()` 在那里取不到文件名，测试会在 Ubuntu
+    /// runner 上假失败。
     #[test]
     fn ego_lite_is_recognized_as_browser() {
-        let ego = std::path::Path::new(r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe");
+        let ego = ego_lite_exe_path(&["Citro Labs", "ego lite", "Application"]);
         assert!(
-            is_browser_exe(ego),
+            is_browser_exe(&ego),
             "ego.exe 必须被判为浏览器 exe，否则 detect_cdp_browsers 扫不到 ego lite"
         );
     }
@@ -731,16 +735,30 @@ mod tests {
     /// 进程可能报出任意一个，两种拼写都必须识别为 "ego lite"。
     #[test]
     fn ego_lite_display_name() {
-        for exe in [
-            r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe",
-            r"E:\ruanjian\ego-lite\Application\ego.exe",
+        for dirs in [
+            &["Citro Labs", "ego lite", "Application"][..],
+            &["ruanjian", "ego-lite", "Application"][..],
         ] {
+            let exe = ego_lite_exe_path(dirs);
             assert_eq!(
-                infer_browser_name(std::path::Path::new(exe)),
+                infer_browser_name(&exe),
                 "ego lite",
-                "ego lite 的展示名必须正确：{exe}"
+                "ego lite 的展示名必须正确：{}",
+                exe.display()
             );
         }
+    }
+
+    /// Build a platform-native path ending in `ego.exe` under the given
+    /// directory components — so the tests behave the same on Windows,
+    /// Linux and macOS runners.
+    fn ego_lite_exe_path(dirs: &[&str]) -> std::path::PathBuf {
+        let mut p = std::path::PathBuf::new();
+        for d in dirs {
+            p.push(d);
+        }
+        p.push("ego.exe");
+        p
     }
 
     /// 自管 profile 判据：Nuphus 自己启动的 Chrome 必须被识别为「自己」。
