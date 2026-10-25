@@ -300,7 +300,7 @@ jobs:
           VER="${VER#v}"
           BASE="https://github.com/mrpulor-gh/nuphus/releases/download/v${VER}"
           ssh -i ~/.ssh/deploy_key ubuntu@43.161.235.81 "sudo mkdir -p /opt/downloads/${VER}"
-          # updater 涓撳睘浜х墿锛坢acOS/Linux 涓庢墜鍔ㄤ笅杞芥枃浠跺悕涓嶅悓锛? 鎵嬪姩瀹夎鍖?+ 绛惧悕
+          # updater 专属产物（macOS/Linux 与手动下载文件名不同：手动安装包 + 签名）
           for f in \
             "nuphus-win32-x64-${VER}-setup.exe" \
             "nuphus-osx-arm64-${VER}.zip" \

@@ -800,7 +800,7 @@ export function ExecutionTraceFloating({
     const top = el.scrollTop
     const prev = foldLastTopRef.current
     // 位置**每帧**都记（哪怕是程序滚动造成的）：方向判定必须拿真实相邻两帧作比较，
-    // 否则第一次用户上滚会因"没有前��帧"而永远无法武装（2026-10-09 实测事故）。
+    // 否则第一次用户上滚会因"没有前一帧"而永远无法武装（2026-10-09 实测事故）。
     foldLastTopRef.current = top
     // 武装只认「用户帧」：进场自动下拉 / 贴底回滚 / 锚点补偿都是程序滚动。
     if (onScroll() && prev != null && top < prev - FOLD_SCROLL_DELTA_EPS_PX) {
