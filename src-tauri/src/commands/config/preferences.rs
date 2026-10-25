@@ -141,7 +141,15 @@ fn is_browser_exe(exe: &std::path::Path) -> bool {
     exe.file_name()
         .map(|n| {
             let n = n.to_string_lossy().to_lowercase();
-            n.contains("chrome") || n.contains("browser") || n.contains("edge")
+            if n.contains("chrome") || n.contains("browser") || n.contains("edge") {
+                return true;
+            }
+            // ego lite (Citro Labs) — its binary is `ego.exe`, which matches
+            // none of the Chromium-family names above. Matched exactly rather
+            // than as a substring: "ego" occurs inside unrelated names
+            // (e.g. "categories.exe"), and a false positive here would make
+            // the detector probe a non-browser process.
+            n == "ego.exe" || n == "ego"
         })
         .unwrap_or(false)
 }
@@ -166,6 +174,14 @@ fn infer_browser_name(exe: &std::path::Path) -> String {
         ("yunlogin", "云登浏览器"),
         ("云登", "云登浏览器"),
         ("maskfog", "MaskFog"),
+        // ego lite (Citro Labs). Two copies exist on a typical install and the
+        // running process may report either:
+        //   - "C:\Program Files\Citro Labs\ego lite\Application\ego.exe" (installer)
+        //   - "E:\...\ego-lite\Application\ego.exe"              (runtime/user dir)
+        // So match both spellings — "ego-lite" (hyphen) as well as "ego lite".
+        ("ego-lite", "ego lite"),
+        ("ego lite", "ego lite"),
+        ("citro labs", "ego lite"),
         ("chrome", "Chrome"),
         ("msedge", "Edge"),
     ];
@@ -684,6 +700,48 @@ fn apply_pinned_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ego lite (Citro Labs) 必须被识别为浏览器 —— 它的可执行文件叫 `ego.exe`，
+    /// 不含 chrome/browser/edge 任何一个子串。漏判 → 设置页扫不到它。
+    #[test]
+    fn ego_lite_is_recognized_as_browser() {
+        let ego = std::path::Path::new(r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe");
+        assert!(
+            is_browser_exe(ego),
+            "ego.exe 必须被判为浏览器 exe，否则 detect_cdp_browsers 扫不到 ego lite"
+        );
+    }
+
+    /// 反向钉点："ego" 作为子串会误伤无关进程（如 categories.exe 含 "ego"），
+    /// 误判会让探测器去探测非浏览器进程。
+    #[test]
+    fn ego_substring_does_not_match_unrelated_exes() {
+        for name in ["categories.exe", "ego2helper.exe", "myego.exe"] {
+            assert!(
+                !is_browser_exe(std::path::Path::new(name)),
+                "{name} 含 'ego' 但不是浏览器 exe，不得误判"
+            );
+        }
+    }
+
+    /// ego lite 的展示名：安装路径是 ...\Citro Labs\ego lite\Application\ego.exe，
+    /// 旧逻辑会落到父目录名 "Application"（毫无意义）。
+    ///
+    /// 同一台机器上存在两份 ego lite（安装目录 + 用户数据/运行目录），运行中的
+    /// 进程可能报出任意一个，两种拼写都必须识别为 "ego lite"。
+    #[test]
+    fn ego_lite_display_name() {
+        for exe in [
+            r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe",
+            r"E:\ruanjian\ego-lite\Application\ego.exe",
+        ] {
+            assert_eq!(
+                infer_browser_name(std::path::Path::new(exe)),
+                "ego lite",
+                "ego lite 的展示名必须正确：{exe}"
+            );
+        }
+    }
 
     /// 自管 profile 判据：Nuphus 自己启动的 Chrome 必须被识别为「自己」。
     /// managed 目录 = dirs::data_dir()/Nuphus/browser_profile_v2。
