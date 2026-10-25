@@ -198,7 +198,11 @@ export function ModelCard({
             value={ctxEdit.value}
             onValueChange={ctxEdit.onValueChange}
             onStart={ctxEdit.onStart}
-            onCommit={() => ctxEdit.onCommit(name)}
+            // 必须原样转发编辑器回传的原始输入值（2026-10-25 修复回归：
+            // 卡片化改版曾写成 `() => ctxEdit.onCommit(name)`——把模型名当成了
+            // 输入值，Number(模型名)=NaN，无论输入什么都报「上下文窗口需为
+            // 大于 0 的数字」且编辑框随即关闭，用户感知为「恢复默认值」）。
+            onCommit={ctxEdit.onCommit}
             onCancel={ctxEdit.onCancel}
             t={ctxEdit.t}
           />

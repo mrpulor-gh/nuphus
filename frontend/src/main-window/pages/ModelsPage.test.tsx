@@ -12,6 +12,7 @@ import {
   oauthStatus,
   openExternal,
   removeCustomProvider,
+  setModelContextWindow,
   updateCustomProvider,
 } from '../lib/api'
 import { ModelsPage } from './ModelsPage'
@@ -958,6 +959,29 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     expect(useBtn('model-two')).toHaveTextContent('使用中')
     expect(screen.getByText('已切换到 model-two')).toBeInTheDocument()
     expect(onChanged).toHaveBeenCalledTimes(1)
+  })
+
+  /* ── 上下文窗口行内编辑（2026-10-25 回归）：Enter 提交必须原样转发用户输入值。
+     卡片化改版曾把模型名当输入值传入（Number("model-one") = NaN），导致无论
+     输入什么都报「上下文窗口需为大于 0 的数字（单位 K）」并随即关闭编辑框
+     （用户感知为「恢复默认值」）。── */
+  it('上下文窗口编辑：输入数字回车 → 以 K 为单位保存（不再误报需大于 0）', async () => {
+    await openModels()
+    await detect()
+    const c = card('model-one')
+    fireEvent.click(c.querySelector('.model-ctx-edit-btn') as HTMLElement)
+    const input = c.querySelector('.ctx-inline-input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    fireEvent.change(input, { target: { value: '128' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(vi.mocked(setModelContextWindow)).toHaveBeenCalledWith(
+        'custom-fast',
+        'model-one',
+        128_000,
+      ),
+    )
+    expect(screen.queryByText(/上下文窗口需为大于 0/)).not.toBeInTheDocument()
   })
 
   it('切换失败保留原选择（启用按钮为原生 button，键盘可用）', async () => {
