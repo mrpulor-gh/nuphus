@@ -963,11 +963,13 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
                   // 专属，不得跨系统主题残留。useTheme.setTheme 本就清草稿预览，
                   // 此处显式再清一次是把契约钉在本调用点，不依赖上游实现的自觉。
                   clearCustomPreview()
-                  // 若此前挂着自定义主题，背景同步回 LS_SKIN（主题皮肤快照只归
-                  // 该主题，边界见 useTheme.tsx 顶部注释）
-                  const fromCustom = customTheme !== null
+                  // 背景同步回预设态（LS_SKIN）：**无条件**执行，不看此前是否挂着
+                  // 自定义主题 —— 背景图是上一状态留下的，不回退就会一直挂着
+                  // （主题皮肤快照只归该主题，边界见 useTheme.tsx 顶部注释）。
+                  // 早先这里有 `if (fromCustom)` 守卫，导致预设态之间切主题时
+                  // 背景纹丝不动 —— 上一张图继续显示在新的系统主题上。
                   setTheme(th.id)
-                  if (fromCustom) void applySkinBg(readSkinBg())
+                  void applySkinBg(readSkinBg())
                 }}
                 title={`${t(`theme.${th.id}`)} — ${t(`theme.${th.id}Desc`)}`}
               >
