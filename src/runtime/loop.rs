@@ -852,6 +852,9 @@ impl Runtime {
                         summary.len(),
                         self.agent.refine_count
                     );
+                    // 提炼落地后重建 L1（distill 标题索引/记忆尾部随之刷新），
+                    // 与 turn-end refine 同一纪律（2026-10-25 定权）。
+                    self.agent.invalidate_l1_prompt_cache();
                     true
                 } else {
                     self.agent.session.truncate_messages(before);

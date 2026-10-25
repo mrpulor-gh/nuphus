@@ -569,6 +569,21 @@ impl ReactAgent {
         self.pause_flag = flag;
     }
 
+    /// refine 成功后重建 L1（系统提示词动态块）缓存。
+    ///
+    /// 背景（2026-10-25 大王定权）：refine 现在**只保留最新摘要**（旧摘要
+    /// 删除，不再叠加）。若系统提示词中的 L1 记忆块（distill 标题索引 +
+    /// 项目记忆尾部）不随之重建，最新摘要与 L1 索引之间会形成断层——模型
+    /// 按索引检索时看不到刚生成的提炼记录。重建只清 L1 与合并缓存（L0 base
+    /// 保留），下次 build_request 时 L1 从记忆库重读、system 前缀随之更新。
+    ///
+    /// 代价：system 段 provider 缓存失效一次（有意取舍——收益是索引与上下文
+    /// 一致，检索链不断层；此后前缀恢复稳定）。
+    pub fn invalidate_l1_prompt_cache(&mut self) {
+        self.cached_l1_prompt = None;
+        self.cached_merged_system_prompt = None;
+    }
+
     /// Load cross-phase context — the single L1 memory injection block:
     /// 1. Project memory journal tail (.nuphus/memory/{tag}.md, ≤2000 chars) — current state
     /// 2. Recent distill titles (global, guides memory_search self-check)
