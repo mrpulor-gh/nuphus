@@ -113,6 +113,12 @@ pub struct BackgroundTask {
     pub tool: String,
     /// 命令文本（截断到 [`COMMAND_PREVIEW_CHARS`]，仅供展示/汇报）
     pub command: String,
+    /// HUD / 后台任务面板上显示的**简短标题**（`system_shell.title` 透传，可选）。
+    ///
+    /// 有值时展示层优先用它：「普通用户看不懂裸命令，标题能一眼说明在干什么」。
+    /// `#[serde(default)]` 兼容既有序列化数据 / 老前端字段缺省。
+    #[serde(default)]
+    pub title: Option<String>,
     pub pid: u32,
     /// 启动时刻（epoch 毫秒）
     pub started_at_ms: u64,
@@ -128,10 +134,15 @@ pub struct BackgroundTaskView {
     pub id: String,
     pub tool: String,
     pub command: String,
+    /// 简短标题（可选）：展示层优先显示它（见 [`BackgroundTask::title`]）
+    #[serde(default)]
+    pub title: Option<String>,
     pub pid: u32,
     pub started_at_ms: u64,
     /// 已运行时长（毫秒）
     pub elapsed_ms: u64,
+    /// 进程存活上限（秒）：到点由系统兜底结束（面板据此显示「最长存活 / 剩余」）
+    pub max_lifetime_secs: u64,
     pub retain: bool,
     pub output_path: Option<String>,
 }
@@ -143,9 +154,11 @@ impl BackgroundTask {
             id: self.id.clone(),
             tool: self.tool.clone(),
             command: self.command.clone(),
+            title: self.title.clone(),
             pid: self.pid,
             started_at_ms: self.started_at_ms,
             elapsed_ms: now_ms.saturating_sub(self.started_at_ms),
+            max_lifetime_secs: MAX_TASK_LIFETIME_SECS,
             retain: self.retain,
             output_path: self.output_path.clone(),
         }
@@ -931,6 +944,7 @@ mod tests {
             id: id.to_string(),
             tool: "system_shell".to_string(),
             command: "cargo build --release".to_string(),
+            title: None,
             pid,
             started_at_ms: 1_000,
             retain,

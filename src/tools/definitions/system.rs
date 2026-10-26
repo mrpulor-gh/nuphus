@@ -185,7 +185,7 @@ impl ToolRegistry {
     pub(crate) fn register_execute_shell(&mut self) {
         self.register(ToolDef {
             name: "system_shell".to_string(),
-            description: "Execute a shell command (PowerShell on Windows, sh on Unix). Default timeout 180s; timeout > 300s automatically switches to background (the process tree survives and output goes to a file — read that file instead of re-running). On timeout the process is KEPT in the background by default (output goes to a file — read the file to continue, do NOT re-run); only explicit background:false kills the process tree on timeout or cancel.".to_string(),
+description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPORTANT: always pass a short \"title\" (≤ 20 chars) for any command that takes more than a couple of seconds — builds, tests, verifications, installs, downloads, long sleeps. The desktop HUD shows that title so the user can see at a glance what is running; without it the HUD falls back to a generic label and the user cannot tell. Default timeout 180s; timeout > 300s automatically switches to background (the process tree survives and output goes to a file — read that file instead of re-running). On timeout the process is KEPT in the background by default (output goes to a file — read the file to continue, do NOT re-run); only explicit background:false kills the process tree on timeout or cancel.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -193,7 +193,7 @@ impl ToolRegistry {
                     "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Max seconds this call waits for the command. NOTE: values above 300 automatically switch to background (you do NOT need to pass background:true), because a foreground run that long would otherwise be wasted. On timeout the process is KEPT by default — it stays in the background (pid + output file are reported back) and the output file keeps growing, so read the file to continue instead of re-running. Only explicit background:false kills the process tree on timeout." },
                     "background": { "type": "boolean", "description": "Leave unset to let the 300s rule decide; either way, timeout keeps the process in the background by default. true = the process explicitly survives a timeout or a user cancel (long jobs whose progress must not be thrown away); it is reported back with pid + output file and is auto-terminated by the system after a max lifetime. Explicit false = the ONLY way to get the process killed on timeout or cancel (for probes whose side effects must not survive)." },
 "cwd": { "type": "string", "description": "Working directory for the command" },
-                    "title": { "type": "string", "description": "Optional short label shown on the desktop HUD while this command runs (keep it under about 20 characters). Use it when the command name alone would not tell the user what is happening. Omit for the default label." }
+"title": { "type": "string", "description": "Short human label shown on the desktop HUD while this command runs. REQUIRED for anything non-trivial (builds, tests, installs, downloads, long sleeps): keep it under about 20 characters and write it in the user's language, e.g. \"依赖全量检查\" / \"Full test suite\". It is also the headline of the background-task panel if the command times out into the background. Omit only for instant commands." }
                 },
                 "required": ["command"]
             }),
@@ -530,6 +530,8 @@ pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolRes
         id: task_id.clone(),
         tool: "system_shell".to_string(),
         command: bg::truncate_command(&request.command),
+        // 调用方填的简短标题（可选）：HUD 与后台任务面板优先显示它
+        title: request.title.clone(),
         pid,
         started_at_ms: bg::now_ms(),
         retain: request.background,

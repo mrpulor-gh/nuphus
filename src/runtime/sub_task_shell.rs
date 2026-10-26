@@ -98,6 +98,9 @@ pub fn stream_shell_blocking(
         id: task_id.clone(),
         tool: "system_shell".to_string(),
         command: bg::truncate_command(command),
+        // Exec 子任务的流式 shell 暂不透传调用方标题（父链未带 params 到此处）；
+        // 面板回落显示命令摘要。主对话路径已支持 title 透传。
+        title: None,
         pid: child.id(),
         started_at_ms: bg::now_ms(),
         retain: background,
