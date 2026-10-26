@@ -1157,8 +1157,10 @@ export function ChatInputBar({
                 <span className="input-bar-ctx-value" style={{ color: ctxColor }}>
                   {/* used 用状态色（红/黄/绿）暗示进度；sep + cap 中性不抢戏 */}
                   {ctxUsed > 0 ? fmt(ctxUsed) : '--'}
-                  {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
-                  {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
+                  {/* 分母未知也给占位（`302k / --`）：只留分子会被读成「没有总量」。
+                        与 ctx 弹窗里的 capacity 行同口径（2026-10-26 大王实测）。 */}
+                  <span className="input-bar-ctx-sep">/</span>
+                  <span className="input-bar-ctx-cap">{ctxLimit > 0 ? fmt(ctxLimit) : '--'}</span>
                 </span>
                 {/* 解码速度/首 token 延迟不占常驻位：明细在下方 ctx 弹窗（ttft / speed 两行） */}
                 {ctxHover && (

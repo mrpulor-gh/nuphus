@@ -2896,12 +2896,16 @@ pub fn get_context_limit(state: State<'_, AppState>) -> Result<usize, String> {
         return Ok(cw.model_context_window);
     }
 
-    // 2. No authoritative value → return 0 (unknown), NOT a 128_000 guess.
-    //    Frontend hides the context-usage percentage when the denominator is
-    //    missing (shows "--"), so a fabricated default would display fake math.
-    //    (goal_types::get_context_window still returns 128_000 for its many
-    //    other call sites — runtime/process sizing — but this command no longer
-    //    leaks that guess into the UI.)
+    // 2. runtime 尚未校准（重启后常见：启动探测被拒/超时 → 0）→ 回退读
+    //    providers.toml 里当前模型的 context_window（**用户自己的权威配置值**），
+    //    否则 UI 只剩「302k」没有分母，被读成"没有总量"（2026-10-26 大王实测）。
+    //    仍拿不到 → 0（未知），绝不猜 128000。
+    let configured = cw.llm_config.clone().and_then(|cfg| {
+        super::model_metadata::configured_context_window(&state.llm_config_path, &cfg)
+    });
+    if let Some(limit) = configured {
+        return Ok(limit);
+    }
     Ok(0)
 }
 

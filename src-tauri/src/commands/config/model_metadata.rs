@@ -130,6 +130,17 @@ fn builtin_context(cfg: &LlamaConfig) -> Option<usize> {
         .filter(|n| *n > 0)
 }
 
+/// providers.toml 里该 (provider, model) 条目的 `context_window`（**用户配置值**）。
+///
+/// 供 `get_context_limit` 在 runtime 尚未校准（重启后常见：启动探测失败 → 0）时回退，
+/// 把「用户/模型页里明明写着 1.0M」的窗口还给 UI。
+/// 仍缺失 → None（调用方继续报 0 = 未知，**不伪造 128000**）。
+pub(super) fn configured_context_window(path: &Path, cfg: &LlamaConfig) -> Option<usize> {
+    let doc = read_doc(path)?;
+    let seg = segment(&doc, &cfg.provider)?;
+    context(model_entry(seg, &cfg.model))
+}
+
 /// Only local work: explicit/persisted values win, builtin is runtime-only, 0 is unknown.
 pub(super) fn activate(
     state: &AppState,
@@ -555,6 +566,35 @@ mod tests {
             connection: connection(&snapshot, &cfg).unwrap(),
         };
         (cfg, doc, snapshot, key)
+    }
+
+    /// 回归（2026-10-26 大王实测）：runtime 未校准时 `get_context_limit` 回退读
+    /// providers.toml 里的用户配置窗口 —— 该回退链的取值语义在此钉住。
+    #[test]
+    fn configured_context_window_reads_user_value() {
+        let dir = std::env::temp_dir().join(format!("nuphus-ctx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("providers.toml");
+        std::fs::write(
+            &path,
+            "[[providers]]\nname='custom-x'\n[[providers.models]]\nid='m-1'\ncontext_window=1000000\n[[providers.models]]\nid='m-2'\n",
+        )
+        .unwrap();
+        let cfg = |model: &str| LlamaConfig {
+            provider: "custom-x".into(),
+            model: model.into(),
+            base_url: "https://example.test/v1".into(),
+            ..Default::default()
+        };
+        // 用户配置值原样返回（UI 拿它当分母）
+        assert_eq!(
+            configured_context_window(&path, &cfg("m-1")),
+            Some(1_000_000)
+        );
+        // 缺字段 / 条目不存在 → None（调用方继续报 0 = 未知，不伪造默认值）
+        assert_eq!(configured_context_window(&path, &cfg("m-2")), None);
+        assert_eq!(configured_context_window(&path, &cfg("missing")), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
