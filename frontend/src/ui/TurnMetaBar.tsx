@@ -87,30 +87,84 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-/** 执行态提示文案（大王 2026-10-22 定）：按 system_shell 命令类型**单项显示**
- *  （Testing / Building / Checking）；判断不出类型或非 shell 工具回落 Running。
- *  无中英对照需求，直接用英文。 */
+/** 命令动作分类（2026-10-26 重做，大王实测驱动）。
+ *
+ * ## 旧实现的三个问题
+ *  ① **类别优先级抢判定**（测试 > 构建 > 检查）：我（模型）常把一条命令写成
+ *     `cd …; cargo fmt …; cargo check …; cargo test …` 串联，只要句子里出现 test，
+ *     整条就显示 Testing —— 用户在前两个阶段看到的文案是错的；
+ *  ② 宽正则误伤：`lint` / `--check` 会命中路径、参数等非动作文本；
+ *  ③ 覆盖窄：install / download / sleep 一律退化 Running，用户看不出在干什么。
+ *
+ * ## 新规则（可解释、可测）
+ *  1. **剥壳**：`pwsh|powershell [-开关] -Command "…"` 取内层命令；
+ *  2. **切段**：按 `;` / `&&` / `||` / 换行 切成命令段；段内取**管道最左侧**命令
+ *     （`… | Select-String` 的右侧是消费端，不是动作）；
+ *  3. **跳过噪声段**：cd / set / echo / mkdir / $env: / exit 之类没有动作语义；
+ *  4. **取首个命中类别的段**：命令序列通常"先做什么，动作就从那句开始"，
+ *     不再按类别优先级抢（那正是 check 被 test 吞掉的根因）；
+ *  5. 逐类别**动词级**匹配；全都判不出 → Running...（不猜）。
+ *
+ * 无中英对照需求，直接用英文（2026-10-22 大王定）。
+ */
+
+/** 噪声段：没有动作语义的前置/配置命令 */
+const SHELL_NOISE_SEG =
+  /^\s*(cd|set|setx|mkdir|md|echo|write-output|write-host|exit|\$env:|if|else|try|fi|then|do|done)\b/i
+
+/** 命令段拆分：剥壳 → 切段 → 段内取管道左侧 → 去噪声 */
+function shellSegments(command: string): string[] {
+  let cmd = command
+  // 剥壳：pwsh / powershell 的 -Command "…" 内层才是真命令
+  const wrapped = cmd.match(
+    /(?:pwsh|powershell)(?:\.exe)?\b[^"'`]*?-c(?:ommand)?\s+(["'`])([\s\S]*)\1/i,
+  )
+  if (wrapped) cmd = wrapped[2]
+  return cmd
+    .split(/;|&&|\|\||\r?\n/)
+    .map(seg => seg.split('|')[0].trim())
+    .filter(seg => seg.length > 0 && !SHELL_NOISE_SEG.test(seg))
+}
+
+/** 类别判定表：**顺序即类别顺序**，逐段试探（动词级匹配，避免子串误伤） */
+const SHELL_ACTION_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /\b(cargo\s+(test|nextest)|nextest|vitest|pytest|jest|mocha|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+(run\s+)?test|go\s+test|dotnet\s+test|ctest)\b/i,
+    'Testing...',
+  ],
+  [
+    /\b(cargo\s+install|npm\s+(i|install|ci)|pnpm\s+(i|install|add)|yarn\s+(add|install)|bun\s+(add|install)|pip3?\s+install|winget\s+install|choco\s+install|scoop\s+install|apt(-get)?\s+install|brew\s+install|dotnet\s+(add|tool))\b/i,
+    'Installing...',
+  ],
+  [
+    /\b(curl|wget|invoke-webrequest|start-bitstransfer|git\s+(clone|pull|fetch)|gh\s+release\s+download)\b/i,
+    'Downloading...',
+  ],
+  [
+    /\b(cargo\s+(build|rustc)|tauri\s+build|npm\s+run\s+build|pnpm\s+(run\s+)?build|yarn\s+(run\s+)?build|vite\s+build|webpack|rollup|esbuild|go\s+build|dotnet\s+build|msbuild|cmake|make)\b/i,
+    'Building...',
+  ],
+  [
+    /\b(cargo\s+(check|clippy|fmt)|rustfmt|tsc|eslint|prettier|stylelint|ruff|mypy|pyright|golangci-lint|go\s+vet|lint|--check|--noemit|-d\s+warnings)\b/i,
+    'Checking...',
+  ],
+  [/\b(start-sleep|sleep|timeout|wait)\b/i, 'Waiting...'],
+  [/\b(stop-process|taskkill|process_kill|kill)\b/i, 'Stopping...'],
+]
+
+/** 执行态提示文案（大王 2026-10-22 定）：按 system_shell 命令类型**单项显示**；
+ *  判断不出类型或非 shell 工具回落 Running。细则见上方分类说明。 */
 export function runningToolLabel(tool: TurnMetaBarActiveTool): string {
   const isShell = tool.toolName === 'system_shell' || tool.toolName === 'shell'
   if (!isShell) return 'Running...'
   const p = tool.params as { command?: unknown } | null | undefined
-  const cmd = typeof p?.command === 'string' ? p.command.toLowerCase() : ''
-  if (!cmd) return 'Running...'
-  // 顺序：测试 → 构建 → 检查（`npm run build` 内部可能含 tsc，按外层命令判）
-  if (
-    /(cargo\s+(test|nextest)|vitest|pytest|jest|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|go\s+test|dotnet\s+test)/.test(
-      cmd,
-    )
-  )
-    return 'Testing...'
-  if (
-    /(cargo\s+build|tauri\s+build|npm\s+run\s+build|pnpm\s+(run\s+)?build|yarn\s+build|vite\s+build|webpack|rollup)/.test(
-      cmd,
-    )
-  )
-    return 'Building...'
-  if (/(cargo\s+(check|clippy|fmt)|tsc\b|eslint|prettier|lint|--check|--noemit)/.test(cmd))
-    return 'Checking...'
+  const cmd = typeof p?.command === 'string' ? p.command : ''
+  if (!cmd.trim()) return 'Running...'
+  for (const seg of shellSegments(cmd)) {
+    for (const [re, label] of SHELL_ACTION_PATTERNS) {
+      if (re.test(seg)) return label
+    }
+  }
   return 'Running...'
 }
 

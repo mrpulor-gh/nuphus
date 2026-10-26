@@ -94,6 +94,26 @@ describe('TurnMetaBar 契约', () => {
     expect(shell('dir C:\\Users')).toBe('Running...')
     // 非 shell 工具（如 Read）不猜类型
     expect(runningToolLabel({ id: 'y', toolName: 'Read' })).toBe('Running...')
+
+    // ── 回归（2026-10-26 大王实测抱怨）──
+    // 一条命令里同时含 fmt / check / test：不得再被 test 抢走类别，
+    // 取**首个实质动作段** → 这里首段是 `cargo fmt` → Checking...
+    expect(
+      shell(
+        'cd C:\\Users\\Administrator\\Nuphus; cargo fmt -p nuphus 2>&1 | Out-Null; cargo check --release -p nuphus 2>&1 | Select-String -Pattern "error"; cargo test --release -p nuphus',
+      ),
+    ).toBe('Checking...')
+    // 纯 test 命令仍是 Testing
+    expect(shell('cargo test --release -p nuphus --lib hud_arbiter')).toBe('Testing...')
+    // 剥壳：powershell -Command "…" 看内层
+    expect(shell('powershell -NoProfile -Command "cargo build --release"')).toBe('Building...')
+    // 新类别：安装 / 下载 / 等待 / 终止（旧实现一律退化 Running）
+    expect(shell('npm install')).toBe('Installing...')
+    expect(shell('curl -L https://example.com/x.zip -o x.zip')).toBe('Downloading...')
+    expect(shell('Start-Sleep -Seconds 30')).toBe('Waiting...')
+    expect(shell('Stop-Process -Id 1234')).toBe('Stopping...')
+    // 管道右侧只是消费端，不参与判定
+    expect(shell('cargo check 2>&1 | Select-String error')).toBe('Checking...')
   })
 
   it('③ 完成后用后端权威 durationMs；令牌项 = 上下文增量（不是累计消耗）', () => {
