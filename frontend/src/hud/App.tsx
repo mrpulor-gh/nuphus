@@ -40,7 +40,8 @@ interface HudState {
   phase: HudPhase
   paused?: boolean
   step_kind?: string | null
-  /// 单次运行超过 1 分钟后的耐心提示态：标题切换为「（验证/构建/测试）中，请耐心等待...」。
+  /// 单次运行超过 1 分钟的耐心提示态：**只在 meta 行加一行小字**（「已超 1 分钟 · 仍在运行」），
+  /// 主文本始终保留当前动作标题 —— 旧实现整段替换文本，会把标题吞掉（2026-10-26 大王指出）。
   /// 只由前端计时触发，不影响 phase（成败仍由后端 ToolResult 决定）。
   patience?: boolean
 }
@@ -556,15 +557,18 @@ export function HudOverlay() {
 
       {/* ── Content area ── */}
       <div className="hud-content">
+        {/* 主行**永远**显示当前文本（= 调用方标题 / 系统族文案）：60s 耐心态只降级到
+            meta 行的小字，绝不吞掉标题（2026-10-26 大王指出的覆盖隐患）。 */}
         <span className="hud-text" style={{ color: colors.text }} key={`text-${animKey}`}>
-          {state.phase === 'running' && state.patience
-            ? '（验证/构建/测试）中，请耐心等待...'
-            : state.text}
+          {state.text}
         </span>
 
-        {/* ── Meta row: elapsed time / workflow paused indicator ── */}
+        {/* ── Meta row: elapsed time / patience hint / workflow paused indicator ── */}
         <span className="hud-meta">
           {isBusy && elapsed > 0 && <span className="hud-elapsed">{formatElapsed(elapsed)}</span>}
+          {state.phase === 'running' && state.patience && (
+            <span className="hud-patience-label">已超 1 分钟 · 仍在运行</span>
+          )}
           {state.paused && <span className="hud-paused-label">已暂停</span>}
         </span>
       </div>
@@ -684,7 +688,8 @@ export function HudOverlay() {
 }
 
 .hud-elapsed,
-.hud-paused-label {
+.hud-paused-label,
+.hud-patience-label {
   display: inline-flex;
   align-items: center;
 }
@@ -702,6 +707,12 @@ export function HudOverlay() {
 
 .hud-paused-label {
   color: var(--hud-meta-color);
+}
+
+/* 60s 耐心提示：只在 meta 行露出，主文本永远留给当前动作标题 */
+.hud-patience-label {
+  color: var(--hud-meta-color);
+  opacity: 0.85;
 }
 
 /* ── Workflow controls ── */
