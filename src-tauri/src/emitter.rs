@@ -106,10 +106,16 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
                 }
             }
             NuphusEvent::ToolCallStart {
-                call_id, tool_name, ..
+                call_id,
+                tool_name,
+                params,
+                ..
             } => {
-                // 并行工具注册：更高优先级（system 族 > desktop/browser）进场即切换
-                if let Some(text) = nuphus::hud_arbiter::on_tool_call_start(call_id, tool_name) {
+                // 并行工具注册：更高优先级（system 族 > desktop/browser）进场即切换。
+                // params 用于 system_shell 的 `title`（调用方填的短标题 → HUD 直显）。
+                if let Some(text) =
+                    nuphus::hud_arbiter::on_tool_call_start_with(call_id, tool_name, Some(params))
+                {
                     let seq2 = self.seq.fetch_add(1, Ordering::SeqCst);
                     crate::commands::hud::show(&self.app, &text, "running", seq2);
                 }

@@ -192,7 +192,8 @@ impl ToolRegistry {
                     "command": { "type": "string", "description": "PowerShell command on Windows, sh on Unix. On Windows use ; not &&" },
                     "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Max seconds this call waits for the command. NOTE: values above 300 automatically switch to background (you do NOT need to pass background:true), because a foreground run that long would otherwise be wasted. On timeout the process is KEPT by default — it stays in the background (pid + output file are reported back) and the output file keeps growing, so read the file to continue instead of re-running. Only explicit background:false kills the process tree on timeout." },
                     "background": { "type": "boolean", "description": "Leave unset to let the 300s rule decide; either way, timeout keeps the process in the background by default. true = the process explicitly survives a timeout or a user cancel (long jobs whose progress must not be thrown away); it is reported back with pid + output file and is auto-terminated by the system after a max lifetime. Explicit false = the ONLY way to get the process killed on timeout or cancel (for probes whose side effects must not survive)." },
-                    "cwd": { "type": "string", "description": "Working directory for the command" }
+"cwd": { "type": "string", "description": "Working directory for the command" },
+                    "title": { "type": "string", "description": "Optional short label shown on the desktop HUD while this command runs (keep it under about 20 characters). Use it when the command name alone would not tell the user what is happening. Omit for the default label." }
                 },
                 "required": ["command"]
             }),
@@ -298,6 +299,10 @@ pub struct ShellRequest {
     /// （显式声明才保留，默认照杀）—— 取消是显式中止，不留孤儿进程是既有契约；
     /// 超时是等待耗尽，进程本身没有出错，杀只会白跑。
     pub kill_on_timeout: bool,
+    /// HUD 上显示的简短标题（可选，2026-10-26 大王定）：填了就**直显**在 HUD，
+    /// 缺省回落固定文案「执行系统命令」。显示层另有 24 字截断保护
+    /// （`hud_arbiter::HUD_TITLE_MAX_CHARS`）。
+    pub title: Option<String>,
     pub cwd: Option<String>,
 }
 
@@ -333,6 +338,13 @@ impl ShellRequest {
                 .get("cwd")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            // HUD 标题（可选）：只做 trim，长度/控制字符清洗在显示层
+            // （hud_arbiter::hud_title_from_params）统一处理。
+            title: params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         }
     }
 }
@@ -1013,7 +1025,28 @@ mod tests {
             // helper 模拟「显式声明」场景：background=false ⇒ 显式前台 ⇒ 超时杀。
             kill_on_timeout: !background,
             cwd: None,
+            title: None,
         }
+    }
+
+    #[test]
+    fn shell_request_parses_title_and_blank_falls_back() {
+        // HUD 标题（2026-10-26）：填了就透传（长度/控制字符清洗在显示层），
+        // 空白 / 缺省 → None（调用方回落默认文案「执行系统命令」）。
+        let with_title = ShellRequest::from_params(&serde_json::json!({
+            "command": "cargo test",
+            "title": "  依赖全量检查  "
+        }));
+        assert_eq!(with_title.title.as_deref(), Some("依赖全量检查"));
+
+        let blank = ShellRequest::from_params(&serde_json::json!({
+            "command": "cargo test",
+            "title": "   "
+        }));
+        assert_eq!(blank.title, None);
+
+        let absent = ShellRequest::from_params(&serde_json::json!({ "command": "cargo test" }));
+        assert_eq!(absent.title, None);
     }
 
     /// 在 delay 之后置位取消标志

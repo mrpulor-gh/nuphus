@@ -90,13 +90,56 @@ pub fn is_hud_tool(tool: &str) -> bool {
     classify_tool(tool).is_some()
 }
 
+/// HUD 标题上限（字符数）：卡片是 300×58 的单行，超长会被裁掉。
+/// 工具 schema 里的建议值是 ≤ 20 字；这里是**显示层保护**，任何来源超长都裁。
+pub const HUD_TITLE_MAX_CHARS: usize = 24;
+
+/// 从工具参数取 HUD 标题（`system_shell.title`，可选）：清洗控制字符 / 折叠空白 /
+/// 截断到 [`HUD_TITLE_MAX_CHARS`]。None = 未填或全空白 → 调用方回落默认文案。
+///
+/// 为什么由**工具层填标题**（2026-10-26 大王定）而不是解析命令：命令里可能带
+/// token / 密码 / 长路径，解析方案需要脱敏与截断两套规则；让调用方自己给一句
+/// 简短标题，既干净又可控。
+pub fn hud_title_from_params(params: Option<&serde_json::Value>) -> Option<String> {
+    let raw = params?.get("title")?.as_str()?.trim();
+    let single: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let collapsed = single.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    let mut out: String = collapsed.chars().take(HUD_TITLE_MAX_CHARS).collect();
+    if collapsed.chars().count() > HUD_TITLE_MAX_CHARS {
+        out.push('…');
+    }
+    Some(out)
+}
+
+/// [`classify_tool`] 的带参版本：`system_shell` 填了 `title` → 显示文本用该标题
+/// （直显，无前缀）；其它工具与缺省情况与 [`classify_tool`] 完全一致。
+pub fn classify_tool_with(
+    tool: &str,
+    params: Option<&serde_json::Value>,
+) -> Option<(Priority, String)> {
+    if tool == "system_shell" {
+        if let Some(title) = hud_title_from_params(params) {
+            return Some((PRIORITY_SYSTEM, title));
+        }
+    }
+    classify_tool(tool)
+}
+
 // ─────────────────────────────────────────────────────────────
 //  仲裁状态
 // ─────────────────────────────────────────────────────────────
 
 struct Entry {
     priority: Priority,
-    tool: String,
+    /// 上屏文本：System 族默认文案，system_shell 填了 `title` 时**直显该标题**
+    /// （2026-10-26 大王定：title 直显；并行两条不同标题时接受切换）。
+    display: String,
 }
 
 struct ArbiterState {
@@ -126,10 +169,7 @@ fn with_state<T>(f: impl FnOnce(&mut ArbiterState) -> T) -> T {
 
 impl ArbiterState {
     fn running_text(e: &Entry) -> String {
-        match system_hint(&e.tool) {
-            Some(h) => h.to_string(),
-            None => format!("{} — 执行中...", e.tool),
-        }
+        e.display.clone()
     }
 
     /// 活跃集中优先级最高条目（数值最小）→ (显示文本, 优先级)。
@@ -154,13 +194,22 @@ impl ArbiterState {
 /// 返回 Some(text) = 需要显示/切换 running 文本（调用方用 fresh seq 发 show）；
 /// None = 当前显示维持不变。
 pub fn on_tool_call_start(call_id: &str, tool: &str) -> Option<String> {
-    let (priority, _) = classify_tool(tool)?;
+    on_tool_call_start_with(call_id, tool, None)
+}
+
+/// 带参数版（emitter 实际调用）：`system_shell` 填了 `title` → 上屏文本直显该标题。
+pub fn on_tool_call_start_with(
+    call_id: &str,
+    tool: &str,
+    params: Option<&serde_json::Value>,
+) -> Option<String> {
+    let (priority, display) = classify_tool_with(tool, params)?;
     with_state(|s| {
         s.active.insert(
             call_id.to_string(),
             Entry {
                 priority,
-                tool: tool.to_string(),
+                display: display.clone(),
             },
         );
         let (top_text, top_prio) = s.top()?;
@@ -326,6 +375,42 @@ mod tests {
             ToolEndAction::SwitchRunning(_) => "SwitchRunning",
             ToolEndAction::SynthTerminal { .. } => "SynthTerminal",
         }
+    }
+
+    #[test]
+    fn hud_title_from_params_cleans_and_caps() {
+        let p = serde_json::json!({ "title": "  依赖  全量\n检查  " });
+        assert_eq!(
+            hud_title_from_params(Some(&p)).as_deref(),
+            Some("依赖 全量 检查")
+        );
+        assert_eq!(
+            hud_title_from_params(Some(&serde_json::json!({ "title": "   " }))),
+            None
+        );
+        assert_eq!(
+            hud_title_from_params(Some(&serde_json::json!({ "command": "x" }))),
+            None
+        );
+        let long = "一".repeat(HUD_TITLE_MAX_CHARS + 10);
+        let capped = hud_title_from_params(Some(&serde_json::json!({ "title": long }))).unwrap();
+        // 截断到上限 + 一个省略号
+        assert_eq!(capped.chars().count(), HUD_TITLE_MAX_CHARS + 1);
+        assert!(capped.ends_with('…'));
+    }
+
+    #[test]
+    fn system_shell_title_is_displayed_verbatim() {
+        let p = serde_json::json!({ "command": "cargo test", "title": "依赖全量检查" });
+        let (prio, text) = classify_tool_with("system_shell", Some(&p)).unwrap();
+        assert_eq!(prio, PRIORITY_SYSTEM);
+        assert_eq!(text, "依赖全量检查"); // 直显，无前缀
+                                          // 缺省 / 空标题 → 回落固定文案
+        let (_, fallback) = classify_tool_with("system_shell", None).unwrap();
+        assert_eq!(fallback, "执行系统命令");
+        // 其它工具不受 title 参数影响
+        let (_, other) = classify_tool_with("desktop_click", Some(&p)).unwrap();
+        assert_eq!(other, "desktop_click — 执行中...");
     }
 
     #[test]
