@@ -26,6 +26,78 @@ use std::time::{Duration, Instant};
 // 死锁安全：执行期间 agent 被 take() 出 runtime ctx（process.rs），runtime 锁
 // 只在任务开始/完成短暂持有——循环内 flush 只拿 DB 连接，不获取任何 state 锁。
 
+// ══════════════════════════════════════════════════════════════════════════
+// 工具调用生命周期守卫（2026-10-26）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 事故：HUD 计时永不退表（system_shell timeout 数十秒后仍显示）。
+//
+// HUD 仲裁（hud_arbiter）把 ToolCallStart / ToolCallEnd 当作工具生命周期的**唯一
+// 真相源**：Start 注册进活跃集，End 注销并裁决。若某个 Start 没有配对 End（早退
+// `?` 传播 / `continue` / 提前 return 都会绕开工具循环末尾的 End 发送点），活跃集
+// 永久残留 —— 之后**每一次** ToolCallEnd 都会把显示切回残留条目的 running
+// （ToolEndAction::SwitchRunning，且补发帧 seq 更大必然被前端接受），而 running
+// 相位没有 auto-hide（只有终态帧才排 15s 自动隐藏）→ 用户看到「HUD 一直显示」。
+//
+// 逐个早退点补 End 极易漏（本次已发现 continue 与 `?` 两处，未来还会新增），故用
+// Drop 兜底：guard 紧跟 Start 创建，正常路径 emit 真实 End 后 disarm；任何提前离开
+// 作用域（含 Err 传播、循环 continue）都补发一条 stub End，保证 Start/End 配对。
+struct ToolEndGuard {
+    emitter: Option<Arc<dyn crate::agent::events::EventEmitter>>,
+    call_id: String,
+    tool: String,
+    started: Instant,
+    armed: bool,
+}
+
+impl ToolEndGuard {
+    fn arm(
+        emitter: Option<&Arc<dyn crate::agent::events::EventEmitter>>,
+        call_id: &str,
+        tool: &str,
+        started: Instant,
+    ) -> Self {
+        Self {
+            emitter: emitter.cloned(),
+            call_id: call_id.to_string(),
+            tool: tool.to_string(),
+            started,
+            armed: true,
+        }
+    }
+
+    /// 正常路径已发真实 End → 撤销兜底（防双发）。
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ToolEndGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(emitter) = &self.emitter else {
+            return;
+        };
+        emitter.emit(NuphusEvent::ToolCallEnd {
+            call_id: self.call_id.clone(),
+            tool_name: self.tool.clone(),
+            success: false,
+            duration_ms: self.started.elapsed().as_millis() as u64,
+            output_preview: "tool call aborted before completion".to_string(),
+            output_full_size: 0,
+            is_truncated: false,
+            error: Some("aborted before completion".to_string()),
+            from_task: false,
+        });
+        tracing::warn!(
+            tool = %self.tool,
+            "tool call exited early — stub ToolCallEnd emitted by lifecycle guard"
+        );
+    }
+}
+
 /// 轮中快照落盘判定（纯函数）：迭代数达 10 的倍数，或距上次落盘 ≥ 30 秒。
 ///
 /// 与 IO 分离便于单测——测试不需要真跑满 30 秒。
@@ -1347,6 +1419,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         from_task: false,
                     });
                 }
+                // Start 之后立刻挂守卫：本 call 的任何早退（含下方 continue 与
+                // `?` 传播）都由 Drop 补一条 stub End，HUD 活跃集不泄漏。
+                let mut end_guard = ToolEndGuard::arm(
+                    self.agent.exec_emitter.as_ref(),
+                    &call.id,
+                    &call.tool,
+                    tool_start,
+                );
 
                 // Tool name validation: intercept non-existent tool names early to prevent system prompt corruption
                 if !self.agent.tools.has_tool(&call.tool) {
@@ -1373,6 +1453,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             from_task: false,
                         });
                     }
+                    end_guard.disarm(); // 上面已发真实 End，勿再补
                     continue;
                 }
 
@@ -1686,6 +1767,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         from_task: false,
                     });
                 }
+                end_guard.disarm(); // 正常路径：真实 End 已发
 
                 let step = ExecutionStep {
                     tool: call.tool.clone(),
