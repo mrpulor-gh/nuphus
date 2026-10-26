@@ -40,8 +40,10 @@ interface HudState {
   phase: HudPhase
   paused?: boolean
   step_kind?: string | null
-  /// 单次运行超过 1 分钟的耐心提示态：**只在 meta 行加一行小字**（「已超 1 分钟 · 仍在运行」），
+  /// 单次运行超过 1 分钟的耐心提示态：**只在 meta 行加一行小字**（「仍在推进 · 请稍候」），
   /// 主文本始终保留当前动作标题 —— 旧实现整段替换文本，会把标题吞掉（2026-10-26 大王指出）。
+  /// 文案纪律（同日修订）：**不复述时长**（meta 行已有 elapsed）、**不用告警语气**
+  /// （"已超 X 分钟"会被读成"卡住了/超时了"）—— 这里是安抚"正常的长任务在推进"。
   /// 只由前端计时触发，不影响 phase（成败仍由后端 ToolResult 决定）。
   patience?: boolean
 }
@@ -567,7 +569,7 @@ export function HudOverlay() {
         <span className="hud-meta">
           {isBusy && elapsed > 0 && <span className="hud-elapsed">{formatElapsed(elapsed)}</span>}
           {state.phase === 'running' && state.patience && (
-            <span className="hud-patience-label">已超 1 分钟 · 仍在运行</span>
+            <span className="hud-patience-label">仍在推进 · 请稍候</span>
           )}
           {state.paused && <span className="hud-paused-label">已暂停</span>}
         </span>
