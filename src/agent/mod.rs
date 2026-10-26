@@ -603,7 +603,12 @@ impl ReactAgent {
             }
         }
 
-        // Part 2: Recent distill record titles+IDs (to guide LLM to call memory_search for self-check)
+        // Part 2: 本项目最近提炼记录（标题 + 可直接用于 memory_session_context 的键）
+        //   项目隔离（2026-10-26 定权）：只注入**当前项目**的 refine——提炼记录本身已按
+        //   项目隔离、准确承载项目进度，注入其它项目的 refine 会污染新会话的上下文。
+        //   跨项目过渡一律走 Part 1（leader_memory_update 写入的项目记忆日志）。
+        //   键必须给 session_id（memory_session_context 的匹配键），不得给 entry id：
+        //   entry id 形如 `refine-{session_id}-{ts}`，与 session_id 字段不同值，曾造成检索断线。
         if let Ok(entries) = crate::store::memory::search_entries_filtered(
             None,
             None,
@@ -617,7 +622,7 @@ impl ReactAgent {
             None,
             None,
             5,
-            true,
+            false,
         ) {
             let distill_titles: Vec<String> = entries
                 .iter()
@@ -628,12 +633,17 @@ impl ReactAgent {
                     } else {
                         e.intent.clone()
                     };
-                    format!("- {} (ID: {})", title, e.id)
+                    let key = if e.turn_id.is_empty() {
+                        format!("session {}", e.session_id)
+                    } else {
+                        format!("session {} · turn {}", e.session_id, e.turn_id)
+                    };
+                    format!("- {} ({})", title, key)
                 })
                 .collect();
             if !distill_titles.is_empty() {
                 parts.push(format!(
-                    "## 历史对话提炼（标题可用于检索，LLM自查）\n{}",
+"## 历史对话提炼（本项目；精查用 memory_session_context 传下方 session id）\n{}",
                     distill_titles.join("\n")
                 ));
             }

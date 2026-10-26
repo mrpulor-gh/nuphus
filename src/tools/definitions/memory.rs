@@ -448,11 +448,11 @@ impl ToolRegistry {
     pub(crate) fn register_session_context(&mut self) {
         self.register(ToolDef {
             name: "memory_session_context".to_string(),
-            description: "查看会话因果链。session_id：该会话最近 N 条；session_id+turn_id：该轮全部条目（Leader 意图与对话、Exec/Workflow 任务轨迹的紧凑步骤：工具 + 参数摘要 + 结果摘要 + 成败）。".to_string(),
+description: "查看会话因果链。session_id：该会话最近 N 条；session_id+turn_id：该轮全部条目（Leader 意图与对话、Exec/Workflow 任务轨迹的紧凑步骤：工具 + 参数摘要 + 结果摘要 + 成败）。session_id 亦可直接传 distill 记录的 entry id（形如 refine-{session_id}-{ts}，L1 提炼索引给出的就是它）。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "会话 ID（从 memory_search 结果中获取的完整 session_id）"},
+                    "session_id": {"type": "string", "description": "会话 ID（memory_search 结果的完整 session_id，或 L1 提炼索引里的 ID：session id / entry id 均可）"},
                     "turn_id": {"type": "string", "description": "可选。精确到某轮次，查看该轮次的所有条目（Leader 意图、Exec 结果、StateChecker 模式等）"},
                     "limit": {"type": "integer", "default": 20, "description": "不加 turn_id 时最多返回多少条"}
                 },

@@ -444,7 +444,13 @@ pub fn search_entries_filtered(
         }
     }
     if let Some(sid) = session_id {
-        conditions.push("e.session_id = ?".to_string());
+        // ── 键容错（2026-10-26 定权）：入参既可能是 session_id，也可能是 distill 记录的
+        // entry id（`refine-{session_id}-{ts}` —— L1 提炼索引曾按 entry id 注入）。
+        // 只匹配 session_id 会让「按索引里的 ID 精查」必然落空（ID 语义断线：
+        // memory_session_context 收到 refine-xxx 时 `WHERE session_id = 'refine-xxx'` 命中 0 行）。
+        // 两个匿名 ? 绑同一值；不得改用 ?N（会与 FTS 的 MATCH ? 参数索引冲突）。
+        conditions.push("(e.session_id = ? OR e.id = ?)".to_string());
+        param_values.push(Box::new(sid.to_string()));
         param_values.push(Box::new(sid.to_string()));
     }
     if let Some(at) = agent_type {
