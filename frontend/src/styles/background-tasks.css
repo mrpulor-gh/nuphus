@@ -231,16 +231,48 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* 命令文本：后端已截断，这里只做排版截断 + 完整文本走 title */
-.bgt-cmd {
-  font-size: var(--fz-xs);
+/* 主行「在干什么」：调用方标题优先，其次是命令摘要 —— 普通用户先看这一行 */
+.bgt-headline {
+  font-size: var(--fz-sm, 13px);
   color: var(--spark-primary);
-  font-family: var(--font-mono, monospace);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 3px;
 }
+/* 状态词：运行中 / 保留在后台（语义色沿用既有 token） */
+.bgt-state {
+  white-space: nowrap;
+}
+.bgt-state--foreground,
+.bgt-state--retained {
+  color: var(--spark-secondary);
+}
+/* 次要一行（小字）：命令原文 / 输出路径 / PID —— 全量信息在 hover 里，
+   普通用户扫前两行即可（2026-10-26 信息降噪） */
+.bgt-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: var(--fz-xs);
+  color: var(--spark-dim);
+  opacity: 0.75;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bgt-sub-cmd {
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 剩余上限：与「已运行」同层的动态值 */
+.bgt-remaining {
+  white-space: nowrap;
+}
+/* 命令文本：后端已截断，这里只做排版截断 + 完整文本走 title */
 .bgt-meta {
   display: flex;
   align-items: center;
@@ -256,23 +288,6 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-/* 保留徽标：语义色走既有 token，不新造颜色 */
-.bgt-badge {
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--spark-secondary);
-  white-space: nowrap;
-}
-.bgt-output {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 3px;
-  font-size: var(--fz-xs);
-  color: var(--spark-dim);
-  min-width: 0;
 }
 .bgt-output-path {
   /* 刻意**不**用 `direction: rtl` 那套「把路径尾部留在视野内」的取巧写法：

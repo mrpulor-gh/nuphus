@@ -61,6 +61,16 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
   const [loading, setLoading] = useState(false)
   const [confirmTask, setConfirmTask] = useState<BackgroundTaskView | null>(null)
   const [killingId, setKillingId] = useState<string | null>(null)
+  /** 列表拉取时刻（本地插值基准）：后端 `elapsed_ms` 仍是权威值，本地只在其上
+   *  叠加「自上次拉取以来的增量」，用于面板打开时的秒级平滑走动，不另算起点。 */
+  const listFetchedAtRef = useRef(Date.now())
+  /** 面板打开时每秒重渲染一次：让「已运行 / 剩余」平滑推进（值仍来自后端+增量） */
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!open) return
+    const id = window.setInterval(() => forceTick(n => n + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [open])
 
   /** 刷新保留项数量（轻量命令）。失败一律静默：入口的可见性不该把用户逼进错误态，
    *  真正要看见失败的时刻是用户主动点「结束」时（那里有独立的错误呈现）。 */
@@ -93,6 +103,7 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
       // 胶囊数字却停在旧值，面板也不会自动关（自动关判的是 `retainedCount`）。
       // 这里用刚拉回来的列表直接派生数字：与列表同源，不新增命令或事件通道。
       setRetainedCount(list.filter(t => t.retain).length)
+      listFetchedAtRef.current = Date.now()
     } catch (e) {
       // 后端不可达就明说，不能静默成一个空列表（空列表会被读成「没有后台任务」）
       setListError(backendErrorMessage(e))
@@ -245,52 +256,91 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
               ) : tasks.length === 0 ? (
                 <div className="bgt-empty">{t('backgroundTasks.empty')}</div>
               ) : (
-                tasks.map(task => (
-                  <div className="bgt-row" key={task.id}>
-                    <div className="bgt-row-main">
-                      <div className="bgt-cmd" title={task.command}>
-                        {task.command}
-                      </div>
-                      <div className="bgt-meta">
-                        <span className="bgt-pid">PID {task.pid}</span>
-                        <span className="bgt-dot">·</span>
-                        <span className="bgt-elapsed">
-                          <IconClock3 size={10} /> {formatElapsed(task.elapsed_ms)}
-                        </span>
-                        {/* 绝对起点：elapsed 是进程存活时长，与本轮耗时语义不同；
-                            给出绝对时刻用户才能与执行追踪的轮次对时 */}
-                        <span
-                          className="bgt-started"
-                          title={new Date(task.started_at_ms).toLocaleString()}
-                        >
-                          {t(
-                            'backgroundTasks.startedAt',
-                            new Date(task.started_at_ms).toLocaleTimeString(),
-                          )}
-                        </span>
-                        {task.retain && (
-                          <span className="bgt-badge">{t('backgroundTasks.badgeRetained')}</span>
-                        )}
-                      </div>
-                      {task.output_path && (
-                        <div className="bgt-output" title={task.output_path}>
-                          <IconFile size={10} />
-                          <span className="bgt-output-path">{task.output_path}</span>
+                tasks.map(task => {
+                  // 本地插值：后端 elapsed_ms + 自上次拉取以来的增量（秒级平滑走动）
+                  const elapsedMs = task.elapsed_ms + (Date.now() - listFetchedAtRef.current)
+                  // 上限：后端未给字段（旧版本）→ 0 = 本行不渲染，不用 NaN 编造状态
+                  const lifetimeMs = Number.isFinite(task.max_lifetime_secs)
+                    ? task.max_lifetime_secs * 1000
+                    : 0
+                  const remainingMs = Math.max(0, lifetimeMs - elapsedMs)
+                  // 主行：调用方填的标题优先；没填才回落命令（普通用户看不懂裸命令）
+                  const headline = task.title?.trim() ? task.title : task.command
+                  return (
+                    <div className="bgt-row" key={task.id}>
+                      <div className="bgt-row-main">
+                        {/* 1｜在干什么（唯一的大字行） */}
+                        <div className="bgt-headline" title={task.title ?? task.command}>
+                          {headline}
                         </div>
-                      )}
+                        {/* 2｜动态：状态 · 已运行 · 剩余上限（上限缺失则整段省略） */}
+                        <div className="bgt-meta">
+                          <span
+                            className={`bgt-state bgt-state--${task.retain ? 'retained' : 'foreground'}`}
+                          >
+                            {task.retain
+                              ? t('backgroundTasks.stateRetained')
+                              : t('backgroundTasks.stateRunning')}
+                          </span>
+                          <span className="bgt-dot">·</span>
+                          <span className="bgt-elapsed">
+                            <IconClock3 size={10} />{' '}
+                            {t('backgroundTasks.elapsed', formatElapsed(elapsedMs))}
+                          </span>
+                          {lifetimeMs > 0 && (
+                            <>
+                              <span className="bgt-dot">·</span>
+                              <span className="bgt-remaining">
+                                {remainingMs > 0
+                                  ? t('backgroundTasks.remaining', formatElapsed(remainingMs))
+                                  : t('backgroundTasks.expiring')}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        {/* 3｜次要一行（小字）：命令原文（有标题时才有必要）/ 输出 / PID，
+                             全量信息在 hover 里——普通用户扫前两行即可 */}
+                        <div
+                          className="bgt-sub"
+                          title={[
+                            task.command,
+                            `PID ${task.pid}`,
+                            t(
+                              'backgroundTasks.startedAt',
+                              new Date(task.started_at_ms).toLocaleString(),
+                            ),
+                            task.output_path ?? '',
+                          ]
+                            .filter(Boolean)
+                            .join('\n')}
+                        >
+                          {task.title?.trim() ? (
+                            <span className="bgt-sub-cmd">{task.command}</span>
+                          ) : null}
+                          {task.output_path ? (
+                            <>
+                              {task.title?.trim() && <span className="bgt-dot">·</span>}
+                              <IconFile size={10} />
+                              <span className="bgt-output-path">{task.output_path}</span>
+                            </>
+                          ) : null}
+                          <span className="bgt-dot">·</span>
+                          <span className="bgt-pid">PID {task.pid}</span>
+                        </div>
+                      </div>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        className="bgt-kill-btn"
+                        loading={killingId === task.id}
+                        onClick={() => setConfirmTask(task)}
+                      >
+                        <IconSquare size={11} />
+                        {t('backgroundTasks.kill')}
+                      </Button>
                     </div>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      className="bgt-kill-btn"
-                      loading={killingId === task.id}
-                      onClick={() => setConfirmTask(task)}
-                    >
-                      <IconSquare size={11} />
-                      {t('backgroundTasks.kill')}
-                    </Button>
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
           </div>

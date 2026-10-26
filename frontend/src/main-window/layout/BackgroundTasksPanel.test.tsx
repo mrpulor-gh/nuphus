@@ -20,9 +20,11 @@ const task = (over: Partial<BackgroundTaskView> = {}): BackgroundTaskView => ({
   id: 'bg-3',
   tool: 'system_shell',
   command: 'yarn build',
+  title: null,
   pid: 42140,
   started_at_ms: 1_700_000_000_000,
   elapsed_ms: 751_000,
+  max_lifetime_secs: 3600,
   retain: true,
   output_path: 'C:/data/background_tasks/bg-3.log',
   ...over,
@@ -71,20 +73,41 @@ describe('后台任务账本面板（可见 + 可结束）', () => {
     expect(countRetainedBackgroundTasks).toHaveBeenCalled()
   })
 
-  it('打开面板后逐行呈现命令 / PID / 时长 / 保留徽标 / 输出路径', async () => {
+  it('打开面板后逐行呈现标题 / PID / 时长 / 状态 / 输出路径', async () => {
     stubLedger(1, [task()])
+    const { container } = render(<BackgroundTasksPanel executionStage="idle" />)
+    fireEvent.click(await screen.findByRole('button', { name: /后台任务/ }))
+
+    // 无 title → 主行回落命令（截断排版，全量在 title 属性里）
+    expect(await screen.findByText('yarn build')).toBeInTheDocument()
+    // 751000ms → 12m31s（本地格式化，不自算起点）
+    expect(screen.getByText(/12m31s/)).toBeInTheDocument()
+    // 状态词 + 相对时长同层可见（2026-10-26：删掉与状态词重复的「后台保留」徽标）
+    expect(screen.getByText('保留在后台')).toBeInTheDocument()
+    expect(screen.getByText(/已运行/)).toBeInTheDocument()
+    // 次要行：PID 与输出路径降为小字一行，全量（含起于时刻）在 hover 里
+    expect(screen.getByText('PID 42140')).toBeInTheDocument()
+    expect(screen.getByText('C:/data/background_tasks/bg-3.log')).toBeInTheDocument()
+    const sub = container.querySelector('.bgt-sub')
+    expect(sub?.getAttribute('title')).toContain(new Date(task().started_at_ms).toLocaleString())
+  })
+
+  it('填了标题时主行显示标题（普通用户看得懂），命令降为辅助行', async () => {
+    // 2026-10-26 大王要求：后台任务对普通用户要「一看即知在干什么」。
+    // 调用方填了 title → 主行显示它；裸命令退居辅助行；上限/状态一并可见。
+    stubLedger(1, [task({ title: '依赖全量检查' })])
     render(<BackgroundTasksPanel executionStage="idle" />)
     fireEvent.click(await screen.findByRole('button', { name: /后台任务/ }))
 
+    const headline = await screen.findByText('依赖全量检查')
+    expect(headline.className).toContain('bgt-headline')
+    // 命令仍可见（辅助行），但已不是主行
     expect(await screen.findByText('yarn build')).toBeInTheDocument()
-    expect(screen.getByText('PID 42140')).toBeInTheDocument()
-    // 751000ms → 12m31s（本地格式化，不自算起点）
-    expect(screen.getByText(/12m31s/)).toBeInTheDocument()
-    // 绝对起点可对时（C 项）：起点时刻 + title 完整日期
-    expect(screen.getByText(/起于/)).toBeInTheDocument()
-    expect(screen.getByText(/起于/)).toHaveAttribute('title')
-    expect(screen.getByText('后台保留')).toBeInTheDocument()
-    expect(screen.getByText('C:/data/background_tasks/bg-3.log')).toBeInTheDocument()
+    // 「最长存活多久」必须明示（到点系统兜底结束）
+    expect(await screen.findByText(/剩余约/)).toBeInTheDocument()
+    // 状态词与运行时长同时可见
+    expect(await screen.findByText('保留在后台')).toBeInTheDocument()
+    expect(await screen.findByText(/已运行/)).toBeInTheDocument()
   })
 
   it('结束需二次确认，确认后带 id 调用 kill 并刷新列表', async () => {

@@ -957,10 +957,14 @@ export interface BackgroundTaskView {
   tool: string
   /** 命令文本（后端已截断，仅供展示） */
   command: string
+  /** 简短标题（可选，调用方填）：展示层**优先显示它**——普通用户看不懂裸命令 */
+  title?: string | null
   pid: number
   started_at_ms: number
   /** 已运行时长（毫秒）——前端本地格式化，避免自算起点与后端漂移 */
   elapsed_ms: number
+  /** 进程存活上限（秒）：到点由系统兜底结束（面板显示「最长存活 / 剩余」） */
+  max_lifetime_secs: number
   /** 显式保留意图：true = 用户/Agent 要求留在后台，取消不会杀它 */
   retain: boolean
   /** 输出日志路径（可读取），没有则为 null */
