@@ -283,10 +283,17 @@ pub enum ToolEndAction {
 pub fn on_tool_call_end(call_id: &str, tool_name: &str, success: bool) -> ToolEndAction {
     let tool_name = tool_name.to_string();
     with_state(|s| {
-        if s.active.remove(call_id).is_none() {
+        // 取出条目本身：合成终态要用它的 display（含调用方 title）。
+        // 短命令下 HUD 几乎只显示终态帧，若回落工具名，用户就看不到自己填的标题。
+        let Some(entry) = s.active.remove(call_id) else {
             // 无登记的 End（普通工具/双发）不消耗 pending，也裁决不出文本
             return ToolEndAction::None;
-        }
+        };
+        let label = if entry.display.trim().is_empty() {
+            tool_name
+        } else {
+            entry.display
+        };
         // 配对抵消：这条 End 对应「已见过的某条终态」（1:1 消耗）
         let had_terminal = s.pending_ends > 0;
         if had_terminal {
@@ -322,7 +329,7 @@ pub fn on_tool_call_end(call_id: &str, tool_name: &str, success: bool) -> ToolEn
                 );
                 ToolEndAction::SynthTerminal {
                     phase,
-                    text: format!("{} — {}", tool_name, desc),
+                    text: format!("{} — {}", label, desc),
                 }
             }
         }
@@ -547,7 +554,9 @@ mod tests {
         match on_tool_call_end("c1", "system_info", true) {
             ToolEndAction::SynthTerminal { phase, text } => {
                 assert_eq!(phase, "done");
-                assert_eq!(text, "system_info — 完成");
+                // 合成终态用条目的 display（system 族文案），不是裸工具名 ——
+                // 短命令下这一帧是用户唯一看得清的 HUD 文本（2026-10-26）
+                assert_eq!(text, "获取系统信息 — 完成");
             }
             other => panic!("expected SynthTerminal, got {}", name(&other)),
         }
@@ -562,7 +571,7 @@ mod tests {
         match on_tool_call_end("c1", "system_shell", false) {
             ToolEndAction::SynthTerminal { phase, text } => {
                 assert_eq!(phase, "error");
-                assert_eq!(text, "system_shell — 失败");
+                assert_eq!(text, "执行系统命令 — 失败");
             }
             other => panic!("expected SynthTerminal, got {}", name(&other)),
         }

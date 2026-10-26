@@ -770,10 +770,15 @@ impl ReactAgent {
         // 本地副本（曾为 desktop_/browser_/system_shell 三条件）与仲裁集合漂移时，
         // 会出现「上了屏却没人发终态帧」→ 退化为兜底合成（HUD 粘住的温床）。
         let needs_hud = crate::hud_arbiter::is_hud_tool(&call.tool);
+        // running / 终态同源取显示名：调用方 title 优先，缺省回落工具名。
+        // 短命令在 HUD 上几乎只会被看到终态那一帧，若这里只有工具名，
+        // 用户就永远看不到自己填的标题（实测反馈 2026-10-26）。
+        let hud_label = crate::hud_arbiter::hud_title_from_params(Some(&call.params))
+            .unwrap_or_else(|| call.tool.clone());
         if needs_hud {
             if let Some(ref emitter) = self.exec_emitter {
                 emitter.emit(NuphusEvent::HudUpdate {
-                    text: format!("{} — 执行中...", call.tool),
+                    text: format!("{} — 执行中...", hud_label),
                     phase: "running".into(),
                     step_kind: None,
                 });
@@ -903,7 +908,9 @@ impl ReactAgent {
                     ("error", "失败")
                 };
                 emitter.emit(NuphusEvent::HudUpdate {
-                    text: format!("{} — {}", call.tool, desc),
+                    // 与 running 帧同一显示源（title 优先）——终态帧是短命令下
+                    // HUD 唯一看得清的一帧，必须带标题
+                    text: format!("{} — {}", hud_label, desc),
                     phase: phase.into(),
                     step_kind: None,
                 });
