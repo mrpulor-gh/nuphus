@@ -270,6 +270,26 @@ export function resolveTurnDuration(
 }
 
 /**
+ * 终止即封口（2026-10-26）：把「进行中」的本轮元数据定格为已结束。
+ *
+ * 与 `resolveTurnDuration` 同一出口——封口值就是它此刻的推算值，不另写算法。
+ *
+ * 为什么必须有：唯一自然封口通道是 `execution_completed`（后端权威 durationMs）。
+ * 中断 / API error / 直接回复等收尾路径没有这个事件，若不显式定格，气泡
+ * （`msg.meta`）与 ctx 弹窗（`turnMeta`）会永远按 `startedAtMs` 推算下去 ——
+ * 「中断后时长 chip 仍在计时」的直接来源。输入框之所以正常，是因为它的 tick 由
+ * 执行状态门控（`isProcessing`）；封口让消息侧与它同源：执行状态终止即停表。
+ *
+ * 已结束（durationMs 有值）或无线索（无 startedAtMs）时原样返回，不伪造数据。
+ */
+export function sealTurnDuration(meta: TurnMeta | null | undefined): TurnMeta {
+  if (!meta) return {}
+  if (meta.durationMs != null) return meta
+  const sealed = resolveTurnDuration(meta)
+  return sealed > 0 ? { ...meta, durationMs: sealed } : meta
+}
+
+/**
  * 轮询快照（`get_execution_state`）合入本轮 turnMeta —— 步数实时值的唯一入口。
  *
  * 后端 `SignalState::execution_tool_calls` 只在本轮「空闲 → Running」那一跳归零

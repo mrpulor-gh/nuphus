@@ -5,6 +5,7 @@ import { debugEnabled } from '../core/debug'
 import { continueReplyAfterUser } from '../core/progressMessages'
 import type { RefineState, RefineTier } from './useExecutionUI'
 import { autoRaiseForceThreshold } from './useExecutionUI'
+import { sealTurnDuration } from '../core/types'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ChatMessage,
@@ -399,6 +400,11 @@ export function useEvents(h: EventHandlers) {
         )
       }
 
+      // ── 终止即封口 ──
+      // 中断 / API error / 直接回复等收尾路径没有 execution_completed（唯一自然封口
+      // 通道），必须显式把本轮元数据定格，否则气泡与 ctx 弹窗会永远推算下去。
+      // 实现与输入框同源：core/types.ts 的 sealTurnDuration（内部走 resolveTurnDuration）。
+
       // ── Shared helpers (extracted duplicated patterns) ──
       const addSystemMsg = (content: string) =>
         h.addMessage({
@@ -410,11 +416,13 @@ export function useEvents(h: EventHandlers) {
 
       const finishWithMessage = (content: string, mood: MoodState) => {
         const s = sid()
+        // 收尾即封口：直接回复路径同样没有 execution_completed（见 sealTurnDuration 注释）
+        h.setTurnMeta(prev => sealTurnDuration(prev))
         // Update existing streaming message, never create new
         if (s && content) {
           h.setMessages(prev =>
             continueReplyAfterUser(prev, s).map(m =>
-              m.id === s ? { ...m, content, runtime: 'done' } : m,
+              m.id === s ? { ...m, content, runtime: 'done', meta: sealTurnDuration(m.meta) } : m,
             ),
           )
         }
@@ -446,9 +454,14 @@ export function useEvents(h: EventHandlers) {
           const s = h.refs.streamingMsgId.current
           if (s) {
             h.setMessages(prev =>
-              prev.map(m => (m.id === s && m.runtime === 'live' ? { ...m, runtime: 'done' } : m)),
+              prev.map(m =>
+                m.id === s && m.runtime === 'live'
+                  ? { ...m, runtime: 'done', meta: sealTurnDuration(m.meta) }
+                  : m,
+              ),
             )
           }
+          h.setTurnMeta(prev => sealTurnDuration(prev))
           h.refs.streamingMsgId.current = null
           h.refs.executionActiveRef.current = false
           h.refs.interruptedRef.current = false
