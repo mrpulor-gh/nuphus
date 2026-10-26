@@ -52,6 +52,7 @@ import { useKeyboard } from '../hooks/useKeyboard'
 import { SplashScreen } from '../ui/SplashScreen'
 import { ErrorScreen } from '../ui/ErrorScreen'
 import { TaskBubble } from './chat/TaskBubble'
+import { ExecIndicator } from './chat/ExecIndicator'
 import { WorkflowTaskPanel } from './layout/WorkflowTaskPanel'
 import { BackgroundTasksPanel } from './layout/BackgroundTasksPanel'
 import { UserInputPrompt } from './layout/UserInputPrompt'
@@ -565,6 +566,12 @@ export default function App() {
               appearanceOpen={s.showThemes}
               onAppearanceDismiss={() => s.setShowThemes(false)}
               onRate={s.handleRate}
+              /* 聊天区左上角常驻「Exec 执行指示器」：数据源 = 本轮 task_runs 台账
+                 （与 TaskBubble 同一份快照），点击沿用本层既有的 showExecTrace 开关
+                 （不动 execTraceOverride → 面板展示全局 timeline，而非某轮历史回溯）。 */
+              execIndicator={
+                <ExecIndicator runs={s.taskRuns} onOpenTrace={() => s.setShowExecTrace(true)} />
+              }
               onShowExecTrace={trace => {
                 s.setExecTraceOverride(trace)
                 s.setShowExecTrace(true)

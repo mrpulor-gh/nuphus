@@ -1806,6 +1806,12 @@ const en: Record<string, string> = {
   'taskBubble.failed': ' → {0} failed',
   'taskBubble.interrupted': ' → {0} unsettled',
 
+  // Exec indicator at the chat area's top-left corner (round avatar + state;
+  // clicking it opens the execution trace panel)
+  'execIndicator.running': 'Exec subtask running',
+  'execIndicator.completed': 'Exec subtask completed',
+  'execIndicator.openTrace': 'View execution trace',
+
   // Task detail modal (opened by clicking any row in the panel) — all four states,
   // interrupted kept separate from failed
   'taskBubble.detail.stateRunning': 'Running',

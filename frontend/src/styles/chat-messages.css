@@ -69,6 +69,14 @@
   gap: 4px;
   pointer-events: auto;
 }
+/* 左上角槽位贴 header 顶部（2026-10-26，Exec 指示器需求）：
+   header 因右侧纵向三钮被撑到约百像素高，默认 align-items:center 会把 0 尺寸的
+   左组落在垂直中线上 —— 挂进该槽位的指示器观感即「偏下」。抬到顶部后，槽位内
+   以 top:0 定位的头像才是「距窗口顶约 12px」的真·左上角。右组（纵向按钮列）
+   继续居中，不受影响。 */
+.chat-header-left {
+  align-self: flex-start;
+}
 /* 右侧是**纵向按钮列**：设置（齿轮）→ 外观（调色板）→ refine chip（有值时）。
    三者在同一 DOM 父子下自然下延，chip 因此不再需要 absolute 到 header 外
    （原先 top:50px/right:16px/z-index:20 与 header 内的浮层互抢层级）。 */

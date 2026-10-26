@@ -286,13 +286,13 @@ const zh: Record<string, string> = {
   'input.ctx.tokens': '令牌',
   'input.ctx.capacity': '容量',
   'input.ctx.steps': '步数',
-  'input.ctx.time': '耗时',
+  'input.ctx.time': '用时',
   'input.ctx.ttft': '首字',
   'input.ctx.speed': '速度',
 
   // ── 一轮执行元数据条（耗时 / 上下文增量 / 步数）──
   // 消息底部 / ctx 弹窗 / 移动端共用同一组件与词条，禁止各处另写字面量
-  'turn.duration': '耗时',
+  'turn.duration': '用时',
   // 本轮上下文增量（轮末占用 − 轮初占用，后端权威，两个值都取自 API usage）。
   // 不是「累计消耗」——同一段上下文在同轮多次调用里被反复计入，累加和会膨胀到
   // 11.2M 这种没有信息量的数字（缺陷实证），那项已从界面移除。
@@ -1718,6 +1718,11 @@ const zh: Record<string, string> = {
   'taskBubble.idle': '待命',
   'taskBubble.failed': ' · {0}失败',
   'taskBubble.interrupted': ' · {0}未结算',
+
+  // 聊天区左上角「Exec 执行指示器」（圆形头像 + 状态，点击进执行追踪面板）
+  'execIndicator.running': 'Exec 子任务执行中',
+  'execIndicator.completed': 'Exec 子任务已完成',
+  'execIndicator.openTrace': '查看执行过程',
 
   // 任务详情弹窗（点面板任一行弹出）——四态齐备，interrupted 不混进 failed
   'taskBubble.detail.stateRunning': '执行中',

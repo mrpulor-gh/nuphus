@@ -228,6 +228,14 @@ interface ChatPanelProps {
   ) => void
   /** 气泡执行回溯：点击打开执行面板显示该轮历史执行过程（traceItems） */
   onShowExecTrace?: (trace: TimelineEntry[]) => void
+  /**
+   * 聊天区左上角（`.chat-header-left`）的自绘 chrome 槽位：**由 App 层组合**。
+   * 现在挂的是「Exec 执行指示器」（ExecIndicator）——它的数据源是本轮 task_runs
+   * 台账、点击目标是 App 层既有的 showExecTrace 开关，两者都已活在 App 层；
+   * 走槽位可避免把执行台账再穿一层 props 进本组件（本组件对执行细节零感知）。
+   * 缺省不渲染（无槽位则左组保持空）。
+   */
+  execIndicator?: ReactNode
   /** Leader 暂停是否禁用（workflow 运行时） */
   isWorkflowRunning?: boolean
   /** 输入栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
@@ -350,6 +358,7 @@ export function ChatPanel({
   appearanceOpen,
   onAppearanceDismiss,
   onRate,
+  execIndicator,
   onShowExecTrace,
 }: ChatPanelProps) {
   const messages = useMemo(() => composeAssistantReplies(messageRecords), [messageRecords])
@@ -1757,7 +1766,9 @@ export function ChatPanel({
           齿轮 = 全应用唯一设置入口（打开设置中心弹窗）；
           调色板 = 外观浮窗（主题 / 微调 / 我的主题 / 语言，非模态常驻）。 */}
       <div className="chat-header">
-        <div className="chat-header-left" />
+        {/* 左上角：App 层组合的常驻 chrome 槽位（Exec 执行指示器）。
+            内部元素以 absolute 落位，故不会把 header 撑高（右侧三钮位置零变化）。 */}
+        <div className="chat-header-left">{execIndicator}</div>
         {/* island 落点锚点：左右两组之间的中央留白（几何见 styles/app-pill.css 的
             .island-slot：绝对定位铺满 header 的 padding box 并 flex 居中，不参与
             space-between 排布 → 两侧内容位置不变）。

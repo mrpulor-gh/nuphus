@@ -1,0 +1,188 @@
+/* ═══════════════════════════════════════════════════════════
+   exec-indicator.css — 聊天区左上角「Exec 执行指示器」
+
+   一件常驻 chrome：圆形头像（Nuphus N 字标）+ 右下角固定 E 角标。
+   展示 Leader 派发内部子 agent（task_dispatch）时的执行状态：
+     执行中（.is-running）   = 头像边缘 1/4 弧环绕旋转
+     已完成（.is-completed） = 环停止成闭环（--success）+ 右上角完成勾
+
+   状态来源、60s 退场计时都在 ExecIndicator.tsx（唯一数据源 = 后端 task_runs 台账）。
+
+   ── 为什么挂在 .chat-header-left（而非 fixed 到窗口左上角）──
+   .chat-area 顶部还有 in-flow 的 .update-notice 与 fixed 的 macOS 权限通告：
+   fixed 的头像会被它们压住、或反过来盖住通知的左侧内容（头像 z 高于 in-flow 元素）。
+   挂进 header 即「聊天区真正的左上角」——随 header 走、不随消息滚动、天然让位。
+
+   ── 配色纪律（全部走 token，零硬编码绘制色）──
+   · 头像底 = --surface-3，与 .message-avatar 同底（视觉相融，不喧宾夺主）
+   · 弧条 = --exec-arc，**主题反色**：亮主题深弧 / 暗主题白弧
+取色键沿用本仓库既有反色约定 --fg-1（见 session-rail.css 与 ui/LetterAvatar.tsx），
+     α 0.9 —— 与 mobile.css 深色主题的 --m-stop-arc 同值（:root 默认即深色；亮主题
+     该值为 0.85，此处取单值：业务 CSS 禁写 [data-theme] 覆盖块，双主题差异只允许活在 tokens.css）
+   · 角标底 = --fg-1 + 字色 = --surface-0（前/背景对调，即 LetterAvatar 的反色口径）
+   ═══════════════════════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ── 根元素：圆形头像本体（36px，与消息行头像同尺寸）──
+   定位：absolute 挂进 .chat-header-left（0 尺寸定位上下文）。
+   为什么不参与 header 布局：头像 36px > 右侧按钮 30px，若按 in-flow 排布会把
+   header 撑高 6px，把设置/外观/浏览器三钮整体顶下去——absolute 后零布局影响。
+   left 4px = 避开会话色块的 24px 命中热区（.session-rail-chip::after）：否则头像
+   左缘那 4px 的点击会被色块抢走（色块 z 55 > header 内容组 z 10）。这是**下界**，
+   再往左就必须先动色块热区，不能只改这里。
+   top 0 = 贴 header 左上角的**上**边：槽位 .chat-header-left 被 chat-messages.css
+   的 align-self:flex-start 抬到 header 顶部，故 top 0 即「距窗口顶约 12px」。
+   （2026-10-26 大王反馈「整体 DOM 偏右下」：原方案 top 50% + translateY(-50%)
+   是与右侧按钮列对齐**中线**，而右侧是纵向三钮、header 被撑到约百像素高，
+   头像遂落在 header 垂直中央 —— 观感即「偏下」。现改为贴顶。） */
+.exec-indicator {
+  --exec-arc: color-mix(in srgb, var(--fg-1) 90%, transparent);
+
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--fg-2);
+  cursor: pointer;
+  /* 交互三态闭环：默认 / hover / focus-visible / active（含 reduced-motion 降级） */
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.exec-indicator:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-3);
+  color: var(--fg-1);
+}
+
+.exec-indicator:active {
+  background: var(--surface-active);
+}
+
+.exec-indicator:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── 品牌字标（nuphus-n.svg 的三条路径；stroke=currentColor 跟随上面的 color）── */
+.exec-indicator-logo {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+/* ── 右下角固定 E 角标 ──
+   压在头像右下角（圆心落在头像圆周外侧约 0.4px），只靠 1px 主题底色描边分离 ——
+   没有投影、没有渐变（反模式「粗阴影」与「无意义装饰」都避开）。
+   描边取 --surface-3 = 头像自身的底：读成「从头像上切下来的一块」。 */
+.exec-indicator-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--fg-1);
+  color: var(--surface-0);
+  box-shadow: 0 0 0 1px var(--surface-3);
+  font-family: var(--font-ui);
+  font-size: var(--fz-xs);
+  font-weight: var(--fw-bold);
+  line-height: 1;
+}
+
+/* ── 完成勾（仅 .is-completed 渲染）——「完成标识」，与闭环同色成一体 ── */
+.exec-indicator-check {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--success);
+  color: var(--surface-0);
+  box-shadow: 0 0 0 1px var(--surface-3);
+  line-height: 1;
+}
+
+/* ── 环绕环：手法逐条复用 mobile.css 的 .mobile-composer-stop::before ──
+   conic-gradient 画 1/4 弧（transparent 0→90deg，色在 90deg 处中断）+ radial-gradient
+   mask 把实心圆盘掏成细环 + 旋转 360°。
+   环外扩 -4px：环（44px）与头像（36px）之间留细间隔，读成「悬浮在头像外的动环」。
+   mask 里的 #000 是 **alpha 通道**（不透明处保留），不是绘制色 —— 同 mobile.css。 */
+.exec-indicator::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg, var(--exec-arc) 90deg, transparent 90deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  pointer-events: none;
+}
+
+.exec-indicator.is-running::before {
+  animation: exec-indicator-spin 1s linear infinite;
+}
+
+@keyframes exec-indicator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 完成态：环绕停止，弧条切成**完整闭环**（--success）——读作「已闭环」而非
+   「转了一半卡住」。动画随 background 覆写一并消失（顺时针动画仅 .is-running 有）。 */
+.exec-indicator.is-completed::before {
+  background: var(--success);
+}
+
+/* ── 退场：60s 无新派发后向左移出并消失（计时在 ExecIndicator.tsx）──
+   时长由 TS 常量经 --exec-leave-duration 注入（单一来源，避免 CSS/JS 漂移）。
+   translate 里必须带上 -50%：基础态的垂直居中就是靠它，动画期间属性被整体接管。 */
+.exec-indicator.is-leaving {
+  animation: exec-indicator-leave var(--exec-leave-duration) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes exec-indicator-leave {
+  to {
+    opacity: 0;
+    transform: translate(-64px, -50%);
+  }
+}
+
+/* ── 无动画降级 ──
+   环不转但仍在、仍是 1/4 弧 → 状态仍可读（与 avatar.css 同一降级哲学）；
+   退场去位移只留淡出（同 desktop-toolbar.css 的降级口径），消失这件事不因降级丢失。 */
+@media (prefers-reduced-motion: reduce) {
+  .exec-indicator.is-running::before {
+    animation: none;
+  }
+
+  .exec-indicator.is-leaving {
+    animation-name: exec-indicator-leave-fade;
+  }
+}
+
+@keyframes exec-indicator-leave-fade {
+  to {
+    opacity: 0;
+  }
+}
