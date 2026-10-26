@@ -154,6 +154,7 @@ fn apply_win11_rounded_corners<R: tauri::Runtime>(window: &tauri::WebviewWindow<
 /// 重取文件信息（含图标），坏条目在下次启动即自愈：
 /// - SHCNE_UPDATEITEM(0x2000)：单文件属性/图标已变
 /// - SHCNE_UPDATEDIR(0x1000)：目录内容已变，重读目录视图
+///
 /// 均为用户级通知、无返回值、失败无副作用；CLI 形态（task 子命令）不走本路径。
 #[cfg(target_os = "windows")]
 fn refresh_shell_icon_cache() {
