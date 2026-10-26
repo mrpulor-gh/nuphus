@@ -766,10 +766,10 @@ impl ReactAgent {
         // 3. Execute tool (with per-line output callback)
         let call_id = call.id.clone();
 
-        // HUD: emit running for desktop/browser/system_shell tools
-        let needs_hud = call.tool.starts_with("desktop_")
-            || call.tool.starts_with("browser_")
-            || call.tool == "system_shell";
+        // HUD: 是否上屏由仲裁侧唯一判定（hud_arbiter::classify_tool 的同一张表）——
+        // 本地副本（曾为 desktop_/browser_/system_shell 三条件）与仲裁集合漂移时，
+        // 会出现「上了屏却没人发终态帧」→ 退化为兜底合成（HUD 粘住的温床）。
+        let needs_hud = crate::hud_arbiter::is_hud_tool(&call.tool);
         if needs_hud {
             if let Some(ref emitter) = self.exec_emitter {
                 emitter.emit(NuphusEvent::HudUpdate {

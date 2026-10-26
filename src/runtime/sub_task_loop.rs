@@ -397,16 +397,9 @@ impl super::SubTaskRunner {
                     from_task: self.is_task,
                 });
 
-                // System tool HUD hint
-                let system_hint = match call.tool.as_str() {
-                    "system_shell" => Some("执行系统命令"),
-                    "system_sleep" => Some("等待中"),
-                    "system_info" => Some("获取系统信息"),
-                    "system_env_get" => Some("读取环境变量"),
-                    "process_list" => Some("查看进程"),
-                    "process_kill" => Some("终止进程"),
-                    _ => None,
-                };
+                // System tool HUD hint —— 文案走仲裁侧同一张表（单一事实源；
+                // 此前的本地副本与 hud_arbiter::system_hint 并列存在，是漂移源）
+                let system_hint = crate::hud_arbiter::system_hint(call.tool.as_str());
                 if let Some(hint) = system_hint {
                     self.emit(NuphusEvent::HudUpdate {
                         text: hint.to_string(),

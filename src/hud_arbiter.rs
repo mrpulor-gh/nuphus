@@ -79,6 +79,17 @@ pub fn classify_tool(tool: &str) -> Option<(Priority, String)> {
     None
 }
 
+/// HUD 参与判定（**单一事实源**）：所有执行体的「这个工具要不要上 HUD」都必须走这里。
+///
+/// 历史问题：`agent/mod.rs` 的 `needs_hud` 与 `sub_task_loop` 的 system_hint 表各自
+/// 维护了一份近似判定，与仲裁侧的 [`classify_tool`] 集合并不一致（缺 system_sleep /
+/// system_info / system_env_get / process_list / process_kill 等）。名单漂移的后果是
+/// 「上屏靠仲裁侧、终态帧却没人发」→ 依赖兜底合成；这正是「HUD 计时永不退表」类
+/// 事故的温床。故收敛为唯一入口，任一处新增/调整工具只改这张表。
+pub fn is_hud_tool(tool: &str) -> bool {
+    classify_tool(tool).is_some()
+}
+
 // ─────────────────────────────────────────────────────────────
 //  仲裁状态
 // ─────────────────────────────────────────────────────────────
@@ -314,6 +325,26 @@ mod tests {
             ToolEndAction::None => "None",
             ToolEndAction::SwitchRunning(_) => "SwitchRunning",
             ToolEndAction::SynthTerminal { .. } => "SynthTerminal",
+        }
+    }
+
+    #[test]
+    fn is_hud_tool_matches_classify_table() {
+        // 单一事实源：各执行体的 needs_hud 行为必须与 classify_tool 的集合一致
+        for t in [
+            "system_shell",
+            "system_sleep",
+            "system_info",
+            "system_env_get",
+            "process_list",
+            "process_kill",
+            "desktop_click",
+            "browser_navigate",
+        ] {
+            assert!(is_hud_tool(t), "{t} 应参与 HUD");
+        }
+        for t in ["Read", "Write", "web_search", "leader_memory_update"] {
+            assert!(!is_hud_tool(t), "{t} 不应参与 HUD");
         }
     }
 
