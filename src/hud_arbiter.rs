@@ -227,21 +227,20 @@ pub fn on_tool_call_start_with(
     })
 }
 
-/// running HudUpdate 事件裁决：有活跃集 → 改写为 top 文本；无活跃集 → 原样放行。
-/// 返回 Some(rewrite_text) = 改写显示；None = 保持事件原文。
+/// running HudUpdate 事件裁决：有活跃集 → **总是**返回仲裁权威文本（top 的 display）；
+/// 无活跃集 → None（调用方放行事件原文，如主轮的普通提示）。
 pub fn on_running_hint() -> Option<String> {
     with_state(|s| {
+        // 2026-10-26 修复：**总是**返回仲裁侧的权威文本（活跃集非空时）。
+        //
+        // 旧语义是「文本没变 → None」，而调用方（emitter）拿到 None 会放行**事件
+        // 原文** —— 原文来自各执行体的通用文案（如 agent 的 "system_shell — 执行中..."），
+        // 于是刚由 ToolCallStart 上屏的 title / 系统族文案被它盖掉（实测：填了 title
+        // 的 system_shell 在 HUD 上仍显示 system_shell）。running 帧只是「该刷新了」
+        // 的触发信号，显示文本必须由仲裁唯一决定。
         let (top_text, top_prio) = s.top()?;
-        let needs_rewrite = match &s.displayed {
-            Some((d, _)) => *d != top_text,
-            None => true,
-        };
-        if needs_rewrite {
-            s.displayed = Some((top_text.clone(), top_prio));
-            Some(top_text)
-        } else {
-            None
-        }
+        s.displayed = Some((top_text.clone(), top_prio));
+        Some(top_text)
     })
 }
 
@@ -378,6 +377,24 @@ mod tests {
     }
 
     #[test]
+    fn running_hint_keeps_shell_title_so_it_cannot_be_overwritten() {
+        // 回归（2026-10-26 实测）：填了 title 的 system_shell，其 running 帧必须继续
+        // 显示 title —— 旧实现「文本未变 → None」会让调用方放行事件原文
+        // （"system_shell — 执行中..."）把标题盖掉。
+        let _serial = serialize();
+        reset();
+        let params = serde_json::json!({ "command": "x", "title": "标题直显验证" });
+        assert_eq!(
+            on_tool_call_start_with("c1", "system_shell", Some(&params)).as_deref(),
+            Some("标题直显验证")
+        );
+        assert_eq!(on_running_hint().as_deref(), Some("标题直显验证"));
+        // 活跃集清空后 → None（调用方放行事件原文，用于非工具类提示）
+        reset();
+        assert!(on_running_hint().is_none());
+    }
+
+    #[test]
     fn hud_title_from_params_cleans_and_caps() {
         let p = serde_json::json!({ "title": "  依赖  全量\n检查  " });
         assert_eq!(
@@ -459,8 +476,10 @@ mod tests {
         let b = on_tool_call_start("c2", "system_shell");
         assert_eq!(b.as_deref(), Some("执行系统命令"));
 
-        // running hint：显示已等于 top → 不重复改写
-        assert!(on_running_hint().is_none());
+        // running hint：**总是**返回仲裁权威文本（此处 top = system_shell 文案）——
+        // 调用方拿到 None 会放行事件原文，那会用 agent 的通用文案覆盖 title
+        // （2026-10-26 实测修复）。
+        assert_eq!(on_running_hint().as_deref(), Some("执行系统命令"));
 
         // shell 结束（真实 done 先经过，配对抵消）→ 留任桌面工具切回显示
         assert!(on_hud_terminal().is_none());
@@ -555,7 +574,11 @@ mod tests {
         reset();
         // Leader 单工具标准链：running → done(真实终态) → ToolCallEnd
         on_tool_call_start("c1", "desktop_click");
-        assert!(on_running_hint().is_none());
+        // running 帧只作触发信号：返回值即权威文本（总是给出），不再"未变即 None"
+        assert_eq!(
+            on_running_hint().as_deref(),
+            Some("desktop_click — 执行中...")
+        );
         // done 终态经过（笔数 1 = 集内 1 → live=false）
         assert!(on_hud_terminal().is_none());
         match on_tool_call_end("c1", "desktop_click", true) {
