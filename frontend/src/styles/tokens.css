@@ -199,7 +199,7 @@
   --msg-user-bg: #152238;
   --msg-assistant-bg: #12141e;
   --input-bg: #12141e; /* 输入框底（新增语义 token，= --bg-secondary 现值） */
-  --skin-bg-opacity: 0.35; /* 皮肤背景图默认不透明度（三主题共用，仅此处定义） */
+  --skin-bg-opacity: 0; /* #117：0 = 未显式设置过就不显示；有图且用户从未设过时，由 useTheme.withSkinOpacityDefault 注入 0.35 覆盖 */
   --code-bg: #0d0f1a;
   --scrollbar-thumb: #1e293b;
   --text-secondary-rgb: 148, 163, 184;

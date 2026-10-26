@@ -8,7 +8,12 @@ import {
   useEffect,
   type ReactNode,
 } from 'react'
-import { newCustomThemeId, parseCustomThemeJSON, type CustomTheme } from './customTheme'
+import {
+  newCustomThemeId,
+  parseCustomThemeJSON,
+  SKIN_OPACITY_KEY,
+  type CustomTheme,
+} from './customTheme'
 import { applySkinBg, readSkinBg } from '../ui/skinBg'
 
 export type ThemeId = 'dark' | 'light' | 'fresh'
@@ -130,6 +135,22 @@ export function skinRestoreSource(customTheme: CustomTheme | null, presetSkin: s
   return customTheme ? (customTheme.skin ?? '') : presetSkin
 }
 
+/**
+ * #117：`--skin-bg-opacity` 的默认值改为 0 之后，「没显式设置过」= 不显示。
+ *
+ * 但有背景图、用户又从未拖过该滑块时，必须给一个可见初值，否则「选了图看不见效果」
+ * （原先 0.35 承担的就是这个语义，现在收窄成：只对有图且无覆盖的情形注入）。
+ * 只在**有图**时注入；系统预设态没有 customTheme，走不到这里 —— 于是历史遗留的
+ * LS_SKIN 残留路径不会被凭空点亮成 35%（#117 的主诉）。
+ */
+function withSkinOpacityDefault(
+  overrides: Record<string, string>,
+  hasSkin: boolean,
+): Record<string, string> {
+  if (!hasSkin || overrides[SKIN_OPACITY_KEY] !== undefined) return overrides
+  return { ...overrides, [SKIN_OPACITY_KEY]: '0.35' }
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   // 「我的主题」列表 + 激活 id（启动时迁移旧版单主题存储）
   const [customStore, setCustomStore] = useState(readCustomThemes)
@@ -173,9 +194,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const html = document.documentElement
     html.setAttribute('data-theme', theme)
     if (previewOverrides !== null) {
-      applyOverrides(previewOverrides)
+      applyOverrides(withSkinOpacityDefault(previewOverrides, !!customTheme?.skin))
     } else if (customTheme) {
-      applyOverrides(customTheme.overrides)
+      applyOverrides(withSkinOpacityDefault(customTheme.overrides, !!customTheme.skin))
     } else {
       applyOverrides({})
     }

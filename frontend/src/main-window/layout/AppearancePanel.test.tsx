@@ -791,7 +791,7 @@ describe('AppearancePanel 外观浮窗', () => {
  * 恒返回空串，ThemeProvider 写 data-theme 在 jsdom 里不带任何解析结果。
  * 这里按 data-theme 仿真浏览器对 :root / [data-theme] 的解析（内联样式优先，
  * 与真实层级一致）。核心色取 tokens.css 真实值；面板 / 弹窗 / 皮肤的 α 刻意
- * 取三主题互异的值 —— 真实 CSS 里三主题 α 相同（modal .8 / panel .9 / skin .35），
+ * 取三主题互异的值 —— 真实 CSS 里三主题 α 相同（modal .8 / panel .9 / skin 0），
  * 若照抄，「滑块读数停在上一套主题」这类冻结回归将完全测不出来。
  */
 const THEME_TOKENS: Record<string, Record<string, string>> = {
@@ -806,7 +806,7 @@ const THEME_TOKENS: Record<string, Record<string, string>> = {
     '--input-bg': '#12141e',
     '--panel-bg': 'rgba(14, 14, 22, 0.9)',
     '--modal-bg': 'rgba(14, 14, 22, 0.8)',
-    '--skin-bg-opacity': '0.35',
+    '--skin-bg-opacity': '0',
   },
   light: {
     '--accent': '#111111',
@@ -819,7 +819,7 @@ const THEME_TOKENS: Record<string, Record<string, string>> = {
     '--input-bg': '#12141e',
     '--panel-bg': 'rgba(251, 251, 252, 0.85)',
     '--modal-bg': 'rgba(251, 251, 252, 0.75)',
-    '--skin-bg-opacity': '0.4',
+    '--skin-bg-opacity': '0',
   },
   fresh: {
     '--accent': '#0b7a52',
@@ -832,7 +832,7 @@ const THEME_TOKENS: Record<string, Record<string, string>> = {
     '--input-bg': '#ffffff',
     '--panel-bg': 'rgba(255, 255, 255, 0.97)',
     '--modal-bg': 'rgba(255, 255, 255, 0.95)',
-    '--skin-bg-opacity': '0.35',
+    '--skin-bg-opacity': '0',
   },
 }
 
@@ -840,15 +840,15 @@ const THEME_TOKENS: Record<string, Record<string, string>> = {
 const EXPECTED: Record<string, { colors: string[]; sliders: number[] }> = {
   dark: {
     colors: ['#3b82f6', '#0a0a10', '#12121a', '#f5f5fa', '#d0d0dd'],
-    sliders: [100, 100, 90, 80, 35],
+    sliders: [100, 100, 90, 80, 0],
   },
   light: {
     colors: ['#111111', '#ffffff', '#f7f7f8', '#1a1a1a', '#444444'],
-    sliders: [100, 100, 85, 75, 40],
+    sliders: [100, 100, 85, 75, 0],
   },
   fresh: {
     colors: ['#0b7a52', '#edf5f0', '#ffffff', '#12251b', '#37503f'],
-    sliders: [100, 100, 97, 95, 35],
+    sliders: [100, 100, 97, 95, 0],
   },
 }
 

@@ -102,15 +102,17 @@
 }
 /* 唯一的绘制层：图片与不透明度都只在这一处声明 ——
    标题栏与聊天区同源同透明度，是结构保证而非约定。
-   背景色兜底：万一 --skin-bg-opacity 被主题改成 0（滑块可到 0%），
-   绘制层整体（含容器）不可见，露出 #root 的 --void-deepest，不会留白。 */
+   背景色兜底：--skin-bg-opacity 为 0 时（滑块可到 0%）绘制层整体（含容器）不可见，
+   露出 #root 的 --void-deepest，不会留白。 */
 .app-skin-backdrop-img {
   position: absolute;
   inset: 0;
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  opacity: var(--skin-bg-opacity, 0.35);
+  /* fallback 与 tokens.css 默认值同语义：#117 之后「没显式设置过」= 0（不显示）；
+     有图时的 0.35 由 useTheme.withSkinOpacityDefault 以**覆盖值**注入，不走这里的 fallback。 */
+  opacity: var(--skin-bg-opacity, 0);
 }
 .title-bar {
   display: flex;

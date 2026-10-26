@@ -334,7 +334,7 @@ function readSkinOpacityPercent(): number {
   const cs = getComputedStyle(document.documentElement)
   const raw = cs.getPropertyValue(SKIN_OPACITY_KEY).trim()
   const n = raw ? parseFloat(raw) : Number.NaN
-  return Number.isFinite(n) ? Math.round(n * 100) : 35
+  return Number.isFinite(n) ? Math.round(n * 100) : 0
 }
 
 /**
@@ -491,7 +491,7 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
     bubbles: 100,
     input: 100,
     panel: 80,
-    skin: 35,
+    skin: 0,
     modal: 80,
   })
 
