@@ -670,7 +670,24 @@ impl super::SubTaskRunner {
                 let mut cache = crate::cache::global_cache().lock().await;
                 let result = match cache.get(&call.tool, &call.params) {
                     Some(r) => r.clone(),
-                    None => continue,
+                    None => {
+                        // 边界：该 call 的 Start 早已发出，但缓存条目在标记命中之后又
+                        // 消失（并发失效）。补一条 stub End 保证配对 —— 否则 HUD 仲裁
+                        // 活跃集泄漏，之后每次 ToolCallEnd 都会把显示切回它的 running，
+                        // 而 running 相位没有 auto-hide（HUD 计时永不退表）。
+                        self.emit(NuphusEvent::ToolCallEnd {
+                            call_id: call.id.clone(),
+                            tool_name: call.tool.clone(),
+                            success: false,
+                            duration_ms: 0,
+                            output_preview: String::new(),
+                            output_full_size: 0,
+                            is_truncated: false,
+                            error: Some("cache entry vanished before replay".to_string()),
+                            from_task: self.is_task,
+                        });
+                        continue;
+                    }
                 };
                 drop(cache);
                 let output_str = result.output.as_deref().unwrap_or("");

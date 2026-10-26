@@ -16,6 +16,7 @@ pub mod react_loop;
 pub mod sub_task;
 pub mod sub_task_loop;
 pub mod sub_task_shell;
+pub mod tool_lifecycle;
 pub mod workflow_agent;
 
 pub use mode::Mode;

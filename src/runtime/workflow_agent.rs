@@ -15,6 +15,7 @@ use crate::agent::exec_tool;
 use crate::agent::pause::PauseDecision;
 use crate::agent::reminders::{ReminderCategory, ReminderPriority, ReminderQueue};
 use crate::runtime::protection::ProtectionGuard;
+use crate::runtime::tool_lifecycle::ToolEndGuard;
 use crate::{
     api::{ApiClient, AssistantEvent, MessageRequest},
     session::{ContentBlock, PromptSnapshot, Session},
@@ -950,6 +951,14 @@ impl WorkflowAgent {
                     iteration: iteration as u32,
                     from_task: false,
                 });
+                // Start 之后立刻挂守卫：本 call 的任何早退（含下方 continue 与
+                // 提前 return）都由 Drop 补一条 stub End，HUD 活跃集不泄漏。
+                let mut end_guard = ToolEndGuard::arm(
+                    self.emitter.as_ref(),
+                    &call.id,
+                    &call.tool,
+                    std::time::Instant::now(),
+                );
 
                 // Protection check
                 let alert = self.protection.check_pre_call(call);
@@ -971,6 +980,7 @@ impl WorkflowAgent {
                         error: err_result.error.clone(),
                         from_task: false,
                     });
+                    end_guard.disarm(); // 上面已发真实 End，勿再补
 
                     match exec_tool::breaker_check(self.safety_failures) {
                         exec_tool::BreakerAction::Halt => {
@@ -1287,6 +1297,7 @@ impl WorkflowAgent {
                     error: result.error.clone(),
                     from_task: false,
                 });
+                end_guard.disarm(); // 正常路径：真实 End 已发
 
                 // External content: sanitize + injection scan + untrusted boundary (unified entry)
                 let filtered = crate::filter::ToolOutputFilter::apply(&call.tool, output_str);
