@@ -40,6 +40,8 @@ pub fn create<R: tauri::Runtime>(app: &AppHandle<R>) {
         .inner_size(HUD_WIDTH, HUD_HEIGHT)
         .decorations(false)
         .transparent(true)
+        // Tauri v2 起窗口阴影默认开启，与透明背景冲突（tauri#8133），必须在建窗时关闭
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
@@ -51,6 +53,9 @@ pub fn create<R: tauri::Runtime>(app: &AppHandle<R>) {
             tracing::info!("[HUD] Window created (hidden)");
             // Position bottom-right after creation
             if let Some(window) = app.get_webview_window(HUD_LABEL) {
+                // WebView2 的 DefaultBackgroundColor 默认白色（官方只接受 alpha=0/255）——
+                // 它是网页内容底下那层底，不刷成透明，「窗口透明」就只是错觉
+                let _ = window.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
                 observe_user_drag(&window);
                 position_bottom_right(&window);
             }
