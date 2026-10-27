@@ -270,6 +270,19 @@ jobs:
             }
           }
           EOF
+          # notes = 该版本 CHANGELOG 段落（客户端「更新内容」预览正文；含标题行供分段解析）。
+          # 段落缺失/为空 → 回退「Nuphus $VER」，与旧行为一致。
+          awk -v ver="$VER" '
+            index($0, "## [" ver "]") == 1 { flag=1; next }
+            flag && index($0, "## [") == 1 { exit }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            sed -i "1i ## [$VER]" release-notes.md
+          else
+            echo "Nuphus $VER" > release-notes.md
+          fi
+          jq --rawfile notes release-notes.md '.notes = $notes' latest.json > latest.json.tmp && mv latest.json.tmp latest.json
           echo "latest.json generated ($(wc -c < latest.json) bytes)"
       - name: Upload latest.json to Release
         env:
@@ -284,6 +297,7 @@ jobs:
     needs: [metadata]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Set up SSH key
         env:
           SSH_KEY: ${{ secrets.SERVER_DEPLOY_KEY }}
@@ -349,6 +363,19 @@ jobs:
             }
           }
           JSONEOF
+          # notes = 该版本 CHANGELOG 段落（与主 latest.json 同源同格式；含标题行供分段解析）。
+          # 段落缺失/为空 → 回退「Nuphus $VER」，与旧行为一致。
+          awk -v ver="$VER" '
+            index($0, "## [" ver "]") == 1 { flag=1; next }
+            flag && index($0, "## [") == 1 { exit }
+            flag { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ -s /tmp/release-notes.md ]; then
+            sed -i "1i ## [$VER]" /tmp/release-notes.md
+          else
+            echo "Nuphus $VER" > /tmp/release-notes.md
+          fi
+          jq --rawfile notes /tmp/release-notes.md '.notes = $notes' /tmp/latest.json > /tmp/latest.json.tmp && mv /tmp/latest.json.tmp /tmp/latest.json
           scp -i ~/.ssh/deploy_key /tmp/latest.json ubuntu@43.161.235.81:/tmp/latest.json
           ssh -i ~/.ssh/deploy_key ubuntu@43.161.235.81 "sudo mv /tmp/latest.json /opt/downloads/latest.json"
 
