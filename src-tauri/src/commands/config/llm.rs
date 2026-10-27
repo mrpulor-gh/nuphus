@@ -77,54 +77,12 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
     // 顶层 model 字段已退役：不再参与启动加载（曾致陈旧值把激活模型/ctx 带偏，
     // 2026-09-05 实测顶层残留 gpt-5.6-sol → 重启 ctx 128K）。
 
-    let find_by_model = |model: &str| -> Option<(String, String, String, String)> {
-        if model.is_empty() {
-            return None;
-        }
-        let providers = doc.get("providers").and_then(|p| p.as_array())?;
-        // 同 id 跨段（官方 deepseek vs opencode-go）时，[last_model] 的最近切换
-        // 归属优先于文件段顺序——否则重启后 chat 会用官方段密钥路由，用户 GO
-        // 选择在磁盘上被静默改写（与 get_provider_context 同一权威链）。
-        let recorded = nuphus::config::load_last_model_provider(&config_path, model);
-        let mut first_hit: Option<(String, String, String, String)> = None;
-        for entry in providers {
-            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
-            let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
-            let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-            let has_model = entry
-                .get("models")
-                .and_then(|arr| arr.as_array())
-                .map(|ms| {
-                    ms.iter()
-                        .any(|m| m.get("id").and_then(|i| i.as_str()) == Some(model))
-                })
-                .unwrap_or(false);
-            if has_model && (!k.is_empty() || oauth_entry(entry)) {
-                let hit = (
-                    name.to_string(),
-                    model.to_string(),
-                    u.to_string(),
-                    k.to_string(),
-                );
-                match &recorded {
-                    Some(rec) if *rec == hit.0 => return Some(hit),
-                    _ => {
-                        if first_hit.is_none() {
-                            first_hit = Some(hit);
-                        }
-                    }
-                }
-            }
-        }
-        first_hit
-    };
-
-    // leader 绑定为空 → find_by_model("") 返回 None → 走下方首个可用 provider 回退。
+    // leader 绑定为空 → find_startup_binding("") 返回 None → 走下方首个可用 provider 回退。
     let am = load_agent_models(&config_path);
     let effective_top = am.leader.clone();
 
-    let (provider_name, model_id, base_url, api_key) = match find_by_model(&effective_top) {
+    let binding = find_startup_binding(&doc, &config_path, &effective_top, &am.leader_provider);
+    let (provider_name, model_id, base_url, api_key) = match binding {
         Some(v) => v,
         None => {
             // 2. Fallback: first provider with a non-empty api_key
@@ -204,6 +162,68 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         provider_name,
         model_id
     );
+}
+
+/// 启动装载的顺位解析：从 `[[providers]]` 里挑出 leader 模型的归属段，
+/// 返回 `(段名, 模型 id, base_url, 解密后的 api_key)`。
+///
+/// 顺位（与 process.rs 会话链路的「权威成对绑定」口径对齐——启动装载曾漏掉 ①，
+/// 同 id 跨段时落到段序盲选、命中无窗口值的段：2026-10-27 实测 ctx 分母恒 `--`）：
+///   ① `[agent_models].leader_provider`——用户显式双字段绑定（段名 + 模型 id），
+///      该段确实发布此 model 且凭证可用时精确命中。**必须排最前**：同 id 跨
+///      custom-xxx 段是多实例常态（本机 `deepseek-v4.1-flash` 同时发布在
+///      opencode-go / custom-codearts-bridge / custom-chickener 三段）；
+///   ② `[last_model]` 磁盘记录——次级的最近切换归属（可能陈旧，如段已不存在）；
+///   ③ 段序 first_hit——兜底（无绑定且无记录时保持既有行为；启动路径静默可容错，
+///      不引入「多候选报错」语义）。
+fn find_startup_binding(
+    doc: &toml::Value,
+    config_path: &std::path::Path,
+    model: &str,
+    leader_provider: &str,
+) -> Option<(String, String, String, String)> {
+    if model.is_empty() {
+        return None;
+    }
+    let providers = doc.get("providers").and_then(|p| p.as_array())?;
+    let recorded = nuphus::config::load_last_model_provider(config_path, model);
+    let mut first_hit: Option<(String, String, String, String)> = None;
+    for entry in providers {
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+        let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
+        let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+        let has_model = entry
+            .get("models")
+            .and_then(|arr| arr.as_array())
+            .map(|ms| {
+                ms.iter()
+                    .any(|m| m.get("id").and_then(|i| i.as_str()) == Some(model))
+            })
+            .unwrap_or(false);
+        if has_model && (!k.is_empty() || oauth_entry(entry)) {
+            let hit = (
+                name.to_string(),
+                model.to_string(),
+                u.to_string(),
+                k.to_string(),
+            );
+            // ① 用户显式成对绑定（段名精确命中）——权威优先，不参与段序竞争。
+            if !leader_provider.is_empty() && hit.0.as_str() == leader_provider {
+                return Some(hit);
+            }
+            // ② [last_model] 记录（次级）；未命中落入 ③ 段序兜底。
+            match &recorded {
+                Some(rec) if *rec == hit.0 => return Some(hit),
+                _ => {
+                    if first_hit.is_none() {
+                        first_hit = Some(hit);
+                    }
+                }
+            }
+        }
+    }
+    first_hit
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -3138,6 +3158,42 @@ mod tests {
             "leader-model"
         );
         std::fs::remove_dir_all(am_path.parent().unwrap()).ok();
+    }
+
+    /// 回归（2026-10-27 大王实测）：同 id 跨段 + `[last_model]` 陈旧记录时，启动装载
+    /// 必须优先取 `[agent_models].leader_provider` 指向的段——段序不参与决策。
+    /// 现场：`deepseek-v4.1-flash` 同时发布在 opencode-go（段序更前、条目无窗口值）/
+    /// custom-codearts-bridge（用户绑定 + 1024000 窗口）/ custom-chickener；旧链
+    /// 段序盲选命中 opencode-go → runtime 窗口 miss → 输入框 ctx 分母恒显示 `--`。
+    #[test]
+    fn startup_binding_prefers_leader_provider_over_segment_order() {
+        let doc: toml::Value = "[[providers]]\nname = 'opencode-go'\napi_key = 'sk-a'\nbase_url = 'https://a.test/v1'\n[[providers.models]]\nid = 'same'\n\n[[providers]]\nname = 'selected'\napi_key = 'sk-b'\nbase_url = 'https://b.test/v1'\n[[providers.models]]\nid = 'same'\n"
+            .parse()
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-startup-binding-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("providers.toml");
+        // 陈旧 [last_model] 记录指向不存在的段——不得把决策带回段序盲选。
+        std::fs::write(&path, "[last_model]\nsame = 'stale-segment'\n").unwrap();
+
+        // ① 显式绑定命中（段序在后的段）——权威优先。
+        let hit = find_startup_binding(&doc, &path, "same", "selected").unwrap();
+        assert_eq!(hit.0, "selected");
+        assert_eq!(hit.2, "https://b.test/v1");
+        assert_eq!(hit.3, "sk-b");
+
+        // ② 无绑定（空串）→ 保持 legacy 兜底：段序首段。
+        let hit = find_startup_binding(&doc, &path, "same", "").unwrap();
+        assert_eq!(hit.0, "opencode-go");
+
+        // ③ 绑定段不存在（陈旧绑定）→ 不入段序竞争，仍回落段序首段。
+        let hit = find_startup_binding(&doc, &path, "same", "ghost").unwrap();
+        assert_eq!(hit.0, "opencode-go");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
