@@ -106,6 +106,11 @@ describe('GithubPage 贡献者页', () => {
     expect(repoLink).toHaveAttribute('href', REPO_URL)
     expect(repoLink).toHaveAttribute('target', '_blank')
     expect(repoLink).toHaveAttribute('rel', 'noreferrer')
+    // 官网入口：与仓库入口并列，同为外链新窗口（2026-10-28 新增）
+    const siteLink = screen.getByRole('link', { name: /官方网站/ })
+    expect(siteLink).toHaveAttribute('href', 'https://www.nuphus.com')
+    expect(siteLink).toHaveAttribute('target', '_blank')
+    expect(siteLink).toHaveAttribute('rel', 'noreferrer')
     expect(screen.getByText(/数据来自本仓库 CHANGELOG/)).toBeInTheDocument()
   })
 

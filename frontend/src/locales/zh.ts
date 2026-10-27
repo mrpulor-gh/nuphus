@@ -813,6 +813,7 @@ const zh: Record<string, string> = {
   'github.intro': '欢迎大家根据实际使用情况提交问题和 PR，我们鼓励由使用者到共同开发者的转变',
   'github.roundInProgress': '开发中',
   'github.contributionCount': '{0} 项贡献',
+  'github.websiteEntry': '官方网站 www.nuphus.com',
   'github.repoEntry': '打开仓库 mrpulor-gh/nuphus',
   'github.authorWechat': '作者微信：{0}',
   'github.dataNote':
@@ -1632,7 +1633,7 @@ const zh: Record<string, string> = {
      措辞统一为「控制面板」，三者必须一起变 */
   'app.settings': '控制面板',
   'app.openInFullPage': '在整页打开',
-  'app.github': 'GitHub',
+  'app.github': '官网与 GitHub',
   'app.memories': '记忆',
   'app.knowledge': '知识库',
   'app.skills': '技能',
@@ -1655,7 +1656,9 @@ const zh: Record<string, string> = {
   'titleBar.close': '关闭',
   'titleBar.menu': '菜单',
   'titleBar.newChat': '新建会话',
+  'titleBar.website': '官网',
   'titleBar.feedback': '反馈',
+  'titleBar.currentVersion': '当前版本（v{0}）',
   'titleBar.checkUpdate': '版本（检查更新）',
 
   'toast.configureApiKey': '请先配置 API Key',

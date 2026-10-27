@@ -90,6 +90,15 @@ export function GithubPage() {
           ))}
         </div>
         <p className="github-page-intro">{t('github.intro')}</p>
+        <a
+          className="github-repo-entry"
+          href="https://www.nuphus.com"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <IconExternalLink size={13} />
+          <span>{t('github.websiteEntry')}</span>
+        </a>
         <a className="github-repo-entry" href={REPO_URL} target="_blank" rel="noreferrer">
           <IconExternalLink size={13} />
           <span>{t('github.repoEntry')}</span>

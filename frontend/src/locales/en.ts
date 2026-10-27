@@ -848,6 +848,7 @@ const en: Record<string, string> = {
     'Issues and pull requests based on real-world use are welcome — we encourage the step from user to co-developer',
   'github.roundInProgress': 'In progress',
   'github.contributionCount': '{0} contributions',
+  'github.websiteEntry': 'Official website www.nuphus.com',
   'github.repoEntry': 'Open the repository mrpulor-gh/nuphus',
   'github.authorWechat': 'Author WeChat: {0}',
   'github.dataNote':
@@ -1719,7 +1720,7 @@ const en: Record<string, string> = {
      SettingsCenter panel title / nav aria — keep the three wordings in sync */
   'app.settings': 'Control Panel',
   'app.openInFullPage': 'Open in full page',
-  'app.github': 'GitHub',
+  'app.github': 'Website & GitHub',
   'app.memories': 'Memories',
   'app.knowledge': 'Knowledge',
   'app.skills': 'Skills',
@@ -1742,7 +1743,9 @@ const en: Record<string, string> = {
   'titleBar.close': 'Close',
   'titleBar.menu': 'Menu',
   'titleBar.newChat': 'New Chat',
+  'titleBar.website': 'Website',
   'titleBar.feedback': 'Feedback',
+  'titleBar.currentVersion': 'Current version (v{0})',
   'titleBar.checkUpdate': 'Version (Check for updates)',
 
   'toast.configureApiKey': 'Please configure API Key first',
