@@ -4,19 +4,19 @@
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](https://rustup.rs/)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-ffc131)](https://v2.tauri.app)
 [![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev)
-[![npm version](https://img.shields.io/npm/v/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![npm downloads](https://img.shields.io/npm/dm/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![CI](https://github.com/mrpulor-gh/nuphus/actions/workflows/main-guard.yml/badge.svg?branch=main)](https://github.com/mrpulor-gh/nuphus/actions/workflows/main-guard.yml)
+[![npm version](https://img.shields.io/npm/v/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![npm downloads](https://img.shields.io/npm/dt/@nuphus/nuphus-desktop.svg)](https://www.npmjs.com/package/@nuphus/nuphus-desktop) [![CI](https://github.com/mrpulor-gh/nuphus/actions/workflows/main-guard.yml/badge.svg?branch=main)](https://github.com/mrpulor-gh/nuphus/actions/workflows/main-guard.yml)
 
 **English** | [中文](README.md)
 
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
 <p align="center">
-  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.1.0"></a>
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.1.2"></a>
   &nbsp;
-  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.0"></a>
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.2-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.2"></a>
 </p>
 
-> **Version**: 1.1.0 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
+> **Version**: 1.1.2 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
