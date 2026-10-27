@@ -183,3 +183,6 @@ rebuild-and-run.bat
 
 # 技术攻坚记录（内部参考，不入库）：Windows 透明窗口/圆角的根本技术与人机界面攻坚笔记
 plugin/knowledge/nuphus-self/windows-transparent-window.md
+
+# 工作流编辑器试运行数据（编辑器产物，不入库）
+plugin/workflows/.editor-runs/
