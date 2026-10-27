@@ -86,6 +86,10 @@
  * 所有者直推，按既定口径以 **commit 出处**收录重要功能；3ac9dbb9（oauth_callback 断言
  * 放宽）属测试基建、b951090f 为 1.0.0  latest.json 资产刷新，均不收录。
  *
+ * `1.1.2` 轮次取证：2026-10-26，v1.1.1（2026-10-25）之后**零合并社区 PR**（最后合并仍为 #116/#115，
+ * 已收录于 1.1.1 轮次，非新提交者）。按既有口径，本轮作者自己的重要功能以 **commit 出处**补入
+ * （`pr: null` + 短 sha，`/commit/<sha>` 可公开核对）；纯格式 / lint 提交不收录。
+ *
  * `1.1.1` 轮次取证：2026-10-25，v1.1.0（2026-10-24）之后合并 PR 共两个：#115
  * （zhoupeiyu515-ui，ego lite 外部 CDP 浏览器识别，merge a624a617）与 #116
  * （zhoupeiyu515-ui，切换主题后背景图残留，merge 8a13ffcf；合并后维护者补
@@ -153,6 +157,37 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '1.1.2',
+    date: '2026-10-26',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '9d692ce9',
+            summary: 'Exec 执行指示器：聊天区左上角常驻头像，执行中边缘弧环绕、点击直达执行追踪面板、60 秒无新派发向左退场',
+          },
+          {
+            pr: null,
+            commit: 'e74c39c1',
+            summary: 'HUD 叠加窗口真透明（建窗关闭窗口阴影 + WebView2 底色置全透明，圆角与透明首次真正生效）',
+          },
+          {
+            pr: null,
+            commit: '7f9e975f',
+            summary: 'HUD 交互与显示修复（告警措辞改安抚、忍耐态保持动作标题可见、仲裁显示不被 shell 标题覆盖）',
+          },
+          {
+            pr: null,
+            commit: '325dce84',
+            summary: '系统预设主题下背景图不透明度默认 0（#117：残留路径不再凭空点亮，选了图仍可见）',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '1.1.1',
     date: '2026-10-25',
