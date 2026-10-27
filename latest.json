@@ -1,19 +1,19 @@
 {
-    "version": "1.1.2",
-    "notes": "## [1.1.2] - 2026-10-26\n\n### Added\n\n- **Exec 执行指示器**：聊天区左上角常驻头像 —— Leader 派发内部子 agent 时显示执行中\n  （边缘 1/4 弧环绕动画），完成后转为完成态；点击直达执行追踪面板，60 秒内无新派发\n  自动向左退场。数据源为后端 task_runs 台账，与任务面板同源。\n- **system_shell 动作标题**：长命令支持一句「给人看」的标题，执行中在 HUD 原文显示，\n  并带入后台任务台账与终端帧。\n\n### Fixed\n\n- **HUD 叠加窗口真透明（Windows）**：此前窗口阴影默认开启、且 WebView2 默认底色未处理，\n  导致透明与圆角长期失效；现已建窗时关闭阴影并把 WebView2 底色置为全透明。\n- **系统预设主题下背景图默认不透明度 35%**（#117，感谢 @zhoupeiyu515-ui）：默认值改为 0；\n  「有图且用户从未设过」时由运行时注入可见值 —— 既不点亮历史残留路径，也不影响选了图能看见。\n- **HUD 交互与显示**：告警措辞改为安抚措辞；60 秒忍耐态保持动作标题可见；仲裁显示保持\n  权威不被 shell 标题覆盖。\n- **上下文窗口回退**：读取失败时回退到已配置的窗口值，并保留分母显示。\n- **轮次时长封口**：中断或 API 错误时不再继续走表。\n- **工具调用配对**：保证 ToolCallStart / ToolCallEnd 成对，修复 HUD 计时器卡死。\n- **shell 活动分类**：按首个真实命令段归类，避免标题被前缀截断。\n- **L1 提炼注入范围**：限定当前项目，并接受 entry id 作为会话键。\n- **模型上下文编辑**：内联提交时转发原始输入，修复上下文窗口编辑回归。\n\n### Changed\n\n- **后台任务面板**：改为更易扫读的排布。\n- **Gitee 国内入口**：发布产物自动剪枝，latest.json 提交幂等。",
-    "pub_date": "2026-10-26T16:26:52Z",
-    "platforms": {
-        "windows-x86_64": {
-            "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnBwRlpIT2svUTdhMFpLT3UzMXZocUo1Tk1XR1FRVHJycmhLeVlmamJNdGtOazlNSXpUUXRnVzNOV0dEeUtxL2xCaEl2emtvelZaMFdVazBRKzVBalEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDI5Mjc5CWZpbGU6TnVwaHVzXzEuMS4yX3g2NC1zZXR1cC5leGUKckRLZFZKSkw1dEMwWnZlc043N3dubmpNL0xpa2tiRG1qWE1BVEFqSmd3elMzaW1KLzNuMnFUMVhiVjRacTgzeklYdFNTMjZ4dUFPdUlHOS92OHl6Qmc9PQo=",
-            "url": "https://gitee.com/nuphus/nuphus/releases/download/v1.1.2/nuphus-win32-x64-1.1.2-setup.exe"
-        },
-        "darwin-aarch64": {
-            "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmhRVWFCU2o1T0toeVgwUkFTYitDTm51YTJ1TmVMNis4LzRwdTlnRHJmTCt0bzBKVWd3ZVM5dStpV2tBVWRBbkN4S3QzaHREQk9HNW1OVWFqQ3pDQmdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDMxOTI0CWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKMndsUWZxMDdYVjFmY1BaVmNCTU45NmtyeWt3aDBTWThXek5VUkZ2aG01TVhnN0tkdWJYYkw2SmZxRXB3bEJjN3pSSUI2WmRyNTRaU2Y5OUtpVldzQUE9PQo=",
-            "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.2/Nuphus.app.tar.gz"
-        },
-        "linux-x86_64": {
-            "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmszbU1YRFJYZnV4Ym5rcTR5alpyOHl0cGZ6S3RYbTg4WFFyRUtXTnVqSms4cDdJQmRhWGg3YytMVU1ZYUlUdzhOYjA1OFR3SlV2QWdPamFyL0RpaGdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDI4Mzc0CWZpbGU6TnVwaHVzXzEuMS4yX2FtZDY0LkFwcEltYWdlCk5FdXRUbGlTNW1pbXU4MlVrTUdWRlBMWUwxSnFwMjMyQnBua1hCVVBMTFRsc3pvc2Z2LzZiR0ZwQUQ1cWtybkIrMDJweTF2YmYwNWxMQzM2dElHckRnPT0K",
-            "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.2/Nuphus_1.1.2_amd64.AppImage"
-        }
+  "version": "1.1.3",
+  "notes": "## [1.1.3]\n\n### Added\n\n- **通用设置页**：语言、会话字号（12–16 px）、关闭行为（退出 / 最小化到托盘）、HUD 悬浮条\n  开关与「完成时窗口置前」开关集中一处（替代原独立语言页）。\n- **快捷键编辑器**：全局工具热键（Ctrl+1/2/3 等）支持捕获式重绑、冲突检测与运行时\n  重注册；弹窗改为「不可编辑在上 / 可编辑在下」的分段列表。\n- **更新内容预览**：更新提示条新增「更新内容」入口，安装前可查看该版本改动明细；\n  发布流程会把 CHANGELOG 段落写入更新元数据（从下一版本起自动生效）。\n- **官网入口**：设置中心「GitHub」更名「官网与 GitHub」并加入官网链接；标题栏品牌\n  悬停弹层新增「官网」（首位），版本入口改显示「当前版本（v…）」。\n\n### Fixed\n\n- **上下文窗口显示**：启动装载按「模型提供商 + 模型 id」双字段绑定解析，修复同名模型\n  跨段时被段序盲选、输入框上下文分母长期显示 `--` 的问题。\n- **HUD 叠加窗口**：恢复为与 v1.1.0 一致的稳定矩形样式（撤回透明 / 圆角实验）。\n- **自动提炼上限**：同一轮次内 in-loop 强制提炼次数上限由 2 上调至 10（长任务后段\n  不再出现「超过 85% 却只剩劝导」）。\n\n### Changed\n\n- 工作流编辑器运行数据不再进入版本库。\n\n",
+  "pub_date": "2026-10-27T18:31:19Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnFsdE8rZmVPd1QyYmhkV0NleU9pYUtuREZsMDVHOG5jank5b1Z2TWtLY0ViSjBHUURBUmVqNVNaVmRBNU9UditUOVlzYUhZTGc5bkJWbVlFemJ1RXc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI1NjY2CWZpbGU6TnVwaHVzXzEuMS4zX3g2NC1zZXR1cC5leGUKM1dQNVpNRURqSHVsWWdTdm9rZnE3UDI0bnk3dWFyNHlJZUhubGhNeXA0YUtHT3F0d3JHdVZSbzdzZFREV2h2eGJxM0FMVC96Zmw1Snp0REVUMmZGQ3c9PQo=",
+      "url": "https://gitee.com/nuphus/nuphus/releases/download/v1.1.3/nuphus-win32-x64-1.1.3-setup.exe"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmc1UFE5UGpnSHFoa2c0akRIMU5oTGF4am1USGhLTkh3QzM3bkNxZGJaVitIa21BTkR2dVRoZlFiV1JZdk1MaXFCR3VOTzlHNE1mV1ZLcW5BbUlXaUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI1ODAyCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKL1ZwMXRnVFl0d2Q4MW5qK0d3UEVyTmxiQWFNb3BoaXh2ek15VlNTem4zUG53eDV1VlNlbFRyWVlBSGhNUEN1UXdwMGFQN2srQUMzTGNPSzVjU2dYREE9PQo=",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.3/Nuphus.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQms5WmUzdUlKenhWZTlJdVQ3VHhNVURZVnlJaGRlWTJLM0NHWUt3cUZnM0RBOVFvd0ZRc3Q1R1ZDRDhMVm5JTUx5SU4rVjk0ZjdoZGVOUjFNcXFRZGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI0OTIzCWZpbGU6TnVwaHVzXzEuMS4zX2FtZDY0LkFwcEltYWdlCjlzS2NRNEZQOCtLc0NXaFRhYi9mTEorWncrVVQ5NHVqRjNVQ3hBTlJORnNxWllQR0IxaG14Tm9jZzI5a1BKMjJQSE10NjFtWkNDWHN5L3VNOVJXWUF3PT0K",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.3/Nuphus_1.1.3_amd64.AppImage"
     }
+  }
 }
