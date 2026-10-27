@@ -1417,7 +1417,10 @@ mod hotkey_tests {
     use std::collections::BTreeMap;
 
     fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     /// 默认键（无覆盖）：三个工具热键各自命中，且互不串位（顺序即 Ctrl+1/2/3）。
@@ -1428,7 +1431,10 @@ mod hotkey_tests {
             resolve_tool_hotkey("control+Digit1", &none).as_deref(),
             Some("screenshot")
         );
-        assert_eq!(resolve_tool_hotkey("control+Digit2", &none).as_deref(), Some("picker"));
+        assert_eq!(
+            resolve_tool_hotkey("control+Digit2", &none).as_deref(),
+            Some("picker")
+        );
         assert_eq!(
             resolve_tool_hotkey("control+Digit3", &none).as_deref(),
             Some("color_picker")
@@ -1443,7 +1449,10 @@ mod hotkey_tests {
             resolve_tool_hotkey("control+Digit4", &custom).as_deref(),
             Some("screenshot")
         );
-        assert_eq!(resolve_tool_hotkey("Ctrl+4", &custom).as_deref(), Some("screenshot"));
+        assert_eq!(
+            resolve_tool_hotkey("Ctrl+4", &custom).as_deref(),
+            Some("screenshot")
+        );
         assert_eq!(resolve_tool_hotkey("control+Digit1", &custom), None);
     }
 
@@ -1451,10 +1460,22 @@ mod hotkey_tests {
     #[test]
     fn accepts_case_and_naming_variants() {
         let none = map(&[]);
-        assert_eq!(resolve_tool_hotkey("Control+Digit2", &none).as_deref(), Some("picker"));
-        assert_eq!(resolve_tool_hotkey("control+2", &none).as_deref(), Some("picker"));
-        assert_eq!(resolve_tool_hotkey("CTRL+DIGIT3", &none).as_deref(), Some("color_picker"));
-        assert_eq!(normalize_hotkey("CmdOrCtrl+DIGIT1"), normalize_hotkey("Ctrl+1"));
+        assert_eq!(
+            resolve_tool_hotkey("Control+Digit2", &none).as_deref(),
+            Some("picker")
+        );
+        assert_eq!(
+            resolve_tool_hotkey("control+2", &none).as_deref(),
+            Some("picker")
+        );
+        assert_eq!(
+            resolve_tool_hotkey("CTRL+DIGIT3", &none).as_deref(),
+            Some("color_picker")
+        );
+        assert_eq!(
+            normalize_hotkey("CmdOrCtrl+DIGIT1"),
+            normalize_hotkey("Ctrl+1")
+        );
         assert_eq!(normalize_hotkey("Ctrl+1"), "ctrl+1");
     }
 

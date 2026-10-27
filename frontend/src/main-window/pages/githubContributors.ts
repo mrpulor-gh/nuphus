@@ -167,22 +167,26 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
           {
             pr: null,
             commit: '9d692ce9',
-            summary: 'Exec 执行指示器：聊天区左上角常驻头像，执行中边缘弧环绕、点击直达执行追踪面板、60 秒无新派发向左退场',
+            summary:
+              'Exec 执行指示器：聊天区左上角常驻头像，执行中边缘弧环绕、点击直达执行追踪面板、60 秒无新派发向左退场',
           },
           {
             pr: null,
             commit: 'e74c39c1',
-            summary: 'HUD 叠加窗口真透明（建窗关闭窗口阴影 + WebView2 底色置全透明，圆角与透明首次真正生效）',
+            summary:
+              'HUD 叠加窗口真透明（建窗关闭窗口阴影 + WebView2 底色置全透明，圆角与透明首次真正生效）',
           },
           {
             pr: null,
             commit: '7f9e975f',
-            summary: 'HUD 交互与显示修复（告警措辞改安抚、忍耐态保持动作标题可见、仲裁显示不被 shell 标题覆盖）',
+            summary:
+              'HUD 交互与显示修复（告警措辞改安抚、忍耐态保持动作标题可见、仲裁显示不被 shell 标题覆盖）',
           },
           {
             pr: null,
             commit: '325dce84',
-            summary: '系统预设主题下背景图不透明度默认 0（#117：残留路径不再凭空点亮，选了图仍可见）',
+            summary:
+              '系统预设主题下背景图不透明度默认 0（#117：残留路径不再凭空点亮，选了图仍可见）',
           },
         ],
       },
