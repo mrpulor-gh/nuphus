@@ -152,14 +152,14 @@ describe('SettingsCenter 设置中心外壳', () => {
       '权限与安全',
       '数据目录',
     ])
-    // 系统组：通用（原语言页改造）→ 帮助 → 版本与更新 → GitHub
-    expect(navGroupLabels('系统')).toEqual(['通用', '帮助', '版本与更新', 'GitHub'])
+    // 系统组：通用（原语言页改造）→ 帮助 → 版本与更新 → 官网与 GitHub
+    expect(navGroupLabels('系统')).toEqual(['通用', '帮助', '版本与更新', '官网与 GitHub'])
 
-    // 旧名「插件」不再出现在导航里；点击 GitHub 仍落在原 'plugins' 分区（渲染新页面）
+    // 旧名「插件」不再出现在导航里；点击 官网与 GitHub 仍落在原 'plugins' 分区（渲染新页面）
     expect(within(nav()).queryByRole('button', { name: '插件' })).toBeNull()
-    fireEvent.click(navItem('GitHub'))
+    fireEvent.click(navItem('官网与 GitHub'))
     expect(await screen.findByTestId('page-github')).toBeInTheDocument()
-    expect(navItem('GitHub')).toHaveAttribute('aria-current', 'page')
+    expect(navItem('官网与 GitHub')).toHaveAttribute('aria-current', 'page')
     expect(props.onClose).not.toHaveBeenCalled()
   })
 
