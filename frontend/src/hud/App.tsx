@@ -626,13 +626,12 @@ export function HudOverlay() {
   position: relative;
   overflow: hidden;
   user-select: none;
-  font-family: var(--font-ui);
+   font-family: var(--font-ui);
   background: var(--hud-bg);
-  /* 无圆角（2026-10-27 回退决策）：CSS 圆角可做但观感不过关（四角透明区肉眼可见、
-     顶部细线），退回直角；圆角交由各系统原生机制（如 Win11 标准窗口）承担 */
   border: var(--hud-border);
-  box-shadow: var(--hud-shadow);
-  animation: hudEnter 0.2s ease-out;
+   /* Windows 无边框窗口无法做椭圆角（圆角处显示窗口底色/锯齿），移除为直角 */
+   box-shadow: var(--hud-shadow);
+   animation: hudEnter 0.2s ease-out;
 }
 
 /* ── Accent bar (3px left edge, phase-colored) ── */
