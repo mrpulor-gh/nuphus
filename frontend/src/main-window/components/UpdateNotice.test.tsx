@@ -1,5 +1,5 @@
 import { StrictMode, useState } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -51,10 +51,10 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function release(version = '1.1.0') {
+function release(version = '1.1.0', body = '新版本说明') {
   const update = {
     version,
-    body: '新版本说明',
+    body,
     download: vi.fn(async (_onEvent?: (event: DownloadEvent) => void) => {}),
     install: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
@@ -133,6 +133,41 @@ describe('启动更新提示与手动更新共用流程', () => {
     await advance()
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('预览更新内容：按分组展示说明，弹窗内可直接发起更新', async () => {
+    const update = release(
+      '1.2.0',
+      '## [1.2.0] - 2026-11-01\n\n### Added\n\n- 更新内容预览入口与正文\n',
+    )
+    vi.mocked(check).mockResolvedValue(update.resource)
+    render(<Harness />)
+    await advance()
+    fireEvent.click(screen.getByRole('button', { name: '更新内容' }))
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('v1.2.0 更新内容')
+    expect(within(dialog).getByText('更新内容预览入口与正文')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '下载并安装' }))
+    await advance(0)
+    expect(update.download).toHaveBeenCalledTimes(1)
+  })
+
+  it('预览兜底：说明不是段落格式时按原文展示', async () => {
+    const update = release('1.3.0', '简短说明一行')
+    vi.mocked(check).mockResolvedValue(update.resource)
+    render(<Harness />)
+    await advance()
+    fireEvent.click(screen.getByRole('button', { name: '更新内容' }))
+    expect(within(screen.getByRole('dialog')).getByText('简短说明一行')).toBeInTheDocument()
+  })
+
+  it('预览空态：该版本未提供更新说明', async () => {
+    const update = release('1.4.0', '')
+    vi.mocked(check).mockResolvedValue(update.resource)
+    render(<Harness />)
+    await advance()
+    fireEvent.click(screen.getByRole('button', { name: '更新内容' }))
+    expect(within(screen.getByRole('dialog')).getByText('该版本未提供更新说明')).toBeInTheDocument()
   })
 
   it('后台检查失败保持安静，手动打开可看到原因并重试', async () => {

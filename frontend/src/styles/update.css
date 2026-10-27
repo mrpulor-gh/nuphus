@@ -175,3 +175,11 @@
   text-transform: none;
   letter-spacing: normal;
 }
+
+/* 预览弹窗里的原文降级展示（notes 不是 CHANGELOG 段落格式时） */
+.update-preview-raw {
+  white-space: pre-wrap;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  line-height: 1.65;
+}
