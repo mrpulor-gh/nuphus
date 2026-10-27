@@ -11,12 +11,12 @@
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
 <p align="center">
-  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.1.2"></a>
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.1.3"></a>
   &nbsp;
-  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.2-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.2"></a>
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.1.3-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.1.3"></a>
 </p>
 
-> **Version**: 1.1.2 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
+> **Version**: 1.1.3 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -283,6 +283,10 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v1.1.3 Contributors
+
+This release has no community pull requests; all changes were made by the maintainer.
 
 ### v1.0.0 Contributors
 
