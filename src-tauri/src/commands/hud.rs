@@ -40,8 +40,6 @@ pub fn create<R: tauri::Runtime>(app: &AppHandle<R>) {
         .inner_size(HUD_WIDTH, HUD_HEIGHT)
         .decorations(false)
         .transparent(true)
-        // 透明链路（2026-10-27 复核）：transparent(true) + wry 对透明窗口自动刷 WebView2 底
-        // + 页面 html,body 透明即可，无需窗口侧额外配置（历史实验见 git 记录）
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
@@ -71,6 +69,19 @@ pub fn create<R: tauri::Runtime>(app: &AppHandle<R>) {
 /// 并行工具生命周期事件乱序（迟到 running 覆盖终态 done、计时器无法
 /// 退出）的根治点。
 pub fn show<R: tauri::Runtime>(app: &AppHandle<R>, text: &str, phase: &str, seq: u64) {
+    // HUD 显示开关（通用设置，默认开 = 历史行为）：关闭时隐藏已显示窗口并早退。
+    // 判断放在函数最前 → 覆盖全部调用路径（emitter 事件链 / main.rs 热键直调 /
+    // hud_update 命令）；读数即读即用（UserPreferences::load，不做进程内缓存，
+    // 与其余偏好命令同一模式）。
+    if !nuphus::config::UserPreferences::load().hud_enabled {
+        if let Some(w) = app.get_webview_window(HUD_LABEL) {
+            if w.is_visible().unwrap_or(false) {
+                hide(app);
+            }
+        }
+        return;
+    }
+
     // Get / recreate window if needed
     let window = match app.get_webview_window(HUD_LABEL) {
         Some(w) => w,

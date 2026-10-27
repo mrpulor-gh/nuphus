@@ -77,6 +77,7 @@ export {
   Radio as IconRadio,
   Quote as IconQuote,
   Settings as IconSettings,
+  SlidersHorizontal as IconSliders,
   MoreHorizontal as IconMoreHorizontal,
   ArchiveRestore as IconRestore,
   Clock3 as IconClock3,

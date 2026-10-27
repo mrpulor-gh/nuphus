@@ -12,9 +12,9 @@ import en from '../../locales/en'
 // 注：画布 / 模型两个分区不在此渲染（宿主分流到 App 层全屏宿主），故无对应桩；
 //     二者收在导航最上方的「快捷入口」组，点击即关闭面板走整页宿主。
 // 注：主题不是设置中心的分区，而是聊天 header 的非模态外观浮窗
-//     （layout/AppearancePanel.tsx）；外观浮窗原来的语言占位 2026-09-28 改成了
-//     真正的「语言」分区（系统组，LanguagePage）。头像同年同日并入灵魂页
-//     （第二个 Section），不再是独立导航项。
+//     （layout/AppearancePanel.tsx）；外观浮窗原来的语言占位 2026-09-28 迁入设置中心，
+//     2026-10-27 改造为「通用」分区（系统组，GeneralPage，含安全跳转 / 快捷键弹窗）。
+//     头像同年同日并入灵魂页（第二个 Section），不再是独立导航项。
 vi.mock('../memories/MemoriesPage', () => ({
   MemoriesPage: () => <div data-testid="page-memories" />,
 }))
@@ -52,10 +52,11 @@ vi.mock('./SoulPage', () => ({ SoulPage: () => <div data-testid="page-soul" /> }
 vi.mock('./MobilePage', () => ({ MobilePage: () => <div data-testid="page-mobile" /> }))
 vi.mock('./BrowserPage', () => ({ BrowserPage: () => <div data-testid="page-browser" /> }))
 /* 主题不在本面板：它走聊天 header 的外观浮窗（layout/AppearancePanel）；
-   语言分区在本面板（系统组 → LanguagePage），链路由 LanguagePage 自己的
-   测试覆盖，这里只验证分区切换。帮助分区复用 App 层同一 HelpPage（无 props）。 */
+   通用分区在本面板（系统组 → GeneralPage），页面内部链路由 GeneralPage 自己的
+   测试覆盖；这里只验证分区切换。
+   帮助分区复用 App 层同一 HelpPage（无 props）。 */
 vi.mock('./HelpPage', () => ({ HelpPage: () => <div data-testid="page-help" /> }))
-vi.mock('./LanguagePage', () => ({ LanguagePage: () => <div data-testid="page-language" /> }))
+vi.mock('./GeneralPage', () => ({ GeneralPage: () => <div data-testid="page-general" /> }))
 vi.mock('./ExternalAgentsPage', () => ({
   ExternalAgentsPage: () => <div data-testid="page-external-agents" />,
 }))
@@ -95,7 +96,7 @@ const navGroupLabels = (title: string) => {
 }
 
 describe('SettingsCenter 设置中心外壳', () => {
-  it('左导航分「快捷入口 / AI 能力 / 连接 / 工作台 / 系统」五组共 19 项，默认落在「灵魂」', async () => {
+  it('左导航分「快捷入口 / AI 能力 / 连接 / 工作台 / 系统」五组共 19 项，默认落在「通用」', async () => {
     renderCenter()
 
     const items = within(nav()).getAllByRole('button')
@@ -110,9 +111,9 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(navGroupLabels('工作台')).toHaveLength(6)
     expect(navGroupLabels('系统')).toHaveLength(4)
 
-    // 默认分区 = 灵魂（AI 能力组首项，每轮对话都生效的身份设置），右内容随之
-    expect(navItem('灵魂')).toHaveAttribute('aria-current', 'page')
-    expect(await screen.findByTestId('page-soul')).toBeInTheDocument()
+    // 默认分区 = 通用（系统组根页），右内容随之
+    expect(navItem('通用')).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByTestId('page-general')).toBeInTheDocument()
   })
 
   it('「快捷入口」在 DOM 中先于其余四组，组内顺序为「模型 → 画布」', () => {
@@ -129,7 +130,7 @@ describe('SettingsCenter 设置中心外壳', () => {
 
   it('会话分区：点击导航切换右侧内容（项目文件夹折叠上限设置页）', async () => {
     renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
     fireEvent.click(navItem('会话'))
     expect(await screen.findByTestId('page-session-groups')).toBeInTheDocument()
@@ -151,8 +152,8 @@ describe('SettingsCenter 设置中心外壳', () => {
       '权限与安全',
       '数据目录',
     ])
-    // 系统组：语言 → 帮助（新增）→ 版本与更新 → GitHub
-    expect(navGroupLabels('系统')).toEqual(['语言', '帮助', '版本与更新', 'GitHub'])
+    // 系统组：通用（原语言页改造）→ 帮助 → 版本与更新 → GitHub
+    expect(navGroupLabels('系统')).toEqual(['通用', '帮助', '版本与更新', 'GitHub'])
 
     // 旧名「插件」不再出现在导航里；点击 GitHub 仍落在原 'plugins' 分区（渲染新页面）
     expect(within(nav()).queryByRole('button', { name: '插件' })).toBeNull()
@@ -164,7 +165,7 @@ describe('SettingsCenter 设置中心外壳', () => {
 
   it('帮助分区：面板内嵌渲染 HelpPage，面板保持打开（不调 onClose）', async () => {
     const props = renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
     fireEvent.click(navItem('帮助'))
 
@@ -212,7 +213,7 @@ describe('SettingsCenter 设置中心外壳', () => {
 
   it('点击左侧任一项：右侧切换内容且面板保持打开', async () => {
     const props = renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
     // 默认落在灵魂；切到记忆再切回灵魂，验证切换链路与两块结构
     fireEvent.click(navItem('记忆'))
@@ -271,7 +272,7 @@ describe('SettingsCenter 设置中心外壳', () => {
 
   it('数据目录分区：弹窗内容区渲染页面，外壳保持打开', async () => {
     const props = renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
     fireEvent.click(navItem('数据目录'))
     expect(await screen.findByTestId('page-data-dirs')).toBeInTheDocument()
@@ -281,7 +282,7 @@ describe('SettingsCenter 设置中心外壳', () => {
 
   it('宿主分流：点「画布」「模型」交给 App 层全屏宿主，弹窗内容区不动', async () => {
     const props = renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
     fireEvent.click(navItem('画布'))
     expect(props.onOpenCanvas).toHaveBeenCalledWith(null)
@@ -293,7 +294,7 @@ describe('SettingsCenter 设置中心外壳', () => {
     // 两项均不落在弹窗内容区：既不渲染对应子页，也不改变当前分区与外壳
     expect(screen.queryByTestId('page-canvas')).toBeNull()
     expect(screen.queryByTestId('page-models')).toBeNull()
-    expect(navItem('灵魂')).toHaveAttribute('aria-current', 'page')
+    expect(navItem('通用')).toHaveAttribute('aria-current', 'page')
     expect(props.onClose).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
@@ -338,20 +339,20 @@ describe('SettingsCenter 设置中心外壳', () => {
     expect(navItem('灵魂')).toHaveAttribute('aria-current', 'page')
   })
 
-  it('语言分区：点导航切换右侧 LanguagePage，aria-current 随动', async () => {
+  it('通用分区：点导航切换右侧 GeneralPage，aria-current 随动', async () => {
     const props = renderCenter()
-    await screen.findByTestId('page-soul')
+    await screen.findByTestId('page-general')
 
-    fireEvent.click(navItem('语言'))
-    expect(await screen.findByTestId('page-language')).toBeInTheDocument()
-    expect(navItem('语言')).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(navItem('通用'))
+    expect(await screen.findByTestId('page-general')).toBeInTheDocument()
+    expect(navItem('通用')).toHaveAttribute('aria-current', 'page')
     expect(navItem('灵魂')).not.toHaveAttribute('aria-current')
     // 切换分区不关闭外壳
     expect(nav()).toBeInTheDocument()
     expect(props.onClose).not.toHaveBeenCalled()
-    // 语言在系统组，不在 AI 能力组（防回流到外观浮窗时代的占位）
-    expect(navGroupLabels('系统')).toContain('语言')
-    expect(navGroupLabels('AI 能力')).not.toContain('语言')
+    // 通用在系统组，不在 AI 能力组（防回流到外观浮窗时代的语言占位）
+    expect(navGroupLabels('系统')).toContain('通用')
+    expect(navGroupLabels('AI 能力')).not.toContain('通用')
   })
 
   it('不含「新建会话 / 强制重置 / 贪吃蛇」等非设置项', () => {

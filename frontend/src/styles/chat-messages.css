@@ -418,7 +418,10 @@
   opacity: 0.7;
 }
 .message-content {
-  font-size: var(--fz-lg);
+  /* 会话字号（通用设置 chat_font_size）：App 层启动恢复 + 通用页设置链路注入
+     --chat-font-size（仅作用于消息正文，不做全局 UI 缩放）；
+     未设置过该偏好时回落 --fz-lg（14px = 历史正文大小），与历史渲染一致 */
+  font-size: var(--chat-font-size, var(--fz-lg));
   color: var(--spark-primary);
   line-height: 1.6;
   white-space: pre-wrap;

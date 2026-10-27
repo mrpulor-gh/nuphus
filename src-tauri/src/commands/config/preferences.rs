@@ -417,6 +417,226 @@ pub fn set_language(lang: String) -> Result<String, String> {
     Ok(lang)
 }
 
+/// 「通用」页聚合偏好载荷（设置中心 `general` 分区一次读取；值均为归一后读数）。
+///
+/// serde 序列化键 = snake_case 字段名，与前端 `GeneralSettings` 类型逐字对应。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GeneralSettings {
+    pub close_action: String,
+    pub chat_font_size: u32,
+    pub hud_enabled: bool,
+    pub raise_on_done: bool,
+}
+
+/// 读取「通用」页全部偏好（一次 IPC 读完四项，避免设置页挂载时四次读配置文件）。
+#[tauri::command(async)]
+pub fn get_general_settings() -> Result<GeneralSettings, String> {
+    let prefs = nuphus::config::UserPreferences::load();
+    Ok(GeneralSettings {
+        close_action: prefs.close_action().to_string(),
+        chat_font_size: prefs.chat_font_size(),
+        hud_enabled: prefs.hud_enabled,
+        raise_on_done: prefs.raise_on_done,
+    })
+}
+
+/// 设置主窗口关闭按钮行为（"quit" 直接退出 / "tray" 最小化到托盘）。
+///
+/// 非法取值**不报错而是归一**（与 `close_action()` 读数同源），并把归一后的结果
+/// 回给前端——前端据此校准本地状态，避免「界面显示 A、落盘 B」。
+/// 生效路径：main.rs 的 CloseRequested 分支每次现读 `close_action()`。
+#[tauri::command(async)]
+pub fn set_close_action(action: String) -> Result<String, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    let applied = nuphus::config::normalize_close_action(&action).to_string();
+    prefs.close_action = applied.clone();
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Close action set to: {applied}");
+    Ok(applied)
+}
+
+/// 设置会话内容字号（px；合法区间 12-16）。越界值归一为默认 14 并回传归一结果。
+///
+/// 生效链路：前端 `applyChatFontSize` 注入 CSS 变量 `--chat-font-size`
+/// （chat-messages.css 的 `.message-content` 消费），应用启动时由 App 层恢复。
+#[tauri::command(async)]
+pub fn set_chat_font_size(size: u32) -> Result<u32, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    let applied = nuphus::config::normalize_chat_font_size(size);
+    prefs.chat_font_size = applied;
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Chat font size set to: {applied}px");
+    Ok(applied)
+}
+
+/// 设置 HUD 悬浮条显示开关（默认开 = 历史行为）。
+///
+/// 关闭时立即隐藏已显示的 HUD 窗口（`hud::hide` 现成路径）；显示侧另有一层
+/// `hud::show()` 内部早退守卫，覆盖事件链全部调用路径，双保险。
+#[tauri::command(async)]
+pub fn set_hud_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    prefs.hud_enabled = enabled;
+    prefs.save().map_err(|e| e.to_string())?;
+    if !enabled {
+        crate::commands::hud::hide(&app);
+    }
+    tracing::info!("HUD enabled set to: {enabled}");
+    Ok(enabled)
+}
+
+/// 设置「执行完成时窗口置前」开关（默认开 = 历史行为）。
+///
+/// 生效路径：emitter.rs 的 LeaderDone 分支每次现读 `raise_on_done`；
+/// SecurityCheck 的置前是安全审批语义，不受本开关影响。
+#[tauri::command(async)]
+pub fn set_raise_on_done(enabled: bool) -> Result<bool, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    prefs.raise_on_done = enabled;
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Raise on done set to: {enabled}");
+    Ok(enabled)
+}
+
+/// 读取快捷键覆盖表（空表 = 全部默认；前端解析器负责合法性判定）。
+#[tauri::command(async)]
+pub fn get_shortcut_overrides() -> Result<std::collections::BTreeMap<String, String>, String> {
+    let prefs = nuphus::config::UserPreferences::load();
+    Ok(prefs.shortcut_overrides.clone())
+}
+
+/// 全局热键（桌面工具）id ↔ 默认键位：唯一映射源（启动注册 / 改键重注册共用）。
+pub const GLOBAL_TOOL_HOTKEYS: [(&str, &str); 3] = [
+    ("global.tool.screenshot", "Ctrl+1"),
+    ("global.tool.picker", "Ctrl+2"),
+    ("global.tool.color_picker", "Ctrl+3"),
+];
+
+/// 全局热键约束：必须含至少一个修饰键（Ctrl / Alt / Shift / Cmd）。
+fn valid_global_hotkey(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("ctrl")
+        || lower.contains("control")
+        || lower.contains("alt")
+        || lower.contains("shift")
+        || lower.contains("cmd")
+}
+
+/// 计算需要重新注册的键位变更（id, 旧键, 新键）；无变化的项跳过。
+fn plan_hotkey_changes(
+    old: &std::collections::BTreeMap<String, String>,
+    new: &std::collections::BTreeMap<String, String>,
+) -> Vec<(String, String, String)> {
+    let mut changes = Vec::new();
+    for (id, default_key) in GLOBAL_TOOL_HOTKEYS {
+        let old_key = old
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or(default_key)
+            .to_string();
+        let new_key = new
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or(default_key)
+            .to_string();
+        if old_key != new_key {
+            changes.push((id.to_string(), old_key, new_key));
+        }
+    }
+    changes
+}
+
+/// 整表覆盖写入快捷键映射（前端已完成解析与冲突检测）。
+///
+/// v1.5.1：涉及全局热键的变更在此**运行时重新注册**（无需重启）。
+/// 原子序：先逐项注册新键（失败 → 回滚已注册的新键并返回 Err，不落库，旧键保持有效）
+/// → 全部成功后解绑旧键并落盘。旧键解绑失败仅告警（不阻断）。
+#[tauri::command(async)]
+pub fn set_shortcut_overrides(
+    app: tauri::AppHandle,
+    overrides: std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut prefs = nuphus::config::UserPreferences::load();
+    let old = prefs.shortcut_overrides.clone();
+    let changes = plan_hotkey_changes(&old, &overrides);
+    if !changes.is_empty() {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let gs = app.global_shortcut();
+        let mut registered_new: Vec<String> = Vec::new();
+        for (_, _, new_key) in &changes {
+            if !valid_global_hotkey(new_key) {
+                for k in &registered_new {
+                    let _ = gs.unregister(k.as_str());
+                }
+                return Err(format!("{new_key} 需要包含修饰键（Ctrl / Alt / Shift）"));
+            }
+            if let Err(e) = gs.register(new_key.as_str()) {
+                for k in &registered_new {
+                    let _ = gs.unregister(k.as_str());
+                }
+                return Err(format!(
+                    "注册快捷键 {new_key} 失败（可能已被系统或其它软件占用）：{e}"
+                ));
+            }
+            registered_new.push(new_key.clone());
+        }
+        for (_, old_key, _) in &changes {
+            if let Err(e) = gs.unregister(old_key.as_str()) {
+                tracing::warn!("Failed to unregister old shortcut {}: {}", old_key, e);
+            }
+        }
+        tracing::info!(
+            "Global tool hotkeys re-registered ({} change(s))",
+            changes.len()
+        );
+    }
+    prefs.shortcut_overrides = overrides;
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!(
+        "Shortcut overrides set: {} entries",
+        prefs.shortcut_overrides.len()
+    );
+    Ok(prefs.shortcut_overrides.clone())
+}
+
+#[cfg(test)]
+mod shortcut_hotkey_tests {
+    use super::*;
+
+    fn map(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn plan_detects_change_add_and_remove() {
+        let empty = map(&[]);
+        let custom = map(&[("global.tool.screenshot", "Ctrl+F9")]);
+        let changes = plan_hotkey_changes(&empty, &custom);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "global.tool.screenshot");
+        assert_eq!(changes[0].1, "Ctrl+1");
+        assert_eq!(changes[0].2, "Ctrl+F9");
+        let back = plan_hotkey_changes(&custom, &empty);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].1, "Ctrl+F9");
+        assert_eq!(back[0].2, "Ctrl+1");
+        assert!(plan_hotkey_changes(&empty, &empty).is_empty());
+    }
+
+    #[test]
+    fn valid_global_hotkey_requires_modifier() {
+        assert!(valid_global_hotkey("Ctrl+1"));
+        assert!(valid_global_hotkey("Alt+F9"));
+        assert!(valid_global_hotkey("Shift+Q"));
+        assert!(valid_global_hotkey("CmdOrCtrl+K"));
+        assert!(!valid_global_hotkey("F9"));
+        assert!(!valid_global_hotkey("1"));
+    }
+}
+
 /// 项目目录展示名（路径末段）：兼容正反斜杠与结尾分隔符；空路径 → 空串。
 /// 展示名规则唯一实现在 utils（书签 / 会话归属自动组共用同一规则）。
 fn project_dir_display_name(dir: &str) -> String {

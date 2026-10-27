@@ -2,7 +2,17 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { listen } from '../core/bridge'
 import type { WorkflowItem } from '../core/types'
-import { wfStop, wfPause, wfResume, wfRun, getToolPermissions, browserOpenUrl } from './lib/api'
+import {
+  wfStop,
+  wfPause,
+  wfResume,
+  wfRun,
+  getToolPermissions,
+  browserOpenUrl,
+  getGeneralSettings,
+  getShortcutOverrides,
+} from './lib/api'
+import { applyChatFontSize } from './lib/chatFontSize'
 import { handleExternalAnchorClick } from './lib/externalLink'
 import { scheduleIdle } from './lib/idle'
 import { applySkinBg, readSkinBg } from '../ui/skinBg'
@@ -158,6 +168,22 @@ export default function App() {
     }
   }, [])
 
+  // ── 会话字号恢复（必须在 App 层做）：GeneralPage 只在被打开时注入 CSS 变量，
+  //    刷新/重启没有第二个恢复点；App 常驻，是唯一可靠的恢复位置（同皮肤背景
+  //    的设计边界）。仅影响消息正文（styles/chat-messages.css 的 .message-content），
+  //    读取失败静默——未注入时 CSS 回退默认 14px，与历史渲染一致。 ──
+  useEffect(() => {
+    let disposed = false
+    void getGeneralSettings()
+      .then(settings => {
+        if (!disposed) applyChatFontSize(settings.chat_font_size)
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+    }
+  }, [])
+
   // ── 画布外壳 chunk 空闲预取：只在浏览器空闲时发起请求，绝不在启动同步路径上加载；
   //    首次点开画布时外壳代码已就绪，配合可见 fallback 消除"点了没反应" ──
   useEffect(() => {
@@ -245,6 +271,11 @@ export default function App() {
   const [pluginMinimized, setPluginMinimized] = useState(false)
   // ── 设置中心全屏覆盖层（输入栏最左端齿轮按钮 → 左导航 + 右内容）──
   const [showSettingsCenter, setShowSettingsCenter] = useState(false)
+  // 快捷键覆盖表（通用页弹窗维护）：App 层持有，useKeyboard 按 id 解析生效；
+  // 弹窗保存后经 SettingsCenter 链路回传，无需重启即可用新键位（主题刷新链路同款语义）
+  const [shortcutOverrides, setShortcutOverrides] = useState<Record<string, string>>({})
+  // 快捷键录制态：录制期间挂起 Ctrl+K/F 等全局分支，避免录制组合被截胡
+  const [shortcutRecording, setShortcutRecording] = useState(false)
   // island 落点锚点：模型页这类全屏宿主（fixed inset:0 + z 2500）会盖住聊天区，
   // 岛在宿主打开时改挂到宿主标题栏（优先级见 ui/islandChannel.ts 的「落点锚点」）
   const modelsIslandAnchor = useIslandHostAnchor('models-page')
@@ -280,57 +311,82 @@ export default function App() {
    * 「先退出面板，再执行原分支」，见下。
    */
   const chatShortcutEnabled = () => !showSettingsCenter
-  useKeyboard([
-    {
-      key: 'k',
-      ctrl: true,
-      handler: () => {
-        // 设置中心宿主（z-index 2500）会盖住命令面板（300）→ 先退出，保证面板可见可用
-        setShowSettingsCenter(false)
-        routePrimaryK(() => s.setCmdPaletteOpen((p: boolean) => !p))
+
+  // 启动读一次覆盖表；弹窗保存经链路回传 setShortcutOverrides 即时刷新（无需重启）
+  useEffect(() => {
+    void getShortcutOverrides()
+      .then(setShortcutOverrides)
+      .catch(() => {})
+  }, [])
+
+  useKeyboard(
+    [
+      {
+        id: 'palette',
+        key: 'k',
+        ctrl: true,
+        // 录制态（快捷键弹窗）期间挂起：避免录制 Ctrl+K 时被本分支截胡
+        enabled: () => !shortcutRecording,
+        handler: () => {
+          // 设置中心宿主（z-index 2500）会盖住命令面板（300）→ 先退出，保证面板可见可用
+          setShowSettingsCenter(false)
+          routePrimaryK(() => s.setCmdPaletteOpen((p: boolean) => !p))
+        },
       },
-    },
-    {
-      // 工作流列表：所有模式一致（Workflow 会话不再抢占 Ctrl+K）
-      key: 'f',
-      ctrl: true,
-      handler: () => {
-        setShowSettingsCenter(false)
-        routePrimaryF(() => {
-          s.setCmdPaletteOpen(false)
-          s.setShowWorkflow(true)
-        })
+      {
+        // 工作流列表：所有模式一致（Workflow 会话不再抢占 Ctrl+K）
+        id: 'workflowList',
+        key: 'f',
+        ctrl: true,
+        // 录制态（快捷键弹窗）期间挂起：避免录制 Ctrl+F 时被本分支截胡
+        enabled: () => !shortcutRecording,
+        handler: () => {
+          setShowSettingsCenter(false)
+          routePrimaryF(() => {
+            s.setCmdPaletteOpen(false)
+            s.setShowWorkflow(true)
+          })
+        },
       },
-    },
-    {
-      key: 'l',
-      ctrl: true,
-      enabled: chatShortcutEnabled,
-      handler: () => s.setFocusSignal((p: number) => p + 1),
-    },
-    { key: 'n', ctrl: true, enabled: chatShortcutEnabled, handler: () => s.handleNewChat() },
-    {
-      key: 'o',
-      ctrl: true,
-      enabled: chatShortcutEnabled,
-      handler: () => {
-        /* TODO: 插件搜索 */
+      {
+        id: 'focusInput',
+        key: 'l',
+        ctrl: true,
+        enabled: chatShortcutEnabled,
+        handler: () => s.setFocusSignal((p: number) => p + 1),
       },
-    },
-    {
-      // 工作流步骤面板：收起 / 展开。
-      // 面板可见性 ≡ workflowRunSteps 非空 且 未被用户收起，所以这里只在有运行数据时响应。
-      key: 'w',
-      ctrl: true,
-      shift: true,
-      enabled: chatShortcutEnabled,
-      handler: () => {
-        if (s.workflowRunSteps.length === 0) return
-        if (s.workflowPanelDismissed) s.showWorkflowPanel()
-        else s.dismissWorkflowPanel()
+      {
+        id: 'newChat',
+        key: 'n',
+        ctrl: true,
+        enabled: chatShortcutEnabled,
+        handler: () => s.handleNewChat(),
       },
-    },
-  ])
+      {
+        key: 'o',
+        ctrl: true,
+        enabled: chatShortcutEnabled,
+        handler: () => {
+          /* TODO: 插件搜索 */
+        },
+      },
+      {
+        // 工作流步骤面板：收起 / 展开。
+        // 面板可见性 ≡ workflowRunSteps 非空 且 未被用户收起，所以这里只在有运行数据时响应。
+        id: 'workflowPanel',
+        key: 'w',
+        ctrl: true,
+        shift: true,
+        enabled: chatShortcutEnabled,
+        handler: () => {
+          if (s.workflowRunSteps.length === 0) return
+          if (s.workflowPanelDismissed) s.showWorkflowPanel()
+          else s.dismissWorkflowPanel()
+        },
+      },
+    ],
+    shortcutOverrides,
+  )
 
   // ── 手机端「新会话」遥控跟随：POST /new-chat 已完成**后端转场**（归档 → 当前槽置
   // None → 清 backup → SessionChanged 双推），NewChatBroadcast 只通知桌面**本地清 view**：

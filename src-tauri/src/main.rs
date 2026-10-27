@@ -82,35 +82,39 @@ fn spawn_exit_flush_and_exit(app: tauri::AppHandle) {
     });
 }
 
-/// 桌面工具热键映射：`Ctrl+1/2/3` → 工具模式。
+/// 桌面工具热键映射：键位（默认 `Ctrl+1/2/3`，可被覆盖改键）→ 工具模式。
 ///
-/// 热键字符串由 `global-hotkey` 归一化输出（形如 `control+Digit1`），
-/// 这里按「含 control、不含 shift/alt/super、末段为数字键」做匹配，
-/// 避免依赖具体大小写或 `Digit` 前缀的写法。
+/// 工具热键解析（按「当前覆盖」实时判定）：键位 → 工具名。
 ///
-/// 返回 `Some("screenshot" | "picker" | "color_picker")`，其余情况 `None`
-/// （交回工作流控制热键处理）。
-fn desktop_tool_for_hotkey(key: &str) -> Option<&'static str> {
-    let lower = key.to_ascii_lowercase();
-    // 修饰键写法兼容 `ctrl` 与 `control`（库的归一化输出用 control，用户写法常用 ctrl）
-    let has_ctrl = lower
-        .split('+')
-        .any(|t| matches!(t.trim(), "ctrl" | "control"));
-    if !has_ctrl {
-        return None;
+/// 与注册所用的默认/覆盖集合（GLOBAL_TOOL_HOTKEYS + shortcut_overrides）保持一致，
+/// 改键（v1.5.1）后新旧键都能命中；比较走 normalize_hotkey，兼容库输出
+/// （形如 `control+Digit4`）与存储写法（`Ctrl+4`）两类形态。
+fn resolve_tool_hotkey(
+    key: &str,
+    overrides: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let nk = normalize_hotkey(key);
+    for (id, default_key) in crate::commands::config::preferences::GLOBAL_TOOL_HOTKEYS {
+        let cur = overrides.get(id).map(String::as_str).unwrap_or(default_key);
+        if normalize_hotkey(cur) == nk {
+            return Some(id.rsplit('.').next().unwrap_or(id).to_string());
+        }
     }
-    // 带其它修饰键的组合不属于工具热键（例如 Ctrl+Shift+1）
-    if lower.contains("shift") || lower.contains("alt") || lower.contains("super") {
-        return None;
+    None
+}
+
+/// 热键字符串归一：大小写 / 空格 / `ctrl|control` / `cmdorctrl` / `Digit` 前缀差异全部消掉。
+fn normalize_hotkey(s: &str) -> String {
+    let mut t = s.to_ascii_lowercase().replace(' ', "");
+    for (from, to) in [
+        ("cmdorctrl", "ctrl"),
+        ("commandorcontrol", "ctrl"),
+        ("control", "ctrl"),
+        ("digit", ""),
+    ] {
+        t = t.replace(from, to);
     }
-    let last = lower.rsplit('+').next()?.trim();
-    let digit = last.strip_prefix("digit").unwrap_or(last);
-    match digit {
-        "1" => Some("screenshot"),
-        "2" => Some("picker"),
-        "3" => Some("color_picker"),
-        _ => None,
-    }
+    t
 }
 
 /// Win11 系统圆角：main 窗口是无装饰窗口（tauri.conf.json `decorations: false`），
@@ -322,11 +326,13 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let key = shortcut.to_string();
-                        // ── 桌面工具热键（Ctrl+1/2/3）：唤起主窗并交给前端执行对应工具 ──
+let key = shortcut.to_string();
+                        // ── 桌面工具热键：唤起主窗并交给前端执行对应工具 ──
                         // 与工作流控制热键（Ctrl+Q / Ctrl+Shift+Q）分流：工具热键不依赖
-                        // 运行中的工作流，任何时候都该可用。
-                        if let Some(tool) = desktop_tool_for_hotkey(&key) {
+                        // 运行中的工作流，任何时候都该可用。键位按「当前覆盖」实时解析
+                        // （v1.5.1 改键后新旧键都必须命中，见 resolve_tool_hotkey）。
+                        let overrides = nuphus::config::UserPreferences::load().shortcut_overrides;
+                        if let Some(tool) = resolve_tool_hotkey(&key, &overrides) {
                             tracing::info!("[Hotkey] {} 唤起桌面工具: {}", key, tool);
                             if let Some(main) = app.get_webview_window("main") {
                                 let _ = main.show();
@@ -523,6 +529,13 @@ fn main() {
             commands::set_reasoning_effort,
             commands::get_language,
             commands::set_language,
+            commands::get_general_settings,
+            commands::set_close_action,
+            commands::set_chat_font_size,
+            commands::set_hud_enabled,
+commands::set_raise_on_done,
+            commands::get_shortcut_overrides,
+            commands::set_shortcut_overrides,
             commands::get_project_dir,
             commands::set_project_dir,
             commands::get_project_bookmarks,
@@ -796,13 +809,21 @@ fn main() {
                         tracing::warn!("Failed to register global shortcut {}: {}", key, e);
                     });
                 }
-                // 桌面工具热键：Ctrl+1 截图 / Ctrl+2 选区 / Ctrl+3 取色。
-                // 单独注册并逐个告警：某个被系统占用时不影响其余两个。
-                for key in ["Ctrl+1", "Ctrl+2", "Ctrl+3"] {
+// 桌面工具热键：默认 Ctrl+1 截图 / Ctrl+2 选区 / Ctrl+3 取色；
+            // 用户可在「通用 → 快捷键」改键（shortcut_overrides，v1.5.1 起可编辑），
+            // 启动时按覆盖注册；单独注册并逐个告警：某个被占用不影响其余两个。
+            {
+                let overrides = nuphus::config::UserPreferences::load().shortcut_overrides;
+                for (id, default_key) in crate::commands::config::preferences::GLOBAL_TOOL_HOTKEYS {
+                    let key = overrides.get(id).map(String::as_str).unwrap_or(default_key);
                     gs.register(key).unwrap_or_else(|e| {
-                        tracing::warn!("Failed to register desktop tool shortcut {}: {}", key, e);
+                        tracing::warn!(
+                            "Failed to register desktop tool shortcut {} ({}): {}",
+                            key, id, e
+                        );
                     });
                 }
+            }
                 tracing::info!(
                     "Global shortcuts: Ctrl+Q(pause/resume) Ctrl+Shift+Q(stop) Ctrl+1(截图) Ctrl+2(选区) Ctrl+3(取色)"
                 );
@@ -1376,7 +1397,14 @@ nuphus::tools::background_tasks::start_watchdog();
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
                     }
-                    spawn_exit_flush_and_exit(app_handle.clone());
+                    // 「最小化到托盘」（通用设置 close_action = "tray"）：只隐藏不退出，
+                    // 进程留在托盘，托盘菜单「显示」/左键点击恢复窗口（见上方托盘段）。
+                    // 默认 "quit" = 历史行为：持久化完成后由后台线程退出。
+                    if nuphus::config::UserPreferences::load().close_action()
+                        != nuphus::config::CLOSE_ACTION_TRAY
+                    {
+                        spawn_exit_flush_and_exit(app_handle.clone());
+                    }
                 }
             }
         }
@@ -1385,62 +1413,58 @@ nuphus::tools::background_tasks::start_watchdog();
 
 #[cfg(test)]
 mod hotkey_tests {
-    use super::desktop_tool_for_hotkey;
+    use super::{normalize_hotkey, resolve_tool_hotkey};
+    use std::collections::BTreeMap;
 
-    /// 三个工具热键必须各自命中，且互不串位（顺序即 Ctrl+1/2/3）。
+    fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    /// 默认键（无覆盖）：三个工具热键各自命中，且互不串位（顺序即 Ctrl+1/2/3）。
     #[test]
-    fn maps_digits_to_distinct_tools() {
+    fn maps_default_digits_to_distinct_tools() {
+        let none = map(&[]);
         assert_eq!(
-            desktop_tool_for_hotkey("control+Digit1"),
+            resolve_tool_hotkey("control+Digit1", &none).as_deref(),
             Some("screenshot")
         );
-        assert_eq!(desktop_tool_for_hotkey("control+Digit2"), Some("picker"));
+        assert_eq!(resolve_tool_hotkey("control+Digit2", &none).as_deref(), Some("picker"));
         assert_eq!(
-            desktop_tool_for_hotkey("control+Digit3"),
+            resolve_tool_hotkey("control+Digit3", &none).as_deref(),
             Some("color_picker")
         );
-        let all = [
-            desktop_tool_for_hotkey("control+Digit1"),
-            desktop_tool_for_hotkey("control+Digit2"),
-            desktop_tool_for_hotkey("control+Digit3"),
-        ];
-        assert_eq!(all.iter().filter(|v| v.is_some()).count(), 3);
-        assert_eq!(
-            all.iter()
-                .filter_map(|v| *v)
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            3,
-            "三个热键必须映射到三个不同工具"
-        );
     }
 
-    /// 大小写与显示写法都要兼容：库输出的归一化串与用户可见写法语义相同。
+    /// 改键后：新键命中、旧键不再命中（v1.5.1 覆盖语义——用户实测场景 Ctrl+1→Ctrl+4）。
     #[test]
-    fn accepts_case_and_plain_digit_forms() {
-        assert_eq!(desktop_tool_for_hotkey("Control+Digit2"), Some("picker"));
-        assert_eq!(desktop_tool_for_hotkey("control+2"), Some("picker"));
-        assert_eq!(desktop_tool_for_hotkey("CTRL+DIGIT3"), Some("color_picker"));
+    fn override_reroutes_hotkey() {
+        let custom = map(&[("global.tool.screenshot", "Ctrl+4")]);
+        assert_eq!(
+            resolve_tool_hotkey("control+Digit4", &custom).as_deref(),
+            Some("screenshot")
+        );
+        assert_eq!(resolve_tool_hotkey("Ctrl+4", &custom).as_deref(), Some("screenshot"));
+        assert_eq!(resolve_tool_hotkey("control+Digit1", &custom), None);
     }
 
-    /// 带其它修饰键、缺 Ctrl、非 1-3 数字都不属于工具热键（交回工作流热键处理）。
+    /// 大小写与写法兼容：库归一化串 / 用户存储写法语义相同。
+    #[test]
+    fn accepts_case_and_naming_variants() {
+        let none = map(&[]);
+        assert_eq!(resolve_tool_hotkey("Control+Digit2", &none).as_deref(), Some("picker"));
+        assert_eq!(resolve_tool_hotkey("control+2", &none).as_deref(), Some("picker"));
+        assert_eq!(resolve_tool_hotkey("CTRL+DIGIT3", &none).as_deref(), Some("color_picker"));
+        assert_eq!(normalize_hotkey("CmdOrCtrl+DIGIT1"), normalize_hotkey("Ctrl+1"));
+        assert_eq!(normalize_hotkey("Ctrl+1"), "ctrl+1");
+    }
+
+    /// 非工具键/非法组合：交回工作流控制热键处理（Ctrl+Q / Ctrl+Shift+Q 等）。
     #[test]
     fn rejects_other_combinations() {
-        assert_eq!(desktop_tool_for_hotkey("control+shift+Digit1"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+alt+Digit1"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+super+Digit1"), None);
-        assert_eq!(desktop_tool_for_hotkey("shift+Digit1"), None);
-        assert_eq!(desktop_tool_for_hotkey("Digit1"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+Digit4"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+Digit0"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+q"), None);
-        assert_eq!(desktop_tool_for_hotkey(""), None);
-    }
-
-    /// 工作流热键不得被误判成工具热键（Ctrl+Q / Ctrl+Shift+Q 仍归工作流控制）。
-    #[test]
-    fn workflow_hotkeys_are_not_tool_hotkeys() {
-        assert_eq!(desktop_tool_for_hotkey("control+q"), None);
-        assert_eq!(desktop_tool_for_hotkey("control+shift+q"), None);
+        let none = map(&[]);
+        assert_eq!(resolve_tool_hotkey("control+q", &none), None);
+        assert_eq!(resolve_tool_hotkey("control+shift+q", &none), None);
+        assert_eq!(resolve_tool_hotkey("control+Digit0", &none), None);
+        assert_eq!(resolve_tool_hotkey("", &none), None);
     }
 }

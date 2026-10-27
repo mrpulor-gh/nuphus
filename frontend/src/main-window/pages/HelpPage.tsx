@@ -10,10 +10,12 @@
  *
  * 改任何一条命令或快捷键时，先改源码，再同步本清单 —— 帮助页的价值就在于「说的都能用」。
  */
+import { useEffect, useMemo, useState } from 'react'
 import { useLanguage } from '../../locales'
 import { Section } from '../../ui/PageLayout'
 import '../../styles/help.css'
-import { formatPrimaryShortcut, isMacPlatform } from '../../ui/platformShortcut'
+import { getShortcutOverrides } from '../lib/api'
+import { buildShortcutItems } from './shortcuts'
 
 /** 斜杠命令：与 ChatPanel.tsx SLASH_ITEMS 逐条一致（顺序同源码） */
 const slashCommands = [
@@ -56,22 +58,17 @@ const tipKeys = [
 
 export function HelpPage() {
   const { t } = useLanguage()
-  // 快捷键：与 App.tsx useKeyboard 绑定一一对应（输入框内行为见 ChatPanel.handleKeyDown；
+  // 快捷键清单与「通用」页的快捷键弹窗**同源**（./shortcuts，唯一事实源）：
+  // 与 App.tsx useKeyboard 绑定一一对应（输入框内行为见 ChatPanel.handleKeyDown；
   // IME 组词态例外 = 选词时 Enter 让位给输入法，见表下 help.shortcut.imeHint）
-  const shortcuts = [
-    { keys: 'Enter', key: 'help.shortcut.send' },
-    { keys: `Shift+Enter / ${formatPrimaryShortcut('Enter')}`, key: 'help.shortcut.newline' },
-    { keys: formatPrimaryShortcut('K'), key: 'help.shortcut.palette' },
-    { keys: formatPrimaryShortcut('F'), key: 'help.shortcut.workflowList' },
-    { keys: formatPrimaryShortcut('L'), key: 'help.shortcut.focusInput' },
-    { keys: formatPrimaryShortcut('N'), key: 'help.shortcut.newChat' },
-    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+Shift+W`, key: 'help.shortcut.workflowPanel' },
-    { keys: 'Esc', key: 'help.shortcut.esc' },
-    // 桌面工具全局热键（在主窗内与其它应用前台时均可用）
-    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+1`, key: 'help.shortcut.toolScreenshot' },
-    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+2`, key: 'help.shortcut.toolPicker' },
-    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+3`, key: 'help.shortcut.toolColorPicker' },
-  ] as const
+  // 快捷键覆盖表（v1.5 可编辑）：与弹窗同源的「默认 + 覆盖」合并展示，不复制清单
+  const [overrides, setOverrides] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void getShortcutOverrides()
+      .then(setOverrides)
+      .catch(() => {})
+  }, [])
+  const shortcuts = useMemo(() => buildShortcutItems(overrides), [overrides])
 
   const modes = [
     { name: 'Leader', key: 'help.mode.leader' },

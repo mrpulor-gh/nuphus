@@ -1,0 +1,194 @@
+/**
+ * general-page.css — 设置中心「通用」页（GeneralPage + ShortcutsDialog）样式。
+ *
+ * 骨架复用 ui/PageLayout（Section / FormRow）+ ui-primitives（segmented / select /
+ * switch）；本文件只补两类页面专属件：
+ *   ① .general-entry      —— 「入口」组整行可点的跳转行（FormRow 无整行点击语义）
+ *   ② .shortcuts-*       —— 快捷键弹窗的搜索区 / 只读列表 / 圆角徽章 / 恢复默认钮
+ */
+@import './tokens.css';
+
+.general-page {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ═══════════════════════════════════════════
+   ① 入口行（整行可点：左标题/说明 + 右缘 chevron）
+   度量对齐 .form-row / .form-row-label / .form-row-hint（page-layout.css），
+   行间分隔线与相邻 form-row 同一条细线规则。
+   ═══════════════════════════════════════════ */
+.general-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--row-h);
+  padding: var(--space-2) 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.general-entry + .general-entry,
+.form-row + .general-entry {
+  border-top: 1px solid var(--line-1);
+}
+.general-entry:focus-visible {
+  outline: none;
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-focus);
+}
+.general-entry-info {
+  flex: 1;
+  min-width: 0;
+}
+.general-entry-label {
+  display: block;
+  font-size: var(--fz-md);
+  font-weight: var(--fw-medium);
+  color: var(--fg-1);
+}
+.general-entry-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: var(--leading-normal);
+}
+.general-entry-chevron {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--fg-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.general-entry:hover .general-entry-chevron {
+  color: var(--fg-1);
+}
+
+/* ═══════════════════════════════════════════
+   ② 快捷键弹窗（ShortcutsDialog，CompactModal 内容）
+   ═══════════════════════════════════════════ */
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+}
+/* 分段标题（不可编辑 / 可编辑） */
+.shortcuts-group-title {
+  padding: var(--space-3) 0 var(--space-1);
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  letter-spacing: 0.02em;
+}
+.shortcuts-group-title:first-child {
+  padding-top: 0;
+}
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.shortcuts-row + .shortcuts-row {
+  border-top: 1px solid var(--line-1);
+}
+.shortcuts-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fz-md);
+  color: var(--fg-1);
+}
+/* 右缘灰色圆角徽章（键位）；长键位（Shift+Enter / Ctrl+Enter）不折行 */
+.shortcuts-keys {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-3);
+  background: var(--surface-3);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs);
+  white-space: nowrap;
+}
+.shortcuts-empty {
+  padding: var(--space-4) 0;
+  text-align: center;
+  font-size: var(--fz-md);
+  color: var(--fg-3);
+}
+/* 底部弱化的「恢复全部默认」：v1 只读（disabled），随说明文案一起承担语义 */
+.shortcuts-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fz-xs);
+  color: var(--fg-3);
+  line-height: var(--leading-normal);
+}
+.shortcuts-reset {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  cursor: pointer;
+}
+.shortcuts-reset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* ═══════════════════════════════════════════
+   ③ 快捷键可编辑行（v1.5）：行内录制 / 类别标签 / 冲突提示
+   ═══════════════════════════════════════════ */
+
+/* 可编辑行 = 按钮形态：几何度量与 .shortcuts-row 完全一致，仅补交互语义 */
+.shortcuts-row.is-editable {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.shortcuts-row.is-editable:hover .shortcuts-keys {
+  color: var(--fg-1);
+}
+.shortcuts-row.is-editable:focus-visible {
+  outline: none;
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-focus);
+}
+/* 录制态：键位徽章以强调色描边，位置不变（度量不跳） */
+.shortcuts-row.is-recording .shortcuts-keys {
+  box-shadow: var(--shadow-focus);
+  color: var(--fg-1);
+}
+.shortcuts-badge {
+  margin-left: var(--space-2);
+  padding: 0 6px;
+  border-radius: var(--radius-3);
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  font-size: var(--fz-xs);
+}
+.shortcuts-cat {
+  margin-left: var(--space-2);
+  padding: 0 6px;
+  border-radius: var(--radius-3);
+  background: var(--surface-3);
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+}
+.shortcuts-feedback {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-1);
+  color: var(--error);
+  font-size: var(--fz-xs);
+  line-height: var(--leading-normal);
+}

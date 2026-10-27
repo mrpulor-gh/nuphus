@@ -1723,6 +1723,7 @@ const en: Record<string, string> = {
   'app.models': 'Models',
   'app.appearance': 'Appearance',
   'app.language': 'Language',
+  'app.general': 'General',
   'app.project': 'Project',
   'app.security': 'Security',
   'app.dataDirs': 'Data Directories',
@@ -2325,13 +2326,12 @@ const en: Record<string, string> = {
   'help.shortcut.palette': 'Open the command palette',
   'help.shortcut.workflowList': 'Open the workflow list',
   'help.shortcut.focusInput': 'Focus the input box',
-  'help.shortcut.newChat': 'New session (archives the current chat)',
-  'help.shortcut.workflowPanel':
-    'Workflow steps panel: collapse / expand (available while a run has steps)',
+  'help.shortcut.newChat': 'Start a new session and archive the current chat',
+  'help.shortcut.workflowPanel': 'Toggle the workflow steps panel',
   'help.shortcut.esc': 'Close modal / Cancel',
-  'help.shortcut.toolScreenshot': 'Global screenshot (works while any app is focused)',
-  'help.shortcut.toolPicker': 'Global region picker (works while any app is focused)',
-  'help.shortcut.toolColorPicker': 'Global color picker (works while any app is focused)',
+  'help.shortcut.toolScreenshot': 'Global screenshot',
+  'help.shortcut.toolPicker': 'Global region picker',
+  'help.shortcut.toolColorPicker': 'Global color picker',
   'help.shortcut.imeHint':
     'While an IME (Chinese, Japanese, etc.) is composing, Enter only confirms the highlighted candidate — it will not send. Press Enter again once the text is committed.',
   'help.entries': 'Where to Find Things',
@@ -2559,6 +2559,42 @@ const en: Record<string, string> = {
     'Saved presets could not be read. You can still enter inputs and run.',
   'workflow.presets.writeError':
     'Preset changes could not be saved. Check local storage and try again.',
+
+  /* General page in the Settings Center (converted from the former Language page, 2026-10-27) */
+  'general.section.interface': 'Interface',
+  'general.section.interfaceDesc': 'Manage the UI language and chat font size',
+  'general.section.window': 'Window',
+  'general.section.windowDesc': 'Manage close behavior and task-run feedback',
+  'general.section.access': 'Access',
+  'general.section.accessDesc': 'Quick access to common settings',
+  'general.chatFontSize': 'Chat font size',
+  'general.chatFontSizeHint': 'Affects chat message text only, not the rest of the UI',
+  'general.languageHint': 'Choose the interface language',
+  'general.closeAction': 'Close button action',
+  'general.closeActionHint': 'What the window close button does',
+  'general.closeAction.tray': 'Minimize to tray',
+  'general.closeAction.quit': 'Quit directly',
+  'general.hud': 'HUD bar',
+  'general.hudHint': 'Show the floating progress bar while a task runs',
+  'general.raiseOnDone': 'Raise window when done',
+  'general.raiseOnDoneHint': 'Bring the main window to the front when a task completes',
+  'general.shortcutsHint': 'View and customize keyboard shortcuts',
+  'general.shortcuts.groupReadonly': 'Not editable',
+  'general.shortcuts.groupEditable': 'Editable',
+  'general.shortcuts.catCommand': 'In-app',
+  'general.shortcuts.mustModifier': 'Global hotkeys require a Ctrl / Alt / Shift modifier',
+
+  'general.shortcuts.reset': 'Restore all defaults',
+  'general.shortcuts.hint':
+    'Click a row under "Editable", then press the new key combination to change it (Esc to cancel)',
+  'general.shortcuts.recording': 'Press the new key combination',
+  'general.shortcuts.conflictReserved': 'That combination is reserved by the system. Try another.',
+  'general.shortcuts.conflictDuplicate':
+    'That combination is already used by another action. Try another.',
+  'general.shortcuts.saveFailed': 'Save failed; the previous keys were restored',
+  'general.shortcuts.overridden': 'Custom',
+  'general.shortcuts.catInput': 'Input keys',
+  'general.shortcuts.catSystem': 'System-wide hotkeys',
 }
 
 export default en

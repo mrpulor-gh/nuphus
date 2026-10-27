@@ -1,6 +1,7 @@
 //! User preference configuration — language, theme, and other persisted settings
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Persisted identity of the user-picked external (fingerprint) browser.
@@ -86,6 +87,32 @@ pub struct UserPreferences {
     /// Chrome or when a URL is set without identity (legacy/manual path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_identity: Option<BrowserIdentity>,
+    /// 主窗口关闭按钮行为（"quit" = 直接退出，默认 = 历史行为；"tray" = 最小化到托盘）。
+    ///
+    /// `serde(default)` 保证老配置平滑升级；手改配置的非法值由
+    /// [`UserPreferences::close_action`] 归一为「直接退出」，不影响启动/关闭。
+    #[serde(default = "default_close_action")]
+    pub close_action: String,
+    /// 会话内容字号（px；**仅影响聊天消息区正文**，不做全局 UI 缩放）。
+    ///
+    /// 合法区间 [`CHAT_FONT_SIZE_MIN`]..=[`CHAT_FONT_SIZE_MAX`]，缺字段/越界值
+    /// 由 [`UserPreferences::chat_font_size`] 与 [`normalize_chat_font_size`]
+    /// 一致地回落 [`CHAT_FONT_SIZE_DEFAULT`]。
+    #[serde(default = "default_chat_font_size")]
+    pub chat_font_size: u32,
+    /// HUD 悬浮条显示开关（默认 true = 历史行为；读点在 `commands::hud::show`）。
+    #[serde(default = "default_true")]
+    pub hud_enabled: bool,
+    /// 执行完成时主窗口置前开关（默认 true = 历史行为；读点在 emitter 的 LeaderDone 分支）。
+    #[serde(default = "default_true")]
+    pub raise_on_done: bool,
+    /// 快捷键覆盖表（v1.5）：id（如 "palette"）→ canonical 组合键（如 "Ctrl+Shift+K"）。
+    ///
+    /// 仅存**被用户改过的**项；空表 = 全部默认（skip 落盘）。canonical 固定修饰键
+    /// 顺序 Ctrl,Alt,Shift + 主键；解析与冲突校验在前端解析器（ui/shortcutKeys），
+    /// 非法值在读取侧按「默认键位」回落，本字段原样存取。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shortcut_overrides: BTreeMap<String, String>,
 }
 
 /// 会话分组折叠上限默认值（全局单值）。
@@ -118,6 +145,35 @@ fn default_session_sort_key() -> String {
     SESSION_SORT_KEY_UPDATED.to_string()
 }
 
+/// 关闭按钮行为：直接退出（默认，= 历史行为）。
+pub const CLOSE_ACTION_QUIT: &str = "quit";
+
+/// 关闭按钮行为：最小化到托盘（隐藏主窗口、进程留在托盘）。
+pub const CLOSE_ACTION_TRAY: &str = "tray";
+
+/// 会话内容字号默认值（px），同时作为越界读数的兜底。
+pub const CHAT_FONT_SIZE_DEFAULT: u32 = 14;
+
+/// 会话内容字号允许区间（px；设置中心下拉选项必须落在其中）。
+pub const CHAT_FONT_SIZE_MIN: u32 = 12;
+pub const CHAT_FONT_SIZE_MAX: u32 = 16;
+
+/// serde 缺省函数：老配置无关闭行为字段时回落「直接退出」（= 历史行为）。
+fn default_close_action() -> String {
+    CLOSE_ACTION_QUIT.to_string()
+}
+
+/// serde 缺省函数：老配置无字号字段时回落 14px（= 历史正文大小）。
+fn default_chat_font_size() -> u32 {
+    CHAT_FONT_SIZE_DEFAULT
+}
+
+/// serde 缺省函数：老配置无该布尔字段时回落 true
+/// （HUD 显示 / 完成置前都以「开」为历史行为，缺字段不能收敛成 false）。
+fn default_true() -> bool {
+    true
+}
+
 /// 组序维度归一：只认 `"recent"`（去空白 + 忽略大小写），其余一律回落默认「按项目」。
 ///
 /// 归一收敛在此，`list_shelf_sessions` / 排序命令 / 前端三处读数语义一致。
@@ -135,6 +191,27 @@ pub fn normalize_session_sort_key(raw: &str) -> &'static str {
         SESSION_SORT_KEY_CREATED
     } else {
         SESSION_SORT_KEY_UPDATED
+    }
+}
+
+/// 关闭行为归一：只认 `"tray"`（去空白 + 忽略大小写），其余一律回落「直接退出」。
+///
+/// 归一收敛在此：`set_close_action` 写回与 `close_action()` 读数同源，
+/// main.rs 的关闭分支只比较归一后的常量，不再自造第二套判定。
+pub fn normalize_close_action(raw: &str) -> &'static str {
+    if raw.trim().eq_ignore_ascii_case(CLOSE_ACTION_TRAY) {
+        CLOSE_ACTION_TRAY
+    } else {
+        CLOSE_ACTION_QUIT
+    }
+}
+
+/// 会话字号归一：12-16 之外（手改配置 / 越界值）一律回落默认 14。
+pub fn normalize_chat_font_size(size: u32) -> u32 {
+    if (CHAT_FONT_SIZE_MIN..=CHAT_FONT_SIZE_MAX).contains(&size) {
+        size
+    } else {
+        CHAT_FONT_SIZE_DEFAULT
     }
 }
 
@@ -166,6 +243,11 @@ impl Default for UserPreferences {
             pinned_sessions: Vec::new(),
             browser_cdp_url: None,
             browser_identity: None,
+            close_action: default_close_action(),
+            chat_font_size: default_chat_font_size(),
+            hud_enabled: default_true(),
+            raise_on_done: default_true(),
+            shortcut_overrides: BTreeMap::new(),
         }
     }
 }
@@ -190,6 +272,16 @@ impl UserPreferences {
     /// 组内排序键读数（归一后）：手改配置的非法值一律回落「更新时间」。
     pub fn session_sort_key(&self) -> &'static str {
         normalize_session_sort_key(&self.session_sort_key)
+    }
+
+    /// 关闭行为读数（归一后）：手改配置的非法值一律回落「直接退出」。
+    pub fn close_action(&self) -> &'static str {
+        normalize_close_action(&self.close_action)
+    }
+
+    /// 会话字号读数（归一后）：越界值一律回落默认 14（仅影响聊天消息区正文）。
+    pub fn chat_font_size(&self) -> u32 {
+        normalize_chat_font_size(self.chat_font_size)
     }
 
     /// 置顶会话 id 读数（归一后）：去空白/去空/去重/保序，数组序即组内展示序。
@@ -398,5 +490,56 @@ mod tests {
         assert!(json.contains("\"archived\":true"));
         let back: ProjectBookmark = serde_json::from_str(&json).unwrap();
         assert!(back.archived);
+    }
+
+    /// 通用偏好落盘往返：四个字段序列化保留、反序列化还原（重启后偏好不丢）。
+    #[test]
+    fn general_prefs_roundtrip_through_json() {
+        let prefs = UserPreferences {
+            close_action: CLOSE_ACTION_TRAY.to_string(),
+            chat_font_size: 16,
+            hud_enabled: false,
+            raise_on_done: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        let back: UserPreferences = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.close_action(), CLOSE_ACTION_TRAY);
+        assert_eq!(back.chat_font_size(), 16);
+        assert!(!back.hud_enabled);
+        assert!(!back.raise_on_done);
+    }
+
+    /// 老配置平滑升级：无 close_action / chat_font_size / hud_enabled /
+    /// raise_on_done 字段的 preferences.json 反序列化后，全部取「= 历史行为」
+    /// 的默认值（尤其两个 bool 不得收敛为 false）。
+    #[test]
+    fn legacy_preferences_json_gains_general_defaults() {
+        let legacy = r#"{
+            "language": "zh-CN",
+            "project_dir": ""
+        }"#;
+        let prefs: UserPreferences = serde_json::from_str(legacy).expect("老配置必须可反序列化");
+        assert_eq!(prefs.close_action(), CLOSE_ACTION_QUIT);
+        assert_eq!(prefs.chat_font_size(), CHAT_FONT_SIZE_DEFAULT);
+        assert!(prefs.hud_enabled, "缺字段 → HUD 默认开（= 历史行为）");
+        assert!(prefs.raise_on_done, "缺字段 → 完成置前默认开（= 历史行为）");
+    }
+
+    /// 通用偏好归一：非法关闭行为回落 "quit"；字号越界回落 14；
+    /// 合法值（含大小写/空白容错）原样通过。
+    #[test]
+    fn general_prefs_normalize_illegal_values() {
+        assert_eq!(normalize_close_action(" Tray "), CLOSE_ACTION_TRAY);
+        assert_eq!(normalize_close_action("QUIT"), CLOSE_ACTION_QUIT);
+        for raw in ["", "  ", "close", "退出", "trayy"] {
+            assert_eq!(normalize_close_action(raw), CLOSE_ACTION_QUIT);
+        }
+        assert_eq!(normalize_chat_font_size(12), 12);
+        assert_eq!(normalize_chat_font_size(15), 15);
+        assert_eq!(normalize_chat_font_size(16), 16);
+        for illegal in [0, 1, 11, 17, 100] {
+            assert_eq!(normalize_chat_font_size(illegal), CHAT_FONT_SIZE_DEFAULT);
+        }
     }
 }

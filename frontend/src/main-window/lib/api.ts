@@ -1268,6 +1268,76 @@ export function setLanguage(lang: string) {
   return invoke<string>('set_language', { lang })
 }
 
+// ── General settings（设置中心「通用」页）──
+
+/** 「通用」页聚合偏好（后端 get_general_settings 原样透传；读数均已归一）。 */
+export type GeneralSettings = {
+  close_action: string
+  chat_font_size: number
+  hud_enabled: boolean
+  raise_on_done: boolean
+}
+
+/**
+ * 聚合缺省值 = 历史行为（与后端 serde 默认一一对应）。
+ * bridge 无 Tauri 通道（浏览器回退链路）时 invoke 返回 null → 用本值兜底，
+ * 页面不因缺通道而失真（set_* 同理回落到请求值）。
+ */
+export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
+  close_action: 'quit',
+  chat_font_size: 14,
+  hud_enabled: true,
+  raise_on_done: true,
+}
+
+export async function getGeneralSettings(): Promise<GeneralSettings> {
+  const settings = await invoke<GeneralSettings>('get_general_settings')
+  return settings ?? GENERAL_SETTINGS_DEFAULTS
+}
+
+/** 设置主窗口关闭按钮行为（返回后端归一后的值）。 */
+export async function setCloseAction(action: string): Promise<string> {
+  const applied = await invoke<string>('set_close_action', { action })
+  return applied ?? action
+}
+
+/** 设置会话内容字号（返回归一后的值；调用方 applyChatFontSize 消费该值注入变量）。 */
+export async function setChatFontSize(size: number): Promise<number> {
+  const applied = await invoke<number>('set_chat_font_size', { size })
+  return applied ?? size
+}
+
+/** 设置 HUD 悬浮条显示开关（返回归一后的值）。 */
+export async function setHudEnabled(enabled: boolean): Promise<boolean> {
+  const applied = await invoke<boolean>('set_hud_enabled', { enabled })
+  return applied ?? enabled
+}
+
+/** 设置「完成时窗口置前」开关（返回归一后的值）。 */
+export async function setRaiseOnDone(enabled: boolean): Promise<boolean> {
+  const applied = await invoke<boolean>('set_raise_on_done', { enabled })
+  return applied ?? enabled
+}
+
+// ── Shortcut overrides（快捷键自定义，通用页弹窗）──
+
+/**
+ * 快捷键覆盖表（id → canonical，如 "palette" → "Ctrl+Shift+K"）。
+ * 仅含被用户改过的项；空表 = 全部默认。bridge 无 Tauri 通道时 invoke 返回 null → 空表兜底。
+ */
+export async function getShortcutOverrides(): Promise<Record<string, string>> {
+  const overrides = await invoke<Record<string, string>>('get_shortcut_overrides')
+  return overrides ?? {}
+}
+
+/** 整表覆盖写入（返回后端落盘后的全量映射；归一结果回传前端校准）。 */
+export async function setShortcutOverrides(
+  overrides: Record<string, string>,
+): Promise<Record<string, string>> {
+  const applied = await invoke<Record<string, string>>('set_shortcut_overrides', { overrides })
+  return applied ?? overrides
+}
+
 // ── Project ──
 
 export type ProjectBookmark = {

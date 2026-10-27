@@ -28,13 +28,13 @@
  *   工作台：会话 SessionGroupsPage / 工作流 WorkflowPage /
  *          定时任务 ScheduleHistoryPage（静态 import）/ 外部 Agent ExternalAgentsPage /
  *          权限与安全 SecurityPage / 数据目录 DataDirsPage
- *   系统：语言 LanguagePage / 帮助 HelpPage / 版本与更新 UpdatePage /
+ *   系统：通用 GeneralPage / 帮助 HelpPage / 版本与更新 UpdatePage /
  *         GitHub GithubPage（内部 id 仍为 'plugins'）
  *
  * 主题不在这里：它是非模态的外观浮窗（layout/AppearancePanel.tsx，由聊天 header
  * 调色板按钮展开）—— 价值就在"改完立刻看见主界面"，放进 fixed inset:0 的本面板
- * 会把主界面盖死，与它的存在意义相反。语言分区则相反：全局偏好、无「即时看见」
- * 的诉求，2026-09-28 从外观浮窗迁入（现居系统组，language → LanguagePage）；
+ * 会把主界面盖死，与它的存在意义相反。通用分区（2026-10-27 由原「语言」分区改造，
+ * id 'language' → 'general'）则相反：全局偏好、无「即时看见」的诉求；
  * 与主题无关的头像设置随灵魂分区承载（SoulPage 内第二个 Section，原独立分区已并入）。
  *
  * 子页 onClose 语义：子页自身没有「页壳」（外壳由 CompactModal / 本组件提供），
@@ -52,7 +52,6 @@ import {
   IconExternalLink,
   IconFile,
   IconFolder,
-  IconGlobe,
   IconHardDrive,
   IconHistory,
   IconPalette,
@@ -61,6 +60,7 @@ import {
   IconRefresh,
   IconSettings,
   IconShield,
+  IconSliders,
   IconSmartphone,
   IconSparkles,
   IconWorkflow,
@@ -94,10 +94,10 @@ const BrowserPage = lazy(() => import('./BrowserPage').then(m => ({ default: m.B
 /* 主题不在本面板：它是聊天 header 调色板按钮展开的外观浮窗
    （layout/AppearancePanel.tsx，非模态常驻）—— 放进 fixed inset:0 的设置中心会把
    主界面盖死，"主题即时生效却看不见"。与主题无关的头像设置随灵魂分区承载
-   （SoulPage 单模块：开关 + 两条身份行）。语言分区在这里（language → LanguagePage）：
-   全局偏好，无「即时看见」的诉求。 */
+   （SoulPage 单模块：开关 + 两条身份行）。通用分区在这里（general → GeneralPage）：
+   语言与全部通用偏好（关闭行为 / HUD / 置前 / 字号），无「即时看见」的诉求。 */
 const HelpPage = lazy(() => import('./HelpPage').then(m => ({ default: m.HelpPage })))
-const LanguagePage = lazy(() => import('./LanguagePage').then(m => ({ default: m.LanguagePage })))
+const GeneralPage = lazy(() => import('./GeneralPage').then(m => ({ default: m.GeneralPage })))
 const ExternalAgentsPage = lazy(() =>
   import('./ExternalAgentsPage').then(m => ({ default: m.ExternalAgentsPage })),
 )
@@ -122,7 +122,7 @@ export type SettingsSectionId =
   | 'mobile'
   | 'browser'
   | 'help'
-  | 'language'
+  | 'general'
   | 'session-groups'
   | 'external-agents'
   | 'security'
@@ -204,9 +204,10 @@ const NAV_GROUPS: { titleKey: string; items: SettingsNavItem[] }[] = [
   {
     titleKey: 'cmd.category.system',
     items: [
-      /* 语言：2026-09-28 从外观浮窗迁入（分区 id 'language'，现居系统组）。
-         内容是 zh/en segmented + getLanguage/apiSetLanguage 原链路（LanguagePage）。 */
-      { id: 'language', labelKey: 'app.language', icon: <IconGlobe size={14} /> },
+      /* 通用：2026-10-27 由原「语言」分区（id 'language'）改造（GeneralPage）。
+         语言链路（zh/en segmented + getLanguage/apiSetLanguage）原样迁入，并收纳
+         窗口关闭行为 / HUD / 完成置前 / 会话字号 + 两个入口行（安全跳转 / 快捷键）。 */
+      { id: 'general', labelKey: 'app.general', icon: <IconSliders size={14} /> },
       /* 帮助：与 App 层 CompactModal 同一个 HelpPage（同一 chunk，不重复打包），
          面板内嵌打开（不关面板） */
       { id: 'help', labelKey: 'cmd.help', icon: <IconHelp size={14} /> },
@@ -242,6 +243,10 @@ export interface SettingsCenterProps {
   onOpenModels: () => void
   /** 打开指定工作流的定时运行历史回放 */
   onOpenScheduleReplay?: (workflowId: string, runId: string) => void
+  /** 快捷键覆盖表变更（快捷键弹窗保存 / 恢复后回传；App 层刷新 useKeyboard） */
+  onShortcutOverridesChange?: (overrides: Record<string, string>) => void
+  /** 快捷键录制态广播（录制期间 App 层挂起 Ctrl+K/F 全局分支） */
+  onShortcutRecordingChange?: (recording: boolean) => void
 }
 
 export function SettingsCenter({
@@ -251,10 +256,12 @@ export function SettingsCenter({
   onOpenCanvas,
   onOpenModels,
   onOpenScheduleReplay,
+  onShortcutOverridesChange,
+  onShortcutRecordingChange,
 }: SettingsCenterProps) {
   const { t } = useLanguage()
-  // 默认分区 = 灵魂（AI 能力组首项）：身份设置每轮对话都生效，是五组里最高频的落点
-  const [section, setSection] = useState<EmbeddedSectionId>('soul')
+  // 默认分区 = 通用（系统组；2026-10-27 定为根页）：全局开关是打开设置的第一落点
+  const [section, setSection] = useState<EmbeddedSectionId>('general')
   // island 落点锚点：设置中心压住聊天区时，岛改挂到本面板标题栏（优先级见 islandChannel）
   const settingsIslandAnchor = useIslandHostAnchor('settings-center')
 
@@ -349,8 +356,13 @@ export function SettingsCenter({
         return <MobilePage />
       case 'browser':
         return <BrowserPage onClose={onClose} />
-      case 'language':
-        return <LanguagePage />
+      case 'general':
+        return (
+          <GeneralPage
+            onShortcutOverridesChange={onShortcutOverridesChange}
+            onShortcutRecordingChange={onShortcutRecordingChange}
+          />
+        )
       case 'session-groups':
         return <SessionGroupsPage />
       case 'external-agents':

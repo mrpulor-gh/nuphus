@@ -154,9 +154,13 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
                 // 窗口置前但【不抢键盘焦点】：执行完成窗口自动跑到最前
                 // （大王要求保留置前），但输入框不自动聚焦、不打断其他窗口打字
                 // （2026-08-08 大王要求移除执行完自动聚焦）。
+                // 「完成时窗口置前」为通用设置开关（默认开 = 历史行为）：关闭时跳过
+                // 置前；SecurityCheck 的置前是安全审批语义，不经本开关。
                 nuphus::hud_arbiter::flush_all();
-                if let Some(main) = self.app.get_webview_window("main") {
-                    bring_to_front_no_activate(&main);
+                if nuphus::config::UserPreferences::load().raise_on_done {
+                    if let Some(main) = self.app.get_webview_window("main") {
+                        bring_to_front_no_activate(&main);
+                    }
                 }
             }
             NuphusEvent::UserInputRequest { .. } => {

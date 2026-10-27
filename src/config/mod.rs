@@ -15,8 +15,10 @@ pub mod registry;
 pub use last_model::{load_last_model_provider, record_last_model, resolve_model_provider_core};
 pub use model::*;
 pub use preferences::{
-    normalize_pinned_sessions, normalize_session_group_order, normalize_session_sort_key,
-    BrowserIdentity, ProjectBookmark, UserPreferences,
+    normalize_chat_font_size, normalize_close_action, normalize_pinned_sessions,
+    normalize_session_group_order, normalize_session_sort_key, BrowserIdentity, ProjectBookmark,
+    UserPreferences, CHAT_FONT_SIZE_DEFAULT, CHAT_FONT_SIZE_MAX, CHAT_FONT_SIZE_MIN,
+    CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY,
 };
 
 use std::path::PathBuf;

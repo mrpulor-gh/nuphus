@@ -19,8 +19,9 @@
  *    ＋ 新建全在卡片上完成 —— 浮窗内**没有**独立的皮肤背景栏，背景只归主题。
  *    「保存 → 原地看到它（新卡即进入行内改名）」是本浮窗的用户感知闭环。
  *
- * 界面语言**不在本浮窗**：2026-09-28 迁入设置中心新增 `language` 分区
- * （pages/LanguagePage.tsx，LangProvider / apiSetLanguage 原链路整体搬迁）。
+ * 界面语言**不在本浮窗**：2026-09-28 迁入设置中心，现居「通用」分区
+ * （pages/GeneralPage.tsx，LangProvider / apiSetLanguage 原链路整体搬迁；
+ * 2026-10-27 语言页改造为通用页 general，语言链路一行未改）。
  *
  * 浮层外形规格（fixed/right20/z60/380px/glass/blur24/radius10/shadow-elevated/
  * apnp-in）见 styles/appearance-panel.css，与 WorkflowTaskPanel 同一浮层家族；
