@@ -1,19 +1,19 @@
 {
-  "version": "1.1.3",
-  "notes": "## [1.1.3]\n\n### Added\n\n- **通用设置页**：语言、会话字号（12–16 px）、关闭行为（退出 / 最小化到托盘）、HUD 悬浮条\n  开关与「完成时窗口置前」开关集中一处（替代原独立语言页）。\n- **快捷键编辑器**：全局工具热键（Ctrl+1/2/3 等）支持捕获式重绑、冲突检测与运行时\n  重注册；弹窗改为「不可编辑在上 / 可编辑在下」的分段列表。\n- **更新内容预览**：更新提示条新增「更新内容」入口，安装前可查看该版本改动明细；\n  发布流程会把 CHANGELOG 段落写入更新元数据（从下一版本起自动生效）。\n- **官网入口**：设置中心「GitHub」更名「官网与 GitHub」并加入官网链接；标题栏品牌\n  悬停弹层新增「官网」（首位），版本入口改显示「当前版本（v…）」。\n\n### Fixed\n\n- **上下文窗口显示**：启动装载按「模型提供商 + 模型 id」双字段绑定解析，修复同名模型\n  跨段时被段序盲选、输入框上下文分母长期显示 `--` 的问题。\n- **HUD 叠加窗口**：恢复为与 v1.1.0 一致的稳定矩形样式（撤回透明 / 圆角实验）。\n- **自动提炼上限**：同一轮次内 in-loop 强制提炼次数上限由 2 上调至 10（长任务后段\n  不再出现「超过 85% 却只剩劝导」）。\n\n### Changed\n\n- 工作流编辑器运行数据不再进入版本库。\n\n",
-  "pub_date": "2026-10-27T18:31:19Z",
+  "version": "1.1.4",
+  "notes": "## [1.1.4]\n\n### Added\n\n- **帮助页 · 模型连接问题速查**：按「遇到的情况 / 可能原因 / 建议处理」三列列出五类常见问题\n  （无法连接、长时间无响应、回复不完整、服务繁忙、上下文容量未知），只给用户可读说明，\n  不暴露内部错误码。\n\n### Fixed\n\n- **上下文窗口口径统一**：连接模型时即把服务端返回的窗口按同一权威链写回配置；中转与自建段\n  同样参与目录匹配；条目缺失窗口时按「提供商 + 模型 id」唯一候选兜底，仍未命中显示 `--`，\n  不再伪造 128K。\n- **Exec 上下文守护**：Exec 的上下文窗口改为「未知即未知」（不再默认 128K），每轮派发重新\n  绑定当前执行模型；窗口未知时不再套用压缩阈值与 85% 止损线，避免小窗口拒绝压缩、未知窗口\n  误判。\n- **工具依赖表编译期内嵌**：修复安装版因工作目录不同而静默加载失败（开发机正常、安装版依赖\n  不生效）的问题。\n- **Anthropic 端点图片消息**：Chat 风格 `image_url` 块按传输层转换为 Anthropic 原生 image\n  块（data URL 转 base64、http(s) 转 url），不支持的形态跳过而非透传，避免请求被拒。\n\n### Changed\n\n- **提炼预算**：云端 Leader 单轮提炼墙钟预算 90s → 180s；桌面兜底复位与手机端超时口径同步，\n  本地端点维持按服务商超时动态计算。\n\n",
+  "pub_date": "2026-10-28T12:45:49Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnFsdE8rZmVPd1QyYmhkV0NleU9pYUtuREZsMDVHOG5jank5b1Z2TWtLY0ViSjBHUURBUmVqNVNaVmRBNU9UditUOVlzYUhZTGc5bkJWbVlFemJ1RXc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI1NjY2CWZpbGU6TnVwaHVzXzEuMS4zX3g2NC1zZXR1cC5leGUKM1dQNVpNRURqSHVsWWdTdm9rZnE3UDI0bnk3dWFyNHlJZUhubGhNeXA0YUtHT3F0d3JHdVZSbzdzZFREV2h2eGJxM0FMVC96Zmw1Snp0REVUMmZGQ3c9PQo=",
-      "url": "https://gitee.com/nuphus/nuphus/releases/download/v1.1.3/nuphus-win32-x64-1.1.3-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm9ERFdqWDVDQzJqczNYWC9HS2ZkVnFOc29SYlJNd3V5U3lMcGxyd2xGWGkyaC9XQk9zaGxkYlRuWCtKek9HSnJQMzR1ZVlYSVpYSHlmMmVLNVEzMlF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTkxNTI4CWZpbGU6TnVwaHVzXzEuMS40X3g2NC1zZXR1cC5leGUKYkxaTE5YQVprOWtJZG1XTEQ5algvS1hMWDBoWDFRWWp0SU9JMHFjeDhPYkdxTWpVMktOZ3BvaVBGZWtvVDhyZlRzK0tHNDAwMzZpS21iWlJaNHpkQkE9PQo=",
+      "url": "https://gitee.com/nuphus/nuphus/releases/download/v1.1.4/nuphus-win32-x64-1.1.4-setup.exe"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmc1UFE5UGpnSHFoa2c0akRIMU5oTGF4am1USGhLTkh3QzM3bkNxZGJaVitIa21BTkR2dVRoZlFiV1JZdk1MaXFCR3VOTzlHNE1mV1ZLcW5BbUlXaUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI1ODAyCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKL1ZwMXRnVFl0d2Q4MW5qK0d3UEVyTmxiQWFNb3BoaXh2ek15VlNTem4zUG53eDV1VlNlbFRyWVlBSGhNUEN1UXdwMGFQN2srQUMzTGNPSzVjU2dYREE9PQo=",
-      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.3/Nuphus.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnNWZXJ4K3I1aXl0R1ZyNzNkWDM3aklNblFTWU0rTkxueE1LNEdzdlpyeFY1aWRpZHpFenZXUENZYXExVCtqZlVYL05vNUl2QVdKQW1MYllGSU9sWnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTkxMzkxCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKSUdpQmZzSWZiUFdScnJXUWhiT0FnN2gyRTRHUlUra1JVVDNwZkFtMWlucThkc3NValpTUTNLNXFibXJWSWtacHV3YkJlRC9LdFlqbmdHNWdHWkRoQ3c9PQo=",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.4/Nuphus.app.tar.gz"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQms5WmUzdUlKenhWZTlJdVQ3VHhNVURZVnlJaGRlWTJLM0NHWUt3cUZnM0RBOVFvd0ZRc3Q1R1ZDRDhMVm5JTUx5SU4rVjk0ZjdoZGVOUjFNcXFRZGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTI0OTIzCWZpbGU6TnVwaHVzXzEuMS4zX2FtZDY0LkFwcEltYWdlCjlzS2NRNEZQOCtLc0NXaFRhYi9mTEorWncrVVQ5NHVqRjNVQ3hBTlJORnNxWllQR0IxaG14Tm9jZzI5a1BKMjJQSE10NjFtWkNDWHN5L3VNOVJXWUF3PT0K",
-      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.3/Nuphus_1.1.3_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnVmeHk4b0FyOUFCSWd6TTVxODdSdkViQlVLaGFtcnZmSHp1OGUvUlZqaUNuTjJ1TDh2SFVDVHVqTDhzMEg5YzdKeERYQmJNNFM3aVBoTndIV3h3REEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTkxMjQ3CWZpbGU6TnVwaHVzXzEuMS40X2FtZDY0LkFwcEltYWdlClJFRG92L3Z1b3dLZHhCbU5wUUZrZW9ieXNRS1F4MkQ3MGxUWVpNcFY1UjhUaXhycXNydHpKQmhjQmFUUkRXRmZSbnRXVmJRcCs3amo3TlhpckZidEJRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v1.1.4/Nuphus_1.1.4_amd64.AppImage"
     }
   }
 }
