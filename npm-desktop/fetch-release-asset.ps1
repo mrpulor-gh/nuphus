@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     预下载 GitHub Release 资产到 npm-desktop/downloads/<ver>/ 并做 sha256 对账。
@@ -51,7 +51,12 @@ $fill = "host=github.com`nprotocol=https`n`n" | git credential fill
 $tok = ($fill | Select-String '^password=').Line -replace '^password=',''
 if (-not $tok) { throw 'no GitHub token from git credential fill' }
 $h = @{ Authorization = "Bearer $tok"; Accept = 'application/vnd.github+json' }
-$rel = Invoke-RestMethod -Proxy 'http://127.0.0.1:2081' -Uri "https://api.github.com/repos/mrpulor-gh/nuphus/releases/tags/v$Version" -Headers $h
+$apiProxy = if ($env:NUPHUS_GITHUB_PROXY) { $env:NUPHUS_GITHUB_PROXY } else { '' }
+if ($apiProxy) {
+    $rel = Invoke-RestMethod -Proxy $apiProxy -Uri "https://api.github.com/repos/mrpulor-gh/nuphus/releases/tags/v$Version" -Headers $h
+} else {
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/mrpulor-gh/nuphus/releases/tags/v$Version" -Headers $h
+}
 Remove-Variable tok, fill -ErrorAction SilentlyContinue
 
 $want = if ($Asset.Count -gt 0) { $Asset } else { @($rel.assets).ForEach({ $_.name }) }
