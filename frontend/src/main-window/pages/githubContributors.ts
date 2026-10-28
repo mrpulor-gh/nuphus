@@ -158,6 +158,33 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '1.1.4',
+    date: '2026-10-28',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '9aabf21b',
+            summary:
+              '上下文窗口统一口径与 Exec 上下文守护：连接即写回窗口、中转段参与目录匹配、未知窗口不再伪造 128K；工具依赖表改编译期内嵌；Anthropic 端点图片消息转原生块',
+          },
+          {
+            pr: null,
+            commit: 'b70acbc9',
+            summary: '帮助页新增模型连接问题速查表（现象 / 原因 / 处理三列，不暴露内部错误码）',
+          },
+          {
+            pr: null,
+            commit: '0f8ac235',
+            summary: '云端 Leader 提炼墙钟预算 90s → 180s（桌面兜底复位与手机端超时口径同步）',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '1.1.3',
     date: '2026-10-28',
     contributors: [
