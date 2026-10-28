@@ -378,7 +378,7 @@ async fn discover_capabilities(
                 let generic_lookup = || aggregator::lookup_generic(&entries, &cfg.model);
                 if want_context {
                     let lookup = if aggregator::has_vendor(&cfg.provider) {
-                        vendor_lookup().or_else(|| generic_lookup())
+                        vendor_lookup().or_else(&generic_lookup)
                     } else {
                         generic_lookup()
                     };
@@ -388,7 +388,7 @@ async fn discover_capabilities(
                         .filter(|n| *n > 0);
                 }
                 if result.efforts.is_empty() {
-                    let lookup = vendor_lookup().or_else(|| generic_lookup());
+                    let lookup = vendor_lookup().or_else(generic_lookup);
                     if let Some(entry) = lookup {
                         result.efforts = entry.supported_efforts.clone();
                         result.default_effort = result
