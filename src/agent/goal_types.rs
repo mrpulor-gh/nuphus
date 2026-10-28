@@ -233,6 +233,17 @@ pub fn try_get_context_window_for(model_name: &str, provider: Option<&str>) -> O
         if let Some(window) = registry.resolve_context_window(provider, model_name) {
             return Some(window);
         }
+        // 唯一候选级（2026-10-28）：绑定/条目 miss，但该模型在全配置中只发布
+        // 在唯一一段 → 用该段的值（唯一 = 无歧义的安全推断，与
+        // `resolve_main_binding` 的「唯一候选」口径一致；多候选仍 None 不猜）。
+        // 显示（输入框分母）、上下文预算、收尾提炼三处共用本函数——保证
+        // 「模型页有值 ↔ 各消费点」同源，杜绝「一边 1.1M 一边 --」分裂。
+        let candidates = registry.find_model_candidates(model_name);
+        if candidates.len() == 1 {
+            if let Some(window) = candidates[0].1.context_window.filter(|w| *w > 0) {
+                return Some(window);
+            }
+        }
     }
     // Fall back to ProviderRegistry metadata table — provider-qualified only.
     let provider = provider.filter(|p| !p.is_empty())?;
@@ -432,8 +443,8 @@ mod tests {
             model: missing,
             provider: "",
         };
-        // 未知模型（且 provider 未知）→ 128K 兜底：provider-blind 版本已删，
-        // 显式穿空 provider 与 client 无绑定（provider_name=""）同路径。
+        // 运行时兼容入口仍保留 128K fallback；Exec 不调用该入口，
+        // 而是直接使用 try_get_context_window_for 的 Option 结果，未知不设窗口。
         assert_eq!(
             get_context_window_of(&unbound),
             get_context_window_for(unbound.model, Some(""))

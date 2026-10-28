@@ -740,8 +740,10 @@ impl WorkflowAgent {
             //    禁工具）、accumulate 压缩后本迭代继续，任务从摘要接续。
             // 未越线维持原有渐进警告（inject_context_warning）与 FORBID break 语义。
             {
-                let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
-                if ctx_window > 0 {
+                if let Some(ctx_window) = crate::agent::goal_types::try_get_context_window_for(
+                    self.llm.model_name(),
+                    Some(self.llm.provider_name()),
+                ) {
                     // 口径与 Leader 检查点统一：estimate_token_usage = max(官方
                     // 读数, 字符估算) 的保守值——官方读数覆盖不到本迭代刚追加
                     // 的工具结果，取 max 才不会漏判。
@@ -913,15 +915,19 @@ impl WorkflowAgent {
                     }),
                 });
                 // ── Session distillation before user stop exit ──
-                let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
-                distill::maybe_refine_session(
-                    &mut self.session,
-                    ctx_window,
-                    self.large_force_threshold,
-                    self.emitter.as_deref(),
-                    &mut self.refine_count,
-                )
-                .await;
+                if let Some(ctx_window) = crate::agent::goal_types::try_get_context_window_for(
+                    self.llm.model_name(),
+                    Some(self.llm.provider_name()),
+                ) {
+                    distill::maybe_refine_session(
+                        &mut self.session,
+                        ctx_window,
+                        self.large_force_threshold,
+                        self.emitter.as_deref(),
+                        &mut self.refine_count,
+                    )
+                    .await;
+                }
                 self.store_turn_memory(input, &result_msg, true);
                 return Ok(AgentOutput {
                     success: true,
@@ -989,6 +995,15 @@ impl WorkflowAgent {
                                 self.safety_failures
                             );
                             self.session.strip_incomplete_tools();
+                            // 失败必须发收敛事件（同最大迭代出口模式）：前端依赖
+                            // execution_error 复位执行态；仅落 output 会让界面停在执行中。
+                            self.emit(NuphusEvent::ExecutionError {
+                                step_index: 0,
+                                error: format!(
+                                    "执行中止: 连续 {} 次安全检查未通过",
+                                    self.safety_failures
+                                ),
+                            });
                             return Ok(AgentOutput {
                                 success: false,
                                 message: format!(
@@ -1353,15 +1368,19 @@ impl WorkflowAgent {
             error: "达到最大迭代次数".to_string(),
         });
         // ── Session distillation before max iterations exit ──
-        let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
-        distill::maybe_refine_session(
-            &mut self.session,
-            ctx_window,
-            self.large_force_threshold,
-            self.emitter.as_deref(),
-            &mut self.refine_count,
-        )
-        .await;
+        if let Some(ctx_window) = crate::agent::goal_types::try_get_context_window_for(
+            self.llm.model_name(),
+            Some(self.llm.provider_name()),
+        ) {
+            distill::maybe_refine_session(
+                &mut self.session,
+                ctx_window,
+                self.large_force_threshold,
+                self.emitter.as_deref(),
+                &mut self.refine_count,
+            )
+            .await;
+        }
         self.store_turn_memory(input, &result_msg, false);
         Ok(AgentOutput {
             success: false,
@@ -1657,7 +1676,15 @@ impl WorkflowAgent {
         const WARN_FORBID: f64 = 0.95;
 
         let usage = self.session.estimate_token_usage();
-        let ctx_window = crate::agent::goal_types::get_context_window_of(self.llm.as_ref());
+        let Some(ctx_window) = crate::agent::goal_types::try_get_context_window_for(
+            self.llm.model_name(),
+            Some(self.llm.provider_name()),
+        ) else {
+            return false;
+        };
+        if usage == 0 {
+            return false;
+        }
         let ratio = usage as f64 / ctx_window as f64;
 
         let level = if ratio >= WARN_FORBID {

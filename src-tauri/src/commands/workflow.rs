@@ -491,18 +491,36 @@ pub fn inject_workflow_runtime(state: &AppState, engine: &mut nuphus::workflow::
     match factory.registry() {
         Ok(registry) => {
             engine.set_client_factory(factory.clone());
-            match crate::commands::config::llm::effective_model_binding(
+            // 绑定口径（2026-10-28）：workflow 优先自身声明；解析/构建失败不留空转
+            // ——回落 leader（与 process 主链同一口径：次要绑定失败降级、不停摆）。
+            let workflow_binding = crate::commands::config::llm::effective_model_binding(
                 &state.llm_config_path,
                 &registry,
                 "workflow",
-            ) {
-                Ok((provider, model)) => match factory.create_client_for(&provider, &model) {
+            )
+            .map_err(|e| {
+                tracing::warn!("[workflow] workflow 绑定不可用（{e}），回落 leader");
+                e
+            })
+            .ok()
+            .or_else(|| {
+                crate::commands::config::llm::effective_model_binding(
+                    &state.llm_config_path,
+                    &registry,
+                    "leader",
+                )
+                .ok()
+            });
+            match workflow_binding {
+                Some((provider, model)) => match factory.create_client_for(&provider, &model) {
                     Ok(client) => engine.set_llm_client(client),
                     Err(e) => tracing::warn!(
                         "[workflow] Failed to create bound client ({provider}:{model}): {e}"
                     ),
                 },
-                Err(e) => tracing::warn!("[workflow] No workflow provider+model binding: {e}"),
+                None => tracing::warn!(
+                    "[workflow] workflow/leader 绑定均不可用，ChatAgent 无可用 client"
+                ),
             }
         }
         Err(e) => tracing::warn!("[workflow] Failed to load model registry: {e}"),

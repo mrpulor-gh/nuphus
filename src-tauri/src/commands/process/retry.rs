@@ -88,6 +88,8 @@ pub async fn retry_agent(
             .map_err(|e| format!("创建 LLM 客户端失败: {}", e))?;
 
         // Agent 级 exec 模型（单一入口 effective_model）：exec → default → leader
+        // 绑定口径（2026-10-28）：解析/构建失败不阻塞重试——回落主客户端
+        // （与 process 主链同一口径：次要绑定失败降级、不停摆）。
         let registry = factory
             .registry()
             .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
@@ -95,10 +97,17 @@ pub async fn retry_agent(
             &state.llm_config_path,
             &registry,
             "exec",
-        )?;
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!("[retry] exec 绑定不可用（{e}），回落主模型");
+            (config.provider.clone(), config.model.clone())
+        });
         let exec_llm = factory
             .create_client_for(&exec_provider, &exec_model)
-            .map_err(|e| format!("创建 Exec LLM 客户端失败 ({exec_model}): {e}"))?;
+            .unwrap_or_else(|e| {
+                tracing::warn!("[retry] Exec 客户端构建失败（{e}），回落主客户端");
+                llm.clone()
+            });
 
         // 4. 断点续跑：失败时错误内容从未进入 session（流式缓冲成功才落库，
         //    strip_incomplete_tools 已清理悬挂工具对），session 末尾即断点——

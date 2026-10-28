@@ -148,12 +148,13 @@ impl AnthropicTransport {
                 }
 
                 _ => {
-                    // user or any other role — keep as-is when text-only;
-                    // if content is already an array (tool_result from
-                    // previous round-trip), preserve it.
+                    // user or any other role：content 数组里的 image_url 块转
+                    // Anthropic 原生 image 源，其余块（text / tool_result 等）原样。
+                    // 2026-10-28：此前原样透传，Anthropic 端点收到未知块类型即
+                    // HTTP 400（带图消息必失败）；图片序列化必须按 transport 分支。
                     out.push(serde_json::json!({
                         "role": "user",
-                        "content": msg["content"],
+                        "content": convert_user_content(&msg["content"]),
                     }));
                 }
             }
@@ -374,6 +375,74 @@ impl AnthropicTransport {
     }
 }
 
+// ── content 适配（Chat 风格 → Anthropic 原生） ──────────────────────────────
+
+/// Chat 风格 content → Anthropic content。
+///
+/// - 字符串（纯文本轮次）：原样返回，不强制数组化；
+/// - 数组：逐块转换——`image_url` 块转 Anthropic image block（data URL →
+///   `source: base64`；http(s) → `source: url`）；无法识别的图片形态跳过并
+///   warn（不把非法块透传给端点制造 400）；其余块（text / tool_result /
+///   已转换的 image 等）原样保留。
+fn convert_user_content(content: &serde_json::Value) -> serde_json::Value {
+    let Some(blocks) = content.as_array() else {
+        return content.clone();
+    };
+    let converted: Vec<serde_json::Value> = blocks
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(|t| t.as_str()) == Some("image_url") {
+                let url = block
+                    .pointer("/image_url/url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let image = image_block_from_url(url);
+                if image.is_none() {
+                    tracing::warn!(
+                        "[anthropic] skipped an unsupported image block \
+                         (only data:*;base64 with png/jpeg/gif/webp, or http(s) URL)"
+                    );
+                }
+                image
+            } else {
+                Some(block.clone())
+            }
+        })
+        .collect();
+    serde_json::Value::Array(converted)
+}
+
+/// data URL / http(s) URL → Anthropic image block；不支持的形态返回 None。
+fn image_block_from_url(url: &str) -> Option<serde_json::Value> {
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (meta, data) = rest.split_once(";base64,")?;
+        let media_type = meta.trim();
+        if data.is_empty()
+            || !matches!(
+                media_type,
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            )
+        {
+            return None;
+        }
+        Some(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            },
+        }))
+    } else if url.starts_with("http://") || url.starts_with("https://") {
+        Some(serde_json::json!({
+            "type": "image",
+            "source": { "type": "url", "url": url },
+        }))
+    } else {
+        None
+    }
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -417,5 +486,54 @@ mod tests {
             body.get("output_config").is_none(),
             "no output_config block when effort is not configured (current behavior preserved)"
         );
+    }
+
+    #[test]
+    fn test_convert_user_content_maps_image_url_to_native_block() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "看图" },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,aGVsbG8=" } },
+                { "type": "image_url", "image_url": { "url": "https://example.com/a.png" } },
+            ],
+        })];
+        let out = transport.convert_messages(&messages);
+        let content = out[0]["content"]
+            .as_array()
+            .expect("content should be array");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(content[1]["source"]["data"], "aGVsbG8=");
+        assert_eq!(content[2]["type"], "image");
+        assert_eq!(content[2]["source"]["type"], "url");
+        assert_eq!(content[2]["source"]["url"], "https://example.com/a.png");
+    }
+
+    #[test]
+    fn test_convert_user_content_keeps_text_and_skips_unsupported_image() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "纯文本轮次" },
+                { "type": "image_url", "image_url": { "url": "ftp://x/a.png" } },
+            ],
+        })];
+        let out = transport.convert_messages(&messages);
+        let content = out[0]["content"].as_array().unwrap();
+        assert_eq!(
+            content.len(),
+            1,
+            "unsupported image block must be dropped, not forwarded"
+        );
+        assert_eq!(content[0]["text"], "纯文本轮次");
+        // 纯字符串 content 保持原样（不强制数组化）
+        let messages = vec![serde_json::json!({ "role": "user", "content": "hello" })];
+        let out = transport.convert_messages(&messages);
+        assert_eq!(out[0]["content"], "hello");
     }
 }

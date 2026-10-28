@@ -551,7 +551,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             //    85% 留出的 15% 余量正是提炼请求 + 摘要输出的安全空间。
             // 注入走 push_user_internal，不动系统提示前缀，不影响缓存命中。
             {
-                let cw = crate::agent::goal_types::get_context_window_for(
+                // 窗口解析走「与显示同源」的无 fallback 查询（2026-10-28）：查不到
+                // （即输入框分母 `--` 的同源场景）→ None → 跳过本块全部触发；
+                // 曾被 128K 兜底误判（1M 模型 302K 水位算成 236%）→ 错乱强制提炼
+                // 「中断后又执行」，宁少不错。
+                let cw = crate::agent::goal_types::try_get_context_window_for(
                     &self.agent.config.model,
                     Some(&self.agent.config.provider),
                 );
@@ -560,12 +564,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 // estimate 取 max(官方读数, 字符估算) 的保守值；中文密集时字符
                 // 估算仍可能偏低——85% 硬线是这类失真的最后一道确定性拦截。
                 let tokens = self.agent.session.estimate_token_usage();
-                if cw > 0 && tokens > 0 {
+                if let Some(cw) = cw.filter(|_| tokens > 0) {
                     let tier = crate::agent::distill::RefineTier::for_window(cw);
                     let force_ratio = tier.force_ratio(self.config.large_force_refine_threshold);
                     let ratio = tokens as f64 / cw as f64;
 
-                    if ratio >= 0.85 && !ctx_hard_stop_done {
+                    // 中断已请求：不再触发提炼大动作（马上从检查点收敛退出）——
+                    // 「中断后又执行」治理（2026-10-28）。
+                    if ratio >= 0.85 && !ctx_hard_stop_done && !cancel_flag.load(Ordering::SeqCst) {
                         // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
                         // 独立于 force 线——force 线已被模型无视时（或单次暴涨
                         // 直接从线下越到 85%+），此处是最后一个不依赖模型自觉
@@ -769,6 +775,19 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             self.agent.session.seal_interrupted_tools();
                             let session_json =
                                 serde_json::to_string(&self.agent.session).unwrap_or_default();
+                            // 收敛事件：该出口曾漏发——「界面永远 connecting」类回归的
+                            // 直接来源之一。前端依赖 execution_error 复位执行态并封口时长。
+                            if let Some(ref emitter) = self.agent.exec_emitter {
+                                emitter.emit(NuphusEvent::HudUpdate {
+                                    text: "已中断".into(),
+                                    phase: "done".into(),
+                                    step_kind: None,
+                                });
+                                emitter.emit(NuphusEvent::ExecutionError {
+                                    step_index: 0,
+                                    error: "任务已被用户中断".into(),
+                                });
+                            }
                             return Ok(crate::AgentOutput {
                                 message: "任务已被用户中断".to_string(),
                                 success: false,
@@ -813,6 +832,20 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                     continue;
                                 }
                             }
+                            // 失败必须发收敛事件（同中断 / DeadLoop 的处理模式）：前端依赖
+                            // execution_error 复位执行态；仅把失败写进 output/DB 会让界面
+                            // 永久停在「连接中」（2026-10-28 用户侧「模型连不上」现场）。
+                            if let Some(ref emitter) = self.agent.exec_emitter {
+                                emitter.emit(NuphusEvent::HudUpdate {
+                                    text: "执行失败".into(),
+                                    phase: "error".into(),
+                                    step_kind: None,
+                                });
+                                emitter.emit(NuphusEvent::ExecutionError {
+                                    step_index: 0,
+                                    error: format!("LLM请求失败：{err_detail}"),
+                                });
+                            }
                             return Ok(crate::AgentOutput {
                                 message: format!(
                                     "LLM请求失败：{}\n该错误不可重试。{}",
@@ -833,6 +866,22 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             self.agent.session.strip_incomplete_tools();
                             let session_json =
                                 serde_json::to_string(&self.agent.session).unwrap_or_default();
+                            // 失败必须发收敛事件（同中断模式）：前端依赖 execution_error 复位
+                            // 执行态；重试链用尽后仅落 output/DB 会让界面持续「连接中」。
+                            if let Some(ref emitter) = self.agent.exec_emitter {
+                                emitter.emit(NuphusEvent::HudUpdate {
+                                    text: "执行失败".into(),
+                                    phase: "error".into(),
+                                    step_kind: None,
+                                });
+                                emitter.emit(NuphusEvent::ExecutionError {
+                                    step_index: 0,
+                                    error: format!(
+                                        "LLM请求失败（已自动重试{}次）：{}",
+                                        max_llm_retries, err_detail
+                                    ),
+                                });
+                            }
                             return Ok(crate::AgentOutput {
                                 message: format!(
                                     "LLM请求失败（已自动重试{}次）：{}",
@@ -879,6 +928,17 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         let mut remaining = wait_ms;
                         while remaining > 0 {
                             if cancel_flag.load(Ordering::SeqCst) {
+                                if let Some(ref emitter) = self.agent.exec_emitter {
+                                    emitter.emit(NuphusEvent::HudUpdate {
+                                        text: "已中断".into(),
+                                        phase: "done".into(),
+                                        step_kind: None,
+                                    });
+                                    emitter.emit(NuphusEvent::ExecutionError {
+                                        step_index: 0,
+                                        error: "任务已被用户中断".into(),
+                                    });
+                                }
                                 return Ok(crate::AgentOutput {
                                     message: "任务已被用户中断".to_string(),
                                     success: false,
@@ -1040,9 +1100,22 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         "[AGENT] {} consecutive empty responses, breaking",
                         consecutive_empty
                     );
+                    // 失败必须发收敛事件（同中断 / DeadLoop 模式）：前端依赖 execution_error
+                    // 复位执行态；空 message 还会让失败气泡落到「未知错误」文案——两处补齐。
+                    if let Some(ref emitter) = self.agent.exec_emitter {
+                        emitter.emit(NuphusEvent::HudUpdate {
+                            text: "已终止".into(),
+                            phase: "error".into(),
+                            step_kind: None,
+                        });
+                        emitter.emit(NuphusEvent::ExecutionError {
+                            step_index: 0,
+                            error: "模型连续多次返回空响应，本轮已终止".into(),
+                        });
+                    }
                     return Ok(crate::AgentOutput {
                         success: false,
-                        message: String::new(),
+                        message: "模型连续多次返回空响应，本轮已终止".to_string(),
                         steps: self.agent.steps.clone(),
                         retry_session: Some(
                             serde_json::to_string(&self.agent.session).unwrap_or_default(),

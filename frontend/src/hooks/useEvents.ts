@@ -446,11 +446,18 @@ export function useEvents(h: EventHandlers) {
           finishWithMessage((event.message || '').trim(), 'success')
           break
         }
-        case 'execution_error': {
+case 'execution_error': {
           const isInterrupted = h.refs.interruptedRef.current
           // 用户中断：不播错误音效、mood 回到 idle（中断不是失败）；
           // 其余 LLM 错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
           if (!isInterrupted) playUiSound('error')
+          // 输入框连接状态复位：health 机此前只认后端 `error` 事件，
+          // execution_error（不可重试失败 / 重试用尽等出口）被漏接 → 状态永久
+          // 停在「连接中」且无任何原因（2026-10-28 用户侧「connecting 一直转、
+          // 什么提示都没有」）。非中断失败一律转「已断开」并把原因记入时间线。
+          if (!isInterrupted) {
+            setHealth('offline', event.error || '模型请求未能完成', 'disconnect', 'failed')
+          }
           const s = h.refs.streamingMsgId.current
           if (s) {
             h.setMessages(prev =>

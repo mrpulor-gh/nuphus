@@ -702,26 +702,37 @@ pub async fn submit_user_message<R: tauri::Runtime>(
         let registry = factory2
             .registry()
             .map_err(|e| format!("无法加载模型配置，请检查 providers.toml: {e}"))?;
-        let leader_binding = crate::commands::config::llm::effective_model_binding(
+let leader_binding = crate::commands::config::llm::effective_model_binding(
             &state.llm_config_path,
             &registry,
             "leader",
         )?;
-        let workflow_binding = crate::commands::config::llm::effective_model_binding(
-            &state.llm_config_path,
-            &registry,
-            "workflow",
-        )?;
-        let exec_binding = crate::commands::config::llm::effective_model_binding(
-            &state.llm_config_path,
-            &registry,
-            "exec",
-        )?;
-        let custom_binding = crate::commands::config::llm::effective_model_binding(
-            &state.llm_config_path,
-            &registry,
-            "custom",
-        )?;
+        // 次要 agent 绑定（workflow / exec / custom）：解析失败**不阻塞主对话**——
+        // 回落 leader。设计口径（2026-10-28）：配置就是模型+provider 两字段，
+        // 「谁用解析谁」；exec 未在模型界面声明即跟随 leader，声明失效同样跟随。
+        // 此前四路任一解析失败都会拒发整条消息（「模型连不上」放大机制之一）。
+        // leader 仍为硬锚：其失败显式上抛，用户得到明确错误。
+        let fallback_binding = |name: &str| -> (String, String) {
+            match crate::commands::config::llm::effective_model_binding(
+                &state.llm_config_path,
+                &registry,
+                name,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        "[BINDING] {} 绑定不可用（{}），回落 leader（{}）",
+                        name,
+                        e,
+                        leader_binding.0
+                    );
+                    leader_binding.clone()
+                }
+            }
+        };
+        let workflow_binding = fallback_binding("workflow");
+        let exec_binding = fallback_binding("exec");
+        let custom_binding = fallback_binding("custom");
         let resolve_llm =
             |b: &(String, String)| -> Result<Arc<dyn nuphus::api::ApiClient>, String> {
                 factory2
@@ -729,9 +740,21 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     .map_err(|e| format!("create LLM client failed ({}:{}): {e}", b.0, b.1))
             };
         let leader_llm = resolve_llm(&leader_binding)?;
-        let workflow_llm = resolve_llm(&workflow_binding)?;
-        let exec_llm = resolve_llm(&exec_binding)?;
-        let custom_llm = resolve_llm(&custom_binding)?;
+        // 次要路 client 构建失败同样回落 leader（保证受理后绝不因次要绑定中断）
+        let resolve_llm_or_leader =
+            |name: &str, b: &(String, String)| -> Arc<dyn nuphus::api::ApiClient> {
+                resolve_llm(b).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "[BINDING] {} LLM 客户端构建失败（{}），回落 leader",
+                        name,
+                        e
+                    );
+                    leader_llm.clone()
+                })
+            };
+        let workflow_llm = resolve_llm_or_leader("workflow", &workflow_binding);
+        let exec_llm = resolve_llm_or_leader("exec", &exec_binding);
+        let custom_llm = resolve_llm_or_leader("custom", &custom_binding);
 
         // 受理事件（主路径）：运行前置全部就绪（registry/LLM client/workflow agent 均已解析，
         // 上方 ? 是本路径最后一批「受理前」Err 出口）→ 此处起进入 ReAct 循环，消息必被处理。
@@ -1242,18 +1265,26 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                 let cw = nuphus::agent::goal_types::try_get_context_window_for(
                     &workflow_binding.1,
                     Some(workflow_binding.0.as_str()),
-                )
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        "[REFINE] workflow 模型 {}/{} 无 context_window 元数据，回落到 128K 兜底。\
-                         如需准确分档，请在模型设置中手动指定上下文窗口。",
-                        workflow_binding.0,
-                        workflow_binding.1
-                    );
-                    128_000
-                });
-                wa.maybe_refine_session(cw, large_force_refine_threshold2, Some(&emitter))
-                    .await;
+)
+                ;
+                // 中断已请求 / 窗口未知 → 跳过（同 Leader 分支口径，2026-10-28）。
+                match cw {
+                    Some(cw) if !cancel_flag2.load(Ordering::SeqCst) => {
+                        wa.maybe_refine_session(cw, large_force_refine_threshold2, Some(&emitter))
+                            .await;
+                    }
+                    Some(_) => {
+                        tracing::info!("[REFINE] cancel 已置位，跳过 workflow 收尾提炼");
+                    }
+                    None => {
+                        tracing::warn!(
+                            "[REFINE] workflow 模型 {}/{} 无窗口元数据（与输入框分母同源），\
+                             跳过自动提炼以避免阈值误判",
+                            workflow_binding.0,
+                            workflow_binding.1
+                        );
+                    }
+                }
                 let mut guard = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
                 guard.workflow_agent = wa_opt.take();
             }
@@ -1289,27 +1320,36 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     ttft_ms: None,
                 });
 
-                // 窗口必须走**无 fallback** 查询：猜一个 128K 会让未知窗口的模型
-                // 静默落进 small 档（无提示、75% 静默提炼），用户看不到 slider 也无从
-                // 知晓阈值依据是什么。custom 段模型靠 providers.toml 的手动设置入口
-                // （set_model_context_window）显式声明；128K 只是这条路也走不通时的
-                // 最后兜底，且必须留下可观测痕迹，不能无声无息。
+// 窗口解析与显示同源、**无 128K 兜底**（2026-10-28）：未知窗口
+                // （输入框分母同源 `--`）→ 跳过本次收尾提炼（宁少不错）——曾用
+                // 128K 兜底把 1M 模型的正常水位误判为远超阈值，触发错乱强制提炼。
+                // custom 段模型靠 providers.toml 的手动设置入口
+                // （set_model_context_window）显式声明，仍是首选路径。
                 let cw = nuphus::agent::goal_types::try_get_context_window_for(
                     &rt.config().model,
                     Some(rt.config().provider.as_str()),
-                )
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        "[REFINE] 模型 {}/{} 无 context_window 元数据，回落到 128K 兜底。\
-                         如需准确分档，请在模型设置中手动指定上下文窗口。",
-                        rt.config().provider,
-                        rt.config().model
-                    );
-                    128_000
-                });
+)
+                ;
                 let large_force_refine_threshold = rt.config().large_force_refine_threshold;
-                rt.maybe_refine_session(&cancel_flag2, cw, large_force_refine_threshold)
-                    .await;
+// 中断已请求 → 不启动新提炼；窗口未知（与显示 `--` 同源）→ 跳过
+                // （宁少不错；2026-10-28「中断后又执行」/错乱提炼治理）。
+                match cw {
+                    Some(cw) if !cancel_flag2.load(Ordering::SeqCst) => {
+                        rt.maybe_refine_session(&cancel_flag2, cw, large_force_refine_threshold)
+                            .await;
+                    }
+                    Some(_) => {
+                        tracing::info!("[REFINE] cancel 已置位，跳过收尾提炼");
+                    }
+                    None => {
+                        tracing::warn!(
+                            "[REFINE] 模型 {}/{} 无窗口元数据（与输入框分母 `--` 同源），\
+                             跳过自动提炼以避免阈值误判",
+                            rt.config().provider,
+                            rt.config().model
+                        );
+                    }
+                }
 
                 {
                     let mut guard = state.runtime.lock().unwrap_or_else(|e| e.into_inner());

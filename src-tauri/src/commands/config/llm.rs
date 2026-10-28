@@ -2154,7 +2154,28 @@ pub async fn list_provider_models(
     provider: String,
     base_url: Option<String>,
 ) -> Result<Vec<ProviderModelBrief>, String> {
-    fetch_provider_models(&api_key, &provider, base_url.as_deref()).await
+    let models = fetch_provider_models(&api_key, &provider, base_url.as_deref()).await?;
+
+    // 「连接」不是只给前端看的临时探测：context_window 是后续切换、runtime、
+    // Exec 与 ctx 展示共同消费的模型事实。连接拿到的窗口立即按同一 provider/model
+    // 权威链写回 providers.toml；remove_missing=false，连接失败/空列表不会删已有模型。
+    if let Some(config_path) = get_config_path() {
+        let ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
+        let agg = if or_agg::has_vendor(&provider) || is_custom_segment_name(&provider) {
+            or_agg::ensure_cache(&openrouter_cache_path()).await
+        } else {
+            Vec::new()
+        };
+        let provider_type = provider_kind_for_segment(&provider);
+        let caps = ProviderCapabilitySource {
+            provider_type: provider_type.as_str(),
+            provider_name: &provider,
+            agg: &agg,
+        };
+        let _ = sync_provider_models(&config_path, &provider, &ids, &caps, false)?;
+    }
+
+    Ok(models)
 }
 
 /// 读指定 provider 段已存的 API key（ModelRegistry 加载即透明解密，明文不出进程）。
@@ -2233,8 +2254,9 @@ pub async fn refresh_provider_models(
     let mut report = SyncReport::default();
     if let Some(config_path) = get_config_path() {
         let ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
-        // OpenRouter 聚合库：仅同步路径联网（ensure_cache），toml_ops 层只消费条目。
-        let agg = if or_agg::has_vendor(&provider) {
+        // OpenRouter 聚合库：官方段走 vendor 映射；custom/opencode-go 等
+        // 中转段也必须加载缓存，供 lookup_generic 补齐 context_window。
+        let agg = if or_agg::has_vendor(&provider) || is_custom_segment_name(&provider) {
             or_agg::ensure_cache(&openrouter_cache_path()).await
         } else {
             Vec::new()
@@ -2275,7 +2297,11 @@ impl CapabilitySource for ProviderCapabilitySource<'_> {
         if let Some(cap) = builtin_capability(self.provider_type, model_id) {
             return Some(cap);
         }
-        let entry = or_agg::lookup(self.agg, self.provider_name, model_id)?;
+        let entry = or_agg::lookup(self.agg, self.provider_name, model_id).or_else(|| {
+            is_custom_segment_name(self.provider_name)
+                .then(|| or_agg::lookup_generic(self.agg, model_id))
+                .flatten()
+        })?;
         // 只写权威明确声明的字段：模态/efforts 为空 = 该源无此信息（未知留空，
         // 不做字符串启发式猜测）。
         Some(CapabilityOverride {
@@ -2924,6 +2950,20 @@ pub fn get_context_limit(state: State<'_, AppState>) -> Result<usize, String> {
         super::model_metadata::configured_context_window(&state.llm_config_path, &cfg)
     });
     if let Some(limit) = configured {
+        return Ok(limit);
+    }
+
+    // 3. 条目未写窗口时的兜底（2026-10-28「模型页 1.1M、输入框 --」回归修复；
+    //    与预算/收尾提炼共用**唯一口径** `try_get_context_window_for`：
+    //    显式 → 唯一候选（多候选不猜）→ builtin 元数据）。
+    //    仍未知 → 0（"--"），不伪造 128000。
+    let fallback = cw.llm_config.clone().and_then(|cfg| {
+        nuphus::agent::goal_types::try_get_context_window_for(
+            &cfg.model,
+            Some(cfg.provider.as_str()),
+        )
+    });
+    if let Some(limit) = fallback {
         return Ok(limit);
     }
     Ok(0)

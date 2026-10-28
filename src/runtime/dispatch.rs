@@ -257,7 +257,10 @@ pub(crate) async fn handle_task_dispatch(
             SubTaskRunner::new_free(exec_llm.clone(), exec_tools, system_prompt, brief.clone());
         // clone：同一份派发正文还要进台账 task 字段（任务面板点开要看它）
         new_agent.session.push_user(dynamic_msg.clone());
-        new_agent.set_context_window(goal_types::get_context_window_of(exec_llm.as_ref()));
+        new_agent.set_context_window(goal_types::try_get_context_window_for(
+            exec_llm.model_name(),
+            Some(exec_llm.provider_name()),
+        ));
         new_agent.set_goal_type(goal_type);
         // Inject goal-type warmup reminders (subtask quality guardrails)
         let warmups = goal_types::get_warmup_reminders(goal_type);
@@ -280,6 +283,14 @@ pub(crate) async fn handle_task_dispatch(
         }
         new_agent
     };
+
+    // 每次派发都重新绑定当前 exec client 的 provider+model 窗口。
+    // 不能只在新建 agent 时设置：同 turn 的 ExecPool 复用可能发生在后台元数据
+    // 校准之后；未知仍保持 None，绝不回退到 128K。
+    exec_agent.set_context_window(goal_types::try_get_context_window_for(
+        exec_llm.model_name(),
+        Some(exec_llm.provider_name()),
+    ));
 
     // Set leader session/turn for causal chain linking in memory entries
     exec_agent.leader_session_id = Some(agent.session.id.clone());
@@ -337,7 +348,10 @@ pub(crate) async fn handle_task_dispatch(
 
     // ── 收集同 turn 回复 + 上下文压缩检查 ──
     exec_agent.turn_replies.push(summary.clone());
-    let cw = goal_types::get_context_window_of(exec_llm.as_ref());
+    let cw = goal_types::try_get_context_window_for(
+        exec_llm.model_name(),
+        Some(exec_llm.provider_name()),
+    );
     let usage = exec_agent.session.estimate_token_usage();
     // Exec 的"压缩"不是 LLM 提炼：丢弃原始 session，只拼接前序任务的最终回复
     // （见下方 turn_replies join）。它是字符串替换，成本远低于语义提炼，因此比例
@@ -347,15 +361,19 @@ pub(crate) async fn handle_task_dispatch(
     // 这里曾经是 `cw*0.50 && usage >= 300_000`：那个绝对门槛让小窗口 Exec
     // （128K×0.5=64K，远小于 300K）永不压缩，session 无上限膨胀直到被截断。
     // 改为纯比例后小窗口同样受控。
-    let compress_threshold = (cw as f64 * EXEC_COMPRESS_RATIO) as usize;
-    if usage >= compress_threshold {
-        exec_agent.needs_compress = true;
-        tracing::info!(
-            "[ExecPool] 标记压缩: turn_replies={}, usage={}, threshold={}",
-            exec_agent.turn_replies.len(),
-            usage,
-            compress_threshold
-        );
+    if let Some(cw) = cw {
+        let compress_threshold = (cw as f64 * EXEC_COMPRESS_RATIO) as usize;
+        if usage >= compress_threshold {
+            exec_agent.needs_compress = true;
+            tracing::info!(
+                "[ExecPool] 标记压缩: turn_replies={}, usage={}, threshold={}",
+                exec_agent.turn_replies.len(),
+                usage,
+                compress_threshold
+            );
+        }
+    } else {
+        tracing::debug!("[ExecPool] context window unknown; skip session compression threshold");
     }
 
     // P2 — Exec returns to pool, same-turn tasks share raw session

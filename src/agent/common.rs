@@ -395,6 +395,13 @@ pub fn extract_tool_calls(blocks: &[ContentBlock]) -> Vec<ToolCall> {
 pub fn is_retryable_llm_error(err: &str) -> bool {
     let e = err.to_lowercase();
 
+    // 限流/并发类：显式不可重试（2026-10-28）——此前 "429"/"rate limit" 在
+    // 下方 retryable 表内（且默认分支放行），会在服务商并发限制下连环重试、
+    // 反复被拒；改为一次失败 + 指引「稍后重试」，重试时机交用户。
+    if is_rate_limit_error(&e) {
+        return false;
+    }
+
     // --- Non-retryable: model/auth/balance/param errors ---
     let non_retryable = [
         "400",
@@ -467,9 +474,8 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
         "handshake failed",
         "partial data",
         "unexpected eof",
-        "429",
-        "rate limit",
-        "too many requests",
+        // 429 / rate limit / too many requests 已由入口处 is_rate_limit_error
+        // 判为不可重试（2026-10-28）：并发/限流下连环重试只会反复被拒。
     ];
     for pat in &retryable {
         if e.contains(pat) {
@@ -507,6 +513,8 @@ pub enum LlmErrorKind {
     RealName,
     /// 余额 / 配额不足。
     Balance,
+    /// 服务商限流 / 并发限制（429 等）——非配置错误，稍后重试即可。
+    RateLimit,
     /// 内容被服务商安全审核拦截（风控）。
     ContentPolicy,
     /// 模型或参数不被该服务商接受。
@@ -533,6 +541,9 @@ impl LlmErrorKind {
                  请到对应服务商控制台完成实名认证后重试"
             }
             LlmErrorKind::Balance => "账户余额或配额不足，请到对应服务商控制台查询后重试",
+            LlmErrorKind::RateLimit => {
+                "服务商限流 / 并发限制，稍后重试即可（频繁出现可在服务商控制台核对并发与速率限额）"
+            }
             LlmErrorKind::ContentPolicy => {
                 "请求内容被该服务商的安全审核拦截，重试无意义。\
                  可换一个服务商或模型、精简历史上下文，或新开会话后重试"
@@ -649,6 +660,11 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
         }
     }
 
+    // --- 限流 / 并发（不是配置错误：稍后重试即可；429 最常见）---
+    if is_rate_limit_error(&e) {
+        return LlmErrorKind::RateLimit;
+    }
+
     // --- 鉴权 ---
     let auth = [
         "401",
@@ -721,8 +737,38 @@ pub fn wants_file_output(input: &str) -> bool {
     lower.contains("save") || lower.contains("analysis") || lower.contains("analyze")
 }
 
+/// 限流 / 并发类错误识别（服务商措辞：`rate limit` / `too many requests` /
+/// `concurrent` / `并发` / `限速` 等）。三个消费点共用同一判定：
+/// - `is_retryable_llm_error`：显式归「不可重试」（防「并发/429」落入默认放行）；
+/// - `is_network_error`（Exec 流重试入口）：先行排除——配额受限下重试 = 同一
+///   并发配额上的连环请求，只会反复被拒（2026-10-28 治理）；
+/// - `classify_llm_error`：归 `LlmErrorKind::RateLimit` 给「稍后重试」指引。
+pub fn is_rate_limit_error(err: &str) -> bool {
+    let e = err.to_lowercase();
+    [
+        "429",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "too many request",
+        "concurrent",
+        "concurrency",
+        "并发",
+        "限速",
+        "频率限制",
+        "请求频率",
+    ]
+    .iter()
+    .any(|p| e.contains(p))
+}
+
 pub fn is_network_error(err: &str) -> bool {
     let err = err.to_lowercase();
+    // 限流/并发类先行排除：即便文案夹带 "timeout" 等网络词（排队超时、并发
+    // 超时类措辞），也不进入重试链——重试会再次撞同一并发配额。
+    if is_rate_limit_error(&err) {
+        return false;
+    }
     err.contains("connection refused")
         || err.contains("connection reset")
         || err.contains("connection closed")
@@ -898,6 +944,12 @@ mod tests {
         assert!(is_retryable_llm_error("503 service unavailable"));
         assert!(is_retryable_llm_error("connection reset by peer"));
         // 分类对网络错误仍会给出类别（关键词可能擦边），但重试决策不受它影响
-        assert!(is_retryable_llm_error("429 Too Many Requests"));
+        // 2026-10-28 指令：并发/限流类不自动重试（一次性失败 + 指引「稍后重试」，
+        // 重试时机交用户；避免「连环重试撞并发」）。
+        assert!(!is_retryable_llm_error("429 Too Many Requests"));
+        assert!(matches!(
+            classify_llm_error("API error 429: Too Many Requests"),
+            LlmErrorKind::RateLimit
+        ));
     }
 }

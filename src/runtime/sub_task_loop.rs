@@ -749,38 +749,39 @@ impl super::SubTaskRunner {
             // Exec 专属硬劝导线，Leader 侧无此线（force 线即分档内 75/80/50–80），
             // 动作只有劝导，没有压缩。
             let usage = self.session.estimate_token_usage();
-            let cw_exec = self.config.context_window;
-            if cw_exec > 0 && usage > 0 {
-                let tier = crate::agent::distill::RefineTier::for_window(cw_exec);
-                let ratio = usage as f64 / cw_exec as f64;
-                // 85% 硬止损：最强劝导（仍不 refine、不截断执行）
-                if ratio >= 0.85 && self.max_warning_injected < 4 {
-                    self.max_warning_injected = 4;
-                    tracing::warn!(
-                        "[EXEC CONTEXT] usage {}/{} ({:.1}%) — hard-stop advisory (no refine by design)",
-                        usage, cw_exec, ratio * 100.0
-                    );
-                    self.reminders.enqueue(
-                        format!(
-                            "上下文使用量已达 {:.0}% ({} tokens)。请立即停止非关键探索，基于已获得的信息尽快产出结论回复 Leader——后续由 Leader 决策（拆分任务或重试）。",
-                            ratio * 100.0, usage
-                        ),
-                        3,
-                        ReminderPriority::Critical,
-                        ReminderCategory::DeviationCorrect,
-                    );
-                } else if let Some(pr) = tier.prompt_ratio() {
-                    if ratio >= pr && self.max_warning_injected < 2 {
-                        self.max_warning_injected = 2;
+            if let Some(cw_exec) = self.config.context_window.filter(|value| *value > 0) {
+                if usage > 0 {
+                    let tier = crate::agent::distill::RefineTier::for_window(cw_exec);
+                    let ratio = usage as f64 / cw_exec as f64;
+                    // 85% 硬止损：最强劝导（仍不 refine、不截断执行）
+                    if ratio >= 0.85 && self.max_warning_injected < 4 {
+                        self.max_warning_injected = 4;
+                        tracing::warn!(
+                            "[EXEC CONTEXT] usage {}/{} ({:.1}%) — hard-stop advisory (no refine by design)",
+                            usage, cw_exec, ratio * 100.0
+                        );
                         self.reminders.enqueue(
                             format!(
-                                "当前上下文使用量已达 {:.0}% ({} tokens)。请规划收敛：优先完成核心目标，尽快输出结论回复 Leader。",
+                                "上下文使用量已达 {:.0}% ({} tokens)。请立即停止非关键探索，基于已获得的信息尽快产出结论回复 Leader——后续由 Leader 决策（拆分任务或重试）。",
                                 ratio * 100.0, usage
                             ),
                             3,
-                            ReminderPriority::High,
+                            ReminderPriority::Critical,
                             ReminderCategory::DeviationCorrect,
                         );
+                    } else if let Some(pr) = tier.prompt_ratio() {
+                        if ratio >= pr && self.max_warning_injected < 2 {
+                            self.max_warning_injected = 2;
+                            self.reminders.enqueue(
+                                format!(
+                                    "当前上下文使用量已达 {:.0}% ({} tokens)。请规划收敛：优先完成核心目标，尽快输出结论回复 Leader。",
+                                    ratio * 100.0, usage
+                                ),
+                                3,
+                                ReminderPriority::High,
+                                ReminderCategory::DeviationCorrect,
+                            );
+                        }
                     }
                 }
             }

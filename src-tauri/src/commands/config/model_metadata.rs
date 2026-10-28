@@ -366,25 +366,29 @@ async fn discover_capabilities(
                 }
             }
         }
-        // ③ OpenRouter 聚合库（权威目录）。
-        //    · context 兜底保持原语义：仅厂商映射段（has_vendor）；
-        //    · efforts 兜底放开到全部段：厂商映射优先，中转 / 自建网关
-        //      （custom-*/opencode-go 等）走 tier-2 全目录唯一基名匹配 ——
-        //      中转站转发的大多是官方同名模型，能力数据可信；零或多命中不采信。
-        let want_vendor_ctx = result.context.is_none() && aggregator::has_vendor(&cfg.provider);
-        if want_vendor_ctx || result.efforts.is_empty() {
+        // ③ OpenRouter 聚合库（权威目录）。context 与 efforts 共用同一
+        // provider-aware 口径：官方段优先 vendor 精确匹配；custom/opencode-go
+        // 等中转段走 lookup_generic 的唯一厂商护栏。此前 context 只对
+        // has_vendor 生效，导致连接链已有 1.1M、后台校准却仍为 None。
+        let want_context = result.context.is_none();
+        if want_context || result.efforts.is_empty() {
             if let Some(dir) = path.parent() {
                 let entries = aggregator::ensure_cache(&aggregator::cache_path(dir)).await;
                 let vendor_lookup = || aggregator::lookup(&entries, &cfg.provider, &cfg.model);
-                if want_vendor_ctx {
-                    result.context = vendor_lookup()
+                let generic_lookup = || aggregator::lookup_generic(&entries, &cfg.model);
+                if want_context {
+                    let lookup = if aggregator::has_vendor(&cfg.provider) {
+                        vendor_lookup().or_else(|| generic_lookup())
+                    } else {
+                        generic_lookup()
+                    };
+                    result.context = lookup
                         .and_then(|entry| entry.context_length)
                         .map(|n| n as usize)
                         .filter(|n| *n > 0);
                 }
                 if result.efforts.is_empty() {
-                    let lookup = vendor_lookup()
-                        .or_else(|| aggregator::lookup_generic(&entries, &cfg.model));
+                    let lookup = vendor_lookup().or_else(|| generic_lookup());
                     if let Some(entry) = lookup {
                         result.efforts = entry.supported_efforts.clone();
                         result.default_effort = result

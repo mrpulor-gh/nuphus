@@ -610,9 +610,14 @@ pub enum FailKind {
 
 /// 连接握手错误分级（纯函数）：HTTP 4xx → Config（鉴权/路由错误）；
 /// 5xx / Io / 其余 → Network。
+///
+/// 例外（2026-10-28）：429 Too Many Requests 是服务端限速 / 过载的**暂时性**
+/// 拒绝（中继重连风暴常见），按网络类退避重试即可恢复；先前归入 Config 会
+/// 直切 60s 慢档并提示「请检查 relay_client.json」，把用户引向无关的配置排查。
 fn classify_connect_error(err: &tungstenite::Error) -> FailKind {
     match err {
         tungstenite::Error::Http(resp) => match resp.status().as_u16() {
+            429 => FailKind::Network,
             400..=499 => FailKind::Config,
             _ => FailKind::Network,
         },
@@ -1745,13 +1750,20 @@ mod backoff_tests {
 
     #[test]
     fn classify_http_4xx_is_config() {
-        for s in [400u16, 401, 403, 404, 429] {
+        for s in [400u16, 401, 403, 404] {
             assert_eq!(
                 classify_connect_error(&http_err(s)),
                 FailKind::Config,
                 "status {s} 应为 Config"
             );
         }
+    }
+
+    #[test]
+    fn classify_http_429_is_network() {
+        // 429（限速 / 过载）是暂时性拒绝：按网络类退避重试，
+        // 不落入「配置/鉴权类错误」把用户引向检查配置。
+        assert_eq!(classify_connect_error(&http_err(429)), FailKind::Network);
     }
 
     #[test]

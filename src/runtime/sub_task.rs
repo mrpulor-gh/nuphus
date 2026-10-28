@@ -29,15 +29,16 @@ use std::sync::Arc;
 /// SubTaskRunner configuration
 pub struct SubTaskConfig {
     pub max_iterations: usize,
-    /// Model context window size (for byte estimation), default 128000
-    pub context_window: usize,
+    /// Model context window size (for context-water-level monitoring).
+    /// None = unknown; unknown must not be treated as a guessed 128K limit.
+    pub context_window: Option<usize>,
 }
 
 impl Default for SubTaskConfig {
     fn default() -> Self {
         Self {
             max_iterations: GoalType::MAX_ITERATIONS,
-            context_window: 128000,
+            context_window: None,
         }
     }
 }
@@ -198,8 +199,8 @@ impl SubTaskRunner {
     }
 
     /// Set model context window size (for 60% distillation threshold)
-    pub fn set_context_window(&mut self, window: usize) {
-        self.config.context_window = window;
+    pub fn set_context_window(&mut self, window: Option<usize>) {
+        self.config.context_window = window.filter(|value| *value > 0);
     }
 
     /// Set pause flag (set externally after user clicks pause button)

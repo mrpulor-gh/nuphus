@@ -326,20 +326,22 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Load tool dependencies from TOML file, overriding registered tools
+    /// 工具依赖表（仓库 `config/tool_deps.toml`，**编译期内嵌**）。
     ///
-    /// File format: each section name as group, inner key=tool name (suffix), value=dependency list.
-    /// Full tool name = "group_key" (e.g. [file] write = ["file_mkdir"] → file_write depends on file_mkdir).
-    /// Silently skip if file doesn't exist, only log warning.
-    fn load_depends_from_file(&mut self, path: &str) {
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Tool deps file '{}' not loaded: {}", path, e);
-                return;
-            }
-        };
+    /// 为什么内嵌而不是运行时读文件（2026-10-28）：原实现按相对路径
+    /// `config/tool_deps.toml` 读 CWD——开发机（仓库根）命中，安装版用户
+    /// CWD 不同必然 miss（「本机正常、用户不正常」类环境分裂；且发版打包
+    /// 资源为空，文件根本不在安装包内）。依赖表是工具 schema 的静态元数据、
+    /// 随代码版本演进——内嵌后所有运行形态（dev / 安装版 / 任意工作目录）
+    /// 行为一致，不再有「加载失败」的静默降级。
+    pub(crate) const EMBEDDED_TOOL_DEPS: &str = include_str!("../../config/tool_deps.toml");
 
+    /// Apply tool dependency declarations from a TOML string.
+    ///
+    /// Format: each section name as group, inner key=tool name (suffix), value=dependency list.
+    /// Full tool name = "group_key" (e.g. [file] write = ["FilesInfo"] → file_write).
+    /// 未注册的名字仅 debug 跳过（名称体系随工具演进，缺条目不算错误）；返回应用数。
+    fn apply_tool_deps_from_str(&mut self, content: &str) -> usize {
         #[derive(Deserialize)]
         struct DepsFile {
             #[serde(flatten)]
@@ -347,11 +349,11 @@ impl ToolRegistry {
                 std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>,
         }
 
-        let deps: DepsFile = match toml::from_str(&content) {
+        let deps: DepsFile = match toml::from_str(content) {
             Ok(d) => d,
             Err(e) => {
-                tracing::warn!("Failed to parse tool deps file '{}': {}", path, e);
-                return;
+                tracing::warn!("Failed to parse embedded tool deps: {}", e);
+                return 0;
             }
         };
 
@@ -367,9 +369,14 @@ impl ToolRegistry {
                 }
             }
         }
+        applied
+    }
+
+    /// 应用编译期内嵌的默认工具依赖表（所有 registry 构造器共用的唯一入口）。
+    fn load_embedded_tool_deps(&mut self) {
+        let applied = self.apply_tool_deps_from_str(Self::EMBEDDED_TOOL_DEPS);
         tracing::info!(
-            "Loaded tool dependencies from '{}': {} applied",
-            path,
+            "Loaded tool dependencies from embedded table: {} applied",
             applied
         );
     }
@@ -1271,7 +1278,7 @@ impl ToolRegistry {
         registry.register_leader_only_tools();
         registry.register_workflow_run();
         registry.register_workflow_validate();
-        registry.load_depends_from_file("config/tool_deps.toml");
+        registry.load_embedded_tool_deps();
         tracing::info!("Registered {} leader tools", registry.len());
         registry
     }
@@ -1326,7 +1333,7 @@ impl ToolRegistry {
             executor: |_, _| Ok(crate::ToolResult::success("wf_call handled by executor")),
             depends_on: vec![],
         });
-        registry.load_depends_from_file("config/tool_deps.toml");
+        registry.load_embedded_tool_deps();
         tracing::info!("Registered {} builtin tools", registry.len());
         registry
     }
@@ -1356,7 +1363,7 @@ impl ToolRegistry {
         // 单靠 register_base_tools 挡不住 browser：它在 get_desktop_schemas 里是无条件
         // 附加的，故必须在 registry 层显式收口（见 automation_tools_enabled 文档）。
         registry.automation_tools_enabled = false;
-        registry.load_depends_from_file("config/tool_deps.toml");
+        registry.load_embedded_tool_deps();
         tracing::info!("Registered {} exec tools", registry.len());
         registry
     }
@@ -1374,7 +1381,7 @@ impl ToolRegistry {
         let client = DesktopClient::new();
         registry.set_desktop_client(client);
         registry.install_platform_semantic_desktop();
-        registry.load_depends_from_file("config/tool_deps.toml");
+        registry.load_embedded_tool_deps();
         tracing::info!("Registered {} work_agent tools", registry.len());
         registry
     }
@@ -1640,6 +1647,20 @@ mod tests {
         assert!(registry.get("Read").is_some());
         assert!(registry.get("Write").is_some());
         assert!(registry.get("Edit").is_some());
+    }
+
+    #[test]
+    fn embedded_tool_deps_apply_on_registries() {
+        // 内嵌依赖表必须真实命中已注册工具（applied > 0）——守护「加载链 +
+        // 名称体系」不静默全 miss（2026-10-28：原实现读 CWD 相对路径，安装版
+        // 必然加载失败；改为编译期内嵌后本测试防回归）。
+        // 不锁死具体条目数：工具名演进允许条目增减，但全 miss 必须红灯。
+        let mut registry = ToolRegistry::leader();
+        let applied = registry.apply_tool_deps_from_str(ToolRegistry::EMBEDDED_TOOL_DEPS);
+        assert!(
+            applied > 0,
+            "内嵌工具依赖表应至少命中一个已注册工具（applied={applied}）"
+        );
     }
 
     #[test]
