@@ -2340,6 +2340,35 @@ const en: Record<string, string> = {
   'help.shortcut.toolColorPicker': 'Global color picker',
   'help.shortcut.imeHint':
     'While an IME (Chinese, Japanese, etc.) is composing, Enter only confirms the highlighted candidate — it will not send. Press Enter again once the text is committed.',
+  'help.modelHelp.title': 'Model Connection Quick Reference',
+  'help.modelHelp.symptom': 'What you see',
+  'help.modelHelp.cause': 'Possible cause',
+  'help.modelHelp.action': 'What to do',
+  'help.modelHelp.connect.symptom': 'The model cannot connect',
+  'help.modelHelp.connect.cause':
+    'The service address, credential, or model name may not match, or the network may be temporarily unavailable.',
+  'help.modelHelp.connect.action':
+    'Check the service address, credential, and model name in Model Settings, then connect again.',
+  'help.modelHelp.wait.symptom': 'The request does not respond for a long time',
+  'help.modelHelp.wait.cause':
+    'The provider may be slow, the network may be unstable, or the service may be queuing requests.',
+  'help.modelHelp.wait.action':
+    'Wait a moment and try again; if it continues, check the network and provider status.',
+  'help.modelHelp.incomplete.symptom': 'The reply ends early or is incomplete',
+  'help.modelHelp.incomplete.cause':
+    'The output is long, the model is reasoning for an extended time, or the provider ended the response early.',
+  'help.modelHelp.incomplete.action':
+    'Narrow the task and ask in steps; switch to a model with more context capacity if needed.',
+  'help.modelHelp.busy.symptom': 'The service is busy or requests are being limited',
+  'help.modelHelp.busy.cause':
+    'The provider has reached its current concurrency or access-frequency limit.',
+  'help.modelHelp.busy.action':
+    'Try again later and avoid repeated submissions; check your provider limits if it happens often.',
+  'help.modelHelp.context.symptom': 'The context capacity is unknown',
+  'help.modelHelp.context.cause':
+    'The model catalog does not provide capacity information, or the provider did not return its metadata.',
+  'help.modelHelp.context.action':
+    'Connect and refresh the model list; if it remains unknown, enter the capacity manually in Model Settings.',
   'help.entries': 'Where to Find Things',
   'help.entries.settings':
     'Gear icon (top-right of chat) = Settings: five groups — Shortcuts, AI, Connect, Workspace, System — hold every setting.',

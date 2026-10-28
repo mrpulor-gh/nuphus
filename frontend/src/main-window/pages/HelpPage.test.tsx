@@ -11,7 +11,15 @@ import { describe, expect, it } from 'vitest'
 import { HelpPage } from './HelpPage'
 import { formatPrimaryShortcut } from '../../ui/platformShortcut'
 
-const SECTION_TITLES = ['斜杠命令', '快捷键', '界面入口', '运行模式', '系统架构', '使用建议']
+const SECTION_TITLES = [
+  '斜杠命令',
+  '快捷键',
+  '模型连接问题速查',
+  '界面入口',
+  '运行模式',
+  '系统架构',
+  '使用建议',
+]
 
 /** 与 HelpPage 同一规则派生按键文案（Mac = Cmd，其余 = Ctrl） */
 const primary = (k: string) => formatPrimaryShortcut(k)
@@ -69,6 +77,16 @@ describe('HelpPage 帮助内容', () => {
     }
     // 未实现的 TODO 占位（Ctrl/Cmd+O）不写进帮助
     expect(shortcutSection.textContent).not.toContain(`${primary('O')}`)
+  })
+
+  it('模型连接速查表只提供用户可读说明，不暴露内部错误代码', () => {
+    render(<HelpPage />)
+    const section = screen
+      .getByRole('heading', { name: '模型连接问题速查' })
+      .closest('section') as HTMLElement
+    expect(section.textContent).toContain('服务地址、密钥或模型名称不匹配')
+    expect(section.textContent).toContain('等待片刻后重试')
+    expect(section.textContent).not.toMatch(/429|5xx|RateLimit|LlmErrorKind|HTTP/)
   })
 
   it('IME 组词态说明在位：Enter 发送的唯一例外是输入法选词', () => {

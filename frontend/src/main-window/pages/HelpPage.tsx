@@ -56,6 +56,34 @@ const tipKeys = [
   'help.tips.settings',
 ] as const
 
+const modelHelpRows = [
+  {
+    symptom: 'help.modelHelp.connect.symptom',
+    cause: 'help.modelHelp.connect.cause',
+    action: 'help.modelHelp.connect.action',
+  },
+  {
+    symptom: 'help.modelHelp.wait.symptom',
+    cause: 'help.modelHelp.wait.cause',
+    action: 'help.modelHelp.wait.action',
+  },
+  {
+    symptom: 'help.modelHelp.incomplete.symptom',
+    cause: 'help.modelHelp.incomplete.cause',
+    action: 'help.modelHelp.incomplete.action',
+  },
+  {
+    symptom: 'help.modelHelp.busy.symptom',
+    cause: 'help.modelHelp.busy.cause',
+    action: 'help.modelHelp.busy.action',
+  },
+  {
+    symptom: 'help.modelHelp.context.symptom',
+    cause: 'help.modelHelp.context.cause',
+    action: 'help.modelHelp.context.action',
+  },
+] as const
+
 export function HelpPage() {
   const { t } = useLanguage()
   // 快捷键清单与「通用」页的快捷键弹窗**同源**（./shortcuts，唯一事实源）：
@@ -122,6 +150,28 @@ export function HelpPage() {
         {/* IME 组词态说明：Enter 发送有例外 —— 组词选字时让位给输入法。
             行为出处同 ChatPanel.handleKeyDown 的 isComposing / keyCode 229 守卫。 */}
         <p className="help-text">{t('help.shortcut.imeHint')}</p>
+      </Section>
+
+      {/* ── Model Connection Quick Reference ── */}
+      <Section title={t('help.modelHelp.title')}>
+        <table className="help-table">
+          <thead>
+            <tr>
+              <th>{t('help.modelHelp.symptom')}</th>
+              <th>{t('help.modelHelp.cause')}</th>
+              <th>{t('help.modelHelp.action')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {modelHelpRows.map(({ symptom, cause, action }) => (
+              <tr key={symptom}>
+                <td>{t(symptom)}</td>
+                <td>{t(cause)}</td>
+                <td>{t(action)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Section>
 
       {/* ── 界面入口（聊天区常驻的三个入口 + Ctrl+K）── */}
