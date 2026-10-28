@@ -104,6 +104,7 @@ describe('githubContributors 数据契约', () => {
     const users = [...new Set(rounds.flatMap(r => r.contributors.map(c => c.user)))].sort()
     expect(users).toEqual([
       'Steooenwolf-666',
+      'ZYT-ZhangYunTao19941116',
       'fouyzjl',
       'mrpulor-gh',
       'yuansui486',

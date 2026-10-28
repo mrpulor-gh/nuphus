@@ -518,10 +518,18 @@ mod tests {
             "错误应含 message: {text}"
         );
 
-        // is_retryable 分类可直接命中（429/rate limit 可重试）。
+        // 2026-10-28 策略：并发/限流类不自动重试（一次性失败 + 指引稍后重试），
+        // 但分类必须落到 RateLimit，UI 才能给出「稍后重试」的指引。
         assert!(
-            crate::agent::common::is_retryable_llm_error(&text),
-            "rate_limit_exceeded 应可重试: {text}"
+            !crate::agent::common::is_retryable_llm_error(&text),
+            "rate_limit_exceeded 不应自动重试: {text}"
+        );
+        assert!(
+            matches!(
+                crate::agent::common::classify_llm_error(&text),
+                crate::agent::common::LlmErrorKind::RateLimit
+            ),
+            "rate_limit_exceeded 应归类为 RateLimit: {text}"
         );
     }
 
