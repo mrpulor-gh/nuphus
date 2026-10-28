@@ -338,6 +338,7 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 | 贡献者 | PR | 内容 |
 |--------|-----|------|
+| [@ZYT-ZhangYunTao19941116](https://github.com/ZYT-ZhangYunTao19941116) | [#114](https://github.com/mrpulor-gh/nuphus/pull/114) | 知识库检索按关键词拆分并采用严格 AND 语义（多关键词须全部命中，单关键词行为不变） |
 | [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#115](https://github.com/mrpulor-gh/nuphus/pull/115) | ego lite 外部 CDP 浏览器识别（`ego.exe` 精确匹配 + 名称推断 + 双安装路径覆盖） |
 | [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#116](https://github.com/mrpulor-gh/nuphus/pull/116) | 切换主题后背景图残留修复（预设卡无条件回退 + 异步解析序号守卫 + HUD 快捷切主题回退） |
 

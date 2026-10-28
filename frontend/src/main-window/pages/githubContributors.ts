@@ -12,6 +12,9 @@
  *   - Steooenwolf-666：2026-09-28 经 `/contributors` API 确认该账号真实存在且已有 21 次提交，
  *     本轮 PR #67 / #70~#75 的作者均为该账号，头像 u/156271754——新增提交者，按发版铁律
  *     补入头像墙与轮次表。
+ *   - ZYT-ZhangYunTao19941116：2026-10-28 经 `/contributors` API 确认已有 1 次提交；PR #114
+ *     （`/pulls/114` merged_at 2026-10-25T01:29:51Z，merge d076d874）随 v1.1.1 发布，此前
+ *     只记改动未记人，本轮按发版铁律补入头像墙与 1.1.1 轮次表。
  *   未收录 PR 归属：fouyzjl（#13~#19 / #20 轮次）——当时提交作者名无法确认为 GitHub 用户名，
  *   按「缺证不写」略去，宁缺勿造。2026-09-22 经 `/contributors` API 确认该账号真实存在
  *   且有 12 次提交，已并入头像墙（见 REPO_COMMITTERS）；轮次表内的贡献记录仍待
@@ -263,6 +266,16 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
     version: '1.1.1',
     date: '2026-10-25',
     contributors: [
+      {
+        user: 'ZYT-ZhangYunTao19941116',
+        contributions: [
+          {
+            pr: 114,
+            summary:
+              '知识库检索按关键词拆分并采用严格 AND 语义：多关键词须全部命中，单关键词行为与此前的包含匹配一致',
+          },
+        ],
+      },
       {
         user: 'zhoupeiyu515-ui',
         contributions: [
@@ -1075,7 +1088,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
 ]
 
 /**
- * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-10-19 拉取，按提交数降序）。
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-10-28 拉取，按提交数降序）。
  *
  * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
  *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人）；
@@ -1088,12 +1101,13 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  *     'https://api.github.com/repos/mrpulor-gh/nuphus/contributors?per_page=100'
  */
 export const REPO_COMMITTERS: string[] = [
-  'yuansui486', // 78 commits
-  'Steooenwolf-666', // 24 commits（2026-10-19 API）
-  'fouyzjl', // 13 commits
-  'mrpulor-gh', // 4 commits（2026-10-19 API；仓库所有者）
-  'jiangdingwei123-afk', // 1 commit（2026-10-19 API，main 上的 80a2e053）
-  'zhoupeiyu515-ui', // 1 commit
+  'yuansui486', // 78 commits（2026-10-28 API）
+  'Steooenwolf-666', // 26 commits（2026-10-28 API）
+  'fouyzjl', // 13 commits（2026-10-28 API）
+  'mrpulor-gh', // 7 commits（2026-10-28 API；仓库所有者）
+  'zhoupeiyu515-ui', // 3 commits（2026-10-28 API）
+  'ZYT-ZhangYunTao19941116', // 1 commit（2026-10-28 API；v1.1.1 轮次 PR #114 作者）
+  'jiangdingwei123-afk', // 1 commit（main 上的 80a2e053）
 ]
 
 /**
