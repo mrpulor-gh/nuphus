@@ -446,7 +446,7 @@ export function useEvents(h: EventHandlers) {
           finishWithMessage((event.message || '').trim(), 'success')
           break
         }
-case 'execution_error': {
+        case 'execution_error': {
           const isInterrupted = h.refs.interruptedRef.current
           // 用户中断：不播错误音效、mood 回到 idle（中断不是失败）；
           // 其余 LLM 错误：立即播放错误音效（低沉三音下行）——用户不盯屏也能感知失败
@@ -1423,13 +1423,13 @@ case 'execution_error': {
   }, [h.setUserInputRequest])
 
   // ── Refine timeout guard: 事件彻底丢失时的兜底复位 ──
-  // 95s > 后端 90s 硬超时：正常慢提炼不被误掐；旧版只复位 isProcessing 不复位
+  // 185s > 后端 Leader 180s 硬超时：正常慢提炼不被误掐；旧版只复位 isProcessing 不复位
   // refining/refineState（弹窗仍卡 spinner）+ 70s 会误杀后端还在跑的提炼。
   useEffect(() => {
     const interval = setInterval(() => {
       if (refineActiveRef.current && refineStartTimeRef.current > 0) {
         const elapsed = Date.now() - refineStartTimeRef.current
-        if (elapsed > 95000) {
+        if (elapsed > 185000) {
           console.warn('[REFINE] Timeout guard triggered, resetting refine state')
           resetRefineUI()
         }

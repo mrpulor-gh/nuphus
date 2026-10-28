@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 /// 提炼的墙钟预算（秒）。
 ///
-/// 云端沿用原来的值（Leader 90s / Workflow 60s，**行为不变**）；**本地端点**
+/// 云端预算为 Leader 180s / Workflow 60s；**本地端点**
 /// （本机/局域网推理服务）改用 provider 配置超时的下限语义：
 /// `max(配置的 timeout_secs, LOCAL_TIMEOUT_FLOOR_SECS)`，再加 60s 余量，
 /// 好让传输层自己的超时先报错（错误信息更准确：是"请求超时"而不是"提炼超时"）。
@@ -217,7 +217,7 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         if let Some(ref e) = saved_emitter {
             rt_owned.restore_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
         }
-        let budget = refine_timeout_secs(&state, 90);
+        let budget = refine_timeout_secs(&state, 180);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(budget),
             rt_owned.resume(refine_prompt, &cancel_flag),

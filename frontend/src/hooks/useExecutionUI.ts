@@ -202,7 +202,7 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   const [taskBubbleVisible, setTaskBubbleVisible] = useState(false)
 
   // ── Refine handlers ──
-  // in-flight 锁：executeSessionRefine 是 await 整轮提炼的 invoke（90s 级），期间
+  // in-flight 锁：executeSessionRefine 是 await 整轮提炼的 invoke（180s 级），期间
   // refining=true。双击/重复触发会在 refining state 渲染生效前再进 handleRefine，
   // 第二发 invoke 被后端防重拒绝 → catch/finally 提前 setRefining(false)，
   // 破坏第一发提炼执行的 UI 锁（大王实测：提炼执行中 refine 入口可再触发）。
