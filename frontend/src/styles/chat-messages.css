@@ -1812,6 +1812,19 @@
   margin-bottom: 8px;
 }
 
+/* 主模型不读图时（capability/none）：气泡图片区显示占位，不渲染破图 */
+.msg-files-placeholder {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius-5);
+  border: 1px solid var(--glass-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .msg-image {
   max-width: 260px;
   max-height: 200px;

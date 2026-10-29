@@ -1787,6 +1787,15 @@ const en: Record<string, string> = {
   'chat.quoteSelection': 'Quote selection',
   'chat.gracefulStop':
     'LLM request failed: {0}\nExecuted {1} step(s), results preserved; not retrying this round. Check model quota/connection and resend.',
+  'chat.visionHintNone':
+    'This model cannot read images: files are provided as path text only. Configure one in Settings → Models → Vision & Audio.',
+  'chat.visionHintCapability':
+    'Images will be examined on demand by {0} (main model context excludes images)',
+  'chat.visionBubbleNone':
+    'This model cannot read images: images were not included with the message',
+  'chat.visionBubbleCapability': 'Images handed to {0} for on-demand recognition',
+  'chat.visionAttachBlocked':
+    'The current model cannot read images and no vision model is configured. Switch to a vision-capable model, or configure one in Settings → Models → Vision & Audio.',
 
   'apiHealth.title': 'Model connection',
   'apiHealth.unknown': 'Not connected yet',

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatReference, PendingImage, PendingFile } from '../../core/types'
+import { useVisionResolution } from '../../hooks/useVisionResolution'
+import { VisionHint } from './VisionHint'
 import {
   IconImage,
   IconFile,
@@ -119,6 +121,10 @@ export default function ReferenceBar({
   const [previewImg, setPreviewImg] = useState<PendingImage | null>(null)
 
   // Esc 关闭图片大图
+  /** 视觉策略来自共享 hook（唯一事实源）：本组件不自行查询，
+   *  只决定「有图待发时是否展示策略提示」。 */
+  const visionResolution = useVisionResolution()
+
   useEffect(() => {
     if (!previewImg) return
     const onKey = (e: KeyboardEvent) => {
@@ -188,6 +194,8 @@ export default function ReferenceBar({
           ))}
         </div>
       )}
+
+      {pendingImages.length > 0 && <VisionHint resolution={visionResolution} variant="refbar" />}
 
       {pendingFiles.length > 0 && (
         <div className="ref-chips">

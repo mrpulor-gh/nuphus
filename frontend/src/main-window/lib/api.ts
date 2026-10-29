@@ -878,7 +878,13 @@ export function switchModel(
   contextWindow?: number,
   mode?: string,
 ) {
-  return invoke<string>('switch_model', { model, provider, baseUrl, contextWindow, mode })
+  return invoke<string>('switch_model', { model, provider, baseUrl, contextWindow, mode }).then(
+    result => {
+      // leader 模型可能被切换（mode 缺省即全局/leader）——视觉策略 main/none 跟随它，失效重查
+      emitVisionResolutionChanged()
+      return result
+    },
+  )
 }
 
 // ── Agent 级模型配置（高级设置） ──
@@ -910,7 +916,11 @@ export function getEffectiveModel(mode: string) {
  * 成对落盘，只给 model 时由后端消歧（唯一候选自动补全 / 多候选报错）。
  */
 export function setAgentModel(agent: string, model: string, provider?: string) {
-  return invoke<string>('set_agent_model', { agent, model, provider })
+  return invoke<string>('set_agent_model', { agent, model, provider }).then(result => {
+    // agent='leader' 会改主模型——视觉策略随之变，统一失效重查（由 useVisionResolution 消费）
+    emitVisionResolutionChanged()
+    return result
+  })
 }
 
 /** 生效模型的 provider 归属（mode 感知，后端权威解析）：弹窗勾选/effort 上下文数据源 */
@@ -1202,7 +1212,10 @@ export function setCapability(key: string, value: string) {
  *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation' | 'video_generation'
  *        | 'web_search_source'（后者 model 位填段名、provider 留空）。 */
 export function setCapabilityBinding(kind: string, model: string, provider: string) {
-  return invoke<void>('set_capability_binding', { kind, model, provider })
+  return invoke<void>('set_capability_binding', { kind, model, provider }).then(result => {
+    if (kind === 'vision') emitVisionResolutionChanged()
+    return result
+  })
 }
 
 /** 图像理解生效路径解析（后端权威，跟随链展示用）。
@@ -1221,6 +1234,16 @@ export function getVisionResolution() {
   return invoke<VisionResolution>('get_vision_resolution')
 }
 
+/** 视觉策略解析失效事件：任何会改变 getVisionResolution 结果的配置写入
+ *  （主模型切换 / 视觉绑定保存 / 模型行视觉开关）在保存成功后 dispatch。
+ *  前端唯一策略源 useVisionResolution 监听本事件失效重查——没有它，
+ *  消费方只能各自定时重查（副本漂移的根源），或永远持有陈旧策略。 */
+export const VISION_RESOLUTION_CHANGED_EVENT = 'nuphus:vision-resolution-changed'
+
+export function emitVisionResolutionChanged() {
+  window.dispatchEvent(new Event(VISION_RESOLUTION_CHANGED_EVENT))
+}
+
 /** 「发送测试图片」探测结果（1x1 PNG 直调视觉链路）。
  *  失败时 kind 为后端分类：auth / billing / rate_limit / image_too_large / other。 */
 export interface VisionTestOutcome {
@@ -1237,7 +1260,13 @@ export function testVisionModel() {
 /** 手动设定某 provider 下某模型的视觉（多模态）能力（模型行内开关）。
  *  落盘后在 providers.toml 标记来源 user，自动探测不再覆盖该值。 */
 export function setModelSupportsVision(provider: string, model: string, supportsVision: boolean) {
-  return invoke<string>('set_model_supports_vision', { provider, model, supportsVision })
+  return invoke<string>('set_model_supports_vision', { provider, model, supportsVision }).then(
+    result => {
+      // 被改的模型可能正是 leader 主模型或视觉绑定模型——统一失效重查
+      emitVisionResolutionChanged()
+      return result
+    },
+  )
 }
 
 /** 手动设定某 provider 下某模型的图像生成能力（模型行内开关）。

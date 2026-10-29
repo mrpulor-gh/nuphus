@@ -36,6 +36,9 @@ vi.mock('../main-window/lib/api', () => ({
   approveOnceSecurity: vi.fn(),
   approveSessionSecurity: vi.fn(),
   rejectSecurity: vi.fn(),
+  // ReferenceBar → useVisionResolution 的 api 依赖：策略不进本用例断言，桩住即可
+  getVisionResolution: vi.fn(() => Promise.resolve(null)),
+  VISION_RESOLUTION_CHANGED_EVENT: 'nuphus:vision-resolution-changed',
 }))
 
 // ChatInputBar 直连的 Tauri 事件 / 窗口 API：jsdom 下无 IPC，桩住（不改组件）

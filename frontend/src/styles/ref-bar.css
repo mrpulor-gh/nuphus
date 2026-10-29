@@ -23,6 +23,20 @@
   gap: 6px;
 }
 
+/* ════════ 图像理解前置提示（图片进引用栏即判定，不等发送后 400） ════════ */
+.ref-vision-hint {
+  flex: 0 0 100%;
+  padding: 2px 4px 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.ref-vision-hint--warning {
+  color: var(--warning);
+}
+
 .ref-chip {
   display: inline-flex;
   align-items: center;

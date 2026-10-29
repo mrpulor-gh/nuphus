@@ -1700,6 +1700,13 @@ const zh: Record<string, string> = {
   'chat.quoteSelection': '引用这段',
   'chat.gracefulStop':
     'LLM请求失败：{0}\n已执行 {1} 步，执行结果已保留；本次不重试，请检查模型额度/连接后重新发送',
+  'chat.visionHintNone':
+    '当前模型无法识图：图片只会以路径文本提供，请到 设置 → 模型 → 图像音频模型 配置',
+  'chat.visionHintCapability': '图片将由 {0} 按需识别（主模型上下文不含图片）',
+  'chat.visionBubbleNone': '当前模型无法识图：图片未随消息读取',
+  'chat.visionBubbleCapability': '图片已交给 {0} 按需识别',
+  'chat.visionAttachBlocked':
+    '当前模型无法识图，且未配置图像理解模型；请切换支持视觉的模型，或在 设置 → 模型 → 图像音频模型 中配置',
 
   'apiHealth.title': '模型连接状态',
   'apiHealth.unknown': '尚未连接',

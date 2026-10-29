@@ -53,6 +53,8 @@ import {
   browserOpenUrl,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
+import { useVisionResolution } from '../../hooks/useVisionResolution'
+import { VisionHint, canAttachImages, showsImagesInline } from './VisionHint'
 import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
 import { getProviderFavorites } from '../lib/favorites'
@@ -498,6 +500,11 @@ export function ChatPanel({
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   // Lightbox for image click-to-zoom
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  /** 视觉策略唯一事实源：任何会改变解析结果的配置写入（主模型切换 /
+   *  视觉绑定保存 / 模型行视觉开关）都在 api.ts 保存包装器内派发
+   *  VISION_RESOLUTION_CHANGED_EVENT，hook 失效自动重查。
+   *  本组件不自行查询——多副本查询是策略漂移的根源。 */
+  const visionResolution = useVisionResolution()
   // Pending file paths (drag-drop) — shown in ReferenceBar, attached to next user message
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   // Pending resource references (skill/knowledge/workflow) — attached to next user message
@@ -1535,8 +1542,15 @@ export function ChatPanel({
     e.target.value = ''
   }
 
-  /** Handle image attached via drag-drop or paste */
+  /** Handle image attached via drag-drop or paste
+   *  分内事只有一件：按当前策略决定图片能否入栏。none → 拒绝并走
+   *  island/hud 瞬时通道报告；其余直接入栏。不持有任何提示的生命周期，
+   *  不负责验证后续——配置修复后策略自动重查（共享 hook），重拖即可。 */
   const handleImageAttach = (file: { name: string; dataUrl: string }) => {
+    if (!canAttachImages(visionResolution)) {
+      hudUpdate(t('chat.visionAttachBlocked'), 'error')
+      return
+    }
     setPendingImages(prev => [...prev, { dataUrl: file.dataUrl, name: file.name }])
   }
 
@@ -2034,23 +2048,28 @@ export function ChatPanel({
                                 </span>
                               </div>
                               <div className={`message-content ${msg.role}`}>
-                                {/* ── 图片附件 ── */}
-                                {msg.images && msg.images.length > 0 && (
-                                  <div className="msg-images">
-                                    {msg.images.map((img, i) => (
-                                      <img
-                                        key={i}
-                                        src={img}
-                                        alt={`图片 ${i + 1}`}
-                                        className="msg-image"
-                                        onClick={() => setLightboxUrl(img)}
-                                        onError={e => {
-                                          ;(e.target as HTMLImageElement).style.display = 'none'
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                )}
+                                {/* ── 图片附件：capability/none 时图片走路径注入，
+                                        主模型上下文不含图片 → 占位而非破图 ── */}
+                                {msg.images &&
+                                  msg.images.length > 0 &&
+                                  (showsImagesInline(visionResolution) ? (
+                                    <div className="msg-images">
+                                      {msg.images.map((img, i) => (
+                                        <img
+                                          key={i}
+                                          src={img}
+                                          alt={`图片 ${i + 1}`}
+                                          className="msg-image"
+                                          onClick={() => setLightboxUrl(img)}
+                                          onError={e => {
+                                            ;(e.target as HTMLImageElement).style.display = 'none'
+                                          }}
+                                        />
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <VisionHint resolution={visionResolution} variant="bubble" />
+                                  ))}
                                 {/* ── 内容引用（quote/skill/knowledge/workflow）──
                                     正文上方展示，先看引用的哪段、再看提问，符合阅读顺序。
                                     quote 只截断显示、全文进 title：引文上限 2000 字符，
