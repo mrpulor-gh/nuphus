@@ -76,8 +76,7 @@ nuphus/
 ├── plugin/                     # 零编译扩展（workflows、skills、knowledge、ui-maps、apps、mcp…）
 ├── frontend/                   # React 前端（Tauri 渲染层，含 mobile PWA 与 locales/）
 ├── npm-desktop/                # npm 分发包（@nuphus/nuphus-desktop）
-├── hooks/                      # Agent 生命周期钩子（pre/post_tool_call、session_start/end）
-└── tools/                      # 辅助工具（stt-proto 等）
+└── hooks/                      # Agent 生命周期钩子（pre/post_tool_call、session_start/end）
 ```
 
 ## 构建与检查命令
@@ -108,12 +107,52 @@ nuphus/
 > 根目录与 `frontend/` 各有一套 npm scripts：根目录的 `dev` / `build` 会自动 `cd frontend`。
 > 上表前端命令均在 `frontend/` 目录下执行。
 
+## 提交信息规范
+
+提交标题一律使用英文，格式为 `<scope>: <描述>`：
+
+- `scope` 取自内部功能域：`feat(app)` / `fix(ui)` / `chore(repo)` / `docs` 等
+- 标题只写修改内容，**不出现第三方项目名、平台名、模型名**
+- 正文语言不限（中文即可），用于说明动机、影响面与验证情况
+
+```bash
+# 好
+git commit -m "feat(chat): route images by vision resolution with strategy hints"
+# 避免：中文标题；带第三方名（如 "fix: adapt to SomeVendor API v2"）
+```
+
+暂存时必须逐一 `git add <文件>`，禁止 `git add .`——他人在途文件会被带入提交。
+
 ## PR 流程
 
 1. Fork 仓库并创建功能分支（`feat/xxx` 或 `fix/xxx`）
-2. 本地跑通与 CI 一致的全部门禁（见下表），避免把红灯交给 reviewer
+2. 本地按「本地验证纪律」验证受影响面（见下），避免把红灯交给 reviewer
 3. 提交 PR 并简要描述变更内容
 4. 提交 PR 即表示你同意将你的贡献按 Apache-2.0 许可证授权（Developer Certificate of Origin）
+
+### 本地验证纪律
+
+**不要求本地跑全量 CI**——全量门禁在发版时集中执行。日常改动按影响面最小验证：
+
+| 改动面 | 本地最低验证 |
+|--------|-------------|
+| 前端 TS/CSS | `npx tsc --noEmit` + 直接受影响的 vitest 测试文件 |
+| Rust | `cargo check --release -p <单个 crate>` |
+| 纯注释 / 文案 / 排版 | 零行为，不跑构建验证 |
+| 前后端契约 | 双边 |
+
+两条纪律：
+
+- **Rust 一律 `--release` 增量**：debug target 会被运行中的 `nuphus.exe` 锁住（`os error 32`），release 增量首次全量后复用缓存更快，且只维护一份 target
+- **格式即时**：改完 `.ts` / `.tsx` / `.css` 立即 `npx prettier --write <file>`——工具编辑会破坏缩进，带破损格式提交只会换来一轮红灯
+
+> 最小化指**范围**，不指深度：只验受影响面，但该跑的层不许跳级、不许省略断言。
+
+### 分支保护
+
+`main` 受分支保护：外部改动**必须**通过 Pull Request，直推会被拒绝。
+
+主仓库为 GitHub（`mrpulor-gh/nuphus`），Gitee（`nuphus/nuphus`）是同步镜像，由维护者双推；贡献者只需关注 GitHub 侧。PR 合入后无需（也无法）自行同步 Gitee。
 
 ### CI 实际门禁
 
@@ -129,7 +168,7 @@ nuphus/
 | Vitest | `npx vitest run` | PR、tag、手动 |
 | Prettier | `npx prettier --check "src/**/*.{ts,tsx,css}"` | PR、tag、main |
 
-> 日常 push 到 main **不**跑全量 CI（界面/文案类改动用本地 tsc/vitest/cargo check 把关，
+> 日常 push 到 main **不**跑全量 CI（界面/文案类改动用本地 tsc/vitest/cargo check --release 把关，
 > 发版时集中跑）。`main-guard.yml` 只补三类与运行环境无关的全仓扫描：
 > `cargo fmt --check`、`tsc --noEmit`、`prettier --check`。详见 `.github/workflows/`。
 
