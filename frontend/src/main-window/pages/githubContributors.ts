@@ -161,6 +161,72 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '1.2.0',
+    date: '2026-10-31',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: 'df85465e',
+            summary:
+              '图片输入按视觉策略分流：不读图的主模型走路径注入与占位提示，引用栏与气泡同源，策略变更后自动重查',
+          },
+          {
+            pr: null,
+            commit: '16a4d366',
+            summary: '提炼提示词改为正向表述：保留有证据的结论与决策，未验证内容必须标注',
+          },
+          {
+            pr: null,
+            commit: '64844caa',
+            summary:
+              '轮次步数 / 提炼阈值 / 模型绑定三处 ctx 口径统一（官方 input+output），Exec 与 Leader 工具计数共享；历史恢复后重建执行态与占用（86a08180）',
+          },
+          {
+            pr: null,
+            commit: 'a117da24',
+            summary: '外壳输出排空改为有截止等待，修复子进程句柄继承导致的工具调用挂死',
+          },
+          {
+            pr: null,
+            commit: 'd0f11805',
+            summary: '修复自定义 NSIS 模板编译错误（StrFunc / REGVIEW），安装向导简化为三步',
+          },
+          {
+            pr: null,
+            commit: '80fa0336',
+            summary: 'Exec 模型绑定带上 provider 实例，修复多实例同名模型串绑',
+          },
+          {
+            pr: null,
+            commit: 'becf873e',
+            summary:
+              '输出预算改取上游上报上限、移除 8192 兜底；采集上限并记录来源，按上下文窗口余量 clamp',
+          },
+          {
+            pr: null,
+            commit: 'cb9f9b76',
+            summary:
+              '序列化层保证 tool_result 紧跟其 tool_use，修复 Anthropic 与严格 OpenAI 兼容端点的 400',
+          },
+          {
+            pr: null,
+            commit: 'e70ec7c2',
+            summary:
+              'token 显示统一：紧凑口径保留两位小数（1,048,576 → 1.05M），模型页与行内编辑使用真实 tokens',
+          },
+          {
+            pr: null,
+            commit: 'ab2d07b6',
+            summary: '执行状态指示换成去边框均衡器（双竖相位错开），无动画时保留不等高姿态',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '1.1.4',
     date: '2026-10-28',
     contributors: [
