@@ -23,6 +23,7 @@ import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { StopChoiceDialog } from '../../ui/StopChoiceDialog'
 import { VoiceButton, type VoiceButtonHandle } from './VoiceButton'
 import { useLanguage } from '../../locales'
+import { formatTokens } from '../../ui/tokenFormat'
 import ReferenceBar from './ReferenceBar'
 import { filesToAttachments, isImageName } from './attachments'
 import type { ChatReference, PendingImage, PendingFile, TurnMeta } from '../../core/types'
@@ -656,11 +657,6 @@ export function ChatInputBar({
         .pop() || projectDir
     : ''
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
-  function fmt(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-    return String(n)
-  }
   function fmtDur(ms: number): string {
     if (ms < 1000) return `${ms}ms`
     if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
@@ -1156,11 +1152,13 @@ export function ChatInputBar({
                 <span className="input-bar-ctx-label">ctx</span>
                 <span className="input-bar-ctx-value" style={{ color: ctxColor }}>
                   {/* used 用状态色（红/黄/绿）暗示进度；sep + cap 中性不抢戏 */}
-                  {ctxUsed > 0 ? fmt(ctxUsed) : '--'}
+                  {ctxUsed > 0 ? formatTokens(ctxUsed) : '--'}
                   {/* 分母未知也给占位（`302k / --`）：只留分子会被读成「没有总量」。
                         与 ctx 弹窗里的 capacity 行同口径（2026-10-26 大王实测）。 */}
                   <span className="input-bar-ctx-sep">/</span>
-                  <span className="input-bar-ctx-cap">{ctxLimit > 0 ? fmt(ctxLimit) : '--'}</span>
+                  <span className="input-bar-ctx-cap">
+                    {ctxLimit > 0 ? formatTokens(ctxLimit) : '--'}
+                  </span>
                 </span>
                 {/* 解码速度/首 token 延迟不占常驻位：明细在下方 ctx 弹窗（ttft / speed 两行） */}
                 {ctxHover && (
@@ -1177,13 +1175,13 @@ export function ChatInputBar({
                     )}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">{t('input.ctx.tokens')}</span>
-                      <span className="input-bar-ctx-value">{fmt(detailTokens)}</span>
+                      <span className="input-bar-ctx-value">{formatTokens(detailTokens)}</span>
                     </span>
                     {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">{t('input.ctx.capacity')}</span>
                       <span className="input-bar-ctx-value">
-                        {ctxLimit > 0 ? fmt(ctxLimit) : '--'}
+                        {ctxLimit > 0 ? formatTokens(ctxLimit) : '--'}
                       </span>
                     </span>
                     {/* 步数 / 耗时：唯一出口 resolveTurnCalls / resolveTurnDuration，无兜底。

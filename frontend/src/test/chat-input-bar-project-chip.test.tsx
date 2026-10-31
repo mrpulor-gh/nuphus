@@ -230,7 +230,8 @@ describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', (
     openCtxDetail()
 
     // tokens 仍走 main（ctx 常驻位与弹窗行各显示一次，故用 getAllByText）
-    expect(screen.getAllByText('100.0k').length).toBeGreaterThan(0)
+    // 口径：100,000 → `100k`（紧凑两位小数、去尾零；见 ui/tokenFormat）
+    expect(screen.getAllByText('100k').length).toBeGreaterThan(0)
     // cache 行整体不渲染：main 的 cache 是哨兵，0/100000 = 0% 是废数
     expect(screen.queryByText('0%')).toBeNull()
   })

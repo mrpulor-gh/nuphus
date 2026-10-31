@@ -111,13 +111,6 @@ function compressImageInWorker(file: File): Promise<string> {
   })
 }
 
-/** token 数量缩写：1.0M / 320K / 860 */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1000) return `${Math.round(n / 1000)}K`
-  return String(n)
-}
-
 export default function Composer({
   disabled,
   token,

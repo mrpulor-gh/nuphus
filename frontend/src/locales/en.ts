@@ -1226,7 +1226,7 @@ const en: Record<string, string> = {
   'models.visionToggleTitleOff':
     'Click to mark as vision-input capable (only models supporting images appear in the image understanding model list)',
   'models.removeFromLocalList': 'Remove from local list',
-  'models.localCtxLabel': 'Default context for local models (K tokens)',
+  'models.localCtxLabel': 'Default context for local models (tokens)',
   'models.localCtxHint':
     'Empty means each local model is configured individually; when filled, it is applied automatically on switching to a new model.',
   'models.addLocalModelLabel': 'Add local model',

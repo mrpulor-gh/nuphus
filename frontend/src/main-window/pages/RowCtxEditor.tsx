@@ -4,25 +4,21 @@
  *  paradigm：badge（只读）↔ 行内输入（编辑）互换，与卡片其它能力 chip 的
  * 「点击即改」同构：Enter / blur 提交，Escape 取消。未知 ctx 显示「—」
  * （不用裸 `?`：那个符号在设置页里已被「帮助」占用，语义会歧义）。
+ *
+ * ## 数值口径（2026-10-31 大王定案）
+ * 模型界面一律显示**真实 token 数**（1,048,576，千分位），不缩写不四舍五入：
+ * 这里是要拿来做校准的地方，`1.0M` 会藏掉 48,576 个 token；编辑框同单位
+ * （tokens），避免「显示 1048576、编辑却按 K」的两套口径把值改错。
+ * 读数位（状态栏 / 气泡 / 移动端）走紧凑口径，见 ui/tokenFormat。
  */
 import { IconEdit3 } from '../../ui/Icons'
+import { formatExactTokens } from '../../ui/tokenFormat'
 
 type TFunc = (key: string, ...args: string[]) => string
 
 const tr = (t: TFunc, key: string, fallback: string): string => {
   const v = t(key)
   return v === key ? fallback : v
-}
-
-/** 上下文窗口格式化：1_000_000 → 1M，128_000 → 128K，32_768 → 33K；未知返回空串 */
-export function formatContextWindow(n?: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1_000_000) {
-    const m = n / 1_000_000
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
-  return `${n}`
 }
 
 export function RowCtxEditor({
@@ -53,9 +49,9 @@ export function RowCtxEditor({
           autoFocus
           type="number"
           className="ctx-inline-input input-num"
-          min={0.1}
-          max={10000}
-          step={0.001}
+          min={1}
+          max={10000000}
+          step={1}
           value={value}
           onChange={e => onValueChange(e.target.value)}
           onKeyDown={e => {
@@ -69,15 +65,18 @@ export function RowCtxEditor({
           }}
           onBlur={() => onCommit(value)}
         />
-        <span className="ctx-unit">K</span>
+        <span className="ctx-unit">tokens</span>
       </span>
     )
   }
   return (
     <>
       {ctx && ctx > 0 ? (
-        <span className="model-badge model-badge--ctx" title={ctxCapTitle}>
-          {formatContextWindow(ctx)}
+        <span
+          className="model-badge model-badge--ctx"
+          title={`${ctxCapTitle} ${formatExactTokens(ctx)} tokens`}
+        >
+          {formatExactTokens(ctx)}
         </span>
       ) : (
         <span className="model-badge model-badge--ctx model-badge--ctx-unknown" title={ctxCapTitle}>

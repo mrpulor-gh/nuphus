@@ -3481,7 +3481,7 @@ body {
   word-break: break-all;
 }
 
-/* 上下文窗口数值：右侧直接显示（如 1.0M），粗体等宽 */
+/* 上下文窗口数值：右侧直接显示（紧凑口径，如 1.05M），粗体等宽 */
 .mobile-model-info-cap {
   font-family: var(--m-font-mono, ui-monospace, monospace);
   font-size: 14px;

@@ -9,6 +9,7 @@
 import { Loader2 } from 'lucide-react'
 import type { PendingRefine } from '../store'
 import { t } from '../i18n'
+import { formatTokens } from '../../ui/tokenFormat'
 
 interface Props {
   refine: PendingRefine
@@ -30,8 +31,8 @@ export default function RefineModal({ refine, refining, onConfirm, onSkip }: Pro
         <span className="mobile-refine-title">上下文即将满载</span>
       </div>
       <p className="mobile-refine-desc">
-        当前已使用约 <strong>{pct}%</strong> 上下文（{Math.round(refine.currentTokens / 1000)}K /{' '}
-        {refine.contextWindow > 0 ? `${Math.round(refine.contextWindow / 1000)}K` : '--'} tokens）。
+        当前已使用约 <strong>{pct}%</strong> 上下文（{formatTokens(refine.currentTokens)} /{' '}
+        {refine.contextWindow > 0 ? formatTokens(refine.contextWindow) : '--'} tokens）。
         提炼后保留关键信息并精简上下文，会话可继续更长时间。
       </p>
       <div className="mobile-refine-actions">

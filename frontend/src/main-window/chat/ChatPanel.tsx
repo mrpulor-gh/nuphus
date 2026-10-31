@@ -116,11 +116,8 @@ import { Button, IconButton } from '../../ui/Button'
 import MarkdownContent from './MarkdownContent'
 import { PreviewOverlay } from './PreviewOverlay'
 import { AppearancePanel } from '../layout/AppearancePanel'
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-  return String(n)
-}
+// 紧凑 token 读数（全前端唯一实现）：1,048,576 → 1.05M，不再压成 1.0M
+import { formatTokens } from '../../ui/tokenFormat'
 
 interface ChatPanelProps {
   messages: ChatMessage[]

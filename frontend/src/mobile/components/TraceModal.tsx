@@ -11,6 +11,7 @@ import { useEffect, useRef } from 'react'
 import { Check, Gauge, Loader2, X, Zap } from 'lucide-react'
 import type { TraceItem } from '../store'
 import { t } from '../i18n'
+import { formatTokens as compactTokens } from '../../ui/tokenFormat'
 
 interface Props {
   traceItems: TraceItem[]
@@ -19,12 +20,10 @@ interface Props {
   onClose: () => void
 }
 
-/** token 数值紧凑格式化：1.2k / 3.4M */
+/** token 数值紧凑格式化：1.2k / 3.4M（口径见 ui/tokenFormat，未定义返回 null 不渲染） */
 function formatTokens(n: number | undefined): string | null {
   if (n === undefined || n === null) return null
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
-  return String(n)
+  return compactTokens(n)
 }
 
 /** 提取工具调用的关键参数（路径/命令），供手机端执行过程展示。

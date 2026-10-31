@@ -1169,7 +1169,7 @@ const zh: Record<string, string> = {
   'models.visionToggleTitleOff':
     '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）',
   'models.removeFromLocalList': '从本地列表移除',
-  'models.localCtxLabel': '本地模型默认上下文（K tokens）',
+  'models.localCtxLabel': '本地模型默认上下文（tokens）',
   'models.localCtxHint': '为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。',
   'models.addLocalModelLabel': '添加本地模型',
   'models.addLocalModelHint':

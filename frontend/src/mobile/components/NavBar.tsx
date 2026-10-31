@@ -35,6 +35,7 @@ import {
   type ShelfSessions,
 } from '../api'
 import type { ActivityState } from '../store'
+import { formatTokens } from '../../ui/tokenFormat'
 import type { WsStatus } from '../ws'
 import {
   DEFAULT_GROUP_LIMIT,
@@ -470,11 +471,6 @@ export default function NavBar({
       ? (tokenUsage.cacheHitTokens / cacheTotal) * 100
       : -1
   const cacheColor = cacheRate > 60 ? '#22c55e' : cacheRate > 30 ? '#f59e0b' : '#ef4444'
-  const fmtTokens = (n: number): string => {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-    return String(n)
-  }
   // step（工具调用步数）= 当前执行累计工具调用（tool_call_start 事件累积）；
   // time（执行用时）= 优先后端权威起点 metaStartedAtMs（刷新/重连不归零），
   // 旧后端缺省时退化为前端 startedAt；暂停冻结在 pausedAt。
@@ -665,7 +661,9 @@ export default function NavBar({
                   <span className="mobile-model-info-name">
                     {model || modelConfig?.current || '—'}
                   </span>
-                  {ctxCap > 0 && <span className="mobile-model-info-cap">{fmtTokens(ctxCap)}</span>}
+                  {ctxCap > 0 && (
+                    <span className="mobile-model-info-cap">{formatTokens(ctxCap)}</span>
+                  )}
                 </div>
                 <div className="mobile-model-info-ctx">
                   <span className="mobile-model-info-ctx-label">ctx</span>
@@ -680,8 +678,8 @@ export default function NavBar({
                   </span>
                   <span className="mobile-model-info-ctx-usage">
                     {ctxCap > 0
-                      ? `${fmtTokens(ctxUsed)}/${fmtTokens(ctxCap)}`
-                      : `${fmtTokens(ctxUsed)}/--`}
+                      ? `${formatTokens(ctxUsed)}/${formatTokens(ctxCap)}`
+                      : `${formatTokens(ctxUsed)}/--`}
                   </span>
                   <span className="mobile-model-info-pct" style={{ color: ctxColor }}>
                     {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}

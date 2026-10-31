@@ -236,7 +236,9 @@ describe('ModelsPage 子智能体模型双字段绑定', () => {
     fireEvent.click(trigger)
     fireEvent.click(screen.getByRole('option', { name: /shared-model.*custom-a/ }))
 
-    await waitFor(() => expect(setAgentModel).toHaveBeenCalledWith('exec', 'shared-model', 'custom-a'))
+    await waitFor(() =>
+      expect(setAgentModel).toHaveBeenCalledWith('exec', 'shared-model', 'custom-a'),
+    )
   })
 })
 
@@ -989,27 +991,44 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
-  /* ── 上下文窗口行内编辑（2026-10-25 回归）：Enter 提交必须原样转发用户输入值。
-     卡片化改版曾把模型名当输入值传入（Number("model-one") = NaN），导致无论
-     输入什么都报「上下文窗口需为大于 0 的数字（单位 K）」并随即关闭编辑框
-     （用户感知为「恢复默认值」）。── */
-  it('上下文窗口编辑：输入数字回车 → 以 K 为单位保存（不再误报需大于 0）', async () => {
+  /* ── 上下文窗口行内编辑（2026-10-25 回归 / 2026-10-31 口径修正）：
+     Enter 提交必须原样转发用户输入值。卡片化改版曾把模型名当输入值传入
+     （Number("model-one") = NaN），导致无论输入什么都报错并随即关闭编辑框。
+     现行口径：显示与编辑**同单位 tokens**（1,048,576 就是 1,048,576），
+     不再按 K 换算（旧实现 1.0M 显示 + 128 → 128,000 换算会藏掉真实值）。── */
+  it('上下文窗口编辑：输入真实 token 数回车 → 原样保存（单位 tokens）', async () => {
     await openModels()
     await detect()
     const c = card('model-one')
     fireEvent.click(c.querySelector('.model-ctx-edit-btn') as HTMLElement)
     const input = c.querySelector('.ctx-inline-input') as HTMLInputElement
     expect(input).toBeTruthy()
-    fireEvent.change(input, { target: { value: '128' } })
+    fireEvent.change(input, { target: { value: '131072' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() =>
       expect(vi.mocked(setModelContextWindow)).toHaveBeenCalledWith(
         'custom-fast',
         'model-one',
-        128_000,
+        131_072,
       ),
     )
     expect(screen.queryByText(/上下文窗口需为大于 0/)).not.toBeInTheDocument()
+  })
+
+  it('模型卡片显示真实 token 数（1,048,576 不显示成 1.0M），编辑框同一口径预填', async () => {
+    await openModels()
+    vi.mocked(listProviderModels).mockResolvedValue([
+      { ...brief('model-one'), context_window: 1_048_576 },
+      brief('model-two'),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
+    await screen.findByText('model-two')
+    const c = card('model-one')
+    expect(within(c).getByText((1_048_576).toLocaleString())).toBeInTheDocument()
+    fireEvent.click(c.querySelector('.model-ctx-edit-btn') as HTMLElement)
+    const input = c.querySelector('.ctx-inline-input') as HTMLInputElement
+    // 预填 = 真实值（不是 1048.576 这种 K 口径），保存才不会被四舍五入
+    expect(input.value).toBe('1048576')
   })
 
   it('切换失败保留原选择（启用按钮为原生 button，键盘可用）', async () => {

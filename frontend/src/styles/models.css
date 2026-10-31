@@ -404,7 +404,7 @@ button.cap-chip:disabled {
   -moz-appearance: textfield;
   appearance: textfield;
 }
-/* 行内编辑单位（K）容器：input + 单位后缀 */
+/* 行内编辑单位（tokens）容器：input + 单位后缀 */
 .ctx-inline-wrap {
   display: inline-flex;
   align-items: center;

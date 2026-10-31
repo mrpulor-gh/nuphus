@@ -74,7 +74,8 @@ import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import { ModelCard, type ModelCardCap } from './ModelCard'
 import { ModelProtocolSelect } from './ModelProtocolSelect'
-import { RowCtxEditor, formatContextWindow } from './RowCtxEditor'
+import { RowCtxEditor } from './RowCtxEditor'
+import { formatExactTokens } from '../../ui/tokenFormat'
 import { getProviderFavorites, setFavorite } from '../lib/favorites'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from '../chat/modelPopupOrder'
 import {
@@ -534,13 +535,13 @@ function makeTXT(t: TFunc) {
       '点击标记为支持视觉输入（支持图片的模型才会出现在图像理解模型列表）',
     ),
     removeFromLocalList: tr(t, 'models.removeFromLocalList', '从本地列表移除'),
-    localCtxLabel: tr(t, 'models.localCtxLabel', '本地模型默认上下文（K tokens）'),
+    localCtxLabel: tr(t, 'models.localCtxLabel', '本地模型默认上下文（tokens）'),
     localCtxHint: tr(
       t,
       'models.localCtxHint',
       '为空则每个本地模型按需单独设置；填写后切换新模型时自动应用。',
     ),
-    localCtxPlaceholder: tr(t, 'models.localCtxPlaceholder', '例如 128'),
+    localCtxPlaceholder: tr(t, 'models.localCtxPlaceholder', '例如 131072'),
     addLocalModelLabel: tr(t, 'models.addLocalModelLabel', '添加本地模型'),
     addLocalModelHint: tr(
       t,
@@ -2580,7 +2581,7 @@ export function ModelsPage({
     const cur = rowCtx(name)
     editingCtxRef.current = name
     setEditingCtxModel(name)
-    setEditingCtxValue(cur !== undefined && cur > 0 ? String(cur / 1000) : '')
+    setEditingCtxValue(cur !== undefined && cur > 0 ? String(cur) : '')
   }
 
   const cancelCtxEdit = () => {
@@ -2645,14 +2646,15 @@ export function ModelsPage({
     setEditingCtxModel(null)
     const raw = String(rawValue ?? '').trim()
     if (raw === '') return
-    const k = Number(raw)
-    if (!Number.isFinite(k) || k <= 0) {
-      setFeedback({ ok: false, msg: '上下文窗口需为大于 0 的数字（单位 K）' })
+    // 单位 = tokens（与卡片 badge 同一口径）；整数校验，避免 1048.576 这种半截值
+    const tokens = Number(raw)
+    if (!Number.isFinite(tokens) || !Number.isInteger(tokens) || tokens <= 0) {
+      setFeedback({ ok: false, msg: '上下文窗口需为大于 0 的整数（单位 tokens）' })
       return
     }
-    const v = Math.round(k * 1000)
-    if (v < 1 || v > 10000000) {
-      setFeedback({ ok: false, msg: '上下文窗口需在 1 ~ 10,000,000K 之间' })
+    const v = tokens
+    if (v > 10000000) {
+      setFeedback({ ok: false, msg: '上下文窗口需在 1 ~ 10,000,000 tokens 之间' })
       return
     }
     const p = providers.find(x => x.id === provider)
@@ -2660,7 +2662,7 @@ export function ModelsPage({
     try {
       await setModelContextWindow(provider, name, v)
       setCtxOverrides(prev => ({ ...prev, [name]: v }))
-      setFeedback({ ok: true, msg: `上下文窗口已保存（${formatContextWindow(v)}）` })
+      setFeedback({ ok: true, msg: `上下文窗口已保存（${formatExactTokens(v)} tokens）` })
       listModels()
         .then(list => {
           if (Array.isArray(list)) setAllModels(list)

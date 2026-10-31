@@ -1,4 +1,5 @@
 import { useLanguage } from '../../locales'
+import { formatExactTokens, formatTokens } from '../../ui/tokenFormat'
 
 interface StatusBarProps {
   mainTokenUsage?: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null
@@ -7,12 +8,6 @@ interface StatusBarProps {
   totalCalls?: number
   mood?: string
   contextLimit?: number
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-  return String(n)
 }
 
 function formatDuration(ms: number): string {
@@ -47,8 +42,9 @@ function ContextBar({ used, limit }: { used: number; limit: number }) {
       className="status-ctx-wrap"
       title={t(
         'status.contextTooltip',
-        formatTokens(used),
-        formatTokens(limit),
+        // 悬停给真实值：紧凑标签只为一眼可比，精确核对走这里
+        formatExactTokens(used),
+        formatExactTokens(limit),
         (pct * 100).toFixed(0),
       )}
     >
