@@ -78,10 +78,7 @@ pub fn current_context_usage(state: State<'_, AppState>) -> Result<Option<Contex
     if let Ok(sb) = state.session.lock() {
         if let Some(ref json) = sb.session_backup {
             if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
-                return Ok(usable_usage(
-                    sess.api_input_tokens,
-                    sess.api_output_tokens,
-                ));
+                return Ok(usable_usage(sess.api_input_tokens, sess.api_output_tokens));
             }
         }
     }
