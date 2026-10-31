@@ -44,18 +44,24 @@ impl AnthropicTransport {
     /// `MessageRequest` (which uses Chat-Completions-style message roles).
     fn build_request_body(&self, request: &MessageRequest) -> serde_json::Value {
         // Anthropic Messages API 强制要求 max_tokens（缺失即 HTTP 400）。
-        // 显式值优先；None 走配置解析链（providers.toml ModelEntry.max_tokens → builtin → 8192 兜底），
+        // 显式值优先；None 走配置解析链（providers.toml 模型级 max_tokens → 8192 兜底），
         // 避免长 thinking 流被静默截断（thinking 占满输出预算 → text/tool_call 缺失 → 空交付）。
+        //
+        // ⚠️ 段限定解析：`resolve_max_output_tokens` 只认「段限定」，无绑定时**不扫描
+        // 兄弟段**（`config/model.rs::resolve_capability` 语义）。这里必须传
+        // `provider_segment`（providers.toml 段名），否则用户在 providers.toml 里
+        // 显式配的模型级 `max_tokens` 会被静默丢弃 → 恒定落 8192 兜底。
+        // 与 Chat Completions 通道（`chat_completions/transport.rs`）语义对齐。
         let max_tokens = request.max_tokens.unwrap_or_else(|| {
             let model = if request.model.is_empty() {
                 &self.config.model
             } else {
                 &request.model
             };
-            // AnthropicConfig carries no provider-segment name (its
-            // `provider_name()` is the static protocol label "anthropic", not a
-            // providers.toml segment), so max_tokens resolves by model id.
-            crate::config::resolve_max_output_tokens(model, None).unwrap_or(8192)
+            // provider_segment 为空串（测试/直构，无段绑定）→ None，不误命中兄弟段。
+            let segment = (!self.config.provider_segment.is_empty())
+                .then_some(self.config.provider_segment.as_str());
+            crate::config::resolve_max_output_tokens(model, segment).unwrap_or(8192)
         });
         let mut body = serde_json::json!({
             "model": if request.model.is_empty() {
@@ -160,6 +166,142 @@ impl AnthropicTransport {
             }
         }
 
+        // ── tool_result 归位 ────────────────────────────────────────────
+        // Anthropic Messages 协议要求：每个 tool_result 必须**紧跟**在发出该
+        // tool_use 的 assistant 消息之后（否则服务端 400
+        // "tool call result does not follow tool call"）。
+        //
+        // Nuphus 的会话层会在两轮之间插入 user 消息（安全检查警告、ACTIVE
+        // REMINDERS 提醒等），这些消息会把 tool_use 与其 tool_result 隔开 →
+        // 协议不合法。此处按 tool_use_id 把 tool_result 归位到对应 assistant
+        // 消息正后方；无对应 tool_use 的孤儿 tool_result 丢弃（协议不接受）。
+        self.reorder_tool_results(out)
+    }
+
+    /// Reorder tool_result messages to immediately follow their tool_use.
+    ///
+    /// Returns a new message vector where every `tool_result` block sits
+    /// directly after the assistant message that contains the matching
+    /// `tool_use`. Orphan tool_results (no matching tool_use) are dropped —
+    /// Anthropic rejects them. Non-tool messages keep their relative order.
+    fn reorder_tool_results(&self, messages: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+        // Index: tool_use_id → position of the assistant message declaring it.
+        let mut use_positions: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for (i, m) in messages.iter().enumerate() {
+            if m["role"].as_str() != Some("assistant") {
+                continue;
+            }
+            if let Some(arr) = m["content"].as_array() {
+                for b in arr {
+                    if b["type"].as_str() == Some("tool_use") {
+                        if let Some(id) = b["id"].as_str() {
+                            use_positions.entry(id.to_string()).or_insert(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect tool_result messages, grouped by their target position.
+        let mut results_by_pos: std::collections::HashMap<usize, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+        let mut orphans = 0usize;
+        for m in messages.iter() {
+            if m["role"].as_str() != Some("user") {
+                continue;
+            }
+            let Some(arr) = m["content"].as_array() else {
+                continue;
+            };
+            if !arr
+                .iter()
+                .any(|b| b["type"].as_str() == Some("tool_result"))
+            {
+                continue;
+            }
+            // A tool_result user message may carry several results.
+            for b in arr {
+                if b["type"].as_str() != Some("tool_result") {
+                    continue;
+                }
+                let Some(id) = b["tool_use_id"].as_str() else {
+                    orphans += 1;
+                    continue;
+                };
+                match use_positions.get(id) {
+                    Some(&pos) => {
+                        results_by_pos.entry(pos).or_default().push(b.clone());
+                    }
+                    None => orphans += 1,
+                }
+            }
+        }
+
+        if results_by_pos.is_empty() && orphans == 0 {
+            return messages;
+        }
+        if orphans > 0 {
+            tracing::warn!(
+                "[Anthropic] dropped {} orphan tool_result block(s) (no matching tool_use)",
+                orphans
+            );
+        }
+
+        // Rebuild: walk messages, emit each assistant's tool_results right after it.
+        let mut out: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
+        for (i, m) in messages.into_iter().enumerate() {
+            let is_assistant = m["role"].as_str() == Some("assistant");
+
+            // tool_result 消息：其 tool_result 块已归位到对应 tool_use 之后，
+            // 原位保留会重复投递 → 剥离这些块。但同消息内**其它**块（如 text）
+            // 必须保留，不能整条丢弃。
+            //
+            // 三态语义：Outer None = 无 tool_result 块（原样保留）；
+            // Outer Some(None) = 整条都是 tool_result（丢弃原位）；
+            // Outer Some(Some(v)) = 保留其它块后的重建消息。
+            let stripped: Option<Option<serde_json::Value>> = if m["role"].as_str() == Some("user")
+            {
+                m["content"].as_array().and_then(|a| {
+                    let rest: Vec<_> = a
+                        .iter()
+                        .filter(|b| b["type"].as_str() != Some("tool_result"))
+                        .cloned()
+                        .collect();
+                    if rest.len() == a.len() {
+                        None // 没有 tool_result 块 → 原样保留
+                    } else if rest.is_empty() {
+                        Some(None) // 整条都是 tool_result → 丢弃原位
+                    } else {
+                        Some(Some(serde_json::json!({
+                            "role": m["role"],
+                            "content": rest,
+                        })))
+                    }
+                })
+            } else {
+                None
+            };
+
+            // ⚠️ 不能用 `Some(null) => ...` 模式：Rust 里 `null` 是**新绑定**而非
+            // 字面量模式，会匹配所有 Some(_) → 整条消息被误丢弃。改用显式判空。
+            match stripped {
+                None => out.push(m),
+                Some(None) => continue, // 整条都是 tool_result → 不保留原位
+                Some(Some(rebuilt)) => out.push(rebuilt),
+            }
+
+            if is_assistant {
+                if let Some(results) = results_by_pos.remove(&i) {
+                    if !results.is_empty() {
+                        out.push(serde_json::json!({
+                            "role": "user",
+                            "content": results,
+                        }));
+                    }
+                }
+            }
+        }
         out
     }
 
@@ -363,6 +505,10 @@ impl Transport for AnthropicTransport {
     fn provider_kind(&self) -> Option<crate::api::ProviderKind> {
         self.config.provider_kind
     }
+
+    fn provider_segment(&self) -> &str {
+        &self.config.provider_segment
+    }
 }
 
 // ── private helpers ─────────────────────────────────────────────────────────
@@ -458,6 +604,7 @@ mod tests {
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: effort.map(|s| s.to_string()),
             extra_headers: Vec::new(),
+            provider_segment: String::new(),
         }
     }
 
@@ -535,5 +682,141 @@ mod tests {
         let messages = vec![serde_json::json!({ "role": "user", "content": "hello" })];
         let out = transport.convert_messages(&messages);
         assert_eq!(out[0]["content"], "hello");
+    }
+
+    /// 回归（协议契约）：Anthropic Messages 要求每个 `tool_result` **紧跟**在
+    /// 发出该 `tool_use` 的 assistant 消息之后，否则服务端 400
+    /// `tool call result does not follow tool call`。
+    ///
+    /// 真实事故：会话层在两轮之间插入 user 消息（安全检查警告 / ACTIVE
+    /// REMINDERS 提醒），把 tool_use 与其 tool_result 隔开 → 协议非法 → 整个
+    /// Exec 循环中断。传输层必须把 tool_result 归位。
+    #[test]
+    fn tool_result_is_moved_to_immediately_follow_its_tool_use() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let messages = vec![
+            serde_json::json!({ "role": "user", "content": "do the task" }),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_A",
+                    "type": "function",
+                    "function": { "name": "Write", "arguments": "{}" }
+                }]
+            }),
+            // 会话层插入的提醒消息 —— 会把 tool_use 与 tool_result 隔开
+            serde_json::json!({ "role": "user", "content": "### ACTIVE REMINDERS ..." }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_A",
+                "content": "ok"
+            }),
+        ];
+
+        let request = MessageRequest::new("claude-sonnet-5", messages);
+        let body = transport.build_request_body(&request);
+        let msgs = body["messages"].as_array().expect("messages array");
+
+        // tool_result 必须在 tool_use 的 assistant 消息之后紧邻
+        let assistant_idx = msgs
+            .iter()
+            .position(|m| {
+                m["content"]
+                    .as_array()
+                    .map(|a| a.iter().any(|b| b["type"] == "tool_use"))
+                    .unwrap_or(false)
+            })
+            .expect("assistant with tool_use");
+        let result_idx = msgs
+            .iter()
+            .position(|m| {
+                m["content"]
+                    .as_array()
+                    .map(|a| a.iter().any(|b| b["type"] == "tool_result"))
+                    .unwrap_or(false)
+            })
+            .expect("user with tool_result");
+
+        assert_eq!(
+            result_idx,
+            assistant_idx + 1,
+            "tool_result must immediately follow the assistant message that issued the tool_use; got {msgs:#?}"
+        );
+    }
+
+    /// 孤儿 tool_result（无对应 tool_use）必须丢弃 —— Anthropic 协议不接受。
+    #[test]
+    fn orphan_tool_result_is_dropped() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let messages = vec![
+            serde_json::json!({ "role": "user", "content": "task" }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_MISSING",
+                "content": "orphan"
+            }),
+        ];
+        let request = MessageRequest::new("claude-sonnet-5", messages);
+        let body = transport.build_request_body(&request);
+        let msgs = body["messages"].as_array().expect("messages array");
+        assert!(
+            !msgs.iter().any(|m| {
+                m["content"]
+                    .as_array()
+                    .map(|a| a.iter().any(|b| b["type"] == "tool_result"))
+                    .unwrap_or(false)
+            }),
+            "orphan tool_result must not be sent; got {msgs:#?}"
+        );
+    }
+
+    /// 边界：同一条 user 消息里混有 tool_result 与 text 时，归位 tool_result
+    /// 的同时**必须保留 text 块**（不能整条丢弃）。
+    #[test]
+    fn mixed_tool_result_and_text_message_keeps_text() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let messages = vec![
+            serde_json::json!({ "role": "user", "content": "task" }),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_A",
+                    "type": "function",
+                    "function": { "name": "Write", "arguments": "{}" }
+                }]
+            }),
+            // 混合消息：tool_result + text
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    { "type": "tool_result", "tool_use_id": "call_A", "content": "ok" },
+                    { "type": "text", "text": "keep this text" }
+                ]
+            }),
+        ];
+        let request = MessageRequest::new("claude-sonnet-5", messages);
+        let body = transport.build_request_body(&request);
+        let msgs = body["messages"].as_array().expect("messages array");
+
+        let all_text: Vec<String> = msgs
+            .iter()
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .filter(|b| b["type"] == "text")
+            .filter_map(|b| b["text"].as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            all_text.iter().any(|t| t.contains("keep this text")),
+            "non-tool_result blocks must survive reordering; got {msgs:#?}"
+        );
+
+        // tool_result 仍然只出现一次（未重复投递）
+        let result_count = msgs
+            .iter()
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .filter(|b| b["type"] == "tool_result")
+            .count();
+        assert_eq!(result_count, 1, "tool_result must not be duplicated");
     }
 }

@@ -1466,6 +1466,10 @@ impl super::super::Transport for ChatCompletionsTransport {
     fn provider_kind(&self) -> Option<crate::api::ProviderKind> {
         self.config.provider_kind
     }
+
+    fn provider_segment(&self) -> &str {
+        &self.config.provider_segment
+    }
 }
 
 impl ChatCompletionsTransport {

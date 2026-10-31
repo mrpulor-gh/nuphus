@@ -119,6 +119,8 @@ impl Provider for QwenProvider {
             provider_kind: Some(crate::api::ProviderKind::Qwen),
             reasoning_effort: cfg.reasoning_effort.clone(),
             extra_headers: vec![],
+            // 段名（providers.toml 段限定键）→ 模型级 max_tokens 精确解析
+            provider_segment: cfg.name.clone(),
         }))
     }
 }

@@ -253,6 +253,8 @@ impl ClientFactory {
                         provider_kind: Some(cfg.provider_type),
                         reasoning_effort: cfg.reasoning_effort.clone(),
                         extra_headers: quirks.extra_headers,
+                        // 段名（providers.toml 段限定键）→ 模型级 max_tokens 精确解析
+                        provider_segment: cfg.name.clone(),
                     },
                 ),
             )),
@@ -317,6 +319,82 @@ mod tests {
             Some(TransportKind::Responses)
         )
         .is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 回归（本次修复核心契约）：Anthropic Messages 通道必须按
+    /// **providers.toml 段名**解析模型级 `max_tokens`。
+    ///
+    /// 修复前：`AnthropicConfig` 不携带段名 → 传输层传 `provider = None`
+    /// → `resolve_max_output_tokens` 按「只认段限定」语义返回 `None`
+    /// → 恒定落 8192 兜底 → 用户在 providers.toml 显式配的 `max_tokens`
+    /// 被**静默丢弃** → 长 thinking 流吃满预算 → text/tool_call 缺失 → 空交付。
+    ///
+    /// 断言 factory 构建出的 Anthropic 传输层确实携带段名（接线成立），
+    /// 且两段同 id 模型各自命中自己的段（不串段）。
+    #[test]
+    fn anthropic_transport_carries_provider_segment_for_max_tokens() {
+        let dir = std::env::temp_dir().join(format!(
+            "nuphus-factory-anthropic-max-tokens-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("providers.toml");
+        let cfg = "model = \"probe-model\"\n\n\
+             [[providers]]\n\
+             name = \"seg-a\"\n\
+             provider_type = \"custom\"\n\
+             api_key = \"sk-a\"\n\
+             base_url = \"https://api.anthropic.com\"\n\n\
+             [[providers.models]]\n\
+             id = \"probe-model\"\n\
+             max_tokens = 32768\n\
+             transport = \"anthropic\"\n\n\
+             [[providers]]\n\
+             name = \"seg-b\"\n\
+             provider_type = \"custom\"\n\
+             api_key = \"sk-b\"\n\
+             base_url = \"https://api.anthropic.com\"\n\n\
+             [[providers.models]]\n\
+             id = \"probe-model\"\n\
+             max_tokens = 65536\n\
+             transport = \"anthropic\"\n";
+        std::fs::write(&path, cfg).unwrap();
+
+        let factory = ClientFactory::live_at(&path);
+        let registry = factory.registry().unwrap();
+
+        for (seg, expected) in [("seg-a", 32_768u32), ("seg-b", 65_536u32)] {
+            let provider = registry.providers.iter().find(|p| p.name == seg).unwrap();
+            let transport = factory
+                .build_transport(&registry, provider, "probe-model")
+                .unwrap();
+            // 核心契约：传输层携带段名（修复前此处恒为空 → 段限定解析失效）
+            assert_eq!(
+                transport.provider_segment(),
+                seg,
+                "Anthropic transport must carry providers.toml segment name"
+            );
+            // 段限定解析命中本段的 max_tokens（不串段）
+            let resolved = registry.get_max_output_tokens(Some(seg), "probe-model");
+            assert_eq!(
+                resolved,
+                Some(expected),
+                "seg {seg} must resolve its own segment's max_tokens"
+            );
+        }
+
+        // 无段绑定 → None（不跨段泄漏），与 Chat Completions 通道语义一致
+        assert_eq!(
+            registry.get_max_output_tokens(None, "probe-model"),
+            None,
+            "no segment binding must not resolve to a sibling segment"
+        );
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 
