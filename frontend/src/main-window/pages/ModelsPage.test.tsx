@@ -12,6 +12,7 @@ import {
   oauthStatus,
   openExternal,
   removeCustomProvider,
+  setAgentModel,
   setModelContextWindow,
   updateCustomProvider,
 } from '../lib/api'
@@ -209,6 +210,33 @@ describe('ModelsPage 增强判断模型导航', () => {
     const entry = await screen.findByRole('button', { name: '增强判断模型' })
     expect(entry).toHaveClass('active')
     expect(screen.getByTestId('enhanced-judgment-settings')).toBeInTheDocument()
+  })
+})
+
+describe('ModelsPage 子智能体模型双字段绑定', () => {
+  it('同名模型回显并保存所选的 custom 实例，而不是同类型的另一实例', async () => {
+    vi.mocked(getAgentModels).mockResolvedValue({
+      leader: '',
+      leader_provider: '',
+      workflow: '',
+      workflow_provider: '',
+      exec: 'shared-model',
+      exec_provider: 'custom-b',
+      custom: '',
+      custom_provider: '',
+    } as never)
+    vi.mocked(listModels).mockResolvedValue([
+      { id: 'shared-model', provider: 'custom-a', supports_vision: false },
+      { id: 'shared-model', provider: 'custom-b', supports_vision: false },
+    ] as never)
+
+    render(<ModelsPage onClose={() => {}} initialView="agents" />)
+
+    const trigger = await screen.findByRole('button', { name: /shared-model \(custom-b\)/ })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('option', { name: /shared-model.*custom-a/ }))
+
+    await waitFor(() => expect(setAgentModel).toHaveBeenCalledWith('exec', 'shared-model', 'custom-a'))
   })
 })
 

@@ -4196,6 +4196,7 @@ export function ModelsPage({
                   <Section title={TXT.execSection} description={TXT.execSectionDesc}>
                     <VisionModelSelect
                       value={agentModels.exec}
+                      provider={agentModels.exec_provider}
                       models={allModels}
                       onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
                       t={t}
