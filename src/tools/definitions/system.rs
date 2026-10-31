@@ -256,6 +256,13 @@ description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPOR
 /// 子进程状态轮询周期（与 registry 等待段的 `CANCEL_POLL_INTERVAL` 同档）
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 
+/// 进程退出后等待输出管道 EOF 的宽限期。
+///
+/// Windows 句柄继承会让子进程树里的孙进程持有 stdout/stderr 写端（EOF 永不到达，
+/// 见 `StreamDrain::join_with_deadline` 的事故注释）——到点直接返回已读快照，
+/// 保证 `timeout` 一定是调用的总上限，而不是「进程存活期间」的上限。
+const DRAIN_JOIN_GRACE: Duration = Duration::from_millis(1500);
+
 /// system_sleep 的可中断等待切片
 const SLEEP_SLICE: Duration = Duration::from_millis(150);
 
@@ -404,13 +411,31 @@ impl StreamDrain {
         }
     }
 
-    /// 等读取线程收尾并取回完整内容。
+    /// 等读取线程收尾并取回完整内容——**有界等待**。
     ///
-    /// 进程被保留（超时 / 后台）时**不调用** —— 那些线程会随进程自然结束而退出，
-    /// 此时等待是白等。
-    fn join(mut self) -> String {
+    /// 为什么不能裸 `join()`：本次事故（2026-10-31）实测——幂等命令里用
+    /// `Start-Process` 起了 GUI 子进程，PowerShell 自身很快就退出了，但 Windows
+    /// 的句柄继承让那个孙进程**持有 stdout 管道写端**，EOF 永不到达，读取线程
+    /// 永远阻塞 → 工具调用挂死 5 分钟以上，`timeout` 完全失效（超时只在进程
+    /// 存活期间检查，进程已退出就走不到超时分支）。
+    ///
+    /// 契约：最多等 `grace`，到点直接取「已读到」的快照并放弃等待（线程随
+    /// 管道关闭自然结束），**绝不无限期阻塞工具返回**。
+    fn join_with_deadline(mut self, grace: Duration) -> String {
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            let deadline = Instant::now() + grace;
+            while !handle.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                // 放弃等待：drop JoinHandle = detach，线程与缓冲区各自收尾。
+                tracing::warn!(
+                    "[SYSTEM_SHELL] 输出管道在进程退出后仍未 EOF（子进程树持有写端），\
+                     已返回当前快照，未阻塞调用"
+                );
+            }
         }
         String::from_utf8_lossy(&self.locked_bytes()).to_string()
     }
@@ -579,8 +604,12 @@ pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolRes
     match outcome {
         ShellOutcome::Exited => {
             let status = exit.expect("Exited 分支必然带退出状态");
-            let stdout_text = stdout.map(|d| d.join()).unwrap_or_default();
-            let stderr_text = stderr.map(|d| d.join()).unwrap_or_default();
+            let stdout_text = stdout
+                .map(|d| d.join_with_deadline(DRAIN_JOIN_GRACE))
+                .unwrap_or_default();
+            let stderr_text = stderr
+                .map(|d| d.join_with_deadline(DRAIN_JOIN_GRACE))
+                .unwrap_or_default();
             registry.unregister(&task.id);
             bg::discard_log(&task);
             if status.success() {
@@ -774,6 +803,31 @@ mod tests {
             cancel_flag: cancel,
             ..ToolCtx::default()
         }
+    }
+
+    // ── 输出排空：进程退出后绝不无限阻塞 ──────────────────────────────
+
+    /// 复现 2026-10-31 事故：孙进程继承并持有 stdout 写端 → 读取线程永不 EOF。
+    /// `join_with_deadline` 必须在宽限期后返回已读快照，绝不能挂死调用。
+    #[test]
+    fn drain_join_returns_snapshot_when_pipe_never_eofs() {
+        let buf = Arc::new(std::sync::Mutex::new(b"partial output".to_vec()));
+        let keep_alive = buf.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(30));
+            drop(keep_alive);
+        });
+        let drain = StreamDrain {
+            buf,
+            handle: Some(handle),
+        };
+        let started = Instant::now();
+        let text = drain.join_with_deadline(Duration::from_millis(120));
+        assert_eq!(text, "partial output");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "必须按 deadline 返回；无限等待管道 EOF 会让 timeout 彻底失效"
+        );
     }
 
     // ── 入参解析：默认值与分支 ──────────────────────────────────────────
