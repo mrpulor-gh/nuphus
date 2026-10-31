@@ -185,7 +185,7 @@ impl ToolRegistry {
     pub(crate) fn register_execute_shell(&mut self) {
         self.register(ToolDef {
             name: "system_shell".to_string(),
-description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPORTANT: always pass a short \"title\" (≤ 20 chars) for any command that takes more than a couple of seconds — builds, tests, verifications, installs, downloads, long sleeps. The desktop HUD shows that title so the user can see at a glance what is running; without it the HUD falls back to a generic label and the user cannot tell. Default timeout 180s; timeout > 300s automatically switches to background (the process tree survives and output goes to a file — read that file instead of re-running). On timeout the process is KEPT in the background by default (output goes to a file — read the file to continue, do NOT re-run); only explicit background:false kills the process tree on timeout or cancel.".to_string(),
+description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPORTANT: always pass a short \"title\" (≤ 20 chars) for any command that takes more than a couple of seconds — builds, tests, verifications, installs, downloads, long sleeps. The desktop HUD shows that title so the user can see at a glance what is running; without it the HUD falls back to a generic label and the user cannot tell. Default timeout 180s; timeout > 300s automatically switches to background (the process tree survives and output goes to a file — read that file instead of re-running). On timeout the process is KEPT in the background by default (output goes to a file — read the file to continue, do NOT re-run); only explicit background:false kills the process tree on timeout or cancel. 验证纪律：使用此工具跑验证环节，必须遵循验证原则——先确认这次验证会改变哪个决定（答不上就不跑），同类用例合并成一次命令，能用秒级 diff/grep 判定的事实不要用分钟级重编译去验；人类用户在意时间成本。".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -200,7 +200,17 @@ description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPOR
             category: ToolCategory::SystemAutomation,
             executor: |params, ctx| {
                 let request = ShellRequest::from_params(params);
-                run_system_shell(&request, ctx)
+                // 工具调用耗时：直接挂在**输出尾部**（用户明确要求）。人类用户在意
+                // 时间成本，验证类慢命令必须一眼看到代价——不藏日志、不另起字段。
+                let started = std::time::Instant::now();
+                let mut result = run_system_shell(&request, ctx)?;
+                let secs = started.elapsed().as_secs_f64();
+                let stamp = format!("工具调用耗时：{secs:.2} s");
+                result.output = Some(match result.output.take() {
+                    Some(out) if !out.is_empty() => format!("{out}\n\n{stamp}"),
+                    _ => stamp,
+                });
+                Ok(result)
             },
             depends_on: vec![],
         });
