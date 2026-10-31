@@ -851,4 +851,102 @@ mod tests {
         assert_eq!(removed, 0, "唯一纯 User 即保留起点，无历史可删");
         assert_eq!(session.len(), before);
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // tool 结果归位（协议邻接契约）
+    //
+    // 背景：运行时会往 assistant(tool_use) 与其 tool_result 之间插入上下文消息
+    // （push_system 安全检查告警 / ACTIVE REMINDERS）。序列化后形态是
+    // assistant → user(提醒) → tool(result)，两种协议都拒收：
+    //   · Anthropic：400 `tool call result does not follow tool call`
+    //   · 严格 OpenAI 兼容端点（DeepSeek 等）：tool 必须紧接 assistant(tool_calls)
+    // 归位只发生在序列化输出，会话存储保持原样。
+    // ════════════════════════════════════════════════════════════════════
+
+    fn tool_use(id: &str, name: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.to_string(),
+            name: name.to_string(),
+            input: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn test_api_messages_moves_tool_result_next_to_assistant() {
+        let mut session = Session::new();
+        session.push_user("do the task".to_string());
+        session.push_assistant(vec![tool_use("call_A", "Write")]);
+        // 运行时插入的提醒（安全告警 / ACTIVE REMINDERS）把配对隔开
+        session.push_system("### ACTIVE REMINDERS\nkeep going".to_string());
+        session.push_tool_result("call_A".to_string(), "ok".to_string(), false);
+
+        let api = session.to_api_messages(true);
+        assert_eq!(api.len(), 4, "归位不增删消息：{api:#?}");
+        assert_eq!(api[1]["role"], "assistant");
+        assert_eq!(api[2]["role"], "tool", "tool 必须紧跟 assistant：{api:#?}");
+        assert_eq!(api[2]["tool_call_id"], "call_A");
+        assert_eq!(api[3]["role"], "user");
+        assert!(
+            api[3]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("ACTIVE REMINDERS"),
+            "提醒内容保留且排在工具结果之后：{api:#?}"
+        );
+        // 存储未被改写（只改序列化输出）
+        assert_eq!(session.len(), 4);
+        assert_eq!(session.messages()[2].role, MessageRole::System);
+    }
+
+    #[test]
+    fn test_api_messages_keeps_parallel_tool_results_grouped() {
+        let mut session = Session::new();
+        session.push_user("run both".to_string());
+        session.push_assistant(vec![
+            tool_use("call_A", "Read"),
+            tool_use("call_B", "Write"),
+        ]);
+        session.push_system("reminder".to_string());
+        session.push_tool_result("call_A".to_string(), "a".to_string(), false);
+        session.push_tool_result("call_B".to_string(), "b".to_string(), false);
+
+        let api = session.to_api_messages(true);
+        assert_eq!(api.len(), 5, "{api:#?}");
+        assert_eq!(
+            api[2]["tool_call_id"], "call_A",
+            "同组结果保持原顺序：{api:#?}"
+        );
+        assert_eq!(api[3]["tool_call_id"], "call_B");
+        assert_eq!(api[4]["role"], "user", "提醒排在全部结果之后：{api:#?}");
+    }
+
+    #[test]
+    fn test_api_messages_drops_orphan_tool_result() {
+        let mut session = Session::new();
+        session.push_user("hi".to_string());
+        session.push_assistant(vec![ContentBlock::Text {
+            text: "done".to_string(),
+            reasoning: None,
+        }]);
+        // 没有 tool_use 认领的结果（历史损坏 / 被裁剪）→ 协议不接受，丢弃
+        session.push_tool_result("ghost".to_string(), "x".to_string(), false);
+
+        let api = session.to_api_messages(true);
+        assert_eq!(api.len(), 2, "{api:#?}");
+        assert!(api.iter().all(|m| m["role"] != "tool"), "{api:#?}");
+    }
+
+    #[test]
+    fn test_api_messages_leaves_adjacent_pairs_untouched() {
+        let mut session = Session::new();
+        session.push_user("go".to_string());
+        session.push_assistant(vec![tool_use("call_A", "Write")]);
+        session.push_tool_result("call_A".to_string(), "ok".to_string(), false);
+
+        let api = session.to_api_messages(true);
+        assert_eq!(api.len(), 3, "{api:#?}");
+        assert_eq!(api[0]["role"], "user");
+        assert_eq!(api[1]["role"], "assistant");
+        assert_eq!(api[2]["role"], "tool");
+    }
 }

@@ -12,6 +12,100 @@ use crate::session::types::*;
 /// 明确三件事：被叫停的是用户、该调用没有产出、不要假设它成功。
 const INTERRUPTED_TOOL_NOTICE: &str = "[中断] 用户强制中断了本次执行，该工具调用未产生任何结果。请等待用户的下一步指令，不要假设此调用已成功。";
 
+/// 序列化层：把 tool 消息归位到发出它的 assistant 之后（协议邻接要求）。
+///
+/// 运行时会在 assistant(tool_use) 与对应 tool_result 之间插入上下文消息
+/// （`push_system` 的安全检查告警、ACTIVE REMINDERS 提醒等）。序列化后形态是
+/// `assistant(tool_calls) → user(提醒) → tool(result)`，两种协议都判非法：
+/// - Anthropic Messages：`tool_result` 必须紧跟发起 `tool_use` 的 assistant，
+///   否则 400 `tool call result does not follow tool call`；
+/// - 严格 OpenAI 兼容端点（DeepSeek 等）：`tool` 消息必须紧接带对应
+///   `tool_call_id` 的 assistant(tool_calls)。
+///
+/// 只在**序列化输出**上归位，不改会话存储（与 System→user 同一条纪律）：
+/// 每个 tool 消息移到其就近前驱 assistant 之后，同组保持相对顺序；其它消息
+/// （提醒 / 摘要 / 用户输入）原序保留。模型读到的顺序变成「先工具结果、后提醒」，
+/// 这正是协议允许、也是提醒本来的生效时机（下一轮开始前）。
+/// 找不到对应 tool_call 的孤儿 tool 消息丢弃并 warn —— 两种协议都拒收。
+fn normalize_tool_adjacency(messages: &mut Vec<serde_json::Value>) {
+    use std::collections::HashMap;
+
+    if !messages.iter().any(|m| m["role"].as_str() == Some("tool")) {
+        return;
+    }
+
+    // tool 下标 → 归属的 assistant 下标（就近前驱：同 id 跨轮复用时取最近的一轮）
+    let mut owner: HashMap<usize, usize> = HashMap::new();
+    let mut orphans = 0usize;
+    for i in 0..messages.len() {
+        if messages[i]["role"].as_str() != Some("tool") {
+            continue;
+        }
+        let found = messages[i]["tool_call_id"].as_str().and_then(|id| {
+            (0..i).rev().find(|&j| {
+                messages[j]["role"].as_str() == Some("assistant")
+                    && messages[j]["tool_calls"]
+                        .as_array()
+                        .is_some_and(|arr| arr.iter().any(|c| c["id"].as_str() == Some(id)))
+            })
+        });
+        match found {
+            Some(j) => {
+                owner.insert(i, j);
+            }
+            None => orphans += 1,
+        }
+    }
+    if orphans > 0 {
+        tracing::warn!(
+            "[transform] dropped {orphans} orphan tool message(s) without a matching tool_call"
+        );
+    }
+
+    // 已经合法（无孤儿，且每个 tool 都排在它那组 assistant 结果的位置）→ 不动
+    let already_adjacent = orphans == 0
+        && owner
+            .iter()
+            .all(|(&t, &a)| (a + 1..t).all(|k| owner.get(&k) == Some(&a)));
+    if already_adjacent {
+        return;
+    }
+
+    let mut by_owner: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (&t, &a) in &owner {
+        by_owner.entry(a).or_default().push(t);
+    }
+    for list in by_owner.values_mut() {
+        list.sort_unstable();
+    }
+
+    // 拆成「保序的非 tool 消息」+「按归属的 tool 消息」，孤儿在拆分时丢弃
+    let mut kept: Vec<(usize, serde_json::Value)> = Vec::with_capacity(messages.len());
+    let mut tools: HashMap<usize, serde_json::Value> = HashMap::new();
+    for (i, m) in messages.drain(..).enumerate() {
+        if m["role"].as_str() == Some("tool") {
+            if owner.contains_key(&i) {
+                tools.insert(i, m);
+            }
+        } else {
+            kept.push((i, m));
+        }
+    }
+
+    let mut out: Vec<serde_json::Value> = Vec::with_capacity(kept.len() + tools.len());
+    for (i, m) in kept {
+        out.push(m);
+        if let Some(list) = by_owner.remove(&i) {
+            for t in list {
+                if let Some(v) = tools.remove(&t) {
+                    out.push(v);
+                }
+            }
+        }
+    }
+    *messages = out;
+}
+
 impl Session {
     /// 清理不完整的工具调用对，确保 API 格式合法
     ///
@@ -128,7 +222,8 @@ impl Session {
             })
             .collect();
 
-        self.messages
+        let mut out: Vec<serde_json::Value> = self
+            .messages
             .iter()
             .map(|msg| {
                 // 会话内的 System 消息（提炼摘要 / push_system 安全警告 / insert_refine_marker
@@ -321,7 +416,10 @@ impl Session {
                     msg_val
                 }
             })
-            .collect()
+            .collect();
+        // 协议邻接：tool 结果必须紧跟其 assistant（详见 normalize_tool_adjacency）
+        normalize_tool_adjacency(&mut out);
+        out
     }
 
     /// 估算当前消息列表 token 用量
