@@ -95,4 +95,15 @@ pub trait Transport: Send + Sync {
     fn provider_kind(&self) -> Option<crate::api::ProviderKind> {
         None
     }
+
+    /// Get the providers.toml **segment name** this transport is bound to
+    /// (e.g. "minimax", "qwen"), or empty when unbound.
+    ///
+    /// Used to resolve model-level `max_tokens` with segment-exact semantics
+    /// (`config::resolve_max_output_tokens` only matches a bound segment and
+    /// never scans sibling segments). Transports that cannot carry a segment
+    /// binding keep the default (empty).
+    fn provider_segment(&self) -> &str {
+        ""
+    }
 }

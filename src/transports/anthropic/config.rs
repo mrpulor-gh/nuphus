@@ -21,6 +21,21 @@ pub struct AnthropicConfig {
     /// 注入循环零生效，请求头与改造前逐字节一致。`x-api-key` 被跳过（鉴权头
     /// 不可被覆盖成双值）。
     pub extra_headers: Vec<(String, String)>,
+    /// providers.toml **段名**（如 "minimax" / "qwen"），用于把模型级
+    /// `max_tokens` 精确解析到所属段。
+    ///
+    /// ⚠️ 必须与 Chat Completions 通道的 `provider_segment` 语义一致
+    /// （见 `chat_completions::ChatCompletionsConfig::provider_segment`）：
+    /// `ModelRegistry::get_max_output_tokens` 只认「段限定」，无绑定时不扫描
+    /// 兄弟段（`config/model.rs` 的 `resolve_capability` 语义）。若这里传
+    /// `None`，用户在 providers.toml 里显式配的模型级 `max_tokens` 会被**静默
+    /// 丢弃**，Anthropic Messages 强制要求的 `max_tokens` 只能落到 8192 兜底
+    /// ——长 thinking 流会吃满预算导致 text/tool_call 缺失（空交付）。
+    ///
+    /// 注意：这里存的是**段名**（`ProviderConfig.name`），不是 provider *type*。
+    /// Chat Completions 侧注释提到 type id 会让 `custom-xxx` 实例全部塌缩到
+    /// "custom" 而错过自己的段；段名同理，取 `cfg.name` 才是段限定键。
+    pub provider_segment: String,
 }
 
 impl AnthropicConfig {
@@ -50,6 +65,7 @@ mod tests {
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: None,
             extra_headers: Vec::new(),
+            provider_segment: String::new(),
         }
     }
 

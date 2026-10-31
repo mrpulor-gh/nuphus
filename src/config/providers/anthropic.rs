@@ -120,6 +120,8 @@ impl Provider for AnthropicProvider {
             timeout_secs: cfg.timeout_secs,
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: cfg.reasoning_effort.clone(),
+            // 段名（providers.toml 段限定键）→ 模型级 max_tokens 精确解析
+            provider_segment: cfg.name.clone(),
             // 段级自定义标头（anthropic 兼容中转实例）；官方段为空 → 零生效
             extra_headers: cfg
                 .extra_headers
