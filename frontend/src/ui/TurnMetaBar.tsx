@@ -34,6 +34,7 @@ import { useEffect, useState } from 'react'
 import { useLanguage } from '../locales'
 import type { TurnMeta } from '../core/types'
 import { isTurnMetaEmpty, resolveTurnCalls, resolveTurnDuration } from '../core/types'
+import { formatTokens } from './tokenFormat'
 
 /** 元数据条可展示槽位 */
 export type TurnMetaSlot = 'duration' | 'tokens' | 'steps'
@@ -78,13 +79,6 @@ export function formatTurnDuration(ms: number): string {
   const m = Math.floor(ms / 60000)
   const s = Math.floor((ms % 60000) / 1000)
   return `${m}m ${s}s`
-}
-
-/** token 数 → 紧凑可读（1.2k / 3.4M），与输入栏 fmt 同款 */
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-  return String(n)
 }
 
 /** 命令动作分类（2026-10-26 重做，大王实测驱动）。
@@ -171,11 +165,11 @@ export function runningToolLabel(tool: TurnMetaBarActiveTool): string {
 /** 耐心阈值（毫秒）：单条工具执行超过 60s 才提示（HUD 单次运行同款节奏） */
 const PATIENCE_DELAY_MS = 60_000
 
-/** 执行中状态指示（2026-10-25 大王定 v3「突触回路」）：两枚神经元由一条
- *  微光线相连，脉冲沿回路往返行进——到达即端点闪爆 + 小涟漪，反向再发。
- *  语义与 agent 执行回路同构（输入→思考→输出→反馈），读「在推进」而非
- *  「加载等待」。契约延续：**不做旋转**（旋转语义是加载等待，长任务会被
- *  读成卡住）。SVG 10×10 无边框无背景，chip 左间距仍由图标自身宽度承担。 */
+/** 执行中状态指示（2026-10-31 大王定 v4「去边框均衡器」）：两根竖条高低起伏、
+ *  相位错开半拍——与虚拟形象 working 态同源（avatar.css `nvEq`：1.1s /
+ *  scaleY .55→1 / 右条 -0.55s），去掉外壳只留双竖，读「正在动手」。
+ *  契约延续：**不做旋转**（旋转语义是加载等待，长任务会被读成卡住）。
+ *  SVG 10×10 无边框无背景，chip 左间距仍由图标自身宽度承担。 */
 function LiveThinking() {
   return (
     <svg
@@ -186,53 +180,20 @@ function LiveThinking() {
       className="turn-meta-thinking"
       aria-hidden="true"
     >
-      {/* 涟漪 ×2：随脉冲抵达自端点迸出（置底层）；常态 opacity 0，降级时隐没 */}
-      <circle
-        cx="2.2"
-        cy="5"
-        r="1.9"
-        stroke="currentColor"
-        strokeWidth="0.5"
-        opacity="0"
-        className="turn-meta-thinking-ring-l"
-      />
-      <circle
-        cx="7.8"
-        cy="5"
-        r="1.9"
-        stroke="currentColor"
-        strokeWidth="0.5"
-        opacity="0"
-        className="turn-meta-thinking-ring-r"
-      />
-      {/* 回路轨道：恒显微弱，把两枚神经元系成"一条回路"的语义锚 */}
+      {/* 双竖：底端对齐、圆头收口；缩放由 CSS 驱动（transform-origin: bottom） */}
       <path
-        d="M 2.2 5 L 7.8 5"
+        d="M3 8.6 L3 1.4"
         stroke="currentColor"
-        strokeWidth="0.55"
-        opacity="0.22"
-        className="turn-meta-thinking-axis"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        className="turn-meta-thinking-bar-l"
       />
-      <circle cx="2.2" cy="5" r="1.2" fill="currentColor" className="turn-meta-thinking-node-l" />
-      <circle cx="7.8" cy="5" r="1.2" fill="currentColor" className="turn-meta-thinking-node-r" />
-      {/* 彗尾：与脉冲同拍但 +0.05s 延迟+小一号暗一档，形成拖尾；基态 opacity 0（降级时隐没） */}
-      <circle
-        cx="2.2"
-        cy="5"
-        r="0.55"
-        fill="currentColor"
-        opacity="0"
-        className="turn-meta-thinking-tail"
-      />
-      {/* 行进脉冲：0-20% 左→右、33-52% 右→左，到端点即被吸收，端点负责闪；
-          基态 opacity 0，仅由关键帧点亮，降级时静场只剩轨道+双端 */}
-      <circle
-        cx="2.2"
-        cy="5"
-        r="0.9"
-        fill="currentColor"
-        opacity="0"
-        className="turn-meta-thinking-pulse"
+      <path
+        d="M7 8.6 L7 1.4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        className="turn-meta-thinking-bar-r"
       />
     </svg>
   )

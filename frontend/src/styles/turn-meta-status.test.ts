@@ -1,12 +1,13 @@
 /**
- * 执行状态指示的样式契约（2026-10-25 大王定 v3「突触回路」）：
+ * 执行状态指示的样式契约（2026-10-31 大王定 v4「去边框均衡器」）：
  *
- * ① 执行中图标 = 两枚神经元 + 微光轨道 + 往返脉冲（彗尾 0.05s 相位滞后），
- *    到达即端点闪爆 + 小涟漪，反向再发。**不能是旋转 svg**——旋转的语义是
- *    「加载等待」，长任务时会被读成卡住。突触回路的往返读的是「在推进」。
- * ② 图标以 translate/scale/opacity 驱动，任何 turn-meta-* 关键帧禁见 rotate。
- * ③ 无动画降级时（prefers-reduced-motion）全家族 animation:none，静场只余
- *    轨道 + 双端节点（脉冲/彗尾基态 opacity 0，由关键帧点亮）。
+ * ① 执行中图标 = 两根竖条高低起伏、相位错开半拍（右条 -0.55s），与虚拟形象
+ *    working 态同源（avatar.css `nvEq`：1.1s / scaleY .55→1），去掉外壳只留
+ *    双竖。**不能是旋转 svg**——旋转的语义是「加载等待」，长任务会被读成卡住；
+ *    均衡器读的是「正在动手」。
+ * ② 只允许 scaleY 驱动（transform-origin: bottom），turn-meta-* 关键帧禁见 rotate。
+ * ③ 无动画降级时（prefers-reduced-motion）animation:none，并保留「两根不等高」
+ *    的静态姿态——否则退化成两根等长直线，状态信息全丢。
  * ④ 动作行 chip 左侧不留 padding，左侧距离交给该 SVG 图标自身宽度。
  * ⑤ 耐心 chip（>60s 的 Running/Testing/Building/Checking）的流光必须真的可见：
  *    它曾被 `.turn-meta-bar--actions .turn-meta-chip`（0,2,0，后出现）覆盖掉
@@ -36,10 +37,17 @@ const ruleBody = (selector: string) => {
   return start < 0 || end < 0 ? '' : css.slice(start + 1, end)
 }
 
-describe('执行中状态图标：突触回路pulse往返而非旋转', () => {
-  it('组件渲染回路全家（轨道/双端/脉冲/彗尾/涟漪×2），旧版类绝迹', () => {
+describe('执行中状态图标：去边框均衡器（双竖高低起伏，非旋转）', () => {
+  it('组件渲染双竖（容器 + 左/右条），旧回路全家与历史 spinner 绝迹', () => {
     for (const cls of [
       'turn-meta-thinking',
+      'turn-meta-thinking-bar-l',
+      'turn-meta-thinking-bar-r',
+    ]) {
+      expect(tsx).toContain(cls)
+    }
+    // 旧版「突触回路」（轨道/节点/脉冲/彗尾/涟漪）与更早的 spinner/点阵必须绝迹，防回潮
+    for (const stale of [
       'turn-meta-thinking-axis',
       'turn-meta-thinking-node-l',
       'turn-meta-thinking-node-r',
@@ -47,16 +55,29 @@ describe('执行中状态图标：突触回路pulse往返而非旋转', () => {
       'turn-meta-thinking-tail',
       'turn-meta-thinking-ring-l',
       'turn-meta-thinking-ring-r',
+      'turn-meta-spinner',
+      'turn-meta-thinking-dot',
+      'turn-meta-thinking-core',
     ]) {
-      expect(tsx).toContain(cls)
+      expect(tsx).not.toContain(stale)
     }
-    // 历史 spinner（旋转）与 v1 四角点 / v2 火花簇类必须绝迹，防回潮
-    expect(tsx).not.toContain('turn-meta-spinner')
-    expect(tsx).not.toContain('turn-meta-thinking-dot')
-    expect(tsx).not.toContain('turn-meta-thinking-core')
   })
 
-  it('行进关键帧 translate 驱动，全部关键帧禁见 rotate，旧关键帧绝锈', () => {
+  it('关键帧只用 scaleY、禁见 rotate；右条相位错开半拍；旧关键帧绝迹', () => {
+    const kf = css.match(/@keyframes turn-meta-eq\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(kf).not.toBe('')
+    expect(kf).toMatch(/scaleY\(/)
+    expect(kf).not.toMatch(/rotate/)
+    // 右条 -0.55s = 半个 1.1s 周期：两根条任意时刻高低不同
+    // （不能用 ruleBody：合并选择器 `.turn-meta-thinking-bar-l,\n.turn-meta-thinking-bar-r {`
+    //  会先命中 transform-box 那条，取不到动画声明）
+    const rightRule =
+      css.match(
+        /\.turn-meta-thinking-bar-r\s*\{[^}]*animation:\s*turn-meta-eq\s*1\.1s[^}]*\}/,
+      )?.[0] ?? ''
+    expect(rightRule).not.toBe('')
+    expect(rightRule).toMatch(/animation-delay:\s*-0\.55s/)
+    // 旧回路关键帧不得残留（防止样式与组件各走一半）
     for (const name of [
       'turn-meta-pulse',
       'turn-meta-tail',
@@ -65,22 +86,8 @@ describe('执行中状态图标：突触回路pulse往返而非旋转', () => {
       'turn-meta-ring-l',
       'turn-meta-ring-r',
     ]) {
-      const kf = css.match(new RegExp(`@keyframes ${name}\\s*\\{[\\s\\S]*?\\n\\}`))?.[0] ?? ''
-      expect(kf).not.toBe('')
+      expect(css).not.toMatch(new RegExp(`@keyframes ${name}\\b`))
     }
-    for (const name of ['turn-meta-pulse', 'turn-meta-tail']) {
-      const kf = css.match(new RegExp(`@keyframes ${name}\\s*\\{[\\s\\S]*?\\n\\}`))?.[0] ?? ''
-      expect(kf).not.toBe('')
-      expect(kf).not.toMatch(/rotate/)
-      expect(kf).toMatch(/translateX\(/)
-    }
-    // 旋转=加载等待=禁；旧图案关键帧绝迹防回潮
-    //（`ring\b` 会误把 `ring-l` 当边界，ring 系用负向前瞻放行）
-    expect(css).not.toMatch(/@keyframes turn-meta-thinking-pulse\b/)
-    expect(css).not.toMatch(/@keyframes turn-meta-spin\b/)
-    expect(css).not.toMatch(/@keyframes turn-meta-dot-/)
-    expect(css).not.toMatch(/@keyframes turn-meta-core\b/)
-    expect(css).not.toMatch(/@keyframes turn-meta-ring(?!-l|-r)\b/)
   })
 
   it('动作行 chip 左侧不留 padding，左侧距离交给 SVG 图标', () => {
@@ -88,17 +95,18 @@ describe('执行中状态图标：突触回路pulse往返而非旋转', () => {
     expect(body).toMatch(/padding:\s*1px 6px 1px 0/)
   })
 
-  it('无动画降级（prefers-reduced-motion）仍然可读：只余轨道+双端', () => {
+  it('无动画降级（prefers-reduced-motion）保留「两根不等高」静态姿态', () => {
     // 文件里早有其它 prefers-reduced-motion 块（如流光降级），须锁定图标那块
     const block =
       [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g)].find(m =>
-        m[0].includes('.turn-meta-thinking-pulse,'),
+        m[0].includes('.turn-meta-thinking-bar-l'),
       )?.[0] ?? ''
     expect(block).not.toBe('')
-    expect(block).toContain('.turn-meta-thinking-tail')
-    expect(block).toContain('.turn-meta-thinking-node-l')
-    expect(block).toContain('.turn-meta-thinking-ring-l')
+    expect(block).toContain('.turn-meta-thinking-bar-r')
     expect(block).toContain('animation: none')
+    // 两根条静止时高度不同（避免退化成两条等长直线）
+    expect(block).toMatch(/scaleY\(0\.62\)/)
+    expect(block).toMatch(/scaleY\(0\.92\)/)
   })
 })
 
