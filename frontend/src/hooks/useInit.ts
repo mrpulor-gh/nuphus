@@ -1,7 +1,7 @@
 // useInit — 应用初始化与 Toast 通知
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { invoke, listen } from '../core/bridge'
-import type { ChatMessage, TimelineEntry } from '../core/types'
+import type { ChatMessage, TimelineEntry, TurnMeta } from '../core/types'
 import {
   getChatHistory,
   getCurrentMode,
@@ -30,6 +30,11 @@ export interface InitDeps {
   messagesRestoredRef: React.MutableRefObject<boolean>
   /** 启动时同步后端权威 mode（镜像恢复结果 leader/workflow/custom） */
   setMode: (mode: string) => void
+  /**
+   * 启动历史恢复完成：把最后一轮已持久化的执行快照回填给执行 UI。
+   * 空历史也要回调（消费方据此清空上一会话残留）；实时执行已开始时由消费方忽略。
+   */
+  onHistoryRestored?: (history: HistoryMessage[] | null) => void
 }
 
 /**
@@ -68,8 +73,36 @@ export function toTimelineEntry(ti: HistoryTraceItem): TimelineEntry {
   }
 }
 
+/**
+ * 恢复展示用的「最后一轮」执行快照：已持久化的耗时 / 步数元数据 + 执行轨迹。
+ *
+ * 只搬运历史里**已经存在**的数据，不做任何推算：ctx 令牌不在此恢复
+ * （它来自每次模型真实请求返回的 input token，重启后等下一次调用自然回填）。
+ * 返回 null = 历史里没有可恢复的执行记录（调用方保持未知态，不伪造 0）。
+ */
+export function lastTurnExecution(history: HistoryMessage[] | null): {
+  meta: TurnMeta | null
+  timeline: TimelineEntry[]
+} | null {
+  if (!history || history.length === 0) return null
+  const folded = foldHistoryAssistants(history)
+  // 从后往前找最后一条带执行数据的 assistant（fold 已把连续轮次合并到末条）。
+  for (let i = folded.length - 1; i >= 0; i -= 1) {
+    const m = folded[i]
+    if (m.role !== 'assistant') continue
+    const meta = m.meta ?? null
+    const timeline = (m.traceItems ?? []).map(toTimelineEntry)
+    if (meta || timeline.length > 0) return { meta, timeline }
+  }
+  return null
+}
+
 export function useInit(deps: InitDeps) {
   const { setMessages, setModelName, setSessionId, messagesRestoredRef, setMode } = deps
+  // 回填回调经 ref 持有：runInitialization 的依赖数组不含它（避免初始化 effect
+  // 因回调标识变化重跑），而 ref 始终指向最新闭包。
+  const onHistoryRestoredRef = useRef(deps.onHistoryRestored)
+  onHistoryRestoredRef.current = deps.onHistoryRestored
 
   // ── App lifecycle state ──
   const [appState, setAppState] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -124,7 +157,10 @@ export function useInit(deps: InitDeps) {
       invoke('splash_status_update', { text: 'Restoring memory…' }).catch(() => {})
       updateInitItem('memory', 'loading')
       try {
-        const history = await getChatHistory()
+        let history = await getChatHistory()
+        // 启动一律回欢迎页：不自动续接任何会话（续接是用户在欢迎页的显式动作，
+        // 由「继续对话」按钮触发）。这里只搬运当前 mode 槽 / 切换中转备份里
+        // 已有的历史，取不到就停在欢迎页，不伪造会话。
         if (history && history.length > 0) {
           // 保留过程说明，并兼容旧版连续 assistant 历史的折叠行为。
           const folded = foldHistoryAssistants(history)
@@ -152,12 +188,14 @@ export function useInit(deps: InitDeps) {
           )
           messagesRestoredRef.current = true
         }
+        // 历史恢复完成：回填最后一轮已持久化的执行快照（空历史也回调 → 清残留）。
+        onHistoryRestoredRef.current?.(history ?? null)
       } catch {}
       updateInitItem('memory', 'done')
 
       // 2.5 Mode: 启动同步后端权威 mode（镜像恢复 leader/workflow/custom）——
       // 输入框 mode chip 与后端 current_mode 一致；会话视图由 get_chat_history
-      // 按 current_mode 返回（有历史则显示，无历史则欢迎页，不自动进入会话）
+      // 按 current_mode 返回（有历史则显示；无历史则欢迎页——启动不自动续接）
       try {
         const m = await getCurrentMode()
         if (m) setMode(m)

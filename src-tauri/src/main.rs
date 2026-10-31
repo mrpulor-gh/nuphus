@@ -488,6 +488,7 @@ let key = shortcut.to_string();
             commands::archive_session,
             commands::has_resume_candidate,
             commands::resume_latest_session,
+            commands::current_context_usage,
             commands::list_external_agents,
             commands::upsert_external_agent,
             commands::delete_external_agent,

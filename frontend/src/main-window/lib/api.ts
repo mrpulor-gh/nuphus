@@ -673,6 +673,25 @@ export function resumeLatestSession() {
   return invoke<HistoryMessage[]>('resume_latest_session')
 }
 
+/**
+ * 当前会话的上下文占用快照（最后一次**真实 API 读数**）。
+ *
+ * 恢复历史（启动 / 切换会话 / 继续对话）后回填输入栏 ctx 指示器用。
+ * 后端返回两个原始读数；**主槽的分子是两者之和** `input + output`
+ * （`Session::context_occupancy`，即「下一次请求的提示词规模」），
+ * 与实时 `token_usage` 的 main 源同口径（react_loop / process 的 main 事件
+ * 都是 `input_tokens = context_occupancy`）。
+ * 从未拿到过读数 → null：前端保持未知态，不伪装 0。
+ */
+export interface ContextUsageSnapshot {
+  input_tokens: number
+  output_tokens: number
+}
+
+export function currentContextUsage() {
+  return invoke<ContextUsageSnapshot | null>('current_context_usage')
+}
+
 // ── External Agents 配置中心（plugin/team.toml CRUD）──
 
 /** 外部 Agent 登记项（team.toml 段 → 扁平字段，含默认值补全） */

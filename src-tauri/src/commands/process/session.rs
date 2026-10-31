@@ -22,6 +22,72 @@ pub fn get_chat_history(
     chat_history(state.inner())
 }
 
+/// 当前会话的上下文占用快照（最后一次**真实 API 读数**）。
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextUsage {
+    /// 上次请求的 input tokens（prompt + cache hit）。单独它不是上下文占用：
+    /// 前端主槽分子 = input + output（`Session::context_occupancy`，与实时
+    /// main 源同口径）。
+    pub input_tokens: u64,
+    /// 上次请求的 output tokens——「下一次请求的提示词规模」的另一半
+    pub output_tokens: u64,
+}
+
+/// 读数收敛：两者皆 0 = 从未拿到过官方读数 → None（保持未知，不伪装 0）。
+fn usable_usage(input: u64, output: u64) -> Option<ContextUsage> {
+    if input == 0 && output == 0 {
+        return None;
+    }
+    Some(ContextUsage {
+        input_tokens: input,
+        output_tokens: output,
+    })
+}
+
+/// 恢复历史后回填输入栏 ctx 指示器（分子只在有真实读数时给值）。
+///
+/// 来源与 `chat_history` 同一会话判定，绝不跨会话取数：
+///   1) 当前 mode 的存活 Agent 会话（页面刷新 / 重连时最准）
+///   2) idle 时的 `session_backup`（「继续对话」/ 切换中转写入的那个会话）
+///
+/// 两者都没有读数（0/0）→ None：前端保持未知态，等下一次真实请求回填。
+#[tauri::command(async)]
+pub fn current_context_usage(state: State<'_, AppState>) -> Result<Option<ContextUsage>, String> {
+    let live = {
+        let guard = state.runtime.lock().map_err(|e| e.to_string())?;
+        let current_mode = state
+            .current_mode
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "leader".to_string());
+        if current_mode == "workflow" {
+            guard
+                .workflow_agent
+                .as_ref()
+                .map(|a| (a.session().api_input_tokens, a.session().api_output_tokens))
+        } else {
+            guard
+                .leader_agent
+                .as_ref()
+                .map(|a| (a.session().api_input_tokens, a.session().api_output_tokens))
+        }
+    };
+    if let Some((input, output)) = live {
+        return Ok(usable_usage(input, output));
+    }
+    if let Ok(sb) = state.session.lock() {
+        if let Some(ref json) = sb.session_backup {
+            if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
+                return Ok(usable_usage(
+                    sess.api_input_tokens,
+                    sess.api_output_tokens,
+                ));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// 从 session 消息过滤出 UI 可见历史。
 /// 追加指令段 [APPEND]：LLM 上下文保留完整指令语义，但 UI 历史需还原为用户原文
 /// ——否则执行中发送的消息在刷新/重连后消失（用户看不到自己发过的内容）。
@@ -445,6 +511,21 @@ mod tests {
 
     // 对齐改造（2026-10-14）：progress 收据机制已删除，历史一律与 leader 同构
     // （连续 assistant 前端折叠、最终回复独立完整）。以下测试验证新契约。
+
+    #[test]
+    fn usable_usage_rejects_empty_reading() {
+        // 从未拿到过官方读数（0/0）→ 未知态，绝不返回 0 让前端伪装成真实占用
+        assert!(usable_usage(0, 0).is_none());
+        assert_eq!(
+            usable_usage(130_000, 2_400),
+            Some(ContextUsage {
+                input_tokens: 130_000,
+                output_tokens: 2_400,
+            })
+        );
+        // 只有一侧有读数也算真实读数（不吞掉）
+        assert!(usable_usage(1, 0).is_some());
+    }
 
     #[test]
     fn extract_history_assistant_tool_rounds_merge_like_leader() {

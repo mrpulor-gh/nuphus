@@ -23,13 +23,14 @@ import {
   getCurrentConfig,
   getChatHistory,
   resumeLatestSession,
+  currentContextUsage,
   newChatSessionCmd,
   type HistoryMessage,
 } from '../main-window/lib/api'
 import { applyTurnSnapshot } from '../core/types'
 import { useExecutionState } from './useExecutionState'
 import type { ExecutionStage } from './useExecutionState'
-import { foldHistoryAssistants, toTimelineEntry } from './useInit'
+import { foldHistoryAssistants, lastTurnExecution, toTimelineEntry } from './useInit'
 import { loadRelation } from '../main-window/lib/relation'
 import { useLanguage } from '../locales'
 
@@ -420,6 +421,12 @@ export function useSession(): SessionAPI {
   const lastStreamingMsgId = useRef<string | null>(null)
   const executionActiveRef = useRef(false)
   const messagesRestoredRef = useRef(false)
+  /**
+   * 会话恢复序号：每次切换 / 新建会话自增，异步返回的历史只有**最新一次**
+   * 才有资格落到界面（messages 与执行快照同源同批）。防止快速切换时先发后到
+   * 的旧会话覆盖后选会话，造成消息与步数/耗时跨会话混杂。
+   */
+  const historyRestoreSeqRef = useRef(0)
   const processingRef = useRef(false)
   const lastSentRef = useRef<{ content: string; time: number } | null>(null)
   const sendSeqRef = useRef(0)
@@ -465,6 +472,17 @@ export function useSession(): SessionAPI {
 
   const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set())
 
+  /**
+   * 历史恢复 → 回填最后一轮执行快照（步数 / 耗时 / 执行轨迹）。
+   *
+   * 只搬运已持久化的数据，不推算 ctx 令牌（ctx 来自模型真实请求的 input token，
+   * 重启后保持 `--`，下一次调用自然恢复）。execUI 在下方才定义，故经 ref 中转；
+   * 赋值点在 execUI 之后、applyHistory 之前。
+   */
+  const restoreExecutionFromHistoryRef = useRef<(history: HistoryMessage[] | null) => void>(
+    () => {},
+  )
+
   // ── Sub-hooks ──
   const modals = useModals()
 
@@ -485,9 +503,43 @@ export function useSession(): SessionAPI {
     setSessionId,
     messagesRestoredRef,
     setMode: setModeState,
+    // 启动恢复的历史同样回填执行快照（execUI 在下方定义，经 ref 中转避免 TDZ）。
+    onHistoryRestored: history => restoreExecutionFromHistoryRef.current(history),
   })
 
   const execUI = useExecutionUI(showToast)
+
+  // 历史恢复回填：实时执行已开始（本轮有活跃执行）时忽略迟到的恢复结果，
+  // 避免把历史快照盖到正在进行的轮次上。没有可恢复数据 → 清空为未知态。
+  restoreExecutionFromHistoryRef.current = history => {
+    if (executionActiveRef.current) return
+    const restored = lastTurnExecution(history)
+    execUI.setTurnMeta(restored?.meta ?? null)
+    execUI.setTimeline(restored?.timeline ?? [])
+    execUI.setCompleted(restored != null)
+    execUI.setDismissThinking(false)
+    // 令牌：回填会话里最后一次**真实 API 读数**。主槽分子与实时 main 源同口径
+    // —— `Session::context_occupancy` = api_input_tokens + api_output_tokens，
+    // 即「下一次请求的提示词规模」（react_loop / process 的 main 事件同样是
+    // `input_tokens = context_occupancy`，output 为 0）。没有读数 → 命令返回
+    // null，保持未知态不伪装 0；下一次真实请求到达后由事件流覆盖。
+    // 序号守卫：期间切走会话 / 新建 → 结果作废，绝不把 A 的占用写进 B。
+    if (history && history.length > 0) {
+      const seq = historyRestoreSeqRef.current
+      currentContextUsage()
+        .then(usage => {
+          if (!usage || seq !== historyRestoreSeqRef.current || executionActiveRef.current) return
+          execUI.setMainTokenUsage({
+            inputTokens: usage.input_tokens + usage.output_tokens,
+            outputTokens: 0,
+            // main 槽没有缓存读数：沿用后端 main 发射点的哨兵（0xffffffff），
+            // 否则 0 会被弹窗算成「缓存命中率 0%」
+            cacheHitTokens: 0xffffffff,
+          })
+        })
+        .catch(() => {})
+    }
+  }
   // 轮询快照回填（见上方 onTurnSnapshot 注释）：起点与步数皆后端权威，
   // 合并规则集中在 applyTurnSnapshot（步数不得被前值 `||` 短路冻住）。
   turnSnapshotFromPollRef.current = (startedAtMs, toolCalls) => {
@@ -755,6 +807,9 @@ export function useSession(): SessionAPI {
 
   // ── handleNewChat (kept in useSession due to tight coupling with messages) ──
   const resetTransientUI = useCallback(() => {
+    // 先作废所有在途的历史恢复：之后即使旧请求返回，也不再落到界面
+    // （新建 / 切走时尤其重要，否则旧会话消息与执行快照会晚到覆盖当前视图）。
+    historyRestoreSeqRef.current += 1
     // 本地清空聊天区回 welcome（进既有会话 / 继续对话 / 新建成功都经此）。
     // 会话归属以后端为权威，前端无需维护任何"下一发送=新建"意图状态。
     setMessages([])
@@ -779,7 +834,20 @@ export function useSession(): SessionAPI {
     // （ChatInputBar 的 ctxLimit>0 分支与 title 兜底），不把「未知」伪装成「确实是 0」。
     // 新会话跑过一轮后由 source="main" 的快照重新填上。
     execUI.setMainTokenUsage(null)
-  }, [setExecutionStage, execUI.setMainTokenUsage])
+    // 执行快照同样属于「上一会话」：切换 / 新建时清空，避免把旧轮次数带到新会话；
+    // 恢复路径随后由历史回填（applyHistory / onHistoryRestored）。
+    execUI.setTurnMeta(null)
+    execUI.setExecTokenUsage(null)
+    execUI.setLiveTurnToolCalls(0)
+    execUI.setDismissThinking(false)
+  }, [
+    setExecutionStage,
+    execUI.setMainTokenUsage,
+    execUI.setTurnMeta,
+    execUI.setExecTokenUsage,
+    execUI.setLiveTurnToolCalls,
+    execUI.setDismissThinking,
+  ])
 
   const handleNewChat = useCallback(
     async (title?: string): Promise<boolean> => {
@@ -835,12 +903,19 @@ export function useSession(): SessionAPI {
       )
       messagesRestoredRef.current = true
     }
+    // 恢复最后一轮已持久化的执行快照（空历史 → 清空为未知态）。
+    restoreExecutionFromHistoryRef.current(history)
   }, [])
 
   const reloadChatFromBackend = useCallback(async () => {
     resetTransientUI()
+    const seq = ++historyRestoreSeqRef.current
     try {
-      applyHistory(await getChatHistory())
+      const history = await getChatHistory()
+      // 只有最新一次恢复有资格落界面：迟到的旧会话结果直接丢弃（消息与执行
+      // 快照同批，不会出现「消息是 B、步数是 A」的跨会话混杂）。
+      if (seq !== historyRestoreSeqRef.current) return
+      applyHistory(history)
     } catch {}
   }, [resetTransientUI, applyHistory])
 
@@ -853,9 +928,14 @@ export function useSession(): SessionAPI {
    */
   const resumeLastSession = useCallback(async () => {
     resetTransientUI()
+    const seq = ++historyRestoreSeqRef.current
     try {
-      applyHistory(await resumeLatestSession())
+      const history = await resumeLatestSession()
+      if (seq !== historyRestoreSeqRef.current) return
+      applyHistory(history)
     } catch {
+      // 续接失败才回退普通重拉；期间若已切走，旧结果同样作废。
+      if (seq !== historyRestoreSeqRef.current) return
       await reloadChatFromBackend()
     }
   }, [resetTransientUI, applyHistory, reloadChatFromBackend])
