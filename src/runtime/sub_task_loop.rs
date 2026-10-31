@@ -184,7 +184,9 @@ impl super::SubTaskRunner {
             self.emit(NuphusEvent::ExecutionProgress {
                 iteration: iteration as u32 + 1,
                 max_iterations: self.config.max_iterations as u32,
-                tool_calls_so_far: self.tool_call_total_count as usize,
+                tool_calls_so_far: crate::state::SignalState::execution_tool_calls(
+                    self.tools.signals(),
+                ),
             });
 
             if assistant_blocks.is_empty() {

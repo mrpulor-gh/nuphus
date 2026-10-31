@@ -77,57 +77,41 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
     // 顶层 model 字段已退役：不再参与启动加载（曾致陈旧值把激活模型/ctx 带偏，
     // 2026-09-05 实测顶层残留 gpt-5.6-sol → 重启 ctx 128K）。
 
+    // 读端前置 = 一次遗留迁移：旧版（1.1.2 及更早的 global/default 切换槽 +
+    // 1.1.3 半绑定）先补写成完整成对绑定，下方解析与 [agent_models] 读端看到
+    // 的即迁移后的权威形态。幂等：无遗留数据时零写入。
+    migrate_legacy_agent_model_selections(&config_path);
+
     // leader 绑定为空 → find_startup_binding("") 返回 None → 走下方首个可用 provider 回退。
     let am = load_agent_models(&config_path);
     let effective_top = am.leader.clone();
 
-    let binding = find_startup_binding(&doc, &config_path, &effective_top, &am.leader_provider);
+    let binding = find_startup_binding(&doc, &effective_top, &am.leader_provider);
+    if binding.is_none() && !effective_top.is_empty() {
+        tracing::warn!(
+            "[STARTUP] 显式绑定不可用：leader「{}」未落到任何「凭证可用且发布该模型」的段（leader_provider=\"{}\"），降级兜底",
+            effective_top,
+            am.leader_provider
+        );
+    }
     let (provider_name, model_id, base_url, api_key) = match binding {
         Some(v) => v,
-        None => {
-            // 2. Fallback: first provider with a non-empty api_key
-            let providers = match doc.get("providers").and_then(|p| p.as_array()) {
-                Some(arr) => arr,
-                None => return,
-            };
-            let mut p = String::new();
-            let mut m = String::new();
-            let mut bu = String::new();
-            let mut key = String::new();
-            for entry in providers {
-                let name = entry
-                    .get("provider_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(entry.get("name").and_then(|v| v.as_str()).unwrap_or(""));
-                let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
-                let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
-                let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-                if (!k.is_empty() || oauth_entry(entry)) && !name.is_empty() {
-                    let model = entry
-                        .get("models")
-                        .and_then(|arr| arr.as_array())
-                        .and_then(|models| models.first())
-                        .and_then(|m| m.get("id").and_then(|id| id.as_str()))
-                        .unwrap_or("");
-                    if !model.is_empty() {
-                        p = if oauth_entry(entry) {
-                            entry["name"].as_str().unwrap_or(name)
-                        } else {
-                            name
-                        }
-                        .to_string();
-                        m = model.to_string();
-                        bu = u.to_string();
-                        key = k.to_string();
-                        break;
-                    }
-                }
+        None => match first_mountable_provider(&doc) {
+            Some((p, m, bu, key)) => {
+                tracing::warn!(
+                    "[STARTUP] 无显式绑定，兜底挂载段序首段：provider={}, model={}（建议在设置中完成模型绑定）",
+                    p,
+                    m
+                );
+                (p, m, bu, key)
             }
-            if p.is_empty() || m.is_empty() {
+            None => {
+                tracing::warn!(
+                    "[STARTUP] 存量配置中没有任何「凭证可用且有模型」的段可兜底：本轮启动不挂载 LLM（ChatAgent 会话将以配置缺失失败）"
+                );
                 return;
             }
-            (p, m, bu, key)
-        }
+        },
     };
 
     if (api_key.is_empty() && !oauth_segment(&provider_name)) || model_id.is_empty() {
@@ -164,21 +148,283 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
     );
 }
 
-/// 启动装载的顺位解析：从 `[[providers]]` 里挑出 leader 模型的归属段，
+/// 兜底挂载的唯一定位器：段序第一个「凭证可用（key 或 OAuth）且发布了模型」的段。
+///
+/// ⚠️ 段名必须取磁盘权威键 `name`：`[agent_models]` 绑定、key/base_url 重读、
+/// 配置页、模型列表刷新全部按段名寻址。曾误用 `provider_type`（2026-10-30 修复）
+/// ——custom 实例段的 provider_type 统一为 `"custom"`，兜底命中时会挂出
+/// **磁盘上不存在的段名** → 启动后一切按段名的重读失败 → 用户侧「API 密钥无效
+/// （401：未通过当前服务商验证）」。
+fn first_mountable_provider(doc: &toml::Value) -> Option<(String, String, String, String)> {
+    let providers = doc.get("providers").and_then(|p| p.as_array())?;
+    for entry in providers {
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+        let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
+        let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+        if (!k.is_empty() || oauth_entry(entry)) && !name.is_empty() {
+            let model = entry
+                .get("models")
+                .and_then(|arr| arr.as_array())
+                .and_then(|models| models.first())
+                .and_then(|m| m.get("id").and_then(|id| id.as_str()))
+                .unwrap_or("");
+            if !model.is_empty() {
+                return Some((
+                    name.to_string(),
+                    model.to_string(),
+                    u.to_string(),
+                    k.to_string(),
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// 1.1.2 → 1.1.3 绑定权威换代的一次性迁移（2026-10-30，双字段启动挂载修复）。
+///
+/// 背景：1.1.3 起模型选择的唯一权威是 `[agent_models]` 成对表。升级后的存量
+/// 文件携带读端**从不认识**的旧数据：
+/// - `global` / `default`：1.1.2 及更早「全局默认/协调位」切换槽的落点（旧版
+///   主列表切换写入；当前读端只认 leader/workflow/exec/custom 四槽）；
+/// - 半绑定：1.1.3 早期 `set_agent_model` 在 provider 未指定时删除
+///   `{agent}_provider` 键（1.1.4 已在写端强制成对，存量数据未修）。
+///
+/// 直接后果（用户侧 NSIS 安装版 401 报障载体）：升级后「上次选择」在读端整体
+/// 蒸发 → 启动落入兜底挂载 → 挂到不受控段 → 同 id 凭证错配 → 服务商
+/// 401「API 密钥未通过当前服务商验证」。
+///
+/// 行为（幂等：无遗留数据时**零写入**；无法消歧的数据保留原样等待下次启动直
+/// 到配置可解，与 diagnose/notify 链路同口径不猜）：
+/// 1. leader 为空且 `global`/`default` 非空 → 晋升 (leader, leader_provider)；
+///    provider 顺位：`[last_model]` 提示段（仅当该段确实发布该模型；陈旧提示
+///    自动跳过）→ 唯一候选段；多候选不猜；
+/// 2. 四槽任一「有 model 无 provider」半绑定 → 同顺位补全 provider；
+/// 3. 被消费或空值的 `global`/`default` 遗留键清除；
+/// 4. 与 toml_ops 写路径同一栈：持 `lock_provider_config`，序列化前
+///    `encrypt_plaintext_provider_keys`。
+fn migrate_legacy_agent_model_selections(config_path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(mut doc) = content.parse::<toml::Value>() else {
+        return;
+    };
+    // 只读快照（借用随块结束；落盘决策全部基于快照）。
+    let snapshot = {
+        let Some(section) = doc.get("agent_models").and_then(|v| v.as_table()) else {
+            return;
+        };
+        let slots: Vec<(String, String, String)> = AgentModels::AGENTS
+            .iter()
+            .map(|a| {
+                (
+                    (*a).to_string(),
+                    section
+                        .get(*a)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    section
+                        .get(format!("{a}_provider").as_str())
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .collect();
+        (
+            slots,
+            section
+                .get("global")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            section
+                .get("default")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let (slots, global_val, default_val) = snapshot;
+
+    let half_count = slots
+        .iter()
+        .filter(|(_, model, provider)| !model.is_empty() && provider.is_empty())
+        .count();
+    let needs_promotion = slots
+        .iter()
+        .any(|(agent, model, _)| agent == "leader" && model.is_empty())
+        && (!global_val.is_empty() || !default_val.is_empty());
+    if half_count == 0 && !needs_promotion {
+        return; // 无任何遗留数据 / 无可消费目标：零写入（幂等关键）。
+    }
+
+    let Ok(registry) = nuphus::config::ModelRegistry::from_toml(config_path.to_str().unwrap_or(""))
+    else {
+        tracing::warn!(
+            "[STARTUP] 绑定迁移跳过：providers.toml 无法载入（解析/解密失败），遗留数据保持原样"
+        );
+        return;
+    };
+
+    // provider 补全顺位：`[last_model]` 提示段（命中才算，陈旧提示自动跳过）→
+    // 唯一候选段。多候选不猜——与运行时 resolve_configured_binding 同口径。
+    let resolve_provider_for = |model: &str| -> Option<String> {
+        if !model.is_empty() {
+            if let Some(hint) = nuphus::config::load_last_model_provider(config_path, model) {
+                if registry.find_model_for_provider(&hint, model).is_some() {
+                    return Some(hint);
+                }
+            }
+            let candidates = registry.find_model_candidates(model);
+            if candidates.len() == 1 {
+                return Some(candidates[0].0.name.clone());
+            }
+        }
+        None
+    };
+
+    let changed = {
+        let mut changed = false;
+        let mut consumed_global = false;
+        let mut consumed_default = false;
+
+        // 1) leader 晋升（global 优先、default 次之）。
+        if needs_promotion {
+            let (from_key, legacy_model) = if global_val.is_empty() {
+                ("default", default_val.clone())
+            } else {
+                ("global", global_val.clone())
+            };
+            match resolve_provider_for(&legacy_model) {
+                Some(provider) => {
+                    if let Some(section) = doc
+                        .as_table_mut()
+                        .and_then(|t| t.get_mut("agent_models"))
+                        .and_then(|v| v.as_table_mut())
+                    {
+                        section.insert(
+                            "leader".to_string(),
+                            toml::Value::String(legacy_model.clone()),
+                        );
+                        section.insert(
+                            "leader_provider".to_string(),
+                            toml::Value::String(provider.clone()),
+                        );
+                        changed = true;
+                        if from_key == "global" {
+                            consumed_global = true;
+                        } else {
+                            consumed_default = true;
+                        }
+                    }
+                    tracing::info!(
+                        "[STARTUP] 遗留绑定晋升：{} = 「{}」(@{}) → leader/leader_provider 成对写入",
+                        from_key,
+                        legacy_model,
+                        provider
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "[STARTUP] 绑定迁移未消歧：[{}] = 「{}」存在多个同名候选段且无有效 [last_model] 归属——数据保留原样（设置页诊断接管）",
+                        from_key,
+                        legacy_model
+                    );
+                }
+            }
+        }
+
+        // 2) 半绑定补全（含 leader 本身的「有 model 无 provider」）。
+        for (agent, model, provider_cur) in &slots {
+            if model.is_empty() || !provider_cur.is_empty() {
+                continue;
+            }
+            match resolve_provider_for(model) {
+                Some(provider) => {
+                    if let Some(section) = doc
+                        .as_table_mut()
+                        .and_then(|t| t.get_mut("agent_models"))
+                        .and_then(|v| v.as_table_mut())
+                    {
+                        section.insert(
+                            format!("{agent}_provider"),
+                            toml::Value::String(provider.clone()),
+                        );
+                    }
+                    changed = true;
+                    tracing::info!(
+                        "[STARTUP] 半绑定补全：{} = 「{}」→ provider={}",
+                        agent,
+                        model,
+                        provider
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "[STARTUP] 半绑定未消歧保留：{} = 「{}」（多候选同名且无有效记录；进入会话将由 leader 锚点接管）",
+                        agent,
+                        model
+                    );
+                }
+            }
+        }
+
+        // 3) 被消费 / 空值的 legacy 键清理（消歧失败的非空键保留，下次重试）。
+        if changed {
+            if let Some(section) = doc
+                .as_table_mut()
+                .and_then(|t| t.get_mut("agent_models"))
+                .and_then(|v| v.as_table_mut())
+            {
+                if consumed_global || global_val.is_empty() {
+                    section.remove("global");
+                }
+                if consumed_default || default_val.is_empty() {
+                    section.remove("default");
+                }
+            }
+        }
+        changed
+    };
+
+    if !changed {
+        return;
+    }
+    let _config_write = nuphus::config::lock_provider_config();
+    nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
+    let new_content = match toml::to_string_pretty(&doc) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("[STARTUP] 绑定迁移序列化失败（{}）——遗留数据保持原样", e);
+            return;
+        }
+    };
+    if let Err(e) = nuphus::config::write_provider_config(config_path, &new_content) {
+        tracing::warn!("[STARTUP] 绑定迁移写盘失败（{}）——遗留数据保持原样", e);
+    }
+}
+
+/// 启动装载顺位解析：从 `[[providers]]` 里挑出 leader 模型的归属段，
 /// 返回 `(段名, 模型 id, base_url, 解密后的 api_key)`。
 ///
-/// 顺位（与 process.rs 会话链路的「权威成对绑定」口径对齐——启动装载曾漏掉 ①，
-/// 同 id 跨段时落到段序盲选、命中无窗口值的段：2026-10-27 实测 ctx 分母恒 `--`）：
-///   ① `[agent_models].leader_provider`——用户显式双字段绑定（段名 + 模型 id），
-///      该段确实发布此 model 且凭证可用时精确命中。**必须排最前**：同 id 跨
-///      custom-xxx 段是多实例常态（本机 `deepseek-v4.1-flash` 同时发布在
-///      opencode-go / custom-codearts-bridge / custom-chickener 三段）；
-///   ② `[last_model]` 磁盘记录——次级的最近切换归属（可能陈旧，如段已不存在）；
-///   ③ 段序 first_hit——兜底（无绑定且无记录时保持既有行为；启动路径静默可容错，
-///      不引入「多候选报错」语义）。
+/// ① `[agent_models].leader_provider`——用户显式双字段绑定（段名 + 模型 id），
+///    该段确实发布此 model 且凭证可用时精确命中。**必须排最前**：同 id 跨
+///    custom-xxx 段是多实例常态（本机 `deepseek-v4.1-flash` 同时发布在
+///    opencode-go / custom-codearts-bridge / custom-chickener 三段，2026-10-27
+///    实测段序盲选曾致 ctx 分母恒 `--`）；
+/// ② 段序 first_hit——兜底（无绑定或绑定陈旧时保持既有行为；启动路径静默可
+///    容错，不引入「多候选报错」语义；兜底命中在调用处留 warn）。
+///
+/// `[last_model]` 影子表自 1.1.3 起停写（二元组化 P1），启动装载**停止消费**
+/// （2026-10-30）：陈旧记录会把挂载带回不受控段（同 id 串段凭证错配的链路环
+/// 节）；运行时 `resolve_configured_binding` 的读取保留，由
+/// nuphus::config::last_model 迁移链口径与 diagnose 管辖。
 fn find_startup_binding(
     doc: &toml::Value,
-    config_path: &std::path::Path,
     model: &str,
     leader_provider: &str,
 ) -> Option<(String, String, String, String)> {
@@ -186,7 +432,6 @@ fn find_startup_binding(
         return None;
     }
     let providers = doc.get("providers").and_then(|p| p.as_array())?;
-    let recorded = nuphus::config::load_last_model_provider(config_path, model);
     let mut first_hit: Option<(String, String, String, String)> = None;
     for entry in providers {
         let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -212,14 +457,12 @@ fn find_startup_binding(
             if !leader_provider.is_empty() && hit.0.as_str() == leader_provider {
                 return Some(hit);
             }
-            // ② [last_model] 记录（次级）；未命中落入 ③ 段序兜底。
-            match &recorded {
-                Some(rec) if *rec == hit.0 => return Some(hit),
-                _ => {
-                    if first_hit.is_none() {
-                        first_hit = Some(hit);
-                    }
-                }
+            // ② 段序首段兜底：first-hit 且整段三元组 (段名/key/base_url) 取自同一条目，
+            //    不存在跨段拼装。曾被 `[last_model]` 记录插队——该表停写后遗留的
+            //    陈旧段名在这里只会制造不受控挂载（2026-10-30 退役，注释保留
+            //    迁移窗口内的现场描述）。
+            if first_hit.is_none() {
+                first_hit = Some(hit);
             }
         }
     }
@@ -729,10 +972,20 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
 
     // Install the exact provider+model client before mutating persisted/runtime state.
     // Failure leaves the old binding intact and emits no success event.
-    let agent_key = mode
-        .as_deref()
-        .filter(|m| AgentModels::AGENTS.contains(m))
-        .unwrap_or("leader");
+    // 前端 mode 字符串：主列表切换发 'global'（全局/当前模型），「设为默认」发
+    // 'default'，agent 槽各自发 leader/workflow/exec/custom。后端权威槽只有
+    // AGENTS 四槽：global/default 一律落 leader 锚点——此前被
+    // filter→unwrap_or 静默吞掉（2026-10-30 显式化）。[agent_models] 不再
+    // 接收 global/default 键；旧文件遗留键由启动迁移一次性清理。
+    let agent_key = match mode.as_deref() {
+        Some(m) if AgentModels::AGENTS.contains(&m) => m,
+        Some("global") | Some("default") => "leader",
+        Some(unknown) => {
+            tracing::warn!("switch_model: 未知 mode={:?}，按 leader 锚点落盘", unknown);
+            "leader"
+        }
+        None => "leader",
+    };
     // 切换前上下文窗口校验（零副作用：只读 runtime/session 锁，不写任何状态）。
     // 必须早于**一切**副作用——base_url 写盘 / 换 client / save_agent_model /
     // record / activate / 广播：拒绝切换时任何持久状态都不得被改写，「拒绝失败」
@@ -793,7 +1046,9 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     // 只能存一个归属，与 custom-xxx 多实例现实结构性冲突——用户当前选择的
     // 唯一权威是 [agent_models] 成对表（上方 save_agent_model）+ runtime
     // llm_config。表内既有数据保留只读（get_provider_context 迁移链见
-    // config/last_model.rs），迁移窗口结束后随文件一并退役。
+    // config/last_model.rs）；启动装载 find_startup_binding 已停止消费，
+    // 运行时 resolve_configured_binding 的兜底读取保留（diagnose 管辖），
+    // 迁移窗口结束后随文件一并退役。
     let generation = super::model_metadata::activate(&state, &cfg, context_window)?;
 
     // 写盘后诊断一次绑定健康（含旧版半绑定遗留）：命中 B 类静默降级 → HUD 提示。
@@ -836,13 +1091,9 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
 }
 
 /// leader 会话当前用量——权威口径与 `agent::distill::maybe_refine_session` 一致：
-/// 官方读数 `api_input_tokens` 优先，为 0 回落字符估算。
+/// 界面 ctx 同口径（官方 input + output），无读数才回落字符估算。
 fn leader_session_usage(session: &nuphus::session::Session) -> usize {
-    if session.api_input_tokens > 0 {
-        session.api_input_tokens as usize
-    } else {
-        session.estimate_token_usage()
-    }
+    session.context_watermark()
 }
 
 /// 切换前上下文窗口校验的拒绝详情——含用户可读文案所需的全部数字。
@@ -3200,8 +3451,9 @@ mod tests {
         std::fs::remove_dir_all(am_path.parent().unwrap()).ok();
     }
 
-    /// 回归（2026-10-27 大王实测）：同 id 跨段 + `[last_model]` 陈旧记录时，启动装载
-    /// 必须优先取 `[agent_models].leader_provider` 指向的段——段序不参与决策。
+    /// 回归（2026-10-27 大王实测；2026-10-30 随 `[last_model]` 退役更新）：
+    /// 同 id 跨段时，启动装载必须优先取 `[agent_models].leader_provider` 指向
+    /// 的段——段序与已退役的 `[last_model]`（启动装载已停止消费）都不参与决策。
     /// 现场：`deepseek-v4.1-flash` 同时发布在 opencode-go（段序更前、条目无窗口值）/
     /// custom-codearts-bridge（用户绑定 + 1024000 窗口）/ custom-chickener；旧链
     /// 段序盲选命中 opencode-go → runtime 窗口 miss → 输入框 ctx 分母恒显示 `--`。
@@ -3210,30 +3462,128 @@ mod tests {
         let doc: toml::Value = "[[providers]]\nname = 'opencode-go'\napi_key = 'sk-a'\nbase_url = 'https://a.test/v1'\n[[providers.models]]\nid = 'same'\n\n[[providers]]\nname = 'selected'\napi_key = 'sk-b'\nbase_url = 'https://b.test/v1'\n[[providers.models]]\nid = 'same'\n"
             .parse()
             .unwrap();
-        let dir = std::env::temp_dir().join(format!(
-            "nuphus-startup-binding-test-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("providers.toml");
-        // 陈旧 [last_model] 记录指向不存在的段——不得把决策带回段序盲选。
-        std::fs::write(&path, "[last_model]\nsame = 'stale-segment'\n").unwrap();
 
         // ① 显式绑定命中（段序在后的段）——权威优先。
-        let hit = find_startup_binding(&doc, &path, "same", "selected").unwrap();
+        let hit = find_startup_binding(&doc, "same", "selected").unwrap();
         assert_eq!(hit.0, "selected");
         assert_eq!(hit.2, "https://b.test/v1");
         assert_eq!(hit.3, "sk-b");
 
-        // ② 无绑定（空串）→ 保持 legacy 兜底：段序首段。
-        let hit = find_startup_binding(&doc, &path, "same", "").unwrap();
+        // ② 无绑定（空串）→ 段序首段兜底（`[last_model]` 已停止消费，不再插队）。
+        let hit = find_startup_binding(&doc, "same", "").unwrap();
         assert_eq!(hit.0, "opencode-go");
 
         // ③ 绑定段不存在（陈旧绑定）→ 不入段序竞争，仍回落段序首段。
-        let hit = find_startup_binding(&doc, &path, "same", "ghost").unwrap();
+        let hit = find_startup_binding(&doc, "same", "ghost").unwrap();
         assert_eq!(hit.0, "opencode-go");
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    /// 回归（2026-10-30 用户侧 NSIS「API 密钥无效 (401)」根链一环）：custom
+    /// 实例段的 `provider_type` 统一是 `"custom"` ≠ 磁盘段名；兜底挂载必须落
+    /// 在真实段名上——假段名会让启动后一切按段名的重读（key/段/模型列表）全
+    /// 失败，用户看到服务商 401。
+    #[test]
+    fn fallback_mounts_real_segment_name_for_custom_instances() {
+        let doc: toml::Value = "[[providers]]\n\
+             name = 'custom-chickener'\n\
+             provider_type = 'custom'\n\
+             api_key = 'sk-c'\n\
+             base_url = 'https://chickener.top/v1'\n\
+             [[providers.models]]\n\
+             id = 'first-model'\n"
+            .parse()
+            .unwrap();
+        let hit = first_mountable_provider(&doc).expect("custom 实例段可产出兜底挂载");
+        assert_eq!(
+            hit.0, "custom-chickener",
+            "兜底必须用真实段名 name，而非 provider_type"
+        );
+        assert_eq!(hit.1, "first-model");
+        assert_eq!(hit.2, "https://chickener.top/v1");
+    }
+
+    /// 1.1.2 → 1.1.3 遗留绑定的一次性迁移：`global` 晋升 leader（借
+    /// `[last_model]` 提示消歧多候选同名段）、exec 半绑定按唯一候选补全、空
+    /// `default` 清理；幂等（第二次调用零写入，文件不再变化）。
+    #[test]
+    fn migrates_legacy_global_and_half_bindings_idempotently() {
+        let (am_path, dir) = {
+            let dir = std::env::temp_dir().join(format!(
+                "nuphus-migrate-test-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let p = dir.join("providers.toml");
+            std::fs::write(
+                &p,
+                "[[providers]]\n\
+                 name = 'official'\n\
+                 provider_type = 'openai'\n\
+                 api_key = 'sk-a'\n\
+                 [[providers.models]]\n\
+                 id = 'same-id'\n\
+                 \n\
+                 [[providers]]\n\
+                 name = 'twin'\n\
+                 provider_type = 'openai'\n\
+                 api_key = 'sk-b'\n\
+                 [[providers.models]]\n\
+                 id = 'same-id'\n\
+                 \n\
+                 [[providers]]\n\
+                 name = 'solo'\n\
+                 provider_type = 'openai'\n\
+                 api_key = 'sk-c'\n\
+                 [[providers.models]]\n\
+                 id = 'unique-id'\n\
+                 \n\
+                 [agent_models]\n\
+                 global = 'same-id'\n\
+                 default = ''\n\
+                 exec = 'unique-id'\n\
+                 \n\
+                 [last_model]\n\
+                 'same-id' = 'official'\n",
+            )
+            .unwrap();
+            (p, dir)
+        };
+
+        migrate_legacy_agent_model_selections(&am_path);
+
+        let doc = std::fs::read_to_string(&am_path)
+            .unwrap()
+            .parse::<toml::Value>()
+            .unwrap();
+        let am = doc
+            .get("agent_models")
+            .and_then(|v| v.as_table())
+            .expect("agent_models 段存在");
+        assert_eq!(am.get("leader").and_then(|v| v.as_str()), Some("same-id"));
+        assert_eq!(
+            am.get("leader_provider").and_then(|v| v.as_str()),
+            Some("official"),
+            "[last_model] 提示段优先于段序（多候选同名不猜）"
+        );
+        assert_eq!(am.get("exec").and_then(|v| v.as_str()), Some("unique-id"));
+        assert_eq!(
+            am.get("exec_provider").and_then(|v| v.as_str()),
+            Some("solo"),
+            "半绑定按唯一候选段补全"
+        );
+        assert!(am.get("global").is_none(), "被消费的遗留键删除");
+        assert!(am.get("default").is_none(), "空遗留键清理");
+
+        // 幂等：第二次调用零写入，文件不再变化。
+        let before = std::fs::read_to_string(&am_path).unwrap();
+        migrate_legacy_agent_model_selections(&am_path);
+        assert_eq!(
+            std::fs::read_to_string(&am_path).unwrap(),
+            before,
+            "迁移必须幂等：无遗留数据时零写入"
+        );
+
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

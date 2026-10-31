@@ -86,8 +86,8 @@ mod tests {
         );
     }
 
-    /// issue #9「附带发现」：提炼后必须清零 api_input_tokens。触发判据
-    /// （`agent/distill.rs`）在 api_input_tokens > 0 时直接取它，不清零则旧峰值
+    /// issue #9「附带发现」：提炼后必须清零 api_input_tokens。refine 判据走
+    /// `context_watermark`（官方 input+output 优先），不清零则旧读数
     /// （如 112498）会让 force refine 每轮都再次触发——即使请求能发出去也是内存态死循环。
     #[test]
     fn test_distill_resets_api_input_tokens() {
@@ -175,6 +175,30 @@ mod tests {
             session.estimate_token_usage() > 132_740,
             "估算仅供内部启发式"
         );
+    }
+
+    /// refine / 水位判据必须与界面 ctx 同口径：
+    /// 官方 input + output 优先，无官方读数才回落字符估算。
+    #[test]
+    fn test_context_watermark_matches_ui_ctx() {
+        let mut session = Session::new();
+        session.push_user("hello world".to_string());
+        // 无官方读数 → 回落估算（新会话不会因为 0 而无法判水位）
+        assert_eq!(session.context_watermark(), session.estimate_token_usage());
+        assert!(session.context_watermark() > 0);
+
+        // 有官方读数 → 严格等于界面 ctx（input + output），不是只取 input
+        session.update_api_input_tokens(130_801);
+        session.update_api_output_tokens(199);
+        assert_eq!(session.context_watermark(), 131_000);
+        assert_eq!(
+            session.context_watermark(),
+            session.context_occupancy() as usize
+        );
+
+        // 提炼后清零 → 回到估算，不残留提炼前水位
+        session.replace_with_distill("short summary");
+        assert_eq!(session.context_watermark(), session.estimate_token_usage());
     }
 
     /// 提炼后占用读数随之作废（0 = 未知 → 界面显示 "--" 或调用方退回估算），

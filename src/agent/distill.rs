@@ -249,8 +249,9 @@ impl RefineTier {
 
 /// Unified refinement check — usable by any Agent type after ReAct loop ends
 ///
-/// 三分档策略见 [`RefineTier`]。实际 token 优先取官方读数
-/// （`api_input_tokens`），取不到才回落到字符估算。
+/// 三分档策略见 [`RefineTier`]。判据水位与界面 ctx **完全同口径**：
+/// [`Session::context_watermark`]（官方 `input + output`，无读数才回落字符估算），
+/// 曾只读 `api_input_tokens`，导致阈值提醒比轮末 ctx 恒少最后一次 output。
 pub async fn maybe_refine_session(
     session: &mut Session,
     context_window: usize,
@@ -258,11 +259,7 @@ pub async fn maybe_refine_session(
     emitter: Option<&dyn EventEmitter>,
     refine_count: &mut u32,
 ) {
-    let actual_tokens = if session.api_input_tokens > 0 {
-        session.api_input_tokens as usize
-    } else {
-        session.estimate_token_usage()
-    };
+    let actual_tokens = session.context_watermark();
 
     let tier = RefineTier::for_window(context_window);
     let force_ratio = tier.force_ratio(large_force_threshold);

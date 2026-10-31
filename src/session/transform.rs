@@ -353,6 +353,24 @@ impl Session {
         self.api_input_tokens.saturating_add(self.api_output_tokens)
     }
 
+    /// 阈值判据用的「当前上下文占用」——**与界面 ctx 完全同口径**。
+    ///
+    /// `refine` 分档线（prompt / force / 85% 硬线）与切换校验一律走这里，
+    /// 禁止各写一套：曾经判据只读 `api_input_tokens`，而界面显示
+    /// `context_occupancy`（input + output），导致「阈值提醒比轮末 ctx 少一截」
+    /// （差额恒为最后一次调用的 output）。
+    ///
+    /// 无官方读数（新会话 / 提炼后清零）才回落 [`Self::estimate_token_usage`]：
+    /// 那时会话内容只在本地手里，估算比直接不判更有用。
+    pub fn context_watermark(&self) -> usize {
+        let occupancy = self.context_occupancy();
+        if occupancy > 0 {
+            occupancy as usize
+        } else {
+            self.estimate_token_usage()
+        }
+    }
+
     /// 更新 API 返回的 input_tokens
     pub fn update_api_input_tokens(&mut self, count: u64) {
         self.api_input_tokens = count;

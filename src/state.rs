@@ -401,6 +401,27 @@ mod tests {
         assert!(!SignalState::execution_stage(&signals).is_busy());
     }
 
+    /// Leader 与 ExecAgent 共用同一轮计数：嵌套执行的步数必须累加，不能各自从 0 开始。
+    #[test]
+    fn execution_tool_calls_accumulate_across_leader_and_exec() {
+        let signals = new_shared_signals();
+        SignalState::set_execution_stage(&signals, ExecutionStage::Running);
+
+        // Leader 先执行两步，ExecAgent 再执行三步；前端读取的总数应为 5。
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 1);
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 2);
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 3);
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 4);
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 5);
+        assert_eq!(SignalState::execution_tool_calls(&signals), 5);
+
+        // 下一轮必须重新从 0 开始，不能把上一轮泄漏到本轮。
+        SignalState::set_execution_stage(&signals, ExecutionStage::Idle);
+        SignalState::set_execution_stage(&signals, ExecutionStage::Running);
+        assert_eq!(SignalState::execution_tool_calls(&signals), 0);
+        assert_eq!(SignalState::inc_execution_tool_calls(&signals), 1);
+    }
+
     /// 阶段字符串标识是前端 / HTTP 的协议取值，改名即破坏双端契约。
     #[test]
     fn execution_stage_str_is_stable_wire_contract() {

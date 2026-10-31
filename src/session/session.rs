@@ -391,9 +391,9 @@ impl Session {
     /// 保留 session ID、depth 不变，清空 messages，插入引导消息
     pub fn replace_with_distill(&mut self, distill_content: &str) {
         self.refined = true;
-        // 必须清零：force refine 判据（agent/distill.rs）在 api_input_tokens > 0 时直接取它，
-        // 留旧峰值会让下一轮必然再次越过 force_limit（issue #9 附带发现）。清零后
-        // estimate_token_usage 回落到提炼后小会话的字符估算，不会误触发。
+        // 必须清零：refine 判据走 context_watermark（官方 input+output 优先），
+        // 留旧读数会让下一轮必然再次越过 force_limit（issue #9 附带发现）。
+        // 清零后水位回落到提炼后小会话的字符估算，不会误触发。
         // output 一并清零：占用读数（context_occupancy）随会话内容作废，下次调用重建。
         self.api_input_tokens = 0;
         self.api_output_tokens = 0;

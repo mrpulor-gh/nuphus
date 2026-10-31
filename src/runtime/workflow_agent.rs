@@ -744,10 +744,9 @@ impl WorkflowAgent {
                     self.llm.model_name(),
                     Some(self.llm.provider_name()),
                 ) {
-                    // 口径与 Leader 检查点统一：estimate_token_usage = max(官方
-                    // 读数, 字符估算) 的保守值——官方读数覆盖不到本迭代刚追加
-                    // 的工具结果，取 max 才不会漏判。
-                    let usage = self.session.estimate_token_usage();
+                    // 判据水位与界面 ctx / Leader 检查点同口径（2026-10-31）：
+                    // 官方 input + output（`context_watermark`），无官方读数才回落估算。
+                    let usage = self.session.context_watermark();
                     if usage > 0 {
                         let ratio = usage as f64 / ctx_window as f64;
                         let can_hard_stop =
@@ -799,7 +798,9 @@ impl WorkflowAgent {
             self.emit(NuphusEvent::ExecutionProgress {
                 iteration: iteration as u32 + 1,
                 max_iterations: self.config.max_iterations as u32,
-                tool_calls_so_far: self.tool_call_count,
+                tool_calls_so_far: crate::state::SignalState::execution_tool_calls(
+                    self.tools.signals(),
+                ),
             });
             if cancel_flag.load(Ordering::SeqCst) {
                 continue;
@@ -846,6 +847,8 @@ impl WorkflowAgent {
                     result_msg
                 };
                 let total_duration = self.execution_started_at.elapsed().as_millis() as u64;
+                let total_tool_calls =
+                    crate::state::SignalState::execution_tool_calls(self.tools.signals());
                 self.last_output = Some(result_msg.clone());
                 self.emit(NuphusEvent::ExecutionCompleted {
                     step_index: 0,
@@ -853,15 +856,15 @@ impl WorkflowAgent {
                         step_index: 0,
                         result_message: result_msg.clone(),
                         artifacts: vec![],
-                        tool_calls_count: self.tool_call_count,
+                        tool_calls_count: total_tool_calls,
                     },
                     total_duration_ms: total_duration,
-                    total_calls: self.tool_call_count,
+                    total_calls: total_tool_calls,
                     meta: Some({
                         let mut m = self.turn_meta.clone();
                         m.finish(
                             total_duration,
-                            self.tool_call_count,
+                            total_tool_calls,
                             self.session.context_occupancy(),
                         );
                         m
@@ -893,6 +896,8 @@ impl WorkflowAgent {
                     text.trim().to_string()
                 };
                 let total_duration = self.execution_started_at.elapsed().as_millis() as u64;
+                let total_tool_calls =
+                    crate::state::SignalState::execution_tool_calls(self.tools.signals());
                 self.last_output = Some(result_msg.clone());
                 self.emit(NuphusEvent::ExecutionCompleted {
                     step_index: 0,
@@ -900,15 +905,15 @@ impl WorkflowAgent {
                         step_index: 0,
                         result_message: result_msg.clone(),
                         artifacts: vec![],
-                        tool_calls_count: self.tool_call_count,
+                        tool_calls_count: total_tool_calls,
                     },
                     total_duration_ms: total_duration,
-                    total_calls: self.tool_call_count,
+                    total_calls: total_tool_calls,
                     meta: Some({
                         let mut m = self.turn_meta.clone();
                         m.finish(
                             total_duration,
-                            self.tool_call_count,
+                            total_tool_calls,
                             self.session.context_occupancy(),
                         );
                         m

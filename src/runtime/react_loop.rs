@@ -559,11 +559,12 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     &self.agent.config.model,
                     Some(&self.agent.config.provider),
                 );
-                // 官方 usage 缺失时回落字符估算（2026-10-25 审计修正：此前只读
-                // api_input_tokens，不回 usage 的 provider 会让本块整段失效）。
-                // estimate 取 max(官方读数, 字符估算) 的保守值；中文密集时字符
-                // 估算仍可能偏低——85% 硬线是这类失真的最后一道确定性拦截。
-                let tokens = self.agent.session.estimate_token_usage();
+                // 判据水位与界面 ctx 同口径（2026-10-31）：官方 input + output
+                // （`context_occupancy`），无官方读数才回落字符估算。
+                // 此前这里与 turn-end 都用 `estimate_token_usage` / api_input，
+                // 与界面显示差最后一次 output —— 阈值提醒恒比轮末 ctx 少一截。
+                // 85% 硬线仍保留：它是立即提炼 + 就地续跑的唯一接力点。
+                let tokens = self.agent.session.context_watermark();
                 if let Some(cw) = cw.filter(|_| tokens > 0) {
                     let tier = crate::agent::distill::RefineTier::for_window(cw);
                     let force_ratio = tier.force_ratio(self.config.large_force_refine_threshold);
@@ -1226,7 +1227,9 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         // Leader completion: emit HudUpdate done + ExecutionCompleted + LeaderDone
                         if let Some(ref emitter) = self.agent.exec_emitter {
                             let total_duration = loop_start.elapsed().as_millis() as u64;
-                            let tool_calls_count = self.agent.steps.len();
+                            let tool_calls_count = crate::state::SignalState::execution_tool_calls(
+                                self.agent.tools.signals(),
+                            );
                             emitter.emit(NuphusEvent::HudUpdate {
                                 text: "任务完成".into(),
                                 phase: "done".into(),
@@ -1276,7 +1279,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 // Leader completion: emit HudUpdate done + ExecutionCompleted + LeaderDone
                 if let Some(ref emitter) = self.agent.exec_emitter {
                     let total_duration = loop_start.elapsed().as_millis() as u64;
-                    let tool_calls_count = self.agent.steps.len();
+                    let tool_calls_count =
+                        crate::state::SignalState::execution_tool_calls(self.agent.tools.signals());
                     emitter.emit(NuphusEvent::HudUpdate {
                         text: "任务完成".into(),
                         phase: "done".into(),
@@ -1367,7 +1371,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     // HudUpdate + ExecutionCompleted + LeaderDone 三连，否则前端
                     // 收不到执行完成事件 → 执行气泡不关闭、输入保持禁用（实测 2026-09-05）。
                     let total_duration = loop_start.elapsed().as_millis() as u64;
-                    let tool_calls_count = self.agent.steps.len();
+                    let tool_calls_count =
+                        crate::state::SignalState::execution_tool_calls(self.agent.tools.signals());
                     emitter.emit(NuphusEvent::ExecutionCompleted {
                         step_index: 0,
                         output: crate::agent::events::StepOutput {
@@ -1893,7 +1898,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 Some(self.agent.config.provider.as_str()),
             );
             if ctx_window > 200_000 {
-                let ctx_tokens = self.agent.session.api_input_tokens;
+                let ctx_tokens = self.agent.session.context_occupancy();
 
                 // Attention dilution warning — once per refine cycle.
                 // 文案只给「系统给不了的信息」（上下文占用量）+ 时序要求：措辞是「在最终交付
@@ -1942,7 +1947,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         // Emit completion events so frontend can finalize (mood → success → idle)
         if let Some(ref emitter) = self.agent.exec_emitter {
             let total_duration = loop_start.elapsed().as_millis() as u64;
-            let tool_calls_count = self.agent.steps.len();
+            let tool_calls_count =
+                crate::state::SignalState::execution_tool_calls(self.agent.tools.signals());
             emitter.emit(NuphusEvent::HudUpdate {
                 text: "达到最大迭代次数".into(),
                 phase: "done".into(),

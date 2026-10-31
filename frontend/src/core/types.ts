@@ -237,8 +237,8 @@ export interface ToolCall {
 // 所有消费点（消息底部 / ctx 弹窗 / 执行回溯顶栏 / 移动端 / ThinkingIndicator）
 // **必须**经此读取，不得各自拼兜底链——否则同一轮指标会出现多个不一致的值。
 // `turnMeta` 本身由后端权威字段构成，故这里不再叠加 fallback：
-//   · toolCalls ← execution_progress.tool_calls_so_far（执行中实时）
-//                 / execution_completed.meta.tool_calls（完成权威）
+//   · toolCalls ← execution_progress.tool_calls_so_far（执行中实时；Leader/ExecAgent 共享轮次累计）
+//                 / execution_completed.meta.tool_calls（完成权威，同一轮次总计）
 /** 本轮工具调用步数。无数据返回 0（不可知，不拿别处的值充数）。 */
 export function resolveTurnCalls(meta: TurnMeta | null | undefined): number {
   return meta?.toolCalls || 0
