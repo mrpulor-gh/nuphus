@@ -42,6 +42,11 @@ pub struct OpenRouterEntry {
     pub id: String,
     /// Context window in tokens (`top_provider.context_length` preferred, top-level fallback).
     pub context_length: Option<u64>,
+    /// 模型自然输出上限（completion cap；`top_provider.max_completion_tokens`
+    /// preferred, top-level 同名 fallback）。与 `context_length` 是两个不同的量：
+    /// 这里只描述"单次最多能生成多少"，**不是**总窗口。
+    #[serde(default)]
+    pub max_completion_tokens: Option<u64>,
     /// `architecture.input_modalities` — e.g. `["text","image"]`.
     pub input_modalities: Vec<String>,
     /// `architecture.output_modalities` — e.g. `["text","image"]` for image generators.
@@ -92,6 +97,10 @@ fn parse_entry(item: &serde_json::Value) -> Option<OpenRouterEntry> {
     let context_length = top_provider
         .and_then(|tp| tp.get("context_length").and_then(|v| v.as_u64()))
         .or_else(|| item.get("context_length").and_then(|v| v.as_u64()));
+    let max_completion_tokens = top_provider
+        .and_then(|tp| tp.get("max_completion_tokens").and_then(|v| v.as_u64()))
+        .or_else(|| item.get("max_completion_tokens").and_then(|v| v.as_u64()))
+        .filter(|n| *n > 0);
 
     let modalities = |key: &str| -> Vec<String> {
         item.get("architecture")
@@ -135,6 +144,7 @@ fn parse_entry(item: &serde_json::Value) -> Option<OpenRouterEntry> {
     Some(OpenRouterEntry {
         id,
         context_length,
+        max_completion_tokens,
         input_modalities,
         output_modalities,
         supported_efforts,
@@ -404,6 +414,7 @@ mod tests {
         OpenRouterEntry {
             id: id.to_string(),
             context_length: ctx,
+            max_completion_tokens: None,
             input_modalities: vec!["text".to_string()],
             output_modalities: vec!["text".to_string()],
             supported_efforts: Vec::new(),

@@ -21,6 +21,16 @@ pub struct MessageRequest {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Prompt size already consumed by this request (tokens), filled by
+    /// `Agent::build_request` from `Session::context_occupancy()`.
+    ///
+    /// Transports use it to keep `input + max_tokens` inside the model's
+    /// context window (Anthropic rejects the overflow with 400 on older
+    /// models, `stop_reason=model_context_window_exceeded` on 4.5+).
+    /// `None` = unknown (non-agent paths) → the window clamp is skipped,
+    /// the cap is sent as resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens_hint: Option<u32>,
     /// Sampling temperature (provider-side). None → provider default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
@@ -60,6 +70,7 @@ impl MessageRequest {
         Self {
             model: model.into(),
             max_tokens: None,
+            input_tokens_hint: None,
             temperature: None,
             messages,
             system: None,
@@ -236,5 +247,28 @@ mod tests {
         let req = MessageRequest::new("test-model", msgs);
         assert_eq!(req.model, "test-model");
         assert!(req.stream);
+    }
+
+    /// `input_tokens_hint` 的 serde 契约（A2 新增字段）：旧报文（无该键）照常
+    /// 反序列化为 None；None 时序列化不产生噪音键——存量请求/日志零影响。
+    #[test]
+    fn test_input_tokens_hint_serde_default_and_skip_when_none() {
+        let json = serde_json::json!({
+            "model": "m",
+            "messages": [],
+        });
+        let req: MessageRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.input_tokens_hint, None);
+
+        let value = serde_json::to_value(&req).unwrap();
+        assert!(
+            value.get("input_tokens_hint").is_none(),
+            "None 的 hint 不得进线上报文"
+        );
+
+        let mut req = req;
+        req.input_tokens_hint = Some(1234);
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["input_tokens_hint"], 1234);
     }
 }

@@ -126,6 +126,7 @@ impl Provider for AnthropicProvider {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            provider_segment: cfg.name.clone(),
         }))
     }
 }

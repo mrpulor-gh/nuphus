@@ -21,6 +21,14 @@ pub struct AnthropicConfig {
     /// 注入循环零生效，请求头与改造前逐字节一致。`x-api-key` 被跳过（鉴权头
     /// 不可被覆盖成双值）。
     pub extra_headers: Vec<(String, String)>,
+    /// providers.toml **段名**（`ProviderConfig.name`，如 `custom-41flash`），
+    /// 不是 provider type。
+    ///
+    /// 与 Chat Completions 侧同名字段同一契约：`provider_kind`/段类型 id 会把
+    /// 每个 custom-xxx 实例折叠成 "custom"，导致按段查模型级配置（如
+    /// `max_output_tokens`）永远 miss。空 = 未绑定（内存/直构）→ 按段查不到
+    /// 值，而不是静默命中同 id 的兄弟段。
+    pub provider_segment: String,
 }
 
 impl AnthropicConfig {
@@ -50,6 +58,7 @@ mod tests {
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: None,
             extra_headers: Vec::new(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
         }
     }
 

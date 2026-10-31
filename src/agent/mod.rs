@@ -538,6 +538,11 @@ impl ReactAgent {
         }
         let mut request = crate::api::MessageRequest::new(&self.config.model, messages)
             .with_merged_system(merged_system_prompt);
+        // 输入占用提示（官方口径）：传输层据此把 `input + max_tokens` 收进上下文
+        // 窗口（Anthropic 超窗：老模型 400，4.5+ stop_reason=model_context_window_
+        // exceeded）。读数来自 API usage 而非本地估算；0 = 新会话/提炼后清零，
+        // 照样透传——clamp 只会因此取到最松的余量，下一次真实读数到达即自校正。
+        request.input_tokens_hint = u32::try_from(self.session.context_occupancy()).ok();
         // 提炼轮禁工具（代码级，非提示词约束）：请求体完全不携带 tools 字段，
         // 模型无从发起工具调用——85% 硬止损的提炼轮必须只产出摘要，不能继续
         // 膨胀上下文（19e52dee 仅靠提示词「禁止调用任何工具」，模型不遵守时
@@ -1104,6 +1109,24 @@ mod tests {
                 .as_str()
                 .is_some_and(|c| c.contains("当前模型已切换至"))),
             "无挂起时不得注入切换提示"
+        );
+    }
+
+    /// A2：输入占用提示随每次 build_request 透传——传输层窗口余量 clamp 的
+    /// 唯一依据。取 `Session::context_occupancy()`（官方 usage 口径：
+    /// 末轮 input + output）；新会话无读数 → 0（clamp 只会取到最松余量）。
+    #[test]
+    fn test_build_request_fills_input_tokens_hint_from_occupancy() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        // 新会话：尚无官方 usage 读数 → 0
+        assert_eq!(agent.build_request("sys").input_tokens_hint, Some(0));
+        // 官方读数到位后：input + output 原样透传（不做本地估算）
+        agent.session_mut().update_api_input_tokens(120_000);
+        agent.session_mut().update_api_output_tokens(3_000);
+        assert_eq!(
+            agent.build_request("sys").input_tokens_hint,
+            Some(123_000),
+            "hint 必须等于 context_occupancy（input + output）"
         );
     }
 

@@ -15,8 +15,8 @@
 //! | `content_block_delta` (thinking_delta) | `StreamEvent::Reasoning` |
 //! | `content_block_delta` (input_json_delta) | appended to tool JSON accumulator |
 //! | `content_block_stop` | flushes text or tool accumulator |
-//! | `message_delta` | `StreamEvent::Usage` |
-//! | `message_stop` | (triggers stop, no StreamEvent) |
+//! | `message_delta` | `StreamEvent::Usage` + records `delta.stop_reason` |
+//! | `message_stop` | (triggers stop, no StreamEvent; logs `max_tokens` truncation) |
 
 use crate::transports::StreamEvent;
 use crate::Result;
@@ -30,6 +30,14 @@ pub(crate) struct AnthropicSseParser {
     reasoning_acc: String,
     /// In-progress tool call: (id, name, partial_json).
     tool_acc: Option<ToolAcc>,
+    /// Last `message_delta.delta.stop_reason` seen ("end_turn" / "max_tokens" /
+    /// "tool_use" / …). Previously dropped entirely, which made
+    /// "agent reports success but produced nothing" impossible to attribute.
+    stop_reason: Option<String>,
+    /// Text characters already flushed as `StreamEvent::TextDelta`.
+    emitted_text_chars: usize,
+    /// Tool calls already flushed as `StreamEvent::ToolUse`.
+    emitted_tool_calls: usize,
 }
 
 #[derive(Default)]
@@ -139,6 +147,7 @@ impl AnthropicSseParser {
                 // If we accumulated text, emit it.
                 if !self.text_acc.is_empty() {
                     let text = std::mem::take(&mut self.text_acc);
+                    self.emitted_text_chars += text.chars().count();
                     out.push(StreamEvent::TextDelta(text));
                 }
                 if !self.reasoning_acc.is_empty() {
@@ -147,6 +156,7 @@ impl AnthropicSseParser {
                 }
                 // If we accumulated a tool call, emit it.
                 if let Some(tool) = self.tool_acc.take() {
+                    self.emitted_tool_calls += 1;
                     out.push(StreamEvent::ToolUse {
                         id: tool.id,
                         name: tool.name,
@@ -160,12 +170,21 @@ impl AnthropicSseParser {
                 if let Some(usage) = data.get("usage") {
                     out.push(self.make_usage(usage));
                 }
-                // stop_reason from delta can be used but we don't map it
-                // to a separate event — the final Done event is sufficient.
+                // `delta.stop_reason` is the terminal reason of the message
+                // ("end_turn" | "max_tokens" | "tool_use" | …). Record it: it is
+                // the only upstream signal that separates "finished" from
+                // "truncated by the output budget", and dropping it used to make
+                // a thinking-only truncation look like a successful empty reply.
+                if let Some(reason) = data["delta"]["stop_reason"].as_str() {
+                    if !reason.is_empty() {
+                        self.stop_reason = Some(reason.to_string());
+                    }
+                }
             }
 
             "message_stop" => {
                 // Response fully received. No data payload.
+                self.report_truncation();
             }
 
             "error" => {
@@ -193,7 +212,9 @@ impl AnthropicSseParser {
     pub fn finalise(&mut self) -> Vec<StreamEvent> {
         let mut out = Vec::new();
         if !self.text_acc.is_empty() {
-            out.push(StreamEvent::TextDelta(std::mem::take(&mut self.text_acc)));
+            let text = std::mem::take(&mut self.text_acc);
+            self.emitted_text_chars += text.chars().count();
+            out.push(StreamEvent::TextDelta(text));
         }
         if !self.reasoning_acc.is_empty() {
             std::mem::take(&mut self.reasoning_acc);
@@ -211,6 +232,34 @@ impl AnthropicSseParser {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
+
+    /// Emit the truncation signal for `stop_reason=max_tokens` at `message_stop`.
+    ///
+    /// 口径与 Chat Completions 的 `finish_reason=length` 一致
+    /// （chat_completions/transport.rs）：**没有任何 text/tool 输出**时说明
+    /// thinking 独自吃满了输出预算 —— 这正是"agent 报成功但零产出"的机制，
+    /// 必须 warn（上游的 reasoning-only 护栏据此改要正式答复）；有输出时只是
+    /// 被上限截断，debug 足够。
+    fn report_truncation(&self) {
+        if self.stop_reason.as_deref() != Some("max_tokens") {
+            return;
+        }
+        // 未 flush 的累加器也算已产出：content_block_stop 缺失时的流不该被
+        // 误判成"零输出"。
+        let text_chars = self.emitted_text_chars + self.text_acc.chars().count();
+        let tool_calls = self.emitted_tool_calls + usize::from(self.tool_acc.is_some());
+        if text_chars == 0 && tool_calls == 0 {
+            tracing::warn!(
+                "[Anthropic] stop_reason=max_tokens 且无 text/tool 输出：thinking 吃满了输出预算。"
+            );
+        } else {
+            tracing::debug!(
+                "[Anthropic] stop_reason=max_tokens（text={} chars, tools={}）：输出被上限截断。",
+                text_chars,
+                tool_calls
+            );
+        }
+    }
 
     fn make_usage(&self, usage: &serde_json::Value) -> StreamEvent {
         let input = usage
@@ -458,5 +507,83 @@ data: {"type":"error","error":{"type":"invalid_request_error","message":"Invalid
         assert!(events
             .iter()
             .any(|e| matches!(e, StreamEvent::Error(msg) if msg == "Invalid API key")));
+    }
+
+    /// 本轮回归：`message_delta.delta.stop_reason` 曾被整体丢弃 →
+    /// 「agent 报成功但零产出」无法归因。有文本输出时：stop_reason 被记录，
+    /// 计数 = 已 flush 的文本字符，且截断判定不 panic。
+    #[test]
+    fn test_stop_reason_max_tokens_recorded_with_text() {
+        let mut parser = AnthropicSseParser::new();
+        parser.feed(
+            "content_block_start",
+            &serde_json::json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"text","text":""}}),
+        );
+        parser.feed(
+            "content_block_delta",
+            &serde_json::json!({"type":"content_block_delta","index":0,
+                "delta":{"type":"text_delta","text":"partial answer"}}),
+        );
+        parser.feed(
+            "content_block_stop",
+            &serde_json::json!({"type":"content_block_stop","index":0}),
+        );
+        parser.feed(
+            "message_delta",
+            &serde_json::json!({"type":"message_delta",
+                "delta":{"stop_reason":"max_tokens"},
+                "usage":{"input_tokens":10,"output_tokens":16}}),
+        );
+        // message_stop → 截断判定（有输出 → debug 分支），不得 panic。
+        let events = parser.feed("message_stop", &serde_json::json!({"type":"message_stop"}));
+
+        assert!(events.is_empty(), "message_stop emits no StreamEvent");
+        assert_eq!(parser.stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(parser.emitted_text_chars, "partial answer".chars().count());
+        assert_eq!(parser.emitted_tool_calls, 0);
+    }
+
+    /// 本轮回归（核心机制）：纯 thinking 流被 max_tokens 截断 —— 没有任何
+    /// text/tool 产出，必须走到 warn 分支（含 thinking 但不计入 text）。
+    #[test]
+    fn test_stop_reason_max_tokens_without_output_hits_warn_branch() {
+        let mut parser = AnthropicSseParser::new();
+        parser.feed(
+            "content_block_start",
+            &serde_json::json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"thinking","thinking":"exhaustive deliberation"}}),
+        );
+        parser.feed(
+            "content_block_stop",
+            &serde_json::json!({"type":"content_block_stop","index":0}),
+        );
+        parser.feed(
+            "message_delta",
+            &serde_json::json!({"type":"message_delta",
+                "delta":{"stop_reason":"max_tokens"},
+                "usage":{"input_tokens":10,"output_tokens":8192}}),
+        );
+        let events = parser.feed("message_stop", &serde_json::json!({"type":"message_stop"}));
+
+        assert!(events.is_empty());
+        assert_eq!(parser.stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(parser.emitted_text_chars, 0, "thinking 不计入 text 产出");
+        assert_eq!(parser.emitted_tool_calls, 0);
+    }
+
+    /// 非截断终止（end_turn）不进入截断判定：stop_reason 仍被如实记录。
+    #[test]
+    fn test_stop_reason_end_turn_recorded() {
+        let mut parser = AnthropicSseParser::new();
+        parser.feed(
+            "message_delta",
+            &serde_json::json!({"type":"message_delta",
+                "delta":{"stop_reason":"end_turn"},
+                "usage":{"input_tokens":1,"output_tokens":1}}),
+        );
+        parser.feed("message_stop", &serde_json::json!({"type":"message_stop"}));
+
+        assert_eq!(parser.stop_reason.as_deref(), Some("end_turn"));
     }
 }

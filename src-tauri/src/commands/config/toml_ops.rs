@@ -348,6 +348,11 @@ pub const IMAGE_GENERATION_SOURCE_KEY: &str = "supports_image_generation_source"
 /// 与 VISION_SOURCE_KEY 同一契约——手填 intent 高于权威聚合值）。
 pub const CONTEXT_WINDOW_SOURCE_KEY: &str = "context_window_source";
 
+/// `max_output_tokens` 的来源标记键：值 `api` = 探测链路采集的上游事实上限，
+/// `user` = 用户手写（同步/校准链路不得覆写，与 CONTEXT_WINDOW_SOURCE_KEY 同一
+/// 契约）。注意与用户配置意图 `max_tokens` 分属两个字段——本键只标记采集值。
+pub const MAX_OUTPUT_TOKENS_SOURCE_KEY: &str = "max_output_tokens_source";
+
 /// 读取模型条目里的来源标记（仅认 `user`；其它/缺失 = 非用户设定）。
 pub fn read_model_vision_source(
     config_path: &std::path::Path,
@@ -486,6 +491,9 @@ const MODEL_SOURCE_KEY: &str = "source";
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CapabilityOverride {
     pub context_window: Option<usize>,
+    /// provider 上报的**模型自然最大输出**（权威目录/元数据）。`None` = 该源无
+    /// 此信息 —— 留空，绝不回落 builtin 静态 8192 猜值。
+    pub max_output_tokens: Option<u32>,
     pub supports_vision: Option<bool>,
     pub supports_audio: Option<bool>,
     pub supports_image_generation: Option<bool>,
@@ -515,6 +523,10 @@ pub fn builtin_capability(provider_type: &str, model_id: &str) -> Option<Capabil
     let def = registry.find_model_for_provider(provider_type, model_id)?;
     Some(CapabilityOverride {
         context_window: Some(def.context_window as usize),
+        // 刻意留空：builtin `ModelDef.max_output_tokens` 是保守猜值（多数
+        // provider 8192），正是本轮要摆脱的东西——把它当输出上限会导致长
+        // thinking 流被截断。真实上限由 `/models` 采集 / 聚合库目录提供。
+        max_output_tokens: None,
         supports_vision: Some(def.supports_vision),
         supports_audio: Some(def.supports_audio),
         supports_image_generation: Some(def.supports_image_generation),
@@ -816,7 +828,9 @@ fn reconcile_segment(
 ///   toggle must survive the next connect/refresh.
 ///
 /// `alias` / `max_tokens` / `cost_per_million_in|out` are user-authored and are
-/// never touched here. Returns whether any field changed.
+/// never touched here. `max_output_tokens` is authority-owned (provider-reported
+/// natural cap) but still yields to `max_output_tokens_source = "user"`.
+/// Returns whether any field changed.
 fn apply_capabilities(
     entry: &mut toml::map::Map<String, toml::Value>,
     cap: Option<CapabilityOverride>,
@@ -852,6 +866,21 @@ fn apply_capabilities(
             != Some("user")
         {
             changed |= set_int(entry, "context_window", window as i64);
+        }
+    }
+    if let Some(output) = cap.max_output_tokens {
+        if output > 0 {
+            // 来源戳屏蔽（与 context_window 同契约）：用户手写的值不被权威同步
+            // 覆盖；采集值（`api`/缺失）可被刷新。**绝不**触碰用户手写的
+            // `max_tokens`（那是意图层，本函数只写 `max_output_tokens`）。
+            if entry
+                .get(MAX_OUTPUT_TOKENS_SOURCE_KEY)
+                .and_then(|v| v.as_str())
+                != Some("user")
+            {
+                changed |= set_int(entry, "max_output_tokens", output as i64);
+                changed |= set_str(entry, MAX_OUTPUT_TOKENS_SOURCE_KEY, "api");
+            }
         }
     }
     if let Some(efforts) = cap.reasoning_efforts {

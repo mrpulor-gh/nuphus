@@ -87,6 +87,16 @@ pub trait Transport: Send + Sync {
     /// Get Provider name
     fn provider_name(&self) -> &str;
 
+    /// providers.toml **段名**（`ProviderConfig.name`），段级配置解析的绑定键。
+    ///
+    /// 与 [`Self::provider_name`] 语义不同：后者是协议/类型 id（"anthropic"、
+    /// "custom"），同类型的多个段在那里折叠成一个值；按段查模型级配置
+    /// （如 `max_output_tokens`）必须用段名，否则永远 miss。
+    /// 默认空 = 未绑定：查不到值（而不是静默命中同名的兄弟段）。
+    fn provider_segment(&self) -> &str {
+        ""
+    }
+
     /// Get model name
     fn model(&self) -> &str;
 

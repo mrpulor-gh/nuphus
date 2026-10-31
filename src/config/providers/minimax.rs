@@ -128,6 +128,7 @@ impl Provider for MiniMaxProvider {
             provider_kind: Some(crate::api::ProviderKind::MiniMax),
             reasoning_effort: cfg.reasoning_effort.clone(),
             extra_headers: vec![],
+            provider_segment: cfg.name.clone(),
         }))
     }
 }

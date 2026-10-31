@@ -2557,6 +2557,12 @@ impl CapabilitySource for ProviderCapabilitySource<'_> {
         // 不做字符串启发式猜测）。
         Some(CapabilityOverride {
             context_window: entry.context_length.map(|c| c as usize),
+            // 目录条目 `top_provider.max_completion_tokens` = 模型自然输出上限
+            // （OpenRouter 目录官方字段）。0/溢出视为未知 → None（留空）。
+            max_output_tokens: entry
+                .max_completion_tokens
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0),
             supports_vision: (!entry.input_modalities.is_empty())
                 .then(|| entry.input_modalities.iter().any(|m| m == "image")),
             supports_audio: (!entry.input_modalities.is_empty())
@@ -2896,6 +2902,10 @@ pub(super) struct ModelApiMetadata {
     pub context_length: Option<usize>,
     pub reasoning_efforts: Vec<String>,
     pub default_effort: Option<String>,
+    /// provider 上报的模型**自然最大输出**（上游事实；`None` = 该 provider 的
+    /// `/models` 不暴露或本次未解析出）。写入 providers.toml 的
+    /// `max_output_tokens`，与上下文窗口分属两个字段。
+    pub max_output_tokens: Option<u32>,
 }
 
 /// 字符串数组提取（容忍单字符串写法）。
@@ -2971,12 +2981,55 @@ const CTX_KEYS: &[&str] = &[
     "max_input_tokens",
 ];
 
+/// 上游 `/models` 条目里的**输出上限**字段候选（provider-agnostic），与
+/// [`CTX_KEYS`] 并列但语义相反：那边是输入窗口，这边是 completion cap。
+/// 点号表示嵌套路径。
+///
+/// 已核对的官方形状：
+/// - OpenRouter 目录：`top_provider.max_completion_tokens`
+/// - Google Generative Language：`outputTokenLimit`
+/// - OpenAI 兼容族 / 部分网关：顶层 `max_completion_tokens`、`max_output_tokens`
+///
+/// ⚠️ 不含 `max_model_len`：vLLM 的该字段是**总窗口**（输入+输出）。当作输出
+/// 上限采集会把整个窗口当预算发出去（要么 400，要么输入侧被挤掉）——正是
+/// `CTX_KEYS` 那条「宁可解析不出，也不要错数字」的同一条铁律。
+/// ⚠️ 不含裸 `max_tokens`：只在 Anthropic 语义下是输出上限，按协议门控单独读
+/// （见 [`ANTHROPIC_OUTPUT_KEY`]）。
+///
+/// 顺序即优先级：OpenRouter 的 `top_provider.max_completion_tokens` 是**按上游
+/// 供应商**给出的权威值，必须排在顶层同名字段之前（与 `aggregator` 里
+/// `top_provider.context_length` 优先于 `context_length` 同一条规则）。反过来会
+/// 让顶层兜底值顶掉权威值——实测该场景下 8192 会盖住 65536。
+const OUTPUT_KEYS: &[&str] = &[
+    "top_provider.max_completion_tokens",
+    "max_completion_tokens",
+    "outputTokenLimit",
+    "max_output_tokens",
+];
+
+/// Anthropic `ModelInfo.max_tokens` = "Maximum value for the `max_tokens`
+/// parameter when using this model" —— 即**输出**上限（`max_input_tokens` 才是
+/// 窗口）。
+///
+/// 仅对 `provider_type == "anthropic"` 读取：OpenAI 兼容 `/models` 从不返回这个
+/// 语义的同名字段，个别网关若出现 `max_tokens` 多为别义（复用 chat 参数名 / 总
+/// 窗口）。把别义值写进 `max_output_tokens` 会直接变成每次请求的输出预算，
+/// 代价是整条通道 400 或长 thinking 被截断，故加协议门控而不是全局采集。
+const ANTHROPIC_OUTPUT_KEY: &str = "max_tokens";
+
+/// Query the provider's `/models` endpoint and distil one model's capabilities.
+///
+/// `provider_type` is the segment's protocol id (`anthropic` / `custom` / …),
+/// used only for the output-cap semantics gate: Anthropic's `max_tokens` is an
+/// output cap, the same-named field elsewhere is not trustworthy
+/// (see [`ANTHROPIC_OUTPUT_KEY`]).
 pub(super) fn query_model_metadata_from_api(
     base_url: &str,
     model: &str,
     api_key: &str,
     auth_header: &str,
     auth_prefix: &str,
+    provider_type: &str,
 ) -> Option<ModelApiMetadata> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     // 空 auth_header（local 等未声明鉴权方案的 Provider）会被 http crate 判为非法
@@ -3048,20 +3101,31 @@ pub(super) fn query_model_metadata_from_api(
 
     // Context window field names live in the module-level CTX_KEYS (see its doc:
     // deliberately excludes `max_tokens` — that is an output cap, not a window).
+    // Output cap field names live in OUTPUT_KEYS (+ the Anthropic-gated
+    // ANTHROPIC_OUTPUT_KEY).
+
+    // 协议门控：只有 anthropic 的 `ModelInfo.max_tokens` 是输出上限。
+    let protocol_is_anthropic = provider_type == "anthropic";
 
     let build_meta = |m: &serde_json::Value| {
         let (reasoning_efforts, default_effort) = extract_reasoning_efforts(m);
+        let mut max_output_tokens = extract_output_tokens(m, OUTPUT_KEYS);
+        if max_output_tokens.is_none() && protocol_is_anthropic {
+            max_output_tokens = extract_output_tokens(m, &[ANTHROPIC_OUTPUT_KEY]);
+        }
         let meta = ModelApiMetadata {
             context_length: extract_context(m, CTX_KEYS),
             reasoning_efforts,
             default_effort,
+            max_output_tokens,
         };
         tracing::info!(
-            "[model-meta] LIVE: model={} context={:?} efforts={:?} default={:?}",
+            "[model-meta] LIVE: model={} context={:?} efforts={:?} default={:?} max_output={:?}",
             model,
             meta.context_length,
             meta.reasoning_efforts,
-            meta.default_effort
+            meta.default_effort,
+            meta.max_output_tokens
         );
         meta
     };
@@ -3179,6 +3243,36 @@ fn extract_context(obj: &serde_json::Value, ctx_keys: &[&str]) -> Option<usize> 
     for key in ctx_keys {
         if let Some(ctx) = obj.get(key).and_then(|v| v.as_u64()) {
             return Some(ctx as usize);
+        }
+    }
+    None
+}
+
+/// Extract the model's natural max output tokens from a `/models` entry.
+///
+/// 与 [`extract_context`] 同构，但支持 `a.b` 点号嵌套路径（OpenRouter 的
+/// `top_provider.max_completion_tokens`）并且只接受**正**整数：0 / 负数（部分
+/// 网关用 -1 表示"unlimited"）不是可用的预算值，宁可不填也不写错数字。
+fn extract_output_tokens(obj: &serde_json::Value, keys: &[&str]) -> Option<u32> {
+    for key in keys {
+        let mut node = obj;
+        let mut missing = false;
+        for segment in key.split('.') {
+            match node.get(segment) {
+                Some(next) => node = next,
+                None => {
+                    missing = true;
+                    break;
+                }
+            }
+        }
+        if missing {
+            continue;
+        }
+        if let Some(n) = node.as_u64() {
+            if n > 0 && n <= u32::MAX as u64 {
+                return Some(n as u32);
+            }
         }
     }
     None
@@ -3359,6 +3453,91 @@ mod tests {
         );
         assert_eq!(
             extract_context(&serde_json::json!({"id": "m"}), CTX_KEYS),
+            None
+        );
+    }
+
+    /// 上游 /models 条目的**输出上限**解析：与上下文字段语义相反，且支持点号
+    /// 嵌套路径（OpenRouter `top_provider.max_completion_tokens`）。
+    ///
+    /// 反向验证：去掉 `extract_output_tokens` 的 `n > 0` 过滤 → 第 ⑥ 组变红；
+    /// 删掉 `OUTPUT_KEYS` 里的 `top_provider.max_completion_tokens` → 第 ① 组变红；
+    /// 把裸 `max_tokens` 加进 `OUTPUT_KEYS` → 第 ④ 组变红。
+    #[test]
+    fn extract_output_tokens_reads_declared_caps_only() {
+        // ① OpenRouter 目录形状：嵌套路径优先于顶层同名字段
+        let openrouter = serde_json::json!({
+            "id": "m",
+            "max_completion_tokens": 8_192,
+            "top_provider": {"max_completion_tokens": 65_536, "context_length": 1_000_000}
+        });
+        assert_eq!(
+            extract_output_tokens(&openrouter, OUTPUT_KEYS),
+            Some(65_536)
+        );
+
+        // ② Google 形状
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"outputTokenLimit": 8_192}), OUTPUT_KEYS),
+            Some(8_192)
+        );
+
+        // ③ OpenAI 兼容族 / 兼容网关的顶层字段
+        assert_eq!(
+            extract_output_tokens(
+                &serde_json::json!({"max_output_tokens": 32_768}),
+                OUTPUT_KEYS
+            ),
+            Some(32_768)
+        );
+        assert_eq!(
+            extract_output_tokens(
+                &serde_json::json!({"max_completion_tokens": 16_384}),
+                OUTPUT_KEYS
+            ),
+            Some(16_384)
+        );
+
+        // ④ Anthropic 语义的裸 `max_tokens` 不在通用候选里（必须走协议门控，
+        //    否则 OpenAI 兼容网关的同名别义字段会被当成输出预算）
+        assert!(!OUTPUT_KEYS.contains(&ANTHROPIC_OUTPUT_KEY));
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"max_tokens": 64_000}), OUTPUT_KEYS),
+            None
+        );
+        assert_eq!(
+            extract_output_tokens(
+                &serde_json::json!({"max_tokens": 64_000}),
+                &[ANTHROPIC_OUTPUT_KEY]
+            ),
+            Some(64_000)
+        );
+
+        // ⑤ vLLM `max_model_len` 是总窗口（输入+输出）→ 绝不当作输出上限
+        assert!(!OUTPUT_KEYS.contains(&"max_model_len"));
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"max_model_len": 131_072}), OUTPUT_KEYS),
+            None
+        );
+
+        // ⑥ 0 / 负数（部分网关用 -1 表示 unlimited）/ 溢出 → None，宁可留空
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"max_output_tokens": 0}), OUTPUT_KEYS),
+            None
+        );
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"max_output_tokens": -1}), OUTPUT_KEYS),
+            None
+        );
+        assert_eq!(
+            extract_output_tokens(
+                &serde_json::json!({"max_output_tokens": 5_000_000_000u64}),
+                OUTPUT_KEYS
+            ),
+            None
+        );
+        assert_eq!(
+            extract_output_tokens(&serde_json::json!({"id": "m"}), OUTPUT_KEYS),
             None
         );
     }

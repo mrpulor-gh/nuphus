@@ -8,6 +8,7 @@ use nuphus::config::{lock_provider_config, registry::ProviderRegistry};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -23,6 +24,8 @@ struct Discovery {
     vision: Option<bool>,
     efforts: Vec<String>,
     default_effort: Option<String>,
+    /// provider 上报的模型自然最大输出（`/models` 元数据，缺则聚合库目录条目）。
+    max_output: Option<u32>,
 }
 
 pub(crate) struct MetadataTasks {
@@ -89,6 +92,16 @@ fn context(entry: Option<&toml::Value>) -> Option<usize> {
         .as_integer()
         .filter(|n| *n > 0)
         .map(|n| n as usize)
+}
+
+/// providers.toml 里该条目已落盘的 `max_output_tokens`（provider 上报事实）。
+/// 与 [`context`] 同口径：非正数/缺字段/条目不存在一律视为「未采集」。
+fn output(entry: Option<&toml::Value>) -> Option<u32> {
+    entry?
+        .get("max_output_tokens")?
+        .as_integer()
+        .filter(|n| *n > 0 && *n <= u32::MAX as i64)
+        .map(|n| n as u32)
 }
 
 /// 模型条目是否已声明 effort 档位（providers.toml 侧）。空数组 / 缺字段 /
@@ -329,8 +342,16 @@ async fn discover_capabilities(
     let entry = model_entry(snapshot, &cfg.model);
     let needs_context = context(entry).is_none() && result.context.is_none();
     let needs_efforts = !has_efforts(entry) && result.efforts.is_empty();
-    if needs_context || needs_efforts {
-        let (probe_cfg, header, prefix) = (cfg.clone(), header.clone(), prefix.clone());
+    // 输出上限与 context / efforts 同层：已落盘就不再探测（探测只填空，见 merge）。
+    let needs_output = output(entry).is_none() && result.max_output.is_none();
+    if needs_context || needs_efforts || needs_output {
+        // `protocol` 是 snapshot 的借用，spawn_blocking 需要 'static → 取一份 owned。
+        let (probe_cfg, header, prefix, protocol_owned) = (
+            cfg.clone(),
+            header.clone(),
+            prefix.clone(),
+            protocol.to_string(),
+        );
         if let Ok(Some(meta)) = tokio::task::spawn_blocking(move || {
             llm::query_model_metadata_from_api(
                 &probe_cfg.base_url,
@@ -338,12 +359,17 @@ async fn discover_capabilities(
                 &probe_cfg.api_key,
                 &header,
                 &prefix,
+                &protocol_owned,
             )
         })
         .await
         {
             if result.context.is_none() {
                 result.context = meta.context_length.filter(|n| *n > 0);
+            }
+            if result.max_output.is_none() {
+                // 只认上游上报的正整数；None = 该 provider 不暴露，交给聚合库兜底。
+                result.max_output = meta.max_output_tokens.filter(|n| *n > 0);
             }
             if result.efforts.is_empty() {
                 result.efforts = meta.reasoning_efforts;
@@ -366,12 +392,13 @@ async fn discover_capabilities(
                 }
             }
         }
-        // ③ OpenRouter 聚合库（权威目录）。context 与 efforts 共用同一
+        // ③ OpenRouter 聚合库（权威目录）。context / efforts / 输出上限共用同一
         // provider-aware 口径：官方段优先 vendor 精确匹配；custom/opencode-go
         // 等中转段走 lookup_generic 的唯一厂商护栏。此前 context 只对
         // has_vendor 生效，导致连接链已有 1.1M、后台校准却仍为 None。
         let want_context = result.context.is_none();
-        if want_context || result.efforts.is_empty() {
+        let want_output = result.max_output.is_none();
+        if want_context || want_output || result.efforts.is_empty() {
             if let Some(dir) = path.parent() {
                 let entries = aggregator::ensure_cache(&aggregator::cache_path(dir)).await;
                 let vendor_lookup = || aggregator::lookup(&entries, &cfg.provider, &cfg.model);
@@ -387,6 +414,20 @@ async fn discover_capabilities(
                         .map(|n| n as usize)
                         .filter(|n| *n > 0);
                 }
+                if want_output {
+                    // 目录条目的 `top_provider.max_completion_tokens`：官方
+                    // `/models` 不暴露输出上限时的权威兜底（同一调用位、同一
+                    // vendor 护栏）。永不写 0 / 溢出值。
+                    let lookup = if aggregator::has_vendor(&cfg.provider) {
+                        vendor_lookup().or_else(&generic_lookup)
+                    } else {
+                        generic_lookup()
+                    };
+                    result.max_output = lookup
+                        .and_then(|entry| entry.max_completion_tokens)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .filter(|n| *n > 0);
+                }
                 if result.efforts.is_empty() {
                     let lookup = vendor_lookup().or_else(generic_lookup);
                     if let Some(entry) = lookup {
@@ -398,8 +439,164 @@ async fn discover_capabilities(
                 }
             }
         }
+        // ④ 输出上限探测兜底（A2）：/models 与聚合库都拿不到上限、且确实缺这个
+        // 值时，对 Anthropic 协议段发一次「明显超限」的极短请求，从 400 文案里
+        // 解析真实 ceiling。探测只填空（交给 merge 落盘，source=api），失败/
+        // 端点不校验一律只 warn——绝不影响连接结论，也绝不写静态猜值。
+        if needs_output && result.max_output.is_none() && protocol == "anthropic" {
+            // 段级自定义标头随探测带上：配了网关标头的中转站，标头缺失会让探测
+            // 必败（只 warn、不产错值——与连接测试同一契约，见 llm.rs 的 headers
+            // 参数注释）。
+            let extra_headers = segment_extra_headers(snapshot);
+            if let Some(ceiling) = probe_max_output_tokens(cfg, extra_headers).await {
+                result.max_output = Some(ceiling);
+            }
+        }
     }
     result
+}
+
+/// 段快照里的 `[providers.<段>.extra_headers]` 自定义标头（字符串值；非字符串
+/// 值跳过）。探测 / 连接链与真实请求必须带同一套标头，否则配了网关标头的中转
+/// 站会必败。
+fn segment_extra_headers(snapshot: &toml::Value) -> std::collections::BTreeMap<String, String> {
+    snapshot
+        .get("extra_headers")
+        .and_then(|v| v.as_table())
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 输出上限探测（A2 兜底）的超时（秒）。与连接测试同量级；超时只 warn。
+const MAX_OUTPUT_PROBE_TIMEOUT_SECS: u64 = 15;
+
+/// 探测用的「明显超限」`max_tokens`：任何真实模型的输出上限都远小于它，从而
+/// 把 Anthropic 的 400 ceiling 文案逼出来（`max_tokens: X > Y, which is the
+/// maximum allowed number of output tokens for <model>`）。
+const MAX_OUTPUT_PROBE_SENTINEL: u32 = 1_000_000;
+
+/// 从 Anthropic 的 400 错误文案解析真实输出上限（纯函数，供单测）。
+///
+/// 只认 `max_tokens: <req> > <ceiling>` 形态，取 `>` 后第一个数字（ceiling）：
+/// 模型名尾巴（`... for claude-sonnet-4-20250514`）里的数字不是上限。非 400 /
+/// 无关 400 / 无比较结构 → `None`——宁可探测不出，也不要一个错的官方感数字
+/// （与 `CTX_KEYS` / `OUTPUT_KEYS` 同一条铁律）。
+fn ceiling_from_api_error(status: u16, body: &str) -> Option<u32> {
+    if status != 400 {
+        return None;
+    }
+    let marker = "max_tokens:";
+    // marker / '>' 均为 ASCII：字节偏移即字符边界，切片安全。
+    let rest = body.get(body.find(marker)? + marker.len()..)?;
+    let tail = rest.get(rest.find('>')? + 1..)?;
+    tail.split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())?
+        .parse::<u32>()
+        .ok()
+        // 一致性护栏：探测发出去的 sentinel 都被判超限，回过来的 ceiling 必然
+        // 小于它；>= sentinel 的「上限」与 400 事实矛盾，按垃圾值丢弃。
+        .filter(|n| *n < MAX_OUTPUT_PROBE_SENTINEL)
+}
+
+/// 输出上限探测兜底（A2）：调用方已按协议门控（仅 Anthropic 段）且确认
+/// `/models` 与聚合库都没采到上限。
+///
+/// 经 Provider 自带 `transport()` 发一个 `max_tokens` 明显超限的极短请求
+/// （端点 / 鉴权 / 段级标头全部复用官方实现，不另写一套 HTTP）：
+/// - `400` 且文案带 `max_tokens: X > Y` → 采到真实 ceiling `Y`；
+/// - 成功响应 → 该端点不校验 max_tokens，上限不可知 → `None`；
+/// - 其余（网络错 / 超时 / 无关 400）→ 只 warn，`None`。
+///
+/// 探测结果由调用方写进 `Discovery.max_output`，经既有 merge 落盘
+/// （只填空，`source=api`）。本函数不碰任何连接结论。
+async fn probe_max_output_tokens(
+    cfg: &LlamaConfig,
+    extra_headers: std::collections::BTreeMap<String, String>,
+) -> Option<u32> {
+    let registry = ProviderRegistry::builtin();
+    let provider = registry.get("anthropic")?;
+    let provider_cfg = nuphus::config::ProviderConfig {
+        name: cfg.provider.clone(),
+        provider_type: nuphus::config::KnownProvider::from_id(&cfg.provider)
+            .unwrap_or(nuphus::config::KnownProvider::Custom),
+        api_key: cfg.api_key.clone(),
+        base_url: cfg.base_url.clone(),
+        auth_header: provider.auth_header().to_string(),
+        auth_prefix: provider.auth_prefix().to_string(),
+        timeout_secs: MAX_OUTPUT_PROBE_TIMEOUT_SECS,
+        models: vec![],
+        reasoning_effort: None,
+        extra_headers,
+        oauth: None,
+    };
+    let transport = provider.transport(&provider_cfg, &cfg.model);
+    // 极短请求：单轮 "hi"，max_tokens 明显超限。input_tokens_hint 不设——
+    // 探测要的正是「服务端眼中的上限」，不该被窗口余量 clamp 改写。
+    let request = nuphus::api::MessageRequest::new(
+        cfg.model.clone(),
+        vec![serde_json::json!({ "role": "user", "content": "hi" })],
+    )
+    .with_max_tokens(MAX_OUTPUT_PROBE_SENTINEL);
+
+    match tokio::time::timeout(
+        Duration::from_secs(MAX_OUTPUT_PROBE_TIMEOUT_SECS),
+        transport.stream(request),
+    )
+    .await
+    {
+        // 端点接受超限 max_tokens → 它不校验，无从得知 ceiling → 不写值
+        Ok(Ok(_)) => {
+            tracing::info!(
+                "[max-output-probe] model={} accepted an oversized max_tokens; \
+                 ceiling stays unknown",
+                cfg.model
+            );
+            None
+        }
+        Ok(Err(nuphus::NuphusError::LLM(nuphus::LLMError::ApiError { status, body }))) => {
+            match ceiling_from_api_error(status, &body) {
+                Some(ceiling) => {
+                    tracing::info!(
+                        "[max-output-probe] model={} ceiling={} parsed from HTTP {} body",
+                        cfg.model,
+                        ceiling,
+                        status
+                    );
+                    Some(ceiling)
+                }
+                None => {
+                    tracing::warn!(
+                        "[max-output-probe] model={} HTTP {} body carries no max_tokens \
+                         ceiling; output cap stays unknown",
+                        cfg.model,
+                        status
+                    );
+                    None
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "[max-output-probe] model={} request failed: {}",
+                cfg.model,
+                e
+            );
+            None
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                "[max-output-probe] model={} timed out after {}s",
+                cfg.model,
+                MAX_OUTPUT_PROBE_TIMEOUT_SECS
+            );
+            None
+        }
+    }
 }
 
 async fn discover_vision(
@@ -474,10 +671,26 @@ fn merge(
         .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(cfg.model.as_str()))?;
     let original = entry.clone();
     let existing = context(Some(entry));
+    let existing_output = output(Some(entry));
     let fields = entry.as_table_mut()?;
     if existing.is_none() {
         if let Some(value) = result.context {
             fields.insert("context_window".into(), toml::Value::Integer(value as i64));
+        }
+    }
+    // 输出上限：与 context 同一规则（连接指纹校验 + 只填空）。已有值——用户手写
+    // 或先前采集——一律不动，且**绝不**写 `max_tokens`（那是用户配置意图，
+    // 见 apply_capabilities 的契约）。写来源戳 `api`：标明这是机器采集的上游事实。
+    if existing_output.is_none() {
+        if let Some(value) = result.max_output {
+            fields.insert(
+                "max_output_tokens".into(),
+                toml::Value::Integer(value as i64),
+            );
+            fields.insert(
+                toml_ops::MAX_OUTPUT_TOKENS_SOURCE_KEY.into(),
+                toml::Value::String("api".into()),
+            );
         }
     }
     if fields
@@ -762,6 +975,65 @@ mod tests {
         doc["providers"][0]["models"] = toml::Value::Array(vec![]);
         assert_eq!(merge(&mut doc, &cfg, &snapshot, &key, &result), None);
     }
+
+    /// A2 上限探测的解析契约：只认 `max_tokens: <req> > <ceiling>`，取 `>` 后
+    /// 第一个数字。带模型名尾巴的真实文案里，尾巴中的数字（版本日期）不是上限。
+    #[test]
+    fn ceiling_from_api_error_parses_only_ceiling() {
+        // 标准话题（Anthropic 官方文案形态）
+        assert_eq!(
+            ceiling_from_api_error(
+                400,
+                "max_tokens: 1000000 > 32000, which is the maximum allowed number of \
+                 output tokens for claude-sonnet-4-20250514"
+            ),
+            Some(32_000)
+        );
+        // 带模型名尾巴（含数字）：必须取 4096，而不是 20241022 / 4
+        assert_eq!(
+            ceiling_from_api_error(
+                400,
+                "max_tokens: 8192 > 4096, which is the maximum allowed number of output \
+                 tokens for claude-3-5-sonnet-20241022"
+            ),
+            Some(4_096)
+        );
+        // 无关 400（缺 max_tokens 字段的另一种必填校验）→ 解析不出
+        assert_eq!(
+            ceiling_from_api_error(400, "messages: text content blocks must be non-empty"),
+            None
+        );
+        // 有 max_tokens 但无比较结构（「Field required」= 未解析到上限时省略字段
+        // 被服务端打回）→ 解析不出
+        assert_eq!(
+            ceiling_from_api_error(400, "max_tokens: Field required"),
+            None
+        );
+        // 非 400（401/429/5xx 与上限无关）→ 一律不采
+        assert_eq!(
+            ceiling_from_api_error(
+                401,
+                "max_tokens: 1000000 > 32000, which is the maximum allowed"
+            ),
+            None
+        );
+        assert_eq!(
+            ceiling_from_api_error(
+                429,
+                "max_tokens: 1000000 > 32000, which is the maximum allowed"
+            ),
+            None
+        );
+        // 一致性护栏：ceiling >= 探测 sentinel 与「被 400 打回」矛盾 → 垃圾值丢弃
+        assert_eq!(
+            ceiling_from_api_error(
+                400,
+                "max_tokens: 1000000 > 1000000, which is the maximum allowed"
+            ),
+            None
+        );
+    }
+
     struct TestConfig(std::path::PathBuf);
     impl TestConfig {
         fn new(doc: &toml::Value) -> Self {

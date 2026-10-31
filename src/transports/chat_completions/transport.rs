@@ -1459,6 +1459,11 @@ impl super::super::Transport for ChatCompletionsTransport {
         &self.config.name
     }
 
+    /// providers.toml 段名（非协议 id）：段级配置解析的唯一绑定。
+    fn provider_segment(&self) -> &str {
+        &self.config.provider_segment
+    }
+
     fn model(&self) -> &str {
         &self.config.model
     }

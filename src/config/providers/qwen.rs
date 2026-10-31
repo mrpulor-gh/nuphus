@@ -119,6 +119,7 @@ impl Provider for QwenProvider {
             provider_kind: Some(crate::api::ProviderKind::Qwen),
             reasoning_effort: cfg.reasoning_effort.clone(),
             extra_headers: vec![],
+            provider_segment: cfg.name.clone(),
         }))
     }
 }

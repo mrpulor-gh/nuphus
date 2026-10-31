@@ -83,6 +83,21 @@ pub struct ModelEntry {
     /// `supports_vision_source` 既有契约，见 toml_ops apply_capabilities）。
     #[serde(default)]
     pub context_window_source: Option<String>,
+    /// provider 上报的模型**自然最大输出**（上游事实，不是用户意图）：由
+    /// `/models` 元数据采集链路写入（Anthropic `max_tokens`、Google
+    /// `outputTokenLimit`、OpenRouter `top_provider.max_completion_tokens`）。
+    /// `None` = 未采集到（或该 provider 不暴露）。
+    ///
+    /// 与用户手写的 `max_tokens` 分属两层：`max_tokens` 是**用户配置意图**
+    /// （可小于自然上限），本字段是**上游事实**。`get_max_output_tokens`
+    /// 先读 `max_tokens`、未配置才回落到本字段——见该方法的文档契约。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    /// `max_output_tokens` 的来源戳：`"api"` = 探测链路采集，
+    /// `"user"` = 用户手写（此后同步/校准链路不得覆写）。
+    /// 与 `context_window_source` 同一契约（见 toml_ops apply_capabilities）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens_source: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -678,6 +693,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -714,6 +731,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -750,6 +769,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -786,6 +807,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -821,6 +844,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -857,6 +882,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -1124,6 +1151,8 @@ impl ModelRegistry {
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort,
                 extra_headers: BTreeMap::new(),
@@ -1143,22 +1172,30 @@ impl ModelRegistry {
 
     /// Resolve the effective max output token budget for a model.
     ///
-    /// Returns Some ONLY when the user explicitly configured `max_tokens` for
-    /// this model in providers.toml. Returns None when unset — callers must
-    /// then OMIT the field from the request body so the provider's official
-    /// default applies (correct "no limit" semantics).
+    /// 解析链（先意图、后事实，**永不猜**）：
+    /// 1. 用户手写 `max_tokens` —— 用户在 providers.toml 显式配置的输出预算
+    ///    （可小于模型自然上限，语义是"我要多少"）。
+    /// 2. `max_output_tokens` —— provider `/models` 上报的**模型自然最大输出**
+    ///    （机器采集的上游事实：Anthropic `ModelInfo.max_tokens`、Google
+    ///    `outputTokenLimit`、OpenRouter `top_provider.max_completion_tokens`）。
+    /// 3. 都没有 → `None`：调用方必须**省略**该字段，让服务端官方默认生效
+    ///    （正确的"不做限制"语义）。
     ///
-    /// ⚠️ Do NOT fall back to builtin metadata here: builtin `max_output_tokens`
-    /// values (8192 for most providers) are conservative assumptions that
-    /// truncated long thinking streams for reasoning models (see transport).
+    /// ⚠️ 两层都拿不到时 Do NOT fall back to builtin metadata: builtin
+    /// `ModelDef.max_output_tokens` values (8192 for most providers) are
+    /// conservative assumptions that truncated long thinking streams for
+    /// reasoning models (see transport). 采集值是上游事实，不是猜值——两者
+    /// 不可混为一谈。
     ///
     /// Provider-aware (`resolve_capability` semantics): with a known binding the
     /// provider-exact entry wins; no binding (or a valueless segment hit) →
     /// `None` — 二元组化 P2-a 起 sibling 候选扫描已删，`max_tokens` 与
     /// context window 同等只认段限定。See [`Self::resolve_capability`].
     pub fn get_max_output_tokens(&self, provider: Option<&str>, model_id: &str) -> Option<u32> {
-        self.resolve_capability(provider, model_id, |m| m.max_tokens.is_some())
-            .and_then(|m| m.max_tokens)
+        self.resolve_capability(provider, model_id, |m| {
+            m.max_tokens.is_some() || m.max_output_tokens.is_some()
+        })
+        .and_then(|m| m.max_tokens.or(m.max_output_tokens))
     }
 }
 
@@ -1553,6 +1590,8 @@ id = "m1"
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -1688,6 +1727,8 @@ vision_provider = "custom"
                     cost_per_million_out: None,
                     source: ModelSource::Auto,
                     context_window_source: None,
+                    max_output_tokens: None,
+                    max_output_tokens_source: None,
                 })
                 .collect(),
             reasoning_effort: None,
@@ -1724,6 +1765,8 @@ vision_provider = "custom"
                 cost_per_million_out: None,
                 source: ModelSource::Auto,
                 context_window_source: None,
+                max_output_tokens: None,
+                max_output_tokens_source: None,
             })
             .collect();
         provider
@@ -1893,6 +1936,8 @@ vision_provider = "custom"
                 cost_per_million_out: None,
                 source: ModelSource::Auto,
                 context_window_source: None,
+                max_output_tokens: None,
+                max_output_tokens_source: None,
             })
             .collect();
         provider
@@ -1980,6 +2025,89 @@ vision_provider = "custom"
         // 跨段泄漏成 deepseek 段的输出上限。
         assert_eq!(registry.get_max_output_tokens(None, "m"), None);
         assert_eq!(registry.get_max_output_tokens(Some(""), "m"), None);
+    }
+
+    /// 解析链（本轮新增）：用户手写 `max_tokens` 优先；未手写才回落到 provider
+    /// 上报的 `max_output_tokens`（上游事实）；两者皆无 → `None`（调用方省略
+    /// 字段，让服务端官方默认生效）。仍按段限定，不跨段取值。
+    ///
+    /// 反向验证：把 `get_max_output_tokens` 改回「只读 `max_tokens`」时，
+    /// `reported-only` 的三条断言全红。
+    #[test]
+    fn test_get_max_output_tokens_user_then_reported() {
+        let registry: ModelRegistry = toml::from_str(
+            r#"
+[[providers]]
+name = "custom-a"
+provider_type = "custom"
+api_key = ""
+
+[[providers.models]]
+id = "user-wins"
+max_tokens = 4096
+max_output_tokens = 64000
+max_output_tokens_source = "api"
+
+[[providers.models]]
+id = "reported-only"
+max_output_tokens = 64000
+max_output_tokens_source = "api"
+
+[[providers.models]]
+id = "neither"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            registry.get_max_output_tokens(Some("custom-a"), "user-wins"),
+            Some(4_096),
+            "用户手写 max_tokens 是意图层，优先于 provider 上报的自然上限"
+        );
+        assert_eq!(
+            registry.get_max_output_tokens(Some("custom-a"), "reported-only"),
+            Some(64_000),
+            "未手写时回落到采集到的自然上限"
+        );
+        assert_eq!(
+            registry.get_max_output_tokens(Some("custom-a"), "neither"),
+            None,
+            "两层都没有 → None（调用方省略字段，绝不回落 builtin 8192）"
+        );
+        assert_eq!(
+            registry.get_max_output_tokens(None, "reported-only"),
+            None,
+            "无段绑定 → None：采集值同样按段限定"
+        );
+    }
+
+    /// providers.toml 向后兼容（本轮新增字段）：旧文件（无 `max_output_tokens`
+    /// / `max_output_tokens_source`）照常反序列化为 `None`；未采集到时序列化
+    /// 不产生任何 TOML 噪音（`skip_serializing_if`）。
+    #[test]
+    fn test_max_output_tokens_toml_compat_and_silent_when_empty() {
+        let registry: ModelRegistry = toml::from_str(
+            r#"
+[[providers]]
+name = "legacy"
+provider_type = "custom"
+api_key = ""
+
+[[providers.models]]
+id = "m"
+max_tokens = 2048
+"#,
+        )
+        .unwrap();
+        let entry = &registry.providers[0].models[0];
+        assert_eq!(entry.max_output_tokens, None);
+        assert_eq!(entry.max_output_tokens_source, None);
+
+        let dumped = toml::to_string(&registry).unwrap();
+        assert!(
+            !dumped.contains("max_output_tokens"),
+            "未采集到值时不得写字段（无 TOML 噪音）: {dumped}"
+        );
     }
 
     /// Capability provider fields round-trip; legacy configs omitting them

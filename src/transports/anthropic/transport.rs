@@ -15,6 +15,14 @@ use crate::Result;
 use super::config::AnthropicConfig;
 use super::parser::parse_sse;
 
+/// 窗口余量 clamp 的预留量（tokens）：Anthropic 校验 `input + max_tokens ≤
+/// 上下文窗口`，留 1K 给系统提示词增量 / 工具调用等提示词外占用。
+const WINDOW_HEADROOM_TOKENS: usize = 1024;
+
+/// 窗口余量 clamp 的下限：再小的输出预算会让长 thinking / 工具流直接空交付，
+/// 宁可以 400 / stop_reason 的形式把超窗暴露出来，也不发一个必然被截断的预算。
+const MIN_OUTPUT_TOKENS_FLOOR: usize = 256;
+
 // ── AnthropicTransport ──────────────────────────────────────────────────────
 
 /// Transport that communicates with Anthropic's Messages API.
@@ -43,29 +51,42 @@ impl AnthropicTransport {
     /// Build the Anthropic Messages API request body from a Nuphus
     /// `MessageRequest` (which uses Chat-Completions-style message roles).
     fn build_request_body(&self, request: &MessageRequest) -> serde_json::Value {
-        // Anthropic Messages API 强制要求 max_tokens（缺失即 HTTP 400）。
-        // 显式值优先；None 走配置解析链（providers.toml ModelEntry.max_tokens → builtin → 8192 兜底），
-        // 避免长 thinking 流被静默截断（thinking 占满输出预算 → text/tool_call 缺失 → 空交付）。
-        let max_tokens = request.max_tokens.unwrap_or_else(|| {
-            let model = if request.model.is_empty() {
-                &self.config.model
-            } else {
-                &request.model
-            };
-            // AnthropicConfig carries no provider-segment name (its
-            // `provider_name()` is the static protocol label "anthropic", not a
-            // providers.toml segment), so max_tokens resolves by model id.
-            crate::config::resolve_max_output_tokens(model, None).unwrap_or(8192)
+        // max_tokens 解析链（A2，8192 兜底已删）：
+        //   request.max_tokens（调用方显式意图）→ 配置解析（providers.toml
+        //   用户手写 max_tokens > 采集 max_output_tokens）→ None。
+        // 仍 None → **不写字段**：Anthropic 对缺失 max_tokens 报 400
+        // 「max_tokens: Field required」，错误路径会打可定位 warn（见
+        // `stream_with_cancellation`），采集由 desktop 侧上限探测兜底。
+        // 绝不回落静态猜值：8192 曾把 reasoning 模型的长 thinking 流截断
+        // （thinking 占满输出预算 → text/tool_call 缺失 → 空交付）。
+        let model = if request.model.is_empty() {
+            &self.config.model
+        } else {
+            &request.model
+        };
+        // 段名绑定（`provider_segment`）：同名模型在多个段可配不同上限，
+        // 必须按 providers.toml 段名解析，否则 resolve_capability 直接返回
+        // None（空段名 → 不猜兄弟段）。
+        let segment = (!self.config.provider_segment.is_empty())
+            .then_some(self.config.provider_segment.as_str());
+        let cap = request
+            .max_tokens
+            .or_else(|| crate::config::resolve_max_output_tokens(model, segment));
+        // 窗口余量 clamp：长会话里 input 已占满窗口时，`input + max_tokens`
+        // 会超出上下文窗口。hint / window 任一缺失 → 不 clamp（原样发送）。
+        let cap = cap.map(|cap| {
+            let window = crate::agent::goal_types::try_get_context_window_for(model, segment);
+            clamp_output(cap, request.input_tokens_hint, window, model)
         });
         let mut body = serde_json::json!({
-            "model": if request.model.is_empty() {
-                &self.config.model
-            } else {
-                &request.model
-            },
-            "max_tokens": max_tokens,
+            "model": model,
             "stream": request.stream,
         });
+        // 必填字段的「不写」是有意为之：见上方解析链注释。条件插入保证
+        // 未解析到上限时报文里根本没有这个键（而不是 null / 猜值）。
+        if let Some(max_tokens) = cap {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
 
         // ── system prompt ────────────────────────────────────────────────
         if let Some(ref merged) = request.merged_system {
@@ -331,6 +352,18 @@ impl Transport for AnthropicTransport {
                 } else {
                     error_text.to_string()
                 };
+            // A2 诊断：未解析到输出上限时 Anthropic 对缺失 max_tokens 报 400
+            // 「max_tokens: Field required」。只 warn、不改错误返回语义——让
+            // 「该段没采到上限」在日志里可定位（采集由 desktop 侧上限探测兜底）。
+            // 段名一并打出：多段同名模型时按段补配置 / 补探测。
+            if status.as_u16() == 400 && error_text.contains("max_tokens") {
+                tracing::warn!(
+                    "[anthropic] 400 mentioning max_tokens — model={}, segment={}, detail={}",
+                    body["model"],
+                    self.config.provider_segment,
+                    detail,
+                );
+            }
             return Err(crate::NuphusError::LLM(crate::LLMError::ApiError {
                 status: status.as_u16(),
                 body: detail,
@@ -356,6 +389,11 @@ impl Transport for AnthropicTransport {
         "anthropic"
     }
 
+    /// providers.toml 段名（非协议 id）：段级配置解析的唯一绑定。
+    fn provider_segment(&self) -> &str {
+        &self.config.provider_segment
+    }
+
     fn model(&self) -> &str {
         &self.config.model
     }
@@ -366,6 +404,35 @@ impl Transport for AnthropicTransport {
 }
 
 // ── private helpers ─────────────────────────────────────────────────────────
+
+/// 窗口余量 clamp（A2）：`min(cap, window - hint - [`WINDOW_HEADROOM_TOKENS`]`，
+/// 下限 [`MIN_OUTPUT_TOKENS_FLOOR`]。
+///
+/// `hint` / `window` 任一缺失 → 不 clamp：没有依据就不改用户/采集得到的值。
+/// 收紧时打 warn（model / cap / effective）——clamp 改的是线上报文，必须可观测，
+/// 禁止静默改用户显式值。
+fn clamp_output(cap: u32, hint: Option<u32>, window: Option<usize>, model: &str) -> u32 {
+    let (Some(hint), Some(window)) = (hint, window) else {
+        return cap;
+    };
+    let allowance = window
+        .saturating_sub(hint as usize)
+        .saturating_sub(WINDOW_HEADROOM_TOKENS)
+        .max(MIN_OUTPUT_TOKENS_FLOOR);
+    let effective = u32::try_from(allowance).map_or(cap, |a| cap.min(a));
+    if effective < cap {
+        tracing::warn!(
+            "[anthropic] max_tokens clamped to fit the context window: \
+             model={}, cap={}, effective={} (window={}, input_tokens_hint={})",
+            model,
+            cap,
+            effective,
+            window,
+            hint,
+        );
+    }
+    effective
+}
 
 impl AnthropicTransport {
     /// Non-cancellable request — used by the required `stream()` method.
@@ -458,6 +525,7 @@ mod tests {
             provider_kind: Some(crate::api::ProviderKind::Anthropic),
             reasoning_effort: effort.map(|s| s.to_string()),
             extra_headers: Vec::new(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
         }
     }
 
@@ -486,6 +554,87 @@ mod tests {
             body.get("output_config").is_none(),
             "no output_config block when effort is not configured (current behavior preserved)"
         );
+    }
+
+    /// 本轮接线事实：Anthropic 通道原先是「按 model id、无段绑定」解析配置
+    /// （`resolve_max_output_tokens(model, None)` 恒 None），采集到的
+    /// `max_output_tokens` 永远解析不到。现在段名随 transport 携带。
+    ///
+    /// A2 契约：8192 兜底已删——该段在本机配置里不存在 → 解析不到上限 →
+    /// **不写 `max_tokens` 字段**（静态猜值会把长 thinking 流截断；缺失字段
+    /// 由服务端 400 + desktop 侧上限探测补采，见 `stream_with_cancellation`
+    /// 的 400 诊断 warn）。
+    ///
+    /// 为什么不做端到端断言：`resolve_max_output_tokens` 读的是全局
+    /// `config_search_paths()`（用户真实 providers.toml），测试进程无法注入
+    /// 一份隔离配置而不污染用户配置、也不该靠环境变量造假绿。解析链本身由
+    /// `config::model::tests::test_get_max_output_tokens_user_then_reported`
+    /// 覆盖；此处只钉「段名被传入」与「未解析到 → 省略字段」两个事实。
+    #[test]
+    fn test_provider_segment_wired_and_unresolved_omits_max_tokens() {
+        let mut cfg = config_with(None);
+        cfg.provider_segment = "nuphus-test-nonexistent-segment".to_string();
+        let transport = AnthropicTransport::new(cfg);
+        assert_eq!(
+            transport.provider_segment(),
+            "nuphus-test-nonexistent-segment",
+            "段名必须原样暴露给配置解析（不是协议 id \"anthropic\"）"
+        );
+        let request = MessageRequest::new("claude-sonnet-5", vec![]);
+        let body = transport.build_request_body(&request);
+        assert!(
+            body.get("max_tokens").is_none(),
+            "未解析到上限时不写 max_tokens 字段——禁止回落任何静态猜值"
+        );
+    }
+
+    /// 空段名（内存 / 直构 transport，无段绑定）同样解析不到上限 → 不写字段。
+    /// 与段名绑定用例并列：有没有段绑定都不该产出静态猜值。
+    #[test]
+    fn test_build_request_body_unbound_segment_omits_max_tokens() {
+        let transport = AnthropicTransport::new(config_with(None));
+        let request = MessageRequest::new("claude-sonnet-5", vec![]);
+        let body = transport.build_request_body(&request);
+        assert!(
+            body.get("max_tokens").is_none(),
+            "无段绑定时解析链同样走到 None——不写字段，不回落静态猜值"
+        );
+    }
+
+    /// clamp 纯函数契约（A2）：有 hint + window 时取
+    /// `min(cap, window - hint - 1024)`，下限 256；hint / window 缺失 → 不 clamp。
+    #[test]
+    fn test_clamp_output_window_remainder() {
+        // 窗口余量充足 → 不动（cap 优先）
+        assert_eq!(
+            clamp_output(64_000, Some(1_000), Some(200_000), "m"),
+            64_000
+        );
+        // 余量收紧：min(64000, 200000-190000-1024=8976) → 8976 < cap
+        assert_eq!(
+            clamp_output(64_000, Some(190_000), Some(200_000), "m"),
+            8_976
+        );
+        // 下限 256：余量算成负数也发 256，不让输出预算归零
+        assert_eq!(clamp_output(64_000, Some(199_999), Some(200_000), "m"), 256);
+        // cap 小于窗口余量 → cap 兜底（不因窗口大就超模型自然上限）
+        assert_eq!(clamp_output(4_096, Some(1_000), Some(200_000), "m"), 4_096);
+        // hint / window 缺失 → 没有依据就不改值
+        assert_eq!(clamp_output(64_000, None, Some(200_000), "m"), 64_000);
+        assert_eq!(clamp_output(64_000, Some(1_000), None, "m"), 64_000);
+    }
+
+    /// 显式 `request.max_tokens` 仍然最高优先，不受段名/配置解析影响；
+    /// 且无 hint 时 clamp 不介入（窗口余量无从算起）。
+    #[test]
+    fn test_build_request_body_explicit_max_tokens_wins_over_config() {
+        let mut cfg = config_with(None);
+        cfg.provider_segment = "nuphus-test-nonexistent-segment".to_string();
+        let transport = AnthropicTransport::new(cfg);
+        let mut request = MessageRequest::new("claude-sonnet-5", vec![]);
+        request.max_tokens = Some(1234);
+        let body = transport.build_request_body(&request);
+        assert_eq!(body["max_tokens"], 1234);
     }
 
     #[test]

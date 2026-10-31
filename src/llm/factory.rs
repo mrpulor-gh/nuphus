@@ -253,6 +253,7 @@ impl ClientFactory {
                         provider_kind: Some(cfg.provider_type),
                         reasoning_effort: cfg.reasoning_effort.clone(),
                         extra_headers: quirks.extra_headers,
+                        provider_segment: cfg.name.clone(),
                     },
                 ),
             )),
