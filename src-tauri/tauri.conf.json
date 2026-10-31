@@ -96,7 +96,10 @@
         "installMode": "currentUser",
         "installerHooks": "installer-hooks.nsh",
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico"
+        "uninstallerIcon": "icons/icon.ico",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "template": "installer-template/installer.nsi"
       }
     },
     "resources": {},
