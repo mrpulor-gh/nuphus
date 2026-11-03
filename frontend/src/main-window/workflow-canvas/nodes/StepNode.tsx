@@ -24,6 +24,7 @@ import {
   Copy,
   Trash2,
   Settings2,
+  Sparkles,
 } from 'lucide-react'
 import type { CanvasNode, StepVisualStatus } from '../types'
 import type { LayoutDir } from '../layout'
@@ -62,6 +63,7 @@ export type StepNodeFlow = Node<
 export const KIND_ICONS: Record<string, typeof Wrench> = {
   tool: Wrench,
   chat: MessageSquare,
+  model: Sparkles,
   script: FileCode2,
   assert: ShieldCheck,
   mcp: Plug,

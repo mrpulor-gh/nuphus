@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 const ACTIONS: &[&str] = &[
-    "tool", "seq", "loop", "if", "call", "wait", "chat", "script", "assert", "mcp", "sleep",
-    "break", "continue",
+    "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert", "mcp",
+    "sleep", "break", "continue",
 ];
 const STEP_FIELDS: &[&str] = &[
     "id",
@@ -99,7 +99,7 @@ fn action_kind(step: &Value) -> Result<&str, String> {
         key != kind
             && !matches!(
                 (kind, key.as_str()),
-                ("tool" | "call" | "chat", "with") | ("wait", "auto")
+                ("tool" | "call" | "chat" | "model", "with") | ("wait", "auto")
             )
     }) {
         return Err("Unknown action fields are not editable".into());
@@ -314,6 +314,7 @@ pub fn build_request(
                 {"script": {"runtime": "node", "code": "console.log('example')"}},
                 {"wait": "Please confirm", "auto": []},
                 {"chat": "Task instructions", "with": {}},
+                {"model": "Task description", "with": {}},
                 {"call": "workflow_id", "with": {}},
                 {"seq": []},
                 {"loop": {"repeat": 2, "max": 100, "do": []}},
@@ -663,6 +664,51 @@ mod tests {
             serde_json::from_str(message.messages[0]["content"].as_str().unwrap()).unwrap();
         for action in content["format"]["action_examples"].as_array().unwrap() {
             action_kind(&json!({"id":"example", "name":"Example", "do":action})).unwrap();
+        }
+    }
+
+    /// 白名单漂移守卫：ACTIONS 必须覆盖全部 14 种 do（与 step_schema.json 的
+    /// DoCustom propertyNames 对齐），且 action_examples 与白名单双向齐全——
+    /// 漏注册的 do 类型会被 scoped edit 当成 "Unsupported action" 拒绝。
+    #[test]
+    fn actions_whitelist_covers_all_do_kinds() {
+        for name in [
+            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert", "mcp",
+            "sleep", "break", "continue",
+        ] {
+            assert!(ACTIONS.contains(&name), "ACTIONS missing do kind '{name}'");
+        }
+        assert_eq!(ACTIONS.len(), 14, "ACTIONS 必须恰好 14 项（新增 do 必须同步）");
+
+        let message = build_request(&request(), &[], "workflow-model").unwrap();
+        let content: Value =
+            serde_json::from_str(message.messages[0]["content"].as_str().unwrap()).unwrap();
+        let examples = content["format"]["action_examples"].as_array().unwrap();
+        for example in examples {
+            let object = example.as_object().expect("example is an object");
+            let action_keys: Vec<&str> = object
+                .keys()
+                .map(|key| key.as_str())
+                .filter(|key| ACTIONS.contains(key))
+                .collect();
+            assert_eq!(
+                action_keys.len(),
+                1,
+                "action example must carry exactly one action key: {example}"
+            );
+            // 伴生键只允许 with / auto（与 action_kind 的字段白名单一致）
+            for key in object.keys() {
+                assert!(
+                    ACTIONS.contains(&key.as_str()) || key == "with" || key == "auto",
+                    "unexpected example key '{key}': {example}"
+                );
+            }
+        }
+        for name in ACTIONS {
+            assert!(
+                examples.iter().any(|example| example.get(name).is_some()),
+                "action_examples missing example for '{name}'"
+            );
         }
     }
     #[tokio::test]

@@ -167,3 +167,54 @@ describe('canvas moves preserve loop item scope', () => {
     ).toEqual({ ok: true })
   })
 })
+
+/**
+ * reorder 是同层拖动的唯一路径（onNodeDragStop），其 newIndex 语义为「移除自身后」
+ * 的目标下标 —— 与 onNodeDrag 按「排除自身的兄弟序列」算出的 index 一致。
+ * 这里逐格钉死，防止与 move_step 的 idx-1 修正混淆后产生差一位的重排。
+ */
+describe('canvas reorder uses the post-removal index', () => {
+  const flat = () => [pause('a'), pause('b'), pause('c'), pause('d')]
+
+  it.each([
+    ['a', 0, ['a', 'b', 'c', 'd']],
+    ['a', 1, ['b', 'a', 'c', 'd']],
+    ['a', 2, ['b', 'c', 'a', 'd']],
+    ['a', 3, ['b', 'c', 'd', 'a']],
+    ['b', 0, ['b', 'a', 'c', 'd']],
+    ['b', 3, ['a', 'c', 'd', 'b']],
+    ['c', 0, ['c', 'a', 'b', 'd']],
+    ['d', 0, ['d', 'a', 'b', 'c']],
+    ['d', 2, ['a', 'b', 'd', 'c']],
+  ])('reorders %s to index %i', (stepId, newIndex, expected) => {
+    expect(applyOp(flat(), { op: 'reorder', stepId, newIndex }).map(s => s.id)).toEqual(expected)
+  })
+
+  it('clamps out-of-range indices instead of dropping the step', () => {
+    expect(applyOp(flat(), { op: 'reorder', stepId: 'a', newIndex: 99 }).map(s => s.id)).toEqual([
+      'b',
+      'c',
+      'd',
+      'a',
+    ])
+    expect(applyOp(flat(), { op: 'reorder', stepId: 'a', newIndex: -5 }).map(s => s.id)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ])
+  })
+
+  it('reorders inside a container lane without touching siblings', () => {
+    const steps = [group('g', [pause('x'), pause('y'), pause('z')]), pause('outside')]
+    const next = applyOp(steps, { op: 'reorder', stepId: 'z', newIndex: 0 })
+    expect(next[0]).toMatchObject({ do: { seq: [{ id: 'z' }, { id: 'x' }, { id: 'y' }] } })
+    expect(next[1].id).toBe('outside')
+  })
+
+  it('rejects reordering a step that does not exist', () => {
+    expect(checkOp(flat(), { op: 'reorder', stepId: 'nope', newIndex: 0 })).toMatchObject({
+      ok: false,
+    })
+  })
+})

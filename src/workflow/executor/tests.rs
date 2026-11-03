@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::GenerationKind;
 use crate::workflow::events::EventBus;
 use crate::workflow::inputs::resolve_declared_inputs;
 use crate::workflow::store::WorkflowStore;
@@ -2620,4 +2621,454 @@ async fn continue_skips_rest_of_iteration_and_loop_continues() {
         "continue 跳过本轮剩余后循环必须继续（seen 执行 3 次，never 0 次）"
     );
     let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+// ── Model 步骤（do.model：text / image / video 单次生成） ──
+
+/// 记录型 mock ApiClient：留住每个请求供断言；fail=true 时固定报错。
+struct RecordingMockClient {
+    reply: String,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    requests: std::sync::Arc<std::sync::Mutex<Vec<crate::api::MessageRequest>>>,
+    fail: bool,
+}
+
+impl RecordingMockClient {
+    fn new(reply: &str, fail: bool) -> (Self, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let client = Self {
+            reply: reply.to_string(),
+            calls: calls.clone(),
+            requests: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            fail,
+        };
+        (client, calls)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::api::ApiClient for RecordingMockClient {
+    async fn stream(
+        &self,
+        request: crate::api::MessageRequest,
+    ) -> crate::Result<Vec<crate::api::AssistantEvent>> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.requests.lock().unwrap().push(request);
+        if self.fail {
+            return Err(crate::NuphusError::agent("mock llm failure".to_string()));
+        }
+        Ok(vec![
+            crate::api::AssistantEvent::TextDelta(self.reply.clone()),
+            crate::api::AssistantEvent::MessageStop,
+        ])
+    }
+
+    fn model_name(&self) -> &str {
+        "mock-model"
+    }
+
+    fn provider_kind(&self) -> crate::api::ProviderKind {
+        crate::api::ProviderKind::Custom
+    }
+
+    fn provider_name(&self) -> &str {
+        ""
+    }
+}
+
+fn make_model_step(name: &str, prompt: &str, opts: ModelOpts) -> Step {
+    Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        action: Action::Model {
+            model: prompt.to_string(),
+            with: opts,
+        },
+        ..Default::default()
+    }
+}
+
+/// text：变量替换后的任务描述进 user 消息，缺省系统提示是中性引导
+/// （不得复用 BASE_CHAT_AGENT_PROMPT），capture 把正文写入变量池。
+#[tokio::test]
+async fn model_text_step_substitutes_vars_and_captures_body() {
+    let executor = Executor::new();
+    let (llm, calls) = RecordingMockClient::new("一句文案", false);
+    let mut step = make_model_step("写文案", "为 {{topic}} 写一句卖点", ModelOpts::default());
+    step.capture = Some("copy".to_string());
+    let mut vars = HashMap::from([("topic".to_string(), serde_json::json!("新品发布会"))]);
+    let events = EventBus::new();
+
+    let out = executor
+        .execute_model_step(
+            &step,
+            "为 {{topic}} 写一句卖点",
+            &ModelOpts::default(),
+            &mut vars,
+            Some(&llm),
+            &events,
+            "wf-model-text",
+        )
+        .await
+        .expect("text model step should succeed");
+
+    assert_eq!(out, "一句文案");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // capture：正文原样入变量池
+    assert_eq!(
+        vars.get("copy"),
+        Some(&serde_json::Value::String("一句文案".to_string()))
+    );
+    // 请求形状：单轮（system + user 各一条），user 是替换后的文案
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].messages[0]["content"].as_str(),
+        Some("为 新品发布会 写一句卖点"),
+        "do.model 必须先做变量替换再进请求"
+    );
+    assert_eq!(
+        requests[0].system.as_deref(),
+        Some(super::step_model::MODEL_TEXT_SYSTEM_PROMPT),
+    );
+    assert_ne!(
+        requests[0].system.as_deref(),
+        Some(super::BASE_CHAT_AGENT_PROMPT),
+        "model 节点不得复用 ChatAgent 的系统提示"
+    );
+    assert!(requests[0].tools.is_none(), "model 节点不带工具");
+}
+
+/// text：with.system / temperature / max_tokens 覆盖进请求；无 with.model 时
+/// 用运行时注入 llm 的模型名。
+#[tokio::test]
+async fn model_text_step_applies_with_overrides() {
+    let executor = Executor::new();
+    let (llm, _calls) = RecordingMockClient::new("ok", false);
+    let opts = ModelOpts {
+        system: Some("你是文案助手".to_string()),
+        temperature: Some(0.7),
+        max_tokens: Some(256),
+        ..Default::default()
+    };
+    let step = make_model_step("带覆盖", "hi", opts.clone());
+    let mut vars = HashMap::new();
+    let events = EventBus::new();
+
+    executor
+        .execute_model_step(&step, "hi", &opts, &mut vars, Some(&llm), &events, "wf-model-ovr")
+        .await
+        .expect("override run should succeed");
+
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(requests[0].system.as_deref(), Some("你是文案助手"));
+    assert_eq!(requests[0].temperature, Some(0.7));
+    assert_eq!(requests[0].max_tokens, Some(256));
+    assert_eq!(requests[0].model, "mock-model", "无 with.model 用运行时 llm 名");
+}
+
+/// text：运行时未注入 llm → 明确报错（不静默降级）。
+#[tokio::test]
+async fn model_text_step_requires_llm_client() {
+    let executor = Executor::new();
+    let step = make_model_step("无客户端", "hi", ModelOpts::default());
+    let mut vars = HashMap::new();
+    let events = EventBus::new();
+
+    let err = executor
+        .execute_model_step(
+            &step,
+            "hi",
+            &ModelOpts::default(),
+            &mut vars,
+            None,
+            &events,
+            "wf-model-nollm",
+        )
+        .await
+        .expect_err("missing llm must error");
+    assert!(
+        err.to_string().contains("requires LLM client"),
+        "error should name the missing client: {err}"
+    );
+}
+
+/// with.model 命中 registry → 走 factory 装配的专属 client（不可达地址 → 失败即证明
+/// 已路由，且主 client 零调用）；未注册的裸模型名 → 回退主 client。
+#[tokio::test]
+async fn model_text_step_routes_with_model_through_factory() {
+    let mut executor = Executor::new();
+    executor.set_client_factory(make_test_factory());
+    let (main, main_calls) = RecordingMockClient::new("mock reply", false);
+    let mut vars = HashMap::new();
+    let events = EventBus::new();
+
+    let routed_opts = ModelOpts {
+        model: Some("routed-model".to_string()),
+        ..Default::default()
+    };
+    let step = make_model_step("路由", "hi", routed_opts.clone());
+    let err = executor
+        .execute_model_step(
+            &step,
+            "hi",
+            &routed_opts,
+            &mut vars,
+            Some(&main),
+            &events,
+            "wf-model-route",
+        )
+        .await
+        .expect_err("unreachable routed client must fail");
+    assert!(
+        !err.to_string().is_empty(),
+        "routed failure should surface a reason: {err}"
+    );
+    assert_eq!(
+        main_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "with.model 命中 registry 时必须走专属 client，主 client 零调用"
+    );
+
+    let bare_opts = ModelOpts {
+        model: Some("bare-name-model".to_string()),
+        ..Default::default()
+    };
+    let step2 = make_model_step("回退", "hi", bare_opts.clone());
+    let out = executor
+        .execute_model_step(
+            &step2,
+            "hi",
+            &bare_opts,
+            &mut vars,
+            Some(&main),
+            &events,
+            "wf-model-fallback",
+        )
+        .await
+        .expect("unregistered bare model must fall back to main client");
+    assert_eq!(out, "mock reply");
+}
+
+/// 重试策略：abort（缺省）= 单次，不套用 tool 步骤的默认 2 次重试；
+/// 仅 on_error 显式 retry 才按配置重试。
+#[tokio::test]
+async fn model_step_abort_does_not_retry_by_default() {
+    let executor = Executor::new();
+    let (llm, calls) = RecordingMockClient::new("", true);
+    let mut vars = HashMap::new();
+    let events = EventBus::new();
+
+    let step = make_model_step("默认中止", "hi", ModelOpts::default());
+    let err = executor
+        .execute_model_step(
+            &step,
+            "hi",
+            &ModelOpts::default(),
+            &mut vars,
+            Some(&llm),
+            &events,
+            "wf-model-abort",
+        )
+        .await
+        .expect_err("failing llm must error");
+    assert!(err.to_string().contains("mock llm failure"), "{err}");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "abort 必须单次执行——model 步骤不套用 tool 的默认 2 次重试"
+    );
+
+    let mut retry_step = make_model_step("显式重试", "hi", ModelOpts::default());
+    retry_step.on_error = OnError::Retry {
+        max: 2,
+        backoff_ms: 1,
+        backoff_multiplier: 2.0,
+    };
+    let err = executor
+        .execute_model_step(
+            &retry_step,
+            "hi",
+            &ModelOpts::default(),
+            &mut vars,
+            Some(&llm),
+            &events,
+            "wf-model-retry",
+        )
+        .await
+        .expect_err("all attempts fail must error");
+    assert!(err.to_string().contains("3 attempt(s)"), "{err}");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1 + 3,
+        "on_error=retry{{max:2}} 必须共 3 次尝试"
+    );
+}
+
+/// with 内所有字符串（含 params 内嵌）都做变量替换，且 `"{{var}}"` 定型为类型值。
+#[test]
+fn resolve_model_opts_substitutes_all_strings_including_nested_params() {
+    let vars = HashMap::from([
+        ("mid".to_string(), serde_json::json!("image-01")),
+        ("count".to_string(), serde_json::json!(3)),
+        ("ar".to_string(), serde_json::json!("16:9")),
+    ]);
+    let opts = ModelOpts {
+        kind: ModelKind::Image,
+        model: Some("{{mid}}".to_string()),
+        provider: Some("{{prov}}".to_string()),
+        params: Some(serde_json::json!({
+            "seed": "{{count}}",
+            "quality": "{{ar}}",
+            "prompt": "keep"
+        })),
+        ..Default::default()
+    };
+    let resolved = super::step_model::resolve_model_opts(&opts, &vars);
+
+    assert_eq!(resolved.kind, ModelKind::Image, "kind 不受替换影响");
+    assert_eq!(resolved.model.as_deref(), Some("image-01"));
+    assert_eq!(resolved.provider.as_deref(), Some("{{prov}}"), "未定义变量保留原串");
+    let params = resolved.params.expect("params preserved");
+    assert_eq!(params["seed"], serde_json::json!(3), "内嵌字符串按类型替换");
+    assert_eq!(params["quality"], serde_json::json!("16:9"));
+    assert_eq!(params["prompt"], serde_json::json!("keep"), "无占位符原样保留");
+}
+
+/// 具名字段原样进入语义生成请求（`GenerationRequest`）——step_model 只构造语义
+/// 请求，不出现任何厂商请求体键名；模态不适用的字段由协议层忽略。
+#[test]
+fn generation_request_carries_semantic_fields_per_modality() {
+    let image = super::step_model::model_generation_request(
+        "a cat",
+        &ModelOpts {
+            kind: ModelKind::Image,
+            ratio: Some("4:3".to_string()),
+            count: Some(3),
+            // 跨模态字段：video 专属，image 模态不生效（协议层忽略）
+            duration: Some(5),
+            first_frame: Some("/tmp/frame.png".to_string()),
+            ..Default::default()
+        },
+        GenerationKind::Image,
+    )
+    .expect("named image fields produce a request");
+    assert_eq!(image.kind, GenerationKind::Image);
+    assert_eq!(image.prompt, "a cat");
+    assert_eq!(image.ratio.as_deref(), Some("4:3"));
+    assert_eq!(image.count, Some(3));
+    assert_eq!(image.duration, Some(5), "语义请求如实携带，模态归属由协议层判定");
+    assert_eq!(image.first_frame.as_deref(), Some("/tmp/frame.png"));
+    assert!(image.extra.is_empty(), "没有 params 时 extra 为空");
+
+    let video = super::step_model::model_generation_request(
+        "a dog",
+        &ModelOpts {
+            kind: ModelKind::Video,
+            ratio: Some("9:16".to_string()),
+            duration: Some(10),
+            first_frame: Some("{{frame}}".to_string()),
+            count: Some(2),
+            ..Default::default()
+        },
+        GenerationKind::Video,
+    )
+    .expect("named video fields produce a request");
+    assert_eq!(video.kind, GenerationKind::Video);
+    assert_eq!(video.ratio.as_deref(), Some("9:16"));
+    assert_eq!(video.duration, Some(10));
+    assert_eq!(video.first_frame.as_deref(), Some("{{frame}}"));
+    assert_eq!(video.count, Some(2), "语义请求如实携带，模态归属由协议层判定");
+}
+
+/// params 是逃生舱：显式键原样进 extra（与具名字段的优先级由协议层裁定），
+/// 非对象 params 由语义层按既有契约报错。
+#[test]
+fn generation_request_keeps_params_as_extra() {
+    let merged = super::step_model::model_generation_request(
+        "a cat",
+        &ModelOpts {
+            kind: ModelKind::Image,
+            ratio: Some("1:1".to_string()),
+            count: Some(1),
+            params: Some(serde_json::json!({
+                "seed": 7,
+                "width": 1024
+            })),
+            ..Default::default()
+        },
+        GenerationKind::Image,
+    )
+    .expect("params object merges");
+    assert_eq!(
+        serde_json::Value::Object(merged.extra.clone()),
+        serde_json::json!({"seed": 7, "width": 1024}),
+        "params 显式键原样进 extra（逃生舱，不断造厂商键名）"
+    );
+    assert_eq!(merged.ratio.as_deref(), Some("1:1"), "具名字段仍是语义字段");
+
+    let err = super::step_model::model_generation_request(
+        "a cat",
+        &ModelOpts {
+            kind: ModelKind::Image,
+            params: Some(serde_json::json!("not-an-object")),
+            ..Default::default()
+        },
+        GenerationKind::Image,
+    )
+    .expect_err("params 非对象必须报错");
+    assert_eq!(err, "params must be a JSON object");
+}
+
+/// first_frame 走与 do.model 同一套变量替换（resolve_model_opts 全字段覆盖）。
+#[test]
+fn resolve_model_opts_substitutes_first_frame_variable() {
+    let vars = HashMap::from([("frame".to_string(), serde_json::json!("C:/shot/frame.png"))]);
+    let opts = ModelOpts {
+        kind: ModelKind::Video,
+        first_frame: Some("{{frame}}".to_string()),
+        ..Default::default()
+    };
+    let resolved = super::step_model::resolve_model_opts(&opts, &vars);
+    assert_eq!(
+        resolved.first_frame.as_deref(),
+        Some("C:/shot/frame.png"),
+        "首帧图路径支持 {{变量}}"
+    );
+    let request = super::step_model::model_generation_request(
+        "a dog",
+        &resolved,
+        GenerationKind::Video,
+    )
+    .expect("resolved first_frame merges");
+    assert_eq!(request.first_frame.as_deref(), Some("C:/shot/frame.png"));
+}
+
+/// 主产物路径选取：空 → None；多条取第一条；绝对路径原样；相对路径按 cwd 兜底。
+#[test]
+fn primary_artifact_path_takes_first_and_absolutizes() {
+    assert!(
+        super::step_model::primary_artifact_path(&[]).is_none(),
+        "无产物必须 None（由调用方报错）"
+    );
+
+    let abs = std::env::temp_dir()
+        .join("nuphus_generated")
+        .join("image_1_0.png");
+    let picked = super::step_model::primary_artifact_path(std::slice::from_ref(&abs))
+        .expect("absolute path passes through");
+    assert!(picked.is_absolute());
+    assert_eq!(picked, abs);
+
+    let second = abs.with_file_name("image_1_1.png");
+    let picked = super::step_model::primary_artifact_path(&[abs.clone(), second])
+        .expect("first of many");
+    assert_eq!(picked, abs, "主产物 = API 返回顺序的第一条");
+
+    let rel = std::path::PathBuf::from("relative").join("image.png");
+    let picked = super::step_model::primary_artifact_path(std::slice::from_ref(&rel))
+        .expect("relative path gets absolutized");
+    assert!(picked.is_absolute(), "capture 出去的路径必须是绝对路径");
+    assert_eq!(picked, std::env::current_dir().unwrap().join(rel));
 }

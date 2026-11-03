@@ -5,11 +5,13 @@ import { editorText, editorValidationText } from './editorText'
  * 表单约束前置 V9/V11 等规则（不允许输入非法值），结构校验由 validate.ts 呈现。
  */
 
-import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconX } from '../../ui/Icons'
+import { IconType, IconImage, IconChevronRight } from '../../ui/Icons'
+import { Film as IconFilm } from 'lucide-react'
 import type { WorkflowStep, Condition, VarRef, ToolSchema } from '../../core/types'
 import { wfTools, listModels, type ModelInfo } from '../lib/api'
+import { selectableModels, type CapabilityFilter } from '../lib/modelCapability'
 import { stepKind } from './projection'
 import { ToolParameterForm } from './ToolParameterForm'
 import {
@@ -29,6 +31,10 @@ import { actionSummary } from './actionSummary'
 import { editorFieldId, editorFieldLabel } from './editorFields'
 import { WorkflowTraceContext } from './WorkflowTraceContext'
 import { ExecutionTraceViewer } from './ExecutionTraceViewer'
+import { PanelFrame } from './inspector/PanelFrame'
+import { SectionCard } from './inspector/SectionCard'
+import { FieldRow } from './inspector/FieldRow'
+import { ConditionRow, JsonField as JsonFieldV2, NumberField, Segmented } from './inspector/controls'
 
 const VariableContext = createContext<{
   catalog: VariableCatalog
@@ -97,7 +103,12 @@ function loadModelsOnce(): Promise<ModelInfo[] | null> {
   return modelsInflight
 }
 
-/** 本地文本缓冲：失焦/回车才提交（避免每次击键都重投影） */
+/** 本地文本缓冲：失焦/回车才提交（避免每次击键都重投影）。
+ *  v2 结构（T2a）：FieldRow（label + 必填 accent * + error/hint 位）+ 原生 control；
+ *  references 变量插入、expand-editor 全屏编辑、validate、mono、multiline、
+ *  画布草稿存储（fieldPath → data-draft-field 定位）全部保留。
+ *  aria-label 承载完整可访问名（label + 必填后缀），与迁移前 label 元素文本一致——
+ *  骨架变化不改变既有 label 查询契约。 */
 function TextField({
   label,
   value,
@@ -111,7 +122,7 @@ function TextField({
   error,
   validate,
   references,
-  hideLabel,
+  hint,
 }: {
   label: string
   value: string
@@ -123,15 +134,12 @@ function TextField({
   title?: string
   /** 语法必填字段：label 追加「（必填）」标记（对齐 compiler.rs 校验） */
   required?: boolean
-  /** 字段级内联错误文案（D2：空名称/必填缺失时展示，与 JsonField 同款样式） */
+  /** 字段级内联错误文案（D2：空名称/必填缺失时展示，走 FieldRow error 位） */
   error?: string | null
   validate?: (value: string) => string | null
   references?: boolean
-  /** 行内复合布局（如 wfc-cond-operand）用：隐藏可见 label，
-      使各分支渲染高度一致——否则 lit 分支 label+input、var 分支裸 input，
-      切换类型时输入框垂直跳动（2026-10-14 错位事故）。label 元素保留，
-      htmlFor 关联与 data-draft-field 定位不受影响 */
-  hideLabel?: boolean
+  /** 字段说明（v2：FieldRow hint 位；原文经 editorText 查表，缺省回退原文） */
+  hint?: string
 }) {
   const { t } = useLanguage()
   const variables = useContext(VariableContext)
@@ -151,86 +159,96 @@ function TextField({
   const [expanded, setExpanded] = useState(false)
   const [variableQuery, setVariableQuery] = useState('')
   const validationError = draftError ?? validate?.(draft) ?? (draft === value ? error : null)
+  const labelText = editorFieldLabel(label, t)
+  const inputClass = `wfp-ctl${mono ? ' wfp-ctl--mono' : ''}${validationError ? ' wfp-ctl--invalid' : ''}`
+  // 技术名 title 与完整可访问名（label + 必填后缀）落在 control 上——骨架变化不改变
+  // 既有 label 查询契约（getByLabelText / getByRole name）
+  const controlExtras = {
+    title,
+    'aria-label': required ? `${labelText}${t('workflowEditor.field.required')}` : labelText,
+  }
+  const control = multiline ? (
+    <textarea
+      id={fieldId}
+      ref={textRef}
+      className={inputClass}
+      value={draft}
+      rows={expanded ? 22 : mono ? 8 : 3}
+      readOnly={readOnly}
+      placeholder={placeholder}
+      {...controlExtras}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+    />
+  ) : (
+    <input
+      id={fieldId}
+      className={inputClass}
+      value={draft}
+      readOnly={readOnly}
+      placeholder={placeholder}
+      {...controlExtras}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing)
+          (e.target as HTMLInputElement).blur()
+      }}
+    />
+  )
+  const picker =
+    references && !readOnly ? (
+      <VariablePicker
+        value={variableQuery}
+        mode="reference"
+        catalog={variables.catalog}
+        label={t('workflowCanvas.variable.insert', label)}
+        onConfigureInput={variables.onConfigureInput}
+        onSelectReference={name => {
+          const start = textRef.current?.selectionStart ?? draft.length
+          const end = textRef.current?.selectionEnd ?? start
+          const token = `{{${name}}}`
+          setDraft(draft.slice(0, start) + token + draft.slice(end))
+          setVariableQuery('')
+          requestAnimationFrame(() => {
+            textRef.current?.focus()
+            textRef.current?.setSelectionRange(start + token.length, start + token.length)
+          })
+        }}
+        onChange={name => {
+          setVariableQuery(name)
+          if (!variables.catalog.references.some(v => v.name === name)) return
+          const start = textRef.current?.selectionStart ?? draft.length
+          const end = textRef.current?.selectionEnd ?? start
+          const token = `{{${name}}}`
+          setDraft(draft.slice(0, start) + token + draft.slice(end))
+          setVariableQuery('')
+          requestAnimationFrame(() => {
+            textRef.current?.focus()
+            textRef.current?.setSelectionRange(start + token.length, start + token.length)
+          })
+        }}
+      />
+    ) : null
+
   return (
-    <label
-      className="wfc-field"
-      title={title}
-      data-draft-field={editorFieldId(label)}
-      htmlFor={fieldId}
+    <FieldRow
+      label={labelText}
+      required={required}
+      fieldPath={editorFieldId(label)}
+      hint={hint ? editorText(hint, t) : undefined}
+      error={validationError ? editorValidationText(validationError, t) : undefined}
     >
-      <span className="wfc-field-label" {...(hideLabel ? { hidden: true } : undefined)}>
-        {editorFieldLabel(label, t)}
-        {required && <em className="wfc-required-mark">{t('workflowEditor.field.required')}</em>}
+      <div className="wfp-tf">
         {multiline && (
-          <button type="button" className="wfc-expand-editor" onClick={() => setExpanded(v => !v)}>
+          <button type="button" className="wfp-tf__expand" onClick={() => setExpanded(v => !v)}>
             {t(expanded ? 'workflowEditor.field.collapse' : 'workflowEditor.field.expand')}
           </button>
         )}
-      </span>
-      {multiline ? (
-        <textarea
-          id={fieldId}
-          ref={textRef}
-          className={`wfc-input${mono ? ' wfc-input--mono' : ''}${error ? ' wfc-input--error' : ''}`}
-          value={draft}
-          rows={expanded ? 22 : mono ? 8 : 3}
-          readOnly={readOnly}
-          placeholder={placeholder}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commit}
-        />
-      ) : (
-        <input
-          id={fieldId}
-          className={`wfc-input${mono ? ' wfc-input--mono' : ''}${error ? ' wfc-input--error' : ''}`}
-          value={draft}
-          readOnly={readOnly}
-          placeholder={placeholder}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-              (e.target as HTMLInputElement).blur()
-          }}
-        />
-      )}
-      {validationError && (
-        <span className="wfc-field-error">{editorValidationText(validationError, t)}</span>
-      )}
-      {references && !readOnly && (
-        <VariablePicker
-          value={variableQuery}
-          mode="reference"
-          catalog={variables.catalog}
-          label={t('workflowCanvas.variable.insert', label)}
-          onConfigureInput={variables.onConfigureInput}
-          onSelectReference={name => {
-            const start = textRef.current?.selectionStart ?? draft.length
-            const end = textRef.current?.selectionEnd ?? start
-            const token = `{{${name}}}`
-            setDraft(draft.slice(0, start) + token + draft.slice(end))
-            setVariableQuery('')
-            requestAnimationFrame(() => {
-              textRef.current?.focus()
-              textRef.current?.setSelectionRange(start + token.length, start + token.length)
-            })
-          }}
-          onChange={name => {
-            setVariableQuery(name)
-            if (!variables.catalog.references.some(v => v.name === name)) return
-            const start = textRef.current?.selectionStart ?? draft.length
-            const end = textRef.current?.selectionEnd ?? start
-            const token = `{{${name}}}`
-            setDraft(draft.slice(0, start) + token + draft.slice(end))
-            setVariableQuery('')
-            requestAnimationFrame(() => {
-              textRef.current?.focus()
-              textRef.current?.setSelectionRange(start + token.length, start + token.length)
-            })
-          }}
-        />
-      )}
-    </label>
+        {control}
+        {picker}
+      </div>
+    </FieldRow>
   )
 }
 
@@ -339,14 +357,10 @@ function ToolCombobox({
   }
 
   return (
-    <div className="wfc-field wfc-combo" data-draft-field={editorFieldId(label)} ref={wrapRef}>
-      <span className="wfc-field-label">
-        {editorFieldLabel(label, t)}
-        {required && <em className="wfc-required-mark">{t('workflowEditor.field.required')}</em>}
-      </span>
+    <div className="wfc-combo" data-draft-field={editorFieldId(label)} ref={wrapRef}>
       <input
         ref={inputRef}
-        className="wfc-input wfc-input--mono"
+        className="wfp-ctl wfp-ctl--mono"
         value={draft}
         placeholder={editorText('搜索或输入工具名', t)}
         role="combobox"
@@ -483,8 +497,8 @@ function RequiredHint({ schema }: { schema?: Record<string, unknown> }) {
 }
 
 /**
- * 工具名字段：注册表 combobox + 必填参数提示。
- * tools === null（加载失败）或 readOnly 时退化为纯文本 TextField。
+ * 工具名字段（T2b）：注册表 combobox（>4 动态列表，S3 矩阵保留 Combobox）+ 必填参数提示，
+ * 外包 FieldRow；tools === null（加载失败）或 readOnly 时退化为纯文本 TextField（已是 v2 结构）。
  */
 function ToolField({
   label,
@@ -494,6 +508,7 @@ function ToolField({
   autoFocus,
   onCommit,
   required,
+  hint,
 }: {
   label: string
   value: string
@@ -504,7 +519,10 @@ function ToolField({
   onCommit: (v: string) => void
   /** 语法必填字段：label 追加「（必填）」标记 */
   required?: boolean
+  /** 字段位提示（加载失败重试 / 参数保留清理，由调用方以 ReactNode 传入） */
+  hint?: ReactNode
 }) {
+  const { t } = useLanguage()
   if (readOnly || tools === null) {
     return (
       <TextField
@@ -519,7 +537,12 @@ function ToolField({
   }
   const list = tools ?? []
   return (
-    <>
+    <FieldRow
+      label={editorFieldLabel(label, t)}
+      required={required}
+      fieldPath={editorFieldId(label)}
+      hint={hint}
+    >
       <ToolCombobox
         label={label}
         value={value}
@@ -529,29 +552,224 @@ function ToolField({
         required={required}
       />
       <RequiredHint schema={list.find(t => t.name === value.trim())?.input_schema} />
-    </>
+    </FieldRow>
   )
 }
 
-function JsonField({
+// ── model 步骤：模型选择（只选不配；按模态筛选） ──
+
+/** 选择值编码 `{provider}::{model}`（与 chat 下拉一致）；空串 = 用模型界面绑定的生成能力 */
+function modelSelectionValue(models: ModelInfo[], modelWith: Record<string, unknown>): string {
+  if (typeof modelWith.model !== 'string' || !modelWith.model) return ''
+  const provider = typeof modelWith.provider === 'string' ? modelWith.provider : ''
+  return `${provider}::${modelWith.model}`
+}
+
+/** 当前覆盖不在（按模态筛选后的）候选里时返回原值供「保留选项」展示，否则 null */
+function modelSelectionFallback(
+  models: ModelInfo[],
+  modelWith: Record<string, unknown>,
+  filter: CapabilityFilter | undefined,
+): string | null {
+  const current = modelSelectionValue(models, modelWith)
+  if (!current) return null
+  const candidates = selectableModels(models, filter).map(m => `${m.provider}::${m.id}`)
+  return candidates.includes(current) ? null : current
+}
+
+/** 生成类型 → 能力过滤维度：image→image_generation，video→video_generation，text→不过滤。
+ *  生成类两种维度在 modelCapability.ts 里共用 `supports_image_generation`（注册表只有
+ *  一个生成能力声明字段），video 复用 image 过滤是既有约定，不新增注册表字段。 */
+function modelCapabilityFilter(kind: string): CapabilityFilter | undefined {
+  if (kind === 'image') return 'image_generation'
+  if (kind === 'video') return 'video_generation'
+  return undefined
+}
+
+// ── model 步骤：画面规格选项（值与后端 step_schema.json 白名单一一对应） ──
+
+/** 生成类型候选：图标化分段三选一，无空白项（text 是缺省模态，也始终显示为可选项）。 */
+const MODEL_KIND_OPTIONS = [
+  { value: 'text', label: '文本', icon: <IconType size={13} /> },
+  { value: 'image', label: '图片', icon: <IconImage size={13} /> },
+  { value: 'video', label: '视频', icon: <IconFilm size={13} /> },
+] as const
+
+/** 图片尺寸校验：只校验正整数——实际上限由所选模型决定，越界由生成协议层报错 */
+function imageDimensionError(value: string): string | null {
+  return numberError(value, { integer: true, min: 1, optional: true })
+}
+
+interface SpecOption {
+  value: string
+  label: string
+  /** 画面比例的 CSS aspect-ratio（图形化方块按真实宽高比渲染） */
+  shape?: string
+}
+
+/** image 全量 7 项比例 */
+const IMAGE_RATIO_OPTIONS: SpecOption[] = [
+  { value: '1:1', label: '1:1', shape: '1:1' },
+  { value: '4:3', label: '4:3', shape: '4:3' },
+  { value: '3:4', label: '3:4', shape: '3:4' },
+  { value: '3:2', label: '3:2', shape: '3:2' },
+  { value: '2:3', label: '2:3', shape: '2:3' },
+  { value: '16:9', label: '16:9', shape: '16:9' },
+  { value: '9:16', label: '9:16', shape: '9:16' },
+]
+/** video 只暴露最常用的 3 项（其余比例视频生成端不稳定，需要时走高级 params 逃生舱） */
+const VIDEO_RATIO_OPTIONS: SpecOption[] = IMAGE_RATIO_OPTIONS.filter(o =>
+  ['1:1', '16:9', '9:16'].includes(o.value),
+)
+const MODEL_COUNT_OPTIONS: SpecOption[] = ['1', '2', '3', '4'].map(value => ({ value, label: value }))
+const MODEL_DURATION_OPTIONS: SpecOption[] = ['5', '6', '8', '10'].map(value => ({
+  value,
+  label: `${value}s`,
+}))
+
+/** 规格缺省值：只决定「未设置时控件显示哪一项」，不写回 with（后端同样不补缺省，
+ *  不设的字段不落盘）——显示默认与生成端自身默认一致时才敢这么做。 */
+const MODEL_SPEC_DEFAULTS = {
+  ratio: { image: '1:1', video: '16:9' },
+  count: '1',
+  duration: '6',
+} as const
+
+/** 规格单选组（T2a）：T1 Segmented（radiogroup + chip，S3 枚举矩阵）。
+ *  当前值不在候选里时（跨模态残留）末尾追加静态保留 chip——只展示、不可交互、
+ *  不触发 patch（与迁移前「保留展示不清空」语义一致）。 */
+function SpecChips({
+  label,
+  fieldPath,
+  options,
+  value,
+  onChange,
+  readOnly,
+  hint,
+}: {
+  label: string
+  fieldPath: string
+  options: SpecOption[]
+  value: string
+  onChange: (value: string) => void
+  readOnly?: boolean
+  hint?: string
+}) {
+  const { t } = useLanguage()
+  const labelText = editorFieldLabel(label, t)
+  const retained = value !== '' && !options.some(option => option.value === value)
+  return (
+    <FieldRow
+      label={labelText}
+      fieldPath={fieldPath}
+      hint={hint ? editorText(hint, t) : undefined}
+    >
+      <div className="wfp-spec">
+        <Segmented
+          label={labelText}
+          options={options.map(option => ({
+            value: option.value,
+            label: option.label,
+            icon: option.shape ? (
+              <span className="wfc-ratio-shape" style={{ aspectRatio: option.shape }} />
+            ) : undefined,
+          }))}
+          value={value}
+          onChange={onChange}
+          disabled={readOnly}
+        />
+        {retained && (
+          <span
+            className="wfp-seg__item is-active wfp-seg__item--static"
+            role="radio"
+            aria-checked
+            aria-disabled="true"
+          >
+            {value}
+          </span>
+        )}
+      </div>
+    </FieldRow>
+  )
+}
+
+/** 数字字段（T2a）：T1 NumberField（单位后缀 / 步进 / 空=默认）+ 画布草稿存储桥接。
+ *  blur / Enter / 方向键步进 → 写回 store 并提交，validate 与提交语义和迁移前
+ *  TextField 完全一致（校验失败保留脏草稿、错误经 FieldRow error 位展示）。 */
+function NumberFieldDraft({
   label,
   value,
   onCommit,
   readOnly,
+  validate,
+  min,
+  max,
+  integer,
+  help,
+  hint,
+}: {
+  label: string
+  value: string
+  onCommit: (v: string) => unknown
+  readOnly?: boolean
+  validate?: (v: string) => string | null
+  min?: number
+  max?: number
+  integer?: boolean
+  /** 技术名（temperature 等）：help 图标 hover 展示 */
+  help?: string
+  hint?: string
+}) {
+  const { t } = useLanguage()
+  const { text, setText, commit, error } = useInspectorDraft(editorFieldId(label), value, {
+    onCommit,
+    validate,
+  })
+  return (
+    <FieldRow
+      label={editorFieldLabel(label, t)}
+      help={help}
+      fieldPath={editorFieldId(label)}
+      hint={hint ? editorText(hint, t) : undefined}
+      error={error ? editorValidationText(error, t) : undefined}
+    >
+      <NumberField
+        value={text}
+        min={min}
+        max={max}
+        integer={integer}
+        disabled={readOnly}
+        invalid={!!error}
+        label={editorFieldLabel(label, t)}
+        onDraftChange={setText}
+        onCommit={v => {
+          setText(v)
+          void commit()
+        }}
+      />
+    </FieldRow>
+  )
+}
+
+/** JSON 逃生舱（T2a）：T1 JsonField（editable：校验徽标 + 等宽编辑）+ 草稿存储桥接。
+ *  validate = JSON.parse（与迁移前本地 JsonField 一致），blur 提交；
+ *  旧展开/收起按钮随 T1 editable 形态取消（textarea 可手动拖高）。 */
+function JsonEscapeField({
+  label,
+  value,
+  onCommit,
+  readOnly,
+  hint,
 }: {
   label: string
   value: unknown
   onCommit: (v: unknown) => void
   readOnly?: boolean
+  hint?: string
 }) {
   const { t } = useLanguage()
   const text = JSON.stringify(value ?? {}, null, 2)
-  const {
-    text: draft,
-    setText: setDraft,
-    commit,
-    error: err,
-  } = useInspectorDraft(editorFieldId(label), text, {
+  const { text: draft, setText, commit, error } = useInspectorDraft(editorFieldId(label), text, {
     validate: v => {
       try {
         JSON.parse(v)
@@ -562,26 +780,79 @@ function JsonField({
     },
     onCommit: v => onCommit(JSON.parse(v)),
   })
-  const [expanded, setExpanded] = useState(false)
   return (
-    <label className="wfc-field" data-draft-field={editorFieldId(label)}>
-      <span className="wfc-field-label">
-        {editorFieldLabel(label, t)}
-        <button type="button" className="wfc-expand-editor" onClick={() => setExpanded(v => !v)}>
-          {t(expanded ? 'workflowEditor.field.collapse' : 'workflowEditor.field.expand')}
-        </button>
-      </span>
-      <textarea
-        className="wfc-input wfc-input--mono"
+    <FieldRow
+      label={editorFieldLabel(label, t)}
+      fieldPath={editorFieldId(label)}
+      hint={hint ? editorText(hint, t) : undefined}
+      error={error ? editorValidationText(error, t) : undefined}
+    >
+      <JsonFieldV2
         value={draft}
-        rows={expanded ? 22 : 6}
-        readOnly={readOnly}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
+        editable
+        disabled={readOnly}
+        onCommit={v => {
+          setText(v)
+          void commit()
+        }}
       />
-      {err && <span className="wfc-field-error">{editorValidationText(err, t)}</span>}
-    </label>
+    </FieldRow>
   )
+}
+
+/** 原生 select 字段行（S3：枚举 >4 / 动态列表）。
+ *  aria-label 保持迁移前「label 包裹 select」的可访问名——既有 findByLabelText 契约不变。 */
+function SelectField({
+  label,
+  value,
+  onChange,
+  disabled,
+  children,
+  hint,
+  help,
+  fieldPath,
+}: {
+  label: string
+  value: string
+  onChange: (e: ChangeEvent<HTMLSelectElement>) => void
+  disabled?: boolean
+  children: ReactNode
+  hint?: ReactNode
+  help?: string
+  fieldPath?: string
+}) {
+  return (
+    <FieldRow label={label} hint={hint} help={help} fieldPath={fieldPath}>
+      <select
+        className="wfp-ctl"
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+      >
+        {children}
+      </select>
+    </FieldRow>
+  )
+}
+
+/** 选择模型：一次 patch 同时写 model + provider（精确路由对）；空值删键回退绑定能力 */
+function setModelSelection(
+  value: string,
+  modelWith: Record<string, unknown>,
+  patchActionKey: (key: string, v: unknown) => unknown,
+): void {
+  const next = { ...modelWith }
+  if (!value) {
+    delete next.model
+    delete next.provider
+  } else {
+    const [provider, ...rest] = value.split('::')
+    next.model = rest.join('::')
+    if (provider) next.provider = provider
+    else delete next.provider
+  }
+  void patchActionKey('with', next)
 }
 
 const COND_OPS: [string, string][] = [
@@ -616,6 +887,93 @@ function condOperandsOf(cond: Condition | undefined): VarRef[] {
   return []
 }
 
+/** 条件操作数（T2b）：值类型 select + 字面量输入 / 变量选择，行内形态（ConditionRow 单元格）。
+ *  字面量输入自行持有 draft（data-draft-field 挂wrapper：focusEditorField 要在容器内找控件），
+ *  不再借 TextField.hideLabel——旧分支随之删除。 */
+function LiteralOperand({
+  label,
+  value,
+  readOnly,
+  onChange,
+}: {
+  label: string
+  value: string
+  readOnly?: boolean
+  onChange: (v: string) => void
+}) {
+  const { t } = useLanguage()
+  const { text, setText, commit } = useInspectorDraft(editorFieldId(label), value, {
+    onCommit: onChange,
+  })
+  return (
+    <span className="wfp-cond-literal" data-draft-field={editorFieldId(label)}>
+      <input
+        className="wfp-ctl"
+        aria-label={editorFieldLabel(label, t)}
+        value={text}
+        readOnly={readOnly}
+        placeholder={editorText('字面量值', t)}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing)
+            (e.target as HTMLInputElement).blur()
+        }}
+      />
+    </span>
+  )
+}
+
+function ConditionOperand({
+  index,
+  operand,
+  readOnly,
+  onChange,
+}: {
+  index: number
+  operand: VarRef | undefined
+  readOnly?: boolean
+  onChange: (v: VarRef) => void
+}) {
+  const { t } = useLanguage()
+  const isVar = !!operand && typeof operand === 'object' && 'var' in operand
+  const text = isVar
+    ? String((operand as { var: string }).var)
+    : typeof operand === 'string'
+      ? operand
+      : ''
+  return (
+    <div className="wfp-cond-operand">
+      <select
+        className="wfp-ctl wfp-cond-operand__kind"
+        aria-label={editorText(index === 0 ? '左侧值类型' : '右侧值类型', t)}
+        value={isVar ? 'var' : 'lit'}
+        disabled={readOnly}
+        onChange={e => onChange(e.target.value === 'var' ? { var: text } : text)}
+      >
+        <option value="lit">{editorText('固定值', t)}</option>
+        <option value="var">{editorText('变量', t)}</option>
+      </select>
+      {isVar ? (
+        <ReferenceField
+          value={text}
+          readOnly={readOnly}
+          label={index === 0 ? '左侧变量' : '右侧变量'}
+          onCommit={v => onChange({ var: v })}
+          hideLabel
+        />
+      ) : (
+        <LiteralOperand
+          label={index === 0 ? '左侧固定值' : '右侧固定值'}
+          value={text}
+          readOnly={readOnly}
+          onChange={onChange}
+        />
+      )}
+    </div>
+  )
+}
+
 function ConditionEditor({
   fieldPath,
   value,
@@ -641,74 +999,74 @@ function ConditionEditor({
   }
   const unary = op === 'not_empty' || op === 'empty'
   const count = op === 'always' ? 0 : unary ? 1 : 2
+  // 比较符 select 两种模态都在场（always 时与「固定结果」上下排列），
+  // 供既有查询契约 getByLabelText('条件') 稳定成立
+  const condOpSelect = (
+    <select
+      className="wfp-ctl"
+      aria-label={editorText('条件', t)}
+      value={op}
+      disabled={readOnly}
+      onChange={e => setOp(e.target.value)}
+    >
+      {COND_OPS.map(([k, label]) => (
+        <option key={k} value={k}>
+          {editorText(label, t)} ({k})
+        </option>
+      ))}
+    </select>
+  )
   return (
-    <div className="wfc-cond" data-field-path={fieldPath}>
-      <label className="wfc-field">
-        <span className="wfc-field-label">{editorText('条件', t)}</span>
-        <select
-          className="wfc-input"
-          value={op}
-          disabled={readOnly}
-          onChange={e => setOp(e.target.value)}
-        >
-          {COND_OPS.map(([k, label]) => (
-            <option key={k} value={k}>
-              {editorText(label, t)} ({k})
-            </option>
-          ))}
-        </select>
-      </label>
-      {op === 'always' && (
-        <label className="wfc-field">
-          <span className="wfc-field-label">{editorText('固定结果', t)}</span>
-          <select
-            className="wfc-input"
+    <div className="wfp-cond-editor" data-field-path={fieldPath} data-draft-field={fieldPath}>
+      {op === 'always' ? (
+        <>
+          <SelectField
+            label={editorText('条件', t)}
+            value={op}
             disabled={readOnly}
+            onChange={e => setOp(e.target.value)}
+          >
+            {COND_OPS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {editorText(label, t)} ({k})
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            label={editorText('固定结果', t)}
             value={String((value as { always?: boolean })?.always ?? true)}
+            disabled={readOnly}
             onChange={e => onChange({ always: e.target.value === 'true' })}
           >
             <option value="true">{editorText('真（满足条件）', t)}</option>
             <option value="false">{editorText('假（不满足条件）', t)}</option>
-          </select>
-        </label>
+          </SelectField>
+        </>
+      ) : (
+        <ConditionRow
+          left={
+            count > 0 ? (
+              <ConditionOperand
+                index={0}
+                operand={operands[0]}
+                readOnly={readOnly}
+                onChange={v => setOperand(0, v)}
+              />
+            ) : null
+          }
+          op={condOpSelect}
+          right={
+            count > 1 ? (
+              <ConditionOperand
+                index={1}
+                operand={operands[1]}
+                readOnly={readOnly}
+                onChange={v => setOperand(1, v)}
+              />
+            ) : null
+          }
+        />
       )}
-      {Array.from({ length: count }).map((_, i) => {
-        const r = operands[i]
-        const isVar = !!r && typeof r === 'object' && 'var' in r
-        const text = isVar ? String((r as { var: string }).var) : typeof r === 'string' ? r : ''
-        return (
-          <div className="wfc-cond-operand" key={i}>
-            <select
-              className="wfc-input wfc-cond-kind"
-              value={isVar ? 'var' : 'lit'}
-              disabled={readOnly}
-              onChange={e => setOperand(i, e.target.value === 'var' ? { var: text } : text)}
-              aria-label={i === 0 ? editorText('左侧值类型', t) : editorText('右侧值类型', t)}
-            >
-              <option value="lit">{editorText('固定值', t)}</option>
-              <option value="var">{editorText('变量', t)}</option>
-            </select>
-            {isVar ? (
-              <ReferenceField
-                value={text}
-                readOnly={readOnly}
-                label={i === 0 ? '左侧变量' : '右侧变量'}
-                onCommit={v => setOperand(i, { var: v })}
-                hideLabel
-              />
-            ) : (
-              <TextField
-                label={i === 0 ? '左侧固定值' : '右侧固定值'}
-                value={text}
-                readOnly={readOnly}
-                placeholder={editorText('字面量值', t)}
-                onCommit={v => setOperand(i, v)}
-                hideLabel
-              />
-            )}
-          </div>
-        )
-      })}
     </div>
   )
 }
@@ -824,89 +1182,69 @@ export function Inspector({
     return patchActionKey('with', next)
   }
 
+  // model 步骤 with（ModelOpts）字段级写入：与 chat 同款合并语义——
+  // 只改目标键，未列出的键（含未知字段）原样保留；切模态不清空其他字段。
+  const modelWith = (d.with && typeof d.with === 'object' ? d.with : {}) as Record<string, unknown>
+  const patchModelWith = (key: string, v: unknown) => {
+    const next = { ...modelWith }
+    if (v === undefined) delete next[key]
+    else next[key] = v
+    return patchActionKey('with', next)
+  }
+  const modelKind = typeof modelWith.kind === 'string' ? modelWith.kind : 'text'
+
+  // 模型候选：按生成类型走 modelCapability 的 selectableModels（image→image_generation，
+  // video→video_generation，text→不过滤）；候选为空时给出去模型界面绑定能力的指引。
+  const modelCandidates = selectableModels(models ?? [], modelCapabilityFilter(modelKind))
+  const modelRetained =
+    Array.isArray(models) && models.length > 0
+      ? modelSelectionFallback(models, modelWith, modelCapabilityFilter(modelKind))
+      : null
+
+  // params 逃生舱内的键级读写：宽高 / 返回格式 / 清晰度没有具名字段，
+  // 键名与取值由所选提供商的生成协议决定
+  // （schema 未新增），只能落在 params 里；undefined = 删键。
+  const modelParamsObject = (
+    modelWith.params && typeof modelWith.params === 'object' && !Array.isArray(modelWith.params)
+      ? modelWith.params
+      : {}
+  ) as Record<string, unknown>
+  const modelParamsValue = (key: string): string => {
+    const value = modelParamsObject[key]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+  }
+  const patchModelParamsKey = (key: string, v: unknown) => {
+    const next: Record<string, unknown> = { ...modelParamsObject }
+    if (v === undefined || v === '') delete next[key]
+    else next[key] = v
+    return patchModelWith('params', Object.keys(next).length ? next : undefined)
+  }
+
   return (
     <VariableContext.Provider value={{ catalog: variableCatalog, onConfigureInput }}>
-      <aside
-        className="wfc-inspector"
-        ref={panelRef}
-        style={{ width: visibleWidth, maxWidth: '100%' }}
-      >
-        <div
-          className="wfc-inspector-resize"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={editorText('调整参数面板宽度', t)}
-          aria-valuemin={360}
-          aria-valuemax={720}
-          aria-valuenow={panelWidth}
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-              e.preventDefault()
-              persistWidth(
-                Math.max(360, Math.min(720, panelWidth + (e.key === 'ArrowLeft' ? 20 : -20))),
-              )
-            }
-          }}
-          onPointerDown={e => {
-            e.preventDefault()
-            e.currentTarget.setPointerCapture(e.pointerId)
-          }}
-          onPointerMove={e => {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-              const right = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth
-              persistWidth(Math.max(360, Math.min(720, right - e.clientX)))
-            }
-          }}
-          onPointerUp={e => {
-            if (e.currentTarget.hasPointerCapture(e.pointerId))
-              e.currentTarget.releasePointerCapture(e.pointerId)
-          }}
-        />
-        <div className="wfc-inspector-head">
-          <span className="wfc-inspector-title">{step.name || step.id}</span>
-          <NodeKindBadge kind={kind} />
-          <button
-            type="button"
-            className="wfc-icon-btn"
-            onClick={onClose}
-            title={editorText('关闭（Esc）', t)}
-          >
-            <IconX size={14} />
-          </button>
-        </div>
-
-        <div className="wfc-inspector-body">
-          <div className="wfc-inspector-hint" title={t('workflowEditor.summary.label')}>
-            {actionSummary(step, t)}
-          </div>
-          <div className="wfc-inspector-section">{editorText('基本信息', t)}</div>
-          <TextField
-            label="名称"
-            value={step.name}
-            readOnly={readOnly}
-            onCommit={v => onPatch({ name: v })}
-            required
-            error={
-              !readOnly && !step.name.trim()
-                ? editorText('名称必填：尚未命名无法保存/通过校验', t)
-                : undefined
-            }
-          />
-          <details className="wfc-inspector-advanced">
-            <summary>
-              {editorText('高级设置', t)}
-              {oeMode !== 'abort' || step.timeout_secs != null
-                ? editorText('（已自定义失败处理或超时）', t)
-                : ''}
-            </summary>
+      <>
+        <PanelFrame
+          className="wfc-inspector"
+          title={step.name || step.id}
+          badge={<NodeKindBadge kind={kind} />}
+          summary={actionSummary(step, t)}
+          width={visibleWidth}
+          onWidthPersist={persistWidth}
+          onClose={onClose}
+        >
+          {/* ① 基础（S1 固定顺序）：名称 / 步骤说明（说明从高级分区挪入） */}
+          <SectionCard title={editorText('基础', t)}>
             <TextField
-              label={idReferenced ? '步骤标识 ID（有历史记录，修改需确认）' : '步骤标识 ID'}
-              value={step.id}
+              label="名称"
+              value={step.name}
               readOnly={readOnly}
-              mono
+              onCommit={v => onPatch({ name: v })}
               required
-              onCommit={v => onPatch({ id: v })}
+              error={
+                !readOnly && !step.name.trim()
+                  ? editorText('名称必填：尚未命名无法保存/通过校验', t)
+                  : undefined
+              }
             />
             <TextField
               label="步骤说明"
@@ -915,115 +1253,10 @@ export function Inspector({
               multiline
               onCommit={v => onPatch({ description: v })}
             />
-            <TextField
-              label="超时秒数（空为执行器默认）"
-              value={step.timeout_secs != null ? String(step.timeout_secs) : ''}
-              readOnly={readOnly}
-              validate={v => numberError(v, { integer: true, min: 1, optional: true })}
-              onCommit={v => {
-                return onPatch({ timeout_secs: v.trim() ? Number(v) : undefined })
-              }}
-            />
-            {kind === 'script' && (
-              <div className="wfc-inspector-hint">
-                {editorText('脚本默认超时为 120 秒，可在上方修改。', t)}
-              </div>
-            )}
-            {!['seq', 'if', 'mcp', 'script'].includes(kind) && (
-              <div className="wfc-inspector-hint">
-                {editorText('此类步骤暂不使用上述超时字段。', t)}
-                {kind === 'script'
-                  ? editorText('脚本执行器固定超时为 120 秒。', t)
-                  : kind === 'tool'
-                    ? editorText('工具的超时由具体工具决定。', t)
-                    : editorText('已保留历史配置，执行时使用对应动作的行为。', t)}
-              </div>
-            )}
+          </SectionCard>
 
-            <label className="wfc-field">
-              <span className="wfc-field-label">
-                {editorText('失败后怎么办', t)} <small>on_error</small>
-              </span>
-              <select
-                className="wfc-input"
-                value={oeMode}
-                disabled={readOnly}
-                onChange={e => {
-                  const m = e.target.value
-                  if (m === 'retry') onPatch({ on_error: { retry: { max: 3, backoff_ms: 500 } } })
-                  else if (m === 'allow_codes')
-                    onPatch({ on_error: { allow_codes: { codes: [0] } } })
-                  else onPatch({ on_error: m as OnErrorValue })
-                }}
-              >
-                <option value="abort">{editorText('终止工作流（默认）', t)}</option>
-                <option value="skip">{editorText('跳过失败步骤，继续执行', t)}</option>
-                <option value="retry" disabled={kind !== 'tool'}>
-                  {editorText('重试（工具步骤）', t)}
-                </option>
-                <option value="allow_codes" disabled={kind !== 'tool'}>
-                  {editorText('允许指定退出码（工具步骤）', t)}
-                </option>
-              </select>
-            </label>
-            {kind === 'tool' && oeMode === 'abort' && (
-              <div className="wfc-inspector-hint">
-                {editorText('工具执行器仍可能先自动重试，再终止工作流。', t)}
-              </div>
-            )}
-            {kind !== 'tool' && (oeMode === 'retry' || oeMode === 'allow_codes') && (
-              <div className="wfc-inspector-hint wfc-inspector-hint--warn">
-                {editorText('已保留历史配置；当前步骤执行器不支持此失败处理设置。', t)}
-              </div>
-            )}
-            {oeMode === 'retry' && retryCfg && (
-              <div className="wfc-field-row">
-                <TextField
-                  label="重试次数"
-                  value={String(retryCfg.max)}
-                  readOnly={readOnly}
-                  validate={v => numberError(v, { integer: true, min: 0, max: 4294967295 })}
-                  onCommit={v => {
-                    const n = Number(v)
-                    return onPatch({ on_error: { retry: { ...retryCfg, max: n } } })
-                  }}
-                />
-                <TextField
-                  label="重试间隔（毫秒）"
-                  value={String(retryCfg.backoff_ms ?? 500)}
-                  readOnly={readOnly}
-                  validate={v => numberError(v, { integer: true, min: 0 })}
-                  onCommit={v => {
-                    const n = Number(v)
-                    return onPatch({ on_error: { retry: { ...retryCfg, backoff_ms: n } } })
-                  }}
-                />
-              </div>
-            )}
-            {oeMode === 'retry' && retryCfg?.backoff_ms === 0 && (
-              <div className="wfc-inspector-hint">
-                {editorText('当前工具执行器会将 0 毫秒按默认 500 毫秒处理。', t)}
-              </div>
-            )}
-            {oeMode === 'allow_codes' && allowCfg && (
-              <TextField
-                label="允许的退出码（逗号分隔）"
-                value={(allowCfg.codes ?? []).join(',')}
-                readOnly={readOnly}
-                validate={v =>
-                  parseExitCodes(v)
-                    ? null
-                    : editorText('请输入完整整数，用英文逗号分隔；末尾不要加逗号', t)
-                }
-                onCommit={v => {
-                  const codes = parseExitCodes(v)
-                  if (codes) return onPatch({ on_error: { allow_codes: { ...allowCfg, codes } } })
-                }}
-              />
-            )}
-          </details>
-
-          <div className="wfc-inspector-section">{editorText('动作参数', t)}</div>
+          {/* ② 动作主体：按 kind 的核心参数（本期范围外 kind 保持原渲染） */}
+          <SectionCard title={editorText('动作主体', t)}>
 
           {kind === 'tool' && (
             <>
@@ -1038,37 +1271,43 @@ export function Inspector({
                   setToolChanged(true)
                   return patchActionKey('tool', v)
                 }}
+                hint={
+                  tools === null || toolChanged ? (
+                    <>
+                      {tools === null && (
+                        <div role="status">
+                          {editorText('工具信息加载失败，仍可手动编辑。', t)}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTools(undefined)
+                              void loadToolsOnce().then(setTools)
+                            }}
+                          >
+                            {editorText('重试加载', t)}
+                          </button>
+                        </div>
+                      )}
+                      {toolChanged && (
+                        <div>
+                          {editorText('已保留原工具参数，请检查是否适用于新工具。', t)}
+                          <button
+                            type="button"
+                            disabled={readOnly}
+                            onClick={() => {
+                              void patchActionKey('with', {})
+                              setParameterReset(version => version + 1)
+                              setToolChanged(false)
+                            }}
+                          >
+                            {editorText('清空参数重新填写', t)}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : undefined
+                }
               />
-              {tools === null && (
-                <div className="wfc-inspector-hint" role="status">
-                  {editorText('工具信息加载失败，仍可手动编辑。', t)}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTools(undefined)
-                      void loadToolsOnce().then(setTools)
-                    }}
-                  >
-                    {editorText('重试加载', t)}
-                  </button>
-                </div>
-              )}
-              {toolChanged && (
-                <div className="wfc-inspector-hint">
-                  {editorText('已保留原工具参数，请检查是否适用于新工具。', t)}
-                  <button
-                    type="button"
-                    disabled={readOnly}
-                    onClick={() => {
-                      void patchActionKey('with', {})
-                      setParameterReset(version => version + 1)
-                      setToolChanged(false)
-                    }}
-                  >
-                    {editorText('清空参数重新填写', t)}
-                  </button>
-                </div>
-              )}
               <ToolParameterForm
                 resetVersion={parameterReset}
                 schema={tools?.find(t => t.name === d.tool)?.input_schema}
@@ -1083,22 +1322,15 @@ export function Inspector({
             </>
           )}
           {kind === 'call' && (
-            <>
-              <TextField
-                label="目标工作流 workflow_id"
-                value={String(d.call ?? '')}
-                readOnly={readOnly}
-                mono
-                required
-                onCommit={v => patchActionKey('call', v)}
-              />
-              <JsonField
-                label="with（参数 JSON）"
-                value={d.with}
-                readOnly={readOnly}
-                onCommit={v => patchActionKey('with', v)}
-              />
-            </>
+            <TextField
+              label="目标工作流 workflow_id"
+              value={String(d.call ?? '')}
+              readOnly={readOnly}
+              mono
+              required
+              title="workflow_id"
+              onCommit={v => patchActionKey('call', v)}
+            />
           )}
           {kind === 'chat' && (
             <>
@@ -1112,50 +1344,47 @@ export function Inspector({
                 onCommit={v => patchActionKey('chat', v)}
               />
               {models != null && models.length > 0 && (
-                <label className="wfc-field">
-                  <span className="wfc-field-label">
-                    {editorText('模型（registry 模型 ID）', t)}
-                  </span>
-                  <select
-                    className="wfc-input"
-                    value={
-                      typeof chatWith.model === 'string'
-                        ? `${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`
-                        : ''
-                    }
-                    disabled={readOnly}
-                    onChange={e => {
-                      const [provider, ...modelParts] = e.target.value.split('::')
-                      const model = modelParts.join('::')
-                      const next = { ...chatWith }
-                      if (model) next.model = model
-                      else delete next.model
-                      if (provider) next.provider = provider
-                      else delete next.provider
-                      patchActionKey('with', next)
-                    }}
-                  >
-                    <option value="">{editorText('默认（主模型）', t)}</option>
-                    {models.map(m => (
-                      <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
-                        {m.id} · {m.provider}
+                <SelectField
+                  label={editorText('模型', t)}
+                  value={
+                    typeof chatWith.model === 'string'
+                      ? `${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`
+                      : ''
+                  }
+                  disabled={readOnly}
+                  onChange={e => {
+                    const [provider, ...modelParts] = e.target.value.split('::')
+                    const model = modelParts.join('::')
+                    const next = { ...chatWith }
+                    if (model) next.model = model
+                    else delete next.model
+                    if (provider) next.provider = provider
+                    else delete next.provider
+                    patchActionKey('with', next)
+                  }}
+                >
+                  <option value="">{editorText('默认（主模型）', t)}</option>
+                  {models.map(m => (
+                    <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
+                      {m.id} · {m.provider}
+                    </option>
+                  ))}
+                  {typeof chatWith.model === 'string' &&
+                    chatWith.model !== '' &&
+                    !models.some(m => m.id === chatWith.model) && (
+                      <option
+                        value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
+                      >
+                        {chatWith.model}
+                        {editorText('（不在 registry）', t)}
                       </option>
-                    ))}
-                    {typeof chatWith.model === 'string' &&
-                      chatWith.model !== '' &&
-                      !models.some(m => m.id === chatWith.model) && (
-                        <option
-                          value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
-                        >
-                          {chatWith.model}
-                          {editorText('（不在 registry）', t)}
-                        </option>
-                      )}
-                  </select>
-                </label>
+                    )}
+                </SelectField>
               )}
-              <TextField
-                label="随机程度 temperature（空为默认）"
+              {/* 文案治理：技术名进 help 图标，「空为默认」说明进 hint */}
+              <NumberFieldDraft
+                label="随机程度"
+                help="temperature"
                 value={chatWith.temperature != null ? String(chatWith.temperature) : ''}
                 readOnly={readOnly}
                 validate={v => numberError(v, { optional: true })}
@@ -1164,9 +1393,14 @@ export function Inspector({
                   const n = Number(v)
                   return patchChatWith('temperature', n)
                 }}
+                hint="越低越稳定；留空使用模型默认"
               />
-              <TextField
-                label="最大输出长度 max_tokens（空为默认）"
+              <NumberFieldDraft
+                label="最大输出长度"
+                help="max_tokens"
+                integer
+                min={1}
+                max={4294967295}
                 value={chatWith.max_tokens != null ? String(chatWith.max_tokens) : ''}
                 readOnly={readOnly}
                 validate={v =>
@@ -1176,41 +1410,196 @@ export function Inspector({
                   if (!v.trim()) return patchChatWith('max_tokens', undefined)
                   return patchChatWith('max_tokens', Number(v))
                 }}
+                hint="单位 token；留空使用模型默认"
               />
-              <JsonField
-                label="其他对话选项（JSON）"
-                value={d.with}
+              {/* 「其他对话选项（JSON）」移至高级分区（S1/S3：主区零 JSON 裸框） */}
+            </>
+          )}
+          {kind === 'model' && (
+            <>
+              <TextField
+                label="提示词（任务描述）"
+                value={String(d.model ?? '')}
                 readOnly={readOnly}
-                onCommit={v => patchActionKey('with', v)}
+                multiline
+                references
+                required
+                onCommit={v => patchActionKey('model', v)}
+                hint={
+                  modelKind === 'video'
+                    ? editorText('写动作和镜头怎么动，不要描写静态状态。', t)
+                    : undefined
+                }
               />
+              {/* 生成类型：必选三选一，无空白项（Segmented，S3 枚举 ≤4） */}
+              <FieldRow
+                label={editorFieldLabel('生成类型', t)}
+                required
+                fieldPath="/do/with/kind"
+                hint={editorText('切换类型不会清空已填写的其他字段。', t)}
+              >
+                <Segmented
+                  label={editorFieldLabel('生成类型', t)}
+                  options={MODEL_KIND_OPTIONS.map(option => ({
+                    value: option.value,
+                    label: editorText(option.label, t),
+                    icon: option.icon,
+                  }))}
+                  value={modelKind}
+                  onChange={v => patchModelWith('kind', v)}
+                  disabled={readOnly}
+                />
+              </FieldRow>
+              {/* 画面规格：按模态显示，全部选项化控件（无裸输入框、无空白项） */}
+              {modelKind !== 'text' && (
+                <>
+                  <SpecChips
+                    label="画面比例"
+                    fieldPath="/do/with/ratio"
+                    options={modelKind === 'video' ? VIDEO_RATIO_OPTIONS : IMAGE_RATIO_OPTIONS}
+                    value={
+                      typeof modelWith.ratio === 'string' && modelWith.ratio
+                        ? modelWith.ratio
+                        : modelKind === 'video'
+                          ? MODEL_SPEC_DEFAULTS.ratio.video
+                          : MODEL_SPEC_DEFAULTS.ratio.image
+                    }
+                    readOnly={readOnly}
+                    onChange={v => patchModelWith('ratio', v)}
+                  />
+                  {modelKind === 'image' && (
+                    <SpecChips
+                      label="生成数量"
+                      fieldPath="/do/with/count"
+                      options={MODEL_COUNT_OPTIONS}
+                      value={
+                        typeof modelWith.count === 'number'
+                          ? String(modelWith.count)
+                          : MODEL_SPEC_DEFAULTS.count
+                      }
+                      readOnly={readOnly}
+                      onChange={v => patchModelWith('count', Number(v))}
+                    />
+                  )}
+                  {modelKind === 'video' && (
+                    <>
+                      <SpecChips
+                        label="时长"
+                        fieldPath="/do/with/duration"
+                        options={MODEL_DURATION_OPTIONS}
+                        hint="新手建议 5–8 秒"
+                        value={
+                          typeof modelWith.duration === 'number'
+                            ? String(modelWith.duration)
+                            : MODEL_SPEC_DEFAULTS.duration
+                        }
+                        readOnly={readOnly}
+                        onChange={v => patchModelWith('duration', Number(v))}
+                      />
+                      <TextField
+                        label="首帧图"
+                        title="first_frame"
+                        value={
+                          typeof modelWith.first_frame === 'string' ? modelWith.first_frame : ''
+                        }
+                        readOnly={readOnly}
+                        references
+                        onCommit={v => patchModelWith('first_frame', v.trim() ? v : undefined)}
+                        hint={editorText('留空 = 文生视频；可插入变量引用上游产物。', t)}
+                      />
+                    </>
+                  )}
+                </>
+              )}
+              {/* 模型选择：只选不配——配置在模型界面完成；候选按模态经 selectableModels 筛选 */}
+              <FieldRow
+                label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
+                fieldPath="/do/with/model"
+                hint={
+                  <>
+                    <div>
+                      {editorText(
+                        '模型配置在模型界面完成，此处只选择使用哪个模型；同名模型跨服务商时下拉条目已带 provider。',
+                        t,
+                      )}
+                    </div>
+                    {modelKind === 'video' && (
+                      <div>
+                        {editorText('视频生成能力以模型界面的「视频生成」绑定为准。', t)}
+                      </div>
+                    )}
+                    {(modelKind === 'video' || modelKind === 'image') && (
+                      <div>
+                        {editorText(
+                          modelKind === 'video'
+                            ? '视频生成通常需要 1–5 分钟，超时上限可在高级里调整。'
+                            : '同步返回，通常数秒',
+                          t,
+                        )}
+                      </div>
+                    )}
+                  </>
+                }
+              >
+                {modelCandidates.length > 0 ? (
+                  <select
+                    className="wfp-ctl"
+                    aria-label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
+                    value={modelSelectionValue(modelCandidates, modelWith)}
+                    disabled={readOnly}
+                    onChange={e => setModelSelection(e.target.value, modelWith, patchActionKey)}
+                  >
+                    <option value="">{editorText('默认（模型界面绑定的生成能力）', t)}</option>
+                    {modelCandidates.map(m => (
+                      <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
+                        {m.id} · {m.provider}
+                      </option>
+                    ))}
+                    {modelRetained && (
+                      <option value={modelRetained}>
+                        {typeof modelWith.model === 'string' ? modelWith.model : ''}
+                        {editorText('（不在当前模态的模型列表中，已保留）', t)}
+                      </option>
+                    )}
+                  </select>
+                ) : (
+                  <span className="wfp-frow__hint">
+                    {editorText(
+                      models === undefined
+                        ? '正在加载模型列表…'
+                        : models === null
+                          ? '模型列表不可用；留空或保留原值时将使用模型界面绑定的生成能力。'
+                          : '生成能力候选为空：去模型界面 → 图像音频模型 → 图片生成 / 视频生成 绑定模型后，这里才会列出候选。',
+                      t,
+                    )}
+                  </span>
+                )}
+              </FieldRow>
             </>
           )}
           {kind === 'script' && (
             <>
-              <label className="wfc-field">
-                <span className="wfc-field-label">{editorText('运行环境 runtime', t)}</span>
-                <select
-                  className="wfc-input"
-                  value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
-                  disabled={readOnly}
-                  onChange={e =>
-                    patchActionKey('script', { ...(d.script as object), runtime: e.target.value })
-                  }
-                >
-                  <option value="python">Python</option>
-                  <option value="node">Node.js</option>
-                  <option value="ahk">{editorText('AutoHotkey（仅 Windows）', t)}</option>
-                  <option value="pwsh">PowerShell（pwsh）</option>
-                  {!['python', 'node', 'ahk', 'pwsh'].includes(
-                    String((d.script as Record<string, unknown>)?.runtime ?? 'python'),
-                  ) && (
-                    <option value={String((d.script as Record<string, unknown>)?.runtime)}>
-                      {String((d.script as Record<string, unknown>)?.runtime)}
-                      {editorText('（当前执行器不支持，已保留）', t)}
-                    </option>
-                  )}
-                </select>
-              </label>
+              <SelectField
+                label={editorText('运行环境 runtime', t)}
+                value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
+                disabled={readOnly}
+                onChange={e =>
+                  patchActionKey('script', { ...(d.script as object), runtime: e.target.value })
+                }
+              >
+                <option value="python">Python</option>
+                <option value="node">Node.js</option>
+                <option value="ahk">{editorText('AutoHotkey（仅 Windows）', t)}</option>
+                <option value="pwsh">PowerShell（pwsh）</option>
+                {!['python', 'node', 'ahk', 'pwsh'].includes(
+                  String((d.script as Record<string, unknown>)?.runtime ?? 'python'),
+                ) && (
+                  <option value={String((d.script as Record<string, unknown>)?.runtime)}>
+                    {String((d.script as Record<string, unknown>)?.runtime)}
+                    {editorText('（当前执行器不支持，已保留）', t)}
+                  </option>
+                )}
+              </SelectField>
               <TextField
                 label="脚本代码 code"
                 value={String((d.script as Record<string, unknown>)?.code ?? '')}
@@ -1219,6 +1608,7 @@ export function Inspector({
                 multiline
                 references
                 required
+                title="code"
                 onCommit={v => patchActionKey('script', { ...(d.script as object), code: v })}
               />
             </>
@@ -1273,6 +1663,7 @@ export function Inspector({
                 readOnly={readOnly}
                 mono
                 required
+                title="server"
                 onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), server: v })}
               />
               <TextField
@@ -1281,19 +1672,16 @@ export function Inspector({
                 readOnly={readOnly}
                 mono
                 required
+                title="tool"
                 onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), tool: v })}
-              />
-              <JsonField
-                label="with（参数 JSON）"
-                value={(d.mcp as Record<string, unknown>)?.with}
-                readOnly={readOnly}
-                onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), with: v })}
               />
             </>
           )}
           {kind === 'sleep' && (
-            <TextField
+            <NumberFieldDraft
               label="时长（秒）"
+              integer
+              min={0}
               value={String(d.sleep ?? 1)}
               readOnly={readOnly}
               validate={v => numberError(v, { min: 0 })}
@@ -1303,30 +1691,298 @@ export function Inspector({
             />
           )}
           {(kind === 'seq' || kind === 'break' || kind === 'continue') && (
-            <div className="wfc-inspector-hint">
+            <div className="wfp-frow__hint">
               {kind === 'seq'
                 ? editorText('顺序容器：子步骤在画布子层编辑（双击节点进入）', t)
                 : editorText('无参数', t)}
             </div>
           )}
           {kind === 'custom' && (
-            <div className="wfc-inspector-hint wfc-inspector-hint--warn">
+            <div className="wfp-frow__hint wfp-frow__hint--warn">
               {editorText('旧格式节点（不兼容 V2），画布只读。请通过 AI 通道重建为 V2 工作流。', t)}
             </div>
           )}
 
-          {(['tool', 'script', 'chat', 'mcp'].includes(kind) || step.capture) && (
-            <>
-              <div className="wfc-inspector-section">
-                {t('workflowCanvas.variable.outputSection')}
-              </div>
+          </SectionCard>
+
+          {/* ③ 高级（S1 固定顺序；T2b 合并原 model 模态高级）：
+              model 模态专属字段（text 采样三件套 / image 宽高返回格式 / video 清晰度等待上限）
+              + 步骤标识 / 超时 / 失败处理 / JSON 逃生舱，默认折叠 */}
+          <details className="wfp-adv">
+            <summary className="wfp-adv__summary">
+              {editorText('高级设置', t)}
+              {oeMode !== 'abort' || step.timeout_secs != null
+                ? editorText('（已自定义失败处理或超时）', t)
+                : ''}
+              <span className="wfp-adv__chev">
+                <IconChevronRight size={11} />
+              </span>
+            </summary>
+            <div className="wfp-adv__body">
+              {kind === 'model' && (
+                <>
+                {modelKind === 'text' && (
+                  <>
+                    <TextField
+                      label="系统提示词"
+                      value={typeof modelWith.system === 'string' ? modelWith.system : ''}
+                      readOnly={readOnly}
+                      multiline
+                      onCommit={v => patchModelWith('system', v || undefined)}
+                    />
+                    <NumberFieldDraft
+                      label="随机程度"
+                      help="temperature"
+                      value={modelWith.temperature != null ? String(modelWith.temperature) : ''}
+                      readOnly={readOnly}
+                      validate={v => numberError(v, { optional: true })}
+                      onCommit={v => {
+                        if (!v.trim()) return patchModelWith('temperature', undefined)
+                        return patchModelWith('temperature', Number(v))
+                      }}
+                    />
+                    <NumberFieldDraft
+                      label="最大输出长度"
+                      help="max_tokens"
+                      integer
+                      min={1}
+                      max={4294967295}
+                      value={modelWith.max_tokens != null ? String(modelWith.max_tokens) : ''}
+                      readOnly={readOnly}
+                      validate={v =>
+                        numberError(v, { integer: true, min: 1, max: 4294967295, optional: true })
+                      }
+                      onCommit={v => {
+                        if (!v.trim()) return patchModelWith('max_tokens', undefined)
+                        return patchModelWith('max_tokens', Number(v))
+                      }}
+                    />
+                  </>
+                )}
+                {modelKind === 'image' && (
+                  <>
+                    <NumberFieldDraft
+                      label="图片宽度 width"
+                      help="width"
+                      integer
+                      min={1}
+                      value={modelParamsValue('width')}
+                      readOnly={readOnly}
+                      validate={v => imageDimensionError(v)}
+                      onCommit={v => patchModelParamsKey('width', v.trim() ? Number(v) : undefined)}
+                      hint="尺寸上限由所选模型决定，超出时协议层会返回明确错误。"
+                    />
+                    <NumberFieldDraft
+                      label="图片高度 height"
+                      help="height"
+                      integer
+                      min={1}
+                      value={modelParamsValue('height')}
+                      readOnly={readOnly}
+                      validate={v => imageDimensionError(v)}
+                      onCommit={v => patchModelParamsKey('height', v.trim() ? Number(v) : undefined)}
+                    />
+                    <SelectField
+                      label={editorFieldLabel('返回格式', t)}
+                      fieldPath="/do/with/params"
+                      value={modelParamsValue('response_format')}
+                      disabled={readOnly}
+                      onChange={e =>
+                        patchModelParamsKey('response_format', e.target.value || undefined)
+                      }
+                    >
+                      <option value="">{editorText('默认（url）', t)}</option>
+                      <option value="url">url</option>
+                      <option value="base64">base64</option>
+                    </SelectField>
+                  </>
+                )}
+                {modelKind === 'video' && (
+                  <>
+                    <TextField
+                      label="画面清晰度"
+                      title="resolution"
+                      placeholder="如 1080P"
+                      value={modelParamsValue('resolution')}
+                      readOnly={readOnly}
+                      onCommit={v => patchModelParamsKey('resolution', v.trim() ? v.trim() : undefined)}
+                      hint="留空使用生成端默认清晰度。"
+                    />
+                    <NumberFieldDraft
+                      label="最长等待时间 timeout_secs"
+                      help="timeout_secs"
+                      integer
+                      min={30}
+                      max={600}
+                      value={modelWith.timeout_secs != null ? String(modelWith.timeout_secs) : ''}
+                      readOnly={readOnly}
+                      validate={v =>
+                        numberError(v, { integer: true, min: 30, max: 600, optional: true })
+                      }
+                      onCommit={v => {
+                        if (!v.trim()) return patchModelWith('timeout_secs', undefined)
+                        return patchModelWith('timeout_secs', Number(v))
+                      }}
+                    />
+                  </>
+                )}
+                <JsonEscapeField
+                  label="参数透传（JSON，逃生舱）"
+                  value={modelWith.params}
+                  readOnly={readOnly}
+                  onCommit={v => patchModelWith('params', v)}
+                  hint="上面的可视化选项会写进这里，手改需自负。"
+                />
+                </>
+              )}
+
+              <TextField
+                label={idReferenced ? '步骤标识 ID（有历史记录，修改需确认）' : '步骤标识 ID'}
+                value={step.id}
+                readOnly={readOnly}
+                mono
+                required
+                onCommit={v => onPatch({ id: v })}
+              />
+              <NumberFieldDraft
+                label="超时秒数（空为执行器默认）"
+                integer
+                min={1}
+                value={step.timeout_secs != null ? String(step.timeout_secs) : ''}
+                readOnly={readOnly}
+                validate={v => numberError(v, { integer: true, min: 1, optional: true })}
+                onCommit={v => {
+                  return onPatch({ timeout_secs: v.trim() ? Number(v) : undefined })
+                }}
+                hint={
+                  kind === 'script'
+                    ? '脚本默认超时为 120 秒，可在上方修改。'
+                    : !['seq', 'if', 'mcp', 'script'].includes(kind)
+                      ? `${editorText('此类步骤暂不使用上述超时字段。', t)}${
+                          kind === 'tool'
+                            ? editorText('工具的超时由具体工具决定。', t)
+                            : editorText('已保留历史配置，执行时使用对应动作的行为。', t)
+                        }`
+                      : undefined
+                }
+              />
+              <SelectField
+                label={editorText('失败后怎么办', t)}
+                help="on_error"
+                value={oeMode}
+                disabled={readOnly}
+                onChange={e => {
+                  const m = e.target.value
+                  if (m === 'retry') onPatch({ on_error: { retry: { max: 3, backoff_ms: 500 } } })
+                  else if (m === 'allow_codes')
+                    onPatch({ on_error: { allow_codes: { codes: [0] } } })
+                  else onPatch({ on_error: m as OnErrorValue })
+                }}
+                hint={
+                  kind === 'tool' && oeMode === 'abort'
+                    ? editorText('工具执行器仍可能先自动重试，再终止工作流。', t)
+                    : kind !== 'tool' && (oeMode === 'retry' || oeMode === 'allow_codes')
+                      ? editorText('已保留历史配置；当前步骤执行器不支持此失败处理设置。', t)
+                      : undefined
+                }
+              >
+                <option value="abort">{editorText('终止工作流（默认）', t)}</option>
+                <option value="skip">{editorText('跳过失败步骤，继续执行', t)}</option>
+                <option value="retry" disabled={kind !== 'tool'}>
+                  {editorText('重试（工具步骤）', t)}
+                </option>
+                <option value="allow_codes" disabled={kind !== 'tool'}>
+                  {editorText('允许指定退出码（工具步骤）', t)}
+                </option>
+              </SelectField>
+              {oeMode === 'retry' && retryCfg && (
+                <>
+                  <NumberFieldDraft
+                    label="重试次数"
+                    integer
+                    min={0}
+                    max={4294967295}
+                    value={String(retryCfg.max)}
+                    readOnly={readOnly}
+                    validate={v => numberError(v, { integer: true, min: 0, max: 4294967295 })}
+                    onCommit={v => {
+                      const n = Number(v)
+                      return onPatch({ on_error: { retry: { ...retryCfg, max: n } } })
+                    }}
+                  />
+                  <NumberFieldDraft
+                    label="重试间隔（毫秒）"
+                    integer
+                    min={0}
+                    value={String(retryCfg.backoff_ms ?? 500)}
+                    readOnly={readOnly}
+                    validate={v => numberError(v, { integer: true, min: 0 })}
+                    onCommit={v => {
+                      const n = Number(v)
+                      return onPatch({ on_error: { retry: { ...retryCfg, backoff_ms: n } } })
+                    }}
+                    hint={
+                      retryCfg?.backoff_ms === 0
+                        ? '当前工具执行器会将 0 毫秒按默认 500 毫秒处理。'
+                        : undefined
+                    }
+                  />
+                </>
+              )}
+              {oeMode === 'allow_codes' && allowCfg && (
+                <TextField
+                  label="允许的退出码（逗号分隔）"
+                  value={(allowCfg.codes ?? []).join(',')}
+                  readOnly={readOnly}
+                  validate={v =>
+                    parseExitCodes(v)
+                      ? null
+                      : editorText('请输入完整整数，用英文逗号分隔；末尾不要加逗号', t)
+                  }
+                  onCommit={v => {
+                    const codes = parseExitCodes(v)
+                    if (codes) return onPatch({ on_error: { allow_codes: { ...allowCfg, codes } } })
+                  }}
+                />
+              )}
+              {/* JSON 逃生舱统一在高级分区（S1/S3：主区零 JSON 裸框）：chat / call / mcp */}
+              {kind === 'chat' && (
+                <JsonEscapeField
+                  label="其他对话选项（JSON）"
+                  value={d.with}
+                  readOnly={readOnly}
+                  onCommit={v => patchActionKey('with', v)}
+                />
+              )}
+              {kind === 'call' && (
+                <JsonEscapeField
+                  label="with（参数 JSON）"
+                  value={d.with}
+                  readOnly={readOnly}
+                  onCommit={v => patchActionKey('with', v)}
+                />
+              )}
+              {kind === 'mcp' && (
+                <JsonEscapeField
+                  label="with（参数 JSON）"
+                  value={(d.mcp as Record<string, unknown>)?.with}
+                  readOnly={readOnly}
+                  onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), with: v })}
+                />
+              )}
+            </div>
+          </details>
+
+          {/* 输出变量 */}
+          {(['tool', 'script', 'chat', 'model', 'mcp'].includes(kind) || step.capture) && (
+            <SectionCard title={t('workflowCanvas.variable.outputSection')}>
               <CaptureField
                 value={step.capture ?? ''}
                 readOnly={readOnly}
                 onCommit={v => onPatch({ capture: v || undefined })}
               />
               {!!captureConsumers?.length && (
-                <div className="wfc-inspector-hint">
+                <div className="wfp-frow__hint">
                   {t('workflowCanvas.variable.consumers')}
                   {captureConsumers.map(consumer => (
                     <button
@@ -1341,19 +1997,18 @@ export function Inspector({
                   ))}
                 </div>
               )}
-              {!['tool', 'script', 'chat', 'mcp'].includes(kind) && (
-                <div className="wfc-inspector-hint">
+              {!['tool', 'script', 'chat', 'model', 'mcp'].includes(kind) && (
+                <div className="wfp-frow__hint">
                   {editorText('已保留历史变量设置；此类步骤不直接产生输出。', t)}
                 </div>
               )}
-            </>
+            </SectionCard>
           )}
 
           {lastOutput && lastOutput.length > 0 && (
-            <>
-              <div className="wfc-inspector-section">{editorText('最近输出', t)}</div>
+            <SectionCard title={editorText('最近输出', t)}>
               <pre className="wfc-output-preview">{lastOutput.join('\n')}</pre>
-            </>
+            </SectionCard>
           )}
           {traceContext && (
             <details open={traceOpen} onToggle={event => setTraceOpen(event.currentTarget.open)}>
@@ -1361,8 +2016,12 @@ export function Inspector({
               {traceOpen && <ExecutionTraceViewer stepId={step.id} />}
             </details>
           )}
-        </div>
-      </aside>
+        </PanelFrame>
+        {/* 面板宽度测量锚点：display:none 不参与布局；其 parent 即画布容器——
+            与迁移前 panelRef 挂在 aside 上测得的同一个元素（多 Inspector 并存时
+            各自测量自己的宿主，querySelector 会串面板） */}
+        <span ref={panelRef} hidden aria-hidden="true" />
+      </>
     </VariableContext.Provider>
   )
 }
@@ -1383,26 +2042,28 @@ function CaptureField({
     validate: v => (!v || isVariableName(v) ? null : t('workflowCanvas.variable.invalid')),
   })
   return (
-    <div
-      className="wfc-field"
-      data-draft-field="/capture"
-      onBlur={() => {
-        void draft.commit()
-      }}
+    <FieldRow
+      label={t('workflowCanvas.variable.capture')}
+      fieldPath="/capture"
+      hint={draft.text !== value && value ? t('workflowCanvas.variable.renameHint') : undefined}
+      error={draft.error ?? undefined}
     >
-      <span className="wfc-field-label">{t('workflowCanvas.variable.capture')}</span>
-      <VariablePicker
-        value={draft.text}
-        onChange={draft.setText}
-        mode="capture"
-        catalog={catalog}
-        readOnly={readOnly}
-      />
-      {draft.text !== value && value && (
-        <span className="wfc-inspector-hint">{t('workflowCanvas.variable.renameHint')}</span>
-      )}
-      {draft.error && <span className="wfc-field-error">{draft.error}</span>}
-    </div>
+      {/* picker 不传可见 label：aria-label 回退键与本行标签同值，
+          可见标签由 FieldRow 承担，combobox 可访问名不变 */}
+      <div
+        onBlur={() => {
+          void draft.commit()
+        }}
+      >
+        <VariablePicker
+          value={draft.text}
+          onChange={draft.setText}
+          mode="capture"
+          catalog={catalog}
+          readOnly={readOnly}
+        />
+      </div>
+    </FieldRow>
   )
 }
 
@@ -1473,23 +2134,22 @@ function LoopEditor({
   }
   return (
     <>
-      <label className="wfc-field">
-        <span className="wfc-field-label">{editorText('循环方式', t)}</span>
-        <select
-          className="wfc-input"
-          value={mode}
-          disabled={readOnly}
-          onChange={e => setMode(e.target.value)}
-        >
-          <option value="for_each">{editorText('遍历列表', t)}</option>
-          <option value="repeat">{editorText('固定次数', t)}</option>
-          <option value="until">{editorText('直到条件满足', t)}</option>
-        </select>
-      </label>
+      <SelectField
+        label={editorText('循环方式', t)}
+        value={mode}
+        disabled={readOnly}
+        onChange={e => setMode(e.target.value)}
+      >
+        <option value="for_each">{editorText('遍历列表', t)}</option>
+        <option value="repeat">{editorText('固定次数', t)}</option>
+        <option value="until">{editorText('直到条件满足', t)}</option>
+      </SelectField>
       {mode === 'for_each' && (
         <>
-          <div className="wfc-field">
-            <span className="wfc-field-label">{editorText('遍历列表 items（变量名）', t)}</span>
+          <FieldRow
+            label={editorFieldLabel('遍历列表', t)}
+            fieldPath={editorFieldId('遍历列表')}
+          >
             <ReferenceField
               label="遍历列表"
               value={(() => {
@@ -1507,13 +2167,15 @@ function LoopEditor({
                   for_each: { ...(def.for_each as object), items: { var: v } },
                 })
               }
+              hideLabel
             />
-          </div>
+          </FieldRow>
           <TextField
             label="当前项变量 as"
             value={String((def.for_each as Record<string, unknown>)?.as ?? 'item')}
             readOnly={readOnly}
             mono
+            title="as"
             onCommit={v =>
               onPatch('loop', {
                 ...def,
@@ -1524,8 +2186,11 @@ function LoopEditor({
         </>
       )}
       {mode === 'repeat' && (
-        <TextField
+        <NumberFieldDraft
           label="重复次数"
+          integer
+          min={0}
+          max={4294967295}
           value={String(def.repeat ?? 1)}
           readOnly={readOnly}
           validate={v => numberError(v, { integer: true, min: 0, max: 4294967295 })}
@@ -1546,8 +2211,12 @@ function LoopEditor({
           />
         </VariableContext.Provider>
       )}
-      <TextField
+      <NumberFieldDraft
         label="最多循环次数 max（默认 100）"
+        help="max"
+        integer
+        min={1}
+        max={4294967295}
         value={String(def.max ?? 100)}
         readOnly={readOnly}
         validate={v => numberError(v, { integer: true, min: 1, max: 4294967295 })}

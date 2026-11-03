@@ -1332,46 +1332,6 @@
   background: var(--surface-1);
   box-shadow: var(--shadow-elevated);
 }
-.wfc-inspector-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line-1);
-}
-.wfc-inspector-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: var(--fw-semibold);
-}
-.wfc-inspector-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.wfc-inspector-section {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line-1);
-  font-size: var(--fz-xs);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-wide);
-  color: var(--fg-4);
-}
-.wfc-inspector-hint {
-  font-size: var(--fz-sm);
-  color: var(--fg-4);
-}
-.wfc-inspector-hint--warn {
-  color: var(--warning);
-}
-
 .wfc-field {
   display: flex;
   flex-direction: column;
@@ -1427,13 +1387,6 @@
 .wfc-input[readonly] {
   opacity: 0.6;
   cursor: not-allowed;
-}
-.wfc-input--error {
-  border-color: var(--error);
-}
-.wfc-input--error:focus {
-  border-color: var(--error);
-  box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.12);
 }
 .wfc-input--mono {
   font-family: var(--font-mono);
@@ -1523,20 +1476,6 @@ textarea.wfc-input {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-1);
   font-family: var(--font-mono);
-}
-
-.wfc-cond {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.wfc-cond-operand {
-  display: grid;
-  /* 左列宽度必须 ≥ .wfc-cond-kind 的 min-width（inspector.css 88px），
-     否则左列内容溢出侵入右列——lit/var 切换时右列输入框随之错位 */
-  grid-template-columns: 88px 1fr;
-  gap: var(--space-2);
-  align-items: center;
 }
 
 .wfc-output-preview {
@@ -1661,31 +1600,6 @@ textarea.wfc-input {
   color: var(--fg-2);
   font-size: var(--fz-xs);
 }
-.wfc-chip {
-  padding: 2px var(--space-2);
-  border: none;
-  border-radius: 999px;
-  background: var(--surface-3);
-  color: var(--fg-3);
-  font-size: var(--fz-xs);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-.wfc-chip:hover {
-  background: var(--accent-dim);
-  color: var(--accent-hover);
-}
-.wfc-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
-.wfc-chip.is-active {
-  background: var(--accent-dim);
-  color: var(--accent-hover);
-}
-
 .wfc-problems-list {
   min-height: 0;
   overflow-y: auto;

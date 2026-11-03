@@ -90,6 +90,9 @@ impl Executor {
                 Action::Chat { chat, with } => {
                     serde_json::json!({"message":super::variables::resolve_vars_str(chat, variables), "options":with})
                 }
+                Action::Model { model, with } => {
+                    serde_json::json!({"message":super::variables::resolve_vars_str(model, variables), "options":with})
+                }
                 Action::Wait { wait, .. } => {
                     serde_json::json!({"message":super::variables::resolve_vars_str(wait, variables)})
                 }
@@ -237,6 +240,10 @@ impl Executor {
                         tool_schemas,
                     )
                     .await
+                }
+                Action::Model { model, with: opts } => {
+                    self.execute_model_step(step, model, opts, variables, llm, events, workflow_id)
+                        .await
                 }
                 Action::Script { script } => {
                     self.execute_script_step(step, script, variables).await

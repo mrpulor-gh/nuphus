@@ -14,6 +14,7 @@ import type {
   RunRecord,
 } from '../../core/types'
 import { stepKind, containerLanes, laneSteps } from './projection'
+import { buildVariableCatalogIndex } from './variableCatalog'
 import { referenceSites } from './variableRename'
 
 export type ProblemLevel = 'error' | 'warning'
@@ -40,6 +41,11 @@ interface MirrorCtx {
   inLoop: boolean
   loopVars: string[]
   hasCustom: boolean
+  /**
+   * V10 遮蔽的生产者 stepId 集合（控制流正确：互斥分支的同名 capture 不算遮蔽）。
+   * 由 buildVariableCatalogIndex 的 scope join 产出，validateIR 一次性注入。
+   */
+  shadowed: Set<string>
 }
 
 function conditionOperands(cond: Condition): { op: string; operands: VarRef[] } | null {
@@ -260,7 +266,10 @@ function validateStep(step: WorkflowStep, ctx: MirrorCtx): void {
 
   // capture 登记（遍历序前向）+ V10 遮蔽
   if (step.capture) {
-    if (ctx.captured.has(step.capture)) {
+    // V10 只看同一条执行路径上的前一个同名 capture。`if` 的 then/else 是互斥分支，
+    // 同名 capture 各只在一条路径生效，那不是遮蔽——故用 scope join 的结论，
+    // 而不是 ctx.captured 这个 DFS 序集合（后者会把兄弟分支误判为互相遮蔽）。
+    if (ctx.shadowed.has(step.id)) {
       ctx.problems.push({
         level: 'warning',
         rule: 'V10',
@@ -307,6 +316,8 @@ export function validateIR(steps: WorkflowStep[], opts: ValidateOptions = {}): P
     inLoop: false,
     loopVars: [],
     hasCustom: false,
+    // V10 的控制流正确结论：互斥分支的同名 capture 不构成遮蔽。
+    shadowed: new Set(buildVariableCatalogIndex(steps, opts.inputs ?? []).shadowed.keys()),
   }
   for (const step of steps) validateStep(step, ctx)
 

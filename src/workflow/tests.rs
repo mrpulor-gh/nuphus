@@ -1942,3 +1942,377 @@ mod scheduler_domain_tests {
         );
     }
 }
+
+// ── Model 步骤（第 14 种 do：text / image / video） ──
+
+#[cfg(test)]
+mod model_step_tests {
+    use crate::workflow::compiler::Compiler;
+    use crate::workflow::types::{Action, ModelKind, ModelOpts, Step, Workflow};
+
+    fn make_model_step(id: &str, prompt: &str, opts: ModelOpts) -> Step {
+        Step {
+            id: id.into(),
+            name: format!("模型步骤-{id}"),
+            action: Action::Model {
+                model: prompt.to_string(),
+                with: opts,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// 编译器接受三种 kind 的合法 model 步骤。
+    #[test]
+    fn compiler_accepts_model_steps_all_kinds() {
+        for (id, kind) in [
+            ("m-text", ModelKind::Text),
+            ("m-image", ModelKind::Image),
+            ("m-video", ModelKind::Video),
+        ] {
+            let mut wf = Workflow::new("model ok");
+            wf.steps = vec![make_model_step(
+                id,
+                "生成一个产品图",
+                ModelOpts {
+                    kind,
+                    ..Default::default()
+                },
+            )];
+            let report = Compiler::validate_workflow(&wf);
+            assert!(
+                report.passed,
+                "{kind:?} model step must pass validation: {:?}",
+                report.errors
+            );
+        }
+    }
+
+    /// 缺省 with（无 kind）= text；缺省 with.model = 运行时 llm / 绑定能力。
+    #[test]
+    fn compiler_accepts_model_step_with_bare_with() {
+        let mut wf = Workflow::new("model bare");
+        wf.steps = vec![make_model_step("m1", "写一句文案", ModelOpts::default())];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "{:?}", report.errors);
+        assert!(
+            report.warnings.is_empty(),
+            "裸 with 不应产生 warning: {:?}",
+            report.warnings
+        );
+    }
+
+    /// model 任务描述为空 → 编译期 error。
+    #[test]
+    fn compiler_rejects_empty_model_prompt() {
+        let mut wf = Workflow::new("model empty");
+        wf.steps = vec![make_model_step("m1", "", ModelOpts::default())];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(!report.passed);
+        assert!(
+            report.errors.iter().any(|e| e.contains("model 不能为空")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    /// 具名规格值非法（比例不在白名单 / 张数越界 / 时长非选项）→ 编译期 error：
+    /// 生成调用计费，不能等 API 才报错。
+    #[test]
+    fn compiler_rejects_illegal_named_spec_values() {
+        let mut wf = Workflow::new("model illegal spec");
+        wf.steps = vec![
+            make_model_step(
+                "m-ratio",
+                "画猫",
+                ModelOpts {
+                    kind: ModelKind::Image,
+                    ratio: Some("1:2".to_string()),
+                    ..Default::default()
+                },
+            ),
+            make_model_step(
+                "m-count",
+                "画猫",
+                ModelOpts {
+                    kind: ModelKind::Image,
+                    count: Some(5),
+                    ..Default::default()
+                },
+            ),
+            make_model_step(
+                "m-duration",
+                "拍猫",
+                ModelOpts {
+                    kind: ModelKind::Video,
+                    duration: Some(7),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(!report.passed, "非法规格值必须阻断: {:?}", report.errors);
+        assert!(
+            report.errors.iter().any(|e| e.contains("画面比例 '1:2'")),
+            "{:?}",
+            report.errors
+        );
+        assert!(
+            report.errors.iter().any(|e| e.contains("生成数量 5 越界")),
+            "{:?}",
+            report.errors
+        );
+        assert!(
+            report.errors.iter().any(|e| e.contains("时长 7 秒")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    /// 合法具名规格值通过编译，且不产生 warning（模态归属正确）。
+    #[test]
+    fn compiler_accepts_named_spec_values() {
+        let mut wf = Workflow::new("model spec ok");
+        wf.steps = vec![
+            make_model_step(
+                "m-image",
+                "画猫",
+                ModelOpts {
+                    kind: ModelKind::Image,
+                    ratio: Some("4:3".to_string()),
+                    count: Some(2),
+                    ..Default::default()
+                },
+            ),
+            make_model_step(
+                "m-video",
+                "拍猫",
+                ModelOpts {
+                    kind: ModelKind::Video,
+                    ratio: Some("16:9".to_string()),
+                    duration: Some(6),
+                    first_frame: Some("{{frame}}".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(report.passed, "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    /// 缺省值不回写：未设置的具名字段不序列化（不落进 workflow.json）。
+    #[test]
+    fn model_opts_skip_unset_named_fields_on_serialize() {
+        let value = serde_json::to_value(ModelOpts {
+            kind: ModelKind::Image,
+            ..Default::default()
+        })
+        .expect("serialize");
+        let object = value.as_object().expect("with object");
+        for absent in ["ratio", "count", "duration", "first_frame", "params"] {
+            assert!(
+                !object.contains_key(absent),
+                "未设置的 {absent} 不得落盘: {object:?}"
+            );
+        }
+        assert_eq!(object.get("kind"), Some(&serde_json::json!("image")));
+
+        let set = serde_json::to_value(ModelOpts {
+            kind: ModelKind::Video,
+            ratio: Some("9:16".to_string()),
+            duration: Some(5),
+            first_frame: Some(String::new()),
+            ..Default::default()
+        })
+        .expect("serialize");
+        assert_eq!(
+            set,
+            serde_json::json!({"kind":"video","ratio":"9:16","duration":5,"first_frame":""})
+        );
+    }
+
+    /// 跨模态误用只 warning 不阻断：text 带 params、image 带 system。
+    #[test]
+    fn compiler_warns_on_modality_mismatch() {
+        let mut wf = Workflow::new("model mismatch");
+        wf.steps = vec![
+            make_model_step(
+                "m-text",
+                "写文案",
+                ModelOpts {
+                    params: Some(serde_json::json!({"n": 1})),
+                    ..Default::default()
+                },
+            ),
+            make_model_step(
+                "m-image",
+                "画猫",
+                ModelOpts {
+                    kind: ModelKind::Image,
+                    system: Some("你是画师".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(
+            report.passed,
+            "模态误用只警告不阻断: {:?}",
+            report.errors
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("params") && w.contains("image/video")),
+            "{:?}",
+            report.warnings
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("system") && w.contains("text")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    /// kind 缺省 = text；显式 image/video 如实解析。
+    #[test]
+    fn model_kind_defaults_to_text_on_deserialize() {
+        let action: Action =
+            serde_json::from_value(serde_json::json!({"model": "写文案"})).expect("bare do.model");
+        match action {
+            Action::Model { model, with } => {
+                assert_eq!(model, "写文案");
+                assert_eq!(with.kind, ModelKind::Text, "kind 缺省必须是 text");
+            }
+            other => panic!("expected Action::Model, got {other:?}"),
+        }
+
+        let action: Action = serde_json::from_value(
+            serde_json::json!({"model": "画一只猫", "with": {"kind": "image"}}),
+        )
+        .expect("image model step");
+        match action {
+            Action::Model { with, .. } => assert_eq!(with.kind, ModelKind::Image),
+            other => panic!("expected Action::Model, got {other:?}"),
+        }
+
+        // 序列化形状（前端/存储契约）：do 下只有 model + with 两个键
+        let value = serde_json::to_value(&Action::Model {
+            model: "做视频".to_string(),
+            with: ModelOpts {
+                kind: ModelKind::Video,
+                ..Default::default()
+            },
+        })
+        .expect("serializable");
+        let object = value.as_object().expect("do is an object");
+        assert_eq!(object.len(), 2, "do 只允许 model + with: {object:?}");
+        assert!(object.contains_key("model") && object.contains_key("with"));
+    }
+
+    /// 非法 kind / 缺 model 字段：不得被解析成合法 Model（untagged 回退 Custom，
+    /// 执行期报 not yet supported——与其它 do 类型的畸形数据同一命运）。
+    #[test]
+    fn illegal_kind_or_missing_model_is_not_accepted_as_model() {
+        let action: Action = serde_json::from_value(
+            serde_json::json!({"model": "x", "with": {"kind": "audio"}}),
+        )
+        .expect("untagged enum always yields some variant");
+        assert!(
+            !matches!(action, Action::Model { .. }),
+            "非法 kind 不得解析为 Model: {action:?}"
+        );
+
+        let action: Action =
+            serde_json::from_value(serde_json::json!({"with": {"kind": "text"}}))
+                .expect("untagged enum always yields some variant");
+        assert!(
+            !matches!(action, Action::Model { .. }),
+            "缺 model 字段不得解析为 Model: {action:?}"
+        );
+    }
+
+    /// schema 漂移守卫：DoModel 已注册进 Action oneOf，且 DoCustom 的
+    /// propertyNames 黑名单覆盖全部 14 个 do 名——漏一处 model 步骤就会被
+    /// DoCustom 吞掉或直接被判未知属性。
+    #[test]
+    fn step_schema_registers_model_do_kind() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("workflow/step_schema.json");
+        let text = std::fs::read_to_string(&path).expect("step_schema.json readable");
+        let schema: serde_json::Value = serde_json::from_str(&text).expect("valid json schema");
+        let defs = &schema["$defs"];
+
+        // DoModel 定义：required = ["model"]，kind enum 三态
+        assert!(defs["DoModel"].is_object(), "$defs.DoModel must exist");
+        assert_eq!(defs["DoModel"]["required"], serde_json::json!(["model"]));
+        let kind_enum = defs["DoModel"]["properties"]["with"]["properties"]["kind"]["enum"]
+            .as_array()
+            .expect("kind enum");
+        assert_eq!(
+            kind_enum,
+            &vec![
+                serde_json::json!("text"),
+                serde_json::json!("image"),
+                serde_json::json!("video")
+            ]
+        );
+
+        // 具名规格字段：enum / 边界必须与 compiler.rs 的 MODEL_RATIOS /
+        // MODEL_DURATIONS 白名单一致（前端选项控件同样只发这些值）
+        let with_props = &defs["DoModel"]["properties"]["with"]["properties"];
+        assert_eq!(
+            with_props["ratio"]["enum"],
+            serde_json::json!(["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"])
+        );
+        assert_eq!(
+            with_props["count"],
+            serde_json::json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4,
+                "description": "image 一次生成张数"
+            })
+        );
+        assert_eq!(
+            with_props["duration"]["enum"],
+            serde_json::json!([5, 6, 8, 10])
+        );
+        assert_eq!(
+            with_props["first_frame"]["type"],
+            serde_json::json!("string")
+        );
+
+        // Step/Action 的 oneOf 已注册 DoModel
+        let one_of = defs["Action"]["oneOf"]
+            .as_array()
+            .expect("Action.oneOf array");
+        assert!(
+            one_of.iter().any(|entry| entry["$ref"] == "#/$defs/DoModel"),
+            "Action oneOf must register #/$defs/DoModel: {one_of:?}"
+        );
+
+        // DoCustom propertyNames 黑名单 = 全部 14 个 do 名（防止 model 被当自定义属性放行）
+        let custom_names = defs["DoCustom"]["propertyNames"]["not"]["enum"]
+            .as_array()
+            .expect("DoCustom propertyNames enum");
+        for name in [
+            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert", "mcp",
+            "sleep", "break", "continue",
+        ] {
+            assert!(
+                custom_names.iter().any(|value| value == name),
+                "DoCustom propertyNames missing do kind '{name}': {custom_names:?}"
+            );
+        }
+        assert_eq!(
+            custom_names.len(),
+            14,
+            "propertyNames 黑名单必须恰好覆盖 14 种 do（新增类型必须同步此处）: {custom_names:?}"
+        );
+    }
+}

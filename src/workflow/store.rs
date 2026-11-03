@@ -197,6 +197,20 @@ impl WorkflowStore {
                     children: Vec::new(),
                     loop_def: None,
                 },
+                Action::Model { model, with: opts } => ExportStep {
+                    name: step.name.clone(),
+                    description: step.description.clone(),
+                    tool: Some(format!("model:{}", opts.kind.as_str())),
+                    params: Some(serde_json::json!({
+                        "prompt": model,
+                        "kind": opts.kind,
+                        "model": opts.model,
+                        "provider": opts.provider,
+                        "params": opts.params,
+                    })),
+                    children: Vec::new(),
+                    loop_def: None,
+                },
                 Action::Script { script } => ExportStep {
                     name: step.name.clone(),
                     description: step.description.clone(),
@@ -401,6 +415,33 @@ impl WorkflowStore {
                     }
                     if let Some(ref knowledge) = opts.knowledge {
                         out.push_str(&format!("{}- 知识库: {:?}\n", indent, knowledge));
+                    }
+                }
+                Action::Model { model, with: opts } => {
+                    out.push_str(&format!(
+                        "{} {}. {} (model: {})\n",
+                        header_prefix,
+                        step.id,
+                        step.name,
+                        opts.kind.as_str()
+                    ));
+                    if !step.description.is_empty() {
+                        out.push_str(&format!("{}- 描述: {}\n", indent, step.description));
+                    }
+                    out.push_str(&format!("{}- 任务描述: {}\n", indent, model));
+                    if let Some(ref m) = opts.model {
+                        out.push_str(&format!("{}- 模型: {}\n", indent, m));
+                    }
+                    if let Some(ref p) = opts.provider {
+                        out.push_str(&format!("{}- Provider: {}\n", indent, p));
+                    }
+                    if let Some(ref params) = opts.params {
+                        out.push_str(&format!(
+                            "{}- 生成参数:\n{}{}\n",
+                            indent,
+                            indent,
+                            serde_json::to_string_pretty(params).unwrap_or_else(|_| "null".into())
+                        ));
                     }
                 }
                 Action::Script { script } => {

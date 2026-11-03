@@ -74,8 +74,21 @@ export function templateSpans(text: string): TemplateSpan[] {
   return spans
 }
 
+/**
+ * Strip a trailing pipe chain (`| get "x"`) so a bracketed reference stays parseable.
+ * Pipe separators never appear inside a quoted JSON key: templateSpans already
+ * stops at an unquoted `}}`, and parseFieldReference only accepts JSON string keys.
+ */
+function stripPipes(expression: string): string {
+  const pipe = expression.indexOf('|')
+  return pipe < 0 ? expression : expression.slice(0, pipe)
+}
+
 export function referenceRoot(expression: string): { name: string; input?: boolean } | null {
-  const parsed = parseFieldReference(expression)
+  // Pipes are stripped first: without this, `inputs["x"] | len` fails the bracket
+  // parser and falls back to a dotted-only regex that returns the bare `inputs`
+  // root, producing a bogus dangling anchor for a declared input.
+  const parsed = parseFieldReference(stripPipes(expression))
   if (parsed) {
     if (parsed.root === 'inputs' && typeof parsed.segments[0] === 'string')
       return { name: parsed.segments[0], input: true }
@@ -84,7 +97,7 @@ export function referenceRoot(expression: string): { name: string; input?: boole
     if (parsed.root === 'params' || parsed.root === 'ENV') return null
     return { name: parsed.root }
   }
-  const match = expression.trim().match(/^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?/)
+  const match = stripPipes(expression).trim().match(/^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?/)
   if (!match || match[1] === 'ENV' || match[1] === 'params') return null
   return match[1] === 'inputs' && match[2] ? { name: match[2], input: true } : { name: match[1] }
 }

@@ -38,6 +38,7 @@ const ACTIONS = [
   'call',
   'wait',
   'chat',
+  'model',
   'script',
   'assert',
   'mcp',
@@ -62,7 +63,7 @@ function kind(step: WorkflowStep): string {
     Object.keys(action).some(
       key =>
         key !== type &&
-        !(key === 'with' && ['tool', 'call', 'chat'].includes(type)) &&
+        !(key === 'with' && ['tool', 'call', 'chat', 'model'].includes(type)) &&
         !(key === 'auto' && type === 'wait'),
     )
   )

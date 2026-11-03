@@ -424,6 +424,76 @@ pub struct ChatOpts {
     pub max_iterations: Option<u32>,
 }
 
+// ── ModelOpts (new, from DoModel) ──
+
+/// model 节点的生成模态：text=文案, image=图片, video=视频。
+/// schema 侧 `with.kind` 缺省即 text（与 `#[derive(Default)]` 的 Text 对齐）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelKind {
+    /// 单轮 LLM 文案生成（缺省）
+    #[default]
+    Text,
+    /// 图片生成
+    Image,
+    /// 视频生成
+    Video,
+}
+
+impl ModelKind {
+    /// schema / 导出文案用的规范名（与 serde rename_all 一致）
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelKind::Text => "text",
+            ModelKind::Image => "image",
+            ModelKind::Video => "video",
+        }
+    }
+}
+
+/// do.model 的 with 配置：一次模型调用（文案 / 图片 / 视频）。
+/// model/provider 只作当次覆盖，与 do.model 的任务描述分离。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelOpts {
+    /// 生成模态，缺省 text
+    #[serde(default)]
+    pub kind: ModelKind,
+    /// 当次覆盖的模型 ID（与 provider 一起精确路由；不填用绑定能力或运行时默认）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// 当次覆盖的模型所属 provider（与 model 成对精确路由）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// text 专用：系统提示词覆盖（缺省用中性系统提示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+    /// text 专用：采样温度
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// text 专用：max_tokens
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// 画面比例（image/video 适用）；执行时进入语义生成请求，请求体键名由生成协议决定
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<String>,
+    /// image 一次生成张数（1–4）；执行时进入语义生成请求，请求体键名由生成协议决定
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// video 时长（秒，仅 5/6/8/10）；执行时进入语义生成请求，请求体键名由生成协议决定
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
+    /// video 首帧图路径（支持 `{{变量}}`；空 = 文生视频）；
+    /// 执行时进入语义生成请求，请求体键名由生成协议决定
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_frame: Option<String>,
+    /// image/video 专用：提供商特定附加参数，键名与取值由生成协议决定
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    /// video 专用：轮询超时秒数，缺省 300
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
 // ── ScriptDef (new, from ScriptV2) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -489,6 +559,11 @@ pub enum Action {
         #[serde(default)]
         with: ChatOpts,
     },
+    Model {
+        model: String,
+        #[serde(default)]
+        with: ModelOpts,
+    },
     Script {
         script: ScriptDef,
     },
@@ -548,6 +623,7 @@ impl Step {
             Action::Call { .. } => "call",
             Action::Wait { .. } => "wait",
             Action::Chat { .. } => "chat_agent",
+            Action::Model { .. } => "model",
             Action::Script { .. } => "script",
             Action::Assert { .. } => "assert",
             Action::Mcp { .. } => "mcp",

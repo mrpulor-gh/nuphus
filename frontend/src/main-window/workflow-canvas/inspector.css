@@ -15,23 +15,8 @@
   text-align: left;
   padding: 4px 0;
 }
-.wfc-inspector-resize {
-  position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: ew-resize;
-  touch-action: none;
-  z-index: 2;
-}
-.wfc-inspector-resize:hover,
-.wfc-inspector-resize:focus-visible {
-  background: var(--accent-glow);
-}
-.wfc-inspector-body > *,
-.wfc-field,
-.wfc-cond-operand {
+/* T2b 后仅 ToolParameterForm / ReferenceField 的 .wfc-field 仍在网格/弹性容器内，需要防收缩 */
+.wfc-field {
   min-width: 0;
 }
 .wfc-inspector .wfc-input {
@@ -44,28 +29,17 @@
   align-items: baseline;
   gap: 4px;
 }
-.wfc-inspector-advanced {
-  margin: 8px 0 12px;
-  border: 1px solid var(--line-3);
-  border-radius: var(--radius-2);
-  padding: 8px;
+/* 比例图形化方块：固定高度、按真实宽高比推导宽度（9:16 也不会撑高一行）。
+   Inspector v2 起由 inspector/ 的 Segmented 渲染，激活态描边在下方规则 */
+.wfc-ratio-shape {
+  display: block;
+  height: 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-inset);
 }
-.wfc-inspector-advanced summary {
-  color: var(--fg-3);
-  cursor: pointer;
-  font-size: var(--fz-sm);
-}
-.wfc-inspector-advanced[open] summary {
-  margin-bottom: 12px;
-}
-.wfc-expand-editor {
-  margin-left: auto;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--fz-xs);
-  border: none;
-  background: transparent;
-  padding: 0 4px;
+.wfp-seg__item.is-active .wfc-ratio-shape {
+  border-color: var(--accent);
 }
 .wfc-combo-menu.wfc-combo-menu--portal {
   position: fixed;
@@ -81,9 +55,6 @@
 .wfc-combo-menu--portal .wfc-combo-name,
 .wfc-combo-menu--portal .wfc-combo-desc {
   overflow-wrap: anywhere;
-}
-.wfc-inspector .wfc-cond-kind {
-  min-width: 88px;
 }
 .wfc-inspector .wfc-output-preview {
   overflow-wrap: anywhere;

@@ -10,7 +10,7 @@
  */
 
 import type { WorkflowStep, Condition, VarRef } from '../../core/types'
-import { templateSpans, referenceRoot, parseFieldReference } from './fieldReferences'
+import { templateSpans, referenceRoot } from './fieldReferences'
 
 /** 一次变量消费 */
 export interface VarConsumption {
@@ -54,13 +54,11 @@ function scanTemplateRefs(text: string, out: VarConsumption[]): void {
   for (const span of templateSpans(text)) {
     const root = referenceRoot(span.body)
     if (!root) continue
+    // 管道名单独提取（get/json/len/default）；root 名已由 referenceRoot 归一化
+    const pipe = span.body.indexOf('|')
     out.push({
       varName: root.name,
-      pipes: parsePipes(
-        !parseFieldReference(span.body) && span.body.includes('|')
-          ? span.body.slice(span.body.indexOf('|'))
-          : '',
-      ),
+      pipes: pipe < 0 ? [] : parsePipes(span.body.slice(pipe)),
       ...(root.input ? { input: true } : {}),
     })
   }

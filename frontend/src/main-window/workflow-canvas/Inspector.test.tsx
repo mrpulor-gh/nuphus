@@ -188,7 +188,7 @@ describe('Inspector manual workflow editing', () => {
       name: 'script',
       do: { script: { runtime: 'pwsh', code: 'prefix ' } },
     })
-    const code = screen.getByRole('textbox', { name: /脚本代码 code/ }) as HTMLTextAreaElement
+    const code = screen.getByRole('textbox', { name: /脚本代码/ }) as HTMLTextAreaElement
     code.setSelectionRange(code.value.length, code.value.length)
     fireEvent.click(screen.getByRole('button', { name: '从历史运行选择字段' }))
     fireEvent.click(await screen.findByRole('button', { name: 'previous', expanded: false }))

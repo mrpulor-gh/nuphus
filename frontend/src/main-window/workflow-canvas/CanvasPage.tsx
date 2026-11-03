@@ -162,10 +162,13 @@ function insertHintFlowPos(
   lane: LaneId,
   index: number,
   rf: ReturnType<typeof useReactFlow>,
+  excludeId: string,
 ): { x: number; y: number; horizontal: boolean } | null {
   const horizontal = layerDir(layer.layerId) === 'LR'
   const siblings = layer.nodes
-    .filter(n => n.lane === lane && !n.synthetic)
+    // excludeId：index 由 onNodeDrag 按「移除自身后」的兄弟序列算出，这里必须同样
+    // 排除被拖节点自身，否则向前拖动时指示线会落在自身原来的槽位上（偏一格）。
+    .filter(n => n.lane === lane && !n.synthetic && n.id !== excludeId)
     .map(n => {
       const fn = rf.getNodes().find(fn => fn.id === n.id)
       const pos = fn?.position ?? { x: 0, y: 0 }
@@ -528,11 +531,28 @@ function CanvasInner({
   }, [steps, variableIndex])
 
   // ── 只读判定：运行中锁（1.6）+ 旧格式整树只读（V13/R1）──
-  const readOnly = snapshot.running || !!projection?.index.hasCustomNodes || !!replayRunId
+  // 旧格式含两种：Action::Custom（kind 不可识别）与缺 id（compiler 报 error 且占位
+  // id 无法被 locateStep 寻址）。两者都让编辑动作静默失败，故一律整树只读。
+  const readOnly =
+    snapshot.running ||
+    !!projection?.index.hasCustomNodes ||
+    !!projection?.index.hasMissingIds ||
+    !!replayRunId
   // 只读翻转（运行开始等）时自动收起残留的连线插入菜单
   useEffect(() => {
     if (readOnly) setEdgeInsert(null)
   }, [readOnly])
+
+  /**
+   * 旧格式只读的原因文案（互斥呈现，避免两种原因堆叠成一段读不通的话）。
+   * 缺 id 与 Custom 节点都会让后端 compiler 报 error，但修法不同：Custom 要重新
+   * 生成，缺 id 只需补一个合法 id，故分开说明。
+   */
+  const legacyNotice = projection?.index.hasMissingIds
+    ? '本工作流包含缺少 id 的旧格式步骤，画布已切换为只读。请通过 AI 对话重新生成同目标工作流（V2 格式）后在画布中编辑。'
+    : projection?.index.hasCustomNodes
+      ? '本工作流包含旧格式节点，画布已切换为只读。 可通过 AI\n          对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。'
+      : null
 
   // ── L2 实时校验（防抖 300ms，3.4）──
   useEffect(() => {
@@ -1253,7 +1273,7 @@ function CanvasInner({
       setDragInsert(index !== currentIndex ? next : null)
       // 指示线屏幕坐标（画布容器内绝对定位）
       if (dragInsertRef.current) {
-        const hintFlow = insertHintFlowPos(layer, next.lane, next.index, rf)
+        const hintFlow = insertHintFlowPos(layer, next.lane, next.index, rf, node.id)
         if (hintFlow) {
           const vp = rf.getViewport()
           setDragInsertScreen({
@@ -2259,16 +2279,13 @@ function CanvasInner({
         </div>
 
         {/* ── 横幅区 ── */}
-        {projection.index.hasCustomNodes && (
+        {legacyNotice && (
           <div className="wfc-banner wfc-banner--error">
             <strong>{editorText('格式不兼容：', t)}</strong>
-            {editorText(
-              '本工作流包含旧格式节点，画布已切换为只读。 可通过 AI\n          对话重新生成同目标工作流（V2 格式）后在画布中编辑；旧格式仍可经原聊天通道运行。',
-              t,
-            )}
+            {editorText(legacyNotice, t)}
           </div>
         )}
-        {(lastRunError || lastRunPaused) && !projection.index.hasCustomNodes && (
+        {(lastRunError || lastRunPaused) && !legacyNotice && (
           <div className="wfc-banner wfc-banner--warning">
             {lastRunError
               ? `${ui('上次运行失败', 'Previous run failed')} ${anchorStepName ?? ''}. ${ui('点击「运行」将从头完整执行，不再续连上次进度。', 'Run will restart the entire workflow, including previously completed steps.')}`

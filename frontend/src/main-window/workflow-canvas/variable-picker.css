@@ -1,14 +1,14 @@
 .wfc-variable-picker {
   min-width: 0;
 }
-/* 行内复合布局（wfc-cond-operand）：picker 含「从历史运行选择字段」按钮，
-   内容组比纯 input 高——grid align-items:center 时左列 select 与右列 input
-   错位 14px。条件行内将按钮绝对定位到 input 下方贴边，不占布局流，
+/* 行内复合布局（条件操作数 .wfp-cond-operand）：picker 含「从历史运行选择字段」按钮，
+   内容组比纯 input 高——flex align-items:center 时左列 select 与右列 input
+   错位。条件行内将按钮绝对定位到 input 下方贴边，不占布局流，
    两分支（lit/var）输入框从此共线 */
-.wfc-cond-operand .wfc-variable-picker {
+.wfp-cond-operand .wfc-variable-picker {
   position: relative;
 }
-.wfc-cond-operand .wfc-variable-picker .wfc-trace-open {
+.wfp-cond-operand .wfc-variable-picker .wfc-trace-open {
   position: absolute;
   right: 0;
   top: calc(100% + 2px);

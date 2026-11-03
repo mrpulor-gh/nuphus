@@ -439,6 +439,8 @@ export function newStep(kind: string, existing: Set<string>): WorkflowStep {
       return { ...base, do: { wait: '', auto: [] } }
     case 'chat':
       return { ...base, do: { chat: '', with: {} } }
+    case 'model':
+      return { ...base, do: { model: '', with: { kind: 'text' } } }
     case 'script':
       return { ...base, do: { script: { runtime: 'python', code: '' } } }
     case 'assert':

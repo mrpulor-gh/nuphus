@@ -32,6 +32,22 @@ describe('control-flow-aware variable projection', () => {
     )
     expect(layer.nodes.some(n => n.id === 'branch::out::shared')).toBe(false)
   })
+  it('does not mark mutually exclusive branch producers as shadowing each other', () => {
+    const result = projectWorkflow({
+      steps: [branch([output('left', 'shared')], [output('right', 'shared')])],
+    })
+    const layer = result.layers.get('branch')!
+    // then/else are mutually exclusive: neither capture shadows the other, so the
+    // warning badge must not appear on either node.
+    expect(layer.nodes.find(n => n.id === 'left')?.shadowedBy).toBeUndefined()
+    expect(layer.nodes.find(n => n.id === 'right')?.shadowedBy).toBeUndefined()
+  })
+  it('marks a same-path re-capture as shadowing the earlier producer', () => {
+    const result = projectWorkflow({ steps: [output('first', 'shared'), output('second', 'shared')] })
+    const layer = result.layers.get('root')!
+    expect(layer.nodes.find(n => n.id === 'first')?.shadowedBy).toBe('second')
+    expect(layer.nodes.find(n => n.id === 'second')?.shadowedBy).toBeUndefined()
+  })
   it('retains both branch producers and marks conditional output rather than inventing one last source', () => {
     const steps = [
       branch([output('left', 'shared')], [output('right', 'shared'), output('optional')]),

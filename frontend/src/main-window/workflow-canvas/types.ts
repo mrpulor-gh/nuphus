@@ -43,6 +43,7 @@ export type StepKind =
   | 'call'
   | 'wait'
   | 'chat'
+  | 'model'
   | 'script'
   | 'assert'
   | 'mcp'
@@ -140,6 +141,12 @@ export interface ProjectionIndex {
   containerIds: Set<string>
   /** 是否存在 Action::Custom 节点（V13：整树只读 + 迁移横幅） */
   hasCustomNodes: boolean
+  /**
+   * 是否存在缺 id 的旧格式步骤。后端 compiler 把空 id 判为 error，保存必被阻断；
+   * 而画布的占位 id（missing_id_N）无法被 locateStep 反查回真实步骤，任何编辑
+   * （选中/删除/复制/调试）都会静默失败。故与 hasCustomNodes 同样触发整树只读。
+   */
+  hasMissingIds: boolean
 }
 
 // ── IrEditOp（1.5）──

@@ -9,6 +9,9 @@
 //! - Loop：for_each 变量名非空、items_var 已被捕获（warning，运行时缺失将静默空循环）
 //! - Call：workflow_id 非空；目标存在性 + 循环调用链见 validate_calls（异步）
 //! - Script：code 非空、runtime 白名单
+//! - Model：model 非空；with.kind 模态归属（跨模态字段 warning）；具名规格值白名单
+//!   （ratio/count/duration，非法规格值编译期 error——生成调用计费，不能等 API 报错）；
+//!   with.model 存在性（同 Chat 规则）
 //! - {{var}} 前向引用检查（warning 级：变量可能由运行时 inputs/params.json 注入）
 //! - inputs 声明 ↔ 引用一致性：引用 {{inputs.x}} 未声明 → error；声明但未被引用 → warning
 //!
@@ -43,6 +46,12 @@ pub struct ValidationDiagnostic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
 }
+
+/// model 节点具名规格白名单（与 step_schema.json 的 DoModel.with 一一对应）。
+/// 写在这里而不是解析 schema：编译期校验是纯 Rust 静态检查，schema 是给
+/// LLM/前端的契约文档，两处必须同步改（tests.rs 有漂移守卫）。
+const MODEL_RATIOS: [&str; 7] = ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"];
+const MODEL_DURATIONS: [u32; 4] = [5, 6, 8, 10];
 
 #[derive(Default)]
 struct DiagnosticMessages {
@@ -746,6 +755,105 @@ impl Compiler {
                                 "Chat step '{}': 知识库文件不存在: {}",
                                 step.name, path
                             ));
+                        }
+                    }
+                }
+            }
+            Action::Model { model, with: opts } => {
+                ctx.site(step, "/do/model", "required", "missing");
+                if model.is_empty() {
+                    ctx.errors
+                        .push(format!("Model step '{}': model 不能为空", step.name));
+                }
+                // 具名规格值白名单（与 step_schema.json 的 DoModel.with 一致）：
+                // 非法比例/越界张数/非选项时长在编译期拒绝——生成调用有成本且计费，
+                // 不能等 API 报错。值合法但跨模态误用只 warning（不阻断）。
+                if let Some(ratio) = &opts.ratio {
+                    ctx.site(step, "/do/with/ratio", "enum", "invalid");
+                    if !MODEL_RATIOS.contains(&ratio.as_str()) {
+                        ctx.errors.push(format!(
+                            "Model step '{}': 画面比例 '{}' 不在可选值 {} 内",
+                            step.name,
+                            ratio,
+                            MODEL_RATIOS.join(" / ")
+                        ));
+                    }
+                }
+                if let Some(count) = opts.count {
+                    ctx.site(step, "/do/with/count", "range", "invalid");
+                    if !(1..=4).contains(&count) {
+                        ctx.errors.push(format!(
+                            "Model step '{}': 生成数量 {} 越界（1–4）",
+                            step.name, count
+                        ));
+                    }
+                }
+                if let Some(duration) = opts.duration {
+                    ctx.site(step, "/do/with/duration", "enum", "invalid");
+                    if !MODEL_DURATIONS.contains(&duration) {
+                        ctx.errors.push(format!(
+                            "Model step '{}': 视频时长 {} 秒不是可选项（{}）",
+                            step.name,
+                            duration,
+                            MODEL_DURATIONS
+                                .iter()
+                                .map(|d| d.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" / ")
+                        ));
+                    }
+                }
+                // kind 与 with 字段的模态归属：schema 的 enum / additionalProperties 已挡
+                // 非法值与未知键，这里只对「合法但跨模态误用」给 warning（不阻断）。
+                let misplaced: [(&str, bool, &str); 9] = [
+                    ("system", opts.system.is_some(), "text"),
+                    ("temperature", opts.temperature.is_some(), "text"),
+                    ("max_tokens", opts.max_tokens.is_some(), "text"),
+                    ("count", opts.count.is_some(), "image"),
+                    ("duration", opts.duration.is_some(), "video"),
+                    ("first_frame", opts.first_frame.is_some(), "video"),
+                    ("ratio", opts.ratio.is_some(), "image/video"),
+                    ("params", opts.params.is_some(), "image/video"),
+                    ("timeout_secs", opts.timeout_secs.is_some(), "video"),
+                ];
+                for (field, set, scope) in misplaced {
+                    if !set || scope.contains(opts.kind.as_str()) {
+                        continue;
+                    }
+                    ctx.site(step, &format!("/do/with/{field}"), "modality", "invalid");
+                    ctx.warnings.push(format!(
+                        "Model step '{}': {} 只对 {} 模态生效（当前 kind={}）",
+                        step.name,
+                        field,
+                        scope,
+                        opts.kind.as_str()
+                    ));
+                }
+                // 显式 provider+model 必须存在；旧数据无 provider 时仅允许唯一候选。
+                // 规则与 Chat 分支一致：registry 不可用（ctx.models=None）时降级跳过。
+                ctx.site(step, "/do/with/model", "model", "structure");
+                if let (Some(model_id), Some(registry)) = (&opts.model, ctx.models) {
+                    if let Some(provider) = &opts.provider {
+                        if registry
+                            .find_model_for_provider(provider, model_id)
+                            .is_none()
+                        {
+                            ctx.errors.push(format!(
+                                "Model step '{}': 模型 '{}' 不存在于 provider '{}'",
+                                step.name, model_id, provider
+                            ));
+                        }
+                    } else {
+                        match registry.find_model_candidates(model_id).len() {
+                            0 => ctx.warnings.push(format!(
+                                "Model step '{}': 模型 '{}' 不在 registry 中，执行时无法精确路由",
+                                step.name, model_id
+                            )),
+                            1 => {}
+                            count => ctx.errors.push(format!(
+                                "Model step '{}': 模型 '{}' 在 registry 中有 {} 个 provider 候选，必须指定 provider",
+                                step.name, model_id, count
+                            )),
                         }
                     }
                 }

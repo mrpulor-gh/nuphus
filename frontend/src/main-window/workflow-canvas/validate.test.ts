@@ -104,3 +104,106 @@ describe('input-aware canvas validation', () => {
     ])
   })
 })
+
+/**
+ * V10 遮蔽必须按**执行路径**判定，不能按全树 DFS 序。
+ * `if` 的 then/else 互斥执行，同名 capture 各只在一条路径生效——旧实现把兄弟分支
+ * 判为互相遮蔽，给合法的分支局部变量报了 warning。
+ */
+describe('V10 shadowing follows execution paths', () => {
+  const capture = (id: string, name: string): WorkflowStep => ({
+    id,
+    name,
+    do: { tool: 'test', with: {} },
+    capture: name,
+  })
+
+  it('reports genuine same-path shadowing', () => {
+    const steps = [capture('p1', 'x'), capture('p2', 'x')]
+    expect(validateIR(steps)).toContainEqual(
+      expect.objectContaining({ rule: 'V10', stepId: 'p2' }),
+    )
+  })
+
+  it('reports shadowing across a seq container boundary', () => {
+    const steps = [capture('outer', 'x'), { id: 'g', name: 'g', do: { seq: [capture('inner', 'x')] } }]
+    expect(validateIR(steps)).toContainEqual(
+      expect.objectContaining({ rule: 'V10', stepId: 'inner' }),
+    )
+  })
+
+  it('does not report mutually exclusive if branches', () => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'if',
+        name: 'if',
+        do: {
+          if: {
+            condition: { always: true },
+            then: [capture('then_producer', 'x')],
+            else: [capture('else_producer', 'x')],
+          },
+        },
+      },
+    ]
+    expect(validateIR(steps)).toEqual([])
+  })
+
+  it('does not report nested containers in separate branches', () => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'if',
+        name: 'if',
+        do: {
+          if: {
+            condition: { always: true },
+            then: [{ id: 'tg', name: 'tg', do: { seq: [capture('tp', 'x')] } }],
+            else: [{ id: 'eg', name: 'eg', do: { seq: [capture('ep', 'x')] } }],
+          },
+        },
+      },
+    ]
+    expect(validateIR(steps)).toEqual([])
+  })
+
+  it('still reports shadowing inside a single branch', () => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'if',
+        name: 'if',
+        do: {
+          if: {
+            condition: { always: true },
+            then: [capture('first', 'x'), capture('second', 'x')],
+          },
+        },
+      },
+    ]
+    expect(validateIR(steps)).toContainEqual(
+      expect.objectContaining({ rule: 'V10', stepId: 'second' }),
+    )
+  })
+
+  it('does not report a loop body producer against its own iteration', () => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'loop',
+        name: 'loop',
+        do: { loop: { repeat: 2, do: [capture('body', 'acc')] } },
+      },
+    ]
+    // Re-capturing the same name every iteration is the loop's job, not shadowing.
+    expect(validateIR(steps)).toEqual([])
+  })
+
+  it('reports a post-loop capture that shadows a pre-loop one', () => {
+    const steps: WorkflowStep[] = [
+      capture('before_loop', 'x'),
+      { id: 'loop', name: 'loop', do: { loop: { repeat: 2, do: [capture('body', 'other')] } } },
+      capture('after_loop', 'x'),
+    ]
+    expect(validateIR(steps)).toContainEqual(
+      expect.objectContaining({ rule: 'V10', stepId: 'after_loop' }),
+    )
+  })
+})

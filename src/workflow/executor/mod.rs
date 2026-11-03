@@ -19,8 +19,8 @@ use crate::workflow::compiler::Compiler;
 use crate::workflow::events::{EventBus, WorkflowEvent};
 use crate::workflow::store::WorkflowStore;
 use crate::workflow::types::{
-    Action, AssertDef, ChatOpts, Condition, ConditionOp, IfDef, LoopDef, McpDef, OnError,
-    RunRecord, RunStatus, ScriptDef, Step, StepRunRecord, StepRunStatus,
+    Action, AssertDef, ChatOpts, Condition, ConditionOp, IfDef, LoopDef, McpDef, ModelKind,
+    ModelOpts, OnError, RunRecord, RunStatus, ScriptDef, Step, StepRunRecord, StepRunStatus,
 };
 use crate::Result;
 use std::collections::HashMap;
@@ -277,6 +277,7 @@ mod step_chat_agent;
 mod step_if;
 mod step_loop;
 mod step_mcp;
+mod step_model;
 mod step_script;
 mod step_seq;
 mod step_tool;

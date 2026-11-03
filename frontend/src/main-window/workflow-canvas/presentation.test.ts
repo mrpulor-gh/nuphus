@@ -19,8 +19,8 @@ const english: CanvasTranslate = (key, ...args) =>
 
 describe('canvas presentation translations', () => {
   it('covers every node kind in both languages and distinguishes delay from confirmation', () => {
-    expect(Object.keys(NODE_KIND_KEYS)).toHaveLength(14)
-    expect(ADDABLE_KINDS).toHaveLength(13)
+    expect(Object.keys(NODE_KIND_KEYS)).toHaveLength(15)
+    expect(ADDABLE_KINDS).toHaveLength(14)
     expect(ADDABLE_KINDS).not.toContain('custom')
     for (const [kind, key] of Object.entries(NODE_KIND_KEYS)) {
       expect(zh[key]).toBeTruthy()
@@ -31,6 +31,8 @@ describe('canvas presentation translations', () => {
     }
     expect(nodeKindLabel('sleep', english)).toBe('Delay')
     expect(nodeKindLabel('wait', english)).toBe('Confirm')
+    expect(nodeKindLabel('model', english)).toBe('Model')
+    expect(nodeKindLabel('model', defaultCanvasTranslate)).toBe('模型')
     expect(nodeKindLabel('future_kind', english)).toBe('Legacy node')
   })
 

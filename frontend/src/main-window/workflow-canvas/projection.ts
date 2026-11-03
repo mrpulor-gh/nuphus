@@ -33,6 +33,7 @@ const KNOWN_ACTION_KEYS = [
   'call',
   'wait',
   'chat',
+  'model',
   'script',
   'assert',
   'mcp',
@@ -193,43 +194,37 @@ interface TreeProfile {
   indexOf: Map<string, number>
   /** stepId → 父容器 id（root 直接子步骤为 null） */
   parentOf: Map<string, string | null>
-  /** var → 生产者 stepId 列表（遍历序） */
-  producers: Map<string, string[]>
 }
 
 function buildTreeProfile(rootSteps: WorkflowStep[]): TreeProfile {
   const order: StepVarProfile[] = []
   const indexOf = new Map<string, number>()
   const parentOf = new Map<string, string | null>()
-  const producers = new Map<string, string[]>()
   walkSteps(rootSteps, (step, parentId) => {
     const p = profileStep(step)
     if (
       !step.do ||
       typeof step.do !== 'object' ||
-      !['tool', 'script', 'chat', 'mcp'].some(key => key in step.do)
+      !['tool', 'script', 'chat', 'model', 'mcp'].some(key => key in step.do)
     )
       p.produces = undefined
     indexOf.set(step.id, order.length)
     order.push(p)
     parentOf.set(step.id, parentId)
-    if (p.produces) {
-      const list = producers.get(p.produces) ?? []
-      list.push(step.id)
-      producers.set(p.produces, list)
-    }
   })
-  return { order, indexOf, parentOf, producers }
+  return { order, indexOf, parentOf }
 }
 
-/** 遮蔽标记（1.4b/V10）：同一变量被多次 capture 时，除最后生产者外全部标记 */
-function shadowedMap(tree: TreeProfile): Map<string, string> {
+/**
+ * 遮蔽标记（1.4b/V10）：同一执行路径上被后序同名 capture 覆盖的生产者。
+ *
+ * 直接复用 variableCatalog 的控制流 join 结果，不再按全树 DFS 序取「最后一个」：
+ * `if` 的 then/else 是互斥分支，同名 capture 各只在一条路径上生效，旧规则会把它们
+ * 误判为互相遮蔽，给合法的分支局部变量打上警告徽标。
+ */
+function shadowedMap(index: { shadowed: Map<string, string> }): Map<string, string> {
   const map = new Map<string, string>()
-  for (const list of tree.producers.values()) {
-    if (list.length < 2) continue
-    const last = list[list.length - 1]
-    for (let i = 0; i < list.length - 1; i++) map.set(list[i], last)
-  }
+  for (const [shadowing, shadowedBy] of index.shadowed) map.set(shadowedBy, shadowing)
   return map
 }
 
@@ -304,18 +299,22 @@ export function projectWorkflow(
     }
   }
   const declaredInputs = new Set((ir.inputs ?? []).map(input => input.name))
-  const shadowed = shadowedMap(tree)
+  const shadowed = shadowedMap(variableIndex)
 
   const layers = new Map<string, CanvasLayer>()
   const nodeById = new Map<string, CanvasNode>()
   const layerOf = new Map<string, string>()
   const containerIds = new Set<string>()
   let hasCustomNodes = false
+  let hasMissingIds = false
 
   let fallbackSeq = 0
   const makeNode = (step: WorkflowStep, lane: LaneId): CanvasNode => {
     const kind = stepKind(step)
     if (kind === 'custom') hasCustomNodes = true
+    // 旧格式步骤可能没有 id（V13）：既非 custom 也不会有合法 id 可寻址，
+    // 与 hasCustomNodes 一并触发整树只读（见 ProjectionIndex.hasMissingIds）。
+    if (!step.id) hasMissingIds = true
     const container = containerLanes(step)
     const node: CanvasNode = {
       // 旧格式步骤可能无 id（V13 只读场景）：给稳定占位 id 保证渲染键唯一
@@ -626,6 +625,7 @@ export function projectWorkflow(
     nodeById,
     containerIds,
     hasCustomNodes,
+    hasMissingIds,
   }
   return { layers, index }
 }

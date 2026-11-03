@@ -1,6 +1,7 @@
 import type { WorkflowStep } from '../../core/types'
 import { containerLanes, containerSummary, stepKind } from './projection'
 import type { CanvasTranslate } from './presentation'
+import { editorText } from './editorText'
 
 /** Only explicit action fields are used. Unknown tool arguments may contain secrets. */
 export function actionSummary(step: WorkflowStep, t: CanvasTranslate): string {
@@ -23,6 +24,15 @@ export function actionSummary(step: WorkflowStep, t: CanvasTranslate): string {
     case 'break':
     case 'continue':
       return t(`workflowEditor.summary.${kind}`)
+    case 'model': {
+      const with_ =
+        action.with && typeof action.with === 'object'
+          ? (action.with as Record<string, unknown>)
+          : {}
+      const modality =
+        with_.kind === 'image' ? '图片' : with_.kind === 'video' ? '视频' : '文本'
+      return t('workflowEditor.summary.model', editorText(modality, t))
+    }
     case 'tool': {
       const params =
         action.with && typeof action.with === 'object'

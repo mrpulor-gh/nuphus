@@ -16,6 +16,7 @@ export const NODE_KIND_KEYS = {
   call: 'workflowCanvas.kind.call',
   wait: 'workflowCanvas.kind.wait',
   chat: 'workflowCanvas.kind.chat',
+  model: 'workflowCanvas.kind.model',
   script: 'workflowCanvas.kind.script',
   assert: 'workflowCanvas.kind.assert',
   mcp: 'workflowCanvas.kind.mcp',

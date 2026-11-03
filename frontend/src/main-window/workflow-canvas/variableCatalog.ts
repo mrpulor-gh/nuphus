@@ -25,7 +25,7 @@ export interface VariableCatalog {
   captures: VariableCandidate[]
 }
 
-const CAPTURE_ACTIONS = ['tool', 'script', 'chat', 'mcp']
+const CAPTURE_ACTIONS = ['tool', 'script', 'chat', 'model', 'mcp']
 export const isVariableName = (name: string): boolean => /^[A-Za-z_][A-Za-z0-9_.]*$/.test(name)
 
 function captureOf(step: WorkflowStep): VariableCandidate | undefined {
@@ -83,6 +83,8 @@ export function buildVariableCatalogIndex(
   loopConditionScope: Map<string, ReadonlyMap<string, VariableCandidate>>
   captures: VariableCandidate[]
   inputs: VariableCandidate[]
+  /** stepId → the same-path producer it shadows (mutually exclusive branches excluded) */
+  shadowed: Map<string, string>
 } {
   const captures = new Map<string, VariableCandidate>()
   walkSteps(steps, step => {
@@ -113,6 +115,14 @@ export function buildVariableCatalogIndex(
   )
   const beforeStep = new Map<string, ReadonlyMap<string, VariableCandidate>>()
   const loopConditionScope = new Map<string, ReadonlyMap<string, VariableCandidate>>()
+  /**
+   * stepId → 被本步遮蔽的生产者 stepId（同一执行路径上的前一个同名 capture）。
+   *
+   * 判定依据是控制流 join 后的 scope，而非全树 DFS 序：`if` 的 then/else 是互斥
+   * 分支，各自从同一 scope 出发，同名 capture 只会在其中一条路径上生效——那不是
+   * 遮蔽（旧实现把它算成遮蔽，给合法的分支局部变量报 V10 警告）。
+   */
+  const shadowed = new Map<string, string>()
   function visit(list: WorkflowStep[], incoming: Scope): Scope {
     let scope = new Map(incoming)
     let conditionalTail = false
@@ -123,6 +133,12 @@ export function buildVariableCatalogIndex(
         unknown
       >
       const before = new Map(scope)
+      // 遮蔽判定只看进入本步时的 scope：同路径前序 capture 才会被这里覆盖。
+      // if 的两个分支在 joinScopes 之后才回到同一 scope，互斥分支不会互相遮蔽。
+      if (step.capture) {
+        const prior = before.get(step.capture)
+        if (prior?.stepId && prior.stepId !== step.id) shadowed.set(step.id, prior.stepId)
+      }
       if (Array.isArray(action.seq)) scope = visit(action.seq as WorkflowStep[], scope)
       const branch = action.if as IfDef | undefined
       if (branch) scope = joinScopes([visit(branch.then, scope), visit(branch.else ?? [], scope)])
@@ -176,6 +192,7 @@ export function buildVariableCatalogIndex(
     loopConditionScope,
     captures: [...captures.values()],
     inputs: [...initial.values()],
+    shadowed,
   }
 }
 

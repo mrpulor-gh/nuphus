@@ -102,6 +102,7 @@
         { "$ref": "#/$defs/DoCall" },
         { "$ref": "#/$defs/DoWait" },
         { "$ref": "#/$defs/DoChat" },
+        { "$ref": "#/$defs/DoModel" },
         { "$ref": "#/$defs/DoScript" },
         { "$ref": "#/$defs/DoAssert" },
         { "$ref": "#/$defs/DoMcp" },
@@ -239,6 +240,34 @@
       "additionalProperties": false
     },
 
+    "DoModel": {
+      "description": "模型节点：一次模型调用（文案 / 图片 / 视频）。capture 得到主产物：text=正文，image=第一张图片路径，video=视频路径。",
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1, "description": "生成任务描述；text=提示词，image/video=画面提示词。支持 {{变量}}" },
+        "with": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["text", "image", "video"], "default": "text", "description": "生成模态" },
+            "model": { "type": "string", "description": "模型 ID（当次覆盖；不填用绑定能力或运行时默认）" },
+            "provider": { "type": "string", "description": "模型所属 provider（与 model 成对精确路由）" },
+            "system": { "type": "string", "description": "text 专用：系统提示词覆盖" },
+            "temperature": { "type": "number", "description": "text 专用" },
+            "max_tokens": { "type": "integer", "minimum": 1, "description": "text 专用" },
+            "ratio": { "type": "string", "enum": ["1:1","4:3","3:4","3:2","2:3","16:9","9:16"], "description": "画面比例；image/video 适用" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 4, "description": "image 一次生成张数" },
+            "duration": { "type": "integer", "enum": [5,6,8,10], "description": "video 时长（秒）" },
+            "first_frame": { "type": "string", "description": "video 首帧图路径，支持 {{变量}}；空=文生视频" },
+            "params": { "type": "object", "description": "image/video 专用，提供商特定附加参数；键名与取值由所选提供商的生成协议决定，语义字段（比例/张数/时长/首帧）请用上面的具名字段；显式键优先于具名字段" },
+            "timeout_secs": { "type": "integer", "minimum": 30, "maximum": 600, "description": "video 轮询超时，默认 300" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
     "DoScript": {
       "description": "执行内联脚本",
       "type": "object",
@@ -330,7 +359,7 @@
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
-      "propertyNames": { "not": { "enum": ["tool","seq","loop","if","call","wait","chat","script","assert","mcp","sleep","break","continue"] } },
+      "propertyNames": { "not": { "enum": ["tool","seq","loop","if","call","wait","chat","model","script","assert","mcp","sleep","break","continue"] } },
       "additionalProperties": { "type": "object" }
     }
   }
