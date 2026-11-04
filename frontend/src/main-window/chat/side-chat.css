@@ -144,22 +144,21 @@
 }
 
 /* ── 消息区左下角：流式执行指示（Running..）──
-   浮在滚动视口上的「活着」信号：与右下角回底钮对称（同 absolute 定位、
-   同 z-index 层级）。**不放 .scp-live-bar**——那条是实色背景（--panel-bg）
-   会把 pill 压成贴条异物，故回到内容区浮层。**只在 liveActive 时渲染**
-   （JSX 门控）：连接/思考阶段「思考中…」三点是行内末行元素，pill 的
-   bottom:12px 会盖住它；liveActive 为真时 live bar 必然在底，故 pill
-   常驻 is-raised（bottom:24px）上抬避让。
+   浮在滚动视口上的「活着」信号：absolute + **z-index:10 盖在 live bar
+   （z-index:6）之上**、bottom:10px 略离视口底——pill 自带实色底+投影，
+   压在条的上沿读作浮层芯片，而非被条的背景吃掉的行内元素（放 .scp-live-bar
+   里的旧案教训）。**只在 liveActive 时渲染**（JSX 门控）：连接/思考阶段
+   「思考中…」三点是行内末行元素，叠上去会盖住它。
    左缘 22px：比贴边（12px）再让 10px，避开窗体圆角/边缘。
    光影只做低幅高频：呼吸描边（accent-dim→glow）+ 一道高光扫过 + 圆点脉冲
-   （复用 scp-dot-pulse）；实色底 + 投影，内容从底下滚过时不透文本。
+   （复用 scp-dot-pulse）。
    pointer-events:none——纯展示，不挡消息点击与滚动。
    prefers-reduced-motion 下动画全关、静态 pill 仍传达在途态。 */
 .scp-running {
   position: absolute;
   left: 22px;
-  bottom: 12px;
-  z-index: 5;
+  bottom: 10px;
+  z-index: 10;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -176,10 +175,6 @@
   pointer-events: none;
   box-shadow: var(--shadow-surface);
   animation: scp-running-breathe 1.6s var(--ease-out) infinite;
-}
-/* live bar（sticky bottom、高 20px）常在底，pill 常驻上抬压它的左半空区 */
-.scp-running.is-raised {
-  bottom: 24px;
 }
 .scp-running-dot {
   width: 5px;

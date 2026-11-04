@@ -2298,11 +2298,12 @@ function SideChatPanelImpl({
               左缘 22px：比贴边再让 10px，避开窗体圆角/边缘。
               **只在 liveActive 时出现**（流式/工具活动期，即最初的「流式执行底部」
               需求）：连接/思考阶段（sending && !liveActive）由「思考中…」三点动画
-              传达存活——那时 pill 会盖住那行，故不渲染。liveActive 为真时 live bar
-              必然可见，故常驻 is-raised 上抬、不被条压住。
+              传达存活——那时 pill 会盖住那行，故不渲染。
+              z-index:10 + bottom:10px（CSS）：盖在 live bar（z-index:6）之上、
+              略离视口底、压条的上沿——实色底+投影读作浮层芯片。
               sending 是后端 slot.running 的前端镜像——它真才显示，绝不伪造活跃。 */}
           {liveActive && (
-            <span className="scp-running is-raised" role="status">
+            <span className="scp-running" role="status">
               <span className="scp-running-dot" aria-hidden="true" />
               <span className="scp-running-text">Running..</span>
               <span className="scp-running-sweep" aria-hidden="true" />
