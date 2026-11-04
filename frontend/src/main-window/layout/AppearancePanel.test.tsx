@@ -392,6 +392,124 @@ describe('AppearancePanel 外观浮窗', () => {
     expect(storedThemes()[0].name).toBe('夜航')
   })
 
+  it('「＋ 新建」不继承当前生效的背景图（新主题皮肤留空，背景被清空）', async () => {
+    // 前提：已有一个带背景图的自定义主题处于激活态
+    localStorage.setItem('nuphus_skin_bg', 'C:/img/global.png')
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '海蓝', base: 'dark', overrides: {}, skin: 'C:/img/theme.png' },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+    skinBroadcasts = []
+
+    await act(async () => {
+      fireEvent.click(newCard(view))
+    })
+
+    // 新主题的皮肤为空 —— 不是复制上一份主题的图
+    const stored = storedThemes()
+    expect(stored).toHaveLength(2)
+    const created = stored.find(t => t.name === '未命名主题')
+    expect(created).toBeDefined()
+    expect(created?.skin ?? '').toBe('')
+
+    // 全局背景同步清空（saveCustom 不写皮肤，必须由新建链路显式广播清除）
+    expect(skinBroadcasts).toEqual([null])
+  })
+
+  it('新建主题：消息气泡默认 60%（写进该主题自己的 overrides，不动系统基底）', async () => {
+    stubThemeComputedStyle()
+    const view = await renderPanel()
+
+    fireEvent.click(newCard(view))
+
+    const stored = storedThemes()
+    expect(stored).toHaveLength(1)
+    const ov = stored[0].overrides
+    // 两个气泡键一起写（同一语义域，劈叉会让两侧透明度不一致）
+    expect(ov['--msg-user-bg']).toMatch(/^rgba\(.+, 0\.6\)$/)
+    expect(ov['--msg-assistant-bg']).toMatch(/^rgba\(.+, 0\.6\)$/)
+    // 只有气泡两个键 —— 不牵连输入框 / 面板 / 弹窗
+    expect(Object.keys(ov).sort()).toEqual(['--msg-assistant-bg', '--msg-user-bg'])
+  })
+
+  it('浮窗收起再展开：改名输入框重新获得焦点并全选（display:none 下 focus 会被浏览器拒绝）', async () => {
+    const onClose = vi.fn()
+    let view!: RenderResult
+    await act(async () => {
+      view = render(
+        <ThemeProvider>
+          <AppearancePanel open onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+
+    fireEvent.click(newCard(view))
+    const input = () => view.container.querySelector('.apnp-theme-rename') as HTMLInputElement
+    expect(input()).toBeInTheDocument()
+    expect(document.activeElement).toBe(input())
+
+    // 收起（浮窗隐藏）。注：jsdom 不加载 CSS，`hidden` 不会变成 display:none，
+    // 浏览器「焦点被 display:none 剥夺」的行为在 jsdom 里不存在，故这里只断言
+    // 输入框仍在树上（保活语义），不断言焦点已离开。
+    await act(async () => {
+      view.rerender(
+        <ThemeProvider>
+          <AppearancePanel open={false} onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+    expect(input()).toBeInTheDocument()
+
+    // 重新展开 → 必须把焦点还回改名框并全选
+    await act(async () => {
+      view.rerender(
+        <ThemeProvider>
+          <AppearancePanel open onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+    expect(document.activeElement).toBe(input())
+    expect(input().selectionStart).toBe(0)
+    expect(input().selectionEnd).toBe(input().value.length)
+  })
+
+  it('浮窗收起期间进入改名态：展开后改名框拿到焦点（焦点由展开态驱动，非仅挂载时一次）', async () => {
+    const onClose = vi.fn()
+    let view!: RenderResult
+    await act(async () => {
+      view = render(
+        <ThemeProvider>
+          <AppearancePanel open onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+
+    // 先进入改名态（新建），再收起，最后展开
+    fireEvent.click(newCard(view))
+    await act(async () => {
+      view.rerender(
+        <ThemeProvider>
+          <AppearancePanel open={false} onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+    await act(async () => {
+      view.rerender(
+        <ThemeProvider>
+          <AppearancePanel open onClose={onClose} />
+        </ThemeProvider>,
+      )
+    })
+
+    const input = view.container.querySelector('.apnp-theme-rename') as HTMLInputElement
+    expect(input).toBeInTheDocument()
+    expect(document.activeElement).toBe(input)
+  })
+
   it('保存（未编辑激活主题）= 新建链路：新卡进入行内改名态', async () => {
     const view = await renderPanel()
 
