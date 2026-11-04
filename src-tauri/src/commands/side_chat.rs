@@ -251,8 +251,7 @@ fn system_prompt(
         // 反查目录取运行时真实值（NUPHUS_DATA_DIR 可覆盖），不写死路径
         archive = nuphus::utils::nuphus_data_dir()
             .join("side-chat")
-            .display()
-            .to_string(),
+            .display(),
         // 归档上限引用常量本身：写死数字会随 HISTORY_CAP 调整而过期
         history_cap = HISTORY_CAP,
         l0 = nuphus::agent::prompt::l0_kernel(),
@@ -1243,6 +1242,7 @@ pub async fn side_chat_dispatch(app: tauri::AppHandle, brief: String) -> Result<
 ///   上下文。**非必要不追加**——这是全系统唯一「伙伴执行中仍接收新任务」
 ///   的场景，用户轮没有这个口子；
 /// - **空闲** → 完整派发（`dispatch_fresh`）。
+///
 /// 派发入池计划：选壳结果的四态分流（规则见 `side_chat_dispatch_impl` 文档）。
 enum DispatchPlan {
     /// 伙伴空闲 → 走 `side_chat_send_impl` 完整派发链路。
@@ -2633,9 +2633,11 @@ mod tests {
     /// side-chat 子目录自动创建、文件内容一致、文件名带时间戳与 key 前 8 位。
     #[tokio::test]
     async fn side_chat_save_writes_md_under_isolated_data_dir() {
-        // env 是进程级共享：加锁串行化本测试的写与恢复，避免波及其他测试
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // env 是进程级共享：加锁串行化本测试的写与恢复，避免波及其他测试。
+        // 用 tokio::sync::Mutex 而非 std：本测试是 async，std guard 跨 await 持锁
+        // 会被 clippy::await_holding_lock 拦（tag CI 的 -D warnings 直接红）。
+        static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _guard = ENV_LOCK.lock().await;
 
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

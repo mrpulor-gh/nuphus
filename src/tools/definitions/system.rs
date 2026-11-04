@@ -542,7 +542,8 @@ fn command_invokes_cargo(command: &str) -> bool {
         .flat_map(|seg| seg.split("&&"))
         .flat_map(|seg| seg.split("||"))
         .filter_map(|seg| {
-            let first = seg.trim().split_whitespace().next()?;
+            // split_whitespace 自带去空白，先 trim() 是冗余（clippy::trim_split_whitespace）
+            let first = seg.split_whitespace().next()?;
             let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
             Some(base == "cargo" || base == "cargo.exe")
         })

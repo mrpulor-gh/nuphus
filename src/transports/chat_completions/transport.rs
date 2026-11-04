@@ -2906,7 +2906,6 @@ mod wire_shape_tests {
     /// 谁把 stepfun 的 cache_hit_field 改回 ""，这个测试直接红。
     #[test]
     fn stepfun_cached_tokens_is_parsed_as_cache_hit() {
-        use crate::config::provider::Provider as _;
         let field = crate::config::registry::ProviderRegistry::builtin()
             .get("stepfun")
             .expect("stepfun 应在内置注册表")

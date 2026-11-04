@@ -245,7 +245,9 @@ mod tests {
     use base64::Engine;
 
     /// 环境变量是进程级状态，测试必须串行，否则互相踩 `NUPHUS_DROP_DIR`。
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // 用 tokio::sync::Mutex 而非 std：这些测试都是 async，std guard 跨 await 持锁
+    // 会被 clippy::await_holding_lock 拦（tag CI 的 -D warnings 直接红）。
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn use_temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("nuphus_drop_{}_{}", tag, std::process::id()));
@@ -297,7 +299,7 @@ mod tests {
     /// 分块往返：两块拼起来与原始字节一致，路径真实可读。
     #[tokio::test]
     async fn begin_plus_append_round_trip() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("roundtrip");
 
         let started = begin_dropped_file("note.txt".into())
@@ -325,7 +327,7 @@ mod tests {
     /// 空文件：只 begin 不 append 也应得到可读的 0 字节文件。
     #[tokio::test]
     async fn begin_only_yields_empty_file() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("empty");
 
         let started = begin_dropped_file("empty.txt".into())
@@ -340,7 +342,7 @@ mod tests {
     /// 乱序 offset 必须拒绝，避免覆盖或错位拼接。
     #[tokio::test]
     async fn rejects_misordered_offset() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("offset");
 
         let started = begin_dropped_file("a.bin".into()).await.unwrap();
@@ -360,7 +362,7 @@ mod tests {
     /// 非法文件名（含路径）必须拒绝，防止越权写盘。
     #[tokio::test]
     async fn rejects_path_like_name() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("traversal");
 
         let err = append_dropped_file(
@@ -378,7 +380,7 @@ mod tests {
     /// 非法 base64 必须报错而非写出半个文件。
     #[tokio::test]
     async fn rejects_invalid_base64() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("badb64");
 
         let started = begin_dropped_file("x.txt".into()).await.unwrap();
@@ -394,7 +396,7 @@ mod tests {
     /// abort 删除半截文件，且对不存在的文件幂等。
     #[tokio::test]
     async fn abort_removes_partial_file() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("abort");
 
         let started = begin_dropped_file("partial.txt".into()).await.unwrap();
@@ -411,7 +413,7 @@ mod tests {
     /// 同名文件不覆盖：第二次 begin 得到不同路径。
     #[tokio::test]
     async fn begin_does_not_overwrite() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         let dir = use_temp_dir("unique");
 
         let first = begin_dropped_file("same.txt".into()).await.unwrap();
