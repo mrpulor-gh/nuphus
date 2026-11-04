@@ -3,7 +3,7 @@
 //! 按工具类别拆分:
 //! - file   — file_list_dir / file_stat / file_append (目录浏览衔接链)
 //! - web    — web::search / web::extract (HTTP 搜索与抓取)
-//! - generation — image_generate / video_generate (MiniMax 生成 API 通用调用器)
+//! - generation — image_generate / video_generate (多提供商生成协议适配层)
 
 pub mod diff;
 pub mod experience;
@@ -12,6 +12,7 @@ pub mod file;
 pub mod generation;
 pub mod http;
 pub mod planner;
+pub mod side_chat_dispatch;
 pub mod tenet;
 pub mod ui_maps;
 pub mod user_input;

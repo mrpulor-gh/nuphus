@@ -21,6 +21,28 @@ const ACQUIRE_WARN_MS: u64 = 200;
 /// 取连接的总等待上限（超过即返错，不无限等）
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// `memory_entries.goal_type` 的 CHECK 白名单——建表 SQL 的唯一真相源。
+///
+/// 前六项 = `GoalType::all()`（任务类型）；其余是内核写入的非任务值：
+/// `general`（历史兼容）、`session_refine`、`memory_snapshot`、
+/// `workflow_memory_snapshot`、`workflow_turn`。
+///
+/// 新增 `GoalType` 时只改这里；测试
+/// `goal_type_whitelist_covers_every_goal_type` 会在漏改时失败。
+const MEMORY_GOAL_TYPE_WHITELIST: &[&str] = &[
+    "project_analysis",
+    "code_generation",
+    "debug_diagnose",
+    "file_operation",
+    "research_query",
+    "scripting_exec",
+    "general",
+    "session_refine",
+    "memory_snapshot",
+    "workflow_memory_snapshot",
+    "workflow_turn",
+];
+
 /// 全局数据库路径（一次初始化）
 static DB_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -231,7 +253,14 @@ fn ensure_column(
 /// 初始化数据库表结构（纯声明式建表，无任何历史数据迁移/兼容逻辑）
 fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
     // 记忆条目表 v4：一维 kind 分类（替代 source 三维混乱）+ goal_type 白名单约束
-    conn.execute_batch("
+    // 白名单值来自 MEMORY_GOAL_TYPE_WHITELIST（单一真相源，新增分类只改常量）。
+    let goal_type_check = MEMORY_GOAL_TYPE_WHITELIST
+        .iter()
+        .map(|id| format!("'{id}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    conn.execute_batch(&format!(
+        "
         CREATE TABLE IF NOT EXISTS memory_entries (
             id              TEXT PRIMARY KEY,
             session_id      TEXT NOT NULL,
@@ -243,7 +272,7 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
             kind            TEXT NOT NULL CHECK(kind IN ('conversation','task_trace','distill','pattern','snapshot')),
             task_chain_id   TEXT,
             chain_step      INTEGER,
-            goal_type       TEXT CHECK(goal_type IS NULL OR goal_type IN ('project_analysis','code_generation','debug_diagnose','file_operation','research_query','scripting_exec','general','session_refine','memory_snapshot','workflow_memory_snapshot','workflow_turn')),
+            goal_type       TEXT CHECK(goal_type IS NULL OR goal_type IN ({goal_type_check})),
             tags            TEXT DEFAULT '',
             intent          TEXT NOT NULL,
             summary         TEXT DEFAULT '',
@@ -260,7 +289,8 @@ fn init_tables(conn: &Connection) -> rusqlite::Result<()> {
             pattern         TEXT,
             custom_agent_id TEXT
         );
-    ")?;
+    "
+    ))?;
 
     // ── 幂等列迁移：custom_agent_id（Custom 记忆隔离，V1 新增）──
     // CREATE TABLE IF NOT EXISTS 不会给已存在的旧表加列，需显式 ALTER。
@@ -372,6 +402,39 @@ mod tests {
             |r| r.get(0),
         )
         .unwrap_or(false)
+    }
+
+    /// goal_type 白名单守卫：GoalType 新增/改名后漏改 CHECK 白名单时，写入会被
+    /// SQLite 层 CHECK 拒绝（静默丢条）。把「人记」变成「机查」。
+    #[test]
+    fn goal_type_whitelist_covers_every_goal_type() {
+        for gt in crate::agent::goal_types::GoalType::all() {
+            assert!(
+                MEMORY_GOAL_TYPE_WHITELIST.contains(&gt.id()),
+                "goal_type `{}` 不在 memory_entries 的 CHECK 白名单：写记忆会被 SQLite 拒绝",
+                gt.id()
+            );
+        }
+    }
+
+    /// 建表 SQL 必须真的由白名单常量生成（防止有人改回硬编码副本后两份漂移）。
+    #[test]
+    fn memory_entries_check_constraint_is_generated_from_whitelist() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_entries'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        for id in MEMORY_GOAL_TYPE_WHITELIST {
+            assert!(
+                sql.contains(&format!("'{id}'")),
+                "建表 SQL 缺白名单值 `{id}`——白名单常量未被使用"
+            );
+        }
     }
 
     /// 老库平滑升级：旧 session_meta（无 project_path 列）经 init_tables 幂等补列，

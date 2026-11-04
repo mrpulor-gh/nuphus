@@ -1,6 +1,6 @@
 //! GoalType — Task type metadata labels
 //!
-//! Used for tool safety filtering, warmup reminders, and memory entry classification.
+//! Used for warmup reminders, memory entry classification, and dispatch labels.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,14 +8,15 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::OnceLock;
 
-/// Default for GoalType is ScriptingExec (for #[serde(default)] backward compatibility)
+/// 默认类型 = FileOperation：与 task_dispatch 的兜底口径一致。
+/// 仅供 `#[serde(default)]` 在字段缺失时使用，不表达「任务就是文件操作」。
 impl Default for GoalType {
     fn default() -> Self {
-        GoalType::ScriptingExec
+        GoalType::FileOperation
     }
 }
 
-/// Goal type — metadata label used for tool safety filtering and warmup reminders
+/// Goal type — metadata label used for warmup reminders and dispatch labels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalType {
@@ -54,7 +55,7 @@ impl RelationConfig {
 /// Decomposed task items from understanding phase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskItem {
-    /// GoalType this task belongs to (labeled by understanding phase LLM). Default general for backward compatibility
+    /// GoalType this task belongs to (labeled by understanding phase LLM). 缺字段时回落 Default（FileOperation）
     #[serde(default)]
     pub goal_type: GoalType,
     /// Task description (high-level execution goal, LLM decides tools and steps)
@@ -132,48 +133,10 @@ impl GoalType {
         }
     }
 
-    pub fn description(self) -> &'static str {
-        match self {
-            GoalType::ProjectAnalysis => "项目架构分析：理解项目结构、模块关系、技术栈、代码规模。选这个当主要工作是'理解现有系统'。",
-            GoalType::CodeGeneration => "代码工程实现：编写/修改/重构源代码。选这个当主要工作是'产出或修改代码'。",
-            GoalType::DebugDiagnose => "问题排查修复：定位Bug根因并验证修复。选这个当输入是'有异常/有Bug'。",
-            GoalType::FileOperation => "文件系统管理：文件增删移改、目录整理。选这个当主要工作是'管理文件'而非分析或编码。",
-            GoalType::ResearchQuery => "外部信息检索：网络搜索、文档阅读、多源验证。选这个当需要从外部获取信息。",
-            GoalType::ScriptingExec => "脚本命令执行：批量处理、测试运行、系统检查。选这个当主要工作是通过命令/脚本完成。",
-        }
-    }
-
-    /// Selection guide — match GoalType based on task objective nature
-    pub fn boundary(self) -> &'static str {
-        match self {
-            GoalType::ProjectAnalysis => {
-                "适合：理解现有系统结构、梳理架构关系、评估技术栈、生成分析报告。"
-            }
-            GoalType::CodeGeneration => {
-                "适合：开发新功能、修改现有代码、重构实现、接口设计、代码迁移。"
-            }
-            GoalType::DebugDiagnose => "适合：排查异常现象、定位Bug根因、修复验证、性能问题诊断。",
-            GoalType::FileOperation => {
-                "适合：文件系统管理、目录整理、批量重命名、文件迁移、权限设置。"
-            }
-            GoalType::ResearchQuery => {
-                "适合：外部信息调研、网络搜索、文档阅读、多源交叉验证、知识汇总。"
-            }
-            GoalType::ScriptingExec => {
-                "适合：命令行批量处理、自动化脚本执行、测试运行、环境检查、日志分析。"
-            }
-        }
-    }
-
     /// Global circuit breaker limit: safety net to prevent LLM infinite loop.
     /// 死循环防护由 ProtectionGuard(dead_loop 阈值5)承担，此值仅为失控保险丝，
     /// 1000 轮对真实任务实质等同不设限。
     pub const MAX_ITERATIONS: usize = 1000;
-
-    /// Whether it's an analytical task (exploration/research/analysis, not execution/operation)
-    pub fn is_analysis(self) -> bool {
-        matches!(self, GoalType::ProjectAnalysis | GoalType::ResearchQuery)
-    }
 }
 
 impl fmt::Display for GoalType {
@@ -395,13 +358,15 @@ mod tests {
         assert_eq!(GoalType::MAX_ITERATIONS, 1000);
     }
 
+    /// Default 与 task_dispatch 兜底同口径（FileOperation）——避免未声明类型
+    /// 的任务被当作「脚本执行」分类落库。
     #[test]
-    fn test_default_goal_type_is_scripting_exec() {
+    fn test_default_goal_type_is_file_operation() {
         let item = TaskItem {
             goal_type: GoalType::default(),
             description: "test".into(),
         };
-        assert_eq!(item.goal_type, GoalType::ScriptingExec);
+        assert_eq!(item.goal_type, GoalType::FileOperation);
     }
 
     /// 最小 ApiClient 桩：只暴露 (model, provider) 对，用于验证便捷封装的取值来源。

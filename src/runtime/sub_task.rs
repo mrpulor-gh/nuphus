@@ -60,6 +60,12 @@ pub struct SubTaskRunner {
     /// Suppress ExecutionStarted/Completed/Error lifecycle events in silent mode
     /// (used by task dispatch, dispatch layer manages lifecycle uniformly)
     pub(crate) suppress_lifecycle_events: bool,
+    /// Suppress memory writes (`learn_from_success` 整段跳过)。
+    ///
+    /// 用于「用完即弃、不落记忆」的临时执行体（临时对话 Side Chat）：这类会话的
+    /// 结果不进记忆库，否则一次性提问会污染后续检索。默认 false —— 既有调用方
+    /// （task_dispatch / CLI）行为不变。
+    pub(crate) suppress_memory_write: bool,
     // Execution statistics
     /// Total execution duration timer
     pub(crate) execution_started_at: std::time::Instant,
@@ -130,6 +136,7 @@ impl SubTaskRunner {
             goal: goal.clone(),
             suppress_error_events: false,
             suppress_lifecycle_events: false,
+            suppress_memory_write: false,
             execution_started_at: std::time::Instant::now(),
             turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             tool_call_total_count: 0,
@@ -191,6 +198,23 @@ impl SubTaskRunner {
     /// Used by task dispatch layer, dispatch layer manages lifecycle events itself.
     pub fn set_suppress_lifecycle_events(&mut self, suppress: bool) {
         self.suppress_lifecycle_events = suppress;
+    }
+
+    /// Set whether to suppress memory writes (`learn_from_success` becomes a no-op).
+    /// Used by ephemeral executors (side chat) whose results must not enter memory.
+    pub fn set_suppress_memory_write(&mut self, suppress: bool) {
+        self.suppress_memory_write = suppress;
+    }
+
+    /// Get a reference to the runner's session (read the accumulated multi-turn context)
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Get a mutable reference to the runner's session (push user turns between
+    /// `run_free` calls; the loop appends assistant replies itself each round).
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
     }
 
     /// Set max iterations

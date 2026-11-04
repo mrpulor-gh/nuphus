@@ -133,6 +133,89 @@
   top: auto;
   bottom: calc(100% + 4px);
 }
+
+/* ═══════════ 下拉分组模式（子智能体模型等）═══════════
+   提供商一行：logo + 黑体名 + 数量 + 展开箭头；hover 主题底 + 椭圆角。
+   展开后才渲染该商模型（懒加载）；子列表左缩进，模型项带能力标注。 */
+.compact-select-menu .cmp-group {
+  display: block;
+}
+.cmp-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: var(--fg-2);
+  font-size: var(--fz-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.cmp-group-row:hover {
+  background: var(--surface-hover);
+}
+.cmp-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 700;
+}
+.cmp-group-count {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+}
+.cmp-group-caret {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.cmp-group-caret.open {
+  transform: rotate(180deg);
+}
+/* 无收录图标的 provider：首字母占位 */
+.cmp-group-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: var(--surface-inset);
+  color: var(--fg-3);
+  font-size: 10px;
+  font-weight: 600;
+}
+/* 展开的模型子列表 */
+.cmp-group-model {
+  margin-left: 22px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.cmp-model-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.cmp-model-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-inset);
+  color: var(--fg-4);
+  font-size: var(--fz-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+/* 能力标注（视觉 / 语音）用语义色，和普通上下文标区分 */
+.cmp-model-tag.is-cap {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
 /* 模型卡片网格：2~3 列自适应（minmax 320px），窄屏降为 1 列。
    **不设固定高度/内滚动**：页面宿主自己滚，列表再滚一次就是双滚动条，
    操作（拖选、点星、点 chip）要在两条滚动轴之间来回对齐，体验很差。 */

@@ -195,7 +195,10 @@ impl Executor {
 
         // 2. 调用并拼接文本增量（无工具调用分支：model 节点不消费 ToolUse）
         let events = llm.stream(request).await.map_err(|e| {
-            crate::NuphusError::agent(format!("Model step '{}': LLM call failed: {}", step.name, e))
+            crate::NuphusError::agent(format!(
+                "Model step '{}': LLM call failed: {}",
+                step.name, e
+            ))
         })?;
         let mut response = String::new();
         for event in &events {
@@ -208,8 +211,8 @@ impl Executor {
 
     /// image：复用生成实现；capture 主产物 = 第一张图片的绝对路径。
     fn model_image_once(prompt: &str, opts: &ModelOpts) -> crate::Result<String> {
-        let request = model_generation_request(prompt, opts, GenerationKind::Image)
-            .map_err(|error| {
+        let request =
+            model_generation_request(prompt, opts, GenerationKind::Image).map_err(|error| {
                 crate::NuphusError::agent(format!("Model image generation failed: {error}"))
             })?;
         let provider = opts.provider.clone();
@@ -235,9 +238,11 @@ impl Executor {
 
     /// video：复用生成实现；capture 主产物 = 视频绝对路径；timeout_secs 缺省 300。
     fn model_video_once(prompt: &str, opts: &ModelOpts) -> crate::Result<String> {
-        use generation::{DEFAULT_POLL_INTERVAL_SECS, DEFAULT_VIDEO_TIMEOUT_SECS, MAX_VIDEO_TIMEOUT_SECS};
-        let mut request = model_generation_request(prompt, opts, GenerationKind::Video)
-            .map_err(|error| {
+        use generation::{
+            DEFAULT_POLL_INTERVAL_SECS, DEFAULT_VIDEO_TIMEOUT_SECS, MAX_VIDEO_TIMEOUT_SECS,
+        };
+        let mut request =
+            model_generation_request(prompt, opts, GenerationKind::Video).map_err(|error| {
                 crate::NuphusError::agent(format!("Model video generation failed: {error}"))
             })?;
         request.poll_interval_secs = Some(DEFAULT_POLL_INTERVAL_SECS);

@@ -25,6 +25,7 @@ import type {
   InlineChatAgentEntry,
   TurnMeta,
   BackgroundTaskView,
+  ChatReference,
 } from '../../core/types'
 
 // ── Tools ──
@@ -2590,4 +2591,177 @@ export function wfTraceRead(
     debug,
     invocationId,
   })
+}
+
+// ── 临时伙伴（Side Chat）──
+//
+// 复用 ExecAgent 的一次性临时会话：不落库、不写记忆、不进 Leader 上下文。
+// sessionKey 由前端在面板打开时生成（crypto.randomUUID），关闭 / 切换主会话 /
+// 清空时销毁；后端按 key 持有进程内的 SubTaskRunner。
+
+/** 临时伙伴一轮问答。返回最终回复文本与本轮工具步骤（MV1 无 token 流式）。
+ *  references：输入框显式选定的 skill 等引用（后端解析后拼到用户消息前）；
+ *  effort：推理强度覆盖（模型声明了 reasoning_efforts 时可选；null = 提供商默认）。
+ *  结论是否自动送回主会话由**后端按派发态判定**（仅当主会话正在派发执行任务时），
+ *  前端没有开关——见 side_chat 的 auto_deliver_gate 头注。
+ *  后几个参数缺省 = null，旧调用方零改动。 */
+export function sideChatSend(
+  sessionKey: string,
+  message: string,
+  fileAccess: boolean,
+  webSearch: boolean,
+  model?: string,
+  references?: ChatReference[],
+  effort?: string | null,
+  provider?: string | null,
+  projectDir?: string | null,
+  turnId?: string | null,
+) {
+  return invoke<{
+    reply: string
+    steps?: { tool: string; ok: boolean; summary: string }[]
+    /** 伙伴的 ctx 占用（token）：最近一次 API 的 input+output，与主会话同口径 */
+    ctx_used?: number
+    /** 本轮 id（前端生成，用于刷新后判重） */
+    turn_id?: string
+  }>('side_chat_send', {
+    sessionKey,
+    message,
+    fileAccess,
+    webSearch,
+    model: model ?? null,
+    references: references ?? null,
+    effort: effort ?? null,
+    // 提供商：与 model 成对。缺了它后端只能按 id 猜（同名跨提供商取段序首段，
+    // 会连到别的 base_url）。
+    provider: provider ?? null,
+    // 面板选定的项目目录：随消息下发（后端拼成 `[工作目录: path]` 段），
+    // 空 = 跟随主会话项目。不做进程级 chdir——Side Chat 与主会话共享进程。
+    projectDir: projectDir ?? null,
+    // 本轮 id：后端据此判重（刷新回填时避免同一条回复出现两次）
+    turnId: turnId ?? null,
+  })
+}
+
+/** 打开面板即建壳：同步面板当前配置（权限 / 模型 / effort / 提供商）。
+ *  不依赖用户先发一条消息——Leader 派发只要求壳存在（选壳判据 = 壳存在）。
+ *  重复调用安全：无壳建壳，空闲壳更新配置，执行中的壳保持不变。 */
+export function sideChatPrepare(
+  sessionKey: string,
+  fileAccess: boolean,
+  webSearch: boolean,
+  model?: string | null,
+  effort?: string | null,
+  provider?: string | null,
+) {
+  return invoke<{ created: boolean }>('side_chat_prepare', {
+    sessionKey,
+    fileAccess,
+    webSearch,
+    model: model ?? null,
+    effort: effort ?? null,
+    provider: provider ?? null,
+  })
+}
+
+/** 会话状态：刷新恢复的唯一入口。
+ *  `running` = 后端仍有在途轮次（前端据此恢复「执行中」态）；
+ *  `last_turn` = 最近一轮的完成结果（前端按 turn_id 判断是否已在本地）；
+ *  `pending_deliveries` = 交付箱积压条数（Finalizing 拒收后落箱、尚未补投的结论）。
+ *  只读，重复调用安全；壳不存在时返回 exists=false 而非报错。 */
+export function sideChatState(sessionKey: string) {
+  return invoke<{
+    exists: boolean
+    running: boolean
+    last_turn: {
+      turn_id: string
+      reply: string
+      steps?: { tool: string; ok: boolean; summary: string }[]
+      ctx_used: number
+    } | null
+    pending_deliveries?: number
+  }>('side_chat_state', { sessionKey })
+}
+
+/** 执行中追加指令：不新建轮次，入队到该临时会话的隔离队列，由本轮的下一个
+ *  迭代边界注入上下文（与主会话 append 同一语义，但走 Side Chat 自己的信号
+ *  状态，绝不进 Leader 队列）。
+ *  只在「执行中」有效：空闲时后端明确报错，调用方应改走 sideChatSend。 */
+export function sideChatAppend(sessionKey: string, message: string, projectDir?: string | null) {
+  return invoke<{ queued: boolean; duplicate: boolean; pending: number }>('side_chat_append', {
+    sessionKey,
+    message,
+    projectDir: projectDir ?? null,
+  })
+}
+
+/** 取消一条尚未消费的追加指令（按内容匹配，不依赖队列下标）。
+ *  removed=false = 已被迭代边界消费（竞态），调用方按「已生效」收尾。 */
+export function sideChatRemoveAppendItem(sessionKey: string, message: string) {
+  return invoke<{ removed: boolean; pending: string[] }>('side_chat_remove_append_item', {
+    sessionKey,
+    message,
+  })
+}
+
+/** 一条执行归档（后端 side-chat/history.jsonl，每轮自动落一条）。 */
+export interface SideChatHistoryEntry {
+  id: string
+  ts: string
+  model: string
+  question: string
+  reply: string
+  steps?: { tool: string; ok: boolean; summary: string }[]
+  ok: boolean
+}
+
+/** 最近 N 条执行归档（新的在前，缺省 10 条）。 */
+export function sideChatHistoryList(limit = 10) {
+  return invoke<SideChatHistoryEntry[]>('side_chat_history_list', { limit })
+}
+
+/** 删除一条执行归档（幂等：不存在也算成功）。 */
+export function sideChatHistoryDelete(id: string) {
+  return invoke<void>('side_chat_history_delete', { id })
+}
+
+/** 销毁临时会话（面板关闭 / 主会话切换）；在途执行被中断。 */
+export function sideChatClose(sessionKey: string) {
+  return invoke<void>('side_chat_close', { sessionKey })
+}
+
+/** 清空临时伙伴：丢弃执行体与会话，下次发送重建（面板保持打开）。 */
+export function sideChatReset(sessionKey: string) {
+  return invoke<void>('side_chat_reset', { sessionKey })
+}
+
+/** 保存临时伙伴为 md 存档（后端写 nuphus_data_dir()/side-chat/），返回落盘路径。 */
+export function sideChatSave(sessionKey: string, content: string) {
+  return invoke<string>('side_chat_save', { sessionKey, content })
+}
+
+/** 临时伙伴「直接提交」：回复全文经主会话**共享提交入口**直接进主会话
+ *  （source="sidechat"，不经输入栏）。主会话 Running 期自动入队为追加指令；
+ *  Finalizing 期后端拒收（rejected），由调用方提示重发（内容仍留在临时伙伴）。
+ *  这是用户手动强制的跨会话通道，任何轮次都能用。另一条是**自动交付**：仅当
+ *  主会话正在派发执行任务时，后端把伙伴结论自动经同一入口送回（门禁由后端
+ *  按派发态判定，没有用户开关）——用户不在电脑旁也不会丢。两条通道互不影响。 */
+export async function sideChatSubmitToMain(
+  input: string,
+  sendId?: string,
+): Promise<ProcessInputResponse | null> {
+  return invoke<ProcessInputResponse>('send_message_cmd', {
+    message: input,
+    sendId,
+    source: 'sidechat',
+    newSession: false,
+  })
+}
+
+/** 停止临时伙伴当前在途执行：置位后端中断（side_chat_cancel）。
+ *  不销毁会话、不清消息——执行体在迭代边界封口未配对工具后返回
+ *  「任务已被用户中断」，作为普通助手气泡呈现；会话保留，下一轮
+ *  发送自动复位标志继续复用执行体。 */
+export async function sideChatCancel(sessionKey: string) {
+  return invoke<void>('side_chat_cancel', { sessionKey })
 }

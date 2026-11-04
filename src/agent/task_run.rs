@@ -20,6 +20,7 @@
 //!   `settle`，其余由 Drop 兜底结算为失败，与退出路径数量解耦。
 
 use crate::agent::events::{EventEmitter, NuphusEvent};
+use crate::agent::parallel;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -369,6 +370,7 @@ pub fn emit_snapshot<E: EventEmitter + ?Sized>(reg: &TaskRunRegistry, emitter: O
 pub struct RunGuard<'a> {
     reg: &'a TaskRunRegistry,
     run_id: String,
+    title: String,
     emitter: Option<Arc<dyn EventEmitter>>,
     settled: bool,
 }
@@ -377,11 +379,16 @@ impl<'a> RunGuard<'a> {
     pub fn new(
         reg: &'a TaskRunRegistry,
         run_id: String,
+        title: String,
         emitter: Option<Arc<dyn EventEmitter>>,
     ) -> Self {
+        // 并行协作契约：Exec 在途是伙伴侧「主会话正在改文件」避让文案的唯一
+        // 事实源，随 open 同步落（写入点只有这一处）。
+        parallel::set_exec(&run_id, &title);
         Self {
             reg,
             run_id,
+            title,
             emitter,
             settled: false,
         }
@@ -391,12 +398,17 @@ impl<'a> RunGuard<'a> {
         &self.run_id
     }
 
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
     /// 正常结算（成功或失败都由调用方给真实结论）。
     pub fn settle(&mut self, ok: bool, summary: &str) {
         if self.settled {
             return;
         }
         self.reg.settle(&self.run_id, ok, summary);
+        parallel::clear_exec(&self.run_id);
         self.settled = true;
         emit_snapshot(self.reg, self.emitter.as_deref());
     }
@@ -407,6 +419,7 @@ impl<'a> RunGuard<'a> {
             return;
         }
         self.reg.settle_interrupted(&self.run_id, reason);
+        parallel::clear_exec(&self.run_id);
         self.settled = true;
         emit_snapshot(self.reg, self.emitter.as_deref());
     }
@@ -414,6 +427,9 @@ impl<'a> RunGuard<'a> {
 
 impl Drop for RunGuard<'_> {
     fn drop(&mut self) {
+        // 无论是否已结算，在途态都按 run_id 收一次（匹配才清，迟到兜底
+        // 动不了更新一笔）；先于 settle 兜底，保证任何退出路径都不残留。
+        parallel::clear_exec(&self.run_id);
         if !self.settled {
             self.reg.settle_interrupted(
                 &self.run_id,
@@ -482,7 +498,7 @@ mod tests {
         let id = reg.open("任务A", "派发正文", "general", None);
         {
             // 未显式 settle，作用域结束即触发 Drop —— 模拟 `?` / return 早退
-            let _g = RunGuard::new(&reg, id.clone(), None);
+            let _g = RunGuard::new(&reg, id.clone(), "任务A".to_string(), None);
         }
         // 守卫已兜底结算为「未结算」（不是业务失败）
         let r = reg.snapshot().into_iter().find(|x| x.run_id == id).unwrap();

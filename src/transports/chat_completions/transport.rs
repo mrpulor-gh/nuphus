@@ -2899,4 +2899,68 @@ mod wire_shape_tests {
             "会话内安全警告内容必须送达（不得被丢弃）"
         );
     }
+
+    /// StepFun 缓存命中字段接线 + 线型解析（2026-11-03「主对话缓存命中恒 0%」根因）：
+    /// 官方 usage 形态是顶层 `cached_tokens`，不在 OpenAI 标准位
+    /// `prompt_tokens_details.cached_tokens`。字段从内置注册表现场取（不写字面量）——
+    /// 谁把 stepfun 的 cache_hit_field 改回 ""，这个测试直接红。
+    #[test]
+    fn stepfun_cached_tokens_is_parsed_as_cache_hit() {
+        use crate::config::provider::Provider as _;
+        let field = crate::config::registry::ProviderRegistry::builtin()
+            .get("stepfun")
+            .expect("stepfun 应在内置注册表")
+            .quirks()
+            .cache_hit_field;
+        assert_eq!(
+            field, "cached_tokens",
+            "StepFun 缓存命中字段必须指向 usage.cached_tokens（留空=标准位兜底=恒 0）"
+        );
+
+        // 复刻 StepFun 流式收尾：内容帧 → finish 帧 → usage 尾帧（choices 为空数组）
+        let body = concat!(
+            "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n",
+            "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
+            "data: {\"id\":\"x\",\"choices\":[],\"usage\":{\"prompt_tokens\":591,\"completion_tokens\":120,\"total_tokens\":711,\"cached_tokens\":512}}\n",
+            "data: [DONE]\n",
+        );
+        let events = ChatCompletionsTransport::parse_sse(body, field).expect("parse_sse 应成功");
+        let usage = events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache_hit_tokens,
+                } => Some((*input_tokens, *output_tokens, *cache_hit_tokens)),
+                _ => None,
+            })
+            .expect("应产出 Usage 事件");
+        assert_eq!(
+            usage,
+            (591, 120, 512),
+            "StepFun cached_tokens 必须进 cache_hit_tokens"
+        );
+    }
+
+    /// 对照：OpenAI 标准位字段不受影响（留空字段时仍走 prompt_tokens_details 兜底）。
+    #[test]
+    fn openai_standard_cached_tokens_still_parses_with_empty_field() {
+        let body = concat!(
+            "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n",
+            "data: {\"id\":\"x\",\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":800}}}\n",
+            "data: [DONE]\n",
+        );
+        let events = ChatCompletionsTransport::parse_sse(body, "").expect("parse_sse 应成功");
+        let cache_hit = events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::Usage {
+                    cache_hit_tokens, ..
+                } => Some(*cache_hit_tokens),
+                _ => None,
+            })
+            .expect("应产出 Usage 事件");
+        assert_eq!(cache_hit, 800);
+    }
 }

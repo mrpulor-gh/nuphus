@@ -673,12 +673,16 @@ mod tests {
     #[test]
     fn actions_whitelist_covers_all_do_kinds() {
         for name in [
-            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert", "mcp",
-            "sleep", "break", "continue",
+            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert",
+            "mcp", "sleep", "break", "continue",
         ] {
             assert!(ACTIONS.contains(&name), "ACTIONS missing do kind '{name}'");
         }
-        assert_eq!(ACTIONS.len(), 14, "ACTIONS 必须恰好 14 项（新增 do 必须同步）");
+        assert_eq!(
+            ACTIONS.len(),
+            14,
+            "ACTIONS 必须恰好 14 项（新增 do 必须同步）"
+        );
 
         let message = build_request(&request(), &[], "workflow-model").unwrap();
         let content: Value =

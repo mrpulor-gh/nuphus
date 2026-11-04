@@ -21,7 +21,7 @@ impl ToolRegistry {
                 "type": "object",
                 "properties": {}
             }),
-            category: ToolCategory::Core,
+            category: ToolCategory::SystemAutomation,
             executor: |_params, _ctx| {
                 let mut info = serde_json::json!({
                     "os": std::env::consts::OS,
@@ -167,7 +167,7 @@ impl ToolRegistry {
                 },
                 "required": ["key"]
             }),
-            category: ToolCategory::Core,
+            category: ToolCategory::SystemAutomation,
             executor: |params, _ctx| {
                 let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                 if key.is_empty() {
@@ -232,7 +232,7 @@ description: "Execute a shell command (PowerShell on Windows, sh on Unix). IMPOR
                     }
                 }
             }),
-            category: ToolCategory::Core,
+            category: ToolCategory::SystemAutomation,
             executor: |params, ctx| {
                 let seconds = params
                     .get("seconds")
@@ -533,8 +533,67 @@ pub fn is_cancelled(flag: &Option<Arc<AtomicBool>>) -> bool {
         .unwrap_or(false)
 }
 
+/// 命令是否**在命令位**调用 cargo（行首 / `;` `|` `&&` `||` 分段后的首 token，
+/// 允许路径形式 `~/.cargo/bin/cargo`）。只在命令位判定——`grep cargo src/`
+/// 这类参数位出现必须放行，否则误伤比漏判更痛。纯函数，单测覆盖。
+fn command_invokes_cargo(command: &str) -> bool {
+    command
+        .split(['\n', ';', '|'])
+        .flat_map(|seg| seg.split("&&"))
+        .flat_map(|seg| seg.split("||"))
+        .filter_map(|seg| {
+            let first = seg.trim().split_whitespace().next()?;
+            let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+            Some(base == "cargo" || base == "cargo.exe")
+        })
+        .any(|is_cargo| is_cargo)
+}
+
+/// 本机是否已有**其它** cargo 进程在跑（target 目录锁单实例的占用代理）。
+///
+/// 为什么用进程名代理而不是直接问锁：cargo 的 target 锁是 fcntl 风格文件锁，
+/// 跨平台问不出持有者；而预检发生在自身 cargo 子进程 spawn **之前**，此刻
+/// 枚举到的 cargo 必然是别人的（别的 Nuphus 会话 / 用户终端 / 忘杀的后台任务）。
+/// 枚举失败（tasklist/ps 异常）时放行——不因探测失败阻断命令。
+fn other_cargo_running() -> bool {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .output();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let output = std::process::Command::new("ps").args(["-eo", "comm"]).output();
+
+    let Ok(output) = output else { return false };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().any(|line| {
+        let name = line.split(',').next().unwrap_or("").trim_matches('"');
+        #[cfg(target_os = "windows")]
+        let hit = name.eq_ignore_ascii_case("cargo.exe");
+        #[cfg(not(target_os = "windows"))]
+        let hit = name == "cargo" || name.ends_with("/cargo");
+        hit
+    })
+}
+
 /// system_shell 执行体
 pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolResult, String> {
+    // cargo 并发预检（与 AutomationGate 同一哲学：单槽资源，占用即拒、不排队）：
+    // target 目录锁是单实例，第二个 cargo 会 `Blocking waiting for file lock`
+    // 静默排队——无输出无进度，配合 system_shell 的 1800s 超时档，用户体验即
+    // 「卡死」（2026-11-03 实测：临时伙伴跑 cargo 撞上另一会话的后台构建持的
+    // 锁，面板「执行中」38s 零推进，锁释放后才恢复）。拒绝的代价（晚几秒）
+    // 远小于静默排队（看起来死了）。真编译仍走 1800s 档，不受此影响。
+    if command_invokes_cargo(&request.command) && other_cargo_running() {
+        return Ok(ToolResult::failure(
+            "另一构建正在进行：本机已有其它 cargo 进程在跑。target 目录锁是单实例，\
+             排队会静默等待（零输出，直到 system_shell 1800s 超时才讲实情）——\
+             这就是「看起来卡死」的根因。请稍后重试；若并行会话也在跑构建，\
+             与用户确认错峰。",
+        ));
+    }
     let registry = bg::global();
     let task_id = registry.next_task_id();
 
@@ -868,6 +927,22 @@ mod tests {
         let r =
             ShellRequest::from_params(&serde_json::json!({"command": "x", "background": "true"}));
         assert!(!r.background);
+    }
+
+    #[test]
+    fn command_invokes_cargo_detects_command_position_only() {
+        // 命令位（各种分段符与路径形式）应命中
+        assert!(command_invokes_cargo("cargo test --release"));
+        assert!(command_invokes_cargo("cd /repo; cargo check"));
+        assert!(command_invokes_cargo("cargo build && cargo test"));
+        assert!(command_invokes_cargo("cargo fmt || true"));
+        assert!(command_invokes_cargo("~/.cargo/bin/cargo fmt"));
+        assert!(command_invokes_cargo("C:\\Users\\x\\.cargo\\bin\\cargo.exe build"));
+        // 参数位出现必须放行——误伤比漏判更痛
+        assert!(!command_invokes_cargo("grep cargo src/lib.rs"));
+        assert!(!command_invokes_cargo("echo 'cargo is slow'"));
+        assert!(!command_invokes_cargo("git log --grep=cargo"));
+        assert!(!command_invokes_cargo(""));
     }
 
     #[test]

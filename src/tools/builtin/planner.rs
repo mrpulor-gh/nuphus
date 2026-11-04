@@ -80,7 +80,7 @@ const META_FIELDS: &[(&str, &str, &str)] = &[
     ("requirement", "- 需求来源:", ""),
     ("status", "- 状态:", "active"),
     ("project", "- 项目:", ""),
-    ("goal_type", "- 目标类型:", "code_generation"),
+    ("goal_type", "- 目标类型:", "file_operation"),
 ];
 
 fn meta_prefix(field: &str) -> &'static str {
@@ -361,7 +361,7 @@ fn planner_create(params: &serde_json::Value, _ctx: &ToolCtx) -> Result<ToolResu
     let goal_type = params
         .get("goal_type")
         .and_then(|v| v.as_str())
-        .unwrap_or("code_generation");
+        .unwrap_or("file_operation");
     let context = params.get("context").and_then(|v| v.as_str()).unwrap_or("");
     let tasks_arr = params
         .get("tasks")
@@ -667,7 +667,7 @@ impl ToolRegistry {
                     "project": { "type": "string", "default": "nuphus", "description": "Project name" },
                     "topic": { "type": "string", "description": "Plan topic" },
                     "requirement": { "type": "string", "description": "Original requirement / success criteria" },
-                    "goal_type": { "type": "string", "enum": ["project_analysis", "code_generation", "debug_diagnose", "file_operation", "research_query", "general"], "default": "code_generation", "description": "Goal type for dispatch" },
+                    "goal_type": { "type": "string", "enum": ["project_analysis", "code_generation", "debug_diagnose", "file_operation", "research_query", "scripting_exec"], "default": "file_operation", "description": "Goal type for dispatch" },
                     "context": { "type": "string", "description": "Leader's understanding: current situation, constraints, known risks, dependencies" },
                     "tasks": {
                         "type": "array",

@@ -84,6 +84,32 @@ impl ClientFactory {
         self.build_client_for(&registry, model_id)
     }
 
+    /// 建客户端并**当次覆盖**推理强度（provider 级 `reasoning_effort`）。
+    ///
+    /// 与主会话的 effort 切换路径刻意不同：主会话走 `update_reasoning_effort`
+    /// 改 config.toml + Runtime 重建（全局生效）；本方法只覆盖**这一次建的
+    /// 客户端**，config.toml 零改动——临时执行体（Side Chat）按用户当轮选择
+    /// 覆盖 effort，不污染主会话与全局配置。
+    ///
+    /// `effort = None` / 空串 = 不覆盖，用配置原值（含 provider 默认）。
+    /// 模型不存在时报错（与 `create_client` 同口径）。
+    pub fn create_client_with_effort(
+        &self,
+        model_id: &str,
+        effort: Option<String>,
+    ) -> Result<Arc<dyn ApiClient>> {
+        let registry = self.registry()?;
+        let (provider, model) = registry
+            .find_model(model_id)
+            .ok_or_else(|| crate::NuphusError::llm(format!("model '{}' not found", model_id)))?;
+        let mut provider = provider.clone();
+        let effort = effort.filter(|e| !e.trim().is_empty());
+        if effort.is_some() {
+            provider.reasoning_effort = effort;
+        }
+        self.build_client(&registry, &provider, &model.id)
+    }
+
     /// 在给定注册表上按 model id 建客户端（`create_client*` 的唯一公共实现）。
     ///
     /// ⚠️ Legacy first-segment-order 语义：同名模型跨 provider 时取段序首段。
@@ -130,6 +156,36 @@ impl ClientFactory {
                 ))
             })?;
         self.build_client(&registry, provider, &model.id)
+    }
+
+    /// Create a client for an exact (provider, model) binding **with** an
+    /// one-shot reasoning-effort override.
+    ///
+    /// 与 `create_client_with_effort` 的差别只有一个：这个**不需要猜 provider**。
+    /// 同名模型跨 provider 时，按 id 查找会取段序首段（`find_model` 的遗留语义），
+    /// 可能连到完全不同的 base_url——临时伙伴就踩过这个（侧栏只传 id，命中了
+    /// 本地代理 127.0.0.1:8317）。调用方知道 provider 时必须走这里。
+    /// 覆盖只作用在本次建的客户端上，不写回 config。
+    pub fn create_client_for_with_effort(
+        &self,
+        provider_name: &str,
+        model_id: &str,
+        effort: Option<String>,
+    ) -> Result<Arc<dyn ApiClient>> {
+        let registry = self.registry()?;
+        let (provider, model) = registry
+            .find_model_for_provider(provider_name, model_id)
+            .ok_or_else(|| {
+                crate::NuphusError::llm(format!(
+                    "model '{}' not found for provider '{}'",
+                    model_id, provider_name
+                ))
+            })?;
+        let mut provider = provider.clone();
+        if let Some(effort) = effort.filter(|e| !e.trim().is_empty()) {
+            provider.reasoning_effort = Some(effort);
+        }
+        self.build_client(&registry, &provider, &model.id)
     }
 
     /// Create Client for the main model (all text tasks)
@@ -468,6 +524,44 @@ mod tests {
         // create_client（find_model 段序首匹配）→ 段序首段，语义不变。
         let first = factory.create_client("probe-model").unwrap();
         assert_eq!(first.provider_name(), "seg-a");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// effort 覆盖（Side Chat 专用路径）：Some(effort) 建客户端成功；
+    /// 空串 / None = 不覆盖；未知模型报错；**覆盖绝不写回 config.toml**——
+    /// 这是与主会话 `update_reasoning_effort`（全局生效）的本质边界。
+    #[test]
+    fn create_client_with_effort_overrides_without_writing_config() {
+        let (dir, cfg_path, _snapshot) = dual_segment_registry();
+        let factory = ClientFactory::live_at(&cfg_path);
+
+        // 已知模型 + 覆盖值：建成功（effort 烧进当次 transport config）
+        let client = factory
+            .create_client_with_effort("probe-model", Some("high".to_string()))
+            .expect("已知模型 + effort 覆盖应建成功");
+        assert_eq!(client.provider_name(), "seg-a");
+
+        // 空串按不覆盖处理（与 None 同路），均建成功
+        assert!(factory
+            .create_client_with_effort("probe-model", Some("  ".to_string()))
+            .is_ok());
+        assert!(factory
+            .create_client_with_effort("probe-model", None)
+            .is_ok());
+
+        // 未知模型：报错，不猜
+        assert!(factory
+            .create_client_with_effort("no-such-model", Some("high".into()))
+            .is_err());
+
+        // 关键边界：覆盖不落盘——fixture 本无 reasoning_effort 键，
+        // 若任何路径写回配置，这里会出现该键
+        let after = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(
+            !after.contains("reasoning_effort"),
+            "effort 覆盖不得写回 config.toml（ Side Chat 不能污染主会话配置）"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

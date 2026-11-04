@@ -1,0 +1,2017 @@
+/* ═══════════════════════════════════════════════════════════════
+   side-chat.css — 临时伙伴面板（.scp-* 前缀）
+
+   定位：绝对定位于 `.chat-panel`（position:relative）内左侧，浮在消息区之上。
+   设计原则：极简风格，不加重度阴影，无突兀黑边，自然呼吸感。
+   避开顶部标题栏与 Header（top: 72px / bottom: 120px），上下留出对称呼吸空间。
+   z-index 60：压过会话台抽屉（56）保证本面板完整可点。
+   仅引用 tokens.css 语义变量，禁止硬编码色值。
+   ═══════════════════════════════════════════════════════════════ */
+
+.scp-panel {
+  position: absolute;
+  left: 20px;
+  top: 20px; /* 恢复舒展大高度，纵向空间充分舒展 */
+  bottom: 140px; /* 底部与主对话输入框保持舒适间距 */
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  max-width: 82%;
+  background: var(--panel-bg);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: 1px solid var(--border-divider);
+  border-radius: 12px;
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  animation: scp-slide-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 发生过移动后彻底禁用进场动画，防止最小化恢复时从原点跳动 */
+.scp-panel.is-moved {
+  animation: none;
+}
+
+/* 最小化 = 完全收起：面板整体从视口与可达性树里消失 */
+.scp-panel.is-minimized {
+  display: none;
+}
+
+/* 拖拽中禁用过渡与文本选中，保证指针跟手零延迟 */
+.scp-panel.is-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
+/* 拉伸中：同样禁选中，光标给出「可调尺寸」的斜向提示 */
+.scp-panel.is-resizing {
+  user-select: none;
+}
+
+/* 边缘拉伸把手：右下角 18×18 热区，视觉是两道斜线（不抢注意力）。
+   贴在面板圆角内侧，z-index 高于滚动区，避免被消息区命中吞掉。 */
+.scp-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-bottom-right-radius: 12px;
+  background: transparent;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.scp-resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--fg-4);
+  border-bottom: 1.5px solid var(--fg-4);
+  opacity: 0.5;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.scp-resize-handle:hover::after {
+  opacity: 0.9;
+}
+.scp-resize-handle:focus,
+.scp-resize-handle:focus-visible {
+  outline: none;
+}
+.scp-resize-handle:focus-visible::after {
+  opacity: 1;
+}
+
+@keyframes scp-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── 顶栏：左右分组 + 拖拽手柄 ── */
+.scp-header {
+  /* 历史浮层的包含块：必须通栏宽。若浮层挂在 28px 的图标 wrap 上（旧行为），
+     260px 浮层的左缘会探出面板，被 .scp-panel 的 overflow:hidden 裁掉一竖条；
+     right 贴 header 的 12px padding 后，浮层整体收在面板内。 */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.scp-header-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 拖拽手柄 */
+.scp-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-2);
+  color: var(--fg-4);
+  cursor: grab;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.scp-drag-handle:hover {
+  background: var(--surface-hover);
+  color: var(--fg-2);
+}
+.scp-drag-handle:active {
+  cursor: grabbing;
+}
+
+.scp-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+.scp-icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-icon-btn:active {
+  transform: scale(0.94);
+}
+.scp-icon-btn:focus,
+.scp-icon-btn:focus-visible {
+  outline: none;
+}
+
+/* ── 轻量 tips（IconTip）：纯 CSS 驱动，hover / focus-within 即显 ──
+   替代原生 title（约 1s 延迟 + 不可控灰框）。方向由 .place-* 按图标所在
+   位置决定（header 在面板顶部→向下；消息操作条在列表尾部→向上），水平由
+   .align-* 按分组决定（右组右对齐、左组左对齐），详见 IconTip 注释。 */
+.scp-tip {
+  position: relative;
+  display: inline-flex;
+}
+.scp-tip-bubble {
+  position: absolute;
+  z-index: 30;
+  /* 内容定宽：包含块只有 28px 的图标盒，不显式定宽会被压成贴图标的细条 */
+  width: max-content;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-1);
+  border-radius: 6px;
+  background: var(--void-primary);
+  color: var(--fg-2);
+  font-size: var(--fz-xs, 11px);
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    visibility var(--dur-fast);
+  /* 水平默认右对齐：右组图标贴面板右缘，文字向左展开不越界 */
+  right: 0;
+  left: auto;
+}
+.scp-tip:hover .scp-tip-bubble,
+.scp-tip:focus-within .scp-tip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+/* 左组元素（拖拽手柄 / 项目选择）：文字向右展开。右对齐会让气泡探出面板
+   左缘，被 .scp-panel 的 overflow:hidden 裁掉。 */
+.scp-tip.align-left .scp-tip-bubble {
+  right: auto;
+  left: 0;
+}
+/* 方向：header 位于面板顶部 → 向下展开（向上必探出面板上缘被裁）；
+   消息操作条位于列表尾部 → 向上展开（向下会顶到滚动视口底缘被裁）。 */
+.scp-tip.place-below .scp-tip-bubble {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+.scp-tip.place-above .scp-tip-bubble {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+/* ── 并行状态细提示条（协作契约双向可见）──
+   顶栏下方一条 11px 细条：主会话 Exec 在途标题 + 交付箱积压计数。
+   只复用既有 token（--fg-3 / --accent / --border-divider / --fz-xs），
+   零新色相、零新字号；两条都没有时组件不渲染，不占高度。 */
+.scp-parallel-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 4px 12px 0;
+}
+.scp-parallel-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--fz-xs, 11px);
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+.scp-parallel-hint-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 待交付计数用强调色：它是「有东西等着被处理」的动作性提示，
+   与主会话在途的中性灰区分开（同 .scp-append-queue-hint 的用色逻辑）。 */
+.scp-parallel-hint.is-pending {
+  color: var(--accent);
+}
+
+/* ── 消息区 ── */
+/* wrap 承担 flex 伸展 + 回底按钮的定位包含块；真正的滚动容器是内层 .scp-messages */
+.scp-messages-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.scp-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-1) transparent;
+  /* 关掉浏览器滚动锚定：流式增长会反向调整 scrollTop，与贴底跟随争抢
+     （与 .chat-messages / 执行追踪面板同一契约，见 hooks/useStickyScroll 顶部注释） */
+  overflow-anchor: none;
+}
+
+/* 回底按钮：跟随态被用户手势解锁时出现，浮在滚动视口右下角 */
+.scp-jump-bottom {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  border-radius: 50%;
+  background: var(--surface-2, var(--void-secondary));
+  color: var(--fg-3);
+  box-shadow: var(--shadow-surface);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.scp-jump-bottom:hover {
+  color: var(--fg-1);
+  background: var(--surface-hover);
+}
+.scp-jump-bottom:focus,
+.scp-jump-bottom:focus-visible {
+  outline: none;
+}
+
+/* 空态：全左对齐，极简结构化说明 */
+.scp-empty {
+  margin: auto 0;
+  padding: 4px 2px 8px;
+  text-align: left;
+  color: var(--fg-4);
+}
+.scp-empty-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.scp-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface-inset);
+  color: var(--fg-3);
+  border: 1px solid var(--border-divider);
+  flex-shrink: 0;
+}
+.scp-empty-heading {
+  min-width: 0;
+}
+.scp-empty-title {
+  margin: 0;
+  font-size: var(--fz-md);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.scp-empty-sub {
+  margin: 2px 0 0;
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.4;
+  color: var(--fg-4);
+}
+.scp-empty-points {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.5;
+}
+.scp-empty-points li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-divider);
+  border-radius: 6px;
+}
+/* 标签列固定宽度：三条内容共用同一左边界 */
+.scp-empty-k {
+  flex: 0 0 3em;
+  color: var(--fg-3);
+  font-weight: 500;
+}
+.scp-empty-points li span:last-child {
+  color: var(--fg-3);
+}
+
+/* ── 执行过程行：极简单行（svg + 文字 + 折角箭头）──
+   严格对齐 GitHub Copilot 格式：无背景、无边框、无胶囊；图标与文字同色（弱化灰），
+   行尾仅一个折角箭头作展开指示，整行可点。展开区不加任何背景块，保持完全扁平。 */
+.scp-process {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+.scp-process-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-4);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.scp-process-row:hover {
+  color: var(--fg-2);
+}
+.scp-process-row.is-static {
+  cursor: default;
+}
+.scp-process-row:focus,
+.scp-process-row:focus-visible {
+  outline: none;
+}
+.scp-process-icon {
+  display: block;
+  flex-shrink: 0;
+  color: currentColor;
+  /* 与文字行盒垂直居中：svg 自身不带基线，交给 flex 的 center 对齐 */
+  align-self: center;
+}
+.scp-process-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-process-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+}
+.scp-process-row:hover .scp-process-detail {
+  color: var(--fg-3);
+}
+.scp-process-caret {
+  flex-shrink: 0;
+  transition: transform 0.15s var(--ease-out);
+}
+.scp-process.is-open .scp-process-caret {
+  transform: rotate(90deg);
+}
+/* 展开区：纯文本缩进，无背景、无边框、无圆角 */
+.scp-process-body {
+  margin: 6px 0 0 19px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/* 思考过程：与 agent 正文明确区分——斜体 + 更小字号 + 弱化灰，一眼看出是
+   「模型内心活动」而非最终答复；工具调用另以「圆点 + 等宽工具名」区分。 */
+.scp-thinking-text {
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.65;
+  font-style: italic;
+  color: var(--fg-4);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.scp-steps-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.scp-steps-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fz-sm);
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+.scp-steps-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-success);
+  transform: translateY(-1px);
+}
+.scp-steps-item.is-failed .scp-steps-dot {
+  background: var(--error);
+}
+.scp-steps-tool {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-2);
+}
+.scp-steps-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-4);
+}
+
+/* 气泡：通栏（width: 100%），背景与主对话窗口完全对齐，无阴影 */
+.scp-bubble {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-divider);
+  font-size: var(--fz-md);
+  line-height: 1.6;
+  word-break: break-word;
+  box-shadow: none;
+}
+.scp-bubble--user {
+  background: var(--msg-user-bg);
+  color: var(--spark-primary, var(--fg-1));
+  white-space: pre-wrap;
+}
+.scp-bubble--assistant {
+  background: var(--msg-assistant-bg);
+  color: var(--spark-primary, var(--fg-1));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Leader 派发来源徽标：挂在用户气泡顶部的一行小字（弱化色 + 小字号），
+   区分「本人在面板发的」与「Leader 后端派来的」——派发任务对用户显式，
+   不再是黑盒。 */
+.scp-bubble-from {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-3, var(--text-secondary, #999));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.scp-bubble-body {
+  width: 100%;
+  min-width: 0;
+}
+/* 执行中追加的消息：固定在输入框上方（.scp-composer 内首块），不随消息列表
+   滚动——流式输出期间始终可见（放进列表会被流式内容顶出视口）。虚线边框 +
+   淡化底色表达「待消费」；每条右侧 × 单独取消（后端按内容从隔离队列移除）。
+   被迭代边界 drain 后整块消失，消息过渡成列表里的正式气泡。
+   注意用 background 淡化而不是 opacity——父级 opacity 会连带压暗内部文字。 */
+.scp-append-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 5px 6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border-divider));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--msg-user-bg) 55%, transparent);
+}
+.scp-append-queue-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 2px;
+  font-size: var(--fz-xs, 11px);
+  color: var(--accent);
+}
+.scp-append-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 2px 2px 4px;
+  border-radius: 6px;
+}
+.scp-append-queue-item:hover {
+  background: var(--surface-hover);
+}
+/* 追加原文：最多两行，再长截断（title 挂全文，点击 × 不受影响） */
+.scp-append-queue-text {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.5;
+  color: var(--fg-2);
+  word-break: break-word;
+}
+/* Leader 派发来的追加：来源小标（与用户自己追加区分），弱化色不抢正文 */
+.scp-append-queue-from {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--fg-3, var(--text-secondary, #999));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.scp-append-queue-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-append-queue-x:hover {
+  background: var(--surface-active);
+  color: var(--error);
+}
+.scp-thinking-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+}
+.scp-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.scp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: scp-dot-pulse 1.2s infinite ease-in-out;
+}
+.scp-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.scp-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes scp-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+.scp-thinking-label {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+}
+
+/* 失败提示 */
+.scp-bubble--assistant.is-error {
+  background: var(--status-error-soft);
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* ── 输入区：极简 Composer，无阴影 ── */
+.scp-composer {
+  position: relative;
+  flex-shrink: 0;
+  /* 右下多留 10px：给边缘拉伸把手（18×18 贴角）让出命中区，
+     否则把手的角落会盖住输入框/发送按钮的一角，点发送变点把手。 */
+  margin: 6px 22px 22px;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: 12px;
+  background: var(--surface-inset);
+  box-shadow: none; /* 极简：无阴影 */
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.scp-composer:focus-within {
+  border-color: var(--accent); /* 仅改变品牌主色边框，绝无黑框与重阴影 */
+  box-shadow: none;
+}
+
+.scp-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 2px 4px 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: var(--fz-md);
+  line-height: 1.55;
+}
+.scp-input::placeholder {
+  color: var(--fg-4);
+}
+
+/* 图标行 */
+.scp-composer-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.scp-plus-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* ── 模型选择：极简触发器 + 浮层（无阴影） ── */
+.scp-model-picker {
+  position: relative;
+  min-width: 0;
+  max-width: 48%;
+}
+.scp-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: var(--fz-xs, 12px);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-model-trigger:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-model-trigger:focus,
+.scp-model-trigger:focus-visible {
+  outline: none;
+}
+.scp-model-value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.scp-model-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* 浮层：无阴影极简面板 */
+.scp-model-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  min-width: 240px;
+  max-width: 300px;
+  max-height: min(320px, 52vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-2) transparent;
+  padding: 6px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: none; /* 极简：无阴影 */
+}
+
+/* ── 推理强度：纯文本触发器 + 浮层（无阴影） ── */
+.scp-effort-picker {
+  position: relative;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.scp-effort-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: var(--fz-xs, 12px);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-effort-trigger:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-effort-trigger:focus,
+.scp-effort-trigger:focus-visible {
+  outline: none;
+}
+.scp-effort-value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.scp-effort-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.scp-effort-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 6px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: none; /* 极简：无阴影 */
+}
+.scp-effort-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.scp-effort-opt:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-effort-opt.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.scp-effort-opt:focus,
+.scp-effort-opt:focus-visible {
+  outline: none;
+}
+
+/* 模型项与提供商行 */
+.scp-model-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-model-opt:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-model-opt.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.scp-model-opt-name {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.scp-model-opt-sub {
+  flex: 1 1 auto;
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scp-provider {
+  display: flex;
+  flex-direction: column;
+}
+.scp-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-provider-row:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-provider-row:focus,
+.scp-provider-row:focus-visible {
+  outline: none;
+}
+.scp-provider-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-provider-count {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  font-size: var(--fz-xs, 11px);
+}
+.scp-provider-caret {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.scp-provider-caret.is-open {
+  transform: rotate(90deg);
+}
+.scp-provider-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-1);
+  background: var(--surface-inset);
+  color: var(--fg-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.scp-model-sublist {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 2px 14px;
+  margin: 2px 0 2px 8px;
+  border-left: 1px solid var(--border-divider);
+  gap: 1px;
+}
+.scp-model-subopt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: var(--fz-xs, 12px);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-model-subopt:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-model-subopt.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.scp-model-subopt-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-model-subopt-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.scp-model-tag {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.scp-model-tag.is-ctx {
+  background: var(--surface-inset);
+  color: var(--fg-4);
+  font-family: var(--font-mono);
+}
+.scp-model-tag.is-vision {
+  background: var(--badge-accent-bg);
+  color: var(--accent);
+}
+
+/* ── 右侧操作区：发送 / 停止 ── */
+.scp-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.scp-composer-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line-1);
+}
+
+/* 发送按钮：极简纯净，无独立灰框，无黑边 */
+.scp-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform 0.1s var(--ease-out);
+  flex-shrink: 0;
+}
+.scp-send:hover {
+  opacity: 0.9;
+}
+.scp-send:active {
+  transform: scale(0.92);
+}
+.scp-send:disabled {
+  background: transparent;
+  color: var(--fg-4);
+  cursor: default;
+  opacity: 0.45;
+}
+/* 执行中追加：次级动作 —— 用表面色 + 强调色文字，与红色的停止键明确分离。
+   同尺寸并排，避免「追加」被误读成「发送（会打断）」或「停止」。 */
+.scp-send.is-append {
+  background: var(--surface-inset);
+  color: var(--accent);
+  opacity: 1;
+}
+.scp-send.is-append:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+  opacity: 1;
+}
+/* 中断态：复用主对话输入框的终止语义键（--send-interrupt-*），不另造配色。
+   简白 = 墨黑反色、dark / fresh = 红——三主题与主输入框完全一致，
+   同 1.6s 呼吸节奏表示「可终止的进行中动作」。 */
+.scp-send.is-stop {
+  background: var(--send-interrupt-fill);
+  color: var(--send-interrupt-fg);
+  opacity: 1;
+  animation: scp-stop-breathing 1.6s ease-in-out infinite;
+}
+.scp-send.is-stop:hover {
+  background: color-mix(in srgb, var(--send-interrupt-fill) 85%, transparent);
+  color: var(--send-interrupt-fg);
+  opacity: 1;
+}
+@keyframes scp-stop-breathing {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--send-interrupt-glow), 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(var(--send-interrupt-glow), 0.25);
+  }
+}
+.scp-send:focus,
+.scp-send:focus-visible {
+  outline: none;
+}
+
+/* 隐藏文件 input */
+.scp-file-input {
+  display: none;
+}
+
+/* ── 实时过程态：同样扁平（单行状态 + 流式正文/思考，无背景块）── */
+.scp-live-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: var(--fz-sm);
+  line-height: 1.4;
+}
+.scp-live-tool-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+.scp-live-tool-name.is-idle {
+  font-weight: 400;
+  color: var(--fg-4);
+}
+/* 工具摘要（完整命令与路径）：独占一行、完整换行——前端截断会埋掉定位信息。
+   深色字体（--fg-1）：与思考的弱化色拉开层级，扫一眼知道「这是执行不是思索」。 */
+.scp-live-tool-summary {
+  flex: 1 1 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg-1);
+}
+/* 工具结束标记：状态与计时合并为尾部 meta 一组，跟随内容尾（不再单行靠右）。
+   在途时只显示动态计时（.is-live 弱化），结束后切换成败 + 静态耗时。 */
+.scp-live-tool-meta {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-4);
+  font-variant-numeric: tabular-nums;
+}
+.scp-live-tool-duration.is-live {
+  color: var(--fg-3);
+}
+.scp-live-tool-state {
+  flex: 0 0 auto;
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-3);
+}
+.scp-live-tool-state.is-failed {
+  color: var(--error);
+}
+/* 工具耗时：夹在 summary 与状态之间，靠右但不抢 auto 边距（state 才是锚点） */
+.scp-live-tool-duration {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-4);
+  opacity: 0.75;
+}
+.scp-live-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 0 19px;
+  min-width: 0;
+  /* 收起钮已移出内容区（进 .scp-live-bar sticky 条）。这里只留一条小缝：
+      条子贴在视口底部时会盖住内容末尾，完全不留缝最后一行会贴着条边；
+      再大的留白都属于浪费（条与容器 padding 已经把底部间隔兜住了）。 */
+  padding-bottom: 4px;
+}
+
+/* 流式模块固定操作条：sticky 贴在滚动视口底部 + 固定高度 = 不随流式内容增长
+   跑位。旧实现把收起钮 absolute 在 .scp-live-content 里：内容每长高一截，钮
+   就跟着容器底边往下漂，平滑追随（rAF）追不上高频 delta 时直接滑出视口——
+   就是「钮在随流式输出滚动」。改常驻条后，钮相对视口静止，正文在它上方滚。
+   实色背景：内容从条下滚过时不能透出文本。 */
+.scp-live-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 20px;
+  background: var(--panel-bg);
+}
+
+/* 收起 / 展开钮：sticky 条内右对齐，低存在感（hover 才明显）。二态共用这一个
+   钮（收起后只剩过程行 + 条上的「展开」），不再分 absolute 的内容区钮与
+   流内展开箭头两个 DOM。 */
+.scp-live-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-4);
+  font-family: inherit;
+  font-size: var(--fz-xs, 11px);
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0.75;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.scp-live-collapse:hover {
+  opacity: 1;
+  color: var(--fg-2);
+  background: var(--surface-hover);
+}
+.scp-live-collapse:focus,
+.scp-live-collapse:focus-visible {
+  outline: none;
+  opacity: 1;
+}
+
+/* 回底钮在流式条可见时上让：sticky 条占据滚动视口底部 20px，回底钮原本钉在
+   右下角 bottom:12px，会和条上的收起/展开钮重叠。 */
+.scp-jump-bottom.is-raised {
+  bottom: 32px;
+}
+/* 思考段弱化 + 正文段常规色；两者都不带背景块 */
+.scp-live-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--spark-primary, var(--fg-1));
+  font-size: var(--fz-md);
+  line-height: 1.6;
+}
+.scp-live-text.is-thinking {
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.65;
+  color: var(--fg-4);
+  font-style: italic;
+}
+
+/* ── 交错时间线：正文 / 思考 / 工具调用按发生顺序排列 ──
+   与「摘要条」的分工：摘要条回答「用了几个工具」，时间线回答「这一步发生在
+   哪段话之后」。展开态走时间线，收起态只留摘要条。 */
+.scp-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+/* 正文块：Markdown 组件自带段落间距，这里只保证块边界不粘连 */
+.scp-tl-text {
+  min-width: 0;
+}
+.scp-tl-text > *:first-child {
+  margin-top: 0;
+}
+.scp-tl-text > *:last-child {
+  margin-bottom: 0;
+}
+/* 思考块：弱化 + 左竖线，与正文同处一条时间轴但视觉降级 */
+.scp-tl-thinking {
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid var(--border-divider);
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 工具块：多行块（不再单行）——summary 独占一行完整换行，meta 跟尾。
+   live 行与归档时间线共用这套类名，一处生效。 */
+.scp-tl-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-1);
+}
+.scp-tl-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.85;
+}
+.scp-tl-tool.is-running .scp-tl-dot {
+  animation: scp-tl-pulse 1.2s ease-in-out infinite;
+}
+.scp-tl-tool.is-failed .scp-tl-dot {
+  background: var(--error);
+}
+/* 失败态：工具名与状态点 / 状态文字同色——只染点不染名，扫一眼看不出哪个
+   工具失败了（名字才是定位信息）。live 行与归档时间线共用这套类名，一处生效。 */
+.scp-tl-tool.is-failed .scp-tl-tool-name {
+  color: var(--error);
+}
+.scp-tl-tool-name {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+/* 完整命令与路径：不做前端截断（截断埋定位信息），等宽 + 主文本色 */
+.scp-tl-tool-summary {
+  flex: 1 1 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+}
+/* 尾部 meta：状态 + 计时一组跟随块尾；等宽数字防计时跳动 */
+.scp-tl-meta {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+.scp-tl-duration {
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.scp-tl-state {
+  flex: 0 0 auto;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+}
+.scp-tl-state.is-failed {
+  color: var(--error);
+}
+/* 工具耗时：位于 summary 与状态之间，与 live 行同口径（state 持 auto 边距） */
+.scp-tl-duration {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  color: var(--fg-4);
+  font-family: var(--font-mono);
+  opacity: 0.75;
+}
+@keyframes scp-tl-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ── 消息操作：最后一条助手回复底部的单行动作 + ctx 消耗 ── */
+.scp-msg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  justify-content: flex-end;
+}
+/* ctx 消耗：口径与主会话输入框一致（used 染状态色，cap 中性）。
+   用 margin-right:auto 单独推到行首——它属于「本轮信息」，不是动作。 */
+.scp-msg-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  padding-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-4);
+  cursor: help;
+  user-select: none;
+}
+.scp-msg-ctx-label {
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.scp-msg-ctx-value {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.scp-msg-ctx-sep {
+  color: var(--spark-tertiary, var(--fg-4));
+  opacity: 0.45;
+}
+.scp-msg-ctx-cap {
+  color: var(--fg-3);
+  font-weight: 500;
+}
+/* 消息操作钮：纯图标方形（svg+文字与面板整体风格不切合），分工与说明交给
+   图标形状 + IconTip。ghost 描边 = 只放入输入栏；强调描边 = 立即提交。 */
+.scp-msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  border-radius: 6px;
+  background: var(--surface-inset);
+  color: var(--fg-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.scp-msg-action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+/* 不可逆动作更醒目：会真的提交给主会话的那颗用强调描边，与「只放入输入栏」
+   的 ghost 拉开层级。反过来弱化它只会制造误触。 */
+.scp-msg-action-btn.is-submit {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-divider));
+  color: var(--fg-1);
+}
+.scp-msg-action-btn.is-submit:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg-1);
+}
+.scp-msg-action-btn:focus,
+.scp-msg-action-btn:focus-visible {
+  outline: none;
+}
+
+/* ── 输入区 chips ── */
+.scp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 6px;
+}
+.scp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-divider);
+  color: var(--fg-2);
+  font-size: var(--fz-xs, 12px);
+  line-height: 1.4;
+}
+.scp-chip-icon {
+  flex-shrink: 0;
+  color: var(--fg-4);
+}
+.scp-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-left: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-chip-x:hover {
+  background: var(--surface-active);
+  color: var(--fg-1);
+}
+
+/* ── 「+」小菜单：无阴影极简 ── */
+.scp-plus-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  padding: 6px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: none; /* 极简：无阴影 */
+}
+.scp-plus-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-plus-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-plus-item:focus,
+.scp-plus-item:focus-visible {
+  outline: none;
+}
+
+/* ── 技能选择浮层：无阴影极简 ── */
+.scp-skill-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(280px, 44vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-2) transparent;
+  padding: 6px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: none; /* 极简：无阴影 */
+}
+.scp-skill-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-skill-opt:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-skill-opt:focus,
+.scp-skill-opt:focus-visible {
+  outline: none;
+}
+.scp-skill-opt-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-skill-empty {
+  padding: 12px 8px;
+  color: var(--fg-4);
+  font-size: var(--fz-sm);
+  text-align: center;
+}
+
+/* ── 临时伙伴入口浮动按钮（左下角常驻）── */
+.chat-side-chat-fab {
+  position: absolute;
+  left: 20px;
+  bottom: 24px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  /* 方形圆角（非正圆）：38px 边配 10px 圆角≈26%，是卡片级圆角比例；
+     再大就滑向胶囊形，50% 即正圆——此处刻意不用。 */
+  border-radius: 10px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--fg-3);
+  box-shadow: var(--shadow-elevated);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.chat-side-chat-fab:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+  transform: scale(1.05);
+}
+.chat-side-chat-fab:active {
+  transform: scale(0.95);
+}
+.chat-side-chat-fab:focus,
+.chat-side-chat-fab:focus-visible {
+  outline: none;
+}
+.chat-side-chat-fab.is-open {
+  color: var(--accent);
+  background: var(--surface-inset);
+}
+
+/* 执行中：入口整体呼吸，提醒「伙伴那边还有活在跑」。
+   与角标的分工：角标是点状提示（收纳态是否可点），呼吸是整体存在感——
+   用户视线在输入框 / 消息区时，只有整个按钮缩放才拉得回来。
+   峰值 1.06 与 hover 的 1.05 同量级，动画覆盖 transform 时不会突然放大。
+   节奏 2.4s 慢于 .scp-send.is-stop 的 1.6s：那是「可终止的进行中动作」，
+   这是常驻入口的状态提示，不该抢焦点。 */
+.chat-side-chat-fab.is-busy {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-divider));
+  animation: chat-side-chat-fab-breathe 2.4s ease-in-out infinite;
+}
+@keyframes chat-side-chat-fab-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: var(--shadow-elevated);
+  }
+  50% {
+    transform: scale(1.06);
+    /* 光晕叠在原有阴影之上：只靠缩放，暗色主题下 6% 差异很难被察觉 */
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+      var(--shadow-elevated);
+  }
+}
+/* 减弱动效：停掉缩放，保留一圈静态强调环——状态仍可读，不再呼吸 */
+@media (prefers-reduced-motion: reduce) {
+  .chat-side-chat-fab.is-busy {
+    animation: none;
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+      var(--shadow-elevated);
+  }
+}
+
+/* ── 项目选择（设置右侧）：选项来自项目中心书签表 ── */
+.scp-project-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.scp-project-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 132px;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-3);
+  font-family: inherit;
+  font-size: var(--fz-xs, 11px);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.scp-project-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+/* 已选定具体项目 / Explore：只靠 accent 字色与「跟随主会话」的灰字区分。
+   边框不画：base 规则的 1px transparent 是占位（保留它，切换状态时不产生
+   1px 布局抖动），这里不再上色，视觉上即无边框。 */
+.scp-project-btn.is-custom {
+  color: var(--accent);
+}
+.scp-project-icon {
+  flex: 0 0 auto;
+}
+.scp-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-project-caret {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.scp-project-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  /* 260px 是面板宽度（380px）减去左组已占位后的实际上限：面板是
+     overflow:hidden，更宽会在右缘被裁（长路径靠 ellipsis 兜底）。 */
+  width: 260px;
+  padding: 4px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  animation: scp-pop-down 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scp-project-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-project-opt:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-project-opt.is-active {
+  color: var(--accent);
+}
+.scp-project-opt-name {
+  font-size: var(--fz-sm);
+}
+/* 路径用等宽字：目录名相同、父路径不同时靠它区分（同名项目是常态） */
+.scp-project-sub {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scp-project-empty {
+  padding: 8px;
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+}
+
+/* ── 历史：顶栏单图标 + hover 展开（保存 / 清空 / 最近归档）── */
+.scp-history-wrap {
+  /* 刻意不设定位：把包含块让给 .scp-header（通栏宽），.scp-history-menu 的
+     right:12px 才能贴面板右内边距、max-width 的 100% 才是面板内宽。挂在 28px
+     的 wrap 上时，260px 浮层左缘探出面板约 26px 被 .scp-panel 的
+     overflow:hidden 裁掉，且 calc(100% - 24px) 会解析成 4px，把整个浮层压成一条。 */
+  display: flex;
+  align-items: center;
+}
+.scp-history-menu {
+  position: absolute;
+  /* 贴 header 底沿（只留 2px 不蹭到 1px 下边框）：包含块是 .scp-header，
+     top:100% 即 header Padding-box 底边。旧值 +6px 浮层与 header 脱节，
+     hover 轨迹上多一段悬空。 */
+  top: calc(100% + 2px);
+  /* 包含块是 .scp-header（通栏）：right 贴面板右内边距，260px 全程落在面板内。
+     旧值 right: 0 挂在 28px 的图标 wrap 上，浮层左缘探出面板约 26px，
+     被 .scp-panel 的 overflow:hidden 裁掉（右组 5 个图标比左组更靠右）。 */
+  right: 12px;
+  /* 面板可被拉窄（最小 320px）或被 max-width:82% 收窄：宽度兜底，永不越左边界 */
+  max-width: calc(100% - 24px);
+  z-index: 20;
+  width: 260px;
+  padding: 6px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: none;
+  animation: scp-pop-down 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 透明桥接条：把图标与浮层之间的间隙并入可命中区域。间隙 = header 下 padding
+   (8px) + 视觉间隙 (2px) = 10px（图标底边 → 浮层顶边，浮层已改为贴 header
+   底沿）。盖不满整段，鼠标穿过时就会「离开触发区却没进浮层」——160ms 关闭
+   延迟也救不回来；盖过头会探到右侧图标按钮的底缘，把那 3px 条的 hover 抢走。 */
+.scp-history-menu::before {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
+.scp-history-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: var(--fz-sm);
+  text-align: left;
+  cursor: pointer;
+  /* 背景与文字必须同一组过渡：只过渡 background 时，hover 的文字色（尤其
+     .is-danger 的 --error）会瞬变，视觉上与 0.12s 渐入的底色脱节。 */
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-history-action:hover {
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.scp-history-action.is-danger:hover {
+  color: var(--error);
+}
+.scp-history-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-divider);
+}
+.scp-history-title {
+  padding: 4px 10px 2px;
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+}
+.scp-history-empty {
+  padding: 8px 10px 6px;
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+}
+.scp-history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  /* 条目多于可视高度时列表内部滚动：高度上限由 JS 按面板剩余空间实测
+     （fitHistoryMenu：面板底边 − 浮层顶边 − 12px − 列表上方固定内容），
+     浮层不伸出 .scp-panel 底边被裁。 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-1) transparent;
+}
+.scp-history-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px 4px 10px;
+  border-radius: 6px;
+}
+.scp-history-item:hover {
+  background: var(--surface-hover);
+}
+.scp-history-ts {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fz-xs, 11px);
+  color: var(--fg-4);
+}
+.scp-history-q {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fz-xs, 12px);
+  color: var(--fg-3);
+}
+.scp-history-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.scp-history-item:hover .scp-history-del {
+  opacity: 1;
+}
+.scp-history-del:hover {
+  color: var(--error);
+}
+.scp-history-del:focus,
+.scp-history-del:focus-visible {
+  outline: none;
+  opacity: 1;
+}
+
+/* ── 最小化浮动入口状态角标 ── */
+.chat-side-chat-badge {
+  position: absolute;
+  /* 入口是方形圆角（r=10）而非正圆：角点比正圆更靠外，4px 会让圆点
+     悬在圆角切线之外，故内缩 1px 落在填充区内。 */
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-4);
+  box-shadow: 0 0 0 2px var(--panel-bg);
+  pointer-events: none;
+}
+.chat-side-chat-badge.is-busy {
+  background: var(--accent);
+  animation: chat-side-chat-badge-pulse 1.2s var(--ease-out) infinite;
+}
+@keyframes chat-side-chat-badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}

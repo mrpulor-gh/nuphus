@@ -824,17 +824,9 @@ impl super::SubTaskRunner {
 
         // Tool schemas are generated only once per dispatch, keeping bytes consistent to match API cache prefix
         let tools = {
-            let t = self.cached_tools.get_or_insert_with(|| {
-                let mut schemas = self.tools.get_schemas();
-                let blocked = crate::agent::prompt::exec_blocked_tools();
-                schemas.retain(|t| {
-                    let name = t.function.name.as_str();
-                    !blocked.contains(&name)
-                        && !name.starts_with("desktop_")
-                        && !name.starts_with("browser_")
-                });
-                schemas
-            });
+            let t = self
+                .cached_tools
+                .get_or_insert_with(|| render_sub_task_schemas(&self.tools));
             t.clone()
         };
 
@@ -1054,6 +1046,12 @@ impl super::SubTaskRunner {
     ) -> crate::Result<()> {
         use crate::memory::entry::PersistedStep;
 
+        // 临时执行体（Side Chat）不落记忆：整段跳过，步骤统计也不做。
+        if self.suppress_memory_write {
+            tracing::debug!("learn_from_success: skipped (memory write suppressed)");
+            return Ok(());
+        }
+
         let mut steps: Vec<PersistedStep> = Vec::new();
         let mut step_number: u32 = 0;
         let mut tools_used: Vec<String> = Vec::new();
@@ -1137,5 +1135,116 @@ impl super::SubTaskRunner {
         });
 
         Ok(())
+    }
+}
+
+/// SubTaskRunner 下发给 LLM 的工具 schema 集合。
+///
+/// `registry.get_schemas()` 是角色工具面的**唯一事实源**：桌面 / 浏览器
+/// 工具的收口已在 registry 层完成——`automation_tools_enabled` 总开关
+/// （desktop_schemas.rs:30 第一道门）+ `automation_allowlist` 三处同源
+/// （schema / has_tool / 执行分发）+ 执行分发同源校验。本函数只做一层
+/// 与角色相关的过滤：剔除 Leader 独占工具（`exec_blocked_tools`）。
+///
+/// 历史 bug（2026-11-04 运行态实测发现）：此处曾无条件剥离
+/// `desktop_*` / `browser_*`（「SubTaskRunner 一律无桌面」的旧假设），
+/// 把 side chat 经 `enable_automation_observe_only` 放权的桌面观察子集
+/// （desktop_screenshot / desktop_vision）一并误杀——表现为「放权代码
+/// 落盘、二进制最新，但伙伴工具面没有 desktop_screenshot」。ExecAgent /
+/// CLI 的 registry 本就不开自动化总开关，`get_schemas()` 无桌面 schema，
+/// 删掉二次剥离对它们零影响；side chat 的白名单收口不受损（browser 与
+/// 控制类在 registry 层已被 allowlist retain 掉）。
+fn render_sub_task_schemas(
+    registry: &crate::tools::ToolRegistry,
+) -> Vec<crate::api::ToolDefinition> {
+    let blocked = crate::agent::prompt::exec_blocked_tools();
+    registry
+        .get_schemas()
+        .into_iter()
+        .filter(|t| !blocked.contains(&t.function.name.as_str()))
+        .collect()
+}
+
+#[cfg(test)]
+mod render_schemas_tests {
+    use super::render_sub_task_schemas;
+    use crate::tools::registry::ToolRegistry;
+
+    fn names(registry: &ToolRegistry) -> Vec<String> {
+        render_sub_task_schemas(registry)
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect()
+    }
+
+    /// side chat 姿势（exec 基座 + desktop client + 观察白名单）：放权的桌面
+    /// 观察子集必须抵达 LLM 工具面；控制类 / 浏览器 / Leader 独占工具不得穿透。
+    #[test]
+    fn side_chat_observe_only_schemas_reach_llm() {
+        let mut registry = ToolRegistry::exec();
+        registry.set_desktop_client(crate::desktop::DesktopClient::new());
+        registry.enable_automation_observe_only();
+        let names = names(&registry);
+        for want in ["desktop_screenshot", "desktop_vision"] {
+            assert!(names.iter().any(|n| n == want), "{want} 应下发: {names:?}");
+        }
+        for forbidden in [
+            "desktop_click",
+            "desktop_input",
+            "desktop_mouse",
+            "desktop_semantic_execute",
+            "browser_navigate",
+            // exec_blocked_tools：Leader 独占
+            "task_dispatch",
+            "side_chat_dispatch",
+            "leader_memory_update",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == forbidden),
+                "{forbidden} 不得下发: {names:?}"
+            );
+        }
+    }
+
+    /// ExecAgent 姿势（exec_with_permissions，不开自动化总开关）：registry 层
+    /// 就无桌面 / 浏览器 schema，删掉下游二次剥离后依然为零（回归保护：
+    /// 修复不得把桌面工具漏给 Exec）。
+    #[test]
+    fn exec_registry_has_no_desktop_schemas() {
+        let registry = ToolRegistry::exec_with_permissions(crate::permissions::ToolPermissions {
+            file_access: false,
+            web_search: false,
+            system_automation: false,
+        });
+        let names = names(&registry);
+        assert!(
+            !names.iter().any(|n| n.starts_with("desktop_")),
+            "Exec 不得有桌面 schema: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("browser_")),
+            "Exec 不得有浏览器 schema: {names:?}"
+        );
+    }
+
+    /// registry 层全放行桌面（builtin_with_desktop：总开关开 + 无 allowlist）时，
+    /// render 层**不得二次剥离**——这是本次修复的核心契约：下游只过滤
+    /// Leader 独占工具，桌面 / 浏览器的收口权完全在 registry 层（总开关 +
+    /// allowlist 三处同源）。曾因 render 层无条件剥离 desktop_*/browser_*，
+    /// 连 side chat 白名单放权的观察子集都被误杀（2026-11-04 运行态实测）。
+    #[test]
+    fn render_never_strips_registry_allowed_desktop() {
+        // exec() 的总开关默认关（desktop_schemas.rs:30 第一道门），只设 client
+        // 不出 schema；全放行姿势取 builtin_with_desktop（new() 默认开总开关）。
+        let registry = ToolRegistry::builtin_with_desktop();
+        let names = names(&registry);
+        for want in ["desktop_screenshot", "desktop_mouse"] {
+            assert!(
+                names.iter().any(|n| n == want),
+                "{want} 是 registry 放行的，render 层不得剥离: {names:?}"
+            );
+        }
+        // Leader 独占工具仍被剥（与角色相关的唯一一层过滤）
+        assert!(!names.iter().any(|n| n == "task_dispatch"));
     }
 }

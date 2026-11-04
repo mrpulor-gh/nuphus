@@ -75,7 +75,7 @@ import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import { ModelCard, type ModelCardCap } from './ModelCard'
 import { ModelProtocolSelect } from './ModelProtocolSelect'
 import { RowCtxEditor } from './RowCtxEditor'
-import { formatExactTokens } from '../../ui/tokenFormat'
+import { formatExactTokens, formatTokens } from '../../ui/tokenFormat'
 import { getProviderFavorites, setFavorite } from '../lib/favorites'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from '../chat/modelPopupOrder'
 import {
@@ -683,6 +683,7 @@ function VisionModelSelect({
   showVisionIcons,
   filterCapability,
   menuUp = false,
+  groupByProvider = false,
 }: {
   value: string
   provider?: string
@@ -695,6 +696,8 @@ function VisionModelSelect({
   filterCapability?: 'vision' | 'audio' | 'image_generation' | 'video_generation'
   /** true = 菜单向上展开（接近页面底部时避免溢出）；默认向下 */
   menuUp?: boolean
+  /** true = 菜单按提供商分组（logo + 名称 + 展开）；默认平铺列表 */
+  groupByProvider?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -723,6 +726,19 @@ function VisionModelSelect({
   const selectedMissing = !!value && !!selected && !filtered.includes(selected)
   const emptyText =
     placeholder || tr(t, 'models.visionNone', '跟随 Leader 模型（需支持图像理解）（推荐）')
+
+  // ── 分组模式（子智能体等无能力过滤的场景）──
+  // 与平铺模式共用同一个菜单容器，只换列表 DOM：提供商一行（logo + 黑体名 +
+  // 数量 + 展开箭头），展开后才渲染该商模型；手风琴，同时只开一个。
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const groups = groupByProvider
+    ? [...filtered.reduce((map, m) => {
+        const bucket = map.get(m.provider)
+        if (bucket) bucket.push(m)
+        else map.set(m.provider, [m])
+        return map
+      }, new Map<string, ModelInfo[]>())].map(([id, list]) => ({ id, list }))
+    : []
 
   return (
     <div className="models-select compact-select-wrap" ref={ref}>
@@ -773,27 +789,91 @@ function VisionModelSelect({
                 : `当前配置的 ${value} 未开启视觉能力，已不在候选列表中；如需继续使用，请先在模型列表中打开它的「视觉输入」。`}
             </div>
           )}
-          {filtered.map(m => (
-            <div
-              key={`${m.provider}:${m.id}`}
-              role="option"
-              aria-selected={selected === m}
-              className={`compact-select-option ${selected === m ? 'active' : ''}`}
-              onClick={() => {
-                onChange(m.id, m.provider)
-                close()
-              }}
-            >
-              {showVisionIcons !== false && m.supports_vision && (
-                <IconEye size={11} className="icon-prefix" />
-              )}
-              {showVisionIcons !== false && filterCapability === 'audio' && m.supports_audio && (
-                <IconMic size={11} className="icon-prefix" />
-              )}
-              <span className="select-option-name">{m.id}</span>
-              <span className="select-option-provider">({m.provider})</span>
-            </div>
-          ))}
+          {groupByProvider
+            ? /* 分组模式：提供商行 + 懒展开的模型子列表 */
+              groups.map(group => (
+                <div className="cmp-group" key={group.id}>
+                  <div
+                    className="cmp-group-row"
+                    role="button"
+                    aria-expanded={expandedGroup === group.id}
+                    onClick={() =>
+                      setExpandedGroup(cur => (cur === group.id ? null : group.id))
+                    }
+                  >
+                    {hasProviderIcon(group.id) ? (
+                      <ProviderIcon provider={group.id} size={16} />
+                    ) : (
+                      <span className="cmp-group-fallback">
+                        {group.id.slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="cmp-group-name">{group.id}</span>
+                    <span className="cmp-group-count">{group.list.length}</span>
+                    <span
+                      className={`cmp-group-caret${expandedGroup === group.id ? ' open' : ''}`}
+                    >
+                      ▾
+                    </span>
+                  </div>
+                  {expandedGroup === group.id &&
+                    group.list.map(m => (
+                      <div
+                        key={`${m.provider}:${m.id}`}
+                        role="option"
+                        aria-selected={selected === m}
+                        className={`compact-select-option cmp-group-model ${
+                          selected === m ? 'active' : ''
+                        }`}
+                        onClick={() => {
+                          onChange(m.id, m.provider)
+                          close()
+                        }}
+                      >
+                        <span className="select-option-name">{m.id}</span>
+                        {/* 能力标注：上下文窗口 + 多模态 */}
+                        <span className="cmp-model-tags">
+                          <span className="cmp-model-tag">
+                            {m.context_window
+                              ? formatTokens(m.context_window)
+                              : t('models.ctxUnknown')}
+                          </span>
+                          {m.supports_vision && (
+                            <span className="cmp-model-tag is-cap">
+                              {t('models.capVision')}
+                            </span>
+                          )}
+                          {m.supports_audio && (
+                            <span className="cmp-model-tag is-cap">
+                              {t('models.capAudio')}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              ))
+            : filtered.map(m => (
+                <div
+                  key={`${m.provider}:${m.id}`}
+                  role="option"
+                  aria-selected={selected === m}
+                  className={`compact-select-option ${selected === m ? 'active' : ''}`}
+                  onClick={() => {
+                    onChange(m.id, m.provider)
+                    close()
+                  }}
+                >
+                  {showVisionIcons !== false && m.supports_vision && (
+                    <IconEye size={11} className="icon-prefix" />
+                  )}
+                  {showVisionIcons !== false && filterCapability === 'audio' && m.supports_audio && (
+                    <IconMic size={11} className="icon-prefix" />
+                  )}
+                  <span className="select-option-name">{m.id}</span>
+                  <span className="select-option-provider">({m.provider})</span>
+                </div>
+              ))}
         </div>
       )}
     </div>
@@ -4203,6 +4283,7 @@ export function ModelsPage({
                       onChange={(m, provider) => void saveAgentModel('exec', m, provider)}
                       t={t}
                       placeholder={TXT.execFollowDefault}
+                      groupByProvider
                     />
                     {agentFeedback && (
                       <div

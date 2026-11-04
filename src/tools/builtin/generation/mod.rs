@@ -1,19 +1,16 @@
-//! generation — MiniMax 多模态生成工具（image_generate / video_generate）
+//! generation — 多提供商模型生成工具（image_generate / video_generate）
 //!
-//! 定位：MiniMax 生成 API 的通用调用器，只做「认证 + 传输 + 落盘」。
-//! 模型与生成参数全部开放用户填写（`params` JSON 原样透传合并进请求体），
-//! 工具不枚举不拦截任何生成参数——新模型新参数无需改代码。
+//! 分层（自上而下，厂商知识只允许往下沉）：
+//! 1. **语义层（本文件）**：`GenerationRequest` 只描述「要生成什么」——模态、
+//!    提示词、比例 / 张数 / 时长 / 首帧 / 尺寸 / 返回格式 + `extra`（提供商特定
+//!    透传）；`GenerationProtocol` 是协议 trait；按 provider 类型选协议，未实现
+//!    的提供商明确报错，**禁止静默回落任何一家**。
+//! 2. **协议层（`minimax.rs`）**：端点、请求键名、响应解析、任务轮询只活在这里。
+//! 3. **文件层（`artifacts.rs`）**：落盘 / 下载，不认识任何服务商。
 //!
-//! API 事实（2026-08-12 从 MiniMax 官方 cli 仓库源码核实：MiniMax-AI/cli）：
-//! - 图像：`POST {base}/v1/image_generation` 同步返回 `data.image_urls[]`
-//!   （或 `data.image_base64[]`）；宽高约束 512–2048 且 8 的倍数（官方校验）
-//! - 视频 V2（H3 系）：`POST {base}/v2/video_generation` → task_id → 轮询
-//!   `GET {base}/v2/query/video_generation/{task_id}`（status ∈
-//!   succeeded/failed/cancelled/expired）
-//! - 视频 V1（Hailuo-2.3 等）：`POST {base}/v1/video_generation` → task_id → 轮询
-//!   `GET {base}/v1/query/video_generation?task_id=`（status ∈ Success/Failed）
-//! - 产出文件：`GET {base}/v1/files/retrieve?file_id=` → `file.download_url` → 下载
-//! - V1/V2 路由对齐官方 cli 的 isVideoV2Model：模型名含 "H3" 走 V2，其余走 V1
+//! 新增一家提供商 = 一个协议实现文件 + `GENERATION_PROTOCOLS` 加一行；
+//! 语义层、工具契约（description / schema）、workflow schema、UI、skill 文档
+//! 都不需要改。
 //!
 //! 凭证：读模型界面的**能力绑定**（providers.toml `[capabilities]` 的
 //! `image_generation` / `video_generation` + 对应 `_provider` 归属）——用户在
@@ -30,54 +27,220 @@ use crate::config::{
 use crate::permissions::ToolCategory;
 use crate::tools::registry::{ToolDef, ToolRegistry};
 use crate::ToolResult;
+use minimax::MiniMaxMediaProtocol;
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
-/// MiniMax 默认 base（仅当绑定的 provider 是 MiniMax 段且未配 base_url 时兜底，
-/// 与 config::providers::minimax 保持一致）；非 MiniMax 段缺 base_url 一律报错。
-const DEFAULT_BASE_URL: &str = "https://api.minimaxi.com/v1";
+mod artifacts;
+mod minimax;
+
 /// 视频轮询默认间隔 / 默认总超时
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
-const DEFAULT_VIDEO_TIMEOUT_SECS: u64 = 300;
+pub(crate) const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
+pub(crate) const DEFAULT_VIDEO_TIMEOUT_SECS: u64 = 300;
 /// 视频轮询超时上限（外层 registry 给本工具 900s 桶，见 registry.rs 超时分级）
-const MAX_VIDEO_TIMEOUT_SECS: u64 = 600;
-/// 单个文件下载上限（防异常响应打爆磁盘；H3 官方限制视频源文件 ≤50MB）
-const DOWNLOAD_CAP_BYTES: u64 = 256 * 1024 * 1024;
-/// 错误响应体透出截断长度
-const ERROR_BODY_CAP: usize = 500;
+pub(crate) const MAX_VIDEO_TIMEOUT_SECS: u64 = 600;
 
-static GEN_AGENT_CACHE: Mutex<Option<(reqwest::blocking::Client, i64)>> = Mutex::new(None);
+// ── 错误归一 ──
 
-/// 生成工具专用 client（复用 web.rs 的 AGENT_TTL 缓存模式）
-fn get_agent() -> reqwest::blocking::Client {
-    let now = super::web::unix_now();
-    if let Ok(cache) = GEN_AGENT_CACHE.lock() {
-        if let Some((ref agent, ts)) = *cache {
-            if now - ts < super::web::AGENT_TTL {
-                return agent.clone();
-            }
+/// 生成流程的错误类别。UI 与工作流只看到归一化后的信息（`Display` 只出文案），
+/// 不看到任何厂商细节。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GenErrorKind {
+    /// 该提供商没有实现生成协议（禁止静默回落）
+    UnsupportedProvider,
+    /// 网络 / 磁盘 IO 失败（请求发送、响应读取、下载、落盘）
+    Transport,
+    /// 请求契约 / 配置类失败与响应形态不符（缺密钥、缺端点、params 非对象、
+    /// 响应缺字段、业务错误码）
+    Protocol,
+    /// 异步任务轮询超时
+    Timeout,
+    /// 协议成功返回但没有任何产物
+    EmptyResult,
+}
+
+/// 归一化生成错误：类别 + 可读文案。
+///
+/// `kind` 是归一化错误契约的一部分（调用方据此区分「提供商未实现 / 传输 /
+/// 协议 / 超时 / 空产物」），当前由守卫测试与语义层断言消费；生产路径只透出
+/// `Display` 文案，因此这里显式标注，避免 dead_code 噪音。
+#[derive(Debug, Clone)]
+pub(crate) struct GenError {
+    #[allow(dead_code)]
+    pub kind: GenErrorKind,
+    pub message: String,
+}
+
+impl GenError {
+    pub(crate) fn unsupported_provider(message: impl Into<String>) -> Self {
+        Self {
+            kind: GenErrorKind::UnsupportedProvider,
+            message: message.into(),
         }
     }
-    let agent = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .expect("Failed to build reqwest blocking Client");
-    if let Ok(mut cache) = GEN_AGENT_CACHE.lock() {
-        *cache = Some((agent.clone(), now));
+
+    pub(crate) fn transport(message: impl Into<String>) -> Self {
+        Self {
+            kind: GenErrorKind::Transport,
+            message: message.into(),
+        }
     }
-    agent
+
+    pub(crate) fn protocol(message: impl Into<String>) -> Self {
+        Self {
+            kind: GenErrorKind::Protocol,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            kind: GenErrorKind::Timeout,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn empty_result(message: impl Into<String>) -> Self {
+        Self {
+            kind: GenErrorKind::EmptyResult,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for GenError {
+    /// 只出文案：工具返回值与工作流错误信息就是这段文字（与重构前逐字一致）。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+// ── 语义契约 ──
+
+/// 生成产物：落盘路径 + 字节数 + 异步任务号（同步协议为 None）。
+#[derive(Debug, Clone)]
+pub(crate) struct Artifact {
+    pub path: PathBuf,
+    pub bytes: u64,
+    /// 异步任务号（同步返回的协议为 None）；仅用于工具输出文案与排查
+    pub task_id: Option<String>,
+}
+
+/// 语义生成请求：只描述「要生成什么」，零厂商信息。
+///
+/// 语义字段（比例 / 张数 / 时长 / 首帧 / 尺寸 / 返回格式）由所选提供商的生成
+/// 协议决定请求体键名；`extra` 是提供商特定附加参数原样透传（逃生舱），
+/// 显式键优先于语义字段。模态不适用的语义字段由协议自行忽略。
+#[derive(Debug, Clone)]
+pub(crate) struct GenerationRequest {
+    pub kind: GenerationKind,
+    pub prompt: String,
+    /// 画面比例（image/video 适用）
+    pub ratio: Option<String>,
+    /// image 一次生成张数
+    pub count: Option<u32>,
+    /// video 时长（秒）
+    pub duration: Option<u32>,
+    /// video 首帧图路径（空 = 文生视频）
+    pub first_frame: Option<String>,
+    /// 图像宽度（像素）
+    pub width: Option<u32>,
+    /// 图像高度（像素）
+    pub height: Option<u32>,
+    /// 返回格式（取值由协议决定）
+    pub output_format: Option<String>,
+    /// 提供商特定附加参数（`params` 原样透传）
+    pub extra: Map<String, Value>,
+    /// 异步生成轮询间隔秒数（None = 语义缺省）
+    pub poll_interval_secs: Option<u64>,
+    /// 异步生成轮询总超时秒数（None = 语义缺省）
+    pub timeout_secs: Option<u64>,
+}
+
+impl GenerationRequest {
+    /// 语义请求：kind + prompt 必填，其余字段默认不设置。
+    pub(crate) fn new(kind: GenerationKind, prompt: impl Into<String>) -> Self {
+        Self {
+            kind,
+            prompt: prompt.into(),
+            ratio: None,
+            count: None,
+            duration: None,
+            first_frame: None,
+            width: None,
+            height: None,
+            output_format: None,
+            extra: Map::new(),
+            poll_interval_secs: None,
+            timeout_secs: None,
+        }
+    }
+
+    /// `params` JSON → `extra` 透传 map。非对象按既有契约报错。
+    pub(crate) fn extra_from_params(
+        params: Option<&Value>,
+    ) -> Result<Map<String, Value>, GenError> {
+        match params {
+            None => Ok(Map::new()),
+            Some(Value::Object(map)) => Ok(map.clone()),
+            Some(_) => Err(GenError::protocol("params must be a JSON object")),
+        }
+    }
+}
+
+// ── 协议适配层 ──
+
+/// 生成协议适配层：一家提供商 = 一个实现 + 一行注册。
+///
+/// 端点、请求键名、响应解析、轮询细节只允许出现在实现里；语义层与产品契约层
+/// （工具 description / workflow schema / UI / skill 文档）看不到任何厂商形态。
+pub(crate) trait GenerationProtocol: Send + Sync {
+    /// 协议标识（如 "minimax_media"），仅用于报错文案与调试
+    fn kind(&self) -> &'static str;
+    /// 协议内置默认端点（用户未配置 base_url 时回落）；没有则 None
+    fn default_base_url(&self) -> Option<&'static str>;
+    /// 图像生成：返回落盘产物（顺序即协议返回顺序，主产物 = 第一条）
+    fn image(&self, target: &GenTarget, req: &GenerationRequest)
+        -> Result<Vec<Artifact>, GenError>;
+    /// 视频生成：异步任务轮询后返回落盘产物
+    fn video(&self, target: &GenTarget, req: &GenerationRequest)
+        -> Result<Vec<Artifact>, GenError>;
+}
+
+/// 已实现的生成协议表：新增一家提供商 = 一个协议实现文件 + 这里加一行。
+/// 表里没有的提供商一律显式报错，禁止静默回落任何一家。
+static GENERATION_PROTOCOLS: &[(ProviderKind, &dyn GenerationProtocol)] =
+    &[(ProviderKind::MiniMax, &MiniMaxMediaProtocol)];
+
+/// 按 provider 类型取生成协议；未实现 → None（调用方报 unsupported_provider）。
+fn protocol_for(kind: ProviderKind) -> Option<&'static dyn GenerationProtocol> {
+    GENERATION_PROTOCOLS
+        .iter()
+        .find(|(provider_kind, _)| *provider_kind == kind)
+        .map(|(_, protocol)| *protocol)
+}
+
+/// 已支持协议标识（报错文案用）
+fn supported_protocols() -> String {
+    GENERATION_PROTOCOLS
+        .iter()
+        .map(|(_, protocol)| protocol.kind())
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 // ── 凭证解析（消费模型界面的能力绑定）──
 
-/// 生成请求目标：凭证 + 本次生效的模型名。
+/// 生成请求目标：凭证 + 本次生效的模型名 + 协议归属。
 ///
 /// 含 api_key，刻意不实现 Debug / Display 防泄露（与旧 GenCredential 同口径）。
-struct GenTarget {
+pub(crate) struct GenTarget {
+    /// 服务商配置段名（仅报错文案用）
+    provider: String,
+    /// 协议类型（选生成协议的唯一依据）
+    provider_kind: ProviderKind,
     api_key: String,
+    /// 生效 base_url（已配置优先，未配置回落协议默认端点）
     base_url: String,
     model: String,
 }
@@ -92,37 +255,6 @@ fn generation_predicate(kind: GenerationKind) -> fn(&ModelEntry) -> bool {
         GenerationKind::Image => |m: &ModelEntry| m.supports_image_generation,
         GenerationKind::Video => |_: &ModelEntry| true,
     }
-}
-
-/// base_url：段内已配则用；未配时**只对 MiniMax 段**回落内置默认端点。
-/// 其他协议类型的段缺 base_url 一律报错——猜一个端点比报错更坏。
-fn base_url_for(cfg: &ProviderConfig) -> Result<String, String> {
-    let configured = cfg.base_url.trim().trim_end_matches('/');
-    if !configured.is_empty() {
-        return Ok(configured.to_string());
-    }
-    if cfg.provider_type == ProviderKind::MiniMax {
-        Ok(DEFAULT_BASE_URL.to_string())
-    } else {
-        Err(format!(
-            "服务商 '{}' 未配置 base_url，且其协议类型不是 MiniMax（无内置默认端点可回落）",
-            cfg.name
-        ))
-    }
-}
-
-fn target_from(cfg: &ProviderConfig, model: &str) -> Result<GenTarget, String> {
-    if cfg.api_key.trim().is_empty() {
-        return Err(format!(
-            "服务商 '{}' 未配置 api_key：请先在模型界面为该服务商填写密钥",
-            cfg.name
-        ));
-    }
-    Ok(GenTarget {
-        api_key: cfg.api_key.clone(),
-        base_url: base_url_for(cfg)?,
-        model: model.to_string(),
-    })
 }
 
 /// 候选清单——**只用于报错文案**，不参与任何模型选择。
@@ -183,7 +315,7 @@ fn unbound_error(registry: &ModelRegistry, kind: GenerationKind, model: Option<&
     msg
 }
 
-/// 解析生成工具的凭证与生效模型——消费能力绑定，参数只作当次覆盖。
+/// 解析凭证与生效模型——消费能力绑定，参数只作当次覆盖（零厂商知识）。
 ///
 /// 优先级：
 /// 1. 生效模型 = 当次 `model` 参数 > 绑定模型；两者都无 → [`unbound_error`]。
@@ -201,16 +333,16 @@ fn resolve_generation_target(
     kind: GenerationKind,
     provider_override: Option<&str>,
     model_override: Option<&str>,
-) -> Result<GenTarget, String> {
+) -> Result<GenTarget, GenError> {
     let predicate = generation_predicate(kind);
-    let binding = resolve_generation_binding(registry, kind)?;
+    let binding = resolve_generation_binding(registry, kind).map_err(GenError::protocol)?;
 
     let model = model_override
         .map(str::trim)
         .filter(|m| !m.is_empty())
         .map(str::to_string)
         .or_else(|| (!binding.is_unbound()).then(|| binding.model.clone()))
-        .ok_or_else(|| unbound_error(registry, kind, None))?;
+        .ok_or_else(|| GenError::protocol(unbound_error(registry, kind, None)))?;
 
     let provider = provider_override
         .map(str::trim)
@@ -222,10 +354,10 @@ fn resolve_generation_target(
         let (cfg, _entry) = registry
             .find_model_for_provider(name, &model)
             .ok_or_else(|| {
-                format!(
+                GenError::protocol(format!(
                     "未找到{kind}模型 {name}/{model}：该服务商下没有这个模型条目。\n{}",
                     unbound_error(registry, kind, Some(&model))
-                )
+                ))
             })?;
         return target_from(cfg, &model);
     }
@@ -238,9 +370,13 @@ fn resolve_generation_target(
         }
     }
     match candidates.len() {
-        0 => Err(unbound_error(registry, kind, Some(&model))),
+        0 => Err(GenError::protocol(unbound_error(
+            registry,
+            kind,
+            Some(&model),
+        ))),
         1 => target_from(candidates[0], &model),
-        _ => Err(format!(
+        _ => Err(GenError::protocol(format!(
             "{kind}模型 {model} 在多个服务商下重名（{}），无法确定用哪个。\n\
              请去模型界面 → 图像音频模型 → {kind} 重新绑定——绑定会同时记录服务商归属，\
              之后不再有歧义。",
@@ -249,238 +385,118 @@ fn resolve_generation_target(
                 .map(|c| c.name.as_str())
                 .collect::<Vec<_>>()
                 .join("、")
-        )),
+        ))),
     }
 }
 
-// ── 请求体合并与路由判定 ──
-
-/// 合并请求体：params 透传为底，顶层参数（model/prompt）覆盖同名键。
-fn merge_request_body(
-    params: Option<&Value>,
-    model: &str,
-    prompt: &str,
-) -> Result<Map<String, Value>, String> {
-    let mut body = match params {
-        None => Map::new(),
-        Some(v) => v
-            .as_object()
-            .cloned()
-            .ok_or_else(|| "params must be a JSON object".to_string())?,
-    };
-    // 顶层参数优先：后插入覆盖 params 同名键
-    body.insert("model".to_string(), json!(model));
-    body.insert("prompt".to_string(), json!(prompt));
-    Ok(body)
-}
-
-/// 视频 V1/V2 路由：对齐 MiniMax 官方 cli 的 isVideoV2Model——
-/// 模型名含 "H3" 走 V2 端点，其余走 V1。
-fn is_video_v2_model(model: &str) -> bool {
-    model.contains("H3")
-}
-
-/// registry base_url 通常以 /v1 结尾；V2 端点在同级 /v2 下，取 API root。
-fn api_root(base_url: &str) -> &str {
-    let b = base_url.trim_end_matches('/');
-    b.strip_suffix("/v1").unwrap_or(b)
-}
-
-// ── MiniMax 响应解析 ──
-
-/// 从响应体提取 base_resp 业务错误（status_code != 0 视为失败）。
-fn extract_api_error(body: &Value) -> Option<String> {
-    let base_resp = body.get("base_resp")?;
-    let code = base_resp.get("status_code")?.as_i64()?;
-    if code == 0 {
-        return None;
+fn target_from(cfg: &ProviderConfig, model: &str) -> Result<GenTarget, GenError> {
+    if cfg.api_key.trim().is_empty() {
+        return Err(GenError::protocol(format!(
+            "服务商 '{}' 未配置 api_key：请先在模型界面为该服务商填写密钥",
+            cfg.name
+        )));
     }
-    let msg = base_resp
-        .get("status_msg")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    Some(format!("MiniMax API error (status_code={code}): {msg}"))
+    Ok(GenTarget {
+        provider: cfg.name.clone(),
+        provider_kind: cfg.provider_type,
+        api_key: cfg.api_key.clone(),
+        base_url: cfg.base_url.trim().trim_end_matches('/').to_string(),
+        model: model.to_string(),
+    })
 }
 
-/// 图像响应条目：URL 或 base64 载荷。
-enum ImageItem {
-    Url(String),
-    Base64(String),
-}
-
-/// 从 image_generation 响应的 data 字段提取图像条目
-/// （`image_urls[]` 与 `image_base64[]` 两种形态都接）。
-fn collect_image_items(data: &Value) -> Vec<ImageItem> {
-    let mut items = Vec::new();
-    if let Some(urls) = data.get("image_urls").and_then(|v| v.as_array()) {
-        for u in urls.iter().filter_map(|v| v.as_str()) {
-            if !u.is_empty() {
-                items.push(ImageItem::Url(u.to_string()));
-            }
-        }
-    }
-    if let Some(b64s) = data.get("image_base64").and_then(|v| v.as_array()) {
-        for b in b64s.iter().filter_map(|v| v.as_str()) {
-            if !b.is_empty() {
-                items.push(ImageItem::Base64(b.to_string()));
-            }
-        }
-    }
-    items
-}
-
-/// 视频任务状态提取：V2 嵌套在 task.status，V1 在顶层 status，两种都接。
-fn video_task_status(resp: &Value) -> Option<String> {
-    resp.pointer("/task/status")
-        .and_then(|v| v.as_str())
-        .or_else(|| resp.get("status").and_then(|v| v.as_str()))
-        .map(|s| s.to_string())
-}
-
-/// 视频产出 file_id 提取：task.file_id / 顶层 file_id 两种形态都接。
-fn video_file_id(resp: &Value) -> Option<String> {
-    resp.pointer("/task/file_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| resp.get("file_id").and_then(|v| v.as_str()))
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-// ── HTTP 收发 ──
-
-fn classify_reqwest_error(e: &reqwest::Error) -> String {
-    if e.is_timeout() {
-        format!("MiniMax API request failed: timeout ({e})")
-    } else if e.is_connect() {
-        format!("MiniMax API request failed: connection error ({e})")
-    } else {
-        format!("MiniMax API request failed: {e}")
-    }
-}
-
-/// 响应文本读取并做业务错误解析（base_resp 透出，不吞错误体）。
-fn parse_response(resp: reqwest::blocking::Response, endpoint: &str) -> Result<Value, String> {
-    let status = resp.status();
-    let text = resp
-        .text()
-        .map_err(|e| format!("读取 MiniMax 响应体失败 ({endpoint}): {e}"))?;
-    if !status.is_success() {
-        let truncated: String = text.chars().take(ERROR_BODY_CAP).collect();
-        return Err(format!(
-            "MiniMax API HTTP {status} ({endpoint}): {truncated}"
-        ));
-    }
-    let body: Value = serde_json::from_str(&text).map_err(|e| {
-        let truncated: String = text.chars().take(ERROR_BODY_CAP).collect();
-        format!("MiniMax 响应非 JSON ({endpoint}): {e} — body: {truncated}")
+/// 完整目标：凭证 + 生效模型 + 生成协议 + 生效 base_url。
+///
+/// 协议未实现的提供商在此显式报错（不静默回落任何一家）；base_url 未配置时
+/// 回落协议内置默认端点，协议没有默认端点也显式报错。
+fn resolve_target(
+    registry: &ModelRegistry,
+    kind: GenerationKind,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<(GenTarget, &'static dyn GenerationProtocol), GenError> {
+    let mut target = resolve_generation_target(registry, kind, provider_override, model_override)?;
+    let protocol = protocol_for(target.provider_kind).ok_or_else(|| {
+        GenError::unsupported_provider(format!(
+            "提供商 '{}' 尚未实现生成协议（已支持：{}）",
+            target.provider,
+            supported_protocols()
+        ))
     })?;
-    if let Some(err) = extract_api_error(&body) {
-        return Err(format!("{err} ({endpoint})"));
+    if target.base_url.is_empty() {
+        target.base_url = protocol
+            .default_base_url()
+            .ok_or_else(|| {
+                GenError::protocol(format!(
+                    "服务商 '{}' 未配置 base_url，且其生成协议（{}）没有内置默认端点",
+                    target.provider,
+                    protocol.kind()
+                ))
+            })?
+            .trim_end_matches('/')
+            .to_string();
     }
-    Ok(body)
+    Ok((target, protocol))
 }
 
-fn post_json(
-    agent: &reqwest::blocking::Client,
-    cred: &GenTarget,
-    url: &str,
-    body: &Value,
-) -> Result<Value, String> {
-    let resp = agent
-        .post(url)
-        .bearer_auth(&cred.api_key)
-        .json(body)
-        .send()
-        .map_err(|e| classify_reqwest_error(&e))?;
-    parse_response(resp, url)
+// ── 生成入口（工具与 workflow do.model 共用）──
+
+/// 图像生成：返回落盘产物列表（顺序即协议返回顺序，主产物 = 第一条）。
+///
+/// 工具层（`image_generate`）与 workflow `do.model`（kind=image）共用同一实现，
+/// 禁止任何一方复制生成逻辑。工具层在此之上再包人类可读文本。
+pub(crate) fn generate_images(
+    req: &GenerationRequest,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<Vec<Artifact>, GenError> {
+    let registry =
+        load_registry().map_err(|e| GenError::protocol(format!("加载模型配置失败: {e}")))?;
+    let (target, protocol) =
+        resolve_target(&registry, req.kind, provider_override, model_override)?;
+    protocol.image(&target, req)
 }
 
-fn get_json(
-    agent: &reqwest::blocking::Client,
-    cred: &GenTarget,
-    url: &str,
-) -> Result<Value, String> {
-    let resp = agent
-        .get(url)
-        .bearer_auth(&cred.api_key)
-        .send()
-        .map_err(|e| classify_reqwest_error(&e))?;
-    parse_response(resp, url)
+/// 视频生成：异步任务轮询后返回落盘的视频产物（一次任务一个文件）。
+///
+/// 工具层（`video_generate`）与 workflow `do.model`（kind=video）共用同一实现，
+/// 禁止任何一方复制生成逻辑。工具层在此之上再包人类可读文本。
+pub(crate) fn generate_video(
+    req: &GenerationRequest,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<Artifact, GenError> {
+    let registry =
+        load_registry().map_err(|e| GenError::protocol(format!("加载模型配置失败: {e}")))?;
+    let (target, protocol) =
+        resolve_target(&registry, req.kind, provider_override, model_override)?;
+    protocol
+        .video(&target, req)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| GenError::empty_result("视频生成未返回任何产物"))
 }
 
-// ── 落盘 ──
+// ── 工具输出文案（对外契约，逐字不变）──
 
-/// 产出目录：~/.nuphus/generated/（自动创建）
-fn generated_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "无法定位用户主目录".to_string())?;
-    let dir = home.join(".nuphus").join("generated");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("创建产出目录失败 {}: {e}", dir.display()))?;
-    Ok(dir)
+/// 图像工具输出文案：`已生成 N 张图像：\n路径 (bytes)`，多张按换行拼接。
+fn format_image_tool_text(artifacts: &[Artifact]) -> String {
+    let lines: Vec<String> = artifacts
+        .iter()
+        .map(|artifact| format!("{} ({} bytes)", artifact.path.display(), artifact.bytes))
+        .collect();
+    format!("已生成 {} 张图像：\n{}", lines.len(), lines.join("\n"))
 }
 
-fn file_timestamp() -> String {
-    chrono::Local::now().format("%Y%m%d_%H%M%S_%3f").to_string()
+/// 视频工具输出文案：`视频生成完成（task_id=...）：\n路径 (bytes)`。
+fn format_video_tool_text(artifact: &Artifact) -> String {
+    format!(
+        "视频生成完成（task_id={}）：\n{} ({} bytes)",
+        artifact.task_id.as_deref().unwrap_or_default(),
+        artifact.path.display(),
+        artifact.bytes
+    )
 }
-
-/// 从 URL 推断图像扩展名（白名单内取原扩展，否则兜底 jpg）。
-fn image_ext_from_url(url: &str) -> &'static str {
-    let path = url.split(['?', '#']).next().unwrap_or("");
-    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => "png",
-        "webp" => "webp",
-        "jpeg" => "jpeg",
-        _ => "jpg",
-    }
-}
-
-/// 下载 URL 到本地文件（带大小上限）。
-fn download_to_file(
-    agent: &reqwest::blocking::Client,
-    url: &str,
-    path: &std::path::Path,
-) -> Result<u64, String> {
-    let mut resp = agent
-        .get(url)
-        .send()
-        .map_err(|e| format!("下载生成文件失败: {}", classify_reqwest_error(&e)))?;
-    if !resp.status().is_success() {
-        return Err(format!("下载生成文件失败: HTTP {}", resp.status()));
-    }
-    let mut file =
-        std::fs::File::create(path).map_err(|e| format!("创建文件失败 {}: {e}", path.display()))?;
-    let written = std::io::copy(&mut resp, &mut file)
-        .map_err(|e| format!("写入文件失败 {}: {e}", path.display()))?;
-    if written == 0 {
-        let _ = std::fs::remove_file(path);
-        return Err(format!("下载内容为空: {url}"));
-    }
-    if written > DOWNLOAD_CAP_BYTES {
-        let _ = std::fs::remove_file(path);
-        return Err(format!(
-            "下载文件超过大小上限 ({DOWNLOAD_CAP_BYTES} bytes): {url}"
-        ));
-    }
-    Ok(written)
-}
-
-/// base64 载荷落盘。
-fn save_base64_image(b64: &str, path: &std::path::Path) -> Result<u64, String> {
-    use base64::Engine;
-    // 兼容 data URI 前缀形态
-    let payload = b64.split_once(',').map(|(_, p)| p).unwrap_or(b64);
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .map_err(|e| format!("image_base64 解码失败: {e}"))?;
-    if bytes.is_empty() {
-        return Err("image_base64 解码结果为空".to_string());
-    }
-    std::fs::write(path, &bytes).map_err(|e| format!("写入文件失败 {}: {e}", path.display()))?;
-    Ok(bytes.len() as u64)
-}
-
-// ── 生成流程 ──
 
 fn run_image_generate(
     prompt: &str,
@@ -488,53 +504,12 @@ fn run_image_generate(
     model_override: Option<&str>,
     params: Option<&Value>,
 ) -> Result<String, String> {
-    let registry = load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
-    let target = resolve_generation_target(
-        &registry,
-        GenerationKind::Image,
-        provider_override,
-        model_override,
-    )?;
-    let mut body = merge_request_body(params, &target.model, prompt)?;
-    // response_format 缺省 url（用户可在 params 中显式覆盖为 base64）
-    body.entry("response_format".to_string())
-        .or_insert_with(|| json!("url"));
-
-    let agent = get_agent();
-    let url = format!("{}/image_generation", target.base_url);
-    let resp = post_json(&agent, &target, &url, &Value::Object(body))?;
-    let data = resp
-        .get("data")
-        .ok_or_else(|| "MiniMax 图像响应缺少 data 字段".to_string())?;
-    let items = collect_image_items(data);
-    if items.is_empty() {
-        return Err(
-            "MiniMax 未返回任何图像（data.image_urls 与 data.image_base64 均为空）".to_string(),
-        );
-    }
-
-    let dir = generated_dir()?;
-    let ts = file_timestamp();
-    let mut lines = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        match item {
-            ImageItem::Url(u) => {
-                let path = dir.join(format!("image_{ts}_{i}.{}", image_ext_from_url(u)));
-                let size = download_to_file(&agent, u, &path)?;
-                lines.push(format!("{} ({} bytes)", path.display(), size));
-            }
-            ImageItem::Base64(b) => {
-                let path = dir.join(format!("image_{ts}_{i}.jpg"));
-                let size = save_base64_image(b, &path)?;
-                lines.push(format!("{} ({} bytes)", path.display(), size));
-            }
-        }
-    }
-    Ok(format!(
-        "已生成 {} 张图像：\n{}",
-        lines.len(),
-        lines.join("\n")
-    ))
+    let mut request = GenerationRequest::new(GenerationKind::Image, prompt);
+    request.extra =
+        GenerationRequest::extra_from_params(params).map_err(|error| error.to_string())?;
+    let artifacts =
+        generate_images(&request, provider_override, model_override).map_err(|e| e.to_string())?;
+    Ok(format_image_tool_text(&artifacts))
 }
 
 fn run_video_generate(
@@ -545,94 +520,14 @@ fn run_video_generate(
     poll_interval_secs: u64,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let registry = load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
-    let target = resolve_generation_target(
-        &registry,
-        GenerationKind::Video,
-        provider_override,
-        model_override,
-    )?;
-    let model = target.model.as_str();
-    let body = merge_request_body(params, model, prompt)?;
-    let agent = get_agent();
-    let root = api_root(&target.base_url).to_string();
-    let v2 = is_video_v2_model(model);
-
-    // 1. 提交生成任务
-    let (submit_url, body_value) = if v2 {
-        (format!("{root}/v2/video_generation"), Value::Object(body))
-    } else {
-        (
-            format!("{}/video_generation", target.base_url),
-            Value::Object(body),
-        )
-    };
-    let submit_resp = post_json(&agent, &target, &submit_url, &body_value)?;
-    let task_id = submit_resp
-        .get("task_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "MiniMax 视频响应缺少 task_id".to_string())?
-        .to_string();
-
-    // 2. 轮询任务状态（V2: 路径参数；V1: query 参数）
-    let query_url = if v2 {
-        format!("{root}/v2/query/video_generation/{task_id}")
-    } else {
-        format!(
-            "{}/query/video_generation?task_id={task_id}",
-            target.base_url
-        )
-    };
-    let start = Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-    let interval = Duration::from_secs(poll_interval_secs);
-    let mut last_status = "unknown".to_string();
-    let file_id = loop {
-        if start.elapsed() >= timeout {
-            return Err(format!(
-                "视频生成轮询超时（task_id={task_id}，已等待 {}s，最后状态: {last_status}）",
-                timeout_secs
-            ));
-        }
-        let resp = get_json(&agent, &target, &query_url)?;
-        let status = video_task_status(&resp)
-            .ok_or_else(|| "MiniMax 视频轮询响应缺少状态字段".to_string())?;
-        last_status = status.clone();
-        match status.to_ascii_lowercase().as_str() {
-            "succeeded" | "success" => {
-                break video_file_id(&resp).ok_or_else(|| {
-                    format!("视频生成成功但响应缺少 file_id（task_id={task_id}）")
-                })?;
-            }
-            "failed" | "fail" | "cancelled" | "canceled" | "expired" => {
-                return Err(format!(
-                    "视频生成失败（task_id={task_id}，status={status}）"
-                ));
-            }
-            // processing/queueing/preparing 等中间态：继续等
-            _ => std::thread::sleep(interval),
-        }
-    };
-
-    // 3. 取下载地址
-    let retrieve_url = format!("{}/files/retrieve?file_id={file_id}", target.base_url);
-    let retrieve_resp = get_json(&agent, &target, &retrieve_url)?;
-    let download_url = retrieve_resp
-        .pointer("/file/download_url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("files/retrieve 响应缺少 file.download_url（file_id={file_id}）"))?;
-
-    // 4. 下载落盘
-    let dir = generated_dir()?;
-    let path = dir.join(format!("video_{}.mp4", file_timestamp()));
-    let size = download_to_file(&agent, download_url, &path)?;
-    Ok(format!(
-        "视频生成完成（task_id={task_id}）：\n{} ({} bytes)",
-        path.display(),
-        size
-    ))
+    let mut request = GenerationRequest::new(GenerationKind::Video, prompt);
+    request.extra =
+        GenerationRequest::extra_from_params(params).map_err(|error| error.to_string())?;
+    request.poll_interval_secs = Some(poll_interval_secs);
+    request.timeout_secs = Some(timeout_secs);
+    let artifact =
+        generate_video(&request, provider_override, model_override).map_err(|e| e.to_string())?;
+    Ok(format_video_tool_text(&artifact))
 }
 
 // ── 工具注册 ──
@@ -641,7 +536,7 @@ impl ToolRegistry {
     pub(crate) fn register_image_generate(&mut self) {
         self.register(ToolDef {
             name: "image_generate".to_string(),
-            description: "生成图像（MiniMax image_generation API，同步返回）。产出为本地文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「图片生成」能力（模型 → 图像音频模型 → 图片生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（典型值 image-01，可填任意已注册的生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。params 为可选 JSON 对象，原样透传合并进 API 请求体（如 aspect_ratio/width/height/n/response_format 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。宽高官方约束 512-2048 且 8 的倍数。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
+            description: "生成图像（同步返回）。产出为本地文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「图片生成」能力（模型 → 图像音频模型 → 图片生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（可填任意已注册的生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。params 为可选 JSON 对象，是提供商特定附加参数：键名与取值由所选提供商的生成协议决定，原样透传合并进请求体，与顶层参数同名时顶层优先。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -655,11 +550,11 @@ impl ToolRegistry {
                     },
                     "model": {
                         "type": "string",
-                        "description": "可选。当次覆盖绑定的生成模型（典型值 image-01，可填任意已注册的生成模型）；不填则用模型界面绑定的模型"
+                        "description": "可选。当次覆盖绑定的生成模型（可填任意已注册的生成模型）；不填则用模型界面绑定的模型"
                     },
                     "params": {
                         "type": "object",
-                        "description": "可选。透传合并进 API 请求体的生成参数（aspect_ratio/width/height/n/response_format 等）。原样发送，与顶层参数同名时顶层优先"
+                        "description": "可选。提供商特定附加参数（JSON 对象）：键名与取值由所选提供商的生成协议决定。原样透传合并进请求体，与顶层参数同名时顶层优先"
                     }
                 },
                 "required": ["prompt"]
@@ -706,7 +601,7 @@ impl ToolRegistry {
     pub(crate) fn register_video_generate(&mut self) {
         self.register(ToolDef {
             name: "video_generate".to_string(),
-            description: "生成视频（MiniMax video_generation API，异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「视频生成」能力（模型 → 图像音频模型 → 视频生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（典型值 MiniMax-H3 / Hailuo-2.3 / MiniMax-Hailuo-02 / S2V-01）；V1/V2 端点按模型名自动路由（含 \"H3\" 走 V2，其余走 V1）。provider 参数为当次覆盖服务商归属。params 为可选 JSON 对象，原样透传合并进 API 请求体（duration/resolution/ratio/first_frame_image 及一切新参数，工具不枚举不拦截；与顶层参数同名时顶层优先）。图像输入按 MiniMax API 要求以 URL 或 data URI 形式写进 params。轮询有超时兜底（timeout_secs），超时/失败错误含 task_id 便于排查。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
+            description: "生成视频（异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「视频生成」能力（模型 → 图像音频模型 → 视频生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（可填任意已注册的视频生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。params 为可选 JSON 对象，是提供商特定附加参数（如时长/清晰度/首帧图等）：键名与取值由所选提供商的生成协议决定，原样透传合并进请求体，与顶层参数同名时顶层优先；图像输入以 URL 或 data URI 形式写进 params。轮询有超时兜底（timeout_secs），超时/失败错误含任务号便于排查。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -720,11 +615,11 @@ impl ToolRegistry {
                     },
                     "model": {
                         "type": "string",
-                        "description": "可选。当次覆盖绑定的视频模型（典型值 MiniMax-H3 / Hailuo-2.3；模型名含 H3 走 V2 端点，其余走 V1）；不填则用模型界面绑定的模型"
+                        "description": "可选。当次覆盖绑定的视频生成模型（可填任意已注册的生成模型）；不填则用模型界面绑定的模型"
                     },
                     "params": {
                         "type": "object",
-                        "description": "可选。透传合并进 API 请求体的生成参数（duration/resolution/ratio/first_frame_image 等）。原样发送，与顶层参数同名时顶层优先"
+                        "description": "可选。提供商特定附加参数（JSON 对象）：键名与取值由所选提供商的生成协议决定。原样透传合并进请求体，与顶层参数同名时顶层优先"
                     },
                     "poll_interval_secs": {
                         "type": "integer",
@@ -755,7 +650,6 @@ impl ToolRegistry {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_string());
-                // model 只作当次覆盖：不填 → 读模型界面绑定的视频生成模型
                 let model = params
                     .get("model")
                     .and_then(|v| v.as_str())
@@ -847,13 +741,7 @@ mod tests {
     }
 
     fn minimax_provider(name: &str, api_key: &str, models: Vec<ModelEntry>) -> ProviderConfig {
-        provider(
-            name,
-            ProviderKind::MiniMax,
-            api_key,
-            DEFAULT_BASE_URL,
-            models,
-        )
+        provider(name, ProviderKind::MiniMax, api_key, "", models)
     }
 
     fn registry_with(providers: Vec<ProviderConfig>, caps: Capabilities) -> ModelRegistry {
@@ -926,113 +814,141 @@ mod tests {
         )
     }
 
-    // ── params 透传合并 ──
+    // ── extra 透传（params → GenerationRequest.extra）──
 
     #[test]
-    fn merge_body_passthrough_and_top_level_wins() {
-        let params = json!({
-            "aspect_ratio": "16:9",
-            "n": 2,
-            "prompt": "should be overridden",
-            "model": "should-be-overridden"
-        });
-        let body = merge_request_body(Some(&params), "image-01", "a cat").unwrap();
-        // 透传键保留
-        assert_eq!(body.get("aspect_ratio").unwrap(), &json!("16:9"));
-        assert_eq!(body.get("n").unwrap(), &json!(2));
-        // 顶层参数优先
-        assert_eq!(body.get("prompt").unwrap(), &json!("a cat"));
-        assert_eq!(body.get("model").unwrap(), &json!("image-01"));
+    fn extra_from_params_accepts_object_and_none() {
+        assert!(GenerationRequest::extra_from_params(None)
+            .expect("None means no extra")
+            .is_empty());
+        let extra =
+            GenerationRequest::extra_from_params(Some(&json!({"seed": 7}))).expect("object ok");
+        assert_eq!(extra.get("seed"), Some(&json!(7)));
     }
 
     #[test]
-    fn merge_body_without_params() {
-        let body = merge_request_body(None, "m", "p").unwrap();
-        assert_eq!(body.len(), 2);
+    fn extra_from_params_rejects_non_object() {
+        let err = GenerationRequest::extra_from_params(Some(&json!("not-an-object")))
+            .expect_err("non-object params must be rejected");
+        assert_eq!(err.kind, GenErrorKind::Protocol);
+        assert_eq!(err.to_string(), "params must be a JSON object");
     }
 
-    #[test]
-    fn merge_body_rejects_non_object_params() {
-        let params = json!(["not", "an", "object"]);
-        assert!(merge_request_body(Some(&params), "m", "p").is_err());
-    }
+    // ── 协议选择 ──
 
-    // ── V1/V2 路由判定 ──
-
+    /// 未实现协议的 provider → unsupported_provider，且错误信息不含任何端点。
     #[test]
-    fn video_v2_routing_by_model_name() {
-        assert!(is_video_v2_model("MiniMax-H3"));
-        assert!(is_video_v2_model("some-H3-variant"));
-        assert!(!is_video_v2_model("Hailuo-2.3"));
-        assert!(!is_video_v2_model("MiniMax-Hailuo-02"));
-        assert!(!is_video_v2_model("S2V-01"));
-        assert!(!is_video_v2_model("h3-lowercase")); // 大小写敏感，对齐官方 cli
-    }
-
-    #[test]
-    fn api_root_strips_v1_suffix() {
-        assert_eq!(
-            api_root("https://api.minimaxi.com/v1"),
-            "https://api.minimaxi.com"
+    fn unsupported_provider_is_reported_without_endpoint() {
+        let registry = registry_with(
+            vec![provider(
+                "custom-gw",
+                ProviderKind::Custom,
+                "k1",
+                "https://gw.example/v1",
+                vec![model_entry("image-01", true)],
+            )],
+            bound_caps("image-01", "custom-gw"),
         );
-        assert_eq!(
-            api_root("https://api.minimaxi.com/v1/"),
-            "https://api.minimaxi.com"
-        );
-        assert_eq!(
-            api_root("https://api.minimax.io/v1"),
-            "https://api.minimax.io"
-        );
-    }
-
-    // ── 错误响应解析 ──
-
-    #[test]
-    fn extract_api_error_nonzero_status() {
-        let body = json!({"base_resp": {"status_code": 1002, "status_msg": "invalid api key"}});
-        let err = extract_api_error(&body).unwrap();
-        assert!(err.contains("1002"));
-        assert!(err.contains("invalid api key"));
-    }
-
-    #[test]
-    fn extract_api_error_zero_or_missing() {
+        let err = match resolve_target(&registry, GenerationKind::Image, None, None) {
+            // GenTarget 含 api_key 刻意不实现 Debug，匹配后只取错误
+            Ok(_) => panic!("provider without a protocol must fail loudly"),
+            Err(e) => e,
+        };
+        assert_eq!(err.kind, GenErrorKind::UnsupportedProvider);
+        let text = err.to_string();
         assert!(
-            extract_api_error(&json!({"base_resp": {"status_code": 0, "status_msg": "ok"}}))
-                .is_none()
+            text.contains("custom-gw"),
+            "error should name the provider: {text}"
         );
-        assert!(extract_api_error(&json!({"data": {}})).is_none());
+        assert!(
+            text.contains("尚未实现生成协议"),
+            "error should say why it failed: {text}"
+        );
+        assert!(
+            text.contains("minimax_media"),
+            "error should list the supported protocols: {text}"
+        );
+        for leak in ["http://", "https://", "/v1", "/v2", "api.minimaxi"] {
+            assert!(
+                !text.contains(leak),
+                "error must not leak endpoint detail ({leak}): {text}"
+            );
+        }
     }
 
-    // ── 图像响应解析 ──
+    /// MiniMax 段未配 base_url → 回落协议内置默认端点。
+    #[test]
+    fn minimax_provider_gets_protocol_default_base_url() {
+        let registry = registry_with(
+            vec![minimax_provider(
+                "minimax",
+                "k1",
+                vec![model_entry("image-01", true)],
+            )],
+            bound_caps("image-01", "minimax"),
+        );
+        let (target, protocol) = resolve_target(&registry, GenerationKind::Image, None, None)
+            .expect("minimax resolves with the protocol default endpoint");
+        assert_eq!(protocol.kind(), "minimax_media");
+        assert_eq!(
+            target.base_url,
+            MiniMaxMediaProtocol
+                .default_base_url()
+                .expect("minimax has a default endpoint")
+        );
+    }
+
+    // ── 工具输出文案契约（结构化重构后必须逐字不变） ──
 
     #[test]
-    fn collect_image_items_urls_and_base64() {
-        let data = json!({"image_urls": ["https://x/a.png", ""], "image_base64": ["aGVsbG8="]});
-        let items = collect_image_items(&data);
-        assert_eq!(items.len(), 2); // 空串被过滤
-        assert!(matches!(items[0], ImageItem::Url(_)));
-        assert!(matches!(items[1], ImageItem::Base64(_)));
+    fn image_tool_text_matches_verbatim_contract() {
+        let one = std::path::PathBuf::from("/tmp/generated/image_1_0.png");
+        let two = std::path::PathBuf::from("/tmp/generated/image_1_1.png");
+        let single = format_image_tool_text(&[Artifact {
+            path: one.clone(),
+            bytes: 2048,
+            task_id: None,
+        }]);
+        assert_eq!(
+            single,
+            format!("已生成 1 张图像：\n{} (2048 bytes)", one.display())
+        );
+        let multi = format_image_tool_text(&[
+            Artifact {
+                path: one.clone(),
+                bytes: 2048,
+                task_id: None,
+            },
+            Artifact {
+                path: two.clone(),
+                bytes: 4096,
+                task_id: None,
+            },
+        ]);
+        assert_eq!(
+            multi,
+            format!(
+                "已生成 2 张图像：\n{} (2048 bytes)\n{} (4096 bytes)",
+                one.display(),
+                two.display()
+            )
+        );
     }
 
     #[test]
-    fn collect_image_items_empty() {
-        assert!(collect_image_items(&json!({})).is_empty());
+    fn video_tool_text_matches_verbatim_contract() {
+        let text = format_video_tool_text(&Artifact {
+            path: std::path::PathBuf::from("/tmp/generated/video_1.mp4"),
+            bytes: 99,
+            task_id: Some("task-42".to_string()),
+        });
+        assert_eq!(
+            text,
+            "视频生成完成（task_id=task-42）：\n/tmp/generated/video_1.mp4 (99 bytes)"
+        );
     }
 
-    // ── 视频状态 / file_id 解析（V1/V2 两种形态）──
-
-    #[test]
-    fn video_status_v2_nested_and_v1_flat() {
-        let v2 = json!({"task": {"status": "succeeded", "file_id": "f-1"}});
-        assert_eq!(video_task_status(&v2).unwrap(), "succeeded");
-        assert_eq!(video_file_id(&v2).unwrap(), "f-1");
-        let v1 = json!({"status": "Success", "file_id": "f-2"});
-        assert_eq!(video_task_status(&v1).unwrap(), "Success");
-        assert_eq!(video_file_id(&v1).unwrap(), "f-2");
-    }
-
-    // ── 凭证解析：消费能力绑定（不再自行发现 MiniMax provider）──
+    // ── 凭证解析：消费能力绑定（不再自行发现任何 provider）──
 
     /// 不用 unwrap：GenTarget 含 api_key，刻意不实现 Debug 防泄露
     fn resolve_err(
@@ -1043,7 +959,7 @@ mod tests {
     ) -> String {
         match resolve_generation_target(registry, kind, provider, model) {
             Ok(_) => panic!("expected an error, got a credential — silent discovery is forbidden"),
-            Err(e) => e,
+            Err(e) => e.to_string(),
         }
     }
 
@@ -1052,7 +968,7 @@ mod tests {
         let registry = duplicate_id_registry();
         let target = resolve_generation_target(&registry, GenerationKind::Image, None, None)
             .expect("binding should resolve");
-        // 凭证取自**绑定**的那个段，而不是段序第一个 MiniMax 段
+        // 凭证取自**绑定**的那个段，而不是段序第一个段
         assert_eq!(target.api_key, "gw-key");
         assert_eq!(target.base_url, "https://gw.example/v1");
         assert_eq!(target.model, "image-01");
@@ -1072,7 +988,15 @@ mod tests {
         let target =
             resolve_generation_target(&rebound, GenerationKind::Image, None, None).unwrap();
         assert_eq!(target.api_key, "minimax-key");
-        assert_eq!(target.base_url, DEFAULT_BASE_URL);
+        // 该段没配 base_url → 生效端点由协议默认提供（语义层不写死任何端点）
+        let (target, _protocol) =
+            resolve_target(&rebound, GenerationKind::Image, None, None).unwrap();
+        assert_eq!(
+            target.base_url,
+            MiniMaxMediaProtocol
+                .default_base_url()
+                .expect("minimax default endpoint")
+        );
     }
 
     #[test]
@@ -1116,7 +1040,7 @@ mod tests {
         // 不用 expect_err：GenTarget 含 api_key，刻意不实现 Debug 防泄露。
         let image = match resolve_generation_target(&registry, GenerationKind::Image, None, None) {
             Ok(_) => panic!("stale image binding must not resolve"),
-            Err(e) => e,
+            Err(e) => e.to_string(),
         };
         assert!(
             image.contains("image-01"),
@@ -1242,51 +1166,6 @@ mod tests {
     }
 
     #[test]
-    fn credential_base_url_fallback_only_for_minimax() {
-        // MiniMax 段未配 base_url → 既定回落
-        let minimax = registry_with(
-            vec![{
-                let mut p = minimax_provider("minimax", "k1", vec![model_entry("image-01", true)]);
-                p.base_url = String::new();
-                p
-            }],
-            Capabilities {
-                image_generation: "image-01".to_string(),
-                image_generation_provider: "minimax".to_string(),
-                ..Default::default()
-            },
-        );
-        let target =
-            resolve_generation_target(&minimax, GenerationKind::Image, None, None).unwrap();
-        assert_eq!(target.base_url, DEFAULT_BASE_URL);
-
-        // 非 MiniMax 段未配 base_url → 不允许猜端点，直接报错
-        let custom = registry_with(
-            vec![provider(
-                "custom-gw",
-                ProviderKind::Custom,
-                "k1",
-                "",
-                vec![model_entry("image-01", true)],
-            )],
-            Capabilities {
-                image_generation: "image-01".to_string(),
-                image_generation_provider: "custom-gw".to_string(),
-                ..Default::default()
-            },
-        );
-        let err = resolve_err(&custom, GenerationKind::Image, None, None);
-        assert!(
-            err.contains("base_url"),
-            "error should name the missing field: {err}"
-        );
-        assert!(
-            err.contains("MiniMax"),
-            "error should explain why there is no fallback: {err}"
-        );
-    }
-
-    #[test]
     fn credential_base_url_trims_trailing_slash() {
         let registry = registry_with(
             vec![provider(
@@ -1311,10 +1190,6 @@ mod tests {
 
     #[test]
     fn workflow_tool_inclusion() {
-        use crate::tools::registry::is_workflow_step_tool;
-        assert!(is_workflow_step_tool("image_generate"));
-        assert!(is_workflow_step_tool("video_generate"));
-
         let registry = ToolRegistry::builtin();
         for name in ["image_generate", "video_generate"] {
             let def = registry
@@ -1325,10 +1200,31 @@ mod tests {
                 .get("required")
                 .and_then(|v| v.as_array())
                 .expect("input_schema should declare required");
-            assert!(
-                required.iter().any(|v| v.as_str() == Some("prompt")),
-                "{name} input_schema should require prompt"
+            assert_eq!(
+                required
+                    .iter()
+                    .map(|v| v.as_str().unwrap_or_default())
+                    .collect::<Vec<_>>(),
+                vec!["prompt"],
+                "{name} input_schema should require prompt only (provider/model are overrides)"
             );
+            for optional in ["provider", "model"] {
+                let prop = def
+                    .parameters
+                    .get("properties")
+                    .and_then(|p| p.get(optional))
+                    .unwrap_or_else(|| panic!("{name} should keep the {optional} property"));
+                assert!(
+                    prop.get("required").is_none(),
+                    "{name}.{optional} must not be required"
+                );
+                // 不得再带 schema 级 default：客户端会自动回填 default，从而
+                // 无声地覆盖模型界面的绑定。
+                assert!(
+                    prop.get("default").is_none(),
+                    "{name}.{optional} must not declare a default that would silently override the binding"
+                );
+            }
         }
     }
 
@@ -1374,11 +1270,75 @@ mod tests {
         }
     }
 
-    // ── 真实 API 验证（手动执行，需 registry 已配置 MiniMax key）──
+    // ── 契约层零厂商泄漏守卫 ──
+
+    /// 工具 description / workflow schema 的 DoModel 段 / model 表单 locale 文案
+    /// 不得出现任何厂商标识、端点、厂商参数名或型号示例——这是「语义层与厂商
+    /// 协议层分离」的回归护栏。
+    #[test]
+    fn contract_layer_has_no_vendor_leak() {
+        const FORBIDDEN: &[&str] = &[
+            "MiniMax",
+            "minimax",
+            "aspect_ratio",
+            "image_urls",
+            "files/retrieve",
+            "image-01",
+            "Hailuo",
+            "S2V-01",
+            "512-2048",
+            "512–2048",
+            "V2 端点",
+            "response_format",
+        ];
+        let mut leaks: Vec<String> = Vec::new();
+        let scan = |surface: &str, text: &str, leaks: &mut Vec<String>| {
+            for pattern in FORBIDDEN {
+                if text.contains(pattern) {
+                    leaks.push(format!("{surface}: {pattern}"));
+                }
+            }
+        };
+
+        // 1. 工具对外契约：description + 参数 schema 描述
+        let registry = ToolRegistry::builtin();
+        for name in ["image_generate", "video_generate"] {
+            let def = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} should be registered"));
+            let mut text = def.description.clone();
+            text.push_str(&serde_json::to_string(&def.parameters).unwrap_or_default());
+            scan(name, &text, &mut leaks);
+        }
+
+        // 2. workflow schema 的 DoModel 段
+        let schema_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("workflow/step_schema.json");
+        let schema_text = std::fs::read_to_string(&schema_path).expect("step_schema.json readable");
+        let schema: Value = serde_json::from_str(&schema_text).expect("valid json schema");
+        let do_model =
+            serde_json::to_string(&schema["$defs"]["DoModel"]).expect("DoModel serializable");
+        scan("step_schema.json:$defs.DoModel", &do_model, &mut leaks);
+
+        // 3. model 表单相关 locale 文案（工作流编辑器语言包，model 表单词条都在这里）
+        let locale_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../frontend/src/locales/workflowEditor.ts");
+        let locale = std::fs::read_to_string(&locale_path).expect("workflowEditor.ts readable");
+        scan("locales/workflowEditor.ts", &locale, &mut leaks);
+
+        assert!(
+            leaks.is_empty(),
+            "契约层厂商泄漏（{}）：{}",
+            leaks.len(),
+            leaks.join("; ")
+        );
+    }
+
+    // ── 真实 API 验证（手动执行，需 registry 已配置生成能力绑定）──
     // cargo test -p nuphus generation::tests::image_generate_real_api -- --ignored --nocapture
 
     #[test]
-    #[ignore = "real MiniMax API call — run manually"]
+    #[ignore = "real generation API call — run manually"]
     fn image_generate_real_api() {
         let registry = ToolRegistry::builtin();
         let def = registry.get("image_generate").unwrap();

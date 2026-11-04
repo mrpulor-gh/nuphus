@@ -575,6 +575,20 @@ commands::set_raise_on_done,
             commands::skill_install_git,
             commands::skill_remove,
             commands::skill_list,
+            // -- 临时对话（Side Chat：复用 ExecAgent，用完即弃，不落库/不写记忆）--
+            commands::side_chat_send,
+            // Leader 派发伙伴的后端通道（不经前端；壳由 Rust 侧选）
+            commands::side_chat_dispatch,
+            commands::side_chat_append,
+            commands::side_chat_prepare,
+            commands::side_chat_remove_append_item,
+            commands::side_chat_state,
+            commands::side_chat_cancel,
+            commands::side_chat_close,
+            commands::side_chat_reset,
+            commands::side_chat_save,
+            commands::side_chat_history_list,
+            commands::side_chat_history_delete,
             // -- MCP 管理（只读） --
             commands::list_mcp_servers,
             commands::list_mcp_tools,
@@ -651,7 +665,9 @@ commands::set_raise_on_done,
             commands::dict_ocr::dict_remove_char,
             commands::dict_ocr::save_temp_image,
             commands::dict_ocr::read_image_base64,
-            commands::dropped_files::save_dropped_file,
+            commands::dropped_files::begin_dropped_file,
+            commands::dropped_files::append_dropped_file,
+            commands::dropped_files::abort_dropped_file,
             commands::dict_ocr::dict_list,
             commands::dict_ocr::dict_load,
             commands::dict_ocr::dict_delete,
@@ -779,6 +795,8 @@ commands::set_raise_on_done,
             // Register agent_dispatch orchestration into the nuphus lib bridge
             // (fn-pointer injection — same pattern as video/render).
             crate::ext_agent::init_bridge(app.handle());
+            // side_chat_dispatch 工具执行桥（Leader 派发伙伴，模式同 ext_agent）
+            commands::side_chat::init_dispatch_bridge(app.handle());
 
             // 注：capture_overlay（WebView 截图遮罩）**不再启动预创建**。
             // Windows 截图已走原生遮罩链路（`commands/capture/`，Win32 分层窗口），

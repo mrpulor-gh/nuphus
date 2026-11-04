@@ -2652,8 +2652,7 @@ impl crate::api::ApiClient for RecordingMockClient {
         &self,
         request: crate::api::MessageRequest,
     ) -> crate::Result<Vec<crate::api::AssistantEvent>> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.requests.lock().unwrap().push(request);
         if self.fail {
             return Err(crate::NuphusError::agent("mock llm failure".to_string()));
@@ -2757,7 +2756,15 @@ async fn model_text_step_applies_with_overrides() {
     let events = EventBus::new();
 
     executor
-        .execute_model_step(&step, "hi", &opts, &mut vars, Some(&llm), &events, "wf-model-ovr")
+        .execute_model_step(
+            &step,
+            "hi",
+            &opts,
+            &mut vars,
+            Some(&llm),
+            &events,
+            "wf-model-ovr",
+        )
         .await
         .expect("override run should succeed");
 
@@ -2765,7 +2772,10 @@ async fn model_text_step_applies_with_overrides() {
     assert_eq!(requests[0].system.as_deref(), Some("你是文案助手"));
     assert_eq!(requests[0].temperature, Some(0.7));
     assert_eq!(requests[0].max_tokens, Some(256));
-    assert_eq!(requests[0].model, "mock-model", "无 with.model 用运行时 llm 名");
+    assert_eq!(
+        requests[0].model, "mock-model",
+        "无 with.model 用运行时 llm 名"
+    );
 }
 
 /// text：运行时未注入 llm → 明确报错（不静默降级）。
@@ -2929,11 +2939,19 @@ fn resolve_model_opts_substitutes_all_strings_including_nested_params() {
 
     assert_eq!(resolved.kind, ModelKind::Image, "kind 不受替换影响");
     assert_eq!(resolved.model.as_deref(), Some("image-01"));
-    assert_eq!(resolved.provider.as_deref(), Some("{{prov}}"), "未定义变量保留原串");
+    assert_eq!(
+        resolved.provider.as_deref(),
+        Some("{{prov}}"),
+        "未定义变量保留原串"
+    );
     let params = resolved.params.expect("params preserved");
     assert_eq!(params["seed"], serde_json::json!(3), "内嵌字符串按类型替换");
     assert_eq!(params["quality"], serde_json::json!("16:9"));
-    assert_eq!(params["prompt"], serde_json::json!("keep"), "无占位符原样保留");
+    assert_eq!(
+        params["prompt"],
+        serde_json::json!("keep"),
+        "无占位符原样保留"
+    );
 }
 
 /// 具名字段原样进入语义生成请求（`GenerationRequest`）——step_model 只构造语义
@@ -2958,7 +2976,11 @@ fn generation_request_carries_semantic_fields_per_modality() {
     assert_eq!(image.prompt, "a cat");
     assert_eq!(image.ratio.as_deref(), Some("4:3"));
     assert_eq!(image.count, Some(3));
-    assert_eq!(image.duration, Some(5), "语义请求如实携带，模态归属由协议层判定");
+    assert_eq!(
+        image.duration,
+        Some(5),
+        "语义请求如实携带，模态归属由协议层判定"
+    );
     assert_eq!(image.first_frame.as_deref(), Some("/tmp/frame.png"));
     assert!(image.extra.is_empty(), "没有 params 时 extra 为空");
 
@@ -2979,7 +3001,11 @@ fn generation_request_carries_semantic_fields_per_modality() {
     assert_eq!(video.ratio.as_deref(), Some("9:16"));
     assert_eq!(video.duration, Some(10));
     assert_eq!(video.first_frame.as_deref(), Some("{{frame}}"));
-    assert_eq!(video.count, Some(2), "语义请求如实携带，模态归属由协议层判定");
+    assert_eq!(
+        video.count,
+        Some(2),
+        "语义请求如实携带，模态归属由协议层判定"
+    );
 }
 
 /// params 是逃生舱：显式键原样进 extra（与具名字段的优先级由协议层裁定），
@@ -3036,12 +3062,9 @@ fn resolve_model_opts_substitutes_first_frame_variable() {
         Some("C:/shot/frame.png"),
         "首帧图路径支持 {{变量}}"
     );
-    let request = super::step_model::model_generation_request(
-        "a dog",
-        &resolved,
-        GenerationKind::Video,
-    )
-    .expect("resolved first_frame merges");
+    let request =
+        super::step_model::model_generation_request("a dog", &resolved, GenerationKind::Video)
+            .expect("resolved first_frame merges");
     assert_eq!(request.first_frame.as_deref(), Some("C:/shot/frame.png"));
 }
 
@@ -3062,8 +3085,8 @@ fn primary_artifact_path_takes_first_and_absolutizes() {
     assert_eq!(picked, abs);
 
     let second = abs.with_file_name("image_1_1.png");
-    let picked = super::step_model::primary_artifact_path(&[abs.clone(), second])
-        .expect("first of many");
+    let picked =
+        super::step_model::primary_artifact_path(&[abs.clone(), second]).expect("first of many");
     assert_eq!(picked, abs, "主产物 = API 返回顺序的第一条");
 
     let rel = std::path::PathBuf::from("relative").join("image.png");

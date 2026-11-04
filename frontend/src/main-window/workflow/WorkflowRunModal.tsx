@@ -34,6 +34,7 @@ function stepKindLabel(do_: Action): string {
   if ('call' in do_) return 'Call'
   if ('wait' in do_) return 'Wait'
   if ('chat' in do_) return 'Chat'
+  if ('model' in do_) return 'Model'
   if ('script' in do_) return 'Script'
   if ('assert' in do_) return 'Assert'
   if ('mcp' in do_) return 'MCP'

@@ -3,7 +3,7 @@
 use crate::automation_gate::{AutomationGate, HoldKind, ResourceClass, OWNER_MANUAL_TOOL};
 use crate::browser::BrowserClient;
 use crate::desktop::DesktopClient;
-use crate::permissions::{PermissionOutcome, PermissionPolicy, ToolCategory};
+use crate::permissions::{PermissionOutcome, PermissionPolicy, ToolCategory, ToolPermissions};
 use crate::ToolResult;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -139,6 +139,11 @@ pub struct ToolRegistry {
     /// 约束是「Exec 执行自动化操作属黑盒」，故必须双端阻断——仅在 schema 层
     /// 隐藏不够，模型仍可能凭上下文或历史消息臆造工具名直接调用。
     pub(super) automation_tools_enabled: bool,
+    /// 自动化 schema 白名单（None = 不限制）。仅 `automation_tools_enabled=true`
+    /// 时生效，且 **schema 生成 / has_tool / 执行分发三处同源判定**——不存在
+    /// 「看不见但调得动」的中间态。用途：临时伙伴只放开桌面观察子集
+    /// （截图 / AI 看图），控制类与浏览器不暴露。
+    pub(super) automation_allowlist: Option<Vec<String>>,
     /// Process-wide resource gate injected by the desktop shell. Core-only
     /// callers may omit it; production registries all share AppState's gate.
     automation_gate: Option<Arc<AutomationGate>>,
@@ -159,6 +164,7 @@ impl Default for ToolRegistry {
             schedule_tool: Arc::new(RwLock::new(None)),
             cancel_flag: None,
             automation_tools_enabled: true,
+            automation_allowlist: None,
             automation_gate: None,
         }
     }
@@ -179,6 +185,7 @@ impl Clone for ToolRegistry {
             schedule_tool: self.schedule_tool.clone(),
             cancel_flag: self.cancel_flag.clone(),
             automation_tools_enabled: self.automation_tools_enabled,
+            automation_allowlist: self.automation_allowlist.clone(),
             automation_gate: self.automation_gate.clone(),
         }
     }
@@ -245,6 +252,29 @@ impl ToolRegistry {
         self.automation_gate = Some(gate);
     }
 
+    /// 自动化 schema 白名单（None = 不限制）。三处同源：schema / has_tool / 执行分发。
+    pub fn set_automation_allowlist(&mut self, names: Vec<String>) {
+        self.automation_allowlist = Some(names);
+    }
+
+    /// 临时伙伴专用：放开自动化 schema 但只放行**桌面观察子集**（截图 / AI 看图）。
+    /// 先开总开关再收白名单——控制类（点击 / 输入 / 拖拽）与浏览器在任何层都不可达。
+    pub fn enable_automation_observe_only(&mut self) {
+        self.automation_tools_enabled = true;
+        self.automation_allowlist = Some(vec![
+            "desktop_screenshot".to_string(),
+            "desktop_vision".to_string(),
+        ]);
+    }
+
+    /// 自动化工具是否在 schema 白名单内（无白名单 = 全放行）。
+    fn automation_allowed(&self, name: &str) -> bool {
+        match &self.automation_allowlist {
+            Some(list) => list.iter().any(|n| n == name),
+            None => true,
+        }
+    }
+
     /// Reuse the same process-wide automation gate when deriving a role-
     /// specific registry. This mirrors `signals()` and avoids constructing a
     /// second gate for Leader/Workflow/plugin runtimes.
@@ -301,7 +331,8 @@ impl ToolRegistry {
     pub fn has_tool(&self, name: &str) -> bool {
         self.get(name).is_some()
             || (self.automation_tools_enabled
-                && (Self::is_desktop_tool(name) || Self::is_browser_tool(name)))
+                && (Self::is_desktop_tool(name) || Self::is_browser_tool(name))
+                && self.automation_allowed(name))
     }
 
     /// Check if tool dependencies are satisfied
@@ -394,6 +425,17 @@ impl ToolRegistry {
         {
             return Ok(ToolResult::failure(format!(
                 "Tool '{}' is unavailable for this agent role (automation tools disabled).",
+                tool_name
+            )));
+        }
+        // 白名单收口（观察子集）：schema 层已不暴露，此处兜住「凭历史上下文臆造
+        // 工具名直接调用」的路径——与总开关同为执行侧终点，判据同一份白名单。
+        if self.automation_tools_enabled
+            && !self.automation_allowed(tool_name)
+            && (Self::is_browser_tool(tool_name) || Self::is_desktop_tool(tool_name))
+        {
+            return Ok(ToolResult::failure(format!(
+                "Tool '{}' is not in this agent's automation allowlist.",
                 tool_name
             )));
         }
@@ -591,6 +633,10 @@ impl ToolRegistry {
     ///   下可跑 5-10 分钟，600s 会把长任务拦腰砍断。而本桶取消不了任何东西
     ///   （见下方 timeouts 说明），砍断只会诱导重试 → 重跑 → 再砍断的循环。
     ///   取宽档：宁可晚、不可早。工具的 `timeout` 参数上限同步提高到 1800s。
+    ///   side_chat_dispatch 同档：它同步驱动伙伴的**完整轮次**（多迭代 LLM +
+    ///   工具，可内含一次 Release 全量构建/测试），耗时口径与 system_shell
+    ///   同源；桶超时不取消执行（伙伴轮次照跑），误报只会让 Leader 误判派发
+    ///   失败而重派——与 agent_dispatch 双投递同型的事故。
     /// - web_search/web_extract/http_request 走 reqwest::blocking 慢抓取，120s 防误杀
     /// - video_subtitle_extract 含 yt-dlp 下载 + ffmpeg 转码 + 本地 ASR，
     ///   长视频兜底链路给 900s（15min）
@@ -615,7 +661,10 @@ impl ToolRegistry {
     ///
     /// 注：desktop_/browser_ 工具在上方分支已提前返回，不经过此处
     fn tool_timeout(tool_name: &str) -> Duration {
-        if tool_name == "system_shell" || tool_name == "system_sleep" {
+        if tool_name == "system_shell"
+            || tool_name == "system_sleep"
+            || tool_name == "side_chat_dispatch"
+        {
             Duration::from_secs(1800) // 与 video 档同级，容纳 Release 全量构建/测试
         } else if tool_name == "web_search"
             || tool_name == "web_extract"
@@ -1217,7 +1266,7 @@ impl ToolRegistry {
         self.register_knowledge_search();
     }
 
-    /// Leader 独占工具（12 个）
+    /// Leader 独占工具（13 个）
     pub(crate) fn register_leader_only_tools(&mut self) {
         self.register_leader_memory_update();
         self.register_timeline_stats();
@@ -1231,6 +1280,8 @@ impl ToolRegistry {
         self.register_annotation_remove();
         self.register_annotation_search();
         self.register_agent_dispatch();
+        // 伙伴派发通道：经 side_chat_bridge 注入桌面壳实现；只进 Leader 工具面
+        self.register_side_chat_dispatch();
     }
 
     /// WorkflowAgent 独占工具
@@ -1368,6 +1419,64 @@ impl ToolRegistry {
         registry
     }
 
+    /// Create Exec Agent tool set filtered by tool permissions
+    ///
+    /// 与 [`Self::exec`] 的差别：把 `permissions` 关闭类别对应的工具**物理剔除**
+    /// （schema 暴露与执行入口同时消失），而不是只靠执行期权限开关。原因：仅设
+    /// `set_tool_permissions` 时，被关闭类别的工具仍在 schema 里，模型会照常调用，
+    /// 于是走进审批轮询——没有审批 UI 的宿主（如临时对话 Side Chat）一次调用要
+    /// 空转 300s 超时才被拒。物理剔除后，编造该类工具名立刻拿到「未知工具」失败，
+    /// 不阻塞、也不产生「看似可用实则被拒」的错觉。
+    ///
+    /// 类别判定与执行期同一口径（[`PermissionPolicy::authorize_by_category`]），
+    /// 保证「看不见的工具」与「被权限拦下的工具」是同一个集合。
+    pub fn exec_with_permissions(permissions: ToolPermissions) -> Self {
+        let mut registry = Self::exec();
+        let policy = PermissionPolicy::new(permissions);
+        registry.tools.retain(|_, def| {
+            matches!(
+                policy.authorize_by_category(&def.name, def.category),
+                PermissionOutcome::Allow
+            )
+        });
+        // retain 绕过了 register() 的缓存清理，必须手动作废，否则渲染到旧工具集
+        if let Ok(mut cache) = registry.prompt_cache.write() {
+            *cache = None;
+        }
+        registry
+    }
+
+    /// 宿主级精确放开：在已裁剪的工具集上补回名单内的工具。
+    ///
+    /// 与 [`Self::exec_with_permissions`] 的物理裁剪同源——schema 暴露与执行入口
+    /// **同时**恢复，不存在「看得见但调不动」的中间态（那会退化成审批轮询空转）。
+    ///
+    /// 可补回的范围由下方 `match` 硬编码收死：未列名的工具静默忽略，
+    /// `process_kill` / `system_sleep` / desktop_* / browser_* 不在其中，
+    /// 无法经此途径获得。
+    ///
+    /// 注意：补回的工具**声明类别不变**（`system_shell` 仍是
+    /// [`ToolCategory::SystemAutomation`](crate::permissions::ToolCategory::SystemAutomation)），
+    /// 因此执行期是否放行取决于宿主给 `SubTaskRunner` 的 `tool_permissions`——
+    /// schema 层与执行层必须配套决策，只改一层会出现「有 schema 无入口」或
+    /// 「放行了却看不见」的割裂。
+    pub fn restore_tools(&mut self, names: &[&str]) {
+        for name in names {
+            match *name {
+                "system_shell" => self.register_execute_shell(),
+                "system_sleep" => self.register_sleep(),
+                "system_env_get" => self.register_system_env_get(),
+                "system_info" => self.register_system_info(),
+                "process_list" => self.register_process_list(),
+                _ => {
+                    tracing::debug!("restore_tools: '{name}' 不在可补回白名单，已忽略");
+                }
+            }
+        }
+        // register() 内部已失效 prompt_cache，此处不重复清——名单为空或全无效时
+        // 没有任何注册发生，缓存本就不该被动。
+    }
+
     /// Create WorkflowAgent tool set
     ///
     /// WorkflowAgent manages workflow design and execution. It gets base tools +
@@ -1401,6 +1510,105 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 宿主级精确放开：补回的工具必须同时进 schema 与执行入口，且白名单外的
+    /// 工具（进程终止 / 睡眠 / 自动化类）无法经此途径获得。
+    ///
+    /// 钉住两件事：
+    ///   1. `restore_tools` 后 `has_tool` 为真——否则 schema 有、执行层判「未知工具」，
+    ///      退化成「看似可用实则被拒」；
+    ///   2. 可补回范围是封闭白名单——`process_kill` 等破坏性工具传名字也补不回。
+    #[test]
+    fn test_restore_tools_is_closed_whitelist() {
+        // 前置事实（防上游变化让测试失真）：exec() 本就注册 system_shell——
+        // register_base_tools 无条件注册它（ExecAgent 要能跑命令），restore_tools
+        // 的职责是把被权限裁剪掉的工具补回，不是从零授予。
+        let base_names: std::collections::HashSet<String> = ToolRegistry::exec()
+            .get_schemas()
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect();
+        assert!(
+            base_names.contains("system_shell"),
+            "exec() 默认应含 system_shell（base tools 已注册）: {base_names:?}"
+        );
+
+        // process_kill 故意混在名单里：必须被忽略
+        let mut registry = ToolRegistry::exec();
+        registry.restore_tools(&[
+            "system_shell",
+            "system_env_get",
+            "process_list",
+            "process_kill",
+            "system_sleep",
+            "browser_navigate",
+        ]);
+
+        let names: std::collections::HashSet<String> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect();
+
+        for want in ["system_shell", "system_env_get", "process_list"] {
+            assert!(names.contains(want), "{want} 应被补回: {names:?}");
+            assert!(
+                registry.has_tool(want),
+                "{want} 应有执行入口（has_tool）——只有 schema 会退化成未知工具"
+            );
+        }
+        // 封闭性：restore_tools 不得把 exec() 本来就没有的能力补进来。
+        // 选 exec() 确实不具备的三类：桌面自动化（automation_tools_enabled=false）、
+        // 浏览器、工作流编排（Leader/WorkflowAgent 专属）。注意不能选 system_shell /
+        // process_kill / system_sleep——它们在 base tools 里本就注册，用它们当前置
+        // 会与「不得进 schema」自相矛盾（那是基线已有，不是 restore 新增）。
+        for forbidden in ["desktop_mouse", "browser_navigate", "workflow_run"] {
+            assert!(
+                !names.contains(forbidden),
+                "{forbidden} 不得进 schema: {names:?}"
+            );
+            assert!(!registry.has_tool(forbidden), "{forbidden} 不得有执行入口");
+        }
+    }
+
+    /// 观察子集白名单三处同源：schema 生成 / has_tool / 执行分发共用一份名单，
+    /// 不存在「看不见但调得动」的中间态（side chat 场景机械化守卫）。
+    #[test]
+    fn automation_observe_only_allowlist_is_consistent() {
+        // 模拟 side chat 的完整姿势：exec() 基座 + 桌面客户端 + 观察白名单。
+        // 只开白名单不设 desktop_client 时桌面 schema 不出（has_desktop 门），
+        // 那不是白名单失效——与 builtin_with_desktop 的装配同构。
+        let mut registry = ToolRegistry::exec();
+        registry.set_desktop_client(DesktopClient::new());
+        registry.enable_automation_observe_only();
+
+        let names: std::collections::HashSet<String> = registry
+            .get_schemas()
+            .into_iter()
+            .map(|s| s.function.name)
+            .collect();
+        for want in ["desktop_screenshot", "desktop_vision"] {
+            assert!(names.contains(want), "{want} 应暴露: {names:?}");
+        }
+        for forbidden in [
+            "desktop_click",
+            "desktop_input",
+            "desktop_mouse",
+            "desktop_semantic_execute",
+            "browser_navigate",
+        ] {
+            assert!(
+                !names.contains(forbidden),
+                "{forbidden} 不应暴露: {names:?}"
+            );
+        }
+        // has_tool 与 schema 同源：白名单外既无 schema 也无执行入口
+        assert!(registry.has_tool("desktop_screenshot"));
+        assert!(
+            !registry.has_tool("desktop_click"),
+            "白名单外的控制类不得有执行入口"
+        );
+    }
 
     /// 角色工具集分离回归：Exec 必须是 Leader 的子集且严格更小。
     ///
@@ -1864,6 +2072,13 @@ mod tests {
         // 档位表其余部分不被顺手改宽：Read 保持 180s，兜底桶保持 15s
         assert_eq!(ToolRegistry::tool_timeout("Read"), Duration::from_secs(180));
         assert_eq!(ToolRegistry::tool_timeout("Write"), Duration::from_secs(15));
+        // side_chat_dispatch 同步驱动伙伴完整轮次（可含 Release 全量构建）：
+        // 必须落在 1800s 宽档，打 15s 兜底桶会让 Leader 误判派发失败而重派
+        assert_eq!(
+            ToolRegistry::tool_timeout("side_chat_dispatch"),
+            Duration::from_secs(1800),
+            "side_chat_dispatch 必须落 1800s 宽档（伙伴轮次可内含长构建）"
+        );
     }
 
     /// issue #69 方向 3 回归：超时文案必须讲实情——spawn_blocking 不可取消，

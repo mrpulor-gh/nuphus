@@ -546,11 +546,23 @@
   flex: 1;
   min-height: 0;
 }
+/*
+  画布背景：网格只做「空间参照」，不承担装饰。
+  - 网格线走 --canvas-grid（比 line-1 更弱），节点边框是 line-2，层级不打架；
+  - 中心一层极淡的径向光 --canvas-glow，避免大面积纯色平板感，
+    亮度压在几乎看不见的档位，不与节点竞争注意力；
+  - 亮暗差异全部由 tokens.css 的语义层承担，本文件只引用 token。
+*/
 .wfc-canvas-wrap .react-flow {
-  background: var(--surface-0);
+  background:
+    radial-gradient(120% 90% at 50% 40%, var(--canvas-glow), transparent 70%),
+    var(--surface-0);
 }
 .wfc-canvas-wrap .react-flow__background {
-  background: var(--surface-0);
+  background: transparent;
+}
+.wfc-canvas-wrap .react-flow__background pattern line {
+  stroke: var(--canvas-grid);
 }
 .wfc-canvas-wrap .react-flow__controls {
   box-shadow: var(--shadow-surface);
@@ -583,8 +595,7 @@
   overflow: hidden;
   border: 1px solid var(--line-1);
   border-radius: var(--radius-3);
-  background: var(--glass-2);
-  backdrop-filter: blur(12px) saturate(1.4);
+  background: var(--surface-2);
   box-shadow: var(--shadow-elevated);
 }
 .wfc-outline-head {
@@ -682,19 +693,24 @@
   flex-shrink: 0;
 }
 
-/* ── 节点卡片 ── */
+/* ── 节点卡片 ──
+   实心表面而非玻璃：网格从半透明卡片背后透出来会让节点边缘发糊，
+   backdrop-filter 在 WebView2 里还要为每个节点付出一次合成成本。
+   层级靠三级表面表达：叶子 surface-1 → 容器 surface-2 → 悬浮 surface-2+阴影。
+   类型辨识交给图标的淡色底衬（见 .wfc-node-icon），不再另加边框内侧的装饰件——
+   卡片只保留一种强调语言：边框（选中/状态）+ 右上角标（校验）。 */
 .wfc-node {
   position: relative;
   width: 200px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-3);
-  background: var(--glass-2);
-  backdrop-filter: blur(12px) saturate(1.4);
+  background: var(--surface-1);
   box-shadow: var(--shadow-surface);
   transition:
     border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .wfc-node:hover {
   border-color: var(--line-3);
@@ -707,7 +723,7 @@
 }
 .wfc-node--container {
   width: 220px;
-  background: var(--glass-3);
+  background: var(--surface-2);
 }
 
 /* ── 容器子步骤预览（hover 浮出，纯 CSS；absolute 脱离文档流，pointer-events:none 绝不干扰点击/下钻/拖拽）── */
@@ -720,9 +736,8 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-3);
-  background: var(--glass-3);
-  backdrop-filter: blur(12px) saturate(1.4);
-  box-shadow: var(--shadow-surface);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-elevated);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -777,19 +792,57 @@
   gap: var(--space-2);
   min-width: 0;
 }
+/* 图标底衬：类型辨识的唯一承载。
+   用 kind 色的淡色方块托住图标，比裸图标多一层可辨识度，又不像边框内侧的
+   装饰件那样和卡片边框、选中环、校验角标抢戏。22px 见方与 13px 图标是实测比例，
+   再小底衬看不见，再大就开始像按钮。
+   取色刻意不新增颜色：只复用 accent / warning / fg 阶梯，与状态色共用一套色语。
+   - 编排类（seq/loop/if/wait）用 accent/warning：它们是流程的骨架，最该被认出；
+   - 动作类（tool/chat/model/script/assert/mcp/call/sleep）数量最多，压到 fg-4 退后，
+     但底衬浓度要够（22%），否则在深底上几乎看不见，类型辨识对它们就失效了；
+   - 控制类（break/continue）与旧格式 custom 用 fg-5：最弱，它们是边角动作。 */
 .wfc-node-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  color: var(--fg-3);
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--node-kind, var(--fg-4)) 22%, transparent);
+  color: var(--node-kind, var(--fg-4));
 }
+.wfc-node--container .wfc-node-icon {
+  background: color-mix(in srgb, var(--node-kind, var(--fg-4)) 26%, transparent);
+}
+.wfc-node-icon[data-kind='seq'],
 .wfc-node-icon[data-kind='loop'] {
-  color: var(--accent-hover);
+  --node-kind: var(--accent);
 }
 .wfc-node-icon[data-kind='if'] {
-  color: var(--warning);
+  --node-kind: var(--warning);
 }
+.wfc-node-icon[data-kind='wait'] {
+  --node-kind: var(--accent-hover);
+}
+.wfc-node-icon[data-kind='tool'],
+.wfc-node-icon[data-kind='chat'],
+.wfc-node-icon[data-kind='model'],
+.wfc-node-icon[data-kind='script'],
+.wfc-node-icon[data-kind='assert'],
+.wfc-node-icon[data-kind='mcp'],
+.wfc-node-icon[data-kind='call'],
+.wfc-node-icon[data-kind='sleep'] {
+  --node-kind: var(--fg-4);
+}
+.wfc-node-icon[data-kind='break'],
+.wfc-node-icon[data-kind='continue'] {
+  --node-kind: var(--fg-5);
+}
+/* 旧格式（unknown）保持中性，虚线边框已承担「不可编辑」的语义 */
 .wfc-node-icon[data-kind='custom'] {
-  color: var(--fg-4);
+  --node-kind: var(--fg-5);
 }
 .wfc-node-name {
   flex: 1;
@@ -942,7 +995,9 @@
   cursor: help;
 }
 
-/* 合成锚点节点 */
+/* 合成锚点节点
+   锚点不是 IR 实体（entry/cond/external），视觉上必须比真实节点轻一档：
+   无阴影、无投影，只靠虚线边框 + 弱文字表达「这里是解释，不是步骤」。 */
 .wfc-anchor {
   width: 150px;
   display: flex;
@@ -952,8 +1007,8 @@
   padding: var(--space-1) var(--space-2);
   border: 1px dashed var(--line-3);
   border-radius: var(--radius-2);
-  background: var(--surface-inset);
-  color: var(--fg-3);
+  background: transparent;
+  color: var(--fg-4);
   font-size: var(--fz-xs);
   box-shadow: none;
 }
@@ -1003,11 +1058,24 @@
   color: var(--accent-hover);
 }
 
+/* 连接锚点：与卡片边框同色的空心小环。
+   实心点会和节点边框、边的端点形成三个独立的视觉元素；
+   空心环读作「这是一个接口」， hover 时才填实表示可交互。 */
 .wfc-handle {
-  width: 6px;
-  height: 6px;
-  background: var(--fg-5);
-  border: none;
+  width: 7px;
+  height: 7px;
+  background: var(--surface-1);
+  border: 1.5px solid var(--line-3);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.wfc-node--container .wfc-handle {
+  background: var(--surface-2);
+}
+.react-flow__handle:hover {
+  border-color: var(--accent);
+  background: var(--accent);
 }
 
 /* 定位闪烁（ProblemsPanel 定位反馈） */
@@ -1024,11 +1092,13 @@
   }
 }
 
-/* ── 泳道框 ── */
+/* ── 泳道框 ──
+   泳道是「分组容器」，必须在节点之下、画布之上：用最暗的一档表面压出层次，
+   边框比节点更弱，避免与节点边框竞争。空泳道虚线提示可拖入。 */
 .wfc-lane {
   border: 1px solid var(--line-1);
   border-radius: var(--radius-4);
-  background: var(--glass-0);
+  background: var(--surface-inset);
 }
 .wfc-lane-title {
   padding: var(--space-1) var(--space-3);
@@ -1047,36 +1117,44 @@
   text-align: center;
 }
 
-/* ── 边 ── */
+/* ── 边 ──
+   三种语义必须一眼可分，且不能让数据边盖过顺序边：
+   顺序边是「流程主干」，最实最亮；数据边是「依赖关系」，虚线且弱一档；
+   装饰边（loopback/cond）是「解释性标注」，最弱最短划。
+   原来的数据边 opacity:0.75 + 装饰边同色系，导致三者糊在一起。 */
 .wfc-edge-seq {
-  stroke: var(--fg-4);
+  stroke: var(--fg-3);
   stroke-width: 1.5;
 }
 .wfc-edge-seq--decorative {
   stroke: var(--fg-5);
-  stroke-dasharray: 5 4;
+  stroke-dasharray: 2 5;
   stroke-width: 1;
 }
 .wfc-edge-data {
   stroke: var(--accent);
   stroke-width: 1.2;
-  stroke-dasharray: 4 3;
-  opacity: 0.75;
+  stroke-dasharray: 5 4;
+  opacity: 0.55;
 }
 .wfc-edge-data--external {
-  stroke: var(--fg-5);
-  opacity: 0.8;
+  stroke: var(--fg-4);
+  opacity: 0.5;
 }
 .wfc-edge-data--dangling {
   stroke: var(--warning);
+  opacity: 0.85;
 }
+/* 边标签：变量名是画布上唯一需要「读」的文字，给它一个实底衬边，
+   避免虚线穿过文字时读不清。paint-order 让描边在填充之下。 */
 .wfc-edge-label {
-  fill: var(--fg-3);
+  fill: var(--fg-2);
   font-size: 10px;
   font-family: var(--font-mono);
   paint-order: stroke;
   stroke: var(--surface-0);
-  stroke-width: 3px;
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
 }
 .wfc-edge-label--dangling {
   fill: var(--warning);
@@ -1230,8 +1308,7 @@
   padding: var(--space-1);
   border: 1px solid var(--line-1);
   border-radius: var(--radius-3);
-  background: var(--glass-2);
-  backdrop-filter: blur(12px) saturate(1.4);
+  background: var(--surface-2);
   box-shadow: var(--shadow-elevated);
 }
 .wfc-palette.is-disabled {

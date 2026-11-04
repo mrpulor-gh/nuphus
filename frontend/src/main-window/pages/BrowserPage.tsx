@@ -19,12 +19,18 @@ function hostPort(url: string): string {
   return url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
 }
 
+/** ego lite is the one external browser whose CDP port is off by default. */
+function isEgoLite(name: string | null | undefined): boolean {
+  return (name ?? '').toLowerCase() === 'ego lite'
+}
+
 /**
  * Browser execution environment.
  * - Managed: Nuphus launches and manages its own browser (zero config).
- * - External (fingerprint browser): the user opens a window in their
- *   fingerprint-browser platform, taps "detect", and picks the detected
- *   window — no addresses, ports, or manual testing are ever exposed.
+ * - External (fingerprint browser / ego lite): the user opens a window in
+ *   their browser, taps "detect", and picks the detected window — no
+ *   addresses, ports, or manual testing are ever exposed. ego lite keeps its
+ *   CDP port off by default, so the guide tells the user where to turn it on.
  * Picking an option applies and persists immediately.
  */
 export function BrowserPage({ onClose: _onClose }: { onClose: () => void }) {
@@ -216,7 +222,10 @@ export function BrowserPage({ onClose: _onClose }: { onClose: () => void }) {
                 >
                   {probe === 'probing' && t('browser.statusProbing')}
                   {probe === 'ok' && t('browser.statusConnected', probeDetail)}
-                  {probe === 'fail' && t('browser.statusUnreachable')}
+                  {probe === 'fail' &&
+                    (isEgoLite(conn?.name)
+                      ? t('browser.statusUnreachableEgo')
+                      : t('browser.statusUnreachable'))}
                 </div>
               </div>
               {/* 「使用中」徽标与探活结果互斥：旧实现只要有 savedUrl 就无条件
@@ -240,6 +249,16 @@ export function BrowserPage({ onClose: _onClose }: { onClose: () => void }) {
           <div style={{ fontSize: 'var(--fs-caption)', lineHeight: 1.8, color: 'var(--fg-2)' }}>
             <div>{t('browser.guideStep1')}</div>
             <div>{t('browser.guideStep2')}</div>
+          </div>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 'var(--fz-xs)',
+              lineHeight: 1.7,
+              color: 'var(--fg-3)',
+            }}
+          >
+            {t('browser.guideEgoNote')}
           </div>
           <div style={{ marginTop: 10 }}>
             <Button variant="default" onClick={handleDetect} loading={detecting}>

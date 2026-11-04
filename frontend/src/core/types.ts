@@ -65,10 +65,12 @@ export interface SendOutcome {
 export interface ChatReference {
   /** quote = 聊天区选中文字引用。label 承载选中原文**全文**（显示侧由
    *  .ref-chip-label 的 ellipsis 截断，后端注入用的是完整 label，两个长度不同但同源）。
-   *  刻意不另开 text 字段：mobile_server 复用同一 Rust 结构体，多一个协议位就要双端同步。 */
-  type: 'skill' | 'knowledge' | 'workflow' | 'capture' | 'quote'
+   *  content 与 label 分离：显示用 label，注入优先用 content（sidechat 回传场景）。
+   *  Rust 侧 `#[serde(default)]`，旧前端不传该字段也能反序列化（移动端同构）。 */
+  type: 'skill' | 'knowledge' | 'workflow' | 'capture' | 'quote' | 'sidechat'
   id: string // skill name / knowledge rel_path / workflow id / capture file path / quote 内容哈希
   label: string // 显示文本
+  content?: string // 注入内容（后端每个分支优先取它）：quote 回落 label，sidechat 承载回复全文；旧前端不传 = undefined
   meta?: CaptureMeta // extra data for capture type
 }
 
@@ -508,7 +510,42 @@ export interface ChatOpts {
   max_iterations?: number
 }
 
-// ── Action (13 种 + Custom) ──
+// ── ModelOpts（do.model 的 with 配置：一次模型调用） ──
+
+/** 生成模态：text=文案（缺省）/ image=图片 / video=视频 */
+export type ModelKind = 'text' | 'image' | 'video'
+
+export interface ModelOpts {
+  /** 生成模态，缺省 text */
+  kind?: ModelKind
+  /** 当次覆盖的模型 ID（与 provider 精确路由；留空用模型界面绑定的生成能力） */
+  model?: string
+  /** 当次覆盖的模型所属 provider */
+  provider?: string
+  /** text 专用：系统提示词覆盖 */
+  system?: string
+  /** text 专用：采样温度 */
+  temperature?: number
+  /** text 专用：max_tokens */
+  max_tokens?: number
+  /** 画面比例（image/video 适用）；执行时进入语义生成请求，请求体键名由生成协议决定 */
+  ratio?: ModelAspectRatio
+  /** image 一次生成张数（1–4）；执行时进入语义生成请求，请求体键名由生成协议决定 */
+  count?: number
+  /** video 时长（秒，仅 5/6/8/10）；执行时进入语义生成请求，请求体键名由生成协议决定 */
+  duration?: number
+  /** video 首帧图路径，支持 {{变量}}；空 = 文生视频，执行时进入语义生成请求 */
+  first_frame?: string
+  /** image/video 专用：提供商特定附加参数，键名与取值由生成协议决定 */
+  params?: Record<string, unknown>
+  /** video 专用：轮询超时秒数，缺省 300 */
+  timeout_secs?: number
+}
+
+/** 画面比例白名单（与后端 step_schema.json 的 DoModel.with.ratio enum 一致） */
+export type ModelAspectRatio = '1:1' | '4:3' | '3:4' | '3:2' | '2:3' | '16:9' | '9:16'
+
+// ── Action (14 种 + Custom) ──
 
 export type Action =
   | { tool: string; with?: Record<string, unknown> }
@@ -518,6 +555,7 @@ export type Action =
   | { call: string; with?: Record<string, unknown> }
   | { wait: string; auto?: WorkflowStep[] }
   | { chat: string; with?: ChatOpts }
+  | { model: string; with?: ModelOpts }
   | { script: ScriptDef }
   | { assert: AssertDef }
   | { mcp: McpDef }

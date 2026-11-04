@@ -79,7 +79,16 @@ pub(crate) async fn handle_task_dispatch(
         .get("goal_type")
         .and_then(|v| v.as_str())
         .unwrap_or("file_operation");
-    let goal_type = GoalType::from_id(goal_type_str).unwrap_or(GoalType::FileOperation);
+    // 显式声明的类型才注入 warmup：未声明或无法识别时按 file_operation 兜底执行，
+    // 但不再把「文件操作」的提醒套到写作、调研等未知任务上。
+    let declared_goal_type = call
+        .params
+        .get("goal_type")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(GoalType::from_id);
+    let goal_type = declared_goal_type.unwrap_or(GoalType::FileOperation);
     let explicit_plan_path = call
         .params
         .get("plan_path")
@@ -211,6 +220,13 @@ pub(crate) async fn handle_task_dispatch(
     if !exec_context.is_empty() {
         dynamic_msg.push_str(&format!("\n## 参考上下文\n{}", exec_context));
     }
+    // ── 注入点 A（→Exec）：用户正在伙伴面板并行执行时，叠一段避让纪律 ──
+    // 事实源是 agent::parallel 的进程级单一状态（侧边 send 起点写入）。
+    if let Some(side) = crate::agent::parallel::snapshot().side {
+        dynamic_msg.push_str(&format!(
+            "\n## 并行避让\n用户临时伙伴面板正在并行执行（连续 {} 轮），可能正在读写同一工作区的文件。纪律：写操作前先读现状；不做无差异覆盖；发现文件内容与预期不符时以当前磁盘内容为准；你的验证结论以自己实际执行为准，不假设对方已验证。\n",
+            side.turns));
+    }
 
     // P2 — Exec Agent pool reuse: same turn shares raw session, cross-turn isolates
     let pool_key = plan_path.unwrap_or("").to_string();
@@ -262,15 +278,18 @@ pub(crate) async fn handle_task_dispatch(
             Some(exec_llm.provider_name()),
         ));
         new_agent.set_goal_type(goal_type);
-        // Inject goal-type warmup reminders (subtask quality guardrails)
-        let warmups = goal_types::get_warmup_reminders(goal_type);
-        for w in warmups {
-            new_agent.reminders.enqueue(
-                w,
-                3, // max_deliveries: show for first 3 iterations
-                crate::agent::reminders::ReminderPriority::High,
-                crate::agent::reminders::ReminderCategory::DeviationCorrect,
-            );
+        // Inject goal-type warmup reminders (subtask quality guardrails).
+        // 只有派发方显式声明了类型才注入——兜底值 file_operation 的提醒
+        // （批量前先单文件验证等）对写作/调研类任务不适用。
+        if let Some(declared) = declared_goal_type {
+            for w in goal_types::get_warmup_reminders(declared) {
+                new_agent.reminders.enqueue(
+                    w,
+                    3, // max_deliveries: show for first 3 iterations
+                    crate::agent::reminders::ReminderPriority::High,
+                    crate::agent::reminders::ReminderCategory::DeviationCorrect,
+                );
+            }
         }
         new_agent.set_tool_permissions(crate::permissions::ToolPermissions::all());
         if let Some(ref emitter) = agent.exec_emitter {
@@ -308,7 +327,7 @@ pub(crate) async fn handle_task_dispatch(
     let mut run_guard = run_registry.as_ref().map(|reg| {
         let id = reg.open(&title, &dynamic_msg, goal_type_str, run_origin.clone());
         crate::agent::task_run::emit_snapshot(reg, run_emitter.as_deref());
-        crate::agent::task_run::RunGuard::new(reg, id, run_emitter.clone())
+        crate::agent::task_run::RunGuard::new(reg, id, title.clone(), run_emitter.clone())
     });
 
     let run_result = exec_agent.run_free(cancel_flag).await;

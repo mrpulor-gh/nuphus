@@ -102,7 +102,13 @@ impl Provider for StepFunProvider {
             max_tokens_field: MaxTokensField::MaxTokens,
             user_agent: None,
             content_tool_tags: &[],
-            cache_hit_field: "",
+            // StepFun 的缓存命中读数在 usage **顶层** `cached_tokens`（官方
+            // prompt-cache 文档：「response.usage.cached_tokens 大于 0 则表明
+            // 命中缓存」），不在 OpenAI 标准位 `prompt_tokens_details.cached_tokens`。
+            // 留空（走标准位兜底）时 read_cache_hit 恒 0——step-5-preview 等型号
+            // 本就支持 Prompt 缓存（>256 token 自动启用），ctx 弹窗会把「无读数」
+            // 显示成「缓存命中 0%」的假数（2026-11-03 大王实测）。
+            cache_hit_field: "cached_tokens",
         }
     }
 

@@ -34,6 +34,7 @@ pub mod runtime;
 pub mod security;
 pub mod segmenter;
 pub mod session;
+pub mod side_chat_bridge;
 pub mod skill;
 pub mod state;
 pub mod store;

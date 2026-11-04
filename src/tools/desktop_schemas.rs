@@ -51,6 +51,12 @@ impl ToolRegistry {
         // Browser 工具总是暴露（由 execute_browser_tool 惰性初始化）
         schemas.extend(self.browser_tool_schemas());
 
+        // 白名单收口（观察子集，side chat 场景）：必须晚于 browser 的无条件附加，
+        // 否则浏览器 schema 从这条路径漏网。与 has_tool / 执行分发同一份名单。
+        if let Some(allow) = &self.automation_allowlist {
+            schemas.retain(|s| allow.iter().any(|n| n == &s.function.name));
+        }
+
         let actions = serde_json::json!([
             "invoke",
             "toggle",

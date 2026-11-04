@@ -1,7 +1,6 @@
 use crate::state::{AppState, HistoryMessage, ProcessInputResponse};
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::agent::goal_types::RelationConfig;
-use serde::Deserialize;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
@@ -33,14 +32,11 @@ pub use shelf::*;
 // ============================================================================
 
 /// 前端通过 ChatMessage.references 传递的资源引用
-/// `type` 是 Rust 关键字，用 #[serde(rename)] 反序列化
-#[derive(Debug, Clone, Deserialize)]
-pub struct ChatReference {
-    #[serde(rename = "type")]
-    pub ref_type: String, // "skill" | "knowledge" | "workflow" | "capture"
-    pub id: String,
-    pub label: String,
-}
+///
+/// 结构体与通用解析已抽到 `nuphus::agent::references`（Side Chat 复用同一份，
+/// 禁止两处各写一份解析）；此处 re-export 保持 `process::ChatReference` 既有
+/// 引用路径不变（mobile_server 等消费方无需改动）。
+pub use nuphus::agent::references::ChatReference;
 
 /// 获取应用根目录（plugin/ 的父目录）
 ///
@@ -52,60 +48,24 @@ pub(crate) fn workspace_root() -> PathBuf {
 }
 
 /// 解析 references，读取对应资源内容，返回注入到 Leader 上下文的文本
+///
+/// 通用分支（skill / knowledge / workflow / quote / 未知类型）走
+/// [`nuphus::agent::references::resolve_reference_text`]——Side Chat 复用
+/// 同一份解析；capture（截图路径 → 图片提示）是主会话特例：Side Chat 无
+/// 视觉工具，capture 不进它的通用分支。
 async fn resolve_references(refs: &[ChatReference]) -> String {
+    let root = workspace_root();
     let mut parts: Vec<String> = Vec::new();
     for r in refs {
-        let content = match r.ref_type.as_str() {
-            "skill" => {
-                let skill_dir = workspace_root().join("plugin").join("skills").join(&r.id);
-                let entry = skill_dir.join("SKILL.md");
-                if entry.exists() {
-                    tokio::fs::read_to_string(&entry).await.unwrap_or_default()
-                } else {
-                    format!("[Skill not found: {}]", r.id)
-                }
-            }
-            "knowledge" => {
-                let kd = workspace_root().join("plugin").join("knowledge");
-                let entry = kd.join(format!("{}.md", r.id));
-                if entry.exists() {
-                    tokio::fs::read_to_string(&entry).await.unwrap_or_default()
-                } else {
-                    format!("[Knowledge not found: {}]", r.id)
-                }
-            }
-            "workflow" => {
-                let wf_dir = workspace_root()
-                    .join("plugin")
-                    .join("workflows")
-                    .join(&r.id);
-                let entry = wf_dir.join("workflow.json");
-                if entry.exists() {
-                    tokio::fs::read_to_string(&entry).await.unwrap_or_default()
-                } else {
-                    format!("[Workflow not found: {}]", r.id)
-                }
-            }
-            // 截图引用：id 即本地图片绝对路径，注入带路径的图片提示，
-            // Agent 据此用 desktop_vision(image_path=...) 查看（主模型不支持视觉）。
-            "capture" => {
-                format!("[📷 用户附带图片，已保存至: {}]", r.id)
-            }
-            // 聊天区选中文字追问：原文由 label 承载（前端 .ref-chip-label 只做显示截断）。
-            // 不落盘、不查文件——引用的就是这段文本本身，注入后即可针对它追问。
-            "quote" => r.label.clone(),
-            _ => format!("[Unknown reference type: {}]", r.ref_type),
-        };
-        if content.is_empty() {
+        // 截图引用：id 即本地图片绝对路径，注入带路径的图片提示，
+        // Agent 据此用 desktop_vision(image_path=...) 查看（主模型不支持视觉）。
+        if r.ref_type == "capture" {
+            let content = format!("[📷 用户附带图片，已保存至: {}]", r.id);
+            parts.push(format!("[{}] {}:\n{}", r.ref_type, r.label, content));
             continue;
         }
-        // quote 的 label 即原文全文（该类型没有独立显示名）：若套用下面
-        // 「[类型] label:」的通用格式，会把同一段文本注入两次
-        // （[quote] 原文:\n原文）。该类型只发类型标记 + 原文。
-        if r.ref_type == "quote" {
-            parts.push(format!("[quote]\n{}", content));
-        } else {
-            parts.push(format!("[{}] {}:\n{}", r.ref_type, r.label, content));
+        if let Some(text) = nuphus::agent::references::resolve_reference_text(&root, r).await {
+            parts.push(text);
         }
     }
     parts.join("\n\n")
@@ -119,6 +79,8 @@ async fn resolve_references(refs: &[ChatReference]) -> String {
 ///
 /// 薄壳：仅做 Tauri 参数适配（`State<'_, AppState>` → `&AppState`），
 /// 业务逻辑全部委托给 [submit_user_message]，桌面端行为与原实现完全一致。
+/// `source` 透传：缺省 None = "desktop"；临时伙伴「直接提交」显式传
+/// "sidechat"（与 mobile / relay 同走共享入口，只标记来源，不改路由）。
 #[tauri::command]
 pub async fn send_message_cmd(
     app: tauri::AppHandle,
@@ -130,6 +92,9 @@ pub async fn send_message_cmd(
     mode: Option<String>,
     references: Option<Vec<ChatReference>>,
     send_id: Option<String>,
+    // 来源标记透传：None = "desktop"（缺省，既有调用方零变化）；
+    // 临时伙伴「直接提交」传 "sidechat"。语义见 submit_user_message。
+    source: Option<String>,
     new_session: Option<bool>,
 ) -> Result<ProcessInputResponse, String> {
     submit_user_message(
@@ -142,7 +107,7 @@ pub async fn send_message_cmd(
         mode,
         references,
         send_id,
-        None, // source 缺省 "desktop"，桌面行为与抽取前完全一致
+        source, // 缺省 "desktop"；显式 "sidechat" 仅改来源标记，路由/会话/忙等语义不变
         new_session.unwrap_or(false),
     )
     .await
@@ -820,6 +785,15 @@ let leader_binding = crate::commands::config::llm::effective_model_binding(
             }
         } else {
             message2.clone()
+        };
+        // ── 注入点 C（→Leader）：用户正在临时伙伴面板并行执行时，把在途轮次叠到
+        // 本轮 effective_message 最前。只此一处：message2 / dedup / 持久化 /
+        // 事件回显一律不碰（那是提交级基准，注入它会把「重发同一句」判成重复）。
+        let effective_message = match nuphus::agent::parallel::snapshot().side {
+            Some(side) => format!(
+                "[并行状态: 用户正在临时伙伴面板并行执行（本轮第 {} 次连续轮次）]\n{}",
+                side.turns, effective_message),
+            None => effective_message,
         };
 
         // ── Run Agent (main model, dual-slot: Leader or Workflow) ──
@@ -1718,6 +1692,7 @@ mod tests {
             ref_type: "quote".into(),
             id: "q1".into(),
             label: text.into(),
+            content: None,
         }];
         let out = resolve_references(&refs).await;
         assert_eq!(
@@ -1738,11 +1713,29 @@ mod tests {
             ref_type: "skill".into(),
             id: "nonexistent-skill".into(),
             label: "我的技能".into(),
+            content: None,
         }];
         let out = resolve_references(&refs).await;
         assert_eq!(
             out,
             "[skill] 我的技能:\n[Skill not found: nonexistent-skill]"
+        );
+    }
+
+    // capture 特例回归：截图路径提示仍走「[capture] label:」通用包装，
+    // 内容逐字为图片路径提示——抽公共函数后不许漂移（主会话独有分支）。
+    #[tokio::test]
+    async fn capture_reference_keeps_image_path_prompt() {
+        let refs = vec![ChatReference {
+            ref_type: "capture".into(),
+            id: "/tmp/shot.png".into(),
+            label: "截图".into(),
+            content: None,
+        }];
+        let out = resolve_references(&refs).await;
+        assert_eq!(
+            out,
+            "[capture] 截图:\n[📷 用户附带图片，已保存至: /tmp/shot.png]"
         );
     }
 

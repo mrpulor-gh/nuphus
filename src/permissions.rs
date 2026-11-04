@@ -134,6 +134,19 @@ impl PermissionPolicy {
         self.permissions = permissions;
     }
 
+    /// 查询工具已注册的类别（未注册过返回 `None`）。
+    ///
+    /// 映射由 [`crate::tools::registry::ToolRegistry::all_tool_categories`]
+    /// 灌入（ToolDef.category + 动态 desktop/browser schema），与
+    /// `exec_with_permissions` 的物理裁剪同源——声明类别才是唯一事实源。
+    /// 执行期判定必须优先用它、拿不到再回落到名字前缀猜测
+    /// （`agent::exec_tool::categorize_tool`）：否则声明 Core 但
+    /// 带 `system_` 前缀的工具会在执行期被猜成 SystemAutomation，策略层
+    /// （已放行）与执行层（审批轮询 300s）各说各话。
+    pub fn category_of(&self, tool: &str) -> Option<ToolCategory> {
+        self.tool_categories.get(tool).copied()
+    }
+
     /// Check tool permission by registered category (all tools registered dynamically at startup)
     pub fn authorize(&self, tool_name: &str) -> PermissionOutcome {
         match self.tool_categories.get(tool_name).copied() {

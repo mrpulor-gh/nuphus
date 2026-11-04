@@ -43,6 +43,7 @@ import {
   listModels,
   getEffectiveModel,
   getProviderContext,
+  sideChatSubmitToMain,
   setRelation as persistRelationToBackend,
   getProjectDir,
   getProjectBookmarks,
@@ -51,8 +52,16 @@ import {
   TOOL_PERMISSIONS_CHANGED_EVENT,
   browserShowWindow,
   browserOpenUrl,
+  sideChatClose,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
+import {
+  clearSideChatStorage,
+  loadSideChatKey,
+  loadSideChatMinimized,
+  saveSideChatKey,
+  saveSideChatMinimized,
+} from './sideChatStorage'
 import { useVisionResolution } from '../../hooks/useVisionResolution'
 import { VisionHint, canAttachImages, showsImagesInline } from './VisionHint'
 import { friendlyIpcError } from '../lib/ipcError'
@@ -72,6 +81,7 @@ import { ChatInputBar } from './ChatInputBar'
 import { VideoProgressBadge } from './VideoProgressBadge'
 import ExternalAgentsStatusBar from './ExternalAgentsStatusBar'
 import SessionRail from './SessionRail'
+import { SideChatPanel } from './SideChatPanel'
 import { loadRelation } from '../lib/relation'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import {
@@ -97,6 +107,7 @@ import {
   IconStar,
   IconChartColumn,
   IconChevronsDown,
+  IconBot,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -235,6 +246,13 @@ interface ChatPanelProps {
    * 缺省不渲染（无槽位则左组保持空）。
    */
   execIndicator?: ReactNode
+  /**
+   * 主会话正在执行的 Exec 任务标题（App 层从 task_runs 台账快照派生：第一个
+   * running 条目的 title；无在途 = null）。**只转发给临时伙伴面板**做并行避让
+   * 细提示——本组件对执行台账保持零感知（见 execIndicator 槽位注释），故这里
+   * 收一个字符串而不是整个台账。
+   */
+  mainExecTitle?: string | null
   /** Leader 暂停是否禁用（workflow 运行时） */
   isWorkflowRunning?: boolean
   /** 输入栏最左端齿轮按钮：打开设置中心全屏覆盖层（状态由 App 层持有） */
@@ -358,6 +376,7 @@ export function ChatPanel({
   onAppearanceDismiss,
   onRate,
   execIndicator,
+  mainExecTitle,
   onShowExecTrace,
 }: ChatPanelProps) {
   const messages = useMemo(() => composeAssistantReplies(messageRecords), [messageRecords])
@@ -739,6 +758,58 @@ export function ChatPanel({
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
+  // ── 临时对话（Side Chat）──
+  // key 由本组件在打开时生成（面板关闭 / 主会话切换即销毁，见 closeSideChat）；
+  // 用 ref 镜像一份：关闭路径可能来自事件回调，不能依赖渲染闭包里的旧 state。
+  // 刷新续命：key / 最小化态 / 消息都落 localStorage——webview 刷新不重载 Rust
+  // 进程，后端会话与执行体仍活着，挂回同一个 key 即无缝继续（见 sideChatStorage）。
+  const [sideChatKey, setSideChatKey] = useState<string | null>(() => loadSideChatKey())
+  /** 收起（最小化）：key 保留、消息保留，只切显示态；左下角入口出状态角标 */
+  const [sideChatMinimized, setSideChatMinimized] = useState(() => loadSideChatMinimized())
+  /** 临时伙伴是否在途执行：驱动左下角入口角标的状态（执行中 / 空闲） */
+  const [sideChatSending, setSideChatSending] = useState(false)
+  const sideChatKeyRef = useRef<string | null>(sideChatKey)
+  const openSideChat = useCallback(() => {
+    if (sideChatKeyRef.current) {
+      // 已存在（最小化中）→ 原地恢复，不新建会话、不清空消息
+      setSideChatMinimized(false)
+      saveSideChatMinimized(false)
+      return
+    }
+    const key = crypto.randomUUID()
+    sideChatKeyRef.current = key
+    setSideChatKey(key)
+    saveSideChatKey(key)
+    saveSideChatMinimized(false)
+  }, [])
+  const closeSideChat = useCallback(() => {
+    const key = sideChatKeyRef.current
+    sideChatKeyRef.current = null
+    setSideChatKey(null)
+    setSideChatMinimized(false)
+    // 后端销毁临时会话（含在途执行）；失败不影响前端关闭
+    if (key) {
+      clearSideChatStorage(key)
+      void sideChatClose(key).catch(err => console.warn('[SideChat] close failed:', err))
+    }
+  }, [])
+  const minimizeSideChat = useCallback(() => {
+    setSideChatMinimized(true)
+    saveSideChatMinimized(true)
+  }, [])
+  const toggleSideChat = useCallback(() => {
+    if (sideChatKeyRef.current) {
+      setSideChatMinimized(m => {
+        saveSideChatMinimized(!m)
+        return !m
+      })
+    } else openSideChat()
+  }, [openSideChat])
+  /** 主会话切换 / 新建成功：临时会话跟随主会话生命周期，一并销毁 */
+  const handleChatReplaced = useCallback(() => {
+    closeSideChat()
+    onChatReplaced?.()
+  }, [closeSideChat, onChatReplaced])
   const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null)
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null)
@@ -1526,7 +1597,10 @@ export function ChatPanel({
     // 与拖拽同一条通道：图片/文档一律进引用栏，不再把非图片内容读成文本塞进输入框。
     void (async () => {
       try {
-        const { entries, failures } = await filesToAttachments([file])
+        const { entries, failures } = await filesToAttachments([file], p => {
+          const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 100
+          hudUpdate(`正在添加 ${p.name}（${pct}%）`, 'info')
+        })
         for (const entry of entries) {
           if (entry.kind === 'image') handleImageAttach(entry.image)
           else handleFileAttach(entry.file)
@@ -1578,6 +1652,57 @@ export function ChatPanel({
       requestAnimationFrame(() => focusInputAtEnd(textareaRef.current))
     },
     [addReference],
+  )
+
+  /**
+   * 「送入主对话」：临时助手回复全文进主会话输入栏。
+   *
+   * 走既有 addQuoteReference 通道（chip + 聚焦输入框）——chip 的 label 只做
+   * 显示截断，注入用的是 content 全文（后端每个引用分支优先取 content）；
+   * 前端在此**不做任何截断**，截断发生在 chip 渲染与后端注入格式，不在这里。
+   */
+  const handleSideChatToMain = useCallback(
+    (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+      addQuoteReference({
+        type: 'sidechat',
+        id: `sidechat-${Date.now()}`,
+        label: `临时助手回复 · ${trimmed.length} 字`,
+        content: trimmed,
+      })
+    },
+    [addQuoteReference],
+  )
+
+  /**
+   * 「直接提交」：临时伙伴回复全文经主会话**共享提交入口**直接进主会话
+   * （source="sidechat"，不经输入栏）。与「送入主对话」的分工：后者进
+   * 输入栏可改可删；这里一键提交——Running 期自动入队为追加指令，
+   * Finalizing 期拒收回执提示重发（内容仍留在临时伙伴，无丢失）。
+   * 跨会话只此一条显式通道，不存在任何自动推送路径。
+   */
+  const handleSideChatSubmit = useCallback(
+    (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+      // 显式来源声明：主会话的 Leader 必须一眼看出这不是用户本人在说话，
+      // 否则会把临时伙伴的并行结论当用户指令执行——隔离边界的最后一道闸。
+      // 声明只加头部一行，全文原样跟在下面（WYSIWYG 不变）。
+      const payload = `${t('sideChat.fromSideChat')}\n\n${trimmed}`
+      void sideChatSubmitToMain(payload, crypto.randomUUID())
+        .then(outcome => {
+          if (outcome?.rejected) {
+            hudUpdate(t('sideChat.submitRejected'), 'warning')
+          } else if (outcome?.appended) {
+            hudUpdate(t('sideChat.submittedAppend'), 'info')
+          } else if (outcome) {
+            hudUpdate(t('sideChat.submittedToast'), 'info')
+          }
+        })
+        .catch(e => hudUpdate(friendlyIpcError(e, '提交到主会话失败'), 'warning'))
+    },
+    [t],
   )
 
   useEffect(() => {
@@ -1763,7 +1888,7 @@ export function ChatPanel({
       {/* ── Session Rail：面板级左缘挂载（收起态 = 左缘一枚色块，点击滑出左侧抽屉）── */}
       {onChatReplaced && (
         <SessionRail
-          onSessionChanged={onChatReplaced}
+          onSessionChanged={handleChatReplaced}
           onNewChat={onNewChat}
           onSwitchProjectDir={switchProject}
           onModeSwitched={onModeSwitched}
@@ -1773,6 +1898,46 @@ export function ChatPanel({
           mood={mood}
         />
       )}
+      {/* ── 临时伙伴（Side Chat）：从对话区左侧滑出的一次性 Agent 面板 ──
+           绝对定位浮在消息区之上（.scp-panel），不挤压主对话布局；
+           跟随主会话生命周期：面板关闭 / 会话切换即销毁（closeSideChat）。 */}
+      {sideChatKey && (
+        <SideChatPanel
+          sessionKey={sideChatKey}
+          modelName={modelName}
+          onClose={closeSideChat}
+          onMinimize={minimizeSideChat}
+          minimized={sideChatMinimized}
+          onSendToMain={handleSideChatToMain}
+          onSubmitToMain={handleSideChatSubmit}
+          mainExecTitle={mainExecTitle}
+          onSendingChange={setSideChatSending}
+        />
+      )}
+      {/* ── 临时伙伴入口：对话窗口左下角浮动 ──
+           刻意不放输入框操作组（那里只放 + / 语音 / 发送）；放在左缘，避开
+           输入栏的固定几何（.chat-input-area 居中且 min-width 800px）。
+           收起（最小化）不销毁会话，只切显示态——此时按钮出角标提示「有未处理的
+           临时对话」，点一下原地恢复。 */}
+      <button
+        type="button"
+        className={`chat-side-chat-fab${sideChatKey ? ' is-open' : ''}${
+          sideChatSending ? ' is-busy' : ''
+        }`}
+        aria-label={t('sideChat.title')}
+        title={t('sideChat.title')}
+        onClick={toggleSideChat}
+      >
+        <IconBot size={18} />
+        {/* 状态角标：有会话即亮。is-busy = 执行中（脉冲强调色），is-idle = 空闲
+            （中性灰）——刻意不用错误红，避免被误读为异常。面板打开时被面板
+            （z-60）遮住也无妨：展开态用户直接看得见过程。 */}
+        {sideChatKey && (
+          <span
+            className={`chat-side-chat-badge${sideChatSending ? ' is-busy' : ' is-idle'}`}
+          />
+        )}
+      </button>
       {/* ── Chat Header：右上角按钮列（设置 + 外观）──
           齿轮 = 全应用唯一设置入口（打开设置中心弹窗）；
           调色板 = 外观浮窗（主题 / 微调 / 我的主题 / 语言，非模态常驻）。 */}
@@ -2593,6 +2758,9 @@ export function ChatPanel({
           onFileSelect={handleFileSelect}
           onImageAttach={handleImageAttach}
           onFileAttach={handleFileAttach}
+          onAttachNotice={(msg, level) =>
+            hudUpdate(msg, level === 'error' ? 'error' : 'info')
+          }
           projectDir={projectDir}
           onOpenPrinciples={onOpenPrinciples}
           onOpenAnnotations={onOpenAnnotations}

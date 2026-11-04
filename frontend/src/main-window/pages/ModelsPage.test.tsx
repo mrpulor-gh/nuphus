@@ -234,7 +234,9 @@ describe('ModelsPage 子智能体模型双字段绑定', () => {
 
     const trigger = await screen.findByRole('button', { name: /shared-model \(custom-b\)/ })
     fireEvent.click(trigger)
-    fireEvent.click(screen.getByRole('option', { name: /shared-model.*custom-a/ }))
+    // 分组模式：先展开目标提供商行，再选其下的模型（懒展开）
+    fireEvent.click(screen.getByText('custom-a'))
+    fireEvent.click(screen.getByRole('option', { name: /shared-model/ }))
 
     await waitFor(() =>
       expect(setAgentModel).toHaveBeenCalledWith('exec', 'shared-model', 'custom-a'),

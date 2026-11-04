@@ -1043,6 +1043,15 @@ async fn heal_external_endpoint(identity: &ExternalIdentity) -> ExternalHeal {
     ExternalHeal::PortUnresponsive
 }
 
+/// Whether the picked browser is ego lite (Citro Labs).
+///
+/// Its failure mode is different from a fingerprint browser: ego lite keeps its
+/// CDP port **off by default**, so "reopen the window in your platform" sends the
+/// user down the wrong path — the fix lives in ego lite's own Settings.
+fn is_ego_lite(name: &str) -> bool {
+    name.eq_ignore_ascii_case("ego lite")
+}
+
 /// Compose the agent-facing message for a failed external attach. Actionable
 /// and anti-misoperation: names the browser, tells the user exactly what to do
 /// (reopen the window — the connection then auto-heals), and explicitly forbids
@@ -1054,13 +1063,23 @@ fn attach_failure_message(
     heal: Option<&ExternalHeal>,
 ) -> String {
     match (identity, heal) {
+        (Some(id), Some(ExternalHeal::ProcessNotFound)) if is_ego_lite(&id.name) => format!(
+            "外部浏览器「{}」当前没有运行。请让用户启动 ego lite，并在它的「设置」中开启 CDP 端口\
+             （默认关闭）——启动并开启后连接会自动恢复。不要切换浏览器、不要修改配置、不要盲目重试。",
+            id.name
+        ),
         (Some(id), Some(ExternalHeal::ProcessNotFound)) => format!(
-            "指纹浏览器「{}」当前没有运行中的窗口。请让用户在指纹浏览器平台中打开该窗口——\
+            "外部浏览器「{}」当前没有运行中的窗口。请让用户在该浏览器平台中打开该窗口——\
              窗口打开后连接会自动恢复。不要切换浏览器、不要修改配置、不要盲目重试。",
             id.name
         ),
+        (Some(id), _) if is_ego_lite(&id.name) => format!(
+            "外部浏览器「{}」的调试端口无响应。请让用户在 ego lite 的「设置」中确认 CDP 端口\
+             已开启（默认关闭）——开启后连接会自动恢复。不要切换浏览器、不要修改配置。",
+            id.name
+        ),
         (Some(id), _) => format!(
-            "指纹浏览器「{}」的窗口进程正在运行，但调试端口无响应。请让用户在指纹浏览器平台中\
+            "外部浏览器「{}」的窗口进程正在运行，但调试端口无响应。请让用户在该浏览器平台中\
              关闭并重新打开该窗口（确认调试端口已开启）——窗口重开后连接会自动恢复。\
              不要切换浏览器、不要修改配置。",
             id.name
@@ -1116,7 +1135,7 @@ impl BrowserClient {
         }
         let exe_path = non_empty("NUPHUS_BROWSER_EXE_PATH")?;
         Some(ExternalIdentity {
-            name: non_empty("NUPHUS_BROWSER_NAME").unwrap_or_else(|| "指纹浏览器".to_string()),
+            name: non_empty("NUPHUS_BROWSER_NAME").unwrap_or_else(|| "外部浏览器".to_string()),
             exe_path,
             user_data_dir: non_empty("NUPHUS_BROWSER_USER_DATA_DIR"),
         })
@@ -4818,6 +4837,63 @@ mod tests {
             "guides reopening the window: {msg}"
         );
         assert!(msg.contains("不要切换浏览器"), "forbids switching: {msg}");
+    }
+
+    /// ego lite 的 CDP 端口默认关闭 —— 让用户"去平台里打开窗口"是错的指引，
+    /// 必须指向它自己的设置。
+    #[test]
+    fn failure_message_ego_lite_points_at_its_own_settings() {
+        let ego = ExternalIdentity {
+            name: "ego lite".to_string(),
+            exe_path: r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe".to_string(),
+            user_data_dir: None,
+        };
+        let not_running = attach_failure_message(
+            "http://127.0.0.1:9222",
+            Some(&ego),
+            Some(&ExternalHeal::ProcessNotFound),
+        );
+        assert!(
+            not_running.contains("ego lite"),
+            "names the browser: {not_running}"
+        );
+        assert!(
+            not_running.contains("CDP 端口"),
+            "points at the CDP port: {not_running}"
+        );
+        assert!(
+            not_running.contains("默认关闭"),
+            "says the port is off by default: {not_running}"
+        );
+        assert!(
+            not_running.contains("不要盲目重试"),
+            "still forbids blind retries: {not_running}"
+        );
+
+        let unresponsive = attach_failure_message(
+            "http://127.0.0.1:9222",
+            Some(&ego),
+            Some(&ExternalHeal::PortUnresponsive),
+        );
+        assert!(
+            unresponsive.contains("确认 CDP 端口"),
+            "tells the user to check the CDP port: {unresponsive}"
+        );
+        assert!(
+            !unresponsive.contains("平台中"),
+            "never sends an ego lite user to a fingerprint platform: {unresponsive}"
+        );
+    }
+
+    /// 大小写 / 前后空格不得影响 ego lite 识别（detect 侧 `infer_browser_name`
+    /// 产出小写 "ego lite"，手工配置可能带空格）。
+    #[test]
+    fn is_ego_lite_matches_display_spellings() {
+        assert!(is_ego_lite("ego lite"));
+        assert!(is_ego_lite("EGO LITE"));
+        assert!(is_ego_lite(" ego lite ".trim()));
+        assert!(!is_ego_lite("AdsPower"));
+        assert!(!is_ego_lite("ego-browser"));
     }
 
     #[test]

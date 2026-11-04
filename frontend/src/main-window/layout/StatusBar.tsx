@@ -87,9 +87,13 @@ export function StatusBar({
         </span>
         {(() => {
           const usage = mainTokenUsage
+          // 哨兵 0xffffffff = 「无读数」：后端两个 main 发射点（react_loop /
+          // process 收尾）与历史恢复回填（useSession.ts）都用它占位。不挡掉它会
+          // 以 4294967295 当分子渲染出几千% 的假命中率——chat 模式下 main 槽本就
+          // 永远收不到真实读数，真实值在 exec 槽（见 ChatInputBar 弹窗口径）。
           const hit = usage?.cacheHitTokens || 0
           const total = usage?.inputTokens || 0
-          if (hit > 0 && total > 0) {
+          if (hit > 0 && hit !== 0xffffffff && total > 0) {
             const rate = (hit / total) * 100
             const color = rate > 60 ? '#22c55e' : rate > 30 ? '#f59e0b' : '#ef4444'
             return (

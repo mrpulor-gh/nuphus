@@ -2156,11 +2156,7 @@ mod model_step_tests {
             ),
         ];
         let report = Compiler::validate_workflow(&wf);
-        assert!(
-            report.passed,
-            "模态误用只警告不阻断: {:?}",
-            report.errors
-        );
+        assert!(report.passed, "模态误用只警告不阻断: {:?}", report.errors);
         assert!(
             report
                 .warnings
@@ -2219,18 +2215,16 @@ mod model_step_tests {
     /// 执行期报 not yet supported——与其它 do 类型的畸形数据同一命运）。
     #[test]
     fn illegal_kind_or_missing_model_is_not_accepted_as_model() {
-        let action: Action = serde_json::from_value(
-            serde_json::json!({"model": "x", "with": {"kind": "audio"}}),
-        )
-        .expect("untagged enum always yields some variant");
+        let action: Action =
+            serde_json::from_value(serde_json::json!({"model": "x", "with": {"kind": "audio"}}))
+                .expect("untagged enum always yields some variant");
         assert!(
             !matches!(action, Action::Model { .. }),
             "非法 kind 不得解析为 Model: {action:?}"
         );
 
-        let action: Action =
-            serde_json::from_value(serde_json::json!({"with": {"kind": "text"}}))
-                .expect("untagged enum always yields some variant");
+        let action: Action = serde_json::from_value(serde_json::json!({"with": {"kind": "text"}}))
+            .expect("untagged enum always yields some variant");
         assert!(
             !matches!(action, Action::Model { .. }),
             "缺 model 字段不得解析为 Model: {action:?}"
@@ -2242,7 +2236,8 @@ mod model_step_tests {
     /// DoCustom 吞掉或直接被判未知属性。
     #[test]
     fn step_schema_registers_model_do_kind() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("workflow/step_schema.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("workflow/step_schema.json");
         let text = std::fs::read_to_string(&path).expect("step_schema.json readable");
         let schema: serde_json::Value = serde_json::from_str(&text).expect("valid json schema");
         let defs = &schema["$defs"];
@@ -2292,7 +2287,9 @@ mod model_step_tests {
             .as_array()
             .expect("Action.oneOf array");
         assert!(
-            one_of.iter().any(|entry| entry["$ref"] == "#/$defs/DoModel"),
+            one_of
+                .iter()
+                .any(|entry| entry["$ref"] == "#/$defs/DoModel"),
             "Action oneOf must register #/$defs/DoModel: {one_of:?}"
         );
 
@@ -2301,8 +2298,8 @@ mod model_step_tests {
             .as_array()
             .expect("DoCustom propertyNames enum");
         for name in [
-            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert", "mcp",
-            "sleep", "break", "continue",
+            "tool", "seq", "loop", "if", "call", "wait", "chat", "model", "script", "assert",
+            "mcp", "sleep", "break", "continue",
         ] {
             assert!(
                 custom_names.iter().any(|value| value == name),

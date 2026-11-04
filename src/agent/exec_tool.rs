@@ -298,7 +298,7 @@ pub async fn check_tool_security(
         if crate::security::is_session_approved(signals, tool) {
             return None;
         }
-        let cat = categorize_tool(tool);
+        let cat = policy.category_of(tool).or_else(|| categorize_tool(tool));
         let disabled = match cat {
             Some(crate::permissions::ToolCategory::FileAccess) => !tp.file_access,
             Some(crate::permissions::ToolCategory::WebSearch) => !tp.web_search,
@@ -357,7 +357,7 @@ pub async fn check_tool_security(
             }
             // Auto-allow non-critical operations when settings page permission is enabled
             if let Some(tp) = tool_permissions {
-                let cat = categorize_tool(tool);
+                let cat = policy.category_of(tool).or_else(|| categorize_tool(tool));
                 let permission_granted = cat.is_some_and(|c| match c {
                     crate::permissions::ToolCategory::FileAccess => tp.file_access,
                     crate::permissions::ToolCategory::SystemAutomation => tp.system_automation,
