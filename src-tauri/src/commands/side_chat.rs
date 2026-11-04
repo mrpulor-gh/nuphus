@@ -249,9 +249,7 @@ fn system_prompt(
         skills = skills,
         env = env,
         // 反查目录取运行时真实值（NUPHUS_DATA_DIR 可覆盖），不写死路径
-        archive = nuphus::utils::nuphus_data_dir()
-            .join("side-chat")
-            .display(),
+        archive = nuphus::utils::nuphus_data_dir().join("side-chat").display(),
         // 归档上限引用常量本身：写死数字会随 HISTORY_CAP 调整而过期
         history_cap = HISTORY_CAP,
         l0 = nuphus::agent::prompt::l0_kernel(),
