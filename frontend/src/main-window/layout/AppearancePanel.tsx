@@ -743,9 +743,9 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
       name,
       base: theme,
       // 新主题的气泡底色按 60% 半透明起步（见 NEW_THEME_BUBBLE_OPACITY）：
-      // 与用户当前预览的微调值合并 —— 用户已显式拖过的气泡透明度优先，
-      // 不被这个默认值覆盖。
-      overrides: { ...activeOverrides, ...bubbleOpacityOverrides(NEW_THEME_BUBBLE_OPACITY) },
+      // 与用户当前预览的微调值合并，**预览值优先** —— 默认值只在用户没拖过
+      // 气泡滑块时兜底（spread 顺序即优先级：后写的赢）。
+      overrides: { ...bubbleOpacityOverrides(NEW_THEME_BUBBLE_OPACITY), ...activeOverrides },
       skin: undefined,
     })
     // 新主题无皮肤 → 全局背景回到「无图」态（与 activateCustom 的 `skin ?? ''` 同口径）

@@ -436,6 +436,21 @@ describe('AppearancePanel 外观浮窗', () => {
     expect(Object.keys(ov).sort()).toEqual(['--msg-assistant-bg', '--msg-user-bg'])
   })
 
+  it('新建主题：已拖过的气泡透明度优先于 60% 默认值（默认值只兜底）', async () => {
+    stubThemeComputedStyle()
+    const view = await renderPanel()
+
+    // 先把气泡拖到 35%（形成未保存预览），再走新建链路
+    fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
+      target: { value: '35' },
+    })
+    fireEvent.click(newCard(view))
+
+    const ov = storedThemes()[0].overrides
+    expect(ov['--msg-user-bg']).toMatch(/^rgba\(.+, 0\.35\)$/)
+    expect(ov['--msg-assistant-bg']).toMatch(/^rgba\(.+, 0\.35\)$/)
+  })
+
   it('浮窗收起再展开：改名输入框重新获得焦点并全选（display:none 下 focus 会被浏览器拒绝）', async () => {
     const onClose = vi.fn()
     let view!: RenderResult
