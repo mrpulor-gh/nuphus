@@ -11,12 +11,12 @@
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
 <p align="center">
-  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="下载 Nuphus 1.2.0"></a>
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="下载 Nuphus 1.3.0"></a>
   &nbsp;
-  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.2.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.2.0"></a>
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.3.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.3.0"></a>
 </p>
 
-> **版本**: 1.2.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
+> **版本**: 1.3.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -316,6 +316,16 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v1.3.0 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#121](https://github.com/mrpulor-gh/nuphus/pull/121) | 外观浮窗三处修复：新建主题不再继承上一份背景图、消息气泡默认 60% 半透明、改名框随浮窗展开拿回焦点 |
+
+其余变更由维护者完成。
 
 ### v1.2.0 贡献者
 

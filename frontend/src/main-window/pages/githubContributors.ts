@@ -100,6 +100,15 @@
  * 提交者，REPO_COMMITTERS 无新增。维护者直推的核心修复按既定口径以 **commit
  * 出处**收录（d89e1f4 / ce29afb / 68abc7b），纯格式 / 杂务提交不收录。
  *
+ * `1.3.0` 轮次取证：2026-11-04，v1.2.0（2026-10-31）之后经 GitHub
+ * `/search/issues?q=is:pr+is:merged+merged:>=2026-10-31` 核对，区间内唯一合并 PR
+ * 为 #121（zhoupeiyu515-ui，外观浮窗三处修复，merged_at 2026-11-04T07:34:29Z，
+ * merge commit 8d753626，出处 `Merge PR #121`）。该作者自 0.2.24 轮次起已在头像墙
+ * （u/296242118），**非新提交者，头像墙无新增**。`git log v1.2.0..HEAD` 区间其余
+ * 提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；08646b3d
+ * （技能目录迁移）与 6488dcd3（Running pill 定位微调，与 e3a57788 同一项）
+ * 不单独收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -160,6 +169,65 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '1.3.0',
+    date: '2026-11-04',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '8c28fbcb',
+            summary:
+              '工作流新增 model 步骤（单次文本/图像/视频生成），并修掉画布拖拽插入提示偏移、legacy 无 id 步骤仍可编辑、管道引用解析回落与 V10 遮蔽误报',
+          },
+          {
+            pr: null,
+            commit: 'a0a28836',
+            summary: 'ctx 弹窗不再渲染假的「缓存命中 0%」：分子分母都需真实读数，无读数整行不渲染',
+          },
+          {
+            pr: null,
+            commit: 'f828db0c',
+            summary:
+              '临时伙伴并行协作契约与临时对话（Side Chat）：进程级并行状态互通、桌面观察态工具面、8MB 分块落盘与 generation 协议拆分',
+          },
+          {
+            pr: null,
+            commit: 'b5351957',
+            summary: '工作区巡检脚本：git 卫生/会话垃圾/ignore 审计/凭证扫描四段，退出码即闸门',
+          },
+          {
+            pr: null,
+            commit: '7fc33394',
+            summary:
+              '临时对话在途态以后端 slot.running 为权威：派发起点置位、BUSY 降级追加、面板 memo 隔断重渲染',
+          },
+          {
+            pr: null,
+            commit: '36d50ffa',
+            summary: 'L2 Leader 提示词四层重构，标题下给出仲裁链，「提倡鼓励」提入判定闸门',
+          },
+          {
+            pr: null,
+            commit: 'e3a57788',
+            summary: '临时对话消息区左下角新增流式 Running 指示器，仅在真实在途时出现',
+          },
+        ],
+      },
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 121,
+            summary:
+              '外观浮窗三处修复：新建主题不再继承上一份背景图、消息气泡默认 60% 半透明、改名框随浮窗展开拿回焦点',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '1.2.0',
     date: '2026-10-31',
