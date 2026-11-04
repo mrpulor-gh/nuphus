@@ -1,4 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { listen } from '@tauri-apps/api/event'
 import {
   Archive as ArchiveIcon,
@@ -74,6 +83,17 @@ export const EXPLORE_PROJECT = '__explore__'
 
 /** 面板尺寸下限（px）：再窄多列结论就没法读了。上限永远相对宿主容器实测。 */
 const PANEL_SIZE_MIN = { w: 320, h: 280 }
+
+/**
+ * 后端「该临时会话正在执行上一条消息」的镜像文案
+ * （`src-tauri/src/commands/side_chat.rs` 的 `BUSY_MESSAGE`）。
+ *
+ * 命中它 = **后端说在途**。`slot.running` 是在途的唯一权威，前端 `sending`
+ * 只是它的投影——投影落后于事实时（派发起点事件未到 / 监听漏事件 / 刷新恢复
+ * 竞态），发送应当降级为追加，而不是给用户一个错误气泡。
+ * 两侧文案由源码断言测试锁定，改一侧必须双改。
+ */
+const BACKEND_BUSY_MESSAGE = '该临时会话正在执行上一条消息，请稍候'
 
 interface SideChatStep {
   tool: string
@@ -393,7 +413,7 @@ interface SideChatPanelProps {
  * ToolCallStart/End 与 LlmTextDelta，渲染「当前工具 + 流式文本」；完成后
  * 清空实时态，落最终回复与 steps 折叠条。
  */
-export function SideChatPanel({
+function SideChatPanelImpl({
   sessionKey,
   modelName,
   onClose,
@@ -972,6 +992,16 @@ export function SideChatPanel({
         // 用户手动追加走前端乐观路径（handleSend），与此事件无关。
         case 'side_chat_dispatch_question': {
           const e = ev as unknown as { question?: string; turn_id?: string; queued?: boolean }
+          // 派发起点 = 后端已在途的权威信号（`dispatch_fresh` 在 await
+          // send_impl **之前**就 emit 它）。前端对这一路从无 sending 态，若不在此
+          // 置位，从派发到首个流式事件之间（LLM 首 token 可能几十秒）composer
+          // 一直停在「发送」态：用户一发就被后端 BUSY 拒收，追加钮与停止钮都不
+          // 在——正是「追加路径不见了 / 停不下来」的体感来源。
+          // queued=true 是「派发轮在途追加」：轮次早已在跑，无需再置位。
+          if (e.queued !== true) {
+            sendingRef.current = true
+            setSending(true)
+          }
           if (e.question) {
             const qTurn = e.turn_id ?? ''
             setMessages(prev =>
@@ -1221,6 +1251,8 @@ export function SideChatPanel({
     liveSegmentsRef.current = EMPTY_LIVE_SEGMENTS
     setLiveBlocks([])
     liveBlocksRef.current = []
+    // 降级标记：后端 BUSY（在途）时本条消息改走追加，finally 的收口必须整段跳过
+    let degradedToAppend = false
     try {
       // references / effort / provider 缺省均不传：后端按 null 兼容。
       // provider 必须与 model 成对传——只给 id 时后端按段序首段猜 provider，
@@ -1280,6 +1312,27 @@ export function SideChatPanel({
       })
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
+      // 后端是「在途」的唯一权威（slot.running），前端 sending 只是它的投影。
+      // 投影落后于事实时（派发起点事件未到 / 监听漏事件 / 刷新恢复竞态），这条
+      // 消息**不是失败**：降级为追加——队列插入检查在后端，enqueue 即刻生效于
+      // 下一个迭代边界；同时把 composer 切到「追加 + 停止」态，用户能停、能继续加。
+      // 不这么做，用户看到的只有一个错误气泡：消息没发出，也没入队。
+      if (detail === BACKEND_BUSY_MESSAGE) {
+        degradedToAppend = true
+        // 先撤掉刚才那条乐观气泡：本条消息改走队列，不能同时在列表里留一份
+        // （否则同一条消息出现两次——一次像已发出，一次在「已入队」区）。
+        // 只撤「最后一条、同文本、非 queued」的那条，绝不碰历史消息。
+        setMessages(prev => {
+          const last = prev[prev.length - 1]
+          return last && last.role === 'user' && last.text === finalText && !last.queued
+            ? prev.slice(0, -1)
+            : prev
+        })
+        sendingRef.current = true
+        setSending(true)
+        await handleAppend()
+        return
+      }
       // 失败保留 chips 与输入：用户改一眼就能重发，不用重新选文件 / skill
       setInput(text)
       setAttachments(sentAttachments)
@@ -1289,6 +1342,9 @@ export function SideChatPanel({
         { role: 'assistant', text: `${t('sideChat.failed')}: ${detail}`, error: true },
       ])
     } finally {
+      // 降级为追加时轮次仍在途：sending / 实时过程 / 待入队区必须原样保持，
+      // 不能被 finally 的收口清掉（否则追加气泡与停止钮一起消失）。
+      if (degradedToAppend) return
       sendingRef.current = false
       setSending(false)
       // 轮次收口：后端已清掉未消费的追加队列，UI 同步丢掉（角标不永驻）
@@ -2654,4 +2710,13 @@ export function SideChatPanel({
   )
 }
 
+/**
+ * memo：本面板是 ChatPanel 的子节点。主会话每个流式 token / 工具事件都会让
+ * ChatPanel 重渲染，不隔断的话伙伴面板整套 JSX（消息列表 + 实时过程 + 输入区）
+ * 跟着每秒几十次重渲染——体感就是「主会话一执行，伙伴窗口输入发沉、点击迟钝，
+ * 指令像是卡住，等主会话跑完才动弹」。ChatPanel 传入的九个 prop 全是稳定引用
+ * （useCallback / setState / 原始值），memo 因此真能挡住父级重渲染；
+ * 若今后给面板加内联箭头 prop，需重新评估这一条。
+ */
+export const SideChatPanel = memo(SideChatPanelImpl)
 export default SideChatPanel

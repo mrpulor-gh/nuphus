@@ -787,6 +787,10 @@ export function ChatPanel({
     sideChatKeyRef.current = null
     setSideChatKey(null)
     setSideChatMinimized(false)
+    // 在途态上报归零：面板随即卸载，不会再有机会经 onSendingChange 补一个
+    // false——不在此复位的话，左下角入口的「执行中」脉冲会永驻（用户关了窗口
+    // 也消不掉，只能刷新）。关闭销毁的是后端壳，前端这份投影必须同时清。
+    setSideChatSending(false)
     // 后端销毁临时会话（含在途执行）；失败不影响前端关闭
     if (key) {
       clearSideChatStorage(key)
@@ -1933,9 +1937,7 @@ export function ChatPanel({
             （中性灰）——刻意不用错误红，避免被误读为异常。面板打开时被面板
             （z-60）遮住也无妨：展开态用户直接看得见过程。 */}
         {sideChatKey && (
-          <span
-            className={`chat-side-chat-badge${sideChatSending ? ' is-busy' : ' is-idle'}`}
-          />
+          <span className={`chat-side-chat-badge${sideChatSending ? ' is-busy' : ' is-idle'}`} />
         )}
       </button>
       {/* ── Chat Header：右上角按钮列（设置 + 外观）──
@@ -2758,9 +2760,7 @@ export function ChatPanel({
           onFileSelect={handleFileSelect}
           onImageAttach={handleImageAttach}
           onFileAttach={handleFileAttach}
-          onAttachNotice={(msg, level) =>
-            hudUpdate(msg, level === 'error' ? 'error' : 'info')
-          }
+          onAttachNotice={(msg, level) => hudUpdate(msg, level === 'error' ? 'error' : 'info')}
           projectDir={projectDir}
           onOpenPrinciples={onOpenPrinciples}
           onOpenAnnotations={onOpenAnnotations}

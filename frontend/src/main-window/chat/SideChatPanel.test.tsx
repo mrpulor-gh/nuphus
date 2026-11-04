@@ -1937,6 +1937,38 @@ describe('SideChatPanel 并行协作契约', () => {
 })
 
 describe('SideChatPanel 接线契约（源码断言）', () => {
+  // 本 describe 以源码断言为主，但「在途态入口」三条回归要真渲染：这里补一套
+  // 与上一个 describe 同构的 mock 基线（上一个 describe 的 afterEach 做过
+  // mockReset，不补的话 sideChatState 返回 undefined，面板挂载即炸）。
+  beforeEach(() => {
+    listModels.mockResolvedValue([])
+    getProjectBookmarks.mockResolvedValue([])
+    getProjectDir.mockResolvedValue({ path: '', name: '', tag: 'default' })
+    sideChatHistoryList.mockResolvedValue([])
+    sideChatState.mockResolvedValue({ exists: false, running: false, last_turn: null })
+    sideChatPrepare.mockResolvedValue({ created: true })
+    sideChatCancel.mockResolvedValue(undefined)
+    sideChatReset.mockResolvedValue(undefined)
+    liveHandlers = []
+    listenMock.mockImplementation((_event: string, handler: SideChatHandler) => {
+      liveHandlers.push(handler)
+      return Promise.resolve(unlistenMock)
+    })
+    invokeMock.mockReset()
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    cleanup()
+    liveHandlers = []
+    sideChatSend.mockReset()
+    sideChatAppend.mockReset()
+    sideChatState.mockReset()
+    listenMock.mockReset()
+    unlistenMock.mockReset()
+    invokeMock.mockReset()
+  })
+
   it('入口按钮是 ChatPanel 左下角浮动，已移出输入栏操作组', () => {
     // 输入栏里不再有临时伙伴按钮
     expect(inputBarSrc).not.toContain('input-side-chat-btn')
@@ -1966,6 +1998,79 @@ describe('SideChatPanel 接线契约（源码断言）', () => {
     expect(chatPanelSrc).toContain("type: 'sidechat'")
     expect(chatPanelSrc).toContain('content: trimmed')
     expect(chatPanelSrc).toContain('addQuoteReference(')
+  })
+
+  // ── 在途态的三个入口（大王 2026-11-04 报障的回归）──
+  // 症候：派发轮里用户在伙伴窗口发指令「卡住不动、等主会话跑完才好」，
+  // 追加路径与停止按钮都找不到。根因是 composer 的在途态只由前端 sending
+  // 投影驱动，而派发这一路没人给它置位；后端 BUSY 又是权威在途信号却不被采纳。
+  it('派发起点事件即置在途态：composer 从「发送」切到「追加 + 停止」', async () => {
+    renderPanel()
+    // 空闲态：只有发送钮，没有停止钮
+    expect(screen.queryByRole('button', { name: '停止' })).toBeNull()
+    // Leader 派发：后端在 await send_impl **之前** emit 起点事件
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'side_chat_dispatch_question',
+        turn_id: 'turn-dispatch-1',
+        question: '核对一遍构建',
+      })
+    })
+    // 在途态：停止钮立刻可用（追加钮要有输入才出现）
+    expect(screen.getByRole('button', { name: '停止' })).toBeTruthy()
+  })
+
+  it('派发轮在途追加（queued）不重复置位，仅落队气泡', async () => {
+    renderPanel()
+    // 先来一发非 queued 的派发起点：把 composer 置在途态（queued 气泡只在
+    // 在途态的「已入队」固定区渲染，这正是它在途才可见的契约）
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'side_chat_dispatch_question',
+        turn_id: 'turn-dispatch-2',
+        question: '第一批任务',
+      })
+    })
+    // 派发轮在途时 Leader 再派一件 → queued 气泡（不重复置位、不新开轮次）
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'side_chat_dispatch_question',
+        turn_id: '',
+        question: '第二批任务',
+        queued: true,
+      })
+    })
+    expect(await screen.findByText('第二批任务')).toBeTruthy()
+    // 两条都在：起点一条 + 入队一条
+    expect(screen.getAllByText(/任务$/).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('后端 BUSY = 在途权威：发送降级为追加，不出错误气泡', async () => {
+    // 前端 sending 投影落后于事实时的兜底（派发起点事件未到 / 监听漏事件）
+    sideChatSend.mockRejectedValue(new Error('该临时会话正在执行上一条消息，请稍候'))
+    sideChatAppend.mockResolvedValue({ queued: true, duplicate: false, pending: 1 })
+    renderPanel()
+    fireEvent.change(screen.getByLabelText(/探索调研/), { target: { value: '补一句' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    // 降级为追加：进后端队列（队列插入检查在后端），落 queued 气泡
+    await waitFor(() => expect(sideChatAppend).toHaveBeenCalledWith(SESSION_KEY, '补一句', null))
+    expect(await screen.findByText('补一句')).toBeTruthy()
+    // 不当失败呈现：错误气泡会带上后端原文，这里必须不出现
+    expect(screen.queryByText(/该临时会话正在执行上一条消息/)).toBeNull()
+    // 轮次仍在途：composer 留在在途态（停止钮在，用户停得下来）
+    expect(screen.getByRole('button', { name: '停止' })).toBeTruthy()
+  })
+
+  it('BUSY 文案镜像：前端常量与后端 BUSY_MESSAGE 同文（改一侧必须双改）', () => {
+    const sideChatRs = read('../../../../src-tauri/src/commands/side_chat.rs')
+    const backend = sideChatRs.match(/const BUSY_MESSAGE: &str = "([^"]+)"/)?.[1]
+    expect(backend).toBeTruthy()
+    expect(read('./SideChatPanel.tsx')).toContain(`const BACKEND_BUSY_MESSAGE = '${backend}'`)
+  })
+
+  it('面板 memo 隔断主会话重渲染风暴（父级每 token 重渲染不再波及伙伴窗口）', () => {
+    const src = read('./SideChatPanel.tsx')
+    expect(src).toContain('export const SideChatPanel = memo(SideChatPanelImpl)')
   })
 
   it('实时过程契约：面板监听独立频道 side-chat-event 并按 sessionKey 过滤', () => {
