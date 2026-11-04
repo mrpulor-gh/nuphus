@@ -561,7 +561,9 @@ fn other_cargo_running() -> bool {
         .args(["/FO", "CSV", "/NH"])
         .output();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let output = std::process::Command::new("ps").args(["-eo", "comm"]).output();
+    let output = std::process::Command::new("ps")
+        .args(["-eo", "comm"])
+        .output();
 
     let Ok(output) = output else { return false };
     if !output.status.success() {
@@ -937,7 +939,9 @@ mod tests {
         assert!(command_invokes_cargo("cargo build && cargo test"));
         assert!(command_invokes_cargo("cargo fmt || true"));
         assert!(command_invokes_cargo("~/.cargo/bin/cargo fmt"));
-        assert!(command_invokes_cargo("C:\\Users\\x\\.cargo\\bin\\cargo.exe build"));
+        assert!(command_invokes_cargo(
+            "C:\\Users\\x\\.cargo\\bin\\cargo.exe build"
+        ));
         // 参数位出现必须放行——误伤比漏判更痛
         assert!(!command_invokes_cargo("grep cargo src/lib.rs"));
         assert!(!command_invokes_cargo("echo 'cargo is slow'"));

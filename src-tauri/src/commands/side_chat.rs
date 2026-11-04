@@ -990,9 +990,8 @@ async fn side_chat_send_impl<R: tauri::Runtime>(
             // 用户有权随时关闭伙伴，关闭后**不得静默重建**一个用户看不到的
             // 执行体（否则派发在面板外幽灵运行、结果无处呈现）。用户 send
             // 路径保持 or_insert（prepare 已建壳，此处兜底旧前端 / 重建竞态）。
-            map.get_mut(&key).ok_or_else(|| {
-                "临时伙伴会话已关闭（用户关闭了伙伴面板），派发终止".to_string()
-            })?
+            map.get_mut(&key)
+                .ok_or_else(|| "临时伙伴会话已关闭（用户关闭了伙伴面板），派发终止".to_string())?
         } else {
             map.entry(key.clone())
                 .or_insert_with(|| Slot::shell(permissions, model_ref, effort_ref, provider_ref))
@@ -2440,9 +2439,10 @@ mod tests {
         {
             let map = slots().lock().unwrap_or_else(|e| e.into_inner());
             let slot = map.get(&key_disp).expect("壳应在");
-            let pending = nuphus::state::SignalState::read(slot.signals.as_ref().expect("signals 应已建"))
-                .append_queue
-                .len();
+            let pending =
+                nuphus::state::SignalState::read(slot.signals.as_ref().expect("signals 应已建"))
+                    .append_queue
+                    .len();
             assert_eq!(pending, 1, "追加 brief 应入队");
         }
 
@@ -2465,16 +2465,9 @@ mod tests {
     async fn prepare_creates_shell_for_dispatch() {
         let key = test_key("prepare-shell");
         // 无壳 → 建壳（created=true，未激活、未在途）
-        let r = side_chat_prepare(
-            key.clone(),
-            true,
-            true,
-            Some("m1".to_string()),
-            None,
-            None,
-        )
-        .await
-        .expect("prepare 应成功");
+        let r = side_chat_prepare(key.clone(), true, true, Some("m1".to_string()), None, None)
+            .await
+            .expect("prepare 应成功");
         assert_eq!(r["created"], serde_json::json!(true));
         {
             let map = slots().lock().unwrap_or_else(|e| e.into_inner());
