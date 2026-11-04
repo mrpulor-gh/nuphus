@@ -92,6 +92,43 @@ const TOKEN_LABELS: Record<CoreTokenKey, string> = {
 /* 无覆盖时的稳定空对象（避免每次渲染生成新引用触发 effect） */
 const EMPTY_OVERRIDES: Record<string, string> = {}
 
+/**
+ * 新建自定义主题时，**消息气泡**的默认不透明度（%）。
+ *
+ * 新主题是给用户从头搭的，底色默认给足 100% 会让气泡糊住背景图；半透明时
+ * 气泡与背景图共存，视觉上更像「壁纸上的浮层」而非「实心卡片」。
+ *
+ * 取 60% 的依据（实测，非拍脑袋）：在**近白壁纸**（浅色气泡的最坏背景）上量
+ * 正文对比度 —— 35% 只有 2.06~2.31（WCAG AA 需 4.5，次要文字近乎不可读），
+ * 50% 是 3.17~3.44（仅达 AA-large，副标题仍偏弱），60% 是 4.41~4.73（达 AA），
+ * 且壁纸质感仍可见。60% 是「可读性达标」与「通透感」之间的平衡点。
+ *
+ * 只作用于**新建**这条链路：写到该主题自己的 overrides 里（随主题存盘 /
+ * 切换 / 导出都在），不碰 tokens.css 的基底值 —— 系统三主题与老用户的既有
+ * 主题一律不受影响。
+ */
+const NEW_THEME_BUBBLE_OPACITY = 60
+
+/**
+ * 按当前生效的气泡底色（取其 rgb 分量，丢弃原 α）重建指定不透明度下的
+ * rgba 覆盖值。
+ *
+ * 与 `handleBubbleOpacity` 同一套口径：读 computed style → 解析 rgb → toRgba。
+ * 读 rgb 而非 rgba 是因为基底可能是实色（α=1）也可能是半透明，我们只要
+ * 它的「颜色」，α 一律由本函数的目标值决定。
+ */
+function bubbleOpacityOverrides(percent: number): Record<string, string> {
+  const cs = getComputedStyle(document.documentElement)
+  const user = parseColorValue(cs.getPropertyValue('--msg-user-bg').trim())
+  const assistant = parseColorValue(cs.getPropertyValue('--msg-assistant-bg').trim())
+  if (!user || !assistant) return {}
+  const alpha = percent / 100
+  return {
+    '--msg-user-bg': toRgba(user, alpha),
+    '--msg-assistant-bg': toRgba(assistant, alpha),
+  }
+}
+
 /* ── 行内「恢复默认」的覆盖键分组 ──
    语义严格限定为 **未保存草稿**（previewOverrides）：只回退草稿里对应的覆盖键，
    绝不触碰、不回写用户已保存的自定义主题数据（不调 saveCustom / 不写 localStorage）。
@@ -287,21 +324,29 @@ function ThemeSkinThumb({
 function RenameInput({
   value,
   ariaLabel,
+  autoFocus,
   onChange,
   onCommit,
   onCancel,
 }: {
   value: string
   ariaLabel: string
+  /**
+   * 是否应当持有焦点。跟随浮窗的展开态 —— 浮窗收起时是 `display:none`，
+   * 浏览器会静默拒绝 focus()（此时焦点落在 BODY），且 deps=[] 的 effect
+   * 不会重跑，浮窗再展开时焦点就再也补不回来了。故把展开态传进来做依赖。
+   */
+  autoFocus: boolean
   onChange: (value: string) => void
   onCommit: () => void
   onCancel: () => void
 }) {
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
+    if (!autoFocus) return
     ref.current?.focus()
     ref.current?.select()
-  }, [])
+  }, [autoFocus])
   return (
     <input
       ref={ref}
@@ -678,8 +723,17 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
 
   /**
    * 新建链路（「＋ 新建」卡与「保存」的非编辑态共用）：
-   * 以「当前系统主题 + 当前微调预览值」建条，皮肤继承当前**生效**的那张图作为
-   * 初始快照（用户随后可在卡上改）；新卡落盘即进入行内改名态（预填「未命名主题」）。
+   * 以「当前系统主题 + 当前微调预览值」建条；**皮肤留空**（新主题不继承当前生效的
+   * 背景图，用户随后在卡上「上传」自己的图）；新卡落盘即进入行内改名态
+   * （预填「未命名主题」）。
+   *
+   * 为什么不再继承：
+   * ① 与 `useTheme.skinRestoreSource` / `activateCustom` 已确立的语义对齐 ——
+   *    「无皮肤 = 空串（清空），不继承上一个主题/系统预设的图」。此前这里写
+   *    `skin: effectiveSkin || undefined`，等于把当前图复制进新主题：新建出来的
+   *    卡片长着上一份主题的图，用户不点「上传」就换不掉，看起来像「复制了一份」。
+   * ② `saveCustom` 不写全局皮肤（只有 `activateCustom` 调 applySkinBg），
+   *    所以这里必须显式清一次，否则新主题虽已存空皮肤，背景图仍停留在旧图上。
    */
   const createCustomFromPreview = () => {
     const id = newCustomThemeId()
@@ -688,9 +742,14 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
       id,
       name,
       base: theme,
-      overrides: activeOverrides,
-      skin: effectiveSkin || undefined,
+      // 新主题的气泡底色按 60% 半透明起步（见 NEW_THEME_BUBBLE_OPACITY）：
+      // 与用户当前预览的微调值合并 —— 用户已显式拖过的气泡透明度优先，
+      // 不被这个默认值覆盖。
+      overrides: { ...activeOverrides, ...bubbleOpacityOverrides(NEW_THEME_BUBBLE_OPACITY) },
+      skin: undefined,
     })
+    // 新主题无皮肤 → 全局背景回到「无图」态（与 activateCustom 的 `skin ?? ''` 同口径）
+    void applySkinBg('')
     setRenamingId(id)
     setRenameDraft(name)
   }
@@ -1054,6 +1113,7 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
                       <RenameInput
                         value={renameDraft}
                         ariaLabel={t('themes.themeRename')}
+                        autoFocus={open}
                         onChange={setRenameDraft}
                         onCommit={() => commitRename(ct)}
                         onCancel={cancelRename}
