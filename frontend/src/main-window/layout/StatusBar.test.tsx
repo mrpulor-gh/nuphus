@@ -6,7 +6,9 @@ import { StatusBar } from './StatusBar'
 /** 后端 main 发射点 / 历史恢复回填共用的「无读数」哨兵（useEvents.ts 同款判据） */
 const SENTINEL = 0xffffffff
 
-function renderBar(mainTokenUsage: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null) {
+function renderBar(
+  mainTokenUsage: { inputTokens: number; outputTokens: number; cacheHitTokens: number } | null,
+) {
   return render(
     <LangProvider>
       <StatusBar mainTokenUsage={mainTokenUsage} execTokenUsage={null} contextLimit={1_000_000} />

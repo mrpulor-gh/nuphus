@@ -257,7 +257,9 @@ export function JsonField({
       <div className="wfp-json__bar">
         <span>JSON</span>
         <span
-          className={valid ? 'wfp-json__badge wfp-json__badge--ok' : 'wfp-json__badge wfp-json__badge--err'}
+          className={
+            valid ? 'wfp-json__badge wfp-json__badge--ok' : 'wfp-json__badge wfp-json__badge--err'
+          }
         >
           {valid ? (
             <>
@@ -363,7 +365,15 @@ export function KeyValueRows({
 
 /* ── ConditionRow（if 条件行：左值 / 运算符徽标 / 右值） ── */
 
-export function ConditionRow({ left, op, right }: { left: ReactNode; op: ReactNode; right: ReactNode }) {
+export function ConditionRow({
+  left,
+  op,
+  right,
+}: {
+  left: ReactNode
+  op: ReactNode
+  right: ReactNode
+}) {
   return (
     <div className="wfp-cond">
       {left}

@@ -555,8 +555,7 @@
 */
 .wfc-canvas-wrap .react-flow {
   background:
-    radial-gradient(120% 90% at 50% 40%, var(--canvas-glow), transparent 70%),
-    var(--surface-0);
+    radial-gradient(120% 90% at 50% 40%, var(--canvas-glow), transparent 70%), var(--surface-0);
 }
 .wfc-canvas-wrap .react-flow__background {
   background: transparent;

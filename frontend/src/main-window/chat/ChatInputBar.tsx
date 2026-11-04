@@ -589,10 +589,7 @@ export function ChatInputBar({
       if (files.length > 0) {
         void attachFiles(files).catch(e => {
           console.error('[Drop] 附件处理异常:', e)
-          onAttachNoticeRef.current?.(
-            e instanceof Error ? e.message : String(e),
-            'error',
-          )
+          onAttachNoticeRef.current?.(e instanceof Error ? e.message : String(e), 'error')
         })
       }
     }
@@ -659,7 +656,8 @@ export function ChatInputBar({
   // 上一轮的暖读数由 useEvents 在 0/哨兵时保留前值，故这里读到 0 时确无可用读数。
   const detailCacheHasRead =
     detailCacheHit > 0 && detailCacheHit !== 0xffffffff && detailCacheTotal > 0
-  const detailCacheRate = execActive && detailCacheHasRead ? (detailCacheHit / detailCacheTotal) * 100 : -1
+  const detailCacheRate =
+    execActive && detailCacheHasRead ? (detailCacheHit / detailCacheTotal) * 100 : -1
   // 生成速度/首 token 延迟：与上面同一数据源（exec 事件携带；main 源为 undefined 时整行隐藏）
   const genTps = detail?.genTps
   const ttftMs = detail?.ttftMs

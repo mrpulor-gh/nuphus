@@ -107,7 +107,10 @@ const messages: Record<string, [string, string]> = {
   'field.modelKind': ['生成类型', 'Generation type'],
   'field.modelSelect': ['选择模型（留空用绑定能力）', 'Select model (blank = bound capability)'],
   'field.modelSystem': ['系统提示词', 'System prompt'],
-  'field.modelParamsEscape': ['参数透传（JSON，逃生舱）', 'Parameter passthrough (JSON escape hatch)'],
+  'field.modelParamsEscape': [
+    '参数透传（JSON，逃生舱）',
+    'Parameter passthrough (JSON escape hatch)',
+  ],
   'field.modelRatio': ['画面比例', 'Aspect ratio'],
   'field.modelCount': ['生成数量', 'Number of images'],
   'field.modelDuration': ['时长', 'Duration'],
@@ -312,7 +315,7 @@ const editorText: Record<string, string> = {
   字面量值: 'Literal value',
   调整参数面板宽度: 'Resize properties panel',
   '关闭（Esc）': 'Close (Esc)',
-  '基础': 'Basics',
+  基础: 'Basics',
   '名称必填：尚未命名无法保存/通过校验': 'Enter a name before saving.',
   高级设置: 'Advanced settings',
   '（已自定义失败处理或超时）': ' (custom error handling or timeout)',
@@ -334,22 +337,21 @@ const editorText: Record<string, string> = {
     'The tool executor treats 0 ms as the default 500 ms.',
   '请输入完整整数，用英文逗号分隔；末尾不要加逗号':
     'Enter integers separated by commas, without a trailing comma.',
-  '动作主体': 'Action',
+  动作主体: 'Action',
   '工具信息加载失败，仍可手动编辑。':
     'Tool information could not be loaded. Manual editing is available.',
   重试加载: 'Reload',
   '已保留原工具参数，请检查是否适用于新工具。':
     'Existing parameters are retained. Check whether they fit the new tool.',
   清空参数重新填写: 'Clear parameters',
-  '模型': 'Model',
+  模型: 'Model',
   '默认（主模型）': 'Default (main model)',
   '（不在 registry）': ' (not registered)',
   文本: 'Text',
   图片: 'Image',
   视频: 'Video',
   '默认（模型界面绑定的生成能力）': 'Default (capability bound in the model UI)',
-  '（不在当前模态的模型列表中，已保留）':
-    ' (not in the current modality list; retained)',
+  '（不在当前模态的模型列表中，已保留）': ' (not in the current modality list; retained)',
   '正在加载模型列表…': 'Loading the model list…',
   '模型列表不可用；留空或保留原值时将使用模型界面绑定的生成能力。':
     'The model list is unavailable; a blank or retained value uses the capability bound in the model UI.',
@@ -362,11 +364,11 @@ const editorText: Record<string, string> = {
   '切换类型不会清空已填写的其他字段。':
     'Switching generation type keeps every value you already filled in.',
   '默认（url）': 'Default (url)',
-  '画面规格': 'Frame settings',
+  画面规格: 'Frame settings',
   '视频生成通常需要 1–5 分钟，超时上限可在高级里调整。':
     'Video generation usually takes 1–5 minutes; the timeout limit can be adjusted under Advanced.',
   '同步返回，通常数秒': 'Returns synchronously, usually within seconds.',
-  '高级': 'Advanced',
+  高级: 'Advanced',
   '尺寸上限由所选模型决定，超出时协议层会返回明确错误。':
     'The size limit is decided by the selected model; the protocol layer reports a clear error when exceeded.',
   '留空使用生成端默认清晰度。': 'Leave blank to use the generation default resolution.',
@@ -377,7 +379,7 @@ const editorText: Record<string, string> = {
     'The visual options above are written here; manual edits are your own responsibility.',
   '生成能力候选为空：去模型界面 → 图像音频模型 → 图片生成 / 视频生成 绑定模型后，这里才会列出候选。':
     'No generation-capable models: bind one in the model UI (Models → Image & audio → image / video generation) to populate this list.',
-  '运行环境': 'Runtime',
+  运行环境: 'Runtime',
   'AutoHotkey（仅 Windows）': 'AutoHotkey (Windows only)',
   '（当前执行器不支持，已保留）': ' (unsupported by this executor; retained)',
   '顺序容器：子步骤在画布子层编辑（双击节点进入）':

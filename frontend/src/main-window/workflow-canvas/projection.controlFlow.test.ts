@@ -43,7 +43,9 @@ describe('control-flow-aware variable projection', () => {
     expect(layer.nodes.find(n => n.id === 'right')?.shadowedBy).toBeUndefined()
   })
   it('marks a same-path re-capture as shadowing the earlier producer', () => {
-    const result = projectWorkflow({ steps: [output('first', 'shared'), output('second', 'shared')] })
+    const result = projectWorkflow({
+      steps: [output('first', 'shared'), output('second', 'shared')],
+    })
     const layer = result.layers.get('root')!
     expect(layer.nodes.find(n => n.id === 'first')?.shadowedBy).toBe('second')
     expect(layer.nodes.find(n => n.id === 'second')?.shadowedBy).toBeUndefined()

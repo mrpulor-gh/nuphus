@@ -40,7 +40,7 @@ describe('referenceRoot handles pipes with bracketed paths', () => {
     expect(parseFieldReference('inputs["x"]')).toEqual({ root: 'inputs', segments: ['x'] })
     expect(parseFieldReference('inputs["x"] | len')).toBeNull()
   })
-});
+})
 
 describe('template scanning records pipes for every reference shape', () => {
   it.each([
@@ -50,11 +50,11 @@ describe('template scanning records pipes for every reference shape', () => {
     ['{{x}}', [{ varName: 'x', pipes: [] }]],
     ['{{missing | default "d"}}', [{ varName: 'missing', pipes: ['default'] }]],
   ])('scans %s', (text, expected) => {
-    expect(profileStep({ id: 's', name: 'S', do: { tool: 't', with: { v: text } } }).consumes).toEqual(
-      expected,
-    )
+    expect(
+      profileStep({ id: 's', name: 'S', do: { tool: 't', with: { v: text } } }).consumes,
+    ).toEqual(expected)
   })
-});
+})
 
 describe('a declared input referenced through a bracket path with a pipe', () => {
   const inputs = [{ name: 'x', type: 'string', required: true }] as never
@@ -92,7 +92,7 @@ describe('a declared input referenced through a bracket path with a pipe', () =>
       { rule: 'input_reference', subject: 'nope' },
     ])
   })
-});
+})
 
 describe('templateSpans keeps quoted brackets intact', () => {
   it('does not terminate a span on a quoted closing brace', () => {

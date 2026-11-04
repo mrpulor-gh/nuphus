@@ -120,13 +120,14 @@ describe('V10 shadowing follows execution paths', () => {
 
   it('reports genuine same-path shadowing', () => {
     const steps = [capture('p1', 'x'), capture('p2', 'x')]
-    expect(validateIR(steps)).toContainEqual(
-      expect.objectContaining({ rule: 'V10', stepId: 'p2' }),
-    )
+    expect(validateIR(steps)).toContainEqual(expect.objectContaining({ rule: 'V10', stepId: 'p2' }))
   })
 
   it('reports shadowing across a seq container boundary', () => {
-    const steps = [capture('outer', 'x'), { id: 'g', name: 'g', do: { seq: [capture('inner', 'x')] } }]
+    const steps = [
+      capture('outer', 'x'),
+      { id: 'g', name: 'g', do: { seq: [capture('inner', 'x')] } },
+    ]
     expect(validateIR(steps)).toContainEqual(
       expect.objectContaining({ rule: 'V10', stepId: 'inner' }),
     )

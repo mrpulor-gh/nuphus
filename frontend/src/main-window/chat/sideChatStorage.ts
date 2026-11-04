@@ -135,11 +135,9 @@ export function loadSideChatPrefs(): SideChatPrefs {
       // 旧版本没这个字段：缺省空串（= 让后端按 id 解析，行为与升级前一致）
       provider: typeof p.provider === 'string' ? p.provider : DEFAULT_PREFS.provider,
       effort: typeof p.effort === 'string' ? p.effort : DEFAULT_PREFS.effort,
-      fileAccess:
-        typeof p.fileAccess === 'boolean' ? p.fileAccess : DEFAULT_PREFS.fileAccess,
+      fileAccess: typeof p.fileAccess === 'boolean' ? p.fileAccess : DEFAULT_PREFS.fileAccess,
       webSearch: typeof p.webSearch === 'boolean' ? p.webSearch : DEFAULT_PREFS.webSearch,
-      projectPath:
-        typeof p.projectPath === 'string' ? p.projectPath : DEFAULT_PREFS.projectPath,
+      projectPath: typeof p.projectPath === 'string' ? p.projectPath : DEFAULT_PREFS.projectPath,
       // 尺寸：必须是「两个正数」才认，否则回落默认几何。旧版本没这个字段 /
       // 手改坏的脏数据都不能让面板变成 0×0。
       size:

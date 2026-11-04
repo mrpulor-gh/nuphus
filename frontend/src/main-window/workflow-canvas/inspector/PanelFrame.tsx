@@ -103,7 +103,10 @@ export function PanelFrame({
         </button>
       </div>
       {summary !== undefined && summary !== null && (
-        <div className="wfp-panel__summary" title={typeof summary === 'string' ? summary : undefined}>
+        <div
+          className="wfp-panel__summary"
+          title={typeof summary === 'string' ? summary : undefined}
+        >
           {summary}
         </div>
       )}

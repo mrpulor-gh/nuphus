@@ -225,9 +225,11 @@ describe('useEvents token_usage 累加口径', () => {
     )
 
     const calls = vi.mocked(handlers.setExecTokenUsage).mock.calls
-    const call = calls[calls.length - 1][0] as (
-      prev: { inputTokens: number; outputTokens: number; cacheHitTokens: number },
-    ) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
+    const call = calls[calls.length - 1][0] as (prev: {
+      inputTokens: number
+      outputTokens: number
+      cacheHitTokens: number
+    }) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
     const state = call({ inputTokens: 130_801, outputTokens: 199, cacheHitTokens: 51_200 })
     // input/output 取本次真实读数，cache 保留前值
     expect(state.inputTokens).toBe(132_000)
@@ -261,9 +263,11 @@ describe('useEvents token_usage 累加口径', () => {
     )
 
     const calls = vi.mocked(handlers.setExecTokenUsage).mock.calls
-    const call = calls[calls.length - 1][0] as (
-      prev: { inputTokens: number; outputTokens: number; cacheHitTokens: number },
-    ) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
+    const call = calls[calls.length - 1][0] as (prev: {
+      inputTokens: number
+      outputTokens: number
+      cacheHitTokens: number
+    }) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
     const state = call({ inputTokens: 130_801, outputTokens: 199, cacheHitTokens: 51_200 })
     expect(state.cacheHitTokens).toBe(51_200)
   })

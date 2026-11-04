@@ -732,12 +732,14 @@ function VisionModelSelect({
   // 数量 + 展开箭头），展开后才渲染该商模型；手风琴，同时只开一个。
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const groups = groupByProvider
-    ? [...filtered.reduce((map, m) => {
-        const bucket = map.get(m.provider)
-        if (bucket) bucket.push(m)
-        else map.set(m.provider, [m])
-        return map
-      }, new Map<string, ModelInfo[]>())].map(([id, list]) => ({ id, list }))
+    ? [
+        ...filtered.reduce((map, m) => {
+          const bucket = map.get(m.provider)
+          if (bucket) bucket.push(m)
+          else map.set(m.provider, [m])
+          return map
+        }, new Map<string, ModelInfo[]>()),
+      ].map(([id, list]) => ({ id, list }))
     : []
 
   return (
@@ -797,9 +799,7 @@ function VisionModelSelect({
                     className="cmp-group-row"
                     role="button"
                     aria-expanded={expandedGroup === group.id}
-                    onClick={() =>
-                      setExpandedGroup(cur => (cur === group.id ? null : group.id))
-                    }
+                    onClick={() => setExpandedGroup(cur => (cur === group.id ? null : group.id))}
                   >
                     {hasProviderIcon(group.id) ? (
                       <ProviderIcon provider={group.id} size={16} />
@@ -810,9 +810,7 @@ function VisionModelSelect({
                     )}
                     <span className="cmp-group-name">{group.id}</span>
                     <span className="cmp-group-count">{group.list.length}</span>
-                    <span
-                      className={`cmp-group-caret${expandedGroup === group.id ? ' open' : ''}`}
-                    >
+                    <span className={`cmp-group-caret${expandedGroup === group.id ? ' open' : ''}`}>
                       ▾
                     </span>
                   </div>
@@ -839,14 +837,10 @@ function VisionModelSelect({
                               : t('models.ctxUnknown')}
                           </span>
                           {m.supports_vision && (
-                            <span className="cmp-model-tag is-cap">
-                              {t('models.capVision')}
-                            </span>
+                            <span className="cmp-model-tag is-cap">{t('models.capVision')}</span>
                           )}
                           {m.supports_audio && (
-                            <span className="cmp-model-tag is-cap">
-                              {t('models.capAudio')}
-                            </span>
+                            <span className="cmp-model-tag is-cap">{t('models.capAudio')}</span>
                           )}
                         </span>
                       </div>
@@ -867,9 +861,9 @@ function VisionModelSelect({
                   {showVisionIcons !== false && m.supports_vision && (
                     <IconEye size={11} className="icon-prefix" />
                   )}
-                  {showVisionIcons !== false && filterCapability === 'audio' && m.supports_audio && (
-                    <IconMic size={11} className="icon-prefix" />
-                  )}
+                  {showVisionIcons !== false &&
+                    filterCapability === 'audio' &&
+                    m.supports_audio && <IconMic size={11} className="icon-prefix" />}
                   <span className="select-option-name">{m.id}</span>
                   <span className="select-option-provider">({m.provider})</span>
                 </div>

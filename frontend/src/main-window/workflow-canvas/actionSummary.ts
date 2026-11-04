@@ -29,8 +29,7 @@ export function actionSummary(step: WorkflowStep, t: CanvasTranslate): string {
         action.with && typeof action.with === 'object'
           ? (action.with as Record<string, unknown>)
           : {}
-      const modality =
-        with_.kind === 'image' ? '图片' : with_.kind === 'video' ? '视频' : '文本'
+      const modality = with_.kind === 'image' ? '图片' : with_.kind === 'video' ? '视频' : '文本'
       return t('workflowEditor.summary.model', editorText(modality, t))
     }
     case 'tool': {

@@ -632,9 +632,7 @@ export default function App() {
                  task_runs 快照（零新订阅 / 零轮询），取第一个 running 条目的标题。
                  Nuphus 串行派发是铁律，同时 running 至多一笔，find 即等价于
                  「当前在跑的那笔」。无在途 → null，侧边整条不渲染。 */
-              mainExecTitle={
-                s.taskRuns.find(r => r.state === 'running')?.title ?? null
-              }
+              mainExecTitle={s.taskRuns.find(r => r.state === 'running')?.title ?? null}
               onShowExecTrace={trace => {
                 s.setExecTraceOverride(trace)
                 s.setShowExecTrace(true)

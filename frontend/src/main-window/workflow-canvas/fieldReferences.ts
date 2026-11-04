@@ -97,7 +97,9 @@ export function referenceRoot(expression: string): { name: string; input?: boole
     if (parsed.root === 'params' || parsed.root === 'ENV') return null
     return { name: parsed.root }
   }
-  const match = stripPipes(expression).trim().match(/^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?/)
+  const match = stripPipes(expression)
+    .trim()
+    .match(/^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?/)
   if (!match || match[1] === 'ENV' || match[1] === 'params') return null
   return match[1] === 'inputs' && match[2] ? { name: match[2], input: true } : { name: match[1] }
 }

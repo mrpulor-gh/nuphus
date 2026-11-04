@@ -21,9 +21,13 @@ const read = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf
 const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '')
 
 const css = stripComments(read('./inspector-panel.css'))
-const sources = ['PanelFrame.tsx', 'SectionCard.tsx', 'FieldRow.tsx', 'controls.tsx', 'icons.tsx'].map(
-  read,
-)
+const sources = [
+  'PanelFrame.tsx',
+  'SectionCard.tsx',
+  'FieldRow.tsx',
+  'controls.tsx',
+  'icons.tsx',
+].map(read)
 
 describe('inspector-panel.css 铁律', () => {
   it('样式源确实读进来了（防「读空文件导致断言静默通过」）', () => {

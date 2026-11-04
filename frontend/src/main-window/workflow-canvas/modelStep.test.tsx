@@ -256,9 +256,7 @@ describe('model step inspector form', () => {
       name: '生成首帧',
       do: { model: '一只橘猫趴在窗台', with: { kind: 'image' } },
     })
-    const select = (await screen.findByLabelText(
-      '选择模型（留空用绑定能力）',
-    )) as HTMLSelectElement
+    const select = (await screen.findByLabelText('选择模型（留空用绑定能力）')) as HTMLSelectElement
     // image → image_generation：只有声明了生成能力的 image-01
     expect(screen.getByRole('option', { name: 'image-01 · minimax' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /deepseek-v4-pro/ })).not.toBeInTheDocument()
@@ -271,15 +269,11 @@ describe('model step inspector form', () => {
     // video → video_generation（复用 image 生成能力声明）：未声明生成能力的模型不列
     fireEvent.click(screen.getByRole('radio', { name: '视频' }))
     expect(screen.queryByRole('option', { name: 'MiniMax-H3 · minimax' })).not.toBeInTheDocument()
-    expect(
-      screen.getByText('视频生成能力以模型界面的「视频生成」绑定为准。'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('视频生成能力以模型界面的「视频生成」绑定为准。')).toBeInTheDocument()
     // text → 不过滤：全部模型可选
     fireEvent.click(screen.getByRole('radio', { name: '文本' }))
     expect(screen.getByRole('option', { name: 'MiniMax-H3 · minimax' })).toBeInTheDocument()
-    expect(
-      screen.getByRole('option', { name: 'deepseek-v4-pro · deepseek' }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'deepseek-v4-pro · deepseek' })).toBeInTheDocument()
   })
 
   it('retains a saved model that is not in the current modality candidate list', async () => {
@@ -291,9 +285,7 @@ describe('model step inspector form', () => {
         with: { kind: 'image', model: 'MiniMax-H3', provider: 'minimax' },
       },
     })
-    const select = (await screen.findByLabelText(
-      '选择模型（留空用绑定能力）',
-    )) as HTMLSelectElement
+    const select = (await screen.findByLabelText('选择模型（留空用绑定能力）')) as HTMLSelectElement
     expect(select).toHaveValue('minimax::MiniMax-H3')
     expect(
       screen.getByRole('option', { name: /MiniMax-H3（不在当前模态的模型列表中，已保留）/ }),

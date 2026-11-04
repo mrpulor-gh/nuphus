@@ -71,9 +71,7 @@ describe('model step inspector form (no generation-capable candidate)', () => {
       name: '写文案',
       do: { model: '写一句', with: { kind: 'text' } },
     })
-    const select = (await screen.findByLabelText(
-      '选择模型（留空用绑定能力）',
-    )) as HTMLSelectElement
+    const select = (await screen.findByLabelText('选择模型（留空用绑定能力）')) as HTMLSelectElement
     expect(screen.getByRole('option', { name: 'deepseek-v4-pro · deepseek' })).toBeInTheDocument()
     expect(select).toHaveValue('')
   })

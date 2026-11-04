@@ -5,7 +5,16 @@ import { editorText, editorValidationText } from './editorText'
  * 表单约束前置 V9/V11 等规则（不允许输入非法值），结构校验由 validate.ts 呈现。
  */
 
-import { createContext, useContext, useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { IconType, IconImage, IconChevronRight } from '../../ui/Icons'
 import { Film as IconFilm } from 'lucide-react'
@@ -34,7 +43,12 @@ import { ExecutionTraceViewer } from './ExecutionTraceViewer'
 import { PanelFrame } from './inspector/PanelFrame'
 import { SectionCard } from './inspector/SectionCard'
 import { FieldRow } from './inspector/FieldRow'
-import { ConditionRow, JsonField as JsonFieldV2, NumberField, Segmented } from './inspector/controls'
+import {
+  ConditionRow,
+  JsonField as JsonFieldV2,
+  NumberField,
+  Segmented,
+} from './inspector/controls'
 
 const VariableContext = createContext<{
   catalog: VariableCatalog
@@ -191,8 +205,7 @@ function TextField({
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => {
-        if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-          (e.target as HTMLInputElement).blur()
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur()
       }}
     />
   )
@@ -621,7 +634,10 @@ const IMAGE_RATIO_OPTIONS: SpecOption[] = [
 const VIDEO_RATIO_OPTIONS: SpecOption[] = IMAGE_RATIO_OPTIONS.filter(o =>
   ['1:1', '16:9', '9:16'].includes(o.value),
 )
-const MODEL_COUNT_OPTIONS: SpecOption[] = ['1', '2', '3', '4'].map(value => ({ value, label: value }))
+const MODEL_COUNT_OPTIONS: SpecOption[] = ['1', '2', '3', '4'].map(value => ({
+  value,
+  label: value,
+}))
 const MODEL_DURATION_OPTIONS: SpecOption[] = ['5', '6', '8', '10'].map(value => ({
   value,
   label: `${value}s`,
@@ -659,11 +675,7 @@ function SpecChips({
   const labelText = editorFieldLabel(label, t)
   const retained = value !== '' && !options.some(option => option.value === value)
   return (
-    <FieldRow
-      label={labelText}
-      fieldPath={fieldPath}
-      hint={hint ? editorText(hint, t) : undefined}
-    >
+    <FieldRow label={labelText} fieldPath={fieldPath} hint={hint ? editorText(hint, t) : undefined}>
       <div className="wfp-spec">
         <Segmented
           label={labelText}
@@ -769,7 +781,12 @@ function JsonEscapeField({
 }) {
   const { t } = useLanguage()
   const text = JSON.stringify(value ?? {}, null, 2)
-  const { text: draft, setText, commit, error } = useInspectorDraft(editorFieldId(label), text, {
+  const {
+    text: draft,
+    setText,
+    commit,
+    error,
+  } = useInspectorDraft(editorFieldId(label), text, {
     validate: v => {
       try {
         JSON.parse(v)
@@ -916,8 +933,7 @@ function LiteralOperand({
         onChange={e => setText(e.target.value)}
         onBlur={commit}
         onKeyDown={e => {
-          if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-            (e.target as HTMLInputElement).blur()
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur()
         }}
       />
     </span>
@@ -1257,452 +1273,453 @@ export function Inspector({
 
           {/* ② 动作主体：按 kind 的核心参数（本期范围外 kind 保持原渲染） */}
           <SectionCard title={editorText('动作主体', t)}>
-
-          {kind === 'tool' && (
-            <>
-              <ToolField
-                label="工具名"
-                value={String(d.tool ?? '')}
-                tools={tools}
-                readOnly={readOnly}
-                autoFocus={focusToolId === step.id}
-                required
-                onCommit={v => {
-                  setToolChanged(true)
-                  return patchActionKey('tool', v)
-                }}
-                hint={
-                  tools === null || toolChanged ? (
-                    <>
-                      {tools === null && (
-                        <div role="status">
-                          {editorText('工具信息加载失败，仍可手动编辑。', t)}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setTools(undefined)
-                              void loadToolsOnce().then(setTools)
-                            }}
-                          >
-                            {editorText('重试加载', t)}
-                          </button>
-                        </div>
-                      )}
-                      {toolChanged && (
-                        <div>
-                          {editorText('已保留原工具参数，请检查是否适用于新工具。', t)}
-                          <button
-                            type="button"
-                            disabled={readOnly}
-                            onClick={() => {
-                              void patchActionKey('with', {})
-                              setParameterReset(version => version + 1)
-                              setToolChanged(false)
-                            }}
-                          >
-                            {editorText('清空参数重新填写', t)}
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  ) : undefined
-                }
-              />
-              <ToolParameterForm
-                resetVersion={parameterReset}
-                schema={tools?.find(t => t.name === d.tool)?.input_schema}
-                value={d.with}
-                readOnly={readOnly}
-                onChange={v => patchActionKey('with', v)}
-                variables={variableCatalog.references.map(v => ({
-                  name: v.name,
-                  label: `${t('workflowCanvas.variable.name')}: ${v.name} · ${t('workflowCanvas.variable.source')}: ${variableSourceLabel(v, t)}${v.maybeUnset ? ` · ${t('workflowCanvas.variable.maybeUnset')}` : ''}`,
-                }))}
-              />
-            </>
-          )}
-          {kind === 'call' && (
-            <TextField
-              label="目标工作流 workflow_id"
-              value={String(d.call ?? '')}
-              readOnly={readOnly}
-              mono
-              required
-              title="workflow_id"
-              onCommit={v => patchActionKey('call', v)}
-            />
-          )}
-          {kind === 'chat' && (
-            <>
-              <TextField
-                label="对话内容"
-                value={String(d.chat ?? '')}
-                readOnly={readOnly}
-                multiline
-                references
-                required
-                onCommit={v => patchActionKey('chat', v)}
-              />
-              {models != null && models.length > 0 && (
-                <SelectField
-                  label={editorText('模型', t)}
-                  value={
-                    typeof chatWith.model === 'string'
-                      ? `${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`
-                      : ''
-                  }
-                  disabled={readOnly}
-                  onChange={e => {
-                    const [provider, ...modelParts] = e.target.value.split('::')
-                    const model = modelParts.join('::')
-                    const next = { ...chatWith }
-                    if (model) next.model = model
-                    else delete next.model
-                    if (provider) next.provider = provider
-                    else delete next.provider
-                    patchActionKey('with', next)
+            {kind === 'tool' && (
+              <>
+                <ToolField
+                  label="工具名"
+                  value={String(d.tool ?? '')}
+                  tools={tools}
+                  readOnly={readOnly}
+                  autoFocus={focusToolId === step.id}
+                  required
+                  onCommit={v => {
+                    setToolChanged(true)
+                    return patchActionKey('tool', v)
                   }}
-                >
-                  <option value="">{editorText('默认（主模型）', t)}</option>
-                  {models.map(m => (
-                    <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
-                      {m.id} · {m.provider}
-                    </option>
-                  ))}
-                  {typeof chatWith.model === 'string' &&
-                    chatWith.model !== '' &&
-                    !models.some(m => m.id === chatWith.model) && (
-                      <option
-                        value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
-                      >
-                        {chatWith.model}
-                        {editorText('（不在 registry）', t)}
-                      </option>
-                    )}
-                </SelectField>
-              )}
-              {/* 文案治理：技术名进 help 图标，「空为默认」说明进 hint */}
-              <NumberFieldDraft
-                label="随机程度"
-                help="temperature"
-                value={chatWith.temperature != null ? String(chatWith.temperature) : ''}
-                readOnly={readOnly}
-                validate={v => numberError(v, { optional: true })}
-                onCommit={v => {
-                  if (!v.trim()) return patchChatWith('temperature', undefined)
-                  const n = Number(v)
-                  return patchChatWith('temperature', n)
-                }}
-                hint="越低越稳定；留空使用模型默认"
-              />
-              <NumberFieldDraft
-                label="最大输出长度"
-                help="max_tokens"
-                integer
-                min={1}
-                max={4294967295}
-                value={chatWith.max_tokens != null ? String(chatWith.max_tokens) : ''}
-                readOnly={readOnly}
-                validate={v =>
-                  numberError(v, { integer: true, min: 1, max: 4294967295, optional: true })
-                }
-                onCommit={v => {
-                  if (!v.trim()) return patchChatWith('max_tokens', undefined)
-                  return patchChatWith('max_tokens', Number(v))
-                }}
-                hint="单位 token；留空使用模型默认"
-              />
-              {/* 「其他对话选项（JSON）」移至高级分区（S1/S3：主区零 JSON 裸框） */}
-            </>
-          )}
-          {kind === 'model' && (
-            <>
-              <TextField
-                label="提示词（任务描述）"
-                value={String(d.model ?? '')}
-                readOnly={readOnly}
-                multiline
-                references
-                required
-                onCommit={v => patchActionKey('model', v)}
-                hint={
-                  modelKind === 'video'
-                    ? editorText('写动作和镜头怎么动，不要描写静态状态。', t)
-                    : undefined
-                }
-              />
-              {/* 生成类型：必选三选一，无空白项（Segmented，S3 枚举 ≤4） */}
-              <FieldRow
-                label={editorFieldLabel('生成类型', t)}
-                required
-                fieldPath="/do/with/kind"
-                hint={editorText('切换类型不会清空已填写的其他字段。', t)}
-              >
-                <Segmented
-                  label={editorFieldLabel('生成类型', t)}
-                  options={MODEL_KIND_OPTIONS.map(option => ({
-                    value: option.value,
-                    label: editorText(option.label, t),
-                    icon: option.icon,
-                  }))}
-                  value={modelKind}
-                  onChange={v => patchModelWith('kind', v)}
-                  disabled={readOnly}
-                />
-              </FieldRow>
-              {/* 画面规格：按模态显示，全部选项化控件（无裸输入框、无空白项） */}
-              {modelKind !== 'text' && (
-                <>
-                  <SpecChips
-                    label="画面比例"
-                    fieldPath="/do/with/ratio"
-                    options={modelKind === 'video' ? VIDEO_RATIO_OPTIONS : IMAGE_RATIO_OPTIONS}
-                    value={
-                      typeof modelWith.ratio === 'string' && modelWith.ratio
-                        ? modelWith.ratio
-                        : modelKind === 'video'
-                          ? MODEL_SPEC_DEFAULTS.ratio.video
-                          : MODEL_SPEC_DEFAULTS.ratio.image
-                    }
-                    readOnly={readOnly}
-                    onChange={v => patchModelWith('ratio', v)}
-                  />
-                  {modelKind === 'image' && (
-                    <SpecChips
-                      label="生成数量"
-                      fieldPath="/do/with/count"
-                      options={MODEL_COUNT_OPTIONS}
-                      value={
-                        typeof modelWith.count === 'number'
-                          ? String(modelWith.count)
-                          : MODEL_SPEC_DEFAULTS.count
-                      }
-                      readOnly={readOnly}
-                      onChange={v => patchModelWith('count', Number(v))}
-                    />
-                  )}
-                  {modelKind === 'video' && (
-                    <>
-                      <SpecChips
-                        label="时长"
-                        fieldPath="/do/with/duration"
-                        options={MODEL_DURATION_OPTIONS}
-                        hint="新手建议 5–8 秒"
-                        value={
-                          typeof modelWith.duration === 'number'
-                            ? String(modelWith.duration)
-                            : MODEL_SPEC_DEFAULTS.duration
-                        }
-                        readOnly={readOnly}
-                        onChange={v => patchModelWith('duration', Number(v))}
-                      />
-                      <TextField
-                        label="首帧图"
-                        title="first_frame"
-                        value={
-                          typeof modelWith.first_frame === 'string' ? modelWith.first_frame : ''
-                        }
-                        readOnly={readOnly}
-                        references
-                        onCommit={v => patchModelWith('first_frame', v.trim() ? v : undefined)}
-                        hint={editorText('留空 = 文生视频；可插入变量引用上游产物。', t)}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-              {/* 模型选择：只选不配——配置在模型界面完成；候选按模态经 selectableModels 筛选 */}
-              <FieldRow
-                label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
-                fieldPath="/do/with/model"
-                hint={
-                  <>
-                    <div>
-                      {editorText(
-                        '模型配置在模型界面完成，此处只选择使用哪个模型；同名模型跨服务商时下拉条目已带 provider。',
-                        t,
-                      )}
-                    </div>
-                    {modelKind === 'video' && (
-                      <div>
-                        {editorText('视频生成能力以模型界面的「视频生成」绑定为准。', t)}
-                      </div>
-                    )}
-                    {(modelKind === 'video' || modelKind === 'image') && (
-                      <div>
-                        {editorText(
-                          modelKind === 'video'
-                            ? '视频生成通常需要 1–5 分钟，超时上限可在高级里调整。'
-                            : '同步返回，通常数秒',
-                          t,
+                  hint={
+                    tools === null || toolChanged ? (
+                      <>
+                        {tools === null && (
+                          <div role="status">
+                            {editorText('工具信息加载失败，仍可手动编辑。', t)}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTools(undefined)
+                                void loadToolsOnce().then(setTools)
+                              }}
+                            >
+                              {editorText('重试加载', t)}
+                            </button>
+                          </div>
                         )}
-                      </div>
-                    )}
-                  </>
-                }
-              >
-                {modelCandidates.length > 0 ? (
-                  <select
-                    className="wfp-ctl"
-                    aria-label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
-                    value={modelSelectionValue(modelCandidates, modelWith)}
+                        {toolChanged && (
+                          <div>
+                            {editorText('已保留原工具参数，请检查是否适用于新工具。', t)}
+                            <button
+                              type="button"
+                              disabled={readOnly}
+                              onClick={() => {
+                                void patchActionKey('with', {})
+                                setParameterReset(version => version + 1)
+                                setToolChanged(false)
+                              }}
+                            >
+                              {editorText('清空参数重新填写', t)}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : undefined
+                  }
+                />
+                <ToolParameterForm
+                  resetVersion={parameterReset}
+                  schema={tools?.find(t => t.name === d.tool)?.input_schema}
+                  value={d.with}
+                  readOnly={readOnly}
+                  onChange={v => patchActionKey('with', v)}
+                  variables={variableCatalog.references.map(v => ({
+                    name: v.name,
+                    label: `${t('workflowCanvas.variable.name')}: ${v.name} · ${t('workflowCanvas.variable.source')}: ${variableSourceLabel(v, t)}${v.maybeUnset ? ` · ${t('workflowCanvas.variable.maybeUnset')}` : ''}`,
+                  }))}
+                />
+              </>
+            )}
+            {kind === 'call' && (
+              <TextField
+                label="目标工作流 workflow_id"
+                value={String(d.call ?? '')}
+                readOnly={readOnly}
+                mono
+                required
+                title="workflow_id"
+                onCommit={v => patchActionKey('call', v)}
+              />
+            )}
+            {kind === 'chat' && (
+              <>
+                <TextField
+                  label="对话内容"
+                  value={String(d.chat ?? '')}
+                  readOnly={readOnly}
+                  multiline
+                  references
+                  required
+                  onCommit={v => patchActionKey('chat', v)}
+                />
+                {models != null && models.length > 0 && (
+                  <SelectField
+                    label={editorText('模型', t)}
+                    value={
+                      typeof chatWith.model === 'string'
+                        ? `${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`
+                        : ''
+                    }
                     disabled={readOnly}
-                    onChange={e => setModelSelection(e.target.value, modelWith, patchActionKey)}
+                    onChange={e => {
+                      const [provider, ...modelParts] = e.target.value.split('::')
+                      const model = modelParts.join('::')
+                      const next = { ...chatWith }
+                      if (model) next.model = model
+                      else delete next.model
+                      if (provider) next.provider = provider
+                      else delete next.provider
+                      patchActionKey('with', next)
+                    }}
                   >
-                    <option value="">{editorText('默认（模型界面绑定的生成能力）', t)}</option>
-                    {modelCandidates.map(m => (
+                    <option value="">{editorText('默认（主模型）', t)}</option>
+                    {models.map(m => (
                       <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
                         {m.id} · {m.provider}
                       </option>
                     ))}
-                    {modelRetained && (
-                      <option value={modelRetained}>
-                        {typeof modelWith.model === 'string' ? modelWith.model : ''}
-                        {editorText('（不在当前模态的模型列表中，已保留）', t)}
-                      </option>
-                    )}
-                  </select>
-                ) : (
-                  <span className="wfp-frow__hint">
-                    {editorText(
-                      models === undefined
-                        ? '正在加载模型列表…'
-                        : models === null
-                          ? '模型列表不可用；留空或保留原值时将使用模型界面绑定的生成能力。'
-                          : '生成能力候选为空：去模型界面 → 图像音频模型 → 图片生成 / 视频生成 绑定模型后，这里才会列出候选。',
-                      t,
-                    )}
-                  </span>
+                    {typeof chatWith.model === 'string' &&
+                      chatWith.model !== '' &&
+                      !models.some(m => m.id === chatWith.model) && (
+                        <option
+                          value={`${typeof chatWith.provider === 'string' ? chatWith.provider : ''}::${chatWith.model}`}
+                        >
+                          {chatWith.model}
+                          {editorText('（不在 registry）', t)}
+                        </option>
+                      )}
+                  </SelectField>
                 )}
-              </FieldRow>
-            </>
-          )}
-          {kind === 'script' && (
-            <>
-              <SelectField
-                label={editorText('运行环境 runtime', t)}
-                value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
-                disabled={readOnly}
-                onChange={e =>
-                  patchActionKey('script', { ...(d.script as object), runtime: e.target.value })
-                }
-              >
-                <option value="python">Python</option>
-                <option value="node">Node.js</option>
-                <option value="ahk">{editorText('AutoHotkey（仅 Windows）', t)}</option>
-                <option value="pwsh">PowerShell（pwsh）</option>
-                {!['python', 'node', 'ahk', 'pwsh'].includes(
-                  String((d.script as Record<string, unknown>)?.runtime ?? 'python'),
-                ) && (
-                  <option value={String((d.script as Record<string, unknown>)?.runtime)}>
-                    {String((d.script as Record<string, unknown>)?.runtime)}
-                    {editorText('（当前执行器不支持，已保留）', t)}
-                  </option>
+                {/* 文案治理：技术名进 help 图标，「空为默认」说明进 hint */}
+                <NumberFieldDraft
+                  label="随机程度"
+                  help="temperature"
+                  value={chatWith.temperature != null ? String(chatWith.temperature) : ''}
+                  readOnly={readOnly}
+                  validate={v => numberError(v, { optional: true })}
+                  onCommit={v => {
+                    if (!v.trim()) return patchChatWith('temperature', undefined)
+                    const n = Number(v)
+                    return patchChatWith('temperature', n)
+                  }}
+                  hint="越低越稳定；留空使用模型默认"
+                />
+                <NumberFieldDraft
+                  label="最大输出长度"
+                  help="max_tokens"
+                  integer
+                  min={1}
+                  max={4294967295}
+                  value={chatWith.max_tokens != null ? String(chatWith.max_tokens) : ''}
+                  readOnly={readOnly}
+                  validate={v =>
+                    numberError(v, { integer: true, min: 1, max: 4294967295, optional: true })
+                  }
+                  onCommit={v => {
+                    if (!v.trim()) return patchChatWith('max_tokens', undefined)
+                    return patchChatWith('max_tokens', Number(v))
+                  }}
+                  hint="单位 token；留空使用模型默认"
+                />
+                {/* 「其他对话选项（JSON）」移至高级分区（S1/S3：主区零 JSON 裸框） */}
+              </>
+            )}
+            {kind === 'model' && (
+              <>
+                <TextField
+                  label="提示词（任务描述）"
+                  value={String(d.model ?? '')}
+                  readOnly={readOnly}
+                  multiline
+                  references
+                  required
+                  onCommit={v => patchActionKey('model', v)}
+                  hint={
+                    modelKind === 'video'
+                      ? editorText('写动作和镜头怎么动，不要描写静态状态。', t)
+                      : undefined
+                  }
+                />
+                {/* 生成类型：必选三选一，无空白项（Segmented，S3 枚举 ≤4） */}
+                <FieldRow
+                  label={editorFieldLabel('生成类型', t)}
+                  required
+                  fieldPath="/do/with/kind"
+                  hint={editorText('切换类型不会清空已填写的其他字段。', t)}
+                >
+                  <Segmented
+                    label={editorFieldLabel('生成类型', t)}
+                    options={MODEL_KIND_OPTIONS.map(option => ({
+                      value: option.value,
+                      label: editorText(option.label, t),
+                      icon: option.icon,
+                    }))}
+                    value={modelKind}
+                    onChange={v => patchModelWith('kind', v)}
+                    disabled={readOnly}
+                  />
+                </FieldRow>
+                {/* 画面规格：按模态显示，全部选项化控件（无裸输入框、无空白项） */}
+                {modelKind !== 'text' && (
+                  <>
+                    <SpecChips
+                      label="画面比例"
+                      fieldPath="/do/with/ratio"
+                      options={modelKind === 'video' ? VIDEO_RATIO_OPTIONS : IMAGE_RATIO_OPTIONS}
+                      value={
+                        typeof modelWith.ratio === 'string' && modelWith.ratio
+                          ? modelWith.ratio
+                          : modelKind === 'video'
+                            ? MODEL_SPEC_DEFAULTS.ratio.video
+                            : MODEL_SPEC_DEFAULTS.ratio.image
+                      }
+                      readOnly={readOnly}
+                      onChange={v => patchModelWith('ratio', v)}
+                    />
+                    {modelKind === 'image' && (
+                      <SpecChips
+                        label="生成数量"
+                        fieldPath="/do/with/count"
+                        options={MODEL_COUNT_OPTIONS}
+                        value={
+                          typeof modelWith.count === 'number'
+                            ? String(modelWith.count)
+                            : MODEL_SPEC_DEFAULTS.count
+                        }
+                        readOnly={readOnly}
+                        onChange={v => patchModelWith('count', Number(v))}
+                      />
+                    )}
+                    {modelKind === 'video' && (
+                      <>
+                        <SpecChips
+                          label="时长"
+                          fieldPath="/do/with/duration"
+                          options={MODEL_DURATION_OPTIONS}
+                          hint="新手建议 5–8 秒"
+                          value={
+                            typeof modelWith.duration === 'number'
+                              ? String(modelWith.duration)
+                              : MODEL_SPEC_DEFAULTS.duration
+                          }
+                          readOnly={readOnly}
+                          onChange={v => patchModelWith('duration', Number(v))}
+                        />
+                        <TextField
+                          label="首帧图"
+                          title="first_frame"
+                          value={
+                            typeof modelWith.first_frame === 'string' ? modelWith.first_frame : ''
+                          }
+                          readOnly={readOnly}
+                          references
+                          onCommit={v => patchModelWith('first_frame', v.trim() ? v : undefined)}
+                          hint={editorText('留空 = 文生视频；可插入变量引用上游产物。', t)}
+                        />
+                      </>
+                    )}
+                  </>
                 )}
-              </SelectField>
-              <TextField
-                label="脚本代码 code"
-                value={String((d.script as Record<string, unknown>)?.code ?? '')}
-                readOnly={readOnly}
-                mono
-                multiline
-                references
-                required
-                title="code"
-                onCommit={v => patchActionKey('script', { ...(d.script as object), code: v })}
-              />
-            </>
-          )}
-          {kind === 'if' && (
-            <ConditionEditor
-              fieldPath="/do/if/condition"
-              value={(d.if as { condition?: Condition })?.condition}
-              readOnly={readOnly}
-              onChange={c => patchActionKey('if', { ...(d.if as object), condition: c })}
-            />
-          )}
-          {kind === 'assert' && (
-            <>
+                {/* 模型选择：只选不配——配置在模型界面完成；候选按模态经 selectableModels 筛选 */}
+                <FieldRow
+                  label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
+                  fieldPath="/do/with/model"
+                  hint={
+                    <>
+                      <div>
+                        {editorText(
+                          '模型配置在模型界面完成，此处只选择使用哪个模型；同名模型跨服务商时下拉条目已带 provider。',
+                          t,
+                        )}
+                      </div>
+                      {modelKind === 'video' && (
+                        <div>{editorText('视频生成能力以模型界面的「视频生成」绑定为准。', t)}</div>
+                      )}
+                      {(modelKind === 'video' || modelKind === 'image') && (
+                        <div>
+                          {editorText(
+                            modelKind === 'video'
+                              ? '视频生成通常需要 1–5 分钟，超时上限可在高级里调整。'
+                              : '同步返回，通常数秒',
+                            t,
+                          )}
+                        </div>
+                      )}
+                    </>
+                  }
+                >
+                  {modelCandidates.length > 0 ? (
+                    <select
+                      className="wfp-ctl"
+                      aria-label={editorFieldLabel('选择模型（留空用绑定能力）', t)}
+                      value={modelSelectionValue(modelCandidates, modelWith)}
+                      disabled={readOnly}
+                      onChange={e => setModelSelection(e.target.value, modelWith, patchActionKey)}
+                    >
+                      <option value="">{editorText('默认（模型界面绑定的生成能力）', t)}</option>
+                      {modelCandidates.map(m => (
+                        <option key={`${m.provider}::${m.id}`} value={`${m.provider}::${m.id}`}>
+                          {m.id} · {m.provider}
+                        </option>
+                      ))}
+                      {modelRetained && (
+                        <option value={modelRetained}>
+                          {typeof modelWith.model === 'string' ? modelWith.model : ''}
+                          {editorText('（不在当前模态的模型列表中，已保留）', t)}
+                        </option>
+                      )}
+                    </select>
+                  ) : (
+                    <span className="wfp-frow__hint">
+                      {editorText(
+                        models === undefined
+                          ? '正在加载模型列表…'
+                          : models === null
+                            ? '模型列表不可用；留空或保留原值时将使用模型界面绑定的生成能力。'
+                            : '生成能力候选为空：去模型界面 → 图像音频模型 → 图片生成 / 视频生成 绑定模型后，这里才会列出候选。',
+                        t,
+                      )}
+                    </span>
+                  )}
+                </FieldRow>
+              </>
+            )}
+            {kind === 'script' && (
+              <>
+                <SelectField
+                  label={editorText('运行环境 runtime', t)}
+                  value={String((d.script as Record<string, unknown>)?.runtime ?? 'python')}
+                  disabled={readOnly}
+                  onChange={e =>
+                    patchActionKey('script', { ...(d.script as object), runtime: e.target.value })
+                  }
+                >
+                  <option value="python">Python</option>
+                  <option value="node">Node.js</option>
+                  <option value="ahk">{editorText('AutoHotkey（仅 Windows）', t)}</option>
+                  <option value="pwsh">PowerShell（pwsh）</option>
+                  {!['python', 'node', 'ahk', 'pwsh'].includes(
+                    String((d.script as Record<string, unknown>)?.runtime ?? 'python'),
+                  ) && (
+                    <option value={String((d.script as Record<string, unknown>)?.runtime)}>
+                      {String((d.script as Record<string, unknown>)?.runtime)}
+                      {editorText('（当前执行器不支持，已保留）', t)}
+                    </option>
+                  )}
+                </SelectField>
+                <TextField
+                  label="脚本代码 code"
+                  value={String((d.script as Record<string, unknown>)?.code ?? '')}
+                  readOnly={readOnly}
+                  mono
+                  multiline
+                  references
+                  required
+                  title="code"
+                  onCommit={v => patchActionKey('script', { ...(d.script as object), code: v })}
+                />
+              </>
+            )}
+            {kind === 'if' && (
               <ConditionEditor
-                fieldPath="/do/assert/condition"
-                value={(d.assert as { condition?: Condition })?.condition}
+                fieldPath="/do/if/condition"
+                value={(d.if as { condition?: Condition })?.condition}
                 readOnly={readOnly}
-                onChange={c => patchActionKey('assert', { ...(d.assert as object), condition: c })}
+                onChange={c => patchActionKey('if', { ...(d.if as object), condition: c })}
               />
+            )}
+            {kind === 'assert' && (
+              <>
+                <ConditionEditor
+                  fieldPath="/do/assert/condition"
+                  value={(d.assert as { condition?: Condition })?.condition}
+                  readOnly={readOnly}
+                  onChange={c =>
+                    patchActionKey('assert', { ...(d.assert as object), condition: c })
+                  }
+                />
+                <TextField
+                  label="失败消息"
+                  value={String((d.assert as Record<string, unknown>)?.message ?? '')}
+                  readOnly={readOnly}
+                  onCommit={v =>
+                    patchActionKey('assert', { ...(d.assert as object), message: v || undefined })
+                  }
+                />
+              </>
+            )}
+            {kind === 'loop' && (
+              <LoopEditor
+                d={d}
+                readOnly={readOnly}
+                onPatch={patchActionKey}
+                conditionCatalog={loopConditionCatalog}
+              />
+            )}
+            {kind === 'wait' && (
               <TextField
-                label="失败消息"
-                value={String((d.assert as Record<string, unknown>)?.message ?? '')}
+                label="等待目标"
+                value={String(d.wait ?? '')}
                 readOnly={readOnly}
-                onCommit={v =>
-                  patchActionKey('assert', { ...(d.assert as object), message: v || undefined })
-                }
+                onCommit={v => patchActionKey('wait', v)}
               />
-            </>
-          )}
-          {kind === 'loop' && (
-            <LoopEditor
-              d={d}
-              readOnly={readOnly}
-              onPatch={patchActionKey}
-              conditionCatalog={loopConditionCatalog}
-            />
-          )}
-          {kind === 'wait' && (
-            <TextField
-              label="等待目标"
-              value={String(d.wait ?? '')}
-              readOnly={readOnly}
-              onCommit={v => patchActionKey('wait', v)}
-            />
-          )}
-          {kind === 'mcp' && (
-            <>
-              <TextField
-                label="MCP 服务器 server"
-                value={String((d.mcp as Record<string, unknown>)?.server ?? '')}
+            )}
+            {kind === 'mcp' && (
+              <>
+                <TextField
+                  label="MCP 服务器 server"
+                  value={String((d.mcp as Record<string, unknown>)?.server ?? '')}
+                  readOnly={readOnly}
+                  mono
+                  required
+                  title="server"
+                  onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), server: v })}
+                />
+                <TextField
+                  label="MCP 工具 tool"
+                  value={String((d.mcp as Record<string, unknown>)?.tool ?? '')}
+                  readOnly={readOnly}
+                  mono
+                  required
+                  title="tool"
+                  onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), tool: v })}
+                />
+              </>
+            )}
+            {kind === 'sleep' && (
+              <NumberFieldDraft
+                label="时长（秒）"
+                integer
+                min={0}
+                value={String(d.sleep ?? 1)}
                 readOnly={readOnly}
-                mono
-                required
-                title="server"
-                onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), server: v })}
+                validate={v => numberError(v, { min: 0 })}
+                onCommit={v => {
+                  return patchActionKey('sleep', Number(v))
+                }}
               />
-              <TextField
-                label="MCP 工具 tool"
-                value={String((d.mcp as Record<string, unknown>)?.tool ?? '')}
-                readOnly={readOnly}
-                mono
-                required
-                title="tool"
-                onCommit={v => patchActionKey('mcp', { ...(d.mcp as object), tool: v })}
-              />
-            </>
-          )}
-          {kind === 'sleep' && (
-            <NumberFieldDraft
-              label="时长（秒）"
-              integer
-              min={0}
-              value={String(d.sleep ?? 1)}
-              readOnly={readOnly}
-              validate={v => numberError(v, { min: 0 })}
-              onCommit={v => {
-                return patchActionKey('sleep', Number(v))
-              }}
-            />
-          )}
-          {(kind === 'seq' || kind === 'break' || kind === 'continue') && (
-            <div className="wfp-frow__hint">
-              {kind === 'seq'
-                ? editorText('顺序容器：子步骤在画布子层编辑（双击节点进入）', t)
-                : editorText('无参数', t)}
-            </div>
-          )}
-          {kind === 'custom' && (
-            <div className="wfp-frow__hint wfp-frow__hint--warn">
-              {editorText('旧格式节点（不兼容 V2），画布只读。请通过 AI 通道重建为 V2 工作流。', t)}
-            </div>
-          )}
-
+            )}
+            {(kind === 'seq' || kind === 'break' || kind === 'continue') && (
+              <div className="wfp-frow__hint">
+                {kind === 'seq'
+                  ? editorText('顺序容器：子步骤在画布子层编辑（双击节点进入）', t)
+                  : editorText('无参数', t)}
+              </div>
+            )}
+            {kind === 'custom' && (
+              <div className="wfp-frow__hint wfp-frow__hint--warn">
+                {editorText(
+                  '旧格式节点（不兼容 V2），画布只读。请通过 AI 通道重建为 V2 工作流。',
+                  t,
+                )}
+              </div>
+            )}
           </SectionCard>
 
           {/* ③ 高级（S1 固定顺序；T2b 合并原 model 模态高级）：
@@ -1721,118 +1738,124 @@ export function Inspector({
             <div className="wfp-adv__body">
               {kind === 'model' && (
                 <>
-                {modelKind === 'text' && (
-                  <>
-                    <TextField
-                      label="系统提示词"
-                      value={typeof modelWith.system === 'string' ? modelWith.system : ''}
-                      readOnly={readOnly}
-                      multiline
-                      onCommit={v => patchModelWith('system', v || undefined)}
-                    />
-                    <NumberFieldDraft
-                      label="随机程度"
-                      help="temperature"
-                      value={modelWith.temperature != null ? String(modelWith.temperature) : ''}
-                      readOnly={readOnly}
-                      validate={v => numberError(v, { optional: true })}
-                      onCommit={v => {
-                        if (!v.trim()) return patchModelWith('temperature', undefined)
-                        return patchModelWith('temperature', Number(v))
-                      }}
-                    />
-                    <NumberFieldDraft
-                      label="最大输出长度"
-                      help="max_tokens"
-                      integer
-                      min={1}
-                      max={4294967295}
-                      value={modelWith.max_tokens != null ? String(modelWith.max_tokens) : ''}
-                      readOnly={readOnly}
-                      validate={v =>
-                        numberError(v, { integer: true, min: 1, max: 4294967295, optional: true })
-                      }
-                      onCommit={v => {
-                        if (!v.trim()) return patchModelWith('max_tokens', undefined)
-                        return patchModelWith('max_tokens', Number(v))
-                      }}
-                    />
-                  </>
-                )}
-                {modelKind === 'image' && (
-                  <>
-                    <NumberFieldDraft
-                      label="图片宽度 width"
-                      help="width"
-                      integer
-                      min={1}
-                      value={modelParamsValue('width')}
-                      readOnly={readOnly}
-                      validate={v => imageDimensionError(v)}
-                      onCommit={v => patchModelParamsKey('width', v.trim() ? Number(v) : undefined)}
-                      hint="尺寸上限由所选模型决定，超出时协议层会返回明确错误。"
-                    />
-                    <NumberFieldDraft
-                      label="图片高度 height"
-                      help="height"
-                      integer
-                      min={1}
-                      value={modelParamsValue('height')}
-                      readOnly={readOnly}
-                      validate={v => imageDimensionError(v)}
-                      onCommit={v => patchModelParamsKey('height', v.trim() ? Number(v) : undefined)}
-                    />
-                    <SelectField
-                      label={editorFieldLabel('返回格式', t)}
-                      fieldPath="/do/with/params"
-                      value={modelParamsValue('response_format')}
-                      disabled={readOnly}
-                      onChange={e =>
-                        patchModelParamsKey('response_format', e.target.value || undefined)
-                      }
-                    >
-                      <option value="">{editorText('默认（url）', t)}</option>
-                      <option value="url">url</option>
-                      <option value="base64">base64</option>
-                    </SelectField>
-                  </>
-                )}
-                {modelKind === 'video' && (
-                  <>
-                    <TextField
-                      label="画面清晰度"
-                      title="resolution"
-                      placeholder="如 1080P"
-                      value={modelParamsValue('resolution')}
-                      readOnly={readOnly}
-                      onCommit={v => patchModelParamsKey('resolution', v.trim() ? v.trim() : undefined)}
-                      hint="留空使用生成端默认清晰度。"
-                    />
-                    <NumberFieldDraft
-                      label="最长等待时间 timeout_secs"
-                      help="timeout_secs"
-                      integer
-                      min={30}
-                      max={600}
-                      value={modelWith.timeout_secs != null ? String(modelWith.timeout_secs) : ''}
-                      readOnly={readOnly}
-                      validate={v =>
-                        numberError(v, { integer: true, min: 30, max: 600, optional: true })
-                      }
-                      onCommit={v => {
-                        if (!v.trim()) return patchModelWith('timeout_secs', undefined)
-                        return patchModelWith('timeout_secs', Number(v))
-                      }}
-                    />
-                  </>
-                )}
-                <JsonEscapeField
-                  label="参数透传（JSON，逃生舱）"
-                  value={modelWith.params}
-                  readOnly={readOnly}
-                  onCommit={v => patchModelWith('params', v)}
-                  hint="上面的可视化选项会写进这里，手改需自负。"
-                />
+                  {modelKind === 'text' && (
+                    <>
+                      <TextField
+                        label="系统提示词"
+                        value={typeof modelWith.system === 'string' ? modelWith.system : ''}
+                        readOnly={readOnly}
+                        multiline
+                        onCommit={v => patchModelWith('system', v || undefined)}
+                      />
+                      <NumberFieldDraft
+                        label="随机程度"
+                        help="temperature"
+                        value={modelWith.temperature != null ? String(modelWith.temperature) : ''}
+                        readOnly={readOnly}
+                        validate={v => numberError(v, { optional: true })}
+                        onCommit={v => {
+                          if (!v.trim()) return patchModelWith('temperature', undefined)
+                          return patchModelWith('temperature', Number(v))
+                        }}
+                      />
+                      <NumberFieldDraft
+                        label="最大输出长度"
+                        help="max_tokens"
+                        integer
+                        min={1}
+                        max={4294967295}
+                        value={modelWith.max_tokens != null ? String(modelWith.max_tokens) : ''}
+                        readOnly={readOnly}
+                        validate={v =>
+                          numberError(v, { integer: true, min: 1, max: 4294967295, optional: true })
+                        }
+                        onCommit={v => {
+                          if (!v.trim()) return patchModelWith('max_tokens', undefined)
+                          return patchModelWith('max_tokens', Number(v))
+                        }}
+                      />
+                    </>
+                  )}
+                  {modelKind === 'image' && (
+                    <>
+                      <NumberFieldDraft
+                        label="图片宽度 width"
+                        help="width"
+                        integer
+                        min={1}
+                        value={modelParamsValue('width')}
+                        readOnly={readOnly}
+                        validate={v => imageDimensionError(v)}
+                        onCommit={v =>
+                          patchModelParamsKey('width', v.trim() ? Number(v) : undefined)
+                        }
+                        hint="尺寸上限由所选模型决定，超出时协议层会返回明确错误。"
+                      />
+                      <NumberFieldDraft
+                        label="图片高度 height"
+                        help="height"
+                        integer
+                        min={1}
+                        value={modelParamsValue('height')}
+                        readOnly={readOnly}
+                        validate={v => imageDimensionError(v)}
+                        onCommit={v =>
+                          patchModelParamsKey('height', v.trim() ? Number(v) : undefined)
+                        }
+                      />
+                      <SelectField
+                        label={editorFieldLabel('返回格式', t)}
+                        fieldPath="/do/with/params"
+                        value={modelParamsValue('response_format')}
+                        disabled={readOnly}
+                        onChange={e =>
+                          patchModelParamsKey('response_format', e.target.value || undefined)
+                        }
+                      >
+                        <option value="">{editorText('默认（url）', t)}</option>
+                        <option value="url">url</option>
+                        <option value="base64">base64</option>
+                      </SelectField>
+                    </>
+                  )}
+                  {modelKind === 'video' && (
+                    <>
+                      <TextField
+                        label="画面清晰度"
+                        title="resolution"
+                        placeholder="如 1080P"
+                        value={modelParamsValue('resolution')}
+                        readOnly={readOnly}
+                        onCommit={v =>
+                          patchModelParamsKey('resolution', v.trim() ? v.trim() : undefined)
+                        }
+                        hint="留空使用生成端默认清晰度。"
+                      />
+                      <NumberFieldDraft
+                        label="最长等待时间 timeout_secs"
+                        help="timeout_secs"
+                        integer
+                        min={30}
+                        max={600}
+                        value={modelWith.timeout_secs != null ? String(modelWith.timeout_secs) : ''}
+                        readOnly={readOnly}
+                        validate={v =>
+                          numberError(v, { integer: true, min: 30, max: 600, optional: true })
+                        }
+                        onCommit={v => {
+                          if (!v.trim()) return patchModelWith('timeout_secs', undefined)
+                          return patchModelWith('timeout_secs', Number(v))
+                        }}
+                      />
+                    </>
+                  )}
+                  <JsonEscapeField
+                    label="参数透传（JSON，逃生舱）"
+                    value={modelWith.params}
+                    readOnly={readOnly}
+                    onCommit={v => patchModelWith('params', v)}
+                    hint="上面的可视化选项会写进这里，手改需自负。"
+                  />
                 </>
               )}
 
@@ -2146,10 +2169,7 @@ function LoopEditor({
       </SelectField>
       {mode === 'for_each' && (
         <>
-          <FieldRow
-            label={editorFieldLabel('遍历列表', t)}
-            fieldPath={editorFieldId('遍历列表')}
-          >
+          <FieldRow label={editorFieldLabel('遍历列表', t)} fieldPath={editorFieldId('遍历列表')}>
             <ReferenceField
               label="遍历列表"
               value={(() => {
