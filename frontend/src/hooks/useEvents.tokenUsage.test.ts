@@ -191,4 +191,80 @@ describe('useEvents token_usage 累加口径', () => {
     expect(handlers.setTurnMeta).not.toHaveBeenCalled()
     expect(handlers.refs.turnMetaTokensRef.current).toEqual({})
   })
+
+  // ── 缺陷回归：exec 槽 cache 分子为 0 不得覆盖上一轮的暖读数 ──
+  // 背景：ctx 弹窗只校验分母，分子 0 会渲染「缓存命中 0%」的假数。修弹窗的同时
+  // 必须修源头：一轮里首次冷调用（新会话首轮 / refine 后前缀重写 / 切模型）报
+  // cache_hit_tokens=0，旧实现直接覆盖，把上一轮的 51200 擦成 0。
+  // 0 与哨兵同属「无读数」，必须保留前值。
+  it('④ exec 槽 cache_hit_tokens=0 保留前值（不擦掉上一轮暖读数）', () => {
+    const handlers = makeHandlers()
+    renderHook(() => useEvents(handlers))
+
+    driveEvent(
+      {
+        type: 'token_usage',
+        input_tokens: 130_801,
+        output_tokens: 199,
+        cache_hit_tokens: 51_200,
+        source: 'exec',
+        gen_tps: 86.6,
+        ttft_ms: 3616,
+      },
+      1,
+    )
+    driveEvent(
+      {
+        type: 'token_usage',
+        input_tokens: 132_000,
+        output_tokens: 120,
+        cache_hit_tokens: 0,
+        source: 'exec',
+      },
+      2,
+    )
+
+    const calls = vi.mocked(handlers.setExecTokenUsage).mock.calls
+    const call = calls[calls.length - 1][0] as (
+      prev: { inputTokens: number; outputTokens: number; cacheHitTokens: number },
+    ) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
+    const state = call({ inputTokens: 130_801, outputTokens: 199, cacheHitTokens: 51_200 })
+    // input/output 取本次真实读数，cache 保留前值
+    expect(state.inputTokens).toBe(132_000)
+    expect(state.outputTokens).toBe(120)
+    expect(state.cacheHitTokens).toBe(51_200)
+  })
+
+  it('⑤ exec 槽哨兵仍保留前值（与 0 同策略，行为不回归）', () => {
+    const handlers = makeHandlers()
+    renderHook(() => useEvents(handlers))
+
+    driveEvent(
+      {
+        type: 'token_usage',
+        input_tokens: 130_801,
+        output_tokens: 199,
+        cache_hit_tokens: 51_200,
+        source: 'exec',
+      },
+      1,
+    )
+    driveEvent(
+      {
+        type: 'token_usage',
+        input_tokens: 132_000,
+        output_tokens: 0,
+        cache_hit_tokens: SENTINEL,
+        source: 'exec',
+      },
+      2,
+    )
+
+    const calls = vi.mocked(handlers.setExecTokenUsage).mock.calls
+    const call = calls[calls.length - 1][0] as (
+      prev: { inputTokens: number; outputTokens: number; cacheHitTokens: number },
+    ) => { inputTokens: number; outputTokens: number; cacheHitTokens: number }
+    const state = call({ inputTokens: 130_801, outputTokens: 199, cacheHitTokens: 51_200 })
+    expect(state.cacheHitTokens).toBe(51_200)
+  })
 })

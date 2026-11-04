@@ -144,6 +144,8 @@ interface ChatInputBarProps {
   onRemoveFile?: (index: number) => void
   /** 拖拽文件时回调（添加到 pendingFiles） */
   onFileAttach?: (file: PendingFile) => void
+  /** 附件处理提示（进度/失败）：拖拽通道没有对话框兜底，必须回报到 HUD */
+  onAttachNotice?: (msg: string, level?: 'info' | 'error') => void
 }
 
 export function ChatInputBar({
@@ -201,6 +203,7 @@ export function ChatInputBar({
   onRemoveImage,
   onRemoveFile,
   onFileAttach,
+  onAttachNotice,
   onPreviewFile,
 }: ChatInputBarProps) {
   const { t } = useLanguage()
@@ -270,6 +273,8 @@ export function ChatInputBar({
   onImageAttachRef.current = onImageAttach
   const onFileAttachRef = useRef(onFileAttach)
   onFileAttachRef.current = onFileAttach
+  const onAttachNoticeRef = useRef(onAttachNotice)
+  onAttachNoticeRef.current = onAttachNotice
 
   // ── 语音输入（STT）──
   // partial：ghost 预览（斜体弱色），不进输入框；final：拼入输入框可编辑后发送
@@ -370,13 +375,18 @@ export function ChatInputBar({
 
   /** File[] → 引用栏条目（图片与文档统一入口）。 */
   async function attachFiles(files: File[]) {
-    const { entries, failures } = await filesToAttachments(files)
+    const { entries, failures } = await filesToAttachments(files, p => {
+      const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 100
+      onAttachNoticeRef.current?.(`正在添加 ${p.name}（${pct}%）`)
+    })
     for (const entry of entries) {
       if (entry.kind === 'image') onImageAttachRef.current(entry.image)
       else onFileAttachRef.current?.(entry.file)
     }
     if (failures.length > 0) {
       console.error('[Drop] 附件添加失败:', failures.join('; '))
+      // 拖拽没有对话框兜底：失败必须让用户看见，不能只留在控制台
+      onAttachNoticeRef.current?.(`附件添加失败：${failures.join('; ')}`, 'error')
     }
   }
 
@@ -576,7 +586,15 @@ export function ChatInputBar({
       depth = 0
       setIsDragOver(false)
       const files = Array.from(e.dataTransfer?.files ?? [])
-      if (files.length > 0) void attachFiles(files)
+      if (files.length > 0) {
+        void attachFiles(files).catch(e => {
+          console.error('[Drop] 附件处理异常:', e)
+          onAttachNoticeRef.current?.(
+            e instanceof Error ? e.message : String(e),
+            'error',
+          )
+        })
+      }
     }
     // 拖放默认行为（未 preventDefault 时浏览器会把文件当链接/文本处理）必须拦掉
     const onWindowDragOver = (e: DragEvent) => {
@@ -629,13 +647,19 @@ export function ChatInputBar({
   const detailTokens = (detail?.inputTokens || 0) + (detail?.outputTokens || 0)
   const detailCacheHit = detail?.cacheHitTokens || 0
   const detailCacheTotal = detail?.inputTokens || 0
-  // 缓存命中率只在 exec 槽有真实读数时展示：main 槽只承载「主上下文占用」，
-  // 其 cache 用哨兵 0xffffffff 表达「无读数」（chat 模式下 main 永远收不到真实
-  // 读数——react_loop.rs:769 与 process.rs:1215 两个 main 发射点都是哨兵，唯一
-  // 真实来源是 workflow 模式），拿它当分子算出的 0% 是假数（表现为「每次执行
-  // 一开始 cache 恒显 0%」）。exec 槽无活动（轮次起点 / 空闲）→ 整行不渲染。
-  const detailCacheRate =
-    execActive && detailCacheTotal > 0 ? (detailCacheHit / detailCacheTotal) * 100 : -1
+  // 缓存命中率**分子分母都要有真实读数**才展示，0 一律不渲染：
+  //   · main 槽的 cache 是哨兵 0xffffffff（「无读数」占位）——chat 模式下 main
+  //     永远收不到真实读数（react_loop.rs:1048 与 process.rs:1288 两个 main 发射点
+  //     都是哨兵，唯一真实来源是 workflow 模式），拿它当分子算出的 0% 是假数；
+  //   · exec 槽有 token 但 cache 也是 0 时同样是废数：provider 没报缓存字段
+  //     （read_cache_hit 字段缺失 unwrap_or(0)，与「真 0」不可区分——Kimi / Qwen /
+  //     custom / MiniMax 的 Anthropic 兼容端点都不返回缓存读数）或前缀冷（新会话
+  //     首轮 / refine 后前缀重写 / 切模型 / 历史恢复）都会落到这里。
+  // 两者对用户都是「不知道」，不是「确实 0%」——与 StatusBar.tsx 同口径（`hit > 0`）。
+  // 上一轮的暖读数由 useEvents 在 0/哨兵时保留前值，故这里读到 0 时确无可用读数。
+  const detailCacheHasRead =
+    detailCacheHit > 0 && detailCacheHit !== 0xffffffff && detailCacheTotal > 0
+  const detailCacheRate = execActive && detailCacheHasRead ? (detailCacheHit / detailCacheTotal) * 100 : -1
   // 生成速度/首 token 延迟：与上面同一数据源（exec 事件携带；main 源为 undefined 时整行隐藏）
   const genTps = detail?.genTps
   const ttftMs = detail?.ttftMs

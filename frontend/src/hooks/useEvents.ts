@@ -1075,8 +1075,13 @@ export function useEvents(h: EventHandlers) {
           ;(() => {
             const update = (setter: React.Dispatch<React.SetStateAction<TokenUsageState>>) =>
               setter((prev: TokenUsageState) => {
+                // 0 与哨兵 0xffffffff 同策略：**保留前值**，不覆盖。
+                // 两种「无读数」：哨兵 = main 发射点的显式占位；0 = provider 未报
+                // 缓存字段（read_cache_hit 字段缺失 unwrap_or(0)）或前缀冷（新会话
+                // 首轮 / refine 后 / 切模型）。拿它们覆盖会让同一轮里一次冷调用擦掉
+                // 上一轮的暖读数，弹窗随后读到 0 → 恒显 0% 的假数（与哨兵同理）。
                 const cacheHit =
-                  event.cache_hit_tokens === 0xffffffff
+                  event.cache_hit_tokens === 0xffffffff || event.cache_hit_tokens === 0
                     ? (prev?.cacheHitTokens ?? 0)
                     : event.cache_hit_tokens
                 return {

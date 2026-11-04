@@ -235,4 +235,50 @@ describe('ctx 弹窗执行详情：整组同源（禁止 exec/main 混源）', (
     // cache 行整体不渲染：main 的 cache 是哨兵，0/100000 = 0% 是废数
     expect(screen.queryByText('0%')).toBeNull()
   })
+
+  // ── 缺陷回归：exec 槽**有 token 但 cache 分子为 0** ──
+  // 原判据只校验分母（`execActive && detailCacheTotal > 0`），分子 0 一路放行：
+  // `0 >= 0` → 渲染「缓存 0%」。而 0 是「不知道」不是「确实 0%」——两种来源：
+  //   ① provider 压根不返回缓存读数：read_cache_hit 字段缺失 unwrap_or(0)，
+  //      Kimi / Qwen / custom / MiniMax(Anthropic 兼容端点) 全落这里；
+  //    ② 前缀冷：新会话首轮 / refine 后前缀重写 / 切模型 / 历史恢复。
+  // 两者都不该冒充命中率（与 StatusBar.tsx 的 `hit > 0` 同口径）。
+  it('exec 有 token 但 cache 分子为 0：cache 行不渲染（0 不是「确实 0%」）', () => {
+    renderInputBar(ACTIVE_DIR, {
+      mainTokenUsage: MAIN_USAGE,
+      execTokenUsage: {
+        inputTokens: 130_801,
+        outputTokens: 199,
+        cacheHitTokens: 0,
+        genTps: 42,
+        ttftMs: 300,
+      },
+      contextLimit: 128_000,
+      totalCalls: 3,
+    })
+    openCtxDetail()
+
+    // 分母真实（130,801）——旧判据只看分母，这里会渲染 0%
+    expect(screen.getAllByText('131k').length).toBeGreaterThan(0)
+    // 分子 0 → 整行不渲染，不得出现 0% 假读数
+    expect(screen.queryByText('0%')).toBeNull()
+  })
+
+  it('exec 哨兵 0xffffffff 当分子：cache 行不渲染（不渲染几千%）', () => {
+    renderInputBar(ACTIVE_DIR, {
+      mainTokenUsage: MAIN_USAGE,
+      execTokenUsage: {
+        inputTokens: 130_801,
+        outputTokens: 199,
+        cacheHitTokens: 0xffffffff,
+      },
+      contextLimit: 128_000,
+      totalCalls: 3,
+    })
+    openCtxDetail()
+
+    expect(screen.getAllByText('131k').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/%.*$/)).toBeNull()
+    expect(screen.queryByText('0%')).toBeNull()
+  })
 })
