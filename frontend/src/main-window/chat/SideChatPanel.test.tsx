@@ -421,6 +421,104 @@ describe('SideChatPanel 渲染行为', () => {
     expect(bubbles[1].className).toContain('scp-bubble--assistant')
   })
 
+  it('摘要栏：派发轮 + 工具事件流 → 完成消息只留静态摘要行（展开已移除）', async () => {
+    // 2026-11-04 所有者定：展开内容全是工具名与路径、无信息量——完成消息的
+    // 过程条降为静态一行「已用 N 个工具」；实时过程区（执行中）不受影响。
+    renderPanel()
+    act(() =>
+      pushLiveEvent(SESSION_KEY, {
+        type: 'side_chat_dispatch_question',
+        turn_id: 'dt-repro',
+        question: '核对门禁语义',
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('核对门禁语义')).toBeTruthy())
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'tool_call_start',
+        call_id: 'c1',
+        tool_name: 'Grep',
+        params: { pattern: 'side_chat' },
+        from_task: true,
+      })
+    })
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'tool_call_end',
+        call_id: 'c1',
+        success: true,
+        duration_ms: 42,
+      })
+    })
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'llm_text_delta',
+        text: '结论如下',
+        is_thinking: false,
+        from_task: true,
+      })
+    })
+    act(() =>
+      pushLiveEvent(SESSION_KEY, {
+        type: 'side_chat_turn_finished',
+        turn_id: 'dt-repro',
+        reply: '结论如下',
+        steps: [],
+        ctx_used: 100,
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('结论如下')).toBeTruthy())
+
+    // 静态摘要行：一行计数，非按钮、无展开交互
+    expect(document.querySelector('.scp-process-row.is-static')).toBeTruthy()
+    expect(screen.getByText('已用 1 个工具')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /已用 1 个工具/ })).toBeNull()
+    // 明细（工具名/路径）不进完成消息的 DOM
+    expect(screen.queryByText('Grep')).toBeNull()
+    expect(document.querySelector('.scp-timeline')).toBeNull()
+    // 回复正文完整渲染
+    expect(screen.getByText('结论如下')).toBeTruthy()
+  })
+
+  it('实时过程：收起只剩摘要行 + 条上展开钮，点开内容回来（回看不中断）', async () => {
+    // 覆盖「执行中」的收起/展开回路：liveCollapsed 门控 .scp-live-content，
+    // 收起后只剩静态摘要行与 live bar 上的展开钮（Running pill 同在条上）。
+    let resolveSend: (v: { reply: string }) => void = () => {}
+    sideChatSend.mockReturnValue(
+      new Promise(resolve => {
+        resolveSend = resolve
+      }),
+    )
+    renderPanel()
+    fireEvent.change(screen.getByLabelText('创意方案 · 探索调研 · 临时任务 · 核对审计…'), {
+      target: { value: '干活' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(screen.getByText('思考中…')).toBeTruthy())
+    act(() => {
+      pushLiveEvent(SESSION_KEY, {
+        type: 'tool_call_start',
+        call_id: 'c1',
+        tool_name: 'Grep',
+        params: { pattern: 'x' },
+        from_task: true,
+      })
+    })
+    // 展开态：实时内容在 DOM 中（'Grep' 同时出现在摘要行与时间线，用 getAllByText）
+    expect(document.querySelector('.scp-live-content')).toBeTruthy()
+    expect(screen.getAllByText('Grep').length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.scp-tl-tool-name').length).toBeGreaterThan(0)
+    // 收起：内容卸载，只剩摘要行；条上出现「展开」钮
+    fireEvent.click(screen.getByRole('button', { name: '收起' }))
+    expect(document.querySelector('.scp-live-content')).toBeNull()
+    expect(document.querySelector('.scp-timeline')).toBeNull()
+    // 展开：内容回来（同一份轨迹，不丢）
+    fireEvent.click(screen.getByRole('button', { name: '展开' }))
+    expect(document.querySelector('.scp-live-content')).toBeTruthy()
+    expect(screen.getAllByText('Grep').length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.scp-tl-tool-name').length).toBeGreaterThan(0)
+  })
+
   it('项目选择：选项来自项目书签，选中后随消息下发 projectDir（不碰全局目录）', async () => {
     getProjectBookmarks.mockResolvedValue([
       { name: 'A 项目', path: 'E:/work/A' },
@@ -519,7 +617,7 @@ describe('SideChatPanel 渲染行为', () => {
     expect((sideChatSend.mock.calls[1] as unknown[])[8]).toBe(EXPLORE_PROJECT)
   })
 
-  it('执行过程：有步骤才出现折叠条，默认展开、点击收起明细', async () => {
+  it('执行过程：有步骤才出现静态摘要行（展开已移除，2026-11-04 所有者定）', async () => {
     sideChatSend.mockResolvedValue({
       reply: '查完了',
       steps: [
@@ -535,24 +633,15 @@ describe('SideChatPanel 渲染行为', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(screen.getByText('查完了')).toBeTruthy())
 
-    const toggle = screen.getByRole('button', { name: '已用 3 个工具' })
-    // 默认展开（2026-11-04 产品决策：派发轮实时事件未固化成 blocks、只剩
-    // steps 时，折叠会令用户看不到执行过程）
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('Grep')).toBeTruthy()
-
-    // 点击收起：明细不在 DOM
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    // 一行静态摘要：「已用 3 个工具」——非按钮、无 aria-expanded、无明细
+    expect(document.querySelector('.scp-process-row.is-static')).toBeTruthy()
+    expect(screen.getByText('已用 3 个工具')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /已用 3 个工具/ })).toBeNull()
+    // 展开内容（工具名/路径/成败样式）不再进完成消息的 DOM
     expect(screen.queryByText('Grep')).toBeNull()
-
-    // 再点展开
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('Grep')).toBeTruthy()
-    expect(screen.getByText('side_chat.rs')).toBeTruthy()
-    // 失败的步骤单独样式标记
-    expect(document.querySelector('.scp-steps-item.is-failed')).toBeTruthy()
+    expect(screen.queryByText('side_chat.rs')).toBeNull()
+    expect(document.querySelector('.scp-steps-list')).toBeNull()
+    expect(document.querySelector('.scp-timeline')).toBeNull()
   })
 
   it('无步骤：不渲染执行过程条', async () => {
@@ -563,7 +652,8 @@ describe('SideChatPanel 渲染行为', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(screen.getByText('直接答')).toBeTruthy())
-    expect(document.querySelector('.scp-steps')).toBeNull()
+    // 无工具步骤 → 不渲染摘要行（2026-11-04 起摘要行只由 steps 驱动）
+    expect(document.querySelector('.scp-process')).toBeNull()
   })
 
   it('模型选择：弹窗先出「默认」与提供商行，展开后才出现具体模型', async () => {
@@ -928,7 +1018,7 @@ describe('SideChatPanel 渲染行为', () => {
     })
   })
 
-  it('思考沉淀与折叠展开：执行中的 thinking 沉淀到最终回复，可折叠展开查看', async () => {
+  it('思考沉淀：执行中的 thinking 不污染最终回复（展开交互已移除）', async () => {
     let resolveSend: (v: { reply: string }) => void = () => {}
     sideChatSend.mockReturnValue(
       new Promise(resolve => {
@@ -956,25 +1046,13 @@ describe('SideChatPanel 渲染行为', () => {
     })
     await waitFor(() => expect(screen.getByText('这是最终结论')).toBeTruthy())
 
-    // 助手过程行渲染（极简单行：svg + 文字 + 折角箭头）
-    expect(document.querySelector('.scp-process-row')).toBeTruthy()
-
-    // 思考过程成为顶部的折叠按钮
-    const toggle = screen.getByRole('button', { name: '思考过程' })
-    // 默认展开（2026-11-04 产品决策，同「已用 N 个工具」条）
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('这是深度思考过程分析')).toBeTruthy()
-
-    // 点击收起
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    // 无工具步骤 → 不渲染摘要行；thinking 不再作为可折叠内容呈现
+    // （2026-11-04 所有者定：完成消息只留静态摘要行，展开内容无信息量）
+    expect(document.querySelector('.scp-process')).toBeNull()
+    expect(screen.queryByRole('button', { name: '思考过程' })).toBeNull()
     expect(screen.queryByText('这是深度思考过程分析')).toBeNull()
-
-    // 再点展开
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('这是深度思考过程分析')).toBeTruthy()
-    expect(document.querySelector('.scp-process-body')).toBeTruthy()
+    // 回复本身完整渲染
+    expect(screen.getByText('这是最终结论')).toBeTruthy()
   })
 
   it('发送失败：错误以助手气泡呈现，不抛到界面外', async () => {
@@ -1273,13 +1351,15 @@ describe('SideChatPanel 渲染行为', () => {
     })
     expect(thinkingText()).toBe('system_info/system_sleep/300s stall.')
 
-    // ⑤ 落盘的 thinking 与实时显示一致：ref 是单一事实源，不被污染
+    // ⑤ 收尾：回复落 DOM、实时过程区随 sending=false 卸载。
+    //   （「落盘 thinking 与实时一致」的验证随展开交互移除而取消——
+    //    2026-11-04 所有者定：完成消息只留静态摘要行。）
     await act(async () => {
       resolveSend({ reply: '完' })
     })
     await waitFor(() => expect(screen.getByText('完')).toBeTruthy())
-    // 默认展开的 timeline 里 thinking 块直接可见（不再需要点「查看详情」）
-    expect(screen.getAllByText('system_info/system_sleep/300s stall.').length).toBeGreaterThan(0)
+    expect(document.querySelector('.scp-live-content')).toBeNull()
+    expect(screen.queryByRole('button', { name: '思考过程' })).toBeNull()
   })
 
   // ── 工具调用的可见性 ──

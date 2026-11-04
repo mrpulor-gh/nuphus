@@ -451,8 +451,6 @@ function SideChatPanelImpl({
    *  两条（后端 BUSY 只拦真实发送，拦不住前端已渲染的重复气泡）。ref 立即
    *  生效，作为 push 前的硬闸门——见 handleSend 开头与各 sending 收尾点。 */
   const sendingRef = useRef(false)
-  /** 折叠的执行过程条：哪几条消息处于展开态（按消息下标） */
-  const [openSteps, setOpenSteps] = useState<Set<number>>(() => new Set())
   // 工具权限不在本面板提供开关：全关会让面板失去全部功能，且「系统与桌面
   // 自动化」在只读 shell 子集放开后已是误导性表述。固定开，由后端
   // ToolPermissions 决定实际可用面。
@@ -1046,18 +1044,55 @@ function SideChatPanelImpl({
           }
           const finishedTurn = e.turn_id ?? ''
           if (!finishedTurn) return
+          // 回看通道的数据装配：后端 turn_finished 的 steps 恒为空数组——
+          // run_free 五个返回点全部硬编码 vec![]（src/runtime/sub_task_loop.rs
+          // 的 :98/:208/:284/:334/:379），completed 消息的过程条曾因此永不渲染。
+          // 这里用与流式过程区**同源**的 liveBlocks/liveSegments 现攒现补：
+          // 事件先行到达时由本路径建消息；命令返回竞态先到时补写既有气泡，
+          // 两条路径合一，hasProcess 不再依赖后端 steps。
+          const traceSteps = liveBlocksRef.current
+            .filter(b => b.kind === 'tool')
+            .map(b => ({ tool: b.tool, ok: b.ok !== false, summary: b.summary }))
+          const thinking = liveSegmentsRef.current
+            .filter(s => s.kind === 'thinking')
+            .map(s => s.text)
+            .join('\n\n')
+            .trim()
+          const blocks = buildMsgBlocks(e.reply ?? '', liveBlocksRef.current)
           setMessages(prev => {
-            if (prev.some(m => m.role === 'assistant' && m.turnId === finishedTurn)) return prev
-            const next = [...prev]
-            // 只落回复：user 消息只来自「派发起点 side_chat_dispatch_question」与
-            // 「用户手动发送」；turn_finished 不再补 user（后端也不再带 question）。
-            next.push({
-              role: 'assistant',
-              text: e.reply ?? '',
-              steps: Array.isArray(e.steps) ? e.steps : [],
-              ctxUsed: e.ctx_used ?? 0,
-              turnId: finishedTurn,
-            })
+            const idx = prev.findIndex(m => m.role === 'assistant' && m.turnId === finishedTurn)
+            if (idx === -1) {
+              // 只落回复：user 消息只来自「派发起点 side_chat_dispatch_question」与
+              // 「用户手动发送」；turn_finished 不再补 user（后端也不再带 question）。
+              return [
+                ...prev,
+                {
+                  role: 'assistant',
+                  text: e.reply ?? '',
+                  // 后端 steps 日后修好后优先用它；当前恒空，用实时轨迹兜底
+                  steps: Array.isArray(e.steps) && e.steps.length > 0 ? e.steps : traceSteps,
+                  thinking: thinking || undefined,
+                  blocks,
+                  ctxUsed: e.ctx_used ?? 0,
+                  turnId: finishedTurn,
+                },
+              ]
+            }
+            // 竞态落败方（命令返回先到、气泡已由 handleSend 落过）：已有气泡但
+            // 缺过程数据时补写 steps/thinking/blocks，不重复建条、不丢既有内容。
+            const existed = prev[idx]
+            const hasProcess =
+              (existed.steps?.length ?? 0) > 0 ||
+              (existed.blocks?.length ?? 0) > 0 ||
+              Boolean(existed.thinking)
+            if (hasProcess) return prev
+            const next = prev.slice()
+            next[idx] = {
+              ...existed,
+              steps: Array.isArray(e.steps) && e.steps.length > 0 ? e.steps : traceSteps,
+              thinking: thinking || existed.thinking,
+              blocks,
+            }
             return next
           })
           // 该轮已收尾：执行中态结束（正常路径的 finally 也设 false，幂等）
@@ -1397,23 +1432,12 @@ function SideChatPanelImpl({
   /** 清空对话：本地消息立即清空，后端丢弃执行体（下次发送重建） */
   const handleClear = useCallback(async () => {
     setMessages([])
-    setOpenSteps(new Set())
     try {
       await sideChatReset(sessionKey)
     } catch (err) {
       console.warn('[SideChat] reset failed:', err)
     }
   }, [sessionKey])
-
-  /** 展开 / 收起某条消息的执行过程（按消息下标切换） */
-  const toggleSteps = useCallback((i: number) => {
-    setOpenSteps(prev => {
-      const next = new Set(prev)
-      if (next.has(i)) next.delete(i)
-      else next.add(i)
-      return next
-    })
-  }, [])
 
   // ── 附件：隐藏 file input 多选 → chip（name 显示 / path 注入）──
   const onFilesPicked = useCallback(
@@ -2011,71 +2035,27 @@ function SideChatPanelImpl({
           )}
           {messages.map((msg, i) => {
             // 执行中追加的消息不进列表：改渲染在输入框上方（见 queuedAppends），
-            // 流式期间也可见。返回 null 而不是 filter——下标 i 是 openSteps 与
-            // lastAssistantIdx 的键，过滤会让后续消息的折叠态、操作条整体错位。
+            // 流式期间也可见。返回 null 而不是 filter——下标 i 是
+            // lastAssistantIdx 的键，过滤会让操作条整体错位。
             if (msg.queued) return null
             const steps = msg.steps ?? []
-            const hasThinking = Boolean(msg.thinking)
             const hasSteps = steps.length > 0
-            const blocks = msg.blocks ?? []
-            const hasBlocks = blocks.length > 0
-            const hasProcess = hasSteps || hasThinking || hasBlocks
-            // 执行过程**默认展开**：有块序列走时序交错，只有 steps 摘要也直接摊开
-            // （派发轮实时事件未固化成 blocks，仅剩 steps，折叠会令用户看不到执行）。
-            // openSteps 统一表示「用户主动收起过」——默认空 = 全部展开。
-            const open = !openSteps.has(i)
             return (
               <Fragment key={i}>
                 <div
                   className={`scp-bubble scp-bubble--${msg.role}${msg.error ? ' is-error' : ''}`}
                 >
-                  {msg.role === 'assistant' && hasProcess && (
-                    <div className={`scp-process${open ? ' is-open' : ''}`}>
-                      <button
-                        type="button"
-                        className="scp-process-row"
-                        aria-expanded={open}
-                        title={t('sideChat.viewDetails')}
-                        onClick={() => toggleSteps(i)}
-                      >
-                        {hasSteps ? (
-                          <IconBookOpen size={13} className="scp-process-icon" />
-                        ) : (
-                          <IconBot size={13} className="scp-process-icon" />
-                        )}
+                  {/* 执行过程摘要（2026-11-04 所有者定）：只留一行静态摘要
+                      「已用 N 个工具」——展开内容全是工具名与路径、无信息量，
+                      展开交互整体移除（完成消息与实时过程区一并取消）。 */}
+                  {msg.role === 'assistant' && hasSteps && (
+                    <div className="scp-process">
+                      <div className="scp-process-row is-static">
+                        <IconBookOpen size={13} className="scp-process-icon" />
                         <span className="scp-process-text">
-                          {hasBlocks
-                            ? `${t('sideChat.stepsUsed').replace('{n}', String(steps.length || blocks.filter(b => b.kind === 'tool').length))} · ${
-                                open ? t('sideChat.processHide') : t('sideChat.processShow')
-                              }`
-                            : hasSteps
-                              ? t('sideChat.stepsUsed').replace('{n}', String(steps.length))
-                              : t('sideChat.thinkingProcess')}
+                          {t('sideChat.stepsUsed').replace('{n}', String(steps.length))}
                         </span>
-                        <span className="scp-process-detail" aria-hidden="true">
-                          <IconChevronRight size={12} className="scp-process-caret" />
-                        </span>
-                      </button>
-                      {/* 展开态已经由交错时间线渲染过程，旧列表不再重复展示；
-                        无块序列（历史消息）才走这个折叠面板。 */}
-                      {open && !hasBlocks && (
-                        <div className="scp-process-body">
-                          {hasThinking && <div className="scp-thinking-text">{msg.thinking}</div>}
-                          {hasSteps && (
-                            <ul className="scp-steps-list">
-                              {steps.map((s, j) => (
-                                <li key={j} className={`scp-steps-item${s.ok ? '' : ' is-failed'}`}>
-                                  <span className="scp-steps-dot" aria-hidden="true" />
-                                  <span className="scp-steps-tool">{s.tool}</span>
-                                  {s.summary && (
-                                    <span className="scp-steps-summary">{s.summary}</span>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
+                      </div>
                     </div>
                   )}
                   <div className="scp-bubble-body">
@@ -2085,52 +2065,9 @@ function SideChatPanelImpl({
                       <div className="scp-bubble-from">{t('sideChat.fromLeaderDispatch')}</div>
                     )}
                     {/* 助手回复走 Markdown 渲染（与主会话同一组件）；用户消息与
-                      错误提示保持纯文本——附件行 / 错误串不该被 Markdown 解释。
-                      有块序列且展开 → 按时间顺序交错渲染正文与工具块；
-                      否则退回「整段正文 + 顶部摘要条」。 */}
+                       错误提示保持纯文本——附件行 / 错误串不该被 Markdown 解释。 */}
                     {msg.role === 'assistant' && !msg.error ? (
-                      hasBlocks && open ? (
-                        <div className="scp-timeline">
-                          {blocks.map((b, j) => {
-                            if (b.kind === 'text') {
-                              const slice = msg.text.slice(b.from, b.to)
-                              if (!slice) return null
-                              return (
-                                <div className="scp-tl-text" key={j}>
-                                  <MarkdownContent content={slice} />
-                                </div>
-                              )
-                            }
-                            if (b.kind === 'thinking') {
-                              return (
-                                <div className="scp-tl-thinking" key={j}>
-                                  {b.text}
-                                </div>
-                              )
-                            }
-                            return (
-                              <div
-                                className={`scp-tl-tool${b.ok ? '' : ' is-failed'}`}
-                                key={j}
-                                title={b.summary}
-                              >
-                                <span className="scp-tl-dot" aria-hidden="true" />
-                                <span className="scp-tl-tool-name">{b.tool}</span>
-                                {b.summary && (
-                                  <span className="scp-tl-tool-summary">{b.summary}</span>
-                                )}
-                                {/* 归档块不携带耗时（MsgBlock 无 durationMs 字段）——
-                                  要看得耗时时看流式状态行，那里有 tool_call_end 的权威值 */}
-                                <span className={`scp-tl-state${b.ok ? '' : ' is-failed'}`}>
-                                  {b.ok ? t('sideChat.toolOk') : t('sideChat.toolFail')}
-                                </span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <MarkdownContent content={msg.text} />
-                      )
+                      <MarkdownContent content={msg.text} />
                     ) : (
                       msg.text
                     )}
@@ -2245,7 +2182,7 @@ function SideChatPanelImpl({
               {!liveCollapsed && (
                 <div className="scp-live-content">
                   {/* 交错渲染：工具块落在它发生时的正文位置，而不是全部堆到末尾。
-                    思考块弱化斜体，正文块常规色——与 streamSegments 的上色规则一致。 */}
+                     思考块弱化斜体，正文块常规色——与 streamSegments 的上色规则一致。 */}
                   {liveBlocks.length > 0 ? (
                     <div className="scp-timeline is-live">
                       {liveBlocks.map((b, i) => {
@@ -2274,9 +2211,9 @@ function SideChatPanelImpl({
                             <span className="scp-tl-tool-name">{b.tool}</span>
                             {b.summary && <span className="scp-tl-tool-summary">{b.summary}</span>}
                             {/* 尾部 meta：状态 + 计时一组跟随块尾。在途 = 动态计时
-                              （startedAt + nowMs，tick 驱动走动）；结束 = 成败 +
-                              durationMs 静态值。命令与路径在 summary 里完整换行，
-                              不做前端截断——截断会埋掉定位信息。 */}
+                               （startedAt + nowMs，tick 驱动走动）；结束 = 成败 +
+                               durationMs 静态值。命令与路径在 summary 里完整换行，
+                               不做前端截断——截断会埋掉定位信息。 */}
                             <span className="scp-tl-meta">
                               <span className={`scp-tl-state${b.ok === false ? ' is-failed' : ''}`}>
                                 {b.ok === undefined
@@ -2310,9 +2247,9 @@ function SideChatPanelImpl({
             </div>
           )}
           {/* 流式模块的固定操作条：sticky 贴在滚动视口底部、高度恒定——不随流式
-            内容增长跑位（旧实现把收起钮 absolute 在 .scp-live-content 里，内容
-            一涨钮就跟着往下漂，平滑追随跟不上时直接滑出视口）。收起/展开二态
-            共用这一个钮：收起后只剩上面那一行过程摘要，盯结果时不被刷屏。 */}
+             内容增长跑位（旧实现把收起钮 absolute 在 .scp-live-content 里，内容
+             一涨钮就跟着往下漂，平滑追随跟不上时直接滑出视口）。收起/展开二态
+             共用这一个钮：收起后只剩上面那一行过程摘要，盯结果时不被刷屏。 */}
           {sending && liveActive && (
             <div className="scp-live-bar">
               <button
@@ -2355,6 +2292,21 @@ function SideChatPanelImpl({
             >
               <IconChevronDown size={14} />
             </button>
+          )}
+          {/* 流式执行「活着」指示：浮在消息内容区左下角（2026-11-04 所有者定——
+              放 .scp-live-bar 里会被它的实色背景遮挡，故回到内容区浮层）。
+              左缘 22px：比贴边再让 10px，避开窗体圆角/边缘。
+              **只在 liveActive 时出现**（流式/工具活动期，即最初的「流式执行底部」
+              需求）：连接/思考阶段（sending && !liveActive）由「思考中…」三点动画
+              传达存活——那时 pill 会盖住那行，故不渲染。liveActive 为真时 live bar
+              必然可见，故常驻 is-raised 上抬、不被条压住。
+              sending 是后端 slot.running 的前端镜像——它真才显示，绝不伪造活跃。 */}
+          {liveActive && (
+            <span className="scp-running is-raised" role="status">
+              <span className="scp-running-dot" aria-hidden="true" />
+              <span className="scp-running-text">Running..</span>
+              <span className="scp-running-sweep" aria-hidden="true" />
+            </span>
           )}
         </div>
       </div>

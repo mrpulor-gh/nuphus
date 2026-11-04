@@ -143,6 +143,88 @@
   cursor: grabbing;
 }
 
+/* ── 消息区左下角：流式执行指示（Running..）──
+   浮在滚动视口上的「活着」信号：与右下角回底钮对称（同 absolute 定位、
+   同 z-index 层级）。**不放 .scp-live-bar**——那条是实色背景（--panel-bg）
+   会把 pill 压成贴条异物，故回到内容区浮层。**只在 liveActive 时渲染**
+   （JSX 门控）：连接/思考阶段「思考中…」三点是行内末行元素，pill 的
+   bottom:12px 会盖住它；liveActive 为真时 live bar 必然在底，故 pill
+   常驻 is-raised（bottom:24px）上抬避让。
+   左缘 22px：比贴边（12px）再让 10px，避开窗体圆角/边缘。
+   光影只做低幅高频：呼吸描边（accent-dim→glow）+ 一道高光扫过 + 圆点脉冲
+   （复用 scp-dot-pulse）；实色底 + 投影，内容从底下滚过时不透文本。
+   pointer-events:none——纯展示，不挡消息点击与滚动。
+   prefers-reduced-motion 下动画全关、静态 pill 仍传达在途态。 */
+.scp-running {
+  position: absolute;
+  left: 22px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--fz-sm);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: var(--shadow-surface);
+  animation: scp-running-breathe 1.6s var(--ease-out) infinite;
+}
+/* live bar（sticky bottom、高 20px）常在底，pill 常驻上抬压它的左半空区 */
+.scp-running.is-raised {
+  bottom: 24px;
+}
+.scp-running-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: scp-dot-pulse 1.2s infinite ease-in-out;
+}
+.scp-running-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, var(--accent-glow) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: scp-running-sweep 2.4s var(--ease-out) infinite;
+}
+@keyframes scp-running-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-dim);
+  }
+  50% {
+    box-shadow: 0 0 8px 1px var(--accent-glow);
+  }
+}
+@keyframes scp-running-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  60%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scp-running,
+  .scp-running-dot,
+  .scp-running-sweep {
+    animation: none;
+  }
+  .scp-running-sweep {
+    display: none;
+  }
+}
+
 .scp-icon-btn {
   display: flex;
   align-items: center;
@@ -463,6 +545,9 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  /* 展开入场：与 .scp-timeline 同一动画（scp-expand-in），让「展开」成为
+     可见的过程；reduced-motion 降见时间线旁的 media 块 */
+  animation: scp-expand-in 0.16s var(--ease-out) both;
 }
 /* 思考过程：与 agent 正文明确区分——斜体 + 更小字号 + 弱化灰，一眼看出是
    「模型内心活动」而非最终答复；工具调用另以「圆点 + 等宽工具名」区分。 */
@@ -1229,7 +1314,11 @@
    跑位。旧实现把收起钮 absolute 在 .scp-live-content 里：内容每长高一截，钮
    就跟着容器底边往下漂，平滑追随（rAF）追不上高频 delta 时直接滑出视口——
    就是「钮在随流式输出滚动」。改常驻条后，钮相对视口静止，正文在它上方滚。
-   实色背景：内容从条下滚过时不能透出文本。 */
+   玻璃必须与 .scp-panel **同款**：同 background token + 同 backdrop-filter。
+   只写 background 不写 blur 时，半透明底（暗 90% / 亮 98%）会把「未模糊的
+   背境」透出来——亮色主题下就是一道白边/白雾（2026-11-04 所有者实测）。
+   margin/padding 抵消 .scp-messages 的 12px 侧 padding：条子通栏，两端不留
+   接缝；按钮经 padding 仍对齐消息内容右缘。 */
 .scp-live-bar {
   position: sticky;
   bottom: 0;
@@ -1238,7 +1327,11 @@
   align-items: center;
   justify-content: flex-end;
   height: 20px;
+  margin: 0 -12px;
+  padding: 0 12px;
   background: var(--panel-bg);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
 }
 
 /* 收起 / 展开钮：sticky 条内右对齐，低存在感（hover 才明显）。二态共用这一个
@@ -1304,6 +1397,26 @@
   gap: 6px;
   width: 100%;
   min-width: 0;
+  /* 展开入场：挂载时一次短促淡入 + 轻微下沉，让「展开」成为可见的过程
+     而非瞬移（收起即卸载、无退场动画——不在进程内做延迟卸载，点击响应
+     优先）。归档时间线 / live 时间线 / 步骤列表共用：一处生效。 */
+  animation: scp-expand-in 0.16s var(--ease-out) both;
+}
+@keyframes scp-expand-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scp-timeline,
+  .scp-process-body {
+    animation: none;
+  }
 }
 /* 正文块：Markdown 组件自带段落间距，这里只保证块边界不粘连 */
 .scp-tl-text {
