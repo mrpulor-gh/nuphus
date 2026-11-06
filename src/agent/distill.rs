@@ -93,6 +93,23 @@ pub const REFINE_PROMPT_UNFINISHED: &str = "[执行中上下文提炼 — 任务
 /// 用尽后 85% 只剩劝导；10 次覆盖常规长任务全程，上限保护仍存）。
 pub const MAX_IN_LOOP_REFINES: u32 = 10;
 
+/// in-loop refine **嵌套接力深度**上限（= 允许的递归层数）。
+///
+/// 与 [`MAX_IN_LOOP_REFINES`] 是**两个不同的闸门**，不可互相替代：
+/// - `MAX_IN_LOOP_REFINES` = 一轮内**累计**提炼次数上限（防烧超时预算）
+/// - 本常量 = **嵌套**接力层数上限（防栈溢出）
+///
+/// 2026-11-06 栈溢出修复：接力路径是
+/// `refine_in_loop → resume → react_loop → refine_in_loop`，`Box::pin` 只固定
+/// future 的**大小**，**不消除运行时栈帧**——每层 await 实占一个完整栈帧。
+/// 层数无界时 tokio worker 线程栈（2MB）被撑爆，Windows 抛
+/// `STATUS_STACK_OVERFLOW` (0xc00000fd) 直接杀进程 = 用户看到的「闪退」。
+///
+/// 取值 1：允许「提炼 → 压缩 → 从摘要接力续跑」一次（这是 85% 硬线接力的
+/// 全部设计意图），但**不允许接力轮里再接力**。第二轮起改走软劝导 + turn-end
+/// 正常 refine 兜底 —— 与 force 线的既有语义一致，不丢任务、不硬杀。
+pub const MAX_REFINE_RECURSION_DEPTH: u32 = 1;
+
 /// in-loop refine 的提交动作：摘要落地（压缩 + 归档）。
 ///
 /// 与 turn-end 路径共用压缩本体（`accumulate_distill`：再次提炼只留最新

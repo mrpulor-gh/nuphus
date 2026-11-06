@@ -659,6 +659,16 @@ impl Runtime {
         let turn_id = self.agent.session.advance_turn();
         tracing::info!("[TURN] Advance to {}", turn_id);
 
+        // ── 新轮次重置跨轮闸门（修复 B10，2026-11-06 栈溢出）────────────
+        // `refine_count` 是「本轮提炼次数」预算（MAX_IN_LOOP_REFINES），
+        // 不是 Agent 生命周期累计值。此前从不重置 → 长会话跑到第 10 次提炼后
+        // 闸门**永久关闭**，85% 硬线从此只剩软劝导，上下文无限膨胀。
+        // `ctx_hard_stop_done` 同理：一条轮次内只硬切一次，新轮次必须复位，
+        // 否则第二轮起 85% 硬线完全失效。
+        self.agent.refine_count = 0;
+        self.agent.ctx_hard_stop_done = false;
+        self.agent.refine_depth = 0;
+
         let effective_input = input.to_string();
 
         // Auto-inject annotations: match keywords in user input (injected once per round)
@@ -794,8 +804,28 @@ impl Runtime {
     pub async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
         use crate::agent::distill::{
             commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
+            MAX_REFINE_RECURSION_DEPTH, REFINE_PROMPT_UNFINISHED,
         };
+
+        // ── 嵌套深度闸门（栈溢出修复，2026-11-06）─────────────────────────
+        // 接力路径：refine_in_loop → resume → react_loop → refine_in_loop。
+        // `Box::pin` **只固定 future 的大小，不消除运行时栈帧**——每层 await
+        // 实占一个完整栈帧。层数无界时 tokio worker 线程栈（2MB）被撑爆 →
+        // Windows STATUS_STACK_OVERFLOW (0xc00000fd) 直接杀进程 =「闪退」。
+        // 实测证据：11/6 崩溃 dump 栈上 `tokio::task::spawn::spawn` 位于栈顶
+        // 第 2 帧，递归帧固定 10 帧周期、`refine_in_loop` 的 poll 函数出现 120 次。
+        //
+        // 深度超限 → 不再嵌套接力，返回 false 让调用方降级为硬劝导
+        //（与 force 线既有语义一致：软劝导让模型收敛，turn-end 正常 refine 兜底，
+        //  不硬杀、不丢任务）。
+        if self.agent.refine_depth >= MAX_REFINE_RECURSION_DEPTH {
+            tracing::warn!(
+                "[REFINE] in-loop skipped: refine depth {} >= max {} (no nested resume)",
+                self.agent.refine_depth,
+                MAX_REFINE_RECURSION_DEPTH
+            );
+            return false;
+        }
 
         if self.agent.refine_count >= MAX_IN_LOOP_REFINES {
             tracing::info!(
@@ -826,7 +856,16 @@ impl Runtime {
 
         // 墙钟预算 300s（本地端点预 fill 慢模型可能远超云端默认；此处只防
         // 「resume 整体挂死」，到点即回滚，不留半提炼状态）。
-        // Box::pin 断异步递归环：refine_in_loop → resume → react_loop → refine_in_loop。
+        //
+        // Box::pin 的真实作用（2026-11-06 更正）：它**只固定 future 的大小**
+        // （让 async fn 递归能通过编译器的 Sized 检查），**不消除运行时栈帧**。
+        // 早前注释称「Box::pin 断异步递归环」是错误认知 —— 递归深度无界时
+        // 每层 await 仍实占一个完整栈帧，栈照样溢出。真正的闸门是上面的
+        // `MAX_REFINE_RECURSION_DEPTH` 深度检查。
+        //
+        // 深度计数在此期间保持 +1：resume 内的 react_loop 若再次越线触发
+        // refine_in_loop，会看到 depth 已达上限而拒绝嵌套（降级软劝导）。
+        self.agent.refine_depth += 1;
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
             Box::pin(self.resume(REFINE_PROMPT_UNFINISHED, cancel_flag)),
@@ -834,6 +873,7 @@ impl Runtime {
         .await
         .map_err(|_| "提炼超时（300s）".to_string())
         .and_then(|r| r.map_err(|e| e.to_string()));
+        self.agent.refine_depth -= 1;
 
         self.agent.tools_suppressed = false;
         let _ = self.take_emitter();

@@ -189,7 +189,31 @@ pub struct ReactAgent {
     /// Pause flag (shared with AppState, inherited by dispatch Exec)
     pub(crate) pause_flag: Option<Arc<AtomicBool>>,
     /// 强制提炼计数器（防止无限循环提炼）
+    ///
+    /// **per-turn 语义**：每次 `advance_turn`（= 用户发一条新消息）归零。
+    /// 修复 B10（2026-11-06）：此前只在构造时置 0、从不重置 → 计数跨轮累积，
+    /// 长会话跑到第 10 次提炼后 `MAX_IN_LOOP_REFINES` 闸门**永久关闭**，
+    /// 85% 硬线从此只剩软劝导，上下文无限膨胀。
     pub refine_count: u32,
+    /// 上下文接力深度（in-loop refine 嵌套层数）。
+    ///
+    /// 0 = 顶层执行；每进入一次 in-loop refine 接力 +1。
+    ///
+    /// **为什么需要（2026-11-06 栈溢出修复）**：in-loop refine 的接力路径是
+    /// `refine_in_loop → resume → react_loop → refine_in_loop`。`Box::pin`
+    /// 只固定 future 的**大小**，**不消除运行时栈帧**——每层 await 仍实占
+    /// 一个完整栈帧。层数无界时线程栈（tokio worker 默认 2MB）会被撑爆，
+    /// Windows 抛 `STATUS_STACK_OVERFLOW` (0xc00000fd) 直接杀进程 = 用户看到的
+    /// 「闪退」。`refine_count` 是跨层共享计数器，但它统计的是**累计提炼次数**
+    /// 而非**嵌套深度**，无法直接当作递归深度闸门，故单列本字段。
+    pub refine_depth: u32,
+    /// 85% 硬止损闸门（**跨 resume 生效**）。
+    ///
+    /// 修复 B10（2026-11-06）：此前 `ctx_hard_stop_done` 是 `react_loop` 的
+    /// **局部变量**，每次 `resume → react_loop` 新调用即重置为 false →
+    /// 层间闸门失效，越线可无限嵌套接力。提升到 Agent 级后，一条轮次内
+    /// 全程只硬切一次。
+    pub ctx_hard_stop_done: bool,
     /// 提炼轮禁工具开关（**代码级**，非提示词约束）：true 时 build_request
     /// 不携带任何 tools，react_loop 剔除模型产出的 tool_use 块——提炼轮
     /// 只允许输出摘要文本，杜绝「提炼轮继续调工具膨胀上下文」。
@@ -290,6 +314,8 @@ impl ReactAgent {
             client_factory: None,
             pause_flag: None,
             refine_count: 0,
+            refine_depth: 0,
+            ctx_hard_stop_done: false,
             tools_suppressed: false,
             context_hint_shown: false,
             last_memory_hint_at: 0,

@@ -654,6 +654,154 @@ fn react_loop_first_flush_persists_user_message_before_first_llm_call() {
     crate::store::session::delete_session(&session_id).unwrap();
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 栈溢出回归（2026-11-06，STATUS_STACK_OVERFLOW 0xc00000fd）
+//
+// 背景：长会话（948 msgs / 5.35MB）执行「接着干」后 3 秒闪退。dump 证据：
+//   - ExceptionCode = EXCEPTION_STACK_OVERFLOW，fault offset 0x3b66507
+//   - 栈顶第 2 帧 = tokio::task::spawn::spawn，第 4 帧 = tauri::async_runtime::spawn
+//   - 递归帧固定 10 帧周期，refine_in_loop 的 poll 函数出现 120 次
+// 根因：in-loop refine 接力路径 refine_in_loop → resume → react_loop →
+//   refine_in_loop 的**嵌套深度无界**。Box::pin 只固定 future 的大小，不消除
+//   运行时栈帧；层数无界 → tokio worker 栈（2MB）爆 → 进程被杀 =「闪退」。
+// 修复：MAX_REFINE_RECURSION_DEPTH 深度闸门 + ctx_hard_stop_done 提升到 Agent 级
+//   + refine_count 恢复 per-turn 语义。
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 计数型 mock：记录收到的 LLM 请求数（用于断言「闸门拒绝时根本没发请求」）。
+struct CountingApiClient {
+    requests: Arc<Mutex<usize>>,
+}
+
+impl CountingApiClient {
+    fn new() -> (Self, Arc<Mutex<usize>>) {
+        let requests = Arc::new(Mutex::new(0usize));
+        (
+            Self {
+                requests: requests.clone(),
+            },
+            requests,
+        )
+    }
+}
+
+#[async_trait]
+impl ApiClient for CountingApiClient {
+    async fn stream(&self, _request: MessageRequest) -> crate::Result<Vec<AssistantEvent>> {
+        *self.requests.lock().unwrap() += 1;
+        Ok(vec![
+            AssistantEvent::TextDelta("提炼摘要".to_string()),
+            AssistantEvent::MessageStop,
+        ])
+    }
+
+    fn model_name(&self) -> &str {
+        "mock-model"
+    }
+
+    fn provider_kind(&self) -> ProviderKind {
+        ProviderKind::MiniMax
+    }
+
+    fn provider_name(&self) -> &str {
+        ""
+    }
+}
+
+/// 回归：嵌套深度达上限时，refine_in_loop 必须**拒绝**接力，且**不发起任何
+/// LLM 请求**。
+///
+/// 修复前（无深度闸门）：refine_in_loop 会真的调用 resume → 发 LLM 请求 →
+/// 嵌套层数无界 → 栈溢出。本测试在修复前会红（断言 false + 请求数为 0）。
+#[test]
+#[serial]
+fn refine_in_loop_refuses_nested_resume_beyond_depth_limit() {
+    use crate::agent::distill::MAX_REFINE_RECURSION_DEPTH;
+
+    let (llm, request_count) = CountingApiClient::new();
+    let mut runtime = RuntimeBuilder::new()
+        .llm(Arc::new(llm))
+        .tools(make_mock_tool_registry())
+        .build()
+        .expect("build should succeed");
+
+    // 模拟「已在一次 refine 接力中」：深度已达上限。
+    runtime.agent_mut().refine_depth = MAX_REFINE_RECURSION_DEPTH;
+
+    let before = *request_count.lock().unwrap();
+    let accepted = tokio_test::block_on(runtime.refine_in_loop(&AtomicBool::new(false)));
+    let after = *request_count.lock().unwrap();
+
+    assert!(
+        !accepted,
+        "深度达上限时 refine_in_loop 必须拒绝接力（返回 false），否则会无限嵌套 → 栈溢出"
+    );
+    assert_eq!(
+        after - before,
+        0,
+        "深度闸门拒绝时不得发起任何 LLM 请求（实际发起 {} 次）",
+        after - before
+    );
+    // 深度未被消耗（拒绝路径不应污染计数）。
+    assert_eq!(
+        runtime.agent().refine_depth,
+        MAX_REFINE_RECURSION_DEPTH,
+        "拒绝路径不应修改深度计数"
+    );
+}
+
+/// 回归：refine_count / ctx_hard_stop_done 是 **per-turn** 语义——新轮次必须归零。
+///
+/// 修复前：refine_count 只在 Agent 构造时置 0，从不重置 → 长会话第 10 次提炼后
+/// MAX_IN_LOOP_REFINES 闸门永久关闭，85% 硬线从此只剩软劝导，上下文无限膨胀。
+#[test]
+#[serial]
+fn refine_gates_reset_on_new_turn() {
+    use crate::agent::distill::MAX_IN_LOOP_REFINES;
+
+    let llm = make_mock_llm();
+    let tools = make_mock_tool_registry();
+    let mut runtime = RuntimeBuilder::new()
+        .llm(llm)
+        .tools(tools)
+        .build()
+        .expect("build should succeed");
+
+    // 模拟「上一轮已经把提炼预算用光」
+    runtime.agent_mut().refine_count = MAX_IN_LOOP_REFINES;
+    runtime.agent_mut().ctx_hard_stop_done = true;
+    runtime.agent_mut().refine_depth = 3;
+
+    // 新一轮（用户发消息）→ run() 应重置全部跨轮闸门。
+    let _ = tokio_test::block_on(runtime.run("新轮次闸门重置验证", &None, &AtomicBool::new(false)));
+
+    assert_eq!(
+        runtime.agent().refine_count,
+        0,
+        "refine_count 应在新轮次归零（per-turn 语义）——否则提炼预算跨轮累积、闸门永久关闭"
+    );
+    assert!(
+        !runtime.agent().ctx_hard_stop_done,
+        "ctx_hard_stop_done 应在新轮次复位——否则第二轮起 85% 硬线完全失效"
+    );
+    assert_eq!(
+        runtime.agent().refine_depth,
+        0,
+        "refine_depth 应在新轮次归零——否则跨轮残留深度会误伤本轮的合法接力"
+    );
+}
+
+/// 回归：深度常量是**硬上限 1**——允许一次「提炼→压缩→接力续跑」，
+/// 但禁止接力轮里再接力（这正是栈溢出的直接成因）。
+#[test]
+fn refine_recursion_depth_limit_is_one() {
+    use crate::agent::distill::MAX_REFINE_RECURSION_DEPTH;
+    assert_eq!(
+        MAX_REFINE_RECURSION_DEPTH, 1,
+        "只允许一层接力：第 2 层起必须降级软劝导，否则 tokio worker 栈会被撑爆"
+    );
+}
+
 /// 轮中增量快照的 10 迭代触发：max_iterations=12 的工具循环跑完后，
 /// 落盘快照应停在「第 10 轮开头」——含 iteration-1..10 的工具调用，
 /// 不含 iteration-11/12（执行中崩溃最多丢失当前迭代的增量）。
