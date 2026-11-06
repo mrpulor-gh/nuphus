@@ -383,7 +383,8 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         //   此线不依赖模型自觉（模型不遵守 force 劝导时它是唯一兜底）。
         let mut ctx_warned = false;
         let mut ctx_force_warned = false;
-        let mut ctx_hard_stop_done = false;
+        // `ctx_hard_stop_done` 已提升到 Agent 级（self.agent.ctx_hard_stop_done）——
+        // 跨 resume 生效，见下方 85% 硬止损处的说明。
 
         // ── 轮中增量快照：进入循环前首刷一次 ──
         // 此刻 session 已含用户消息（上方 push_user），首次 LLM 请求尚未发出。
@@ -572,12 +573,21 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 
                     // 中断已请求：不再触发提炼大动作（马上从检查点收敛退出）——
                     // 「中断后又执行」治理（2026-10-28）。
-                    if ratio >= 0.85 && !ctx_hard_stop_done && !cancel_flag.load(Ordering::SeqCst) {
+                    //
+                    // 闸门 `ctx_hard_stop_done` 现为 **Agent 级**（修复 B10，
+                    // 2026-11-06 栈溢出）：此前是 react_loop 的局部变量，每次
+                    // `resume → react_loop` 新调用即重置为 false → 层间闸门失效，
+                    // 越线可无限嵌套接力（每层实占一个栈帧，Box::pin 不消除栈帧）
+                    // → tokio worker 栈爆 → STATUS_STACK_OVERFLOW 直接杀进程。
+                    // 提升到 Agent 级后：**一条轮次内全程只硬切一次**，
+                    // 接力轮里不再二次硬切。
+                    let hard_stop_done = self.agent.ctx_hard_stop_done;
+                    if ratio >= 0.85 && !hard_stop_done && !cancel_flag.load(Ordering::SeqCst) {
                         // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
                         // 独立于 force 线——force 线已被模型无视时（或单次暴涨
                         // 直接从线下越到 85%+），此处是最后一个不依赖模型自觉
                         // 的动作点。ctx_hard_stop_done 保证本轮只硬切一次。
-                        ctx_hard_stop_done = true;
+                        self.agent.ctx_hard_stop_done = true;
                         ctx_force_warned = true;
                         tracing::warn!(
                             "[REFINE] 85% hard stop: {}/{} tokens ({:.1}%) — in-loop refine",

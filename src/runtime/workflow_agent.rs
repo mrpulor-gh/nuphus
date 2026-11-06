@@ -95,6 +95,18 @@ pub struct WorkflowAgent {
     /// Session refine counter（turn-end maybe_refine_session 分档计数用；
     /// in-loop 注入不再计数——整体替换后 token 清零、消息归 1，天然不循环）
     pub(crate) refine_count: u32,
+    /// in-loop refine **嵌套接力深度**（与 Leader 的 `ReactAgent::refine_depth`
+    /// 同构，见该处注释）。
+    ///
+    /// 2026-11-06 栈溢出修复：接力路径 `refine_in_loop → run → 迭代循环 →
+    /// refine_in_loop` 中，`Box::pin` 只固定 future 大小、**不消除运行时栈帧**，
+    /// 层数无界时 tokio worker 栈爆 → STATUS_STACK_OVERFLOW 直接杀进程。
+    pub(crate) refine_depth: u32,
+    /// 85% 硬止损闸门（**跨 run 生效**）。
+    ///
+    /// 修复 B10（2026-11-06）：此前是每次 `run` 内部迭代循环的局部变量，
+    /// 嵌套接力时层间闸门失效。提升到 Agent 级后一条轮次内只硬切一次。
+    pub(crate) ctx_hard_stop_done: bool,
     /// Refine threshold (inherited from Runtime config, same as Leader)
     pub(crate) large_force_threshold: f64,
     /// Model label for prompt building
@@ -156,6 +168,8 @@ impl WorkflowAgent {
             execution_started_at: std::time::Instant::now(),
             turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             refine_count: 0,
+            refine_depth: 0,
+            ctx_hard_stop_done: false,
             large_force_threshold,
             model_label,
             supports_vision: false,
@@ -552,6 +566,17 @@ impl WorkflowAgent {
         self.inject_memory_snapshot();
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();
+        // ── 新轮次重置跨轮闸门（修复 B10，2026-11-06 栈溢出）────────────
+        // 与 Leader（Runtime::run）同构：refine_count 是「本轮提炼次数」预算，
+        // 不是生命周期累计值；ctx_hard_stop_done 是一条轮次内只硬切一次的闸门。
+        // 二者不重置 → 长会话/多任务后闸门永久关闭，85% 硬线失效。
+        // 注意 internal_input=true（refine 内部调用 run）时**不重置**——
+        // 接力轮继承外层的计数与深度，避免绕过闸门。
+        if !self.internal_input {
+            self.refine_count = 0;
+            self.ctx_hard_stop_done = false;
+            self.refine_depth = 0;
+        }
         self.max_warning_injected = 0;
         self.user_terminated = false;
         self.pending_warnings.clear();
@@ -749,9 +774,15 @@ impl WorkflowAgent {
                     let usage = self.session.context_watermark();
                     if usage > 0 {
                         let ratio = usage as f64 / ctx_window as f64;
-                        let can_hard_stop =
-                            self.refine_count < crate::agent::distill::MAX_IN_LOOP_REFINES;
+                        let can_hard_stop = self.refine_count
+                            < crate::agent::distill::MAX_IN_LOOP_REFINES
+                            // 闸门提升到 Agent 级（修复 B10，2026-11-06 栈溢出）：
+                            // 此前每次 run 内部迭代循环的局部变量，嵌套接力时
+                            // 层间闸门失效 → 越线可无限嵌套 → 栈溢出。
+                            && !self.ctx_hard_stop_done;
                         if ratio >= 0.85 && can_hard_stop {
+                            // 一条轮次内只硬切一次（跨 run 生效）。
+                            self.ctx_hard_stop_done = true;
                             // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
                             // 提炼失败/达上限 → 降级渐进警告 / FORBID break（衔接老语义）。
                             tracing::warn!(
@@ -1752,8 +1783,21 @@ impl WorkflowAgent {
     async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
         use crate::agent::distill::{
             commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
+            MAX_REFINE_RECURSION_DEPTH, REFINE_PROMPT_UNFINISHED,
         };
+
+        // ── 嵌套深度闸门（栈溢出修复，2026-11-06）─────────────────────────
+        // 与 Leader（Runtime::refine_in_loop）同构：Box::pin 只固定 future 大小，
+        // 不消除运行时栈帧；层数无界 → tokio worker 栈爆 → 进程被杀。
+        // 深度超限 → 不再嵌套接力，返回 false 让调用方降级为渐进警告兜底。
+        if self.refine_depth >= MAX_REFINE_RECURSION_DEPTH {
+            tracing::warn!(
+                "[REFINE] workflow in-loop skipped: refine depth {} >= max {} (no nested run)",
+                self.refine_depth,
+                MAX_REFINE_RECURSION_DEPTH
+            );
+            return false;
+        }
 
         if self.refine_count >= MAX_IN_LOOP_REFINES {
             tracing::info!(
@@ -1779,7 +1823,15 @@ impl WorkflowAgent {
         if let Some(ref e) = saved {
             self.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
         }
-        // Box::pin 断异步递归环：refine_in_loop → run → 迭代循环 → refine_in_loop。
+        // Box::pin 的真实作用（2026-11-06 更正）：它**只固定 future 的大小**
+        // （让 async fn 递归能通过编译器的 Sized 检查），**不消除运行时栈帧**。
+        // 早前注释称「Box::pin 断异步递归环」是错误认知 —— 递归深度无界时
+        // 每层 await 仍实占一个完整栈帧，栈照样溢出。真正的闸门是上面的
+        // `MAX_REFINE_RECURSION_DEPTH` 深度检查。
+        //
+        // 深度计数在此期间保持 +1：run 内的迭代循环若再次越线触发
+        // refine_in_loop，会看到 depth 已达上限而拒绝嵌套。
+        self.refine_depth += 1;
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
             Box::pin(self.run(REFINE_PROMPT_UNFINISHED, &None, cancel_flag)),
@@ -1787,6 +1839,7 @@ impl WorkflowAgent {
         .await
         .map_err(|_| "提炼超时（300s）".to_string())
         .and_then(|r| r.map_err(|e| e.to_string()));
+        self.refine_depth -= 1;
         self.set_internal_input(false);
         self.tools_suppressed = false;
         let _ = self.take_emitter();
